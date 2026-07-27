@@ -1,0 +1,16 @@
+services:
+  bridge:
+    build: .
+    restart: unless-stopped
+    environment:
+      CHATWOOT_WEBHOOK_SECRET: ${CHATWOOT_WEBHOOK_SECRET}
+      ALLOWED_WHATSAPP_JID: ${ALLOWED_WHATSAPP_JID}
+      CAPTURE_DIR: /app/data/captures
+      WEBHOOK_MAX_AGE_SECONDS: ${WEBHOOK_MAX_AGE_SECONDS:-300}
+    ports:
+      - "8000:8000"
+    volumes:
+      - bridge-data:/app/data
+
+volumes:
+  bridge-data:
