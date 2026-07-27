@@ -24,6 +24,33 @@ def test_accepts_only_configured_whatsapp_jid() -> None:
     assert decision.reason == "accepted"
 
 
+def test_accepts_evolution_identifier_in_chatwoot_sender_metadata() -> None:
+    payload = {
+        "event": "message_created",
+        "message_type": "incoming",
+        "private": False,
+        "conversation": {
+            "contact_inbox": {
+                "source_id": "chatwoot-internal-source-id",
+            },
+            "meta": {
+                "sender": {
+                    "identifier": "5492916424279@s.whatsapp.net",
+                }
+            },
+        },
+    }
+
+    decision = classify_chatwoot_event(
+        payload,
+        allowed_jid="5492916424279@s.whatsapp.net",
+    )
+
+    assert decision.accepted is True
+    assert decision.sender_jid == "5492916424279@s.whatsapp.net"
+    assert decision.reason == "accepted"
+
+
 @pytest.mark.parametrize(
     ("changes", "expected_reason"),
     [

@@ -17,7 +17,9 @@ def classify_chatwoot_event(
     """Classify an event before any agent can be invoked."""
     conversation = payload.get("conversation") or {}
     contact_inbox = conversation.get("contact_inbox") or {}
-    sender_jid = contact_inbox.get("source_id")
+    metadata = conversation.get("meta") or {}
+    sender = metadata.get("sender") or {}
+    sender_jid = sender.get("identifier") or contact_inbox.get("source_id")
 
     if payload.get("event") != "message_created":
         return EventDecision(False, "unsupported_event", sender_jid)
