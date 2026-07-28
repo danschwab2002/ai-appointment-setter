@@ -8,11 +8,20 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
+import httpx
 from fastapi import FastAPI, Header, HTTPException, Request, Response, status
 
+from bridge.chatwoot import ChatwootClient, ChatwootProtocolError
 from bridge.filtering import classify_chatwoot_event
 from bridge.security import verify_chatwoot_signature
+
+
+class ChatwootControl(Protocol):
+    async def ensure_conversation_label(
+        self, *, conversation_id: int, label: str
+    ) -> bool: ...
 
 
 @dataclass(frozen=True)
@@ -21,6 +30,11 @@ class Settings:
     allowed_jid: str
     capture_dir: Path
     max_age_seconds: int
+    agent_bot_id: int | None = None
+    chatwoot_base_url: str | None = None
+    chatwoot_account_id: int | None = None
+    chatwoot_control_api_access_token: str | None = None
+    chatwoot_pause_macro_id: int | None = None
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -29,6 +43,13 @@ class Settings:
             allowed_jid=os.environ["ALLOWED_WHATSAPP_JID"],
             capture_dir=Path(os.getenv("CAPTURE_DIR", "./data/captures")),
             max_age_seconds=int(os.getenv("WEBHOOK_MAX_AGE_SECONDS", "300")),
+            agent_bot_id=int(os.environ["CHATWOOT_AGENT_BOT_ID"]),
+            chatwoot_base_url=os.environ["CHATWOOT_BASE_URL"],
+            chatwoot_account_id=int(os.environ["CHATWOOT_ACCOUNT_ID"]),
+            chatwoot_control_api_access_token=os.environ[
+                "CHATWOOT_CONTROL_API_ACCESS_TOKEN"
+            ],
+            chatwoot_pause_macro_id=int(os.environ["CHATWOOT_PAUSE_MACRO_ID"]),
         )
 
 
@@ -51,8 +72,26 @@ def _capture_payload(
     return True
 
 
-def create_app(settings: Settings) -> FastAPI:
+def create_app(
+    settings: Settings,
+    *,
+    chatwoot_client: ChatwootControl | None = None,
+) -> FastAPI:
     app = FastAPI(title="AI Appointment Setter Bridge")
+    control_client = chatwoot_client
+    if (
+        control_client is None
+        and settings.chatwoot_base_url is not None
+        and settings.chatwoot_account_id is not None
+        and settings.chatwoot_control_api_access_token is not None
+        and settings.chatwoot_pause_macro_id is not None
+    ):
+        control_client = ChatwootClient(
+            base_url=settings.chatwoot_base_url,
+            account_id=settings.chatwoot_account_id,
+            access_token=settings.chatwoot_control_api_access_token,
+            pause_macro_id=settings.chatwoot_pause_macro_id,
+        )
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -65,7 +104,7 @@ def create_app(settings: Settings) -> FastAPI:
         x_chatwoot_signature: str = Header(),
         x_chatwoot_timestamp: str = Header(),
         x_chatwoot_delivery: str = Header(),
-    ) -> dict[str, str]:
+    ) -> dict[str, object]:
         raw_body = await request.body()
         if not verify_chatwoot_signature(
             raw_body=raw_body,
@@ -89,7 +128,38 @@ def create_app(settings: Settings) -> FastAPI:
         decision = classify_chatwoot_event(
             payload,
             allowed_jid=settings.allowed_jid,
+            agent_bot_id=settings.agent_bot_id,
         )
+        if decision.action == "pause_automation":
+            conversation = payload.get("conversation") or {}
+            conversation_id = conversation.get("id")
+            if not isinstance(conversation_id, int) or isinstance(
+                conversation_id, bool
+            ):
+                raise HTTPException(
+                    status_code=422,
+                    detail="invalid_conversation_id",
+                )
+            if control_client is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="chatwoot_control_unavailable",
+                )
+            try:
+                changed = await control_client.ensure_conversation_label(
+                    conversation_id=conversation_id,
+                    label="automation_paused",
+                )
+            except (httpx.HTTPError, ChatwootProtocolError) as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail="chatwoot_control_unavailable",
+                ) from exc
+            return {
+                "status": "automation_paused",
+                "reason": decision.reason,
+                "label_status": "added" if changed else "already_present",
+            }
         if not decision.accepted:
             response.status_code = status.HTTP_200_OK
             return {

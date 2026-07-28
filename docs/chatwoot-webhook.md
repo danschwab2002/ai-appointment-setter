@@ -25,13 +25,15 @@ Chatwoot firma el cuerpo crudo mediante los headers:
 
 ## Prueba permitida
 
-El bridge solo captura mensajes públicos entrantes cuyo `conversation.contact_inbox.source_id` sea exactamente:
+El bridge solo captura mensajes públicos entrantes cuyo identificador de
+remitente coincida con `ALLOWED_WHATSAPP_JID`. Para la integración actual, el
+valor canónico se lee desde `conversation.meta.sender.identifier`; únicamente
+se usa `conversation.contact_inbox.source_id` como compatibilidad con payloads
+que no incluyen el metadata del remitente.
 
-```text
-5492916424279@s.whatsapp.net
-```
-
-Cualquier otro JID recibe HTTP 200 con estado `ignored` y no se persiste.
+Cualquier otro JID recibe HTTP 200 con estado `ignored` y no se persiste. El
+valor autorizado es configuración sensible del despliegue y no debe copiarse a
+documentación ni logs.
 
 ## Resultado esperado
 
@@ -42,3 +44,6 @@ Un evento aceptado devuelve HTTP 202:
 ```
 
 Los payloads aceptados quedan bajo `CAPTURE_DIR` con permisos `0600`. El nombre del archivo es un SHA-256 del delivery ID para evitar path traversal y no revelar identificadores.
+
+La estructura sanitizada y las diferencias observadas entre webhook y API se
+documentan en [`research/chatwoot-observed-contract.md`](research/chatwoot-observed-contract.md).

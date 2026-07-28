@@ -12,7 +12,7 @@ El primer receptor no llama a un modelo ni envía mensajes. Su objetivo es obten
 
 Solo se aceptará para procesamiento el contacto cuyo identificador de WhatsApp sea exactamente:
 
-`5492916424279@s.whatsapp.net`
+`12025550123@s.whatsapp.net`
 
 La restricción será aplicada por código antes de cualquier futura invocación a Hermes. No será una instrucción de prompt.
 
@@ -21,3 +21,7 @@ La restricción será aplicada por código antes de cualquier futura invocación
 ```text
 Chatwoot -> bridge -> sales-agent (Hermes) -> Chatwoot -> Evolution API -> WhatsApp
 ```
+
+## Decisiones arquitectónicas
+
+- [ADR-0001: Profile comercial como motor de razonamiento aislado](decisions/0001-commercial-profile-boundary.md)
