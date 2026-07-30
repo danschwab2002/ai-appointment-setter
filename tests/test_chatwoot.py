@@ -77,3 +77,41 @@ def test_does_not_update_chatwoot_when_pause_label_already_exists() -> None:
 
     assert changed is False
     assert [request.method for request in requests] == ["GET"]
+
+
+def test_reads_a_bounded_conversation_history_from_chatwoot() -> None:
+    messages = [
+        {
+            "id": 10,
+            "message_type": 0,
+            "private": False,
+            "content": "Hola",
+            "sender": {"type": "contact", "id": 20},
+        },
+        {
+            "id": 11,
+            "message_type": 1,
+            "private": False,
+            "content": "¿Cómo te llamás?",
+            "sender": {"type": "agent_bot", "id": 1},
+        },
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == "/api/v1/accounts/1/conversations/2/messages"
+        assert request.headers["api_access_token"] == "control-token"
+        return httpx.Response(200, json={"meta": {}, "payload": messages})
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = asyncio.run(
+        client.get_conversation_messages(conversation_id=2, limit=20)
+    )
+
+    assert result == messages

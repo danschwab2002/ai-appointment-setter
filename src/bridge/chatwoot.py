@@ -33,6 +33,35 @@ class ChatwootClient:
         self._confirmation_delay_seconds = confirmation_delay_seconds
         self._transport = transport
 
+    async def get_conversation_messages(
+        self, *, conversation_id: int, limit: int = 20
+    ) -> list[dict[str, object]]:
+        """Read a bounded canonical conversation history from Chatwoot."""
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        path = (
+            f"/api/v1/accounts/{self._account_id}"
+            f"/conversations/{conversation_id}/messages"
+        )
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers={"api_access_token": self._access_token},
+            transport=self._transport,
+            timeout=15,
+        ) as client:
+            response = await client.get(path)
+            response.raise_for_status()
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise ChatwootProtocolError("invalid_json") from exc
+        messages = payload.get("payload") if isinstance(payload, dict) else None
+        if not isinstance(messages, list) or not all(
+            isinstance(message, dict) for message in messages
+        ):
+            raise ChatwootProtocolError("invalid_messages_payload")
+        return messages[-limit:]
+
     async def ensure_conversation_label(
         self, *, conversation_id: int, label: str
     ) -> bool:

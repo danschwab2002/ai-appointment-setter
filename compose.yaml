@@ -12,6 +12,11 @@ services:
       ALLOWED_WHATSAPP_JID: ${ALLOWED_WHATSAPP_JID}
       CAPTURE_DIR: /app/data/captures
       WEBHOOK_MAX_AGE_SECONDS: ${WEBHOOK_MAX_AGE_SECONDS:-300}
+      HERMES_SHADOW_ENABLED: ${HERMES_SHADOW_ENABLED:-false}
+      HERMES_API_BASE_URL: ${HERMES_API_BASE_URL:-}
+      HERMES_API_KEY: ${HERMES_API_KEY:-}
+      HERMES_MODEL_NAME: ${HERMES_MODEL_NAME:-agente-comercial}
+      SHADOW_DIR: /app/data/shadow
     ports:
       - "8000:8000"
     volumes:
