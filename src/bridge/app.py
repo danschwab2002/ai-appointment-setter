@@ -6,9 +6,10 @@ import hashlib
 import json
 import os
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import AsyncGenerator, Protocol
 from urllib.parse import urlparse
 
 import httpx
@@ -24,7 +25,17 @@ from fastapi import (
 from bridge.chatwoot import ChatwootClient, ChatwootProtocolError
 from bridge.filtering import classify_chatwoot_event
 from bridge.hermes import HermesShadowProcessor
+from bridge.hotmart import (
+    EVENT_CART_ABANDONMENT,
+    classify_hotmart_event,
+    is_stale_event,
+    verify_hotmart_token,
+)
 from bridge.security import verify_chatwoot_signature
+from bridge.supabase import SupabaseClient, SupabaseError
+from bridge.messaging import EvolutionMessageSender, MessageSender
+from bridge.recovery_agent import RecoveryAgentClient
+from bridge.worker import ResolutionWorker
 
 
 class ChatwootControl(Protocol):
@@ -79,6 +90,15 @@ class Settings:
     shadow_dir: Path = Path("./data/shadow")
     automated_replies_enabled: bool = False
     reply_dir: Path = Path("./data/replies")
+    hotmart_hottok: str | None = None
+    hotmart_max_age_seconds: int = 300
+    supabase_base_url: str | None = None
+    supabase_anon_key: str | None = None
+    worker_poll_interval_seconds: float = 5.0
+    worker_batch_size: int = 10
+    worker_enabled: bool = False
+    chatwoot_inbox_id: int | None = None
+    messaging_channel: str = "evolution"
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -143,6 +163,26 @@ class Settings:
         else:
             hermes_api_base_url = os.getenv("HERMES_API_BASE_URL") or None
             hermes_api_key = os.getenv("HERMES_API_KEY") or None
+
+        hotmart_hottok = os.getenv("HOTMART_HOTTOK", "").strip() or None
+        hotmart_max_age_seconds = int(
+            os.getenv("HOTMART_MAX_AGE_SECONDS", "300")
+        )
+        supabase_base_url = os.getenv("SUPABASE_BASE_URL", "").strip() or None
+        supabase_anon_key = os.getenv("SUPABASE_ANON_KEY", "").strip() or None
+        worker_enabled = (
+            os.getenv("RESOLUTION_WORKER_ENABLED", "false").lower() == "true"
+        )
+        worker_poll_interval = float(
+            os.getenv("RESOLUTION_WORKER_POLL_INTERVAL", "5.0")
+        )
+        worker_batch_size = int(
+            os.getenv("RESOLUTION_WORKER_BATCH_SIZE", "10")
+        )
+        chatwoot_inbox_id_raw = os.getenv("CHATWOOT_INBOX_ID", "").strip()
+        chatwoot_inbox_id = int(chatwoot_inbox_id_raw) if chatwoot_inbox_id_raw else None
+        messaging_channel = os.getenv("MESSAGING_CHANNEL", "evolution").strip().lower()
+
         return cls(
             webhook_secret=os.environ["CHATWOOT_WEBHOOK_SECRET"],
             allowed_jid=os.environ["ALLOWED_WHATSAPP_JID"],
@@ -163,6 +203,15 @@ class Settings:
             shadow_dir=Path(os.getenv("SHADOW_DIR", "./data/shadow")),
             automated_replies_enabled=automated_replies_enabled,
             reply_dir=Path(os.getenv("REPLY_DIR", "./data/replies")),
+            hotmart_hottok=hotmart_hottok,
+            hotmart_max_age_seconds=hotmart_max_age_seconds,
+            supabase_base_url=supabase_base_url,
+            supabase_anon_key=supabase_anon_key,
+            worker_poll_interval_seconds=worker_poll_interval,
+            worker_batch_size=worker_batch_size,
+            worker_enabled=worker_enabled,
+            chatwoot_inbox_id=chatwoot_inbox_id,
+            messaging_channel=messaging_channel,
         )
 
 
@@ -258,8 +307,10 @@ def create_app(
     *,
     chatwoot_client: ChatwootControl | None = None,
     shadow_processor: ShadowProcessor | None = None,
+    supabase_client: SupabaseClient | None = None,
+    recovery_agent_client: RecoveryAgentClient | None = None,
+    message_sender: MessageSender | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="AI Appointment Setter Bridge")
     control_client = chatwoot_client
     if (
         control_client is None
@@ -278,6 +329,69 @@ def create_app(
             reply_dir=settings.reply_dir,
             pause_macro_id=settings.chatwoot_pause_macro_id,
         )
+
+    # Shared Supabase client (injected or constructed from settings).
+    shared_supabase = supabase_client
+    if (
+        shared_supabase is None
+        and settings.supabase_base_url is not None
+        and settings.supabase_anon_key is not None
+    ):
+        shared_supabase = SupabaseClient(
+            base_url=settings.supabase_base_url,
+            anon_key=settings.supabase_anon_key,
+        )
+
+    # Build the resolution worker if Supabase is configured and enabled.
+    resolution_worker: ResolutionWorker | None = None
+    if (
+        settings.worker_enabled
+        and shared_supabase is not None
+    ):
+        recovery_agent = recovery_agent_client
+        if (
+            recovery_agent is None
+            and settings.hermes_api_base_url is not None
+            and settings.hermes_api_key is not None
+        ):
+            recovery_agent = RecoveryAgentClient(
+                base_url=settings.hermes_api_base_url,
+                api_key=settings.hermes_api_key,
+                model_name=settings.hermes_model_name,
+                proposals_dir=Path(
+                    os.getenv("RECOVERY_PROPOSALS_DIR", "./data/recovery")
+                ),
+            )
+        sender = message_sender
+        if (
+            sender is None
+            and settings.messaging_channel == "evolution"
+            and settings.chatwoot_inbox_id is not None
+            and control_client is not None
+            and isinstance(control_client, ChatwootClient)
+        ):
+            sender = EvolutionMessageSender(
+                chatwoot=control_client,
+                inbox_id=settings.chatwoot_inbox_id,
+            )
+        resolution_worker = ResolutionWorker(
+            supabase=shared_supabase,
+            poll_interval_seconds=settings.worker_poll_interval_seconds,
+            batch_size=settings.worker_batch_size,
+            recovery_agent=recovery_agent,
+            message_sender=sender,
+        )
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+        if resolution_worker is not None:
+            await resolution_worker.start()
+        yield
+        if resolution_worker is not None:
+            await resolution_worker.stop()
+
+    app = FastAPI(title="AI Appointment Setter Bridge", lifespan=lifespan)
+    app.state.resolution_worker = resolution_worker
 
     async def run_shadow_with_canonical_history(
         *,
@@ -512,6 +626,81 @@ def create_app(
         return {
             "status": "captured",
             "delivery_id": x_chatwoot_delivery,
+        }
+
+    @app.post("/webhooks/hotmart", status_code=status.HTTP_202_ACCEPTED)
+    async def receive_hotmart_webhook(
+        request: Request,
+        response: Response,
+        x_hotmart_hottok: str = Header(default=""),
+    ) -> dict[str, object]:
+        raw_body = await request.body()
+
+        if settings.hotmart_hottok is None:
+            raise HTTPException(
+                status_code=503, detail="hotmart_not_configured"
+            )
+        if not verify_hotmart_token(
+            received_token=x_hotmart_hottok,
+            expected_token=settings.hotmart_hottok,
+        ):
+            raise HTTPException(status_code=401, detail="invalid_token")
+
+        try:
+            payload = json.loads(raw_body)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=400, detail="invalid_json"
+            ) from exc
+
+        decision = classify_hotmart_event(payload)
+        if not decision.accepted:
+            response.status_code = status.HTTP_200_OK
+            return {
+                "status": "ignored",
+                "reason": decision.reason,
+            }
+
+        event_id = decision.event_id
+        assert event_id is not None  # classify guarantees this when accepted
+
+        event_obj = payload if isinstance(payload, dict) else {}
+        stale = is_stale_event(
+            creation_date=event_obj.get("creation_date"),
+            max_age_seconds=settings.hotmart_max_age_seconds,
+        )
+        if stale is None:
+            raise HTTPException(
+                status_code=400, detail="invalid_creation_date"
+            )
+        if stale:
+            raise HTTPException(status_code=401, detail="stale_webhook")
+
+        if shared_supabase is None:
+            raise HTTPException(
+                status_code=503, detail="supabase_not_configured"
+            )
+        try:
+            result = await shared_supabase.insert_webhook_event(
+                source="hotmart",
+                external_event_id=event_id,
+                event_type=EVENT_CART_ABANDONMENT,
+                payload=payload,
+            )
+        except SupabaseError as exc:
+            raise HTTPException(
+                status_code=503, detail="webhook_persist_unavailable"
+            ) from exc
+
+        if not result.inserted:
+            response.status_code = status.HTTP_200_OK
+            return {
+                "status": "duplicate",
+                "event_id": event_id,
+            }
+        return {
+            "status": "received",
+            "event_id": event_id,
         }
 
     return app

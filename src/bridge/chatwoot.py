@@ -396,3 +396,142 @@ class ChatwootClient:
         ):
             raise ChatwootProtocolError("invalid_messages_payload")
         return messages
+
+    # ── Contact and conversation creation (recovery first-touch) ───
+
+    async def create_contact(
+        self,
+        *,
+        inbox_id: int,
+        name: str | None,
+        phone_number: str,
+        email: str | None = None,
+    ) -> int:
+        """Create a contact in Chatwoot and return its numeric ID.
+
+        ``phone_number`` must be in E.164 format (``+`` + DDI + number).
+        """
+        path = f"/api/v1/accounts/{self._account_id}/contacts"
+        body_dict: dict[str, object] = {
+            "inbox_id": inbox_id,
+            "phone_number": phone_number,
+            "blocked": False,
+        }
+        if name is not None:
+            body_dict["name"] = name
+        if email is not None:
+            body_dict["email"] = email
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers={"api_access_token": self._access_token},
+            transport=self._transport,
+            timeout=15,
+        ) as client:
+            response = await client.post(path, json=body_dict)
+            response.raise_for_status()
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise ChatwootProtocolError("invalid_json") from exc
+        if not isinstance(payload, dict):
+            raise ChatwootProtocolError("invalid_contact_payload")
+        contact = payload.get("payload")
+        if not isinstance(contact, dict):
+            # Chatwoot may return the contact directly without a "payload" key
+            contact = payload
+        contact_id = contact.get("id")
+        if not isinstance(contact_id, int) or isinstance(contact_id, bool):
+            raise ChatwootProtocolError("invalid_contact_id")
+        return contact_id
+
+    async def create_conversation(
+        self,
+        *,
+        inbox_id: int,
+        contact_id: int,
+    ) -> int:
+        """Create a conversation for a contact in an inbox.
+
+        Returns the numeric conversation ID.
+        """
+        path = f"/api/v1/accounts/{self._account_id}/conversations"
+        body: dict[str, object] = {
+            "inbox_id": inbox_id,
+            "contact_id": contact_id,
+        }
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers={"api_access_token": self._access_token},
+            transport=self._transport,
+            timeout=15,
+        ) as client:
+            response = await client.post(path, json=body)
+            response.raise_for_status()
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise ChatwootProtocolError("invalid_json") from exc
+        if not isinstance(payload, dict):
+            raise ChatwootProtocolError("invalid_conversation_payload")
+        conversation = payload
+        conversation_id = conversation.get("id")
+        if not isinstance(conversation_id, int) or isinstance(
+            conversation_id, bool
+        ):
+            raise ChatwootProtocolError("invalid_conversation_id")
+        return conversation_id
+
+    async def send_first_message(
+        self,
+        *,
+        conversation_id: int,
+        content: str,
+        delivery_id: str,
+    ) -> dict[str, object]:
+        """Send the first outbound message to a conversation via AgentBot.
+
+        Unlike ``send_agent_bot_reply``, this does not require a trigger
+        message — it initiates the conversation.
+        """
+        if (
+            self._agent_bot_access_token is None
+            or self._agent_bot_id is None
+        ):
+            raise ChatwootProtocolError("agent_bot_not_configured")
+
+        reply_hash = hashlib.sha256(
+            f"first:{conversation_id}".encode("utf-8")
+        ).hexdigest()
+        messages_path = (
+            f"/api/v1/accounts/{self._account_id}"
+            f"/conversations/{conversation_id}/messages"
+        )
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            transport=self._transport,
+            timeout=15,
+        ) as client:
+            response = await client.post(
+                messages_path,
+                headers={"api_access_token": self._agent_bot_access_token},
+                json={
+                    "content": content,
+                    "message_type": "outgoing",
+                    "private": False,
+                    "content_type": "text",
+                    "content_attributes": {
+                        "recovery_first_touch_hash": reply_hash,
+                    },
+                },
+            )
+            response.raise_for_status()
+        try:
+            message = response.json()
+        except ValueError as exc:
+            raise ChatwootProtocolError("invalid_json") from exc
+        if not isinstance(message, dict):
+            raise ChatwootProtocolError("invalid_message_payload")
+        message_id = message.get("id")
+        if not isinstance(message_id, int) or isinstance(message_id, bool):
+            raise ChatwootProtocolError("invalid_message_id")
+        return {"status": "sent", "message_id": message_id}

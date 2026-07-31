@@ -56,6 +56,8 @@ AgentBot y marcador idempotente.
 
 - [ADR-0001: Profile comercial como motor de razonamiento aislado](decisions/0001-commercial-profile-boundary.md)
 - [ADR-0002: Detección y señalización de intervención humana](decisions/0002-human-takeover-detection.md)
+- [ADR-0003: Frontera determinista–razonamiento en la recuperación de carrito](decisions/0003-deterministic-reasoning-boundary.md)
+- [ADR-0004: Capa de mensajería abstraída para soportar migración Evolution → WABA](decisions/0004-messaging-layer-abstraction.md)
 
 ## Estado operativo
 
