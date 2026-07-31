@@ -154,6 +154,22 @@ def test_persists_a_valid_hermes_shadow_proposal_privately(tmp_path: Path) -> No
     }
     assert stat.S_IMODE(result_path.stat().st_mode) == 0o600
 
+    assert processor.get_completed_proposal(delivery_id=delivery_id) == proposal
+
+
+def test_does_not_expose_a_failed_result_as_a_sendable_proposal(
+    tmp_path: Path,
+) -> None:
+    processor = HermesShadowProcessor(
+        base_url="https://hermes.example.test/v1",
+        api_key="test-hermes-key",
+        model_name="agente-comercial",
+        shadow_dir=tmp_path,
+    )
+    processor.record_failure(delivery_id="failed", reason="hermes_unavailable")
+
+    assert processor.get_completed_proposal(delivery_id="failed") is None
+
 
 def test_records_an_unavailable_hermes_service_without_raising(tmp_path: Path) -> None:
     delivery_id = "failed-shadow-delivery"

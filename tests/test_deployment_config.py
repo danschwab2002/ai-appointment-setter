@@ -43,6 +43,44 @@ def test_deployment_declares_optional_hermes_shadow_variables() -> None:
     assert "HERMES_API_KEY=replace-me" in env_example
 
 
+def test_deployment_declares_automated_reply_variables_disabled_by_default() -> None:
+    env_example = (PROJECT_ROOT / ".env.example").read_text()
+    compose = (PROJECT_ROOT / "compose.yaml").read_text()
+    required = {
+        "CHATWOOT_AUTOMATED_REPLIES_ENABLED",
+        "CHATWOOT_AGENT_BOT_ACCESS_TOKEN",
+        "REPLY_DIR",
+    }
+
+    for variable in required:
+        assert f"{variable}=" in env_example
+        assert f"{variable}:" in compose
+
+    assert "CHATWOOT_AUTOMATED_REPLIES_ENABLED=false" in env_example
+
+
+def test_enabling_replies_requires_shadow_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CHATWOOT_AUTOMATED_REPLIES_ENABLED", "true")
+    monkeypatch.setenv("CHATWOOT_AGENT_BOT_ACCESS_TOKEN", "test-agent-bot-token")
+    monkeypatch.setenv("HERMES_SHADOW_ENABLED", "false")
+
+    with pytest.raises(ValueError, match="requires HERMES_SHADOW_ENABLED"):
+        Settings.from_env()
+
+
+def test_enabling_replies_requires_the_agent_bot_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CHATWOOT_AUTOMATED_REPLIES_ENABLED", "true")
+    monkeypatch.setenv("HERMES_SHADOW_ENABLED", "true")
+    monkeypatch.delenv("CHATWOOT_AGENT_BOT_ACCESS_TOKEN", raising=False)
+
+    with pytest.raises(ValueError, match="CHATWOOT_AGENT_BOT_ACCESS_TOKEN"):
+        Settings.from_env()
+
+
 def test_production_config_requires_the_agent_bot_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

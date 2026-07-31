@@ -24,6 +24,7 @@ class StubChatwootClient:
         self.calls: list[tuple[int, str]] = []
         self.messages = messages or []
         self.history_calls: list[tuple[int, int]] = []
+        self.reply_calls: list[dict[str, object]] = []
 
     async def get_conversation_messages(
         self, *, conversation_id: int, limit: int = 20
@@ -43,12 +44,31 @@ class StubChatwootClient:
             raise httpx.ConnectError("unavailable", request=request)
         return self.changed
 
+    async def send_agent_bot_reply(
+        self,
+        *,
+        conversation_id: int,
+        trigger_message_id: int,
+        delivery_id: str,
+        content: str,
+    ) -> dict[str, object]:
+        self.reply_calls.append(
+            {
+                "conversation_id": conversation_id,
+                "trigger_message_id": trigger_message_id,
+                "delivery_id": delivery_id,
+                "content": content,
+            }
+        )
+        return {"status": "sent", "message_id": 900}
+
 
 class StubShadowProcessor:
-    def __init__(self) -> None:
+    def __init__(self, proposal: dict[str, object] | None = None) -> None:
         self.calls: list[tuple[str, dict[str, object]]] = []
         self.failures: list[tuple[str, str]] = []
         self.completed_delivery_ids: set[str] = set()
+        self.proposal = proposal
 
     async def run(
         self, *, delivery_id: str, context: dict[str, object]
@@ -62,6 +82,13 @@ class StubShadowProcessor:
 
     def has_result(self, *, delivery_id: str) -> bool:
         return delivery_id in self.completed_delivery_ids
+
+    def get_completed_proposal(
+        self, *, delivery_id: str
+    ) -> dict[str, object] | None:
+        if delivery_id not in self.completed_delivery_ids:
+            return None
+        return self.proposal
 
 
 def _signed_headers(
@@ -216,6 +243,89 @@ def test_processes_a_normalized_shadow_evaluation_for_an_allowed_message(
             },
         )
     ]
+    assert chatwoot.reply_calls == []
+
+
+def test_sends_the_validated_agent_reply_for_an_allowed_message(
+    tmp_path: Path,
+) -> None:
+    secret = "webhook-secret"
+    proposal: dict[str, object] = {
+        "decision": "ask_question",
+        "qualification_status": "in_progress",
+        "reason_code": "need_person_name",
+        "reply": "¡Hola! Soy el asistente virtual de Dan. ¿Cómo te llamás?",
+        "captured_fields": {
+            "person_name": None,
+            "location": None,
+            "role": None,
+            "company_name": None,
+            "company_size": None,
+            "business_model": None,
+            "company_operational": None,
+            "can_invest_in_education": None,
+        },
+        "missing_fields": ["person_name"],
+    }
+    payload = {
+        "event": "message_created",
+        "id": 789,
+        "content": "Hola",
+        "message_type": "incoming",
+        "private": False,
+        "conversation": {
+            "id": 123,
+            "contact_inbox": {
+                "source_id": "12025550123@s.whatsapp.net",
+            },
+        },
+    }
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    shadow = StubShadowProcessor(proposal)
+    chatwoot = StubChatwootClient(
+        messages=[
+            {
+                "id": 789,
+                "message_type": 0,
+                "private": False,
+                "content": "Hola",
+                "sender": {"type": "contact", "id": 20},
+            }
+        ]
+    )
+    app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            automated_replies_enabled=True,
+        ),
+        chatwoot_client=chatwoot,
+        shadow_processor=shadow,
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(raw_body, secret=secret, delivery="reply-delivery"),
+    )
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "status": "reply_sent",
+        "delivery_id": "reply-delivery",
+        "message_id": 900,
+    }
+    assert chatwoot.reply_calls == [
+        {
+            "conversation_id": 123,
+            "trigger_message_id": 789,
+            "delivery_id": "reply-delivery",
+            "content": "¡Hola! Soy el asistente virtual de Dan. ¿Cómo te llamás?",
+        }
+    ]
 
 
 def test_retries_shadow_processing_for_a_capture_without_a_terminal_result(
@@ -349,6 +459,11 @@ def test_build_app_wires_the_shadow_processor_when_enabled(
 
         def has_result(self, *, delivery_id: str) -> bool:
             return False
+
+        def get_completed_proposal(
+            self, *, delivery_id: str
+        ) -> dict[str, object] | None:
+            return None
 
         def record_failure(self, *, delivery_id: str, reason: str) -> None:
             raise AssertionError(reason)

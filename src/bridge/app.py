@@ -36,6 +36,15 @@ class ChatwootControl(Protocol):
         self, *, conversation_id: int, label: str
     ) -> bool: ...
 
+    async def send_agent_bot_reply(
+        self,
+        *,
+        conversation_id: int,
+        trigger_message_id: int,
+        delivery_id: str,
+        content: str,
+    ) -> dict[str, object]: ...
+
 
 class ShadowProcessor(Protocol):
     async def run(
@@ -45,6 +54,10 @@ class ShadowProcessor(Protocol):
     def record_failure(self, *, delivery_id: str, reason: str) -> None: ...
 
     def has_result(self, *, delivery_id: str) -> bool: ...
+
+    def get_completed_proposal(
+        self, *, delivery_id: str
+    ) -> dict[str, object] | None: ...
 
 
 @dataclass(frozen=True)
@@ -57,16 +70,34 @@ class Settings:
     chatwoot_base_url: str | None = None
     chatwoot_account_id: int | None = None
     chatwoot_control_api_access_token: str | None = None
+    chatwoot_agent_bot_access_token: str | None = None
     chatwoot_pause_macro_id: int | None = None
     hermes_shadow_enabled: bool = False
     hermes_api_base_url: str | None = None
     hermes_api_key: str | None = None
     hermes_model_name: str = "agente-comercial"
     shadow_dir: Path = Path("./data/shadow")
+    automated_replies_enabled: bool = False
+    reply_dir: Path = Path("./data/replies")
 
     @classmethod
     def from_env(cls) -> Settings:
         shadow_enabled = os.getenv("HERMES_SHADOW_ENABLED", "false").lower() == "true"
+        automated_replies_enabled = (
+            os.getenv("CHATWOOT_AUTOMATED_REPLIES_ENABLED", "false").lower()
+            == "true"
+        )
+        agent_bot_access_token = (
+            os.getenv("CHATWOOT_AGENT_BOT_ACCESS_TOKEN", "").strip() or None
+        )
+        if automated_replies_enabled and not shadow_enabled:
+            raise ValueError(
+                "CHATWOOT_AUTOMATED_REPLIES_ENABLED requires HERMES_SHADOW_ENABLED"
+            )
+        if automated_replies_enabled and agent_bot_access_token is None:
+            raise ValueError(
+                "CHATWOOT_AGENT_BOT_ACCESS_TOKEN is required for automated replies"
+            )
         hermes_model_name = os.getenv(
             "HERMES_MODEL_NAME", "agente-comercial"
         ).strip()
@@ -123,12 +154,15 @@ class Settings:
             chatwoot_control_api_access_token=os.environ[
                 "CHATWOOT_CONTROL_API_ACCESS_TOKEN"
             ],
+            chatwoot_agent_bot_access_token=agent_bot_access_token,
             chatwoot_pause_macro_id=int(os.environ["CHATWOOT_PAUSE_MACRO_ID"]),
             hermes_shadow_enabled=shadow_enabled,
             hermes_api_base_url=hermes_api_base_url,
             hermes_api_key=hermes_api_key,
             hermes_model_name=hermes_model_name,
             shadow_dir=Path(os.getenv("SHADOW_DIR", "./data/shadow")),
+            automated_replies_enabled=automated_replies_enabled,
+            reply_dir=Path(os.getenv("REPLY_DIR", "./data/replies")),
         )
 
 
@@ -238,6 +272,10 @@ def create_app(
             base_url=settings.chatwoot_base_url,
             account_id=settings.chatwoot_account_id,
             access_token=settings.chatwoot_control_api_access_token,
+            allowed_jid=settings.allowed_jid,
+            agent_bot_access_token=settings.chatwoot_agent_bot_access_token,
+            agent_bot_id=settings.agent_bot_id,
+            reply_dir=settings.reply_dir,
             pause_macro_id=settings.chatwoot_pause_macro_id,
         )
 
@@ -246,14 +284,14 @@ def create_app(
         delivery_id: str,
         current_message_id: int | None,
         context: dict[str, object],
-    ) -> None:
+    ) -> dict[str, object] | None:
         if control_client is None or settings.agent_bot_id is None:
             if shadow_processor is not None:
                 shadow_processor.record_failure(
                     delivery_id=delivery_id,
                     reason="chatwoot_history_not_configured",
                 )
-            return
+            return None
         conversation_id = int(str(context["conversation_ref"]))
         try:
             history = await control_client.get_conversation_messages(
@@ -266,7 +304,7 @@ def create_app(
                     delivery_id=delivery_id,
                     reason="chatwoot_history_unavailable",
                 )
-            return
+            return None
         normalized = _normalize_chatwoot_history(
             history,
             agent_bot_id=settings.agent_bot_id,
@@ -286,7 +324,7 @@ def create_app(
                     delivery_id=delivery_id,
                     reason="current_message_not_in_canonical_history",
                 )
-            return
+            return None
         normalized = normalized[: current_index + 1]
         public_messages = [
             {
@@ -296,11 +334,13 @@ def create_app(
             for message in normalized
         ]
         enriched_context = {**context, "messages": public_messages}
-        if shadow_processor is not None:
-            await shadow_processor.run(
-                delivery_id=delivery_id,
-                context=enriched_context,
-            )
+        if shadow_processor is None:
+            return None
+        await shadow_processor.run(
+            delivery_id=delivery_id,
+            context=enriched_context,
+        )
+        return shadow_processor.get_completed_proposal(delivery_id=delivery_id)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -382,12 +422,22 @@ def create_app(
             payload=payload,
         )
         context = _shadow_context(payload)
+        completed_proposal = (
+            shadow_processor.get_completed_proposal(
+                delivery_id=x_chatwoot_delivery
+            )
+            if shadow_processor is not None
+            else None
+        )
         shadow_pending = (
             shadow_processor is not None
             and context is not None
             and not shadow_processor.has_result(delivery_id=x_chatwoot_delivery)
         )
-        if not captured and not shadow_pending:
+        reply_pending = (
+            settings.automated_replies_enabled and completed_proposal is not None
+        )
+        if not captured and not shadow_pending and not reply_pending:
             response.status_code = status.HTTP_200_OK
             return {
                 "status": "duplicate",
@@ -395,7 +445,7 @@ def create_app(
             }
         if shadow_pending and context is not None:
             message_id = payload.get("id")
-            await run_shadow_with_canonical_history(
+            completed_proposal = await run_shadow_with_canonical_history(
                 delivery_id=x_chatwoot_delivery,
                 current_message_id=(
                     message_id
@@ -404,6 +454,57 @@ def create_app(
                 ),
                 context=context,
             )
+        if settings.automated_replies_enabled and completed_proposal is not None:
+            message_id = payload.get("id")
+            conversation = payload.get("conversation")
+            conversation_id = (
+                conversation.get("id") if isinstance(conversation, dict) else None
+            )
+            reply = completed_proposal.get("reply")
+            if (
+                control_client is None
+                or not isinstance(message_id, int)
+                or isinstance(message_id, bool)
+                or not isinstance(conversation_id, int)
+                or isinstance(conversation_id, bool)
+                or not isinstance(reply, str)
+            ):
+                raise HTTPException(
+                    status_code=503,
+                    detail="chatwoot_reply_not_configured",
+                )
+            try:
+                reply_result = await control_client.send_agent_bot_reply(
+                    conversation_id=conversation_id,
+                    trigger_message_id=message_id,
+                    delivery_id=x_chatwoot_delivery,
+                    content=reply,
+                )
+            except (httpx.HTTPError, ChatwootProtocolError) as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail="chatwoot_reply_unavailable",
+                ) from exc
+            reply_status = reply_result.get("status")
+            if reply_status in {"sent", "duplicate"}:
+                return {
+                    "status": (
+                        "reply_sent" if reply_status == "sent" else "reply_duplicate"
+                    ),
+                    "delivery_id": x_chatwoot_delivery,
+                    "message_id": reply_result.get("message_id"),
+                }
+            if reply_status == "blocked":
+                return {
+                    "status": "reply_blocked",
+                    "delivery_id": x_chatwoot_delivery,
+                    "reason": reply_result.get("reason"),
+                }
+            raise HTTPException(
+                status_code=503,
+                detail="invalid_chatwoot_reply_result",
+            )
+        if shadow_pending:
             return {
                 "status": "shadow_processed",
                 "delivery_id": x_chatwoot_delivery,

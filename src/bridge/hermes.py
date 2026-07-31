@@ -156,6 +156,27 @@ class HermesShadowProcessor:
             digest=digest,
         )
 
+    def get_completed_proposal(
+        self, *, delivery_id: str
+    ) -> dict[str, object] | None:
+        digest = hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
+        try:
+            result = json.loads(
+                (self._shadow_dir / f"{digest}.json").read_text(encoding="utf-8")
+            )
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return None
+        if (
+            not isinstance(result, dict)
+            or result.get("delivery_id_hash") != digest
+            or result.get("status") != "completed"
+        ):
+            return None
+        proposal = result.get("proposal")
+        if not isinstance(proposal, dict) or not _is_valid_proposal(proposal):
+            return None
+        return proposal
+
     async def run(
         self, *, delivery_id: str, context: dict[str, object]
     ) -> None:
