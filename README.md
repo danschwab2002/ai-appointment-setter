@@ -78,3 +78,9 @@ docker compose up --build
 ```
 
 La guía de conexión se encuentra en `docs/chatwoot-webhook.md`.
+
+## Registro operativo
+
+El estado E2E validado, los controles de seguridad ejercitados y la migración
+del gateway comercial desde `nohup` a supervisión s6 están documentados en
+[`docs/operations/2026-07-31-production-readiness.md`](docs/operations/2026-07-31-production-readiness.md).
