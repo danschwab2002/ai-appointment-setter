@@ -123,6 +123,13 @@ class ResolutionWorker:
             return
 
         # If a recovery agent is configured, send the SituationReport.
+        if self._recovery_agent is None:
+            logger.warning(
+                "recovery_agent_not_configured event_id=%s",
+                report.event_id,
+            )
+            return
+
         if self._recovery_agent is not None:
             try:
                 proposal = await self._recovery_agent.request_proposal(
@@ -138,45 +145,73 @@ class ResolutionWorker:
                 )
                 return
 
-            # If the agent says send_first_touch, execute via MessageSender.
-            if (
-                proposal is not None
-                and proposal.get("action") == "send_first_touch"
-                and self._message_sender is not None
-                and report.phone_available
-                and report.buyer_phone is not None
-            ):
-                message = proposal.get("message")
-                if not isinstance(message, str):
-                    logger.error(
-                        "send_first_touch_without_message event_id=%s",
-                        report.event_id,
-                    )
-                    return
-                try:
-                    send_result = await self._message_sender.send_first_touch(
-                        phone=report.buyer_phone,
-                        buyer_name=report.buyer_name,
-                        buyer_email=report.buyer_email,
-                        content=message,
-                        delivery_id=report.event_id,
-                    )
-                except Exception:
-                    logger.exception(
-                        "first_touch_send_failed event_id=%s",
-                        report.event_id,
-                    )
-                    return
-                if send_result.status == "sent":
-                    logger.info(
-                        "first_touch_sent event_id=%s conversation=%s",
-                        report.event_id,
-                        send_result.conversation_id,
-                    )
-                else:
-                    logger.warning(
-                        "first_touch_%s event_id=%s reason=%s",
-                        send_result.status,
-                        report.event_id,
-                        send_result.reason,
-                    )
+            if proposal is None:
+                logger.warning(
+                    "recovery_proposal_unavailable event_id=%s",
+                    report.event_id,
+                )
+                return
+
+            logger.info(
+                "recovery_proposal_received event_id=%s action=%s",
+                report.event_id,
+                proposal.get("action"),
+            )
+
+            action = proposal.get("action")
+            if action != "send_first_touch":
+                logger.info(
+                    "recovery_proposal_no_send event_id=%s action=%s",
+                    report.event_id,
+                    action,
+                )
+                return
+
+            if self._message_sender is None:
+                logger.warning(
+                    "first_touch_sender_not_configured event_id=%s",
+                    report.event_id,
+                )
+                return
+
+            if not report.phone_available or report.buyer_phone is None:
+                logger.warning(
+                    "first_touch_phone_unavailable event_id=%s",
+                    report.event_id,
+                )
+                return
+
+            message = proposal.get("message")
+            if not isinstance(message, str):
+                logger.error(
+                    "send_first_touch_without_message event_id=%s",
+                    report.event_id,
+                )
+                return
+            try:
+                send_result = await self._message_sender.send_first_touch(
+                    phone=report.buyer_phone,
+                    buyer_name=report.buyer_name,
+                    buyer_email=report.buyer_email,
+                    content=message,
+                    delivery_id=report.event_id,
+                )
+            except Exception:
+                logger.exception(
+                    "first_touch_send_failed event_id=%s",
+                    report.event_id,
+                )
+                return
+            if send_result.status == "sent":
+                logger.info(
+                    "first_touch_sent event_id=%s conversation=%s",
+                    report.event_id,
+                    send_result.conversation_id,
+                )
+            else:
+                logger.warning(
+                    "first_touch_%s event_id=%s reason=%s",
+                    send_result.status,
+                    report.event_id,
+                    send_result.reason,
+                )

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -94,6 +95,79 @@ def _make_supabase(transport: MockTransport) -> SupabaseClient:
 
 def _run(coro: Any) -> Any:
     return asyncio.run(coro)
+
+
+def test_worker_logs_when_recovery_agent_is_not_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def fake_resolve_event(**_: object) -> object:
+        return SimpleNamespace(event_id="event-001")
+
+    monkeypatch.setattr("bridge.worker.resolve_event", fake_resolve_event)
+    worker = ResolutionWorker(supabase=object())  # type: ignore[arg-type]
+
+    with caplog.at_level("WARNING", logger="bridge.worker"):
+        _run(worker._process_one({"id": "event-001", "payload": {}}))
+
+    assert "recovery_agent_not_configured event_id=event-001" in caplog.text
+
+
+def test_worker_logs_when_recovery_proposal_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def fake_resolve_event(**_: object) -> object:
+        return SimpleNamespace(
+            event_id="event-002",
+            to_dict=lambda: {"event_id": "event-002"},
+        )
+
+    class AgentWithoutProposal:
+        async def request_proposal(self, **_: object) -> None:
+            return None
+
+    monkeypatch.setattr("bridge.worker.resolve_event", fake_resolve_event)
+    worker = ResolutionWorker(
+        supabase=object(),  # type: ignore[arg-type]
+        recovery_agent=AgentWithoutProposal(),  # type: ignore[arg-type]
+    )
+
+    with caplog.at_level("WARNING", logger="bridge.worker"):
+        _run(worker._process_one({"id": "event-002", "payload": {}}))
+
+    assert "recovery_proposal_unavailable event_id=event-002" in caplog.text
+
+
+def test_worker_logs_when_first_touch_sender_is_not_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def fake_resolve_event(**_: object) -> object:
+        return SimpleNamespace(
+            event_id="event-003",
+            phone_available=True,
+            buyer_phone="12025550123",
+            to_dict=lambda: {"event_id": "event-003"},
+        )
+
+    class FirstTouchAgent:
+        async def request_proposal(self, **_: object) -> dict[str, object]:
+            return {
+                "action": "send_first_touch",
+                "message": "Test message",
+            }
+
+    monkeypatch.setattr("bridge.worker.resolve_event", fake_resolve_event)
+    worker = ResolutionWorker(
+        supabase=object(),  # type: ignore[arg-type]
+        recovery_agent=FirstTouchAgent(),  # type: ignore[arg-type]
+    )
+
+    with caplog.at_level("WARNING", logger="bridge.worker"):
+        _run(worker._process_one({"id": "event-003", "payload": {}}))
+
+    assert "first_touch_sender_not_configured event_id=event-003" in caplog.text
 
 
 # ── Test: worker processes a pending event ──────────────────────────
