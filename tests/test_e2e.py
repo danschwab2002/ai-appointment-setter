@@ -116,7 +116,7 @@ def _build_app(transport: E2ETransport, tmp_path: Path):
         hotmart_hottok="e2e-hottok",
         hotmart_max_age_seconds=300,
         supabase_base_url="https://fake.supabase.co",
-        supabase_anon_key="fake-key",
+        supabase_service_role_key="fake-service-role-key",
         worker_enabled=True,
         worker_poll_interval_seconds=0.1,
         worker_batch_size=5,
@@ -135,7 +135,7 @@ def _build_app(transport: E2ETransport, tmp_path: Path):
 
     supabase = SupabaseClient(
         base_url="https://fake.supabase.co",
-        anon_key="fake-key",
+        service_role_key="fake-service-role-key",
         transport=transport,
     )
     chatwoot = ChatwootClient(

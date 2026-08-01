@@ -93,7 +93,7 @@ class Settings:
     hotmart_hottok: str | None = None
     hotmart_max_age_seconds: int = 300
     supabase_base_url: str | None = None
-    supabase_anon_key: str | None = None
+    supabase_service_role_key: str | None = None
     worker_poll_interval_seconds: float = 5.0
     worker_batch_size: int = 10
     worker_enabled: bool = False
@@ -169,7 +169,9 @@ class Settings:
             os.getenv("HOTMART_MAX_AGE_SECONDS", "300")
         )
         supabase_base_url = os.getenv("SUPABASE_BASE_URL", "").strip() or None
-        supabase_anon_key = os.getenv("SUPABASE_ANON_KEY", "").strip() or None
+        supabase_service_role_key = (
+            os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip() or None
+        )
         worker_enabled = (
             os.getenv("RESOLUTION_WORKER_ENABLED", "false").lower() == "true"
         )
@@ -206,7 +208,7 @@ class Settings:
             hotmart_hottok=hotmart_hottok,
             hotmart_max_age_seconds=hotmart_max_age_seconds,
             supabase_base_url=supabase_base_url,
-            supabase_anon_key=supabase_anon_key,
+            supabase_service_role_key=supabase_service_role_key,
             worker_poll_interval_seconds=worker_poll_interval,
             worker_batch_size=worker_batch_size,
             worker_enabled=worker_enabled,
@@ -335,11 +337,11 @@ def create_app(
     if (
         shared_supabase is None
         and settings.supabase_base_url is not None
-        and settings.supabase_anon_key is not None
+        and settings.supabase_service_role_key is not None
     ):
         shared_supabase = SupabaseClient(
             base_url=settings.supabase_base_url,
-            anon_key=settings.supabase_anon_key,
+            service_role_key=settings.supabase_service_role_key,
         )
 
     # Build the resolution worker if Supabase is configured and enabled.

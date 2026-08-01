@@ -87,7 +87,7 @@ class MockTransport(httpx.AsyncBaseTransport):
 def _make_supabase(transport: MockTransport) -> SupabaseClient:
     return SupabaseClient(
         base_url="https://fake.supabase.co",
-        anon_key="fake-key",
+        service_role_key="fake-service-role-key",
         transport=transport,
     )
 

@@ -212,7 +212,7 @@ def test_persists_valid_event_to_supabase(tmp_path) -> None:
             _hotmart_settings(
                 capture_dir=tmp_path,
                 supabase_base_url="https://fake-supabase.supabase.co",
-                supabase_anon_key="fake-anon-key",
+                supabase_service_role_key="fake-service-role-key",
             )
         )
         raw = json.dumps(EXAMPLE_PAYLOAD).encode()
@@ -252,7 +252,7 @@ def test_returns_duplicate_for_already_stored_event(tmp_path) -> None:
             _hotmart_settings(
                 capture_dir=tmp_path,
                 supabase_base_url="https://fake-supabase.supabase.co",
-                supabase_anon_key="fake-anon-key",
+                supabase_service_role_key="fake-service-role-key",
             )
         )
         raw = json.dumps(EXAMPLE_PAYLOAD).encode()
@@ -283,7 +283,7 @@ def test_returns_503_when_supabase_fails(tmp_path) -> None:
             _hotmart_settings(
                 capture_dir=tmp_path,
                 supabase_base_url="https://fake-supabase.supabase.co",
-                supabase_anon_key="fake-anon-key",
+                supabase_service_role_key="fake-service-role-key",
             )
         )
         raw = json.dumps(EXAMPLE_PAYLOAD).encode()
@@ -300,7 +300,7 @@ def test_returns_503_when_supabase_not_configured(tmp_path) -> None:
         _hotmart_settings(
             capture_dir=tmp_path,
             supabase_base_url=None,
-            supabase_anon_key=None,
+            supabase_service_role_key=None,
         )
     )
     raw = json.dumps(EXAMPLE_PAYLOAD).encode()

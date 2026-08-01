@@ -24,6 +24,36 @@ def test_deployment_declares_required_chatwoot_control_variables() -> None:
         assert f"{variable}:" in compose
 
 
+def test_deployment_uses_supabase_service_role_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_example = (PROJECT_ROOT / ".env.example").read_text()
+    compose = (PROJECT_ROOT / "compose.yaml").read_text()
+
+    assert "SUPABASE_SERVICE_ROLE_KEY=" in env_example
+    assert "SUPABASE_SERVICE_ROLE_KEY:" in compose
+    assert "SUPABASE_ANON_KEY" not in env_example
+    assert "SUPABASE_ANON_KEY" not in compose
+
+    required_environment = {
+        "CHATWOOT_WEBHOOK_SECRET": "test-secret",
+        "ALLOWED_WHATSAPP_JID": "12025550123@s.whatsapp.net",
+        "CHATWOOT_AGENT_BOT_ID": "1",
+        "CHATWOOT_BASE_URL": "https://chatwoot.example.test",
+        "CHATWOOT_ACCOUNT_ID": "1",
+        "CHATWOOT_CONTROL_API_ACCESS_TOKEN": "test-control-token",
+        "CHATWOOT_PAUSE_MACRO_ID": "1",
+        "SUPABASE_SERVICE_ROLE_KEY": "fake-service-role-key",
+        "SUPABASE_ANON_KEY": "legacy-anon-key",
+    }
+    for name, value in required_environment.items():
+        monkeypatch.setenv(name, value)
+    settings = Settings.from_env()
+
+    assert settings.supabase_service_role_key == "fake-service-role-key"
+    assert not hasattr(settings, "supabase_anon_key")
+
+
 def test_deployment_declares_optional_hermes_shadow_variables() -> None:
     env_example = (PROJECT_ROOT / ".env.example").read_text()
     compose = (PROJECT_ROOT / "compose.yaml").read_text()

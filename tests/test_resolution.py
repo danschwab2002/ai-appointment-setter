@@ -84,7 +84,7 @@ def _make_supabase(transport: MockSupabaseTransport) -> Any:
     from bridge.supabase import SupabaseClient
     return SupabaseClient(
         base_url="https://fake.supabase.co",
-        anon_key="fake-key",
+        service_role_key="fake-service-role-key",
         transport=transport,
     )
 

@@ -180,19 +180,19 @@ class SupabaseClient:
         self,
         *,
         base_url: str,
-        anon_key: str,
+        service_role_key: str,
         transport: httpx.AsyncBaseTransport | None = None,
         timeout_seconds: float = 10.0,
     ) -> None:
         self._base_url = base_url.rstrip("/")
-        self._anon_key = anon_key
+        self._service_role_key = service_role_key
         self._transport = transport
         self._timeout_seconds = timeout_seconds
 
     def _headers(self, *, prefer: str | None = None) -> dict[str, str]:
         headers = {
-            "apikey": self._anon_key,
-            "Authorization": f"Bearer {self._anon_key}",
+            "apikey": self._service_role_key,
+            "Authorization": f"Bearer {self._service_role_key}",
             "Content-Type": "application/json",
         }
         if prefer:
