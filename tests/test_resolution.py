@@ -189,7 +189,7 @@ def test_creates_new_contact_when_no_match(tmp_path) -> None:
     assert report.contact_match is None
     assert report.phone_available is True
     assert report.has_active_conversation is False
-    assert report.has_open_recovery_case is True
+    assert report.has_open_recovery_case is False
     assert report.contact_blocked is False
     assert report.buyer_name == "Juan Perez"
     assert report.buyer_email == "juan@example.com"
@@ -240,9 +240,9 @@ def test_matches_existing_contact_by_email(tmp_path) -> None:
          "last_message_direction": "inbound", "last_inbound_at": "2026-07-31T10:00:00Z",
          "last_outbound_at": None, "paused_until": None},
     ])
-    # fetch_recovery_cases
+    # fetch_recovery_cases → a distinct pre-existing open case
     transport.set("GET", "/rest/v1/recovery_cases", [
-        {"_status": 200, "id": "rc-002", "status": "grace_period",
+        {"_status": 200, "id": "rc-prior", "status": "grace_period",
          "lead_stage": "new", "current_goal": None, "product_name": "IA para empresarios"},
     ])
     # fetch_channel_identities → one whatsapp

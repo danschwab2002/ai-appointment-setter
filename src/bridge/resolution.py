@@ -186,7 +186,8 @@ async def resolve_event(
         for c in conversations
     )
     has_open = any(
-        rc.status in ("grace_period", "active", "paused")
+        rc.recovery_case_id != recovery_case_id
+        and rc.status in ("grace_period", "active", "paused")
         for rc in recovery_cases
     )
     contact_blocked = (
