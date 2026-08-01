@@ -93,6 +93,39 @@ def _run(coro: Any) -> Any:
     return asyncio.run(coro)
 
 
+def test_recovery_case_stays_pending_without_selected_channel_identity() -> None:
+    captured_body: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured_body.update(json.loads(request.content))
+        return httpx.Response(
+            201,
+            json=[{"id": "case-001"}],
+            request=request,
+        )
+
+    from bridge.supabase import SupabaseClient
+
+    client = SupabaseClient(
+        base_url="https://fake.supabase.co",
+        service_role_key="fake-service-role-key",
+        transport=httpx.MockTransport(handler),
+    )
+
+    _run(
+        client.create_recovery_case(
+            contact_id="00000000-0000-0000-0000-000000000001",
+            abandonment_event_id="00000000-0000-0000-0000-000000000002",
+            external_product_id="3526906",
+            product_name="IA para empresarios",
+            offer_code="testcode001",
+            grace_expires_at="2026-08-01T17:00:00+00:00",
+        )
+    )
+
+    assert captured_body.get("identity_resolution_status", "pending") == "pending"
+
+
 # ── Test: new contact (no existing match) ──────────────────────────
 
 

@@ -596,7 +596,6 @@ class SupabaseClient:
                 "status": "grace_period",
                 "lead_stage": "new",
                 "grace_expires_at": grace_expires_at,
-                "identity_resolution_status": "resolved",
             },
             ensure_ascii=False,
         )
