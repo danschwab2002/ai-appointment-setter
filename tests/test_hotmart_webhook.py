@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import time
 
 import httpx
 
 from bridge.app import Settings, create_app
+from bridge.hotmart import parse_hotmart_payload
 
 
 # ── Fixtures ────────────────────────────────────────────────────────
@@ -32,6 +34,34 @@ EXAMPLE_PAYLOAD: dict[str, object] = {
         "checkout_country": {"name": "Brasil", "iso": "BR"},
     },
 }
+
+
+def test_parse_hotmart_payload_rejects_phone_with_non_phone_suffix() -> None:
+    payload = copy.deepcopy(EXAMPLE_PAYLOAD)
+    data = payload["data"]
+    assert isinstance(data, dict)
+    buyer = data["buyer"]
+    assert isinstance(buyer, dict)
+    buyer["phone"] = "5531999999999@evil"
+
+    parsed = parse_hotmart_payload(payload)
+
+    assert parsed is not None
+    assert parsed.buyer_phone is None
+
+
+def test_parse_hotmart_payload_accepts_formatted_phone() -> None:
+    payload = copy.deepcopy(EXAMPLE_PAYLOAD)
+    data = payload["data"]
+    assert isinstance(data, dict)
+    buyer = data["buyer"]
+    assert isinstance(buyer, dict)
+    buyer["phone"] = "+55 (31) 99999-9999"
+
+    parsed = parse_hotmart_payload(payload)
+
+    assert parsed is not None
+    assert parsed.buyer_phone == "5531999999999"
 
 
 def _hotmart_settings(**overrides: object) -> Settings:

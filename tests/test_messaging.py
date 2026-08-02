@@ -377,6 +377,59 @@ def test_send_first_message_raises_without_agent_bot() -> None:
 # ── EvolutionMessageSender end-to-end ────────────────────────────────
 
 
+def test_evolution_sender_blocks_phone_outside_allowed_jid() -> None:
+    transport = MockTransport()
+    sender = EvolutionMessageSender(
+        chatwoot=_chatwoot(transport),
+        inbox_id=1,
+        allowed_jid="15555550100@s.whatsapp.net",
+    )
+
+    result = _run(sender.send_first_touch(
+        phone="12025550123",
+        buyer_name="Test",
+        buyer_email="test@test.com",
+        content="¡Hola!",
+        delivery_id="evt-not-allowed",
+    ))
+
+    assert result.status == "blocked"
+    assert result.reason == "target_not_allowed"
+    assert transport.requests == []
+
+
+@pytest.mark.parametrize(
+    "allowed_jid",
+    [
+        "12025550123",
+        "12025550123@g.us",
+        "+1 (202) 555-0123@s.whatsapp.net",
+        "12025550123@s.whatsapp.net@evil",
+    ],
+)
+def test_evolution_sender_rejects_noncanonical_allowed_jid(
+    allowed_jid: str,
+) -> None:
+    transport = MockTransport()
+    sender = EvolutionMessageSender(
+        chatwoot=_chatwoot(transport),
+        inbox_id=1,
+        allowed_jid=allowed_jid,
+    )
+
+    result = _run(sender.send_first_touch(
+        phone="12025550123",
+        buyer_name="Test",
+        buyer_email="test@test.com",
+        content="¡Hola!",
+        delivery_id="evt-invalid-jid",
+    ))
+
+    assert result.status == "blocked"
+    assert result.reason == "target_not_allowed"
+    assert transport.requests == []
+
+
 def test_evolution_sender_sends_first_touch() -> None:
     transport = MockTransport()
     # search_contact → no existing contact
@@ -416,7 +469,11 @@ def test_evolution_sender_sends_first_touch() -> None:
         ),
     )
     client = _chatwoot(transport)
-    sender = EvolutionMessageSender(chatwoot=client, inbox_id=1)
+    sender = EvolutionMessageSender(
+        chatwoot=client,
+        inbox_id=1,
+        allowed_jid="5531999999999@s.whatsapp.net",
+    )
     result = _run(sender.send_first_touch(
         phone="5531999999999",
         buyer_name="Test Buyer",
@@ -464,7 +521,11 @@ def test_evolution_sender_reuses_existing_contact() -> None:
             request=httpx.Request("POST", "https://chatwoot.test"),
         ),
     )
-    sender = EvolutionMessageSender(chatwoot=_chatwoot(transport), inbox_id=1)
+    sender = EvolutionMessageSender(
+        chatwoot=_chatwoot(transport),
+        inbox_id=1,
+        allowed_jid="15555550100@s.whatsapp.net",
+    )
 
     result = _run(sender.send_first_touch(
         phone="15555550100",
@@ -483,7 +544,11 @@ def test_evolution_sender_reuses_existing_contact() -> None:
 
 def test_evolution_sender_blocks_on_invalid_phone() -> None:
     client = _chatwoot(MockTransport())
-    sender = EvolutionMessageSender(chatwoot=client, inbox_id=1)
+    sender = EvolutionMessageSender(
+        chatwoot=client,
+        inbox_id=1,
+        allowed_jid="5531999999999@s.whatsapp.net",
+    )
     result = _run(sender.send_first_touch(
         phone="",
         buyer_name="Test",
@@ -511,7 +576,11 @@ def test_evolution_sender_fails_on_chatwoot_error() -> None:
         httpx.Response(500, request=httpx.Request("POST", "https://chatwoot.test")),
     )
     client = _chatwoot(transport)
-    sender = EvolutionMessageSender(chatwoot=client, inbox_id=1)
+    sender = EvolutionMessageSender(
+        chatwoot=client,
+        inbox_id=1,
+        allowed_jid="5531999999999@s.whatsapp.net",
+    )
     result = _run(sender.send_first_touch(
         phone="5531999999999",
         buyer_name="Test",
@@ -529,7 +598,11 @@ def test_evolution_sender_sanitizes_search_http_error() -> None:
         "/api/v1/accounts/1/contacts/search",
         httpx.Response(500, request=httpx.Request("GET", "https://chatwoot.test")),
     )
-    sender = EvolutionMessageSender(chatwoot=_chatwoot(transport), inbox_id=1)
+    sender = EvolutionMessageSender(
+        chatwoot=_chatwoot(transport),
+        inbox_id=1,
+        allowed_jid="15555550100@s.whatsapp.net",
+    )
 
     result = _run(sender.send_first_touch(
         phone="15555550100",

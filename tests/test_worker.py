@@ -228,6 +228,58 @@ def test_worker_blocks_send_when_authoritative_context_is_incomplete(
     assert "first_touch_decision_guard_blocked" in caplog.text
 
 
+def test_worker_blocks_injected_sender_for_unauthorized_target(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    report_dict = {
+        "authoritative_context_complete": True,
+        "contact_blocked": False,
+        "phone_available": True,
+        "any_conversation_human_takeover": False,
+        "has_active_conversation": False,
+        "has_open_recovery_case": False,
+    }
+
+    async def fake_resolve_event(**_: object) -> object:
+        return SimpleNamespace(
+            event_id="event-unauthorized-target",
+            phone_available=True,
+            buyer_phone="12025550123",
+            buyer_name="Test",
+            buyer_email="test@test.com",
+            to_dict=lambda: report_dict,
+        )
+
+    class Agent:
+        async def request_proposal(self, **_: object) -> dict[str, object]:
+            return {
+                "action": "send_first_touch",
+                "reason_code": "first_touch",
+                "message": "Test message",
+            }
+
+    class SenderThatMustNotRun:
+        async def send_first_touch(self, **_: object) -> object:
+            raise AssertionError("message sender must not be invoked")
+
+    monkeypatch.setattr("bridge.worker.resolve_event", fake_resolve_event)
+    worker = ResolutionWorker(
+        supabase=object(),  # type: ignore[arg-type]
+        recovery_agent=Agent(),  # type: ignore[arg-type]
+        message_sender=SenderThatMustNotRun(),  # type: ignore[arg-type]
+        allowed_jid="15555550100@s.whatsapp.net",
+    )
+
+    with caplog.at_level("ERROR", logger="bridge.worker"):
+        _run(worker._process_one({
+            "id": "event-unauthorized-target",
+            "payload": {},
+        }))
+
+    assert "first_touch_target_not_allowed" in caplog.text
+
+
 # ── Test: worker processes a pending event ──────────────────────────
 
 

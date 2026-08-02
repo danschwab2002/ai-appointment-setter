@@ -43,9 +43,11 @@ class HotmartBuyerData:
 
 # ── Normalisation helpers ────────────────────────────────────────────
 
-# Strip everything that is not a digit.  Hotmart sends phone with DDI
-# and no "+": "5531999999999".  We store the raw digits as-is.
+# Hotmart normally sends DDI and digits without "+". Accept conventional
+# display separators, but reject letters, JID suffixes, and other content
+# before normalization.
 _NON_DIGIT = re.compile(r"\D")
+_PHONE_INPUT = re.compile(r"\+?[0-9 ()-]+")
 
 
 def normalize_email(raw: str | None) -> str | None:
@@ -57,8 +59,8 @@ def normalize_email(raw: str | None) -> str | None:
 
 
 def normalize_phone(raw: str | None) -> str | None:
-    """Strip a phone number to bare digits, returning ``None`` if empty."""
-    if not isinstance(raw, str):
+    """Validate phone syntax and return bare digits, or ``None``."""
+    if not isinstance(raw, str) or _PHONE_INPUT.fullmatch(raw) is None:
         return None
     digits = _NON_DIGIT.sub("", raw)
     return digits or None

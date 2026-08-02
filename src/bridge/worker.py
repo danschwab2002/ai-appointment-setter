@@ -14,7 +14,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from bridge.messaging import MessageSender
+from bridge.messaging import MessageSender, is_allowed_whatsapp_target
 from bridge.recovery_agent import (
     RecoveryAgentClient,
     required_recovery_decision,
@@ -42,12 +42,14 @@ class ResolutionWorker:
         batch_size: int = 10,
         recovery_agent: RecoveryAgentClient | None = None,
         message_sender: MessageSender | None = None,
+        allowed_jid: str | None = None,
     ) -> None:
         self._supabase = supabase
         self._poll_interval = poll_interval_seconds
         self._batch_size = batch_size
         self._recovery_agent = recovery_agent
         self._message_sender = message_sender
+        self._allowed_jid = allowed_jid
         self._stopped = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
 
@@ -197,6 +199,16 @@ class ResolutionWorker:
             if not report.phone_available or report.buyer_phone is None:
                 logger.warning(
                     "first_touch_phone_unavailable event_id=%s",
+                    report.event_id,
+                )
+                return
+
+            if not is_allowed_whatsapp_target(
+                report.buyer_phone,
+                self._allowed_jid,
+            ):
+                logger.error(
+                    "first_touch_target_not_allowed event_id=%s",
                     report.event_id,
                 )
                 return

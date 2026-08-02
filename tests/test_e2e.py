@@ -110,7 +110,7 @@ def _build_app(transport: E2ETransport, tmp_path: Path):
     """Build the app with all dependencies wired to the mock transport."""
     settings = Settings(
         webhook_secret="unused",
-        allowed_jid="unused@s.whatsapp.net",
+        allowed_jid="5531999999999@s.whatsapp.net",
         capture_dir=tmp_path / "captures",
         max_age_seconds=300,
         hotmart_hottok="e2e-hottok",
@@ -156,6 +156,7 @@ def _build_app(transport: E2ETransport, tmp_path: Path):
     message_sender = EvolutionMessageSender(
         chatwoot=chatwoot,
         inbox_id=1,
+        allowed_jid="5531999999999@s.whatsapp.net",
     )
 
     app = create_app(

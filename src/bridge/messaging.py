@@ -7,6 +7,7 @@ official Meta WhatsApp Business API. See ADR-0004.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -40,6 +41,30 @@ class MessageSender(Protocol):
     ) -> FirstTouchResult: ...
 
 
+_INDIVIDUAL_JID_RE = re.compile(r"([1-9]\d{6,14})@s\.whatsapp\.net")
+_PHONE_INPUT_RE = re.compile(r"\+?[0-9 ()-]+")
+
+
+def allowed_phone_from_jid(allowed_jid: str | None) -> str | None:
+    """Extract digits only from one canonical individual WhatsApp JID."""
+    if not isinstance(allowed_jid, str):
+        return None
+    match = _INDIVIDUAL_JID_RE.fullmatch(allowed_jid)
+    return match.group(1) if match is not None else None
+
+
+def is_allowed_whatsapp_target(
+    phone: str | None,
+    allowed_jid: str | None,
+) -> bool:
+    """Validate and compare one outbound phone against the configured JID."""
+    if not isinstance(phone, str) or _PHONE_INPUT_RE.fullmatch(phone) is None:
+        return False
+    normalized = normalize_phone(phone)
+    allowed_phone = allowed_phone_from_jid(allowed_jid)
+    return normalized is not None and normalized == allowed_phone
+
+
 def _to_e164(digits: str) -> str:
     """Convert bare digits (from Hotmart) to E.164 format for Chatwoot.
 
@@ -61,9 +86,11 @@ class EvolutionMessageSender:
         *,
         chatwoot: ChatwootClient,
         inbox_id: int,
+        allowed_jid: str,
     ) -> None:
         self._chatwoot = chatwoot
         self._inbox_id = inbox_id
+        self._allowed_jid = allowed_jid
 
     async def send_first_touch(
         self,
@@ -81,6 +108,13 @@ class EvolutionMessageSender:
                 conversation_id=None,
                 message_id=None,
                 reason="invalid_phone",
+            )
+        if not is_allowed_whatsapp_target(phone, self._allowed_jid):
+            return FirstTouchResult(
+                status="blocked",
+                conversation_id=None,
+                message_id=None,
+                reason="target_not_allowed",
             )
 
         e164 = _to_e164(normalized)

@@ -375,6 +375,7 @@ def create_app(
             sender = EvolutionMessageSender(
                 chatwoot=control_client,
                 inbox_id=settings.chatwoot_inbox_id,
+                allowed_jid=settings.allowed_jid,
             )
         resolution_worker = ResolutionWorker(
             supabase=shared_supabase,
@@ -382,6 +383,7 @@ def create_app(
             batch_size=settings.worker_batch_size,
             recovery_agent=recovery_agent,
             message_sender=sender,
+            allowed_jid=settings.allowed_jid,
         )
 
     @asynccontextmanager
