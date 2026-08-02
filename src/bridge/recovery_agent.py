@@ -36,17 +36,18 @@ _VALID_REASON_CODES = {
 }
 
 _VALID_LEAD_STAGES = {"new", "discovery", "qualifying"}
+_EXPECTED_PROPOSAL_KEYS = {
+    "action",
+    "reason_code",
+    "message",
+    "lead_stage",
+    "current_goal",
+}
 
 
 def is_valid_recovery_proposal(proposal: dict[str, object]) -> bool:
     """Return whether a recovery proposal matches the skill contract."""
-    if set(proposal) != {
-        "action",
-        "reason_code",
-        "message",
-        "lead_stage",
-        "current_goal",
-    }:
+    if set(proposal) != _EXPECTED_PROPOSAL_KEYS:
         return False
 
     action = proposal["action"]
@@ -76,6 +77,88 @@ def is_valid_recovery_proposal(proposal: dict[str, object]) -> bool:
         return False
 
     return True
+
+
+def _safe_proposal_diagnostics(proposal: object) -> dict[str, object]:
+    """Describe contract failures without persisting generated text or PII."""
+    diagnostics: dict[str, object] = {
+        "proposal_type": type(proposal).__name__,
+    }
+    if not isinstance(proposal, dict):
+        diagnostics["validation_errors"] = ["not_an_object"]
+        return diagnostics
+
+    proposal_keys = set(proposal)
+    missing_keys = sorted(_EXPECTED_PROPOSAL_KEYS - proposal_keys)
+    extra_key_count = len(proposal_keys - _EXPECTED_PROPOSAL_KEYS)
+    diagnostics.update(
+        {
+            "expected_keys_present": sorted(
+                _EXPECTED_PROPOSAL_KEYS & proposal_keys
+            ),
+            "missing_keys": missing_keys,
+            "extra_key_count": extra_key_count,
+        }
+    )
+
+    validation_errors: list[str] = []
+    if missing_keys:
+        validation_errors.append("missing_keys")
+    if extra_key_count:
+        validation_errors.append("unexpected_keys")
+
+    action = proposal.get("action")
+    action_valid = isinstance(action, str) and action in _VALID_ACTIONS
+    if action_valid:
+        diagnostics["action"] = action
+    else:
+        validation_errors.append("invalid_action")
+
+    reason_code = proposal.get("reason_code")
+    reason_valid = (
+        isinstance(reason_code, str) and reason_code in _VALID_REASON_CODES
+    )
+    if reason_valid:
+        diagnostics["reason_code"] = reason_code
+    else:
+        validation_errors.append("invalid_reason_code")
+
+    lead_stage = proposal.get("lead_stage")
+    lead_stage_valid = (
+        isinstance(lead_stage, str) and lead_stage in _VALID_LEAD_STAGES
+    )
+    if lead_stage_valid:
+        diagnostics["lead_stage"] = lead_stage
+    else:
+        validation_errors.append("invalid_lead_stage")
+
+    message = proposal.get("message")
+    diagnostics["message_type"] = type(message).__name__
+    if isinstance(message, str):
+        diagnostics["message_length"] = len(message)
+    message_valid = (
+        isinstance(message, str)
+        and bool(message.strip())
+        and len(message) <= 500
+        if action == "send_first_touch"
+        else message is None
+    )
+    if not message_valid:
+        validation_errors.append("invalid_message")
+
+    current_goal = proposal.get("current_goal")
+    diagnostics["current_goal_type"] = type(current_goal).__name__
+    if isinstance(current_goal, str):
+        diagnostics["current_goal_length"] = len(current_goal)
+    if not (
+        isinstance(current_goal, str)
+        and bool(current_goal.strip())
+        and len(current_goal) <= 200
+    ):
+        validation_errors.append("invalid_current_goal")
+
+    diagnostics["validation_errors"] = validation_errors
+    return diagnostics
 
 
 # ── Client ──────────────────────────────────────────────────────────
@@ -186,6 +269,7 @@ class RecoveryAgentClient:
                     "status": "failed",
                     "event_id": event_id,
                     "reason": "invalid_agent_output",
+                    "diagnostics": _safe_proposal_diagnostics(proposal),
                 },
             )
             return None

@@ -206,6 +206,64 @@ def test_returns_none_when_agent_returns_invalid_proposal() -> None:
     assert result is None
 
 
+def test_persists_safe_diagnostics_for_invalid_proposal() -> None:
+    import hashlib
+
+    proposal = _valid_proposal()
+    private_message = "private-message-that-must-not-be-persisted"
+    proposal["message"] = private_message
+    proposal["unexpected"] = "private-extra-value"
+    transport = _MockTransport(
+        body={
+            "choices": [
+                {"message": {"content": json.dumps(proposal)}}
+            ]
+        }
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        proposals_dir = Path(tmp)
+        client = RecoveryAgentClient(
+            base_url="https://hermes.example.test/v1",
+            api_key="test-key",
+            model_name="agente-comercial",
+            proposals_dir=proposals_dir,
+            transport=transport,
+        )
+        result = _run(client.request_proposal(
+            event_id="evt-invalid-diagnostics",
+            situation_report={"event_id": "evt-invalid-diagnostics"},
+        ))
+
+        digest = hashlib.sha256(b"evt-invalid-diagnostics").hexdigest()
+        persisted_text = (proposals_dir / f"{digest}.json").read_text()
+        persisted = json.loads(persisted_text)
+
+    assert result is None
+    assert persisted["diagnostics"] == {
+        "proposal_type": "dict",
+        "expected_keys_present": [
+            "action",
+            "current_goal",
+            "lead_stage",
+            "message",
+            "reason_code",
+        ],
+        "missing_keys": [],
+        "extra_key_count": 1,
+        "action": "send_first_touch",
+        "reason_code": "first_touch",
+        "lead_stage": "new",
+        "message_type": "str",
+        "message_length": len(private_message),
+        "current_goal_type": "str",
+        "current_goal_length": len("iniciar conversación de recupero"),
+        "validation_errors": ["unexpected_keys"],
+    }
+    assert "private-message-that-must-not-be-persisted" not in persisted_text
+    assert "private-extra-value" not in persisted_text
+
+
 def test_persists_proposal_to_disk() -> None:
     import hashlib
     proposal = _valid_proposal()
