@@ -15,7 +15,10 @@ from pathlib import Path
 from typing import Any
 
 from bridge.messaging import MessageSender
-from bridge.recovery_agent import RecoveryAgentClient
+from bridge.recovery_agent import (
+    RecoveryAgentClient,
+    required_recovery_decision,
+)
 from bridge.resolution import ResolutionError, resolve_event
 from bridge.supabase import SupabaseClient, SupabaseError
 
@@ -131,10 +134,11 @@ class ResolutionWorker:
             return
 
         if self._recovery_agent is not None:
+            situation_report = report.to_dict()
             try:
                 proposal = await self._recovery_agent.request_proposal(
                     event_id=report.event_id,
-                    situation_report=report.to_dict(),
+                    situation_report=situation_report,
                 )
             except Exception:
                 # Agent call failed — the event is already 'processed'.
@@ -164,6 +168,22 @@ class ResolutionWorker:
                     "recovery_proposal_no_send event_id=%s action=%s",
                     report.event_id,
                     action,
+                )
+                return
+
+            required_decision = required_recovery_decision(situation_report)
+            if (
+                required_decision != {
+                    "action": "send_first_touch",
+                    "reason_code": "first_touch",
+                }
+                or proposal.get("reason_code") != "first_touch"
+            ):
+                logger.error(
+                    "first_touch_decision_guard_blocked "
+                    "event_id=%s required_action=%s",
+                    report.event_id,
+                    required_decision["action"],
                 )
                 return
 

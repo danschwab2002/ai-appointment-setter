@@ -148,13 +148,22 @@ def test_worker_logs_when_first_touch_sender_is_not_configured(
             event_id="event-003",
             phone_available=True,
             buyer_phone="12025550123",
-            to_dict=lambda: {"event_id": "event-003"},
+            to_dict=lambda: {
+                "event_id": "event-003",
+                "authoritative_context_complete": True,
+                "contact_blocked": False,
+                "phone_available": True,
+                "any_conversation_human_takeover": False,
+                "has_active_conversation": False,
+                "has_open_recovery_case": False,
+            },
         )
 
     class FirstTouchAgent:
         async def request_proposal(self, **_: object) -> dict[str, object]:
             return {
                 "action": "send_first_touch",
+                "reason_code": "first_touch",
                 "message": "Test message",
             }
 
@@ -168,6 +177,55 @@ def test_worker_logs_when_first_touch_sender_is_not_configured(
         _run(worker._process_one({"id": "event-003", "payload": {}}))
 
     assert "first_touch_sender_not_configured event_id=event-003" in caplog.text
+
+
+def test_worker_blocks_send_when_authoritative_context_is_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    report_dict = {
+        "authoritative_context_complete": False,
+        "contact_blocked": False,
+        "phone_available": True,
+        "any_conversation_human_takeover": False,
+        "has_active_conversation": False,
+        "has_open_recovery_case": False,
+    }
+
+    async def fake_resolve_event(**_: object) -> object:
+        return SimpleNamespace(
+            event_id="event-incomplete-context",
+            phone_available=True,
+            buyer_phone="12025550123",
+            to_dict=lambda: report_dict,
+        )
+
+    class UnexpectedAgent:
+        async def request_proposal(self, **_: object) -> dict[str, object]:
+            return {
+                "action": "send_first_touch",
+                "reason_code": "first_touch",
+                "message": "Test message",
+            }
+
+    class SenderThatMustNotRun:
+        async def send_first_touch(self, **_: object) -> object:
+            raise AssertionError("message sender must not be invoked")
+
+    monkeypatch.setattr("bridge.worker.resolve_event", fake_resolve_event)
+    worker = ResolutionWorker(
+        supabase=object(),  # type: ignore[arg-type]
+        recovery_agent=UnexpectedAgent(),  # type: ignore[arg-type]
+        message_sender=SenderThatMustNotRun(),  # type: ignore[arg-type]
+    )
+
+    with caplog.at_level("ERROR", logger="bridge.worker"):
+        _run(worker._process_one({
+            "id": "event-incomplete-context",
+            "payload": {},
+        }))
+
+    assert "first_touch_decision_guard_blocked" in caplog.text
 
 
 # ── Test: worker processes a pending event ──────────────────────────

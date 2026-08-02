@@ -99,6 +99,8 @@ class SituationReport:
     conversations: list[ConversationSummary] = field(default_factory=list)
     recovery_cases: list[RecoveryCaseSummary] = field(default_factory=list)
     channel_identities: list[ChannelIdentitySummary] = field(default_factory=list)
+    authoritative_context_complete: bool = False
+    any_conversation_human_takeover: bool = False
     has_active_conversation: bool = False
     has_open_recovery_case: bool = False
     phone_available: bool = False
@@ -163,11 +165,111 @@ class SituationReport:
                 }
                 for ci in self.channel_identities
             ],
+            "authoritative_context_complete": (
+                self.authoritative_context_complete
+            ),
+            "any_conversation_human_takeover": (
+                self.any_conversation_human_takeover
+            ),
             "has_active_conversation": self.has_active_conversation,
             "has_open_recovery_case": self.has_open_recovery_case,
             "phone_available": self.phone_available,
             "contact_blocked": self.contact_blocked,
         }
+
+
+_CONTACT_PERMISSIONS = {
+    "unknown", "allowed", "opted_out", "blocked", "restricted",
+}
+_LIFECYCLE_STATUSES = {
+    "lead", "qualified_lead", "opportunity", "customer", "nurture",
+    "unqualified", "closed_lost", "do_not_contact",
+}
+_CONVERSATION_STATUSES = {
+    "active", "awaiting_agent", "awaiting_contact", "snoozed",
+    "paused_human", "completed", "closed", "blocked",
+}
+_AUTOMATION_STATUSES = {
+    "enabled", "draft_only", "paused", "disabled", "restricted", "error",
+}
+_RECOVERY_CASE_STATUSES = {
+    "grace_period", "active", "paused", "won", "sequence_exhausted",
+    "lost", "cancelled", "unreachable", "error",
+}
+_LEAD_STAGES = {
+    "new", "discovery", "qualifying", "qualified", "solution_presented",
+    "proposal_pending", "objection_handling", "booking_pending", "booked",
+    "nurture", "won", "lost", "unqualified",
+}
+_CHANNELS = {"instagram", "whatsapp", "email", "sms", "other"}
+_IDENTITY_STATUSES = {"active", "unreachable", "blocked", "unknown"}
+
+
+def _response_rows(
+    response: httpx.Response,
+    *,
+    operation: str,
+) -> list[dict[str, Any]]:
+    """Parse an authoritative PostgREST list response or fail closed."""
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise SupabaseError(f"{operation}_invalid_json") from exc
+    if not isinstance(payload, list) or any(
+        not isinstance(row, dict) for row in payload
+    ):
+        raise SupabaseError(f"{operation}_invalid_shape")
+    return payload
+
+
+def _required_string(
+    row: dict[str, Any],
+    key: str,
+    *,
+    operation: str,
+) -> str:
+    value = row.get(key)
+    if not isinstance(value, str) or not value:
+        raise SupabaseError(f"{operation}_invalid_row")
+    return value
+
+
+def _required_enum(
+    row: dict[str, Any],
+    key: str,
+    allowed: set[str],
+    *,
+    operation: str,
+) -> str:
+    value = _required_string(row, key, operation=operation)
+    if value not in allowed:
+        raise SupabaseError(f"{operation}_invalid_row")
+    return value
+
+
+def _optional_string(
+    row: dict[str, Any],
+    key: str,
+    *,
+    operation: str,
+) -> str | None:
+    value = row.get(key)
+    if value is not None and not isinstance(value, str):
+        raise SupabaseError(f"{operation}_invalid_row")
+    return value
+
+
+def _optional_enum(
+    row: dict[str, Any],
+    key: str,
+    allowed: set[str],
+    *,
+    operation: str,
+) -> str | None:
+    value = _optional_string(row, key, operation=operation)
+    if value is not None and value not in allowed:
+        raise SupabaseError(f"{operation}_invalid_row")
+    return value
 
 
 # ── Client ───────────────────────────────────────────────────────────
@@ -331,20 +433,38 @@ class SupabaseClient:
             raise SupabaseError(
                 f"find_contact_by_email_failed: HTTP {response.status_code}"
             )
-        rows = response.json() if response.content else []
-        if not isinstance(rows, list) or not rows:
+        rows = _response_rows(response, operation="find_contact_by_email")
+        if not rows:
             return None
         row = rows[0]
         contact = row.get("contacts")
         if not isinstance(contact, dict):
-            return None
+            raise SupabaseError("find_contact_by_email_invalid_row")
         return ContactMatch(
-            contact_id=str(contact.get("id")),
-            full_name=contact.get("full_name"),
-            email=contact.get("email"),
-            phone=contact.get("phone"),
-            contact_permission=contact.get("contact_permission", "unknown"),
-            lifecycle_status=contact.get("lifecycle_status", "lead"),
+            contact_id=_required_string(
+                contact, "id", operation="find_contact_by_email"
+            ),
+            full_name=_optional_string(
+                contact, "full_name", operation="find_contact_by_email"
+            ),
+            email=_optional_string(
+                contact, "email", operation="find_contact_by_email"
+            ),
+            phone=_optional_string(
+                contact, "phone", operation="find_contact_by_email"
+            ),
+            contact_permission=_required_enum(
+                contact,
+                "contact_permission",
+                _CONTACT_PERMISSIONS,
+                operation="find_contact_by_email",
+            ),
+            lifecycle_status=_required_enum(
+                contact,
+                "lifecycle_status",
+                _LIFECYCLE_STATUSES,
+                operation="find_contact_by_email",
+            ),
             matched_by="email",
         )
 
@@ -372,20 +492,38 @@ class SupabaseClient:
             raise SupabaseError(
                 f"find_contact_by_phone_failed: HTTP {response.status_code}"
             )
-        rows = response.json() if response.content else []
-        if not isinstance(rows, list) or not rows:
+        rows = _response_rows(response, operation="find_contact_by_phone")
+        if not rows:
             return None
         row = rows[0]
         contact = row.get("contacts")
         if not isinstance(contact, dict):
-            return None
+            raise SupabaseError("find_contact_by_phone_invalid_row")
         return ContactMatch(
-            contact_id=str(contact.get("id")),
-            full_name=contact.get("full_name"),
-            email=contact.get("email"),
-            phone=contact.get("phone"),
-            contact_permission=contact.get("contact_permission", "unknown"),
-            lifecycle_status=contact.get("lifecycle_status", "lead"),
+            contact_id=_required_string(
+                contact, "id", operation="find_contact_by_phone"
+            ),
+            full_name=_optional_string(
+                contact, "full_name", operation="find_contact_by_phone"
+            ),
+            email=_optional_string(
+                contact, "email", operation="find_contact_by_phone"
+            ),
+            phone=_optional_string(
+                contact, "phone", operation="find_contact_by_phone"
+            ),
+            contact_permission=_required_enum(
+                contact,
+                "contact_permission",
+                _CONTACT_PERMISSIONS,
+                operation="find_contact_by_phone",
+            ),
+            lifecycle_status=_required_enum(
+                contact,
+                "lifecycle_status",
+                _LIFECYCLE_STATUSES,
+                operation="find_contact_by_phone",
+            ),
             matched_by="phone",
         )
 
@@ -482,21 +620,42 @@ class SupabaseClient:
             raise SupabaseError(
                 f"fetch_conversations_failed: HTTP {response.status_code}"
             )
-        rows = response.json() if response.content else []
-        if not isinstance(rows, list):
-            return []
+        operation = "fetch_conversations"
+        rows = _response_rows(response, operation=operation)
         summaries: list[ConversationSummary] = []
         for row in rows:
+            human_takeover = row.get("human_takeover")
+            if not isinstance(human_takeover, bool):
+                raise SupabaseError(f"{operation}_invalid_row")
             summaries.append(
                 ConversationSummary(
-                    conversation_id=row.get("id"),
-                    status=row.get("status", "active"),
-                    automation_status=row.get("automation_status", "enabled"),
-                    human_takeover=row.get("human_takeover", False),
-                    last_message_direction=row.get("last_message_direction"),
-                    last_inbound_at=row.get("last_inbound_at"),
-                    last_outbound_at=row.get("last_outbound_at"),
-                    paused_until=row.get("paused_until"),
+                    conversation_id=_required_string(
+                        row, "id", operation=operation
+                    ),
+                    status=_required_enum(
+                        row, "status", _CONVERSATION_STATUSES,
+                        operation=operation,
+                    ),
+                    automation_status=_required_enum(
+                        row, "automation_status", _AUTOMATION_STATUSES,
+                        operation=operation,
+                    ),
+                    human_takeover=human_takeover,
+                    last_message_direction=_optional_enum(
+                        row,
+                        "last_message_direction",
+                        {"inbound", "outbound"},
+                        operation=operation,
+                    ),
+                    last_inbound_at=_optional_string(
+                        row, "last_inbound_at", operation=operation
+                    ),
+                    last_outbound_at=_optional_string(
+                        row, "last_outbound_at", operation=operation
+                    ),
+                    paused_until=_optional_string(
+                        row, "paused_until", operation=operation
+                    ),
                 )
             )
         return summaries
@@ -522,18 +681,29 @@ class SupabaseClient:
             raise SupabaseError(
                 f"fetch_recovery_cases_failed: HTTP {response.status_code}"
             )
-        rows = response.json() if response.content else []
-        if not isinstance(rows, list):
-            return []
+        operation = "fetch_recovery_cases"
+        rows = _response_rows(response, operation=operation)
         summaries: list[RecoveryCaseSummary] = []
         for row in rows:
             summaries.append(
                 RecoveryCaseSummary(
-                    recovery_case_id=row.get("id"),
-                    status=row.get("status", "grace_period"),
-                    lead_stage=row.get("lead_stage", "new"),
-                    current_goal=row.get("current_goal"),
-                    product_name=row.get("product_name"),
+                    recovery_case_id=_required_string(
+                        row, "id", operation=operation
+                    ),
+                    status=_required_enum(
+                        row, "status", _RECOVERY_CASE_STATUSES,
+                        operation=operation,
+                    ),
+                    lead_stage=_required_enum(
+                        row, "lead_stage", _LEAD_STAGES,
+                        operation=operation,
+                    ),
+                    current_goal=_optional_string(
+                        row, "current_goal", operation=operation
+                    ),
+                    product_name=_required_string(
+                        row, "product_name", operation=operation
+                    ),
                 )
             )
         return summaries
@@ -557,17 +727,25 @@ class SupabaseClient:
             raise SupabaseError(
                 f"fetch_channel_identities_failed: HTTP {response.status_code}"
             )
-        rows = response.json() if response.content else []
-        if not isinstance(rows, list):
-            return []
+        operation = "fetch_channel_identities"
+        rows = _response_rows(response, operation=operation)
         summaries: list[ChannelIdentitySummary] = []
         for row in rows:
             summaries.append(
                 ChannelIdentitySummary(
-                    channel_identity_id=row.get("id"),
-                    channel=row.get("channel", "other"),
-                    external_user_id=row.get("external_user_id"),
-                    identity_status=row.get("identity_status", "unknown"),
+                    channel_identity_id=_required_string(
+                        row, "id", operation=operation
+                    ),
+                    channel=_required_enum(
+                        row, "channel", _CHANNELS, operation=operation
+                    ),
+                    external_user_id=_optional_string(
+                        row, "external_user_id", operation=operation
+                    ),
+                    identity_status=_required_enum(
+                        row, "identity_status", _IDENTITY_STATUSES,
+                        operation=operation,
+                    ),
                 )
             )
         return summaries

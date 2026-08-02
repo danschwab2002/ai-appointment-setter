@@ -5,12 +5,19 @@ from __future__ import annotations
 import asyncio
 import json
 import tempfile
+from itertools import product
 from pathlib import Path
+from typing import cast
 
 import httpx
 import pytest
 
-from bridge.recovery_agent import RecoveryAgentClient, is_valid_recovery_proposal
+from bridge.recovery_agent import (
+    _RECOVERY_DECISION_POLICY,
+    RecoveryAgentClient,
+    is_valid_recovery_proposal,
+    required_recovery_decision,
+)
 
 
 # ── Proposal validation ─────────────────────────────────────────────
@@ -23,6 +30,19 @@ def _valid_proposal() -> dict[str, object]:
         "message": "¡Hola! Soy el asistente virtual de Dan. Vi que estabas mirando el curso. ¿Te quedó alguna duda?",
         "lead_stage": "new",
         "current_goal": "iniciar conversación de recupero",
+    }
+
+
+def _situation_report(event_id: str) -> dict[str, object]:
+    return {
+        "event_id": event_id,
+        "source": "hotmart",
+        "authoritative_context_complete": True,
+        "contact_blocked": False,
+        "phone_available": True,
+        "any_conversation_human_takeover": False,
+        "has_active_conversation": False,
+        "has_open_recovery_case": False,
     }
 
 
@@ -111,6 +131,103 @@ def test_rejects_extra_field() -> None:
 # ── RecoveryAgentClient ─────────────────────────────────────────────
 
 
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({}, {"action": "send_first_touch", "reason_code": "first_touch"}),
+        (
+            {"authoritative_context_complete": False},
+            {"action": "handoff", "reason_code": "insufficient_context"},
+        ),
+        (
+            {
+                "contact_blocked": True,
+                "phone_available": False,
+                "any_conversation_human_takeover": True,
+                "has_active_conversation": True,
+                "has_open_recovery_case": True,
+            },
+            {"action": "abort", "reason_code": "contact_blocked"},
+        ),
+        (
+            {"phone_available": False},
+            {"action": "abort", "reason_code": "no_phone_available"},
+        ),
+        (
+            {"any_conversation_human_takeover": True},
+            {"action": "abort", "reason_code": "human_takeover_active"},
+        ),
+        (
+            {"has_active_conversation": True},
+            {"action": "hold", "reason_code": "active_conversation_exists"},
+        ),
+        (
+            {"has_open_recovery_case": True},
+            {"action": "hold", "reason_code": "recovery_case_active"},
+        ),
+    ],
+)
+def test_required_recovery_decision(
+    overrides: dict[str, object],
+    expected: dict[str, str],
+) -> None:
+    report: dict[str, object] = {
+        "authoritative_context_complete": True,
+        "contact_blocked": False,
+        "phone_available": True,
+        "any_conversation_human_takeover": False,
+        "has_active_conversation": False,
+        "has_open_recovery_case": False,
+    }
+    report.update(overrides)
+
+    assert required_recovery_decision(report) == expected
+
+
+def test_required_recovery_decision_handoffs_when_guard_is_missing() -> None:
+    report = _situation_report("evt-missing-guard")
+    del report["contact_blocked"]
+
+    assert required_recovery_decision(report) == {
+        "action": "handoff",
+        "reason_code": "insufficient_context",
+    }
+
+
+def test_executable_decision_matches_declarative_policy_exhaustively() -> None:
+    fields = cast(
+        list[str], _RECOVERY_DECISION_POLICY["authoritative_fields"]
+    )
+    rules = cast(list[dict[str, object]], _RECOVERY_DECISION_POLICY["rules"])
+    default = cast(dict[str, str], _RECOVERY_DECISION_POLICY["default"])
+    missing = cast(
+        dict[str, str],
+        _RECOVERY_DECISION_POLICY["on_missing_authoritative_field"],
+    )
+
+    for values in product((False, True), repeat=len(fields)):
+        report: dict[str, object] = dict(zip(fields, values, strict=True))
+        expected = default
+        for rule in rules:
+            assert isinstance(rule, dict)
+            condition = cast(dict[str, bool], rule["when"])
+            if all(report[key] == value for key, value in condition.items()):
+                expected = {
+                    "action": rule["action"],
+                    "reason_code": rule["reason_code"],
+                }
+                break
+        assert required_recovery_decision(report) == expected
+
+    complete_report: dict[str, object] = {
+        field: False for field in fields
+    }
+    for field in fields:
+        incomplete_report = complete_report.copy()
+        del incomplete_report[field]
+        assert required_recovery_decision(incomplete_report) == missing
+
+
 class _MockTransport(httpx.AsyncBaseTransport):
     def __init__(self, *, status_code: int = 200, body: dict | None = None):
         self.status_code = status_code
@@ -149,7 +266,7 @@ def test_returns_proposal_when_agent_responds_valid() -> None:
         )
         result = _run(client.request_proposal(
             event_id="evt-001",
-            situation_report={"event_id": "evt-001", "source": "hotmart"},
+            situation_report=_situation_report("evt-001"),
         ))
 
     assert result is not None
@@ -158,7 +275,24 @@ def test_returns_proposal_when_agent_responds_valid() -> None:
     assert len(transport.requests) == 1
     # Verify the request body includes the situation_report
     req_body = json.loads(transport.requests[0].content)
-    assert "situation_report" in req_body["messages"][0]["content"]
+    context = json.loads(req_body["messages"][0]["content"])
+    assert "situation_report" in context
+    assert context["decision_policy"]["default"] == {
+        "action": "send_first_touch",
+        "reason_code": "first_touch",
+    }
+    assert context["decision_policy"]["authoritative_fields"] == [
+        "authoritative_context_complete",
+        "contact_blocked",
+        "phone_available",
+        "any_conversation_human_takeover",
+        "has_active_conversation",
+        "has_open_recovery_case",
+    ]
+    assert context["required_decision"] == {
+        "action": "send_first_touch",
+        "reason_code": "first_touch",
+    }
 
 
 def test_returns_none_when_agent_unavailable() -> None:
@@ -176,7 +310,7 @@ def test_returns_none_when_agent_unavailable() -> None:
         )
         result = _run(client.request_proposal(
             event_id="evt-002",
-            situation_report={"event_id": "evt-002"},
+            situation_report=_situation_report("evt-002"),
         ))
 
     assert result is None
@@ -200,10 +334,51 @@ def test_returns_none_when_agent_returns_invalid_proposal() -> None:
         )
         result = _run(client.request_proposal(
             event_id="evt-003",
-            situation_report={"event_id": "evt-003"},
+            situation_report=_situation_report("evt-003"),
         ))
 
     assert result is None
+
+
+def test_rejects_valid_proposal_that_contradicts_required_decision() -> None:
+    import hashlib
+
+    proposal = _valid_proposal()
+    transport = _MockTransport(
+        body={
+            "choices": [
+                {"message": {"content": json.dumps(proposal)}}
+            ]
+        }
+    )
+    report = _situation_report("evt-decision-mismatch")
+    report["contact_blocked"] = True
+
+    with tempfile.TemporaryDirectory() as tmp:
+        proposals_dir = Path(tmp)
+        client = RecoveryAgentClient(
+            base_url="https://hermes.example.test/v1",
+            api_key="test-key",
+            model_name="agente-comercial",
+            proposals_dir=proposals_dir,
+            transport=transport,
+        )
+        result = _run(client.request_proposal(
+            event_id="evt-decision-mismatch",
+            situation_report=report,
+        ))
+
+        digest = hashlib.sha256(b"evt-decision-mismatch").hexdigest()
+        persisted = json.loads(
+            (proposals_dir / f"{digest}.json").read_text()
+        )
+
+    assert result is None
+    assert persisted["reason"] == "proposal_decision_mismatch"
+    assert persisted["required_decision"] == {
+        "action": "abort",
+        "reason_code": "contact_blocked",
+    }
 
 
 def test_persists_safe_diagnostics_for_invalid_proposal() -> None:
@@ -232,7 +407,7 @@ def test_persists_safe_diagnostics_for_invalid_proposal() -> None:
         )
         result = _run(client.request_proposal(
             event_id="evt-invalid-diagnostics",
-            situation_report={"event_id": "evt-invalid-diagnostics"},
+            situation_report=_situation_report("evt-invalid-diagnostics"),
         ))
 
         digest = hashlib.sha256(b"evt-invalid-diagnostics").hexdigest()
@@ -285,7 +460,7 @@ def test_persists_proposal_to_disk() -> None:
         )
         _run(client.request_proposal(
             event_id="evt-004",
-            situation_report={"event_id": "evt-004"},
+            situation_report=_situation_report("evt-004"),
         ))
 
         digest = hashlib.sha256(b"evt-004").hexdigest()

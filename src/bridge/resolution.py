@@ -57,11 +57,13 @@ async def resolve_event(
     # ── Step 2: Look up existing contact ────────────────────────────
     match: ContactMatch | None = None
     strategy: str | None = None
+    authoritative_context_complete = True
 
     if buyer.buyer_email is not None:
         try:
             match = await supabase.find_contact_by_email(buyer.buyer_email)
         except SupabaseError:
+            authoritative_context_complete = False
             match = None
         if match is not None:
             strategy = "existing_identity_by_email"
@@ -70,6 +72,7 @@ async def resolve_event(
         try:
             match = await supabase.find_contact_by_phone(buyer.buyer_phone)
         except SupabaseError:
+            authoritative_context_complete = False
             match = None
         if match is not None:
             strategy = "existing_identity_by_phone"
@@ -167,17 +170,17 @@ async def resolve_event(
     try:
         conversations = await supabase.fetch_conversations(contact_id=contact_id)
     except SupabaseError:
-        pass
+        authoritative_context_complete = False
     try:
         recovery_cases = await supabase.fetch_recovery_cases(contact_id=contact_id)
     except SupabaseError:
-        pass
+        authoritative_context_complete = False
     try:
         channel_identities = await supabase.fetch_channel_identities(
             contact_id=contact_id
         )
     except SupabaseError:
-        pass
+        authoritative_context_complete = False
 
     # ── Step 7: Build SituationReport ──────────────────────────────
     has_active = any(
@@ -185,6 +188,7 @@ async def resolve_event(
         and not c.human_takeover
         for c in conversations
     )
+    any_human_takeover = any(c.human_takeover for c in conversations)
     has_open = any(
         rc.recovery_case_id != recovery_case_id
         and rc.status in ("grace_period", "active", "paused")
@@ -192,7 +196,10 @@ async def resolve_event(
     )
     contact_blocked = (
         match is not None
-        and match.contact_permission in ("opted_out", "blocked", "restricted", "do_not_contact")
+        and (
+            match.contact_permission in ("opted_out", "blocked", "restricted")
+            or match.lifecycle_status == "do_not_contact"
+        )
     ) or any(
         ci.identity_status in ("blocked", "unreachable")
         for ci in channel_identities
@@ -216,6 +223,8 @@ async def resolve_event(
         conversations=conversations,
         recovery_cases=recovery_cases,
         channel_identities=channel_identities,
+        authoritative_context_complete=authoritative_context_complete,
+        any_conversation_human_takeover=any_human_takeover,
         has_active_conversation=has_active,
         has_open_recovery_case=has_open,
         phone_available=buyer.buyer_phone is not None,

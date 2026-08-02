@@ -44,6 +44,94 @@ _EXPECTED_PROPOSAL_KEYS = {
     "current_goal",
 }
 
+_RECOVERY_DECISION_POLICY: dict[str, object] = {
+    "authoritative_fields": [
+        "authoritative_context_complete",
+        "contact_blocked",
+        "phone_available",
+        "any_conversation_human_takeover",
+        "has_active_conversation",
+        "has_open_recovery_case",
+    ],
+    "rules": [
+        {
+            "when": {"authoritative_context_complete": False},
+            "action": "handoff",
+            "reason_code": "insufficient_context",
+        },
+        {
+            "when": {"contact_blocked": True},
+            "action": "abort",
+            "reason_code": "contact_blocked",
+        },
+        {
+            "when": {"phone_available": False},
+            "action": "abort",
+            "reason_code": "no_phone_available",
+        },
+        {
+            "when": {"any_conversation_human_takeover": True},
+            "action": "abort",
+            "reason_code": "human_takeover_active",
+        },
+        {
+            "when": {"has_active_conversation": True},
+            "action": "hold",
+            "reason_code": "active_conversation_exists",
+        },
+        {
+            "when": {"has_open_recovery_case": True},
+            "action": "hold",
+            "reason_code": "recovery_case_active",
+        },
+    ],
+    "default": {
+        "action": "send_first_touch",
+        "reason_code": "first_touch",
+    },
+    "on_missing_authoritative_field": {
+        "action": "handoff",
+        "reason_code": "insufficient_context",
+    },
+    "constraints": [
+        "Apply the first matching rule; otherwise apply default.",
+        "Do not recompute or contradict authoritative_fields from nested data.",
+        "The current recovery case is excluded by has_open_recovery_case.",
+        "Cancelled, closed, or lost cases do not block the default action.",
+        "Use only the action and reason_code pairs defined in this policy.",
+    ],
+}
+
+
+def required_recovery_decision(
+    situation_report: dict[str, object],
+) -> dict[str, str]:
+    """Calculate the required action from bridge-authoritative guard fields."""
+    authoritative_fields = _RECOVERY_DECISION_POLICY["authoritative_fields"]
+    assert isinstance(authoritative_fields, list)
+    if any(
+        not isinstance(situation_report.get(field), bool)
+        for field in authoritative_fields
+    ):
+        return {"action": "handoff", "reason_code": "insufficient_context"}
+
+    if situation_report["authoritative_context_complete"] is False:
+        return {"action": "handoff", "reason_code": "insufficient_context"}
+    if situation_report["contact_blocked"] is True:
+        return {"action": "abort", "reason_code": "contact_blocked"}
+    if situation_report["phone_available"] is False:
+        return {"action": "abort", "reason_code": "no_phone_available"}
+    if situation_report["any_conversation_human_takeover"] is True:
+        return {"action": "abort", "reason_code": "human_takeover_active"}
+    if situation_report["has_active_conversation"] is True:
+        return {
+            "action": "hold",
+            "reason_code": "active_conversation_exists",
+        }
+    if situation_report["has_open_recovery_case"] is True:
+        return {"action": "hold", "reason_code": "recovery_case_active"}
+    return {"action": "send_first_touch", "reason_code": "first_touch"}
+
 
 def is_valid_recovery_proposal(proposal: dict[str, object]) -> bool:
     """Return whether a recovery proposal matches the skill contract."""
@@ -200,14 +288,21 @@ class RecoveryAgentClient:
         proposal.  The result is persisted to disk regardless of validity.
         """
         digest = hashlib.sha256(event_id.encode("utf-8")).hexdigest()
+        required_decision = required_recovery_decision(situation_report)
 
         context = {
             "skill": "cart-abandonment-recovery",
             "situation_report": situation_report,
+            "decision_policy": _RECOVERY_DECISION_POLICY,
+            "required_decision": required_decision,
             "instructions": (
-                "Usá la skill cart-abandonment-recovery para analizar el "
-                "situation_report y decidir qué acción tomar. Respondé "
-                "únicamente con el JSON del contrato de salida de esa skill."
+                "Aplicá decision_policy de forma estricta sobre el "
+                "situation_report. No recalcules los authoritative_fields. "
+                "Copiá action y reason_code exactamente desde "
+                "required_decision. "
+                "Usá la skill cart-abandonment-recovery únicamente para las "
+                "reglas de redacción del message. Respondé únicamente con el "
+                "JSON del contrato de salida, sin campos adicionales."
             ),
         }
 
@@ -269,6 +364,22 @@ class RecoveryAgentClient:
                     "status": "failed",
                     "event_id": event_id,
                     "reason": "invalid_agent_output",
+                    "diagnostics": _safe_proposal_diagnostics(proposal),
+                },
+            )
+            return None
+
+        if (
+            proposal["action"] != required_decision["action"]
+            or proposal["reason_code"] != required_decision["reason_code"]
+        ):
+            self._persist(
+                digest=digest,
+                result={
+                    "status": "failed",
+                    "event_id": event_id,
+                    "reason": "proposal_decision_mismatch",
+                    "required_decision": required_decision,
                     "diagnostics": _safe_proposal_diagnostics(proposal),
                 },
             )
