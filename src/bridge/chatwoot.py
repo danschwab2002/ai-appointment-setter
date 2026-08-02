@@ -399,6 +399,89 @@ class ChatwootClient:
 
     # ── Contact and conversation creation (recovery first-touch) ───
 
+    async def find_contact_by_phone(
+        self,
+        *,
+        inbox_id: int,
+        phone_number: str,
+    ) -> int | None:
+        """Return one exact, unblocked contact linked to the target inbox."""
+        if (
+            not isinstance(inbox_id, int)
+            or isinstance(inbox_id, bool)
+            or inbox_id <= 0
+        ):
+            raise ChatwootProtocolError("invalid_inbox_id")
+        path = f"/api/v1/accounts/{self._account_id}/contacts/search"
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers={"api_access_token": self._access_token},
+            transport=self._transport,
+            timeout=15,
+        ) as client:
+            response = await client.get(path, params={"q": phone_number})
+            response.raise_for_status()
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise ChatwootProtocolError("invalid_json") from exc
+        if not isinstance(body, dict) or not isinstance(body.get("payload"), list):
+            raise ChatwootProtocolError("invalid_contact_search_payload")
+
+        exact_matches: dict[int, tuple[bool, bool]] = {}
+        for contact in body["payload"]:
+            if not isinstance(contact, dict):
+                raise ChatwootProtocolError("invalid_contact_search_payload")
+            contact_id = contact.get("id")
+            candidate_phone = contact.get("phone_number")
+            blocked = contact.get("blocked")
+            contact_inboxes = contact.get("contact_inboxes")
+            if (
+                not isinstance(contact_id, int)
+                or isinstance(contact_id, bool)
+                or contact_id <= 0
+                or not isinstance(candidate_phone, str)
+                or not candidate_phone
+                or not isinstance(blocked, bool)
+                or not isinstance(contact_inboxes, list)
+            ):
+                raise ChatwootProtocolError("invalid_contact_search_result")
+            linked_inbox_ids: set[int] = set()
+            for contact_inbox in contact_inboxes:
+                inbox = (
+                    contact_inbox.get("inbox")
+                    if isinstance(contact_inbox, dict)
+                    else None
+                )
+                linked_id = inbox.get("id") if isinstance(inbox, dict) else None
+                if (
+                    not isinstance(linked_id, int)
+                    or isinstance(linked_id, bool)
+                    or linked_id <= 0
+                ):
+                    raise ChatwootProtocolError("invalid_contact_search_result")
+                linked_inbox_ids.add(linked_id)
+            if candidate_phone != phone_number:
+                continue
+            previous_blocked, previous_linked = exact_matches.get(
+                contact_id, (False, False)
+            )
+            exact_matches[contact_id] = (
+                previous_blocked or blocked,
+                previous_linked or inbox_id in linked_inbox_ids,
+            )
+
+        if len(exact_matches) > 1:
+            raise ChatwootProtocolError("ambiguous_contact_match")
+        if not exact_matches:
+            return None
+        contact_id, (blocked, linked_to_inbox) = next(iter(exact_matches.items()))
+        if blocked:
+            raise ChatwootProtocolError("contact_blocked")
+        if not linked_to_inbox:
+            raise ChatwootProtocolError("contact_not_linked_to_inbox")
+        return contact_id
+
     async def create_contact(
         self,
         *,

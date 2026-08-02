@@ -217,7 +217,10 @@ def _setup_mocks(transport: E2ETransport) -> None:
             ],
         },
     ])
-    # ── Chatwoot: create contact ───────────────────────────────────
+    # ── Chatwoot: search then create contact ───────────────────────
+    transport.set("GET", "/api/v1/accounts/1/contacts/search", [
+        {"_status": 200, "payload": []},
+    ])
     transport.set("POST", "/api/v1/accounts/1/contacts", [
         {"_status": 200, "id": 42, "name": "Juan Perez"},
     ])

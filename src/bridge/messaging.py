@@ -86,12 +86,17 @@ class EvolutionMessageSender:
         e164 = _to_e164(normalized)
 
         try:
-            contact_id = await self._chatwoot.create_contact(
+            contact_id = await self._chatwoot.find_contact_by_phone(
                 inbox_id=self._inbox_id,
-                name=buyer_name,
                 phone_number=e164,
-                email=buyer_email,
             )
+            if contact_id is None:
+                contact_id = await self._chatwoot.create_contact(
+                    inbox_id=self._inbox_id,
+                    name=buyer_name,
+                    phone_number=e164,
+                    email=buyer_email,
+                )
             conversation_id = await self._chatwoot.create_conversation(
                 inbox_id=self._inbox_id,
                 contact_id=contact_id,
@@ -101,12 +106,19 @@ class EvolutionMessageSender:
                 content=content,
                 delivery_id=delivery_id,
             )
-        except (ChatwootProtocolError, httpx.HTTPError) as exc:
+        except ChatwootProtocolError as exc:
             return FirstTouchResult(
                 status="failed",
                 conversation_id=None,
                 message_id=None,
                 reason=str(exc),
+            )
+        except httpx.HTTPError:
+            return FirstTouchResult(
+                status="failed",
+                conversation_id=None,
+                message_id=None,
+                reason="chatwoot_http_error",
             )
 
         message_id_raw = result.get("message_id")

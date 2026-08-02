@@ -30,6 +30,7 @@ class MockTransport(httpx.AsyncBaseTransport):
     def __init__(self) -> None:
         self.routes: dict[str, list[httpx.Response]] = {}
         self.requests: list[tuple[str, str, bytes]] = []
+        self.query_params: list[dict[str, str]] = []
 
     def set(self, path_prefix: str, response: httpx.Response) -> None:
         self.routes[path_prefix] = self.routes.get(path_prefix, []) + [response]
@@ -38,6 +39,7 @@ class MockTransport(httpx.AsyncBaseTransport):
         path = request.url.path
         body = request.content
         self.requests.append((request.method, path, body))
+        self.query_params.append(dict(request.url.params))
         for prefix, responses in self.routes.items():
             if path.startswith(prefix) and responses:
                 return responses.pop(0)
@@ -60,6 +62,159 @@ def _run(coro):
 
 
 # ── ChatwootClient.create_contact ────────────────────────────────────
+
+
+def test_find_contact_by_phone_returns_exact_inbox_match() -> None:
+    transport = MockTransport()
+    transport.set(
+        "/api/v1/accounts/1/contacts/search",
+        httpx.Response(
+            200,
+            json={
+                "payload": [
+                    {
+                        "id": 41,
+                        "phone_number": "+553****9999",
+                        "blocked": False,
+                        "contact_inboxes": [{"inbox": {"id": 1}}],
+                    },
+                ],
+            },
+            request=httpx.Request("GET", "https://chatwoot.test"),
+        ),
+    )
+
+    contact_id = _run(_chatwoot(transport).find_contact_by_phone(
+        inbox_id=1,
+        phone_number="+553****9999",
+    ))
+
+    assert contact_id == 41
+    assert transport.query_params[0] == {"q": "+553****9999"}
+
+
+def test_find_contact_by_phone_returns_none_for_empty_result() -> None:
+    transport = MockTransport()
+    transport.set(
+        "/api/v1/accounts/1/contacts/search",
+        httpx.Response(
+            200,
+            json={"payload": []},
+            request=httpx.Request("GET", "https://chatwoot.test"),
+        ),
+    )
+
+    contact_id = _run(_chatwoot(transport).find_contact_by_phone(
+        inbox_id=1,
+        phone_number="+553****9999",
+    ))
+
+    assert contact_id is None
+
+
+def test_find_contact_by_phone_rejects_blocked_match() -> None:
+    transport = MockTransport()
+    transport.set(
+        "/api/v1/accounts/1/contacts/search",
+        httpx.Response(
+            200,
+            json={
+                "payload": [
+                    {
+                        "id": 41,
+                        "phone_number": "+553****9999",
+                        "blocked": True,
+                        "contact_inboxes": [{"inbox": {"id": 1}}],
+                    },
+                ],
+            },
+            request=httpx.Request("GET", "https://chatwoot.test"),
+        ),
+    )
+
+    with pytest.raises(ChatwootProtocolError, match="contact_blocked"):
+        _run(_chatwoot(transport).find_contact_by_phone(
+            inbox_id=1,
+            phone_number="+553****9999",
+        ))
+
+
+def test_find_contact_by_phone_rejects_non_positive_id() -> None:
+    transport = MockTransport()
+    transport.set(
+        "/api/v1/accounts/1/contacts/search",
+        httpx.Response(
+            200,
+            json={
+                "payload": [
+                    {
+                        "id": 0,
+                        "phone_number": "+553****9999",
+                        "blocked": False,
+                        "contact_inboxes": [{"inbox": {"id": 1}}],
+                    },
+                ],
+            },
+            request=httpx.Request("GET", "https://chatwoot.test"),
+        ),
+    )
+
+    with pytest.raises(ChatwootProtocolError, match="invalid_contact_search_result"):
+        _run(_chatwoot(transport).find_contact_by_phone(
+            inbox_id=1,
+            phone_number="+553****9999",
+        ))
+
+
+def test_find_contact_by_phone_rejects_malformed_nonmatching_row() -> None:
+    transport = MockTransport()
+    transport.set(
+        "/api/v1/accounts/1/contacts/search",
+        httpx.Response(
+            200,
+            json={"payload": [{"id": 41, "blocked": False, "contact_inboxes": []}]},
+            request=httpx.Request("GET", "https://chatwoot.test"),
+        ),
+    )
+
+    with pytest.raises(ChatwootProtocolError, match="invalid_contact_search_result"):
+        _run(_chatwoot(transport).find_contact_by_phone(
+            inbox_id=1,
+            phone_number="+553****9999",
+        ))
+
+
+def test_find_contact_by_phone_rejects_distinct_exact_matches() -> None:
+    transport = MockTransport()
+    transport.set(
+        "/api/v1/accounts/1/contacts/search",
+        httpx.Response(
+            200,
+            json={
+                "payload": [
+                    {
+                        "id": 41,
+                        "phone_number": "+553****9999",
+                        "blocked": False,
+                        "contact_inboxes": [{"inbox": {"id": 1}}],
+                    },
+                    {
+                        "id": 42,
+                        "phone_number": "+553****9999",
+                        "blocked": False,
+                        "contact_inboxes": [{"inbox": {"id": 2}}],
+                    },
+                ],
+            },
+            request=httpx.Request("GET", "https://chatwoot.test"),
+        ),
+    )
+
+    with pytest.raises(ChatwootProtocolError, match="ambiguous_contact_match"):
+        _run(_chatwoot(transport).find_contact_by_phone(
+            inbox_id=1,
+            phone_number="+553****9999",
+        ))
 
 
 def test_create_contact_returns_contact_id() -> None:
@@ -224,6 +379,15 @@ def test_send_first_message_raises_without_agent_bot() -> None:
 
 def test_evolution_sender_sends_first_touch() -> None:
     transport = MockTransport()
+    # search_contact → no existing contact
+    transport.set(
+        "/api/v1/accounts/1/contacts/search",
+        httpx.Response(
+            200,
+            json={"payload": []},
+            request=httpx.Request("GET", "https://chatwoot.test"),
+        ),
+    )
     # create_contact
     transport.set(
         "/api/v1/accounts/1/contacts",
@@ -265,6 +429,58 @@ def test_evolution_sender_sends_first_touch() -> None:
     assert result.message_id == 888
 
 
+def test_evolution_sender_reuses_existing_contact() -> None:
+    transport = MockTransport()
+    transport.set(
+        "/api/v1/accounts/1/contacts/search",
+        httpx.Response(
+            200,
+            json={
+                "payload": [
+                    {
+                        "id": 55,
+                        "phone_number": "+15555550100",
+                        "blocked": False,
+                        "contact_inboxes": [{"inbox": {"id": 1}}],
+                    },
+                ],
+            },
+            request=httpx.Request("GET", "https://chatwoot.test"),
+        ),
+    )
+    transport.set(
+        "/api/v1/accounts/1/conversations",
+        httpx.Response(
+            200,
+            json={"id": 200},
+            request=httpx.Request("POST", "https://chatwoot.test"),
+        ),
+    )
+    transport.set(
+        "/api/v1/accounts/1/conversations/200/messages",
+        httpx.Response(
+            200,
+            json={"id": 888, "message_type": 1, "private": False, "content": "¡Hola!"},
+            request=httpx.Request("POST", "https://chatwoot.test"),
+        ),
+    )
+    sender = EvolutionMessageSender(chatwoot=_chatwoot(transport), inbox_id=1)
+
+    result = _run(sender.send_first_touch(
+        phone="15555550100",
+        buyer_name="Test Buyer",
+        buyer_email="buyer@test.com",
+        content="¡Hola!",
+        delivery_id="evt-existing",
+    ))
+
+    assert result.status == "sent", result.reason
+    assert not any(
+        method == "POST" and path == "/api/v1/accounts/1/contacts"
+        for method, path, _ in transport.requests
+    )
+
+
 def test_evolution_sender_blocks_on_invalid_phone() -> None:
     client = _chatwoot(MockTransport())
     sender = EvolutionMessageSender(chatwoot=client, inbox_id=1)
@@ -281,6 +497,14 @@ def test_evolution_sender_blocks_on_invalid_phone() -> None:
 
 def test_evolution_sender_fails_on_chatwoot_error() -> None:
     transport = MockTransport()
+    transport.set(
+        "/api/v1/accounts/1/contacts/search",
+        httpx.Response(
+            200,
+            json={"payload": []},
+            request=httpx.Request("GET", "https://chatwoot.test"),
+        ),
+    )
     # create_contact returns 500
     transport.set(
         "/api/v1/accounts/1/contacts",
@@ -296,3 +520,25 @@ def test_evolution_sender_fails_on_chatwoot_error() -> None:
         delivery_id="evt-003",
     ))
     assert result.status == "failed"
+    assert result.reason == "chatwoot_http_error"
+
+
+def test_evolution_sender_sanitizes_search_http_error() -> None:
+    transport = MockTransport()
+    transport.set(
+        "/api/v1/accounts/1/contacts/search",
+        httpx.Response(500, request=httpx.Request("GET", "https://chatwoot.test")),
+    )
+    sender = EvolutionMessageSender(chatwoot=_chatwoot(transport), inbox_id=1)
+
+    result = _run(sender.send_first_touch(
+        phone="15555550100",
+        buyer_name="Test",
+        buyer_email="test@test.com",
+        content="¡Hola!",
+        delivery_id="evt-http-error",
+    ))
+
+    assert result.status == "failed"
+    assert result.reason == "chatwoot_http_error"
+    assert "15555550100" not in result.reason
