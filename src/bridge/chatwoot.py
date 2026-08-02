@@ -435,11 +435,17 @@ class ChatwootClient:
             raise ChatwootProtocolError("invalid_json") from exc
         if not isinstance(payload, dict):
             raise ChatwootProtocolError("invalid_contact_payload")
-        contact = payload.get("payload")
-        if not isinstance(contact, dict):
-            # Chatwoot may return the contact directly without a "payload" key
-            contact = payload
-        contact_id = contact.get("id")
+        contact_id = payload.get("id")
+        embedded = payload.get("payload")
+        if not isinstance(contact_id, int) or isinstance(contact_id, bool):
+            if isinstance(embedded, dict):
+                contact_id = embedded.get("id")
+            elif (
+                isinstance(embedded, list)
+                and embedded
+                and isinstance(embedded[0], dict)
+            ):
+                contact_id = embedded[0].get("id")
         if not isinstance(contact_id, int) or isinstance(contact_id, bool):
             raise ChatwootProtocolError("invalid_contact_id")
         return contact_id

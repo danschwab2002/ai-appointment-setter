@@ -109,6 +109,27 @@ def test_create_contact_handles_direct_response() -> None:
     assert contact_id == 77
 
 
+def test_create_contact_handles_official_payload_list_response() -> None:
+    transport = MockTransport()
+    transport.set(
+        "/api/v1/accounts/1/contacts",
+        httpx.Response(
+            200,
+            json={"payload": [{"id": 88, "name": "Test"}]},
+            request=httpx.Request("POST", "https://chatwoot.test"),
+        ),
+    )
+    client = _chatwoot(transport)
+
+    contact_id = _run(client.create_contact(
+        inbox_id=1,
+        name="Test",
+        phone_number="+553****9999",
+    ))
+
+    assert contact_id == 88
+
+
 def test_create_contact_raises_on_invalid_id() -> None:
     transport = MockTransport()
     transport.set(
