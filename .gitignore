@@ -5,3 +5,4 @@ __pycache__/
 .hermes/
 *.py[cod]
 data/
+tests/sql/followup_engine/node_modules/
