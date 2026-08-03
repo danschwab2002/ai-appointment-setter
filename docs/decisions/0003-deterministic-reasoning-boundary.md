@@ -1,7 +1,13 @@
 # ADR-0003: Frontera determinista–razonamiento en la recuperación de carrito
 
-- **Estado:** Aceptada
+- **Estado:** Aceptada; parcialmente supersedida por ADR-0007
 - **Fecha:** 2026-07-31
+
+> **Nota de supersesión:** ADR-0007 conserva la separación entre hechos
+> determinísticos y razonamiento, pero reemplaza la autoridad que esta decisión
+> asignaba al agente sobre enviar, esperar o abstenerse. El bridge autoriza la
+> acción ejecutable; Hermes propone estrategia y redacción dentro de las
+> alternativas seguras.
 
 ## Contexto
 

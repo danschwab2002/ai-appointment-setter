@@ -1,4 +1,4 @@
-# ADR-0004: Empaquetado reproducible y aislamiento por cliente
+# ADR-0005: Empaquetado reproducible y aislamiento por cliente
 
 - **Estado:** Aceptada como arquitectura objetivo
 - **Fecha:** 2026-07-31

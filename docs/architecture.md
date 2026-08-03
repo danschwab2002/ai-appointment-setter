@@ -58,6 +58,9 @@ AgentBot y marcador idempotente.
 - [ADR-0002: Detección y señalización de intervención humana](decisions/0002-human-takeover-detection.md)
 - [ADR-0003: Frontera determinista–razonamiento en la recuperación de carrito](decisions/0003-deterministic-reasoning-boundary.md)
 - [ADR-0004: Capa de mensajería abstraída para soportar migración Evolution → WABA](decisions/0004-messaging-layer-abstraction.md)
+- [ADR-0005: Empaquetado reproducible y aislamiento por cliente](decisions/0005-reproducible-client-deployments.md)
+- [ADR-0006: Superficie de producto de tres agentes](decisions/0006-three-agent-product-surface.md)
+- [ADR-0007: Motor durable de próxima acción](decisions/0007-durable-next-action-engine.md)
 
 ## Estado operativo
 

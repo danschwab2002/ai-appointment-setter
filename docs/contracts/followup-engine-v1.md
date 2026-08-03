@@ -1,0 +1,572 @@
+# Contrato conceptual V1: motor de seguimientos
+
+- **Estado:** aceptado como contrato conceptual; pendiente de esquema físico
+- **Fecha:** 2026-08-03
+- **ADR:** [ADR-0007](../decisions/0007-durable-next-action-engine.md)
+- **Alcance:** recuperación de carrito y primer contacto durable
+
+Este documento define significados, invariantes y transiciones. No fija todavía
+nombres de tablas, SQL, endpoints ni payloads definitivos.
+
+## 1. Principios contractuales
+
+1. Postgres conserva la planificación y el estado operativo canónico.
+2. Chatwoot conserva la realidad conversacional y la aceptación del mensaje.
+3. Hotmart conserva la realidad de abandono y compra.
+4. Hermes propone estrategia o contenido, pero no autoriza efectos.
+5. Toda acción vencida debe reevaluarse antes de ejecutar.
+6. Sólo existe una próxima acción materializada por caso.
+7. Toda política publicada es inmutable.
+8. Toda transición durable es idempotente y auditable.
+9. Un resultado externo incierto bloquea nuevos envíos de la secuencia.
+10. Ningún contrato contiene PII innecesaria en logs o auditoría.
+
+## 2. Política publicada
+
+Una política define comportamiento comercial versionado.
+
+```text
+PolicyVersion
+  policy_key
+  version
+  status
+  purpose
+  timezone
+  business_windows
+  grace_period
+  expires_after
+  max_automatic_messages
+  steps[]
+  approved_by
+  approved_at
+  published_at
+```
+
+### Invariantes
+
+- `policy_key + version` es único.
+- Sólo `published` puede iniciar secuencias.
+- Una versión `published` no se edita.
+- Cada paso declara su demora, tipo de acción y condición de vigencia.
+- Horarios y tiempos son configuración, no constantes del motor.
+- Hermes o Automation Expert pueden proponer; no pueden publicar.
+
+### Política inicial de prueba
+
+```text
+purpose: cart_recovery
+business timezone: tenant timezone
+business window: Monday-Saturday 09:00-19:00
+grace period: 1 hour
+step 1: first_contact
+step 2: no_reply_followup after 24 hours
+step 3: no_reply_followup after 72 hours
+max automatic messages: 3
+sequence expiry: 7 days from abandonment
+```
+
+## 3. Caso comercial
+
+Un caso representa un objetivo comercial, no una espera concreta.
+
+```text
+CommercialCase
+  case_id
+  purpose
+  status
+  source
+  source_subject_key
+  contact_id
+  conversation_id?
+  policy_key
+  policy_version
+  created_at
+  updated_at
+  terminal_reason?
+  revision
+```
+
+### Estados mínimos
+
+```text
+grace_period -> active | won | cancelled | expired | escalated
+active -> won | lost | cancelled | expired | escalated | sequence_exhausted
+```
+
+### Invariantes
+
+- Una compra correlacionada inequívocamente puede mover el caso a `won`.
+- Una respuesta no cierra automáticamente el caso.
+- Un caso terminal no se reabre silenciosamente.
+- Mismo producto/oferta con caso abierto actualiza ese caso.
+- Otro producto/oferta o caso terminal puede crear un caso nuevo.
+
+## 4. Instancia de secuencia
+
+Una secuencia aplica una versión de política a un caso.
+
+```text
+SequenceInstance
+  sequence_id
+  case_id
+  policy_key
+  policy_version
+  purpose
+  status
+  current_step
+  anchor
+  automatic_messages_accepted
+  started_at
+  updated_at
+  completed_at?
+  completion_reason?
+  revision
+```
+
+### Estados mínimos
+
+```text
+active -> paused | completed | cancelled | failed
+paused -> active | cancelled | failed
+```
+
+### Invariantes
+
+- El MVP permite una secuencia activa por caso.
+- La secuencia conserva su versión de política hasta terminar.
+- `delivery_unknown` en un intento bloquea el avance.
+- Reanudar después de human takeover crea planificación nueva.
+
+## 5. Ancla de vigencia
+
+El ancla identifica el hecho que una acción espera que siga vigente.
+
+```text
+ActionAnchor
+  type
+  subject_internal_id
+  observed_at
+  checkpoint
+```
+
+Tipos iniciales:
+
+```text
+cart_abandonment
+accepted_outbound_message
+requested_contact_time
+```
+
+Para `no_reply`, la condición inicial es:
+
+```text
+No existe un mensaje entrante posterior al accepted_outbound_message anclado.
+```
+
+El checkpoint es evidencia concreta —por ejemplo, ID interno y timestamp—, no una
+promesa de snapshot distribuido sobre Chatwoot.
+
+## 6. Acción programada
+
+Una acción representa «reevaluar en este momento», no «enviar».
+
+```text
+ScheduledAction
+  action_id
+  case_id
+  sequence_id
+  policy_key
+  policy_version
+  step_key
+  action_type
+  due_at
+  next_attempt_at?
+  expires_at
+  anchor
+  status
+  idempotency_key
+  attempt_count
+  lease_owner?
+  lease_generation?
+  lease_expires_at?
+  created_at
+  updated_at
+  terminal_reason?
+```
+
+### Estados durables mínimos
+
+```text
+pending
+deferred
+retryable_failed
+delivery_unknown
+accepted_by_chatwoot
+cancelled
+skipped
+expired
+permanent_failed
+superseded
+```
+
+El claim se representa mediante campos de lease y no necesita ser un estado de
+negocio independiente.
+
+### Invariantes
+
+- Sólo una acción comercial viva —`pending`, `deferred`, `retryable_failed` o
+  `delivery_unknown`— por secuencia.
+- `idempotency_key` identifica una intención lógica estable.
+- Una acción terminal nunca vuelve a `pending`.
+- Diferir o reintentar conserva la misma acción e idempotency key. Un
+  diferimiento comercial puede actualizar `due_at`; un retry técnico utiliza
+  `next_attempt_at` con backoff.
+- Sólo reemplazar el objetivo o paso crea una sucesora y marca la anterior
+  `superseded`.
+- Un lease expirado permite reclamar de nuevo la misma acción.
+- Sólo la generación vigente puede confirmar una transición en Postgres.
+
+## 7. Decisión de reevaluación
+
+El bridge devuelve una decisión estructurada:
+
+```text
+ReevaluationDecision
+  action_id
+  decision
+  reason_code
+  evaluated_at
+  case_revision
+  sequence_revision
+  conversation_checkpoint?
+  replacement_due_at?
+  replacement_step_key?
+  escalation_type?
+```
+
+Valores permitidos:
+
+```text
+execute
+defer
+replace
+cancel
+skip
+pause
+expire
+escalate
+```
+
+### Efectos
+
+| Decisión | Acción actual | Secuencia | Acción sucesora |
+|---|---|---|---|
+| `execute` | reserva e inicia intento; todavía no terminaliza | continúa | sólo después del resultado externo |
+| `defer` | misma acción con `due_at` o `next_attempt_at` nuevo | continúa | ninguna |
+| `replace` | `superseded` | continúa | otro paso o intención |
+| `cancel` | `cancelled` | puede completar | ninguna salvo nuevo disparador |
+| `skip` | `skipped` | avanza o completa | según política |
+| `pause` | `cancelled` | `paused` | ninguna automática |
+| `expire` | `expired` | `completed` o `failed` según política | ninguna |
+| `escalate` | `cancelled` o bloqueada | `paused` o `failed` según causa | tarea explícita de revisión |
+
+## 8. Precedencia de guardas
+
+El orden conceptual de reevaluación es:
+
+```text
+1. opt-out, bloqueo o restricción legal conocida
+2. compra autoritativa conocida
+3. human takeover o pausa
+4. integridad de identidad, destino y estado canónico
+5. política, step y revisiones vigentes
+6. respuesta posterior al ancla
+7. límites de frecuencia y modalidad de canal
+8. horario y expiración
+9. elegibilidad comercial
+10. propuesta de Hermes
+11. validación final cercana al efecto
+```
+
+Una guarda bloqueante no puede ser revocada por una decisión posterior ni por
+Hermes. Las restricciones globales ya conocidas —por ejemplo, opt-out— se aplican
+aunque otra validación falle. Si no puede establecerse con certeza a qué persona
+corresponde una restricción, la incertidumbre tampoco habilita el envío.
+
+### Resultados típicos
+
+| Hecho actual | Resultado |
+|---|---|
+| compra correlacionada | cancelar acción, completar secuencia, ganar caso |
+| opt-out | cancelar acción y automatización aplicable |
+| human takeover | cancelar acción y pausar secuencia |
+| respuesta posterior al ancla | cancelar acción y completar `no_reply` |
+| permiso desconocido | escalar sin enviar |
+| fuera de horario | diferir la misma acción hasta la próxima ventana |
+| identidad conflictiva | escalar sin enviar |
+| política o step obsoletos | reemplazar o cancelar |
+
+## 9. Intento de efecto externo
+
+Cada ejecución saliente crea evidencia durable antes del request.
+
+```text
+DeliveryAttempt
+  attempt_id
+  action_id
+  idempotency_key
+  attempt_number
+  channel
+  mode
+  started_at
+  outcome
+  remote_message_id?
+  accepted_at?
+  reason_code?
+  reconciliation_deadline?
+```
+
+Modos de contenido:
+
+```text
+freeform
+approved_template
+```
+
+Resultados mínimos:
+
+```text
+accepted_by_chatwoot
+rejected
+failed_before_request
+delivery_unknown
+```
+
+### Invariantes
+
+- `accepted_by_chatwoot` no significa entregado ni leído.
+- Un request ambiguo produce `delivery_unknown`.
+- `delivery_unknown` no se reintenta automáticamente.
+- La reconciliación busca un marcador estable durante una ventana acotada.
+- Si no puede probarse aplicado o no aplicado, requiere intervención.
+- `ALLOWED_WHATSAPP_JID` sigue siendo obligatorio durante pruebas.
+
+## 10. Operaciones transaccionales conceptuales
+
+### 10.1. Planificar recuperación
+
+Entrada:
+
+```text
+authenticated abandonment event
+resolved identity
+published policy version
+```
+
+Efecto atómico:
+
+```text
+crear o actualizar caso
+crear secuencia si corresponde
+crear primera acción
+registrar evento de auditoría
+```
+
+Repetir la misma entrada no crea una segunda intención lógica.
+
+### 10.2. Reclamar acciones vencidas
+
+Entrada:
+
+```text
+worker id
+now
+lease duration
+batch size
+```
+
+Efecto atómico:
+
+```text
+seleccionar pending/deferred/retryable_failed cuya fecha elegible <= now
+usar next_attempt_at para retry técnico y due_at para evaluación comercial
+ignorar leases vigentes
+asignar owner, generation y expiry
+retornar acciones reclamadas
+```
+
+`delivery_unknown` no vuelve al dispatcher normal: lo procesa la reconciliación.
+
+### 10.3. Aplicar reevaluación o reservar intento
+
+Entrada:
+
+```text
+action id
+lease generation
+expected revisions
+decision
+```
+
+Efecto atómico:
+
+```text
+verificar lease y revisiones
+si decision != execute:
+  aplicar la transición correspondiente
+  conservar la misma acción para defer
+  crear una sucesora sólo para replace
+si decision == execute:
+  reservar ledger e intento con idempotency key estable
+  conservar la acción no terminal hasta conocer el resultado externo
+registrar auditoría
+```
+
+### 10.4. Confirmar resultado externo
+
+Entrada:
+
+```text
+action id
+attempt id
+lease generation
+delivery outcome
+remote message id?
+```
+
+Efecto atómico:
+
+```text
+accepted_by_chatwoot:
+  terminalizar acción como accepted_by_chatwoot
+  avanzar current_step una sola vez
+  crear como máximo la próxima acción comercial
+failed_before_request o rejected:
+  marcar retryable_failed con next_attempt_at o permanent_failed según política
+delivery_unknown:
+  marcar action e intento delivery_unknown
+  bloquear avance y retry automático
+registrar auditoría
+```
+
+### 10.5. Reconciliar resultado incierto
+
+```text
+mensaje encontrado inequívocamente:
+  finalizar como accepted_by_chatwoot y avanzar una sola vez
+no aplicado demostrado por el contrato observado:
+  marcar retryable_failed con next_attempt_at
+resultado todavía indeterminado al vencer la ventana:
+  conservar evidencia delivery_unknown
+  pausar la secuencia y escalar
+```
+
+### 10.6. Registrar respuesta entrante
+
+Efecto esperado:
+
+```text
+persistir checkpoint conversacional
+cancelar acción no_reply posterior al ancla
+completar secuencia con reason = replied
+mantener caso comercial abierto
+```
+
+La reevaluación previa al envío repite esta guarda por si el webhook llegó tarde o
+falló.
+
+### 10.7. Registrar compra
+
+Efecto esperado:
+
+```text
+persistir evento autenticado y deduplicado
+correlacionar inequívocamente
+marcar caso won
+completar secuencia con reason = purchased
+cancelar acción pendiente
+registrar auditoría
+```
+
+Una correlación ambigua no ejecuta el cierre automático.
+
+## 11. Autoridad de fuentes
+
+| Hecho | Fuente autoritativa |
+|---|---|
+| realidad de abandono, compra y reversión conocida por el motor | eventos autenticados de Hotmart persistidos y correlacionados |
+| contactos, IDs y orden de conversaciones, inbox, asignación, etiquetas, mensajes, timestamps y capacidad actual de responder | Chatwoot |
+| planificación y política | Supabase/Postgres |
+| permiso de contacto | estado estructurado en Supabase con procedencia |
+| autorización ejecutable | bridge |
+| estrategia y redacción | Hermes dentro de límites |
+| aceptación del mensaje | respuesta o reconciliación contra Chatwoot |
+
+La autoridad del proveedor y la proyección conocida por el motor no son lo mismo.
+El motor sólo puede actuar sobre eventos Hotmart autenticados y persistidos y
+sobre checkpoints de Chatwoot obtenidos correctamente. «No hay compra/respuesta
+conocida hasta este checkpoint» no prueba que el hecho no esté ocurriendo en ese
+instante.
+
+Incluso después de la validación final existe una ventana residual entre leer el
+estado y completar el request externo. El contrato reduce esa carrera mediante
+reevaluación cercana al efecto; no promete eliminarla.
+
+## 12. Auditoría mínima
+
+Cada transición registra:
+
+```text
+event_type
+occurred_at
+actor_type
+internal case/sequence/action ids
+policy key/version
+from_status
+to_status
+reason_code
+attempt id?
+lease generation?
+```
+
+No registra teléfonos, emails, nombres, contenido, payloads completos, tokens,
+firmas ni URLs de búsqueda con PII.
+
+## 13. Alcance V1 y aspectos diferidos
+
+Incluido:
+
+- primer contacto durable;
+- grace period;
+- no respuesta;
+- dos follow-ups configurables;
+- compra, respuesta, opt-out y human takeover;
+- horario de negocio;
+- claims recuperables;
+- resultado remoto incierto;
+- política publicada e inmutable.
+
+Diferido:
+
+- arbitraje global entre casos;
+- frecuencia global sofisticada por contacto;
+- múltiples pollers salvo necesidad real;
+- WABA hasta tener inbox y templates;
+- otros propósitos fuera de recuperación de carrito;
+- migración automática entre versiones;
+- workflow engine genérico.
+
+## 14. Contratos físicos todavía pendientes
+
+Antes de implementar deben definirse y probarse:
+
+1. baseline versionado del esquema Supabase actual;
+2. payload, identificadores y correlación de compra Hotmart, además de los
+   contratos reales de reembolso, disputa y otras reversiones;
+3. esquema físico de autorización por canal y propósito;
+4. firmas concretas de RPC y constraints SQL;
+5. marcador y límites reales de reconciliación Chatwoot;
+6. códigos de razón y métricas operativas definitivos.
+
+Estos puntos concretan este contrato; no reabren las decisiones de ADR-0007 salvo
+que la investigación demuestre una incompatibilidad real.

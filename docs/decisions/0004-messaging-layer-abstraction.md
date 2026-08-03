@@ -1,7 +1,12 @@
 # ADR-0004: Capa de mensajería abstraída para soportar migración Evolution → WABA
 
-- **Estado:** Aceptada
+- **Estado:** Aceptada; parcialmente supersedida por ADR-0007
 - **Fecha:** 2026-07-31
+
+> **Nota de supersesión:** ADR-0007 conserva Chatwoot como frontera de canal,
+> pero reemplaza el contrato único propuesto para WABA por dos modalidades:
+> texto libre cuando la ventana lo permite y template aprobado cuando resulta
+> obligatorio.
 
 ## Contexto
 

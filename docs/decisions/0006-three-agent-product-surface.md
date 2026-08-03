@@ -30,7 +30,7 @@ por sí solo un sandbox. Las autorizaciones finales deben permanecer en APIs y
 servicios determinísticos externos al modelo.
 
 ADR-0001 establece que el agente comercial razona y el bridge conserva la
-autorización operativa. ADR-0004 establece el aislamiento por cliente, el
+autorización operativa. ADR-0005 establece el aislamiento por cliente, el
 empaquetado reproducible de profiles y una superficie funcional acotada. Esta
 decisión completa la definición del producto identificando los agentes que el
 cliente recibe.
