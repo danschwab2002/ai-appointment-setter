@@ -35,7 +35,7 @@ from bridge.security import verify_chatwoot_signature
 from bridge.supabase import SupabaseClient, SupabaseError
 from bridge.messaging import EvolutionMessageSender, MessageSender
 from bridge.recovery_agent import RecoveryAgentClient
-from bridge.worker import ResolutionWorker
+from bridge.worker import DurableDispatcher, ResolutionWorker
 
 
 class ChatwootControl(Protocol):
@@ -99,6 +99,13 @@ class Settings:
     worker_enabled: bool = False
     chatwoot_inbox_id: int | None = None
     messaging_channel: str = "evolution"
+    followup_policy_key: str | None = None
+    followup_policy_version: int | None = None
+    dispatcher_enabled: bool = False
+    dispatcher_worker_id: str | None = None
+    dispatcher_poll_interval_seconds: float = 5.0
+    dispatcher_batch_size: int = 10
+    dispatcher_outbound_enabled: bool = False
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -184,6 +191,30 @@ class Settings:
         chatwoot_inbox_id_raw = os.getenv("CHATWOOT_INBOX_ID", "").strip()
         chatwoot_inbox_id = int(chatwoot_inbox_id_raw) if chatwoot_inbox_id_raw else None
         messaging_channel = os.getenv("MESSAGING_CHANNEL", "evolution").strip().lower()
+        followup_policy_key = os.getenv("FOLLOWUP_POLICY_KEY", "").strip() or None
+        followup_policy_version_raw = os.getenv(
+            "FOLLOWUP_POLICY_VERSION", ""
+        ).strip()
+        followup_policy_version = (
+            int(followup_policy_version_raw)
+            if followup_policy_version_raw
+            else None
+        )
+        dispatcher_enabled = (
+            os.getenv("DURABLE_DISPATCHER_ENABLED", "false").lower() == "true"
+        )
+        dispatcher_worker_id = (
+            os.getenv("DURABLE_DISPATCHER_WORKER_ID", "").strip() or None
+        )
+        dispatcher_poll_interval_seconds = float(
+            os.getenv("DURABLE_DISPATCHER_POLL_INTERVAL", "5.0")
+        )
+        dispatcher_batch_size = int(
+            os.getenv("DURABLE_DISPATCHER_BATCH_SIZE", "10")
+        )
+        dispatcher_outbound_enabled = (
+            os.getenv("DURABLE_OUTBOUND_ENABLED", "false").lower() == "true"
+        )
 
         return cls(
             webhook_secret=os.environ["CHATWOOT_WEBHOOK_SECRET"],
@@ -214,6 +245,13 @@ class Settings:
             worker_enabled=worker_enabled,
             chatwoot_inbox_id=chatwoot_inbox_id,
             messaging_channel=messaging_channel,
+            followup_policy_key=followup_policy_key,
+            followup_policy_version=followup_policy_version,
+            dispatcher_enabled=dispatcher_enabled,
+            dispatcher_worker_id=dispatcher_worker_id,
+            dispatcher_poll_interval_seconds=dispatcher_poll_interval_seconds,
+            dispatcher_batch_size=dispatcher_batch_size,
+            dispatcher_outbound_enabled=dispatcher_outbound_enabled,
         )
 
 
@@ -344,12 +382,23 @@ def create_app(
             service_role_key=settings.supabase_service_role_key,
         )
 
-    # Build the resolution worker if Supabase is configured and enabled.
+    # Build background workers only when explicitly enabled.
     resolution_worker: ResolutionWorker | None = None
+    durable_dispatcher: DurableDispatcher | None = None
+    if settings.worker_enabled and shared_supabase is None:
+        raise ValueError("Supabase is required when RESOLUTION_WORKER_ENABLED=true")
     if (
         settings.worker_enabled
         and shared_supabase is not None
     ):
+        if (
+            settings.followup_policy_key is None
+            or settings.followup_policy_version is None
+        ):
+            raise ValueError(
+                "FOLLOWUP_POLICY_KEY and FOLLOWUP_POLICY_VERSION are required "
+                "when RESOLUTION_WORKER_ENABLED=true"
+            )
         recovery_agent = recovery_agent_client
         if (
             recovery_agent is None
@@ -384,18 +433,98 @@ def create_app(
             recovery_agent=recovery_agent,
             message_sender=sender,
             allowed_jid=settings.allowed_jid,
+            policy_key=settings.followup_policy_key,
+            policy_version=settings.followup_policy_version,
+        )
+
+    if settings.dispatcher_enabled:
+        if shared_supabase is None:
+            raise ValueError(
+                "Supabase is required when DURABLE_DISPATCHER_ENABLED=true"
+            )
+        if settings.dispatcher_worker_id is None:
+            raise ValueError(
+                "DURABLE_DISPATCHER_WORKER_ID is required when "
+                "DURABLE_DISPATCHER_ENABLED=true"
+            )
+        if not isinstance(control_client, ChatwootClient):
+            raise ValueError(
+                "Chatwoot control API is required when "
+                "DURABLE_DISPATCHER_ENABLED=true"
+            )
+        if settings.chatwoot_account_id is None:
+            raise ValueError(
+                "CHATWOOT_ACCOUNT_ID is required when "
+                "DURABLE_DISPATCHER_ENABLED=true"
+            )
+        if settings.dispatcher_poll_interval_seconds <= 0:
+            raise ValueError("DURABLE_DISPATCHER_POLL_INTERVAL must be positive")
+        if not 1 <= settings.dispatcher_batch_size <= 100:
+            raise ValueError("DURABLE_DISPATCHER_BATCH_SIZE must be between 1 and 100")
+        outbound_agent: RecoveryAgentClient | None = None
+        outbound_sender: MessageSender | None = None
+        if settings.dispatcher_outbound_enabled:
+            outbound_agent = recovery_agent_client
+            if (
+                outbound_agent is None
+                and settings.hermes_api_base_url is not None
+                and settings.hermes_api_key is not None
+            ):
+                outbound_agent = RecoveryAgentClient(
+                    base_url=settings.hermes_api_base_url,
+                    api_key=settings.hermes_api_key,
+                    model_name=settings.hermes_model_name,
+                    proposals_dir=Path(
+                        os.getenv("RECOVERY_PROPOSALS_DIR", "./data/recovery")
+                    ),
+                )
+            outbound_sender = message_sender
+            if (
+                outbound_sender is None
+                and settings.messaging_channel == "evolution"
+                and settings.chatwoot_inbox_id is not None
+                and isinstance(control_client, ChatwootClient)
+            ):
+                outbound_sender = EvolutionMessageSender(
+                    chatwoot=control_client,
+                    inbox_id=settings.chatwoot_inbox_id,
+                    allowed_jid=settings.allowed_jid,
+                )
+            if outbound_agent is None or outbound_sender is None:
+                raise ValueError(
+                    "durable outbound requires Hermes and sender dependencies"
+                )
+        durable_dispatcher = DurableDispatcher(
+            supabase=shared_supabase,
+            worker_id=settings.dispatcher_worker_id,
+            poll_interval_seconds=settings.dispatcher_poll_interval_seconds,
+            batch_size=settings.dispatcher_batch_size,
+            chatwoot=control_client,
+            chatwoot_account_id=settings.chatwoot_account_id,
+            recovery_agent=outbound_agent,
+            sender=outbound_sender,
+            allowed_jid=(
+                settings.allowed_jid
+                if settings.dispatcher_outbound_enabled
+                else None
+            ),
         )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         if resolution_worker is not None:
             await resolution_worker.start()
+        if durable_dispatcher is not None:
+            await durable_dispatcher.start()
         yield
+        if durable_dispatcher is not None:
+            await durable_dispatcher.stop()
         if resolution_worker is not None:
             await resolution_worker.stop()
 
     app = FastAPI(title="AI Appointment Setter Bridge", lifespan=lifespan)
     app.state.resolution_worker = resolution_worker
+    app.state.durable_dispatcher = durable_dispatcher
 
     async def run_shadow_with_canonical_history(
         *,

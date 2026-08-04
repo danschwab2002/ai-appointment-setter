@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import stat
 import tempfile
 from itertools import product
 from pathlib import Path
@@ -14,10 +16,13 @@ import pytest
 
 from bridge.recovery_agent import (
     _RECOVERY_DECISION_POLICY,
+    FollowupMessageProposal,
     RecoveryAgentClient,
+    is_valid_followup_message_proposal,
     is_valid_recovery_proposal,
     required_recovery_decision,
 )
+from bridge.supabase import FollowupExecutionContext
 
 
 # ── Proposal validation ─────────────────────────────────────────────
@@ -126,6 +131,36 @@ def test_rejects_extra_field() -> None:
     proposal = _valid_proposal()
     proposal["extra"] = "nope"
     assert is_valid_recovery_proposal(proposal) is False
+
+
+@pytest.mark.parametrize(
+    ("proposal", "expected"),
+    [
+        (
+            {
+                "strategy": "abrir una conversación breve y consultiva",
+                "message": "Hola, ¿te quedó alguna duda sobre el programa?",
+            },
+            True,
+        ),
+        ({"strategy": "", "message": "Hola"}, False),
+        ({"strategy": "consultiva", "message": "   "}, False),
+        ({"strategy": "x" * 121, "message": "Hola"}, False),
+        ({"strategy": "consultiva", "message": "x" * 501}, False),
+        (
+            {
+                "strategy": "consultiva",
+                "message": "Hola",
+                "action": "send_message",
+            },
+            False,
+        ),
+    ],
+)
+def test_validates_bounded_followup_message_proposal(
+    proposal: dict[str, object], expected: bool
+) -> None:
+    assert is_valid_followup_message_proposal(proposal) is expected
 
 
 # ── RecoveryAgentClient ─────────────────────────────────────────────
@@ -292,6 +327,403 @@ def test_returns_proposal_when_agent_responds_valid() -> None:
     assert context["required_decision"] == {
         "action": "send_first_touch",
         "reason_code": "first_touch",
+    }
+
+
+def test_requests_bounded_durable_followup_message() -> None:
+    proposal = {
+        "strategy": "recordatorio consultivo",
+        "message": "Hola Ana, ¿te quedó alguna duda sobre Curso Uno?",
+    }
+    transport = _MockTransport(
+        body={"choices": [{"message": {"content": json.dumps(proposal)}}]}
+    )
+    execution_context = FollowupExecutionContext(
+        action_id="action-001",
+        action_type="first_contact_review",
+        step_key="first_contact",
+        recovery_case_id="case-001",
+        contact_id="contact-001",
+        source_event_id="event-001",
+        buyer_name="Ana",
+        buyer_email="ana@example.test",
+        buyer_phone="15555550100",
+        product_name="Curso Uno",
+        offer_code="OFERTA1",
+        current_goal="iniciar conversación",
+        lead_stage="new",
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        client = RecoveryAgentClient(
+            base_url="https://hermes.example.test/v1",
+            api_key="test-key",
+            model_name="agente-comercial",
+            proposals_dir=Path(tmp),
+            transport=transport,
+        )
+        result = _run(client.request_followup_message(
+            attempt_id="attempt-001",
+            execution_context=execution_context,
+        ))
+
+    assert result == FollowupMessageProposal(
+        strategy="recordatorio consultivo",
+        message="Hola Ana, ¿te quedó alguna duda sobre Curso Uno?",
+    )
+    request = transport.requests[0]
+    assert request.headers["Idempotency-Key"] == __import__("hashlib").sha256(
+        b"followup:attempt-001"
+    ).hexdigest()
+    request_body = json.loads(request.content)
+    agent_context = json.loads(request_body["messages"][0]["content"])
+    assert agent_context["execution_context"] == {
+        "action_type": "first_contact_review",
+        "step_key": "first_contact",
+        "buyer_name": "Ana",
+        "product_name": "Curso Uno",
+        "offer_code": "OFERTA1",
+        "current_goal": "iniciar conversación",
+        "lead_stage": "new",
+    }
+    serialized = json.dumps(agent_context)
+    assert "ana@example.test" not in serialized
+    assert "15555550100" not in serialized
+    assert "contact-001" not in serialized
+    assert agent_context["required_output"] == {
+        "strategy": "non-empty string, max 120 characters",
+        "message": "non-empty string, max 500 characters",
+    }
+
+
+def test_reuses_completed_durable_followup_proposal_without_second_agent_call() -> None:
+    proposal = {
+        "strategy": "recordatorio consultivo",
+        "message": "Hola Ana, ¿te quedó alguna duda?",
+    }
+    transport = _MockTransport(
+        body={"choices": [{"message": {"content": json.dumps(proposal)}}]}
+    )
+    execution_context = FollowupExecutionContext(
+        action_id="action-001",
+        action_type="first_contact_review",
+        step_key="first_contact",
+        recovery_case_id="case-001",
+        contact_id="contact-001",
+        source_event_id="event-001",
+        buyer_name="Ana",
+        buyer_email=None,
+        buyer_phone=None,
+        product_name="Curso Uno",
+        offer_code=None,
+        current_goal=None,
+        lead_stage="new",
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        client = RecoveryAgentClient(
+            base_url="https://hermes.example.test/v1",
+            api_key="test-key",
+            model_name="agente-comercial",
+            proposals_dir=Path(tmp),
+            transport=transport,
+        )
+        first = _run(client.request_followup_message(
+            attempt_id="attempt-replay",
+            execution_context=execution_context,
+        ))
+        replay = _run(client.request_followup_message(
+            attempt_id="attempt-replay",
+            execution_context=execution_context,
+        ))
+
+    assert first == replay == FollowupMessageProposal(**proposal)
+    assert len(transport.requests) == 1
+
+
+def test_serializes_concurrent_followup_requests_for_same_attempt() -> None:
+    proposal = {
+        "strategy": "recordatorio consultivo",
+        "message": "Hola Ana, ¿te quedó alguna duda?",
+    }
+
+    class DelayedTransport(_MockTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            await asyncio.sleep(0.05)
+            return await super().handle_async_request(request)
+
+    transport = DelayedTransport(
+        body={"choices": [{"message": {"content": json.dumps(proposal)}}]}
+    )
+    execution_context = FollowupExecutionContext(
+        action_id="action-001",
+        action_type="first_contact_review",
+        step_key="first_contact",
+        recovery_case_id="case-001",
+        contact_id="contact-001",
+        source_event_id="event-001",
+        buyer_name="Ana",
+        buyer_email=None,
+        buyer_phone=None,
+        product_name="Curso Uno",
+        offer_code=None,
+        current_goal=None,
+        lead_stage="new",
+    )
+
+    async def exercise(
+        client: RecoveryAgentClient,
+    ) -> tuple[FollowupMessageProposal | None, FollowupMessageProposal | None]:
+        return await asyncio.gather(
+            client.request_followup_message(
+                attempt_id="attempt-concurrent",
+                execution_context=execution_context,
+            ),
+            client.request_followup_message(
+                attempt_id="attempt-concurrent",
+                execution_context=execution_context,
+            ),
+        )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        client = RecoveryAgentClient(
+            base_url="https://hermes.example.test/v1",
+            api_key="test-key",
+            model_name="agente-comercial",
+            proposals_dir=Path(tmp),
+            transport=transport,
+        )
+        results = _run(exercise(client))
+
+    assert results == [FollowupMessageProposal(**proposal)] * 2
+    assert len(transport.requests) == 1
+
+
+def test_repeated_cancellation_waits_for_pending_file_lock() -> None:
+    proposal = {"strategy": "consultiva", "message": "Hola Ana"}
+
+    class HeldTransport(_MockTransport):
+        def __init__(self) -> None:
+            super().__init__(
+                body={"choices": [{"message": {"content": json.dumps(proposal)}}]}
+            )
+            self.entered = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            self.entered.set()
+            await self.release.wait()
+            return await super().handle_async_request(request)
+
+    transport = HeldTransport()
+    execution_context = FollowupExecutionContext(
+        action_id="action-001",
+        action_type="first_contact_review",
+        step_key="first_contact",
+        recovery_case_id="case-001",
+        contact_id="contact-001",
+        source_event_id="event-001",
+        buyer_name="Ana",
+        buyer_email=None,
+        buyer_phone=None,
+        product_name="Curso Uno",
+        offer_code=None,
+        current_goal=None,
+        lead_stage="new",
+    )
+
+    async def exercise(client: RecoveryAgentClient) -> None:
+        holder = asyncio.create_task(client.request_followup_message(
+            attempt_id="attempt-cancel",
+            execution_context=execution_context,
+        ))
+        await transport.entered.wait()
+        waiter = asyncio.create_task(client.request_followup_message(
+            attempt_id="attempt-cancel",
+            execution_context=execution_context,
+        ))
+        await asyncio.sleep(0.01)
+        waiter.cancel()
+        await asyncio.sleep(0.01)
+        waiter.cancel()
+        await asyncio.sleep(0.01)
+        assert waiter.done() is False
+        transport.release.set()
+        assert await holder == FollowupMessageProposal(**proposal)
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+
+    with tempfile.TemporaryDirectory() as tmp:
+        client = RecoveryAgentClient(
+            base_url="https://hermes.example.test/v1",
+            api_key="test-key",
+            model_name="agente-comercial",
+            proposals_dir=Path(tmp),
+            transport=transport,
+        )
+        _run(exercise(client))
+
+    assert len(transport.requests) == 1
+
+
+def test_replaces_schema_invalid_completed_followup_artifact() -> None:
+    valid = {
+        "strategy": "consultiva",
+        "message": "Hola Ana, ¿te puedo ayudar?",
+    }
+    transport = _MockTransport(
+        body={"choices": [{"message": {"content": json.dumps(valid)}}]}
+    )
+    execution_context = FollowupExecutionContext(
+        action_id="action-001",
+        action_type="first_contact_review",
+        step_key="first_contact",
+        recovery_case_id="case-001",
+        contact_id="contact-001",
+        source_event_id="event-001",
+        buyer_name="Ana",
+        buyer_email=None,
+        buyer_phone=None,
+        product_name="Curso Uno",
+        offer_code=None,
+        current_goal=None,
+        lead_stage="new",
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        proposals_dir = Path(tmp)
+        digest = __import__("hashlib").sha256(
+            b"followup:attempt-poisoned"
+        ).hexdigest()
+        poisoned_path = proposals_dir / f"{digest}.json"
+        poisoned_path.write_text(json.dumps({
+            "status": "completed",
+            "attempt_id": "attempt-poisoned",
+            "proposal": {"strategy": "", "message": "bad"},
+        }))
+        client = RecoveryAgentClient(
+            base_url="https://hermes.example.test/v1",
+            api_key="test-key",
+            model_name="agente-comercial",
+            proposals_dir=proposals_dir,
+            transport=transport,
+        )
+        result = _run(client.request_followup_message(
+            attempt_id="attempt-poisoned",
+            execution_context=execution_context,
+        ))
+        persisted = json.loads(poisoned_path.read_text())
+
+    assert result == FollowupMessageProposal(**valid)
+    assert len(transport.requests) == 1
+    assert persisted == {
+        "status": "completed",
+        "attempt_id": "attempt-poisoned",
+        "proposal": valid,
+    }
+
+
+def test_fsyncs_proposal_directory_after_atomic_replace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    proposal = {"strategy": "consultiva", "message": "Hola Ana"}
+    transport = _MockTransport(
+        body={"choices": [{"message": {"content": json.dumps(proposal)}}]}
+    )
+    execution_context = FollowupExecutionContext(
+        action_id="action-001",
+        action_type="first_contact_review",
+        step_key="first_contact",
+        recovery_case_id="case-001",
+        contact_id="contact-001",
+        source_event_id="event-001",
+        buyer_name="Ana",
+        buyer_email=None,
+        buyer_phone=None,
+        product_name="Curso Uno",
+        offer_code=None,
+        current_goal=None,
+        lead_stage="new",
+    )
+    fsynced_directory = False
+    real_fsync = os.fsync
+
+    def observe_fsync(fd: int) -> None:
+        nonlocal fsynced_directory
+        fsynced_directory = fsynced_directory or stat.S_ISDIR(os.fstat(fd).st_mode)
+        real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", observe_fsync)
+    with tempfile.TemporaryDirectory() as tmp:
+        client = RecoveryAgentClient(
+            base_url="https://hermes.example.test/v1",
+            api_key="test-key",
+            model_name="agente-comercial",
+            proposals_dir=Path(tmp),
+            transport=transport,
+        )
+        result = _run(client.request_followup_message(
+            attempt_id="attempt-fsync",
+            execution_context=execution_context,
+        ))
+
+    assert result == FollowupMessageProposal(**proposal)
+    assert fsynced_directory is True
+
+
+def test_valid_retry_replaces_failed_durable_followup_artifact() -> None:
+    invalid = {"strategy": "", "message": "Hola"}
+    valid = {"strategy": "consultiva", "message": "Hola, ¿te puedo ayudar?"}
+    transport = _MockTransport(
+        body={"choices": [{"message": {"content": json.dumps(invalid)}}]}
+    )
+    execution_context = FollowupExecutionContext(
+        action_id="action-001",
+        action_type="first_contact_review",
+        step_key="first_contact",
+        recovery_case_id="case-001",
+        contact_id="contact-001",
+        source_event_id="event-001",
+        buyer_name="Ana",
+        buyer_email=None,
+        buyer_phone=None,
+        product_name="Curso Uno",
+        offer_code=None,
+        current_goal=None,
+        lead_stage="new",
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        proposals_dir = Path(tmp)
+        client = RecoveryAgentClient(
+            base_url="https://hermes.example.test/v1",
+            api_key="test-key",
+            model_name="agente-comercial",
+            proposals_dir=proposals_dir,
+            transport=transport,
+        )
+        first = _run(client.request_followup_message(
+            attempt_id="attempt-retry",
+            execution_context=execution_context,
+        ))
+        transport.body = {
+            "choices": [{"message": {"content": json.dumps(valid)}}]
+        }
+        retried = _run(client.request_followup_message(
+            attempt_id="attempt-retry",
+            execution_context=execution_context,
+        ))
+        digest = __import__("hashlib").sha256(
+            b"followup:attempt-retry"
+        ).hexdigest()
+        persisted = json.loads((proposals_dir / f"{digest}.json").read_text())
+
+    assert first is None
+    assert retried == FollowupMessageProposal(**valid)
+    assert persisted == {
+        "status": "completed",
+        "attempt_id": "attempt-retry",
+        "proposal": valid,
     }
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 
 import httpx
@@ -341,9 +342,15 @@ def test_send_first_message_returns_sent_status() -> None:
             200,
             json={
                 "id": 999,
+                "conversation_id": 123,
                 "message_type": 1,
                 "private": False,
                 "content": "¡Hola!",
+                "content_attributes": {
+                    "recovery_first_touch_hash": hashlib.sha256(
+                        b"first:123:evt-001"
+                    ).hexdigest()
+                },
             },
             request=httpx.Request("POST", "https://chatwoot.test"),
         ),
@@ -371,6 +378,31 @@ def test_send_first_message_raises_without_agent_bot() -> None:
             conversation_id=123,
             content="¡Hola!",
             delivery_id="evt-001",
+        ))
+
+
+def test_send_first_message_rejects_noncanonical_success_payload() -> None:
+    transport = MockTransport()
+    transport.set(
+        "/api/v1/accounts/1/conversations/200/messages",
+        httpx.Response(
+            200,
+            json={
+                "id": 888,
+                "conversation_id": 200,
+                "message_type": 0,
+                "private": False,
+                "content": "Mensaje aprobado",
+            },
+            request=httpx.Request("POST", "https://chatwoot.test"),
+        ),
+    )
+
+    with pytest.raises(ChatwootProtocolError, match="invalid_sent_message"):
+        _run(_chatwoot(transport).send_first_message(
+            conversation_id=200,
+            content="Mensaje aprobado",
+            delivery_id="attempt-001",
         ))
 
 
@@ -464,7 +496,18 @@ def test_evolution_sender_sends_first_touch() -> None:
         "/api/v1/accounts/1/conversations/200/messages",
         httpx.Response(
             200,
-            json={"id": 888, "message_type": 1, "private": False, "content": "¡Hola!"},
+            json={
+                "id": 888,
+                "conversation_id": 200,
+                "message_type": 1,
+                "private": False,
+                "content": "¡Hola! Soy el asistente virtual de Dan.",
+                "content_attributes": {
+                    "recovery_first_touch_hash": hashlib.sha256(
+                        b"first:200:evt-001"
+                    ).hexdigest()
+                },
+            },
             request=httpx.Request("POST", "https://chatwoot.test"),
         ),
     )
@@ -517,7 +560,18 @@ def test_evolution_sender_reuses_existing_contact() -> None:
         "/api/v1/accounts/1/conversations/200/messages",
         httpx.Response(
             200,
-            json={"id": 888, "message_type": 1, "private": False, "content": "¡Hola!"},
+            json={
+                "id": 888,
+                "conversation_id": 200,
+                "message_type": 1,
+                "private": False,
+                "content": "¡Hola!",
+                "content_attributes": {
+                    "recovery_first_touch_hash": hashlib.sha256(
+                        b"first:200:evt-existing"
+                    ).hexdigest()
+                },
+            },
             request=httpx.Request("POST", "https://chatwoot.test"),
         ),
     )

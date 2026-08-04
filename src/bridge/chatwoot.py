@@ -6,6 +6,7 @@ import asyncio
 import fcntl
 import hashlib
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
@@ -13,6 +14,27 @@ import httpx
 
 class ChatwootProtocolError(RuntimeError):
     """Raised when Chatwoot returns an unexpected response shape."""
+
+
+@dataclass(frozen=True)
+class CanonicalConversationSnapshot:
+    """Bounded, validated facts read directly from Chatwoot."""
+
+    conversation_id: int
+    inbox_id: int
+    status: str
+    can_reply: bool
+    labels: tuple[str, ...]
+    anchor_found: bool
+    inbound_after_anchor: bool
+    human_activity_after_anchor: bool
+    checkpoint_message_id: int | None
+    checkpoint_created_at: int | None
+    human_assignee_present: bool = False
+
+    @property
+    def automation_paused(self) -> bool:
+        return "automation_paused" in self.labels or self.human_assignee_present
 
 
 class ChatwootClient:
@@ -44,6 +66,232 @@ class ChatwootClient:
         self._confirmation_attempts = confirmation_attempts
         self._confirmation_delay_seconds = confirmation_delay_seconds
         self._transport = transport
+
+    async def get_canonical_conversation_snapshot(
+        self,
+        *,
+        conversation_id: int,
+        expected_inbox_id: int,
+        anchor_message_id: int | None,
+        anchor_observed_at_epoch: int | None = None,
+        message_limit: int = 100,
+    ) -> CanonicalConversationSnapshot:
+        """Read and validate current conversation facts from Chatwoot.
+
+        Absence of a requested anchor is represented explicitly; callers must
+        fail closed rather than interpreting a bounded history as complete.
+        """
+        if conversation_id <= 0 or expected_inbox_id <= 0:
+            raise ValueError("conversation and inbox IDs must be positive")
+        if message_limit < 1 or message_limit > 100:
+            raise ValueError("message_limit must be between 1 and 100")
+
+        path = (
+            f"/api/v1/accounts/{self._account_id}"
+            f"/conversations/{conversation_id}"
+        )
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers={"api_access_token": self._access_token},
+            transport=self._transport,
+            timeout=15,
+        ) as client:
+            response = await client.get(path)
+            response.raise_for_status()
+
+        try:
+            details = response.json()
+        except ValueError as exc:
+            raise ChatwootProtocolError("invalid_json") from exc
+        if not isinstance(details, dict) or details.get("id") != conversation_id:
+            raise ChatwootProtocolError("invalid_conversation_payload")
+        inbox_id = details.get("inbox_id")
+        status = details.get("status")
+        can_reply = details.get("can_reply")
+        labels = details.get("labels")
+        if (
+            not isinstance(inbox_id, int)
+            or isinstance(inbox_id, bool)
+            or inbox_id != expected_inbox_id
+            or status not in {"open", "pending", "snoozed", "resolved"}
+            or not isinstance(can_reply, bool)
+            or not isinstance(labels, list)
+            or not all(isinstance(label, str) and label for label in labels)
+        ):
+            raise ChatwootProtocolError("invalid_conversation_authority")
+        if not self._is_authorized_conversation(
+            response, conversation_id=conversation_id
+        ):
+            raise ChatwootProtocolError("conversation_identity_mismatch")
+        meta = details.get("meta")
+        if not isinstance(meta, dict):
+            raise ChatwootProtocolError("invalid_conversation_authority")
+        sender = meta.get("sender")
+        if not isinstance(sender, dict) or sender.get("blocked") is True:
+            raise ChatwootProtocolError("conversation_contact_blocked")
+        assignee = meta.get("assignee")
+        if assignee is not None and not isinstance(assignee, dict):
+            raise ChatwootProtocolError("invalid_conversation_authority")
+        human_assignee_present = isinstance(assignee, dict)
+
+        messages, history_boundary_reached = await self._get_canonical_messages(
+            conversation_id=conversation_id,
+            anchor_message_id=anchor_message_id,
+            anchor_observed_at_epoch=anchor_observed_at_epoch,
+            limit=message_limit,
+        )
+        anchor_index: int | None = None
+        normalized: list[tuple[int, int, int, bool, object]] = []
+        for index, message in enumerate(messages):
+            message_id = message.get("id")
+            created_at = message.get("created_at")
+            message_type = message.get("message_type")
+            private = message.get("private")
+            if (
+                not isinstance(message_id, int)
+                or isinstance(message_id, bool)
+                or not isinstance(created_at, int)
+                or isinstance(created_at, bool)
+                or message_type not in (0, 1, 2)
+                or not isinstance(private, bool)
+            ):
+                raise ChatwootProtocolError("invalid_canonical_message")
+            normalized.append(
+                (message_id, created_at, message_type, private, message.get("sender"))
+            )
+            if anchor_message_id is not None and message_id == anchor_message_id:
+                anchor_index = index
+
+        after_anchor = (
+            [
+                item for item in normalized
+                if anchor_observed_at_epoch is None or item[1] > anchor_observed_at_epoch
+            ]
+            if anchor_message_id is None
+            else (
+                normalized[anchor_index + 1 :]
+                if anchor_index is not None
+                else []
+            )
+        )
+        inbound = any(
+            message_type == 0 and not private
+            for _, _, message_type, private, _ in after_anchor
+        )
+        human_activity = any(
+            message_type == 1
+            and not private
+            and isinstance(sender, dict)
+            and sender.get("type") != "agent_bot"
+            for _, _, message_type, private, sender in after_anchor
+        )
+        checkpoint = messages[-1] if messages else None
+        checkpoint_id = checkpoint.get("id") if checkpoint else None
+        checkpoint_at = checkpoint.get("created_at") if checkpoint else None
+        if checkpoint_id is not None and not isinstance(checkpoint_id, int):
+            raise ChatwootProtocolError("invalid_canonical_message")
+        if checkpoint_at is not None and not isinstance(checkpoint_at, int):
+            raise ChatwootProtocolError("invalid_canonical_message")
+        return CanonicalConversationSnapshot(
+            conversation_id=conversation_id,
+            inbox_id=inbox_id,
+            status=status,
+            can_reply=can_reply,
+            labels=tuple(sorted(set(labels))),
+            anchor_found=(
+                anchor_index is not None
+                if anchor_message_id is not None
+                else history_boundary_reached
+            ),
+            inbound_after_anchor=inbound,
+            human_activity_after_anchor=human_activity,
+            checkpoint_message_id=checkpoint_id,
+            checkpoint_created_at=checkpoint_at,
+            human_assignee_present=human_assignee_present,
+        )
+
+    async def _get_canonical_messages(
+        self,
+        *,
+        conversation_id: int,
+        anchor_message_id: int | None,
+        anchor_observed_at_epoch: int | None,
+        limit: int,
+    ) -> tuple[list[dict[str, object]], bool]:
+        """Page backwards until the anchor boundary is proven or limit is hit."""
+        path = (
+            f"/api/v1/accounts/{self._account_id}"
+            f"/conversations/{conversation_id}/messages"
+        )
+        messages_by_id: dict[int, dict[str, object]] = {}
+        before: int | None = None
+        boundary_reached = False
+
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers={"api_access_token": self._access_token},
+            transport=self._transport,
+            timeout=15,
+        ) as client:
+            while len(messages_by_id) < limit:
+                response = await client.get(
+                    path,
+                    params={"before": str(before)} if before is not None else None,
+                )
+                response.raise_for_status()
+                page = self._parse_messages(response)
+                if not page:
+                    boundary_reached = True
+                    break
+
+                page_ids: list[int] = []
+                page_times: list[int] = []
+                added = 0
+                for message in page:
+                    message_id = message.get("id")
+                    created_at = message.get("created_at")
+                    if (
+                        not isinstance(message_id, int)
+                        or isinstance(message_id, bool)
+                        or not isinstance(created_at, int)
+                        or isinstance(created_at, bool)
+                    ):
+                        raise ChatwootProtocolError("invalid_canonical_message")
+                    page_ids.append(message_id)
+                    page_times.append(created_at)
+                    if message_id not in messages_by_id:
+                        messages_by_id[message_id] = message
+                        added += 1
+
+                if anchor_message_id is not None and anchor_message_id in page_ids:
+                    boundary_reached = True
+                    break
+                if (
+                    anchor_message_id is None
+                    and anchor_observed_at_epoch is not None
+                    and min(page_times) <= anchor_observed_at_epoch
+                ):
+                    boundary_reached = True
+                    break
+                if len(page) < 20:
+                    boundary_reached = True
+                    break
+                if added == 0:
+                    raise ChatwootProtocolError("canonical_history_did_not_advance")
+                before = min(page_ids)
+
+        def sort_key(item: tuple[int, dict[str, object]]) -> tuple[int, int]:
+            message_id, message = item
+            created_at = message.get("created_at")
+            if not isinstance(created_at, int) or isinstance(created_at, bool):
+                raise ChatwootProtocolError("invalid_canonical_message")
+            return created_at, message_id
+
+        ordered = [
+            message
+            for _, message in sorted(messages_by_id.items(), key=sort_key)
+        ]
+        return ordered[-limit:], boundary_reached
 
     async def send_agent_bot_reply(
         self,
@@ -589,7 +837,7 @@ class ChatwootClient:
             raise ChatwootProtocolError("agent_bot_not_configured")
 
         reply_hash = hashlib.sha256(
-            f"first:{conversation_id}".encode("utf-8")
+            f"first:{conversation_id}:{delivery_id}".encode("utf-8")
         ).hexdigest()
         messages_path = (
             f"/api/v1/accounts/{self._account_id}"
@@ -621,6 +869,17 @@ class ChatwootClient:
         if not isinstance(message, dict):
             raise ChatwootProtocolError("invalid_message_payload")
         message_id = message.get("id")
-        if not isinstance(message_id, int) or isinstance(message_id, bool):
-            raise ChatwootProtocolError("invalid_message_id")
+        attributes = message.get("content_attributes")
+        if (
+            not isinstance(message_id, int)
+            or isinstance(message_id, bool)
+            or message_id <= 0
+            or message.get("conversation_id") != conversation_id
+            or message.get("message_type") != 1
+            or message.get("private") is not False
+            or message.get("content") != content
+            or not isinstance(attributes, dict)
+            or attributes.get("recovery_first_touch_hash") != reply_hash
+        ):
+            raise ChatwootProtocolError("invalid_sent_message")
         return {"status": "sent", "message_id": message_id}

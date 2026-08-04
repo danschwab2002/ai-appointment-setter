@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node validate.mjs"
+    "test": "node validate.mjs",
+    "test:real-postgres": "uv run python real_postgres_concurrency.py"
   },
   "dependencies": {
     "@electric-sql/pglite": "0.5.4"

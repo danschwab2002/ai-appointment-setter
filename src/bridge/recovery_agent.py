@@ -8,15 +8,19 @@ contract.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
 import re
 import tempfile
 import fcntl
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
+
+from bridge.supabase import FollowupExecutionContext
 
 
 # ── Recovery proposal validation ────────────────────────────────────
@@ -43,6 +47,16 @@ _EXPECTED_PROPOSAL_KEYS = {
     "lead_stage",
     "current_goal",
 }
+_FOLLOWUP_MESSAGE_PROPOSAL_KEYS = {"strategy", "message"}
+
+
+@dataclass(frozen=True)
+class FollowupMessageProposal:
+    """Untrusted draft accepted by the bridge's bounded output contract."""
+
+    strategy: str
+    message: str
+
 
 _RECOVERY_DECISION_POLICY: dict[str, object] = {
     "authoritative_fields": [
@@ -131,6 +145,22 @@ def required_recovery_decision(
     if situation_report["has_open_recovery_case"] is True:
         return {"action": "hold", "reason_code": "recovery_case_active"}
     return {"action": "send_first_touch", "reason_code": "first_touch"}
+
+
+def is_valid_followup_message_proposal(proposal: dict[str, object]) -> bool:
+    """Validate a bounded durable follow-up drafting proposal."""
+    if set(proposal) != _FOLLOWUP_MESSAGE_PROPOSAL_KEYS:
+        return False
+    strategy = proposal["strategy"]
+    message = proposal["message"]
+    return (
+        isinstance(strategy, str)
+        and bool(strategy.strip())
+        and len(strategy) <= 120
+        and isinstance(message, str)
+        and bool(message.strip())
+        and len(message) <= 500
+    )
 
 
 def is_valid_recovery_proposal(proposal: dict[str, object]) -> bool:
@@ -276,6 +306,156 @@ class RecoveryAgentClient:
         self._transport = transport
         self._timeout_seconds = timeout_seconds
 
+    async def request_followup_message(
+        self,
+        *,
+        attempt_id: str,
+        execution_context: FollowupExecutionContext,
+    ) -> FollowupMessageProposal | None:
+        """Serialize one durable Hermes evaluation per delivery attempt."""
+        digest = hashlib.sha256(f"followup:{attempt_id}".encode("utf-8")).hexdigest()
+        self._proposals_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
+        self._proposals_dir.chmod(0o700)
+        evaluation_lock_fd = os.open(
+            self._proposals_dir / f"{digest}.evaluation.lock",
+            os.O_CREAT | os.O_RDWR,
+            0o600,
+        )
+        try:
+            lock_task = asyncio.create_task(
+                asyncio.to_thread(fcntl.flock, evaluation_lock_fd, fcntl.LOCK_EX)
+            )
+            cancellation_requested = False
+            while not lock_task.done():
+                try:
+                    await asyncio.shield(lock_task)
+                except asyncio.CancelledError:
+                    cancellation_requested = True
+            lock_task.result()
+            if cancellation_requested:
+                raise asyncio.CancelledError
+            return await self._request_followup_message_locked(
+                attempt_id=attempt_id,
+                execution_context=execution_context,
+            )
+        finally:
+            fcntl.flock(evaluation_lock_fd, fcntl.LOCK_UN)
+            os.close(evaluation_lock_fd)
+
+    async def _request_followup_message_locked(
+        self,
+        *,
+        attempt_id: str,
+        execution_context: FollowupExecutionContext,
+    ) -> FollowupMessageProposal | None:
+        """Request only strategy and copy while holding the attempt lock."""
+        digest = hashlib.sha256(f"followup:{attempt_id}".encode("utf-8")).hexdigest()
+        cached = self._load_completed_followup_proposal(
+            digest=digest,
+            attempt_id=attempt_id,
+        )
+        if cached is not None:
+            return cached
+        context = {
+            "skill": "cart-abandonment-recovery",
+            "execution_context": {
+                "action_type": execution_context.action_type,
+                "step_key": execution_context.step_key,
+                "buyer_name": execution_context.buyer_name,
+                "product_name": execution_context.product_name,
+                "offer_code": execution_context.offer_code,
+                "current_goal": execution_context.current_goal,
+                "lead_stage": execution_context.lead_stage,
+            },
+            "required_output": {
+                "strategy": "non-empty string, max 120 characters",
+                "message": "non-empty string, max 500 characters",
+            },
+            "instructions": (
+                "La autorización para contactar ya fue evaluada fuera del modelo. "
+                "No decidas si enviar ni propongas destinatario, canal o acción. "
+                "Usá la skill sólo para estrategia y redacción. Respondé únicamente "
+                "con un objeto JSON que contenga exactamente strategy y message."
+            ),
+        }
+        try:
+            async with httpx.AsyncClient(
+                transport=self._transport,
+                timeout=self._timeout_seconds,
+            ) as client:
+                response = await client.post(
+                    f"{self._base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self._api_key}",
+                        "Idempotency-Key": digest,
+                    },
+                    json={
+                        "model": self._model_name,
+                        "stream": False,
+                        "messages": [{
+                            "role": "user",
+                            "content": json.dumps(context, ensure_ascii=False),
+                        }],
+                    },
+                )
+                response.raise_for_status()
+        except httpx.HTTPError:
+            self._persist(
+                digest=digest,
+                result={
+                    "status": "failed",
+                    "attempt_id": attempt_id,
+                    "reason": "agent_unavailable",
+                },
+                replace_nonterminal=True,
+            )
+            return None
+
+        try:
+            body = response.json()
+            proposal_text = body["choices"][0]["message"]["content"]
+            proposal = json.loads(proposal_text)
+        except (
+            KeyError,
+            IndexError,
+            TypeError,
+            UnicodeError,
+            json.JSONDecodeError,
+        ):
+            proposal = None
+
+        if not isinstance(proposal, dict) or not is_valid_followup_message_proposal(
+            proposal
+        ):
+            self._persist(
+                digest=digest,
+                result={
+                    "status": "failed",
+                    "attempt_id": attempt_id,
+                    "reason": "invalid_followup_message_proposal",
+                },
+                replace_nonterminal=True,
+            )
+            return None
+
+        accepted = FollowupMessageProposal(
+            strategy=proposal["strategy"],
+            message=proposal["message"],
+        )
+        self._persist(
+            digest=digest,
+            result={
+                "status": "completed",
+                "attempt_id": attempt_id,
+                "proposal": {
+                    "strategy": accepted.strategy,
+                    "message": accepted.message,
+                },
+            },
+            replace_nonterminal=True,
+        )
+        return accepted
+
     async def request_proposal(
         self,
         *,
@@ -395,8 +575,43 @@ class RecoveryAgentClient:
         )
         return proposal
 
-    def _persist(self, *, digest: str, result: dict[str, object]) -> None:
-        """Persist a result to disk with file locking, same as HermesShadow."""
+    def _load_completed_followup_proposal(
+        self,
+        *,
+        digest: str,
+        attempt_id: str,
+    ) -> FollowupMessageProposal | None:
+        """Reuse only a complete artifact for the same durable attempt."""
+        result_path = self._proposals_dir / f"{digest}.json"
+        try:
+            persisted = json.loads(result_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return None
+        if not isinstance(persisted, dict):
+            return None
+        if (
+            persisted.get("status") != "completed"
+            or persisted.get("attempt_id") != attempt_id
+        ):
+            return None
+        proposal = persisted.get("proposal")
+        if not isinstance(proposal, dict) or not is_valid_followup_message_proposal(
+            proposal
+        ):
+            return None
+        return FollowupMessageProposal(
+            strategy=proposal["strategy"],
+            message=proposal["message"],
+        )
+
+    def _persist(
+        self,
+        *,
+        digest: str,
+        result: dict[str, object],
+        replace_nonterminal: bool = False,
+    ) -> None:
+        """Persist a result atomically; completed artifacts are immutable."""
         self._proposals_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
         self._proposals_dir.chmod(0o700)
         result_path = self._proposals_dir / f"{digest}.json"
@@ -410,7 +625,20 @@ class RecoveryAgentClient:
         with os.fdopen(lock_fd) as lock_handle:
             fcntl.flock(lock_handle, fcntl.LOCK_EX)
             if result_path.exists():
-                return  # Already persisted
+                if not replace_nonterminal:
+                    return
+                try:
+                    existing = json.loads(result_path.read_text(encoding="utf-8"))
+                except (OSError, UnicodeError, json.JSONDecodeError):
+                    existing = None
+                if isinstance(existing, dict) and existing.get("status") == "completed":
+                    existing_proposal = existing.get("proposal")
+                    if (
+                        existing.get("attempt_id") == result.get("attempt_id")
+                        and isinstance(existing_proposal, dict)
+                        and is_valid_followup_message_proposal(existing_proposal)
+                    ):
+                        return
             temporary_fd, temporary_name = tempfile.mkstemp(
                 prefix=f".{digest}.", suffix=".tmp", dir=self._proposals_dir
             )
@@ -421,6 +649,14 @@ class RecoveryAgentClient:
                     handle.flush()
                     os.fsync(handle.fileno())
                 os.replace(temporary_name, result_path)
+                directory_fd = os.open(
+                    self._proposals_dir,
+                    os.O_RDONLY | os.O_DIRECTORY,
+                )
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
             finally:
                 try:
                     os.unlink(temporary_name)

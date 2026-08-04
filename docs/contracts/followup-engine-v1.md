@@ -345,6 +345,10 @@ delivery_unknown
 ### Invariantes
 
 - `accepted_by_chatwoot` no significa entregado ni leído.
+- `accepted_by_chatwoot` sólo puede persistirse mediante `record_and_finalize_followup_acceptance`, junto con conversación, mensaje outbound público y correlación canónicos; los RPC genéricos rechazan accepted.
+- `accepted_message_id` referencia un mensaje real y no puede aceptar dos intentos.
+- Una aceptación real se conserva aunque cambie la autoridad durante el request; en ese caso no avanza la secuencia ni crea sucesor.
+- La conversación aceptada se vincula atómicamente a `channel_identities.external_conversation_id`; una asociación contradictoria falla cerrada.
 - Un request ambiguo produce `delivery_unknown`.
 - `delivery_unknown` no se reintenta automáticamente.
 - La reconciliación busca un marcador estable durante una ventana acotada.
@@ -438,9 +442,12 @@ Efecto atómico:
 
 ```text
 accepted_by_chatwoot:
+  crear o reutilizar conversación y mensaje canónicos sin carrera
+  vincular la conversación a la identidad de canal
   terminalizar acción como accepted_by_chatwoot
-  avanzar current_step una sola vez
-  crear como máximo la próxima acción comercial
+  si la autoridad sigue vigente, avanzar current_step una sola vez
+  si la autoridad cambió, conservar evidencia sin avanzar ni crear sucesor
+  crear como máximo la próxima acción comercial, anclada al mensaje y conversación canónicos
 failed_before_request o rejected:
   marcar retryable_failed con next_attempt_at o permanent_failed según política
 delivery_unknown:
@@ -570,3 +577,32 @@ Antes de implementar deben definirse y probarse:
 
 Estos puntos concretan este contrato; no reabren las decisiones de ADR-0007 salvo
 que la investigación demuestre una incompatibilidad real.
+
+## 15. Verificación ejecutable
+
+El harness rápido aplica baseline y migración sobre PGlite:
+
+```bash
+cd tests/sql/followup_engine
+npm test
+```
+
+La carrera de aceptación canónica debe verificarse además contra una base
+PostgreSQL real, vacía y descartable:
+
+```bash
+ALLOW_DISPOSABLE_DATABASE=followup-concurrency \
+DATABASE_URL=postgresql://.../followup_concurrency_probe \
+PSQL=/ruta/a/psql npm run test:real-postgres
+```
+
+La prueba exige dos backends identificados y activos simultáneamente, observa
+al menos una espera de lock real y comprueba la serialización por contacto: la
+primera llamada materializa la aceptación y la segunda reproduce el mismo
+resultado canónico. La evidencia relacional exige una sola conversación, un
+solo mensaje accepted vinculado al intento, una sola identidad de canal y un
+solo sucesor `no_reply_review` anclado al mensaje y la conversación canónicos.
+No afirma una carrera de inserts posterior al lock, porque el orden global de
+locks la evita para el mismo contacto. El script rechaza bases con objetos en
+esquemas de usuario, exige confirmación explícita y sólo acepta nombres de base
+con prefijo `followup_concurrency`.

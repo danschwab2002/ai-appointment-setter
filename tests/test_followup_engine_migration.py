@@ -80,6 +80,119 @@ def test_claim_does_not_reclaim_an_in_flight_external_request() -> None:
     assert "fda.phase = 'request_started'" in body
 
 
+def test_reevaluation_is_fenced_fail_closed_and_audited() -> None:
+    sql = _migration_sql()
+    body = _function_body(sql, "reevaluate_followup_action")
+
+    assert "v_action.lease_owner = p_worker_id" in body
+    assert "v_action.lease_generation = p_lease_generation" in body
+    assert "v_action.lease_expires_at > p_now" in body
+    assert "v_contact.contact_permission in ('opted_out', 'blocked', 'restricted')" in body
+    assert body.index("contact_blocked") < body.index("purchase_detected")
+    assert "v_case.purchase_event_id is not null or v_case.status = 'won'" in body
+    assert "c.human_takeover or c.status = 'paused_human'" in body
+    assert "authorization_status in ('denied', 'restricted')" in body
+    assert "v_policy.status <> 'published' or v_step is null" in body
+    assert "v_step ->> 'mode' <> 'freeform'" in body
+    assert "v_decision := 'defer'" in body
+    assert "v_reason := 'business_window_closed'" in body
+    assert "v_action.action_type = 'first_contact_review'" in body
+    assert "ci.external_conversation_id is null" in body
+    assert "v_reason := 'chatwoot_authority_unavailable'" in body
+    assert "v_action.action_type = 'no_reply_review'" in body
+    assert "v_reason := 'eligible_for_execution'" in body
+    assert "ce.data ->> 'decision' <> 'execute'" in body
+    assert "authorization_status = 'allowed'" in body
+    assert "v_case.identity_resolution_status <> 'resolved'" in body
+    assert "followup_action_reevaluated" in body
+    assert "'worker_id', p_worker_id" in body
+    assert "followup_action_reevaluated" in body[:body.index("current_action_lease_not_found")]
+    assert "revoke execute on function public.reevaluate_followup_action" in sql
+    assert "grant execute on function public.reevaluate_followup_action" in sql
+    assert "create or replace function public.get_followup_chatwoot_context" in sql
+    assert "external_conversation_id" in body
+    assert "p_chatwoot_inbound_after_anchor" in body
+    assert "chatwoot_anchor_not_found" in body
+    assert "prospect_replied" in body
+    assert "grant execute on function public.get_followup_chatwoot_context" in sql
+
+
+def test_automatic_message_limit_terminalizes_the_sequence_without_orphaning_it() -> None:
+    body = _function_body(_migration_sql(), "reevaluate_followup_action")
+
+    assert "v_reason = 'automatic_message_limit_reached'" in body
+    assert "completion_reason = v_reason" in body
+    assert "set status = 'sequence_exhausted'" in body
+
+
+def test_reconciliation_action_cannot_enter_the_outbound_execute_path() -> None:
+    body = _function_body(_migration_sql(), "reevaluate_followup_action")
+
+    reconcile_guard = "v_action.action_type = 'reconcile_delivery'"
+    assert reconcile_guard in body
+    assert "v_reason := 'reconciliation_requires_dedicated_worker'" in body
+    assert body.index(reconcile_guard) < body.index(
+        "v_action.action_type = 'first_contact_review'"
+    )
+
+
+def test_reservation_requires_matching_durable_execute_authorization() -> None:
+    body = _function_body(_migration_sql(), "reserve_followup_delivery_attempt")
+
+    assert "followup_execute_authorization_not_found" in body
+    assert "ce.event_type = 'followup_action_reevaluated'" in body
+    assert "ce.data ->> 'decision' = 'execute'" in body
+    assert "ce.data ->> 'worker_id' = p_worker_id" in body
+    assert "ce.data ->> 'lease_generation' = p_lease_generation::text" in body
+    assert "ce.data ->> 'case_version' = p_expected_case_version::text" in body
+    assert "ce.data ->> 'sequence_revision' = p_expected_sequence_revision::text" in body
+    assert "v_action.action_type not in ('first_contact_review', 'no_reply_review')" in body
+
+
+def test_execution_context_is_fenced_and_exposes_only_required_case_fields() -> None:
+    sql = _migration_sql()
+    body = _function_body(sql, "get_followup_execution_context")
+
+    assert "v_action.lease_owner = p_worker_id" in body
+    assert "v_action.lease_generation = p_lease_generation" in body
+    assert "v_action.lease_expires_at > p_now" in body
+    assert "from public.recovery_cases rc" in body
+    assert "join public.contacts c" in body
+    assert "c.full_name" in body
+    assert "c.email" in body
+    assert "c.phone" in body
+    assert "rc.product_name" in body
+    assert "rc.offer_code" in body
+    assert "grant execute on function public.get_followup_execution_context" in sql
+
+
+def test_claim_sweeps_actions_expired_after_a_worker_crash() -> None:
+    body = _function_body(_migration_sql(), "claim_due_followup_actions")
+    assert "expired_after_worker_crash" in body
+    assert body.index("from public.contacts c") < body.index(
+        "from public.recovery_cases rc where rc.id = v_case_id for update"
+    )
+    assert "set status = 'expired'" in body
+    assert "set status = 'completed', completion_reason = 'expired'" in body
+
+
+def test_reevaluation_locks_case_sequence_action_in_global_order() -> None:
+    body = _function_body(_migration_sql(), "reevaluate_followup_action")
+    contact_lock = body.index("select c.* into strict v_contact")
+    case_lock = body.index("select rc.* into strict v_case")
+    sequence_lock = body.index("select fs.* into strict v_sequence")
+    action_lock = body.index("where sa.id = p_action_id\n    for update")
+    assert contact_lock < case_lock < sequence_lock < action_lock
+
+
+def test_reevaluation_does_not_leave_active_aggregate_without_action() -> None:
+    body = _function_body(_migration_sql(), "reevaluate_followup_action")
+    assert "completion_reason = 'expired'" in body
+    assert "status = 'expired', closed_at = p_now" in body
+    assert "authoritative_state_changed" in body
+    assert "status = 'paused', revision = revision + 1" in body
+
+
 def test_reserve_delivery_attempt_requires_current_fencing_generation() -> None:
     sql = _migration_sql()
     assert "create table public.followup_delivery_attempts" in sql
@@ -121,7 +234,7 @@ def test_reserve_rechecks_case_and_sequence_revisions_under_lock() -> None:
 def test_finalize_records_acceptance_but_suppresses_successor_after_concurrent_change() -> None:
     sql = _migration_sql()
     reserve_body = _function_body(sql, "reserve_followup_delivery_attempt")
-    finalize_body = _function_body(sql, "finalize_followup_delivery_attempt")
+    finalize_body = _function_body(sql, "_finalize_followup_delivery_attempt")
 
     assert "expected_case_version bigint not null" in sql
     assert "expected_sequence_revision bigint not null" in sql
@@ -138,7 +251,7 @@ def test_finalize_records_acceptance_but_suppresses_successor_after_concurrent_c
 
 
 def test_late_rejection_cannot_resurrect_a_terminal_action() -> None:
-    body = _function_body(_migration_sql(), "finalize_followup_delivery_attempt")
+    body = _function_body(_migration_sql(), "_finalize_followup_delivery_attempt")
 
     assert "p_outcome = 'rejected' and not v_authoritative_current" in body
     assert "rejected_after_authoritative_state_change" in body
@@ -148,7 +261,7 @@ def test_late_rejection_cannot_resurrect_a_terminal_action() -> None:
 
 
 def test_late_delivery_unknown_preserves_terminal_action_state() -> None:
-    body = _function_body(_migration_sql(), "finalize_followup_delivery_attempt")
+    body = _function_body(_migration_sql(), "_finalize_followup_delivery_attempt")
 
     assert "p_outcome = 'delivery_unknown' and not v_authoritative_current" in body
     assert "delivery_unknown_after_authoritative_state_change" in body
@@ -158,7 +271,7 @@ def test_late_delivery_unknown_preserves_terminal_action_state() -> None:
 
 
 def test_finalize_locks_authoritative_state_before_action_and_attempt() -> None:
-    body = _function_body(_migration_sql(), "finalize_followup_delivery_attempt")
+    body = _function_body(_migration_sql(), "_finalize_followup_delivery_attempt")
 
     case_lock = body.index("select rc.* into strict v_case")
     sequence_lock = body.index("select fs.* into strict v_sequence")
@@ -170,7 +283,7 @@ def test_finalize_locks_authoritative_state_before_action_and_attempt() -> None:
 
 def test_finalize_delivery_attempt_preserves_external_uncertainty() -> None:
     sql = _migration_sql()
-    body = _function_body(sql, "finalize_followup_delivery_attempt")
+    body = _function_body(sql, "_finalize_followup_delivery_attempt")
 
     assert "v_action.lease_owner = p_worker_id" in body
     assert "v_action.lease_generation = p_lease_generation" in body
@@ -186,7 +299,7 @@ def test_finalize_delivery_attempt_preserves_external_uncertainty() -> None:
 
 def test_accepted_delivery_materializes_only_the_next_review() -> None:
     sql = _migration_sql()
-    body = _function_body(sql, "finalize_followup_delivery_attempt")
+    body = _function_body(sql, "_finalize_followup_delivery_attempt")
 
     assert "p_accepted_message_id is null" in body
     assert "insert into public.scheduled_actions" in body
@@ -203,7 +316,7 @@ def test_accepted_delivery_materializes_only_the_next_review() -> None:
 
 def test_finalize_delivery_attempt_is_idempotent_after_commit() -> None:
     sql = _migration_sql()
-    body = _function_body(sql, "finalize_followup_delivery_attempt")
+    body = _function_body(sql, "_finalize_followup_delivery_attempt")
 
     completed_guard = body.index("if v_attempt.phase = 'completed'")
     active_lease_guard = body.index("v_action.lease_owner = p_worker_id")
@@ -243,7 +356,8 @@ def test_request_start_is_persisted_before_the_external_post() -> None:
     assert "v_action.lease_generation = p_lease_generation" in body
     assert "fda.phase = 'reserved'" in body
     assert "phase = 'request_started'" in body
-    assert "request_started_at = p_now" in body
+    assert "v_effective_now timestamptz := clock_timestamp()" in body
+    assert "request_started_at = v_effective_now" in body
 
 
 def test_request_start_revalidates_authoritative_state_under_lock() -> None:
@@ -279,14 +393,22 @@ def test_claim_reserve_and_request_start_fail_closed_after_expiration() -> None:
 
     assert "sa.expires_at > p_now" in claim
     assert "v_action.expires_at > p_now" in reserve
-    assert "v_action.expires_at > p_now" in request_start
+    assert "v_action.expires_at > v_effective_now" in request_start
+    assert "v_action.lease_expires_at > v_effective_now" in request_start
 
 
 def test_delivery_unknown_has_explicit_bounded_reconciliation_rpc() -> None:
     sql = _migration_sql()
     body = _function_body(sql, "reconcile_followup_delivery_attempt")
+    canonical = _function_body(sql, "record_and_finalize_followup_acceptance")
 
-    assert "'accepted_by_chatwoot', 'not_applied', 'escalated'" in body
+    assert "p_resolution = 'accepted_by_chatwoot'" in body
+    assert "canonical_acceptance_required" in body
+    assert "p_resolution not in ('not_applied', 'escalated')" in body
+    assert "v_attempt.outcome = 'delivery_unknown'" in canonical
+    assert "v_attempt.reconciliation_deadline" in canonical
+    assert "v_reconciling := true" in canonical
+    assert "reconciliation_resolution = 'accepted_by_chatwoot'" in canonical
     assert "reconciliation_resolution" in body
     assert "reconciled_at = p_now" in body
     assert "public.finalize_followup_delivery_attempt" in body
@@ -306,7 +428,7 @@ def test_delivery_unknown_has_explicit_bounded_reconciliation_rpc() -> None:
 
 def test_delivery_unknown_ledger_requires_deadline_and_durable_reconciliation_inputs() -> None:
     sql = _migration_sql()
-    finalize = _function_body(sql, "finalize_followup_delivery_attempt")
+    finalize = _function_body(sql, "_finalize_followup_delivery_attempt")
 
     assert "outcome is distinct from 'delivery_unknown'\n        or reconciliation_deadline is not null" in sql
     assert "p_reconciliation_deadline <= p_now" in finalize
@@ -318,7 +440,7 @@ def test_delivery_unknown_ledger_requires_deadline_and_durable_reconciliation_in
 
 def test_acceptance_idempotency_compares_the_durable_anchor() -> None:
     sql = _migration_sql()
-    finalize = _function_body(sql, "finalize_followup_delivery_attempt")
+    finalize = _function_body(sql, "_finalize_followup_delivery_attempt")
     reconcile = _function_body(sql, "reconcile_followup_delivery_attempt")
 
     expected = "accepted_message_id is distinct from p_accepted_message_id"
@@ -396,11 +518,22 @@ def test_only_one_active_sequence_and_due_before_expiry_are_allowed() -> None:
 
 def test_retry_beyond_expiration_becomes_expired() -> None:
     sql = _migration_sql()
-    body = _function_body(sql, "finalize_followup_delivery_attempt")
+    body = _function_body(sql, "_finalize_followup_delivery_attempt")
 
     assert "p_next_attempt_at < v_action.expires_at" in body
     assert "status = 'expired'" in body
     assert "retry_beyond_expiration" in body
+
+
+def test_accepted_finalization_surface_exposes_only_the_canonical_rpc() -> None:
+    sql = _migration_sql()
+    wrapper = _function_body(sql, "finalize_followup_delivery_attempt")
+
+    assert "p_outcome = 'accepted_by_chatwoot'" in wrapper
+    assert "canonical_acceptance_required" in wrapper
+    assert "revoke execute on function public._finalize_followup_delivery_attempt" in sql
+    assert "grant execute on function public._finalize_followup_delivery_attempt" not in sql
+    assert "grant execute on function public.record_and_finalize_followup_acceptance" in sql
 
 
 def test_followup_engine_objects_are_not_publicly_executable() -> None:

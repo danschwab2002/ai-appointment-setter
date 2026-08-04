@@ -17,6 +17,10 @@ class SupabaseError(RuntimeError):
     """Raised when a Supabase REST call fails."""
 
 
+class SupabaseCommittedResponseError(SupabaseError):
+    """Raised when a successful mutating RPC returns an invalid committed row."""
+
+
 # ── Data classes for resolution results ──────────────────────────────
 
 
@@ -25,6 +29,107 @@ class InsertResult:
     """Outcome of an insert_webhook_event call."""
 
     inserted: bool
+
+
+@dataclass(frozen=True)
+class CartRecoveryPlan:
+    """Durable case, sequence, and next action created by PostgreSQL."""
+
+    recovery_case_id: str
+    followup_sequence_id: str
+    scheduled_action_id: str
+    created: bool
+
+
+@dataclass(frozen=True)
+class ScheduledAction:
+    """An action atomically claimed by a dispatcher lease."""
+
+    action_id: str
+    recovery_case_id: str
+    followup_sequence_id: str
+    action_type: str
+    status: str
+    due_at: str
+    expires_at: str
+    expected_case_version: int
+    policy_key: str
+    policy_version: int
+    step_key: str
+    anchor_type: str
+    anchor_subject_internal_id: str
+    anchor_observed_at: str
+    lease_owner: str
+    lease_generation: int
+    lease_expires_at: str
+    idempotency_key: str
+
+
+@dataclass(frozen=True)
+class ChatwootAuthorityContext:
+    """Fenced external identifiers required for a canonical Chatwoot read."""
+
+    action_id: str
+    action_type: str
+    chatwoot_account_id: int | None
+    external_conversation_id: int | None
+    expected_inbox_id: int | None
+    anchor_external_message_id: int | None
+
+
+@dataclass(frozen=True)
+class FollowupExecutionContext:
+    """Minimal fenced commercial context used to prepare one proposal."""
+
+    action_id: str
+    action_type: str
+    step_key: str
+    recovery_case_id: str
+    contact_id: str
+    source_event_id: str
+    buyer_name: str | None
+    buyer_email: str | None
+    buyer_phone: str | None
+    product_name: str
+    offer_code: str | None
+    current_goal: str | None
+    lead_stage: str
+
+
+@dataclass(frozen=True)
+class ReevaluationDecision:
+    """Authoritative result for one leased action."""
+
+    action_id: str
+    decision: str
+    reason_code: str
+    case_version: int
+    sequence_revision: int
+
+
+@dataclass(frozen=True)
+class DeliveryAttempt:
+    """A fenced outbound attempt reserved before an external request."""
+
+    attempt_id: str
+    action_id: str
+    idempotency_key: str
+    attempt_number: int
+    channel: str
+    mode: str
+    phase: str
+    lease_generation: int
+    expected_case_version: int
+    expected_sequence_revision: int
+
+
+@dataclass(frozen=True)
+class DeliveryFinalization:
+    """Durable action projection returned after finalizing an effect attempt."""
+
+    action_id: str
+    status: str
+    terminal_reason: str | None
 
 
 @dataclass(frozen=True)
@@ -272,6 +377,31 @@ def _optional_enum(
     return value
 
 
+def _required_int(
+    row: dict[str, Any],
+    key: str,
+    *,
+    operation: str,
+) -> int:
+    value = row.get(key)
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise SupabaseError(f"{operation}_invalid_row")
+    return value
+
+
+def _optional_positive_int(
+    row: dict[str, Any], key: str, *, operation: str
+) -> int | None:
+    value = row.get(key)
+    if value is None:
+        return None
+    if isinstance(value, str) and value.isdigit():
+        value = int(value)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise SupabaseError(f"{operation}_invalid_row")
+    return value
+
+
 # ── Client ───────────────────────────────────────────────────────────
 
 
@@ -406,6 +536,571 @@ class SupabaseClient:
             raise SupabaseError(
                 f"update_event_status_failed: HTTP {response.status_code}"
             )
+
+    async def plan_cart_recovery(
+        self,
+        *,
+        webhook_event_id: str,
+        contact_id: str,
+        external_product_id: str,
+        product_name: str,
+        offer_code: str | None,
+        policy_key: str,
+        policy_version: int,
+        abandoned_at: str,
+    ) -> CartRecoveryPlan:
+        """Atomically create or reuse the durable cart-recovery plan."""
+        body = json.dumps({
+            "p_webhook_event_id": webhook_event_id,
+            "p_contact_id": contact_id,
+            "p_external_product_id": external_product_id,
+            "p_product_name": product_name,
+            "p_offer_code": offer_code,
+            "p_policy_key": policy_key,
+            "p_policy_version": policy_version,
+            "p_abandoned_at": abandoned_at,
+        }, ensure_ascii=False)
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/plan_cart_recovery",
+            content=body,
+        )
+        if response.status_code != 200:
+            raise SupabaseError(
+                f"plan_cart_recovery_failed: HTTP {response.status_code}"
+            )
+        rows = _response_rows(response, operation="plan_cart_recovery")
+        if len(rows) != 1:
+            raise SupabaseError("plan_cart_recovery_invalid_shape")
+        row = rows[0]
+        created = row.get("created")
+        if not isinstance(created, bool):
+            raise SupabaseError("plan_cart_recovery_invalid_row")
+        return CartRecoveryPlan(
+            recovery_case_id=_required_string(
+                row, "recovery_case_id", operation="plan_cart_recovery"
+            ),
+            followup_sequence_id=_required_string(
+                row, "followup_sequence_id", operation="plan_cart_recovery"
+            ),
+            scheduled_action_id=_required_string(
+                row, "scheduled_action_id", operation="plan_cart_recovery"
+            ),
+            created=created,
+        )
+
+    async def claim_due_followup_actions(
+        self,
+        *,
+        worker_id: str,
+        now: str,
+        lease_duration: str,
+        batch_size: int,
+    ) -> list[ScheduledAction]:
+        """Claim due actions; PostgreSQL remains the queue authority."""
+        body = json.dumps({
+            "p_worker_id": worker_id,
+            "p_now": now,
+            "p_lease_duration": lease_duration,
+            "p_batch_size": batch_size,
+        }, ensure_ascii=False)
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/claim_due_followup_actions",
+            content=body,
+        )
+        if response.status_code != 200:
+            raise SupabaseError(
+                f"claim_due_followup_actions_failed: HTTP {response.status_code}"
+            )
+        operation = "claim_due_followup_actions"
+        rows = _response_rows(response, operation=operation)
+        actions: list[ScheduledAction] = []
+        for row in rows:
+            actions.append(ScheduledAction(
+                action_id=_required_string(row, "id", operation=operation),
+                recovery_case_id=_required_string(
+                    row, "recovery_case_id", operation=operation
+                ),
+                followup_sequence_id=_required_string(
+                    row, "followup_sequence_id", operation=operation
+                ),
+                action_type=_required_enum(
+                    row,
+                    "action_type",
+                    {"first_contact_review", "no_reply_review", "reconcile_delivery"},
+                    operation=operation,
+                ),
+                status=_required_enum(
+                    row,
+                    "status",
+                    {"pending", "deferred", "retryable_failed"},
+                    operation=operation,
+                ),
+                due_at=_required_string(row, "due_at", operation=operation),
+                expires_at=_required_string(row, "expires_at", operation=operation),
+                expected_case_version=_required_int(
+                    row, "expected_case_version", operation=operation
+                ),
+                policy_key=_required_string(row, "policy_key", operation=operation),
+                policy_version=_required_int(
+                    row, "policy_version", operation=operation
+                ),
+                step_key=_required_string(row, "step_key", operation=operation),
+                anchor_type=_required_string(row, "anchor_type", operation=operation),
+                anchor_subject_internal_id=_required_string(
+                    row, "anchor_subject_internal_id", operation=operation
+                ),
+                anchor_observed_at=_required_string(
+                    row, "anchor_observed_at", operation=operation
+                ),
+                lease_owner=_required_string(row, "lease_owner", operation=operation),
+                lease_generation=_required_int(
+                    row, "lease_generation", operation=operation
+                ),
+                lease_expires_at=_required_string(
+                    row, "lease_expires_at", operation=operation
+                ),
+                idempotency_key=_required_string(
+                    row, "idempotency_key", operation=operation
+                ),
+            ))
+        return actions
+
+    async def get_followup_execution_context(
+        self,
+        *,
+        action_id: str,
+        worker_id: str,
+        lease_generation: int,
+        now: str,
+    ) -> FollowupExecutionContext:
+        """Read the minimal fenced case context needed before agent reasoning."""
+        operation = "get_followup_execution_context"
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps({
+                "p_action_id": action_id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": lease_generation,
+                "p_now": now,
+            }, ensure_ascii=False),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        returned_action_id = _required_string(row, "action_id", operation=operation)
+        if returned_action_id != action_id:
+            raise SupabaseError(f"{operation}_action_mismatch")
+        return FollowupExecutionContext(
+            action_id=returned_action_id,
+            action_type=_required_enum(
+                row,
+                "action_type",
+                {"first_contact_review", "no_reply_review", "reconcile_delivery"},
+                operation=operation,
+            ),
+            step_key=_required_string(row, "step_key", operation=operation),
+            recovery_case_id=_required_string(
+                row, "recovery_case_id", operation=operation
+            ),
+            contact_id=_required_string(row, "contact_id", operation=operation),
+            source_event_id=_required_string(
+                row, "source_event_id", operation=operation
+            ),
+            buyer_name=_optional_string(row, "buyer_name", operation=operation),
+            buyer_email=_optional_string(row, "buyer_email", operation=operation),
+            buyer_phone=_optional_string(row, "buyer_phone", operation=operation),
+            product_name=_required_string(row, "product_name", operation=operation),
+            offer_code=_optional_string(row, "offer_code", operation=operation),
+            current_goal=_optional_string(row, "current_goal", operation=operation),
+            lead_stage=_required_enum(
+                row, "lead_stage", _LEAD_STAGES, operation=operation
+            ),
+        )
+
+    async def get_followup_chatwoot_context(
+        self,
+        *,
+        action_id: str,
+        worker_id: str,
+        lease_generation: int,
+        now: str,
+    ) -> ChatwootAuthorityContext:
+        """Read fenced external identifiers needed for canonical Chatwoot checks."""
+        operation = "get_followup_chatwoot_context"
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps({
+                "p_action_id": action_id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": lease_generation,
+                "p_now": now,
+            }, ensure_ascii=False),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        returned_action_id = _required_string(row, "action_id", operation=operation)
+        if returned_action_id != action_id:
+            raise SupabaseError(f"{operation}_action_mismatch")
+        return ChatwootAuthorityContext(
+            action_id=returned_action_id,
+            action_type=_required_enum(
+                row, "action_type",
+                {"first_contact_review", "no_reply_review", "reconcile_delivery"},
+                operation=operation,
+            ),
+            chatwoot_account_id=_optional_positive_int(
+                row, "chatwoot_account_id", operation=operation
+            ),
+            external_conversation_id=_optional_positive_int(
+                row, "external_conversation_id", operation=operation
+            ),
+            expected_inbox_id=_optional_positive_int(
+                row, "expected_inbox_id", operation=operation
+            ),
+            anchor_external_message_id=_optional_positive_int(
+                row, "anchor_external_message_id", operation=operation
+            ),
+        )
+
+    async def reevaluate_followup_action(
+        self,
+        *,
+        action_id: str,
+        worker_id: str,
+        lease_generation: int,
+        now: str,
+        chatwoot_evidence: dict[str, object] | None = None,
+    ) -> ReevaluationDecision:
+        """Apply deterministic guards and atomically persist non-execute results."""
+        rpc_body: dict[str, object] = {
+            "p_action_id": action_id,
+            "p_worker_id": worker_id,
+            "p_lease_generation": lease_generation,
+            "p_now": now,
+            "p_chatwoot_checked": chatwoot_evidence is not None,
+        }
+        if chatwoot_evidence is not None:
+            rpc_body.update(chatwoot_evidence)
+        body = json.dumps(rpc_body, ensure_ascii=False)
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/reevaluate_followup_action",
+            content=body,
+        )
+        if response.status_code != 200:
+            raise SupabaseError(
+                f"reevaluate_followup_action_failed: HTTP {response.status_code}"
+            )
+        operation = "reevaluate_followup_action"
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        returned_action_id = _required_string(
+            row, "action_id", operation=operation
+        )
+        if returned_action_id != action_id:
+            raise SupabaseError(f"{operation}_action_mismatch")
+        return ReevaluationDecision(
+            action_id=returned_action_id,
+            decision=_required_enum(
+                row,
+                "decision",
+                {"execute", "cancel", "pause", "expire", "escalate"},
+                operation=operation,
+            ),
+            reason_code=_required_string(row, "reason_code", operation=operation),
+            case_version=_required_int(row, "case_version", operation=operation),
+            sequence_revision=_required_int(
+                row, "sequence_revision", operation=operation
+            ),
+        )
+
+    async def reserve_followup_delivery_attempt(
+        self,
+        *,
+        action_id: str,
+        worker_id: str,
+        lease_generation: int,
+        expected_case_version: int,
+        expected_sequence_revision: int,
+        channel: str,
+        mode: str,
+        now: str,
+    ) -> DeliveryAttempt:
+        """Reserve the durable effect ledger entry for an execute decision."""
+        operation = "reserve_followup_delivery_attempt"
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps({
+                "p_action_id": action_id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": lease_generation,
+                "p_expected_case_version": expected_case_version,
+                "p_expected_sequence_revision": expected_sequence_revision,
+                "p_channel": channel,
+                "p_mode": mode,
+                "p_now": now,
+            }, ensure_ascii=False),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        returned_action_id = _required_string(row, "action_id", operation=operation)
+        if returned_action_id != action_id:
+            raise SupabaseError(f"{operation}_action_mismatch")
+        returned_generation = _required_int(
+            row, "lease_generation", operation=operation
+        )
+        if returned_generation != lease_generation:
+            raise SupabaseError(f"{operation}_lease_mismatch")
+        returned_case_version = _required_int(
+            row, "expected_case_version", operation=operation
+        )
+        returned_sequence_revision = _required_int(
+            row, "expected_sequence_revision", operation=operation
+        )
+        if (
+            returned_case_version != expected_case_version
+            or returned_sequence_revision != expected_sequence_revision
+        ):
+            raise SupabaseError(f"{operation}_revision_mismatch")
+        return DeliveryAttempt(
+            attempt_id=_required_string(row, "id", operation=operation),
+            action_id=returned_action_id,
+            idempotency_key=_required_string(
+                row, "idempotency_key", operation=operation
+            ),
+            attempt_number=_required_int(
+                row, "attempt_number", operation=operation
+            ),
+            channel=_required_enum(
+                row, "channel", {"whatsapp"}, operation=operation
+            ),
+            mode=_required_enum(
+                row,
+                "mode",
+                {"freeform", "approved_template"},
+                operation=operation,
+            ),
+            phase=_required_enum(
+                row,
+                "phase",
+                {"reserved", "request_started"},
+                operation=operation,
+            ),
+            lease_generation=returned_generation,
+            expected_case_version=returned_case_version,
+            expected_sequence_revision=returned_sequence_revision,
+        )
+
+    async def mark_followup_request_started(
+        self,
+        *,
+        action_id: str,
+        attempt_id: str,
+        worker_id: str,
+        lease_generation: int,
+        now: str,
+    ) -> DeliveryAttempt:
+        """Persist the last authorization boundary immediately before HTTP."""
+        operation = "mark_followup_request_started"
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps({
+                "p_action_id": action_id,
+                "p_attempt_id": attempt_id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": lease_generation,
+                "p_now": now,
+            }, ensure_ascii=False),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        try:
+            rows = _response_rows(response, operation=operation)
+            if len(rows) != 1:
+                raise SupabaseError(f"{operation}_invalid_shape")
+            row = rows[0]
+            returned_attempt_id = _required_string(row, "id", operation=operation)
+            returned_action_id = _required_string(row, "action_id", operation=operation)
+            returned_generation = _required_int(
+                row, "lease_generation", operation=operation
+            )
+            phase = _required_enum(
+                row, "phase", {"request_started"}, operation=operation
+            )
+            if returned_attempt_id != attempt_id:
+                raise SupabaseError(f"{operation}_attempt_mismatch")
+            if returned_action_id != action_id:
+                raise SupabaseError(f"{operation}_action_mismatch")
+            if returned_generation != lease_generation:
+                raise SupabaseError(f"{operation}_lease_mismatch")
+            return DeliveryAttempt(
+                attempt_id=returned_attempt_id,
+                action_id=returned_action_id,
+                idempotency_key=_required_string(
+                    row, "idempotency_key", operation=operation
+                ),
+                attempt_number=_required_int(
+                    row, "attempt_number", operation=operation
+                ),
+                channel=_required_enum(
+                    row, "channel", {"whatsapp"}, operation=operation
+                ),
+                mode=_required_enum(
+                    row,
+                    "mode",
+                    {"freeform", "approved_template"},
+                    operation=operation,
+                ),
+                phase=phase,
+                lease_generation=returned_generation,
+                expected_case_version=_required_int(
+                    row, "expected_case_version", operation=operation
+                ),
+                expected_sequence_revision=_required_int(
+                    row, "expected_sequence_revision", operation=operation
+                ),
+            )
+        except SupabaseError as exc:
+            raise SupabaseCommittedResponseError(str(exc)) from exc
+
+    async def finalize_followup_delivery_attempt(
+        self,
+        *,
+        action_id: str,
+        attempt_id: str,
+        worker_id: str,
+        lease_generation: int,
+        outcome: str,
+        remote_message_id: str | None,
+        accepted_message_id: str | None,
+        reason_code: str,
+        next_attempt_at: str | None,
+        reconciliation_deadline: str | None,
+        now: str,
+    ) -> DeliveryFinalization:
+        """Finalize one started non-accepted attempt through the fenced RPC."""
+        operation = "finalize_followup_delivery_attempt"
+        if outcome == "accepted_by_chatwoot":
+            raise SupabaseError(f"{operation}_canonical_acceptance_required")
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps({
+                "p_action_id": action_id,
+                "p_attempt_id": attempt_id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": lease_generation,
+                "p_outcome": outcome,
+                "p_remote_message_id": remote_message_id,
+                "p_accepted_message_id": accepted_message_id,
+                "p_reason_code": reason_code,
+                "p_next_attempt_at": next_attempt_at,
+                "p_reconciliation_deadline": reconciliation_deadline,
+                "p_now": now,
+            }, ensure_ascii=False),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        returned_action_id = _required_string(row, "id", operation=operation)
+        if returned_action_id != action_id:
+            raise SupabaseError(f"{operation}_action_mismatch")
+        return DeliveryFinalization(
+            action_id=returned_action_id,
+            status=_required_enum(
+                row,
+                "status",
+                {
+                    "pending",
+                    "deferred",
+                    "retryable_failed",
+                    "delivery_unknown",
+                    "accepted_by_chatwoot",
+                    "cancelled",
+                    "skipped",
+                    "expired",
+                    "permanent_failed",
+                    "superseded",
+                },
+                operation=operation,
+            ),
+            terminal_reason=_optional_string(
+                row, "terminal_reason", operation=operation
+            ),
+        )
+
+    async def record_and_finalize_followup_acceptance(
+        self,
+        *,
+        action_id: str,
+        attempt_id: str,
+        worker_id: str,
+        lease_generation: int,
+        external_conversation_id: str,
+        remote_message_id: str,
+        message_content: str,
+        now: str,
+    ) -> DeliveryFinalization:
+        """Atomically persist the canonical accepted message and finalize its attempt."""
+        operation = "record_and_finalize_followup_acceptance"
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps({
+                "p_action_id": action_id,
+                "p_attempt_id": attempt_id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": lease_generation,
+                "p_external_conversation_id": str(external_conversation_id),
+                "p_remote_message_id": str(remote_message_id),
+                "p_message_content": message_content,
+                "p_now": now,
+            }, ensure_ascii=False),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        returned_action_id = _required_string(row, "id", operation=operation)
+        if returned_action_id != action_id:
+            raise SupabaseError(f"{operation}_action_mismatch")
+        status = _required_enum(
+            row,
+            "status",
+            {"accepted_by_chatwoot"},
+            operation=operation,
+        )
+        return DeliveryFinalization(
+            action_id=returned_action_id,
+            status=status,
+            terminal_reason=_optional_string(
+                row, "terminal_reason", operation=operation
+            ),
+        )
 
     # ── Contact lookup ────────────────────────────────────────────
 

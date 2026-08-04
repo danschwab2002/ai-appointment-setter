@@ -8,6 +8,7 @@ import json
 import time
 
 import httpx
+import pytest
 
 from bridge.app import Settings, create_app
 from bridge.hotmart import parse_hotmart_payload
@@ -75,6 +76,92 @@ def _hotmart_settings(**overrides: object) -> Settings:
     }
     defaults.update(overrides)
     return Settings(**defaults)  # type: ignore[arg-type]
+
+
+def test_worker_requires_complete_durable_policy_configuration() -> None:
+    with pytest.raises(ValueError, match="FOLLOWUP_POLICY_KEY and FOLLOWUP_POLICY_VERSION"):
+        create_app(_hotmart_settings(
+            worker_enabled=True,
+            supabase_base_url="https://fake.supabase.co",
+            supabase_service_role_key="service-role",
+            followup_policy_version=None,
+        ))
+
+
+def test_worker_fails_closed_without_supabase() -> None:
+    with pytest.raises(ValueError, match="Supabase is required"):
+        create_app(_hotmart_settings(
+            worker_enabled=True,
+            followup_policy_key="cart-recovery-test",
+            followup_policy_version=1,
+        ))
+
+
+def test_dispatcher_requires_worker_id_when_enabled() -> None:
+    with pytest.raises(ValueError, match="DURABLE_DISPATCHER_WORKER_ID"):
+        create_app(_hotmart_settings(
+            dispatcher_enabled=True,
+            supabase_base_url="https://fake.supabase.co",
+            supabase_service_role_key="service-role",
+        ))
+
+
+def test_dispatcher_is_wired_only_when_explicitly_enabled() -> None:
+    disabled = create_app(_hotmart_settings(
+        dispatcher_enabled=False,
+    ))
+    enabled = create_app(_hotmart_settings(
+        dispatcher_enabled=True,
+        dispatcher_worker_id="dispatcher-test",
+        supabase_base_url="https://fake.supabase.co",
+        supabase_service_role_key="service-role",
+        chatwoot_base_url="https://chatwoot.example.test",
+        chatwoot_account_id=1,
+        chatwoot_control_api_access_token="control-token",
+        chatwoot_pause_macro_id=1,
+    ))
+    assert disabled.state.durable_dispatcher is None
+    assert enabled.state.durable_dispatcher is not None
+
+
+def test_dispatcher_outbound_requires_complete_explicit_dependencies() -> None:
+    with pytest.raises(ValueError, match="durable outbound requires Hermes and sender"):
+        create_app(_hotmart_settings(
+            dispatcher_enabled=True,
+            dispatcher_outbound_enabled=True,
+            dispatcher_worker_id="dispatcher-test",
+            supabase_base_url="https://fake.supabase.co",
+            supabase_service_role_key="service-role",
+            chatwoot_base_url="https://chatwoot.example.test",
+            chatwoot_account_id=1,
+            chatwoot_control_api_access_token="control-token",
+            chatwoot_pause_macro_id=1,
+        ))
+
+
+def test_dispatcher_outbound_injects_agent_sender_and_allowlist() -> None:
+    agent = object()
+    sender = object()
+    app = create_app(
+        _hotmart_settings(
+            allowed_jid="15555550100@s.whatsapp.net",
+            dispatcher_enabled=True,
+            dispatcher_outbound_enabled=True,
+            dispatcher_worker_id="dispatcher-test",
+            supabase_base_url="https://fake.supabase.co",
+            supabase_service_role_key="service-role",
+            chatwoot_base_url="https://chatwoot.example.test",
+            chatwoot_account_id=1,
+            chatwoot_control_api_access_token="control-token",
+            chatwoot_pause_macro_id=1,
+        ),
+        recovery_agent_client=agent,  # type: ignore[arg-type]
+        message_sender=sender,  # type: ignore[arg-type]
+    )
+    dispatcher = app.state.durable_dispatcher
+    assert dispatcher._recovery_agent is agent
+    assert dispatcher._sender is sender
+    assert dispatcher._allowed_jid == "15555550100@s.whatsapp.net"
 
 
 def _post_hotmart(

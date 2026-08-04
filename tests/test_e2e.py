@@ -120,6 +120,8 @@ def _build_app(transport: E2ETransport, tmp_path: Path):
         worker_enabled=True,
         worker_poll_interval_seconds=0.1,
         worker_batch_size=5,
+        followup_policy_key="cart-recovery-test",
+        followup_policy_version=1,
         chatwoot_inbox_id=1,
         messaging_channel="evolution",
         hermes_api_base_url="https://hermes.test/v1",
@@ -189,9 +191,15 @@ def _setup_mocks(transport: E2ETransport) -> None:
         {"_status": 201},
         {"_status": 201},
     ])
-    # ── Supabase: create recovery_case ──────────────────────────────
-    transport.set("POST", "/rest/v1/recovery_cases", [
-        {"_status": 201, "id": "rc-e2e-001"},
+    # ── Supabase: plan durable recovery ──────────────────────────────
+    transport.set("POST", "/rest/v1/rpc/plan_cart_recovery", [
+        {
+            "_status": 200,
+            "recovery_case_id": "rc-e2e-001",
+            "followup_sequence_id": "seq-e2e-001",
+            "scheduled_action_id": "action-e2e-001",
+            "created": True,
+        },
     ])
     # ── Supabase: log resolution attempt ────────────────────────────
     transport.set("POST", "/rest/v1/identity_resolution_attempts", [
@@ -252,10 +260,8 @@ def _setup_mocks(transport: E2ETransport) -> None:
     ])
 
 
-def test_e2e_webhook_to_whatsapp(tmp_path: Path) -> None:
-    """Full flow: Hotmart webhook → identity resolution → agent reasoning
-    → WhatsApp first-touch message via Chatwoot.
-    """
+def test_e2e_webhook_to_durable_plan_without_outbound_send(tmp_path: Path) -> None:
+    """Hotmart webhook → identity resolution → durable plan, without send."""
     transport = E2ETransport()
     _setup_mocks(transport)
     app = _build_app(transport, tmp_path)
@@ -284,49 +290,31 @@ def test_e2e_webhook_to_whatsapp(tmp_path: Path) -> None:
         # Step 2: Start the worker manually (ASGITransport doesn't run lifespan)
         await worker.start()
 
-        # Step 3: Wait for the worker to process and send the message
+        # Step 3: Wait for the worker to process and plan the action
         deadline = time.time() + 5.0
         while time.time() < deadline:
-            send_msgs = [
+            processed = [
                 r for r in transport.requests
-                if r[0] == "POST"
-                and "/conversations/100/messages" in r[1]
+                if r[0] == "PATCH" and r[1] == "/rest/v1/webhook_events"
             ]
-            if send_msgs:
+            if processed:
                 break
             await asyncio.sleep(0.1)
 
         await worker.stop()
 
-        # Step 4: Verify the WhatsApp message was sent
+        # Step 4: Verify planning completed without an outbound message
         send_msgs = [
             r for r in transport.requests
             if r[0] == "POST" and "/conversations/100/messages" in r[1]
         ]
-        assert len(send_msgs) == 1, "Expected exactly one first-touch message"
+        assert len(send_msgs) == 0, "Durable planning must not send immediately"
 
-        # Verify the message content
-        msg_body = json.loads(send_msgs[0][2])
-        assert msg_body["content"] == AGENT_PROPOSAL["message"]
-        assert msg_body["message_type"] == "outgoing"
-        assert msg_body["private"] is False
-
-        # Verify the contact was created in Chatwoot with E.164 phone
-        contact_posts = [
+        plan_posts = [
             r for r in transport.requests
-            if r[0] == "POST" and r[1] == "/api/v1/accounts/1/contacts"
+            if r[0] == "POST" and r[1] == "/rest/v1/rpc/plan_cart_recovery"
         ]
-        assert len(contact_posts) == 1
-        contact_body = json.loads(contact_posts[0][2])
-        assert contact_body["phone_number"] == "+5531999999999"
-        assert contact_body["name"] == "Juan Perez"
-
-        # Verify the conversation was created
-        conv_posts = [
-            r for r in transport.requests
-            if r[0] == "POST" and r[1] == "/api/v1/accounts/1/conversations"
-        ]
-        assert len(conv_posts) == 1
+        assert len(plan_posts) == 1
 
         # Verify the webhook event was marked as processed
         patch_requests = [
@@ -334,18 +322,11 @@ def test_e2e_webhook_to_whatsapp(tmp_path: Path) -> None:
         ]
         assert len(patch_requests) >= 1
 
-        # Verify the agent was called with the situation_report
+        # Hermes and Chatwoot must not run before the due-action dispatcher.
         agent_posts = [
             r for r in transport.requests
             if r[0] == "POST" and "/chat/completions" in r[1]
         ]
-        assert len(agent_posts) == 1
-        agent_body = json.loads(agent_posts[0][2])
-        agent_context = json.loads(agent_body["messages"][0]["content"])
-        assert "situation_report" in agent_context
-        assert agent_context["situation_report"]["buyer_email"] == "juan@example.com"
-        assert agent_context["situation_report"]["buyer_phone"] == "5531999999999"
-        assert agent_context["situation_report"]["product_name"] == "IA para empresarios"
-        assert agent_context["situation_report"]["phone_available"] is True
+        assert len(agent_posts) == 0
 
     asyncio.run(run_e2e())

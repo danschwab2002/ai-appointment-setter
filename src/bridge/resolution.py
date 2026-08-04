@@ -32,6 +32,8 @@ async def resolve_event(
     payload: dict[str, object],
     supabase: SupabaseClient,
     grace_hours: int = DEFAULT_GRACE_HOURS,
+    policy_key: str | None = None,
+    policy_version: int | None = None,
 ) -> SituationReport:
     """Resolve identity for one webhook event and return a situation report.
 
@@ -129,19 +131,42 @@ async def resolve_event(
         except SupabaseError:
             pass
 
-    # ── Step 5: Create recovery_case ───────────────────────────────
-    grace_expires = datetime.now(timezone.utc) + timedelta(hours=grace_hours)
+    # ── Step 5: Create the recovery case, or the complete durable plan ──
     try:
-        recovery_case_id = await supabase.create_recovery_case(
-            contact_id=contact_id,
-            abandonment_event_id=webhook_event_id,
-            external_product_id=(
-                str(buyer.product_id) if buyer.product_id is not None else None
-            ),
-            product_name=buyer.product_name,
-            offer_code=buyer.offer_code,
-            grace_expires_at=grace_expires.isoformat(),
-        )
+        if policy_key is not None and policy_version is not None:
+            if buyer.product_id is None or buyer.product_name is None:
+                raise SupabaseError("plan_cart_recovery_missing_product")
+            abandoned_at = datetime.fromtimestamp(
+                buyer.creation_date_ms / 1000,
+                tz=timezone.utc,
+            ).isoformat()
+            plan = await supabase.plan_cart_recovery(
+                webhook_event_id=webhook_event_id,
+                contact_id=contact_id,
+                external_product_id=str(buyer.product_id),
+                product_name=buyer.product_name,
+                offer_code=buyer.offer_code,
+                policy_key=policy_key,
+                policy_version=policy_version,
+                abandoned_at=abandoned_at,
+            )
+            recovery_case_id = plan.recovery_case_id
+        else:
+            grace_expires = datetime.now(timezone.utc) + timedelta(
+                hours=grace_hours
+            )
+            recovery_case_id = await supabase.create_recovery_case(
+                contact_id=contact_id,
+                abandonment_event_id=webhook_event_id,
+                external_product_id=(
+                    str(buyer.product_id)
+                    if buyer.product_id is not None
+                    else None
+                ),
+                product_name=buyer.product_name,
+                offer_code=buyer.offer_code,
+                grace_expires_at=grace_expires.isoformat(),
+            )
     except SupabaseError as exc:
         await supabase.update_event_status(
             event_id=webhook_event_id,

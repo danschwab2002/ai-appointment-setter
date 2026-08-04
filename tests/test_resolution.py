@@ -141,6 +141,83 @@ def _configure_new_contact_resolution(
     ])
 
 
+def test_durable_plan_is_committed_before_event_is_marked_processed() -> None:
+    transport = MockSupabaseTransport()
+    transport.set("GET", "/rest/v1/contact_points", [
+        {"_status": 200},
+        {"_status": 200},
+    ])
+    transport.set("POST", "/rest/v1/contacts", [
+        {"_status": 201, "id": "contact-durable"},
+    ])
+    transport.set("POST", "/rest/v1/contact_points", [
+        {"_status": 201},
+        {"_status": 201},
+    ])
+    transport.set("POST", "/rest/v1/rpc/plan_cart_recovery", [{
+        "_status": 200,
+        "recovery_case_id": "case-durable",
+        "followup_sequence_id": "sequence-durable",
+        "scheduled_action_id": "action-durable",
+        "created": True,
+    }])
+    transport.set("POST", "/rest/v1/identity_resolution_attempts", [
+        {"_status": 201},
+    ])
+    transport.set("GET", "/rest/v1/conversations", [{"_status": 200}])
+    transport.set("GET", "/rest/v1/recovery_cases", [{"_status": 200}])
+    transport.set("GET", "/rest/v1/channel_identities", [{"_status": 200}])
+    transport.set("PATCH", "/rest/v1/webhook_events", [{"_status": 204}])
+
+    _run(resolve_event(
+        webhook_event_id="we-durable",
+        payload=PAYLOAD,
+        supabase=_make_supabase(transport),
+        policy_key="cart-recovery-test",
+        policy_version=1,
+    ))
+
+    paths = [(method, path) for method, path, _ in transport.requests]
+    assert ("POST", "/rest/v1/recovery_cases") not in paths
+    assert paths.index(("POST", "/rest/v1/rpc/plan_cart_recovery")) < paths.index(
+        ("PATCH", "/rest/v1/webhook_events")
+    )
+
+
+def test_durable_plan_failure_does_not_mark_event_processed() -> None:
+    transport = MockSupabaseTransport()
+    transport.set("GET", "/rest/v1/contact_points", [
+        {"_status": 200},
+        {"_status": 200},
+    ])
+    transport.set("POST", "/rest/v1/contacts", [
+        {"_status": 201, "id": "contact-plan-failure"},
+    ])
+    transport.set("POST", "/rest/v1/contact_points", [
+        {"_status": 201},
+        {"_status": 201},
+    ])
+    transport.set("POST", "/rest/v1/rpc/plan_cart_recovery", [{
+        "_status": 500,
+    }])
+    transport.set("PATCH", "/rest/v1/webhook_events", [{"_status": 204}])
+
+    with pytest.raises(Exception, match="create_recovery_case_failed"):
+        _run(resolve_event(
+            webhook_event_id="we-plan-failure",
+            payload=PAYLOAD,
+            supabase=_make_supabase(transport),
+            policy_key="cart-recovery-test",
+            policy_version=1,
+        ))
+
+    patches = [
+        request for request in transport.requests
+        if request[0:2] == ("PATCH", "/rest/v1/webhook_events")
+    ]
+    assert len(patches) == 1
+
+
 @pytest.mark.parametrize(
     "failed_context_path",
     [

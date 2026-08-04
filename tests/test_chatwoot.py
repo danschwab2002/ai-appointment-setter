@@ -896,3 +896,131 @@ def test_reads_a_bounded_conversation_history_from_chatwoot() -> None:
     )
 
     assert result == messages
+
+
+def test_reads_canonical_snapshot_and_detects_inbound_after_anchor() -> None:
+    requests: list[httpx.Request] = []
+    messages = [
+        {"id": 40, "created_at": 100, "message_type": 1, "private": False,
+         "sender": {"type": "agent_bot", "id": 1}},
+        {"id": 41, "created_at": 101, "message_type": 0, "private": False,
+         "sender": {"type": "contact", "id": 20}},
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/messages"):
+            return httpx.Response(200, json={"payload": messages})
+        return httpx.Response(200, json={
+            "id": 2,
+            "inbox_id": 7,
+            "status": "open",
+            "can_reply": True,
+            "labels": ["cart_recovery"],
+            "meta": {"sender": {"identifier": ALLOWED_JID}},
+        })
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        transport=httpx.MockTransport(handler),
+    )
+    snapshot = asyncio.run(client.get_canonical_conversation_snapshot(
+        conversation_id=2,
+        expected_inbox_id=7,
+        anchor_message_id=40,
+    ))
+
+    assert snapshot.anchor_found is True
+    assert snapshot.inbound_after_anchor is True
+    assert snapshot.human_activity_after_anchor is False
+    assert snapshot.checkpoint_message_id == 41
+    assert [request.url.path for request in requests] == [
+        "/api/v1/accounts/1/conversations/2",
+        "/api/v1/accounts/1/conversations/2/messages",
+    ]
+
+
+def test_canonical_snapshot_exposes_missing_anchor_fail_closed() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/messages"):
+            return httpx.Response(200, json={"payload": [{
+                "id": 41, "created_at": 101, "message_type": 0,
+                "private": False, "sender": {"type": "contact", "id": 20},
+            }]})
+        return httpx.Response(200, json={
+            "id": 2, "inbox_id": 7, "status": "open", "can_reply": True,
+            "labels": [], "meta": {"sender": {"identifier": ALLOWED_JID}},
+        })
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test", account_id=1,
+        access_token="control-token", allowed_jid=ALLOWED_JID,
+        transport=httpx.MockTransport(handler),
+    )
+    snapshot = asyncio.run(client.get_canonical_conversation_snapshot(
+        conversation_id=2, expected_inbox_id=7, anchor_message_id=40,
+    ))
+    assert snapshot.anchor_found is False
+    assert snapshot.inbound_after_anchor is False
+
+
+def test_canonical_snapshot_pages_back_until_anchor() -> None:
+    latest = [
+        {"id": message_id, "created_at": message_id,
+         "message_type": 0 if message_id == 41 else 2, "private": False,
+         "sender": {"type": "contact", "id": 20}}
+        for message_id in range(41, 61)
+    ]
+    older = [{
+        "id": 40, "created_at": 40, "message_type": 1, "private": False,
+        "sender": {"type": "agent_bot", "id": 1},
+    }]
+    message_requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/messages"):
+            message_requests.append(request)
+            return httpx.Response(
+                200,
+                json={"payload": older if request.url.params.get("before") else latest},
+            )
+        return httpx.Response(200, json={
+            "id": 2, "inbox_id": 7, "status": "open", "can_reply": True,
+            "labels": [], "meta": {"sender": {"identifier": ALLOWED_JID}},
+        })
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test", account_id=1,
+        access_token="control-token", allowed_jid=ALLOWED_JID,
+        transport=httpx.MockTransport(handler),
+    )
+    snapshot = asyncio.run(client.get_canonical_conversation_snapshot(
+        conversation_id=2, expected_inbox_id=7, anchor_message_id=40,
+    ))
+
+    assert snapshot.anchor_found is True
+    assert snapshot.inbound_after_anchor is True
+    assert len(message_requests) == 2
+    assert message_requests[1].url.params["before"] == "41"
+
+
+def test_canonical_snapshot_rejects_wrong_inbox_or_identity() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "id": 2, "inbox_id": 99, "status": "open", "can_reply": True,
+            "labels": [],
+            "meta": {"sender": {"identifier": "12025550000@s.whatsapp.net"}},
+        })
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test", account_id=1,
+        access_token="control-token", allowed_jid=ALLOWED_JID,
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(ChatwootProtocolError, match="invalid_conversation_authority"):
+        asyncio.run(client.get_canonical_conversation_snapshot(
+            conversation_id=2, expected_inbox_id=7, anchor_message_id=None,
+        ))
