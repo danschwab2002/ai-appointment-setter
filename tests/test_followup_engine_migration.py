@@ -12,6 +12,12 @@ MIGRATION = (
     / "migrations"
     / "20260803000100_followup_engine_v1.sql"
 )
+PERMISSIONS_HOTFIX = (
+    Path(__file__).parents[1]
+    / "supabase"
+    / "migrations"
+    / "20260804000100_followup_engine_permissions_hotfix.sql"
+)
 BASELINE = (
     Path(__file__).parents[1]
     / "supabase"
@@ -544,3 +550,18 @@ def test_followup_engine_objects_are_not_publicly_executable() -> None:
     assert "revoke execute on function public.plan_cart_recovery" in sql
     assert "grant execute on function public.claim_due_followup_actions" in sql
     assert "to service_role" in sql
+
+
+def test_internal_finalizer_is_explicitly_revoked_from_supabase_api_roles() -> None:
+    assert PERMISSIONS_HOTFIX.exists(), "missing permissions hotfix migration"
+    sql = re.sub(
+        r"\s+", " ", PERMISSIONS_HOTFIX.read_text(encoding="utf-8").lower()
+    )
+    signature = (
+        "public._finalize_followup_delivery_attempt("
+        "uuid, uuid, text, bigint, text, text, uuid, text, timestamptz, "
+        "timestamptz, timestamptz)"
+    )
+
+    for role in ("public", "anon", "authenticated", "service_role"):
+        assert f"revoke execute on function {signature} from {role}" in sql
