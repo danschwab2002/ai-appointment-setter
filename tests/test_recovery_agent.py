@@ -396,6 +396,89 @@ def test_requests_bounded_durable_followup_message() -> None:
     }
 
 
+def test_parses_followup_message_wrapped_in_markdown_fences() -> None:
+    # Hermes (and most chat LLMs) frequently wrap JSON in ```json fences.
+    # The bounded proposal must be recovered from that envelope.
+    fenced = (
+        "```json\n"
+        "{\n"
+        '  "strategy": "Primer contacto cálido para retomar interés",\n'
+        '  "message": "¡Hola Ana! Vi que estuviste viendo Curso Uno. '
+        '¿Alguna duda que pueda resolverte?"\n'
+        "}\n"
+        "```"
+    )
+    transport = _MockTransport(
+        body={"choices": [{"message": {"content": fenced}}]}
+    )
+    execution_context = FollowupExecutionContext(
+        action_id="action-fence",
+        action_type="first_contact_review",
+        step_key="first_contact",
+        recovery_case_id="case-fence",
+        contact_id="contact-fence",
+        source_event_id="event-fence",
+        buyer_name="Ana",
+        buyer_email="ana@example.test",
+        buyer_phone="15555550100",
+        product_name="Curso Uno",
+        offer_code="OFERTA1",
+        current_goal="iniciar conversación",
+        lead_stage="new",
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        client = RecoveryAgentClient(
+            base_url="https://hermes.example.test/v1",
+            api_key="test-key",
+            model_name="agente-comercial",
+            proposals_dir=Path(tmp),
+            transport=transport,
+        )
+        result = _run(client.request_followup_message(
+            attempt_id="attempt-fence",
+            execution_context=execution_context,
+        ))
+
+    assert result == FollowupMessageProposal(
+        strategy="Primer contacto cálido para retomar interés",
+        message=(
+            "¡Hola Ana! Vi que estuviste viendo Curso Uno. "
+            "¿Alguna duda que pueda resolverte?"
+        ),
+    )
+
+
+def test_agent_json_parser_rejects_errors_and_resists_redos() -> None:
+    import time
+
+    from bridge.recovery_agent import _parse_agent_json_object
+
+    # Fail-closed: a raw provider error string (e.g. HTTP 429) must not parse.
+    assert _parse_agent_json_object(
+        "API call failed after 3 retries: HTTP 429"
+    ) is None
+    # A non-object JSON value must not parse.
+    assert _parse_agent_json_object("[1, 2, 3]") is None
+    # Direct JSON, fenced JSON, and fence-without-language all parse.
+    assert _parse_agent_json_object('{"strategy": "a", "message": "b"}') == {
+        "strategy": "a",
+        "message": "b",
+    }
+    assert _parse_agent_json_object(
+        '```json\n{"strategy": "a", "message": "b"}\n```'
+    ) == {"strategy": "a", "message": "b"}
+
+    # Regression: an unterminated fence followed by a long whitespace run must
+    # resolve in linear time (the previous regex backtracked catastrophically).
+    malicious = "```json\n" + " " * 200_000
+    start = time.perf_counter()
+    result = _parse_agent_json_object(malicious)
+    elapsed = time.perf_counter() - start
+    assert result is None
+    assert elapsed < 1.0, f"parser too slow ({elapsed:.2f}s) — possible ReDoS"
+
+
 def test_reuses_completed_durable_followup_proposal_without_second_agent_call() -> None:
     proposal = {
         "strategy": "recordatorio consultivo",

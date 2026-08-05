@@ -12,7 +12,6 @@ import asyncio
 import hashlib
 import json
 import os
-import re
 import tempfile
 import fcntl
 from dataclasses import dataclass
@@ -145,6 +144,52 @@ def required_recovery_decision(
     if situation_report["has_open_recovery_case"] is True:
         return {"action": "hold", "reason_code": "recovery_case_active"}
     return {"action": "send_first_touch", "reason_code": "first_touch"}
+
+
+def _strip_code_fence(text: str) -> str | None:
+    """Return the body inside a leading markdown code fence, or None.
+
+    Pure linear string scanning (no regex) so a malformed/unclosed fence
+    followed by a long run of whitespace cannot trigger catastrophic
+    backtracking (ReDoS) on attacker-influenced agent output.
+    """
+    stripped = text.strip()
+    if not stripped.startswith("```"):
+        return None
+    newline = stripped.find("\n")
+    if newline == -1:
+        return None
+    body = stripped[newline + 1 :]
+    closing = body.rfind("```")
+    if closing != -1:
+        body = body[:closing]
+    return body.strip()
+
+
+def _parse_agent_json_object(text: str) -> dict[str, object] | None:
+    """Parse a JSON object from an agent reply, tolerating markdown fences.
+
+    Chat LLMs frequently wrap JSON in ```json ... ``` fences or emit a small
+    amount of surrounding prose. Accept the direct JSON first; otherwise pull
+    the object out of a fenced block or the outermost brace pair. Returns the
+    parsed dict, or ``None`` when nothing decodes to a JSON object.
+    """
+    candidates: list[str] = [text]
+    fenced = _strip_code_fence(text)
+    if fenced is not None:
+        candidates.append(fenced)
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidates.append(text[start : end + 1])
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
 
 
 def is_valid_followup_message_proposal(proposal: dict[str, object]) -> bool:
@@ -414,7 +459,7 @@ class RecoveryAgentClient:
         try:
             body = response.json()
             proposal_text = body["choices"][0]["message"]["content"]
-            proposal = json.loads(proposal_text)
+            proposal = _parse_agent_json_object(proposal_text)
         except (
             KeyError,
             IndexError,
@@ -439,8 +484,8 @@ class RecoveryAgentClient:
             return None
 
         accepted = FollowupMessageProposal(
-            strategy=proposal["strategy"],
-            message=proposal["message"],
+            strategy=str(proposal["strategy"]),
+            message=str(proposal["message"]),
         )
         self._persist(
             digest=digest,
@@ -525,7 +570,7 @@ class RecoveryAgentClient:
         try:
             body = response.json()
             proposal_text = body["choices"][0]["message"]["content"]
-            proposal = json.loads(proposal_text)
+            proposal = _parse_agent_json_object(proposal_text)
         except (
             KeyError,
             IndexError,
