@@ -15,6 +15,10 @@ const identityAuditMigration = await readFile(
   `${root}/supabase/migrations/20260805000100_followup_identity_audit.sql`,
   'utf8',
 );
+const contactAuthorizationGrantMigration = await readFile(
+  `${root}/supabase/migrations/20260805000200_followup_contact_authorization_grant.sql`,
+  'utf8',
+);
 const db = new PGlite();
 await db.waitReady;
 await db.exec(baseline);
@@ -25,6 +29,8 @@ await db.exec(identityBindingMigration);
 console.log('identity_binding_migration_apply=OK');
 await db.exec(identityAuditMigration);
 console.log('identity_audit_migration_apply=OK');
+await db.exec(contactAuthorizationGrantMigration);
+console.log('contact_authorization_grant_migration_apply=OK');
 
 async function authorizeExecute(actionId, workerId, leaseGeneration = 1, caseVersion = 1, sequenceRevision = 1) {
   await db.query(`
@@ -205,6 +211,75 @@ if (identityAttempts.rows.length !== 1
 }
 console.log('identity_binding_atomic_replay=OK');
 console.log('identity_audit_atomic_replay=OK');
+
+// Cart abandonment IS the authorization: the atomic plan must have granted
+// exactly one active 'allowed' whatsapp/cart_recovery authorization, sourced
+// from hotmart with cart_abandonment evidence, and the plan replay above must
+// NOT have produced a duplicate.
+const grantRows = await db.query(`
+  select authorization_status, authorization_source, purpose, channel,
+         evidence ->> 'reason' as reason,
+         evidence ->> 'webhook_event_id' as webhook_event_id
+  from public.contact_authorizations
+  where contact_id='00000000-0000-0000-0000-000000000012'
+    and channel='whatsapp'
+    and purpose='cart_recovery'
+`);
+if (grantRows.rows.length !== 1) {
+  throw new Error('cart-abandonment authorization grant was not idempotent');
+}
+const grant = grantRows.rows[0];
+if (grant.authorization_status !== 'allowed'
+    || grant.authorization_source !== 'hotmart'
+    || grant.reason !== 'cart_abandonment'
+    || grant.webhook_event_id !== '00000000-0000-0000-0000-000000000011') {
+  throw new Error('cart-abandonment authorization grant invariant failed');
+}
+console.log('contact_authorization_grant_atomic_replay=OK');
+
+// Opt-out is authoritative: an active denial recorded BEFORE planning must not
+// be overwritten by the auto-grant, and no extra 'allowed' row may appear.
+await db.exec(`
+  insert into public.webhook_events (
+    id, source, external_event_id, event_type, payload
+  ) values (
+    '00000000-0000-0000-0000-000000000021', 'hotmart',
+    'optout-respect-event', 'PURCHASE_OUT_OF_SHOPPING_CART', '{}'::jsonb
+  );
+  insert into public.contacts (id, full_name) values (
+    '00000000-0000-0000-0000-000000000022', 'Opt Out Respect Check'
+  );
+  insert into public.contact_authorizations (
+    contact_id, channel, purpose, authorization_status,
+    authorization_source, valid_from
+  ) values (
+    '00000000-0000-0000-0000-000000000022', 'whatsapp', 'cart_recovery',
+    'denied', 'manual', now() - interval '1 minute'
+  );
+`);
+await db.query(`
+  select * from public.plan_cart_recovery_with_identity(
+    '00000000-0000-0000-0000-000000000021',
+    '00000000-0000-0000-0000-000000000022',
+    'optout-product', 'Opt Out Product', 'optout-offer',
+    'cart-recovery-test', 1, timestamptz '2099-01-01 00:00:00+00',
+    1, 7, '5531988888888'
+  )
+`);
+const optoutRows = await db.query(`
+  select authorization_status, authorization_source
+  from public.contact_authorizations
+  where contact_id='00000000-0000-0000-0000-000000000022'
+    and channel='whatsapp'
+    and purpose='cart_recovery'
+  order by valid_from
+`);
+if (optoutRows.rows.length !== 1
+    || optoutRows.rows[0].authorization_status !== 'denied'
+    || optoutRows.rows[0].authorization_source !== 'manual') {
+  throw new Error('auto-grant overrode an active opt-out');
+}
+console.log('contact_authorization_optout_respected=OK');
 await db.exec(`
   delete from public.scheduled_actions where recovery_case_id in (
     select id from public.recovery_cases
@@ -226,6 +301,28 @@ await db.exec(`
   where id='00000000-0000-0000-0000-000000000012';
   delete from public.webhook_events
   where id='00000000-0000-0000-0000-000000000011';
+  delete from public.scheduled_actions where recovery_case_id in (
+    select id from public.recovery_cases
+    where contact_id='00000000-0000-0000-0000-000000000022'
+  );
+  delete from public.followup_sequences where recovery_case_id in (
+    select id from public.recovery_cases
+    where contact_id='00000000-0000-0000-0000-000000000022'
+  );
+  delete from public.recovery_case_events where recovery_case_id in (
+    select id from public.recovery_cases
+    where contact_id='00000000-0000-0000-0000-000000000022'
+  );
+  delete from public.recovery_cases
+  where contact_id='00000000-0000-0000-0000-000000000022';
+  delete from public.channel_identities
+  where contact_id='00000000-0000-0000-0000-000000000022';
+  delete from public.contact_authorizations
+  where contact_id='00000000-0000-0000-0000-000000000022';
+  delete from public.contacts
+  where id='00000000-0000-0000-0000-000000000022';
+  delete from public.webhook_events
+  where id='00000000-0000-0000-0000-000000000021';
 `);
 console.log('identity_binding_probe_cleanup=OK');
 
