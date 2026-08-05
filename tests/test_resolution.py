@@ -185,6 +185,7 @@ def test_durable_plan_is_committed_before_event_is_marked_processed() -> None:
     plan_index = paths.index(
         ("POST", "/rest/v1/rpc/plan_cart_recovery_with_identity")
     )
+    assert ("POST", "/rest/v1/identity_resolution_attempts") not in paths
     processed_index = paths.index(("PATCH", "/rest/v1/webhook_events"))
     assert plan_index < processed_index
 

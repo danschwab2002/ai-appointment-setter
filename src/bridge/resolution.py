@@ -136,6 +136,7 @@ async def resolve_event(
             pass
 
     # ── Step 5: Create the recovery case, or the complete durable plan ──
+    durable_plan_enabled = policy_key is not None and policy_version is not None
     try:
         if policy_key is not None and policy_version is not None:
             if buyer.product_id is None or buyer.product_name is None:
@@ -190,17 +191,27 @@ async def resolve_event(
         )
         raise ResolutionError("create_recovery_case_failed") from exc
 
-    # ── Log the resolution attempt ──────────────────────────────────
-    try:
-        await supabase.log_resolution_attempt(
-            recovery_case_id=recovery_case_id,
-            channel="whatsapp",
-            strategy=strategy or "other",
-            status="matched" if match is not None else "not_found",
-            confidence=1.0 if match is not None else None,
+    # Durable planning records a matched selected identity in the same SQL
+    # transaction. The legacy path still owns its best-effort audit write.
+    if not durable_plan_enabled:
+        audit_strategy = (
+            strategy
+            if strategy in {
+                "existing_identity_by_email",
+                "existing_identity_by_phone",
+            }
+            else "other"
         )
-    except SupabaseError:
-        pass  # Best-effort logging
+        try:
+            await supabase.log_resolution_attempt(
+                recovery_case_id=recovery_case_id,
+                channel="whatsapp",
+                strategy=audit_strategy,
+                status="matched" if match is not None else "not_found",
+                confidence=1.0 if match is not None else None,
+            )
+        except SupabaseError:
+            pass  # Best-effort logging
 
     # ── Step 6: Fetch conversations, recovery_cases, identities ────
     conversations = []

@@ -11,6 +11,10 @@ const identityBindingMigration = await readFile(
   `${root}/supabase/migrations/20260804000200_followup_identity_binding.sql`,
   'utf8',
 );
+const identityAuditMigration = await readFile(
+  `${root}/supabase/migrations/20260805000100_followup_identity_audit.sql`,
+  'utf8',
+);
 const db = new PGlite();
 await db.waitReady;
 await db.exec(baseline);
@@ -19,6 +23,8 @@ await db.exec(migration);
 console.log('migration_apply=OK');
 await db.exec(identityBindingMigration);
 console.log('identity_binding_migration_apply=OK');
+await db.exec(identityAuditMigration);
+console.log('identity_audit_migration_apply=OK');
 
 async function authorizeExecute(actionId, workerId, leaseGeneration = 1, caseVersion = 1, sequenceRevision = 1) {
   await db.query(`
@@ -156,6 +162,8 @@ if (identityPlan2.rows.length !== 1 || identityPlan2.rows[0].created !== false) 
 }
 const identityBinding = await db.query(`
   select rc.identity_resolution_status,
+         rc.identity_resolution_attempt_count,
+         rc.identity_resolution_last_attempt_at is not null as has_last_attempt,
          rc.selected_channel_identity_id,
          ci.contact_id,
          ci.account_id,
@@ -169,9 +177,17 @@ const identityBinding = await db.query(`
   join public.channel_identities ci on ci.id=rc.selected_channel_identity_id
   where rc.id=$1
 `, [identityPlan1.rows[0].recovery_case_id]);
+const identityAttempts = await db.query(`
+  select status, strategy, matched_channel_identity_id,
+         evidence ->> 'source' as evidence_source
+  from public.identity_resolution_attempts
+  where recovery_case_id=$1
+`, [identityPlan1.rows[0].recovery_case_id]);
 const bound = identityBinding.rows[0];
 if (!bound
     || bound.identity_resolution_status !== 'resolved'
+    || bound.identity_resolution_attempt_count !== 1
+    || bound.has_last_attempt !== true
     || bound.contact_id !== '00000000-0000-0000-0000-000000000012'
     || bound.account_id !== 'chatwoot:1'
     || bound.external_user_id !== '5531999999999'
@@ -179,7 +195,16 @@ if (!bound
     || bound.identity_count !== 1) {
   throw new Error('identity binding invariant failed');
 }
+const identityAttempt = identityAttempts.rows[0];
+if (identityAttempts.rows.length !== 1
+    || identityAttempt.status !== 'matched'
+    || identityAttempt.strategy !== 'other'
+    || identityAttempt.matched_channel_identity_id !== bound.selected_channel_identity_id
+    || identityAttempt.evidence_source !== 'selected_channel_identity_transition') {
+  throw new Error('identity audit invariant failed');
+}
 console.log('identity_binding_atomic_replay=OK');
+console.log('identity_audit_atomic_replay=OK');
 await db.exec(`
   delete from public.scheduled_actions where recovery_case_id in (
     select id from public.recovery_cases
