@@ -7,12 +7,18 @@ const root = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../..');
 const baseline = (await readFile(`${root}/supabase/baseline/20260803_public_schema.sql`, 'utf8'))
   .replace('create extension if not exists pgcrypto;', '-- omitted in PGlite: extension unavailable');
 const migration = await readFile(`${root}/supabase/migrations/20260803000100_followup_engine_v1.sql`, 'utf8');
+const identityBindingMigration = await readFile(
+  `${root}/supabase/migrations/20260804000200_followup_identity_binding.sql`,
+  'utf8',
+);
 const db = new PGlite();
 await db.waitReady;
 await db.exec(baseline);
 console.log('baseline_apply=OK');
 await db.exec(migration);
 console.log('migration_apply=OK');
+await db.exec(identityBindingMigration);
+console.log('identity_binding_migration_apply=OK');
 
 async function authorizeExecute(actionId, workerId, leaseGeneration = 1, caseVersion = 1, sequenceRevision = 1) {
   await db.query(`
@@ -112,6 +118,91 @@ await db.query(`
   where id=$1
 `, [plan1.rows[0].recovery_case_id]);
 console.log('plan_idempotency=OK');
+
+await db.exec(`
+  insert into public.webhook_events (
+    id, source, external_event_id, event_type, payload
+  ) values (
+    '00000000-0000-0000-0000-000000000011', 'hotmart',
+    'identity-binding-event', 'PURCHASE_OUT_OF_SHOPPING_CART', '{}'::jsonb
+  );
+  insert into public.contacts (id, full_name) values (
+    '00000000-0000-0000-0000-000000000012', 'Identity Binding Check'
+  );
+`);
+const identityPlan1 = await db.query(`
+  select * from public.plan_cart_recovery_with_identity(
+    '00000000-0000-0000-0000-000000000011',
+    '00000000-0000-0000-0000-000000000012',
+    'identity-product', 'Identity Product', 'identity-offer',
+    'cart-recovery-test', 1, timestamptz '2099-01-01 00:00:00+00',
+    1, 7, '5531999999999'
+  )
+`);
+const identityPlan2 = await db.query(`
+  select * from public.plan_cart_recovery_with_identity(
+    '00000000-0000-0000-0000-000000000011',
+    '00000000-0000-0000-0000-000000000012',
+    'identity-product', 'Identity Product', 'identity-offer',
+    'cart-recovery-test', 1, timestamptz '2099-01-01 00:00:00+00',
+    1, 7, '5531999999999'
+  )
+`);
+if (identityPlan1.rows.length !== 1 || identityPlan1.rows[0].created !== true) {
+  throw new Error('identity plan did not create');
+}
+if (identityPlan2.rows.length !== 1 || identityPlan2.rows[0].created !== false) {
+  throw new Error('identity plan replay was not idempotent');
+}
+const identityBinding = await db.query(`
+  select rc.identity_resolution_status,
+         rc.selected_channel_identity_id,
+         ci.contact_id,
+         ci.account_id,
+         ci.external_user_id,
+         ci.metadata ->> 'inbox_id' as inbox_id,
+         (select count(*)::int from public.channel_identities x
+          where x.channel='whatsapp'
+            and x.account_id='chatwoot:1'
+            and x.external_user_id='5531999999999') as identity_count
+  from public.recovery_cases rc
+  join public.channel_identities ci on ci.id=rc.selected_channel_identity_id
+  where rc.id=$1
+`, [identityPlan1.rows[0].recovery_case_id]);
+const bound = identityBinding.rows[0];
+if (!bound
+    || bound.identity_resolution_status !== 'resolved'
+    || bound.contact_id !== '00000000-0000-0000-0000-000000000012'
+    || bound.account_id !== 'chatwoot:1'
+    || bound.external_user_id !== '5531999999999'
+    || bound.inbox_id !== '7'
+    || bound.identity_count !== 1) {
+  throw new Error('identity binding invariant failed');
+}
+console.log('identity_binding_atomic_replay=OK');
+await db.exec(`
+  delete from public.scheduled_actions where recovery_case_id in (
+    select id from public.recovery_cases
+    where contact_id='00000000-0000-0000-0000-000000000012'
+  );
+  delete from public.followup_sequences where recovery_case_id in (
+    select id from public.recovery_cases
+    where contact_id='00000000-0000-0000-0000-000000000012'
+  );
+  delete from public.recovery_case_events where recovery_case_id in (
+    select id from public.recovery_cases
+    where contact_id='00000000-0000-0000-0000-000000000012'
+  );
+  delete from public.recovery_cases
+  where contact_id='00000000-0000-0000-0000-000000000012';
+  delete from public.channel_identities
+  where contact_id='00000000-0000-0000-0000-000000000012';
+  delete from public.contacts
+  where id='00000000-0000-0000-0000-000000000012';
+  delete from public.webhook_events
+  where id='00000000-0000-0000-0000-000000000011';
+`);
+console.log('identity_binding_probe_cleanup=OK');
 
 const claim = await db.query(`
   select * from public.claim_due_followup_actions(

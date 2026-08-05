@@ -1029,6 +1029,9 @@ def test_worker_stops_after_durable_planning_without_invoking_agent_or_sender(
     async def fake_resolve_event(**kwargs: object) -> object:
         assert kwargs["policy_key"] == "cart-recovery-test"
         assert kwargs["policy_version"] == 1
+        assert kwargs["allowed_jid"] == "5531999999999@s.whatsapp.net"
+        assert kwargs["chatwoot_account_id"] == 1
+        assert kwargs["chatwoot_inbox_id"] == 7
         return SimpleNamespace(event_id="event-planned")
 
     class AgentThatMustNotRun:
@@ -1044,6 +1047,9 @@ def test_worker_stops_after_durable_planning_without_invoking_agent_or_sender(
         supabase=object(),  # type: ignore[arg-type]
         recovery_agent=AgentThatMustNotRun(),  # type: ignore[arg-type]
         message_sender=SenderThatMustNotRun(),  # type: ignore[arg-type]
+        allowed_jid="5531999999999@s.whatsapp.net",
+        chatwoot_account_id=1,
+        chatwoot_inbox_id=7,
         policy_key="cart-recovery-test",
         policy_version=1,
     )

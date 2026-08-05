@@ -399,6 +399,21 @@ def create_app(
                 "FOLLOWUP_POLICY_KEY and FOLLOWUP_POLICY_VERSION are required "
                 "when RESOLUTION_WORKER_ENABLED=true"
             )
+        if settings.allowed_jid is None:
+            raise ValueError(
+                "ALLOWED_WHATSAPP_JID is required when "
+                "RESOLUTION_WORKER_ENABLED=true"
+            )
+        if settings.chatwoot_account_id is None:
+            raise ValueError(
+                "CHATWOOT_ACCOUNT_ID is required when "
+                "RESOLUTION_WORKER_ENABLED=true"
+            )
+        if settings.chatwoot_inbox_id is None:
+            raise ValueError(
+                "CHATWOOT_INBOX_ID is required when "
+                "RESOLUTION_WORKER_ENABLED=true"
+            )
         recovery_agent = recovery_agent_client
         if (
             recovery_agent is None
@@ -433,6 +448,8 @@ def create_app(
             recovery_agent=recovery_agent,
             message_sender=sender,
             allowed_jid=settings.allowed_jid,
+            chatwoot_account_id=settings.chatwoot_account_id,
+            chatwoot_inbox_id=settings.chatwoot_inbox_id,
             policy_key=settings.followup_policy_key,
             policy_version=settings.followup_policy_version,
         )

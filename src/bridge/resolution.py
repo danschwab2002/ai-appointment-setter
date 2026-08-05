@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from bridge.hotmart import HotmartBuyerData, parse_hotmart_payload
+from bridge.messaging import is_allowed_whatsapp_target
 from bridge.supabase import (
     ContactMatch,
     SituationReport,
@@ -34,6 +35,9 @@ async def resolve_event(
     grace_hours: int = DEFAULT_GRACE_HOURS,
     policy_key: str | None = None,
     policy_version: int | None = None,
+    allowed_jid: str | None = None,
+    chatwoot_account_id: int | None = None,
+    chatwoot_inbox_id: int | None = None,
 ) -> SituationReport:
     """Resolve identity for one webhook event and return a situation report.
 
@@ -140,6 +144,12 @@ async def resolve_event(
                 buyer.creation_date_ms / 1000,
                 tz=timezone.utc,
             ).isoformat()
+            identity_allowed = (
+                buyer.buyer_phone is not None
+                and chatwoot_account_id is not None
+                and chatwoot_inbox_id is not None
+                and is_allowed_whatsapp_target(buyer.buyer_phone, allowed_jid)
+            )
             plan = await supabase.plan_cart_recovery(
                 webhook_event_id=webhook_event_id,
                 contact_id=contact_id,
@@ -149,6 +159,11 @@ async def resolve_event(
                 policy_key=policy_key,
                 policy_version=policy_version,
                 abandoned_at=abandoned_at,
+                chatwoot_account_id=(
+                    chatwoot_account_id if identity_allowed else None
+                ),
+                chatwoot_inbox_id=(chatwoot_inbox_id if identity_allowed else None),
+                external_user_id=(buyer.buyer_phone if identity_allowed else None),
             )
             recovery_case_id = plan.recovery_case_id
         else:

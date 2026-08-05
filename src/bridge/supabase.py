@@ -402,6 +402,15 @@ def _optional_positive_int(
     return value
 
 
+def _optional_chatwoot_account_id(
+    row: dict[str, Any], key: str, *, operation: str
+) -> int | None:
+    value = row.get(key)
+    if isinstance(value, str) and value.startswith("chatwoot:"):
+        value = value.removeprefix("chatwoot:")
+    return _optional_positive_int({key: value}, key, operation=operation)
+
+
 # ── Client ───────────────────────────────────────────────────────────
 
 
@@ -548,9 +557,26 @@ class SupabaseClient:
         policy_key: str,
         policy_version: int,
         abandoned_at: str,
+        chatwoot_account_id: int | None = None,
+        chatwoot_inbox_id: int | None = None,
+        external_user_id: str | None = None,
     ) -> CartRecoveryPlan:
         """Atomically create or reuse the durable cart-recovery plan."""
-        body = json.dumps({
+        identity_values = (
+            chatwoot_account_id,
+            chatwoot_inbox_id,
+            external_user_id,
+        )
+        if any(value is not None for value in identity_values) and not all(
+            value is not None for value in identity_values
+        ):
+            raise SupabaseError("plan_cart_recovery_incomplete_identity")
+        rpc_name = (
+            "plan_cart_recovery_with_identity"
+            if all(value is not None for value in identity_values)
+            else "plan_cart_recovery"
+        )
+        rpc_body: dict[str, object] = {
             "p_webhook_event_id": webhook_event_id,
             "p_contact_id": contact_id,
             "p_external_product_id": external_product_id,
@@ -559,10 +585,17 @@ class SupabaseClient:
             "p_policy_key": policy_key,
             "p_policy_version": policy_version,
             "p_abandoned_at": abandoned_at,
-        }, ensure_ascii=False)
+        }
+        if rpc_name == "plan_cart_recovery_with_identity":
+            rpc_body.update({
+                "p_chatwoot_account_id": chatwoot_account_id,
+                "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                "p_external_user_id": external_user_id,
+            })
+        body = json.dumps(rpc_body, ensure_ascii=False)
         response = await self._request(
             "POST",
-            "/rest/v1/rpc/plan_cart_recovery",
+            f"/rest/v1/rpc/{rpc_name}",
             content=body,
         )
         if response.status_code != 200:
@@ -759,7 +792,7 @@ class SupabaseClient:
                 {"first_contact_review", "no_reply_review", "reconcile_delivery"},
                 operation=operation,
             ),
-            chatwoot_account_id=_optional_positive_int(
+            chatwoot_account_id=_optional_chatwoot_account_id(
                 row, "chatwoot_account_id", operation=operation
             ),
             external_conversation_id=_optional_positive_int(

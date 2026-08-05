@@ -640,6 +640,8 @@ class ResolutionWorker:
         recovery_agent: RecoveryAgentClient | None = None,
         message_sender: MessageSender | None = None,
         allowed_jid: str | None = None,
+        chatwoot_account_id: int | None = None,
+        chatwoot_inbox_id: int | None = None,
         policy_key: str | None = None,
         policy_version: int | None = None,
     ) -> None:
@@ -649,6 +651,8 @@ class ResolutionWorker:
         self._recovery_agent = recovery_agent
         self._message_sender = message_sender
         self._allowed_jid = allowed_jid
+        self._chatwoot_account_id = chatwoot_account_id
+        self._chatwoot_inbox_id = chatwoot_inbox_id
         self._policy_key = policy_key
         self._policy_version = policy_version
         self._stopped = asyncio.Event()
@@ -714,6 +718,9 @@ class ResolutionWorker:
                 supabase=self._supabase,
                 policy_key=self._policy_key,
                 policy_version=self._policy_version,
+                allowed_jid=self._allowed_jid,
+                chatwoot_account_id=self._chatwoot_account_id,
+                chatwoot_inbox_id=self._chatwoot_inbox_id,
             )
         except ResolutionError:
             # resolve_event already marked the event as 'failed'.

@@ -154,7 +154,7 @@ def test_durable_plan_is_committed_before_event_is_marked_processed() -> None:
         {"_status": 201},
         {"_status": 201},
     ])
-    transport.set("POST", "/rest/v1/rpc/plan_cart_recovery", [{
+    transport.set("POST", "/rest/v1/rpc/plan_cart_recovery_with_identity", [{
         "_status": 200,
         "recovery_case_id": "case-durable",
         "followup_sequence_id": "sequence-durable",
@@ -175,13 +175,18 @@ def test_durable_plan_is_committed_before_event_is_marked_processed() -> None:
         supabase=_make_supabase(transport),
         policy_key="cart-recovery-test",
         policy_version=1,
+        allowed_jid="5531999999999@s.whatsapp.net",
+        chatwoot_account_id=1,
+        chatwoot_inbox_id=7,
     ))
 
     paths = [(method, path) for method, path, _ in transport.requests]
     assert ("POST", "/rest/v1/recovery_cases") not in paths
-    assert paths.index(("POST", "/rest/v1/rpc/plan_cart_recovery")) < paths.index(
-        ("PATCH", "/rest/v1/webhook_events")
+    plan_index = paths.index(
+        ("POST", "/rest/v1/rpc/plan_cart_recovery_with_identity")
     )
+    processed_index = paths.index(("PATCH", "/rest/v1/webhook_events"))
+    assert plan_index < processed_index
 
 
 def test_durable_plan_failure_does_not_mark_event_processed() -> None:
@@ -197,7 +202,7 @@ def test_durable_plan_failure_does_not_mark_event_processed() -> None:
         {"_status": 201},
         {"_status": 201},
     ])
-    transport.set("POST", "/rest/v1/rpc/plan_cart_recovery", [{
+    transport.set("POST", "/rest/v1/rpc/plan_cart_recovery_with_identity", [{
         "_status": 500,
     }])
     transport.set("PATCH", "/rest/v1/webhook_events", [{"_status": 204}])
@@ -209,6 +214,9 @@ def test_durable_plan_failure_does_not_mark_event_processed() -> None:
             supabase=_make_supabase(transport),
             policy_key="cart-recovery-test",
             policy_version=1,
+            allowed_jid="5531999999999@s.whatsapp.net",
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=7,
         ))
 
     patches = [
@@ -216,6 +224,9 @@ def test_durable_plan_failure_does_not_mark_event_processed() -> None:
         if request[0:2] == ("PATCH", "/rest/v1/webhook_events")
     ]
     assert len(patches) == 1
+    assert (
+        "POST", "/rest/v1/rpc/plan_cart_recovery_with_identity"
+    ) in [(method, path) for method, path, _ in transport.requests]
 
 
 @pytest.mark.parametrize(

@@ -262,7 +262,7 @@ def test_get_followup_chatwoot_context_is_fenced_and_typed() -> None:
         return httpx.Response(200, json=[{
             "action_id": "action-001",
             "action_type": "no_reply_review",
-            "chatwoot_account_id": "1",
+            "chatwoot_account_id": "chatwoot:1",
             "external_conversation_id": "22",
             "expected_inbox_id": 7,
             "anchor_external_message_id": "40",

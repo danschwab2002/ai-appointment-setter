@@ -192,7 +192,7 @@ def _setup_mocks(transport: E2ETransport) -> None:
         {"_status": 201},
     ])
     # ── Supabase: plan durable recovery ──────────────────────────────
-    transport.set("POST", "/rest/v1/rpc/plan_cart_recovery", [
+    transport.set("POST", "/rest/v1/rpc/plan_cart_recovery_with_identity", [
         {
             "_status": 200,
             "recovery_case_id": "rc-e2e-001",
@@ -312,7 +312,8 @@ def test_e2e_webhook_to_durable_plan_without_outbound_send(tmp_path: Path) -> No
 
         plan_posts = [
             r for r in transport.requests
-            if r[0] == "POST" and r[1] == "/rest/v1/rpc/plan_cart_recovery"
+            if r[0] == "POST"
+            and r[1] == "/rest/v1/rpc/plan_cart_recovery_with_identity"
         ]
         assert len(plan_posts) == 1
 

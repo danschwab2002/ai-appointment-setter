@@ -370,13 +370,18 @@ published policy version
 Efecto atómico:
 
 ```text
+crear o reutilizar channel_identity WhatsApp canónica para el JID autorizado
 crear o actualizar caso
+seleccionar esa identidad y marcar identity_resolution_status=resolved
 crear secuencia si corresponde
 crear primera acción
 registrar evento de auditoría
 ```
 
 Repetir la misma entrada no crea una segunda intención lógica.
+Para el destinatario allowlisted, identidad y plan se materializan mediante un
+único RPC y un único commit; el webhook sólo pasa a `processed` después de ese
+commit. No puede quedar visible un plan enviable sin identidad seleccionada.
 
 ### 10.2. Reclamar acciones vencidas
 

@@ -73,6 +73,8 @@ def _hotmart_settings(**overrides: object) -> Settings:
         "max_age_seconds": 300,
         "hotmart_hottok": HOTMART_TOKEN,
         "hotmart_max_age_seconds": 300,
+        "chatwoot_account_id": 1,
+        "chatwoot_inbox_id": 7,
     }
     defaults.update(overrides)
     return Settings(**defaults)  # type: ignore[arg-type]
@@ -86,6 +88,31 @@ def test_worker_requires_complete_durable_policy_configuration() -> None:
             supabase_service_role_key="service-role",
             followup_policy_version=None,
         ))
+
+
+@pytest.mark.parametrize(
+    ("missing_field", "expected_name"),
+    [
+        ("allowed_jid", "ALLOWED_WHATSAPP_JID"),
+        ("chatwoot_account_id", "CHATWOOT_ACCOUNT_ID"),
+        ("chatwoot_inbox_id", "CHATWOOT_INBOX_ID"),
+    ],
+)
+def test_resolution_worker_requires_complete_whatsapp_identity_configuration(
+    missing_field: str,
+    expected_name: str,
+) -> None:
+    overrides: dict[str, object] = {
+        "worker_enabled": True,
+        "supabase_base_url": "https://fake.supabase.co",
+        "supabase_service_role_key": "service-role",
+        "followup_policy_key": "cart-recovery-test",
+        "followup_policy_version": 1,
+        missing_field: None,
+    }
+
+    with pytest.raises(ValueError, match=expected_name):
+        create_app(_hotmart_settings(**overrides))
 
 
 def test_worker_fails_closed_without_supabase() -> None:
