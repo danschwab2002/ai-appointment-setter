@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+import tempfile
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -24,6 +25,11 @@ from fastapi import (
 )
 
 from bridge.chatwoot import ChatwootClient, ChatwootProtocolError
+from bridge.chatwoot_inbox import (
+    ChatwootWorker,
+    DurableChatwootInbox,
+    RetryableChatwootWorkError,
+)
 from bridge.filtering import classify_chatwoot_event
 from bridge.hermes import HermesShadowProcessor
 from bridge.hotmart import (
@@ -32,13 +38,19 @@ from bridge.hotmart import (
     is_stale_event,
     verify_hotmart_token,
 )
-from bridge.security import verify_chatwoot_signature
-from bridge.supabase import SupabaseClient, SupabaseError
-
-logger = logging.getLogger(__name__)
 from bridge.messaging import EvolutionMessageSender, MessageSender
 from bridge.recovery_agent import RecoveryAgentClient
+from bridge.security import verify_chatwoot_signature
+from bridge.supabase import SupabaseClient, SupabaseError
 from bridge.worker import DurableDispatcher, ResolutionWorker
+
+
+logger = logging.getLogger(__name__)
+CHATWOOT_WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024
+
+
+class CanonicalHistoryIncompleteError(RetryableChatwootWorkError):
+    """Raised when Chatwoot has not exposed the triggering message yet."""
 
 
 class ChatwootControl(Protocol):
@@ -262,19 +274,36 @@ def _capture_payload(
     *, capture_dir: Path, delivery_id: str, payload: dict[str, object]
 ) -> bool:
     capture_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
+    directory_fd = os.open(
+        capture_dir,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+    )
+    os.fchmod(directory_fd, 0o700)
     digest = hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
     capture_path = capture_dir / f"{digest}.json"
     serialized = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
-
-    def private_file(path: str, flags: int) -> int:
-        return os.open(path, flags, 0o600)
-
+    temporary_fd, temporary_name = tempfile.mkstemp(
+        prefix=f".{digest}.", suffix=".tmp", dir=capture_dir
+    )
     try:
-        with open(capture_path, "x", encoding="utf-8", opener=private_file) as handle:
+        os.fchmod(temporary_fd, 0o600)
+        handle = os.fdopen(temporary_fd, "w", encoding="utf-8")
+        temporary_fd = -1
+        with handle:
             handle.write(serialized)
-    except FileExistsError:
-        return False
-    return True
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(temporary_name, capture_path)
+        except FileExistsError:
+            return False
+        os.fsync(directory_fd)
+        return True
+    finally:
+        if temporary_fd >= 0:
+            os.close(temporary_fd)
+        os.close(directory_fd)
+        os.unlink(temporary_name)
 
 
 def _shadow_context(payload: dict[str, object]) -> dict[str, object] | None:
@@ -372,6 +401,11 @@ def create_app(
             reply_dir=settings.reply_dir,
             pause_macro_id=settings.chatwoot_pause_macro_id,
         )
+    chatwoot_inbox = (
+        DurableChatwootInbox(Path(settings.capture_dir) / ".work")
+        if shadow_processor is not None or control_client is not None
+        else None
+    )
 
     # Shared Supabase client (injected or constructed from settings).
     shared_supabase = supabase_client
@@ -530,21 +564,40 @@ def create_app(
             ),
         )
 
+    chatwoot_worker: ChatwootWorker | None = None
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-        if resolution_worker is not None:
-            await resolution_worker.start()
-        if durable_dispatcher is not None:
-            await durable_dispatcher.start()
-        yield
-        if durable_dispatcher is not None:
-            await durable_dispatcher.stop()
-        if resolution_worker is not None:
-            await resolution_worker.stop()
+        try:
+            if resolution_worker is not None:
+                await resolution_worker.start()
+            if durable_dispatcher is not None:
+                await durable_dispatcher.start()
+            if chatwoot_worker is not None:
+                await chatwoot_worker.start()
+            yield
+        finally:
+            for worker_name, worker in (
+                ("chatwoot", chatwoot_worker),
+                ("dispatcher", durable_dispatcher),
+                ("resolution", resolution_worker),
+            ):
+                if worker is None:
+                    continue
+                try:
+                    await worker.stop()
+                except Exception as exc:
+                    logger.warning(
+                        "worker_stop_failed worker=%s error_type=%s",
+                        worker_name,
+                        type(exc).__name__,
+                    )
 
     app = FastAPI(title="AI Appointment Setter Bridge", lifespan=lifespan)
     app.state.resolution_worker = resolution_worker
     app.state.durable_dispatcher = durable_dispatcher
+    app.state.chatwoot_inbox = chatwoot_inbox
+    app.state.chatwoot_worker = chatwoot_worker
 
     async def run_shadow_with_canonical_history(
         *,
@@ -565,13 +618,10 @@ def create_app(
                 conversation_id=conversation_id,
                 limit=20,
             )
-        except (httpx.HTTPError, ChatwootProtocolError):
-            if shadow_processor is not None:
-                shadow_processor.record_failure(
-                    delivery_id=delivery_id,
-                    reason="chatwoot_history_unavailable",
-                )
-            return None
+        except (httpx.HTTPError, ChatwootProtocolError) as exc:
+            raise RetryableChatwootWorkError(
+                "chatwoot_canonical_history_unavailable"
+            ) from exc
         normalized = _normalize_chatwoot_history(
             history,
             agent_bot_id=settings.agent_bot_id,
@@ -586,12 +636,9 @@ def create_app(
             None,
         )
         if current_index is None:
-            if shadow_processor is not None:
-                shadow_processor.record_failure(
-                    delivery_id=delivery_id,
-                    reason="current_message_not_in_canonical_history",
-                )
-            return None
+            raise CanonicalHistoryIncompleteError(
+                "current_message_not_in_canonical_history"
+            )
         normalized = normalized[: current_index + 1]
         public_messages = [
             {
@@ -609,6 +656,86 @@ def create_app(
         )
         return shadow_processor.get_completed_proposal(delivery_id=delivery_id)
 
+    async def process_chatwoot_work(
+        delivery_id: str,
+        payload: dict[str, object],
+    ) -> None:
+        decision = classify_chatwoot_event(
+            payload,
+            allowed_jid=settings.allowed_jid,
+            agent_bot_id=settings.agent_bot_id,
+        )
+        if decision.action == "pause_automation":
+            conversation = payload.get("conversation")
+            conversation_id = (
+                conversation.get("id") if isinstance(conversation, dict) else None
+            )
+            if (
+                control_client is None
+                or not isinstance(conversation_id, int)
+                or isinstance(conversation_id, bool)
+            ):
+                raise RuntimeError("chatwoot_pause_not_configured")
+            await control_client.ensure_conversation_label(
+                conversation_id=conversation_id,
+                label="automation_paused",
+            )
+            return
+        if not decision.accepted:
+            return
+        context = _shadow_context(payload)
+        if context is None or shadow_processor is None:
+            return
+        completed_proposal = shadow_processor.get_completed_proposal(
+            delivery_id=delivery_id
+        )
+        if not shadow_processor.has_result(delivery_id=delivery_id):
+            message_id = payload.get("id")
+            completed_proposal = await run_shadow_with_canonical_history(
+                delivery_id=delivery_id,
+                current_message_id=(
+                    message_id
+                    if isinstance(message_id, int) and not isinstance(message_id, bool)
+                    else None
+                ),
+                context=context,
+            )
+        if not settings.automated_replies_enabled or completed_proposal is None:
+            return
+
+        message_id = payload.get("id")
+        conversation = payload.get("conversation")
+        conversation_id = (
+            conversation.get("id") if isinstance(conversation, dict) else None
+        )
+        reply = completed_proposal.get("reply")
+        if (
+            control_client is None
+            or not isinstance(message_id, int)
+            or isinstance(message_id, bool)
+            or not isinstance(conversation_id, int)
+            or isinstance(conversation_id, bool)
+            or not isinstance(reply, str)
+        ):
+            raise RuntimeError("chatwoot_reply_not_configured")
+        reply_result = await control_client.send_agent_bot_reply(
+            conversation_id=conversation_id,
+            trigger_message_id=message_id,
+            delivery_id=delivery_id,
+            content=reply,
+        )
+        reply_status = reply_result.get("status")
+        if reply_status in {"sent", "duplicate", "blocked"}:
+            return
+        raise RuntimeError("invalid_chatwoot_reply_result")
+
+    if chatwoot_inbox is not None:
+        chatwoot_worker = ChatwootWorker(
+            inbox=chatwoot_inbox,
+            handler=process_chatwoot_work,
+        )
+        app.state.chatwoot_worker = chatwoot_worker
+
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
@@ -621,7 +748,15 @@ def create_app(
         x_chatwoot_timestamp: str = Header(),
         x_chatwoot_delivery: str = Header(),
     ) -> dict[str, object]:
-        raw_body = await request.body()
+        body = bytearray()
+        async for chunk in request.stream():
+            if len(body) + len(chunk) > CHATWOOT_WEBHOOK_BODY_LIMIT_BYTES:
+                raise HTTPException(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    detail="chatwoot_webhook_body_too_large",
+                )
+            body.extend(chunk)
+        raw_body = bytes(body)
         if not verify_chatwoot_signature(
             raw_body=raw_body,
             timestamp=x_chatwoot_timestamp,
@@ -661,20 +796,25 @@ def create_app(
                     status_code=503,
                     detail="chatwoot_control_unavailable",
                 )
-            try:
-                changed = await control_client.ensure_conversation_label(
-                    conversation_id=conversation_id,
-                    label="automation_paused",
-                )
-            except (httpx.HTTPError, ChatwootProtocolError) as exc:
-                raise HTTPException(
-                    status_code=503,
-                    detail="chatwoot_control_unavailable",
-                ) from exc
+            assert chatwoot_inbox is not None
+            _capture_payload(
+                capture_dir=settings.capture_dir,
+                delivery_id=x_chatwoot_delivery,
+                payload=payload,
+            )
+            admitted = chatwoot_inbox.admit(
+                delivery_id=x_chatwoot_delivery,
+                payload=payload,
+            )
+            if admitted:
+                return {
+                    "status": "accepted",
+                    "delivery_id": x_chatwoot_delivery,
+                }
+            response.status_code = status.HTTP_200_OK
             return {
-                "status": "automation_paused",
-                "reason": decision.reason,
-                "label_status": "added" if changed else "already_present",
+                "status": "duplicate",
+                "delivery_id": x_chatwoot_delivery,
             }
         if not decision.accepted:
             logger.warning("chatwoot_webhook_ignored reason=%s", decision.reason)
@@ -690,91 +830,29 @@ def create_app(
             payload=payload,
         )
         context = _shadow_context(payload)
-        completed_proposal = (
-            shadow_processor.get_completed_proposal(
-                delivery_id=x_chatwoot_delivery
-            )
-            if shadow_processor is not None
-            else None
-        )
-        shadow_pending = (
-            shadow_processor is not None
+        if (
+            chatwoot_inbox is not None
+            and shadow_processor is not None
             and context is not None
-            and not shadow_processor.has_result(delivery_id=x_chatwoot_delivery)
-        )
-        reply_pending = (
-            settings.automated_replies_enabled and completed_proposal is not None
-        )
-        if not captured and not shadow_pending and not reply_pending:
+        ):
+            admitted = chatwoot_inbox.admit(
+                delivery_id=x_chatwoot_delivery,
+                payload=payload,
+            )
+            if admitted:
+                return {
+                    "status": "accepted",
+                    "delivery_id": x_chatwoot_delivery,
+                }
             response.status_code = status.HTTP_200_OK
             return {
                 "status": "duplicate",
                 "delivery_id": x_chatwoot_delivery,
             }
-        if shadow_pending and context is not None:
-            message_id = payload.get("id")
-            completed_proposal = await run_shadow_with_canonical_history(
-                delivery_id=x_chatwoot_delivery,
-                current_message_id=(
-                    message_id
-                    if isinstance(message_id, int) and not isinstance(message_id, bool)
-                    else None
-                ),
-                context=context,
-            )
-        if settings.automated_replies_enabled and completed_proposal is not None:
-            message_id = payload.get("id")
-            conversation = payload.get("conversation")
-            conversation_id = (
-                conversation.get("id") if isinstance(conversation, dict) else None
-            )
-            reply = completed_proposal.get("reply")
-            if (
-                control_client is None
-                or not isinstance(message_id, int)
-                or isinstance(message_id, bool)
-                or not isinstance(conversation_id, int)
-                or isinstance(conversation_id, bool)
-                or not isinstance(reply, str)
-            ):
-                raise HTTPException(
-                    status_code=503,
-                    detail="chatwoot_reply_not_configured",
-                )
-            try:
-                reply_result = await control_client.send_agent_bot_reply(
-                    conversation_id=conversation_id,
-                    trigger_message_id=message_id,
-                    delivery_id=x_chatwoot_delivery,
-                    content=reply,
-                )
-            except (httpx.HTTPError, ChatwootProtocolError) as exc:
-                raise HTTPException(
-                    status_code=503,
-                    detail="chatwoot_reply_unavailable",
-                ) from exc
-            reply_status = reply_result.get("status")
-            if reply_status in {"sent", "duplicate"}:
-                return {
-                    "status": (
-                        "reply_sent" if reply_status == "sent" else "reply_duplicate"
-                    ),
-                    "delivery_id": x_chatwoot_delivery,
-                    "message_id": reply_result.get("message_id"),
-                }
-            if reply_status == "blocked":
-                return {
-                    "status": "reply_blocked",
-                    "delivery_id": x_chatwoot_delivery,
-                    "reason": reply_result.get("reason"),
-                }
-            raise HTTPException(
-                status_code=503,
-                detail="invalid_chatwoot_reply_result",
-            )
-        if shadow_pending:
+        if not captured:
+            response.status_code = status.HTTP_200_OK
             return {
-                "status": "shadow_processed",
+                "status": "duplicate",
                 "delivery_id": x_chatwoot_delivery,
             }
         return {

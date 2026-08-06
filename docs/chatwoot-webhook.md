@@ -37,13 +37,29 @@ documentación ni logs.
 
 ## Resultado esperado
 
-Un evento aceptado devuelve HTTP 202:
+Con Hermes habilitado, un evento aceptado se admite durablemente y devuelve HTTP
+202 sin esperar el razonamiento ni el envío:
 
 ```json
-{"status":"captured","delivery_id":"..."}
+{"status":"accepted","delivery_id":"..."}
 ```
 
-Los payloads aceptados quedan bajo `CAPTURE_DIR` con permisos `0600`. El nombre del archivo es un SHA-256 del delivery ID para evitar path traversal y no revelar identificadores.
+El trabajo queda en `CAPTURE_DIR/.work` con estado `admitted`; el worker lo retoma
+en segundo plano y, también después de un reinicio, lo cambia a `completed` sólo
+al alcanzar un resultado terminal. Una repetición del mismo delivery devuelve
+HTTP 200 con estado `duplicate`.
+
+Con Hermes deshabilitado se conserva el modo de captura y la respuesta usa
+`status: captured` sólo después de publicar la captura de forma atómica y
+sincronizar archivo y directorio.
+
+Los payloads aceptados quedan bajo `CAPTURE_DIR` con permisos privados. El nombre
+de cada archivo es un SHA-256 del delivery ID para evitar path traversal y no
+revelar identificadores. La admisión se escribe atómicamente y se sincroniza a
+disco antes del HTTP 202.
+
+El contrato HTTP y de replay está versionado en
+[`contracts/chatwoot-ingress-v1.md`](contracts/chatwoot-ingress-v1.md).
 
 La estructura sanitizada y las diferencias observadas entre webhook y API se
 documentan en [`research/chatwoot-observed-contract.md`](research/chatwoot-observed-contract.md).

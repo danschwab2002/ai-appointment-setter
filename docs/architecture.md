@@ -17,23 +17,37 @@ sensible del despliegue y no se documenta en el repositorio.
 La restricción se aplica por código antes de invocar Hermes; no depende de una
 instrucción de prompt.
 
-## Flujo sombra disponible
+## Ingreso durable desde Chatwoot
 
 ```text
-Chatwoot -> bridge -> historial canónico de Chatwoot
-                   -> API Server de agente-comercial
-                   -> validación JSON
-                   -> archivo privado en SHADOW_DIR
+Chatwoot -> POST /webhooks/chatwoot
+         -> autenticación + anti-replay + filtro de JID
+         -> captura privada + admisión atómica en CAPTURE_DIR/.work
+         -> HTTP 202
+
+worker local -> historial canónico de Chatwoot
+             -> API Server de agente-comercial
+             -> validación JSON
+             -> archivo privado en SHADOW_DIR
+             -> autorización final + AgentBot de Chatwoot
 ```
+
+El receptor sólo devuelve HTTP 202 después de persistir una admisión recuperable.
+No espera la consulta de historial, la ejecución de Hermes ni el envío de la
+respuesta. El worker procesa una admisión por vez y retoma archivos con estado
+`admitted` al reiniciarse. Sólo marca `completed` después de un resultado
+terminal; las guardas y marcadores existentes mantienen idempotentes las
+evaluaciones y los efectos externos ante replay.
 
 El historial se trunca en el ID canónico del mensaje que originó el webhook.
 Los mensajes posteriores no forman parte de esa evaluación. Si el ID no aparece
 en la lectura acotada, el bridge falla cerrado y no invoca Hermes.
 
-Este flujo no vuelve a Chatwoot, Evolution API ni WhatsApp. La propuesta se
-conserva únicamente para evaluación. Un delivery con resultado terminal se
-trata como duplicado. Si existe la captura pero falta el resultado terminal, el
-bridge reintenta síncronamente con la misma `Idempotency-Key` antes de responder.
+La cola usa el mismo volumen privado persistente de las capturas. Los nombres de
+archivo derivan del hash del delivery ID, y las escrituras de admisión y
+finalización son atómicas y sincronizadas a disco. Esta implementación presupone
+un único servicio del bridge compartiendo ese volumen; el lock por archivo evita
+procesamiento concurrente dentro de ese despliegue.
 
 ## Flujo de envío implementado
 
