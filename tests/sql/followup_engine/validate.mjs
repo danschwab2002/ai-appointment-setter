@@ -23,6 +23,10 @@ const perCaseAnchorMigration = await readFile(
   `${root}/supabase/migrations/20260805000300_per_case_conversation_anchor.sql`,
   'utf8',
 );
+const finalE2ePolicySeed = await readFile(
+  `${root}/supabase/seeds/20260806000100_cart_recovery_e2e_final_v1.sql`,
+  'utf8',
+);
 const db = new PGlite();
 await db.waitReady;
 await db.exec(baseline);
@@ -37,6 +41,27 @@ await db.exec(contactAuthorizationGrantMigration);
 console.log('contact_authorization_grant_migration_apply=OK');
 await db.exec(perCaseAnchorMigration);
 console.log('per_case_anchor_migration_apply=OK');
+await db.exec(finalE2ePolicySeed);
+const finalE2ePolicy = await db.query(`
+  select grace_period = interval '0 seconds' as immediate_first_message,
+         expires_after = interval '1 hour' as expires_in_one_hour,
+         max_automatic_messages = 4 as allows_four_messages,
+         approved_by = 'operator-e2e-final-policy' as approval_matches,
+         steps = '[{"step_key":"first_contact","mode":"freeform"},{"step_key":"followup_1","delay":"2 minutes","mode":"freeform"},{"step_key":"followup_2","delay":"5 minutes","mode":"freeform"},{"step_key":"followup_3","delay":"10 minutes","mode":"freeform"}]'::jsonb as steps_match
+  from public.followup_policy_versions
+  where policy_key = 'cart-recovery-e2e-final'
+    and version = 1
+    and status = 'published'
+`);
+if (finalE2ePolicy.rows.length !== 1
+    || !finalE2ePolicy.rows[0].immediate_first_message
+    || !finalE2ePolicy.rows[0].expires_in_one_hour
+    || !finalE2ePolicy.rows[0].allows_four_messages
+    || !finalE2ePolicy.rows[0].approval_matches
+    || !finalE2ePolicy.rows[0].steps_match) {
+  throw new Error('final E2E policy does not match the approved 0/2/5/10 schedule');
+}
+console.log('final_e2e_policy=OK');
 
 async function authorizeExecute(actionId, workerId, leaseGeneration = 1, caseVersion = 1, sequenceRevision = 1) {
   await db.query(`
@@ -2037,6 +2062,123 @@ try {
 if (!adr8MidCaseMismatchBlocked) throw new Error('ADR-0008: case_conversation_mismatch did not block mid-case jump');
 console.log('adr8_mid_case_conversation_jump_blocked=OK');
 
+await db.exec(`
+  insert into public.webhook_events (
+    id, source, external_event_id, event_type, payload
+  ) values (
+    '50000000-0000-0000-0000-000000000001',
+    'hotmart', 'final-e2e-four-message-event',
+    'PURCHASE_OUT_OF_SHOPPING_CART', '{}'::jsonb
+  );
+  insert into public.contacts (id, full_name) values (
+    '50000000-0000-0000-0000-000000000002', 'Final E2E Chain Check'
+  );
+`);
+const finalE2ePlan = await db.query(`
+  select * from public.plan_cart_recovery_with_identity(
+    '50000000-0000-0000-0000-000000000001',
+    '50000000-0000-0000-0000-000000000002',
+    'final-e2e-product', 'Final E2E Product', 'final-e2e-offer',
+    'cart-recovery-e2e-final', 1,
+    timestamptz '2099-02-01 00:00:00+00',
+    1, 7, '5531888888888'
+  )
+`);
+if (finalE2ePlan.rows.length !== 1 || finalE2ePlan.rows[0].created !== true) {
+  throw new Error('final E2E four-message plan was not created');
+}
+const finalE2eAcceptedAt = [
+  '2099-02-01T00:00:00.000Z',
+  '2099-02-01T00:02:00.000Z',
+  '2099-02-01T00:07:00.000Z',
+  '2099-02-01T00:17:00.000Z',
+];
+for (let index = 0; index < finalE2eAcceptedAt.length; index += 1) {
+  const pending = await db.query(`
+    select id, due_at = $2::timestamptz as due_at_matches
+    from public.scheduled_actions
+    where recovery_case_id=$1 and status='pending'
+  `, [finalE2ePlan.rows[0].recovery_case_id, finalE2eAcceptedAt[index]]);
+  if (pending.rows.length !== 1) {
+    throw new Error(`final E2E expected one pending action before message ${index + 1}`);
+  }
+  if (!pending.rows[0].due_at_matches) {
+    throw new Error(`final E2E message ${index + 1} was not due at the exact relative delay`);
+  }
+  const claimed = await db.query(`
+    select * from public.claim_due_followup_actions(
+      'final-e2e-worker', $1::timestamptz, interval '1 minute', 100
+    )
+  `, [finalE2eAcceptedAt[index]]);
+  const action = claimed.rows.find((row) => row.id === pending.rows[0].id);
+  if (!action) throw new Error(`final E2E message ${index + 1} action was not due`);
+  const sequence = await db.query(`
+    select revision from public.followup_sequences where id=$1
+  `, [action.followup_sequence_id]);
+  await authorizeExecute(
+    action.id,
+    'final-e2e-worker',
+    action.lease_generation,
+    action.expected_case_version,
+    sequence.rows[0].revision,
+  );
+  const attempt = await db.query(`
+    select * from public.reserve_followup_delivery_attempt(
+      $1, 'final-e2e-worker', $2, $3, $4,
+      'whatsapp', 'freeform', $5::timestamptz
+    )
+  `, [
+    action.id,
+    action.lease_generation,
+    action.expected_case_version,
+    sequence.rows[0].revision,
+    finalE2eAcceptedAt[index],
+  ]);
+  await db.query(`
+    select * from public.mark_followup_request_started(
+      $1, $2, 'final-e2e-worker', $3, $4::timestamptz
+    )
+  `, [
+    action.id,
+    attempt.rows[0].id,
+    action.lease_generation,
+    finalE2eAcceptedAt[index],
+  ]);
+  await db.query(`
+    select * from public.record_and_finalize_followup_acceptance(
+      $1, $2, 'final-e2e-worker', $3,
+      '9901', $4, $5, $6::timestamptz
+    )
+  `, [
+    action.id,
+    attempt.rows[0].id,
+    action.lease_generation,
+    `final-e2e-message-${index + 1}`,
+    `Mensaje E2E final ${index + 1}`,
+    finalE2eAcceptedAt[index],
+  ]);
+}
+const finalE2eState = await db.query(`
+  select rc.status as case_status,
+         fs.status as sequence_status,
+         fs.automatic_messages_accepted,
+         count(sa.id) filter (where sa.status='pending')::int as pending_actions,
+         count(sa.id)::int as total_actions
+  from public.recovery_cases rc
+  join public.followup_sequences fs on fs.recovery_case_id=rc.id
+  join public.scheduled_actions sa on sa.followup_sequence_id=fs.id
+  where rc.id=$1
+  group by rc.status, fs.status, fs.automatic_messages_accepted
+`, [finalE2ePlan.rows[0].recovery_case_id]);
+if (finalE2eState.rows.length !== 1
+    || finalE2eState.rows[0].automatic_messages_accepted !== 4
+    || finalE2eState.rows[0].pending_actions !== 0
+    || finalE2eState.rows[0].total_actions !== 4
+    || finalE2eState.rows[0].sequence_status !== 'completed') {
+  throw new Error('final E2E policy did not complete exactly four accepted messages');
+}
+console.log('final_e2e_four_message_chain=OK');
+
 await db.close();
 
 const dirtyDb = new PGlite();
@@ -2077,3 +2219,31 @@ try {
 if (!preflightBlocked) throw new Error('legacy scheduler preflight did not abort');
 console.log('legacy_preflight_abort=OK');
 await dirtyDb.close();
+
+const conflictingPolicyDb = new PGlite();
+await conflictingPolicyDb.waitReady;
+await conflictingPolicyDb.exec(baseline);
+await conflictingPolicyDb.exec(migration);
+await conflictingPolicyDb.exec(identityBindingMigration);
+await conflictingPolicyDb.exec(identityAuditMigration);
+await conflictingPolicyDb.exec(contactAuthorizationGrantMigration);
+await conflictingPolicyDb.exec(perCaseAnchorMigration);
+await conflictingPolicyDb.exec(
+  finalE2ePolicySeed.replaceAll(
+    'operator-e2e-final-policy',
+    'unexpected-approver',
+  ),
+);
+let conflictingPolicyApprovalBlocked = false;
+try {
+  await conflictingPolicyDb.exec(finalE2ePolicySeed);
+} catch (error) {
+  conflictingPolicyApprovalBlocked = String(error.message).includes(
+    'final_e2e_policy_v1_mismatch',
+  );
+}
+if (!conflictingPolicyApprovalBlocked) {
+  throw new Error('final E2E seed accepted conflicting approval identity');
+}
+console.log('final_e2e_conflicting_approval_blocked=OK');
+await conflictingPolicyDb.close();
