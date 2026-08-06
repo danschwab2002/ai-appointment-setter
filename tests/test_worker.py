@@ -396,12 +396,12 @@ def test_dispatcher_resolves_delivery_unknown_when_acceptance_finalization_fails
     finalizations: list[dict[str, object]] = []
     action = ScheduledAction(
         action_id="action-send", recovery_case_id="case-001",
-        followup_sequence_id="sequence-001", action_type="first_contact_review",
+        followup_sequence_id="sequence-001", action_type="no_reply_review",
         status="pending", due_at="2026-08-03T13:00:00+00:00",
         expires_at="2026-08-10T12:00:00+00:00", expected_case_version=1,
         policy_key="cart-recovery-test", policy_version=1,
-        step_key="first_contact", anchor_type="cart_abandonment",
-        anchor_subject_internal_id="event-001",
+        step_key="followup_1", anchor_type="accepted_message",
+        anchor_subject_internal_id="message-001",
         anchor_observed_at="2026-08-03T12:00:00+00:00",
         lease_owner="dispatcher-test", lease_generation=3,
         lease_expires_at="2026-08-03T13:05:00+00:00",
@@ -433,8 +433,8 @@ def test_dispatcher_resolves_delivery_unknown_when_acceptance_finalization_fails
         async def get_followup_chatwoot_context(self, **_: object) -> ChatwootAuthorityContext:
             return ChatwootAuthorityContext(
                 action_id=action.action_id, action_type=action.action_type,
-                chatwoot_account_id=None, external_conversation_id=None,
-                expected_inbox_id=None, anchor_external_message_id=None,
+                chatwoot_account_id=1, external_conversation_id=7001,
+                expected_inbox_id=1, anchor_external_message_id=6001,
             )
 
         async def reevaluate_followup_action(self, **_: object) -> ReevaluationDecision:
@@ -473,11 +473,18 @@ def test_dispatcher_resolves_delivery_unknown_when_acceptance_finalization_fails
                 message="Hola Ana, ¿te quedó alguna duda?",
             )
 
+    sender_conversation_id = {"value": 7001}
+
     class SenderStub:
         async def send_first_touch(self, **_: object) -> FirstTouchResult:
+            raise AssertionError("follow-up must not create a new conversation")
+
+        async def send_followup(self, **kwargs: object) -> FirstTouchResult:
+            assert kwargs["conversation_id"] == 7001
             events.append("sender")
             return FirstTouchResult(
-                status="sent", reason="sent", conversation_id=7001,
+                status="sent", reason="sent",
+                conversation_id=sender_conversation_id["value"],
                 message_id=8001,
             )
 
@@ -489,6 +496,14 @@ def test_dispatcher_resolves_delivery_unknown_when_acceptance_finalization_fails
         allowed_jid="15555550100@s.whatsapp.net",
         clock=lambda: "2026-08-03T13:01:00+00:00",
     )
+
+    async def canonical_evidence(**_: object) -> dict[str, object]:
+        return {
+            "p_chatwoot_conversation_id": "7001",
+            "p_chatwoot_checkpoint_message_id": "6001",
+        }
+
+    dispatcher._load_chatwoot_evidence = canonical_evidence  # type: ignore[method-assign]
 
     # The message was already delivered by the sender; the acceptance finalize
     # then fails. The dispatcher must NOT strand the attempt: it must record a
@@ -511,6 +526,19 @@ def test_dispatcher_resolves_delivery_unknown_when_acceptance_finalization_fails
     assert last["reason_code"] == "acceptance_finalization_failed"
     assert last["next_attempt_at"] is None
     assert last["reconciliation_deadline"] == "2026-08-03T13:16:00+00:00"
+
+    sender_conversation_id["value"] = 7002
+    events.clear()
+    finalizations.clear()
+    _run(dispatcher.dispatch_due(now="2026-08-03T13:00:00+00:00"))
+
+    assert events == ["request_started", "sender", "finalize"]
+    mismatch = finalizations[-1]
+    assert mismatch["outcome"] == "delivery_unknown"
+    assert mismatch["remote_message_id"] == "8001"
+    assert mismatch["accepted_message_id"] is None
+    assert mismatch["reason_code"] == "sender_conversation_mismatch"
+    assert mismatch["next_attempt_at"] is None
 
 
 def test_dispatcher_marks_started_immediately_before_sender_and_finalizes_acceptance() -> None:

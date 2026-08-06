@@ -47,13 +47,17 @@ class MockTransport(httpx.AsyncBaseTransport):
         return httpx.Response(404, request=request)
 
 
-def _chatwoot(transport: MockTransport) -> ChatwootClient:
+def _chatwoot(
+    transport: MockTransport,
+    *,
+    agent_bot_id: int = 99,
+) -> ChatwootClient:
     return ChatwootClient(
         base_url="https://chatwoot.test",
         account_id=1,
         access_token="test-token",
         agent_bot_access_token="bot-token",
-        agent_bot_id=99,
+        agent_bot_id=agent_bot_id,
         transport=transport,
     )
 
@@ -406,6 +410,80 @@ def test_send_first_message_rejects_noncanonical_success_payload() -> None:
         ))
 
 
+def test_send_followup_message_uses_attempt_correlation() -> None:
+    transport = MockTransport()
+    expected_hash = hashlib.sha256(b"followup:attempt-002").hexdigest()
+    transport.set(
+        "/api/v1/accounts/1/conversations/200/messages",
+        httpx.Response(
+            200,
+            json={
+                "id": 889,
+                "conversation_id": 200,
+                "message_type": 1,
+                "private": False,
+                "content": "Seguimiento",
+                "content_attributes": {"recovery_followup_hash": expected_hash},
+                "sender": {"type": "agent_bot", "id": 99},
+            },
+            request=httpx.Request("POST", "https://chatwoot.test"),
+        ),
+    )
+
+    result = _run(_chatwoot(transport).send_followup_message(
+        conversation_id=200,
+        content="Seguimiento",
+        delivery_id="attempt-002",
+    ))
+
+    assert result == {"status": "sent", "message_id": 889}
+    body = json.loads(transport.requests[0][2])
+    assert body["content_attributes"] == {
+        "recovery_followup_hash": expected_hash,
+    }
+
+
+@pytest.mark.parametrize(
+    ("sender", "agent_bot_id"),
+    [
+        ({"type": "user", "id": 99}, 99),
+        ({"type": "agent_bot", "id": True}, 1),
+    ],
+)
+def test_send_followup_message_rejects_wrong_sender(
+    sender: dict[str, object],
+    agent_bot_id: int,
+) -> None:
+    transport = MockTransport()
+    expected_hash = hashlib.sha256(b"followup:attempt-002").hexdigest()
+    transport.set(
+        "/api/v1/accounts/1/conversations/200/messages",
+        httpx.Response(
+            200,
+            json={
+                "id": 889,
+                "conversation_id": 200,
+                "message_type": 1,
+                "private": False,
+                "content": "Seguimiento",
+                "content_attributes": {"recovery_followup_hash": expected_hash},
+                "sender": sender,
+            },
+            request=httpx.Request("POST", "https://chatwoot.test"),
+        ),
+    )
+
+    with pytest.raises(ChatwootProtocolError, match="invalid_sent_message"):
+        _run(_chatwoot(
+            transport,
+            agent_bot_id=agent_bot_id,
+        ).send_followup_message(
+            conversation_id=200,
+            content="Seguimiento",
+            delivery_id="attempt-002",
+        ))
+
+
 # ── EvolutionMessageSender end-to-end ────────────────────────────────
 
 
@@ -527,6 +605,49 @@ def test_evolution_sender_sends_first_touch() -> None:
     assert result.status == "sent"
     assert result.conversation_id == 200
     assert result.message_id == 888
+
+
+def test_evolution_sender_sends_followup_in_existing_conversation() -> None:
+    transport = MockTransport()
+    transport.set(
+        "/api/v1/accounts/1/conversations/200/messages",
+        httpx.Response(
+            200,
+            json={
+                "id": 889,
+                "conversation_id": 200,
+                "message_type": 1,
+                "private": False,
+                "content": "¿Te quedó alguna duda?",
+                "content_attributes": {
+                    "recovery_followup_hash": hashlib.sha256(
+                        b"followup:attempt-002"
+                    ).hexdigest()
+                },
+                "sender": {"type": "agent_bot", "id": 99},
+            },
+            request=httpx.Request("POST", "https://chatwoot.test"),
+        ),
+    )
+    sender = EvolutionMessageSender(
+        chatwoot=_chatwoot(transport),
+        inbox_id=1,
+        allowed_jid="5531999999999@s.whatsapp.net",
+    )
+
+    result = _run(sender.send_followup(
+        conversation_id=200,
+        phone="5531999999999",
+        content="¿Te quedó alguna duda?",
+        delivery_id="attempt-002",
+    ))
+
+    assert result.status == "sent"
+    assert result.conversation_id == 200
+    assert result.message_id == 889
+    assert [path for _, path, _ in transport.requests] == [
+        "/api/v1/accounts/1/conversations/200/messages"
+    ]
 
 
 def test_evolution_sender_reuses_existing_contact() -> None:

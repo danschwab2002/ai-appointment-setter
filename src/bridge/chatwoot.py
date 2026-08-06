@@ -883,3 +883,75 @@ class ChatwootClient:
         ):
             raise ChatwootProtocolError("invalid_sent_message")
         return {"status": "sent", "message_id": message_id}
+
+    async def send_followup_message(
+        self,
+        *,
+        conversation_id: int,
+        content: str,
+        delivery_id: str,
+    ) -> dict[str, object]:
+        """Send one durable follow-up into an existing conversation."""
+        if self._agent_bot_access_token is None or self._agent_bot_id is None:
+            raise ChatwootProtocolError("agent_bot_not_configured")
+        if (
+            not isinstance(conversation_id, int)
+            or isinstance(conversation_id, bool)
+            or conversation_id <= 0
+        ):
+            raise ChatwootProtocolError("invalid_conversation_id")
+
+        followup_hash = hashlib.sha256(
+            f"followup:{delivery_id}".encode("utf-8")
+        ).hexdigest()
+        messages_path = (
+            f"/api/v1/accounts/{self._account_id}"
+            f"/conversations/{conversation_id}/messages"
+        )
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            transport=self._transport,
+            timeout=15,
+        ) as client:
+            response = await client.post(
+                messages_path,
+                headers={"api_access_token": self._agent_bot_access_token},
+                json={
+                    "content": content,
+                    "message_type": "outgoing",
+                    "private": False,
+                    "content_type": "text",
+                    "content_attributes": {
+                        "recovery_followup_hash": followup_hash,
+                    },
+                },
+            )
+            response.raise_for_status()
+        try:
+            message = response.json()
+        except ValueError as exc:
+            raise ChatwootProtocolError("invalid_json") from exc
+        if not isinstance(message, dict):
+            raise ChatwootProtocolError("invalid_message_payload")
+        message_id = message.get("id")
+        attributes = message.get("content_attributes")
+        sender = message.get("sender")
+        sender_id = sender.get("id") if isinstance(sender, dict) else None
+        if (
+            not isinstance(message_id, int)
+            or isinstance(message_id, bool)
+            or message_id <= 0
+            or message.get("conversation_id") != conversation_id
+            or message.get("message_type") != 1
+            or message.get("private") is not False
+            or message.get("content") != content
+            or not isinstance(attributes, dict)
+            or attributes.get("recovery_followup_hash") != followup_hash
+            or not isinstance(sender, dict)
+            or sender.get("type") != "agent_bot"
+            or not isinstance(sender_id, int)
+            or isinstance(sender_id, bool)
+            or sender_id != self._agent_bot_id
+        ):
+            raise ChatwootProtocolError("invalid_sent_message")
+        return {"status": "sent", "message_id": message_id}

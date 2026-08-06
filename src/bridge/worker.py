@@ -382,6 +382,24 @@ class DurableDispatcher:
                                 raise SupabaseError(
                                     "final_followup_reevaluation_mismatch"
                                 )
+                            followup_conversation_id: int | None = None
+                            if action.action_type == "no_reply_review":
+                                if not isinstance(final_evidence, dict):
+                                    raise SupabaseError(
+                                        "followup_conversation_not_available"
+                                    )
+                                raw_conversation_id = final_evidence.get(
+                                    "p_chatwoot_conversation_id"
+                                )
+                                if (
+                                    not isinstance(raw_conversation_id, str)
+                                    or not raw_conversation_id.isdigit()
+                                    or int(raw_conversation_id) <= 0
+                                ):
+                                    raise SupabaseError(
+                                        "followup_conversation_not_available"
+                                    )
+                                followup_conversation_id = int(raw_conversation_id)
                             try:
                                 started, request_start_cancelled = (
                                     await _await_with_cancellation_state(
@@ -475,13 +493,21 @@ class DurableDispatcher:
                                 )
                                 raise asyncio.CancelledError
                             try:
-                                result = await self._sender.send_first_touch(
-                                    phone=execution_context.buyer_phone or "",
-                                    buyer_name=execution_context.buyer_name,
-                                    buyer_email=execution_context.buyer_email,
-                                    content=proposal.message,
-                                    delivery_id=attempt.attempt_id,
-                                )
+                                if followup_conversation_id is not None:
+                                    result = await self._sender.send_followup(
+                                        conversation_id=followup_conversation_id,
+                                        phone=execution_context.buyer_phone or "",
+                                        content=proposal.message,
+                                        delivery_id=attempt.attempt_id,
+                                    )
+                                else:
+                                    result = await self._sender.send_first_touch(
+                                        phone=execution_context.buyer_phone or "",
+                                        buyer_name=execution_context.buyer_name,
+                                        buyer_email=execution_context.buyer_email,
+                                        content=proposal.message,
+                                        delivery_id=attempt.attempt_id,
+                                    )
                             except asyncio.CancelledError:
                                 deadline = (
                                     datetime.fromisoformat(final_now)
@@ -545,6 +571,26 @@ class DurableDispatcher:
                                 and isinstance(result.message_id, int)
                                 and not isinstance(result.message_id, bool)
                                 and result.message_id > 0
+                                and (
+                                    followup_conversation_id is None
+                                    or result.conversation_id
+                                    == followup_conversation_id
+                                )
+                            )
+                            sender_conversation_mismatch = (
+                                isinstance(result, FirstTouchResult)
+                                and result.status == "sent"
+                                and followup_conversation_id is not None
+                                and result.conversation_id
+                                != followup_conversation_id
+                            )
+                            remote_message_id = (
+                                str(result.message_id)
+                                if isinstance(result, FirstTouchResult)
+                                and isinstance(result.message_id, int)
+                                and not isinstance(result.message_id, bool)
+                                and result.message_id > 0
+                                else None
                             )
                             if result is None:
                                 pass
@@ -585,9 +631,13 @@ class DurableDispatcher:
                                         worker_id=self._worker_id,
                                         lease_generation=action.lease_generation,
                                         outcome="delivery_unknown",
-                                        remote_message_id=None,
+                                        remote_message_id=remote_message_id,
                                         accepted_message_id=None,
-                                        reason_code="sender_result_inconclusive",
+                                        reason_code=(
+                                            "sender_conversation_mismatch"
+                                            if sender_conversation_mismatch
+                                            else "sender_result_inconclusive"
+                                        ),
                                         next_attempt_at=None,
                                         reconciliation_deadline=deadline,
                                         now=final_now,

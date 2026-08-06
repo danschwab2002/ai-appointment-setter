@@ -40,6 +40,15 @@ class MessageSender(Protocol):
         delivery_id: str,
     ) -> FirstTouchResult: ...
 
+    async def send_followup(
+        self,
+        *,
+        conversation_id: int,
+        phone: str,
+        content: str,
+        delivery_id: str,
+    ) -> FirstTouchResult: ...
+
 
 _INDIVIDUAL_JID_RE = re.compile(r"([1-9]\d{6,14})@s\.whatsapp\.net")
 _PHONE_INPUT_RE = re.compile(r"\+?[0-9 ()-]+")
@@ -151,6 +160,68 @@ class EvolutionMessageSender:
             return FirstTouchResult(
                 status="failed",
                 conversation_id=None,
+                message_id=None,
+                reason="chatwoot_http_error",
+            )
+
+        message_id_raw = result.get("message_id")
+        message_id = (
+            message_id_raw
+            if isinstance(message_id_raw, int)
+            and not isinstance(message_id_raw, bool)
+            else None
+        )
+        return FirstTouchResult(
+            status="sent",
+            conversation_id=conversation_id,
+            message_id=message_id,
+        )
+
+    async def send_followup(
+        self,
+        *,
+        conversation_id: int,
+        phone: str,
+        content: str,
+        delivery_id: str,
+    ) -> FirstTouchResult:
+        """Send a follow-up without creating another Chatwoot conversation."""
+        if not is_allowed_whatsapp_target(phone, self._allowed_jid):
+            return FirstTouchResult(
+                status="blocked",
+                conversation_id=None,
+                message_id=None,
+                reason="target_not_allowed",
+            )
+        if (
+            not isinstance(conversation_id, int)
+            or isinstance(conversation_id, bool)
+            or conversation_id <= 0
+        ):
+            return FirstTouchResult(
+                status="blocked",
+                conversation_id=None,
+                message_id=None,
+                reason="invalid_conversation_id",
+            )
+
+        try:
+            result = await self._chatwoot.send_followup_message(
+                conversation_id=conversation_id,
+                content=content,
+                delivery_id=delivery_id,
+            )
+        except ChatwootProtocolError as exc:
+            return FirstTouchResult(
+                status="failed",
+                conversation_id=conversation_id,
+                message_id=None,
+                reason=str(exc),
+            )
+        except httpx.HTTPError:
+            return FirstTouchResult(
+                status="failed",
+                conversation_id=conversation_id,
                 message_id=None,
                 reason="chatwoot_http_error",
             )

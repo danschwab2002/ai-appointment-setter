@@ -351,6 +351,8 @@ delivery_unknown
 - La conversación aceptada se vincula atómicamente a `recovery_cases.conversation_id` y a la secuencia; una asociación contradictoria dentro del mismo caso falla cerrada.
 - `channel_identities.external_conversation_id` es sólo un puntero denormalizado last-write-wins a la conversación más reciente de la identidad y nunca se usa como autoridad de respuesta o seguimiento.
 - La conversación autoritativa debe pertenecer al mismo contacto y a la identidad seleccionada del caso.
+- `first_contact_review` puede crear una conversación Chatwoot nueva; `no_reply_review` publica exclusivamente en la conversación canónica ya vinculada al caso. Un seguimiento nunca busca/crea contacto ni abre otra conversación.
+- La correlación remota de un seguimiento es `sha256("followup:{attempt_id}")`; no se etiqueta como primer contacto.
 - Un request ambiguo produce `delivery_unknown`.
 - `delivery_unknown` no se reintenta automáticamente.
 - La reconciliación busca un marcador estable durante una ventana acotada.
