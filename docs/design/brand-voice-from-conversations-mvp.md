@@ -310,7 +310,11 @@ Los principales aprendizajes fueron:
 - deben revisarse tanto rasgos positivos como restricciones sobre aquello que no debe imitarse, por ejemplo errores accidentales o fórmulas genéricas de IA;
 - una inferencia observable puede ser descartada como rasgo de voz y permanecer, si corresponde, como regla del kernel; esto confirma la necesidad de clasificar cada aprendizaje antes de publicarlo;
 - las respuestas de prueba necesitan contexto factual explícito para evaluar la voz sin medir accidentalmente conocimiento o estrategia comercial;
-- la aprobación debe registrar por separado decisiones sobre reglas y decisiones sobre respuestas de prueba.
+- la aprobación debe registrar por separado decisiones sobre reglas y decisiones sobre respuestas de prueba;
+- una regla como «una sola pregunta» debe definirse semánticamente como «un solo dato solicitado»: contar signos `?` no detecta preguntas compuestas;
+- las aperturas necesitan ejemplos positivos y negativos explícitos para estabilizar identidad, tono y transición, no sólo adjetivos abstractos;
+- la evaluación de comportamiento generativo debe repetir el mismo escenario varias veces para detectar incumplimientos intermitentes;
+- la prueba real debe separar apertura, continuidad y cambio de registro porque aprobar uno de esos momentos no valida automáticamente los demás.
 
 La evidencia sanitizada de esta prueba se encuentra en `docs/operations/2026-08-06-brand-voice-onboarding-trial.md`.
 
