@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import time
 from contextlib import asynccontextmanager
@@ -33,6 +34,8 @@ from bridge.hotmart import (
 )
 from bridge.security import verify_chatwoot_signature
 from bridge.supabase import SupabaseClient, SupabaseError
+
+logger = logging.getLogger(__name__)
 from bridge.messaging import EvolutionMessageSender, MessageSender
 from bridge.recovery_agent import RecoveryAgentClient
 from bridge.worker import DurableDispatcher, ResolutionWorker
@@ -674,6 +677,7 @@ def create_app(
                 "label_status": "added" if changed else "already_present",
             }
         if not decision.accepted:
+            logger.info("chatwoot_webhook_ignored reason=%s", decision.reason)
             response.status_code = status.HTTP_200_OK
             return {
                 "status": "ignored",

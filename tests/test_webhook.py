@@ -776,7 +776,9 @@ def test_records_shadow_failure_when_current_message_is_missing_from_history(
 
 def test_recognizes_configured_agent_bot_without_capturing_it(
     tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level("INFO", logger="bridge.app")
     secret = "webhook-secret"
     payload = {
         "event": "message_created",
@@ -816,6 +818,7 @@ def test_recognizes_configured_agent_bot_without_capturing_it(
         "status": "ignored",
         "reason": "automation_outgoing",
     }
+    assert "chatwoot_webhook_ignored reason=automation_outgoing" in caplog.messages
     assert list(tmp_path.iterdir()) == []
 
 
