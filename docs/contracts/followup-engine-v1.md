@@ -348,7 +348,9 @@ delivery_unknown
 - `accepted_by_chatwoot` sólo puede persistirse mediante `record_and_finalize_followup_acceptance`, junto con conversación, mensaje outbound público y correlación canónicos; los RPC genéricos rechazan accepted.
 - `accepted_message_id` referencia un mensaje real y no puede aceptar dos intentos.
 - Una aceptación real se conserva aunque cambie la autoridad durante el request; en ese caso no avanza la secuencia ni crea sucesor.
-- La conversación aceptada se vincula atómicamente a `channel_identities.external_conversation_id`; una asociación contradictoria falla cerrada.
+- La conversación aceptada se vincula atómicamente a `recovery_cases.conversation_id` y a la secuencia; una asociación contradictoria dentro del mismo caso falla cerrada.
+- `channel_identities.external_conversation_id` es sólo un puntero denormalizado last-write-wins a la conversación más reciente de la identidad y nunca se usa como autoridad de respuesta o seguimiento.
+- La conversación autoritativa debe pertenecer al mismo contacto y a la identidad seleccionada del caso.
 - Un request ambiguo produce `delivery_unknown`.
 - `delivery_unknown` no se reintenta automáticamente.
 - La reconciliación busca un marcador estable durante una ventana acotada.

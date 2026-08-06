@@ -388,6 +388,131 @@ def test_durable_dispatcher_reevaluates_every_claim_without_external_effects() -
     }]
 
 
+def test_dispatcher_resolves_delivery_unknown_when_acceptance_finalization_fails() -> None:
+    """A failing acceptance RPC (e.g. HTTP 400) after the message was already sent
+    must be resolved to a durable, reconcilable delivery_unknown instead of
+    propagating and stranding the attempt at request_started forever."""
+    events: list[str] = []
+    finalizations: list[dict[str, object]] = []
+    action = ScheduledAction(
+        action_id="action-send", recovery_case_id="case-001",
+        followup_sequence_id="sequence-001", action_type="first_contact_review",
+        status="pending", due_at="2026-08-03T13:00:00+00:00",
+        expires_at="2026-08-10T12:00:00+00:00", expected_case_version=1,
+        policy_key="cart-recovery-test", policy_version=1,
+        step_key="first_contact", anchor_type="cart_abandonment",
+        anchor_subject_internal_id="event-001",
+        anchor_observed_at="2026-08-03T12:00:00+00:00",
+        lease_owner="dispatcher-test", lease_generation=3,
+        lease_expires_at="2026-08-03T13:05:00+00:00",
+        idempotency_key="cart_recovery:first_contact:case-001",
+    )
+    attempt = DeliveryAttempt(
+        attempt_id="attempt-001", action_id=action.action_id,
+        idempotency_key=action.idempotency_key, attempt_number=1,
+        channel="whatsapp", mode="freeform", phase="reserved",
+        lease_generation=3, expected_case_version=1,
+        expected_sequence_revision=1,
+    )
+    context = FollowupExecutionContext(
+        action_id=action.action_id, action_type=action.action_type,
+        step_key=action.step_key, recovery_case_id=action.recovery_case_id,
+        contact_id="contact-001", source_event_id="event-001",
+        buyer_name="Ana", buyer_email="ana@example.test",
+        buyer_phone="15555550100", product_name="Curso Uno",
+        offer_code="OFERTA1", current_goal="iniciar conversación",
+        lead_stage="new",
+    )
+
+    class SupabaseStub:
+        reevaluations = 0
+
+        async def claim_due_followup_actions(self, **_: object) -> list[ScheduledAction]:
+            return [action]
+
+        async def get_followup_chatwoot_context(self, **_: object) -> ChatwootAuthorityContext:
+            return ChatwootAuthorityContext(
+                action_id=action.action_id, action_type=action.action_type,
+                chatwoot_account_id=None, external_conversation_id=None,
+                expected_inbox_id=None, anchor_external_message_id=None,
+            )
+
+        async def reevaluate_followup_action(self, **_: object) -> ReevaluationDecision:
+            self.reevaluations += 1
+            return ReevaluationDecision(
+                action_id=action.action_id, decision="execute",
+                reason_code="eligible_for_execution", case_version=1,
+                sequence_revision=1,
+            )
+
+        async def reserve_followup_delivery_attempt(self, **_: object) -> DeliveryAttempt:
+            return attempt
+
+        async def get_followup_execution_context(self, **_: object) -> FollowupExecutionContext:
+            return context
+
+        async def mark_followup_request_started(self, **_: object) -> DeliveryAttempt:
+            events.append("request_started")
+            return DeliveryAttempt(**{**attempt.__dict__, "phase": "request_started"})
+
+        async def finalize_followup_delivery_attempt(self, **kwargs: object) -> object:
+            events.append("finalize")
+            finalizations.append(kwargs)
+            return SimpleNamespace(status="delivery_unknown")
+
+        async def record_and_finalize_followup_acceptance(self, **_: object) -> object:
+            events.append("accepted-attempt")
+            raise SupabaseError(
+                "record_and_finalize_followup_acceptance_failed: HTTP 400"
+            )
+
+    class AgentStub:
+        async def request_followup_message(self, **_: object) -> FollowupMessageProposal:
+            return FollowupMessageProposal(
+                strategy="recordatorio consultivo",
+                message="Hola Ana, ¿te quedó alguna duda?",
+            )
+
+    class SenderStub:
+        async def send_first_touch(self, **_: object) -> FirstTouchResult:
+            events.append("sender")
+            return FirstTouchResult(
+                status="sent", reason="sent", conversation_id=7001,
+                message_id=8001,
+            )
+
+    dispatcher = DurableDispatcher(
+        supabase=SupabaseStub(),  # type: ignore[arg-type]
+        worker_id="dispatcher-test",
+        recovery_agent=AgentStub(),  # type: ignore[arg-type]
+        sender=SenderStub(),  # type: ignore[arg-type]
+        allowed_jid="15555550100@s.whatsapp.net",
+        clock=lambda: "2026-08-03T13:01:00+00:00",
+    )
+
+    # The message was already delivered by the sender; the acceptance finalize
+    # then fails. The dispatcher must NOT strand the attempt: it must record a
+    # durable delivery_unknown so reconciliation can resolve it.
+    _run(dispatcher.dispatch_due(now="2026-08-03T13:00:00+00:00"))
+
+    assert events.count("sender") == 1, "the ambiguous finalize must never resend"
+    assert "accepted-attempt" in events, "acceptance finalize must have been attempted"
+    assert finalizations, (
+        "acceptance-finalize failure after a real send must be resolved to a "
+        "durable delivery_unknown, not left stranded at request_started"
+    )
+    last = finalizations[-1]
+    assert last["outcome"] == "delivery_unknown"
+    assert last["remote_message_id"] == "8001", (
+        "preserve the provider message id already returned by Chatwoot so "
+        "reconciliation does not discard known external evidence"
+    )
+    assert last["accepted_message_id"] is None
+    assert last["reason_code"] == "acceptance_finalization_failed"
+    assert last["next_attempt_at"] is None
+    assert last["reconciliation_deadline"] == "2026-08-03T13:16:00+00:00"
+
+
 def test_dispatcher_marks_started_immediately_before_sender_and_finalizes_acceptance() -> None:
     events: list[str] = []
     context_times: list[object] = []

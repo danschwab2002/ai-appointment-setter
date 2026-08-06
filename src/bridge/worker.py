@@ -598,24 +598,71 @@ class DurableDispatcher:
                                         "followup_unknown_finalization_mismatch"
                                     )
                             else:
-                                finalized = await _commit_outcome_despite_cancellation(
-                                    self._supabase.record_and_finalize_followup_acceptance(
-                                        action_id=action.action_id,
-                                        attempt_id=attempt.attempt_id,
-                                        worker_id=self._worker_id,
-                                        lease_generation=action.lease_generation,
-                                        external_conversation_id=str(
-                                            result.conversation_id
-                                        ),
-                                        remote_message_id=str(result.message_id),
-                                        message_content=proposal.message,
-                                        now=final_now,
+                                try:
+                                    finalized = (
+                                        await _commit_outcome_despite_cancellation(
+                                            self._supabase.record_and_finalize_followup_acceptance(
+                                                action_id=action.action_id,
+                                                attempt_id=attempt.attempt_id,
+                                                worker_id=self._worker_id,
+                                                lease_generation=(
+                                                    action.lease_generation
+                                                ),
+                                                external_conversation_id=str(
+                                                    result.conversation_id
+                                                ),
+                                                remote_message_id=str(
+                                                    result.message_id
+                                                ),
+                                                message_content=proposal.message,
+                                                now=final_now,
+                                            )
+                                        )
                                     )
-                                )
-                                if finalized.status != "accepted_by_chatwoot":
-                                    raise SupabaseError(
-                                        "followup_acceptance_finalization_mismatch"
+                                    if finalized.status != "accepted_by_chatwoot":
+                                        raise SupabaseError(
+                                            "followup_acceptance_finalization_mismatch"
+                                        )
+                                except SupabaseError:
+                                    # The message was already delivered by the
+                                    # sender, but persisting the canonical
+                                    # acceptance failed (e.g. HTTP 400 from a
+                                    # finalize invariant). Never strand the
+                                    # attempt at request_started: resolve it to a
+                                    # durable, reconcilable delivery_unknown so
+                                    # reconciliation owns the canonical binding
+                                    # instead of a blind resend.
+                                    deadline = (
+                                        datetime.fromisoformat(final_now)
+                                        + timedelta(minutes=15)
+                                    ).isoformat()
+                                    unknown = (
+                                        await _commit_outcome_despite_cancellation(
+                                            self._supabase.finalize_followup_delivery_attempt(
+                                                action_id=action.action_id,
+                                                attempt_id=attempt.attempt_id,
+                                                worker_id=self._worker_id,
+                                                lease_generation=(
+                                                    action.lease_generation
+                                                ),
+                                                outcome="delivery_unknown",
+                                                remote_message_id=str(
+                                                    result.message_id
+                                                ),
+                                                accepted_message_id=None,
+                                                reason_code=(
+                                                    "acceptance_finalization_failed"
+                                                ),
+                                                next_attempt_at=None,
+                                                reconciliation_deadline=deadline,
+                                                now=final_now,
+                                            )
+                                        )
                                     )
+                                    if unknown.status != "delivery_unknown":
+                                        raise SupabaseError(
+                                            "followup_unknown_finalization_mismatch"
+                                        )
                     else:
                         raise SupabaseError("invalid_followup_message_proposal")
             decisions.append(decision)

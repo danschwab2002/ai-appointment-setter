@@ -19,6 +19,10 @@ const contactAuthorizationGrantMigration = await readFile(
   `${root}/supabase/migrations/20260805000200_followup_contact_authorization_grant.sql`,
   'utf8',
 );
+const perCaseAnchorMigration = await readFile(
+  `${root}/supabase/migrations/20260805000300_per_case_conversation_anchor.sql`,
+  'utf8',
+);
 const db = new PGlite();
 await db.waitReady;
 await db.exec(baseline);
@@ -31,6 +35,8 @@ await db.exec(identityAuditMigration);
 console.log('identity_audit_migration_apply=OK');
 await db.exec(contactAuthorizationGrantMigration);
 console.log('contact_authorization_grant_migration_apply=OK');
+await db.exec(perCaseAnchorMigration);
+console.log('per_case_anchor_migration_apply=OK');
 
 async function authorizeExecute(actionId, workerId, leaseGeneration = 1, caseVersion = 1, sequenceRevision = 1) {
   await db.query(`
@@ -1621,6 +1627,24 @@ await db.query(`
       identity_resolution_status='resolved'
   where id=$1
 `, [canonicalPlan.rows[0].recovery_case_id]);
+// ADR-0008: reply authority is the case's own conversation. Give this case a
+// Chatwoot conversation "22" (linked to the identity) so the no-reply check
+// reads it from the case, not from the identity anchor.
+const canonicalConversation = await db.query(`
+  insert into public.conversations (
+    contact_id, channel_identity_id, status, automation_status,
+    human_takeover, commercial_context
+  ) values (
+    '00000000-0000-0000-0000-000000000076',
+    '00000000-0000-0000-0000-000000000078',
+    'active', 'enabled', false,
+    jsonb_build_object('chatwoot_conversation_id', '22')
+  )
+  returning id
+`);
+await db.query(`
+  update public.recovery_cases set conversation_id=$2 where id=$1
+`, [canonicalPlan.rows[0].recovery_case_id, canonicalConversation.rows[0].id]);
 const canonicalClaims = await db.query(`
   select * from public.claim_due_followup_actions(
     'canonical-worker', now(), interval '5 minutes', 100
@@ -1702,6 +1726,316 @@ try {
 }
 if (!nullExpirationBlocked) throw new Error('scheduled action accepted null expires_at');
 console.log('ledger_and_action_identity_constraints=OK');
+
+// --- ADR-0008: per-case conversation authority (recurring buyer) ---
+// One buyer has two LIVE cases for different products. Chatwoot opens
+// conversation "26" for case A and "27" for case B. Finalizing B must not
+// change the reply-authority conversation read by A.
+async function driveFirstContactToAccept(caseId, externalConversationId, remoteMessageId, content) {
+  const claimed = await db.query(`
+    select * from public.claim_due_followup_actions(
+      'adr8-worker', now(), interval '5 minutes', 1
+    )
+  `);
+  const row = claimed.rows.find((r) => r.recovery_case_id === caseId);
+  if (!row) throw new Error(`ADR-0008: no due action claimed for case ${caseId}`);
+  const aId = row.id;
+  await authorizeExecute(aId, 'adr8-worker');
+  const reserved = await db.query(`
+    select * from public.reserve_followup_delivery_attempt(
+      $1, 'adr8-worker', 1, 1, 1, 'whatsapp', 'freeform', now()
+    )
+  `, [aId]);
+  const atId = reserved.rows[0].id;
+  await db.query(`
+    select * from public.mark_followup_request_started($1, $2, 'adr8-worker', 1, now())
+  `, [aId, atId]);
+  const fin = await db.query(`
+    select * from public.record_and_finalize_followup_acceptance(
+      $1, $2, 'adr8-worker', 1, $3, $4, $5, now()
+    )
+  `, [aId, atId, externalConversationId, remoteMessageId, content]);
+  return { actionId: aId, attemptId: atId, status: fin.rows[0].status };
+}
+
+await db.exec(`
+  insert into public.webhook_events (id, source, external_event_id, event_type, payload)
+  values ('00000000-0000-0000-0000-0000000ad801', 'hotmart', 'adr8-event-1',
+          'PURCHASE_OUT_OF_SHOPPING_CART', '{}'::jsonb);
+  insert into public.contacts (id, full_name)
+  values ('00000000-0000-0000-0000-0000000ad80c', 'Recurring Buyer');
+`);
+
+// Case #1 -> Chatwoot conversation "26"
+const adr8Plan1 = await db.query(`
+  select * from public.plan_cart_recovery_with_identity(
+    '00000000-0000-0000-0000-0000000ad801',
+    '00000000-0000-0000-0000-0000000ad80c',
+    'adr8-product', 'ADR8 Product', 'adr8-offer',
+    'cart-recovery-test', 1, now() - interval '2 hours',
+    1, 7, '5599888800026'
+  )
+`);
+const adr8Case1 = adr8Plan1.rows[0].recovery_case_id;
+const adr8Accept1 = await driveFirstContactToAccept(adr8Case1, '26', 'adr8-msg-26', 'Primer contacto caso 1');
+if (adr8Accept1.status !== 'accepted_by_chatwoot') throw new Error('ADR-0008: case #1 did not accept');
+const adr8AnchorAfter1 = await db.query(`
+  select ci.external_conversation_id
+  from public.recovery_cases rc
+  join public.channel_identities ci on ci.id = rc.selected_channel_identity_id
+  where rc.id = $1
+`, [adr8Case1]);
+if (adr8AnchorAfter1.rows[0].external_conversation_id !== '26') throw new Error('ADR-0008: identity not anchored to 26');
+console.log('adr8_case_a_bound_to_26=OK');
+
+// Keep case A live. A different product creates a concurrent case B that
+// resolves to the same WhatsApp identity.
+await db.exec(`
+  insert into public.webhook_events (id, source, external_event_id, event_type, payload)
+  values ('00000000-0000-0000-0000-0000000ad802', 'hotmart', 'adr8-event-2',
+          'PURCHASE_OUT_OF_SHOPPING_CART', '{}'::jsonb);
+`);
+const adr8Plan2 = await db.query(`
+  select * from public.plan_cart_recovery_with_identity(
+    '00000000-0000-0000-0000-0000000ad802',
+    '00000000-0000-0000-0000-0000000ad80c',
+    'adr8-product-b', 'ADR8 Product B', 'adr8-offer-b',
+    'cart-recovery-test', 1, now() - interval '2 hours',
+    1, 7, '5599888800026'
+  )
+`);
+const adr8Case2 = adr8Plan2.rows[0].recovery_case_id;
+if (adr8Plan2.rows[0].created !== true || adr8Case2 === adr8Case1) throw new Error('ADR-0008: case #2 was not a new case');
+const adr8LiveCases = await db.query(`
+  select count(*)::int as count,
+         count(distinct selected_channel_identity_id)::int as identities
+  from public.recovery_cases
+  where id in ($1, $2)
+    and status in ('grace_period', 'active', 'paused')
+`, [adr8Case1, adr8Case2]);
+if (adr8LiveCases.rows[0].count !== 2 || adr8LiveCases.rows[0].identities !== 1) {
+  throw new Error('ADR-0008: expected two live cases sharing one identity');
+}
+// The denormalized identity pointer still carries "26" before B finalizes.
+const adr8StaleAnchor = await db.query(`
+  select ci.external_conversation_id
+  from public.recovery_cases rc
+  join public.channel_identities ci on ci.id = rc.selected_channel_identity_id
+  where rc.id = $1
+`, [adr8Case2]);
+if (adr8StaleAnchor.rows[0].external_conversation_id !== '26') throw new Error('ADR-0008: precondition — case #2 should inherit stale 26 anchor');
+
+// Case #2 -> Chatwoot conversation "27". Must accept by advancing the anchor.
+const adr8Accept2 = await driveFirstContactToAccept(adr8Case2, '27', 'adr8-msg-27', 'Primer contacto caso 2');
+if (adr8Accept2.status !== 'accepted_by_chatwoot') throw new Error('ADR-0008: case #2 finalize did not accept (regression: mismatch guard rejected)');
+const adr8AnchorAfter2 = await db.query(`
+  select ci.external_conversation_id
+  from public.recovery_cases rc
+  join public.channel_identities ci on ci.id = rc.selected_channel_identity_id
+  where rc.id = $1
+`, [adr8Case2]);
+if (adr8AnchorAfter2.rows[0].external_conversation_id !== '27') throw new Error('ADR-0008: anchor did not advance to 27');
+const adr8Case2Conv = await db.query(`
+  select c.commercial_context ->> 'chatwoot_conversation_id' as ext
+  from public.recovery_cases rc
+  join public.conversations c on c.id = rc.conversation_id
+  where rc.id = $1
+`, [adr8Case2]);
+if (adr8Case2Conv.rows[0].ext !== '27') throw new Error('ADR-0008: case #2 not linked to conversation 27');
+console.log('adr8_concurrent_case_b_bound_to_27=OK');
+
+// Make case A's successor due and claim it. Its authoritative context must stay
+// on conversation "26" even though case B last wrote identity pointer "27".
+await db.query(`
+  update public.scheduled_actions
+  set due_at=now() - interval '1 minute', next_attempt_at=null
+  where recovery_case_id=$1
+    and status in ('pending', 'deferred')
+`, [adr8Case1]);
+const adr8CaseAClaims = await db.query(`
+  select * from public.claim_due_followup_actions(
+    'adr8-authority-worker', now(), interval '5 minutes', 100
+  )
+`);
+const adr8CaseAReview = adr8CaseAClaims.rows.find(
+  (row) => row.recovery_case_id === adr8Case1 && row.action_type === 'no_reply_review'
+);
+if (!adr8CaseAReview) throw new Error('ADR-0008: case A no-reply review was not claimed');
+const adr8CaseAContext = await db.query(`
+  select * from public.get_followup_chatwoot_context(
+    $1, 'adr8-authority-worker', $2, now()
+  )
+`, [adr8CaseAReview.id, adr8CaseAReview.lease_generation]);
+if (adr8CaseAContext.rows[0].external_conversation_id !== '26') {
+  throw new Error('ADR-0008: case A authority was hijacked by case B conversation');
+}
+console.log('adr8_concurrent_cases_keep_independent_authority=OK');
+
+// Human takeover belongs to the conversation/case that owns it. Pausing case B's
+// conversation must not pause the concurrently-live case A.
+await db.query(`
+  update public.conversations
+  set human_takeover=true
+  where id=(select conversation_id from public.recovery_cases where id=$1)
+`, [adr8Case2]);
+const adr8CaseAAfterBHumanTakeover = await db.query(`
+  select * from public.reevaluate_followup_action(
+    $1, 'adr8-authority-worker', $2, now(),
+    true, '26', $3, now(),
+    'open', true, true, false, false, false
+  )
+`, [
+  adr8CaseAReview.id,
+  adr8CaseAReview.lease_generation,
+  adr8CaseAContext.rows[0].anchor_external_message_id,
+]);
+if (
+  adr8CaseAAfterBHumanTakeover.rows[0].decision !== 'execute' ||
+  adr8CaseAAfterBHumanTakeover.rows[0].reason_code !== 'eligible_for_execution'
+) {
+  throw new Error('ADR-0008: case B human takeover paused case A');
+}
+console.log('adr8_human_takeover_is_scoped_to_case_conversation=OK');
+
+// Same contact but a different WhatsApp identity must also fail closed. This
+// isolates the identity predicate from the contact predicate.
+const adr8CaseAContact = await db.query(`
+  select contact_id from public.recovery_cases where id=$1
+`, [adr8Case1]);
+await db.query(`
+  insert into public.channel_identities (
+    id, contact_id, channel, account_id, external_user_id, identity_status
+  ) values (
+    '00000000-0000-0000-0000-0000000ad829', $1,
+    'whatsapp', 'chatwoot:adr8-other-identity', '5599888800029', 'active'
+  )
+`, [adr8CaseAContact.rows[0].contact_id]);
+const adr8SameContactOtherIdentityConversation = await db.query(`
+  insert into public.conversations (
+    contact_id, channel_identity_id, status, automation_status,
+    human_takeover, commercial_context
+  ) values (
+    $1, '00000000-0000-0000-0000-0000000ad829',
+    'active', 'enabled', false,
+    jsonb_build_object('chatwoot_conversation_id', '29')
+  ) returning id
+`, [adr8CaseAContact.rows[0].contact_id]);
+await db.exec('begin');
+await db.query(`
+  update public.recovery_cases set conversation_id=$2 where id=$1
+`, [adr8Case1, adr8SameContactOtherIdentityConversation.rows[0].id]);
+const adr8WrongIdentityContext = await db.query(`
+  select * from public.get_followup_chatwoot_context(
+    $1, 'adr8-authority-worker', $2, now()
+  )
+`, [adr8CaseAReview.id, adr8CaseAReview.lease_generation]);
+let adr8WrongIdentityEvidenceBlocked = false;
+try {
+  await db.query(`
+    select * from public.reevaluate_followup_action(
+      $1, 'adr8-authority-worker', $2, now(),
+      true, '29', 'wrong-identity-anchor', now(),
+      'open', true, true, false, false, false
+    )
+  `, [adr8CaseAReview.id, adr8CaseAReview.lease_generation]);
+} catch (error) {
+  adr8WrongIdentityEvidenceBlocked = String(error.message).includes(
+    'invalid_chatwoot_authority_evidence'
+  );
+}
+await db.exec('rollback');
+if (
+  adr8WrongIdentityContext.rows[0].external_conversation_id !== null ||
+  !adr8WrongIdentityEvidenceBlocked
+) {
+  throw new Error('ADR-0008: same-contact foreign identity bypassed authority fence');
+}
+console.log('adr8_same_contact_foreign_identity_fails_closed=OK');
+
+// A conversation owned by another contact and identity must fail closed. The
+// authoritative context must not expose that foreign conversation merely because its UUID was stored on the case.
+await db.exec('begin');
+await db.query(`
+  update public.recovery_cases set conversation_id=$2 where id=$1
+`, [adr8Case1, canonicalConversation.rows[0].id]);
+const adr8ForeignContext = await db.query(`
+  select * from public.get_followup_chatwoot_context(
+    $1, 'adr8-authority-worker', $2, now()
+  )
+`, [adr8CaseAReview.id, adr8CaseAReview.lease_generation]);
+let adr8ForeignEvidenceBlocked = false;
+try {
+  await db.query(`
+    select * from public.reevaluate_followup_action(
+      $1, 'adr8-authority-worker', $2, now(),
+      true, '22', 'foreign-anchor', now(),
+      'open', true, true, false, false, false
+    )
+  `, [adr8CaseAReview.id, adr8CaseAReview.lease_generation]);
+} catch (error) {
+  adr8ForeignEvidenceBlocked = String(error.message).includes(
+    'invalid_chatwoot_authority_evidence'
+  );
+}
+await db.exec('rollback');
+if (adr8ForeignContext.rows[0].external_conversation_id !== null) {
+  throw new Error('ADR-0008: foreign conversation leaked into case authority');
+}
+if (!adr8ForeignEvidenceBlocked) {
+  throw new Error('ADR-0008: foreign conversation evidence bypassed reevaluation fence');
+}
+console.log('adr8_foreign_conversation_authority_fails_closed=OK');
+
+// Regression: a fresh successor attempt inside case A cannot finalize against
+// conversation "28" because case A is already canonically bound to "26".
+const adr8CaseASequence = await db.query(`
+  select revision from public.followup_sequences where id=$1
+`, [adr8CaseAReview.followup_sequence_id]);
+const adr8CaseASequenceRevision = adr8CaseASequence.rows[0].revision;
+await authorizeExecute(
+  adr8CaseAReview.id,
+  'adr8-authority-worker',
+  adr8CaseAReview.lease_generation,
+  adr8CaseAReview.expected_case_version,
+  adr8CaseASequenceRevision,
+);
+const adr8CaseAAttempt = await db.query(`
+  select * from public.reserve_followup_delivery_attempt(
+    $1, 'adr8-authority-worker', $2, $3, $4,
+    'whatsapp', 'freeform', now()
+  )
+`, [
+  adr8CaseAReview.id,
+  adr8CaseAReview.lease_generation,
+  adr8CaseAReview.expected_case_version,
+  adr8CaseASequenceRevision,
+]);
+await db.query(`
+  select * from public.mark_followup_request_started(
+    $1, $2, 'adr8-authority-worker', $3, now()
+  )
+`, [
+  adr8CaseAReview.id,
+  adr8CaseAAttempt.rows[0].id,
+  adr8CaseAReview.lease_generation,
+]);
+let adr8MidCaseMismatchBlocked = false;
+try {
+  await db.query(`
+    select * from public.record_and_finalize_followup_acceptance(
+      $1, $2, 'adr8-authority-worker', $3,
+      '28', 'adr8-msg-28', 'salto indebido', now()
+    )
+  `, [
+    adr8CaseAReview.id,
+    adr8CaseAAttempt.rows[0].id,
+    adr8CaseAReview.lease_generation,
+  ]);
+} catch (error) {
+  adr8MidCaseMismatchBlocked = String(error.message).includes('case_conversation_mismatch');
+}
+if (!adr8MidCaseMismatchBlocked) throw new Error('ADR-0008: case_conversation_mismatch did not block mid-case jump');
+console.log('adr8_mid_case_conversation_jump_blocked=OK');
 
 await db.close();
 
