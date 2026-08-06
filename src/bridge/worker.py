@@ -219,6 +219,40 @@ class DurableDispatcher:
             )
         return actions
 
+    async def _finalize_pre_request_failure(
+        self,
+        *,
+        action: ScheduledAction,
+        attempt: DeliveryAttempt,
+        reason_code: str,
+    ) -> None:
+        """Close a reserved attempt when no external request could have started."""
+        failed_at = self._clock()
+        retry_at = (
+            datetime.fromisoformat(failed_at) + timedelta(minutes=1)
+        ).isoformat()
+        finalized = await _commit_outcome_despite_cancellation(
+            self._supabase.finalize_followup_delivery_attempt(
+                action_id=action.action_id,
+                attempt_id=attempt.attempt_id,
+                worker_id=self._worker_id,
+                lease_generation=action.lease_generation,
+                outcome="failed_before_request",
+                remote_message_id=None,
+                accepted_message_id=None,
+                reason_code=reason_code,
+                next_attempt_at=retry_at,
+                reconciliation_deadline=None,
+                now=failed_at,
+            )
+        )
+        if finalized.status not in {
+            "retryable_failed",
+            "permanent_failed",
+            "expired",
+        }:
+            raise SupabaseError("followup_pre_request_finalization_mismatch")
+
     async def _load_chatwoot_evidence(
         self,
         *,
@@ -314,22 +348,41 @@ class DurableDispatcher:
                     attempt.attempt_id,
                 )
                 if self._recovery_agent is not None:
-                    execution_context = (
-                        await self._supabase.get_followup_execution_context(
-                            action_id=action.action_id,
-                            worker_id=self._worker_id,
-                            lease_generation=action.lease_generation,
-                            now=now,
+                    try:
+                        execution_context = (
+                            await self._supabase.get_followup_execution_context(
+                                action_id=action.action_id,
+                                worker_id=self._worker_id,
+                                lease_generation=action.lease_generation,
+                                now=now,
+                            )
                         )
-                    )
-                    _validate_followup_execution_context(
-                        action,
-                        execution_context,
-                    )
-                    proposal = await self._recovery_agent.request_followup_message(
-                        attempt_id=attempt.attempt_id,
-                        execution_context=execution_context,
-                    )
+                        _validate_followup_execution_context(
+                            action,
+                            execution_context,
+                        )
+                        proposal = (
+                            await self._recovery_agent.request_followup_message(
+                                attempt_id=attempt.attempt_id,
+                                execution_context=execution_context,
+                            )
+                        )
+                        if proposal is not None:
+                            _validate_followup_message_proposal(proposal)
+                    except asyncio.CancelledError:
+                        await self._finalize_pre_request_failure(
+                            action=action,
+                            attempt=attempt,
+                            reason_code="pre_request_cancelled",
+                        )
+                        raise
+                    except Exception:
+                        await self._finalize_pre_request_failure(
+                            action=action,
+                            attempt=attempt,
+                            reason_code="pre_request_failed",
+                        )
+                        raise
                     if proposal is None:
                         logger.warning(
                             "durable_followup_proposal_unavailable "
@@ -337,8 +390,12 @@ class DurableDispatcher:
                             action.action_id,
                             attempt.attempt_id,
                         )
+                        await self._finalize_pre_request_failure(
+                            action=action,
+                            attempt=attempt,
+                            reason_code="agent_proposal_unavailable",
+                        )
                     elif isinstance(proposal, FollowupMessageProposal):
-                        _validate_followup_message_proposal(proposal)
                         logger.info(
                             "durable_followup_proposal_ready "
                             "action_id=%s attempt_id=%s",
@@ -350,23 +407,45 @@ class DurableDispatcher:
                                 execution_context.buyer_phone,
                                 self._allowed_jid,
                             ):
+                                await self._finalize_pre_request_failure(
+                                    action=action,
+                                    attempt=attempt,
+                                    reason_code="pre_request_failed",
+                                )
                                 raise SupabaseError(
                                     "followup_recipient_not_allowlisted"
                                 )
                             final_now = self._clock()
-                            final_evidence = await self._load_chatwoot_evidence(
-                                action=action,
-                                now=final_now,
-                            )
-                            final_decision = (
-                                await self._supabase.reevaluate_followup_action(
-                                    action_id=action.action_id,
-                                    worker_id=self._worker_id,
-                                    lease_generation=action.lease_generation,
-                                    now=final_now,
-                                    chatwoot_evidence=final_evidence,
+                            try:
+                                final_evidence = (
+                                    await self._load_chatwoot_evidence(
+                                        action=action,
+                                        now=final_now,
+                                    )
                                 )
-                            )
+                                final_decision = (
+                                    await self._supabase.reevaluate_followup_action(
+                                        action_id=action.action_id,
+                                        worker_id=self._worker_id,
+                                        lease_generation=action.lease_generation,
+                                        now=final_now,
+                                        chatwoot_evidence=final_evidence,
+                                    )
+                                )
+                            except asyncio.CancelledError:
+                                await self._finalize_pre_request_failure(
+                                    action=action,
+                                    attempt=attempt,
+                                    reason_code="pre_request_cancelled",
+                                )
+                                raise
+                            except Exception:
+                                await self._finalize_pre_request_failure(
+                                    action=action,
+                                    attempt=attempt,
+                                    reason_code="pre_request_failed",
+                                )
+                                raise
                             decision = final_decision
                             if final_decision.decision != "execute":
                                 decisions.append(decision)

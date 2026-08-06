@@ -388,6 +388,176 @@ def test_durable_dispatcher_reevaluates_every_claim_without_external_effects() -
     }]
 
 
+def test_dispatcher_finalizes_reserved_attempt_when_proposal_is_unavailable() -> None:
+    finalizations: list[dict[str, object]] = []
+    action = ScheduledAction(
+        action_id="action-no-proposal",
+        recovery_case_id="case-001",
+        followup_sequence_id="sequence-001",
+        action_type="first_contact_review",
+        status="pending",
+        due_at="2026-08-03T13:00:00+00:00",
+        expires_at="2026-08-10T12:00:00+00:00",
+        expected_case_version=1,
+        policy_key="cart-recovery-test",
+        policy_version=1,
+        step_key="first_contact",
+        anchor_type="cart_abandonment",
+        anchor_subject_internal_id="event-001",
+        anchor_observed_at="2026-08-03T12:00:00+00:00",
+        lease_owner="dispatcher-test",
+        lease_generation=3,
+        lease_expires_at="2026-08-03T13:05:00+00:00",
+        idempotency_key="cart_recovery:first_contact:case-001",
+    )
+    attempt = DeliveryAttempt(
+        attempt_id="attempt-no-proposal",
+        action_id=action.action_id,
+        idempotency_key=action.idempotency_key,
+        attempt_number=1,
+        channel="whatsapp",
+        mode="freeform",
+        phase="reserved",
+        lease_generation=3,
+        expected_case_version=1,
+        expected_sequence_revision=1,
+    )
+
+    class SupabaseStub:
+        async def claim_due_followup_actions(
+            self, **_: object
+        ) -> list[ScheduledAction]:
+            return [action]
+
+        async def get_followup_chatwoot_context(
+            self, **_: object
+        ) -> ChatwootAuthorityContext:
+            return ChatwootAuthorityContext(
+                action_id=action.action_id,
+                action_type=action.action_type,
+                chatwoot_account_id=None,
+                external_conversation_id=None,
+                expected_inbox_id=None,
+                anchor_external_message_id=None,
+            )
+
+        async def reevaluate_followup_action(
+            self, **_: object
+        ) -> ReevaluationDecision:
+            return ReevaluationDecision(
+                action_id=action.action_id,
+                decision="execute",
+                reason_code="eligible_for_execution",
+                case_version=1,
+                sequence_revision=1,
+            )
+
+        async def reserve_followup_delivery_attempt(
+            self, **_: object
+        ) -> DeliveryAttempt:
+            return attempt
+
+        async def get_followup_execution_context(
+            self, **_: object
+        ) -> FollowupExecutionContext:
+            return FollowupExecutionContext(
+                action_id=action.action_id,
+                action_type=action.action_type,
+                step_key=action.step_key,
+                recovery_case_id=action.recovery_case_id,
+                contact_id="contact-001",
+                source_event_id="event-001",
+                buyer_name="Ana",
+                buyer_email="ana@example.test",
+                buyer_phone="15555550100",
+                product_name="Curso Uno",
+                offer_code="OFERTA1",
+                current_goal="iniciar conversación",
+                lead_stage="new",
+            )
+
+        async def finalize_followup_delivery_attempt(
+            self, **kwargs: object
+        ) -> object:
+            finalizations.append(kwargs)
+            return SimpleNamespace(status="retryable_failed")
+
+        async def mark_followup_request_started(self, **_: object) -> object:
+            raise AssertionError("request must not start without a proposal")
+
+    class AgentWithoutProposal:
+        async def request_followup_message(self, **_: object) -> None:
+            return None
+
+    class SenderStub:
+        async def send_first_touch(self, **_: object) -> object:
+            raise AssertionError("sender must not run without a proposal")
+
+        async def send_followup(self, **_: object) -> object:
+            raise AssertionError("sender must not run without a proposal")
+
+    dispatcher = DurableDispatcher(
+        supabase=SupabaseStub(),  # type: ignore[arg-type]
+        worker_id="dispatcher-test",
+        recovery_agent=AgentWithoutProposal(),  # type: ignore[arg-type]
+        sender=SenderStub(),  # type: ignore[arg-type]
+        allowed_jid="15555550100@s.whatsapp.net",
+        clock=lambda: "2026-08-03T13:01:00+00:00",
+    )
+
+    _run(dispatcher.dispatch_due(now="2026-08-03T13:00:00+00:00"))
+
+    assert finalizations == [{
+        "action_id": action.action_id,
+        "attempt_id": attempt.attempt_id,
+        "worker_id": "dispatcher-test",
+        "lease_generation": 3,
+        "outcome": "failed_before_request",
+        "remote_message_id": None,
+        "accepted_message_id": None,
+        "reason_code": "agent_proposal_unavailable",
+        "next_attempt_at": "2026-08-03T13:02:00+00:00",
+        "reconciliation_deadline": None,
+        "now": "2026-08-03T13:01:00+00:00",
+    }]
+
+    finalizations.clear()
+    entered = asyncio.Event()
+
+    class BlockingAgent:
+        async def request_followup_message(self, **_: object) -> None:
+            entered.set()
+            await asyncio.Event().wait()
+
+    cancelled_dispatcher = DurableDispatcher(
+        supabase=SupabaseStub(),  # type: ignore[arg-type]
+        worker_id="dispatcher-test",
+        recovery_agent=BlockingAgent(),  # type: ignore[arg-type]
+        sender=SenderStub(),  # type: ignore[arg-type]
+        allowed_jid="15555550100@s.whatsapp.net",
+        clock=lambda: "2026-08-03T13:01:00+00:00",
+    )
+
+    async def cancel_during_proposal() -> None:
+        task = asyncio.create_task(
+            cancelled_dispatcher.dispatch_due(
+                now="2026-08-03T13:00:00+00:00"
+            )
+        )
+        await entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    _run(cancel_during_proposal())
+
+    assert len(finalizations) == 1
+    cancelled = finalizations[0]
+    assert cancelled["outcome"] == "failed_before_request"
+    assert cancelled["reason_code"] == "pre_request_cancelled"
+    assert cancelled["next_attempt_at"] == "2026-08-03T13:02:00+00:00"
+
+
 def test_dispatcher_resolves_delivery_unknown_when_acceptance_finalization_fails() -> None:
     """A failing acceptance RPC (e.g. HTTP 400) after the message was already sent
     must be resolved to a durable, reconcilable delivery_unknown instead of
@@ -621,7 +791,12 @@ def test_dispatcher_marks_started_immediately_before_sender_and_finalizes_accept
 
         async def finalize_followup_delivery_attempt(self, **kwargs: object) -> object:
             finalizations.append(kwargs)
-            return SimpleNamespace(status="delivery_unknown")
+            status = (
+                "retryable_failed"
+                if kwargs.get("outcome") == "failed_before_request"
+                else "delivery_unknown"
+            )
+            return SimpleNamespace(status=status)
 
         async def record_and_finalize_followup_acceptance(self, **kwargs: object) -> object:
             events.append("accepted")
@@ -691,6 +866,7 @@ def test_dispatcher_marks_started_immediately_before_sender_and_finalizes_accept
     assert events == ["reevaluate-1", "reserve", "hermes", "reevaluate-2"]
 
     events.clear()
+    finalizations.clear()
     outside_allowlist = DurableDispatcher(
         supabase=SupabaseStub(),  # type: ignore[arg-type]
         worker_id="dispatcher-test",
@@ -701,6 +877,9 @@ def test_dispatcher_marks_started_immediately_before_sender_and_finalizes_accept
     with pytest.raises(SupabaseError, match="followup_recipient_not_allowlisted"):
         _run(outside_allowlist.dispatch_due(now="2026-08-03T13:00:00+00:00"))
     assert events == ["reevaluate-1", "reserve", "hermes"]
+    assert len(finalizations) == 1
+    assert finalizations[0]["outcome"] == "failed_before_request"
+    assert finalizations[0]["reason_code"] == "pre_request_failed"
 
     async def cancelled_request_start_scenario() -> None:
         nonlocal request_start_hook, final_override
