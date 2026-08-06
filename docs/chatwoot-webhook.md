@@ -49,6 +49,12 @@ en segundo plano y, también después de un reinicio, lo cambia a `completed` s�
 al alcanzar un resultado terminal. Una repetición del mismo delivery devuelve
 HTTP 200 con estado `duplicate`.
 
+La salida de Hermes puede ser un objeto JSON directo o el mismo objeto dentro de
+un bloque Markdown `json`. El bridge extrae ese envoltorio mediante operaciones
+lineales y, en ambos casos, exige exactamente el mismo esquema antes de permitir
+una respuesta pública; texto libre, errores de proveedor y objetos incompletos
+siguen fallando cerrados.
+
 Con Hermes deshabilitado se conserva el modo de captura y la respuesta usa
 `status: captured` sólo después de publicar la captura de forma atómica y
 sincronizar archivo y directorio.

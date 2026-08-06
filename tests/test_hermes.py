@@ -7,7 +7,11 @@ from pathlib import Path
 import httpx
 import pytest
 
-from bridge.hermes import HermesShadowProcessor, _is_valid_proposal
+from bridge.hermes import (
+    HermesShadowProcessor,
+    _is_valid_proposal,
+    _parse_agent_proposal,
+)
 
 
 def _valid_proposal() -> dict[str, object]:
@@ -155,6 +159,59 @@ def test_persists_a_valid_hermes_shadow_proposal_privately(tmp_path: Path) -> No
     assert stat.S_IMODE(result_path.stat().st_mode) == 0o600
 
     assert processor.get_completed_proposal(delivery_id=delivery_id) == proposal
+
+
+def test_accepts_a_valid_proposal_wrapped_in_a_markdown_json_fence(
+    tmp_path: Path,
+) -> None:
+    proposal = _valid_proposal()
+    delivery_id = "markdown-fenced-shadow-delivery"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                "```json\n"
+                                f"{json.dumps(proposal, ensure_ascii=False)}\n"
+                                "```"
+                            )
+                        }
+                    }
+                ]
+            },
+        )
+
+    processor = HermesShadowProcessor(
+        base_url="https://hermes.example.test/v1",
+        api_key="test-hermes-key",
+        model_name="agente-comercial",
+        shadow_dir=tmp_path,
+        transport=httpx.MockTransport(handler),
+    )
+
+    asyncio.run(
+        processor.run(
+            delivery_id=delivery_id,
+            context={"conversation_ref": "123", "messages": []},
+        )
+    )
+
+    assert processor.get_completed_proposal(delivery_id=delivery_id) == proposal
+
+
+def test_rejects_text_after_a_markdown_json_fence() -> None:
+    content = (
+        "```json\n"
+        f"{json.dumps(_valid_proposal(), ensure_ascii=False)}\n"
+        "```\n"
+        "provider error"
+    )
+
+    assert _parse_agent_proposal(content) is None
 
 
 def test_does_not_expose_a_failed_result_as_a_sendable_proposal(

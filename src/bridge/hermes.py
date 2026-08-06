@@ -46,6 +46,37 @@ _DECISION_STATUSES = {
 }
 
 
+def _parse_agent_proposal(content: object) -> dict[str, object] | None:
+    if not isinstance(content, str):
+        return None
+
+    stripped = content.strip()
+    candidates = [stripped]
+    if stripped.startswith("```"):
+        opening_end = stripped.find("\n")
+        closing_start = stripped.rfind("```")
+        opening = (
+            stripped[:opening_end].strip().lower()
+            if opening_end >= 0
+            else ""
+        )
+        if (
+            opening in {"```", "```json"}
+            and closing_start > opening_end
+            and closing_start == len(stripped) - 3
+        ):
+            candidates.append(stripped[opening_end + 1 : closing_start].strip())
+
+    for candidate in candidates:
+        try:
+            proposal = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(proposal, dict):
+            return proposal
+    return None
+
+
 def _is_valid_proposal(proposal: dict[str, object]) -> bool:
     if set(proposal) != {
         "decision",
@@ -254,7 +285,6 @@ class HermesShadowProcessor:
         try:
             body = response.json()
             proposal_text = body["choices"][0]["message"]["content"]
-            proposal = json.loads(proposal_text)
         except (
             KeyError,
             IndexError,
@@ -263,6 +293,8 @@ class HermesShadowProcessor:
             json.JSONDecodeError,
         ):
             proposal = None
+        else:
+            proposal = _parse_agent_proposal(proposal_text)
         if not isinstance(proposal, dict) or not _is_valid_proposal(proposal):
             self._persist_result(
                 digest=digest,

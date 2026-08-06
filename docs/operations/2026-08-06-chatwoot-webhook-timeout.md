@@ -79,14 +79,26 @@ La prueba confirma que el ACK no espera la dependencia externa, que el fallo
 transitorio no se vuelve terminal y que el límite de cuerpo se aplica. No
 demuestra el despliegue productivo ni la entrega por WhatsApp.
 
-## Verificación productiva pendiente
+## Verificación productiva parcial
 
-1. desplegar la revisión aprobada;
-2. confirmar `/health` por HTTP;
-3. enviar un único mensaje público entrante desde el JID autorizado;
-4. comprobar que el `WebhookJob` termina antes del timeout;
-5. comprobar una única respuesta del AgentBot en la conversación canónica;
-6. comprobar pausa o continuidad comercial y ausencia de efectos duplicados.
+Después de desplegar `b9b66a1` se confirmó:
+
+- `/health` respondió correctamente;
+- el límite nuevo rechazó un cuerpo mayor a 1 MiB con HTTP 413;
+- un mensaje público real recibió HTTP 202;
+- el work item terminó `completed` en el primer intento y eliminó su payload.
+
+No hubo respuesta pública. El resultado shadow quedó `failed` con razón
+`invalid_agent_output`. Un diagnóstico estructural, sin imprimir contenido,
+confirmó HTTP 200 de Hermes y contenido no vacío que comenzaba con un fence
+`json`; el parser estricto intentaba decodificar el contenido completo. La
+corrección
+para extraer ese envoltorio manteniendo la validación exacta de la propuesta está
+implementada y probada localmente, pero todavía requiere despliegue y un evento
+nuevo.
+
+Continúa pendiente comprobar una única respuesta del AgentBot en la conversación
+canónica, la pausa o continuidad comercial y la ausencia de efectos duplicados.
 
 ## Contratos relacionados
 
