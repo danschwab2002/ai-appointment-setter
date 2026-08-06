@@ -79,7 +79,7 @@ La prueba confirma que el ACK no espera la dependencia externa, que el fallo
 transitorio no se vuelve terminal y que el límite de cuerpo se aplica. No
 demuestra el despliegue productivo ni la entrega por WhatsApp.
 
-## Verificación productiva parcial
+## Verificación productiva completada
 
 Después de desplegar `b9b66a1` se confirmó:
 
@@ -88,17 +88,31 @@ Después de desplegar `b9b66a1` se confirmó:
 - un mensaje público real recibió HTTP 202;
 - el work item terminó `completed` en el primer intento y eliminó su payload.
 
-No hubo respuesta pública. El resultado shadow quedó `failed` con razón
-`invalid_agent_output`. Un diagnóstico estructural, sin imprimir contenido,
+En esa primera ejecución no hubo respuesta pública. El resultado shadow quedó
+`failed` con razón `invalid_agent_output`. Un diagnóstico estructural, sin
+imprimir contenido,
 confirmó HTTP 200 de Hermes y contenido no vacío que comenzaba con un fence
 `json`; el parser estricto intentaba decodificar el contenido completo. La
 corrección
-para extraer ese envoltorio manteniendo la validación exacta de la propuesta está
-implementada y probada localmente, pero todavía requiere despliegue y un evento
-nuevo.
+para extraer ese envoltorio manteniendo la validación exacta de la propuesta se
+publicó en `7f63d3c` y se desplegó.
 
-Continúa pendiente comprobar una única respuesta del AgentBot en la conversación
-canónica, la pausa o continuidad comercial y la ausencia de efectos duplicados.
+Con un evento público nuevo se confirmó:
+
+```text
+work status=completed
+attempts=0
+last error=None
+payload retained=False
+shadow status=completed
+proposal present=True
+shadow reason=None
+```
+
+El AgentBot publicó exactamente una respuesta en la conversación canónica, sin
+duplicados, y el flujo continuó bajo automatización comercial. Esto completa la
+verificación productiva del ACK durable, procesamiento posterior, propuesta
+válida y efecto público idempotente.
 
 ## Contratos relacionados
 
