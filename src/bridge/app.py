@@ -677,7 +677,7 @@ def create_app(
                 "label_status": "added" if changed else "already_present",
             }
         if not decision.accepted:
-            logger.info("chatwoot_webhook_ignored reason=%s", decision.reason)
+            logger.warning("chatwoot_webhook_ignored reason=%s", decision.reason)
             response.status_code = status.HTTP_200_OK
             return {
                 "status": "ignored",

@@ -778,7 +778,7 @@ def test_recognizes_configured_agent_bot_without_capturing_it(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    caplog.set_level("INFO", logger="bridge.app")
+    caplog.set_level("WARNING", logger="bridge.app")
     secret = "webhook-secret"
     payload = {
         "event": "message_created",
