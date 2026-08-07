@@ -46,6 +46,7 @@ Cada release referencia versiones exactas de los artefactos que forman el paquet
 4. **Política de calificación:** criterios e información comercial requerida, cuando corresponda.
 5. **Ejemplos conversacionales:** ejemplos y contraejemplos aprobados.
 6. **Contrato de salida:** estructura que debe producir el agente para que la aplicación pueda validarla.
+7. **Catálogo de casos y skills:** tipos de caso operativo, criterios de tipificación y playbooks aprobados que el agente puede utilizar.
 
 La política conversacional puede implementar cualquiera de las variantes bajo evaluación:
 
@@ -73,6 +74,7 @@ artifacts:
   qualification_policy_version: 1
   conversation_examples_version: 1
   output_contract_version: 1
+  operational_case_catalog_version: 1
 
 compatibility:
   platform_kernel_version: 1
@@ -193,6 +195,8 @@ El MVP debe comprobar, como mínimo:
 - el Brand Voice fue revisado y aprobado expresamente por el infoproductor;
 - para la primera release, el onboarding obligatorio de Brand Voice está completo;
 - los ejemplos no contradicen reglas de mayor autoridad;
+- los tipos de caso y skills declaran condiciones de entrada, resolución y escalamiento;
+- una skill derivada de una resolución humana fue revisada y no contiene PII innecesaria;
 - no existen promesas o afirmaciones expresamente prohibidas;
 - la política conversacional respeta los límites del kernel;
 - la información faltante está declarada y no se completa mediante suposiciones.
@@ -249,6 +253,8 @@ Una nueva versión puede originarse por:
 - modificación de voz;
 - ajuste del comportamiento conversacional;
 - incorporación de ejemplos;
+- incorporación o modificación de un tipo de caso o skill;
+- resolución humana que origina una mejora supervisada;
 - corrección derivada de feedback;
 - cambio del contrato de salida;
 - incompatibilidad con una nueva versión del kernel.
@@ -267,6 +273,7 @@ Este diseño no decide todavía:
 - cuáles serán las pruebas y umbrales definitivos;
 - cómo se implementarán experimentos entre variantes;
 - cómo el aprendizaje supervisado propondrá nuevos borradores.
+- cómo se compilarán y evaluarán los tipos de caso y skills incluidos.
 
 Estas decisiones deben resolverse cuando exista información suficiente. No son requisitos del Conversation Release MVP conceptual.
 
