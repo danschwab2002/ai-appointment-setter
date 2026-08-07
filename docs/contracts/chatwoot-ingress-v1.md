@@ -93,6 +93,62 @@ La ejecución interna es **at-least-once**. Los resultados persistidos de Hermes
 los marcadores idempotentes del sender impiden repetir el razonamiento o el efecto
 externo cuando un replay ocurre después de un éxito parcial.
 
+## División de respuesta saliente
+
+Cuando `CHATWOOT_REPLY_SPLITTER_ENABLED=true`, una propuesta pública validada se
+envía a un divisor de formato mediante el mismo API server Hermes, con `provider`
+y `model` explícitos. Su única salida admitida es `{"parts":[...]}` con 1–4
+strings no vacíos. El bridge recorre el reply original por cursor: cada parte
+debe coincidir carácter por carácter y sólo puede omitir whitespace que ya
+existía entre dos partes. Whitespace interno modificado, salida inválida o error
+HTTP del modelo persisten un manifiesto fallback con la respuesta original en una
+parte. Si ese manifiesto no puede persistirse, no se autoriza ningún POST.
+La frontera de aplicación vuelve a validar y materializa atómicamente la salida de
+cualquier implementación inyectada del divisor —incluido su fallback por
+excepción— antes de autorizar el envío.
+
+Una división válida se persiste privadamente antes del primer envío como un
+manifiesto inmutable versión 1. Su identidad es el hash de conversación + trigger
+canónico, no el delivery del webhook. El manifiesto contiene hash del reply,
+cantidad total y, para cada parte ordenada, contenido, hash de contenido e
+identidad de parte. Las identidades son las mismas que usa el sender para markers
+y journals. En replay se reutiliza el mismo manifiesto; un reply diferente para
+la misma identidad falla cerrado con `reply_split_manifest_conflict` y no autoriza
+un nuevo lote. Un cache existente inválido, inseguro o inaccesible falla cerrado:
+nunca autoriza enviar sin manifiesto ni recalcular el lote después de un envío parcial. El directorio,
+locks y resultados se validan por tipo y owner sin seguir symlinks. Para
+multipart, cada POST incluye:
+
+Antes de escribir el manifiesto, el bridge sincroniza una claim hash-only
+independiente en `REPLY_DIR`. Una claim sin su manifiesto correspondiente produce
+`reply_split_manifest_missing_after_claim`; no consulta al divisor ni autoriza
+ningún POST.
+
+`CHATWOOT_REPLY_SPLITTER_ENABLED` controla sólo la creación de manifiestos nuevos.
+El bridge consulta y respeta un manifiesto existente aun cuando el flag esté
+apagado, para que un restart o rollback no cambie un lote parcial a una sola parte.
+Si ya existe el journal legacy de una respuesta única para el mismo lote, una
+geometría multipart nueva queda bloqueada como entrega desconocida hasta que el
+marker previo pueda reconciliarse.
+
+- hash estable del lote lógico;
+- hash idempotente de la parte;
+- índice 1-based;
+- cantidad total.
+
+La primera parte no espera. Cada parte posterior espera
+`CHATWOOT_REPLY_PART_DELAY_SECONDS` — valor inicial `2` — y luego repite la
+autorización completa. Sólo se toleran entre el trigger y la parte actual las
+partes anteriores, válidas y contiguas, del mismo lote. Un inbound nuevo,
+intervención pública humana, pausa o mensaje ajeno bloquea las partes restantes.
+Cada POST se precede con un journal durable hash-only `posting`. Una respuesta
+HTTP perdida nunca habilita retry ciego: el trabajo permanece admitido y los
+replays sólo reconcilian el marker exacto en el historial canónico de Chatwoot.
+El journal no se elimina, por lo que un marker temporalmente invisible o borrado
+tampoco habilita otro POST. La lectura falla cerrada si agota 100 páginas sin
+alcanzar 2000 mensajes únicos o una frontera real, incluso si páginas solapadas
+ya incluyeron el trigger.
+
 ## Fallos y reintentos
 
 Una excepción del procesamiento conserva el trabajo y registra únicamente el tipo

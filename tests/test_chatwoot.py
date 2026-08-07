@@ -114,6 +114,354 @@ def test_sends_an_idempotent_agent_bot_reply_after_authorization(
     ]
 
 
+def test_sends_the_next_part_after_prior_parts_from_the_same_reply_batch(
+    tmp_path: Path,
+) -> None:
+    requests: list[httpx.Request] = []
+    batch_hash = hashlib.sha256(b"2:10").hexdigest()
+    first_hash = hashlib.sha256(f"{batch_hash}:1:2".encode()).hexdigest()
+    second_hash = hashlib.sha256(f"{batch_hash}:2:2".encode()).hexdigest()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.method == "GET" and request.url.path.endswith("/labels"):
+            return httpx.Response(200, json={"payload": []})
+        if request.method == "GET" and request.url.path.endswith("/messages"):
+            return httpx.Response(
+                200,
+                json={
+                    "payload": [
+                        {
+                            "id": 10,
+                            "conversation_id": 2,
+                            "message_type": 0,
+                            "private": False,
+                            "content": "Hola",
+                            "sender": {"type": "contact", "id": 20},
+                        },
+                        {
+                            "id": 11,
+                            "conversation_id": 2,
+                            "message_type": 1,
+                            "private": False,
+                            "content": "Primera parte.",
+                            "content_attributes": {
+                                "appointment_setter_reply_hash": first_hash,
+                                "appointment_setter_reply_batch_hash": batch_hash,
+                                "appointment_setter_reply_part_index": 1,
+                                "appointment_setter_reply_part_count": 2,
+                            },
+                            "sender": {"type": "agent_bot", "id": 1},
+                        },
+                    ]
+                },
+            )
+        assert request.method == "POST"
+        body = json.loads(request.content)
+        assert body["content"] == "Segunda parte."
+        assert body["content_attributes"] == {
+            "appointment_setter_reply_hash": second_hash,
+            "appointment_setter_reply_batch_hash": batch_hash,
+            "appointment_setter_reply_part_index": 2,
+            "appointment_setter_reply_part_count": 2,
+        }
+        return httpx.Response(
+            200,
+            json={
+                "id": 12,
+                "conversation_id": 2,
+                "message_type": 1,
+                "private": False,
+                "content": "Segunda parte.",
+                "content_attributes": body["content_attributes"],
+                "sender": {"type": "agent_bot", "id": 1},
+            },
+        )
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        agent_bot_access_token="agent-bot-token",
+        agent_bot_id=1,
+        reply_dir=tmp_path,
+        transport=AuthorizedConversationTransport(httpx.MockTransport(handler)),
+    )
+
+    result = asyncio.run(
+        client.send_agent_bot_reply(
+            conversation_id=2,
+            trigger_message_id=10,
+            delivery_id="multipart-delivery",
+            content="Segunda parte.",
+            part_index=2,
+            part_count=2,
+            prior_parts=("Primera parte.",),
+        )
+    )
+
+    assert result == {"status": "sent", "message_id": 12}
+
+
+def test_blocks_duplicate_or_out_of_order_prior_reply_parts(tmp_path: Path) -> None:
+    batch_hash = hashlib.sha256(b"2:10").hexdigest()
+
+    def part_message(message_id: int, part_index: int) -> dict[str, object]:
+        part_hash = hashlib.sha256(
+            f"{batch_hash}:{part_index}:3".encode()
+        ).hexdigest()
+        return {
+            "id": message_id,
+            "conversation_id": 2,
+            "message_type": 1,
+            "private": False,
+            "content": ("Primera parte.", "Segunda parte.")[part_index - 1],
+            "content_attributes": {
+                "appointment_setter_reply_hash": part_hash,
+                "appointment_setter_reply_batch_hash": batch_hash,
+                "appointment_setter_reply_part_index": part_index,
+                "appointment_setter_reply_part_count": 3,
+            },
+            "sender": {"type": "agent_bot", "id": 1},
+        }
+
+    trigger = {
+        "id": 10,
+        "conversation_id": 2,
+        "message_type": 0,
+        "private": False,
+        "content": "Hola",
+        "sender": {"type": "contact", "id": 20},
+    }
+    cases = (
+        (part_message(11, 1), part_message(12, 1), part_message(13, 2)),
+        (part_message(11, 2), part_message(12, 1)),
+    )
+
+    for case_index, previous_parts in enumerate(cases):
+        requests: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            if request.method == "GET" and request.url.path.endswith("/labels"):
+                return httpx.Response(200, json={"payload": []})
+            if request.method == "GET" and request.url.path.endswith("/messages"):
+                return httpx.Response(
+                    200,
+                    json={"payload": [trigger, *previous_parts]},
+                )
+            raise AssertionError("an invalid prior-part sequence must not POST")
+
+        client = ChatwootClient(
+            base_url="https://chatwoot.example.test",
+            account_id=1,
+            access_token="control-token",
+            allowed_jid=ALLOWED_JID,
+            agent_bot_access_token="agent-bot-token",
+            agent_bot_id=1,
+            reply_dir=tmp_path / str(case_index),
+            transport=AuthorizedConversationTransport(httpx.MockTransport(handler)),
+        )
+
+        result = asyncio.run(
+            client.send_agent_bot_reply(
+                conversation_id=2,
+                trigger_message_id=10,
+                delivery_id=f"invalid-sequence-{case_index}",
+                content="Tercera parte.",
+                part_index=3,
+                part_count=3,
+                prior_parts=("Primera parte.", "Segunda parte."),
+            )
+        )
+
+        assert result == {
+            "status": "blocked",
+            "reason": "reply_sequence_incomplete",
+        }
+
+
+def test_reconciles_a_multipart_reply_marker_beyond_the_first_history_page(
+    tmp_path: Path,
+) -> None:
+    requests: list[httpx.Request] = []
+    batch_hash = hashlib.sha256(b"2:10").hexdigest()
+    first_hash = hashlib.sha256(f"{batch_hash}:1:2".encode()).hexdigest()
+    second_hash = hashlib.sha256(f"{batch_hash}:2:2".encode()).hexdigest()
+    later_private_messages = [
+        {
+            "id": message_id,
+            "conversation_id": 2,
+            "message_type": 1,
+            "private": True,
+            "content": "private",
+            "sender": {"type": "user", "id": 99},
+        }
+        for message_id in range(100, 120)
+    ]
+    older_page = [
+        {
+            "id": 10,
+            "conversation_id": 2,
+            "message_type": 0,
+            "private": False,
+            "content": "Hola",
+            "sender": {"type": "contact", "id": 20},
+        },
+        {
+            "id": 11,
+            "conversation_id": 2,
+            "message_type": 1,
+            "private": False,
+            "content": "Primera parte.",
+            "content_attributes": {
+                "appointment_setter_reply_hash": first_hash,
+                "appointment_setter_reply_batch_hash": batch_hash,
+                "appointment_setter_reply_part_index": 1,
+                "appointment_setter_reply_part_count": 2,
+            },
+            "sender": {"type": "agent_bot", "id": 1},
+        },
+        {
+            "id": 12,
+            "conversation_id": 2,
+            "message_type": 1,
+            "private": False,
+            "content": "Segunda parte.",
+            "content_attributes": {
+                "appointment_setter_reply_hash": second_hash,
+                "appointment_setter_reply_batch_hash": batch_hash,
+                "appointment_setter_reply_part_index": 2,
+                "appointment_setter_reply_part_count": 2,
+            },
+            "sender": {"type": "agent_bot", "id": 1},
+        },
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.method == "GET" and request.url.path.endswith("/labels"):
+            return httpx.Response(200, json={"payload": []})
+        if request.method == "GET" and request.url.path.endswith("/messages"):
+            before = request.url.params.get("before")
+            return httpx.Response(
+                200,
+                json={
+                    "payload": older_page if before == "100" else later_private_messages
+                },
+            )
+        raise AssertionError("an accepted marker must reconcile without POST")
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        agent_bot_access_token="agent-bot-token",
+        agent_bot_id=1,
+        reply_dir=tmp_path,
+        transport=AuthorizedConversationTransport(httpx.MockTransport(handler)),
+    )
+
+    result = asyncio.run(
+        client.send_agent_bot_reply(
+            conversation_id=2,
+            trigger_message_id=10,
+            delivery_id="multipart-replay",
+            content="Segunda parte.",
+            part_index=2,
+            part_count=2,
+            prior_parts=("Primera parte.",),
+        )
+    )
+
+    assert result == {"status": "duplicate", "message_id": 12}
+    message_gets = [
+        request for request in requests if request.url.path.endswith("/messages")
+    ]
+    assert len(message_gets) == 2
+    assert message_gets[1].url.params.get("before") == "100"
+
+
+def test_blocks_remaining_parts_when_the_contact_replies_between_them(
+    tmp_path: Path,
+) -> None:
+    requests: list[httpx.Request] = []
+    batch_hash = hashlib.sha256(b"2:10").hexdigest()
+    first_hash = hashlib.sha256(f"{batch_hash}:1:2".encode()).hexdigest()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/labels"):
+            return httpx.Response(200, json={"payload": []})
+        if request.url.path.endswith("/messages"):
+            return httpx.Response(
+                200,
+                json={
+                    "payload": [
+                        {
+                            "id": 10,
+                            "conversation_id": 2,
+                            "message_type": 0,
+                            "private": False,
+                            "content": "Hola",
+                            "sender": {"type": "contact", "id": 20},
+                        },
+                        {
+                            "id": 11,
+                            "conversation_id": 2,
+                            "message_type": 1,
+                            "private": False,
+                            "content": "Primera parte.",
+                            "content_attributes": {
+                                "appointment_setter_reply_hash": first_hash,
+                                "appointment_setter_reply_batch_hash": batch_hash,
+                                "appointment_setter_reply_part_index": 1,
+                                "appointment_setter_reply_part_count": 2,
+                            },
+                            "sender": {"type": "agent_bot", "id": 1},
+                        },
+                        {
+                            "id": 12,
+                            "conversation_id": 2,
+                            "message_type": 0,
+                            "private": False,
+                            "content": "Una duda",
+                            "sender": {"type": "contact", "id": 20},
+                        },
+                    ]
+                },
+            )
+        raise AssertionError("must not POST after the contact advances the conversation")
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        agent_bot_access_token="agent-bot-token",
+        agent_bot_id=1,
+        reply_dir=tmp_path,
+        transport=AuthorizedConversationTransport(httpx.MockTransport(handler)),
+    )
+
+    result = asyncio.run(
+        client.send_agent_bot_reply(
+            conversation_id=2,
+            trigger_message_id=10,
+            delivery_id="multipart-delivery",
+            content="Segunda parte.",
+            part_index=2,
+            part_count=2,
+            prior_parts=("Primera parte.",),
+        )
+    )
+
+    assert result == {"status": "blocked", "reason": "conversation_advanced"}
+    assert not any(request.method == "POST" for request in requests)
+
+
 def test_does_not_send_an_agent_bot_reply_when_automation_is_paused(
     tmp_path: Path,
 ) -> None:
@@ -644,6 +992,201 @@ def test_retry_after_a_lost_response_does_not_duplicate_the_message(
 
     assert retry_result == {"status": "duplicate", "message_id": 11}
     assert transport.post_calls == 1
+
+
+def test_retry_does_not_repost_while_an_accepted_marker_is_still_invisible(
+    tmp_path: Path,
+) -> None:
+    class DelayedMarkerTransport(httpx.AsyncBaseTransport):
+        def __init__(self) -> None:
+            self.post_calls = 0
+
+        async def handle_async_request(
+            self, request: httpx.Request
+        ) -> httpx.Response:
+            if request.method == "GET" and request.url.path.endswith("/labels"):
+                return httpx.Response(200, json={"payload": []})
+            if request.method == "GET":
+                return httpx.Response(
+                    200,
+                    json={
+                        "payload": [
+                            {
+                                "id": 10,
+                                "message_type": 0,
+                                "private": False,
+                                "content": "Hola",
+                                "sender": {"type": "contact", "id": 20},
+                            }
+                        ]
+                    },
+                )
+            self.post_calls += 1
+            raise httpx.ReadTimeout("response lost", request=request)
+
+    transport = DelayedMarkerTransport()
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        agent_bot_access_token="agent-bot-token",
+        agent_bot_id=1,
+        reply_dir=tmp_path,
+        transport=AuthorizedConversationTransport(transport),
+    )
+
+    with pytest.raises(httpx.ReadTimeout):
+        asyncio.run(
+            client.send_agent_bot_reply(
+                conversation_id=2,
+                trigger_message_id=10,
+                delivery_id="delayed-marker",
+                content="Una sola respuesta",
+            )
+        )
+
+    restarted_client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        agent_bot_access_token="agent-bot-token",
+        agent_bot_id=1,
+        reply_dir=tmp_path,
+        transport=AuthorizedConversationTransport(transport),
+    )
+    with pytest.raises(ChatwootProtocolError, match="reply_delivery_unknown"):
+        asyncio.run(
+            restarted_client.send_agent_bot_reply(
+                conversation_id=2,
+                trigger_message_id=10,
+                delivery_id="delayed-marker",
+                content="Una sola respuesta",
+            )
+        )
+
+    assert transport.post_calls == 1
+
+
+def test_legacy_one_part_journal_blocks_new_multipart_geometry(
+    tmp_path: Path,
+) -> None:
+    batch_hash = hashlib.sha256(b"2:10").hexdigest()
+    journal_path = tmp_path / f".{batch_hash}.posting"
+    journal_path.write_text("posting\n", encoding="utf-8")
+    journal_path.chmod(0o600)
+
+    class InvisibleLegacyMarkerTransport(httpx.AsyncBaseTransport):
+        def __init__(self) -> None:
+            self.post_calls = 0
+
+        async def handle_async_request(
+            self, request: httpx.Request
+        ) -> httpx.Response:
+            if request.method == "GET" and request.url.path.endswith("/labels"):
+                return httpx.Response(200, json={"payload": []})
+            if request.method == "GET":
+                return httpx.Response(
+                    200,
+                    json={
+                        "payload": [
+                            {
+                                "id": 10,
+                                "message_type": 0,
+                                "private": False,
+                                "content": "Hola",
+                                "sender": {"type": "contact", "id": 20},
+                            }
+                        ]
+                    },
+                )
+            self.post_calls += 1
+            part_hash = hashlib.sha256(f"{batch_hash}:1:2".encode()).hexdigest()
+            return httpx.Response(
+                200,
+                json={
+                    "id": 11,
+                    "conversation_id": 2,
+                    "message_type": 1,
+                    "private": False,
+                    "content": "Primera parte.",
+                    "content_attributes": {
+                        "appointment_setter_reply_hash": part_hash,
+                        "appointment_setter_reply_batch_hash": batch_hash,
+                        "appointment_setter_reply_part_index": 1,
+                        "appointment_setter_reply_part_count": 2,
+                    },
+                    "sender": {"type": "agent_bot", "id": 1},
+                },
+            )
+
+    transport = InvisibleLegacyMarkerTransport()
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        agent_bot_access_token="agent-bot-token",
+        agent_bot_id=1,
+        reply_dir=tmp_path,
+        transport=AuthorizedConversationTransport(transport),
+    )
+
+    with pytest.raises(ChatwootProtocolError, match="reply_delivery_unknown"):
+        asyncio.run(
+            client.send_agent_bot_reply(
+                conversation_id=2,
+                trigger_message_id=10,
+                delivery_id="multipart-after-legacy",
+                content="Primera parte.",
+                part_index=1,
+                part_count=2,
+                prior_parts=(),
+            )
+        )
+
+    assert transport.post_calls == 0
+
+
+def test_history_scan_limit_fails_when_overlapping_pages_never_complete() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        before = request.url.params.get("before")
+        newest = int(before) + 18 if before is not None else 500
+        return httpx.Response(
+            200,
+            json={
+                "payload": [
+                    {"id": message_id}
+                    for message_id in range(newest - 19, newest + 1)
+                ]
+            },
+        )
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(
+        ChatwootHistoryScanLimitError,
+        match="required_messages_beyond_scan_limit",
+    ):
+        asyncio.run(
+            client.get_conversation_messages(
+                conversation_id=2,
+                limit=2000,
+                required_message_ids=(500,),
+            )
+        )
+
+    assert calls == 100
 
 
 def test_rejects_a_created_message_that_does_not_match_the_requested_reply(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -12,7 +13,7 @@ import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import AsyncGenerator, Protocol
+from typing import AsyncGenerator, Awaitable, Callable, Protocol
 from urllib.parse import urlparse
 
 import httpx
@@ -29,6 +30,7 @@ from bridge.chatwoot import (
     ChatwootClient,
     ChatwootHistoryScanLimitError,
     ChatwootProtocolError,
+    ChatwootReplyDeliveryUnknownError,
 )
 from bridge.chatwoot_inbox import (
     ChatwootWorker,
@@ -45,6 +47,12 @@ from bridge.hotmart import (
 )
 from bridge.messaging import EvolutionMessageSender, MessageSender
 from bridge.recovery_agent import RecoveryAgentClient
+from bridge.reply_splitter import (
+    HermesReplySplitter,
+    ReplySplitManifestConflictError,
+    ReplySplitManifestStorageError,
+    validate_reply_parts,
+)
 from bridge.security import verify_chatwoot_signature
 from bridge.supabase import SupabaseClient, SupabaseError
 from bridge.worker import DurableDispatcher, ResolutionWorker
@@ -78,6 +86,9 @@ class ChatwootControl(Protocol):
         trigger_message_id: int,
         delivery_id: str,
         content: str,
+        part_index: int = 1,
+        part_count: int = 1,
+        prior_parts: tuple[str, ...] = (),
     ) -> dict[str, object]: ...
 
 
@@ -93,6 +104,16 @@ class ShadowProcessor(Protocol):
     def get_completed_proposal(
         self, *, delivery_id: str
     ) -> dict[str, object] | None: ...
+
+
+class ReplySplitter(Protocol):
+    async def split(
+        self,
+        *,
+        conversation_id: int,
+        trigger_message_id: int,
+        reply: str,
+    ) -> tuple[str, ...]: ...
 
 
 @dataclass(frozen=True)
@@ -114,6 +135,10 @@ class Settings:
     shadow_dir: Path = Path("./data/shadow")
     automated_replies_enabled: bool = False
     reply_dir: Path = Path("./data/replies")
+    reply_splitter_enabled: bool = False
+    reply_splitter_provider: str | None = None
+    reply_splitter_model_name: str | None = None
+    reply_part_delay_seconds: float = 2.0
     chatwoot_inbound_debounce_seconds: float = 0.0
     hotmart_hottok: str | None = None
     hotmart_max_age_seconds: int = 300
@@ -139,6 +164,20 @@ class Settings:
             os.getenv("CHATWOOT_AUTOMATED_REPLIES_ENABLED", "false").lower()
             == "true"
         )
+        reply_splitter_enabled = (
+            os.getenv("CHATWOOT_REPLY_SPLITTER_ENABLED", "false").lower()
+            == "true"
+        )
+        reply_part_delay_seconds = float(
+            os.getenv("CHATWOOT_REPLY_PART_DELAY_SECONDS", "2")
+        )
+        if (
+            not math.isfinite(reply_part_delay_seconds)
+            or reply_part_delay_seconds < 0
+        ):
+            raise ValueError(
+                "CHATWOOT_REPLY_PART_DELAY_SECONDS must be finite and not negative"
+            )
         chatwoot_inbound_debounce_seconds = float(
             os.getenv("CHATWOOT_INBOUND_DEBOUNCE_SECONDS", "30")
         )
@@ -160,6 +199,21 @@ class Settings:
             raise ValueError(
                 "CHATWOOT_AGENT_BOT_ACCESS_TOKEN is required for automated replies"
             )
+        reply_splitter_provider = (
+            os.getenv("HERMES_REPLY_SPLITTER_PROVIDER", "").strip() or None
+        )
+        reply_splitter_model_name = (
+            os.getenv("HERMES_REPLY_SPLITTER_MODEL_NAME", "").strip() or None
+        )
+        if reply_splitter_enabled and not automated_replies_enabled:
+            raise ValueError(
+                "CHATWOOT_REPLY_SPLITTER_ENABLED requires "
+                "CHATWOOT_AUTOMATED_REPLIES_ENABLED"
+            )
+        if reply_splitter_enabled and reply_splitter_provider is None:
+            raise ValueError("HERMES_REPLY_SPLITTER_PROVIDER is required")
+        if reply_splitter_enabled and reply_splitter_model_name is None:
+            raise ValueError("HERMES_REPLY_SPLITTER_MODEL_NAME is required")
         hermes_model_name = os.getenv(
             "HERMES_MODEL_NAME", "agente-comercial"
         ).strip()
@@ -271,6 +325,10 @@ class Settings:
             shadow_dir=Path(os.getenv("SHADOW_DIR", "./data/shadow")),
             automated_replies_enabled=automated_replies_enabled,
             reply_dir=Path(os.getenv("REPLY_DIR", "./data/replies")),
+            reply_splitter_enabled=reply_splitter_enabled,
+            reply_splitter_provider=reply_splitter_provider,
+            reply_splitter_model_name=reply_splitter_model_name,
+            reply_part_delay_seconds=reply_part_delay_seconds,
             chatwoot_inbound_debounce_seconds=(
                 chatwoot_inbound_debounce_seconds
             ),
@@ -402,6 +460,8 @@ def create_app(
     *,
     chatwoot_client: ChatwootControl | None = None,
     shadow_processor: ShadowProcessor | None = None,
+    reply_splitter: ReplySplitter | None = None,
+    reply_part_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     supabase_client: SupabaseClient | None = None,
     recovery_agent_client: RecoveryAgentClient | None = None,
     message_sender: MessageSender | None = None,
@@ -412,6 +472,13 @@ def create_app(
     ):
         raise ValueError(
             "CHATWOOT_INBOUND_DEBOUNCE_SECONDS must be finite and not negative"
+        )
+    if (
+        not math.isfinite(settings.reply_part_delay_seconds)
+        or settings.reply_part_delay_seconds < 0
+    ):
+        raise ValueError(
+            "CHATWOOT_REPLY_PART_DELAY_SECONDS must be finite and not negative"
         )
     control_client = chatwoot_client
     if (
@@ -430,6 +497,29 @@ def create_app(
             agent_bot_id=settings.agent_bot_id,
             reply_dir=settings.reply_dir,
             pause_macro_id=settings.chatwoot_pause_macro_id,
+        )
+    configured_reply_splitter = reply_splitter
+    reply_manifest_reader = HermesReplySplitter(
+        base_url="",
+        api_key="",
+        provider="",
+        model_name="",
+        result_dir=settings.reply_dir / ".splits",
+    )
+    if settings.reply_splitter_enabled and configured_reply_splitter is None:
+        if (
+            settings.hermes_api_base_url is None
+            or settings.hermes_api_key is None
+            or settings.reply_splitter_provider is None
+            or settings.reply_splitter_model_name is None
+        ):
+            raise ValueError("reply splitter Hermes settings are required")
+        configured_reply_splitter = HermesReplySplitter(
+            base_url=settings.hermes_api_base_url,
+            api_key=settings.hermes_api_key,
+            provider=settings.reply_splitter_provider,
+            model_name=settings.reply_splitter_model_name,
+            result_dir=settings.reply_dir / ".splits",
         )
     chatwoot_inbox = (
         DurableChatwootInbox(Path(settings.capture_dir) / ".work")
@@ -770,16 +860,81 @@ def create_app(
             or not isinstance(reply, str)
         ):
             raise RuntimeError("chatwoot_reply_not_configured")
-        reply_result = await control_client.send_agent_bot_reply(
-            conversation_id=conversation_id,
-            trigger_message_id=message_id,
-            delivery_id=delivery_id,
-            content=reply,
-        )
-        reply_status = reply_result.get("status")
-        if reply_status in {"sent", "duplicate", "blocked"}:
-            return
-        raise RuntimeError("invalid_chatwoot_reply_result")
+        parts = (reply,)
+        try:
+            persisted_parts = await reply_manifest_reader.load_existing(
+                conversation_id=conversation_id,
+                trigger_message_id=message_id,
+                reply=reply,
+            )
+        except ReplySplitManifestConflictError as exc:
+            raise RuntimeError("reply_split_manifest_conflict") from exc
+        except ReplySplitManifestStorageError as exc:
+            raise RuntimeError("reply_split_manifest_storage_error") from exc
+        if persisted_parts is not None:
+            parts = persisted_parts
+        elif settings.reply_splitter_enabled:
+            if configured_reply_splitter is None:
+                raise RuntimeError("reply_splitter_not_configured")
+            split_failure: str | None = None
+            try:
+                candidate_parts = await configured_reply_splitter.split(
+                    conversation_id=conversation_id,
+                    trigger_message_id=message_id,
+                    reply=reply,
+                )
+            except ReplySplitManifestConflictError as exc:
+                raise RuntimeError("reply_split_manifest_conflict") from exc
+            except ReplySplitManifestStorageError as exc:
+                raise RuntimeError("reply_split_manifest_storage_error") from exc
+            except Exception:
+                candidate_parts = (reply,)
+                split_failure = "splitter_error"
+            validated_parts = validate_reply_parts(reply, candidate_parts)
+            if validated_parts is None:
+                validated_parts = (reply,)
+                split_failure = "invalid_parts"
+            try:
+                parts = await reply_manifest_reader.persist_parts(
+                    conversation_id=conversation_id,
+                    trigger_message_id=message_id,
+                    reply=reply,
+                    parts=validated_parts,
+                    failure=split_failure,
+                )
+            except ReplySplitManifestConflictError as exc:
+                raise RuntimeError("reply_split_manifest_conflict") from exc
+            except ReplySplitManifestStorageError as exc:
+                raise RuntimeError("reply_split_manifest_storage_error") from exc
+
+        try:
+            for offset, part in enumerate(parts):
+                if offset > 0:
+                    await reply_part_sleep(settings.reply_part_delay_seconds)
+                if len(parts) == 1:
+                    reply_result = await control_client.send_agent_bot_reply(
+                        conversation_id=conversation_id,
+                        trigger_message_id=message_id,
+                        delivery_id=delivery_id,
+                        content=part,
+                    )
+                else:
+                    reply_result = await control_client.send_agent_bot_reply(
+                        conversation_id=conversation_id,
+                        trigger_message_id=message_id,
+                        delivery_id=delivery_id,
+                        content=part,
+                        part_index=offset + 1,
+                        part_count=len(parts),
+                        prior_parts=parts[:offset],
+                    )
+                reply_status = reply_result.get("status")
+                if reply_status == "blocked":
+                    return
+                if reply_status not in {"sent", "duplicate"}:
+                    raise RuntimeError("invalid_chatwoot_reply_result")
+        except ChatwootReplyDeliveryUnknownError as exc:
+            raise RetryableChatwootWorkError("reply_delivery_unknown") from exc
 
     if chatwoot_inbox is not None:
         def inbound_debounce_key(payload: dict[str, object]) -> str | None:

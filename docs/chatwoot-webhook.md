@@ -61,6 +61,28 @@ lineales y, en ambos casos, exige exactamente el mismo esquema antes de permitir
 una respuesta pública; texto libre, errores de proveedor y objetos incompletos
 siguen fallando cerrados.
 
+La salida pública puede dividirse opcionalmente en 1–4 burbujas con
+`CHATWOOT_REPLY_SPLITTER_ENABLED=true`. El divisor usa un modelo pequeño elegido
+por `HERMES_REPLY_SPLITTER_PROVIDER` y `HERMES_REPLY_SPLITTER_MODEL_NAME`; sólo
+propone cortes y el bridge verifica que no cambie el texto. Ante un fallo del
+modelo se persiste una sola burbuja original; si el manifiesto no puede persistirse,
+se falla cerrado sin POST. Las partes nuevas se separan por
+`CHATWOOT_REPLY_PART_DELAY_SECONDS` — default `2` — y cada una se reautoriza y
+reconcilia por marker antes de enviarse. Un journal hash-only durable se escribe
+antes de cada POST: si se pierde la respuesta, el trabajo sigue admitido y nunca
+reenvía mientras el marker no sea visible. La reconciliación pagina hasta 100
+páginas y falla cerrada si no prueba un historial suficiente.
+
+El split se persiste antes del primer POST como un manifiesto inmutable identificado
+por conversación + trigger canónico. Incluye el hash del reply y las identidades
+exactas de todas las partes. Un replay con otro delivery reutiliza ese manifiesto;
+un texto lógico distinto para el mismo trigger falla cerrado. La capacidad está
+implementada localmente pero permanece apagada por defecto y aún no tiene E2E real
+por WhatsApp.
+
+Apagar el flag detiene la creación de splits nuevos, no la continuación de lotes
+ya persistidos. Un replay siempre consulta primero el manifiesto semántico.
+
 Con Hermes deshabilitado se conserva el modo de captura y la respuesta usa
 `status: captured` sólo después de publicar la captura de forma atómica y
 sincronizar archivo y directorio.

@@ -31,7 +31,8 @@ worker local -> debounce durable + lock hasheado por conversación (30 s)
              -> API Server de agente-comercial
              -> validación JSON
              -> archivo privado en SHADOW_DIR
-             -> autorización final + AgentBot de Chatwoot
+             -> divisor opcional de formato + validación determinista
+             -> 1–4 autorizaciones finales + AgentBot de Chatwoot
 ```
 
 El receptor sólo devuelve HTTP 202 después de persistir una admisión recuperable.
@@ -79,9 +80,35 @@ estructurada; el bridge vuelve a consultar Chatwoot y conserva la decisión fina
 Antes de publicar valida pausa, intervención humana, JID canónico, trigger,
 avance de conversación, idempotencia e identidad exclusiva del AgentBot.
 
-La autorización se repite inmediatamente antes del `POST`. La respuesta creada
-se acepta sólo si coincide en conversación, dirección, visibilidad, contenido,
-AgentBot y marcador idempotente.
+La división outbound opcional, implementada localmente pero apagada por defecto,
+consulta el mismo API server Hermes con `provider`
+y modelo pequeño explícitos. El prompt por request sólo propone cortes; el bridge
+exige 1–4 partes y reconstrucción del texto original, y aplica fallback a una
+sola parte persistida si el modelo no cumple el contrato. Un fallo de almacenamiento
+falla cerrado antes de cualquier POST. La división válida se persiste
+en el volumen privado antes del primer envío como un manifiesto inmutable
+identificado por conversación + trigger canónico, nunca por delivery. Una claim
+hash-only independiente se sincroniza antes del JSON; si el manifiesto desaparece
+pero la claim permanece, el lote falla cerrado sin recalcular geometría. Cada parte
+multipart tiene marker
+propio con hash de lote, índice y total. Entre partes nuevas se esperan dos
+segundos configurables y se repiten todas las guardas; un inbound nuevo o una
+intervención humana bloquean las restantes. Antes de cada POST se sincroniza un
+journal hash-only `posting`; si el efecto queda incierto, los replays sólo
+reconcilian y nunca repiten el POST. El historial se pagina con trigger requerido
+y falla cerrado al agotar el límite de 100 páginas.
+
+La autorización se repite inmediatamente antes de cada `POST`. La respuesta
+creada se acepta sólo si coincide en conversación, dirección, visibilidad,
+contenido, AgentBot y marcador idempotente. En replay, Chatwoot se consulta por
+el marker exacto de cada parte antes de repetir un efecto externo.
+
+La división multipart todavía no tiene evidencia de despliegue ni E2E real por
+WhatsApp; `CHATWOOT_REPLY_SPLITTER_ENABLED=false` continúa siendo el default.
+Ese flag impide crear lotes nuevos, pero no desactiva la lectura y reconciliación
+de manifiestos ya existentes.
+Los journals de respuesta única previos a la activación también bloquean una
+geometría multipart nueva mientras su entrega permanezca incierta.
 
 ## Decisiones arquitectónicas
 
