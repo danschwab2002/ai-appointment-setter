@@ -25,7 +25,9 @@ Chatwoot -> POST /webhooks/chatwoot
          -> captura privada + admisión atómica en CAPTURE_DIR/.work
          -> HTTP 202
 
-worker local -> historial canónico de Chatwoot
+worker local -> debounce durable + lock hasheado por conversación (30 s)
+             -> líder por mayor message_id canónico
+             -> historial de Chatwoot validado contra todos los IDs del batch
              -> API Server de agente-comercial
              -> validación JSON
              -> archivo privado en SHADOW_DIR
@@ -40,14 +42,29 @@ terminal; las guardas y marcadores existentes mantienen idempotentes las
 evaluaciones y los efectos externos ante replay.
 
 El historial se trunca en el ID canónico del mensaje que originó el webhook.
-Los mensajes posteriores no forman parte de esa evaluación. Si el ID no aparece
-en la lectura acotada, el bridge falla cerrado y no invoca Hermes.
+Para mensajes públicos entrantes, cada nueva admisión de la conversación reinicia
+una ventana durable de 30 segundos. Cuando vence, el mayor `message_id` canónico
+del grupo se convierte en el trigger aunque los webhooks hayan llegado fuera de
+orden. El cliente pagina el historial con `before`, y los mensajes anteriores del
+mismo turno forman parte de una única evaluación. Los mensajes posteriores al
+trigger no forman parte de esa evaluación. Si algún ID del batch no aparece en la
+lectura acotada, el bridge falla cerrado y no invoca Hermes. Las intervenciones
+humanas no esperan esta ventana. El worker repite el scan y la decisión del turno
+bajo el lock conversacional para que una admisión ocurrida entre el scan inicial y
+el lock reinicie efectivamente el deadline.
+
+La lectura canónica conserva una ventana reciente mínima y pagina hasta encontrar
+los IDs requeridos del batch, alcanzar el inicio real o agotar 100 páginas. Ese
+último caso entra al circuito terminal acotado en vez de bloquear la conversación
+con retries infinitos.
 
 La cola usa el mismo volumen privado persistente de las capturas. Los nombres de
 archivo derivan del hash del delivery ID, y las escrituras de admisión y
 finalización son atómicas y sincronizadas a disco. Esta implementación presupone
 un único servicio del bridge compartiendo ese volumen; el lock por archivo evita
-procesamiento concurrente dentro de ese despliegue.
+procesamiento concurrente dentro de ese despliegue. El dead-letter de un grupo
+persistente usa además un journal privado de intención: si el proceso cae entre
+miembros, el próximo escaneo termina la transición antes de elegir otro turno.
 
 ## Flujo de envío implementado
 

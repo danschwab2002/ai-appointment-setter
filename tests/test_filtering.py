@@ -5,6 +5,7 @@ import pytest
 def test_accepts_only_configured_whatsapp_jid() -> None:
     payload = {
         "event": "message_created",
+        "id": 100,
         "message_type": "incoming",
         "private": False,
         "conversation": {
@@ -27,6 +28,7 @@ def test_accepts_only_configured_whatsapp_jid() -> None:
 def test_accepts_evolution_identifier_in_chatwoot_sender_metadata() -> None:
     payload = {
         "event": "message_created",
+        "id": 101,
         "message_type": "incoming",
         "private": False,
         "conversation": {
@@ -196,3 +198,27 @@ def test_rejects_events_that_are_not_public_incoming_messages(
 
     assert decision.accepted is False
     assert decision.reason == expected_reason
+
+
+@pytest.mark.parametrize("message_id", [None, True, "102", -1])
+def test_rejects_incoming_messages_without_a_canonical_message_id(
+    message_id: object,
+) -> None:
+    decision = classify_chatwoot_event(
+        {
+            "event": "message_created",
+            "id": message_id,
+            "message_type": "incoming",
+            "private": False,
+            "conversation": {
+                "contact_inbox": {
+                    "source_id": "12025550123@s.whatsapp.net",
+                }
+            },
+        },
+        allowed_jid="12025550123@s.whatsapp.net",
+    )
+
+    assert decision.accepted is False
+    assert decision.action == "ignore"
+    assert decision.reason == "invalid_message_id"

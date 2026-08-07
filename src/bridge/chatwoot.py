@@ -16,6 +16,10 @@ class ChatwootProtocolError(RuntimeError):
     """Raised when Chatwoot returns an unexpected response shape."""
 
 
+class ChatwootHistoryScanLimitError(ChatwootProtocolError):
+    """Raised when required messages exceed the bounded history scan."""
+
+
 @dataclass(frozen=True)
 class CanonicalConversationSnapshot:
     """Bounded, validated facts read directly from Chatwoot."""
@@ -548,7 +552,11 @@ class ChatwootClient:
         return isinstance(identifier, str) and identifier == self._allowed_jid
 
     async def get_conversation_messages(
-        self, *, conversation_id: int, limit: int = 20
+        self,
+        *,
+        conversation_id: int,
+        limit: int = 20,
+        required_message_ids: tuple[int, ...] = (),
     ) -> list[dict[str, object]]:
         """Read a bounded canonical conversation history from Chatwoot."""
         if limit <= 0:
@@ -557,24 +565,57 @@ class ChatwootClient:
             f"/api/v1/accounts/{self._account_id}"
             f"/conversations/{conversation_id}/messages"
         )
+        collected: dict[int, dict[str, object]] = {}
+        required_ids = set(required_message_ids)
+        before: int | None = None
+        max_pages = 100
+        reached_history_boundary = False
         async with httpx.AsyncClient(
             base_url=self._base_url,
             headers={"api_access_token": self._access_token},
             transport=self._transport,
             timeout=15,
         ) as client:
-            response = await client.get(path)
-            response.raise_for_status()
-        try:
-            payload = response.json()
-        except ValueError as exc:
-            raise ChatwootProtocolError("invalid_json") from exc
-        messages = payload.get("payload") if isinstance(payload, dict) else None
-        if not isinstance(messages, list) or not all(
-            isinstance(message, dict) for message in messages
-        ):
-            raise ChatwootProtocolError("invalid_messages_payload")
-        return messages[-limit:]
+            for _ in range(max_pages):
+                params = {"before": before} if before is not None else None
+                response = await client.get(path, params=params)
+                response.raise_for_status()
+                try:
+                    payload = response.json()
+                except ValueError as exc:
+                    raise ChatwootProtocolError("invalid_json") from exc
+                messages = (
+                    payload.get("payload") if isinstance(payload, dict) else None
+                )
+                if not isinstance(messages, list) or not all(
+                    isinstance(message, dict) for message in messages
+                ):
+                    raise ChatwootProtocolError("invalid_messages_payload")
+                if not messages:
+                    reached_history_boundary = True
+                    break
+                page_ids: list[int] = []
+                for message in messages:
+                    message_id = message.get("id")
+                    if not isinstance(message_id, int) or isinstance(message_id, bool):
+                        raise ChatwootProtocolError("invalid_message_id")
+                    page_ids.append(message_id)
+                    collected[message_id] = message
+                if len(messages) < 20:
+                    reached_history_boundary = True
+                    break
+                if len(collected) >= limit and required_ids.issubset(collected):
+                    break
+                next_before = min(page_ids)
+                if before is not None and next_before >= before:
+                    raise ChatwootProtocolError("messages_cursor_did_not_advance")
+                before = next_before
+        missing_required_ids = required_ids.difference(collected)
+        if missing_required_ids and not reached_history_boundary:
+            raise ChatwootHistoryScanLimitError("required_messages_beyond_scan_limit")
+        ordered_ids = sorted(collected)
+        selected_ids = set(ordered_ids[-limit:]) | required_ids.intersection(collected)
+        return [collected[message_id] for message_id in sorted(selected_ids)]
 
     async def ensure_conversation_label(
         self, *, conversation_id: int, label: str

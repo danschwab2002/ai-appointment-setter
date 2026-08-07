@@ -49,6 +49,12 @@ en segundo plano y, también después de un reinicio, lo cambia a `completed` s�
 al alcanzar un resultado terminal. Una repetición del mismo delivery devuelve
 HTTP 200 con estado `duplicate`.
 
+Los mensajes entrantes de una misma conversación esperan un período de silencio
+configurado con `CHATWOOT_INBOUND_DEBOUNCE_SECONDS`. El valor inicial es `30`:
+cada mensaje nuevo reinicia esa espera y, al vencer, el último delivery procesa
+una única lectura canónica que incluye todos los mensajes del turno. El HTTP 202
+no espera esos 30 segundos. Usar `0` desactiva temporalmente la agrupación.
+
 La salida de Hermes puede ser un objeto JSON directo o el mismo objeto dentro de
 un bloque Markdown `json`. El bridge extrae ese envoltorio mediante operaciones
 lineales y, en ambos casos, exige exactamente el mismo esquema antes de permitir

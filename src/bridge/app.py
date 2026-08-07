@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
 import tempfile
 import time
@@ -24,7 +25,11 @@ from fastapi import (
     status,
 )
 
-from bridge.chatwoot import ChatwootClient, ChatwootProtocolError
+from bridge.chatwoot import (
+    ChatwootClient,
+    ChatwootHistoryScanLimitError,
+    ChatwootProtocolError,
+)
 from bridge.chatwoot_inbox import (
     ChatwootWorker,
     DurableChatwootInbox,
@@ -55,7 +60,11 @@ class CanonicalHistoryIncompleteError(RetryableChatwootWorkError):
 
 class ChatwootControl(Protocol):
     async def get_conversation_messages(
-        self, *, conversation_id: int, limit: int = 20
+        self,
+        *,
+        conversation_id: int,
+        limit: int = 20,
+        required_message_ids: tuple[int, ...] = (),
     ) -> list[dict[str, object]]: ...
 
     async def ensure_conversation_label(
@@ -105,6 +114,7 @@ class Settings:
     shadow_dir: Path = Path("./data/shadow")
     automated_replies_enabled: bool = False
     reply_dir: Path = Path("./data/replies")
+    chatwoot_inbound_debounce_seconds: float = 0.0
     hotmart_hottok: str | None = None
     hotmart_max_age_seconds: int = 300
     supabase_base_url: str | None = None
@@ -129,6 +139,16 @@ class Settings:
             os.getenv("CHATWOOT_AUTOMATED_REPLIES_ENABLED", "false").lower()
             == "true"
         )
+        chatwoot_inbound_debounce_seconds = float(
+            os.getenv("CHATWOOT_INBOUND_DEBOUNCE_SECONDS", "30")
+        )
+        if (
+            not math.isfinite(chatwoot_inbound_debounce_seconds)
+            or chatwoot_inbound_debounce_seconds < 0
+        ):
+            raise ValueError(
+                "CHATWOOT_INBOUND_DEBOUNCE_SECONDS must be finite and not negative"
+            )
         agent_bot_access_token = (
             os.getenv("CHATWOOT_AGENT_BOT_ACCESS_TOKEN", "").strip() or None
         )
@@ -251,6 +271,9 @@ class Settings:
             shadow_dir=Path(os.getenv("SHADOW_DIR", "./data/shadow")),
             automated_replies_enabled=automated_replies_enabled,
             reply_dir=Path(os.getenv("REPLY_DIR", "./data/replies")),
+            chatwoot_inbound_debounce_seconds=(
+                chatwoot_inbound_debounce_seconds
+            ),
             hotmart_hottok=hotmart_hottok,
             hotmart_max_age_seconds=hotmart_max_age_seconds,
             supabase_base_url=supabase_base_url,
@@ -383,6 +406,13 @@ def create_app(
     recovery_agent_client: RecoveryAgentClient | None = None,
     message_sender: MessageSender | None = None,
 ) -> FastAPI:
+    if (
+        not math.isfinite(settings.chatwoot_inbound_debounce_seconds)
+        or settings.chatwoot_inbound_debounce_seconds < 0
+    ):
+        raise ValueError(
+            "CHATWOOT_INBOUND_DEBOUNCE_SECONDS must be finite and not negative"
+        )
     control_client = chatwoot_client
     if (
         control_client is None
@@ -603,6 +633,7 @@ def create_app(
         *,
         delivery_id: str,
         current_message_id: int | None,
+        batch_message_ids: tuple[int, ...],
         context: dict[str, object],
     ) -> dict[str, object] | None:
         if control_client is None or settings.agent_bot_id is None:
@@ -616,8 +647,11 @@ def create_app(
         try:
             history = await control_client.get_conversation_messages(
                 conversation_id=conversation_id,
-                limit=20,
+                limit=max(200, len(set(batch_message_ids)) + 19),
+                required_message_ids=batch_message_ids,
             )
+        except ChatwootHistoryScanLimitError as exc:
+            raise RuntimeError("chatwoot_history_scan_limit_exceeded") from exc
         except (httpx.HTTPError, ChatwootProtocolError) as exc:
             raise RetryableChatwootWorkError(
                 "chatwoot_canonical_history_unavailable"
@@ -640,6 +674,20 @@ def create_app(
                 "current_message_not_in_canonical_history"
             )
         normalized = normalized[: current_index + 1]
+        message_indexes = {
+            message.get("_message_ref"): index
+            for index, message in enumerate(normalized)
+        }
+        expected_refs = {str(message_id) for message_id in batch_message_ids}
+        if not expected_refs.issubset(message_indexes):
+            raise CanonicalHistoryIncompleteError(
+                "batched_messages_not_in_canonical_history"
+            )
+        first_batch_index = min(
+            (message_indexes[message_ref] for message_ref in expected_refs),
+            default=current_index,
+        )
+        normalized = normalized[max(0, first_batch_index - 19) :]
         public_messages = [
             {
                 "actor": message["actor"],
@@ -659,6 +707,7 @@ def create_app(
     async def process_chatwoot_work(
         delivery_id: str,
         payload: dict[str, object],
+        batch_message_ids: tuple[int, ...],
     ) -> None:
         decision = classify_chatwoot_event(
             payload,
@@ -681,6 +730,8 @@ def create_app(
                 label="automation_paused",
             )
             return
+        if decision.reason == "invalid_message_id":
+            raise RuntimeError("chatwoot_invalid_message_id")
         if not decision.accepted:
             return
         context = _shadow_context(payload)
@@ -698,6 +749,7 @@ def create_app(
                     if isinstance(message_id, int) and not isinstance(message_id, bool)
                     else None
                 ),
+                batch_message_ids=batch_message_ids,
                 context=context,
             )
         if not settings.automated_replies_enabled or completed_proposal is None:
@@ -730,9 +782,29 @@ def create_app(
         raise RuntimeError("invalid_chatwoot_reply_result")
 
     if chatwoot_inbox is not None:
+        def inbound_debounce_key(payload: dict[str, object]) -> str | None:
+            decision = classify_chatwoot_event(
+                payload,
+                allowed_jid=settings.allowed_jid,
+                agent_bot_id=settings.agent_bot_id,
+            )
+            if not decision.accepted:
+                return None
+            conversation = payload.get("conversation")
+            conversation_id = (
+                conversation.get("id") if isinstance(conversation, dict) else None
+            )
+            if not isinstance(conversation_id, int) or isinstance(
+                conversation_id, bool
+            ):
+                return None
+            return str(conversation_id)
+
         chatwoot_worker = ChatwootWorker(
             inbox=chatwoot_inbox,
             handler=process_chatwoot_work,
+            debounce_key=inbound_debounce_key,
+            debounce_seconds=settings.chatwoot_inbound_debounce_seconds,
         )
         app.state.chatwoot_worker = chatwoot_worker
 

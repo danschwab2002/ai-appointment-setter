@@ -34,12 +34,18 @@ class StubChatwootClient:
         self.messages = messages or []
         self.history_error = history_error
         self.history_calls: list[tuple[int, int]] = []
+        self.history_required_ids: list[tuple[int, ...]] = []
         self.reply_calls: list[dict[str, object]] = []
 
     async def get_conversation_messages(
-        self, *, conversation_id: int, limit: int = 20
+        self,
+        *,
+        conversation_id: int,
+        limit: int = 20,
+        required_message_ids: tuple[int, ...] = (),
     ) -> list[dict[str, object]]:
         self.history_calls.append((conversation_id, limit))
+        self.history_required_ids.append(required_message_ids)
         if self.history_error is not None:
             raise self.history_error
         if self.fail:
@@ -217,17 +223,21 @@ def test_chatwoot_worker_loop_survives_an_unexpected_iteration_failure(
     admitted_items = inbox.admitted_items
     scans = 0
 
-    def flaky_admitted_items():  # type: ignore[no-untyped-def]
+    def flaky_admitted_items(*, include_deferred=False):  # type: ignore[no-untyped-def]
         nonlocal scans
         scans += 1
         if scans == 1:
             raise RuntimeError("scan failed with private data")
-        return admitted_items()
+        return admitted_items(include_deferred=include_deferred)
 
     monkeypatch.setattr(inbox, "admitted_items", flaky_admitted_items)
     handled: list[str] = []
 
-    async def handler(delivery_id: str, payload: dict[str, object]) -> None:
+    async def handler(
+        delivery_id: str,
+        payload: dict[str, object],
+        batch_message_ids: tuple[int, ...],
+    ) -> None:
         handled.append(delivery_id)
 
     worker = ChatwootWorker(
@@ -263,15 +273,19 @@ def test_chatwoot_worker_scans_the_inbox_once_per_run(
     admitted_items = inbox.admitted_items
     scans = 0
 
-    def counted_admitted_items():  # type: ignore[no-untyped-def]
+    def counted_admitted_items(*, include_deferred=False):  # type: ignore[no-untyped-def]
         nonlocal scans
         scans += 1
-        return admitted_items()
+        return admitted_items(include_deferred=include_deferred)
 
     monkeypatch.setattr(inbox, "admitted_items", counted_admitted_items)
     handled: list[str] = []
 
-    async def handler(delivery_id: str, payload: dict[str, object]) -> None:
+    async def handler(
+        delivery_id: str,
+        payload: dict[str, object],
+        batch_message_ids: tuple[int, ...],
+    ) -> None:
         handled.append(delivery_id)
 
     worker = ChatwootWorker(inbox=inbox, handler=handler)
@@ -282,6 +296,568 @@ def test_chatwoot_worker_scans_the_inbox_once_per_run(
     assert sorted(handled) == ["delivery-one", "delivery-two"]
 
 
+def test_chatwoot_worker_resets_the_conversation_debounce_window(
+    tmp_path: Path,
+) -> None:
+    current_time = 1_000.0
+    clock = lambda: current_time
+    inbox = DurableChatwootInbox(tmp_path / ".work", clock=clock)
+    handled: list[tuple[str, dict[str, object]]] = []
+
+    async def handler(
+        delivery_id: str,
+        payload: dict[str, object],
+        batch_message_ids: tuple[int, ...],
+    ) -> None:
+        handled.append((delivery_id, payload))
+
+    def conversation_key(payload: dict[str, object]) -> str | None:
+        conversation = payload.get("conversation")
+        conversation_id = (
+            conversation.get("id") if isinstance(conversation, dict) else None
+        )
+        return str(conversation_id) if isinstance(conversation_id, int) else None
+
+    worker = ChatwootWorker(
+        inbox=inbox,
+        handler=handler,
+        debounce_key=conversation_key,
+        debounce_seconds=30,
+        clock=clock,
+    )
+    first_payload: dict[str, object] = {
+        "id": 10,
+        "conversation": {"id": 2},
+    }
+    second_payload: dict[str, object] = {
+        "id": 11,
+        "conversation": {"id": 2},
+    }
+
+    assert inbox.admit(delivery_id="delivery-one", payload=first_payload)
+    asyncio.run(worker.run_once())
+    assert handled == []
+
+    current_time += 20
+    assert inbox.admit(delivery_id="delivery-two", payload=second_payload)
+    current_time += 29
+    asyncio.run(worker.run_once())
+    assert handled == []
+
+    current_time += 1
+    asyncio.run(worker.run_once())
+
+    assert handled == [("delivery-two", second_payload)]
+    envelopes = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in (tmp_path / ".work").glob("*.json")
+    ]
+    assert len(envelopes) == 2
+    assert {envelope["status"] for envelope in envelopes} == {"completed"}
+
+
+def test_chatwoot_worker_uses_canonical_message_order_for_the_group_leader(
+    tmp_path: Path,
+) -> None:
+    current_time = 1_500.0
+    clock = lambda: current_time
+    inbox = DurableChatwootInbox(tmp_path / ".work", clock=clock)
+    handled: list[str] = []
+
+    async def handler(
+        delivery_id: str,
+        payload: dict[str, object],
+        batch_message_ids: tuple[int, ...],
+    ) -> None:
+        handled.append(delivery_id)
+
+    worker = ChatwootWorker(
+        inbox=inbox,
+        handler=handler,
+        debounce_key=lambda payload: "conversation-one",
+        debounce_seconds=30,
+        clock=clock,
+    )
+    assert inbox.admit(
+        delivery_id="canonical-newer",
+        payload={"id": 51, "conversation": {"id": 1}},
+    )
+    current_time += 1
+    assert inbox.admit(
+        delivery_id="canonically-older-arrived-last",
+        payload={"id": 50, "conversation": {"id": 1}},
+    )
+    current_time += 30
+
+    asyncio.run(worker.run_once())
+
+    assert handled == ["canonical-newer"]
+
+
+def test_chatwoot_worker_preserves_debounce_across_restart_and_per_conversation(
+    tmp_path: Path,
+) -> None:
+    current_time = 2_000.0
+    clock = lambda: current_time
+    inbox = DurableChatwootInbox(tmp_path / ".work", clock=clock)
+    handled: list[str] = []
+
+    def conversation_key(payload: dict[str, object]) -> str | None:
+        conversation = payload.get("conversation")
+        conversation_id = (
+            conversation.get("id") if isinstance(conversation, dict) else None
+        )
+        return str(conversation_id) if isinstance(conversation_id, int) else None
+
+    async def handler(
+        delivery_id: str,
+        payload: dict[str, object],
+        batch_message_ids: tuple[int, ...],
+    ) -> None:
+        handled.append(delivery_id)
+
+    assert inbox.admit(
+        delivery_id="conversation-one",
+        payload={"id": 20, "conversation": {"id": 1}},
+    )
+    current_time += 10
+    assert inbox.admit(
+        delivery_id="conversation-two",
+        payload={"id": 21, "conversation": {"id": 2}},
+    )
+
+    restarted_inbox = DurableChatwootInbox(tmp_path / ".work", clock=clock)
+    restarted_worker = ChatwootWorker(
+        inbox=restarted_inbox,
+        handler=handler,
+        debounce_key=conversation_key,
+        debounce_seconds=30,
+        clock=clock,
+    )
+
+    current_time += 20
+    asyncio.run(restarted_worker.run_once())
+    assert handled == ["conversation-one"]
+
+    current_time += 10
+    asyncio.run(restarted_worker.run_once())
+    assert handled == ["conversation-one", "conversation-two"]
+
+
+def test_chatwoot_worker_retries_only_the_latest_delivery_in_a_batch(
+    tmp_path: Path,
+) -> None:
+    current_time = 3_000.0
+    clock = lambda: current_time
+    inbox = DurableChatwootInbox(tmp_path / ".work", clock=clock)
+    calls: list[str] = []
+
+    async def handler(
+        delivery_id: str,
+        payload: dict[str, object],
+        batch_message_ids: tuple[int, ...],
+    ) -> None:
+        calls.append(delivery_id)
+        if len(calls) == 1:
+            raise RetryableChatwootWorkError("temporary failure")
+
+    worker = ChatwootWorker(
+        inbox=inbox,
+        handler=handler,
+        debounce_key=lambda payload: "conversation-one",
+        debounce_seconds=30,
+        clock=clock,
+    )
+    assert inbox.admit(
+        delivery_id="batch-old",
+        payload={"id": 30, "conversation": {"id": 1}},
+    )
+    current_time += 1
+    assert inbox.admit(
+        delivery_id="batch-latest",
+        payload={"id": 31, "conversation": {"id": 1}},
+    )
+    current_time += 30
+
+    asyncio.run(worker.run_once())
+
+    envelopes = {
+        envelope["delivery_id"]: (path, envelope)
+        for path in (tmp_path / ".work").glob("*.json")
+        if (envelope := json.loads(path.read_text(encoding="utf-8")))
+    }
+    assert envelopes["batch-old"][1]["status"] == "admitted"
+    assert envelopes["batch-latest"][1]["status"] == "admitted"
+    assert envelopes["batch-latest"][1]["attempts"] == 1
+
+    latest_path, latest_envelope = envelopes["batch-latest"]
+    latest_envelope["next_attempt_at"] = current_time
+    latest_path.write_text(json.dumps(latest_envelope), encoding="utf-8")
+    asyncio.run(worker.run_once())
+
+    assert calls == ["batch-latest", "batch-latest"]
+    completed = [
+        json.loads(path.read_text(encoding="utf-8"))["status"]
+        for path in (tmp_path / ".work").glob("*.json")
+    ]
+    assert set(completed) == {"completed"}
+
+
+def test_chatwoot_worker_fails_the_whole_batch_when_the_leader_dead_letters(
+    tmp_path: Path,
+) -> None:
+    current_time = 3_500.0
+    clock = lambda: current_time
+    inbox = DurableChatwootInbox(tmp_path / ".work", clock=clock)
+
+    async def handler(
+        delivery_id: str,
+        payload: dict[str, object],
+        batch_message_ids: tuple[int, ...],
+    ) -> None:
+        raise ValueError("invalid grouped work")
+
+    worker = ChatwootWorker(
+        inbox=inbox,
+        handler=handler,
+        debounce_key=lambda payload: "conversation-one",
+        debounce_seconds=30,
+        clock=clock,
+    )
+    assert inbox.admit(
+        delivery_id="dead-letter-old",
+        payload={"id": 35, "conversation": {"id": 1}},
+    )
+    current_time += 1
+    assert inbox.admit(
+        delivery_id="dead-letter-leader",
+        payload={"id": 36, "conversation": {"id": 1}},
+    )
+    leader_path = next(
+        path
+        for path in (tmp_path / ".work").glob("*.json")
+        if json.loads(path.read_text(encoding="utf-8"))["delivery_id"]
+        == "dead-letter-leader"
+    )
+    leader_envelope = json.loads(leader_path.read_text(encoding="utf-8"))
+    leader_envelope["attempts"] = 7
+    leader_path.write_text(json.dumps(leader_envelope), encoding="utf-8")
+    current_time += 30
+
+    asyncio.run(worker.run_once())
+
+    envelopes = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in (tmp_path / ".work").glob("*.json")
+    ]
+    assert {envelope["status"] for envelope in envelopes} == {"failed"}
+
+
+def test_group_dead_letter_recovers_after_a_crash_between_member_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current_time = 3_600.0
+    clock = lambda: current_time
+    inbox = DurableChatwootInbox(tmp_path / ".work", clock=clock)
+    calls: list[str] = []
+
+    async def handler(
+        delivery_id: str,
+        payload: dict[str, object],
+        batch_message_ids: tuple[int, ...],
+    ) -> None:
+        calls.append(delivery_id)
+        raise ValueError("invalid grouped work")
+
+    worker = ChatwootWorker(
+        inbox=inbox,
+        handler=handler,
+        debounce_key=lambda payload: "conversation-one",
+        debounce_seconds=30,
+        clock=clock,
+    )
+    for delivery_id, message_id in (("crash-old", 36), ("crash-leader", 37)):
+        assert inbox.admit(
+            delivery_id=delivery_id,
+            payload={"id": message_id, "conversation": {"id": 1}},
+        )
+        current_time += 1
+    leader_path = next(
+        path
+        for path in (tmp_path / ".work").glob("*.json")
+        if json.loads(path.read_text(encoding="utf-8"))["delivery_id"]
+        == "crash-leader"
+    )
+    leader_envelope = json.loads(leader_path.read_text(encoding="utf-8"))
+    leader_envelope["attempts"] = 7
+    leader_path.write_text(json.dumps(leader_envelope), encoding="utf-8")
+    current_time += 30
+    replace_envelope = inbox._replace_envelope
+    terminal_writes = 0
+
+    def crash_after_first_terminal_write(
+        path: Path, envelope: dict[str, object]
+    ) -> None:
+        nonlocal terminal_writes
+        replace_envelope(path, envelope)
+        if envelope.get("status") == "failed" and not path.name.startswith("."):
+            terminal_writes += 1
+            if terminal_writes == 1:
+                raise RuntimeError("simulated crash")
+
+    monkeypatch.setattr(inbox, "_replace_envelope", crash_after_first_terminal_write)
+
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        asyncio.run(worker.run_once())
+
+    journal_path = next(
+        (tmp_path / ".work").glob(".group-failure-*.json")
+    )
+    journal = json.loads(journal_path.read_text(encoding="utf-8"))
+    assert set(journal) == {
+        "status",
+        "leader_file",
+        "member_files",
+        "leader_error_type",
+    }
+    assert stat.S_IMODE(journal_path.stat().st_mode) == 0o600
+    assert "crash-old" not in journal_path.read_text(encoding="utf-8")
+    assert "crash-leader" not in journal_path.read_text(encoding="utf-8")
+
+    restarted_inbox = DurableChatwootInbox(tmp_path / ".work", clock=clock)
+    restarted_worker = ChatwootWorker(
+        inbox=restarted_inbox,
+        handler=handler,
+        debounce_key=lambda payload: "conversation-one",
+        debounce_seconds=30,
+        clock=clock,
+    )
+    asyncio.run(restarted_worker.run_once())
+
+    envelopes = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in (tmp_path / ".work").glob("[!.]*.json")
+    ]
+    assert {envelope["status"] for envelope in envelopes} == {"failed"}
+    assert calls == ["crash-leader"]
+    assert list((tmp_path / ".work").glob(".group-failure-*.json")) == []
+
+
+def test_chatwoot_worker_serializes_handlers_by_conversation(
+    tmp_path: Path,
+) -> None:
+    current_time = 3_800.0
+    clock = lambda: current_time
+    inbox = DurableChatwootInbox(tmp_path / ".work", clock=clock)
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    calls: list[str] = []
+
+    async def handler(
+        delivery_id: str,
+        payload: dict[str, object],
+        batch_message_ids: tuple[int, ...],
+    ) -> None:
+        calls.append(delivery_id)
+        if delivery_id == "concurrent-old":
+            first_started.set()
+            await release_first.wait()
+
+    def worker() -> ChatwootWorker:
+        return ChatwootWorker(
+            inbox=inbox,
+            handler=handler,
+            debounce_key=lambda payload: "conversation-one",
+            debounce_seconds=30,
+            clock=clock,
+        )
+
+    assert inbox.admit(
+        delivery_id="concurrent-old",
+        payload={"id": 38, "conversation": {"id": 1}},
+    )
+    current_time += 30
+
+    async def exercise_workers() -> None:
+        first_run = asyncio.create_task(worker().run_once())
+        await first_started.wait()
+        nonlocal current_time
+        current_time += 1
+        assert inbox.admit(
+            delivery_id="concurrent-new",
+            payload={"id": 39, "conversation": {"id": 1}},
+        )
+        current_time += 30
+        await worker().run_once()
+        assert calls == ["concurrent-old"]
+        release_first.set()
+        await first_run
+        await worker().run_once()
+
+    asyncio.run(exercise_workers())
+
+    assert calls == ["concurrent-old", "concurrent-new"]
+
+
+def test_new_admission_between_scan_and_conversation_lock_resets_the_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current_time = 3_900.0
+    clock = lambda: current_time
+    inbox = DurableChatwootInbox(tmp_path / ".work", clock=clock)
+    calls: list[tuple[str, tuple[int, ...]]] = []
+
+    async def handler(
+        delivery_id: str,
+        payload: dict[str, object],
+        batch_message_ids: tuple[int, ...],
+    ) -> None:
+        calls.append((delivery_id, batch_message_ids))
+
+    worker = ChatwootWorker(
+        inbox=inbox,
+        handler=handler,
+        debounce_key=lambda payload: "conversation-one",
+        debounce_seconds=30,
+        clock=clock,
+    )
+    assert inbox.admit(
+        delivery_id="scan-old",
+        payload={"id": 38, "conversation": {"id": 1}},
+    )
+    current_time += 30
+    processing_lock_path = inbox.processing_lock_path
+    injected = False
+
+    def inject_before_lock(*, namespace: str, key: str) -> Path:
+        nonlocal current_time, injected
+        if namespace == "conversation" and not injected:
+            current_time += 1
+            assert inbox.admit(
+                delivery_id="scan-new",
+                payload={"id": 39, "conversation": {"id": 1}},
+            )
+            injected = True
+        return processing_lock_path(namespace=namespace, key=key)
+
+    monkeypatch.setattr(inbox, "processing_lock_path", inject_before_lock)
+
+    asyncio.run(worker.run_once())
+
+    assert calls == []
+    assert len(inbox.admitted_items(include_deferred=True)) == 2
+
+    current_time += 30
+    asyncio.run(worker.run_once())
+
+    assert calls == [("scan-new", (38, 39))]
+    assert inbox.admitted_items(include_deferred=True) == []
+
+
+def test_new_delivery_supersedes_an_older_delivery_still_in_backoff(
+    tmp_path: Path,
+) -> None:
+    current_time = 4_000.0
+    clock = lambda: current_time
+    inbox = DurableChatwootInbox(tmp_path / ".work", clock=clock)
+    calls: list[str] = []
+
+    async def handler(
+        delivery_id: str,
+        payload: dict[str, object],
+        batch_message_ids: tuple[int, ...],
+    ) -> None:
+        calls.append(delivery_id)
+        if delivery_id == "backoff-old" and calls.count(delivery_id) == 1:
+            raise RetryableChatwootWorkError("temporary failure")
+
+    worker = ChatwootWorker(
+        inbox=inbox,
+        handler=handler,
+        debounce_key=lambda payload: "conversation-one",
+        debounce_seconds=30,
+        clock=clock,
+    )
+    assert inbox.admit(
+        delivery_id="backoff-old",
+        payload={"id": 40, "conversation": {"id": 1}},
+    )
+    old_path = next((tmp_path / ".work").glob("*.json"))
+    old_envelope = json.loads(old_path.read_text(encoding="utf-8"))
+    old_envelope["attempts"] = 6
+    old_path.write_text(json.dumps(old_envelope), encoding="utf-8")
+    current_time += 30
+    asyncio.run(worker.run_once())
+
+    current_time += 1
+    assert inbox.admit(
+        delivery_id="backoff-new",
+        payload={"id": 41, "conversation": {"id": 1}},
+    )
+    current_time += 30
+    asyncio.run(worker.run_once())
+    current_time += 30
+    asyncio.run(worker.run_once())
+
+    assert calls == ["backoff-old", "backoff-new"]
+    envelopes = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in (tmp_path / ".work").glob("*.json")
+    ]
+    assert {envelope["status"] for envelope in envelopes} == {"completed"}
+
+
+def test_chatwoot_worker_does_not_debounce_unkeyed_control_work(
+    tmp_path: Path,
+) -> None:
+    inbox = DurableChatwootInbox(tmp_path / ".work")
+    assert inbox.admit(
+        delivery_id="human-control",
+        payload={"event": "message_created", "message_type": "outgoing"},
+    )
+    handled: list[str] = []
+
+    async def handler(
+        delivery_id: str,
+        payload: dict[str, object],
+        batch_message_ids: tuple[int, ...],
+    ) -> None:
+        handled.append(delivery_id)
+
+    worker = ChatwootWorker(
+        inbox=inbox,
+        handler=handler,
+        debounce_key=lambda payload: None,
+        debounce_seconds=30,
+    )
+
+    asyncio.run(worker.run_once())
+
+    assert handled == ["human-control"]
+
+
+@pytest.mark.parametrize("debounce_seconds", [-1.0, float("nan"), float("inf")])
+def test_rejects_invalid_chatwoot_debounce_values(
+    tmp_path: Path,
+    debounce_seconds: float,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="CHATWOOT_INBOUND_DEBOUNCE_SECONDS must be finite and not negative",
+    ):
+        create_app(
+            Settings(
+                webhook_secret="webhook-secret",
+                allowed_jid="12025550123@s.whatsapp.net",
+                capture_dir=tmp_path,
+                max_age_seconds=300,
+                chatwoot_inbound_debounce_seconds=debounce_seconds,
+            )
+        )
+
+
 def test_chatwoot_worker_times_out_a_blocked_handler_and_preserves_work(
     tmp_path: Path,
 ) -> None:
@@ -289,7 +865,9 @@ def test_chatwoot_worker_times_out_a_blocked_handler_and_preserves_work(
     inbox.admit(delivery_id="blocked-delivery", payload={"event": "test"})
 
     async def blocked_handler(
-        delivery_id: str, payload: dict[str, object]
+        delivery_id: str,
+        payload: dict[str, object],
+        batch_message_ids: tuple[int, ...],
     ) -> None:
         await asyncio.Event().wait()
 
@@ -315,7 +893,9 @@ def test_chatwoot_worker_dead_letters_an_unclassified_error_after_eight_attempts
     inbox.admit(delivery_id="invalid-delivery", payload={"event": "test"})
 
     async def invalid_handler(
-        delivery_id: str, payload: dict[str, object]
+        delivery_id: str,
+        payload: dict[str, object],
+        batch_message_ids: tuple[int, ...],
     ) -> None:
         raise ValueError("invalid work")
 
@@ -346,7 +926,9 @@ def test_retryable_failure_backoff_stays_bounded_after_many_attempts(
     work_path.write_text(json.dumps(envelope), encoding="utf-8")
 
     async def unavailable_handler(
-        delivery_id: str, payload: dict[str, object]
+        delivery_id: str,
+        payload: dict[str, object],
+        batch_message_ids: tuple[int, ...],
     ) -> None:
         raise RetryableChatwootWorkError("still unavailable")
 
@@ -367,7 +949,7 @@ def test_chatwoot_worker_start_restarts_a_finished_task(
 ) -> None:
     worker = ChatwootWorker(
         inbox=DurableChatwootInbox(tmp_path / ".work"),
-        handler=lambda delivery_id, payload: asyncio.sleep(0),
+        handler=lambda delivery_id, payload, batch_message_ids: asyncio.sleep(0),
     )
     runs = 0
     keep_second_run_alive = asyncio.Event()
@@ -544,6 +1126,305 @@ def test_processes_a_normalized_shadow_evaluation_for_an_allowed_message(
     assert chatwoot.reply_calls == []
 
 
+def test_batches_two_incoming_messages_into_one_shadow_evaluation(
+    tmp_path: Path,
+) -> None:
+    secret = "webhook-secret"
+    base_payload: dict[str, object] = {
+        "event": "message_created",
+        "message_type": "incoming",
+        "private": False,
+        "conversation": {
+            "id": 123,
+            "contact_inbox": {
+                "source_id": "12025550123@s.whatsapp.net",
+            },
+        },
+    }
+    first_payload = {**base_payload, "id": 789, "content": "Hola"}
+    second_payload = {**base_payload, "id": 790, "content": "Tengo una duda"}
+    shadow = StubShadowProcessor()
+    app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            chatwoot_inbound_debounce_seconds=30,
+        ),
+        chatwoot_client=StubChatwootClient(
+            messages=[
+                {
+                    "id": 789,
+                    "message_type": 0,
+                    "private": False,
+                    "content": "Hola",
+                    "sender": {"type": "contact", "id": 20},
+                },
+                {
+                    "id": 790,
+                    "message_type": 0,
+                    "private": False,
+                    "content": "Tengo una duda",
+                    "sender": {"type": "contact", "id": 20},
+                },
+            ]
+        ),
+        shadow_processor=shadow,
+    )
+
+    for delivery_id, payload in (
+        ("batch-delivery-one", first_payload),
+        ("batch-delivery-two", second_payload),
+    ):
+        raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        response = _post(
+            app,
+            raw_body,
+            _signed_headers(raw_body, secret=secret, delivery=delivery_id),
+        )
+        assert response.status_code == 202
+
+    asyncio.run(app.state.chatwoot_worker.run_once())
+    assert shadow.calls == []
+
+    for work_path in (tmp_path / ".work").glob("*.json"):
+        envelope = json.loads(work_path.read_text(encoding="utf-8"))
+        envelope["admitted_at"] -= 30
+        work_path.write_text(json.dumps(envelope), encoding="utf-8")
+    asyncio.run(app.state.chatwoot_worker.run_once())
+
+    assert shadow.calls == [
+        (
+            "batch-delivery-two",
+            {
+                "conversation_ref": "123",
+                "human_handoff_confirmed": False,
+                "known_fields": {
+                    "person_name": None,
+                    "location": None,
+                    "role": None,
+                    "company_name": None,
+                    "company_size": None,
+                    "business_model": None,
+                    "company_operational": None,
+                    "can_invest_in_education": None,
+                },
+                "messages": [
+                    {"actor": "prospect", "text": "Hola"},
+                    {"actor": "prospect", "text": "Tengo una duda"},
+                ],
+            },
+        )
+    ]
+
+
+def test_batch_larger_than_twenty_keeps_every_message_in_the_shadow_turn(
+    tmp_path: Path,
+) -> None:
+    secret = "webhook-secret"
+    history = [
+        {
+            "id": message_id,
+            "message_type": 0,
+            "private": False,
+            "content": f"Parte {message_id}",
+            "sender": {"type": "contact", "id": 20},
+        }
+        for message_id in range(1_000, 1_025)
+    ]
+    chatwoot = StubChatwootClient(messages=history)
+    shadow = StubShadowProcessor()
+    app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            chatwoot_inbound_debounce_seconds=30,
+        ),
+        chatwoot_client=chatwoot,
+        shadow_processor=shadow,
+    )
+    inbox = app.state.chatwoot_inbox
+    assert inbox is not None
+    for message in history:
+        assert inbox.admit(
+            delivery_id=f"batch-{message['id']}",
+            payload={
+                "event": "message_created",
+                "id": message["id"],
+                "content": message["content"],
+                "message_type": "incoming",
+                "private": False,
+                "conversation": {
+                    "id": 123,
+                    "contact_inbox": {
+                        "source_id": "12025550123@s.whatsapp.net",
+                    },
+                },
+            },
+        )
+    for work_path in (tmp_path / ".work").glob("*.json"):
+        envelope = json.loads(work_path.read_text(encoding="utf-8"))
+        envelope["admitted_at"] = 0
+        work_path.write_text(json.dumps(envelope), encoding="utf-8")
+
+    asyncio.run(app.state.chatwoot_worker.run_once())
+
+    assert chatwoot.history_calls == [(123, 200)]
+    assert chatwoot.history_required_ids == [tuple(range(1_000, 1_025))]
+    assert len(shadow.calls) == 1
+    delivery_id, context = shadow.calls[0]
+    assert delivery_id == "batch-1024"
+    assert context["messages"] == [
+        {"actor": "prospect", "text": f"Parte {message_id}"}
+        for message_id in range(1_000, 1_025)
+    ]
+
+
+def test_missing_canonical_batch_member_keeps_the_whole_turn_admitted(
+    tmp_path: Path,
+) -> None:
+    app = create_app(
+        Settings(
+            webhook_secret="webhook-secret",
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            chatwoot_inbound_debounce_seconds=30,
+        ),
+        chatwoot_client=StubChatwootClient(
+            messages=[
+                {
+                    "id": 2_001,
+                    "message_type": 0,
+                    "private": False,
+                    "content": "Segunda parte",
+                    "sender": {"type": "contact", "id": 20},
+                }
+            ]
+        ),
+        shadow_processor=(shadow := StubShadowProcessor()),
+    )
+    inbox = app.state.chatwoot_inbox
+    assert inbox is not None
+    for message_id, content in ((2_000, "Primera parte"), (2_001, "Segunda parte")):
+        assert inbox.admit(
+            delivery_id=f"missing-{message_id}",
+            payload={
+                "event": "message_created",
+                "id": message_id,
+                "content": content,
+                "message_type": "incoming",
+                "private": False,
+                "conversation": {
+                    "id": 123,
+                    "contact_inbox": {
+                        "source_id": "12025550123@s.whatsapp.net",
+                    },
+                },
+            },
+        )
+    for work_path in (tmp_path / ".work").glob("*.json"):
+        envelope = json.loads(work_path.read_text(encoding="utf-8"))
+        envelope["admitted_at"] = 0
+        work_path.write_text(json.dumps(envelope), encoding="utf-8")
+
+    asyncio.run(app.state.chatwoot_worker.run_once())
+
+    assert shadow.calls == []
+    envelopes = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in (tmp_path / ".work").glob("*.json")
+    ]
+    assert {envelope["status"] for envelope in envelopes} == {"admitted"}
+
+
+def test_legacy_admitted_incoming_without_message_id_does_not_complete(
+    tmp_path: Path,
+) -> None:
+    shadow = StubShadowProcessor()
+    app = create_app(
+        Settings(
+            webhook_secret="webhook-secret",
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+        ),
+        chatwoot_client=StubChatwootClient(messages=[]),
+        shadow_processor=shadow,
+    )
+    inbox = app.state.chatwoot_inbox
+    assert inbox is not None
+    assert inbox.admit(
+        delivery_id="legacy-missing-message-id",
+        payload={
+            "event": "message_created",
+            "content": "Mensaje legacy",
+            "message_type": "incoming",
+            "private": False,
+            "conversation": {
+                "id": 123,
+                "contact_inbox": {
+                    "source_id": "12025550123@s.whatsapp.net",
+                },
+            },
+        },
+    )
+
+    asyncio.run(app.state.chatwoot_worker.run_once())
+
+    envelope = json.loads(next((tmp_path / ".work").glob("*.json")).read_text())
+    assert envelope["status"] == "admitted"
+    assert envelope["attempts"] == 1
+    assert shadow.calls == []
+
+
+@pytest.mark.parametrize("field", ["admitted_at", "next_attempt_at"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_durable_timestamps_never_execute_work(
+    tmp_path: Path,
+    field: str,
+    value: float,
+) -> None:
+    inbox = DurableChatwootInbox(tmp_path / ".work", clock=lambda: 5_000.0)
+    assert inbox.admit(
+        delivery_id=f"non-finite-{field}-{value}",
+        payload={"id": 500, "conversation": {"id": 1}},
+    )
+    envelope_path = next((tmp_path / ".work").glob("*.json"))
+    envelope = json.loads(envelope_path.read_text(encoding="utf-8"))
+    envelope[field] = value
+    envelope_path.write_text(json.dumps(envelope), encoding="utf-8")
+    calls: list[str] = []
+
+    async def handler(
+        delivery_id: str,
+        payload: dict[str, object],
+        batch_message_ids: tuple[int, ...],
+    ) -> None:
+        calls.append(delivery_id)
+
+    worker = ChatwootWorker(
+        inbox=inbox,
+        handler=handler,
+        debounce_key=lambda payload: "conversation-one",
+        debounce_seconds=30,
+        clock=lambda: 5_100.0,
+    )
+
+    asyncio.run(worker.run_once())
+
+    assert calls == []
+    assert inbox.admitted_items(include_deferred=True) == []
+    assert json.loads(envelope_path.read_text(encoding="utf-8"))["status"] == "admitted"
+
+
 def test_acknowledges_durable_work_without_waiting_for_hermes(
     tmp_path: Path,
 ) -> None:
@@ -614,6 +1495,8 @@ def test_acknowledges_durable_work_without_waiting_for_hermes(
     work_items = list((tmp_path / ".work").glob("*.json"))
     assert len(work_items) == 1
     admitted = json.loads(work_items[0].read_text(encoding="utf-8"))
+    admitted_at = admitted.pop("admitted_at")
+    assert isinstance(admitted_at, float)
     assert admitted == {
         "status": "admitted",
         "delivery_id": "fast-ack-delivery",
@@ -1133,7 +2016,7 @@ def test_uses_canonical_chatwoot_history_for_the_shadow_context(
     assert response.status_code == 202
     assert response.json()["status"] == "accepted"
     asyncio.run(app.state.chatwoot_worker.run_once())
-    assert chatwoot.history_calls == [(123, 20)]
+    assert chatwoot.history_calls == [(123, 200)]
     assert shadow.calls[0][1]["messages"] == [
         {"actor": "prospect", "text": "Hola"},
         {"actor": "assistant", "text": "¿Cómo te llamás?"},
@@ -1634,3 +2517,42 @@ def test_ignores_a_message_from_any_other_whatsapp_jid(tmp_path: Path) -> None:
         "reason": "sender_not_allowed",
     }
     assert list(tmp_path.glob("*.json")) == []
+
+
+def test_ignores_an_incoming_message_without_a_canonical_id(
+    tmp_path: Path,
+) -> None:
+    secret = "webhook-secret"
+    payload = {
+        "event": "message_created",
+        "content": "Mensaje sin ID",
+        "message_type": "incoming",
+        "private": False,
+        "conversation": {
+            "contact_inbox": {
+                "source_id": "12025550123@s.whatsapp.net",
+            }
+        },
+    }
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+        )
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(raw_body, secret=secret, delivery="missing-message-id"),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ignored",
+        "reason": "invalid_message_id",
+    }
+    assert list((tmp_path / ".work").glob("*.json")) == []

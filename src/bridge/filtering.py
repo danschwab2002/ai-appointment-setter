@@ -73,4 +73,11 @@ def classify_chatwoot_event(
         )
     if message_type != "incoming":
         return EventDecision(False, "not_incoming", sender_jid, "ignore")
+    message_id = event.get("id")
+    if (
+        not isinstance(message_id, int)
+        or isinstance(message_id, bool)
+        or message_id < 0
+    ):
+        return EventDecision(False, "invalid_message_id", sender_jid, "ignore")
     return EventDecision(True, "accepted", sender_jid, "capture_incoming")

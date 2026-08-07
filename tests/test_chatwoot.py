@@ -6,7 +6,11 @@ from pathlib import Path
 import httpx
 import pytest
 
-from bridge.chatwoot import ChatwootClient, ChatwootProtocolError
+from bridge.chatwoot import (
+    ChatwootClient,
+    ChatwootHistoryScanLimitError,
+    ChatwootProtocolError,
+)
 
 
 ALLOWED_JID = "12025550123@s.whatsapp.net"
@@ -896,6 +900,96 @@ def test_reads_a_bounded_conversation_history_from_chatwoot() -> None:
     )
 
     assert result == messages
+
+
+def test_paginates_conversation_history_with_the_before_cursor() -> None:
+    requests: list[httpx.Request] = []
+    messages = [{"id": message_id} for message_id in range(1, 26)]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        before = request.url.params.get("before")
+        if before is None:
+            page = messages[-20:]
+        else:
+            assert before == "6"
+            page = messages[:5]
+        return httpx.Response(200, json={"payload": page})
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = asyncio.run(
+        client.get_conversation_messages(conversation_id=2, limit=25)
+    )
+
+    assert result == messages
+    assert [request.url.params.get("before") for request in requests] == [None, "6"]
+
+
+def test_paginates_past_the_recent_limit_until_required_ids_are_found() -> None:
+    requests: list[httpx.Request] = []
+    messages = [{"id": message_id} for message_id in range(1, 251)]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        before = int(request.url.params.get("before", "251"))
+        eligible = [message for message in messages if message["id"] < before]
+        return httpx.Response(200, json={"payload": eligible[-20:]})
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = asyncio.run(
+        client.get_conversation_messages(
+            conversation_id=2,
+            limit=200,
+            required_message_ids=(1, 250),
+        )
+    )
+
+    result_ids = [message["id"] for message in result]
+    assert result_ids == [1, *range(51, 251)]
+    assert len(requests) == 13
+
+
+def test_fails_explicitly_when_required_ids_exceed_the_history_scan_limit() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        before = int(request.url.params.get("before", "100001"))
+        page = [{"id": message_id} for message_id in range(before - 20, before)]
+        return httpx.Response(200, json={"payload": page})
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(
+        ChatwootHistoryScanLimitError,
+        match="required_messages_beyond_scan_limit",
+    ):
+        asyncio.run(
+            client.get_conversation_messages(
+                conversation_id=2,
+                limit=200,
+                required_message_ids=(1,),
+            )
+        )
+
+    assert len(requests) == 100
 
 
 def test_reads_canonical_snapshot_and_detects_inbound_after_anchor() -> None:

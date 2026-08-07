@@ -16,7 +16,9 @@ El cuerpo tiene un límite fijo de `1 MiB`, aplicado durante la lectura y antes 
 autenticar la firma.
 
 Antes de persistir, el bridge valida firma, antigüedad, JSON, tipo de evento,
-visibilidad, dirección, actor y JID autorizado.
+visibilidad, dirección, actor y JID autorizado. Un mensaje entrante sólo puede
+admitirse si contiene un `id` canónico entero no negativo; si falta o es inválido,
+responde `200 ignored` con `reason=invalid_message_id` y no crea trabajo durable.
 
 ## Respuestas
 
@@ -50,10 +52,42 @@ No confirma que Hermes terminó ni que Chatwoot aceptó una respuesta.
 3. Sólo después de esa admisión el endpoint devuelve HTTP 202.
 4. El worker procesa archivos `admitted` fuera de la solicitud HTTP.
 5. Al reiniciar, el worker retoma admisiones pendientes.
-6. Un lock por archivo evita procesamiento concurrente del mismo delivery.
+6. Un lock por delivery protege trabajo sin agrupación; un lock hasheado por
+   conversación serializa los turnos agrupados sin exponer el ID en el nombre.
 7. El archivo pasa a `completed` únicamente después de un resultado terminal.
 8. Al completar, el payload se elimina del archivo de trabajo y queda sólo el
    tombstone mínimo necesario para deduplicar el delivery.
+
+Los mensajes públicos entrantes aceptados se agrupan por conversación antes de
+invocar Hermes. Cada nueva admisión reinicia una ventana durable configurada por
+`CHATWOOT_INBOUND_DEBOUNCE_SECONDS`, cuyo valor productivo inicial es `30`. El
+endpoint no espera esa ventana: conserva el ACK inmediato después de persistir.
+
+La admisión más reciente determina cuándo vence el silencio. El delivery con el
+mayor ID canónico de Chatwoot lidera el turno aunque los webhooks hayan llegado
+fuera de orden. El historial leído hasta ese ID debe contener todos los IDs del
+batch; la ausencia de cualquiera es reintentable y nunca completa silenciosamente
+un turno parcial. El cliente recorre las páginas de 20 mensajes mediante el cursor
+`before`. Lee como mínimo 200 mensajes recientes y continúa más atrás hasta
+encontrar todos los IDs obligatorios, alcanzar el inicio comprobado del historial
+o agotar un límite operacional de 100 páginas. Devuelve la ventana reciente más
+los miembros requeridos encontrados. Los deliveries
+anteriores se completan sin invocar Hermes por separado sólo después del éxito del
+líder. El valor `0` desactiva la agrupación y
+restaura el procesamiento inmediato.
+
+La formación del grupo también considera deliveries temporalmente diferidos por
+backoff. Si llega un mensaje más reciente, esos deliveries anteriores se cierran
+como miembros del mismo turno y no reaparecen luego como evaluaciones obsoletas.
+Después de adquirir el lock conversacional, el worker vuelve a escanear todos los
+miembros y revalida leader, backoff y deadline; esa relectura es el punto de corte
+del turno. Una admisión posterior forma el turno siguiente y la autorización final
+impide enviar una respuesta basada en el trigger anterior.
+Mientras el líder se reintenta, los miembros anteriores permanecen `admitted`.
+Si un error no reintentable agota los intentos del líder, todos terminan `failed`
+en lugar de tombstones `completed`. Esa transición multiarchivo usa un journal de
+intención privado y sincronizado a disco; un reinicio reconcilia cualquier journal
+pendiente antes de volver a seleccionar trabajo.
 
 La ejecución interna es **at-least-once**. Los resultados persistidos de Hermes y
 los marcadores idempotentes del sender impiden repetir el razonamiento o el efecto
@@ -65,7 +99,9 @@ Una excepción del procesamiento conserva el trabajo y registra únicamente el t
 de error y el estado, sin delivery ID, mensaje, teléfono ni payload.
 Los fallos HTTP o de protocolo al obtener el historial canónico de Chatwoot, y
 la ausencia temporal del mensaje trigger en ese historial, son reintentables y
-no se agotan ni producen un resultado terminal de Hermes. Para otros errores:
+no se agotan ni producen un resultado terminal de Hermes. Agotar las 100 páginas
+sin encontrar IDs obligatorios es un error acotado sujeto al máximo general de
+intentos, no un retry infinito. Para otros errores:
 
 - máximo: `8` intentos;
 - backoff exponencial con jitter;
@@ -80,7 +116,8 @@ directorio antes de responder `202 captured`.
 
 Una intervención humana pública usa la misma admisión durable. La etiqueta
 `automation_paused` se aplica en el worker y un fallo transitorio de Chatwoot no
-bloquea la respuesta del webhook.
+bloquea la respuesta del webhook. Esta intervención no queda demorada por la
+ventana de mensajes entrantes.
 
 ## Privacidad e idempotencia
 
@@ -88,11 +125,13 @@ bloquea la respuesta del webhook.
 - archivos: `0600`;
 - directorio, archivos y locks se abren sin seguir symlinks y validando tipo y
   propietario;
+- timestamps durables no finitos se rechazan y nunca llegan al handler;
 - nombre: SHA-256 del delivery ID;
 - no se registran payloads, contenido, JIDs ni identificadores personales;
 - un delivery repetido no crea un segundo archivo;
 - una respuesta externa se correlaciona y valida antes de considerarse aceptada.
 
 El lifecycle detiene todos los workers dentro de `finally`, incluso si la
-aplicación termina por excepción. Cada poll hace un único escaneo del inbox; la
-revalidación bajo lock lee directamente sólo el ítem seleccionado.
+aplicación termina por excepción. Cada poll hace un scan inicial; para trabajo
+agrupado, la revalidación bajo lock vuelve a leer todos los miembros admitidos de
+la conversación antes de decidir el turno.
