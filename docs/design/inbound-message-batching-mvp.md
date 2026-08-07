@@ -1,6 +1,6 @@
 # Compilación durable de mensajes entrantes
 
-- **Estado:** Implementado localmente; pendiente de despliegue y E2E productivo
+- **Estado:** Implementado y validado mediante E2E productivo controlado
 - **Alcance:** Primer MVP limitado al ingreso Chatwoot → Hermes
 - **Fuera de alcance:** División de respuestas salientes, indicadores de escritura, seguimiento comercial y cambios de UX
 
