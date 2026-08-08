@@ -83,6 +83,33 @@ La autorización se repite inmediatamente antes del `POST`. La respuesta creada
 se acepta sólo si coincide en conversación, dirección, visibilidad, contenido,
 AgentBot y marcador idempotente.
 
+## Cierre determinístico por compra aprobada
+
+La implementación del repositorio admite `PURCHASE_APPROVED` de Hotmart como un
+evento durable distinto del abandono:
+
+```text
+Hotmart PURCHASE_APPROVED
+  -> autenticación + anti-replay + deduplicación
+  -> webhook_events(received)
+  -> ResolutionWorker
+  -> correlación transaccional por identidad + producto + oferta
+  -> recovery_case(won)
+  -> followup_sequence(completed)
+  -> scheduled_action(cancelled si todavía no inició entrega)
+```
+
+La correlación no se delega a Hermes. Una coincidencia exacta cierra el caso y
+la secuencia en la misma transacción. Una coincidencia ambigua pausa los casos
+candidatos y requiere revisión humana; no elige el primer resultado. Los envíos
+con resultado externo incierto conservan su estado `delivery_unknown` para no
+confundir ausencia de confirmación con ausencia de efecto.
+
+El contrato detallado se encuentra en
+[Compra aprobada de Hotmart V1](contracts/hotmart-purchase-approved-v1.md). La
+existencia de esta implementación no prueba que su migración esté aplicada ni
+que una compra real haya sido verificada en el despliegue.
+
 ## Decisiones arquitectónicas
 
 - [ADR-0001: Profile comercial como motor de razonamiento aislado](decisions/0001-commercial-profile-boundary.md)

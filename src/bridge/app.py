@@ -967,6 +967,8 @@ def create_app(
 
         event_id = decision.event_id
         assert event_id is not None  # classify guarantees this when accepted
+        event_type = decision.event_type
+        assert event_type is not None
 
         event_obj = payload if isinstance(payload, dict) else {}
         stale = is_stale_event(
@@ -988,7 +990,7 @@ def create_app(
             result = await shared_supabase.insert_webhook_event(
                 source="hotmart",
                 external_event_id=event_id,
-                event_type=EVENT_CART_ABANDONMENT,
+                event_type=event_type,
                 payload=payload,
             )
         except SupabaseError as exc:

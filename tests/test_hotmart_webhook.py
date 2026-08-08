@@ -36,6 +36,31 @@ EXAMPLE_PAYLOAD: dict[str, object] = {
     },
 }
 
+PURCHASE_APPROVED_PAYLOAD: dict[str, object] = {
+    "id": "purchase-event-001",
+    "creation_date": int(time.time() * 1000),
+    "event": "PURCHASE_APPROVED",
+    "version": "2.0.0",
+    "data": {
+        "product": {
+            "id": 3526906,
+            "ucode": "product-ucode-001",
+            "name": "Product Name",
+        },
+        "buyer": {
+            "name": "Buyer name",
+            "email": "buyer@email.com.br",
+            "checkout_phone": "5531999999999",
+        },
+        "purchase": {
+            "approved_date": int(time.time() * 1000),
+            "status": "APPROVED",
+            "transaction": "HP17715690036014",
+            "offer": {"code": "n82b9jqz"},
+        },
+    },
+}
+
 
 def test_parse_hotmart_payload_rejects_phone_with_non_phone_suffix() -> None:
     payload = copy.deepcopy(EXAMPLE_PAYLOAD)
@@ -253,16 +278,40 @@ def test_rejects_invalid_json(tmp_path) -> None:
     assert response.json()["detail"] == "invalid_json"
 
 
-def test_ignores_unsupported_event_type(tmp_path) -> None:
-    app = create_app(_hotmart_settings(capture_dir=tmp_path))
-    payload = {**EXAMPLE_PAYLOAD, "event": "PURCHASE_APPROVED"}
-    raw = json.dumps(payload).encode()
-    response = _post_hotmart(app, raw)
-    assert response.status_code == 200
+def test_persists_purchase_approved_for_deferred_processing(tmp_path) -> None:
+    transport = _MockSupabaseTransport(status_code=201)
+    import bridge.supabase as supabase_mod
+
+    original_init = supabase_mod.SupabaseClient.__init__
+
+    def _patched_init(self, **kwargs):
+        kwargs["transport"] = transport
+        original_init(self, **kwargs)
+
+    supabase_mod.SupabaseClient.__init__ = _patched_init
+    try:
+        app = create_app(
+            _hotmart_settings(
+                capture_dir=tmp_path,
+                supabase_base_url="https://fake-supabase.supabase.co",
+                supabase_service_role_key="fake-service-role-key",
+            )
+        )
+        response = _post_hotmart(
+            app,
+            json.dumps(PURCHASE_APPROVED_PAYLOAD).encode(),
+        )
+    finally:
+        supabase_mod.SupabaseClient.__init__ = original_init
+
+    assert response.status_code == 202
     assert response.json() == {
-        "status": "ignored",
-        "reason": "unsupported_event_type",
+        "status": "received",
+        "event_id": "purchase-event-001",
     }
+    assert len(transport.requests) == 1
+    body = json.loads(transport.requests[0].content)
+    assert body["event_type"] == "PURCHASE_APPROVED"
 
 
 def test_ignores_unsupported_version(tmp_path) -> None:
@@ -325,7 +374,11 @@ class _MockSupabaseTransport(httpx.AsyncBaseTransport):
         response_body: list[dict[str, object]] | None = None,
     ) -> None:
         self.status_code = status_code
-        self.response_body = response_body or []
+        self.response_body = (
+            [{"id": "inserted-event"}]
+            if response_body is None
+            else response_body
+        )
         self.requests: list[httpx.Request] = []
 
     async def handle_async_request(
@@ -381,7 +434,7 @@ def test_persists_valid_event_to_supabase(tmp_path) -> None:
 
 
 def test_returns_duplicate_for_already_stored_event(tmp_path) -> None:
-    transport = _MockSupabaseTransport(status_code=409)
+    transport = _MockSupabaseTransport(status_code=201, response_body=[])
     import bridge.supabase as supabase_mod
 
     original_init = supabase_mod.SupabaseClient.__init__

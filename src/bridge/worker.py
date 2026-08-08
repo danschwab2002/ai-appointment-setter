@@ -18,6 +18,11 @@ from typing import Any, Callable
 import httpx
 
 from bridge.chatwoot import ChatwootClient, ChatwootProtocolError
+from bridge.hotmart import (
+    EVENT_CART_ABANDONMENT,
+    EVENT_PURCHASE_APPROVED,
+    parse_hotmart_purchase_payload,
+)
 from bridge.messaging import FirstTouchResult, MessageSender, is_allowed_whatsapp_target
 from bridge.recovery_agent import (
     FollowupMessageProposal,
@@ -34,6 +39,7 @@ from bridge.supabase import (
     SupabaseClient,
     SupabaseCommittedResponseError,
     SupabaseError,
+    SupabasePermanentError,
 )
 
 logger = logging.getLogger(__name__)
@@ -875,7 +881,12 @@ class ResolutionWorker:
         for event in events:
             if self._stopped.is_set():
                 break
-            await self._process_one(event)
+            try:
+                await self._process_one(event)
+            except SupabaseError:
+                # Keep the event retryable, but do not let one bad or
+                # unavailable RPC starve later events in the same batch.
+                continue
 
     async def _process_one(self, event: dict[str, Any]) -> None:
         event_id = event.get("id")
@@ -885,6 +896,49 @@ class ResolutionWorker:
         if not isinstance(payload, dict):
             await self._supabase.update_event_status(
                 event_id=event_id, status="failed", error="invalid_payload"
+            )
+            return
+        event_type = event.get("event_type")
+        if event_type == EVENT_PURCHASE_APPROVED:
+            purchase = parse_hotmart_purchase_payload(payload)
+            if purchase is None:
+                await self._supabase.update_event_status(
+                    event_id=event_id,
+                    status="failed",
+                    error="invalid_purchase_payload",
+                )
+                return
+            try:
+                result = await self._supabase.apply_hotmart_purchase_approved(
+                    webhook_event_id=event_id,
+                    buyer_email=purchase.buyer_email,
+                    buyer_phone=purchase.buyer_phone,
+                    external_product_id=str(purchase.product_id),
+                    offer_code=purchase.offer_code,
+                    transaction=purchase.transaction,
+                    approved_at=datetime.fromtimestamp(
+                        purchase.approved_date_ms / 1000,
+                        tz=timezone.utc,
+                    ).isoformat(),
+                )
+            except SupabasePermanentError:
+                await self._supabase.update_event_status(
+                    event_id=event_id,
+                    status="failed",
+                    error="purchase_rpc_permanent_failure",
+                )
+                return
+            logger.info(
+                "hotmart_purchase_processed event_id=%s outcome=%s",
+                purchase.event_id,
+                result.outcome,
+            )
+            return
+        if event_type != EVENT_CART_ABANDONMENT:
+            await self._supabase.update_event_status(
+                event_id=event_id,
+                status="failed",
+                error="unsupported_persisted_event_type",
             )
             return
         try:

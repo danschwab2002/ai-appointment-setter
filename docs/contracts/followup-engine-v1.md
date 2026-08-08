@@ -499,12 +499,14 @@ Efecto esperado:
 persistir evento autenticado y deduplicado
 correlacionar inequívocamente
 marcar caso won
-completar secuencia con reason = purchased
+completar secuencia con completion_reason = purchase_detected
 cancelar acción pendiente
 registrar auditoría
 ```
 
-Una correlación ambigua no ejecuta el cierre automático.
+Una correlación ambigua no ejecuta el cierre automático y pausa de forma
+fail-closed los casos candidatos. El ingreso, la correlación y sus outcomes se
+definen en [Compra aprobada de Hotmart V1](hotmart-purchase-approved-v1.md).
 
 ## 11. Autoridad de fuentes
 

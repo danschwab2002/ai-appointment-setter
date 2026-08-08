@@ -17,6 +17,10 @@ class SupabaseError(RuntimeError):
     """Raised when a Supabase REST call fails."""
 
 
+class SupabasePermanentError(SupabaseError):
+    """Raised when retrying an unchanged request cannot succeed."""
+
+
 class SupabaseCommittedResponseError(SupabaseError):
     """Raised when a successful mutating RPC returns an invalid committed row."""
 
@@ -39,6 +43,15 @@ class CartRecoveryPlan:
     followup_sequence_id: str
     scheduled_action_id: str
     created: bool
+
+
+@dataclass(frozen=True)
+class PurchaseCorrelationResult:
+    """Authoritative outcome of applying one approved purchase."""
+
+    outcome: str
+    recovery_case_id: str | None
+    matched_by: str | None
 
 
 @dataclass(frozen=True)
@@ -495,6 +508,18 @@ class SupabaseClient:
             raise SupabaseError(
                 f"webhook_event_insert_failed: HTTP {response.status_code}"
             )
+        try:
+            rows = response.json()
+        except ValueError as exc:
+            raise SupabaseError("webhook_event_insert_invalid_json") from exc
+        if not isinstance(rows, list) or any(
+            not isinstance(row, dict) for row in rows
+        ):
+            raise SupabaseError("webhook_event_insert_invalid_shape")
+        if len(rows) == 0:
+            return InsertResult(inserted=False)
+        if len(rows) != 1:
+            raise SupabaseError("webhook_event_insert_invalid_cardinality")
         return InsertResult(inserted=True)
 
     async def fetch_pending_events(self, *, limit: int = 10) -> list[dict[str, Any]]:
@@ -620,6 +645,64 @@ class SupabaseClient:
                 row, "scheduled_action_id", operation="plan_cart_recovery"
             ),
             created=created,
+        )
+
+    async def apply_hotmart_purchase_approved(
+        self,
+        *,
+        webhook_event_id: str,
+        buyer_email: str | None,
+        buyer_phone: str | None,
+        external_product_id: str,
+        offer_code: str | None,
+        transaction: str,
+        approved_at: str,
+    ) -> PurchaseCorrelationResult:
+        """Atomically correlate a purchase and stop its recovery sequence."""
+        body = json.dumps({
+            "p_webhook_event_id": webhook_event_id,
+            "p_buyer_email": buyer_email,
+            "p_buyer_phone": buyer_phone,
+            "p_external_product_id": external_product_id,
+            "p_offer_code": offer_code,
+            "p_transaction": transaction,
+            "p_approved_at": approved_at,
+        }, ensure_ascii=False)
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/apply_hotmart_purchase_approved",
+            content=body,
+        )
+        operation = "apply_hotmart_purchase_approved"
+        if response.status_code != 200:
+            error_type = (
+                SupabasePermanentError
+                if 400 <= response.status_code < 500
+                else SupabaseError
+            )
+            raise error_type(
+                f"{operation}_failed: HTTP {response.status_code}"
+            )
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        return PurchaseCorrelationResult(
+            outcome=_required_enum(
+                row,
+                "outcome",
+                {"applied", "already_applied", "not_found", "ambiguous"},
+                operation=operation,
+            ),
+            recovery_case_id=_optional_string(
+                row, "recovery_case_id", operation=operation
+            ),
+            matched_by=_optional_enum(
+                row,
+                "matched_by",
+                {"email", "phone", "email_and_phone"},
+                operation=operation,
+            ),
         )
 
     async def claim_due_followup_actions(
