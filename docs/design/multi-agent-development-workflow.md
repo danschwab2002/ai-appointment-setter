@@ -83,9 +83,9 @@ created_at
 updated_at
 ```
 
-Estados activos para exclusión: `claimed`, `implementing` y `review`. `paused`
-conserva el handoff pero no bloquea un nuevo claim. `merged` y `abandoned` son
-terminales.
+Estados que conservan exclusión: `claimed`, `implementing`, `review` y `paused`.
+Un handoff pausado continúa reservando su scope hasta su consolidación o cierre.
+`merged` y `abandoned` son terminales.
 
 ## Reglas de solapamiento
 
