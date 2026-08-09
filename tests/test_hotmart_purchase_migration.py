@@ -11,6 +11,10 @@ ORDERING_GUARD_MIGRATION = (
     Path(__file__).parents[1]
     / "supabase/migrations/20260808000200_hotmart_purchase_ordering_guard.sql"
 )
+ORDERING_GUARD_PRIVILEGES_MIGRATION = (
+    Path(__file__).parents[1]
+    / "supabase/migrations/20260808000300_hotmart_purchase_ordering_guard_privileges.sql"
+)
 
 
 def test_purchase_rpc_atomically_closes_exact_recovery_case() -> None:
@@ -67,3 +71,13 @@ def test_late_abandonment_is_cancelled_by_already_known_purchase() -> None:
     assert "purchase_correlation_case_not_found" in sql
     assert "'known_purchase_before_recovery_plan'" in sql
     assert "purchase_event_id = v_purchase_event_id" in sql
+
+
+def test_ordering_guard_trigger_function_has_no_direct_api_execute_surface() -> None:
+    sql = ORDERING_GUARD_PRIVILEGES_MIGRATION.read_text().lower()
+
+    assert "stop_cart_recovery_for_known_purchase()" in sql
+    assert "revoke all" in sql
+    for role in ("public", "anon", "authenticated", "service_role"):
+        assert role in sql
+    assert "grant execute" not in sql
