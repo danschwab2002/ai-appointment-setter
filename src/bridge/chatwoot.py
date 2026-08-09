@@ -6,10 +6,13 @@ import asyncio
 import fcntl
 import hashlib
 import os
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
+
+from bridge.reply_splitter import reply_batch_hash, reply_part_hash
 
 
 class ChatwootProtocolError(RuntimeError):
@@ -18,6 +21,10 @@ class ChatwootProtocolError(RuntimeError):
 
 class ChatwootHistoryScanLimitError(ChatwootProtocolError):
     """Raised when required messages exceed the bounded history scan."""
+
+
+class ChatwootReplyDeliveryUnknownError(ChatwootProtocolError):
+    """Raised when a reply POST may have succeeded and must not be repeated."""
 
 
 @dataclass(frozen=True)
@@ -304,8 +311,11 @@ class ChatwootClient:
         trigger_message_id: int,
         delivery_id: str,
         content: str,
+        part_index: int = 1,
+        part_count: int = 1,
+        prior_parts: tuple[str, ...] = (),
     ) -> dict[str, object]:
-        """Authorize and send one public AgentBot reply for an incoming event."""
+        """Authorize and send one idempotent part of a public AgentBot reply."""
         if (
             self._agent_bot_access_token is None
             or self._agent_bot_id is None
@@ -313,25 +323,153 @@ class ChatwootClient:
             or self._allowed_jid is None
         ):
             raise ChatwootProtocolError("agent_bot_reply_not_configured")
-        reply_hash = hashlib.sha256(
-            f"{conversation_id}:{trigger_message_id}".encode("utf-8")
-        ).hexdigest()
-        self._reply_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
-        self._reply_dir.chmod(0o700)
-        lock_path = self._reply_dir / f".{reply_hash}.processing.lock"
-        lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
-        os.fchmod(lock_fd, 0o600)
+        if (
+            not isinstance(part_index, int)
+            or isinstance(part_index, bool)
+            or not isinstance(part_count, int)
+            or isinstance(part_count, bool)
+            or not 1 <= part_index <= part_count <= 4
+            or len(prior_parts) != part_index - 1
+            or any(not isinstance(part, str) or not part for part in prior_parts)
+        ):
+            raise ChatwootProtocolError("invalid_reply_part")
+        _ = delivery_id
+        batch_hash = reply_batch_hash(
+            conversation_id=conversation_id,
+            trigger_message_id=trigger_message_id,
+        )
+        reply_hash = reply_part_hash(
+            batch_hash=batch_hash,
+            part_index=part_index,
+            part_count=part_count,
+        )
+        reply_dir_fd = self._open_private_reply_dir()
+        lock_fd = -1
         try:
+            lock_fd = os.open(
+                f".{batch_hash}.processing.lock",
+                os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+                dir_fd=reply_dir_fd,
+            )
+            lock_stat = os.fstat(lock_fd)
+            if (
+                not stat.S_ISREG(lock_stat.st_mode)
+                or lock_stat.st_uid != os.getuid()
+            ):
+                raise ChatwootProtocolError("unsafe_reply_lock")
+            os.fchmod(lock_fd, 0o600)
             await self._acquire_lock(lock_fd)
             return await self._authorize_and_send(
                 conversation_id=conversation_id,
                 trigger_message_id=trigger_message_id,
+                batch_hash=batch_hash,
                 reply_hash=reply_hash,
                 content=content,
+                part_index=part_index,
+                part_count=part_count,
+                prior_parts=prior_parts,
+                reply_dir_fd=reply_dir_fd,
             )
         finally:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-            os.close(lock_fd)
+            if lock_fd >= 0:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                os.close(lock_fd)
+            os.close(reply_dir_fd)
+
+    def _open_private_reply_dir(self) -> int:
+        reply_dir = self._reply_dir
+        if reply_dir is None:
+            raise ChatwootProtocolError("agent_bot_reply_not_configured")
+        reply_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        directory_fd = os.open(reply_dir, flags)
+        directory_stat = os.fstat(directory_fd)
+        if (
+            not stat.S_ISDIR(directory_stat.st_mode)
+            or directory_stat.st_uid != os.getuid()
+        ):
+            os.close(directory_fd)
+            raise ChatwootProtocolError("unsafe_reply_dir")
+        os.fchmod(directory_fd, 0o700)
+        return directory_fd
+
+    @staticmethod
+    def _claim_reply_delivery(
+        *,
+        reply_dir_fd: int,
+        batch_hash: str,
+        reply_hash: str,
+        part_count: int,
+    ) -> bool:
+        if part_count > 1:
+            legacy_journal_name = f".{batch_hash}.posting"
+            try:
+                legacy_fd = os.open(
+                    legacy_journal_name,
+                    os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                    dir_fd=reply_dir_fd,
+                )
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                raise ChatwootProtocolError("unsafe_reply_journal") from exc
+            else:
+                try:
+                    legacy_stat = os.fstat(legacy_fd)
+                    if (
+                        not stat.S_ISREG(legacy_stat.st_mode)
+                        or legacy_stat.st_uid != os.getuid()
+                        or legacy_stat.st_mode & 0o077
+                    ):
+                        raise ChatwootProtocolError("unsafe_reply_journal")
+                finally:
+                    os.close(legacy_fd)
+                return False
+
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        journal_name = f".{reply_hash}.posting"
+        try:
+            journal_fd = os.open(
+                journal_name,
+                flags,
+                0o600,
+                dir_fd=reply_dir_fd,
+            )
+        except FileExistsError:
+            existing_fd = os.open(
+                journal_name,
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=reply_dir_fd,
+            )
+            try:
+                existing_stat = os.fstat(existing_fd)
+                if (
+                    not stat.S_ISREG(existing_stat.st_mode)
+                    or existing_stat.st_uid != os.getuid()
+                    or existing_stat.st_mode & 0o077
+                ):
+                    raise ChatwootProtocolError("unsafe_reply_journal")
+            finally:
+                os.close(existing_fd)
+            return False
+        try:
+            journal_stat = os.fstat(journal_fd)
+            if (
+                not stat.S_ISREG(journal_stat.st_mode)
+                or journal_stat.st_uid != os.getuid()
+            ):
+                raise ChatwootProtocolError("unsafe_reply_journal")
+            os.fchmod(journal_fd, 0o600)
+            if os.write(journal_fd, b"posting\n") != len(b"posting\n"):
+                raise OSError("short_reply_journal_write")
+            os.fsync(journal_fd)
+        finally:
+            os.close(journal_fd)
+        os.fsync(reply_dir_fd)
+        return True
 
     @staticmethod
     async def _acquire_lock(lock_fd: int) -> None:
@@ -347,8 +485,13 @@ class ChatwootClient:
         *,
         conversation_id: int,
         trigger_message_id: int,
+        batch_hash: str,
         reply_hash: str,
         content: str,
+        part_index: int,
+        part_count: int,
+        prior_parts: tuple[str, ...],
+        reply_dir_fd: int,
     ) -> dict[str, object]:
         agent_bot_access_token = self._agent_bot_access_token
         if agent_bot_access_token is None:
@@ -365,6 +508,18 @@ class ChatwootClient:
             f"/api/v1/accounts/{self._account_id}"
             f"/conversations/{conversation_id}/messages"
         )
+        authorization_kwargs = {
+            "conversation_path": conversation_path,
+            "labels_path": labels_path,
+            "conversation_id": conversation_id,
+            "trigger_message_id": trigger_message_id,
+            "batch_hash": batch_hash,
+            "reply_hash": reply_hash,
+            "content": content,
+            "part_index": part_index,
+            "part_count": part_count,
+            "prior_parts": prior_parts,
+        }
         async with httpx.AsyncClient(
             base_url=self._base_url,
             headers={"api_access_token": self._access_token},
@@ -373,13 +528,7 @@ class ChatwootClient:
         ) as control_client:
             authorization_result = await self._current_authorization_result(
                 control_client=control_client,
-                conversation_path=conversation_path,
-                labels_path=labels_path,
-                messages_path=messages_path,
-                conversation_id=conversation_id,
-                trigger_message_id=trigger_message_id,
-                reply_hash=reply_hash,
-                content=content,
+                **authorization_kwargs,
             )
         if authorization_result is not None:
             return authorization_result
@@ -392,16 +541,28 @@ class ChatwootClient:
         ) as final_client:
             authorization_result = await self._current_authorization_result(
                 control_client=final_client,
-                conversation_path=conversation_path,
-                labels_path=labels_path,
-                messages_path=messages_path,
-                conversation_id=conversation_id,
-                trigger_message_id=trigger_message_id,
-                reply_hash=reply_hash,
-                content=content,
+                **authorization_kwargs,
             )
             if authorization_result is not None:
                 return authorization_result
+            if not self._claim_reply_delivery(
+                reply_dir_fd=reply_dir_fd,
+                batch_hash=batch_hash,
+                reply_hash=reply_hash,
+                part_count=part_count,
+            ):
+                raise ChatwootReplyDeliveryUnknownError("reply_delivery_unknown")
+            marker_attributes: dict[str, object] = {
+                "appointment_setter_reply_hash": reply_hash,
+            }
+            if part_count > 1:
+                marker_attributes.update(
+                    {
+                        "appointment_setter_reply_batch_hash": batch_hash,
+                        "appointment_setter_reply_part_index": part_index,
+                        "appointment_setter_reply_part_count": part_count,
+                    }
+                )
             response = await final_client.post(
                 messages_path,
                 headers={"api_access_token": agent_bot_access_token},
@@ -410,9 +571,7 @@ class ChatwootClient:
                     "message_type": "outgoing",
                     "private": False,
                     "content_type": "text",
-                    "content_attributes": {
-                        "appointment_setter_reply_hash": reply_hash,
-                    },
+                    "content_attributes": marker_attributes,
                 },
             )
             response.raise_for_status()
@@ -434,6 +593,17 @@ class ChatwootClient:
             or message.get("content") != content
             or not isinstance(attributes, dict)
             or attributes.get("appointment_setter_reply_hash") != reply_hash
+            or (
+                part_count > 1
+                and (
+                    attributes.get("appointment_setter_reply_batch_hash")
+                    != batch_hash
+                    or attributes.get("appointment_setter_reply_part_index")
+                    != part_index
+                    or attributes.get("appointment_setter_reply_part_count")
+                    != part_count
+                )
+            )
             or not isinstance(sender, dict)
             or sender.get("type") != "agent_bot"
             or sender.get("id") != self._agent_bot_id
@@ -447,11 +617,14 @@ class ChatwootClient:
         control_client: httpx.AsyncClient,
         conversation_path: str,
         labels_path: str,
-        messages_path: str,
         conversation_id: int,
         trigger_message_id: int,
+        batch_hash: str,
         reply_hash: str,
         content: str,
+        part_index: int,
+        part_count: int,
+        prior_parts: tuple[str, ...],
     ) -> dict[str, object] | None:
         conversation_response = await control_client.get(conversation_path)
         conversation_response.raise_for_status()
@@ -466,9 +639,11 @@ class ChatwootClient:
         if "automation_paused" in self._parse_labels(labels_response):
             return {"status": "blocked", "reason": "automation_paused"}
 
-        messages_response = await control_client.get(messages_path)
-        messages_response.raise_for_status()
-        messages = self._parse_messages(messages_response)
+        messages = await self.get_conversation_messages(
+            conversation_id=conversation_id,
+            limit=2000,
+            required_message_ids=(trigger_message_id,),
+        )
         trigger_index = next(
             (
                 index
@@ -510,14 +685,58 @@ class ChatwootClient:
                     and message.get("message_type") == 1
                     and message.get("private") is False
                     and message.get("content") == content
+                    and (
+                        part_count == 1
+                        or (
+                            attributes.get("appointment_setter_reply_batch_hash")
+                            == batch_hash
+                            and attributes.get("appointment_setter_reply_part_index")
+                            == part_index
+                            and attributes.get("appointment_setter_reply_part_count")
+                            == part_count
+                        )
+                    )
                 ):
                     raise ChatwootProtocolError("invalid_agent_bot_message")
                 return {"status": "duplicate", "message_id": message_id}
 
+        prior_indices: list[int] = []
         for message in messages[trigger_index + 1 :]:
             if message.get("private") is not False:
                 continue
+            attributes = message.get("content_attributes")
             sender = message.get("sender")
+            prior_index = (
+                attributes.get("appointment_setter_reply_part_index")
+                if isinstance(attributes, dict)
+                else None
+            )
+            if (
+                part_count > 1
+                and isinstance(sender, dict)
+                and sender.get("type") == "agent_bot"
+                and sender.get("id") == self._agent_bot_id
+                and isinstance(attributes, dict)
+                and attributes.get("appointment_setter_reply_batch_hash")
+                == batch_hash
+                and attributes.get("appointment_setter_reply_part_count")
+                == part_count
+                and isinstance(prior_index, int)
+                and not isinstance(prior_index, bool)
+                and 1 <= prior_index < part_index
+            ):
+                expected_hash = hashlib.sha256(
+                    f"{batch_hash}:{prior_index}:{part_count}".encode("utf-8")
+                ).hexdigest()
+                if not (
+                    attributes.get("appointment_setter_reply_hash") == expected_hash
+                    and message.get("conversation_id") == conversation_id
+                    and message.get("message_type") == 1
+                    and message.get("content") == prior_parts[prior_index - 1]
+                ):
+                    raise ChatwootProtocolError("invalid_agent_bot_message")
+                prior_indices.append(prior_index)
+                continue
             if (
                 message.get("message_type") == 1
                 and isinstance(sender, dict)
@@ -525,6 +744,8 @@ class ChatwootClient:
             ):
                 return {"status": "blocked", "reason": "human_intervention"}
             return {"status": "blocked", "reason": "conversation_advanced"}
+        if prior_indices != list(range(1, part_index)):
+            return {"status": "blocked", "reason": "reply_sequence_incomplete"}
         return None
 
     def _is_authorized_conversation(
@@ -611,7 +832,9 @@ class ChatwootClient:
                     raise ChatwootProtocolError("messages_cursor_did_not_advance")
                 before = next_before
         missing_required_ids = required_ids.difference(collected)
-        if missing_required_ids and not reached_history_boundary:
+        if not reached_history_boundary and (
+            missing_required_ids or len(collected) < limit
+        ):
             raise ChatwootHistoryScanLimitError("required_messages_beyond_scan_limit")
         ordered_ids = sorted(collected)
         selected_ids = set(ordered_ids[-limit:]) | required_ids.intersection(collected)

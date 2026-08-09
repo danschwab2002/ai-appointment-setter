@@ -17,6 +17,7 @@ from bridge.chatwoot_inbox import (
     DurableChatwootInbox,
     RetryableChatwootWorkError,
 )
+from bridge.reply_splitter import HermesReplySplitter
 
 
 class StubChatwootClient:
@@ -69,15 +70,25 @@ class StubChatwootClient:
         trigger_message_id: int,
         delivery_id: str,
         content: str,
+        part_index: int = 1,
+        part_count: int = 1,
+        prior_parts: tuple[str, ...] = (),
     ) -> dict[str, object]:
-        self.reply_calls.append(
-            {
-                "conversation_id": conversation_id,
-                "trigger_message_id": trigger_message_id,
-                "delivery_id": delivery_id,
-                "content": content,
-            }
-        )
+        call: dict[str, object] = {
+            "conversation_id": conversation_id,
+            "trigger_message_id": trigger_message_id,
+            "delivery_id": delivery_id,
+            "content": content,
+        }
+        if part_count > 1:
+            call.update(
+                {
+                    "part_index": part_index,
+                    "part_count": part_count,
+                    "prior_parts": prior_parts,
+                }
+            )
+        self.reply_calls.append(call)
         return {"status": "sent", "message_id": 900}
 
 
@@ -115,6 +126,33 @@ class BlockingShadowProcessor(StubShadowProcessor):
     ) -> None:
         self.calls.append((delivery_id, context))
         await asyncio.Event().wait()
+
+
+class StubReplySplitter:
+    def __init__(self, parts: tuple[str, ...]) -> None:
+        self.parts = parts
+        self.calls: list[tuple[int, int, str]] = []
+
+    async def split(
+        self,
+        *,
+        conversation_id: int,
+        trigger_message_id: int,
+        reply: str,
+    ) -> tuple[str, ...]:
+        self.calls.append((conversation_id, trigger_message_id, reply))
+        return self.parts
+
+
+class FailingReplySplitter:
+    async def split(
+        self,
+        *,
+        conversation_id: int,
+        trigger_message_id: int,
+        reply: str,
+    ) -> tuple[str, ...]:
+        raise RuntimeError("splitter storage unavailable")
 
 
 def _signed_headers(
@@ -1592,6 +1630,413 @@ def test_sends_the_validated_agent_reply_for_an_allowed_message(
     completed = json.loads(work_path.read_text(encoding="utf-8"))
     assert completed["status"] == "completed"
     assert completed["payload"] == {}
+
+
+def test_splits_and_sends_a_reply_in_order_with_delays_between_parts(
+    tmp_path: Path,
+) -> None:
+    secret = "webhook-secret"
+    reply = "Primera parte. Segunda parte. Tercera parte."
+    proposal: dict[str, object] = {
+        "decision": "ask_question",
+        "qualification_status": "in_progress",
+        "reason_code": "answer_question",
+        "reply": reply,
+        "captured_fields": {},
+        "missing_fields": [],
+    }
+    payload = {
+        "event": "message_created",
+        "id": 789,
+        "content": "Hola",
+        "message_type": "incoming",
+        "private": False,
+        "conversation": {
+            "id": 123,
+            "contact_inbox": {
+                "source_id": "12025550123@s.whatsapp.net",
+            },
+        },
+    }
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    shadow = StubShadowProcessor(proposal)
+    chatwoot = StubChatwootClient(
+        messages=[
+            {
+                "id": 789,
+                "message_type": 0,
+                "private": False,
+                "content": "Hola",
+                "sender": {"type": "contact", "id": 20},
+            }
+        ]
+    )
+    splitter = StubReplySplitter(
+        ("Primera parte.", "Segunda parte.", "Tercera parte.")
+    )
+    delays: list[float] = []
+
+    async def record_delay(seconds: float) -> None:
+        delays.append(seconds)
+
+    app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            automated_replies_enabled=True,
+            reply_dir=tmp_path / "replies",
+            reply_splitter_enabled=True,
+            reply_part_delay_seconds=2,
+        ),
+        chatwoot_client=chatwoot,
+        shadow_processor=shadow,
+        reply_splitter=splitter,
+        reply_part_sleep=record_delay,
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(raw_body, secret=secret, delivery="multipart-delivery"),
+    )
+
+    assert response.status_code == 202
+    assert splitter.calls == []
+    assert chatwoot.reply_calls == []
+
+    asyncio.run(app.state.chatwoot_worker.run_once())
+    asyncio.run(app.state.chatwoot_worker.run_once())
+
+    assert splitter.calls == [(123, 789, reply)]
+    assert delays == [2, 2]
+    assert chatwoot.reply_calls == [
+        {
+            "conversation_id": 123,
+            "trigger_message_id": 789,
+            "delivery_id": "multipart-delivery",
+            "content": "Primera parte.",
+            "part_index": 1,
+            "part_count": 3,
+            "prior_parts": (),
+        },
+        {
+            "conversation_id": 123,
+            "trigger_message_id": 789,
+            "delivery_id": "multipart-delivery",
+            "content": "Segunda parte.",
+            "part_index": 2,
+            "part_count": 3,
+            "prior_parts": ("Primera parte.",),
+        },
+        {
+            "conversation_id": 123,
+            "trigger_message_id": 789,
+            "delivery_id": "multipart-delivery",
+            "content": "Tercera parte.",
+            "part_index": 3,
+            "part_count": 3,
+            "prior_parts": ("Primera parte.", "Segunda parte."),
+        },
+    ]
+    manifest_digest = hashlib.sha256(b"123:789").hexdigest()
+    manifest = json.loads(
+        (tmp_path / "replies" / ".splits" / f"{manifest_digest}.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert [part["content"] for part in manifest["parts"]] == [
+        "Primera parte.",
+        "Segunda parte.",
+        "Tercera parte.",
+    ]
+
+
+def test_replays_an_existing_multipart_manifest_when_feature_flag_is_off(
+    tmp_path: Path,
+) -> None:
+    secret = "webhook-secret"
+    reply = "Primera parte. Segunda parte."
+    model_calls = 0
+
+    def split_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal model_calls
+        model_calls += 1
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"parts":["Primera parte.","Segunda parte."]}'
+                            )
+                        }
+                    }
+                ]
+            },
+        )
+
+    result_dir = tmp_path / "replies" / ".splits"
+    splitter = HermesReplySplitter(
+        base_url="https://hermes.example.test/v1",
+        api_key="test-key",
+        provider="small-provider",
+        model_name="small-model",
+        result_dir=result_dir,
+        transport=httpx.MockTransport(split_handler),
+    )
+    assert asyncio.run(
+        splitter.split(conversation_id=123, trigger_message_id=789, reply=reply)
+    ) == ("Primera parte.", "Segunda parte.")
+
+    proposal: dict[str, object] = {
+        "decision": "ask_question",
+        "qualification_status": "in_progress",
+        "reason_code": "answer_question",
+        "reply": reply,
+        "captured_fields": {},
+        "missing_fields": [],
+    }
+    payload = {
+        "event": "message_created",
+        "id": 789,
+        "content": "Hola",
+        "message_type": "incoming",
+        "private": False,
+        "conversation": {
+            "id": 123,
+            "contact_inbox": {
+                "source_id": "12025550123@s.whatsapp.net",
+            },
+        },
+    }
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    chatwoot = StubChatwootClient(
+        messages=[
+            {
+                "id": 789,
+                "message_type": 0,
+                "private": False,
+                "content": "Hola",
+                "sender": {"type": "contact", "id": 20},
+            }
+        ]
+    )
+    delays: list[float] = []
+
+    async def record_delay(seconds: float) -> None:
+        delays.append(seconds)
+
+    app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path / "captures",
+            max_age_seconds=300,
+            agent_bot_id=1,
+            automated_replies_enabled=True,
+            reply_dir=tmp_path / "replies",
+            reply_splitter_enabled=False,
+            reply_part_delay_seconds=2,
+        ),
+        chatwoot_client=chatwoot,
+        shadow_processor=StubShadowProcessor(proposal),
+        reply_part_sleep=record_delay,
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(raw_body, secret=secret, delivery="flag-off-replay"),
+    )
+    assert response.status_code == 202
+
+    asyncio.run(app.state.chatwoot_worker.run_once())
+
+    assert model_calls == 1
+    assert delays == [2]
+    assert [call.get("part_index") for call in chatwoot.reply_calls] == [1, 2]
+    assert [call.get("part_count") for call in chatwoot.reply_calls] == [2, 2]
+
+
+def test_missing_manifest_after_claim_does_not_send_from_the_app(
+    tmp_path: Path,
+) -> None:
+    secret = "webhook-secret"
+    reply = "Primera parte. Segunda parte."
+
+    def split_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"parts":["Primera parte.","Segunda parte."]}'
+                        }
+                    }
+                ]
+            },
+        )
+
+    result_dir = tmp_path / "replies" / ".splits"
+    splitter = HermesReplySplitter(
+        base_url="https://hermes.example.test/v1",
+        api_key="test-key",
+        provider="small-provider",
+        model_name="small-model",
+        result_dir=result_dir,
+        transport=httpx.MockTransport(split_handler),
+    )
+    assert asyncio.run(
+        splitter.split(conversation_id=123, trigger_message_id=789, reply=reply)
+    ) == ("Primera parte.", "Segunda parte.")
+    batch_hash = hashlib.sha256(b"123:789").hexdigest()
+    (result_dir / f"{batch_hash}.json").unlink()
+
+    payload = {
+        "event": "message_created",
+        "id": 789,
+        "content": "Hola",
+        "message_type": "incoming",
+        "private": False,
+        "conversation": {
+            "id": 123,
+            "contact_inbox": {"source_id": "12025550123@s.whatsapp.net"},
+        },
+    }
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    proposal: dict[str, object] = {
+        "decision": "ask_question",
+        "qualification_status": "in_progress",
+        "reason_code": "answer_question",
+        "reply": reply,
+        "captured_fields": {},
+        "missing_fields": [],
+    }
+    chatwoot = StubChatwootClient(
+        messages=[
+            {
+                "id": 789,
+                "message_type": 0,
+                "private": False,
+                "content": "Hola",
+                "sender": {"type": "contact", "id": 20},
+            }
+        ]
+    )
+    app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path / "captures",
+            max_age_seconds=300,
+            agent_bot_id=1,
+            automated_replies_enabled=True,
+            reply_dir=tmp_path / "replies",
+            reply_splitter_enabled=False,
+        ),
+        chatwoot_client=chatwoot,
+        shadow_processor=StubShadowProcessor(proposal),
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(raw_body, secret=secret, delivery="missing-manifest"),
+    )
+    assert response.status_code == 202
+
+    asyncio.run(app.state.chatwoot_worker.run_once())
+
+    assert chatwoot.reply_calls == []
+    work_path = next((tmp_path / "captures" / ".work").glob("*.json"))
+    work = json.loads(work_path.read_text(encoding="utf-8"))
+    assert work["status"] == "admitted"
+
+
+def test_splitter_exception_falls_back_to_one_original_reply(tmp_path: Path) -> None:
+    secret = "webhook-secret"
+    reply = "Respuesta comercial válida."
+    payload = {
+        "event": "message_created",
+        "id": 789,
+        "content": "Hola",
+        "message_type": "incoming",
+        "private": False,
+        "conversation": {
+            "id": 123,
+            "contact_inbox": {
+                "source_id": "12025550123@s.whatsapp.net",
+            },
+        },
+    }
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    shadow = StubShadowProcessor(
+        {
+            "decision": "ask_question",
+            "qualification_status": "in_progress",
+            "reason_code": "answer_question",
+            "reply": reply,
+            "captured_fields": {},
+            "missing_fields": [],
+        }
+    )
+    chatwoot = StubChatwootClient(
+        messages=[
+            {
+                "id": 789,
+                "message_type": 0,
+                "private": False,
+                "content": "Hola",
+                "sender": {"type": "contact", "id": 20},
+            }
+        ]
+    )
+    app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            automated_replies_enabled=True,
+            reply_dir=tmp_path / "replies",
+            reply_splitter_enabled=True,
+        ),
+        chatwoot_client=chatwoot,
+        shadow_processor=shadow,
+        reply_splitter=FailingReplySplitter(),
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(raw_body, secret=secret, delivery="splitter-failure"),
+    )
+    assert response.status_code == 202
+
+    asyncio.run(app.state.chatwoot_worker.run_once())
+
+    assert chatwoot.reply_calls == [
+        {
+            "conversation_id": 123,
+            "trigger_message_id": 789,
+            "delivery_id": "splitter-failure",
+            "content": reply,
+        }
+    ]
+    manifest_digest = hashlib.sha256(b"123:789").hexdigest()
+    manifest = json.loads(
+        (tmp_path / "replies" / ".splits" / f"{manifest_digest}.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["status"] == "fallback"
+    assert [part["content"] for part in manifest["parts"]] == [reply]
 
 
 def test_replays_admitted_chatwoot_work_after_restart(tmp_path: Path) -> None:

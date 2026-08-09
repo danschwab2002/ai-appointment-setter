@@ -86,6 +86,8 @@ def test_deployment_uses_supabase_service_role_only(
 
     assert settings.supabase_service_role_key == "fake-service-role-key"
     assert settings.chatwoot_inbound_debounce_seconds == 30
+    assert settings.reply_splitter_enabled is False
+    assert settings.reply_part_delay_seconds == 2
     assert not hasattr(settings, "supabase_anon_key")
 
 
@@ -115,6 +117,10 @@ def test_deployment_declares_automated_reply_variables_disabled_by_default() -> 
         "CHATWOOT_AUTOMATED_REPLIES_ENABLED",
         "CHATWOOT_AGENT_BOT_ACCESS_TOKEN",
         "CHATWOOT_INBOUND_DEBOUNCE_SECONDS",
+        "CHATWOOT_REPLY_SPLITTER_ENABLED",
+        "CHATWOOT_REPLY_PART_DELAY_SECONDS",
+        "HERMES_REPLY_SPLITTER_PROVIDER",
+        "HERMES_REPLY_SPLITTER_MODEL_NAME",
         "REPLY_DIR",
     }
 
@@ -124,6 +130,8 @@ def test_deployment_declares_automated_reply_variables_disabled_by_default() -> 
 
     assert "CHATWOOT_AUTOMATED_REPLIES_ENABLED=false" in env_example
     assert "CHATWOOT_INBOUND_DEBOUNCE_SECONDS=30" in env_example
+    assert "CHATWOOT_REPLY_SPLITTER_ENABLED=false" in env_example
+    assert "CHATWOOT_REPLY_PART_DELAY_SECONDS=2" in env_example
 
 
 def test_enabling_replies_requires_shadow_mode(
