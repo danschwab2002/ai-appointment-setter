@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any, Callable
 
 import httpx
@@ -826,6 +825,7 @@ class ResolutionWorker:
         chatwoot_inbox_id: int | None = None,
         policy_key: str | None = None,
         policy_version: int | None = None,
+        purchase_worker_enabled: bool = False,
     ) -> None:
         self._supabase = supabase
         self._poll_interval = poll_interval_seconds
@@ -837,6 +837,7 @@ class ResolutionWorker:
         self._chatwoot_inbox_id = chatwoot_inbox_id
         self._policy_key = policy_key
         self._policy_version = policy_version
+        self._purchase_worker_enabled = purchase_worker_enabled
         self._stopped = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
 
@@ -876,7 +877,12 @@ class ResolutionWorker:
 
     async def _process_batch(self) -> None:
         events = await self._supabase.fetch_pending_events(
-            limit=self._batch_size
+            limit=self._batch_size,
+            excluded_event_types=(
+                ()
+                if self._purchase_worker_enabled
+                else (EVENT_PURCHASE_APPROVED,)
+            ),
         )
         for event in events:
             if self._stopped.is_set():

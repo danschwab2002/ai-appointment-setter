@@ -9,10 +9,11 @@ import time
 
 import httpx
 import pytest
+from fastapi import HTTPException, Response
+from starlette.requests import Request
 
 from bridge.app import Settings, create_app
 from bridge.hotmart import parse_hotmart_payload
-
 
 # ── Fixtures ────────────────────────────────────────────────────────
 
@@ -258,6 +259,40 @@ def test_rejects_request_with_wrong_token(tmp_path) -> None:
     assert response.json()["detail"] == "invalid_token"
 
 
+def test_rejects_wrong_token_without_reading_request_body(tmp_path) -> None:
+    app = create_app(_hotmart_settings(capture_dir=tmp_path))
+    route = next(
+        route
+        for route in app.routes
+        if getattr(route, "path", None) == "/webhooks/hotmart"
+    )
+
+    async def fail_if_body_is_read() -> dict[str, object]:
+        raise AssertionError("unauthenticated_body_was_read")
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/webhooks/hotmart",
+            "headers": [],
+        },
+        receive=fail_if_body_is_read,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            route.endpoint(
+                request,
+                Response(),
+                x_hotmart_hottok="wrong-token",
+            )
+        )
+
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "invalid_token"
+
+
 def test_returns_503_when_hotmart_not_configured(tmp_path) -> None:
     app = create_app(
         _hotmart_settings(capture_dir=tmp_path, hotmart_hottok=None)
@@ -276,6 +311,15 @@ def test_rejects_invalid_json(tmp_path) -> None:
     response = _post_hotmart(app, b"not-json")
     assert response.status_code == 400
     assert response.json()["detail"] == "invalid_json"
+
+
+def test_rejects_hotmart_body_larger_than_one_mebibyte(tmp_path) -> None:
+    app = create_app(_hotmart_settings(capture_dir=tmp_path))
+
+    response = _post_hotmart(app, b"{" + b"x" * (1024 * 1024))
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == "hotmart_webhook_body_too_large"
 
 
 def test_persists_purchase_approved_for_deferred_processing(tmp_path) -> None:

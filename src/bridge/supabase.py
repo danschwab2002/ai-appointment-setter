@@ -522,17 +522,27 @@ class SupabaseClient:
             raise SupabaseError("webhook_event_insert_invalid_cardinality")
         return InsertResult(inserted=True)
 
-    async def fetch_pending_events(self, *, limit: int = 10) -> list[dict[str, Any]]:
+    async def fetch_pending_events(
+        self,
+        *,
+        limit: int = 10,
+        excluded_event_types: tuple[str, ...] = (),
+    ) -> list[dict[str, Any]]:
         """Fetch webhook events in 'received' status, oldest first."""
+        params = {
+            "select": "id,source,external_event_id,event_type,payload",
+            "processing_status": "eq.received",
+            "order": "received_at.asc,id.asc",
+            "limit": str(limit),
+        }
+        if excluded_event_types:
+            params["event_type"] = (
+                "not.in.(" + ",".join(excluded_event_types) + ")"
+            )
         response = await self._request(
             "GET",
             "/rest/v1/webhook_events",
-            params={
-                "select": "id,source,external_event_id,event_type,payload",
-                "processing_status": "eq.received",
-                "order": "received_at.asc",
-                "limit": str(limit),
-            },
+            params=params,
         )
         if response.status_code != 200:
             raise SupabaseError(
@@ -561,7 +571,7 @@ class SupabaseClient:
         body = json.dumps(body_dict, ensure_ascii=False)
         response = await self._request(
             "PATCH",
-            f"/rest/v1/webhook_events",
+            "/rest/v1/webhook_events",
             params={"id": f"eq.{event_id}"},
             content=body,
             prefer="return=minimal",
@@ -675,9 +685,30 @@ class SupabaseClient:
         )
         operation = "apply_hotmart_purchase_approved"
         if response.status_code != 200:
+            try:
+                error_body = response.json()
+            except ValueError:
+                error_body = None
+            sqlstate = (
+                error_body.get("code")
+                if isinstance(error_body, dict)
+                else None
+            )
+            error_message = (
+                error_body.get("message")
+                if isinstance(error_body, dict)
+                else None
+            )
+            permanent_contract_errors = {
+                ("22023", "invalid_purchase_correlation_input"),
+                ("22023", "webhook_event_not_purchase_approved"),
+                ("22023", "purchase_event_invalid_approved_date"),
+                ("22023", "purchase_rpc_payload_mismatch"),
+                ("22023", "purchase_approved_at_in_future"),
+            }
             error_type = (
                 SupabasePermanentError
-                if 400 <= response.status_code < 500
+                if (sqlstate, error_message) in permanent_contract_errors
                 else SupabaseError
             )
             raise error_type(

@@ -226,15 +226,166 @@ await db.query(`
   );
 `);
 const inFlight = await db.query(`
-  select rc.status as case_status, sa.status as action_status
+  select rc.status as case_status, sa.status as action_status,
+         fda.phase as attempt_phase, fda.outcome as attempt_outcome,
+         fda.reconciliation_deadline is not null as has_reconciliation_deadline
   from public.recovery_cases rc
   join public.scheduled_actions sa on sa.recovery_case_id = rc.id
+  join public.followup_delivery_attempts fda on fda.action_id = sa.id
   where rc.id = '${plan3.rows[0].recovery_case_id}'::uuid;
 `);
 if (inFlight.rows[0]?.case_status !== 'won'
-    || inFlight.rows[0]?.action_status !== 'delivery_unknown') {
+    || inFlight.rows[0]?.action_status !== 'delivery_unknown'
+    || inFlight.rows[0]?.attempt_phase !== 'completed'
+    || inFlight.rows[0]?.attempt_outcome !== 'delivery_unknown'
+    || inFlight.rows[0]?.has_reconciliation_deadline !== true) {
   throw new Error(`unexpected in-flight state: ${JSON.stringify(inFlight.rows[0])}`);
 }
 console.log('IN_FLIGHT_DELIVERY_PRESERVED_AS_UNKNOWN_OK');
+
+// Una reserva sin request iniciado debe cerrarse como failed_before_request.
+await insertAbandonment({
+  eventId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5',
+  contactId: 'cccccccc-cccc-4ccc-8ccc-ccccccccccc5',
+  externalId: 'abandonment-5',
+  email: 'buyer5@example.com',
+  phone: '5531555555555',
+});
+const plan5 = await plan({
+  eventId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5',
+  contactId: 'cccccccc-cccc-4ccc-8ccc-ccccccccccc5',
+});
+await db.exec(`
+  update public.recovery_cases
+  set created_at = '2026-08-08T00:00:02Z'
+  where id = '${plan5.rows[0].recovery_case_id}'::uuid;
+  insert into public.followup_delivery_attempts (
+    action_id, idempotency_key, attempt_number, channel, mode,
+    phase, started_at, lease_generation,
+    expected_case_version, expected_sequence_revision
+  ) values (
+    '${plan5.rows[0].scheduled_action_id}'::uuid,
+    'purchase-reserved-1', 1, 'whatsapp', 'freeform',
+    'reserved', '2026-08-08T00:00:03Z', 1, 1, 1
+  );
+`);
+await insertPurchase({
+  eventId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb5',
+  externalId: 'purchase-5',
+  email: 'buyer5@example.com',
+  phone: '5531555555555',
+  transaction: 'HP17715690036018',
+});
+await db.query(`
+  select * from public.apply_hotmart_purchase_approved(
+    'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb5'::uuid,
+    'buyer5@example.com', '5531555555555', '123', 'OFFER-1',
+    'HP17715690036018', '2026-08-08T00:00:05Z'::timestamptz
+  );
+`);
+const reserved = await db.query(`
+  select sa.status as action_status, fda.phase as attempt_phase,
+         fda.outcome as attempt_outcome
+  from public.scheduled_actions sa
+  join public.followup_delivery_attempts fda on fda.action_id = sa.id
+  where sa.id = '${plan5.rows[0].scheduled_action_id}'::uuid;
+`);
+if (reserved.rows[0]?.action_status !== 'cancelled'
+    || reserved.rows[0]?.attempt_phase !== 'completed'
+    || reserved.rows[0]?.attempt_outcome !== 'failed_before_request') {
+  throw new Error(`unexpected reserved state: ${JSON.stringify(reserved.rows[0])}`);
+}
+console.log('RESERVED_ATTEMPT_CLOSED_BEFORE_REQUEST_OK');
+
+// Una cancelación ajena a compras y sin terminal_reason no toca el ledger.
+await insertAbandonment({
+  eventId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa6',
+  contactId: 'cccccccc-cccc-4ccc-8ccc-ccccccccccc6',
+  externalId: 'abandonment-6',
+  email: 'buyer6@example.com',
+  phone: '5531222222222',
+});
+const plan6 = await plan({
+  eventId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa6',
+  contactId: 'cccccccc-cccc-4ccc-8ccc-ccccccccccc6',
+});
+await db.exec(`
+  insert into public.followup_delivery_attempts (
+    action_id, idempotency_key, attempt_number, channel, mode,
+    phase, started_at, lease_generation,
+    expected_case_version, expected_sequence_revision
+  ) values (
+    '${plan6.rows[0].scheduled_action_id}'::uuid,
+    'non-purchase-reserved-1', 1, 'whatsapp', 'freeform',
+    'reserved', '2026-08-08T00:00:03Z', 1, 1, 1
+  );
+  update public.scheduled_actions
+  set status = 'cancelled'
+  where id = '${plan6.rows[0].scheduled_action_id}'::uuid;
+`);
+const unrelatedCancellation = await db.query(`
+  select phase, outcome, reason_code
+  from public.followup_delivery_attempts
+  where action_id = '${plan6.rows[0].scheduled_action_id}'::uuid;
+`);
+if (unrelatedCancellation.rows[0]?.phase !== 'reserved'
+    || unrelatedCancellation.rows[0]?.outcome !== null
+    || unrelatedCancellation.rows[0]?.reason_code !== null) {
+  throw new Error(
+    `purchase trigger touched unrelated attempt: ${JSON.stringify(unrelatedCancellation.rows[0])}`
+  );
+}
+console.log('UNRELATED_NULL_REASON_CANCELLATION_PRESERVES_ATTEMPT_OK');
+
+// Compra previa con email y teléfono apuntando a contactos distintos: fail closed.
+await insertPurchase({
+  eventId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb4',
+  externalId: 'purchase-4',
+  email: 'buyer4@example.com',
+  phone: '5531444444444',
+  transaction: 'HP17715690036017',
+});
+await insertAbandonment({
+  eventId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4',
+  contactId: 'cccccccc-cccc-4ccc-8ccc-ccccccccccc4',
+  externalId: 'abandonment-4',
+  email: 'buyer4@example.com',
+  phone: '5531666666666',
+});
+await db.exec(`
+  insert into public.contacts (id, full_name, email, phone)
+  values (
+    'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+    'Other Buyer', 'other4@example.com', '5531444444444'
+  );
+  insert into public.contact_points (
+    contact_id, type, raw_value, normalized_value, source
+  ) values (
+    'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+    'phone', '5531444444444', '5531444444444', 'hotmart'
+  );
+`);
+const plan4 = await plan({
+  eventId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4',
+  contactId: 'cccccccc-cccc-4ccc-8ccc-ccccccccccc4',
+});
+const ambiguous = await db.query(`
+  select rc.status as case_status, fs.status as sequence_status,
+         sa.status as action_status, sa.terminal_reason,
+         we.processing_status as purchase_status
+  from public.recovery_cases rc
+  join public.followup_sequences fs on fs.recovery_case_id = rc.id
+  join public.scheduled_actions sa on sa.recovery_case_id = rc.id
+  join public.webhook_events we on we.external_event_id = 'purchase-4'
+  where rc.id = '${plan4.rows[0].recovery_case_id}'::uuid;
+`);
+if (ambiguous.rows[0]?.case_status !== 'paused'
+    || ambiguous.rows[0]?.sequence_status !== 'paused'
+    || ambiguous.rows[0]?.action_status !== 'cancelled'
+    || ambiguous.rows[0]?.terminal_reason !== 'purchase_correlation_ambiguous'
+    || ambiguous.rows[0]?.purchase_status !== 'failed') {
+  throw new Error(`unexpected ambiguous inverse state: ${JSON.stringify(ambiguous.rows[0])}`);
+}
+console.log('AMBIGUOUS_INVERSE_PURCHASE_FAILS_CLOSED_OK');
 
 await db.close();

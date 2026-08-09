@@ -22,6 +22,27 @@ fijados a esos commits. `list_migrations` continúa vacío, por lo que esta
 aplicación no quedó registrada en el historial administrado de migraciones de
 Supabase. El repositorio conserva la fuente canónica y los commits aplicados.
 
+## Correcciones de seguridad pendientes de aplicación remota
+
+La revisión posterior agregó la migración forward-only
+`20260808000400_hotmart_purchase_safety_fences.sql`. Localmente cubre:
+
+- cierre durable de attempts `reserved` como `failed_before_request`;
+- cierre de attempts `request_started` como `delivery_unknown` con deadline;
+- pausa fail-closed cuando una compra previa coincide ambiguamente con más de
+  un contacto;
+- auditoría de la ambigüedad sin adjudicar la compra a un contacto.
+
+Esta migración **no fue aplicada a Supabase**. Tampoco se debe ejecutar todavía
+el migrador completo: las migraciones `00100..00300` ya existen físicamente,
+pero no figuran en el historial remoto, y una reaplicación podría fallar o
+repetir DDL. Antes de cualquier deploy se debe reconciliar formalmente el
+historial remoto con esos tres bundles, verificar sus hashes/fuentes y recién
+después aplicar `00400` y repetir el postflight. El flag
+`HOTMART_PURCHASE_WORKER_ENABLED` debe permanecer en `false` hasta completar esa
+secuencia y el E2E manual. Esto apaga el consumidor asíncrono, no las guardas
+SQL fail-closed ya instaladas.
+
 ## Postflight remoto
 
 La consulta independiente mediante el MCP Supabase de solo lectura confirmó:
@@ -114,5 +135,6 @@ Referencias:
 - que un webhook real de Hotmart cierre un caso;
 - que se haya enviado o cancelado un WhatsApp en producción.
 
-La capacidad está **migrada y verificada estructural y conductualmente en SQL
-remoto**, pero sigue **pendiente de despliegue del bridge y E2E**.
+La capacidad base está **migrada y verificada estructural y conductualmente en
+SQL remoto**, pero las correcciones forward de seguridad, el despliegue del
+bridge y el E2E siguen pendientes.

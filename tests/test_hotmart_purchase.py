@@ -7,8 +7,9 @@ import copy
 import json
 
 import httpx
+import pytest
 
-from bridge.hotmart import parse_hotmart_purchase_payload
+from bridge.hotmart import EVENT_PURCHASE_APPROVED, parse_hotmart_purchase_payload
 from bridge.supabase import (
     PurchaseCorrelationResult,
     SupabaseClient,
@@ -16,7 +17,6 @@ from bridge.supabase import (
     SupabasePermanentError,
 )
 from bridge.worker import ResolutionWorker
-
 
 PURCHASE_APPROVED_PAYLOAD: dict[str, object] = {
     "id": "purchase-event-001",
@@ -122,6 +122,81 @@ def test_calls_atomic_purchase_correlation_rpc() -> None:
         "p_transaction": "HP17715690036014",
         "p_approved_at": "2026-08-08T12:00:00+00:00",
     }
+
+
+def _invoke_purchase_rpc_error(
+    *, status_code: int, response_body: object
+) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(status_code, json=response_body)
+
+    client = SupabaseClient(
+        base_url="https://supabase.example.test",
+        service_role_key="service-role",
+        transport=httpx.MockTransport(handler),
+    )
+    asyncio.run(client.apply_hotmart_purchase_approved(
+        webhook_event_id="event-001",
+        buyer_email="buyer@example.test",
+        buyer_phone="5531999999999",
+        external_product_id="3526906",
+        offer_code="offer-001",
+        transaction="HP17715690036014",
+        approved_at="2026-08-08T12:00:00+00:00",
+    ))
+
+
+@pytest.mark.parametrize(
+    "status_code",
+    [400, 401, 403, 404, 408, 409, 425, 429],
+)
+def test_purchase_rpc_retries_unclassified_http_errors(status_code: int) -> None:
+    with pytest.raises(SupabaseError) as exc_info:
+        _invoke_purchase_rpc_error(
+            status_code=status_code,
+            response_body={"message": "temporary or operational failure"},
+        )
+
+    assert not isinstance(exc_info.value, SupabasePermanentError)
+
+
+@pytest.mark.parametrize(
+    ("sqlstate", "message"),
+    [
+        ("22023", "invalid_purchase_correlation_input"),
+        ("22023", "webhook_event_not_purchase_approved"),
+        ("22023", "purchase_event_invalid_approved_date"),
+        ("22023", "purchase_rpc_payload_mismatch"),
+        ("22023", "purchase_approved_at_in_future"),
+    ],
+)
+def test_purchase_rpc_quarantines_explicit_contract_errors(
+    sqlstate: str, message: str
+) -> None:
+    with pytest.raises(SupabasePermanentError):
+        _invoke_purchase_rpc_error(
+            status_code=400,
+            response_body={"code": sqlstate, "message": message},
+        )
+
+
+@pytest.mark.parametrize(
+    ("sqlstate", "message"),
+    [
+        ("22023", "unknown_contract_error"),
+        ("23514", "internal_constraint_regression"),
+    ],
+)
+def test_purchase_rpc_retries_unclassified_sql_errors(
+    sqlstate: str, message: str
+) -> None:
+    with pytest.raises(SupabaseError) as exc_info:
+        _invoke_purchase_rpc_error(
+            status_code=400,
+            response_body={"code": sqlstate, "message": message},
+        )
+
+    assert not isinstance(exc_info.value, SupabasePermanentError)
 
 
 def test_resolution_worker_routes_purchase_to_atomic_correlation() -> None:
@@ -237,3 +312,26 @@ def test_resolution_worker_does_not_let_one_transient_event_starve_batch() -> No
     asyncio.run(worker._process_batch())
 
     assert processed == ["purchase-following-002"]
+
+
+def test_disabled_purchase_worker_excludes_purchase_backlog() -> None:
+    fetch_calls: list[dict[str, object]] = []
+
+    class SupabaseStub:
+        async def fetch_pending_events(
+            self, **kwargs: object
+        ) -> list[dict[str, object]]:
+            fetch_calls.append(kwargs)
+            return []
+
+    worker = ResolutionWorker(
+        supabase=SupabaseStub(),  # type: ignore[arg-type]
+        purchase_worker_enabled=False,
+    )
+
+    asyncio.run(worker._process_batch())
+
+    assert fetch_calls == [{
+        "limit": 10,
+        "excluded_event_types": (EVENT_PURCHASE_APPROVED,),
+    }]

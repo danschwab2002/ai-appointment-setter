@@ -1,7 +1,7 @@
 # Contrato de compra aprobada de Hotmart V1
 
-- **Estado:** Implementado; DDL y conducta transaccional verificados en
-  Supabase; despliegue del bridge y E2E pendientes
+- **Estado:** Implementado localmente; DDL base verificado en Supabase;
+  migración forward de seguridad, despliegue del bridge y E2E pendientes
 - **Evento:** `PURCHASE_APPROVED`
 - **Versión de payload:** `2.0.0`
 - **Frontera autoritativa:** bridge + función transaccional de Postgres
@@ -17,8 +17,9 @@ cancelar seguimientos.
 
 `POST /webhooks/hotmart` aplica las mismas guardas que el abandono de carrito:
 
-1. `X-HOTMART-HOTTOK` válido mediante comparación constante;
-2. JSON válido dentro del límite configurado;
+1. `X-HOTMART-HOTTOK` válido mediante comparación constante, antes de leer el
+   cuerpo;
+2. JSON válido dentro del límite fijo de 1 MiB, leído incrementalmente;
 3. `id` externo no vacío;
 4. `event = PURCHASE_APPROVED`;
 5. `version = 2.0.0`;
@@ -51,6 +52,18 @@ Normalización:
 
 Un payload incompleto o contradictorio termina como
 `invalid_purchase_payload`; no invoca Hermes ni intenta correlación parcial.
+
+El consumo asíncrono de `PURCHASE_APPROVED` por el resolution worker está
+protegido por `HOTMART_PURCHASE_WORKER_ENABLED`, apagado por defecto. La
+admisión HTTP sigue siendo durable con el flag apagado, pero el worker excluye
+ese tipo de evento de su lote para que no bloquee abandonos. El flag sólo puede
+activarse junto con `RESOLUTION_WORKER_ENABLED=true`.
+
+Este flag no desactiva las guardas SQL fail-closed. Una compra durable conocida
+puede igualmente impedir una recuperación creada después: una coincidencia
+exacta se aplica por la guarda de orden inverso y una coincidencia ambigua pausa
+el caso sin elegir contacto. La garantía de no contactar a un comprador tiene
+precedencia sobre el apagado del consumidor asíncrono.
 
 ## Correlación autoritativa
 
@@ -88,8 +101,11 @@ En una sola transacción:
    `completion_reason = purchase_detected`;
 4. las acciones `pending`, `deferred` o `retryable_failed` sin request iniciado
    pasan a `cancelled` con `terminal_reason = purchase_detected`;
-5. se registra `purchase_detected` en `conversation_events`;
-6. el webhook pasa a `processed`.
+5. un delivery attempt `reserved` se finaliza como `failed_before_request`;
+6. un delivery attempt `request_started` se finaliza como `delivery_unknown`
+   con deadline de reconciliación;
+7. se registra `purchase_detected` en `conversation_events`;
+8. el webhook pasa a `processed`.
 
 Las acciones que ya están en `delivery_unknown` no se reclasifican como
 canceladas porque puede existir un efecto externo previo. Si la compra compite
@@ -108,6 +124,7 @@ casos candidatos, aplica fail-closed:
 - pausa los casos activos;
 - pausa sus secuencias;
 - cancela acciones todavía no iniciadas;
+- finaliza de forma coherente sus delivery attempts;
 - registra `purchase_correlation_ambiguous`.
 
 La resolución posterior es humana; no se elige el primer candidato.
