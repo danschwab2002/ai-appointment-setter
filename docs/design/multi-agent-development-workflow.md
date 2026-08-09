@@ -129,6 +129,8 @@ archivos entre worktrees y no se usa `stash` como mecanismo de coordinación.
 
 - Las ramas pueden publicarse automáticamente cuando quedan verificadas.
 - El merge a `main` es serial y pertenece al integrador.
+- La integración debe conservar el commit exacto fijado en `review` como
+  ancestro de `main`; no usar squash ni rebase para una tarea coordinada.
 - El despliegue referencia un commit limpio de `origin/main`.
 - Una rama funcional no equivale a una capacidad desplegada.
 - Una migración o despliegue remoto conserva sus autorizaciones independientes.
