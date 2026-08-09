@@ -117,7 +117,7 @@ evento durable distinto del abandono:
 
 ```text
 Hotmart PURCHASE_APPROVED
-  -> autenticación + anti-replay + deduplicación
+  -> autenticación + anti-replay + admisión semántica transaccional
   -> webhook_events(received)
   -> ResolutionWorker
   -> correlación transaccional por identidad + producto + oferta
@@ -125,6 +125,17 @@ Hotmart PURCHASE_APPROVED
   -> followup_sequence(completed)
   -> scheduled_action(cancelled si todavía no inició entrega)
 ```
+
+La transacción Hotmart no se trata como duplicate por sí sola. La RPC de
+admisión compara una tupla de negocio normalizada. Un replay idéntico se
+deduplica; una tupla distinta para la misma transacción crea un incidente
+durable y activa un bloqueo global fail-closed en la frontera
+`request_started`. Admisión y request-start comparten un advisory lock: la
+operación que gana se vuelve visible antes de que la otra continúe. Así, un
+request ya iniciado conserva honestamente su posible efecto y ningún request
+nuevo puede comenzar hasta una resolución operativa explícita. Los casos y
+acciones pueden permanecer visibles como pendientes, pero no pueden producir
+un efecto externo.
 
 La correlación no se delega a Hermes. Una coincidencia exacta cierra el caso y
 la secuencia en la misma transacción. Una coincidencia ambigua pausa los casos

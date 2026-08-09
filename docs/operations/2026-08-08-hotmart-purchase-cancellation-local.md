@@ -104,3 +104,49 @@ Los dos servidores locales fueron detenidos después de la prueba.
 Antes de declarar la capacidad operativa deben aplicarse la migración de forma
 controlada y verificar los outcomes `applied`, `already_applied`, `not_found` y
 `ambiguous` contra datos de prueba en el esquema real.
+
+## Addendum de integración — 2026-08-09
+
+La rama fue actualizada contra el `main` vigente y la admisión HTTP de compra
+pasó de un insert REST genérico a la RPC transaccional
+`admit_hotmart_purchase_approved(...)`. Por eso, el simulador HTTP descrito
+arriba conserva valor histórico pero ya no representa el endpoint PostgREST
+actual.
+
+La verificación combinada ejecutó:
+
+```text
+uv run pytest -q: exit 0
+npm test --prefix tests/sql/followup_engine: exit 0
+validate-tree: 11 migraciones, 0 versiones duplicadas
+compileall: exit 0
+Ruff focalizado sobre pruebas modificadas: exit 0
+git diff --check: exit 0
+```
+
+Los probes SQL nuevos produjeron:
+
+```text
+PURCHASE_SEMANTIC_EXACT_REPLAY_OK
+PURCHASE_SEMANTIC_CONFLICT_FAILS_CLOSED_OK
+UNPROCESSABLE_PURCHASE_DOES_NOT_RESERVE_TRANSACTION_OK
+LEGACY_MALFORMED_PURCHASE_CANNOT_SUPPRESS_CORRECTION_OK
+UNRESOLVED_PURCHASE_SEMANTIC_CONFLICT_BLOCKS_REQUEST_START_OK
+RESOLVED_PURCHASE_SEMANTIC_CONFLICT_REPLAY_OK
+```
+
+También se levantaron Uvicorn y un stub PostgREST en puertos TCP locales. Dos
+requests HTTP reales verificaron el mapeo bridge → RPC:
+
+```text
+PURCHASE_HTTP_RPC_ADMISSION_OK
+PURCHASE_HTTP_SEMANTIC_CONFLICT_MAPPING_OK
+```
+
+Esto demuestra localmente que una repetición con tupla normalizada idéntica no
+crea trabajo, mientras que una misma transacción con datos de negocio distintos
+persiste un incidente y bloquea transaccionalmente todo `request_started`
+posterior. También demuestra que tipos no procesables no reservan la transacción
+y que el replay posterior a una resolución conserva su outcome sin reabrirla.
+Todavía no demuestra que la migración forward esté aplicada en Supabase ni que
+el bridge desplegado invoque la RPC nueva.

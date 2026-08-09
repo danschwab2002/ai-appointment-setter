@@ -11,6 +11,7 @@ import pytest
 
 from bridge.hotmart import EVENT_PURCHASE_APPROVED, parse_hotmart_purchase_payload
 from bridge.supabase import (
+    PurchaseAdmissionResult,
     PurchaseCorrelationResult,
     SupabaseClient,
     SupabaseError,
@@ -42,6 +43,43 @@ PURCHASE_APPROVED_PAYLOAD: dict[str, object] = {
         },
     },
 }
+
+
+def test_admits_purchase_through_semantic_idempotency_rpc() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json=[{
+                "outcome": "semantic_conflict",
+                "webhook_event_id": "existing-event-001",
+            }],
+        )
+
+    client = SupabaseClient(
+        base_url="https://supabase.example.test",
+        service_role_key="service-role",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = asyncio.run(client.admit_hotmart_purchase_approved(
+        external_event_id="corrected-event-002",
+        payload=PURCHASE_APPROVED_PAYLOAD,
+    ))
+
+    assert result == PurchaseAdmissionResult(
+        outcome="semantic_conflict",
+        webhook_event_id="existing-event-001",
+    )
+    assert requests[0].url.path == (
+        "/rest/v1/rpc/admit_hotmart_purchase_approved"
+    )
+    assert json.loads(requests[0].content) == {
+        "p_external_event_id": "corrected-event-002",
+        "p_payload": PURCHASE_APPROVED_PAYLOAD,
+    }
 
 
 def test_parses_official_purchase_approved_identifiers() -> None:

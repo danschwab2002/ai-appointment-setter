@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-
 MIGRATION = (
     Path(__file__).parents[1]
     / "supabase/migrations/20260808000100_hotmart_purchase_approved.sql"
@@ -14,6 +13,10 @@ ORDERING_GUARD_MIGRATION = (
 ORDERING_GUARD_PRIVILEGES_MIGRATION = (
     Path(__file__).parents[1]
     / "supabase/migrations/20260808000300_hotmart_purchase_ordering_guard_privileges.sql"
+)
+SEMANTIC_CONFLICT_MIGRATION = (
+    Path(__file__).parents[1]
+    / "supabase/migrations/20260808000500_hotmart_purchase_semantic_conflicts.sql"
 )
 
 
@@ -81,3 +84,38 @@ def test_ordering_guard_trigger_function_has_no_direct_api_execute_surface() -> 
     for role in ("public", "anon", "authenticated", "service_role"):
         assert role in sql
     assert "grant execute" not in sql
+
+
+def test_purchase_admission_distinguishes_exact_replay_from_semantic_conflict() -> None:
+    sql = SEMANTIC_CONFLICT_MIGRATION.read_text().lower()
+
+    assert "create table public.hotmart_purchase_semantic_conflicts" in sql
+    assert "function public.admit_hotmart_purchase_approved" in sql
+    assert "function public.hotmart_purchase_semantic_tuple" in sql
+    assert "lock table public.webhook_events" in sql
+    assert "outcome := 'duplicate'" in sql
+    assert "outcome := 'semantic_conflict'" in sql
+    assert "incoming_payload" in sql
+    assert "resolved_at" in sql
+
+
+def test_unresolved_purchase_semantic_conflict_blocks_request_start() -> None:
+    sql = SEMANTIC_CONFLICT_MIGRATION.read_text().lower()
+
+    assert sql.count("pg_advisory_xact_lock(7275726368617365)") >= 2
+    assert "function public.guard_purchase_semantic_conflict_request_start" in sql
+    assert "new.phase <> 'request_started'" in sql
+    assert "unresolved_purchase_semantic_conflict" in sql
+    assert "trigger followup_attempts_guard_purchase_semantic_conflict" in sql
+    assert "before insert or update of phase" in sql
+
+
+def test_purchase_admission_privileges_expose_only_the_entrypoint() -> None:
+    sql = SEMANTIC_CONFLICT_MIGRATION.read_text().lower()
+
+    for role in ("public", "anon", "authenticated"):
+        assert role in sql
+    assert "grant execute on function public.admit_hotmart_purchase_approved" in sql
+    assert "to service_role" in sql
+    assert "hotmart_purchase_semantic_tuple(jsonb) from service_role" in sql
+    assert "guard_purchase_semantic_conflict_request_start() from service_role" in sql

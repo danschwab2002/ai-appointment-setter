@@ -323,7 +323,13 @@ def test_rejects_hotmart_body_larger_than_one_mebibyte(tmp_path) -> None:
 
 
 def test_persists_purchase_approved_for_deferred_processing(tmp_path) -> None:
-    transport = _MockSupabaseTransport(status_code=201)
+    transport = _MockSupabaseTransport(
+        status_code=200,
+        response_body=[{
+            "outcome": "inserted",
+            "webhook_event_id": "inserted-event",
+        }],
+    )
     import bridge.supabase as supabase_mod
 
     original_init = supabase_mod.SupabaseClient.__init__
@@ -354,8 +360,94 @@ def test_persists_purchase_approved_for_deferred_processing(tmp_path) -> None:
         "event_id": "purchase-event-001",
     }
     assert len(transport.requests) == 1
+    assert transport.requests[0].url.path == (
+        "/rest/v1/rpc/admit_hotmart_purchase_approved"
+    )
     body = json.loads(transport.requests[0].content)
-    assert body["event_type"] == "PURCHASE_APPROVED"
+    assert body["p_external_event_id"] == "purchase-event-001"
+    assert body["p_payload"]["event"] == "PURCHASE_APPROVED"
+
+
+def test_purchase_semantic_conflict_is_durable_and_not_reported_as_duplicate(
+    tmp_path,
+) -> None:
+    transport = _MockSupabaseTransport(
+        status_code=200,
+        response_body=[{
+            "outcome": "semantic_conflict",
+            "webhook_event_id": "existing-purchase-event",
+        }],
+    )
+    import bridge.supabase as supabase_mod
+
+    original_init = supabase_mod.SupabaseClient.__init__
+
+    def _patched_init(self, **kwargs):
+        kwargs["transport"] = transport
+        original_init(self, **kwargs)
+
+    supabase_mod.SupabaseClient.__init__ = _patched_init
+    try:
+        app = create_app(
+            _hotmart_settings(
+                capture_dir=tmp_path,
+                supabase_base_url="https://fake-supabase.supabase.co",
+                supabase_service_role_key="fake-service-role-key",
+            )
+        )
+        response = _post_hotmart(
+            app,
+            json.dumps(PURCHASE_APPROVED_PAYLOAD).encode(),
+        )
+    finally:
+        supabase_mod.SupabaseClient.__init__ = original_init
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "status": "conflict",
+        "event_id": "purchase-event-001",
+        "reason": "purchase_semantic_conflict",
+    }
+    assert transport.requests[0].url.path == (
+        "/rest/v1/rpc/admit_hotmart_purchase_approved"
+    )
+
+
+def test_rejects_unprocessable_purchase_before_semantic_admission(tmp_path) -> None:
+    transport = _MockSupabaseTransport(status_code=500)
+    import bridge.supabase as supabase_mod
+
+    original_init = supabase_mod.SupabaseClient.__init__
+
+    def _patched_init(self, **kwargs):
+        kwargs["transport"] = transport
+        original_init(self, **kwargs)
+
+    malformed = copy.deepcopy(PURCHASE_APPROVED_PAYLOAD)
+    data = malformed["data"]
+    assert isinstance(data, dict)
+    product = data["product"]
+    assert isinstance(product, dict)
+    product["id"] = "3526906"
+    supabase_mod.SupabaseClient.__init__ = _patched_init
+    try:
+        app = create_app(
+            _hotmart_settings(
+                capture_dir=tmp_path,
+                supabase_base_url="https://fake-supabase.supabase.co",
+                supabase_service_role_key="fake-service-role-key",
+            )
+        )
+        response = _post_hotmart(app, json.dumps(malformed).encode())
+    finally:
+        supabase_mod.SupabaseClient.__init__ = original_init
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ignored",
+        "reason": "invalid_purchase_payload",
+    }
+    assert transport.requests == []
 
 
 def test_ignores_unsupported_version(tmp_path) -> None:

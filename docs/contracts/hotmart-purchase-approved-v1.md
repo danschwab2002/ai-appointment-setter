@@ -24,9 +24,19 @@ cancelar seguimientos.
 4. `event = PURCHASE_APPROVED`;
 5. `version = 2.0.0`;
 6. `creation_date` dentro de la ventana anti-replay;
-7. persistencia idempotente en `webhook_events` antes de responder `202`.
+7. admisión transaccional mediante `admit_hotmart_purchase_approved(...)` antes
+   de responder.
 
-El receptor no correlaciona ni modifica el caso durante el request HTTP.
+Una admisión nueva responde `202 received`; un replay semánticamente idéntico
+responde `200 duplicate`. La admisión no correlaciona un comprador con un caso.
+La única excepción es una colisión semántica de transacción: se persiste como
+incidente y activa el bloqueo global fail-closed de `request_started` antes de
+responder `202 conflict`.
+
+La admisión exige la misma forma procesable que el worker para ID, timestamps,
+identidad, producto, estado y transacción. Un payload con tipos incompatibles se
+rechaza antes de reservar la transacción, por lo que una entrega corregida puede
+ingresar después.
 
 ## Campos requeridos para procesamiento
 
@@ -48,6 +58,7 @@ Normalización:
 - email: `trim` + minúsculas;
 - teléfono: sólo dígitos después de validar sintaxis convencional;
 - producto: representación textual del identificador numérico;
+- oferta: `trim`; vacío equivale a ausencia;
 - transacción: referencia Hotmart con formato `HP[A-Z0-9]{6,62}`.
 
 Un payload incompleto o contradictorio termina como
@@ -140,6 +151,26 @@ operativa.
 - `(source, external_event_id)` evita admisiones duplicadas;
 - un índice parcial único por `data.purchase.transaction` evita aplicar la
   misma transacción con IDs externos diferentes;
+- `admit_hotmart_purchase_approved(...)` serializa la admisión y compara la
+  tupla normalizada `evento + versión + estado + transacción + identidad +
+  producto + oferta + fecha aprobada`;
+- una tupla idéntica es `duplicate`, incluso si Hotmart cambia el ID externo;
+- una misma transacción con una tupla diferente no es un duplicate: crea un
+  registro durable en `hotmart_purchase_semantic_conflicts`, conserva el
+  payload entrante y devuelve `semantic_conflict`;
+- una fila histórica que no cumple la forma procesable nunca puede clasificarse
+  como duplicate de una entrega corregida; produce el mismo incidente durable
+  fail-closed;
+- admisión y transición a `request_started` comparten un advisory lock
+  transaccional global: si el request ganó la carrera queda honestamente del
+  lado potencialmente enviado; si ganó la admisión, ningún request nuevo puede
+  cruzar la frontera mientras el conflicto siga sin resolver;
+- un caso o una acción pueden seguir visibles como pendientes durante el
+  incidente, pero el trigger autoritativo sobre `followup_delivery_attempts`
+  impide el efecto externo tanto para trabajo actual como futuro;
+- la liberación nunca es automática: un operador debe resolver el incidente;
+  un replay del delivery conflictivo conserva `semantic_conflict` y no reabre
+  una resolución ya registrada;
 - `recovery_cases.purchase_event_id` es único;
 - reejecutar una compra ya aplicada devuelve `already_applied`;
 - una falla transitoria de la llamada RPC deja el evento `received` por rollback
@@ -157,7 +188,10 @@ Los logs de aplicación sólo incluyen el ID externo del evento y el outcome. No
 incluyen email, teléfono, payload completo ni transacción.
 
 El payload completo permanece en `webhook_events` y en la captura privada según
-las reglas de datos existentes.
+las reglas de datos existentes. Ante una colisión semántica, el payload entrante
+también queda en `hotmart_purchase_semantic_conflicts`, con acceso directo
+revocado para roles públicos y de usuario; sólo el service role puede leer la
+evidencia y la escritura ocurre mediante la RPC de admisión.
 
 ## Límites de evidencia
 

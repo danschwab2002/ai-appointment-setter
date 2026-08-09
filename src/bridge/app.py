@@ -40,8 +40,10 @@ from bridge.chatwoot_inbox import (
 from bridge.filtering import classify_chatwoot_event
 from bridge.hermes import HermesShadowProcessor
 from bridge.hotmart import (
+    EVENT_PURCHASE_APPROVED,
     classify_hotmart_event,
     is_stale_event,
+    parse_hotmart_purchase_payload,
     verify_hotmart_token,
 )
 from bridge.messaging import EvolutionMessageSender, MessageSender
@@ -1166,6 +1168,35 @@ def create_app(
                 status_code=503, detail="supabase_not_configured"
             )
         try:
+            if event_type == EVENT_PURCHASE_APPROVED:
+                if parse_hotmart_purchase_payload(payload) is None:
+                    response.status_code = status.HTTP_200_OK
+                    return {
+                        "status": "ignored",
+                        "reason": "invalid_purchase_payload",
+                    }
+                purchase_admission = (
+                    await shared_supabase.admit_hotmart_purchase_approved(
+                        external_event_id=event_id,
+                        payload=payload,
+                    )
+                )
+                if purchase_admission.outcome == "semantic_conflict":
+                    return {
+                        "status": "conflict",
+                        "event_id": event_id,
+                        "reason": "purchase_semantic_conflict",
+                    }
+                if purchase_admission.outcome == "duplicate":
+                    response.status_code = status.HTTP_200_OK
+                    return {
+                        "status": "duplicate",
+                        "event_id": event_id,
+                    }
+                return {
+                    "status": "received",
+                    "event_id": event_id,
+                }
             result = await shared_supabase.insert_webhook_event(
                 source="hotmart",
                 external_event_id=event_id,

@@ -36,6 +36,14 @@ class InsertResult:
 
 
 @dataclass(frozen=True)
+class PurchaseAdmissionResult:
+    """Durable semantic-admission outcome for a purchase webhook."""
+
+    outcome: str
+    webhook_event_id: str
+
+
+@dataclass(frozen=True)
 class CartRecoveryPlan:
     """Durable case, sequence, and next action created by PostgreSQL."""
 
@@ -521,6 +529,49 @@ class SupabaseClient:
         if len(rows) != 1:
             raise SupabaseError("webhook_event_insert_invalid_cardinality")
         return InsertResult(inserted=True)
+
+    async def admit_hotmart_purchase_approved(
+        self,
+        *,
+        external_event_id: str,
+        payload: dict[str, Any],
+    ) -> PurchaseAdmissionResult:
+        """Admit a purchase with transaction-level semantic replay checks."""
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/admit_hotmart_purchase_approved",
+            content=json.dumps(
+                {
+                    "p_external_event_id": external_event_id,
+                    "p_payload": payload,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(
+                f"purchase_admission_failed: HTTP {response.status_code}"
+            )
+        try:
+            rows = response.json()
+        except ValueError as exc:
+            raise SupabaseError("purchase_admission_invalid_json") from exc
+        if (
+            not isinstance(rows, list)
+            or len(rows) != 1
+            or not isinstance(rows[0], dict)
+        ):
+            raise SupabaseError("purchase_admission_invalid_shape")
+        outcome = rows[0].get("outcome")
+        webhook_event_id = rows[0].get("webhook_event_id")
+        if outcome not in {"inserted", "duplicate", "semantic_conflict"}:
+            raise SupabaseError("purchase_admission_invalid_outcome")
+        if not isinstance(webhook_event_id, str) or not webhook_event_id:
+            raise SupabaseError("purchase_admission_invalid_event_id")
+        return PurchaseAdmissionResult(
+            outcome=outcome,
+            webhook_event_id=webhook_event_id,
+        )
 
     async def fetch_pending_events(
         self,

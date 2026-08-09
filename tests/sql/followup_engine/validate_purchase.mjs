@@ -388,4 +388,333 @@ if (ambiguous.rows[0]?.case_status !== 'paused'
 }
 console.log('AMBIGUOUS_INVERSE_PURCHASE_FAILS_CLOSED_OK');
 
+// La admisión rechaza tipos que el worker no puede procesar, sin reservar la
+// transacción. Una entrega corregida puede ingresar después.
+let malformedAdmissionBlocked = false;
+try {
+  await db.query(`
+    select * from public.admit_hotmart_purchase_approved(
+      'purchase-semantic-malformed',
+      jsonb_build_object(
+        'id', 'purchase-semantic-malformed',
+        'creation_date', 1786147200000,
+        'event', 'PURCHASE_APPROVED',
+        'version', '2.0.0',
+        'data', jsonb_build_object(
+          'buyer', jsonb_build_object('email', 'malformed@example.com'),
+          'product', jsonb_build_object('id', '123'),
+          'purchase', jsonb_build_object(
+            'status', 'APPROVED',
+            'transaction', 'HPSEMANTICBAD01',
+            'approved_date', 1786147205000
+          )
+        )
+      )
+    );
+  `);
+} catch (error) {
+  malformedAdmissionBlocked = String(error).includes('invalid_purchase_admission_input');
+}
+if (!malformedAdmissionBlocked) {
+  throw new Error('unprocessable purchase was admitted');
+}
+const correctedAfterMalformed = await db.query(`
+  select * from public.admit_hotmart_purchase_approved(
+    'purchase-semantic-corrected-after-malformed',
+    jsonb_build_object(
+      'id', 'purchase-semantic-corrected-after-malformed',
+      'creation_date', 1786147200000,
+      'event', 'PURCHASE_APPROVED',
+      'version', '2.0.0',
+      'data', jsonb_build_object(
+        'buyer', jsonb_build_object('email', 'malformed@example.com'),
+        'product', jsonb_build_object('id', 123),
+        'purchase', jsonb_build_object(
+          'status', 'APPROVED',
+          'transaction', 'HPSEMANTICBAD01',
+          'approved_date', 1786147205000
+        )
+      )
+    )
+  );
+`);
+if (correctedAfterMalformed.rows[0]?.outcome !== 'inserted') {
+  throw new Error(`corrected purchase was suppressed: ${JSON.stringify(correctedAfterMalformed.rows[0])}`);
+}
+console.log('UNPROCESSABLE_PURCHASE_DOES_NOT_RESERVE_TRANSACTION_OK');
+
+// Una fila malformada creada por el bridge anterior nunca puede comparar como
+// duplicate con una entrega corregida y procesable.
+await db.exec(`
+  insert into public.webhook_events (
+    id, source, external_event_id, event_type, payload, processing_status
+  ) values (
+    'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb9',
+    'hotmart', 'purchase-semantic-legacy-malformed', 'PURCHASE_APPROVED',
+    jsonb_build_object(
+      'id', 'purchase-semantic-legacy-malformed',
+      'creation_date', 1786147200000,
+      'event', 'PURCHASE_APPROVED',
+      'version', '2.0.0',
+      'data', jsonb_build_object(
+        'buyer', jsonb_build_object('email', 'legacy@example.com'),
+        'product', jsonb_build_object('id', '123'),
+        'purchase', jsonb_build_object(
+          'status', 'APPROVED',
+          'transaction', 'HPSEMANTICLEG01',
+          'approved_date', 1786147205000
+        )
+      )
+    ),
+    'failed'
+  );
+`);
+const correctedLegacy = await db.query(`
+  select * from public.admit_hotmart_purchase_approved(
+    'purchase-semantic-legacy-corrected',
+    jsonb_build_object(
+      'id', 'purchase-semantic-legacy-corrected',
+      'creation_date', 1786147201000,
+      'event', 'PURCHASE_APPROVED',
+      'version', '2.0.0',
+      'data', jsonb_build_object(
+        'buyer', jsonb_build_object('email', 'legacy@example.com'),
+        'product', jsonb_build_object('id', 123),
+        'purchase', jsonb_build_object(
+          'status', 'APPROVED',
+          'transaction', 'HPSEMANTICLEG01',
+          'approved_date', 1786147205000
+        )
+      )
+    )
+  );
+`);
+if (correctedLegacy.rows[0]?.outcome !== 'semantic_conflict') {
+  throw new Error(`legacy malformed row suppressed correction: ${JSON.stringify(correctedLegacy.rows[0])}`);
+}
+await db.exec(`
+  update public.hotmart_purchase_semantic_conflicts
+  set resolved_at = clock_timestamp(), resolution = 'legacy-probe-resolved'
+  where incoming_external_event_id = 'purchase-semantic-legacy-corrected';
+`);
+console.log('LEGACY_MALFORMED_PURCHASE_CANNOT_SUPPRESS_CORRECTION_OK');
+
+// La misma transacción sólo es duplicate cuando la tupla de negocio coincide.
+await insertAbandonment({
+  eventId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa7',
+  contactId: 'cccccccc-cccc-4ccc-8ccc-ccccccccccc7',
+  externalId: 'abandonment-7',
+  email: 'buyer7@example.com',
+  phone: '5531777777777',
+});
+const plan7 = await plan({
+  eventId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa7',
+  contactId: 'cccccccc-cccc-4ccc-8ccc-ccccccccccc7',
+});
+const firstAdmission = await db.query(`
+  select * from public.admit_hotmart_purchase_approved(
+    'purchase-semantic-1',
+    jsonb_build_object(
+      'id', 'purchase-semantic-1',
+      'creation_date', 1786147200000,
+      'event', 'PURCHASE_APPROVED',
+      'version', '2.0.0',
+      'data', jsonb_build_object(
+        'buyer', jsonb_build_object(
+          'email', 'buyer7@example.com',
+          'checkout_phone', '5531777777777'
+        ),
+        'product', jsonb_build_object('id', 123),
+        'purchase', jsonb_build_object(
+          'status', 'APPROVED',
+          'transaction', 'HPSEMANTIC00001',
+          'approved_date', 1786147205000,
+          'offer', jsonb_build_object('code', 'OFFER-1')
+        )
+      )
+    )
+  );
+`);
+if (firstAdmission.rows[0]?.outcome !== 'inserted') {
+  throw new Error(`first semantic admission failed: ${JSON.stringify(firstAdmission.rows[0])}`);
+}
+const exactReplay = await db.query(`
+  select * from public.admit_hotmart_purchase_approved(
+    'purchase-semantic-exact-replay',
+    jsonb_build_object(
+      'id', 'purchase-semantic-exact-replay',
+      'creation_date', 1786147201000,
+      'event', 'PURCHASE_APPROVED',
+      'version', '2.0.0',
+      'data', jsonb_build_object(
+        'buyer', jsonb_build_object(
+          'email', ' BUYER7@example.com ',
+          'checkout_phone', '+55 (31) 77777-7777'
+        ),
+        'product', jsonb_build_object('id', 123),
+        'purchase', jsonb_build_object(
+          'status', 'APPROVED',
+          'transaction', 'HPSEMANTIC00001',
+          'approved_date', 1786147205000,
+          'offer', jsonb_build_object('code', ' OFFER-1 ')
+        )
+      )
+    )
+  );
+`);
+const beforeConflict = await db.query(`
+  select rc.status as case_status, sa.status as action_status,
+         (select count(*)::integer
+          from public.hotmart_purchase_semantic_conflicts
+          where resolved_at is null) as conflicts
+  from public.recovery_cases rc
+  join public.scheduled_actions sa on sa.recovery_case_id = rc.id
+  where rc.id = '${plan7.rows[0].recovery_case_id}'::uuid;
+`);
+if (exactReplay.rows[0]?.outcome !== 'duplicate'
+    || beforeConflict.rows[0]?.case_status !== 'grace_period'
+    || beforeConflict.rows[0]?.action_status !== 'pending'
+    || beforeConflict.rows[0]?.conflicts !== 0) {
+  throw new Error(`exact replay was not idempotent: ${JSON.stringify({
+    replay: exactReplay.rows[0], state: beforeConflict.rows[0],
+  })}`);
+}
+console.log('PURCHASE_SEMANTIC_EXACT_REPLAY_OK');
+
+const semanticConflict = await db.query(`
+  select * from public.admit_hotmart_purchase_approved(
+    'purchase-semantic-corrected',
+    jsonb_build_object(
+      'id', 'purchase-semantic-corrected',
+      'creation_date', 1786147200000,
+      'event', 'PURCHASE_APPROVED',
+      'version', '2.0.0',
+      'data', jsonb_build_object(
+        'buyer', jsonb_build_object(
+          'email', 'corrected-buyer@example.com',
+          'checkout_phone', '5531888888888'
+        ),
+        'product', jsonb_build_object('id', 123),
+        'purchase', jsonb_build_object(
+          'status', 'APPROVED',
+          'transaction', 'HPSEMANTIC00001',
+          'approved_date', 1786147205000,
+          'offer', jsonb_build_object('code', 'OFFER-1')
+        )
+      )
+    )
+  );
+`);
+const conflictState = await db.query(`
+  select count(*)::integer as unresolved_conflicts
+  from public.hotmart_purchase_semantic_conflicts
+  where resolved_at is null;
+`);
+if (semanticConflict.rows[0]?.outcome !== 'semantic_conflict'
+    || conflictState.rows[0]?.unresolved_conflicts !== 1) {
+  throw new Error(`semantic conflict did not fail closed: ${JSON.stringify({
+    admission: semanticConflict.rows[0], state: conflictState.rows[0],
+  })}`);
+}
+console.log('PURCHASE_SEMANTIC_CONFLICT_FAILS_CLOSED_OK');
+
+// Un conflicto durable serializa y bloquea la frontera request_started, incluso
+// si un plan futuro sigue visible como pendiente.
+await insertAbandonment({
+  eventId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa8',
+  contactId: 'cccccccc-cccc-4ccc-8ccc-ccccccccccc8',
+  externalId: 'abandonment-8',
+  email: 'buyer8@example.com',
+  phone: '5531888888889',
+});
+const plan8 = await plan({
+  eventId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa8',
+  contactId: 'cccccccc-cccc-4ccc-8ccc-ccccccccccc8',
+});
+await db.exec(`
+  insert into public.followup_delivery_attempts (
+    action_id, idempotency_key, attempt_number, channel, mode,
+    phase, started_at, lease_generation,
+    expected_case_version, expected_sequence_revision
+  ) values (
+    '${plan8.rows[0].scheduled_action_id}'::uuid,
+    'semantic-conflict-gated-1', 1, 'whatsapp', 'freeform',
+    'reserved', '2026-08-08T00:00:03Z', 1, 1, 1
+  );
+`);
+let requestStartBlocked = false;
+try {
+  await db.exec(`
+    update public.followup_delivery_attempts
+    set phase = 'request_started',
+        request_started_at = '2026-08-08T00:00:04Z'
+    where action_id = '${plan8.rows[0].scheduled_action_id}'::uuid;
+  `);
+} catch (error) {
+  requestStartBlocked = String(error).includes('unresolved_purchase_semantic_conflict');
+}
+const gatedAttempt = await db.query(`
+  select phase
+  from public.followup_delivery_attempts
+  where action_id = '${plan8.rows[0].scheduled_action_id}'::uuid;
+`);
+if (!requestStartBlocked || gatedAttempt.rows[0]?.phase !== 'reserved') {
+  throw new Error(`request start escaped semantic conflict: ${JSON.stringify(gatedAttempt.rows[0])}`);
+}
+console.log('UNRESOLVED_PURCHASE_SEMANTIC_CONFLICT_BLOCKS_REQUEST_START_OK');
+
+// El mismo delivery conflictivo conserva su outcome después de resolución y no
+// reabre el incidente. La frontera se libera sólo al quedar resuelto.
+await db.exec(`
+  update public.hotmart_purchase_semantic_conflicts
+  set resolved_at = clock_timestamp(), resolution = 'local-test-resolution'
+  where incoming_external_event_id = 'purchase-semantic-corrected';
+`);
+const replayAfterResolution = await db.query(`
+  select * from public.admit_hotmart_purchase_approved(
+    'purchase-semantic-corrected',
+    jsonb_build_object(
+      'id', 'purchase-semantic-corrected',
+      'creation_date', 1786147200000,
+      'event', 'PURCHASE_APPROVED',
+      'version', '2.0.0',
+      'data', jsonb_build_object(
+        'buyer', jsonb_build_object(
+          'email', 'corrected-buyer@example.com',
+          'checkout_phone', '5531888888888'
+        ),
+        'product', jsonb_build_object('id', 123),
+        'purchase', jsonb_build_object(
+          'status', 'APPROVED',
+          'transaction', 'HPSEMANTIC00001',
+          'approved_date', 1786147205000,
+          'offer', jsonb_build_object('code', 'OFFER-1')
+        )
+      )
+    )
+  );
+`);
+await db.exec(`
+  update public.followup_delivery_attempts
+  set phase = 'request_started',
+      request_started_at = '2026-08-08T00:00:04Z'
+  where action_id = '${plan8.rows[0].scheduled_action_id}'::uuid;
+`);
+const releasedAttempt = await db.query(`
+  select phase,
+         (select count(*)::integer
+          from public.hotmart_purchase_semantic_conflicts
+          where resolved_at is null) as unresolved_conflicts
+  from public.followup_delivery_attempts
+  where action_id = '${plan8.rows[0].scheduled_action_id}'::uuid;
+`);
+if (replayAfterResolution.rows[0]?.outcome !== 'semantic_conflict'
+    || releasedAttempt.rows[0]?.phase !== 'request_started'
+    || releasedAttempt.rows[0]?.unresolved_conflicts !== 0) {
+  throw new Error(`resolved conflict replay was not idempotent: ${JSON.stringify({
+    replay: replayAfterResolution.rows[0], attempt: releasedAttempt.rows[0],
+  })}`);
+}
+console.log('RESOLVED_PURCHASE_SEMANTIC_CONFLICT_REPLAY_OK');
+
 await db.close();
