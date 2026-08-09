@@ -73,8 +73,15 @@ un clon ajeno, worktrees ausentes o con rama distinta, reserva pausada, rollback
 con trabajo concurrente, cleanup de identidad, pin inmutable y refs remotas
 forjadas o stale.
 
-## Límite pendiente
+## Activación remota y corrección del método de integración
 
-La branch protection de GitHub todavía debe configurarse para requerir PR y el
-job `verify` de `.github/workflows/ci.yml`. Los hooks actuales protegen este clon,
-pero no sustituyen esa protección remota.
+El PR #1 publicó el workflow y su job `verify` pasó. Después se configuró branch
+protection de `main` con PR obligatorio, rama actualizada, `verify` requerido,
+protección para administradores, historial sin force-push y conversaciones
+resueltas.
+
+El PR #1 se integró inicialmente con squash. El árbol resultante era correcto,
+pero el squash no conserva el commit fijado en `review` como ancestro y, por lo
+tanto, no satisface la evidencia exigida por el coordinador. Este follow-up
+registra la regla operativa explícita y debe integrarse mediante merge commit,
+conservando el lineage revisado sin reescribir `main` ni perder trabajo.

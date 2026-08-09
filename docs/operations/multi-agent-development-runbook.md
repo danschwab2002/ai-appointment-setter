@@ -124,7 +124,8 @@ El integrador procesa una rama por vez:
 2. actualizar la rama contra el `origin/main` vigente;
 3. resolver conflictos semánticos, no sólo marcadores de Git;
 4. ejecutar suite combinada;
-5. mergear mediante PR;
+5. mergear mediante PR usando **merge commit**; squash y rebase cambian el SHA
+   revisado y por diseño no satisfacen la transición a `merged`;
 6. marcar `merged`; la transición consulta y descarga la rama del remoto,
    verifica que el commit exacto fijado al entrar en `review` siga siendo el
    `HEAD` de la tarea y ya esté contenido en la referencia protegida remota;
@@ -176,8 +177,8 @@ Moverlo a `abandoned`; comprobar que el worktree esté limpio y ejecutar
 
 ## Límites y protección remota
 
-Los hooks sólo protegen este clon y pueden omitirse desde otro equipo. Configurar
-en GitHub branch protection para `main` con push directo bloqueado, PR y tests
+Los hooks sólo protegen este clon y pueden omitirse desde otro equipo. GitHub
+branch protection para `main` debe mantener push directo bloqueado, PR y tests
 requeridos. El workflow `.github/workflows/ci.yml` ejecuta la suite Python, la
 suite SQL y `validate-tree`; este último rechaza versiones duplicadas de
 migraciones dentro del árbol propuesto. Branch protection debe marcar ese job
