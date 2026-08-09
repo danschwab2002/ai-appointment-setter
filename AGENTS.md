@@ -4,6 +4,17 @@
 
 Construir un receptor seguro para webhooks de Chatwoot antes de integrar el profile comercial de Hermes.
 
+## Desarrollo multiagente obligatorio
+
+- `main` es sólo para integración; ningún agente implementa directamente allí.
+- Cada tarea sustancial requiere rama, worktree y claim exclusivos administrados por `scripts/agent_workspace.py`.
+- Antes de editar y antes de commitear, ejecutar `uv run python scripts/agent_workspace.py preflight`; si falla, detenerse sin modificar archivos.
+- Declarar paths y recursos semánticos del claim. No continuar ante solapamientos de scope, archivos reales o versiones de migración.
+- Un worktree no reclamado es fail-closed: adoptarlo o crear uno nuevo antes de trabajar.
+- Cada agente publica una rama limpia y la mueve a `review`; un único integrador procesa PRs de forma serial.
+- No mergear ni desplegar desde un worktree sucio. El despliegue parte de un commit verificado de `origin/main`.
+- Seguir el runbook `docs/operations/multi-agent-development-runbook.md` para crear, adoptar, revisar, integrar y limpiar tareas.
+
 ## Convenciones
 
 - Python administrado con `uv`; no usar `pip` global.
