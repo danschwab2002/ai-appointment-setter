@@ -1,7 +1,7 @@
 # Contrato de compra aprobada de Hotmart V1
 
-- **Estado:** Implementado; DDL aplicado y verificado estructuralmente en
-  Supabase; prueba conductual remota y despliegue del bridge pendientes
+- **Estado:** Implementado; DDL y conducta transaccional verificados en
+  Supabase; despliegue del bridge y E2E pendientes
 - **Evento:** `PURCHASE_APPROVED`
 - **Versión de payload:** `2.0.0`
 - **Frontera autoritativa:** bridge + función transaccional de Postgres

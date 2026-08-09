@@ -2,9 +2,10 @@
 
 ## Alcance
 
-Registrar evidencia sanitizada de la aplicación manual y el postflight remoto de
-las migraciones de `PURCHASE_APPROVED`. No se insertaron fixtures, no se llamó al
-worker y no se envió ningún mensaje.
+Registrar evidencia sanitizada de la aplicación manual, el postflight remoto y
+una prueba conductual transaccional de `PURCHASE_APPROVED`. Los fixtures se
+ejecutaron dentro de un bloque que terminó con una excepción deliberada para
+forzar rollback. No se llamó al worker y no se envió ningún mensaje.
 
 ## Fuente aplicada
 
@@ -45,6 +46,35 @@ stop_cart_recovery_for_known_purchase:
 La función interna sigue habilitada como trigger diferido aunque no tenga una
 superficie RPC ejecutable directamente.
 
+## Prueba conductual remota con rollback
+
+Se ejecutó una única sentencia PL/pgSQL sobre la instancia Supabase. Validó y
+luego revirtió atómicamente:
+
+```text
+PURCHASE_REMOTE_ROLLBACK_PROBE_OK
+direct=applied
+replay=already_applied
+inverse=cancelled
+in_flight=delivery_unknown
+```
+
+La excepción final `P0001` fue el resultado esperado y la condición que forzó
+el rollback. El primer intento del harness fue rechazado correctamente porque
+su timestamp RPC conservaba microsegundos mientras el payload durable usaba
+milisegundos (`purchase_rpc_payload_mismatch`). Un segundo intento incompleto no
+llegó a parsearse por faltar el delimitador final. Ninguno dejó datos.
+
+Después del probe aprobado, una consulta independiente confirmó:
+
+```text
+webhook_residue = 0
+contact_residue = 0
+policy_residue = 0
+case_residue = 0
+attempt_residue = 0
+```
+
 ## Estado previo observado
 
 Antes de una prueba de compra, la base contenía ocho eventos
@@ -72,15 +102,17 @@ Referencias:
 - el DDL existe en la instancia remota;
 - el índice de idempotencia semántica existe;
 - la guarda de orden inverso está instalada y habilitada;
-- los permisos efectivos de ambas funciones respetan la frontera prevista.
+- los permisos efectivos de ambas funciones respetan la frontera prevista;
+- el RPC aplica el cierre directo y su replay es idempotente;
+- el orden compra→abandono cancela la recuperación recién planificada;
+- una entrega ya iniciada conserva `delivery_unknown`.
 
 ## Qué no demuestra
 
 - que el bridge desplegado contenga todavía el commit `353e35c`;
 - que PostgREST invoque el RPC con el contrato esperado;
-- que ambos órdenes de eventos funcionen sobre datos remotos;
 - que un webhook real de Hotmart cierre un caso;
 - que se haya enviado o cancelado un WhatsApp en producción.
 
-La capacidad está **migrada y verificada estructuralmente**, pero sigue
-**pendiente de prueba conductual remota y E2E**.
+La capacidad está **migrada y verificada estructural y conductualmente en SQL
+remoto**, pero sigue **pendiente de despliegue del bridge y E2E**.

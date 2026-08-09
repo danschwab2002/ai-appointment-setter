@@ -107,8 +107,9 @@ confundir ausencia de confirmación con ausencia de efecto.
 
 El contrato detallado se encuentra en
 [Compra aprobada de Hotmart V1](contracts/hotmart-purchase-approved-v1.md). La
-implementación y el DDL están presentes en Supabase, con permisos efectivos
-verificados. Esto no prueba que el bridge desplegado use esta versión ni que una
+implementación y el DDL están presentes en Supabase, con permisos efectivos y
+ambos órdenes de eventos verificados mediante un probe transaccional con
+rollback. Esto no prueba que el bridge desplegado use esta versión ni que una
 compra real haya sido verificada end-to-end. La evidencia se registra en
 [Postflight Supabase del 2026-08-08](operations/2026-08-08-hotmart-purchase-cancellation-supabase.md).
 
