@@ -1,6 +1,7 @@
 # Contrato de compra aprobada de Hotmart V1
 
-- **Estado:** Implementado localmente; migración y despliegue pendientes
+- **Estado:** Implementado; DDL aplicado y verificado estructuralmente en
+  Supabase; prueba conductual remota y despliegue del bridge pendientes
 - **Evento:** `PURCHASE_APPROVED`
 - **Versión de payload:** `2.0.0`
 - **Frontera autoritativa:** bridge + función transaccional de Postgres
@@ -149,9 +150,10 @@ ejecutaron sobre PGlite junto con el esquema completo. La prueba conductual
 cubrió compra posterior al caso, compra anterior al abandono y request externo
 ya iniciado preservado como `delivery_unknown`.
 
-Esto no constituye todavía evidencia de:
+El DDL y sus permisos efectivos fueron verificados en Supabase. Esto no
+constituye todavía evidencia de:
 
-- migración aplicada en Supabase;
+- bridge desplegado con esta versión;
 - procesamiento de una compra real de Hotmart;
 - cancelación observada end-to-end en producción.
 
