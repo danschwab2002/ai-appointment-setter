@@ -17,7 +17,12 @@ from typing import Any, Literal
 # ── Event constants (v2.0.0) ─────────────────────────────────────────
 
 EVENT_CART_ABANDONMENT = "PURCHASE_OUT_OF_SHOPPING_CART"
+EVENT_PURCHASE_APPROVED = "PURCHASE_APPROVED"
 EVENT_VERSION = "2.0.0"
+SUPPORTED_EVENT_TYPES = frozenset({
+    EVENT_CART_ABANDONMENT,
+    EVENT_PURCHASE_APPROVED,
+})
 
 
 # ── Parsed buyer data ────────────────────────────────────────────────
@@ -41,6 +46,21 @@ class HotmartBuyerData:
     affiliate: bool | None
 
 
+@dataclass(frozen=True)
+class HotmartPurchaseData:
+    """Identifiers required to correlate one approved Hotmart purchase."""
+
+    event_id: str
+    creation_date_ms: int
+    approved_date_ms: int
+    transaction: str
+    buyer_email: str | None
+    buyer_phone: str | None
+    product_id: int
+    product_ucode: str | None
+    offer_code: str | None
+
+
 # ── Normalisation helpers ────────────────────────────────────────────
 
 # Hotmart normally sends DDI and digits without "+". Accept conventional
@@ -48,6 +68,8 @@ class HotmartBuyerData:
 # before normalization.
 _NON_DIGIT = re.compile(r"\D")
 _PHONE_INPUT = re.compile(r"\+?[0-9 ()-]+")
+_TRANSACTION_REFERENCE = re.compile(r"HP[A-Z0-9]{6,62}")
+_MAX_DATETIME_TIMESTAMP_MS = 253_402_300_799_999
 
 
 def normalize_email(raw: str | None) -> str | None:
@@ -118,6 +140,51 @@ def parse_hotmart_payload(payload: object) -> HotmartBuyerData | None:
         checkout_country_iso=_str(country.get("iso")),
         checkout_country_name=_str(country.get("name")),
         affiliate=_bool(data.get("affiliate")),
+    )
+
+
+def parse_hotmart_purchase_payload(payload: object) -> HotmartPurchaseData | None:
+    """Extract the fail-closed correlation fields from PURCHASE_APPROVED v2."""
+    event = _json_object(payload)
+    data = _json_object(event.get("data"))
+    buyer = _json_object(data.get("buyer"))
+    product = _json_object(data.get("product"))
+    purchase = _json_object(data.get("purchase"))
+    offer = _json_object(purchase.get("offer"))
+
+    event_id = _str(event.get("id"))
+    creation_date = _int(event.get("creation_date"))
+    approved_date = _int(purchase.get("approved_date"))
+    transaction = _str(purchase.get("transaction"))
+    product_id = _int(product.get("id"))
+    buyer_email = normalize_email(buyer.get("email"))
+    buyer_phone = normalize_phone(buyer.get("checkout_phone"))
+    if (
+        event_id is None
+        or event.get("event") != EVENT_PURCHASE_APPROVED
+        or event.get("version") != EVENT_VERSION
+        or purchase.get("status") != "APPROVED"
+        or creation_date is None
+        or not 0 <= creation_date <= _MAX_DATETIME_TIMESTAMP_MS
+        or approved_date is None
+        or not 0 <= approved_date <= _MAX_DATETIME_TIMESTAMP_MS
+        or transaction is None
+        or _TRANSACTION_REFERENCE.fullmatch(transaction) is None
+        or product_id is None
+        or (buyer_email is None and buyer_phone is None)
+    ):
+        return None
+
+    return HotmartPurchaseData(
+        event_id=event_id,
+        creation_date_ms=creation_date,
+        approved_date_ms=approved_date,
+        transaction=transaction,
+        buyer_email=buyer_email,
+        buyer_phone=buyer_phone,
+        product_id=product_id,
+        product_ucode=_str(product.get("ucode")),
+        offer_code=_str(offer.get("code")),
     )
 
 # ── Decision types ───────────────────────────────────────────────────
@@ -198,7 +265,7 @@ def classify_hotmart_event(payload: object) -> HotmartDecision:
         )
 
     event_type = event.get("event")
-    if not isinstance(event_type, str) or event_type != EVENT_CART_ABANDONMENT:
+    if not isinstance(event_type, str) or event_type not in SUPPORTED_EVENT_TYPES:
         return HotmartDecision(
             False, "unsupported_event_type", "ignore", event_id, event_type
         )

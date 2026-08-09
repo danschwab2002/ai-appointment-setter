@@ -40,9 +40,10 @@ from bridge.chatwoot_inbox import (
 from bridge.filtering import classify_chatwoot_event
 from bridge.hermes import HermesShadowProcessor
 from bridge.hotmart import (
-    EVENT_CART_ABANDONMENT,
+    EVENT_PURCHASE_APPROVED,
     classify_hotmart_event,
     is_stale_event,
+    parse_hotmart_purchase_payload,
     verify_hotmart_token,
 )
 from bridge.messaging import EvolutionMessageSender, MessageSender
@@ -57,9 +58,9 @@ from bridge.security import verify_chatwoot_signature
 from bridge.supabase import SupabaseClient, SupabaseError
 from bridge.worker import DurableDispatcher, ResolutionWorker
 
-
 logger = logging.getLogger(__name__)
 CHATWOOT_WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024
+HOTMART_WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024
 
 
 class CanonicalHistoryIncompleteError(RetryableChatwootWorkError):
@@ -142,6 +143,7 @@ class Settings:
     chatwoot_inbound_debounce_seconds: float = 0.0
     hotmart_hottok: str | None = None
     hotmart_max_age_seconds: int = 300
+    hotmart_purchase_worker_enabled: bool = False
     supabase_base_url: str | None = None
     supabase_service_role_key: str | None = None
     worker_poll_interval_seconds: float = 5.0
@@ -271,6 +273,15 @@ class Settings:
         worker_enabled = (
             os.getenv("RESOLUTION_WORKER_ENABLED", "false").lower() == "true"
         )
+        hotmart_purchase_worker_enabled = (
+            os.getenv("HOTMART_PURCHASE_WORKER_ENABLED", "false").lower()
+            == "true"
+        )
+        if hotmart_purchase_worker_enabled and not worker_enabled:
+            raise ValueError(
+                "HOTMART_PURCHASE_WORKER_ENABLED requires "
+                "RESOLUTION_WORKER_ENABLED"
+            )
         worker_poll_interval = float(
             os.getenv("RESOLUTION_WORKER_POLL_INTERVAL", "5.0")
         )
@@ -334,6 +345,7 @@ class Settings:
             ),
             hotmart_hottok=hotmart_hottok,
             hotmart_max_age_seconds=hotmart_max_age_seconds,
+            hotmart_purchase_worker_enabled=hotmart_purchase_worker_enabled,
             supabase_base_url=supabase_base_url,
             supabase_service_role_key=supabase_service_role_key,
             worker_poll_interval_seconds=worker_poll_interval,
@@ -466,6 +478,11 @@ def create_app(
     recovery_agent_client: RecoveryAgentClient | None = None,
     message_sender: MessageSender | None = None,
 ) -> FastAPI:
+    if settings.hotmart_purchase_worker_enabled and not settings.worker_enabled:
+        raise ValueError(
+            "HOTMART_PURCHASE_WORKER_ENABLED requires "
+            "RESOLUTION_WORKER_ENABLED"
+        )
     if (
         not math.isfinite(settings.chatwoot_inbound_debounce_seconds)
         or settings.chatwoot_inbound_debounce_seconds < 0
@@ -609,6 +626,7 @@ def create_app(
             chatwoot_inbox_id=settings.chatwoot_inbox_id,
             policy_key=settings.followup_policy_key,
             policy_version=settings.followup_policy_version,
+            purchase_worker_enabled=settings.hotmart_purchase_worker_enabled,
         )
 
     if settings.dispatcher_enabled:
@@ -1093,8 +1111,6 @@ def create_app(
         response: Response,
         x_hotmart_hottok: str = Header(default=""),
     ) -> dict[str, object]:
-        raw_body = await request.body()
-
         if settings.hotmart_hottok is None:
             raise HTTPException(
                 status_code=503, detail="hotmart_not_configured"
@@ -1104,6 +1120,16 @@ def create_app(
             expected_token=settings.hotmart_hottok,
         ):
             raise HTTPException(status_code=401, detail="invalid_token")
+
+        body = bytearray()
+        async for chunk in request.stream():
+            if len(body) + len(chunk) > HOTMART_WEBHOOK_BODY_LIMIT_BYTES:
+                raise HTTPException(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    detail="hotmart_webhook_body_too_large",
+                )
+            body.extend(chunk)
+        raw_body = bytes(body)
 
         try:
             payload = json.loads(raw_body)
@@ -1122,6 +1148,8 @@ def create_app(
 
         event_id = decision.event_id
         assert event_id is not None  # classify guarantees this when accepted
+        event_type = decision.event_type
+        assert event_type is not None
 
         event_obj = payload if isinstance(payload, dict) else {}
         stale = is_stale_event(
@@ -1140,10 +1168,39 @@ def create_app(
                 status_code=503, detail="supabase_not_configured"
             )
         try:
+            if event_type == EVENT_PURCHASE_APPROVED:
+                if parse_hotmart_purchase_payload(payload) is None:
+                    response.status_code = status.HTTP_200_OK
+                    return {
+                        "status": "ignored",
+                        "reason": "invalid_purchase_payload",
+                    }
+                purchase_admission = (
+                    await shared_supabase.admit_hotmart_purchase_approved(
+                        external_event_id=event_id,
+                        payload=payload,
+                    )
+                )
+                if purchase_admission.outcome == "semantic_conflict":
+                    return {
+                        "status": "conflict",
+                        "event_id": event_id,
+                        "reason": "purchase_semantic_conflict",
+                    }
+                if purchase_admission.outcome == "duplicate":
+                    response.status_code = status.HTTP_200_OK
+                    return {
+                        "status": "duplicate",
+                        "event_id": event_id,
+                    }
+                return {
+                    "status": "received",
+                    "event_id": event_id,
+                }
             result = await shared_supabase.insert_webhook_event(
                 source="hotmart",
                 external_event_id=event_id,
-                event_type=EVENT_CART_ABANDONMENT,
+                event_type=event_type,
                 payload=payload,
             )
         except SupabaseError as exc:

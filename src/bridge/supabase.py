@@ -17,6 +17,10 @@ class SupabaseError(RuntimeError):
     """Raised when a Supabase REST call fails."""
 
 
+class SupabasePermanentError(SupabaseError):
+    """Raised when retrying an unchanged request cannot succeed."""
+
+
 class SupabaseCommittedResponseError(SupabaseError):
     """Raised when a successful mutating RPC returns an invalid committed row."""
 
@@ -32,6 +36,14 @@ class InsertResult:
 
 
 @dataclass(frozen=True)
+class PurchaseAdmissionResult:
+    """Durable semantic-admission outcome for a purchase webhook."""
+
+    outcome: str
+    webhook_event_id: str
+
+
+@dataclass(frozen=True)
 class CartRecoveryPlan:
     """Durable case, sequence, and next action created by PostgreSQL."""
 
@@ -39,6 +51,15 @@ class CartRecoveryPlan:
     followup_sequence_id: str
     scheduled_action_id: str
     created: bool
+
+
+@dataclass(frozen=True)
+class PurchaseCorrelationResult:
+    """Authoritative outcome of applying one approved purchase."""
+
+    outcome: str
+    recovery_case_id: str | None
+    matched_by: str | None
 
 
 @dataclass(frozen=True)
@@ -495,19 +516,84 @@ class SupabaseClient:
             raise SupabaseError(
                 f"webhook_event_insert_failed: HTTP {response.status_code}"
             )
+        try:
+            rows = response.json()
+        except ValueError as exc:
+            raise SupabaseError("webhook_event_insert_invalid_json") from exc
+        if not isinstance(rows, list) or any(
+            not isinstance(row, dict) for row in rows
+        ):
+            raise SupabaseError("webhook_event_insert_invalid_shape")
+        if len(rows) == 0:
+            return InsertResult(inserted=False)
+        if len(rows) != 1:
+            raise SupabaseError("webhook_event_insert_invalid_cardinality")
         return InsertResult(inserted=True)
 
-    async def fetch_pending_events(self, *, limit: int = 10) -> list[dict[str, Any]]:
+    async def admit_hotmart_purchase_approved(
+        self,
+        *,
+        external_event_id: str,
+        payload: dict[str, Any],
+    ) -> PurchaseAdmissionResult:
+        """Admit a purchase with transaction-level semantic replay checks."""
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/admit_hotmart_purchase_approved",
+            content=json.dumps(
+                {
+                    "p_external_event_id": external_event_id,
+                    "p_payload": payload,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(
+                f"purchase_admission_failed: HTTP {response.status_code}"
+            )
+        try:
+            rows = response.json()
+        except ValueError as exc:
+            raise SupabaseError("purchase_admission_invalid_json") from exc
+        if (
+            not isinstance(rows, list)
+            or len(rows) != 1
+            or not isinstance(rows[0], dict)
+        ):
+            raise SupabaseError("purchase_admission_invalid_shape")
+        outcome = rows[0].get("outcome")
+        webhook_event_id = rows[0].get("webhook_event_id")
+        if outcome not in {"inserted", "duplicate", "semantic_conflict"}:
+            raise SupabaseError("purchase_admission_invalid_outcome")
+        if not isinstance(webhook_event_id, str) or not webhook_event_id:
+            raise SupabaseError("purchase_admission_invalid_event_id")
+        return PurchaseAdmissionResult(
+            outcome=outcome,
+            webhook_event_id=webhook_event_id,
+        )
+
+    async def fetch_pending_events(
+        self,
+        *,
+        limit: int = 10,
+        excluded_event_types: tuple[str, ...] = (),
+    ) -> list[dict[str, Any]]:
         """Fetch webhook events in 'received' status, oldest first."""
+        params = {
+            "select": "id,source,external_event_id,event_type,payload",
+            "processing_status": "eq.received",
+            "order": "received_at.asc,id.asc",
+            "limit": str(limit),
+        }
+        if excluded_event_types:
+            params["event_type"] = (
+                "not.in.(" + ",".join(excluded_event_types) + ")"
+            )
         response = await self._request(
             "GET",
             "/rest/v1/webhook_events",
-            params={
-                "select": "id,source,external_event_id,event_type,payload",
-                "processing_status": "eq.received",
-                "order": "received_at.asc",
-                "limit": str(limit),
-            },
+            params=params,
         )
         if response.status_code != 200:
             raise SupabaseError(
@@ -536,7 +622,7 @@ class SupabaseClient:
         body = json.dumps(body_dict, ensure_ascii=False)
         response = await self._request(
             "PATCH",
-            f"/rest/v1/webhook_events",
+            "/rest/v1/webhook_events",
             params={"id": f"eq.{event_id}"},
             content=body,
             prefer="return=minimal",
@@ -620,6 +706,85 @@ class SupabaseClient:
                 row, "scheduled_action_id", operation="plan_cart_recovery"
             ),
             created=created,
+        )
+
+    async def apply_hotmart_purchase_approved(
+        self,
+        *,
+        webhook_event_id: str,
+        buyer_email: str | None,
+        buyer_phone: str | None,
+        external_product_id: str,
+        offer_code: str | None,
+        transaction: str,
+        approved_at: str,
+    ) -> PurchaseCorrelationResult:
+        """Atomically correlate a purchase and stop its recovery sequence."""
+        body = json.dumps({
+            "p_webhook_event_id": webhook_event_id,
+            "p_buyer_email": buyer_email,
+            "p_buyer_phone": buyer_phone,
+            "p_external_product_id": external_product_id,
+            "p_offer_code": offer_code,
+            "p_transaction": transaction,
+            "p_approved_at": approved_at,
+        }, ensure_ascii=False)
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/apply_hotmart_purchase_approved",
+            content=body,
+        )
+        operation = "apply_hotmart_purchase_approved"
+        if response.status_code != 200:
+            try:
+                error_body = response.json()
+            except ValueError:
+                error_body = None
+            sqlstate = (
+                error_body.get("code")
+                if isinstance(error_body, dict)
+                else None
+            )
+            error_message = (
+                error_body.get("message")
+                if isinstance(error_body, dict)
+                else None
+            )
+            permanent_contract_errors = {
+                ("22023", "invalid_purchase_correlation_input"),
+                ("22023", "webhook_event_not_purchase_approved"),
+                ("22023", "purchase_event_invalid_approved_date"),
+                ("22023", "purchase_rpc_payload_mismatch"),
+                ("22023", "purchase_approved_at_in_future"),
+            }
+            error_type = (
+                SupabasePermanentError
+                if (sqlstate, error_message) in permanent_contract_errors
+                else SupabaseError
+            )
+            raise error_type(
+                f"{operation}_failed: HTTP {response.status_code}"
+            )
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        return PurchaseCorrelationResult(
+            outcome=_required_enum(
+                row,
+                "outcome",
+                {"applied", "already_applied", "not_found", "ambiguous"},
+                operation=operation,
+            ),
+            recovery_case_id=_optional_string(
+                row, "recovery_case_id", operation=operation
+            ),
+            matched_by=_optional_enum(
+                row,
+                "matched_by",
+                {"email", "phone", "email_and_phone"},
+                operation=operation,
+            ),
         )
 
     async def claim_due_followup_actions(

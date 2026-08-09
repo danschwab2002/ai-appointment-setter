@@ -1350,7 +1350,11 @@ def test_worker_logs_when_recovery_agent_is_not_configured(
     worker = ResolutionWorker(supabase=object())  # type: ignore[arg-type]
 
     with caplog.at_level("WARNING", logger="bridge.worker"):
-        _run(worker._process_one({"id": "event-001", "payload": {}}))
+        _run(worker._process_one({
+            "id": "event-001",
+            "event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "payload": {},
+        }))
 
     assert "recovery_agent_not_configured event_id=event-001" in caplog.text
 
@@ -1386,7 +1390,11 @@ def test_worker_stops_after_durable_planning_without_invoking_agent_or_sender(
         policy_version=1,
     )
 
-    _run(worker._process_one({"id": "event-planned", "payload": {}}))
+    _run(worker._process_one({
+        "id": "event-planned",
+        "event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+        "payload": {},
+    }))
 
 
 def test_worker_logs_when_recovery_proposal_is_unavailable(
@@ -1410,7 +1418,11 @@ def test_worker_logs_when_recovery_proposal_is_unavailable(
     )
 
     with caplog.at_level("WARNING", logger="bridge.worker"):
-        _run(worker._process_one({"id": "event-002", "payload": {}}))
+        _run(worker._process_one({
+            "id": "event-002",
+            "event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "payload": {},
+        }))
 
     assert "recovery_proposal_unavailable event_id=event-002" in caplog.text
 
@@ -1450,7 +1462,11 @@ def test_worker_logs_when_first_touch_sender_is_not_configured(
     )
 
     with caplog.at_level("WARNING", logger="bridge.worker"):
-        _run(worker._process_one({"id": "event-003", "payload": {}}))
+        _run(worker._process_one({
+            "id": "event-003",
+            "event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "payload": {},
+        }))
 
     assert "first_touch_sender_not_configured event_id=event-003" in caplog.text
 
@@ -1498,6 +1514,7 @@ def test_worker_blocks_send_when_authoritative_context_is_incomplete(
     with caplog.at_level("ERROR", logger="bridge.worker"):
         _run(worker._process_one({
             "id": "event-incomplete-context",
+            "event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
             "payload": {},
         }))
 
@@ -1550,6 +1567,7 @@ def test_worker_blocks_injected_sender_for_unauthorized_target(
     with caplog.at_level("ERROR", logger="bridge.worker"):
         _run(worker._process_one({
             "id": "event-unauthorized-target",
+            "event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
             "payload": {},
         }))
 

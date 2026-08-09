@@ -9,10 +9,11 @@ import time
 
 import httpx
 import pytest
+from fastapi import HTTPException, Response
+from starlette.requests import Request
 
 from bridge.app import Settings, create_app
 from bridge.hotmart import parse_hotmart_payload
-
 
 # ── Fixtures ────────────────────────────────────────────────────────
 
@@ -33,6 +34,31 @@ EXAMPLE_PAYLOAD: dict[str, object] = {
         },
         "offer": {"code": "n82b9jqz"},
         "checkout_country": {"name": "Brasil", "iso": "BR"},
+    },
+}
+
+PURCHASE_APPROVED_PAYLOAD: dict[str, object] = {
+    "id": "purchase-event-001",
+    "creation_date": int(time.time() * 1000),
+    "event": "PURCHASE_APPROVED",
+    "version": "2.0.0",
+    "data": {
+        "product": {
+            "id": 3526906,
+            "ucode": "product-ucode-001",
+            "name": "Product Name",
+        },
+        "buyer": {
+            "name": "Buyer name",
+            "email": "buyer@email.com.br",
+            "checkout_phone": "5531999999999",
+        },
+        "purchase": {
+            "approved_date": int(time.time() * 1000),
+            "status": "APPROVED",
+            "transaction": "HP17715690036014",
+            "offer": {"code": "n82b9jqz"},
+        },
     },
 }
 
@@ -233,6 +259,40 @@ def test_rejects_request_with_wrong_token(tmp_path) -> None:
     assert response.json()["detail"] == "invalid_token"
 
 
+def test_rejects_wrong_token_without_reading_request_body(tmp_path) -> None:
+    app = create_app(_hotmart_settings(capture_dir=tmp_path))
+    route = next(
+        route
+        for route in app.routes
+        if getattr(route, "path", None) == "/webhooks/hotmart"
+    )
+
+    async def fail_if_body_is_read() -> dict[str, object]:
+        raise AssertionError("unauthenticated_body_was_read")
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/webhooks/hotmart",
+            "headers": [],
+        },
+        receive=fail_if_body_is_read,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            route.endpoint(
+                request,
+                Response(),
+                x_hotmart_hottok="wrong-token",
+            )
+        )
+
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "invalid_token"
+
+
 def test_returns_503_when_hotmart_not_configured(tmp_path) -> None:
     app = create_app(
         _hotmart_settings(capture_dir=tmp_path, hotmart_hottok=None)
@@ -253,16 +313,141 @@ def test_rejects_invalid_json(tmp_path) -> None:
     assert response.json()["detail"] == "invalid_json"
 
 
-def test_ignores_unsupported_event_type(tmp_path) -> None:
+def test_rejects_hotmart_body_larger_than_one_mebibyte(tmp_path) -> None:
     app = create_app(_hotmart_settings(capture_dir=tmp_path))
-    payload = {**EXAMPLE_PAYLOAD, "event": "PURCHASE_APPROVED"}
-    raw = json.dumps(payload).encode()
-    response = _post_hotmart(app, raw)
+
+    response = _post_hotmart(app, b"{" + b"x" * (1024 * 1024))
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == "hotmart_webhook_body_too_large"
+
+
+def test_persists_purchase_approved_for_deferred_processing(tmp_path) -> None:
+    transport = _MockSupabaseTransport(
+        status_code=200,
+        response_body=[{
+            "outcome": "inserted",
+            "webhook_event_id": "inserted-event",
+        }],
+    )
+    import bridge.supabase as supabase_mod
+
+    original_init = supabase_mod.SupabaseClient.__init__
+
+    def _patched_init(self, **kwargs):
+        kwargs["transport"] = transport
+        original_init(self, **kwargs)
+
+    supabase_mod.SupabaseClient.__init__ = _patched_init
+    try:
+        app = create_app(
+            _hotmart_settings(
+                capture_dir=tmp_path,
+                supabase_base_url="https://fake-supabase.supabase.co",
+                supabase_service_role_key="fake-service-role-key",
+            )
+        )
+        response = _post_hotmart(
+            app,
+            json.dumps(PURCHASE_APPROVED_PAYLOAD).encode(),
+        )
+    finally:
+        supabase_mod.SupabaseClient.__init__ = original_init
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "status": "received",
+        "event_id": "purchase-event-001",
+    }
+    assert len(transport.requests) == 1
+    assert transport.requests[0].url.path == (
+        "/rest/v1/rpc/admit_hotmart_purchase_approved"
+    )
+    body = json.loads(transport.requests[0].content)
+    assert body["p_external_event_id"] == "purchase-event-001"
+    assert body["p_payload"]["event"] == "PURCHASE_APPROVED"
+
+
+def test_purchase_semantic_conflict_is_durable_and_not_reported_as_duplicate(
+    tmp_path,
+) -> None:
+    transport = _MockSupabaseTransport(
+        status_code=200,
+        response_body=[{
+            "outcome": "semantic_conflict",
+            "webhook_event_id": "existing-purchase-event",
+        }],
+    )
+    import bridge.supabase as supabase_mod
+
+    original_init = supabase_mod.SupabaseClient.__init__
+
+    def _patched_init(self, **kwargs):
+        kwargs["transport"] = transport
+        original_init(self, **kwargs)
+
+    supabase_mod.SupabaseClient.__init__ = _patched_init
+    try:
+        app = create_app(
+            _hotmart_settings(
+                capture_dir=tmp_path,
+                supabase_base_url="https://fake-supabase.supabase.co",
+                supabase_service_role_key="fake-service-role-key",
+            )
+        )
+        response = _post_hotmart(
+            app,
+            json.dumps(PURCHASE_APPROVED_PAYLOAD).encode(),
+        )
+    finally:
+        supabase_mod.SupabaseClient.__init__ = original_init
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "status": "conflict",
+        "event_id": "purchase-event-001",
+        "reason": "purchase_semantic_conflict",
+    }
+    assert transport.requests[0].url.path == (
+        "/rest/v1/rpc/admit_hotmart_purchase_approved"
+    )
+
+
+def test_rejects_unprocessable_purchase_before_semantic_admission(tmp_path) -> None:
+    transport = _MockSupabaseTransport(status_code=500)
+    import bridge.supabase as supabase_mod
+
+    original_init = supabase_mod.SupabaseClient.__init__
+
+    def _patched_init(self, **kwargs):
+        kwargs["transport"] = transport
+        original_init(self, **kwargs)
+
+    malformed = copy.deepcopy(PURCHASE_APPROVED_PAYLOAD)
+    data = malformed["data"]
+    assert isinstance(data, dict)
+    product = data["product"]
+    assert isinstance(product, dict)
+    product["id"] = "3526906"
+    supabase_mod.SupabaseClient.__init__ = _patched_init
+    try:
+        app = create_app(
+            _hotmart_settings(
+                capture_dir=tmp_path,
+                supabase_base_url="https://fake-supabase.supabase.co",
+                supabase_service_role_key="fake-service-role-key",
+            )
+        )
+        response = _post_hotmart(app, json.dumps(malformed).encode())
+    finally:
+        supabase_mod.SupabaseClient.__init__ = original_init
+
     assert response.status_code == 200
     assert response.json() == {
         "status": "ignored",
-        "reason": "unsupported_event_type",
+        "reason": "invalid_purchase_payload",
     }
+    assert transport.requests == []
 
 
 def test_ignores_unsupported_version(tmp_path) -> None:
@@ -325,7 +510,11 @@ class _MockSupabaseTransport(httpx.AsyncBaseTransport):
         response_body: list[dict[str, object]] | None = None,
     ) -> None:
         self.status_code = status_code
-        self.response_body = response_body or []
+        self.response_body = (
+            [{"id": "inserted-event"}]
+            if response_body is None
+            else response_body
+        )
         self.requests: list[httpx.Request] = []
 
     async def handle_async_request(
@@ -381,7 +570,7 @@ def test_persists_valid_event_to_supabase(tmp_path) -> None:
 
 
 def test_returns_duplicate_for_already_stored_event(tmp_path) -> None:
-    transport = _MockSupabaseTransport(status_code=409)
+    transport = _MockSupabaseTransport(status_code=201, response_body=[])
     import bridge.supabase as supabase_mod
 
     original_init = supabase_mod.SupabaseClient.__init__
