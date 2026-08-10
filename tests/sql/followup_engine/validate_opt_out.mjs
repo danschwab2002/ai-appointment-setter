@@ -33,13 +33,25 @@ insert into public.webhook_events (
   id, source, external_event_id, event_type, payload, processing_status, received_at
 ) values (
   'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', 'hotmart', 'optout-abandonment-1',
-  'PURCHASE_OUT_OF_SHOPPING_CART', '{}'::jsonb, 'received', '2026-08-09T00:00:00Z'
+  'PURCHASE_OUT_OF_SHOPPING_CART', jsonb_build_object(
+    'id', 'optout-abandonment-1', 'creation_date', 1786233600000,
+    'event', 'PURCHASE_OUT_OF_SHOPPING_CART', 'version', '2.0.0',
+    'data', jsonb_build_object(
+      'buyer', jsonb_build_object('email', 'optout@example.test', 'phone', '5531999999999'),
+      'product', jsonb_build_object('id', 123, 'name', 'Pilot Product'),
+      'offer', jsonb_build_object('code', 'OFFER-1')
+    )
+  ), 'received', '2026-08-09T00:00:00Z'
 );
 insert into public.contacts (id, full_name, email, phone)
 values (
   'cccccccc-cccc-4ccc-8ccc-ccccccccccc1', 'Opt Out Fixture',
   'optout@example.test', '5531999999999'
 );
+insert into public.contact_points (contact_id, type, raw_value, normalized_value, source, source_event_id)
+values
+  ('cccccccc-cccc-4ccc-8ccc-ccccccccccc1', 'email', 'optout@example.test', 'optout@example.test', 'hotmart', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'),
+  ('cccccccc-cccc-4ccc-8ccc-ccccccccccc1', 'phone', '5531999999999', '5531999999999', 'hotmart', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1');
 `);
 
 const plan = await db.query(`
@@ -126,13 +138,25 @@ insert into public.webhook_events (
   id, source, external_event_id, event_type, payload, processing_status, received_at
 ) values (
   'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2', 'hotmart', 'optout-abandonment-2',
-  'PURCHASE_OUT_OF_SHOPPING_CART', '{}'::jsonb, 'received', '2026-08-09T00:10:00Z'
+  'PURCHASE_OUT_OF_SHOPPING_CART', jsonb_build_object(
+    'id', 'optout-abandonment-2', 'creation_date', 1786234200000,
+    'event', 'PURCHASE_OUT_OF_SHOPPING_CART', 'version', '2.0.0',
+    'data', jsonb_build_object(
+      'buyer', jsonb_build_object('email', 'optout2@example.test', 'phone', '5531777777777'),
+      'product', jsonb_build_object('id', 123, 'name', 'Pilot Product'),
+      'offer', jsonb_build_object('code', 'OFFER-1')
+    )
+  ), 'received', '2026-08-09T00:10:00Z'
 );
 insert into public.contacts (id, full_name, email, phone)
 values (
   'cccccccc-cccc-4ccc-8ccc-ccccccccccc2', 'In Flight Opt Out Fixture',
   'optout2@example.test', '5531777777777'
 );
+insert into public.contact_points (contact_id, type, raw_value, normalized_value, source, source_event_id)
+values
+  ('cccccccc-cccc-4ccc-8ccc-ccccccccccc2', 'email', 'optout2@example.test', 'optout2@example.test', 'hotmart', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2'),
+  ('cccccccc-cccc-4ccc-8ccc-ccccccccccc2', 'phone', '5531777777777', '5531777777777', 'hotmart', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2');
 `);
 const inFlightPlan = await db.query(`
 select * from public.plan_cart_recovery_with_identity(
@@ -238,8 +262,18 @@ insert into public.webhook_events (
   id, source, external_event_id, event_type, payload, processing_status, received_at
 ) values (
   'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3', 'hotmart', 'optout-abandonment-3',
-  'PURCHASE_OUT_OF_SHOPPING_CART', '{}'::jsonb, 'received', '2026-08-09T00:07:00Z'
+  'PURCHASE_OUT_OF_SHOPPING_CART', jsonb_build_object(
+    'id', 'optout-abandonment-3', 'creation_date', 1786234020000,
+    'event', 'PURCHASE_OUT_OF_SHOPPING_CART', 'version', '2.0.0',
+    'data', jsonb_build_object(
+      'buyer', jsonb_build_object('phone', '5531888888888'),
+      'product', jsonb_build_object('id', 123, 'name', 'Pilot Product'),
+      'offer', jsonb_build_object('code', 'OFFER-1')
+    )
+  ), 'received', '2026-08-09T00:07:00Z'
 );
+insert into public.contact_points (contact_id, type, raw_value, normalized_value, source, source_event_id)
+values ('cccccccc-cccc-4ccc-8ccc-ccccccccccc3', 'phone', '5531888888888', '5531888888888', 'hotmart', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3');
 insert into public.channel_identities (
   contact_id, channel, account_id, external_user_id, identity_status, metadata
 ) values (

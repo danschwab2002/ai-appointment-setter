@@ -41,10 +41,12 @@ from bridge.chatwoot_inbox import (
 from bridge.filtering import classify_chatwoot_event
 from bridge.hermes import HermesShadowProcessor
 from bridge.hotmart import (
+    EVENT_CART_ABANDONMENT,
     EVENT_PURCHASE_APPROVED,
     classify_hotmart_event,
     is_stale_event,
     parse_hotmart_purchase_payload,
+    parse_hotmart_payload,
     verify_hotmart_token,
 )
 from bridge.messaging import EvolutionMessageSender, MessageSender
@@ -1406,23 +1408,39 @@ def create_app(
                     "status": "received",
                     "event_id": event_id,
                 }
-            result = await shared_supabase.insert_webhook_event(
-                source="hotmart",
-                external_event_id=event_id,
-                event_type=event_type,
-                payload=payload,
+            if (
+                event_type == EVENT_CART_ABANDONMENT
+                and parse_hotmart_payload(payload) is None
+            ):
+                response.status_code = status.HTTP_200_OK
+                return {
+                    "status": "ignored",
+                    "reason": "invalid_cart_abandonment_payload",
+                }
+            abandonment_admission = (
+                await shared_supabase.admit_hotmart_cart_abandonment(
+                    external_event_id=event_id,
+                    payload=payload,
+                )
             )
+            if abandonment_admission.outcome == "semantic_conflict":
+                response.status_code = status.HTTP_200_OK
+                return {
+                    "status": "conflict",
+                    "event_id": event_id,
+                    "reason": "cart_abandonment_semantic_conflict",
+                }
+            if abandonment_admission.outcome == "duplicate":
+                response.status_code = status.HTTP_200_OK
+                return {
+                    "status": "duplicate",
+                    "event_id": event_id,
+                }
         except SupabaseError as exc:
             raise HTTPException(
                 status_code=503, detail="webhook_persist_unavailable"
             ) from exc
 
-        if not result.inserted:
-            response.status_code = status.HTTP_200_OK
-            return {
-                "status": "duplicate",
-                "event_id": event_id,
-            }
         return {
             "status": "received",
             "event_id": event_id,
