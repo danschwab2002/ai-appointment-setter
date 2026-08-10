@@ -91,6 +91,28 @@ def test_parse_hotmart_payload_accepts_formatted_phone() -> None:
     assert parsed.buyer_phone == "5531999999999"
 
 
+def test_parse_hotmart_payload_accepts_checkout_phone_fallback() -> None:
+    payload = copy.deepcopy(EXAMPLE_PAYLOAD)
+    data = payload["data"]
+    assert isinstance(data, dict)
+    buyer = data["buyer"]
+    assert isinstance(buyer, dict)
+    buyer.pop("phone")
+    buyer["checkout_phone"] = "+55 (31) 98888-7777"
+
+    parsed = parse_hotmart_payload(payload)
+
+    assert parsed is not None
+    assert parsed.buyer_phone == "5531988887777"
+
+
+def test_parse_hotmart_payload_rejects_zero_creation_date() -> None:
+    payload = copy.deepcopy(EXAMPLE_PAYLOAD)
+    payload["creation_date"] = 0
+
+    assert parse_hotmart_payload(payload) is None
+
+
 def _hotmart_settings(**overrides: object) -> Settings:
     defaults: dict[str, object] = {
         "webhook_secret": "unused",
@@ -450,6 +472,50 @@ def test_rejects_unprocessable_purchase_before_semantic_admission(tmp_path) -> N
     assert transport.requests == []
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda payload: payload["data"].__setitem__("buyer", {}),
+        lambda payload: payload["data"].__setitem__("product", {}),
+        lambda payload: payload["data"].__setitem__("offer", {}),
+    ],
+)
+def test_rejects_unprocessable_cart_abandonment_before_admission(
+    tmp_path,
+    mutation,
+) -> None:
+    transport = _MockSupabaseTransport(status_code=500)
+    import bridge.supabase as supabase_mod
+
+    original_init = supabase_mod.SupabaseClient.__init__
+
+    def _patched_init(self, **kwargs):
+        kwargs["transport"] = transport
+        original_init(self, **kwargs)
+
+    malformed = copy.deepcopy(EXAMPLE_PAYLOAD)
+    mutation(malformed)
+    supabase_mod.SupabaseClient.__init__ = _patched_init
+    try:
+        app = create_app(
+            _hotmart_settings(
+                capture_dir=tmp_path,
+                supabase_base_url="https://fake-supabase.supabase.co",
+                supabase_service_role_key="fake-service-role-key",
+            )
+        )
+        response = _post_hotmart(app, json.dumps(malformed).encode())
+    finally:
+        supabase_mod.SupabaseClient.__init__ = original_init
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ignored",
+        "reason": "invalid_cart_abandonment_payload",
+    }
+    assert transport.requests == []
+
+
 def test_ignores_unsupported_version(tmp_path) -> None:
     app = create_app(_hotmart_settings(capture_dir=tmp_path))
     payload = {**EXAMPLE_PAYLOAD, "version": "1.0.0"}
@@ -529,7 +595,13 @@ class _MockSupabaseTransport(httpx.AsyncBaseTransport):
 
 
 def test_persists_valid_event_to_supabase(tmp_path) -> None:
-    transport = _MockSupabaseTransport(status_code=201)
+    transport = _MockSupabaseTransport(
+        status_code=200,
+        response_body=[{
+            "outcome": "inserted",
+            "webhook_event_id": "inserted-event",
+        }],
+    )
     # Patch SupabaseClient to use our mock transport
     import bridge.supabase as supabase_mod
 
@@ -560,17 +632,20 @@ def test_persists_valid_event_to_supabase(tmp_path) -> None:
     }
     assert len(transport.requests) == 1
     req = transport.requests[0]
-    assert req.url.path == "/rest/v1/webhook_events"
+    assert req.url.path == "/rest/v1/rpc/admit_hotmart_cart_abandonment"
     body = json.loads(req.content)
-    assert body["source"] == "hotmart"
-    assert body["external_event_id"] == "0d7aa966-b887-4617-8c56-9e865bfc8ce4"
-    assert body["event_type"] == "PURCHASE_OUT_OF_SHOPPING_CART"
-    assert body["processing_status"] == "received"
-    assert body["payload"]["data"]["buyer"]["email"] == "buyer@email.com.br"
+    assert body["p_external_event_id"] == "0d7aa966-b887-4617-8c56-9e865bfc8ce4"
+    assert body["p_payload"]["data"]["buyer"]["email"] == "buyer@email.com.br"
 
 
 def test_returns_duplicate_for_already_stored_event(tmp_path) -> None:
-    transport = _MockSupabaseTransport(status_code=201, response_body=[])
+    transport = _MockSupabaseTransport(
+        status_code=200,
+        response_body=[{
+            "outcome": "duplicate",
+            "webhook_event_id": "existing-event",
+        }],
+    )
     import bridge.supabase as supabase_mod
 
     original_init = supabase_mod.SupabaseClient.__init__
@@ -597,6 +672,45 @@ def test_returns_duplicate_for_already_stored_event(tmp_path) -> None:
     assert response.json() == {
         "status": "duplicate",
         "event_id": "0d7aa966-b887-4617-8c56-9e865bfc8ce4",
+    }
+
+
+def test_cart_abandonment_semantic_conflict_is_not_reported_as_duplicate(
+    tmp_path,
+) -> None:
+    transport = _MockSupabaseTransport(
+        status_code=200,
+        response_body=[{
+            "outcome": "semantic_conflict",
+            "webhook_event_id": "existing-event",
+        }],
+    )
+    import bridge.supabase as supabase_mod
+
+    original_init = supabase_mod.SupabaseClient.__init__
+
+    def _patched_init(self, **kwargs):
+        kwargs["transport"] = transport
+        original_init(self, **kwargs)
+
+    supabase_mod.SupabaseClient.__init__ = _patched_init
+    try:
+        app = create_app(
+            _hotmart_settings(
+                capture_dir=tmp_path,
+                supabase_base_url="https://fake-supabase.supabase.co",
+                supabase_service_role_key="fake-service-role-key",
+            )
+        )
+        response = _post_hotmart(app, json.dumps(EXAMPLE_PAYLOAD).encode())
+    finally:
+        supabase_mod.SupabaseClient.__init__ = original_init
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "conflict",
+        "event_id": "0d7aa966-b887-4617-8c56-9e865bfc8ce4",
+        "reason": "cart_abandonment_semantic_conflict",
     }
 
 

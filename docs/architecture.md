@@ -153,6 +153,12 @@ implementación está presente en el árbol y
 tiene pruebas locales, PGlite y PostgreSQL real; todavía no constituye evidencia
 de migración aplicada ni de worker activo en producción.
 
+## Ingreso autoritativo de abandono de carrito
+
+`PURCHASE_OUT_OF_SHOPPING_CART` se autentica por Hottok y se valida contra el contrato Hotmart `2.0.0` antes de reservar identidad durable. La RPC `admit_hotmart_cart_abandonment` es la frontera transaccional que inserta el evento, reconoce replays exactos y registra diferencias bajo el mismo `external_event_id` como conflictos semánticos.
+
+La resolución consulta email y teléfono y falla cerrado si apuntan a contactos distintos o si un identificador tiene múltiples dueños. La planificación sigue siendo asíncrona, pero un trigger de base valida en la misma transacción que evento, contacto, producto, oferta y timestamp coincidan exactamente antes de asociar el evento con un caso. Conflictos semánticos no resueltos bloquean globalmente el inicio de requests outbound. El contrato detallado está en `docs/contracts/hotmart-cart-abandonment-v1.md`.
+
 ## Cierre determinístico por compra aprobada
 
 La implementación del repositorio admite `PURCHASE_APPROVED` de Hotmart como un

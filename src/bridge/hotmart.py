@@ -120,23 +120,38 @@ def parse_hotmart_payload(payload: object) -> HotmartBuyerData | None:
     country = _json_object(data.get("checkout_country"))
 
     event_id = _str(event.get("id"))
-    if event_id is None:
-        return None
-
-    creation_date = event.get("creation_date")
-    if isinstance(creation_date, bool) or not isinstance(creation_date, int):
+    creation_date = _int(event.get("creation_date"))
+    buyer_email = normalize_email(buyer.get("email"))
+    buyer_phone = normalize_phone(buyer.get("phone"))
+    if buyer_phone is None:
+        buyer_phone = normalize_phone(buyer.get("checkout_phone"))
+    product_id = _int(product.get("id"))
+    product_name = _str(product.get("name"))
+    offer_code = _str(offer.get("code"))
+    if (
+        event_id is None
+        or event.get("event") != EVENT_CART_ABANDONMENT
+        or event.get("version") != EVENT_VERSION
+        or creation_date is None
+        or not 0 < creation_date <= _MAX_DATETIME_TIMESTAMP_MS
+        or (buyer_email is None and buyer_phone is None)
+        or product_id is None
+        or product_id < 1
+        or product_name is None
+        or offer_code is None
+    ):
         return None
 
     return HotmartBuyerData(
         event_id=event_id,
-        event_type=_str(event.get("event")) or EVENT_CART_ABANDONMENT,
+        event_type=EVENT_CART_ABANDONMENT,
         creation_date_ms=creation_date,
         buyer_name=_str(buyer.get("name")),
-        buyer_email=normalize_email(buyer.get("email")),
-        buyer_phone=normalize_phone(buyer.get("phone")),
-        product_id=_int(product.get("id")),
-        product_name=_str(product.get("name")),
-        offer_code=_str(offer.get("code")),
+        buyer_email=buyer_email,
+        buyer_phone=buyer_phone,
+        product_id=product_id,
+        product_name=product_name,
+        offer_code=offer_code,
         checkout_country_iso=_str(country.get("iso")),
         checkout_country_name=_str(country.get("name")),
         affiliate=_bool(data.get("affiliate")),
