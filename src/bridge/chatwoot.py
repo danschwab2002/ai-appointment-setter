@@ -1167,6 +1167,7 @@ class ChatwootClient:
         conversation_id: int,
         content: str,
         delivery_id: str,
+        template_params: dict[str, object] | None = None,
     ) -> dict[str, object]:
         """Send the first outbound message to a conversation via AgentBot.
 
@@ -1186,6 +1187,17 @@ class ChatwootClient:
             f"/api/v1/accounts/{self._account_id}"
             f"/conversations/{conversation_id}/messages"
         )
+        body: dict[str, object] = {
+            "content": content,
+            "message_type": "outgoing",
+            "private": False,
+            "content_type": "text",
+            "content_attributes": {
+                "recovery_first_touch_hash": reply_hash,
+            },
+        }
+        if template_params is not None:
+            body["template_params"] = template_params
         async with httpx.AsyncClient(
             base_url=self._base_url,
             transport=self._transport,
@@ -1194,15 +1206,7 @@ class ChatwootClient:
             response = await client.post(
                 messages_path,
                 headers={"api_access_token": self._agent_bot_access_token},
-                json={
-                    "content": content,
-                    "message_type": "outgoing",
-                    "private": False,
-                    "content_type": "text",
-                    "content_attributes": {
-                        "recovery_first_touch_hash": reply_hash,
-                    },
-                },
+                json=body,
             )
             response.raise_for_status()
         try:
@@ -1233,6 +1237,7 @@ class ChatwootClient:
         conversation_id: int,
         content: str,
         delivery_id: str,
+        template_params: dict[str, object] | None = None,
     ) -> dict[str, object]:
         """Send one durable follow-up into an existing conversation."""
         if self._agent_bot_access_token is None or self._agent_bot_id is None:
@@ -1251,6 +1256,17 @@ class ChatwootClient:
             f"/api/v1/accounts/{self._account_id}"
             f"/conversations/{conversation_id}/messages"
         )
+        body: dict[str, object] = {
+            "content": content,
+            "message_type": "outgoing",
+            "private": False,
+            "content_type": "text",
+            "content_attributes": {
+                "recovery_followup_hash": followup_hash,
+            },
+        }
+        if template_params is not None:
+            body["template_params"] = template_params
         async with httpx.AsyncClient(
             base_url=self._base_url,
             transport=self._transport,
@@ -1259,15 +1275,7 @@ class ChatwootClient:
             response = await client.post(
                 messages_path,
                 headers={"api_access_token": self._agent_bot_access_token},
-                json={
-                    "content": content,
-                    "message_type": "outgoing",
-                    "private": False,
-                    "content_type": "text",
-                    "content_attributes": {
-                        "recovery_followup_hash": followup_hash,
-                    },
-                },
+                json=body,
             )
             response.raise_for_status()
         try:

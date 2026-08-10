@@ -34,4 +34,4 @@ jobs:
           cache-dependency-path: tests/sql/followup_engine/package-lock.json
       - name: Run SQL behavioral suite
         working-directory: tests/sql/followup_engine
-        run: npm ci && npm test && node validate_pilot_boundary.mjs
+        run: npm ci && npm test && node validate_pilot_boundary.mjs && node validate_pilot_boundary_runtime.mjs

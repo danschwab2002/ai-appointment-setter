@@ -161,11 +161,12 @@ La resolución consulta email y teléfono y falla cerrado si apuntan a contactos
 
 ## Perímetro durable del piloto Lancemos
 
-El árbol incluye una capa SQL default-off para acotar el piloto Lancemos. Todavía
-no está conectada a los entrypoints HTTP, la planificación ni la frontera
-`mark_followup_request_started`; no tiene seed real y no fue desplegada.
+El árbol incluye una capa SQL default-off que acota el piloto Lancemos y wiring
+runtime para aplicarla en planificación y request-start. El código y las
+migraciones tienen evidencia local; no se aplicaron todavía en producción ni se
+armó una cohorte real.
 
-Las fuentes de verdad nuevas son:
+Las fuentes de verdad son:
 
 - `pilot_scope_versions`, para el scope publicado e inmutable de tenant,
   account/inbox, cuenta opaca de canal, evento Hotmart, producto, oferta, policy
@@ -177,13 +178,23 @@ Las fuentes de verdad nuevas son:
   autorizaciones de request-start y consumo conservador de presupuesto;
 - `pilot_control_events`, para la auditoría de activación, pausa/cierre, cambio
   de versión y membresía.
+- `pilot_recovery_case_bindings`, para ligar de forma inmutable cada caso al
+  scope/version y al evento autoritativo que admitió su planificación.
 
-`evaluate_lancemos_pilot_scope` permite rechazar temprano sin consumir
-presupuesto. `authorize_lancemos_pilot_request_start` vuelve a validar el scope
-contra el estado canónico y reserva capacidad bajo el lock del runtime. La fase
-posterior debe componer esa autorización con `mark_followup_request_started`, la
-autorización del contacto y los stops negativos existentes en una única frontera
-transaccional.
+`plan_lancemos_pilot_cart_recovery` compone evaluación, planificación y binding
+durable en una sola transacción. Recibe sólo scope/version; tenant y routing se
+derivan del scope publicado. Rechaza antes de persistir trabajo si scope,
+versión, policy, identidad o cohorte no coinciden. Los RPC históricos de
+planificación ya no son entrypoints para roles API.
+
+`mark_lancemos_pilot_request_started` no acepta dimensiones de scope del caller:
+las deriva del binding inmutable del caso. Compone la autorización actual del piloto
+con la frontera de request-start y con los guards existentes de autorización
+del contacto, compra, takeover y opt-out. El entrypoint histórico conserva su
+firma sólo para composición interna, exige la autorización durable del mismo
+action/attempt y no es ejecutable por roles API; la función interna y la
+función de autorización standalone tampoco lo son. Así, un caller con
+`service_role` no puede separar autorización y efecto ni omitir el perímetro.
 
 Publicar o activar una versión nunca arma outbound. Un cambio de versión sólo es
 válido desde `inactive|paused`, siempre vuelve a `inactive`, no copia la cohorte
@@ -194,13 +205,26 @@ PostgreSQL y la timezone es constante para todas las versiones de un mismo
 `scope_key`. Las tablas niegan DML directo a roles API y `service_role`; sólo los
 entrypoints explícitos tienen `EXECUTE`.
 
-La allowlist actual permanece vigente hasta verificar toda la conjunción
-end-to-end. Siguen pendientes IDs, cohorte, caps y owner del kill switch reales,
-la policy comercial del cap diario, wiring Python/settings, despliegue Supabase,
-WABA y HTTP E2E. El contrato detallado está en
-[Perímetro Lancemos V1](contracts/lancemos-pilot-boundary-v1.md) y la evidencia
-local en
-[Perímetro Lancemos fase 1](operations/2026-08-10-lancemos-pilot-boundary-local.md).
+El bridge valida al arrancar que cualquier worker de planificación u outbound
+esté asociado a una configuración completa del perímetro. `/health` conserva
+liveness simple y `/ready` consulta una RPC de estado sanitizada. Un runtime
+`inactive` es operacionalmente ready pero no autoriza automatización; un scope
+o una versión incoherentes producen HTTP 503. Docker y Compose usan `/ready`,
+por lo que el diagnóstico normal no depende de consola interactiva.
+
+El sender local usa siempre la API de Chatwoot. Para un scope `waba`, el factory
+exige templates aprobados separados para primer contacto y seguimiento y envía
+`template_params` con un único placeholder de body. No existe fallback a texto
+libre ni a Evolution cuando el scope durable declara WABA. El dispatcher registra
+esos intentos como `approved_template`; la frontera SQL request-start rechaza
+fail-closed una reserva WABA marcada como `freeform`.
+
+Siguen pendientes el despliegue de migraciones, la configuración remota
+automatizada, IDs reales, cohorte, caps y owner del kill switch, WABA oficial y
+HTTP E2E contra el entorno desplegado. El contrato de fase 1 está en
+[Perímetro Lancemos V1](contracts/lancemos-pilot-boundary-v1.md), el wiring en
+[Wiring runtime V1](contracts/lancemos-pilot-boundary-runtime-v1.md) y la
+evidencia local en `docs/operations/`.
 
 ## Cierre determinístico por compra aprobada
 

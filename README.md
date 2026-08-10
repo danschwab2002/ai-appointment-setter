@@ -48,6 +48,11 @@ La división opcional de una respuesta lógica en 1–4 burbujas está implement
 
 Continúa apagada por defecto con `CHATWOOT_REPLY_SPLITTER_ENABLED=false` y todavía no tiene evidencia de despliegue ni E2E real por WhatsApp. Ver [`docs/design/outbound-reply-splitting-mvp.md`](docs/design/outbound-reply-splitting-mvp.md).
 
+El adapter local de primer contacto y seguimiento soporta también inboxes WABA
+de Chatwoot mediante templates aprobados. WABA permanece sin evidencia de
+despliegue o envío real; la configuración incompleta falla al arrancar y no cae
+a texto libre ni a Evolution.
+
 ## Fronteras de responsabilidad
 
 - **Hotmart:** fuente del evento de abandono de carrito aceptado por el receptor actual.
@@ -90,6 +95,7 @@ Verificación básica:
 
 ```bash
 curl http://localhost:8000/health
+curl http://localhost:8000/ready
 ```
 
 ## Activación segura
@@ -103,6 +109,14 @@ CHATWOOT_REPLY_SPLITTER_ENABLED=false
 RESOLUTION_WORKER_ENABLED=false
 DURABLE_DISPATCHER_ENABLED=false
 DURABLE_OUTBOUND_ENABLED=false
+LANCEMOS_PILOT_BOUNDARY_ENABLED=false
 ```
 
-No debe habilitarse mensajería saliente sólo porque el servicio responda `/health`. La guía de conexión de Chatwoot está en [`docs/chatwoot-webhook.md`](docs/chatwoot-webhook.md), y la evidencia operativa vigente vive en [`docs/operations/`](docs/operations/).
+`/health` sólo prueba que el proceso responde. `/ready` valida de forma
+sanitizada la configuración durable del perímetro cuando está habilitado. Un
+runtime `inactive` sigue estando listo para recibir tráfico sin ejecutar
+automatización; una versión o scope inconsistentes producen HTTP 503. El
+Dockerfile y `compose.yaml` usan `/ready`, por lo que el diagnóstico normal no
+requiere consola interactiva.
+
+No debe habilitarse mensajería saliente sólo porque el servicio responda `/health` o `/ready`. La guía de conexión de Chatwoot está en [`docs/chatwoot-webhook.md`](docs/chatwoot-webhook.md), y la evidencia operativa vigente vive en [`docs/operations/`](docs/operations/).

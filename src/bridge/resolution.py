@@ -14,6 +14,7 @@ from bridge.hotmart import HotmartBuyerData, parse_hotmart_payload
 from bridge.messaging import is_allowed_whatsapp_target
 from bridge.supabase import (
     ContactMatch,
+    PilotBoundaryConfig,
     SituationReport,
     SupabaseClient,
     SupabaseError,
@@ -38,6 +39,7 @@ async def resolve_event(
     allowed_jid: str | None = None,
     chatwoot_account_id: int | None = None,
     chatwoot_inbox_id: int | None = None,
+    pilot_boundary: PilotBoundaryConfig | None = None,
 ) -> SituationReport:
     """Resolve identity for one webhook event and return a situation report.
 
@@ -202,6 +204,7 @@ async def resolve_event(
                 ),
                 chatwoot_inbox_id=(chatwoot_inbox_id if identity_allowed else None),
                 external_user_id=(buyer.buyer_phone if identity_allowed else None),
+                pilot_boundary=pilot_boundary,
             )
             recovery_case_id = plan.recovery_case_id
         else:

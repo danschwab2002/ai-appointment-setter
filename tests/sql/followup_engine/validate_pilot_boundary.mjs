@@ -578,7 +578,6 @@ const serviceEntrypoints = new Set([
   'set_lancemos_pilot_runtime_state',
   'set_lancemos_pilot_cohort_member',
   'evaluate_lancemos_pilot_scope',
-  'authorize_lancemos_pilot_request_start',
 ]);
 for (const row of functionPrivileges.rows) {
   if (row.anon_execute || row.authenticated_execute
@@ -598,7 +597,7 @@ const tablePrivileges = await db.query(`
   where table_schema='public'
     and table_name like 'pilot_%'
 `);
-if (tablePrivileges.rows.length !== 5
+if (tablePrivileges.rows.length !== 6
     || tablePrivileges.rows.some((row) => row.anon_dml
       || row.authenticated_dml || row.service_dml)) {
   throw new Error(`pilot table privilege leak: ${JSON.stringify(tablePrivileges.rows)}`);

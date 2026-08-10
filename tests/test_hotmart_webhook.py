@@ -128,6 +128,21 @@ def _hotmart_settings(**overrides: object) -> Settings:
     return Settings(**defaults)  # type: ignore[arg-type]
 
 
+def _pilot_boundary_settings() -> dict[str, object]:
+    return {
+        "pilot_boundary_enabled": True,
+        "pilot_scope_key": "lancemos-cart-recovery",
+        "pilot_scope_version": 1,
+        "pilot_tenant_key": "lancemos",
+        "pilot_channel_provider": "waba",
+        "pilot_channel_account_ref": "opaque-account-ref",
+        "waba_first_touch_template_name": "cart_recovery_first",
+        "waba_followup_template_name": "cart_recovery_followup",
+        "waba_template_language": "es_AR",
+        "waba_template_category": "MARKETING",
+    }
+
+
 def test_worker_requires_complete_durable_policy_configuration() -> None:
     with pytest.raises(ValueError, match="FOLLOWUP_POLICY_KEY and FOLLOWUP_POLICY_VERSION"):
         create_app(_hotmart_settings(
@@ -135,6 +150,17 @@ def test_worker_requires_complete_durable_policy_configuration() -> None:
             supabase_base_url="https://fake.supabase.co",
             supabase_service_role_key="service-role",
             followup_policy_version=None,
+        ))
+
+
+def test_durable_cart_planning_requires_enabled_pilot_boundary() -> None:
+    with pytest.raises(ValueError, match="LANCEMOS_PILOT_BOUNDARY_ENABLED"):
+        create_app(_hotmart_settings(
+            worker_enabled=True,
+            supabase_base_url="https://fake.supabase.co",
+            supabase_service_role_key="service-role",
+            followup_policy_key="cart-recovery-test",
+            followup_policy_version=1,
         ))
 
 
@@ -211,7 +237,69 @@ def test_dispatcher_outbound_requires_complete_explicit_dependencies() -> None:
             chatwoot_account_id=1,
             chatwoot_control_api_access_token="control-token",
             chatwoot_pause_macro_id=1,
+            messaging_channel="waba",
+            **_pilot_boundary_settings(),
         ))
+
+
+def test_dispatcher_outbound_requires_enabled_pilot_boundary() -> None:
+    with pytest.raises(ValueError, match="LANCEMOS_PILOT_BOUNDARY_ENABLED"):
+        create_app(_hotmart_settings(
+            dispatcher_enabled=True,
+            dispatcher_outbound_enabled=True,
+            dispatcher_worker_id="dispatcher-test",
+            supabase_base_url="https://fake.supabase.co",
+            supabase_service_role_key="service-role",
+            chatwoot_base_url="https://chatwoot.example.test",
+            chatwoot_account_id=1,
+            chatwoot_control_api_access_token="control-token",
+            chatwoot_pause_macro_id=1,
+        ))
+
+
+@pytest.mark.parametrize(
+    "missing_field,expected_name",
+    [
+        ("pilot_scope_key", "LANCEMOS_PILOT_SCOPE_KEY"),
+        ("pilot_scope_version", "LANCEMOS_PILOT_SCOPE_VERSION"),
+        ("pilot_tenant_key", "LANCEMOS_PILOT_TENANT_KEY"),
+        ("pilot_channel_provider", "LANCEMOS_PILOT_CHANNEL_PROVIDER"),
+        ("pilot_channel_account_ref", "LANCEMOS_PILOT_CHANNEL_ACCOUNT_REF"),
+    ],
+)
+def test_enabled_pilot_boundary_requires_complete_configuration(
+    missing_field: str,
+    expected_name: str,
+) -> None:
+    overrides = _pilot_boundary_settings()
+    overrides[missing_field] = None
+
+    with pytest.raises(ValueError, match=expected_name):
+        create_app(_hotmart_settings(**overrides))
+
+
+@pytest.mark.parametrize(
+    "missing_field,expected_name",
+    [
+        ("waba_first_touch_template_name", "WABA_FIRST_TOUCH_TEMPLATE_NAME"),
+        ("waba_followup_template_name", "WABA_FOLLOWUP_TEMPLATE_NAME"),
+        ("waba_template_language", "WABA_TEMPLATE_LANGUAGE"),
+        ("waba_template_category", "WABA_TEMPLATE_CATEGORY"),
+    ],
+)
+def test_waba_outbound_requires_approved_template_configuration(
+    missing_field: str,
+    expected_name: str,
+) -> None:
+    overrides = _pilot_boundary_settings()
+    overrides[missing_field] = None
+    with pytest.raises(ValueError, match=expected_name):
+        create_app(
+            _hotmart_settings(
+                dispatcher_outbound_enabled=True,
+                **overrides,
+            )
+        )
 
 
 def test_dispatcher_outbound_injects_agent_sender_and_allowlist() -> None:
@@ -229,6 +317,8 @@ def test_dispatcher_outbound_injects_agent_sender_and_allowlist() -> None:
             chatwoot_account_id=1,
             chatwoot_control_api_access_token="control-token",
             chatwoot_pause_macro_id=1,
+            messaging_channel="waba",
+            **_pilot_boundary_settings(),
         ),
         recovery_agent_client=agent,  # type: ignore[arg-type]
         message_sender=sender,  # type: ignore[arg-type]
@@ -237,6 +327,40 @@ def test_dispatcher_outbound_injects_agent_sender_and_allowlist() -> None:
     assert dispatcher._recovery_agent is agent
     assert dispatcher._sender is sender
     assert dispatcher._allowed_jid == "15555550100@s.whatsapp.net"
+    assert dispatcher._pilot_boundary is not None
+    assert dispatcher._pilot_boundary.scope_key == "lancemos-cart-recovery"
+
+
+def test_dispatcher_outbound_builds_chatwoot_sender_for_waba_scope() -> None:
+    app = create_app(
+        _hotmart_settings(
+            allowed_jid="15555550100@s.whatsapp.net",
+            dispatcher_enabled=True,
+            dispatcher_outbound_enabled=True,
+            dispatcher_worker_id="dispatcher-test",
+            supabase_base_url="https://fake.supabase.co",
+            supabase_service_role_key="service-role",
+            chatwoot_base_url="https://chatwoot.example.test",
+            chatwoot_account_id=1,
+            chatwoot_control_api_access_token="control-token",
+            chatwoot_pause_macro_id=1,
+            chatwoot_inbox_id=20,
+            messaging_channel="evolution",
+            **_pilot_boundary_settings(),
+        ),
+        recovery_agent_client=object(),  # type: ignore[arg-type]
+    )
+
+    from bridge.messaging import ChatwootMessageSender, WhatsAppTemplateConfig
+
+    sender = app.state.durable_dispatcher._sender
+    assert isinstance(sender, ChatwootMessageSender)
+    assert sender._template == WhatsAppTemplateConfig(
+        first_touch_name="cart_recovery_first",
+        followup_name="cart_recovery_followup",
+        language="es_AR",
+        category="MARKETING",
+    )
 
 
 def _post_hotmart(

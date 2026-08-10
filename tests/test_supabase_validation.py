@@ -11,6 +11,7 @@ import pytest
 
 from bridge.supabase import (
     DeliveryAttempt,
+    PilotBoundaryConfig,
     SupabaseClient,
     SupabaseCommittedResponseError,
     SupabaseError,
@@ -135,6 +136,110 @@ def test_plan_cart_recovery_calls_authoritative_rpc() -> None:
         "p_policy_key": "cart-recovery-test",
         "p_policy_version": 1,
         "p_abandoned_at": "2026-08-03T12:00:00+00:00",
+    }
+
+
+def test_plan_cart_recovery_with_pilot_uses_atomic_boundary_rpc() -> None:
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=[{
+            "recovery_case_id": "case-001",
+            "followup_sequence_id": "sequence-001",
+            "scheduled_action_id": "action-001",
+            "created": True,
+        }], request=request)
+
+    client = SupabaseClient(
+        base_url="https://fake.supabase.co",
+        service_role_key="fake-service-role-key",
+        transport=httpx.MockTransport(handler),
+    )
+    pilot = PilotBoundaryConfig(
+        scope_key="lancemos-cart-recovery",
+        scope_version=1,
+        tenant_key="lancemos",
+        channel_provider="waba",
+        channel_account_ref="opaque-account-ref",
+    )
+
+    result = asyncio.run(client.plan_cart_recovery(
+        webhook_event_id="event-001",
+        contact_id="contact-001",
+        external_product_id="3526906",
+        product_name="Test Product",
+        offer_code="test-offer",
+        policy_key="cart-recovery-test",
+        policy_version=1,
+        abandoned_at="2026-08-03T12:00:00+00:00",
+        chatwoot_account_id=1,
+        chatwoot_inbox_id=7,
+        external_user_id="15555550100",
+        pilot_boundary=pilot,
+    ))
+
+    assert result.created is True
+    assert requests[0].url.path == (
+        "/rest/v1/rpc/plan_lancemos_pilot_cart_recovery"
+    )
+    assert json.loads(requests[0].content) == {
+        "p_webhook_event_id": "event-001",
+        "p_contact_id": "contact-001",
+        "p_external_product_id": "3526906",
+        "p_product_name": "Test Product",
+        "p_offer_code": "test-offer",
+        "p_policy_key": "cart-recovery-test",
+        "p_policy_version": 1,
+        "p_abandoned_at": "2026-08-03T12:00:00+00:00",
+        "p_chatwoot_account_id": 1,
+        "p_chatwoot_inbox_id": 7,
+        "p_external_user_id": "15555550100",
+        "p_scope_key": "lancemos-cart-recovery",
+        "p_scope_version": 1,
+    }
+
+
+def test_get_pilot_runtime_status_uses_read_only_status_rpc() -> None:
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=[{
+            "configured": True,
+            "runtime_state": "inactive",
+            "runtime_generation": 4,
+            "reason_code": "pilot_runtime_inactive",
+        }], request=request)
+
+    client = SupabaseClient(
+        base_url="https://fake.supabase.co",
+        service_role_key="fake-service-role-key",
+        transport=httpx.MockTransport(handler),
+    )
+    status = asyncio.run(client.get_pilot_runtime_status(
+        pilot_boundary=PilotBoundaryConfig(
+            scope_key="lancemos-cart-recovery",
+            scope_version=1,
+            tenant_key="lancemos",
+            channel_provider="waba",
+            channel_account_ref="opaque-account-ref",
+        ),
+    ))
+
+    assert status.configured is True
+    assert status.runtime_state == "inactive"
+    assert status.runtime_generation == 4
+    assert status.reason_code == "pilot_runtime_inactive"
+    assert requests[0].url.path == (
+        "/rest/v1/rpc/get_lancemos_pilot_runtime_status"
+    )
+    assert json.loads(requests[0].content) == {
+        "p_scope_key": "lancemos-cart-recovery",
+        "p_scope_version": 1,
+        "p_tenant_key": "lancemos",
+        "p_channel_provider": "waba",
+        "p_channel_account_ref": "opaque-account-ref",
     }
 
 
@@ -450,6 +555,62 @@ def test_mark_followup_request_started_calls_fenced_rpc_and_validates_attempt() 
     assert attempt.action_id == "action-001"
     assert attempt.phase == "request_started"
     assert requests[0].url.path == "/rest/v1/rpc/mark_followup_request_started"
+    assert json.loads(requests[0].content) == {
+        "p_action_id": "action-001",
+        "p_attempt_id": "attempt-001",
+        "p_worker_id": "dispatcher-1",
+        "p_lease_generation": 2,
+        "p_now": "2026-08-03T13:00:01+00:00",
+    }
+
+
+def test_mark_request_started_with_pilot_uses_atomic_authorization_rpc() -> None:
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=[{
+            "id": "attempt-001",
+            "action_id": "action-001",
+            "idempotency_key": "cart_recovery:first_contact:case-001",
+            "attempt_number": 1,
+            "channel": "whatsapp",
+            "mode": "freeform",
+            "phase": "request_started",
+            "lease_generation": 2,
+            "expected_case_version": 3,
+            "expected_sequence_revision": 4,
+            "pilot_authorization_id": "authorization-001",
+            "pilot_runtime_generation": 9,
+            "pilot_authorization_replayed": False,
+        }], request=request)
+
+    client = SupabaseClient(
+        base_url="https://fake.supabase.co",
+        service_role_key="fake-service-role-key",
+        transport=httpx.MockTransport(handler),
+    )
+    pilot = PilotBoundaryConfig(
+        scope_key="lancemos-cart-recovery",
+        scope_version=1,
+        tenant_key="lancemos",
+        channel_provider="waba",
+        channel_account_ref="opaque-account-ref",
+    )
+
+    attempt = asyncio.run(client.mark_followup_request_started(
+        action_id="action-001",
+        attempt_id="attempt-001",
+        worker_id="dispatcher-1",
+        lease_generation=2,
+        now="2026-08-03T13:00:01+00:00",
+        pilot_boundary=pilot,
+    ))
+
+    assert attempt.phase == "request_started"
+    assert requests[0].url.path == (
+        "/rest/v1/rpc/mark_lancemos_pilot_request_started"
+    )
     assert json.loads(requests[0].content) == {
         "p_action_id": "action-001",
         "p_attempt_id": "attempt-001",

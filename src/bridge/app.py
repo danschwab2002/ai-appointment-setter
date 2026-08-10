@@ -49,7 +49,11 @@ from bridge.hotmart import (
     parse_hotmart_payload,
     verify_hotmart_token,
 )
-from bridge.messaging import EvolutionMessageSender, MessageSender
+from bridge.messaging import (
+    ChatwootMessageSender,
+    MessageSender,
+    WhatsAppTemplateConfig,
+)
 from bridge.opt_out import detect_explicit_opt_out
 from bridge.recovery_agent import RecoveryAgentClient
 from bridge.reply_splitter import (
@@ -59,7 +63,7 @@ from bridge.reply_splitter import (
     validate_reply_parts,
 )
 from bridge.security import verify_chatwoot_signature
-from bridge.supabase import SupabaseClient, SupabaseError
+from bridge.supabase import PilotBoundaryConfig, SupabaseClient, SupabaseError
 from bridge.worker import DurableDispatcher, OptOutProjectionWorker, ResolutionWorker
 
 logger = logging.getLogger(__name__)
@@ -177,6 +181,16 @@ class Settings:
     dispatcher_outbound_enabled: bool = False
     chatwoot_durable_opt_out_enabled: bool = False
     opt_out_projection_worker_id: str | None = None
+    pilot_boundary_enabled: bool = False
+    pilot_scope_key: str | None = None
+    pilot_scope_version: int | None = None
+    pilot_tenant_key: str | None = None
+    pilot_channel_provider: str | None = None
+    pilot_channel_account_ref: str | None = None
+    waba_first_touch_template_name: str | None = None
+    waba_followup_template_name: str | None = None
+    waba_template_language: str | None = None
+    waba_template_category: str | None = None
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -345,6 +359,13 @@ class Settings:
         opt_out_projection_worker_id = (
             os.getenv("CHATWOOT_OPT_OUT_PROJECTION_WORKER_ID", "").strip() or None
         )
+        pilot_boundary_enabled = (
+            os.getenv("LANCEMOS_PILOT_BOUNDARY_ENABLED", "false").lower()
+            == "true"
+        )
+        pilot_scope_version_raw = os.getenv(
+            "LANCEMOS_PILOT_SCOPE_VERSION", ""
+        ).strip()
 
         return cls(
             webhook_secret=os.environ["CHATWOOT_WEBHOOK_SECRET"],
@@ -393,6 +414,34 @@ class Settings:
             dispatcher_outbound_enabled=dispatcher_outbound_enabled,
             chatwoot_durable_opt_out_enabled=chatwoot_durable_opt_out_enabled,
             opt_out_projection_worker_id=opt_out_projection_worker_id,
+            pilot_boundary_enabled=pilot_boundary_enabled,
+            pilot_scope_key=(
+                os.getenv("LANCEMOS_PILOT_SCOPE_KEY", "").strip() or None
+            ),
+            pilot_scope_version=(
+                int(pilot_scope_version_raw) if pilot_scope_version_raw else None
+            ),
+            pilot_tenant_key=(
+                os.getenv("LANCEMOS_PILOT_TENANT_KEY", "").strip() or None
+            ),
+            pilot_channel_provider=(
+                os.getenv("LANCEMOS_PILOT_CHANNEL_PROVIDER", "").strip() or None
+            ),
+            pilot_channel_account_ref=(
+                os.getenv("LANCEMOS_PILOT_CHANNEL_ACCOUNT_REF", "").strip() or None
+            ),
+            waba_first_touch_template_name=(
+                os.getenv("WABA_FIRST_TOUCH_TEMPLATE_NAME", "").strip() or None
+            ),
+            waba_followup_template_name=(
+                os.getenv("WABA_FOLLOWUP_TEMPLATE_NAME", "").strip() or None
+            ),
+            waba_template_language=(
+                os.getenv("WABA_TEMPLATE_LANGUAGE", "").strip() or None
+            ),
+            waba_template_category=(
+                os.getenv("WABA_TEMPLATE_CATEGORY", "").strip().upper() or None
+            ),
         )
 
 
@@ -518,6 +567,56 @@ def create_app(
     recovery_agent_client: RecoveryAgentClient | None = None,
     message_sender: MessageSender | None = None,
 ) -> FastAPI:
+    pilot_fields = (
+        (settings.pilot_scope_key, "LANCEMOS_PILOT_SCOPE_KEY"),
+        (settings.pilot_scope_version, "LANCEMOS_PILOT_SCOPE_VERSION"),
+        (settings.pilot_tenant_key, "LANCEMOS_PILOT_TENANT_KEY"),
+        (settings.pilot_channel_provider, "LANCEMOS_PILOT_CHANNEL_PROVIDER"),
+        (settings.pilot_channel_account_ref, "LANCEMOS_PILOT_CHANNEL_ACCOUNT_REF"),
+    )
+    if settings.pilot_boundary_enabled:
+        for value, name in pilot_fields:
+            if value is None or value == "":
+                raise ValueError(f"{name} is required when pilot boundary is enabled")
+        if settings.pilot_scope_version is None or settings.pilot_scope_version < 1:
+            raise ValueError("LANCEMOS_PILOT_SCOPE_VERSION must be positive")
+    if settings.dispatcher_outbound_enabled and not settings.pilot_boundary_enabled:
+        raise ValueError(
+            "DURABLE_OUTBOUND_ENABLED requires LANCEMOS_PILOT_BOUNDARY_ENABLED"
+        )
+    waba_template: WhatsAppTemplateConfig | None = None
+    if (
+        settings.dispatcher_outbound_enabled
+        and settings.pilot_channel_provider == "waba"
+    ):
+        template_fields = (
+            (settings.waba_first_touch_template_name, "WABA_FIRST_TOUCH_TEMPLATE_NAME"),
+            (settings.waba_followup_template_name, "WABA_FOLLOWUP_TEMPLATE_NAME"),
+            (settings.waba_template_language, "WABA_TEMPLATE_LANGUAGE"),
+            (settings.waba_template_category, "WABA_TEMPLATE_CATEGORY"),
+        )
+        for value, name in template_fields:
+            if value is None or not value.strip():
+                raise ValueError(f"{name} is required for WABA outbound")
+        if settings.waba_template_category not in {"MARKETING", "UTILITY"}:
+            raise ValueError("WABA_TEMPLATE_CATEGORY must be MARKETING or UTILITY")
+        waba_template = WhatsAppTemplateConfig(
+            first_touch_name=settings.waba_first_touch_template_name,  # type: ignore[arg-type]
+            followup_name=settings.waba_followup_template_name,  # type: ignore[arg-type]
+            language=settings.waba_template_language,  # type: ignore[arg-type]
+            category=settings.waba_template_category,  # type: ignore[arg-type]
+        )
+    pilot_boundary = (
+        PilotBoundaryConfig(
+            scope_key=settings.pilot_scope_key,  # type: ignore[arg-type]
+            scope_version=settings.pilot_scope_version,  # type: ignore[arg-type]
+            tenant_key=settings.pilot_tenant_key,  # type: ignore[arg-type]
+            channel_provider=settings.pilot_channel_provider,  # type: ignore[arg-type]
+            channel_account_ref=settings.pilot_channel_account_ref,  # type: ignore[arg-type]
+        )
+        if settings.pilot_boundary_enabled
+        else None
+    )
     if settings.hotmart_purchase_worker_enabled and not settings.worker_enabled:
         raise ValueError(
             "HOTMART_PURCHASE_WORKER_ENABLED requires "
@@ -649,6 +748,11 @@ def create_app(
                 "CHATWOOT_INBOX_ID is required when "
                 "RESOLUTION_WORKER_ENABLED=true"
             )
+        if not settings.pilot_boundary_enabled:
+            raise ValueError(
+                "RESOLUTION_WORKER_ENABLED requires "
+                "LANCEMOS_PILOT_BOUNDARY_ENABLED"
+            )
         recovery_agent = recovery_agent_client
         if (
             recovery_agent is None
@@ -666,15 +770,16 @@ def create_app(
         sender = message_sender
         if (
             sender is None
-            and settings.messaging_channel == "evolution"
+            and settings.pilot_channel_provider in {"evolution", "waba"}
             and settings.chatwoot_inbox_id is not None
             and control_client is not None
             and isinstance(control_client, ChatwootClient)
         ):
-            sender = EvolutionMessageSender(
+            sender = ChatwootMessageSender(
                 chatwoot=control_client,
                 inbox_id=settings.chatwoot_inbox_id,
                 allowed_jid=settings.allowed_jid,
+                template=waba_template,
             )
         resolution_worker = ResolutionWorker(
             supabase=shared_supabase,
@@ -688,6 +793,7 @@ def create_app(
             policy_key=settings.followup_policy_key,
             policy_version=settings.followup_policy_version,
             purchase_worker_enabled=settings.hotmart_purchase_worker_enabled,
+            pilot_boundary=pilot_boundary,
         )
 
     if settings.dispatcher_enabled:
@@ -734,14 +840,15 @@ def create_app(
             outbound_sender = message_sender
             if (
                 outbound_sender is None
-                and settings.messaging_channel == "evolution"
+                and settings.pilot_channel_provider in {"evolution", "waba"}
                 and settings.chatwoot_inbox_id is not None
                 and isinstance(control_client, ChatwootClient)
             ):
-                outbound_sender = EvolutionMessageSender(
+                outbound_sender = ChatwootMessageSender(
                     chatwoot=control_client,
                     inbox_id=settings.chatwoot_inbox_id,
                     allowed_jid=settings.allowed_jid,
+                    template=waba_template,
                 )
             if outbound_agent is None or outbound_sender is None:
                 raise ValueError(
@@ -761,6 +868,7 @@ def create_app(
                 if settings.dispatcher_outbound_enabled
                 else None
             ),
+            pilot_boundary=pilot_boundary,
         )
 
     opt_out_projection_worker: OptOutProjectionWorker | None = None
@@ -1191,6 +1299,45 @@ def create_app(
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/ready")
+    async def readiness() -> dict[str, str]:
+        if pilot_boundary is None:
+            return {
+                "status": "ready",
+                "pilot_boundary": "disabled",
+                "automation_state": "default_off",
+                "reason_code": "pilot_boundary_disabled",
+            }
+        if shared_supabase is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="pilot_readiness_unavailable",
+            )
+        try:
+            pilot_status = await shared_supabase.get_pilot_runtime_status(
+                pilot_boundary=pilot_boundary
+            )
+        except Exception as exc:
+            logger.warning(
+                "pilot_readiness_check_failed error_type=%s",
+                type(exc).__name__,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="pilot_readiness_unavailable",
+            ) from exc
+        if not pilot_status.configured or pilot_status.runtime_state is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=pilot_status.reason_code,
+            )
+        return {
+            "status": "ready",
+            "pilot_boundary": "configured",
+            "automation_state": pilot_status.runtime_state,
+            "reason_code": pilot_status.reason_code,
+        }
 
     @app.post("/webhooks/chatwoot", status_code=status.HTTP_202_ACCEPTED)
     async def receive_chatwoot_webhook(
