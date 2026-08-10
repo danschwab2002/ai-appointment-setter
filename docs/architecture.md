@@ -159,6 +159,49 @@ de migración aplicada ni de worker activo en producción.
 
 La resolución consulta email y teléfono y falla cerrado si apuntan a contactos distintos o si un identificador tiene múltiples dueños. La planificación sigue siendo asíncrona, pero un trigger de base valida en la misma transacción que evento, contacto, producto, oferta y timestamp coincidan exactamente antes de asociar el evento con un caso. Conflictos semánticos no resueltos bloquean globalmente el inicio de requests outbound. El contrato detallado está en `docs/contracts/hotmart-cart-abandonment-v1.md`.
 
+## Perímetro durable del piloto Lancemos
+
+El árbol incluye una capa SQL default-off para acotar el piloto Lancemos. Todavía
+no está conectada a los entrypoints HTTP, la planificación ni la frontera
+`mark_followup_request_started`; no tiene seed real y no fue desplegada.
+
+Las fuentes de verdad nuevas son:
+
+- `pilot_scope_versions`, para el scope publicado e inmutable de tenant,
+  account/inbox, cuenta opaca de canal, evento Hotmart, producto, oferta, policy
+  y límites;
+- `pilot_runtime_controls`, para versión seleccionada, estado
+  `inactive|armed|paused|closed` y generación CAS;
+- `pilot_cohort_memberships`, para la cohorte explícita por versión y contacto;
+- `pilot_outbound_request_authorizations`, como ledger append-only de
+  autorizaciones de request-start y consumo conservador de presupuesto;
+- `pilot_control_events`, para la auditoría de activación, pausa/cierre, cambio
+  de versión y membresía.
+
+`evaluate_lancemos_pilot_scope` permite rechazar temprano sin consumir
+presupuesto. `authorize_lancemos_pilot_request_start` vuelve a validar el scope
+contra el estado canónico y reserva capacidad bajo el lock del runtime. La fase
+posterior debe componer esa autorización con `mark_followup_request_started`, la
+autorización del contacto y los stops negativos existentes en una única frontera
+transaccional.
+
+Publicar o activar una versión nunca arma outbound. Un cambio de versión sólo es
+válido desde `inactive|paused`, siempre vuelve a `inactive`, no copia la cohorte
+y no reinicia presupuesto. `inactive`, `paused` y `closed` bloquean
+autorizaciones nuevas. Los replays exactos recuperan el ledger original, pero
+`replayed=true` nunca habilita otro efecto externo. El cap diario usa el reloj de
+PostgreSQL y la timezone es constante para todas las versiones de un mismo
+`scope_key`. Las tablas niegan DML directo a roles API y `service_role`; sólo los
+entrypoints explícitos tienen `EXECUTE`.
+
+La allowlist actual permanece vigente hasta verificar toda la conjunción
+end-to-end. Siguen pendientes IDs, cohorte, caps y owner del kill switch reales,
+la policy comercial del cap diario, wiring Python/settings, despliegue Supabase,
+WABA y HTTP E2E. El contrato detallado está en
+[Perímetro Lancemos V1](contracts/lancemos-pilot-boundary-v1.md) y la evidencia
+local en
+[Perímetro Lancemos fase 1](operations/2026-08-10-lancemos-pilot-boundary-local.md).
+
 ## Cierre determinístico por compra aprobada
 
 La implementación del repositorio admite `PURCHASE_APPROVED` de Hotmart como un
