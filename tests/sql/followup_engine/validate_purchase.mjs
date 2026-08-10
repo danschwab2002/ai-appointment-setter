@@ -44,7 +44,12 @@ async function insertAbandonment({ eventId, contactId, externalId, email, phone 
         'id', '${externalId}',
         'creation_date', 1786147200000,
         'event', 'PURCHASE_OUT_OF_SHOPPING_CART',
-        'version', '2.0.0'
+        'version', '2.0.0',
+        'data', jsonb_build_object(
+          'buyer', jsonb_build_object('email', '${email}', 'phone', '${phone}'),
+          'product', jsonb_build_object('id', 123, 'name', 'Pilot Product'),
+          'offer', jsonb_build_object('code', 'OFFER-1')
+        )
       ),
       'received', '2026-08-08T00:00:01Z'
     );
@@ -52,9 +57,9 @@ async function insertAbandonment({ eventId, contactId, externalId, email, phone 
     values ('${contactId}', 'Local Buyer', '${email}', '${phone}');
     insert into public.contact_points (
       contact_id, type, raw_value, normalized_value, source, source_event_id
-    ) values (
-      '${contactId}', 'email', '${email}', '${email}', 'hotmart', '${eventId}'
-    );
+    ) values
+      ('${contactId}', 'email', '${email}', '${email}', 'hotmart', '${eventId}'),
+      ('${contactId}', 'phone', '${phone}', '${phone}', 'hotmart', '${eventId}');
   `);
 }
 
@@ -505,7 +510,7 @@ await insertAbandonment({
   contactId: 'cccccccc-cccc-4ccc-8ccc-ccccccccccc7',
   externalId: 'abandonment-7',
   email: 'buyer7@example.com',
-  phone: '5531777777777',
+  phone: '5599990000001',
 });
 const plan7 = await plan({
   eventId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa7',
@@ -522,7 +527,7 @@ const firstAdmission = await db.query(`
       'data', jsonb_build_object(
         'buyer', jsonb_build_object(
           'email', 'buyer7@example.com',
-          'checkout_phone', '5531777777777'
+          'checkout_phone', '5599990000001'
         ),
         'product', jsonb_build_object('id', 123),
         'purchase', jsonb_build_object(
@@ -549,7 +554,7 @@ const exactReplay = await db.query(`
       'data', jsonb_build_object(
         'buyer', jsonb_build_object(
           'email', ' BUYER7@example.com ',
-          'checkout_phone', '+55 (31) 77777-7777'
+          'checkout_phone', '5599990000001'
         ),
         'product', jsonb_build_object('id', 123),
         'purchase', jsonb_build_object(

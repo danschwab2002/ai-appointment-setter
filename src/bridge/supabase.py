@@ -44,6 +44,14 @@ class PurchaseAdmissionResult:
 
 
 @dataclass(frozen=True)
+class CartAbandonmentAdmissionResult:
+    """Durable semantic-admission outcome for a cart-abandonment webhook."""
+
+    outcome: str
+    webhook_event_id: str
+
+
+@dataclass(frozen=True)
 class CartRecoveryPlan:
     """Durable case, sequence, and next action created by PostgreSQL."""
 
@@ -588,6 +596,45 @@ class SupabaseClient:
         if not isinstance(webhook_event_id, str) or not webhook_event_id:
             raise SupabaseError("purchase_admission_invalid_event_id")
         return PurchaseAdmissionResult(
+            outcome=outcome,
+            webhook_event_id=webhook_event_id,
+        )
+
+    async def admit_hotmart_cart_abandonment(
+        self,
+        *,
+        external_event_id: str,
+        payload: dict[str, Any],
+    ) -> CartAbandonmentAdmissionResult:
+        """Admit an abandonment with normalized semantic replay checks."""
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/admit_hotmart_cart_abandonment",
+            content=json.dumps(
+                {
+                    "p_external_event_id": external_event_id,
+                    "p_payload": payload,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(
+                f"cart_abandonment_admission_failed: HTTP {response.status_code}"
+            )
+        rows = _response_rows(
+            response,
+            operation="cart_abandonment_admission",
+        )
+        if len(rows) != 1:
+            raise SupabaseError("cart_abandonment_admission_invalid_shape")
+        outcome = rows[0].get("outcome")
+        webhook_event_id = rows[0].get("webhook_event_id")
+        if outcome not in {"inserted", "duplicate", "semantic_conflict"}:
+            raise SupabaseError("cart_abandonment_admission_invalid_outcome")
+        if not isinstance(webhook_event_id, str) or not webhook_event_id:
+            raise SupabaseError("cart_abandonment_admission_invalid_event_id")
+        return CartAbandonmentAdmissionResult(
             outcome=outcome,
             webhook_event_id=webhook_event_id,
         )
@@ -1571,7 +1618,7 @@ class SupabaseClient:
                 ),
                 "normalized_value": f"eq.{email}",
                 "type": "eq.email",
-                "limit": "1",
+                "limit": "2",
             },
         )
         if response.status_code != 200:
@@ -1581,6 +1628,8 @@ class SupabaseClient:
         rows = _response_rows(response, operation="find_contact_by_email")
         if not rows:
             return None
+        if len(rows) != 1:
+            raise SupabaseError("find_contact_by_email_ambiguous")
         row = rows[0]
         contact = row.get("contacts")
         if not isinstance(contact, dict):
@@ -1630,7 +1679,7 @@ class SupabaseClient:
                 ),
                 "normalized_value": f"eq.{phone}",
                 "type": "eq.phone",
-                "limit": "1",
+                "limit": "2",
             },
         )
         if response.status_code != 200:
@@ -1640,6 +1689,8 @@ class SupabaseClient:
         rows = _response_rows(response, operation="find_contact_by_phone")
         if not rows:
             return None
+        if len(rows) != 1:
+            raise SupabaseError("find_contact_by_phone_ambiguous")
         row = rows[0]
         contact = row.get("contacts")
         if not isinstance(contact, dict):

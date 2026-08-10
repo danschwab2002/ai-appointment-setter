@@ -61,27 +61,54 @@ async def resolve_event(
         raise ResolutionError("invalid_payload_structure")
 
     # ── Step 2: Look up existing contact ────────────────────────────
-    match: ContactMatch | None = None
-    strategy: str | None = None
+    email_match: ContactMatch | None = None
+    phone_match: ContactMatch | None = None
     authoritative_context_complete = True
 
     if buyer.buyer_email is not None:
         try:
-            match = await supabase.find_contact_by_email(buyer.buyer_email)
-        except SupabaseError:
+            email_match = await supabase.find_contact_by_email(buyer.buyer_email)
+        except SupabaseError as exc:
+            if str(exc).endswith("_ambiguous"):
+                await supabase.update_event_status(
+                    event_id=webhook_event_id,
+                    status="failed",
+                    error="identity_ambiguous",
+                )
+                raise ResolutionError("identity_ambiguous") from exc
             authoritative_context_complete = False
-            match = None
-        if match is not None:
-            strategy = "existing_identity_by_email"
 
-    if match is None and buyer.buyer_phone is not None:
+    if buyer.buyer_phone is not None:
         try:
-            match = await supabase.find_contact_by_phone(buyer.buyer_phone)
-        except SupabaseError:
+            phone_match = await supabase.find_contact_by_phone(buyer.buyer_phone)
+        except SupabaseError as exc:
+            if str(exc).endswith("_ambiguous"):
+                await supabase.update_event_status(
+                    event_id=webhook_event_id,
+                    status="failed",
+                    error="identity_ambiguous",
+                )
+                raise ResolutionError("identity_ambiguous") from exc
             authoritative_context_complete = False
-            match = None
-        if match is not None:
-            strategy = "existing_identity_by_phone"
+
+    if (
+        email_match is not None
+        and phone_match is not None
+        and email_match.contact_id != phone_match.contact_id
+    ):
+        await supabase.update_event_status(
+            event_id=webhook_event_id,
+            status="failed",
+            error="identity_ambiguous",
+        )
+        raise ResolutionError("identity_ambiguous")
+
+    match = email_match or phone_match
+    strategy: str | None = None
+    if email_match is not None:
+        strategy = "existing_identity_by_email"
+    elif phone_match is not None:
+        strategy = "existing_identity_by_phone"
 
     # ── Step 3: Create contact if not found ────────────────────────
     contact_id: str
@@ -119,8 +146,13 @@ async def resolve_event(
                 source="hotmart",
                 source_event_id=webhook_event_id,
             )
-        except SupabaseError:
-            pass  # Best-effort; duplicates are silently ignored
+        except SupabaseError as exc:
+            await supabase.update_event_status(
+                event_id=webhook_event_id,
+                status="failed",
+                error="identity_binding_failed",
+            )
+            raise ResolutionError("identity_binding_failed") from exc
 
     if buyer.buyer_phone is not None:
         try:
@@ -132,8 +164,13 @@ async def resolve_event(
                 source="hotmart",
                 source_event_id=webhook_event_id,
             )
-        except SupabaseError:
-            pass
+        except SupabaseError as exc:
+            await supabase.update_event_status(
+                event_id=webhook_event_id,
+                status="failed",
+                error="identity_binding_failed",
+            )
+            raise ResolutionError("identity_binding_failed") from exc
 
     # ── Step 5: Create the recovery case, or the complete durable plan ──
     durable_plan_enabled = policy_key is not None and policy_version is not None

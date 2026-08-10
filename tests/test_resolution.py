@@ -283,6 +283,111 @@ def test_identity_lookup_failure_forces_insufficient_context(
     }
 
 
+def test_conflicting_email_and_phone_contacts_fail_before_mutation() -> None:
+    transport = MockSupabaseTransport()
+    transport.set("GET", "/rest/v1/contact_points", [
+        {
+            "_status": 200,
+            "contacts": {
+                "id": "contact-by-email",
+                "full_name": "Email owner",
+                "email": "juan@example.com",
+                "phone": None,
+                "contact_permission": "allowed",
+                "lifecycle_status": "lead",
+            },
+        },
+        {
+            "_status": 200,
+            "contacts": {
+                "id": "contact-by-phone",
+                "full_name": "Phone owner",
+                "email": None,
+                "phone": "5531999999999",
+                "contact_permission": "allowed",
+                "lifecycle_status": "lead",
+            },
+        },
+    ])
+    transport.set("PATCH", "/rest/v1/webhook_events", [{"_status": 204}])
+
+    with pytest.raises(Exception, match="identity_ambiguous"):
+        _run(resolve_event(
+            webhook_event_id="we-ambiguous",
+            payload=PAYLOAD,
+            supabase=_make_supabase(transport),
+            policy_key="cart-recovery-test",
+            policy_version=1,
+            allowed_jid="5531999999999@s.whatsapp.net",
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=7,
+        ))
+
+    assert [request[0] for request in transport.requests] == ["GET", "GET", "PATCH"]
+
+
+def test_contact_lookup_rejects_multiple_exact_matches() -> None:
+    from bridge.supabase import SupabaseClient, SupabaseError
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["limit"] == "2"
+        contact = {
+            "full_name": None,
+            "email": "juan@example.com",
+            "phone": None,
+            "contact_permission": "allowed",
+            "lifecycle_status": "lead",
+        }
+        return httpx.Response(
+            200,
+            json=[
+                {"contacts": {**contact, "id": "contact-a"}},
+                {"contacts": {**contact, "id": "contact-b"}},
+            ],
+            request=request,
+        )
+
+    client = SupabaseClient(
+        base_url="https://fake.supabase.co",
+        service_role_key="fake-service-role-key",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(SupabaseError, match="find_contact_by_email_ambiguous"):
+        _run(client.find_contact_by_email("juan@example.com"))
+
+
+def test_contact_point_failure_stops_before_plan() -> None:
+    transport = MockSupabaseTransport()
+    transport.set("GET", "/rest/v1/contact_points", [
+        {"_status": 200},
+        {"_status": 200},
+    ])
+    transport.set("POST", "/rest/v1/contacts", [
+        {"_status": 201, "id": "contact-new"},
+    ])
+    transport.set("POST", "/rest/v1/contact_points", [
+        {"_status": 500},
+    ])
+    transport.set("PATCH", "/rest/v1/webhook_events", [
+        {"_status": 204},
+    ])
+
+    with pytest.raises(Exception, match="identity_binding_failed"):
+        _run(resolve_event(
+            webhook_event_id="we-point-failure",
+            payload=PAYLOAD,
+            supabase=_make_supabase(transport),
+            policy_key="cart-recovery-test",
+            policy_version=1,
+        ))
+
+    assert [request[1] for request in transport.requests][-1] == "/rest/v1/webhook_events"
+    assert "/rest/v1/rpc/plan_cart_recovery_with_identity" not in [
+        request[1] for request in transport.requests
+    ]
+
+
 def test_recovery_case_stays_pending_without_selected_channel_identity() -> None:
     captured_body: dict[str, object] = {}
 
@@ -409,6 +514,7 @@ def test_matches_existing_contact_by_email(tmp_path) -> None:
                 "lifecycle_status": "qualified_lead",
             },
         },
+        {"_status": 200},
     ])
     # create_contact_point (email + phone, idempotent)
     transport.set("POST", "/rest/v1/contact_points", [
