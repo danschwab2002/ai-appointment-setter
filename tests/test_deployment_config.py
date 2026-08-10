@@ -57,6 +57,38 @@ def test_deployment_declares_required_chatwoot_control_variables() -> None:
         assert f"{variable}:" in compose
 
 
+def test_deployment_declares_waba_pilot_contract_default_off() -> None:
+    env_example = (PROJECT_ROOT / ".env.example").read_text()
+    compose = (PROJECT_ROOT / "compose.yaml").read_text()
+    required = {
+        "HOTMART_HOTTOK",
+        "CHATWOOT_INBOX_ID",
+        "LANCEMOS_PILOT_BOUNDARY_ENABLED",
+        "LANCEMOS_PILOT_SCOPE_KEY",
+        "LANCEMOS_PILOT_SCOPE_VERSION",
+        "LANCEMOS_PILOT_TENANT_KEY",
+        "LANCEMOS_PILOT_CHANNEL_PROVIDER",
+        "LANCEMOS_PILOT_CHANNEL_ACCOUNT_REF",
+        "WABA_FIRST_TOUCH_TEMPLATE_NAME",
+        "WABA_FOLLOWUP_TEMPLATE_NAME",
+        "WABA_TEMPLATE_LANGUAGE",
+        "WABA_TEMPLATE_CATEGORY",
+        "DURABLE_DISPATCHER_ENABLED",
+        "DURABLE_OUTBOUND_ENABLED",
+    }
+
+    for variable in required:
+        assert f"{variable}=" in env_example
+        assert f"{variable}:" in compose
+
+    assert "LANCEMOS_PILOT_BOUNDARY_ENABLED=false" in env_example
+    assert "DURABLE_DISPATCHER_ENABLED=false" in env_example
+    assert "DURABLE_OUTBOUND_ENABLED=false" in env_example
+    assert "${LANCEMOS_PILOT_BOUNDARY_ENABLED:-false}" in compose
+    assert "${DURABLE_DISPATCHER_ENABLED:-false}" in compose
+    assert "${DURABLE_OUTBOUND_ENABLED:-false}" in compose
+
+
 def test_deployment_uses_supabase_service_role_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
