@@ -1,7 +1,7 @@
 # Dudas de diseño para conversar con Juan
 
 - **Estado:** Revisada después de la reunión; contiene respuestas, direcciones aceptadas y temas todavía abiertos
-- **Última revisión:** 2026-08-07
+- **Última revisión:** 2026-08-10
 - **Propósito:** Conservar las preguntas originales, registrar qué se resolvió con Juan y enlazar los diseños o decisiones derivados.
 - **Alcance actual:** Onboarding comercial, alcance mínimo del MVP, control del agente, complejidad conversacional, biblioteca de casos, creación de contenido y una decisión personal sobre el foco profesional.
 - **Fuente de respuestas:** Reunión con Juan Martitegui del 7 de agosto de 2026 ([grabación de Fathom](https://fathom.video/share/yj78Kt41tfdyWwPwTsqk-SUcDC3x9JSi)).
@@ -254,3 +254,34 @@ Las dos primeras dudas están relacionadas, pero no son la misma:
 2. **Control de comportamiento:** qué intenta conseguir, cómo conduce la conversación y qué seguimientos realiza.
 
 La conversación con Juan debería aclarar tanto el mecanismo de entrada de información como el nivel de control final que tendrá el infoproductor sobre cada dimensión.
+
+## Próxima reunión — definiciones para activar el piloto de Lancemos
+
+- **Estado:** Pendientes de Juan
+
+### 1. Número y cuenta de WhatsApp oficial
+
+- ¿Qué número se utilizará para el piloto?
+- ¿Cuál es la cuenta WABA (`WhatsApp Business Account`) propietaria del número?
+- ¿Qué cuenta e inbox de Chatwoot deben quedar vinculados a ese número?
+
+### 2. Templates de WhatsApp
+
+- Confirmar qué templates se utilizarán para el primer contacto y para los
+  seguimientos que ocurran fuera de la ventana permitida.
+- Juan debe revisar y aprobar expresamente todos los templates antes de que se
+  solicite su aprobación en Meta o se habiliten para el piloto.
+- Para cada template deben quedar definidos el copy, el idioma y las variables
+  permitidas.
+
+### 3. Producto y oferta de Hotmart
+
+- ¿Cuál es el producto exacto de Hotmart que participará del piloto?
+- ¿Cuál es la oferta exacta cuyo abandono debe disparar el webhook de
+  `PURCHASE_OUT_OF_SHOPPING_CART`?
+- Registrar los identificadores canónicos de website, producto y oferta una vez
+  confirmados, sin incluir credenciales en la documentación.
+
+Estas tres definiciones son suficientes como agenda mínima de la próxima reunión.
+Los valores continúan pendientes y no deben asumirse ni configurarse antes de la
+confirmación de Juan.
