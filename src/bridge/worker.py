@@ -33,6 +33,7 @@ from bridge.resolution import ResolutionError, resolve_event
 from bridge.supabase import (
     DeliveryAttempt,
     FollowupExecutionContext,
+    PilotBoundaryConfig,
     ReevaluationDecision,
     ScheduledAction,
     SupabaseClient,
@@ -103,13 +104,14 @@ def _validate_reserved_delivery_attempt(
     action: ScheduledAction,
     decision: ReevaluationDecision,
     attempt: DeliveryAttempt,
+    expected_mode: str,
 ) -> None:
     """Accept only the exact reservation authorized for this outbound slice."""
     if (
         attempt.action_id != action.action_id
         or attempt.idempotency_key != action.idempotency_key
         or attempt.channel != "whatsapp"
-        or attempt.mode != "freeform"
+        or attempt.mode != expected_mode
         or attempt.phase != "reserved"
         or attempt.lease_generation != action.lease_generation
         or attempt.expected_case_version != decision.case_version
@@ -123,6 +125,7 @@ def _validate_started_delivery_attempt(
     decision: ReevaluationDecision,
     reserved: DeliveryAttempt,
     started: DeliveryAttempt,
+    expected_mode: str,
 ) -> None:
     """Require the request-start transition to preserve the complete fence."""
     if (
@@ -131,7 +134,7 @@ def _validate_started_delivery_attempt(
         or started.idempotency_key != action.idempotency_key
         or started.attempt_number != reserved.attempt_number
         or started.channel != "whatsapp"
-        or started.mode != "freeform"
+        or started.mode != expected_mode
         or started.phase != "request_started"
         or started.lease_generation != action.lease_generation
         or started.expected_case_version != decision.case_version
@@ -249,6 +252,7 @@ class DurableDispatcher:
         sender: MessageSender | None = None,
         allowed_jid: str | None = None,
         clock: Callable[[], str] | None = None,
+        pilot_boundary: PilotBoundaryConfig | None = None,
     ) -> None:
         self._supabase = supabase
         self._worker_id = worker_id
@@ -260,6 +264,13 @@ class DurableDispatcher:
         self._recovery_agent = recovery_agent
         self._sender = sender
         self._allowed_jid = allowed_jid
+        self._pilot_boundary = pilot_boundary
+        self._delivery_mode = (
+            "approved_template"
+            if pilot_boundary is not None
+            and pilot_boundary.channel_provider == "waba"
+            else "freeform"
+        )
         self._clock = clock or (
             lambda: datetime.now(timezone.utc).isoformat()
         )
@@ -431,13 +442,14 @@ class DurableDispatcher:
                     expected_case_version=decision.case_version,
                     expected_sequence_revision=decision.sequence_revision,
                     channel="whatsapp",
-                    mode="freeform",
+                    mode=self._delivery_mode,
                     now=now,
                 )
                 _validate_reserved_delivery_attempt(
                     action,
                     decision,
                     attempt,
+                    self._delivery_mode,
                 )
                 logger.info(
                     "durable_delivery_attempt_reserved action_id=%s attempt_id=%s",
@@ -585,6 +597,7 @@ class DurableDispatcher:
                                             worker_id=self._worker_id,
                                             lease_generation=action.lease_generation,
                                             now=final_now,
+                                            pilot_boundary=self._pilot_boundary,
                                         )
                                     )
                                 )
@@ -619,6 +632,7 @@ class DurableDispatcher:
                                     final_decision,
                                     attempt,
                                     started,
+                                    self._delivery_mode,
                                 )
                             except Exception:
                                 deadline = (
@@ -918,6 +932,7 @@ class ResolutionWorker:
         policy_key: str | None = None,
         policy_version: int | None = None,
         purchase_worker_enabled: bool = False,
+        pilot_boundary: PilotBoundaryConfig | None = None,
     ) -> None:
         self._supabase = supabase
         self._poll_interval = poll_interval_seconds
@@ -930,6 +945,7 @@ class ResolutionWorker:
         self._policy_key = policy_key
         self._policy_version = policy_version
         self._purchase_worker_enabled = purchase_worker_enabled
+        self._pilot_boundary = pilot_boundary
         self._stopped = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
 
@@ -1049,6 +1065,7 @@ class ResolutionWorker:
                 allowed_jid=self._allowed_jid,
                 chatwoot_account_id=self._chatwoot_account_id,
                 chatwoot_inbox_id=self._chatwoot_inbox_id,
+                pilot_boundary=self._pilot_boundary,
             )
         except ResolutionError:
             # resolve_event already marked the event as 'failed'.

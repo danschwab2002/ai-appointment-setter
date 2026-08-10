@@ -62,6 +62,25 @@ class CartRecoveryPlan:
 
 
 @dataclass(frozen=True)
+class PilotBoundaryConfig:
+    """Non-secret identity of one published pilot scope."""
+
+    scope_key: str
+    scope_version: int
+    tenant_key: str
+    channel_provider: str
+    channel_account_ref: str
+
+
+@dataclass(frozen=True)
+class PilotRuntimeStatus:
+    configured: bool
+    runtime_state: str | None
+    runtime_generation: int | None
+    reason_code: str
+
+
+@dataclass(frozen=True)
 class PurchaseCorrelationResult:
     """Authoritative outcome of applying one approved purchase."""
 
@@ -698,6 +717,60 @@ class SupabaseClient:
                 f"update_event_status_failed: HTTP {response.status_code}"
             )
 
+    async def get_pilot_runtime_status(
+        self,
+        *,
+        pilot_boundary: PilotBoundaryConfig,
+    ) -> PilotRuntimeStatus:
+        operation = "pilot_runtime_status"
+        body = {
+            "p_scope_key": pilot_boundary.scope_key,
+            "p_scope_version": pilot_boundary.scope_version,
+            "p_tenant_key": pilot_boundary.tenant_key,
+            "p_channel_provider": pilot_boundary.channel_provider,
+            "p_channel_account_ref": pilot_boundary.channel_account_ref,
+        }
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_lancemos_pilot_runtime_status",
+            content=json.dumps(body, ensure_ascii=False),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(
+                f"pilot_runtime_status_failed: HTTP {response.status_code}"
+            )
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError("pilot_runtime_status_invalid_shape")
+        row = rows[0]
+        try:
+            configured = row.get("configured")
+            if not isinstance(configured, bool):
+                raise ValueError("configured must be boolean")
+            runtime_state = row.get("runtime_state")
+            if runtime_state is not None and runtime_state not in {
+                "inactive", "armed", "paused", "closed",
+            }:
+                raise ValueError("runtime_state is invalid")
+            generation = row.get("runtime_generation")
+            if generation is not None and (
+                not isinstance(generation, int)
+                or isinstance(generation, bool)
+                or generation < 0
+            ):
+                raise ValueError("runtime_generation is invalid")
+            reason_code = _required_string(
+                row, "reason_code", operation=operation
+            )
+        except (TypeError, ValueError) as exc:
+            raise SupabaseCommittedResponseError(operation) from exc
+        return PilotRuntimeStatus(
+            configured=configured,
+            runtime_state=runtime_state,
+            runtime_generation=generation,
+            reason_code=reason_code,
+        )
+
     async def plan_cart_recovery(
         self,
         *,
@@ -712,6 +785,7 @@ class SupabaseClient:
         chatwoot_account_id: int | None = None,
         chatwoot_inbox_id: int | None = None,
         external_user_id: str | None = None,
+        pilot_boundary: PilotBoundaryConfig | None = None,
     ) -> CartRecoveryPlan:
         """Atomically create or reuse the durable cart-recovery plan."""
         identity_values = (
@@ -723,11 +797,16 @@ class SupabaseClient:
             value is not None for value in identity_values
         ):
             raise SupabaseError("plan_cart_recovery_incomplete_identity")
-        rpc_name = (
-            "plan_cart_recovery_with_identity"
-            if all(value is not None for value in identity_values)
-            else "plan_cart_recovery"
-        )
+        if pilot_boundary is not None and not all(
+            value is not None for value in identity_values
+        ):
+            raise SupabaseError("pilot_plan_cart_recovery_requires_identity")
+        if pilot_boundary is not None:
+            rpc_name = "plan_lancemos_pilot_cart_recovery"
+        elif all(value is not None for value in identity_values):
+            rpc_name = "plan_cart_recovery_with_identity"
+        else:
+            rpc_name = "plan_cart_recovery"
         rpc_body: dict[str, object] = {
             "p_webhook_event_id": webhook_event_id,
             "p_contact_id": contact_id,
@@ -738,11 +817,16 @@ class SupabaseClient:
             "p_policy_version": policy_version,
             "p_abandoned_at": abandoned_at,
         }
-        if rpc_name == "plan_cart_recovery_with_identity":
+        if rpc_name != "plan_cart_recovery":
             rpc_body.update({
                 "p_chatwoot_account_id": chatwoot_account_id,
                 "p_chatwoot_inbox_id": chatwoot_inbox_id,
                 "p_external_user_id": external_user_id,
+            })
+        if pilot_boundary is not None:
+            rpc_body.update({
+                "p_scope_key": pilot_boundary.scope_key,
+                "p_scope_version": pilot_boundary.scope_version,
             })
         body = json.dumps(rpc_body, ensure_ascii=False)
         response = await self._request(
@@ -1414,19 +1498,25 @@ class SupabaseClient:
         worker_id: str,
         lease_generation: int,
         now: str,
+        pilot_boundary: PilotBoundaryConfig | None = None,
     ) -> DeliveryAttempt:
         """Persist the last authorization boundary immediately before HTTP."""
-        operation = "mark_followup_request_started"
+        operation = (
+            "mark_lancemos_pilot_request_started"
+            if pilot_boundary is not None
+            else "mark_followup_request_started"
+        )
+        rpc_body: dict[str, object] = {
+            "p_action_id": action_id,
+            "p_attempt_id": attempt_id,
+            "p_worker_id": worker_id,
+            "p_lease_generation": lease_generation,
+            "p_now": now,
+        }
         response = await self._request(
             "POST",
             f"/rest/v1/rpc/{operation}",
-            content=json.dumps({
-                "p_action_id": action_id,
-                "p_attempt_id": attempt_id,
-                "p_worker_id": worker_id,
-                "p_lease_generation": lease_generation,
-                "p_now": now,
-            }, ensure_ascii=False),
+            content=json.dumps(rpc_body, ensure_ascii=False),
         )
         if response.status_code != 200:
             raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
@@ -1449,6 +1539,11 @@ class SupabaseClient:
                 raise SupabaseError(f"{operation}_action_mismatch")
             if returned_generation != lease_generation:
                 raise SupabaseError(f"{operation}_lease_mismatch")
+            if pilot_boundary is not None:
+                _required_string(row, "pilot_authorization_id", operation=operation)
+                _required_int(row, "pilot_runtime_generation", operation=operation)
+                if not isinstance(row.get("pilot_authorization_replayed"), bool):
+                    raise SupabaseError(f"{operation}_invalid_row")
             return DeliveryAttempt(
                 attempt_id=returned_attempt_id,
                 action_id=returned_action_id,

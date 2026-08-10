@@ -99,21 +99,23 @@ WABA).
 
 ### Configuración por canal
 
-El canal se determina por configuración (`MESSAGING_CHANNEL=evolution` o
-`MESSAGING_CHANNEL=waba`). El bridge construye el `MessageSender` correspondiente
-al iniciar. No hay detección automática —es una decisión de despliegue.
+El provider se determina por el scope durable publicado y por su configuración
+explícita (`LANCEMOS_PILOT_CHANNEL_PROVIDER`). El bridge construye el
+`MessageSender` correspondiente al iniciar. `MESSAGING_CHANNEL` queda como
+compatibilidad de configuración histórica y no autoriza ni selecciona el
+provider del piloto. No hay detección automática.
 
 ## Consecuencias
 
-- El bridge introduce una nueva abstracción (`MessageSender`) que hoy tiene una
-  sola implementación (Evolution), pero que permite agregar WABA sin tocar el
-  código que orquesta el recupero.
+- El bridge introduce una abstracción (`MessageSender`) implementada sobre la
+  API de Chatwoot. En inboxes Evolution usa freeform; en WABA adjunta templates
+  aprobados sin cambiar el código que orquesta el recupero.
 - La skill del agente necesita soportar dos modos de salida (libre y template).
   El modo se le comunica en el contexto que envía el bridge.
-- La migración a WABA requiere: (a) crear y aprobar los templates en Meta,
-  (b) configurar el inbox de WABA en Chatwoot, (c) implementar
-  `WABAMessageSender`, (d) cambiar `MESSAGING_CHANNEL` a `waba`. No requiere
-  cambiar el worker, la resolución de identidad, ni el `SituationReport`.
+- La activación WABA requiere: (a) crear y aprobar los templates en Meta,
+  (b) configurar el inbox WABA en Chatwoot y (c) declarar nombres, idioma y
+  categoría de templates. No requiere cambiar el worker, la resolución de
+  identidad ni el `SituationReport`.
 - Con WABA, el costo por mensaje entregado (marketing) pasa a ser una
   consideración operativa. El sistema debe registrar el intento de envío y su
   resultado para auditoría de costo.
@@ -150,10 +152,12 @@ del template.
 
 Este ADR documenta la decisión de diseño. La implementación inmediata es:
 
-1. Interfaz `MessageSender` con `EvolutionMessageSender` como implementación.
+1. Interfaz `MessageSender` con `ChatwootMessageSender`; `freeform` durable para
+   Evolution y `approved_template` + `template_params` obligatorio para WABA.
 2. Métodos nuevos en `ChatwootClient`: `create_contact()`,
    `create_conversation()`, `send_first_message()`.
-3. El bridge usa `EvolutionMessageSender` para enviar el primer mensaje cuando
-   el agente dice `send_first_touch`.
+3. El bridge construye el sender según el provider durable del scope; WABA
+   falla al arrancar sin templates aprobados y nunca cae a freeform.
 
-`WABAMessageSender` se implementa cuando se active la migración a WABA.
+El soporte está implementado en el árbol, pero la conexión de un inbox WABA y
+la evidencia de envío real siguen pendientes de despliegue.

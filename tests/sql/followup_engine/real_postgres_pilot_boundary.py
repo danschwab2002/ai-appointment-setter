@@ -165,7 +165,6 @@ def main() -> None:
     require(
         service_functions == (
             "activate_lancemos_pilot_scope_version,"
-            "authorize_lancemos_pilot_request_start,"
             "evaluate_lancemos_pilot_scope,"
             "set_lancemos_pilot_cohort_member,"
             "set_lancemos_pilot_runtime_state"
@@ -182,7 +181,8 @@ def main() -> None:
           'pilot_runtime_controls',
           'pilot_cohort_memberships',
           'pilot_outbound_request_authorizations',
-          'pilot_control_events'
+          'pilot_control_events',
+          'pilot_recovery_case_bindings'
         ] loop
           begin
             execute format('select 1 from public.%I limit 0', table_name);
@@ -351,12 +351,12 @@ def main() -> None:
         ('{winner_contact}','email','{winner_email}','{winner_email}','hotmart','{event_id}'),
         ('{winner_contact}','phone','{winner_phone}','{winner_phone}','hotmart','{event_id}');
       set role service_role;
-      select * from public.plan_cart_recovery_with_identity(
+      select * from public.plan_lancemos_pilot_cart_recovery(
         '{event_id}','{winner_contact}',
         '3526906','Product One','offer-1','pilot-real',1,
         (select to_timestamp((payload->>'creation_date')::double precision / 1000)
          from public.webhook_events where id='{event_id}'),
-        10,20,'{winner_phone}'
+        10,20,'{winner_phone}','lancemos-real',1
       );
       reset role;
       insert into public.followup_delivery_attempts(
@@ -384,7 +384,6 @@ def main() -> None:
     """)
 
     authorize_sql = """
-      set role service_role;
       select authorized::text || '|' || reason_code || '|' || replayed::text
       from public.authorize_lancemos_pilot_request_start(
         'lancemos-real',1,'lancemos',10,20,'waba','opaque-number-ref',
@@ -474,7 +473,6 @@ def main() -> None:
     """)
     require(paused == "paused|5", f"kill switch did not pause: {paused}")
     blocked = query(f"""
-      set role service_role;
       select authorized::text || '|' || reason_code
       from public.authorize_lancemos_pilot_request_start(
         'lancemos-real',1,'lancemos',10,20,'waba','opaque-number-ref',
@@ -482,7 +480,6 @@ def main() -> None:
         '{winner_contact}','{action_id}',
         '53000000-0000-4000-8000-000000000004',clock_timestamp()
       );
-      reset role;
     """)
     require(
         blocked == "false|pilot_runtime_not_armed",

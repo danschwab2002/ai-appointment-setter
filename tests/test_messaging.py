@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from bridge.chatwoot import ChatwootClient, ChatwootProtocolError
-from bridge.messaging import EvolutionMessageSender, _to_e164
+from bridge.messaging import ChatwootMessageSender, WhatsAppTemplateConfig, _to_e164
 
 
 # ── E.164 helper ─────────────────────────────────────────────────────
@@ -484,12 +484,12 @@ def test_send_followup_message_rejects_wrong_sender(
         ))
 
 
-# ── EvolutionMessageSender end-to-end ────────────────────────────────
+# ── ChatwootMessageSender end-to-end ────────────────────────────────
 
 
 def test_evolution_sender_blocks_phone_outside_allowed_jid() -> None:
     transport = MockTransport()
-    sender = EvolutionMessageSender(
+    sender = ChatwootMessageSender(
         chatwoot=_chatwoot(transport),
         inbox_id=1,
         allowed_jid="15555550100@s.whatsapp.net",
@@ -521,7 +521,7 @@ def test_evolution_sender_rejects_noncanonical_allowed_jid(
     allowed_jid: str,
 ) -> None:
     transport = MockTransport()
-    sender = EvolutionMessageSender(
+    sender = ChatwootMessageSender(
         chatwoot=_chatwoot(transport),
         inbox_id=1,
         allowed_jid=allowed_jid,
@@ -540,7 +540,7 @@ def test_evolution_sender_rejects_noncanonical_allowed_jid(
     assert transport.requests == []
 
 
-def test_evolution_sender_sends_first_touch() -> None:
+def test_chatwoot_sender_sends_waba_first_touch_template() -> None:
     transport = MockTransport()
     # search_contact → no existing contact
     transport.set(
@@ -590,10 +590,16 @@ def test_evolution_sender_sends_first_touch() -> None:
         ),
     )
     client = _chatwoot(transport)
-    sender = EvolutionMessageSender(
+    sender = ChatwootMessageSender(
         chatwoot=client,
         inbox_id=1,
         allowed_jid="5531999999999@s.whatsapp.net",
+        template=WhatsAppTemplateConfig(
+            first_touch_name="cart_recovery_first",
+            followup_name="cart_recovery_followup",
+            language="es_AR",
+            category="MARKETING",
+        ),
     )
     result = _run(sender.send_first_touch(
         phone="5531999999999",
@@ -605,9 +611,18 @@ def test_evolution_sender_sends_first_touch() -> None:
     assert result.status == "sent"
     assert result.conversation_id == 200
     assert result.message_id == 888
+    body = json.loads(transport.requests[-1][2])
+    assert body["template_params"] == {
+        "name": "cart_recovery_first",
+        "category": "MARKETING",
+        "language": "es_AR",
+        "processed_params": {
+            "body": {"1": "¡Hola! Soy el asistente virtual de Dan."}
+        },
+    }
 
 
-def test_evolution_sender_sends_followup_in_existing_conversation() -> None:
+def test_chatwoot_sender_sends_waba_followup_template() -> None:
     transport = MockTransport()
     transport.set(
         "/api/v1/accounts/1/conversations/200/messages",
@@ -629,10 +644,16 @@ def test_evolution_sender_sends_followup_in_existing_conversation() -> None:
             request=httpx.Request("POST", "https://chatwoot.test"),
         ),
     )
-    sender = EvolutionMessageSender(
+    sender = ChatwootMessageSender(
         chatwoot=_chatwoot(transport),
         inbox_id=1,
         allowed_jid="5531999999999@s.whatsapp.net",
+        template=WhatsAppTemplateConfig(
+            first_touch_name="cart_recovery_first",
+            followup_name="cart_recovery_followup",
+            language="es_AR",
+            category="MARKETING",
+        ),
     )
 
     result = _run(sender.send_followup(
@@ -648,6 +669,11 @@ def test_evolution_sender_sends_followup_in_existing_conversation() -> None:
     assert [path for _, path, _ in transport.requests] == [
         "/api/v1/accounts/1/conversations/200/messages"
     ]
+    body = json.loads(transport.requests[-1][2])
+    assert body["template_params"]["name"] == "cart_recovery_followup"
+    assert body["template_params"]["processed_params"] == {
+        "body": {"1": "¿Te quedó alguna duda?"}
+    }
 
 
 def test_evolution_sender_reuses_existing_contact() -> None:
@@ -696,7 +722,7 @@ def test_evolution_sender_reuses_existing_contact() -> None:
             request=httpx.Request("POST", "https://chatwoot.test"),
         ),
     )
-    sender = EvolutionMessageSender(
+    sender = ChatwootMessageSender(
         chatwoot=_chatwoot(transport),
         inbox_id=1,
         allowed_jid="15555550100@s.whatsapp.net",
@@ -715,11 +741,13 @@ def test_evolution_sender_reuses_existing_contact() -> None:
         method == "POST" and path == "/api/v1/accounts/1/contacts"
         for method, path, _ in transport.requests
     )
+    body = json.loads(transport.requests[-1][2])
+    assert "template_params" not in body
 
 
 def test_evolution_sender_blocks_on_invalid_phone() -> None:
     client = _chatwoot(MockTransport())
-    sender = EvolutionMessageSender(
+    sender = ChatwootMessageSender(
         chatwoot=client,
         inbox_id=1,
         allowed_jid="5531999999999@s.whatsapp.net",
@@ -751,7 +779,7 @@ def test_evolution_sender_fails_on_chatwoot_error() -> None:
         httpx.Response(500, request=httpx.Request("POST", "https://chatwoot.test")),
     )
     client = _chatwoot(transport)
-    sender = EvolutionMessageSender(
+    sender = ChatwootMessageSender(
         chatwoot=client,
         inbox_id=1,
         allowed_jid="5531999999999@s.whatsapp.net",
@@ -773,7 +801,7 @@ def test_evolution_sender_sanitizes_search_http_error() -> None:
         "/api/v1/accounts/1/contacts/search",
         httpx.Response(500, request=httpx.Request("GET", "https://chatwoot.test")),
     )
-    sender = EvolutionMessageSender(
+    sender = ChatwootMessageSender(
         chatwoot=_chatwoot(transport),
         inbox_id=1,
         allowed_jid="15555550100@s.whatsapp.net",

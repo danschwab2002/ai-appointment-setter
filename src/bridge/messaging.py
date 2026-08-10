@@ -27,6 +27,24 @@ class FirstTouchResult:
     reason: str | None = None
 
 
+@dataclass(frozen=True)
+class WhatsAppTemplateConfig:
+    """Approved Chatwoot WABA templates with one body placeholder."""
+
+    first_touch_name: str
+    followup_name: str
+    language: str
+    category: str
+
+    def params(self, *, content: str, followup: bool) -> dict[str, object]:
+        return {
+            "name": self.followup_name if followup else self.first_touch_name,
+            "category": self.category,
+            "language": self.language,
+            "processed_params": {"body": {"1": content}},
+        }
+
+
 class MessageSender(Protocol):
     """Interface for sending recovery first-touch messages."""
 
@@ -83,11 +101,13 @@ def _to_e164(digits: str) -> str:
     return f"+{digits}" if not digits.startswith("+") else digits
 
 
-class EvolutionMessageSender:
-    """Send first-touch messages via Chatwoot + Evolution API.
+class ChatwootMessageSender:
+    """Send WhatsApp messages through the configured Chatwoot inbox.
 
     Creates a contact, creates a conversation, and sends the first message
-    via AgentBot — all through the Chatwoot REST API.
+    via AgentBot — all through the Chatwoot REST API. The inbox may be backed
+    by Evolution or by the official WABA integration; that durable provider is
+    bound separately by the pilot scope.
     """
 
     def __init__(
@@ -96,10 +116,12 @@ class EvolutionMessageSender:
         chatwoot: ChatwootClient,
         inbox_id: int,
         allowed_jid: str,
+        template: WhatsAppTemplateConfig | None = None,
     ) -> None:
         self._chatwoot = chatwoot
         self._inbox_id = inbox_id
         self._allowed_jid = allowed_jid
+        self._template = template
 
     async def send_first_touch(
         self,
@@ -148,6 +170,11 @@ class EvolutionMessageSender:
                 conversation_id=conversation_id,
                 content=content,
                 delivery_id=delivery_id,
+                template_params=(
+                    self._template.params(content=content, followup=False)
+                    if self._template is not None
+                    else None
+                ),
             )
         except ChatwootProtocolError as exc:
             return FirstTouchResult(
@@ -210,6 +237,11 @@ class EvolutionMessageSender:
                 conversation_id=conversation_id,
                 content=content,
                 delivery_id=delivery_id,
+                template_params=(
+                    self._template.params(content=content, followup=True)
+                    if self._template is not None
+                    else None
+                ),
             )
         except ChatwootProtocolError as exc:
             return FirstTouchResult(

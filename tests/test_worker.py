@@ -19,6 +19,7 @@ from bridge.supabase import (
     DeliveryAttempt,
     FollowupExecutionContext,
     OptOutProjectionClaim,
+    PilotBoundaryConfig,
     ReevaluationDecision,
     ScheduledAction,
     SupabaseClient,
@@ -213,7 +214,10 @@ def test_dispatcher_rejects_malformed_reserved_attempt(
     malformed = DeliveryAttempt(**{**attempt.__dict__, field: value})
 
     with pytest.raises(SupabaseError, match="reserved_delivery_attempt_mismatch"):
-        _validate_reserved_delivery_attempt(action, decision, malformed)
+        _validate_reserved_delivery_attempt(
+            action,  # type: ignore[arg-type]
+            decision, malformed, "freeform"
+        )
 
 
 def test_durable_dispatcher_claims_due_actions_without_external_effects() -> None:
@@ -718,6 +722,8 @@ def test_dispatcher_marks_started_immediately_before_sender_and_finalizes_accept
     context_times: list[object] = []
     reevaluation_times: list[object] = []
     request_start_times: list[object] = []
+    request_start_boundaries: list[object] = []
+    reservation_modes: list[object] = []
     request_start_hook: Callable[[], Any] | None = None
     finalizations: list[dict[str, object]] = []
     final_override: ReevaluationDecision | None = None
@@ -737,7 +743,7 @@ def test_dispatcher_marks_started_immediately_before_sender_and_finalizes_accept
     attempt = DeliveryAttempt(
         attempt_id="attempt-001", action_id=action.action_id,
         idempotency_key=action.idempotency_key, attempt_number=1,
-        channel="whatsapp", mode="freeform", phase="reserved",
+        channel="whatsapp", mode="approved_template", phase="reserved",
         lease_generation=3, expected_case_version=1,
         expected_sequence_revision=1,
     )
@@ -777,19 +783,29 @@ def test_dispatcher_marks_started_immediately_before_sender_and_finalizes_accept
                 sequence_revision=1,
             )
 
-        async def reserve_followup_delivery_attempt(self, **_: object) -> DeliveryAttempt:
+        async def reserve_followup_delivery_attempt(
+            self, **kwargs: object
+        ) -> DeliveryAttempt:
+            reservation_modes.append(kwargs["mode"])
             events.append("reserve")
-            return attempt
+            return DeliveryAttempt(
+                **{**attempt.__dict__, "mode": kwargs["mode"]}
+            )
 
         async def get_followup_execution_context(self, **_: object) -> FollowupExecutionContext:
             return context
 
         async def mark_followup_request_started(self, **kwargs: object) -> DeliveryAttempt:
             request_start_times.append(kwargs["now"])
+            request_start_boundaries.append(kwargs.get("pilot_boundary"))
             events.append("request_started")
             if request_start_hook is not None:
                 return await request_start_hook()
-            return DeliveryAttempt(**{**attempt.__dict__, "phase": "request_started"})
+            return DeliveryAttempt(**{
+                **attempt.__dict__,
+                "mode": reservation_modes[-1],
+                "phase": "request_started",
+            })
 
         async def finalize_followup_delivery_attempt(self, **kwargs: object) -> object:
             finalizations.append(kwargs)
@@ -830,6 +846,13 @@ def test_dispatcher_marks_started_immediately_before_sender_and_finalizes_accept
         sender=SenderStub(),  # type: ignore[arg-type]
         allowed_jid="15555550100@s.whatsapp.net",
         clock=lambda: "2026-08-03T13:01:00+00:00",
+        pilot_boundary=PilotBoundaryConfig(
+            scope_key="lancemos-cart-recovery",
+            scope_version=1,
+            tenant_key="lancemos",
+            channel_provider="waba",
+            channel_account_ref="opaque-account-ref",
+        ),
     )
     decisions = _run(dispatcher.dispatch_due(now="2026-08-03T13:00:00+00:00"))
 
@@ -847,6 +870,8 @@ def test_dispatcher_marks_started_immediately_before_sender_and_finalizes_accept
         "2026-08-03T13:01:00+00:00",
     ]
     assert request_start_times == ["2026-08-03T13:01:00+00:00"]
+    assert reservation_modes == ["approved_template"]
+    assert request_start_boundaries[0] is not None
 
     events.clear()
     final_override = ReevaluationDecision(
@@ -894,7 +919,11 @@ def test_dispatcher_marks_started_immediately_before_sender_and_finalizes_accept
         async def delayed_started() -> DeliveryAttempt:
             entered.set()  # model the database commit before the response arrives
             await release.wait()
-            return DeliveryAttempt(**{**attempt.__dict__, "phase": "request_started"})
+            return DeliveryAttempt(**{
+                **attempt.__dict__,
+                "mode": reservation_modes[-1],
+                "phase": "request_started",
+            })
 
         request_start_hook = delayed_started
         guarded = DurableDispatcher(

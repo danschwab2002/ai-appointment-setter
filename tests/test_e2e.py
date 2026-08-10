@@ -16,7 +16,7 @@ import httpx
 
 from bridge.app import Settings, create_app
 from bridge.chatwoot import ChatwootClient
-from bridge.messaging import EvolutionMessageSender
+from bridge.messaging import ChatwootMessageSender
 from bridge.recovery_agent import RecoveryAgentClient
 from bridge.supabase import SupabaseClient
 
@@ -133,6 +133,12 @@ def _build_app(transport: E2ETransport, tmp_path: Path):
         chatwoot_control_api_access_token="test-control-token",
         chatwoot_agent_bot_access_token="test-bot-token",
         chatwoot_pause_macro_id=1,
+        pilot_boundary_enabled=True,
+        pilot_scope_key="lancemos-cart-recovery",
+        pilot_scope_version=1,
+        pilot_tenant_key="lancemos",
+        pilot_channel_provider="waba",
+        pilot_channel_account_ref="opaque-account-ref",
     )
 
     supabase = SupabaseClient(
@@ -155,7 +161,7 @@ def _build_app(transport: E2ETransport, tmp_path: Path):
         proposals_dir=tmp_path / "recovery",
         transport=transport,
     )
-    message_sender = EvolutionMessageSender(
+    message_sender = ChatwootMessageSender(
         chatwoot=chatwoot,
         inbox_id=1,
         allowed_jid="5531999999999@s.whatsapp.net",
@@ -196,7 +202,7 @@ def _setup_mocks(transport: E2ETransport) -> None:
         {"_status": 201},
     ])
     # ── Supabase: plan durable recovery ──────────────────────────────
-    transport.set("POST", "/rest/v1/rpc/plan_cart_recovery_with_identity", [
+    transport.set("POST", "/rest/v1/rpc/plan_lancemos_pilot_cart_recovery", [
         {
             "_status": 200,
             "recovery_case_id": "rc-e2e-001",
@@ -317,7 +323,7 @@ def test_e2e_webhook_to_durable_plan_without_outbound_send(tmp_path: Path) -> No
         plan_posts = [
             r for r in transport.requests
             if r[0] == "POST"
-            and r[1] == "/rest/v1/rpc/plan_cart_recovery_with_identity"
+            and r[1] == "/rest/v1/rpc/plan_lancemos_pilot_cart_recovery"
         ]
         assert len(plan_posts) == 1
 
