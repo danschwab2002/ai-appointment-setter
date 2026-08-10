@@ -606,3 +606,85 @@ def test_recovery_case_lookup_requires_product_name() -> None:
 
     with pytest.raises(SupabaseError):
         _invoke(_client([row]), "fetch_recovery_cases")
+
+
+def test_apply_chatwoot_inbound_opt_out_calls_authoritative_rpc() -> None:
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json=[{
+                "outcome": "applied",
+                "opt_out_event_id": "event-1",
+                "matched_contact_id": "contact-1",
+                "affected_cases": 1,
+                "affected_actions": 2,
+                "affected_attempts": 1,
+            }],
+            request=request,
+        )
+
+    client = SupabaseClient(
+        base_url="https://fake.supabase.co",
+        service_role_key="fake-service-role-key",
+        transport=httpx.MockTransport(handler),
+    )
+    result = asyncio.run(client.apply_chatwoot_inbound_opt_out(
+        chatwoot_account_id=1,
+        chatwoot_inbox_id=7,
+        chatwoot_conversation_id=42,
+        chatwoot_message_id=9001,
+        external_user_id="5531999999999",
+        occurred_at="2026-08-09T00:05:00+00:00",
+        rule_key="unsubscribe",
+    ))
+
+    assert result.outcome == "applied"
+    assert result.opt_out_event_id == "event-1"
+    assert requests[0].url.path.endswith("/rpc/apply_chatwoot_inbound_opt_out")
+    assert json.loads(requests[0].content) == {
+        "p_chatwoot_account_id": 1,
+        "p_chatwoot_inbox_id": 7,
+        "p_chatwoot_conversation_id": 42,
+        "p_chatwoot_message_id": 9001,
+        "p_external_user_id": "5531999999999",
+        "p_occurred_at": "2026-08-09T00:05:00+00:00",
+        "p_rule_key": "unsubscribe",
+    }
+
+
+def test_has_chatwoot_opt_out_stop_requires_boolean_rpc_response() -> None:
+    assert asyncio.run(_client(True).has_chatwoot_opt_out_stop(
+        chatwoot_account_id=1,
+        chatwoot_inbox_id=7,
+        chatwoot_conversation_id=42,
+        external_user_id="5531999999999",
+    )) is True
+
+    with pytest.raises(SupabaseError, match="invalid_shape"):
+        asyncio.run(_client([{"stopped": True}]).has_chatwoot_opt_out_stop(
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=7,
+            chatwoot_conversation_id=42,
+            external_user_id="5531999999999",
+        ))
+
+
+def test_reconcile_chatwoot_opt_out_stop_parses_authoritative_result() -> None:
+    result = asyncio.run(_client([{
+        "outcome": "already_applied",
+        "opt_out_event_id": "event-1",
+        "matched_contact_id": "contact-1",
+        "affected_cases": 0,
+        "affected_actions": 0,
+        "affected_attempts": 0,
+    }]).reconcile_chatwoot_opt_out_stop(
+        chatwoot_account_id=1,
+        chatwoot_inbox_id=7,
+        chatwoot_conversation_id=42,
+        external_user_id="5531999999999",
+    ))
+    assert result.outcome == "already_applied"
+    assert result.contact_id == "contact-1"

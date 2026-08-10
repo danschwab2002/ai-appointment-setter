@@ -63,6 +63,25 @@ class PurchaseCorrelationResult:
 
 
 @dataclass(frozen=True)
+class InboundOptOutResult:
+    """Authoritative outcome of one canonical inbound opt-out."""
+
+    outcome: str
+    opt_out_event_id: str
+    contact_id: str | None
+    affected_cases: int
+    affected_actions: int
+    affected_attempts: int
+
+
+@dataclass(frozen=True)
+class OptOutProjectionClaim:
+    opt_out_event_id: str
+    chatwoot_conversation_id: int
+    lease_generation: int
+
+
+@dataclass(frozen=True)
 class ScheduledAction:
     """An action atomically claimed by a dispatcher lease."""
 
@@ -785,6 +804,239 @@ class SupabaseClient:
                 {"email", "phone", "email_and_phone"},
                 operation=operation,
             ),
+        )
+
+    async def apply_chatwoot_inbound_opt_out(
+        self,
+        *,
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+        chatwoot_conversation_id: int,
+        chatwoot_message_id: int,
+        external_user_id: str,
+        occurred_at: str,
+        rule_key: str,
+    ) -> InboundOptOutResult:
+        """Persist and atomically apply one canonical inbound opt-out."""
+        operation = "apply_chatwoot_inbound_opt_out"
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps(
+                {
+                    "p_chatwoot_account_id": chatwoot_account_id,
+                    "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                    "p_chatwoot_conversation_id": chatwoot_conversation_id,
+                    "p_chatwoot_message_id": chatwoot_message_id,
+                    "p_external_user_id": external_user_id,
+                    "p_occurred_at": occurred_at,
+                    "p_rule_key": rule_key,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        return InboundOptOutResult(
+            outcome=_required_enum(
+                row,
+                "outcome",
+                {
+                    "applied",
+                    "already_applied",
+                    "recorded_unmatched",
+                    "recorded_ambiguous",
+                    "evidence_conflict",
+                },
+                operation=operation,
+            ),
+            opt_out_event_id=_required_string(
+                row, "opt_out_event_id", operation=operation
+            ),
+            contact_id=_optional_string(
+                row, "matched_contact_id", operation=operation
+            ),
+            affected_cases=_required_int(
+                row, "affected_cases", operation=operation
+            ),
+            affected_actions=_required_int(
+                row, "affected_actions", operation=operation
+            ),
+            affected_attempts=_required_int(
+                row, "affected_attempts", operation=operation
+            ),
+        )
+
+    async def has_chatwoot_opt_out_stop(
+        self,
+        *,
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+        chatwoot_conversation_id: int,
+        external_user_id: str,
+    ) -> bool:
+        """Check conversation-local and contact-global durable stop facts."""
+        operation = "has_chatwoot_opt_out_stop"
+        if not external_user_id.isdigit():
+            raise SupabaseError(f"{operation}_invalid_external_user_id")
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps(
+                {
+                    "p_chatwoot_account_id": chatwoot_account_id,
+                    "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                    "p_chatwoot_conversation_id": chatwoot_conversation_id,
+                    "p_external_user_id": external_user_id,
+                }
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        try:
+            result = response.json()
+        except ValueError as exc:
+            raise SupabaseError(f"{operation}_invalid_json") from exc
+        if not isinstance(result, bool):
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return result
+
+    async def reconcile_chatwoot_opt_out_stop(
+        self,
+        *,
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+        chatwoot_conversation_id: int,
+        external_user_id: str,
+    ) -> InboundOptOutResult:
+        """Reconcile a durable pending stop against current identity state."""
+        operation = "reconcile_chatwoot_opt_out_stop"
+        if not external_user_id.isdigit():
+            raise SupabaseError(f"{operation}_invalid_external_user_id")
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps(
+                {
+                    "p_chatwoot_account_id": chatwoot_account_id,
+                    "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                    "p_chatwoot_conversation_id": chatwoot_conversation_id,
+                    "p_external_user_id": external_user_id,
+                }
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        return InboundOptOutResult(
+            outcome=_required_enum(
+                row,
+                "outcome",
+                {
+                    "applied",
+                    "already_applied",
+                    "recorded_unmatched",
+                    "recorded_ambiguous",
+                    "evidence_conflict",
+                },
+                operation=operation,
+            ),
+            opt_out_event_id=_required_string(
+                row, "opt_out_event_id", operation=operation
+            ),
+            contact_id=_optional_string(
+                row, "matched_contact_id", operation=operation
+            ),
+            affected_cases=_required_int(
+                row, "affected_cases", operation=operation
+            ),
+            affected_actions=_required_int(
+                row, "affected_actions", operation=operation
+            ),
+            affected_attempts=_required_int(
+                row, "affected_attempts", operation=operation
+            ),
+        )
+
+    async def claim_chatwoot_opt_out_projections(
+        self,
+        *,
+        worker_id: str,
+        now: str,
+        lease_duration: str,
+        batch_size: int,
+    ) -> list[OptOutProjectionClaim]:
+        operation = "claim_chatwoot_opt_out_projections"
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps({
+                "p_worker_id": worker_id,
+                "p_now": now,
+                "p_lease_duration": lease_duration,
+                "p_batch_size": batch_size,
+            }),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        return [
+            OptOutProjectionClaim(
+                opt_out_event_id=_required_string(
+                    row, "opt_out_event_id", operation=operation
+                ),
+                chatwoot_conversation_id=_required_int(
+                    row, "chatwoot_conversation_id", operation=operation
+                ),
+                lease_generation=_required_int(
+                    row, "lease_generation", operation=operation
+                ),
+            )
+            for row in rows
+        ]
+
+    async def finalize_chatwoot_opt_out_projection(
+        self,
+        *,
+        opt_out_event_id: str,
+        worker_id: str,
+        lease_generation: int,
+        applied: bool,
+        error_code: str | None,
+        max_attempts: int,
+        now: str,
+    ) -> str:
+        operation = "finalize_chatwoot_opt_out_projection"
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps({
+                "p_opt_out_event_id": opt_out_event_id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": lease_generation,
+                "p_applied": applied,
+                "p_error_code": error_code,
+                "p_max_attempts": max_attempts,
+                "p_now": now,
+            }),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return _required_enum(
+            rows[0],
+            "projection_status",
+            {"pending", "applied", "retryable_failed", "dead_letter"},
+            operation=operation,
         )
 
     async def claim_due_followup_actions(

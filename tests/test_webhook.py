@@ -18,6 +18,7 @@ from bridge.chatwoot_inbox import (
     RetryableChatwootWorkError,
 )
 from bridge.reply_splitter import HermesReplySplitter
+from bridge.supabase import InboundOptOutResult
 
 
 class StubChatwootClient:
@@ -28,15 +29,24 @@ class StubChatwootClient:
         fail: bool = False,
         messages: list[dict[str, object]] | None = None,
         history_error: Exception | None = None,
+        authority_error: Exception | None = None,
     ) -> None:
         self.changed = changed
         self.fail = fail
         self.calls: list[tuple[int, str]] = []
         self.messages = messages or []
         self.history_error = history_error
+        self.authority_error = authority_error
         self.history_calls: list[tuple[int, int]] = []
         self.history_required_ids: list[tuple[int, ...]] = []
         self.reply_calls: list[dict[str, object]] = []
+        self.opt_out_macro_calls: list[int] = []
+
+    async def validate_conversation_authority(
+        self, *, conversation_id: int, expected_inbox_id: int
+    ) -> None:
+        if self.authority_error is not None:
+            raise self.authority_error
 
     async def get_conversation_messages(
         self,
@@ -62,6 +72,12 @@ class StubChatwootClient:
             request = httpx.Request("GET", "https://chatwoot.example.test")
             raise httpx.ConnectError("unavailable", request=request)
         return self.changed
+
+    async def apply_opt_out_macro(self, *, conversation_id: int) -> None:
+        self.opt_out_macro_calls.append(conversation_id)
+        if self.fail:
+            request = httpx.Request("POST", "https://chatwoot.example.test")
+            raise httpx.ConnectError("unavailable", request=request)
 
     async def send_agent_bot_reply(
         self,
@@ -118,6 +134,52 @@ class StubShadowProcessor:
         if delivery_id not in self.completed_delivery_ids:
             return None
         return self.proposal
+
+
+class StubOptOutSupabase:
+    def __init__(self, *, stopped: bool = False) -> None:
+        self.stopped = stopped
+        self.stop_checks: list[dict[str, object]] = []
+        self.apply_calls: list[dict[str, object]] = []
+        self.reconcile_calls: list[dict[str, object]] = []
+        self.projection_claim_calls: list[dict[str, object]] = []
+
+    async def has_chatwoot_opt_out_stop(self, **kwargs: object) -> bool:
+        self.stop_checks.append(kwargs)
+        return self.stopped
+
+    async def apply_chatwoot_inbound_opt_out(
+        self, **kwargs: object
+    ) -> InboundOptOutResult:
+        self.apply_calls.append(kwargs)
+        self.stopped = True
+        return InboundOptOutResult(
+            outcome="applied",
+            opt_out_event_id="opt-out-event-1",
+            contact_id="contact-1",
+            affected_cases=1,
+            affected_actions=1,
+            affected_attempts=0,
+        )
+
+    async def reconcile_chatwoot_opt_out_stop(
+        self, **kwargs: object
+    ) -> InboundOptOutResult:
+        self.reconcile_calls.append(kwargs)
+        return InboundOptOutResult(
+            outcome="already_applied",
+            opt_out_event_id="opt-out-event-1",
+            contact_id="contact-1",
+            affected_cases=0,
+            affected_actions=0,
+            affected_attempts=0,
+        )
+
+    async def claim_chatwoot_opt_out_projections(
+        self, **kwargs: object
+    ) -> tuple[()]:
+        self.projection_claim_calls.append(kwargs)
+        return ()
 
 
 class BlockingShadowProcessor(StubShadowProcessor):
@@ -1162,6 +1224,430 @@ def test_processes_a_normalized_shadow_evaluation_for_an_allowed_message(
         )
     ]
     assert chatwoot.reply_calls == []
+
+
+def test_applies_canonical_opt_out_before_shadow_or_reply(tmp_path: Path) -> None:
+    secret = "webhook-secret"
+    payload = {
+        "event": "message_created",
+        "id": 789,
+        "content": "Quiero darme de baja",
+        "message_type": "incoming",
+        "private": False,
+        "conversation": {
+            "id": 123,
+            "contact_inbox": {"source_id": "12025550123@s.whatsapp.net"},
+        },
+    }
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    shadow = StubShadowProcessor(proposal={"reply": "No debe enviarse"})
+    supabase = StubOptOutSupabase()
+    chatwoot = StubChatwootClient(
+        messages=[
+            {
+                "id": 789,
+                "created_at": 1786233900,
+                "message_type": 0,
+                "private": False,
+                "content": "Quiero darme de baja",
+                "sender": {"type": "contact", "id": 20},
+            }
+        ]
+    )
+    app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=7,
+            chatwoot_durable_opt_out_enabled=True,
+            chatwoot_opt_out_macro_id=9,
+            opt_out_projection_worker_id="opt-out-projection-test",
+            automated_replies_enabled=True,
+        ),
+        chatwoot_client=chatwoot,
+        shadow_processor=shadow,
+        supabase_client=supabase,  # type: ignore[arg-type]
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(raw_body, secret=secret, delivery="opt-out-delivery"),
+    )
+    assert response.status_code == 202
+    asyncio.run(app.state.chatwoot_worker.run_once())
+
+    assert supabase.stop_checks == [
+        {
+            "chatwoot_account_id": 1,
+            "chatwoot_inbox_id": 7,
+            "chatwoot_conversation_id": 123,
+            "external_user_id": "12025550123",
+        }
+    ]
+    assert supabase.apply_calls == [
+        {
+            "chatwoot_account_id": 1,
+            "chatwoot_inbox_id": 7,
+            "chatwoot_conversation_id": 123,
+            "chatwoot_message_id": 789,
+            "external_user_id": "12025550123",
+            "occurred_at": "2026-08-09T00:05:00+00:00",
+            "rule_key": "unsubscribe",
+        }
+    ]
+    assert shadow.calls == []
+    assert chatwoot.reply_calls == []
+
+
+def test_existing_durable_stop_blocks_later_inbound_before_shadow(
+    tmp_path: Path,
+) -> None:
+    secret = "webhook-secret"
+    payload = {
+        "event": "message_created",
+        "id": 790,
+        "content": "Gracias",
+        "message_type": "incoming",
+        "private": False,
+        "conversation": {
+            "id": 123,
+            "contact_inbox": {"source_id": "12025550123@s.whatsapp.net"},
+        },
+    }
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    shadow = StubShadowProcessor()
+    supabase = StubOptOutSupabase(stopped=True)
+    app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=7,
+            chatwoot_durable_opt_out_enabled=True,
+            chatwoot_opt_out_macro_id=9,
+            opt_out_projection_worker_id="opt-out-projection-test",
+        ),
+        chatwoot_client=StubChatwootClient(
+            messages=[
+                {
+                    "id": 790,
+                    "created_at": 1786233960,
+                    "message_type": 0,
+                    "private": False,
+                    "content": "Gracias",
+                    "sender": {"type": "contact", "id": 20},
+                }
+            ]
+        ),
+        shadow_processor=shadow,
+        supabase_client=supabase,  # type: ignore[arg-type]
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(raw_body, secret=secret, delivery="stopped-delivery"),
+    )
+    assert response.status_code == 202
+    asyncio.run(app.state.chatwoot_worker.run_once())
+    assert supabase.apply_calls == []
+    assert supabase.reconcile_calls == [
+        {
+            "chatwoot_account_id": 1,
+            "chatwoot_inbox_id": 7,
+            "chatwoot_conversation_id": 123,
+            "external_user_id": "12025550123",
+        }
+    ]
+    assert shadow.calls == []
+
+
+def test_opt_out_is_detected_in_earlier_message_of_canonical_batch(
+    tmp_path: Path,
+) -> None:
+    secret = "webhook-secret"
+    base_payload: dict[str, object] = {
+        "event": "message_created",
+        "message_type": "incoming",
+        "private": False,
+        "conversation": {
+            "id": 123,
+            "contact_inbox": {"source_id": "12025550123@s.whatsapp.net"},
+        },
+    }
+    first_payload = {
+        **base_payload,
+        "id": 789,
+        "content": "No quiero recibir más mensajes",
+    }
+    second_payload = {**base_payload, "id": 790, "content": "Gracias"}
+    supabase = StubOptOutSupabase()
+    shadow = StubShadowProcessor()
+    app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=7,
+            chatwoot_inbound_debounce_seconds=30,
+            chatwoot_durable_opt_out_enabled=True,
+            chatwoot_opt_out_macro_id=9,
+            opt_out_projection_worker_id="opt-out-projection-test",
+        ),
+        chatwoot_client=StubChatwootClient(
+            messages=[
+                {
+                    "id": 789,
+                    "created_at": 1786233900,
+                    "message_type": 0,
+                    "private": False,
+                    "content": "No quiero recibir más mensajes",
+                    "sender": {"type": "contact", "id": 20},
+                },
+                {
+                    "id": 790,
+                    "created_at": 1786233960,
+                    "message_type": 0,
+                    "private": False,
+                    "content": "Gracias",
+                    "sender": {"type": "contact", "id": 20},
+                },
+            ]
+        ),
+        shadow_processor=shadow,
+        supabase_client=supabase,  # type: ignore[arg-type]
+    )
+    for delivery_id, payload in (
+        ("opt-out-batch-one", first_payload),
+        ("opt-out-batch-two", second_payload),
+    ):
+        raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        assert _post(
+            app,
+            raw_body,
+            _signed_headers(raw_body, secret=secret, delivery=delivery_id),
+        ).status_code == 202
+
+    for work_path in (tmp_path / ".work").glob("*.json"):
+        envelope = json.loads(work_path.read_text(encoding="utf-8"))
+        envelope["admitted_at"] -= 30
+        work_path.write_text(json.dumps(envelope), encoding="utf-8")
+    asyncio.run(app.state.chatwoot_worker.run_once())
+
+    assert len(supabase.apply_calls) == 1
+    assert supabase.apply_calls[0]["chatwoot_message_id"] == 789
+    assert supabase.apply_calls[0]["rule_key"] == "stop_receiving_messages"
+    assert shadow.calls == []
+
+
+def test_durable_opt_out_is_admitted_without_hermes_shadow(tmp_path: Path) -> None:
+    secret = "test-secret"
+    payload: dict[str, object] = {
+        "event": "message_created",
+        "id": 791,
+        "message_type": "incoming",
+        "private": False,
+        "content": "No quiero recibir más mensajes",
+        "conversation": {
+            "id": 123,
+            "contact_inbox": {"source_id": "12025550123@s.whatsapp.net"},
+        },
+    }
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    supabase = StubOptOutSupabase()
+    app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=7,
+            chatwoot_durable_opt_out_enabled=True,
+            chatwoot_opt_out_macro_id=9,
+            opt_out_projection_worker_id="opt-out-projection-test",
+        ),
+        chatwoot_client=StubChatwootClient(
+            messages=[{
+                "id": 791,
+                "created_at": 1786233960,
+                "message_type": 0,
+                "private": False,
+                "content": "No quiero recibir más mensajes",
+                "sender": {"type": "contact", "id": 20},
+            }]
+        ),
+        shadow_processor=None,
+        supabase_client=supabase,  # type: ignore[arg-type]
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(raw_body, secret=secret, delivery="opt-out-no-shadow"),
+    )
+
+    assert response.status_code == 202
+    asyncio.run(app.state.chatwoot_worker.run_once())
+    assert len(supabase.apply_calls) == 1
+
+
+def test_existing_durable_stop_is_enforced_when_detection_is_disabled(
+    tmp_path: Path,
+) -> None:
+    secret = "test-secret"
+    payload: dict[str, object] = {
+        "event": "message_created",
+        "id": 792,
+        "message_type": "incoming",
+        "private": False,
+        "content": "Gracias",
+        "conversation": {
+            "id": 123,
+            "contact_inbox": {"source_id": "12025550123@s.whatsapp.net"},
+        },
+    }
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    shadow = StubShadowProcessor()
+    supabase = StubOptOutSupabase(stopped=True)
+    app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=7,
+            chatwoot_durable_opt_out_enabled=False,
+        ),
+        chatwoot_client=StubChatwootClient(
+            messages=[{
+                "id": 792,
+                "created_at": 1786233960,
+                "message_type": 0,
+                "private": False,
+                "content": "Gracias",
+                "sender": {"type": "contact", "id": 20},
+            }]
+        ),
+        shadow_processor=shadow,
+        supabase_client=supabase,  # type: ignore[arg-type]
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(raw_body, secret=secret, delivery="opt-out-enforced"),
+    )
+
+    assert response.status_code == 202
+    asyncio.run(app.state.chatwoot_worker.run_once())
+    assert shadow.calls == []
+    assert len(supabase.reconcile_calls) == 1
+
+
+def test_cached_reply_cannot_bypass_stop_when_detector_is_disabled(
+    tmp_path: Path,
+) -> None:
+    secret = "test-secret"
+    payload: dict[str, object] = {
+        "event": "message_created",
+        "id": 793,
+        "message_type": "incoming",
+        "private": False,
+        "content": "Gracias",
+        "conversation": {
+            "id": 123,
+            "contact_inbox": {"source_id": "12025550123@s.whatsapp.net"},
+        },
+    }
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    shadow = StubShadowProcessor({"reply": "No debe enviarse"})
+    shadow.completed_delivery_ids.add("cached-opt-out-enforced")
+    supabase = StubOptOutSupabase(stopped=True)
+    chatwoot = StubChatwootClient(messages=[{
+        "id": 793,
+        "created_at": 1786233960,
+        "message_type": 0,
+        "private": False,
+        "content": "Gracias",
+        "sender": {"type": "contact", "id": 20},
+    }])
+    app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=7,
+            chatwoot_durable_opt_out_enabled=False,
+            automated_replies_enabled=True,
+        ),
+        chatwoot_client=chatwoot,
+        shadow_processor=shadow,
+        supabase_client=supabase,  # type: ignore[arg-type]
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(
+            raw_body,
+            secret=secret,
+            delivery="cached-opt-out-enforced",
+        ),
+    )
+    asyncio.run(app.state.chatwoot_worker.run_once())
+
+    assert response.status_code == 202
+    assert len(supabase.stop_checks) == 1
+    assert len(supabase.reconcile_calls) == 1
+    assert chatwoot.reply_calls == []
+
+
+def test_opt_out_projection_worker_survives_detector_disablement(
+    tmp_path: Path,
+) -> None:
+    supabase = StubOptOutSupabase()
+    app = create_app(
+        Settings(
+            webhook_secret="secret",
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=7,
+            chatwoot_durable_opt_out_enabled=False,
+            chatwoot_opt_out_macro_id=9,
+            opt_out_projection_worker_id="opt-out-projection-test",
+        ),
+        chatwoot_client=StubChatwootClient(messages=[]),
+        supabase_client=supabase,  # type: ignore[arg-type]
+    )
+
+    async def exercise_lifespan() -> None:
+        async with app.router.lifespan_context(app):
+            await asyncio.sleep(0)
+
+    asyncio.run(exercise_lifespan())
+
+    assert len(supabase.projection_claim_calls) == 1
 
 
 def test_batches_two_incoming_messages_into_one_shadow_evaluation(

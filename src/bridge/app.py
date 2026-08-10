@@ -12,6 +12,7 @@ import tempfile
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import AsyncGenerator, Awaitable, Callable, Protocol
 from urllib.parse import urlparse
@@ -47,6 +48,7 @@ from bridge.hotmart import (
     verify_hotmart_token,
 )
 from bridge.messaging import EvolutionMessageSender, MessageSender
+from bridge.opt_out import detect_explicit_opt_out
 from bridge.recovery_agent import RecoveryAgentClient
 from bridge.reply_splitter import (
     HermesReplySplitter,
@@ -56,7 +58,7 @@ from bridge.reply_splitter import (
 )
 from bridge.security import verify_chatwoot_signature
 from bridge.supabase import SupabaseClient, SupabaseError
-from bridge.worker import DurableDispatcher, ResolutionWorker
+from bridge.worker import DurableDispatcher, OptOutProjectionWorker, ResolutionWorker
 
 logger = logging.getLogger(__name__)
 CHATWOOT_WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024
@@ -67,7 +69,17 @@ class CanonicalHistoryIncompleteError(RetryableChatwootWorkError):
     """Raised when Chatwoot has not exposed the triggering message yet."""
 
 
+@dataclass(frozen=True)
+class CanonicalWorkResult:
+    proposal: dict[str, object] | None
+    stopped: bool = False
+
+
 class ChatwootControl(Protocol):
+    async def validate_conversation_authority(
+        self, *, conversation_id: int, expected_inbox_id: int
+    ) -> None: ...
+
     async def get_conversation_messages(
         self,
         *,
@@ -79,6 +91,8 @@ class ChatwootControl(Protocol):
     async def ensure_conversation_label(
         self, *, conversation_id: int, label: str
     ) -> bool: ...
+
+    async def apply_opt_out_macro(self, *, conversation_id: int) -> None: ...
 
     async def send_agent_bot_reply(
         self,
@@ -129,6 +143,7 @@ class Settings:
     chatwoot_control_api_access_token: str | None = None
     chatwoot_agent_bot_access_token: str | None = None
     chatwoot_pause_macro_id: int | None = None
+    chatwoot_opt_out_macro_id: int | None = None
     hermes_shadow_enabled: bool = False
     hermes_api_base_url: str | None = None
     hermes_api_key: str | None = None
@@ -158,6 +173,8 @@ class Settings:
     dispatcher_poll_interval_seconds: float = 5.0
     dispatcher_batch_size: int = 10
     dispatcher_outbound_enabled: bool = False
+    chatwoot_durable_opt_out_enabled: bool = False
+    opt_out_projection_worker_id: str | None = None
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -315,6 +332,17 @@ class Settings:
         dispatcher_outbound_enabled = (
             os.getenv("DURABLE_OUTBOUND_ENABLED", "false").lower() == "true"
         )
+        chatwoot_durable_opt_out_enabled = (
+            os.getenv("CHATWOOT_DURABLE_OPT_OUT_ENABLED", "false").lower()
+            == "true"
+        )
+        opt_out_macro_id_raw = os.getenv("CHATWOOT_OPT_OUT_MACRO_ID", "").strip()
+        chatwoot_opt_out_macro_id = (
+            int(opt_out_macro_id_raw) if opt_out_macro_id_raw else None
+        )
+        opt_out_projection_worker_id = (
+            os.getenv("CHATWOOT_OPT_OUT_PROJECTION_WORKER_ID", "").strip() or None
+        )
 
         return cls(
             webhook_secret=os.environ["CHATWOOT_WEBHOOK_SECRET"],
@@ -329,6 +357,7 @@ class Settings:
             ],
             chatwoot_agent_bot_access_token=agent_bot_access_token,
             chatwoot_pause_macro_id=int(os.environ["CHATWOOT_PAUSE_MACRO_ID"]),
+            chatwoot_opt_out_macro_id=chatwoot_opt_out_macro_id,
             hermes_shadow_enabled=shadow_enabled,
             hermes_api_base_url=hermes_api_base_url,
             hermes_api_key=hermes_api_key,
@@ -360,6 +389,8 @@ class Settings:
             dispatcher_poll_interval_seconds=dispatcher_poll_interval_seconds,
             dispatcher_batch_size=dispatcher_batch_size,
             dispatcher_outbound_enabled=dispatcher_outbound_enabled,
+            chatwoot_durable_opt_out_enabled=chatwoot_durable_opt_out_enabled,
+            opt_out_projection_worker_id=opt_out_projection_worker_id,
         )
 
 
@@ -463,6 +494,13 @@ def _normalize_chatwoot_history(
             message_id = message.get("id")
             if isinstance(message_id, int) and not isinstance(message_id, bool):
                 normalized_message["_message_ref"] = str(message_id)
+            created_at = message.get("created_at")
+            if (
+                isinstance(created_at, int)
+                and not isinstance(created_at, bool)
+                and created_at > 0
+            ):
+                normalized_message["_created_at"] = str(created_at)
             normalized.append(normalized_message)
     return normalized
 
@@ -497,6 +535,20 @@ def create_app(
         raise ValueError(
             "CHATWOOT_REPLY_PART_DELAY_SECONDS must be finite and not negative"
         )
+    if settings.chatwoot_durable_opt_out_enabled and (
+        settings.chatwoot_account_id is None
+        or settings.chatwoot_account_id < 1
+        or settings.chatwoot_inbox_id is None
+        or settings.chatwoot_inbox_id < 1
+        or settings.agent_bot_id is None
+        or settings.agent_bot_id < 1
+        or settings.chatwoot_opt_out_macro_id is None
+        or settings.chatwoot_opt_out_macro_id < 1
+        or settings.opt_out_projection_worker_id is None
+    ):
+        raise ValueError(
+            "CHATWOOT_DURABLE_OPT_OUT_ENABLED requires canonical Chatwoot IDs"
+        )
     control_client = chatwoot_client
     if (
         control_client is None
@@ -514,6 +566,7 @@ def create_app(
             agent_bot_id=settings.agent_bot_id,
             reply_dir=settings.reply_dir,
             pause_macro_id=settings.chatwoot_pause_macro_id,
+            opt_out_macro_id=settings.chatwoot_opt_out_macro_id,
         )
     configured_reply_splitter = reply_splitter
     reply_manifest_reader = HermesReplySplitter(
@@ -554,6 +607,12 @@ def create_app(
         shared_supabase = SupabaseClient(
             base_url=settings.supabase_base_url,
             service_role_key=settings.supabase_service_role_key,
+        )
+    if settings.chatwoot_durable_opt_out_enabled and (
+        shared_supabase is None or control_client is None
+    ):
+        raise ValueError(
+            "CHATWOOT_DURABLE_OPT_OUT_ENABLED requires Supabase and Chatwoot control"
         )
 
     # Build background workers only when explicitly enabled.
@@ -702,6 +761,32 @@ def create_app(
             ),
         )
 
+    opt_out_projection_worker: OptOutProjectionWorker | None = None
+    opt_out_enforcement_enabled = (
+        shared_supabase is not None
+        and control_client is not None
+        and settings.agent_bot_id is not None
+        and settings.chatwoot_account_id is not None
+        and settings.chatwoot_account_id > 0
+        and settings.chatwoot_inbox_id is not None
+        and settings.chatwoot_inbox_id > 0
+    )
+    opt_out_projection_configured = (
+        opt_out_enforcement_enabled
+        and settings.chatwoot_opt_out_macro_id is not None
+        and settings.chatwoot_opt_out_macro_id > 0
+        and bool(settings.opt_out_projection_worker_id)
+    )
+    if opt_out_projection_configured:
+        assert shared_supabase is not None
+        assert control_client is not None
+        assert settings.opt_out_projection_worker_id is not None
+        opt_out_projection_worker = OptOutProjectionWorker(
+            supabase=shared_supabase,
+            chatwoot=control_client,  # type: ignore[arg-type]
+            worker_id=settings.opt_out_projection_worker_id,
+        )
+
     chatwoot_worker: ChatwootWorker | None = None
 
     @asynccontextmanager
@@ -711,12 +796,15 @@ def create_app(
                 await resolution_worker.start()
             if durable_dispatcher is not None:
                 await durable_dispatcher.start()
+            if opt_out_projection_worker is not None:
+                await opt_out_projection_worker.start()
             if chatwoot_worker is not None:
                 await chatwoot_worker.start()
             yield
         finally:
             for worker_name, worker in (
                 ("chatwoot", chatwoot_worker),
+                ("opt_out_projection", opt_out_projection_worker),
                 ("dispatcher", durable_dispatcher),
                 ("resolution", resolution_worker),
             ):
@@ -734,6 +822,7 @@ def create_app(
     app = FastAPI(title="AI Appointment Setter Bridge", lifespan=lifespan)
     app.state.resolution_worker = resolution_worker
     app.state.durable_dispatcher = durable_dispatcher
+    app.state.opt_out_projection_worker = opt_out_projection_worker
     app.state.chatwoot_inbox = chatwoot_inbox
     app.state.chatwoot_worker = chatwoot_worker
 
@@ -743,16 +832,22 @@ def create_app(
         current_message_id: int | None,
         batch_message_ids: tuple[int, ...],
         context: dict[str, object],
-    ) -> dict[str, object] | None:
+    ) -> CanonicalWorkResult:
         if control_client is None or settings.agent_bot_id is None:
             if shadow_processor is not None:
                 shadow_processor.record_failure(
                     delivery_id=delivery_id,
                     reason="chatwoot_history_not_configured",
                 )
-            return None
+            return CanonicalWorkResult(proposal=None)
         conversation_id = int(str(context["conversation_ref"]))
         try:
+            if opt_out_enforcement_enabled:
+                assert settings.chatwoot_inbox_id is not None
+                await control_client.validate_conversation_authority(
+                    conversation_id=conversation_id,
+                    expected_inbox_id=settings.chatwoot_inbox_id,
+                )
             history = await control_client.get_conversation_messages(
                 conversation_id=conversation_id,
                 limit=max(200, len(set(batch_message_ids)) + 19),
@@ -791,6 +886,99 @@ def create_app(
             raise CanonicalHistoryIncompleteError(
                 "batched_messages_not_in_canonical_history"
             )
+        external_user_id = (
+            settings.allowed_jid.split("@", 1)[0]
+            if settings.allowed_jid is not None
+            else ""
+        )
+        if not external_user_id.isdigit():
+            raise CanonicalHistoryIncompleteError(
+                "canonical_external_user_id_invalid"
+            )
+        if opt_out_enforcement_enabled:
+            assert shared_supabase is not None
+            assert settings.chatwoot_account_id is not None
+            assert settings.chatwoot_inbox_id is not None
+            try:
+                stopped = await shared_supabase.has_chatwoot_opt_out_stop(
+                    chatwoot_account_id=settings.chatwoot_account_id,
+                    chatwoot_inbox_id=settings.chatwoot_inbox_id,
+                    chatwoot_conversation_id=conversation_id,
+                    external_user_id=external_user_id,
+                )
+            except SupabaseError as exc:
+                raise RetryableChatwootWorkError(
+                    "chatwoot_opt_out_stop_check_failed"
+                ) from exc
+            if stopped:
+                try:
+                    reconciliation = (
+                        await shared_supabase.reconcile_chatwoot_opt_out_stop(
+                            chatwoot_account_id=settings.chatwoot_account_id,
+                            chatwoot_inbox_id=settings.chatwoot_inbox_id,
+                            chatwoot_conversation_id=conversation_id,
+                            external_user_id=external_user_id,
+                        )
+                    )
+                except SupabaseError as exc:
+                    raise RetryableChatwootWorkError(
+                        "chatwoot_opt_out_reconciliation_failed"
+                    ) from exc
+                logger.info(
+                    "chatwoot_opt_out_reconciled outcome=%s event_id=%s",
+                    reconciliation.outcome,
+                    reconciliation.opt_out_event_id,
+                )
+                return CanonicalWorkResult(proposal=None, stopped=True)
+
+        if settings.chatwoot_durable_opt_out_enabled:
+            assert shared_supabase is not None
+            assert settings.chatwoot_account_id is not None
+            assert settings.chatwoot_inbox_id is not None
+            batch_messages = [
+                message
+                for message in normalized
+                if message.get("_message_ref") in expected_refs
+                and message.get("actor") == "prospect"
+            ]
+            opt_out_match = detect_explicit_opt_out(
+                [message["text"] for message in batch_messages]
+            )
+            if opt_out_match is not None:
+                matched_message = batch_messages[opt_out_match.message_index]
+                message_ref = matched_message.get("_message_ref")
+                created_at = matched_message.get("_created_at")
+                if (
+                    message_ref is None
+                    or created_at is None
+                    or not external_user_id.isdigit()
+                ):
+                    raise CanonicalHistoryIncompleteError(
+                        "canonical_opt_out_evidence_incomplete"
+                    )
+                occurred_at = datetime.fromtimestamp(
+                    int(created_at), tz=UTC
+                ).isoformat()
+                try:
+                    result = await shared_supabase.apply_chatwoot_inbound_opt_out(
+                        chatwoot_account_id=settings.chatwoot_account_id,
+                        chatwoot_inbox_id=settings.chatwoot_inbox_id,
+                        chatwoot_conversation_id=conversation_id,
+                        chatwoot_message_id=int(message_ref),
+                        external_user_id=external_user_id,
+                        occurred_at=occurred_at,
+                        rule_key=opt_out_match.rule_key,
+                    )
+                except SupabaseError as exc:
+                    raise RetryableChatwootWorkError(
+                        "chatwoot_opt_out_apply_failed"
+                    ) from exc
+                logger.info(
+                    "chatwoot_opt_out_stopped outcome=%s event_id=%s",
+                    result.outcome,
+                    result.opt_out_event_id,
+                )
+                return CanonicalWorkResult(proposal=None, stopped=True)
         first_batch_index = min(
             (message_indexes[message_ref] for message_ref in expected_refs),
             default=current_index,
@@ -805,12 +993,20 @@ def create_app(
         ]
         enriched_context = {**context, "messages": public_messages}
         if shadow_processor is None:
-            return None
+            return CanonicalWorkResult(proposal=None)
+        if shadow_processor.has_result(delivery_id=delivery_id):
+            return CanonicalWorkResult(
+                proposal=shadow_processor.get_completed_proposal(
+                    delivery_id=delivery_id
+                )
+            )
         await shadow_processor.run(
             delivery_id=delivery_id,
             context=enriched_context,
         )
-        return shadow_processor.get_completed_proposal(delivery_id=delivery_id)
+        return CanonicalWorkResult(
+            proposal=shadow_processor.get_completed_proposal(delivery_id=delivery_id)
+        )
 
     async def process_chatwoot_work(
         delivery_id: str,
@@ -843,14 +1039,20 @@ def create_app(
         if not decision.accepted:
             return
         context = _shadow_context(payload)
-        if context is None or shadow_processor is None:
+        if context is None:
             return
-        completed_proposal = shadow_processor.get_completed_proposal(
-            delivery_id=delivery_id
+        completed_proposal = (
+            shadow_processor.get_completed_proposal(delivery_id=delivery_id)
+            if shadow_processor is not None
+            else None
         )
-        if not shadow_processor.has_result(delivery_id=delivery_id):
+        must_scan_canonical_history = opt_out_enforcement_enabled or (
+            shadow_processor is not None
+            and not shadow_processor.has_result(delivery_id=delivery_id)
+        )
+        if must_scan_canonical_history:
             message_id = payload.get("id")
-            completed_proposal = await run_shadow_with_canonical_history(
+            canonical_result = await run_shadow_with_canonical_history(
                 delivery_id=delivery_id,
                 current_message_id=(
                     message_id
@@ -860,6 +1062,9 @@ def create_app(
                 batch_message_ids=batch_message_ids,
                 context=context,
             )
+            if canonical_result.stopped:
+                return
+            completed_proposal = canonical_result.proposal
         if not settings.automated_replies_enabled or completed_proposal is None:
             return
 
@@ -1077,7 +1282,11 @@ def create_app(
         context = _shadow_context(payload)
         if (
             chatwoot_inbox is not None
-            and shadow_processor is not None
+            and (
+                shadow_processor is not None
+                or opt_out_enforcement_enabled
+                or settings.chatwoot_durable_opt_out_enabled
+            )
             and context is not None
         ):
             admitted = chatwoot_inbox.admit(

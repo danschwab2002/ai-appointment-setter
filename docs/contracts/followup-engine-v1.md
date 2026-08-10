@@ -530,6 +530,44 @@ Incluso después de la validación final existe una ventana residual entre leer 
 estado y completar el request externo. El contrato reduce esa carrera mediante
 reevaluación cercana al efecto; no promete eliminarla.
 
+### Baja inbound durable implementada
+
+Una baja explícita en un batch canónico de Chatwoot se admite mediante
+`apply_chatwoot_inbound_opt_out`. La evidencia se identifica por cuenta, inbox,
+conversación y mensaje canónicos; el texto no se persiste en auditoría. La RPC:
+
+Antes de consultar o aplicar el stop, el bridge obtiene la conversación canónica
+por API y exige que pertenezca al inbox configurado y al JID autorizado. Los
+identificadores declarados por el webhook no sustituyen esa autoridad.
+
+- serializa la admisión y `request_started` por cuenta + usuario externo, y
+  consulta todo stop anterior antes de permitir la frontera ejecutable;
+- deja `contacts` en `opted_out/do_not_contact` y una autorización `denied` activa;
+- cancela casos, secuencias, acciones e intentos que no cruzaron
+  `request_started`;
+- conserva un intento iniciado como `delivery_unknown`, con reconciliación y sin
+  retry ciego;
+- una evidencia tardía `not_applied` mueve ese intento a `rejected` y la acción a
+  `cancelled`, sin crear retry ni sucesor;
+- persiste `unmatched` o `ambiguous` como stop fact de conversación y permite
+  reconciliarlo después sin duplicar evidencia;
+- impide relajar físicamente el stop o borrar su denial sin un contrato futuro de
+  reautorización explícita.
+
+`service_role` conserva lectura pero no DML directo sobre
+`followup_delivery_attempts`. Reserva, request-start, finalización y
+reconciliación atraviesan entrypoints `SECURITY DEFINER`; sus helpers internos no
+son ejecutables por roles de API. Este cierre evita reescribir un estado terminal
+desde PostgREST.
+
+La señal operacional en Chatwoot es una proyección durable separada. Un worker
+con lease comprueba primero las labels canónicas: si ya existen
+`automation_opted_out` y `automation_paused`, no vuelve a ejecutar el macro. Sólo
+marca `applied` después de confirmar ambas. La finalización exige lease no nulo,
+vigente, del mismo owner y generación; un replay tardío no incrementa intentos ni
+muta el evento. Los fallos usan backoff acotado y terminan en `dead_letter`;
+nunca revierten la baja SQL.
+
 ## 12. Auditoría mínima
 
 Cada transición registra:

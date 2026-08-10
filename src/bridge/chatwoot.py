@@ -62,6 +62,7 @@ class ChatwootClient:
         agent_bot_id: int | None = None,
         reply_dir: Path | None = None,
         pause_macro_id: int | None = None,
+        opt_out_macro_id: int | None = None,
         confirmation_attempts: int = 10,
         confirmation_delay_seconds: float = 0.5,
         transport: httpx.AsyncBaseTransport | None = None,
@@ -74,6 +75,7 @@ class ChatwootClient:
         self._agent_bot_id = agent_bot_id
         self._reply_dir = reply_dir
         self._pause_macro_id = pause_macro_id
+        self._opt_out_macro_id = opt_out_macro_id
         self._confirmation_attempts = confirmation_attempts
         self._confirmation_delay_seconds = confirmation_delay_seconds
         self._transport = transport
@@ -772,6 +774,39 @@ class ChatwootClient:
             )
         return isinstance(identifier, str) and identifier == self._allowed_jid
 
+    async def validate_conversation_authority(
+        self, *, conversation_id: int, expected_inbox_id: int
+    ) -> None:
+        """Fail closed unless Chatwoot confirms the configured inbox and JID."""
+        if conversation_id <= 0 or expected_inbox_id <= 0:
+            raise ValueError("conversation and inbox IDs must be positive")
+        path = (
+            f"/api/v1/accounts/{self._account_id}"
+            f"/conversations/{conversation_id}"
+        )
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers={"api_access_token": self._access_token},
+            transport=self._transport,
+            timeout=15,
+        ) as client:
+            response = await client.get(path)
+            response.raise_for_status()
+        try:
+            conversation = response.json()
+        except ValueError as exc:
+            raise ChatwootProtocolError("invalid_json") from exc
+        if (
+            not isinstance(conversation, dict)
+            or conversation.get("id") != conversation_id
+            or conversation.get("inbox_id") != expected_inbox_id
+        ):
+            raise ChatwootProtocolError("invalid_conversation_authority")
+        if not self._is_authorized_conversation(
+            response, conversation_id=conversation_id
+        ):
+            raise ChatwootProtocolError("conversation_identity_mismatch")
+
     async def get_conversation_messages(
         self,
         *,
@@ -882,6 +917,50 @@ class ChatwootClient:
                     return True
 
             raise ChatwootProtocolError("macro_label_not_confirmed")
+
+    async def apply_opt_out_macro(self, *, conversation_id: int) -> None:
+        """Apply and verify the dedicated durable opt-out projection macro."""
+        if self._opt_out_macro_id is None:
+            raise ChatwootProtocolError("opt_out_macro_not_configured")
+        labels_path = (
+            f"/api/v1/accounts/{self._account_id}"
+            f"/conversations/{conversation_id}/labels"
+        )
+        macro_path = (
+            f"/api/v1/accounts/{self._account_id}"
+            f"/macros/{self._opt_out_macro_id}/execute"
+        )
+        headers = {"api_access_token": self._access_token}
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers=headers,
+            transport=self._transport,
+            timeout=15,
+        ) as client:
+            response = await client.get(labels_path)
+            response.raise_for_status()
+            if {
+                "automation_opted_out",
+                "automation_paused",
+            }.issubset(self._parse_labels(response)):
+                return
+            response = await client.post(
+                macro_path,
+                json={"conversation_ids": [conversation_id]},
+            )
+            response.raise_for_status()
+            for _ in range(self._confirmation_attempts):
+                if self._confirmation_delay_seconds > 0:
+                    await asyncio.sleep(self._confirmation_delay_seconds)
+                response = await client.get(labels_path)
+                response.raise_for_status()
+                labels = self._parse_labels(response)
+                if {
+                    "automation_opted_out",
+                    "automation_paused",
+                }.issubset(labels):
+                    return
+        raise ChatwootProtocolError("opt_out_macro_postconditions_not_confirmed")
 
     @staticmethod
     def _parse_labels(response: httpx.Response) -> list[str]:

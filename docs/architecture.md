@@ -28,6 +28,8 @@ Chatwoot -> POST /webhooks/chatwoot
 worker local -> debounce durable + lock hasheado por conversación (30 s)
              -> líder por mayor message_id canónico
              -> historial de Chatwoot validado contra todos los IDs del batch
+             -> detector determinista de baja explícita
+                -> RPC SQL autoritativa + corte del turno
              -> API Server de agente-comercial
              -> validación JSON
              -> archivo privado en SHADOW_DIR
@@ -109,6 +111,47 @@ Ese flag impide crear lotes nuevos, pero no desactiva la lectura y reconciliaci�
 de manifiestos ya existentes.
 Los journals de respuesta única previos a la activación también bloquean una
 geometría multipart nueva mientras su entrega permanezca incierta.
+
+## Baja inbound durable
+
+La baja explícita se resuelve antes de Hermes sobre el turno canónico completo.
+La detección es determinística y la autoridad resultante vive en Supabase, no en
+el modelo ni en una etiqueta de Chatwoot:
+
+```text
+validación canónica de inbox + JID en Chatwoot
+  -> turno canónico completo
+  -> consulta del stop durable previo
+  -> detector cerrado de baja explícita
+  -> apply_chatwoot_inbound_opt_out
+     -> stop fact + denied + contacto do_not_contact
+     -> cierre del workflow no iniciado
+     -> delivery_unknown si request_started ya existía
+  -> sin Hermes ni respuesta automática
+
+contact_opt_out_events(projection pending)
+  -> OptOutProjectionWorker con lease
+  -> macro dedicado de Chatwoot
+  -> confirmación de automation_opted_out + automation_paused
+```
+
+Un stop `unmatched` o `ambiguous` conserva la identidad canónica de Chatwoot. Si
+la identidad interna aparece después, la misma evidencia puede reconciliarse. La
+frontera `request_started` toma un advisory lock por cuenta y usuario externo y
+consulta también esos stops anteriores: una planificación creada en el orden
+inverso no puede iniciar el request. Los intentos ya iniciados se conservan como
+efecto incierto; evidencia tardía `not_applied` los cierra sin retry y una
+aceptación tardía no reabre el caso ni crea sucesores.
+
+La tabla de intentos no admite `INSERT`, `UPDATE` ni `DELETE` directo desde
+`service_role`; las transiciones necesarias pasan por entrypoints
+`SECURITY DEFINER` de firma cerrada. La proyección Chatwoot consulta primero las
+labels canónicas: si ambas ya existen no repite el macro. Su finalización exige
+owner, generación y lease vigente, por lo que un replay tardío no muta el evento.
+La proyección es reintentable y no puede revertir la autoridad SQL. Esta
+implementación está presente en el árbol y
+tiene pruebas locales, PGlite y PostgreSQL real; todavía no constituye evidencia
+de migración aplicada ni de worker activo en producción.
 
 ## Cierre determinístico por compra aprobada
 

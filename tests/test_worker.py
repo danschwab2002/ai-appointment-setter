@@ -11,13 +11,14 @@ from typing import Any, Callable
 import httpx
 import pytest
 
-from bridge.chatwoot import CanonicalConversationSnapshot
+from bridge.chatwoot import CanonicalConversationSnapshot, ChatwootProtocolError
 from bridge.messaging import FirstTouchResult
 from bridge.recovery_agent import FollowupMessageProposal
 from bridge.supabase import (
     ChatwootAuthorityContext,
     DeliveryAttempt,
     FollowupExecutionContext,
+    OptOutProjectionClaim,
     ReevaluationDecision,
     ScheduledAction,
     SupabaseClient,
@@ -27,6 +28,7 @@ from bridge.supabase import (
 import bridge.worker as worker_module
 from bridge.worker import (
     DurableDispatcher,
+    OptOutProjectionWorker,
     ResolutionWorker,
     _await_despite_cancellation,
     _validate_followup_execution_context,
@@ -1749,3 +1751,65 @@ def test_worker_start_stop_idempotent() -> None:
         await worker.stop()
 
     _run(run_test())
+
+
+class StubProjectionSupabase:
+    def __init__(self) -> None:
+        self.finalizations: list[dict[str, object]] = []
+
+    async def claim_chatwoot_opt_out_projections(
+        self, **_: object
+    ) -> list[OptOutProjectionClaim]:
+        return [OptOutProjectionClaim(
+            opt_out_event_id="opt-out-event-1",
+            chatwoot_conversation_id=42,
+            lease_generation=3,
+        )]
+
+    async def finalize_chatwoot_opt_out_projection(
+        self, **kwargs: object
+    ) -> str:
+        self.finalizations.append(kwargs)
+        return "applied" if kwargs["applied"] else "retryable_failed"
+
+
+class StubProjectionChatwoot:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.calls: list[int] = []
+
+    async def apply_opt_out_macro(self, *, conversation_id: int) -> None:
+        self.calls.append(conversation_id)
+        if self.fail:
+            raise ChatwootProtocolError("macro failed")
+
+
+def test_opt_out_projection_worker_finalizes_confirmed_macro() -> None:
+    supabase = StubProjectionSupabase()
+    chatwoot = StubProjectionChatwoot()
+    worker = OptOutProjectionWorker(
+        supabase=supabase,  # type: ignore[arg-type]
+        chatwoot=chatwoot,  # type: ignore[arg-type]
+        worker_id="projection-worker-1",
+    )
+
+    assert asyncio.run(worker.run_once()) == 1
+    assert chatwoot.calls == [42]
+    assert supabase.finalizations[0]["applied"] is True
+    assert supabase.finalizations[0]["error_code"] is None
+
+
+def test_opt_out_projection_worker_records_retryable_chatwoot_failure() -> None:
+    supabase = StubProjectionSupabase()
+    chatwoot = StubProjectionChatwoot(fail=True)
+    worker = OptOutProjectionWorker(
+        supabase=supabase,  # type: ignore[arg-type]
+        chatwoot=chatwoot,  # type: ignore[arg-type]
+        worker_id="projection-worker-1",
+    )
+
+    assert asyncio.run(worker.run_once()) == 1
+    assert supabase.finalizations[0]["applied"] is False
+    assert supabase.finalizations[0]["error_code"] == (
+        "chatwoot_ChatwootProtocolError"
+    )

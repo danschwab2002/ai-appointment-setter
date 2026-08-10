@@ -1661,3 +1661,79 @@ def test_canonical_snapshot_rejects_wrong_inbox_or_identity() -> None:
         asyncio.run(client.get_canonical_conversation_snapshot(
             conversation_id=2, expected_inbox_id=7, anchor_message_id=None,
         ))
+
+
+def test_apply_opt_out_macro_confirms_stop_and_pause_labels() -> None:
+    requests: list[httpx.Request] = []
+    posted = False
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal posted
+        requests.append(request)
+        if request.method == "POST":
+            posted = True
+            assert request.url.path.endswith("/macros/9/execute")
+            assert json.loads(request.content) == {"conversation_ids": [42]}
+            return httpx.Response(200, json={})
+        assert request.url.path.endswith("/conversations/42/labels")
+        return httpx.Response(200, json={"payload": (
+            ["automation_opted_out", "automation_paused"] if posted else []
+        )})
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="token",
+        opt_out_macro_id=9,
+        confirmation_attempts=1,
+        confirmation_delay_seconds=0,
+        transport=httpx.MockTransport(handler),
+    )
+
+    asyncio.run(client.apply_opt_out_macro(conversation_id=42))
+    assert [request.method for request in requests] == ["GET", "POST", "GET"]
+
+
+def test_validate_conversation_authority_rejects_wrong_inbox() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "id": 42,
+            "inbox_id": 99,
+            "meta": {"sender": {"identifier": ALLOWED_JID}},
+        })
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="token",
+        allowed_jid=ALLOWED_JID,
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(ChatwootProtocolError, match="invalid_conversation_authority"):
+        asyncio.run(client.validate_conversation_authority(
+            conversation_id=42, expected_inbox_id=7,
+        ))
+
+
+def test_apply_opt_out_macro_skips_post_when_labels_already_projected() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.method == "GET"
+        return httpx.Response(
+            200,
+            json={"payload": ["automation_opted_out", "automation_paused"]},
+        )
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="token",
+        opt_out_macro_id=9,
+        transport=httpx.MockTransport(handler),
+    )
+
+    asyncio.run(client.apply_opt_out_macro(conversation_id=42))
+    assert [request.method for request in requests] == ["GET"]
