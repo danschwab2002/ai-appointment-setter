@@ -33,8 +33,8 @@ for (const name of migrationNames) {
 const CONTACT_1 = '10000000-0000-0000-0000-000000000001';
 const CONTACT_2 = '10000000-0000-0000-0000-000000000002';
 const CONTACT_3 = '10000000-0000-0000-0000-000000000003';
-const EVENT_ID = '20000000-0000-0000-0000-000000000001';
-const FOREIGN_EVENT_ID = '20000000-0000-0000-0000-000000000002';
+let eventId = null;
+let foreignEventId = null;
 const ATTEMPT_1 = '40000000-0000-0000-0000-000000000001';
 const ATTEMPT_2 = '40000000-0000-0000-0000-000000000002';
 const ATTEMPT_3 = '40000000-0000-0000-0000-000000000003';
@@ -85,7 +85,7 @@ async function evaluate(overrides = {}) {
     channelAccountRef: 'opaque-number-ref',
     source: 'hotmart',
     eventType: 'PURCHASE_OUT_OF_SHOPPING_CART',
-    productId: 'product-1',
+    productId: '3526906',
     offerCode: 'offer-1',
     contactId: CONTACT_1,
     ...overrides,
@@ -119,7 +119,7 @@ async function authorize(attemptId, now, overrides = {}) {
     channelAccountRef: 'opaque-number-ref',
     source: 'hotmart',
     eventType: 'PURCHASE_OUT_OF_SHOPPING_CART',
-    productId: 'product-1',
+    productId: '3526906',
     offerCode: 'offer-1',
     contactId: CONTACT_1,
     actionId,
@@ -146,6 +146,27 @@ async function authorize(attemptId, now, overrides = {}) {
     now,
   ]);
   return assertOne(result.rows, 'request authorization');
+}
+
+async function admitCartAbandonment(externalEventId, email, phone) {
+  const payload = {
+    id: externalEventId,
+    creation_date: Date.parse('2026-08-10T10:00:00.000Z'),
+    event: 'PURCHASE_OUT_OF_SHOPPING_CART',
+    version: '2.0.0',
+    data: {
+      buyer: { email, phone },
+      product: { id: 3526906, name: 'Product One' },
+      offer: { code: 'offer-1' },
+    },
+  };
+  const result = await db.query(
+    'select * from public.admit_hotmart_cart_abandonment($1, $2::jsonb)',
+    [externalEventId, JSON.stringify(payload)],
+  );
+  const admitted = assertOne(result.rows, 'cart abandonment admission');
+  if (admitted.outcome !== 'inserted') throw new Error('cart abandonment was not inserted');
+  return admitted.webhook_event_id;
 }
 
 await db.exec(`
@@ -180,7 +201,7 @@ await db.exec(`
   ) values (
     'lancemos-cart-recovery', 1, 'published', 'lancemos',
     10, 20, 'whatsapp', 'waba', 'opaque-number-ref',
-    'hotmart', 'PURCHASE_OUT_OF_SHOPPING_CART', 'product-1', 'offer-1',
+    'hotmart', 'PURCHASE_OUT_OF_SHOPPING_CART', '3526906', 'offer-1',
     'cart_recovery', 'cart-recovery-test', 1, 'America/Argentina/Buenos_Aires',
     2, 2, 1, 'operator-test', now(), now()
   );
@@ -193,10 +214,10 @@ await db.exec(`
     'migration-test', 'default-off'
   );
 
-  insert into public.contacts (id, full_name) values
-    ('${CONTACT_1}', 'Pilot Contact One'),
-    ('${CONTACT_2}', 'Pilot Contact Two'),
-    ('${CONTACT_3}', 'Pilot Contact Three');
+  insert into public.contacts (id, full_name, email, phone) values
+    ('${CONTACT_1}', 'Pilot Contact One', 'pilot-one@example.com', '5491100000000'),
+    ('${CONTACT_2}', 'Pilot Contact Two', 'pilot-two@example.com', '5491100000001'),
+    ('${CONTACT_3}', 'Pilot Contact Three', null, null);
 `);
 
 const inactive = await evaluate();
@@ -262,22 +283,26 @@ if (outsideCohort.allowed !== false
 }
 console.log('pilot_scope_conjunction=OK');
 
-await db.exec(`
-  insert into public.webhook_events (
-    id, source, external_event_id, event_type, payload
-  ) values (
-    '${EVENT_ID}', 'hotmart', 'pilot-boundary-event',
-    'PURCHASE_OUT_OF_SHOPPING_CART', '{}'::jsonb
-  );
-`);
+eventId = await admitCartAbandonment(
+  'pilot-boundary-event',
+  'pilot-one@example.com',
+  '5491100000000',
+);
+await db.query(`
+  insert into public.contact_points (
+    contact_id,type,raw_value,normalized_value,source,source_event_id
+  ) values
+    ($1,'email','pilot-one@example.com','pilot-one@example.com','hotmart',$2),
+    ($1,'phone','5491100000000','5491100000000','hotmart',$2)
+`, [CONTACT_1, eventId]);
 const plan = await db.query(`
   select * from public.plan_cart_recovery_with_identity(
-    '${EVENT_ID}', '${CONTACT_1}',
-    'product-1', 'Product One', 'offer-1',
+    $1, '${CONTACT_1}',
+    '3526906', 'Product One', 'offer-1',
     'cart-recovery-test', 1, timestamptz '2026-08-10 10:00:00+00',
     10, 20, '5491100000000'
   )
-`);
+`, [eventId]);
 const planned = assertOne(plan.rows, 'cart recovery plan');
 if (planned.scheduled_action_id == null) throw new Error('plan did not return action');
 actionId = planned.scheduled_action_id;
@@ -297,22 +322,26 @@ await db.query(`
      'reserved', timestamptz '2026-08-13 10:01:00+00', 4, 1, 1);
 `, [actionId]);
 
-await db.exec(`
-  insert into public.webhook_events (
-    id, source, external_event_id, event_type, payload
-  ) values (
-    '${FOREIGN_EVENT_ID}', 'hotmart', 'pilot-foreign-policy-event',
-    'PURCHASE_OUT_OF_SHOPPING_CART', '{}'::jsonb
-  );
-`);
+foreignEventId = await admitCartAbandonment(
+  'pilot-foreign-policy-event',
+  'pilot-two@example.com',
+  '5491100000001',
+);
+await db.query(`
+  insert into public.contact_points (
+    contact_id,type,raw_value,normalized_value,source,source_event_id
+  ) values
+    ($1,'email','pilot-two@example.com','pilot-two@example.com','hotmart',$2),
+    ($1,'phone','5491100000001','5491100000001','hotmart',$2)
+`, [CONTACT_2, foreignEventId]);
 const foreignPlan = await db.query(`
   select * from public.plan_cart_recovery_with_identity(
-    '${FOREIGN_EVENT_ID}', '${CONTACT_2}',
-    'product-1', 'Product One', 'offer-1',
+    $1, '${CONTACT_2}',
+    '3526906', 'Product One', 'offer-1',
     'foreign-policy-test', 1, timestamptz '2026-08-10 10:00:00+00',
     10, 20, '5491100000001'
   )
-`);
+`, [foreignEventId]);
 const foreignActionId = assertOne(
   foreignPlan.rows,
   'foreign-policy plan',
@@ -455,7 +484,7 @@ await db.exec(`
   )
   select 'lancemos-versioned',version,'published','lancemos',10,20,
          'whatsapp','waba','opaque-number-ref','hotmart',
-         'PURCHASE_OUT_OF_SHOPPING_CART','product-1',
+         'PURCHASE_OUT_OF_SHOPPING_CART','3526906',
          'offer-' || version::text,'cart_recovery','cart-recovery-test',1,
          'America/Argentina/Buenos_Aires',2,2,1,
          'operator-test',clock_timestamp(),clock_timestamp()
@@ -509,7 +538,7 @@ try {
     ) values (
       'lancemos-versioned',3,'published','lancemos',10,20,
       'whatsapp','waba','opaque-number-ref','hotmart',
-      'PURCHASE_OUT_OF_SHOPPING_CART','product-1','offer-3','cart_recovery',
+      'PURCHASE_OUT_OF_SHOPPING_CART','3526906','offer-3','cart_recovery',
       'cart-recovery-test',1,'UTC',2,2,1,
       'operator-test',clock_timestamp(),clock_timestamp()
     )

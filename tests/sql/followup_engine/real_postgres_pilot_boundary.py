@@ -224,22 +224,24 @@ def main() -> None:
       ) values (
         'lancemos-real',1,'published','lancemos',10,20,
         'whatsapp','waba','opaque-number-ref','hotmart',
-        'PURCHASE_OUT_OF_SHOPPING_CART','product-1','offer-1','cart_recovery',
+        'PURCHASE_OUT_OF_SHOPPING_CART','3526906','offer-1','cart_recovery',
         'pilot-real',1,'UTC',1,10,2,
         'probe',clock_timestamp(),clock_timestamp()
       ), (
         'lancemos-real',2,'published','lancemos',10,20,
         'whatsapp','waba','opaque-number-ref','hotmart',
-        'PURCHASE_OUT_OF_SHOPPING_CART','product-1','offer-2','cart_recovery',
+        'PURCHASE_OUT_OF_SHOPPING_CART','3526906','offer-2','cart_recovery',
         'pilot-real',1,'UTC',1,10,2,
         'probe',clock_timestamp(),clock_timestamp()
       );
       insert into public.pilot_runtime_controls(
         scope_key,scope_version,runtime_state,generation,changed_by,change_reason
       ) values ('lancemos-real',1,'inactive',0,'probe','default-off');
-      insert into public.contacts(id,full_name) values
-        ('51000000-0000-4000-8000-000000000001','Concurrent One'),
-        ('51000000-0000-4000-8000-000000000002','Concurrent Two');
+      insert into public.contacts(id,full_name,email,phone) values
+        ('51000000-0000-4000-8000-000000000001','Concurrent One',
+         'pilot-real-one@example.com','5491100000000'),
+        ('51000000-0000-4000-8000-000000000002','Concurrent Two',
+         'pilot-real-two@example.com','5491100000001');
     """)
     activated = query("""
       set role service_role;
@@ -303,6 +305,12 @@ def main() -> None:
     winner_contact, active_count = cohort.split("|")
     require(active_count == "1", "cohort cap was exceeded concurrently")
     loser_contact = contacts[1] if winner_contact == contacts[0] else contacts[0]
+    winner_email = (
+        "pilot-real-one@example.com"
+        if winner_contact == contacts[0]
+        else "pilot-real-two@example.com"
+    )
+    winner_phone = "5491100000000" if winner_contact == contacts[0] else "5491100000001"
     retry = query(f"""
       set role service_role;
       select changed::text || '|' || reason_code || '|' || active_member_count::text
@@ -317,18 +325,38 @@ def main() -> None:
     )
     print("pilot_boundary_real_postgres_cohort_concurrency=OK")
 
-    query(f"""
-      insert into public.webhook_events(
-        id,source,external_event_id,event_type,payload,processing_status
-      ) values (
-        '52000000-0000-4000-8000-000000000001','hotmart','pilot-real-event',
-        'PURCHASE_OUT_OF_SHOPPING_CART','{{}}','received'
+    event_id = query(f"""
+      set role service_role;
+      select webhook_event_id
+      from public.admit_hotmart_cart_abandonment(
+        'pilot-real-event',
+        jsonb_build_object(
+          'id','pilot-real-event',
+          'creation_date',floor(extract(epoch from date_trunc('second',clock_timestamp())) * 1000)::bigint,
+          'event','PURCHASE_OUT_OF_SHOPPING_CART',
+          'version','2.0.0',
+          'data',jsonb_build_object(
+            'buyer',jsonb_build_object('email','{winner_email}','phone','{winner_phone}'),
+            'product',jsonb_build_object('id',3526906,'name','Product One'),
+            'offer',jsonb_build_object('code','offer-1')
+          )
+        )
       );
+      reset role;
+    """)
+    query(f"""
+      insert into public.contact_points(
+        contact_id,type,raw_value,normalized_value,source,source_event_id
+      ) values
+        ('{winner_contact}','email','{winner_email}','{winner_email}','hotmart','{event_id}'),
+        ('{winner_contact}','phone','{winner_phone}','{winner_phone}','hotmart','{event_id}');
       set role service_role;
       select * from public.plan_cart_recovery_with_identity(
-        '52000000-0000-4000-8000-000000000001','{winner_contact}',
-        'product-1','Product One','offer-1','pilot-real',1,
-        clock_timestamp(),10,20,'5491100000000'
+        '{event_id}','{winner_contact}',
+        '3526906','Product One','offer-1','pilot-real',1,
+        (select to_timestamp((payload->>'creation_date')::double precision / 1000)
+         from public.webhook_events where id='{event_id}'),
+        10,20,'{winner_phone}'
       );
       reset role;
       insert into public.followup_delivery_attempts(
@@ -360,7 +388,7 @@ def main() -> None:
       select authorized::text || '|' || reason_code || '|' || replayed::text
       from public.authorize_lancemos_pilot_request_start(
         'lancemos-real',1,'lancemos',10,20,'waba','opaque-number-ref',
-        'hotmart','PURCHASE_OUT_OF_SHOPPING_CART','product-1','offer-1',
+        'hotmart','PURCHASE_OUT_OF_SHOPPING_CART','3526906','offer-1',
         '{contact}','{action}','{attempt}',clock_timestamp()
       )
     """
@@ -450,7 +478,7 @@ def main() -> None:
       select authorized::text || '|' || reason_code
       from public.authorize_lancemos_pilot_request_start(
         'lancemos-real',1,'lancemos',10,20,'waba','opaque-number-ref',
-        'hotmart','PURCHASE_OUT_OF_SHOPPING_CART','product-1','offer-1',
+        'hotmart','PURCHASE_OUT_OF_SHOPPING_CART','3526906','offer-1',
         '{winner_contact}','{action_id}',
         '53000000-0000-4000-8000-000000000004',clock_timestamp()
       );

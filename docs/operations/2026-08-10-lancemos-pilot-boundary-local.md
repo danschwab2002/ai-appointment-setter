@@ -17,7 +17,7 @@ La fase 1 implementa de forma aditiva:
 - kill switch serializado contra nuevas autorizaciones;
 - ACL cerrada para roles API y DML directo de `service_role`.
 
-No existe seed con identificadores reales y no se modificó el runtime Python. La allowlist actual permanece. El wiring hacia admisión, planificación y `mark_followup_request_started` pertenece a una fase posterior, después de integrar el workstream de abandono.
+No existe seed con identificadores reales y no se modificó el runtime Python. La allowlist actual permanece. El ingreso autoritativo de abandono ya está integrado en `main`; componer el perímetro con admisión, planificación y `mark_followup_request_started` pertenece a una fase posterior.
 
 ## PGlite
 
@@ -97,7 +97,7 @@ Después de una primera revisión independiente `REQUEST_CHANGES`, se agregaron 
 - relectura del ledger bajo lock para replay concurrente del mismo attempt;
 - ACL del nuevo RPC de activación.
 
-Tras esas correcciones se repitieron PGlite, la suite completa y PostgreSQL 17.10 real con resultado PASS. CI ejecuta el probe directamente después de `npm test`. La actualización de `docs/architecture.md` permanece pendiente de que el Workstream B libere ese path compartido.
+Tras integrar el Workstream B se adaptaron los fixtures del perímetro para ingresar abandonos mediante `admit_hotmart_cart_abandonment`, en lugar de fabricar eventos no autoritativos. Se repitieron la suite combinada, PGlite y PostgreSQL 17.10 real con las 14 migraciones y resultado PASS. CI ejecuta el probe directamente después de `npm test`, y `docs/architecture.md` ya registra autoridades, fronteras y límites de esta fase.
 
 La revisión técnica independiente final emitió `APPROVE`, sin bloqueantes técnicos nuevos. Confirmó en PostgreSQL 17.10 tanto el replay concurrente exacto como la serialización de versiones concurrentes con timezone incompatible.
 
