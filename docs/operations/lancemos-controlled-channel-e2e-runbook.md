@@ -34,8 +34,8 @@ Antes de tocar configuración debe existir un registro aprobado con:
 | Destinatario E2E | autorizado | sólo confirmación `configured=true` |
 | Operador/rollback | disponible | rol o equipo, sin dato personal innecesario |
 
-Si un valor está pendiente, el resultado es `blocked_missing_business_input` y no
-se continúa.
+Si un valor está pendiente, el resultado es `status: blocked` con
+`blocked_reason: business_input` y no se continúa.
 
 ## 3. Preflight sin efectos
 
@@ -232,6 +232,7 @@ Crear un documento fechado nuevo en `docs/operations/` con:
 
 ```yaml
 status: pass | fail | blocked
+blocked_reason: external | deployment | implementation | business_input | null
 source_mode: hotmart_real | manual_official_v2
 waba_control_plane_verified: true | false
 juan_templates_approved: true | false
