@@ -15,7 +15,6 @@ class OptOutMatch:
 _POLITE_PREFIX = r"(?:(?:por favor|hola|buenas|buen dia|buenos dias) )*"
 _POLITE_SUFFIX = r"(?: (?:por favor|gracias))*"
 MAX_MESSAGE_CHARS = 2_000
-MAX_BATCH_MESSAGES = 50
 _QUOTE_PAIRS = (
     ("\"", "\""),
     ("'", "'"),
@@ -104,8 +103,6 @@ def _is_fully_quoted(text: str) -> bool:
 
 def detect_explicit_opt_out(messages: Sequence[object]) -> OptOutMatch | None:
     for index, message in enumerate(messages):
-        if index >= MAX_BATCH_MESSAGES:
-            break
         if (
             not isinstance(message, str)
             or len(message) > MAX_MESSAGE_CHARS

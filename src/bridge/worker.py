@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any, Callable
 
 import httpx
@@ -138,6 +138,98 @@ def _validate_started_delivery_attempt(
         or started.expected_sequence_revision != decision.sequence_revision
     ):
         raise SupabaseError("started_delivery_attempt_mismatch")
+
+
+class OptOutProjectionWorker:
+    """Durably project authoritative opt-outs into Chatwoot."""
+
+    def __init__(
+        self,
+        *,
+        supabase: SupabaseClient,
+        chatwoot: ChatwootClient,
+        worker_id: str,
+        poll_interval_seconds: float = 5.0,
+        batch_size: int = 10,
+        lease_duration: str = "1 minute",
+        max_attempts: int = 5,
+    ) -> None:
+        self._supabase = supabase
+        self._chatwoot = chatwoot
+        self._worker_id = worker_id
+        self._poll_interval = poll_interval_seconds
+        self._batch_size = batch_size
+        self._lease_duration = lease_duration
+        self._max_attempts = max_attempts
+        self._stopped = asyncio.Event()
+        self._task: asyncio.Task[None] | None = None
+
+    async def start(self) -> None:
+        if self._task is not None:
+            return
+        self._stopped.clear()
+        self._task = asyncio.create_task(self._run())
+
+    async def stop(self, *, timeout: float = 10.0) -> None:
+        self._stopped.set()
+        if self._task is None:
+            return
+        try:
+            await asyncio.wait_for(self._task, timeout=timeout)
+        except TimeoutError:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+        self._task = None
+
+    async def _run(self) -> None:
+        while not self._stopped.is_set():
+            try:
+                await self.run_once()
+            except SupabaseError:
+                logger.exception("chatwoot_opt_out_projection_supabase_error")
+            try:
+                await asyncio.wait_for(
+                    self._stopped.wait(), timeout=self._poll_interval
+                )
+            except TimeoutError:
+                pass
+
+    async def run_once(self) -> int:
+        now = datetime.now(UTC).isoformat()
+        claims = await self._supabase.claim_chatwoot_opt_out_projections(
+            worker_id=self._worker_id,
+            now=now,
+            lease_duration=self._lease_duration,
+            batch_size=self._batch_size,
+        )
+        for claim in claims:
+            applied = False
+            error_code: str | None = None
+            try:
+                await self._chatwoot.apply_opt_out_macro(
+                    conversation_id=claim.chatwoot_conversation_id
+                )
+                applied = True
+            except (httpx.HTTPError, ChatwootProtocolError) as exc:
+                error_code = f"chatwoot_{type(exc).__name__}"
+            status = await self._supabase.finalize_chatwoot_opt_out_projection(
+                opt_out_event_id=claim.opt_out_event_id,
+                worker_id=self._worker_id,
+                lease_generation=claim.lease_generation,
+                applied=applied,
+                error_code=error_code,
+                max_attempts=self._max_attempts,
+                now=datetime.now(UTC).isoformat(),
+            )
+            logger.info(
+                "chatwoot_opt_out_projection_finalized event_id=%s status=%s",
+                claim.opt_out_event_id,
+                status,
+            )
+        return len(claims)
 
 
 class DurableDispatcher:

@@ -36,10 +36,13 @@ def test_ignores_messages_over_the_bounded_detector_limit() -> None:
     assert detect_explicit_opt_out([message]) is None
 
 
-def test_does_not_scan_past_the_bounded_batch_limit() -> None:
+def test_scans_the_complete_canonical_batch() -> None:
     messages = (["ahora no"] * 50) + ["No me escriban más"]
 
-    assert detect_explicit_opt_out(messages) is None
+    match = detect_explicit_opt_out(messages)
+
+    assert match is not None
+    assert match.message_index == 50
 
 
 @pytest.mark.parametrize(

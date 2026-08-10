@@ -1,11 +1,11 @@
 # Opt-out inbound durable para el MVP de Lancemos
 
-- **Estado:** Diseño aprobado para implementación
+- **Estado:** Implementada localmente; pendiente de integración y despliegue
 - **Fecha:** 2026-08-09
 - **Revisión adversarial:** PASS durable-workflow y PASS producto/bridge
 - **Prioridad de producto:** [Próxima prioridad del MVP](./lancemos-mvp-next-priority.md)
 - **Alcance:** WhatsApp, propósito `cart_recovery`, una oferta y un piloto supervisado
-- **No implica:** implementación, DDL aplicado, despliegue ni habilitación de outbound
+- **No implica:** DDL aplicado en producción, worker productivo ni habilitación de outbound
 
 ## 1. Objetivo
 
