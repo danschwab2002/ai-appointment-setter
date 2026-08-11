@@ -186,9 +186,10 @@ Antes de cualquier reparación de tracking:
 4. revisión adversarial sobre commit y manifests congelados;
 5. autorización productiva específica.
 
-Después de integrar D también se requiere una migración forward-only para cerrar
-los cinco leaks trigger-only ya documentados. Esta herramienta no crea ni aplica
-esa migración.
+D ya está integrado en `main` mediante `94ee3a44fa29641106a394bf593e26cb917846aa`.
+También se requiere una migración forward-only posterior para cerrar los cinco
+leaks trigger-only ya documentados e incluir las funciones nuevas de handoff.
+Esta herramienta no crea ni aplica esa migración.
 
 ## 8. Rollback operativo
 
@@ -203,10 +204,11 @@ Nunca borrar objetos o modificar migration history para conseguir igualdad.
 
 ## 9. Evidencia local del artefacto
 
-Validación realizada sobre baseline + las 15 migraciones del commit integrado de G:
+Validación realizada sobre baseline + las 16 migraciones de `main` después de
+integrar el runtime de handoff:
 
 ```text
-manifest_rows=1048
+manifest_rows=1223
 self_comparison=exact_match
 changed_contract_probe=exit_1_without_value_echo
 ```
