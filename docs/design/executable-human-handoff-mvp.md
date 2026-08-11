@@ -1,14 +1,13 @@
 # Diseño base — handoff humano ejecutable para el piloto
 
-- **Estado:** Base de diseño aprobada; no implementada
+- **Estado:** Implementada en el árbol; no desplegada ni validada contra Chatwoot real
 - **Fecha:** 2026-08-10
 - **Alcance V1:** handoff por caso cuando ya existe una conversación canónica de
   Chatwoot
 - **Fuera de V1:** crear una conversación sólo para escalar antes del primer
   contacto; esos casos siguen fail-closed como escalación operativa sin handoff
   conversacional
-- **No implica:** ADR aceptado, migración desplegada, responsable configurado ni
-  E2E real
+- **No implica:** migración desplegada, responsable configurado ni E2E real
 
 ## 1. Brecha actual
 
@@ -141,7 +140,8 @@ asignación y nota; el stop durable no depende de ninguna etiqueta.
 La nota privada contiene un marcador estable derivado de `handoff_request_id` y
 un texto fijo versionado sin PII adicional. Antes del POST se busca exactamente
 ese marcador en la conversación canónica. La asignación queda confirmada si la
-conversación tiene el `expected_team_id` o cualquier assignee humano. Un team
+conversación tiene el `expected_team_id` o un assignee con `assignee_type=User`.
+Un `AgentBot` no cuenta como humano; un tipo desconocido falla cerrado. Un team
 distinto sin assignee humano es conflicto operativo y no se sobrescribe.
 
 ## 5. Entry points
@@ -165,9 +165,9 @@ En una sola transacción:
 
 ### Claim/finalización
 
-Claims separados o un claim tipado para los dos efectos, con lease y batch
-acotado. La finalización idempotente no modifica la vigencia del stop. Un error o
-dead letter nunca reanuda automatización.
+Claims separados o un claim tipado para los dos efectos, con lease, reloj
+autoritativo de PostgreSQL y batch acotado. La finalización idempotente no
+modifica la vigencia del stop. Un error o dead letter nunca reanuda automatización.
 
 Helpers internos y tablas no tienen DML/EXECUTE para roles API.
 
@@ -292,7 +292,7 @@ estado de proyección permanecen separados.
 7. confirmar asignación, nota y estado durable;
 8. mantener outbound general apagado hasta go/no-go.
 
-## 13. Decisiones pendientes
+## 13. Decisiones aceptadas y estado
 
 | Decisión | Recomendación | Estado |
 |---|---|---|
@@ -303,5 +303,6 @@ estado de proyección permanecen separados.
 | Autoridad | Supabase pausa primero; Chatwoot es proyección recuperable | aceptada 2026-08-10 |
 | Sugerencia Hermes | `suggest_handoff` sin autoridad; bridge/política decide | aceptada por continuidad de ADR-0003/0007 |
 
-Las decisiones de esta tabla forman la base aprobada. La implementación debe
-crear el ADR correspondiente antes o junto con el primer cambio ejecutable.
+Las decisiones de esta tabla forman la base implementada. ADR-0010 registra la
+decisión arquitectónica; el contrato ejecutable vive en
+`docs/contracts/executable-human-handoff-v1.md`.

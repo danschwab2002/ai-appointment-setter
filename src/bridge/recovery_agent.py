@@ -47,6 +47,12 @@ _EXPECTED_PROPOSAL_KEYS = {
     "current_goal",
 }
 _FOLLOWUP_MESSAGE_PROPOSAL_KEYS = {"strategy", "message"}
+_FOLLOWUP_HANDOFF_PROPOSAL_KEYS = {"proposal", "reason_code"}
+_VALID_HANDOFF_REASON_CODES = {
+    "explicit_human_request",
+    "commercial_exception",
+    "policy_requires_human",
+}
 
 
 @dataclass(frozen=True)
@@ -55,6 +61,13 @@ class FollowupMessageProposal:
 
     strategy: str
     message: str
+
+
+@dataclass(frozen=True)
+class FollowupHandoffSuggestion:
+    """Untrusted bounded suggestion; the bridge remains execution authority."""
+
+    reason_code: str
 
 
 _RECOVERY_DECISION_POLICY: dict[str, object] = {
@@ -194,6 +207,11 @@ def _parse_agent_json_object(text: str) -> dict[str, object] | None:
 
 def is_valid_followup_message_proposal(proposal: dict[str, object]) -> bool:
     """Validate a bounded durable follow-up drafting proposal."""
+    if set(proposal) == _FOLLOWUP_HANDOFF_PROPOSAL_KEYS:
+        return (
+            proposal.get("proposal") == "suggest_handoff"
+            and proposal.get("reason_code") in _VALID_HANDOFF_REASON_CODES
+        )
     if set(proposal) != _FOLLOWUP_MESSAGE_PROPOSAL_KEYS:
         return False
     strategy = proposal["strategy"]
@@ -356,7 +374,7 @@ class RecoveryAgentClient:
         *,
         attempt_id: str,
         execution_context: FollowupExecutionContext,
-    ) -> FollowupMessageProposal | None:
+    ) -> FollowupMessageProposal | FollowupHandoffSuggestion | None:
         """Serialize one durable Hermes evaluation per delivery attempt."""
         digest = hashlib.sha256(f"followup:{attempt_id}".encode("utf-8")).hexdigest()
         self._proposals_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
@@ -392,7 +410,7 @@ class RecoveryAgentClient:
         *,
         attempt_id: str,
         execution_context: FollowupExecutionContext,
-    ) -> FollowupMessageProposal | None:
+    ) -> FollowupMessageProposal | FollowupHandoffSuggestion | None:
         """Request only strategy and copy while holding the attempt lock."""
         digest = hashlib.sha256(f"followup:{attempt_id}".encode("utf-8")).hexdigest()
         cached = self._load_completed_followup_proposal(
@@ -413,14 +431,23 @@ class RecoveryAgentClient:
                 "lead_stage": execution_context.lead_stage,
             },
             "required_output": {
-                "strategy": "non-empty string, max 120 characters",
-                "message": "non-empty string, max 500 characters",
+                "one_of": [
+                    {
+                        "strategy": "non-empty string, max 120 characters",
+                        "message": "non-empty string, max 500 characters",
+                    },
+                    {
+                        "proposal": "suggest_handoff",
+                        "reason_code": sorted(_VALID_HANDOFF_REASON_CODES),
+                    },
+                ],
             },
             "instructions": (
                 "La autorización para contactar ya fue evaluada fuera del modelo. "
                 "No decidas si enviar ni propongas destinatario, canal o acción. "
-                "Usá la skill sólo para estrategia y redacción. Respondé únicamente "
-                "con un objeto JSON que contenga exactamente strategy y message."
+                "Usá la skill para devolver un borrador o suggest_handoff. "
+                "La sugerencia no ejecuta nada: el bridge valida la política. "
+                "Respondé únicamente con uno de los objetos JSON de one_of."
             ),
         }
         try:
@@ -483,19 +510,30 @@ class RecoveryAgentClient:
             )
             return None
 
-        accepted = FollowupMessageProposal(
-            strategy=str(proposal["strategy"]),
-            message=str(proposal["message"]),
-        )
+        accepted: FollowupMessageProposal | FollowupHandoffSuggestion
+        if proposal.get("proposal") == "suggest_handoff":
+            accepted = FollowupHandoffSuggestion(
+                reason_code=str(proposal["reason_code"])
+            )
+            persisted_proposal: dict[str, object] = {
+                "proposal": "suggest_handoff",
+                "reason_code": accepted.reason_code,
+            }
+        else:
+            accepted = FollowupMessageProposal(
+                strategy=str(proposal["strategy"]),
+                message=str(proposal["message"]),
+            )
+            persisted_proposal = {
+                "strategy": accepted.strategy,
+                "message": accepted.message,
+            }
         self._persist(
             digest=digest,
             result={
                 "status": "completed",
                 "attempt_id": attempt_id,
-                "proposal": {
-                    "strategy": accepted.strategy,
-                    "message": accepted.message,
-                },
+                "proposal": persisted_proposal,
             },
             replace_nonterminal=True,
         )
@@ -625,7 +663,7 @@ class RecoveryAgentClient:
         *,
         digest: str,
         attempt_id: str,
-    ) -> FollowupMessageProposal | None:
+    ) -> FollowupMessageProposal | FollowupHandoffSuggestion | None:
         """Reuse only a complete artifact for the same durable attempt."""
         result_path = self._proposals_dir / f"{digest}.json"
         try:
@@ -644,9 +682,13 @@ class RecoveryAgentClient:
             proposal
         ):
             return None
+        if proposal.get("proposal") == "suggest_handoff":
+            return FollowupHandoffSuggestion(
+                reason_code=str(proposal["reason_code"])
+            )
         return FollowupMessageProposal(
-            strategy=proposal["strategy"],
-            message=proposal["message"],
+            strategy=str(proposal["strategy"]),
+            message=str(proposal["message"]),
         )
 
     def _persist(

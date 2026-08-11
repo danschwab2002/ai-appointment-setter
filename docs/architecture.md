@@ -226,6 +226,37 @@ HTTP E2E contra el entorno desplegado. El contrato de fase 1 está en
 [Wiring runtime V1](contracts/lancemos-pilot-boundary-runtime-v1.md) y la
 evidencia local en `docs/operations/`.
 
+## Handoff humano ejecutable
+
+El árbol implementa un handoff stop-first para casos Lancemos que ya tienen una
+conversación Chatwoot canónica:
+
+```text
+Hermes suggest_handoff
+  -> bridge valida motivo allowlisted + policy/scope piloto
+  -> request_human_handoff
+     -> pausa durable caso/secuencia/conversación
+     -> cierra reservas previas a request
+     -> preserva request_started como delivery_unknown
+     -> crea assignment + private_note pendientes
+  -> HumanHandoffProjectionWorker
+     -> reconcilia assignment sin sobrescribir persona/otro equipo
+     -> reconcilia nota privada por marcador estable
+     -> finaliza cada efecto con lease fenced
+```
+
+Supabase es autoridad del stop y Chatwoot es una proyección operativa. Cada
+request fija policy, scope, account, inbox, conversación externa, equipo y nota.
+La admisión y la proyección son flags separados y default-off; apagar admisión no
+detiene el drain de efectos existentes. No se crean conversaciones, labels,
+macros ni mensajes externos al contacto.
+
+`/ready` publica conteos sanitizados del backlog cuando la proyección está
+habilitada. Esta implementación tiene evidencia local y PGlite, pero no acredita
+migración aplicada, IDs/equipo reales ni worker o Chatwoot productivos. La
+decisión está en [ADR-0010](decisions/0010-executable-human-handoff.md) y la
+interfaz exacta en [Handoff humano V1](contracts/executable-human-handoff-v1.md).
+
 ## Cierre determinístico por compra aprobada
 
 La implementación del repositorio admite `PURCHASE_APPROVED` de Hotmart como un

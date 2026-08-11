@@ -17,6 +17,18 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -35,3 +47,10 @@ jobs:
       - name: Run SQL behavioral suite
         working-directory: tests/sql/followup_engine
         run: npm ci && npm test && node validate_pilot_boundary.mjs && node validate_pilot_boundary_runtime.mjs
+      - name: Verify handoff request-start races on PostgreSQL
+        env:
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: >-
+          uv run python tests/sql/followup_engine/validate_handoff_postgres.py
+          --pg-bin /usr/bin --host 127.0.0.1 --port 5432
