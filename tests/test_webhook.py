@@ -1144,6 +1144,105 @@ def test_captures_a_signed_allowed_incoming_message(tmp_path: Path) -> None:
     assert json.loads(captures[0].read_text()) == payload
 
 
+def test_same_sender_from_another_inbox_is_ignored_before_capture(
+    tmp_path: Path,
+) -> None:
+    secret = "webhook-secret"
+    payload = {
+        "event": "message_created",
+        "id": 789,
+        "content": "No pertenece al inbox autorizado",
+        "message_type": "incoming",
+        "private": False,
+        "account": {"id": 1},
+        "inbox": {"id": 1},
+        "conversation": {
+            "id": 123,
+            "inbox_id": 1,
+            "contact_inbox": {
+                "source_id": "12025550123@s.whatsapp.net",
+            },
+        },
+    }
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=6,
+        )
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(raw_body, secret=secret, delivery="wrong-inbox"),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ignored",
+        "reason": "inbox_not_allowed",
+    }
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_wrong_inbox_human_outgoing_cannot_pause_or_invoke_hermes(
+    tmp_path: Path,
+) -> None:
+    secret = "webhook-secret"
+    payload = {
+        "event": "message_created",
+        "message_type": "outgoing",
+        "private": False,
+        "account": {"id": 1},
+        "inbox": {"id": 1},
+        "sender": {"id": 1, "type": "user"},
+        "conversation": {
+            "id": 123,
+            "inbox_id": 1,
+            "meta": {
+                "sender": {"identifier": "12025550123@s.whatsapp.net"},
+            },
+        },
+    }
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    chatwoot = StubChatwootClient()
+    shadow = StubShadowProcessor()
+    app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=6,
+        ),
+        chatwoot_client=chatwoot,
+        shadow_processor=shadow,
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(raw_body, secret=secret, delivery="wrong-inbox-human"),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ignored",
+        "reason": "inbox_not_allowed",
+    }
+    assert chatwoot.calls == []
+    assert chatwoot.history_calls == []
+    assert chatwoot.reply_calls == []
+    assert shadow.calls == []
+    assert list(tmp_path.rglob("*.json")) == []
+
+
 def test_processes_a_normalized_shadow_evaluation_for_an_allowed_message(
     tmp_path: Path,
 ) -> None:
@@ -1234,8 +1333,11 @@ def test_applies_canonical_opt_out_before_shadow_or_reply(tmp_path: Path) -> Non
         "content": "Quiero darme de baja",
         "message_type": "incoming",
         "private": False,
+        "account": {"id": 1},
+        "inbox": {"id": 7},
         "conversation": {
             "id": 123,
+            "inbox_id": 7,
             "contact_inbox": {"source_id": "12025550123@s.whatsapp.net"},
         },
     }
@@ -1314,8 +1416,11 @@ def test_existing_durable_stop_blocks_later_inbound_before_shadow(
         "content": "Gracias",
         "message_type": "incoming",
         "private": False,
+        "account": {"id": 1},
+        "inbox": {"id": 7},
         "conversation": {
             "id": 123,
+            "inbox_id": 7,
             "contact_inbox": {"source_id": "12025550123@s.whatsapp.net"},
         },
     }
@@ -1378,8 +1483,11 @@ def test_opt_out_is_detected_in_earlier_message_of_canonical_batch(
         "event": "message_created",
         "message_type": "incoming",
         "private": False,
+        "account": {"id": 1},
+        "inbox": {"id": 7},
         "conversation": {
             "id": 123,
+            "inbox_id": 7,
             "contact_inbox": {"source_id": "12025550123@s.whatsapp.net"},
         },
     }
@@ -1459,8 +1567,11 @@ def test_durable_opt_out_is_admitted_without_hermes_shadow(tmp_path: Path) -> No
         "message_type": "incoming",
         "private": False,
         "content": "No quiero recibir más mensajes",
+        "account": {"id": 1},
+        "inbox": {"id": 7},
         "conversation": {
             "id": 123,
+            "inbox_id": 7,
             "contact_inbox": {"source_id": "12025550123@s.whatsapp.net"},
         },
     }
@@ -1514,8 +1625,11 @@ def test_existing_durable_stop_is_enforced_when_detection_is_disabled(
         "message_type": "incoming",
         "private": False,
         "content": "Gracias",
+        "account": {"id": 1},
+        "inbox": {"id": 7},
         "conversation": {
             "id": 123,
+            "inbox_id": 7,
             "contact_inbox": {"source_id": "12025550123@s.whatsapp.net"},
         },
     }
@@ -1569,8 +1683,11 @@ def test_cached_reply_cannot_bypass_stop_when_detector_is_disabled(
         "message_type": "incoming",
         "private": False,
         "content": "Gracias",
+        "account": {"id": 1},
+        "inbox": {"id": 7},
         "conversation": {
             "id": 123,
+            "inbox_id": 7,
             "contact_inbox": {"source_id": "12025550123@s.whatsapp.net"},
         },
     }
@@ -2723,6 +2840,7 @@ def test_build_app_wires_the_shadow_processor_when_enabled(
         agent_bot_id=1,
         chatwoot_base_url="https://chatwoot.example.test",
         chatwoot_account_id=1,
+        chatwoot_inbox_id=7,
         chatwoot_control_api_access_token="test-control-token",
         chatwoot_pause_macro_id=1,
         hermes_shadow_enabled=True,
@@ -2784,8 +2902,11 @@ def test_build_app_wires_the_shadow_processor_when_enabled(
         "content": "Hola",
         "message_type": "incoming",
         "private": False,
+        "account": {"id": 1},
+        "inbox": {"id": 7},
         "conversation": {
             "id": 124,
+            "inbox_id": 7,
             "contact_inbox": {
                 "source_id": "12025550123@s.whatsapp.net",
             },

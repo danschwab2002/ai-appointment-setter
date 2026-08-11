@@ -1,7 +1,7 @@
 # Runbook — E2E controlado Hotmart → WABA para Lancemos
 
-- **Estado:** Preparado; no ejecutado
-- **Fecha:** 2026-08-10
+- **Estado:** Preparado; control plane observado, corridas inbound/outbound no ejecutadas
+- **Fecha:** 2026-08-11
 - **Alcance:** una oferta, un destinatario allowlisted y un primer contacto oficial
 - **Prerequisito:** `docs/design/lancemos-waba-hotmart-readiness.md`
 - **No es evidencia:** este documento define el procedimiento; la evidencia se crea después de una ejecución real
@@ -50,8 +50,20 @@ no imprimir valores:
 - `LANCEMOS_PILOT_BOUNDARY_ENABLED=false`;
 - `DURABLE_DISPATCHER_ENABLED=false`;
 - `DURABLE_OUTBOUND_ENABLED=false`;
-- `CHATWOOT_AUTOMATED_REPLIES_ENABLED=false` salvo que exista una prueba inbound
-  separada y autorizada.
+- `CHATWOOT_AUTOMATED_REPLIES_ENABLED=false`;
+- `CHATWOOT_REPLY_SPLITTER_ENABLED=false`;
+- `HERMES_SHADOW_ENABLED=false`;
+- `RESOLUTION_WORKER_ENABLED=false` y `HOTMART_PURCHASE_WORKER_ENABLED=false`;
+- `CHATWOOT_DURABLE_OPT_OUT_ENABLED=false`;
+- `CHATWOOT_OPT_OUT_MACRO_ID` y
+  `CHATWOOT_OPT_OUT_PROJECTION_WORKER_ID` sin configurar, porque la presencia de
+  ambos puede iniciar el worker aunque el detector durable esté apagado;
+- `HUMAN_HANDOFF_ADMISSION_ENABLED=false` y
+  `HUMAN_HANDOFF_PROJECTION_ENABLED=false`.
+
+Además de los flags, demostrar conteo cero de efectos de opt-out y handoff
+pendientes, leased o retryable. Un worker apagado con backlog mutable no satisface
+el preflight sin efectos.
 
 Resultado esperado: el servicio arranca sin activar efectos generales.
 
@@ -83,9 +95,107 @@ el acto de publicación. Verificar:
 `GET /ready` debe responder sin PII y declarar un estado coherente con runtime
 inactivo. Un `503` o mismatch conserva `no-go`.
 
-## 4. Corrida controlada de primer contacto
+## 4. Corrida inbound previa al pago, sin respuesta
 
-### 4.1 Barrera de backlog cero
+Esta corrida es independiente del primer contacto iniciado por template. Sólo
+demuestra la ruta real `WABA → Chatwoot → webhook del bridge` y no requiere método
+de pago ni templates aprobados.
+
+### 4.1 Gates específicos
+
+Antes de pedir el mensaje al teléfono de prueba, exigir:
+
+```text
+CHATWOOT_ACCOUNT_ID=<account verificado>
+CHATWOOT_INBOX_ID=<inbox WABA verificado>
+MESSAGING_CHANNEL=waba
+CHATWOOT_AUTOMATED_REPLIES_ENABLED=false
+CHATWOOT_REPLY_SPLITTER_ENABLED=false
+HERMES_SHADOW_ENABLED=false
+CHATWOOT_DURABLE_OPT_OUT_ENABLED=false
+CHATWOOT_OPT_OUT_MACRO_ID=<unset>
+CHATWOOT_OPT_OUT_PROJECTION_WORKER_ID=<unset>
+HUMAN_HANDOFF_ADMISSION_ENABLED=false
+HUMAN_HANDOFF_PROJECTION_ENABLED=false
+LANCEMOS_PILOT_BOUNDARY_ENABLED=false
+RESOLUTION_WORKER_ENABLED=false
+HOTMART_PURCHASE_WORKER_ENABLED=false
+DURABLE_DISPATCHER_ENABLED=false
+DURABLE_OUTBOUND_ENABLED=false
+```
+
+Además:
+
+- la revisión desplegada debe validar `account.id`, `inbox.id` y
+  `conversation.inbox_id` antes de persistir el webhook;
+- Evolution debe permanecer desconectado y su integración Chatwoot deshabilitada,
+  sin borrar el inbox histórico;
+- el webhook compartido debe seguir suscrito sólo a `message_created`;
+- no debe existir trabajo outbound vivo ni un request iniciado sin reconciliar;
+- los backlogs de proyección de opt-out y handoff deben ser exactamente cero;
+- `CAPTURE_DIR/.work` no debe contener una admisión previa procesable;
+- el único JID de prueba debe estar configurado sólo en el secret store.
+
+Generar un snapshot sanitizado y ejecutar:
+
+```text
+uv run python scripts/verify_chatwoot_waba_readiness.py \
+  --expected-account-id "$ACCOUNT_ID" \
+  --expected-waba-inbox-id "$WABA_INBOX_ID" \
+  --expected-legacy-inbox-id "$LEGACY_INBOX_ID" < snapshot.json
+```
+
+Sólo `status=ready`, `safe_for_controlled_inbound=true` y exit code `0` permiten
+continuar. El 2026-08-11 el probe real produjo `blocked`: el bridge desplegado
+seguía apuntando a Evolution con efectos habilitados, la integración Evolution →
+Chatwoot seguía activa y no existía Team humano.
+
+El snapshot que alimenta el verificador debe declarar explícitamente todos los
+flags anteriores y los dos resultados `*_projection_backlog_zero=true`. Campos
+ausentes, `null`, strings o enteros usados como booleanos bloquean la corrida; el
+verificador no infiere defaults del runtime.
+
+### 4.2 Única acción manual
+
+Con operador presente, el teléfono allowlisted envía **un** mensaje entrante al
+número oficial. No se responde desde Chatwoot, no se cambia el estado de la
+conversación y no se habilita ningún worker durante la observación.
+
+### 4.3 Evidencia obligatoria
+
+Registrar por separado, sin contenido ni IDs externos:
+
+1. dispositivo confirmó que envió un único mensaje al número oficial;
+2. Chatwoot creó o reutilizó una conversación en el inbox WABA esperado;
+3. Chatwoot emitió un webhook `message_created` autenticado;
+4. el bridge respondió `202 captured` una vez;
+5. replay del mismo delivery produjo `200 duplicate` y ninguna segunda captura;
+6. mismo JID con account/inbox incorrecto produjo `200 ignored` con
+   `inbox_not_allowed` o `account_not_allowed`;
+7. cero llamadas a Hermes, cero replies, cero request-start y cero mensajes al
+   dispositivo desde el negocio.
+
+Un `2xx` de Chatwoot, un payload manual o ver la conversación en UI no sustituye
+las demás capas. Si aparece cualquier respuesta externa, detener la observación y
+considerar la corrida `fail`; todos los flags permanecen apagados durante el
+diagnóstico.
+
+### 4.4 Rollback de esta corrida
+
+La corrida inbound no activa nada y su rollback normal es conservar todos los
+flags de 4.1 en `false`/`unset`. Si aparece un efecto inesperado:
+
+1. detener el servicio bridge antes de investigar;
+2. no borrar la conversación, capturas ni efectos durables;
+3. confirmar nuevamente que los workers de reply, shadow, resolución, compra,
+   dispatcher, opt-out y handoff no fueron construidos;
+4. verificar backlog de ambas proyecciones y reconciliar cualquier lease o efecto
+   incierto sin retry ciego;
+5. reanudar sólo con un snapshot nuevo que vuelva a producir `status=ready`.
+
+## 5. Corrida controlada de primer contacto
+
+### 5.1 Barrera de backlog cero
 
 Antes de poner el runtime en `armed`, el origen Hotmart debe permanecer
 desconectado o temporalmente suspendido y nadie debe emitir eventos manuales. Una
@@ -122,7 +232,7 @@ prueba que el proceso y el dispatcher arrancan sin sender, pero no prueba WABA.
 Sólo si ambas lecturas son cero puede prepararse la activación. El ingreso sigue
 quiescente hasta que `/ready` confirme `pilot_runtime_armed`.
 
-### 4.2 Fuente del evento
+### 5.2 Fuente del evento
 
 Elegir y registrar una sola modalidad:
 
@@ -132,7 +242,7 @@ Elegir y registrar una sola modalidad:
 
 La modalidad manual no se registra como prueba de entrega real de Hotmart.
 
-### 4.3 Activación acotada
+### 5.3 Activación acotada
 
 Sólo después del preflight:
 
@@ -162,7 +272,7 @@ DURABLE_OUTBOUND_ENABLED=true
 No se apaga `LANCEMOS_PILOT_BOUNDARY_ENABLED` mientras cualquiera de esos
 workers permanezca habilitado: el factory rechaza esa combinación.
 
-### 4.4 Postcondiciones obligatorias
+### 5.4 Postcondiciones obligatorias
 
 Registrar sin PII:
 
@@ -179,7 +289,7 @@ Registrar sin PII:
 
 El usuario de prueba confirma la llegada física; un `2xx` de Chatwoot no basta.
 
-## 5. Probes negativos y replay
+## 6. Probes negativos y replay
 
 Con outbound todavía acotado:
 
@@ -194,7 +304,7 @@ Con outbound todavía acotado:
 Cada probe debe demostrar progreso positivo en el camino válido y contadores cero
 en el camino bloqueado; un worker muerto no cuenta como prueba de seguridad.
 
-## 6. Follow-up separado
+## 7. Follow-up separado
 
 No se incluye automáticamente en la primera corrida. Para probarlo:
 
@@ -206,7 +316,7 @@ No se incluye automáticamente en la primera corrida. Para probarlo:
   en una corrida independiente;
 - exigir cero mensaje cuando cualquiera de esos stops gana.
 
-## 7. Rollback
+## 8. Rollback
 
 Después de la corrida, o ante el primer fallo:
 
@@ -226,7 +336,7 @@ Después de la corrida, o ante el primer fallo:
 7. mantener la cohorte general vacía y verificar `/ready` sanitizado;
 8. no borrar evidencia durable para “limpiar” la prueba.
 
-## 8. Evidencia de salida
+## 9. Evidencia de salida
 
 Crear un documento fechado nuevo en `docs/operations/` con:
 
@@ -249,7 +359,7 @@ limitations: []
 No incluir contenido de mensajes, teléfonos, emails, tokens, payloads completos ni
 IDs externos sin sanitizar.
 
-## 9. Veredicto
+## 10. Veredicto
 
 - `pass`: todas las postcondiciones, probes y rollback fueron observados.
 - `fail`: se ejecutó la frontera y una postcondición fue incorrecta.

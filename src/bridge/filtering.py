@@ -11,6 +11,8 @@ EventAction = Literal[
     "ignore",
 ]
 
+_SCOPE_UNSET = object()
+
 
 @dataclass(frozen=True)
 class EventDecision:
@@ -24,8 +26,19 @@ def _json_object(value: object) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _canonical_positive_id(value: object) -> int | None:
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        return None
+    return value
+
+
 def classify_chatwoot_event(
-    payload: object, *, allowed_jid: str, agent_bot_id: int | None = None
+    payload: object,
+    *,
+    allowed_jid: str,
+    agent_bot_id: int | None = None,
+    expected_account_id: int | None | object = _SCOPE_UNSET,
+    expected_inbox_id: int | None | object = _SCOPE_UNSET,
 ) -> EventDecision:
     """Classify an event before any agent can be invoked."""
     event = _json_object(payload)
@@ -39,6 +52,34 @@ def classify_chatwoot_event(
         return EventDecision(False, "unsupported_event", sender_jid, "ignore")
     if event.get("private") is not False:
         return EventDecision(False, "private_message", sender_jid, "ignore")
+    if expected_account_id is not _SCOPE_UNSET:
+        if (
+            not isinstance(expected_account_id, int)
+            or isinstance(expected_account_id, bool)
+            or expected_account_id <= 0
+        ):
+            return EventDecision(
+                False, "scope_configuration_incomplete", sender_jid, "ignore"
+            )
+        account = _json_object(event.get("account"))
+        if _canonical_positive_id(account.get("id")) != expected_account_id:
+            return EventDecision(False, "account_not_allowed", sender_jid, "ignore")
+    if expected_inbox_id is not _SCOPE_UNSET:
+        if (
+            not isinstance(expected_inbox_id, int)
+            or isinstance(expected_inbox_id, bool)
+            or expected_inbox_id <= 0
+        ):
+            return EventDecision(
+                False, "scope_configuration_incomplete", sender_jid, "ignore"
+            )
+        inbox = _json_object(event.get("inbox"))
+        if (
+            _canonical_positive_id(inbox.get("id")) != expected_inbox_id
+            or _canonical_positive_id(conversation.get("inbox_id"))
+            != expected_inbox_id
+        ):
+            return EventDecision(False, "inbox_not_allowed", sender_jid, "ignore")
     if sender_jid != allowed_jid:
         return EventDecision(False, "sender_not_allowed", sender_jid, "ignore")
 
