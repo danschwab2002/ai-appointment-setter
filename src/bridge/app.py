@@ -64,7 +64,12 @@ from bridge.reply_splitter import (
 )
 from bridge.security import verify_chatwoot_signature
 from bridge.supabase import PilotBoundaryConfig, SupabaseClient, SupabaseError
-from bridge.worker import DurableDispatcher, OptOutProjectionWorker, ResolutionWorker
+from bridge.worker import (
+    DurableDispatcher,
+    HumanHandoffProjectionWorker,
+    OptOutProjectionWorker,
+    ResolutionWorker,
+)
 
 logger = logging.getLogger(__name__)
 CHATWOOT_WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024
@@ -181,6 +186,15 @@ class Settings:
     dispatcher_outbound_enabled: bool = False
     chatwoot_durable_opt_out_enabled: bool = False
     opt_out_projection_worker_id: str | None = None
+    human_handoff_projection_enabled: bool = False
+    human_handoff_admission_enabled: bool = False
+    handoff_projection_policy_key: str | None = None
+    handoff_projection_policy_version: int | None = None
+    human_handoff_projection_worker_id: str | None = None
+    human_handoff_projection_poll_interval_seconds: float = 5.0
+    human_handoff_projection_batch_size: int = 10
+    human_handoff_projection_lease_seconds: int = 60
+    human_handoff_projection_max_attempts: int = 8
     pilot_boundary_enabled: bool = False
     pilot_scope_key: str | None = None
     pilot_scope_version: int | None = None
@@ -359,6 +373,26 @@ class Settings:
         opt_out_projection_worker_id = (
             os.getenv("CHATWOOT_OPT_OUT_PROJECTION_WORKER_ID", "").strip() or None
         )
+        human_handoff_projection_enabled = (
+            os.getenv("HUMAN_HANDOFF_PROJECTION_ENABLED", "false").lower()
+            == "true"
+        )
+        human_handoff_admission_enabled = (
+            os.getenv("HUMAN_HANDOFF_ADMISSION_ENABLED", "false").lower()
+            == "true"
+        )
+        handoff_projection_policy_key = (
+            os.getenv("HANDOFF_PROJECTION_POLICY_KEY", "").strip() or None
+        )
+        raw_handoff_policy_version = os.getenv(
+            "HANDOFF_PROJECTION_POLICY_VERSION", ""
+        ).strip()
+        handoff_projection_policy_version = (
+            int(raw_handoff_policy_version) if raw_handoff_policy_version else None
+        )
+        human_handoff_projection_worker_id = (
+            os.getenv("HUMAN_HANDOFF_PROJECTION_WORKER_ID", "").strip() or None
+        )
         pilot_boundary_enabled = (
             os.getenv("LANCEMOS_PILOT_BOUNDARY_ENABLED", "false").lower()
             == "true"
@@ -414,6 +448,25 @@ class Settings:
             dispatcher_outbound_enabled=dispatcher_outbound_enabled,
             chatwoot_durable_opt_out_enabled=chatwoot_durable_opt_out_enabled,
             opt_out_projection_worker_id=opt_out_projection_worker_id,
+            human_handoff_projection_enabled=human_handoff_projection_enabled,
+            human_handoff_admission_enabled=human_handoff_admission_enabled,
+            handoff_projection_policy_key=handoff_projection_policy_key,
+            handoff_projection_policy_version=handoff_projection_policy_version,
+            human_handoff_projection_worker_id=(
+                human_handoff_projection_worker_id
+            ),
+            human_handoff_projection_poll_interval_seconds=float(
+                os.getenv("HUMAN_HANDOFF_PROJECTION_POLL_INTERVAL", "5.0")
+            ),
+            human_handoff_projection_batch_size=int(
+                os.getenv("HUMAN_HANDOFF_PROJECTION_BATCH_SIZE", "10")
+            ),
+            human_handoff_projection_lease_seconds=int(
+                os.getenv("HUMAN_HANDOFF_PROJECTION_LEASE_SECONDS", "60")
+            ),
+            human_handoff_projection_max_attempts=int(
+                os.getenv("HUMAN_HANDOFF_PROJECTION_MAX_ATTEMPTS", "8")
+            ),
             pilot_boundary_enabled=pilot_boundary_enabled,
             pilot_scope_key=(
                 os.getenv("LANCEMOS_PILOT_SCOPE_KEY", "").strip() or None
@@ -715,6 +768,64 @@ def create_app(
         raise ValueError(
             "CHATWOOT_DURABLE_OPT_OUT_ENABLED requires Supabase and Chatwoot control"
         )
+    if settings.human_handoff_admission_enabled:
+        if (
+            not settings.dispatcher_enabled
+            or not settings.dispatcher_outbound_enabled
+            or not settings.pilot_boundary_enabled
+            or not settings.human_handoff_projection_enabled
+        ):
+            raise ValueError(
+                "HUMAN_HANDOFF_ADMISSION_ENABLED requires outbound dispatcher, "
+                "pilot boundary, and handoff projection"
+            )
+        if (
+            not settings.handoff_projection_policy_key
+            or settings.handoff_projection_policy_version is None
+            or settings.handoff_projection_policy_version < 1
+        ):
+            raise ValueError(
+                "HANDOFF_PROJECTION_POLICY_KEY and "
+                "HANDOFF_PROJECTION_POLICY_VERSION are required"
+            )
+    if settings.human_handoff_projection_enabled:
+        if shared_supabase is None or not isinstance(control_client, ChatwootClient):
+            raise ValueError(
+                "HUMAN_HANDOFF_PROJECTION_ENABLED requires Supabase and "
+                "Chatwoot control"
+            )
+        if not settings.human_handoff_projection_worker_id:
+            raise ValueError("HUMAN_HANDOFF_PROJECTION_WORKER_ID is required")
+        if (
+            settings.chatwoot_account_id is None
+            or settings.chatwoot_account_id < 1
+            or settings.chatwoot_inbox_id is None
+            or settings.chatwoot_inbox_id < 1
+        ):
+            raise ValueError(
+                "HUMAN_HANDOFF_PROJECTION_ENABLED requires canonical Chatwoot IDs"
+            )
+        if (
+            not math.isfinite(
+                settings.human_handoff_projection_poll_interval_seconds
+            )
+            or settings.human_handoff_projection_poll_interval_seconds <= 0
+        ):
+            raise ValueError(
+                "HUMAN_HANDOFF_PROJECTION_POLL_INTERVAL must be positive"
+            )
+        if not 1 <= settings.human_handoff_projection_batch_size <= 100:
+            raise ValueError(
+                "HUMAN_HANDOFF_PROJECTION_BATCH_SIZE must be between 1 and 100"
+            )
+        if not 5 <= settings.human_handoff_projection_lease_seconds <= 900:
+            raise ValueError(
+                "HUMAN_HANDOFF_PROJECTION_LEASE_SECONDS must be between 5 and 900"
+            )
+        if not 1 <= settings.human_handoff_projection_max_attempts <= 100:
+            raise ValueError(
+                "HUMAN_HANDOFF_PROJECTION_MAX_ATTEMPTS must be between 1 and 100"
+            )
 
     # Build background workers only when explicitly enabled.
     resolution_worker: ResolutionWorker | None = None
@@ -869,9 +980,17 @@ def create_app(
                 else None
             ),
             pilot_boundary=pilot_boundary,
+            human_handoff_admission_enabled=(
+                settings.human_handoff_admission_enabled
+            ),
+            handoff_projection_policy_key=settings.handoff_projection_policy_key,
+            handoff_projection_policy_version=(
+                settings.handoff_projection_policy_version
+            ),
         )
 
     opt_out_projection_worker: OptOutProjectionWorker | None = None
+    human_handoff_projection_worker: HumanHandoffProjectionWorker | None = None
     opt_out_enforcement_enabled = (
         shared_supabase is not None
         and control_client is not None
@@ -896,6 +1015,21 @@ def create_app(
             chatwoot=control_client,  # type: ignore[arg-type]
             worker_id=settings.opt_out_projection_worker_id,
         )
+    if settings.human_handoff_projection_enabled:
+        assert shared_supabase is not None
+        assert isinstance(control_client, ChatwootClient)
+        assert settings.human_handoff_projection_worker_id is not None
+        human_handoff_projection_worker = HumanHandoffProjectionWorker(
+            supabase=shared_supabase,
+            chatwoot=control_client,
+            worker_id=settings.human_handoff_projection_worker_id,
+            poll_interval_seconds=(
+                settings.human_handoff_projection_poll_interval_seconds
+            ),
+            batch_size=settings.human_handoff_projection_batch_size,
+            lease_seconds=settings.human_handoff_projection_lease_seconds,
+            max_attempts=settings.human_handoff_projection_max_attempts,
+        )
 
     chatwoot_worker: ChatwootWorker | None = None
 
@@ -908,6 +1042,8 @@ def create_app(
                 await durable_dispatcher.start()
             if opt_out_projection_worker is not None:
                 await opt_out_projection_worker.start()
+            if human_handoff_projection_worker is not None:
+                await human_handoff_projection_worker.start()
             if chatwoot_worker is not None:
                 await chatwoot_worker.start()
             yield
@@ -915,6 +1051,7 @@ def create_app(
             for worker_name, worker in (
                 ("chatwoot", chatwoot_worker),
                 ("opt_out_projection", opt_out_projection_worker),
+                ("human_handoff_projection", human_handoff_projection_worker),
                 ("dispatcher", durable_dispatcher),
                 ("resolution", resolution_worker),
             ):
@@ -933,6 +1070,7 @@ def create_app(
     app.state.resolution_worker = resolution_worker
     app.state.durable_dispatcher = durable_dispatcher
     app.state.opt_out_projection_worker = opt_out_projection_worker
+    app.state.human_handoff_projection_worker = human_handoff_projection_worker
     app.state.chatwoot_inbox = chatwoot_inbox
     app.state.chatwoot_worker = chatwoot_worker
 
@@ -1302,12 +1440,45 @@ def create_app(
 
     @app.get("/ready")
     async def readiness() -> dict[str, str]:
+        handoff_readiness: dict[str, str] = {}
+        if settings.human_handoff_projection_enabled:
+            if shared_supabase is None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="human_handoff_readiness_unavailable",
+                )
+            try:
+                handoff_status = (
+                    await shared_supabase.get_human_handoff_projection_status()
+                )
+            except Exception as exc:
+                logger.warning(
+                    "human_handoff_readiness_check_failed error_type=%s",
+                    type(exc).__name__,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="human_handoff_readiness_unavailable",
+                ) from exc
+            handoff_readiness = {
+                "human_handoff_projection": "configured",
+                "human_handoff_pending": str(handoff_status.pending_count),
+                "human_handoff_retryable": str(handoff_status.retryable_count),
+                "human_handoff_delivery_unknown": str(
+                    handoff_status.delivery_unknown_count
+                ),
+                "human_handoff_conflicts": str(handoff_status.conflict_count),
+                "human_handoff_dead_letters": str(
+                    handoff_status.dead_letter_count
+                ),
+            }
         if pilot_boundary is None:
             return {
                 "status": "ready",
                 "pilot_boundary": "disabled",
                 "automation_state": "default_off",
                 "reason_code": "pilot_boundary_disabled",
+                **handoff_readiness,
             }
         if shared_supabase is None:
             raise HTTPException(
@@ -1337,6 +1508,7 @@ def create_app(
             "pilot_boundary": "configured",
             "automation_state": pilot_status.runtime_state,
             "reason_code": pilot_status.reason_code,
+            **handoff_readiness,
         }
 
     @app.post("/webhooks/chatwoot", status_code=status.HTTP_202_ACCEPTED)

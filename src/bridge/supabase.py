@@ -7,6 +7,7 @@ just httpx, matching the project's existing conventions.
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -106,6 +107,45 @@ class OptOutProjectionClaim:
     opt_out_event_id: str
     chatwoot_conversation_id: int
     lease_generation: int
+
+
+@dataclass(frozen=True)
+class HumanHandoffProjectionClaim:
+    effect_id: str
+    handoff_request_id: str
+    effect_kind: str
+    current_effect_status: str
+    attempt_count: int
+    lease_generation: int
+    expected_team_id: int
+    chatwoot_account_id: int
+    chatwoot_inbox_id: int
+    chatwoot_conversation_id: int
+    private_note_body: str
+    idempotency_marker: str
+
+
+@dataclass(frozen=True)
+class HumanHandoffProjectionFinalization:
+    effect_status: str
+    handoff_status: str
+
+
+@dataclass(frozen=True)
+class HumanHandoffRequestResult:
+    outcome: str
+    handoff_request_id: str
+    affected_actions: int
+    affected_attempts: int
+
+
+@dataclass(frozen=True)
+class HumanHandoffProjectionStatus:
+    pending_count: int
+    retryable_count: int
+    delivery_unknown_count: int
+    conflict_count: int
+    dead_letter_count: int
 
 
 @dataclass(frozen=True)
@@ -394,6 +434,33 @@ def _response_rows(
     return payload
 
 
+_COMMITTED_HANDOFF_OPERATIONS = {
+    "claim_human_handoff_projection_effects",
+    "request_human_handoff",
+    "finalize_human_handoff_projection_effect",
+}
+
+
+def _invalid_row_error(operation: str) -> SupabaseError:
+    error_type = (
+        SupabaseCommittedResponseError
+        if operation in _COMMITTED_HANDOFF_OPERATIONS
+        else SupabaseError
+    )
+    return error_type(f"{operation}_invalid_row")
+
+
+def _committed_response_rows(
+    response: httpx.Response, *, operation: str
+) -> list[dict[str, Any]]:
+    try:
+        return _response_rows(response, operation=operation)
+    except SupabaseError as exc:
+        raise SupabaseCommittedResponseError(
+            f"{operation}_committed_response_invalid"
+        ) from exc
+
+
 def _required_string(
     row: dict[str, Any],
     key: str,
@@ -402,7 +469,7 @@ def _required_string(
 ) -> str:
     value = row.get(key)
     if not isinstance(value, str) or not value:
-        raise SupabaseError(f"{operation}_invalid_row")
+        raise _invalid_row_error(operation)
     return value
 
 
@@ -415,7 +482,7 @@ def _required_enum(
 ) -> str:
     value = _required_string(row, key, operation=operation)
     if value not in allowed:
-        raise SupabaseError(f"{operation}_invalid_row")
+        raise _invalid_row_error(operation)
     return value
 
 
@@ -427,7 +494,7 @@ def _optional_string(
 ) -> str | None:
     value = row.get(key)
     if value is not None and not isinstance(value, str):
-        raise SupabaseError(f"{operation}_invalid_row")
+        raise _invalid_row_error(operation)
     return value
 
 
@@ -440,7 +507,7 @@ def _optional_enum(
 ) -> str | None:
     value = _optional_string(row, key, operation=operation)
     if value is not None and value not in allowed:
-        raise SupabaseError(f"{operation}_invalid_row")
+        raise _invalid_row_error(operation)
     return value
 
 
@@ -452,8 +519,37 @@ def _required_int(
 ) -> int:
     value = row.get(key)
     if not isinstance(value, int) or isinstance(value, bool):
-        raise SupabaseError(f"{operation}_invalid_row")
+        raise _invalid_row_error(operation)
     return value
+
+
+def _required_positive_int(
+    row: dict[str, Any], key: str, *, operation: str
+) -> int:
+    value = _required_int(row, key, operation=operation)
+    if value < 1:
+        raise _invalid_row_error(operation)
+    return value
+
+
+def _required_nonnegative_int(
+    row: dict[str, Any], key: str, *, operation: str
+) -> int:
+    value = _required_int(row, key, operation=operation)
+    if value < 0:
+        raise _invalid_row_error(operation)
+    return value
+
+
+def _required_uuid(
+    row: dict[str, Any], key: str, *, operation: str
+) -> str:
+    value = _required_string(row, key, operation=operation)
+    try:
+        parsed = uuid.UUID(value)
+    except (ValueError, AttributeError) as exc:
+        raise _invalid_row_error(operation) from exc
+    return str(parsed)
 
 
 def _optional_positive_int(
@@ -465,7 +561,7 @@ def _optional_positive_int(
     if isinstance(value, str) and value.isdigit():
         value = int(value)
     if not isinstance(value, int) or isinstance(value, bool) or value < 1:
-        raise SupabaseError(f"{operation}_invalid_row")
+        raise _invalid_row_error(operation)
     return value
 
 
@@ -1168,6 +1264,226 @@ class SupabaseClient:
             "projection_status",
             {"pending", "applied", "retryable_failed", "dead_letter"},
             operation=operation,
+        )
+
+    async def claim_human_handoff_projection_effects(
+        self,
+        *,
+        worker_id: str,
+        now: str,
+        lease_seconds: int,
+        batch_size: int,
+    ) -> list[HumanHandoffProjectionClaim]:
+        operation = "claim_human_handoff_projection_effects"
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps({
+                "p_worker_id": worker_id,
+                "p_now": now,
+                "p_lease_seconds": lease_seconds,
+                "p_limit": batch_size,
+            }),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _committed_response_rows(response, operation=operation)
+        return [
+            HumanHandoffProjectionClaim(
+                effect_id=_required_uuid(row, "effect_id", operation=operation),
+                handoff_request_id=_required_uuid(
+                    row, "handoff_request_id", operation=operation
+                ),
+                effect_kind=_required_enum(
+                    row,
+                    "effect_kind",
+                    {"assignment", "private_note"},
+                    operation=operation,
+                ),
+                current_effect_status=_required_enum(
+                    row,
+                    "current_effect_status",
+                    {"pending", "retryable_failed", "delivery_unknown"},
+                    operation=operation,
+                ),
+                attempt_count=_required_positive_int(
+                    row, "attempt_count", operation=operation
+                ),
+                lease_generation=_required_positive_int(
+                    row, "lease_generation", operation=operation
+                ),
+                expected_team_id=_required_positive_int(
+                    row, "expected_team_id", operation=operation
+                ),
+                chatwoot_account_id=_required_positive_int(
+                    row, "chatwoot_account_id", operation=operation
+                ),
+                chatwoot_inbox_id=_required_positive_int(
+                    row, "chatwoot_inbox_id", operation=operation
+                ),
+                chatwoot_conversation_id=_required_positive_int(
+                    row, "chatwoot_conversation_id", operation=operation
+                ),
+                private_note_body=_required_string(
+                    row, "private_note_body", operation=operation
+                ),
+                idempotency_marker=_required_string(
+                    row, "idempotency_marker", operation=operation
+                ),
+            )
+            for row in rows
+        ]
+
+    async def request_human_handoff(
+        self,
+        *,
+        recovery_case_id: str,
+        command_key: str,
+        reason_code: str,
+        requested_by: str,
+        projection_policy_key: str,
+        projection_policy_version: int,
+        source_action_id: str,
+        source_attempt_id: str,
+        worker_id: str,
+        lease_generation: int,
+        now: str,
+    ) -> HumanHandoffRequestResult:
+        operation = "request_human_handoff"
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps({
+                "p_recovery_case_id": recovery_case_id,
+                "p_command_key": command_key,
+                "p_reason_code": reason_code,
+                "p_requested_by": requested_by,
+                "p_projection_policy_key": projection_policy_key,
+                "p_projection_policy_version": projection_policy_version,
+                "p_source_action_id": source_action_id,
+                "p_source_attempt_id": source_attempt_id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": lease_generation,
+                "p_now": now,
+            }),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _committed_response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseCommittedResponseError(
+                f"{operation}_committed_response_invalid"
+            )
+        row = rows[0]
+        return HumanHandoffRequestResult(
+            outcome=_required_enum(
+                row,
+                "outcome",
+                {"requested", "already_requested", "evidence_appended"},
+                operation=operation,
+            ),
+            handoff_request_id=_required_uuid(
+                row, "handoff_request_id", operation=operation
+            ),
+            affected_actions=_required_nonnegative_int(
+                row, "affected_actions", operation=operation
+            ),
+            affected_attempts=_required_nonnegative_int(
+                row, "affected_attempts", operation=operation
+            ),
+        )
+
+    async def finalize_human_handoff_projection_effect(
+        self,
+        *,
+        effect_id: str,
+        worker_id: str,
+        lease_generation: int,
+        outcome: str,
+        error_code: str | None,
+        retry_at: str | None,
+        now: str,
+    ) -> HumanHandoffProjectionFinalization:
+        operation = "finalize_human_handoff_projection_effect"
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps({
+                "p_effect_id": effect_id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": lease_generation,
+                "p_outcome": outcome,
+                "p_error_code": error_code,
+                "p_retry_at": retry_at,
+                "p_now": now,
+            }),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _committed_response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseCommittedResponseError(
+                f"{operation}_committed_response_invalid"
+            )
+        row = rows[0]
+        result = HumanHandoffProjectionFinalization(
+            effect_status=_required_enum(
+                row,
+                "effect_status",
+                {
+                    "applied",
+                    "retryable_failed",
+                    "delivery_unknown",
+                    "conflict",
+                    "dead_letter",
+                },
+                operation=operation,
+            ),
+            handoff_status=_required_enum(
+                row,
+                "handoff_status",
+                {"projected", "projection_failed", "dead_letter"},
+                operation=operation,
+            ),
+        )
+
+        if result.effect_status != outcome:
+            raise SupabaseCommittedResponseError(
+                f"{operation}_committed_response_mismatch"
+            )
+        return result
+
+    async def get_human_handoff_projection_status(
+        self,
+    ) -> HumanHandoffProjectionStatus:
+        operation = "get_human_handoff_projection_status"
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content="{}",
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        return HumanHandoffProjectionStatus(
+            pending_count=_required_nonnegative_int(
+                row, "pending_count", operation=operation
+            ),
+            retryable_count=_required_nonnegative_int(
+                row, "retryable_count", operation=operation
+            ),
+            delivery_unknown_count=_required_nonnegative_int(
+                row, "delivery_unknown_count", operation=operation
+            ),
+            conflict_count=_required_nonnegative_int(
+                row, "conflict_count", operation=operation
+            ),
+            dead_letter_count=_required_nonnegative_int(
+                row, "dead_letter_count", operation=operation
+            ),
         )
 
     async def claim_due_followup_actions(

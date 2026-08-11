@@ -16,7 +16,13 @@ from typing import Any, Callable
 
 import httpx
 
-from bridge.chatwoot import ChatwootClient, ChatwootProtocolError
+from bridge.chatwoot import (
+    ChatwootAssignmentConflictError,
+    ChatwootClient,
+    ChatwootHandoffConflictError,
+    ChatwootHandoffDeliveryUnknownError,
+    ChatwootProtocolError,
+)
 from bridge.hotmart import (
     EVENT_CART_ABANDONMENT,
     EVENT_PURCHASE_APPROVED,
@@ -24,6 +30,7 @@ from bridge.hotmart import (
 )
 from bridge.messaging import FirstTouchResult, MessageSender, is_allowed_whatsapp_target
 from bridge.recovery_agent import (
+    FollowupHandoffSuggestion,
     FollowupMessageProposal,
     RecoveryAgentClient,
     is_valid_followup_message_proposal,
@@ -43,6 +50,25 @@ from bridge.supabase import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _consume_detached_task_result(task: asyncio.Task[Any]) -> None:
+    """Consume a detached task outcome without delaying a shutdown deadline."""
+    try:
+        task.exception()
+    except (asyncio.CancelledError, Exception):
+        pass
+
+
+async def _await_with_hard_timeout(coro: Any, *, timeout: float) -> Any:
+    """Bound an await without waiting for cancellation acknowledgement."""
+    task = asyncio.create_task(coro)
+    done, _ = await asyncio.wait({task}, timeout=timeout)
+    if task not in done:
+        task.cancel()
+        task.add_done_callback(_consume_detached_task_result)
+        raise TimeoutError
+    return task.result()
 
 
 async def _await_with_cancellation_state(coro: Any) -> tuple[Any, bool]:
@@ -88,9 +114,16 @@ def _validate_followup_execution_context(
 
 
 def _validate_followup_message_proposal(
-    proposal: FollowupMessageProposal,
+    proposal: FollowupMessageProposal | FollowupHandoffSuggestion,
 ) -> None:
     """Revalidate agent output at the dispatcher trust boundary."""
+    if isinstance(proposal, FollowupHandoffSuggestion):
+        if is_valid_followup_message_proposal({
+            "proposal": "suggest_handoff",
+            "reason_code": proposal.reason_code,
+        }):
+            return
+        raise SupabaseError("invalid_followup_message_proposal")
     if not isinstance(proposal, FollowupMessageProposal) or not (
         is_valid_followup_message_proposal({
             "strategy": proposal.strategy,
@@ -235,6 +268,187 @@ class OptOutProjectionWorker:
         return len(claims)
 
 
+class HumanHandoffProjectionWorker:
+    """Reconcile durable handoff effects into Chatwoot without external replies."""
+
+    def __init__(
+        self,
+        *,
+        supabase: SupabaseClient,
+        chatwoot: ChatwootClient,
+        worker_id: str,
+        poll_interval_seconds: float = 5.0,
+        batch_size: int = 10,
+        lease_seconds: int = 60,
+        max_attempts: int = 8,
+        finalization_timeout_seconds: float = 10.0,
+        clock: Callable[[], str] | None = None,
+    ) -> None:
+        self._supabase = supabase
+        self._chatwoot = chatwoot
+        self._worker_id = worker_id
+        self._poll_interval = poll_interval_seconds
+        self._batch_size = batch_size
+        self._lease_seconds = lease_seconds
+        self._max_attempts = max_attempts
+        self._finalization_timeout = finalization_timeout_seconds
+        self._clock = clock or (lambda: datetime.now(UTC).isoformat())
+        self._stopped = asyncio.Event()
+        self._task: asyncio.Task[None] | None = None
+
+    async def start(self) -> None:
+        if self._task is not None:
+            return
+        self._stopped.clear()
+        self._task = asyncio.create_task(self._run())
+
+    async def stop(self, *, timeout: float = 10.0) -> None:
+        self._stopped.set()
+        if self._task is None:
+            return
+        done, _ = await asyncio.wait({self._task}, timeout=timeout)
+        if self._task not in done:
+            self._task.cancel()
+            done, _ = await asyncio.wait({self._task}, timeout=timeout)
+            if self._task not in done:
+                self._task.add_done_callback(_consume_detached_task_result)
+                logger.warning(
+                    "human_handoff_projection_stop_deadline_exceeded; "
+                    "durable lease will expire for reconciliation"
+                )
+            elif self._task.cancelled():
+                pass
+            else:
+                self._task.result()
+        elif self._task.cancelled():
+            pass
+        else:
+            self._task.result()
+        self._task = None
+
+    async def _run(self) -> None:
+        while not self._stopped.is_set():
+            try:
+                await self.run_once()
+            except SupabaseError:
+                logger.exception("human_handoff_projection_supabase_error")
+            except Exception:
+                logger.exception("human_handoff_projection_unexpected_error")
+            try:
+                await asyncio.wait_for(
+                    self._stopped.wait(), timeout=self._poll_interval
+                )
+            except TimeoutError:
+                pass
+
+    @staticmethod
+    def _retry_at(now: str, *, attempt_count: int) -> str:
+        retry_minutes = min(max(attempt_count, 1), 10)
+        return (
+            datetime.fromisoformat(now) + timedelta(minutes=retry_minutes)
+        ).isoformat()
+
+    async def run_once(self) -> int:
+        claimed_at = self._clock()
+        claims = await self._supabase.claim_human_handoff_projection_effects(
+            worker_id=self._worker_id,
+            now=claimed_at,
+            lease_seconds=self._lease_seconds,
+            batch_size=self._batch_size,
+        )
+        for claim in claims:
+            outcome = "applied"
+            error_code: str | None = None
+            retry_at: str | None = None
+            try:
+                if claim.chatwoot_account_id != self._chatwoot.account_id:
+                    outcome = "dead_letter"
+                    error_code = "chatwoot_account_mismatch"
+                elif claim.effect_kind == "assignment":
+                    await self._chatwoot.ensure_handoff_assignment(
+                        conversation_id=claim.chatwoot_conversation_id,
+                        expected_inbox_id=claim.chatwoot_inbox_id,
+                        expected_team_id=claim.expected_team_id,
+                    )
+                elif claim.effect_kind == "private_note":
+                    applied = await self._chatwoot.ensure_private_handoff_note(
+                        conversation_id=claim.chatwoot_conversation_id,
+                        expected_inbox_id=claim.chatwoot_inbox_id,
+                        note_body=claim.private_note_body,
+                        idempotency_marker=claim.idempotency_marker,
+                        create_if_missing=(
+                            claim.current_effect_status != "delivery_unknown"
+                        ),
+                    )
+                    if not applied:
+                        if claim.attempt_count >= self._max_attempts:
+                            outcome = "dead_letter"
+                            error_code = "private_note_delivery_unknown_unresolved"
+                        else:
+                            outcome = "delivery_unknown"
+                            error_code = "private_note_not_yet_visible"
+                            retry_at = self._retry_at(
+                                claimed_at, attempt_count=claim.attempt_count
+                            )
+                else:
+                    outcome = "dead_letter"
+                    error_code = "unsupported_handoff_effect"
+            except ChatwootAssignmentConflictError:
+                outcome = "conflict"
+                error_code = "unexpected_chatwoot_team"
+            except ChatwootHandoffConflictError as exc:
+                outcome = "conflict"
+                error_code = str(exc)
+            except ChatwootHandoffDeliveryUnknownError:
+                if claim.attempt_count >= self._max_attempts:
+                    outcome = "dead_letter"
+                    error_code = "private_note_delivery_unknown_unresolved"
+                else:
+                    outcome = "delivery_unknown"
+                    error_code = "private_note_delivery_unknown"
+                    retry_at = self._retry_at(
+                        claimed_at, attempt_count=claim.attempt_count
+                    )
+            except (httpx.HTTPError, ChatwootProtocolError, ValueError) as exc:
+                error_code = f"chatwoot_{type(exc).__name__}"
+                if claim.attempt_count >= self._max_attempts:
+                    outcome = "dead_letter"
+                elif claim.current_effect_status == "delivery_unknown":
+                    outcome = "delivery_unknown"
+                    retry_at = self._retry_at(
+                        claimed_at, attempt_count=claim.attempt_count
+                    )
+                else:
+                    outcome = "retryable_failed"
+                    retry_at = self._retry_at(
+                        claimed_at, attempt_count=claim.attempt_count
+                    )
+
+            finalized = await _commit_outcome_despite_cancellation(
+                _await_with_hard_timeout(
+                    self._supabase.finalize_human_handoff_projection_effect(
+                        effect_id=claim.effect_id,
+                        worker_id=self._worker_id,
+                        lease_generation=claim.lease_generation,
+                        outcome=outcome,
+                        error_code=error_code,
+                        retry_at=retry_at,
+                        now=self._clock(),
+                    ),
+                    timeout=self._finalization_timeout,
+                )
+            )
+            logger.info(
+                "human_handoff_projection_finalized effect_id=%s "
+                "effect_kind=%s effect_status=%s handoff_status=%s",
+                claim.effect_id,
+                claim.effect_kind,
+                finalized.effect_status,
+                finalized.handoff_status,
+            )
+        return len(claims)
+
+
 class DurableDispatcher:
     """Claim and re-evaluate due actions without producing external effects."""
 
@@ -253,6 +467,9 @@ class DurableDispatcher:
         allowed_jid: str | None = None,
         clock: Callable[[], str] | None = None,
         pilot_boundary: PilotBoundaryConfig | None = None,
+        human_handoff_admission_enabled: bool = False,
+        handoff_projection_policy_key: str | None = None,
+        handoff_projection_policy_version: int | None = None,
     ) -> None:
         self._supabase = supabase
         self._worker_id = worker_id
@@ -265,6 +482,9 @@ class DurableDispatcher:
         self._sender = sender
         self._allowed_jid = allowed_jid
         self._pilot_boundary = pilot_boundary
+        self._human_handoff_admission_enabled = human_handoff_admission_enabled
+        self._handoff_projection_policy_key = handoff_projection_policy_key
+        self._handoff_projection_policy_version = handoff_projection_policy_version
         self._delivery_mode = (
             "approved_template"
             if pilot_boundary is not None
@@ -504,6 +724,47 @@ class DurableDispatcher:
                             attempt=attempt,
                             reason_code="agent_proposal_unavailable",
                         )
+                    elif isinstance(proposal, FollowupHandoffSuggestion):
+                        if (
+                            not self._human_handoff_admission_enabled
+                            or self._handoff_projection_policy_key is None
+                            or self._handoff_projection_policy_version is None
+                        ):
+                            await self._finalize_pre_request_failure(
+                                action=action,
+                                attempt=attempt,
+                                reason_code="handoff_admission_disabled",
+                            )
+                        else:
+                            requested = await self._supabase.request_human_handoff(
+                                recovery_case_id=action.recovery_case_id,
+                                command_key=f"handoff:{attempt.attempt_id}",
+                                reason_code=proposal.reason_code,
+                                requested_by="agent",
+                                projection_policy_key=(
+                                    self._handoff_projection_policy_key
+                                ),
+                                projection_policy_version=(
+                                    self._handoff_projection_policy_version
+                                ),
+                                source_action_id=action.action_id,
+                                source_attempt_id=attempt.attempt_id,
+                                worker_id=self._worker_id,
+                                lease_generation=action.lease_generation,
+                                now=self._clock(),
+                            )
+                            if requested.outcome not in {
+                                "requested",
+                                "already_requested",
+                                "evidence_appended",
+                            }:
+                                raise SupabaseError(
+                                    "human_handoff_request_outcome_mismatch"
+                                )
+                            logger.info(
+                                "handoff_requested reason=%s",
+                                proposal.reason_code,
+                            )
                     elif isinstance(proposal, FollowupMessageProposal):
                         logger.info(
                             "durable_followup_proposal_ready "

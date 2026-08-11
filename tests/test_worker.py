@@ -13,7 +13,7 @@ import pytest
 
 from bridge.chatwoot import CanonicalConversationSnapshot, ChatwootProtocolError
 from bridge.messaging import FirstTouchResult
-from bridge.recovery_agent import FollowupMessageProposal
+from bridge.recovery_agent import FollowupHandoffSuggestion, FollowupMessageProposal
 from bridge.supabase import (
     ChatwootAuthorityContext,
     DeliveryAttempt,
@@ -562,6 +562,142 @@ def test_dispatcher_finalizes_reserved_attempt_when_proposal_is_unavailable() ->
     assert cancelled["outcome"] == "failed_before_request"
     assert cancelled["reason_code"] == "pre_request_cancelled"
     assert cancelled["next_attempt_at"] == "2026-08-03T13:02:00+00:00"
+
+
+def test_dispatcher_commits_allowlisted_handoff_before_request_start() -> None:
+    action = ScheduledAction(
+        action_id="action-handoff",
+        recovery_case_id="case-handoff",
+        followup_sequence_id="sequence-handoff",
+        action_type="first_contact_review",
+        status="pending",
+        due_at="2026-08-03T13:00:00+00:00",
+        expires_at="2026-08-10T12:00:00+00:00",
+        expected_case_version=1,
+        policy_key="cart-recovery-test",
+        policy_version=1,
+        step_key="first_contact",
+        anchor_type="cart_abandonment",
+        anchor_subject_internal_id="event-handoff",
+        anchor_observed_at="2026-08-03T12:00:00+00:00",
+        lease_owner="dispatcher-test",
+        lease_generation=3,
+        lease_expires_at="2026-08-03T13:05:00+00:00",
+        idempotency_key="cart_recovery:first_contact:case-handoff",
+    )
+    attempt = DeliveryAttempt(
+        attempt_id="attempt-handoff",
+        action_id=action.action_id,
+        idempotency_key=action.idempotency_key,
+        attempt_number=1,
+        channel="whatsapp",
+        mode="freeform",
+        phase="reserved",
+        lease_generation=3,
+        expected_case_version=1,
+        expected_sequence_revision=1,
+    )
+    handoff_calls: list[dict[str, object]] = []
+
+    class SupabaseStub:
+        async def claim_due_followup_actions(self, **_: object) -> list[ScheduledAction]:
+            return [action]
+
+        async def get_followup_chatwoot_context(
+            self, **_: object
+        ) -> ChatwootAuthorityContext:
+            return ChatwootAuthorityContext(
+                action_id=action.action_id,
+                action_type=action.action_type,
+                chatwoot_account_id=None,
+                external_conversation_id=None,
+                expected_inbox_id=None,
+                anchor_external_message_id=None,
+            )
+
+        async def reevaluate_followup_action(
+            self, **_: object
+        ) -> ReevaluationDecision:
+            return ReevaluationDecision(
+                action_id=action.action_id,
+                decision="execute",
+                reason_code="eligible_for_execution",
+                case_version=1,
+                sequence_revision=1,
+            )
+
+        async def reserve_followup_delivery_attempt(
+            self, **_: object
+        ) -> DeliveryAttempt:
+            return attempt
+
+        async def get_followup_execution_context(
+            self, **_: object
+        ) -> FollowupExecutionContext:
+            return FollowupExecutionContext(
+                action_id=action.action_id,
+                action_type=action.action_type,
+                step_key=action.step_key,
+                recovery_case_id=action.recovery_case_id,
+                contact_id="contact-handoff",
+                source_event_id="event-handoff",
+                buyer_name="Ana",
+                buyer_email="ana@example.test",
+                buyer_phone="15555550100",
+                product_name="Curso Uno",
+                offer_code="OFERTA1",
+                current_goal="resolver excepción comercial",
+                lead_stage="new",
+            )
+
+        async def request_human_handoff(self, **kwargs: object) -> object:
+            handoff_calls.append(kwargs)
+            return SimpleNamespace(outcome="requested")
+
+        async def finalize_followup_delivery_attempt(self, **_: object) -> object:
+            raise AssertionError("accepted handoff must close the attempt atomically")
+
+        async def mark_followup_request_started(self, **_: object) -> object:
+            raise AssertionError("request must not start after suggest_handoff")
+
+    class HandoffAgent:
+        async def request_followup_message(self, **_: object) -> object:
+            return FollowupHandoffSuggestion(reason_code="commercial_exception")
+
+    class SenderStub:
+        async def send_first_touch(self, **_: object) -> object:
+            raise AssertionError("handoff must remain externally silent")
+
+        async def send_followup(self, **_: object) -> object:
+            raise AssertionError("handoff must remain externally silent")
+
+    dispatcher = DurableDispatcher(
+        supabase=SupabaseStub(),  # type: ignore[arg-type]
+        worker_id="dispatcher-test",
+        recovery_agent=HandoffAgent(),  # type: ignore[arg-type]
+        sender=SenderStub(),  # type: ignore[arg-type]
+        allowed_jid="15555550100@s.whatsapp.net",
+        clock=lambda: "2026-08-03T13:01:00+00:00",
+        human_handoff_admission_enabled=True,
+        handoff_projection_policy_key="lancemos-handoff",
+        handoff_projection_policy_version=1,
+    )
+
+    _run(dispatcher.dispatch_due(now="2026-08-03T13:00:00+00:00"))
+
+    assert handoff_calls == [{
+        "recovery_case_id": "case-handoff",
+        "command_key": "handoff:attempt-handoff",
+        "reason_code": "commercial_exception",
+        "requested_by": "agent",
+        "projection_policy_key": "lancemos-handoff",
+        "projection_policy_version": 1,
+        "source_action_id": "action-handoff",
+        "source_attempt_id": "attempt-handoff",
+        "worker_id": "dispatcher-test",
+        "lease_generation": 3,
+        "now": "2026-08-03T13:01:00+00:00",
+    }]
 
 
 def test_dispatcher_resolves_delivery_unknown_when_acceptance_finalization_fails() -> None:

@@ -27,6 +27,18 @@ class ChatwootReplyDeliveryUnknownError(ChatwootProtocolError):
     """Raised when a reply POST may have succeeded and must not be repeated."""
 
 
+class ChatwootAssignmentConflictError(ChatwootProtocolError):
+    """Raised when a handoff would overwrite a different assigned team."""
+
+
+class ChatwootHandoffConflictError(ChatwootProtocolError):
+    """Raised when existing handoff evidence is contradictory."""
+
+
+class ChatwootHandoffDeliveryUnknownError(ChatwootProtocolError):
+    """Raised when a private-note POST may have succeeded."""
+
+
 @dataclass(frozen=True)
 class CanonicalConversationSnapshot:
     """Bounded, validated facts read directly from Chatwoot."""
@@ -79,6 +91,10 @@ class ChatwootClient:
         self._confirmation_attempts = confirmation_attempts
         self._confirmation_delay_seconds = confirmation_delay_seconds
         self._transport = transport
+
+    @property
+    def account_id(self) -> int:
+        return self._account_id
 
     async def get_canonical_conversation_snapshot(
         self,
@@ -807,12 +823,222 @@ class ChatwootClient:
         ):
             raise ChatwootProtocolError("conversation_identity_mismatch")
 
+    async def _get_handoff_conversation(
+        self, *, conversation_id: int, expected_inbox_id: int
+    ) -> dict[str, object]:
+        if conversation_id <= 0 or expected_inbox_id <= 0:
+            raise ValueError("conversation and inbox IDs must be positive")
+        path = (
+            f"/api/v1/accounts/{self._account_id}"
+            f"/conversations/{conversation_id}"
+        )
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers={"api_access_token": self._access_token},
+            transport=self._transport,
+            timeout=15,
+        ) as client:
+            response = await client.get(path)
+            response.raise_for_status()
+        try:
+            conversation = response.json()
+        except ValueError as exc:
+            raise ChatwootProtocolError("invalid_json") from exc
+        if (
+            not isinstance(conversation, dict)
+            or conversation.get("id") != conversation_id
+            or conversation.get("inbox_id") != expected_inbox_id
+        ):
+            raise ChatwootProtocolError("invalid_conversation_authority")
+        if not self._is_authorized_conversation(
+            response, conversation_id=conversation_id
+        ):
+            raise ChatwootProtocolError("conversation_identity_mismatch")
+        return conversation
+
+    @staticmethod
+    def _handoff_assignment_state(
+        conversation: dict[str, object], *, expected_team_id: int
+    ) -> str:
+        meta = conversation.get("meta")
+        if not isinstance(meta, dict):
+            raise ChatwootProtocolError("invalid_handoff_assignment_payload")
+        assignee = meta.get("assignee")
+        team = meta.get("team")
+        if assignee is not None:
+            assignee_id = assignee.get("id") if isinstance(assignee, dict) else None
+            if (
+                not isinstance(assignee_id, int)
+                or isinstance(assignee_id, bool)
+                or assignee_id <= 0
+            ):
+                raise ChatwootProtocolError("invalid_handoff_assignee")
+            assignee_type = meta.get("assignee_type")
+            if assignee_type == "User":
+                return "existing_human"
+            if assignee_type != "AgentBot":
+                raise ChatwootProtocolError("invalid_handoff_assignee_type")
+        if team is None:
+            return "unassigned"
+        team_id = team.get("id") if isinstance(team, dict) else None
+        if (
+            not isinstance(team_id, int)
+            or isinstance(team_id, bool)
+            or team_id <= 0
+        ):
+            raise ChatwootProtocolError("invalid_handoff_team")
+        if team_id == expected_team_id:
+            return "expected_team"
+        raise ChatwootAssignmentConflictError("unexpected_team")
+
+    async def ensure_handoff_assignment(
+        self,
+        *,
+        conversation_id: int,
+        expected_inbox_id: int,
+        expected_team_id: int,
+    ) -> str:
+        """Assign the expected team only when no person or team owns the case."""
+        if expected_team_id <= 0:
+            raise ValueError("expected team ID must be positive")
+        conversation = await self._get_handoff_conversation(
+            conversation_id=conversation_id,
+            expected_inbox_id=expected_inbox_id,
+        )
+        state = self._handoff_assignment_state(
+            conversation, expected_team_id=expected_team_id
+        )
+        if state == "existing_human":
+            return state
+        if state == "expected_team":
+            return state
+
+        path = (
+            f"/api/v1/accounts/{self._account_id}"
+            f"/conversations/{conversation_id}/assignments"
+        )
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers={"api_access_token": self._access_token},
+            transport=self._transport,
+            timeout=15,
+        ) as client:
+            response = await client.post(path, json={"team_id": expected_team_id})
+            response.raise_for_status()
+
+        for attempt in range(self._confirmation_attempts):
+            confirmed = await self._get_handoff_conversation(
+                conversation_id=conversation_id,
+                expected_inbox_id=expected_inbox_id,
+            )
+            state = self._handoff_assignment_state(
+                confirmed, expected_team_id=expected_team_id
+            )
+            if state in {"existing_human", "expected_team"}:
+                return "team_assigned"
+            if attempt + 1 < self._confirmation_attempts:
+                await asyncio.sleep(self._confirmation_delay_seconds)
+        raise ChatwootProtocolError("handoff_assignment_not_confirmed")
+
+    async def ensure_private_handoff_note(
+        self,
+        *,
+        conversation_id: int,
+        expected_inbox_id: int,
+        note_body: str,
+        idempotency_marker: str,
+        create_if_missing: bool,
+    ) -> bool:
+        """Find or create exactly one private note identified by a stable marker."""
+        if not note_body.strip() or len(note_body) > 1800:
+            raise ValueError("private note body must contain 1 to 1800 characters")
+        if (
+            not idempotency_marker.startswith("[supportmagician-handoff:")
+            or not idempotency_marker.endswith("]")
+            or len(idempotency_marker) > 300
+        ):
+            raise ValueError("invalid handoff idempotency marker")
+        await self._get_handoff_conversation(
+            conversation_id=conversation_id,
+            expected_inbox_id=expected_inbox_id,
+        )
+        messages = await self.get_conversation_messages(
+            conversation_id=conversation_id,
+            limit=2000,
+            require_history_boundary=True,
+        )
+        marker_count = 0
+        for message in messages:
+            content = message.get("content")
+            if not isinstance(content, str) or idempotency_marker not in content:
+                continue
+            if message.get("private") is not True or message.get("message_type") != 1:
+                raise ChatwootHandoffConflictError(
+                    "handoff_marker_on_non_private_message"
+                )
+            marker_count += 1
+        if marker_count > 1:
+            raise ChatwootHandoffConflictError(
+                "duplicate_handoff_private_note_marker"
+            )
+        if marker_count == 1:
+            return True
+        if not create_if_missing:
+            return False
+
+        content = f"{note_body.rstrip()}\n\n{idempotency_marker}"
+        if len(content) > 2200:
+            raise ValueError("private handoff note is too long")
+        path = (
+            f"/api/v1/accounts/{self._account_id}"
+            f"/conversations/{conversation_id}/messages"
+        )
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._base_url,
+                headers={"api_access_token": self._access_token},
+                transport=self._transport,
+                timeout=15,
+            ) as client:
+                response = await client.post(
+                    path,
+                    json={
+                        "content": content,
+                        "message_type": "outgoing",
+                        "private": True,
+                    },
+                )
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise ChatwootHandoffDeliveryUnknownError(
+                "private_note_delivery_unknown"
+            ) from exc
+        try:
+            created = response.json()
+        except ValueError as exc:
+            raise ChatwootHandoffDeliveryUnknownError(
+                "private_note_invalid_response"
+            ) from exc
+        if (
+            not isinstance(created, dict)
+            or not isinstance(created.get("id"), int)
+            or created.get("conversation_id") != conversation_id
+            or created.get("private") is not True
+            or created.get("message_type") != 1
+            or created.get("content") != content
+        ):
+            raise ChatwootHandoffDeliveryUnknownError(
+                "private_note_unconfirmed_response"
+            )
+        return True
+
     async def get_conversation_messages(
         self,
         *,
         conversation_id: int,
         limit: int = 20,
         required_message_ids: tuple[int, ...] = (),
+        require_history_boundary: bool = False,
     ) -> list[dict[str, object]]:
         """Read a bounded canonical conversation history from Chatwoot."""
         if limit <= 0:
@@ -867,6 +1093,8 @@ class ChatwootClient:
                     raise ChatwootProtocolError("messages_cursor_did_not_advance")
                 before = next_before
         missing_required_ids = required_ids.difference(collected)
+        if require_history_boundary and not reached_history_boundary:
+            raise ChatwootHistoryScanLimitError("history_boundary_beyond_scan_limit")
         if not reached_history_boundary and (
             missing_required_ids or len(collected) < limit
         ):

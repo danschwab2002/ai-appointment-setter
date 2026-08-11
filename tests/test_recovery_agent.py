@@ -155,6 +155,20 @@ def test_rejects_extra_field() -> None:
             },
             False,
         ),
+        (
+            {
+                "proposal": "suggest_handoff",
+                "reason_code": "commercial_exception",
+            },
+            True,
+        ),
+        (
+            {
+                "proposal": "suggest_handoff",
+                "reason_code": "insufficient_context",
+            },
+            False,
+        ),
     ],
 )
 def test_validates_bounded_followup_message_proposal(
@@ -391,8 +405,20 @@ def test_requests_bounded_durable_followup_message() -> None:
     assert "15555550100" not in serialized
     assert "contact-001" not in serialized
     assert agent_context["required_output"] == {
-        "strategy": "non-empty string, max 120 characters",
-        "message": "non-empty string, max 500 characters",
+        "one_of": [
+            {
+                "strategy": "non-empty string, max 120 characters",
+                "message": "non-empty string, max 500 characters",
+            },
+            {
+                "proposal": "suggest_handoff",
+                "reason_code": [
+                    "commercial_exception",
+                    "explicit_human_request",
+                    "policy_requires_human",
+                ],
+            },
+        ]
     }
 
 

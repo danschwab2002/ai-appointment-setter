@@ -187,6 +187,18 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         + exists(select 1 from triggers where tgname = 'pilot_recovery_case_bindings_append_only')::int,
         4,
         'catalog_objects'
+    union all
+    select
+        '20260810000400',
+        '20260810000400_executable_human_handoff.sql',
+        (to_regclass('public.human_handoff_requests') is not null)::int
+        + (to_regclass('public.human_handoff_request_evidence') is not null)::int
+        + (to_regclass('public.human_handoff_projection_effects') is not null)::int
+        + exists(select 1 from functions where proname = 'request_human_handoff')::int
+        + exists(select 1 from functions where proname = 'claim_human_handoff_projection_effects')::int
+        + exists(select 1 from triggers where tgname = 'human_handoff_projection_effects_protect_identity')::int,
+        6,
+        'catalog_objects'
 )
 select
     version,
