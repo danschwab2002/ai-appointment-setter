@@ -16,9 +16,25 @@ El cuerpo tiene un límite fijo de `1 MiB`, aplicado durante la lectura y antes 
 autenticar la firma.
 
 Antes de persistir, el bridge valida firma, antigüedad, JSON, tipo de evento,
-visibilidad, dirección, actor y JID autorizado. Un mensaje entrante sólo puede
-admitirse si contiene un `id` canónico entero no negativo; si falta o es inválido,
-responde `200 ignored` con `reason=invalid_message_id` y no crea trabajo durable.
+visibilidad, dirección, actor y JID autorizado. Cuando el runtime declara alcance
+Chatwoot, exige además que `account.id`, `inbox.id` y
+`conversation.inbox_id` coincidan exactamente con `CHATWOOT_ACCOUNT_ID` y
+`CHATWOOT_INBOX_ID`. Los dos identificadores de inbox deben estar presentes y ser
+enteros positivos no booleanos y coherentes. JSON `true` se rechaza aunque Python
+lo compare igual a `1`; no existe fallback por nombre de inbox, proveedor ni
+teléfono. Un evento del mismo JID en otro inbox queda rechazado antes de captura,
+pausa, Hermes o cualquier efecto.
+
+Si sólo uno de los dos IDs esperados está configurado, el ingreso falla cerrado
+con `reason=scope_configuration_incomplete`. Los reason codes de rechazo de
+alcance son `account_not_allowed` e `inbox_not_allowed`; no contienen IDs ni PII.
+La omisión total de ambos IDs se conserva únicamente para el modo local legacy
+inyectado directamente mediante `Settings`; `Settings.from_env` siempre requiere
+account y una configuración productiva WABA debe declarar también inbox.
+
+Un mensaje entrante sólo puede admitirse si contiene un `id` canónico entero no
+negativo; si falta o es inválido, responde `200 ignored` con
+`reason=invalid_message_id` y no crea trabajo durable.
 
 ## Respuestas
 

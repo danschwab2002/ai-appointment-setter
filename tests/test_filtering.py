@@ -2,6 +2,137 @@ from bridge.filtering import classify_chatwoot_event
 import pytest
 
 
+def _scoped_incoming_payload(*, account_id: int = 1, inbox_id: int = 6) -> dict[str, object]:
+    return {
+        "event": "message_created",
+        "id": 200,
+        "message_type": "incoming",
+        "private": False,
+        "account": {"id": account_id},
+        "inbox": {"id": inbox_id},
+        "conversation": {
+            "inbox_id": inbox_id,
+            "meta": {
+                "sender": {"identifier": "12025550123@s.whatsapp.net"},
+            },
+        },
+    }
+
+
+def test_accepts_only_the_configured_account_and_inbox() -> None:
+    decision = classify_chatwoot_event(
+        _scoped_incoming_payload(),
+        allowed_jid="12025550123@s.whatsapp.net",
+        expected_account_id=1,
+        expected_inbox_id=6,
+    )
+
+    assert decision.accepted is True
+    assert decision.reason == "accepted"
+
+
+@pytest.mark.parametrize(
+    ("payload", "reason"),
+    [
+        (_scoped_incoming_payload(account_id=2), "account_not_allowed"),
+        (_scoped_incoming_payload(inbox_id=1), "inbox_not_allowed"),
+        (
+            {
+                **_scoped_incoming_payload(),
+                "conversation": {
+                    "inbox_id": 1,
+                    "meta": {
+                        "sender": {
+                            "identifier": "12025550123@s.whatsapp.net",
+                        }
+                    },
+                },
+            },
+            "inbox_not_allowed",
+        ),
+        (
+            {key: value for key, value in _scoped_incoming_payload().items() if key != "inbox"},
+            "inbox_not_allowed",
+        ),
+        (
+            {
+                key: value
+                for key, value in _scoped_incoming_payload().items()
+                if key != "account"
+            },
+            "account_not_allowed",
+        ),
+    ],
+)
+def test_rejects_same_sender_from_another_or_malformed_scope(
+    payload: dict[str, object], reason: str
+) -> None:
+    decision = classify_chatwoot_event(
+        payload,
+        allowed_jid="12025550123@s.whatsapp.net",
+        expected_account_id=1,
+        expected_inbox_id=6,
+    )
+
+    assert decision.accepted is False
+    assert decision.action == "ignore"
+    assert decision.reason == reason
+
+
+@pytest.mark.parametrize(
+    ("expected_account_id", "expected_inbox_id"),
+    [(None, 6), (1, None), (True, 6), (1, 0)],
+)
+def test_rejects_an_incomplete_or_invalid_runtime_scope(
+    expected_account_id: object,
+    expected_inbox_id: object,
+) -> None:
+    decision = classify_chatwoot_event(
+        _scoped_incoming_payload(),
+        allowed_jid="12025550123@s.whatsapp.net",
+        expected_account_id=expected_account_id,
+        expected_inbox_id=expected_inbox_id,
+    )
+
+    assert decision.accepted is False
+    assert decision.action == "ignore"
+    assert decision.reason == "scope_configuration_incomplete"
+
+
+@pytest.mark.parametrize(
+    ("location", "reason"),
+    [
+        ("account", "account_not_allowed"),
+        ("inbox", "inbox_not_allowed"),
+        ("conversation", "inbox_not_allowed"),
+    ],
+)
+def test_rejects_boolean_payload_ids_that_compare_equal_to_one(
+    location: str,
+    reason: str,
+) -> None:
+    payload = _scoped_incoming_payload(account_id=1, inbox_id=1)
+    if location == "account":
+        payload["account"] = {"id": True}
+    elif location == "inbox":
+        payload["inbox"] = {"id": True}
+    else:
+        conversation = payload["conversation"]
+        assert isinstance(conversation, dict)
+        conversation["inbox_id"] = True
+
+    decision = classify_chatwoot_event(
+        payload,
+        allowed_jid="12025550123@s.whatsapp.net",
+        expected_account_id=1,
+        expected_inbox_id=1,
+    )
+
+    assert decision.accepted is False
+    assert decision.action == "ignore"
+    assert decision.reason == reason
+
+
 def test_accepts_only_configured_whatsapp_jid() -> None:
     payload = {
         "event": "message_created",

@@ -165,8 +165,11 @@ def _payload(*, message_id: int, content: str) -> bytes:
             "content": content,
             "message_type": "incoming",
             "private": False,
+            "account": {"id": 1},
+            "inbox": {"id": 7},
             "conversation": {
                 "id": 123,
+                "inbox_id": 7,
                 "contact_inbox": {"source_id": ALLOWED_JID},
             },
         },

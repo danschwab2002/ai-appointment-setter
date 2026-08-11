@@ -38,7 +38,7 @@ from bridge.chatwoot_inbox import (
     DurableChatwootInbox,
     RetryableChatwootWorkError,
 )
-from bridge.filtering import classify_chatwoot_event
+from bridge.filtering import EventDecision, classify_chatwoot_event
 from bridge.hermes import HermesShadowProcessor
 from bridge.hotmart import (
     EVENT_CART_ABANDONMENT,
@@ -1256,16 +1256,32 @@ def create_app(
             proposal=shadow_processor.get_completed_proposal(delivery_id=delivery_id)
         )
 
+    def classify_scoped_chatwoot_event(
+        payload: dict[str, object],
+    ) -> EventDecision:
+        if (
+            settings.chatwoot_account_id is None
+            and settings.chatwoot_inbox_id is None
+        ):
+            return classify_chatwoot_event(
+                payload,
+                allowed_jid=settings.allowed_jid,
+                agent_bot_id=settings.agent_bot_id,
+            )
+        return classify_chatwoot_event(
+            payload,
+            allowed_jid=settings.allowed_jid,
+            agent_bot_id=settings.agent_bot_id,
+            expected_account_id=settings.chatwoot_account_id,
+            expected_inbox_id=settings.chatwoot_inbox_id,
+        )
+
     async def process_chatwoot_work(
         delivery_id: str,
         payload: dict[str, object],
         batch_message_ids: tuple[int, ...],
     ) -> None:
-        decision = classify_chatwoot_event(
-            payload,
-            allowed_jid=settings.allowed_jid,
-            agent_bot_id=settings.agent_bot_id,
-        )
+        decision = classify_scoped_chatwoot_event(payload)
         if decision.action == "pause_automation":
             conversation = payload.get("conversation")
             conversation_id = (
@@ -1409,11 +1425,7 @@ def create_app(
 
     if chatwoot_inbox is not None:
         def inbound_debounce_key(payload: dict[str, object]) -> str | None:
-            decision = classify_chatwoot_event(
-                payload,
-                allowed_jid=settings.allowed_jid,
-                agent_bot_id=settings.agent_bot_id,
-            )
+            decision = classify_scoped_chatwoot_event(payload)
             if not decision.accepted:
                 return None
             conversation = payload.get("conversation")
@@ -1547,11 +1559,7 @@ def create_app(
         except json.JSONDecodeError as exc:
             raise HTTPException(status_code=400, detail="invalid_json") from exc
 
-        decision = classify_chatwoot_event(
-            payload,
-            allowed_jid=settings.allowed_jid,
-            agent_bot_id=settings.agent_bot_id,
-        )
+        decision = classify_scoped_chatwoot_event(payload)
         if decision.action == "pause_automation":
             conversation = payload.get("conversation") or {}
             conversation_id = conversation.get("id")
