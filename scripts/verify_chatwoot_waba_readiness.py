@@ -141,6 +141,8 @@ def evaluate_snapshot(
         blockers.add("bridge_handoff_admission_not_off")
     if bridge.get("human_handoff_projection_enabled") is not False:
         blockers.add("bridge_handoff_projection_not_off")
+    if bridge.get("human_pause_enabled") is not False:
+        blockers.add("bridge_human_pause_not_off")
     if bridge.get("opt_out_projection_backlog_zero") is not True:
         blockers.add("opt_out_projection_backlog_not_zero")
     if bridge.get("human_handoff_projection_backlog_zero") is not True:

@@ -154,6 +154,7 @@ class Settings:
     chatwoot_control_api_access_token: str | None = None
     chatwoot_agent_bot_access_token: str | None = None
     chatwoot_pause_macro_id: int | None = None
+    chatwoot_human_pause_enabled: bool = False
     chatwoot_opt_out_macro_id: int | None = None
     hermes_shadow_enabled: bool = False
     hermes_api_base_url: str | None = None
@@ -212,6 +213,9 @@ class Settings:
         automated_replies_enabled = (
             os.getenv("CHATWOOT_AUTOMATED_REPLIES_ENABLED", "false").lower()
             == "true"
+        )
+        chatwoot_human_pause_enabled = (
+            os.getenv("CHATWOOT_HUMAN_PAUSE_ENABLED", "false").lower() == "true"
         )
         reply_splitter_enabled = (
             os.getenv("CHATWOOT_REPLY_SPLITTER_ENABLED", "false").lower()
@@ -414,6 +418,7 @@ class Settings:
             ],
             chatwoot_agent_bot_access_token=agent_bot_access_token,
             chatwoot_pause_macro_id=int(os.environ["CHATWOOT_PAUSE_MACRO_ID"]),
+            chatwoot_human_pause_enabled=chatwoot_human_pause_enabled,
             chatwoot_opt_out_macro_id=chatwoot_opt_out_macro_id,
             hermes_shadow_enabled=shadow_enabled,
             hermes_api_base_url=hermes_api_base_url,
@@ -1283,6 +1288,8 @@ def create_app(
     ) -> None:
         decision = classify_scoped_chatwoot_event(payload)
         if decision.action == "pause_automation":
+            if not settings.chatwoot_human_pause_enabled:
+                return
             conversation = payload.get("conversation")
             conversation_id = (
                 conversation.get("id") if isinstance(conversation, dict) else None
@@ -1561,6 +1568,15 @@ def create_app(
 
         decision = classify_scoped_chatwoot_event(payload)
         if decision.action == "pause_automation":
+            if not settings.chatwoot_human_pause_enabled:
+                logger.warning(
+                    "chatwoot_webhook_ignored reason=human_pause_disabled"
+                )
+                response.status_code = status.HTTP_200_OK
+                return {
+                    "status": "ignored",
+                    "reason": "human_pause_disabled",
+                }
             conversation = payload.get("conversation") or {}
             conversation_id = conversation.get("id")
             if not isinstance(conversation_id, int) or isinstance(

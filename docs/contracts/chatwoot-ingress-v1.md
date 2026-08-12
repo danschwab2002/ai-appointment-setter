@@ -25,6 +25,12 @@ lo compare igual a `1`; no existe fallback por nombre de inbox, proveedor ni
 teléfono. Un evento del mismo JID en otro inbox queda rechazado antes de captura,
 pausa, Hermes o cualquier efecto.
 
+La proyección `automation_paused` derivada de un mensaje humano saliente está
+controlada por `CHATWOOT_HUMAN_PAUSE_ENABLED`, cuyo default es `false`. Con el
+flag apagado, tanto eventos nuevos como trabajo admitido antes de un reinicio se
+completan sin llamar a Chatwoot; el webhook nuevo devuelve
+`reason=human_pause_disabled` y no se persiste.
+
 Si sólo uno de los dos IDs esperados está configurado, el ingreso falla cerrado
 con `reason=scope_configuration_incomplete`. Los reason codes de rechazo de
 alcance son `account_not_allowed` e `inbox_not_allowed`; no contienen IDs ni PII.

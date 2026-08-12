@@ -3375,6 +3375,7 @@ def test_pauses_automation_when_a_human_sends_a_public_message(
             capture_dir=tmp_path,
             max_age_seconds=300,
             agent_bot_id=1,
+            chatwoot_human_pause_enabled=True,
         ),
         chatwoot_client=chatwoot,
     )
@@ -3425,6 +3426,7 @@ def test_fails_closed_when_chatwoot_cannot_apply_the_pause_label(
             capture_dir=tmp_path,
             max_age_seconds=300,
             agent_bot_id=1,
+            chatwoot_human_pause_enabled=True,
         ),
         chatwoot_client=chatwoot,
     )
@@ -3450,6 +3452,76 @@ def test_fails_closed_when_chatwoot_cannot_apply_the_pause_label(
     assert work["status"] == "admitted"
     assert work["attempts"] == 1
     assert work["next_attempt_at"] > time.time()
+
+
+def test_default_off_human_pause_discards_new_and_stale_work(
+    tmp_path: Path,
+) -> None:
+    secret = "webhook-secret"
+    payload = {
+        "event": "message_created",
+        "message_type": "outgoing",
+        "private": False,
+        "sender": {"id": 1, "type": "user"},
+        "conversation": {
+            "id": 2,
+            "meta": {
+                "sender": {"identifier": "12025550123@s.whatsapp.net"},
+            },
+        },
+    }
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    producer_client = StubChatwootClient()
+    producer = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            chatwoot_human_pause_enabled=True,
+        ),
+        chatwoot_client=producer_client,
+    )
+    admitted = _post(
+        producer,
+        raw_body,
+        _signed_headers(raw_body, secret=secret, delivery="stale-human-pause"),
+    )
+    assert admitted.status_code == 202
+
+    safe_client = StubChatwootClient()
+    safe_app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+        ),
+        chatwoot_client=safe_client,
+    )
+    asyncio.run(safe_app.state.chatwoot_worker.run_once())
+
+    assert producer_client.calls == []
+    assert safe_client.calls == []
+    work_items = list((tmp_path / ".work").glob("*.json"))
+    assert len(work_items) == 1
+    completed = json.loads(work_items[0].read_text(encoding="utf-8"))
+    assert completed["status"] == "completed"
+
+    ignored = _post(
+        safe_app,
+        raw_body,
+        _signed_headers(raw_body, secret=secret, delivery="new-human-pause"),
+    )
+    assert ignored.status_code == 200
+    assert ignored.json() == {
+        "status": "ignored",
+        "reason": "human_pause_disabled",
+    }
+    assert len(list((tmp_path / ".work").glob("*.json"))) == 1
+    assert safe_client.calls == []
 
 
 def test_rejects_a_stale_webhook(tmp_path: Path) -> None:
