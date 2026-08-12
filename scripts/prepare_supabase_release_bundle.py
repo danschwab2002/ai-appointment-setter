@@ -6,8 +6,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 PREFIX_LAST = "20260808000300"
@@ -63,48 +66,63 @@ def build(repo: Path, output: Path, *, allow_dirty: bool = False) -> dict[str, o
     if not tail:
         raise ValueError("pending tail is empty")
 
-    output.mkdir(parents=True, exist_ok=True)
-    bundle_path = output / "pending-tail.sql"
-    with bundle_path.open("wb") as target:
-        for row in tail:
-            source = repo / "supabase" / "migrations" / row["filename"]
-            target.write(f"\n-- BEGIN {row['filename']}\n".encode())
-            target.write(source.read_bytes())
-            if not source.read_bytes().endswith(b"\n"):
-                target.write(b"\n")
-            target.write(f"-- END {row['filename']}\n".encode())
+    migration_sources = [
+        repo / "supabase" / "migrations" / row["filename"] for row in tail
+    ]
+    postflight_sources = [repo / relative for relative in REQUIRED_POSTFLIGHT]
+    for source in (*migration_sources, *postflight_sources):
+        if not source.is_file():
+            raise ValueError("required bundle artifact missing")
+    if output.exists():
+        raise ValueError("output path already exists")
 
-    postflight_path = output / "postflight.sql"
-    with postflight_path.open("wb") as target:
-        for relative in REQUIRED_POSTFLIGHT:
-            source = repo / relative
-            if not source.is_file():
-                raise ValueError(f"required postflight artifact missing: {relative}")
-            target.write(f"\n-- BEGIN {relative}\n".encode())
-            target.write(source.read_bytes())
-            if not source.read_bytes().endswith(b"\n"):
-                target.write(b"\n")
-            target.write(f"-- END {relative}\n".encode())
+    output.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.", dir=output.parent))
+    try:
+        bundle_path = staging / "pending-tail.sql"
+        with bundle_path.open("wb") as target:
+            for row, source in zip(tail, migration_sources, strict=True):
+                content = source.read_bytes()
+                target.write(f"\n-- BEGIN {row['filename']}\n".encode())
+                target.write(content)
+                if not content.endswith(b"\n"):
+                    target.write(b"\n")
+                target.write(f"-- END {row['filename']}\n".encode())
 
-    manifest: dict[str, object] = {
-        "format": "supabase_release_bundle/v1",
-        "commit": commit,
-        "dirty_source": dirty,
-        "prefix_last": PREFIX_LAST,
-        "prefix": prefix,
-        "pending_tail": tail,
-        "bundle": {"filename": bundle_path.name, "sha256": sha256(bundle_path)},
-        "postflight": {
-            "filename": postflight_path.name,
-            "sha256": sha256(postflight_path),
-        },
-        "production_authorized": False,
-    }
-    manifest_path = output / "manifest.json"
-    manifest_path.write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-    return manifest
+        postflight_path = staging / "postflight.sql"
+        with postflight_path.open("wb") as target:
+            for relative, source in zip(
+                REQUIRED_POSTFLIGHT, postflight_sources, strict=True
+            ):
+                content = source.read_bytes()
+                target.write(f"\n-- BEGIN {relative}\n".encode())
+                target.write(content)
+                if not content.endswith(b"\n"):
+                    target.write(b"\n")
+                target.write(f"-- END {relative}\n".encode())
+
+        manifest: dict[str, object] = {
+            "format": "supabase_release_bundle/v1",
+            "commit": commit,
+            "dirty_source": dirty,
+            "prefix_last": PREFIX_LAST,
+            "prefix": prefix,
+            "pending_tail": tail,
+            "bundle": {"filename": bundle_path.name, "sha256": sha256(bundle_path)},
+            "postflight": {
+                "filename": postflight_path.name,
+                "sha256": sha256(postflight_path),
+            },
+            "production_authorized": False,
+        }
+        (staging / "manifest.json").write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        os.replace(staging, output)
+        return manifest
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
 
 
 def main() -> int:

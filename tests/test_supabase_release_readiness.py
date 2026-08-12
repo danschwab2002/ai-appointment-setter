@@ -43,6 +43,38 @@ def test_bundle_hashes_match_written_artifacts(tmp_path: Path) -> None:
     assert MODULE.sha256(output / "postflight.sql") == manifest["postflight"]["sha256"]
 
 
+def test_bundle_rejects_preexisting_output_without_modifying_it(tmp_path: Path) -> None:
+    output = tmp_path / "existing"
+    output.mkdir()
+    sentinel = output / "manifest.json"
+    sentinel.write_text("old-manifest\n")
+
+    with pytest.raises(ValueError, match="output path already exists"):
+        MODULE.build(ROOT, output, allow_dirty=True)
+
+    assert sentinel.read_text() == "old-manifest\n"
+    assert sorted(path.name for path in output.iterdir()) == ["manifest.json"]
+
+
+def test_late_failure_leaves_no_output_or_staging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "bundle"
+    real_sha256 = MODULE.sha256
+
+    def fail_on_postflight(path: Path) -> str:
+        if path.name == "postflight.sql":
+            raise OSError("injected late hash failure")
+        return real_sha256(path)
+
+    monkeypatch.setattr(MODULE, "sha256", fail_on_postflight)
+    with pytest.raises(OSError, match="injected late hash failure"):
+        MODULE.build(ROOT, output, allow_dirty=True)
+
+    assert not output.exists()
+    assert list(tmp_path.glob(".bundle.*")) == []
+
+
 def test_bundle_rejects_duplicate_versions(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     migrations = repo / "supabase" / "migrations"
