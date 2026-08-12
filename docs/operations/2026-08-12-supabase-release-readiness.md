@@ -60,11 +60,17 @@ service_entrypoints=27
 api_role_execute_leaks=0
 trigger_service_execute_leaks=0
 focused_pytest=8_passed
+supabase_cli_version=2.113.0
+supabase_cli_offline_interfaces=repair,list,push,dump_PASS
 ```
 
 La migración `20260812000100_supabase_function_acl_hardening.sql` hace inventario
 dinámico de todas las funciones públicas, revoca `EXECUTE` de PUBLIC y roles API,
 y restaura sólo 27 RPC exactos para `service_role`.
+
+La interfaz offline del CLI fijado expone `repair --linked --status`,
+`migration list --linked`, `db push --linked --dry-run` y
+`db dump --linked --schema --file`. Esto no prueba su comportamiento transaccional.
 
 Docker está instalado pero el daemon no estaba disponible. Por eso no se declara
 ejecutada la receta PostgreSQL 17 ni probado el failure mode del Supabase CLI.
