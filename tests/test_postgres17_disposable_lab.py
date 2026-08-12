@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -101,8 +103,9 @@ def test_rootless_server_uses_disposable_socket_directory(tmp_path: Path) -> Non
 
     arguments = cluster.server_arguments()
 
-    assert arguments[arguments.index("-k") + 1] == str(cluster.data.parent)
+    assert arguments[arguments.index("-k") + 1] == str(cluster.socket_dir)
     assert "/var/run/postgresql" not in arguments
+    assert arguments[arguments.index("-h") + 1] == ""
 
 
 def test_staging_is_created_next_to_atomic_output(tmp_path: Path) -> None:
@@ -112,6 +115,7 @@ def test_staging_is_created_next_to_atomic_output(tmp_path: Path) -> None:
     staging = module.create_staging_workspace(output)
     try:
         assert staging.parent == output.parent
+        assert staging.stat().st_mode & 0o777 == 0o700
     finally:
         staging.rmdir()
 
@@ -124,3 +128,92 @@ def test_private_artifact_contract_includes_prefix_and_full_manifests() -> None:
         "full-stack-schema-contract.json",
         "summary.json",
     )
+
+
+def test_private_artifact_is_owner_only_under_permissive_umask(tmp_path: Path) -> None:
+    module = load_module()
+    artifact = tmp_path / "manifest.json"
+    previous = os.umask(0)
+    try:
+        module.write_private_text(artifact, "private\n")
+    finally:
+        os.umask(previous)
+
+    assert artifact.stat().st_mode & 0o777 == 0o600
+
+
+def test_server_identity_rejects_exited_process_even_when_probe_matches(
+    tmp_path: Path,
+) -> None:
+    module = load_module()
+    cluster = module.Cluster(tmp_path / "pg-root", tmp_path / "workspace")
+
+    class ExitedProcess:
+        def poll(self) -> int:
+            return 1
+
+    cluster.process = ExitedProcess()
+    cluster.sql = lambda database, statement: cluster.identity
+
+    with pytest.raises(RuntimeError, match="owned PostgreSQL process exited"):
+        cluster.assert_owned_server()
+
+
+def test_server_identity_rejects_foreign_cluster(tmp_path: Path) -> None:
+    module = load_module()
+    cluster = module.Cluster(tmp_path / "pg-root", tmp_path / "workspace")
+
+    class RunningProcess:
+        def poll(self):
+            return None
+
+    cluster.process = RunningProcess()
+    cluster.sql = lambda database, statement: "foreign-cluster"
+
+    with pytest.raises(RuntimeError, match="identity mismatch"):
+        cluster.assert_owned_server()
+
+
+def test_cli_url_uses_owned_unix_socket_not_tcp(tmp_path: Path) -> None:
+    module = load_module()
+    cluster = module.Cluster(tmp_path / "pg-root", tmp_path / "workspace")
+
+    class RunningProcess:
+        def poll(self):
+            return None
+
+    cluster.process = RunningProcess()
+    cluster.sql = lambda database, statement: cluster.identity
+
+    parsed = urlsplit(cluster.url("postgres17_lab_probe"))
+
+    assert parsed.hostname is None
+    assert parsed.port is None
+    assert parse_qs(parsed.query)["host"] == [str(cluster.socket_dir)]
+
+
+def test_private_output_tree_is_owner_only(tmp_path: Path) -> None:
+    module = load_module()
+    output = tmp_path / "artifacts"
+    output.mkdir(mode=0o700)
+
+    for name in module.PRIVATE_ARTIFACTS:
+        module.write_private_text(output / name, "private\n")
+
+    assert output.stat().st_mode & 0o777 == 0o700
+    assert all(path.stat().st_mode & 0o777 == 0o600 for path in output.iterdir())
+
+
+def test_cleanup_workspace_survives_stop_failure(tmp_path: Path) -> None:
+    module = load_module()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    class BrokenCluster:
+        def stop(self) -> None:
+            raise RuntimeError("stop failed")
+
+    with pytest.raises(RuntimeError, match="stop failed"):
+        module.cleanup_cluster(BrokenCluster(), workspace)
+
+    assert not workspace.exists()

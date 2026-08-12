@@ -13,6 +13,11 @@ PostgreSQL `17.10` se ejecutó rootless desde paquetes Debian extraídos en un
 prefijo temporal. No se instaló software global ni se usó Docker. El cluster, sus
 dos bases y las migraciones sintéticas se eliminaron al terminar.
 
+El servidor no escucha TCP: usa un socket Unix dentro del workspace `0700` y una
+identidad aleatoria de `cluster_name`, verificada antes y después de crear bases
+y antes de entregar la URI al CLI. Los manifiestos se publican en directorio
+`0700` con archivos `0600`.
+
 `scripts/bootstrap_postgres17_rootless.py` reprodujo la preparación desde cero:
 seis paquetes explícitos, binarios completos, major 17 verificado y manifest
 privado con hashes. Ese prefijo recién generado volvió a pasar el laboratorio.
@@ -38,10 +43,14 @@ later_object_present=false
 status=pass
 ```
 
-El control del CLI usó tres migraciones sintéticas en otra base disposable:
+El control local del CLI usó tres migraciones sintéticas en otra base disposable:
 una válida, una que ejecuta `raise exception` y una posterior válida. Esto prueba
 que `db push` `2.113.0` devolvió error, confirmó la migración anterior y no dejó
 registrada ni aplicada la fallida ni la posterior.
+
+Esto prueba la semántica del binario contra PostgreSQL 17 local. No reemplaza una
+prueba posterior contra un proyecto Supabase hosted disposable si el proceso de
+release exige validar también diferencias de plataforma administrada.
 
 ## Artefactos privados
 
@@ -59,12 +68,13 @@ contienen filas de aplicación. Los hashes permiten verificar el handoff privado
 ## Gates cerrados
 
 - `postgres17_disposable_not_executed` → cerrado;
-- `supabase_cli_failure_mode_unproved` → cerrado.
+- `supabase_cli_local_failure_mode_unproved` → cerrado.
 
 ## Gates todavía bloqueados
 
 - `prefix_exact_equivalence_unproved`: falta exportar el mismo manifiesto desde
   el remoto mediante lectura de catálogos y comparar exactamente;
+- `supabase_hosted_disposable_failure_mode_unproved`;
 - `migration_tracking_empty`: no se autoriza repair;
 - `production_ddl_not_authorized`;
 - `postflight_not_applicable_before_deploy`;

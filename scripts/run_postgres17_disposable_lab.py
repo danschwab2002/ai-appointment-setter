@@ -7,12 +7,13 @@ import argparse
 import json
 import os
 import shutil
-import socket
 import subprocess
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 DESTRUCTIVE_OPT_IN = "I_UNDERSTAND_THIS_IS_DISPOSABLE"
 DATABASE_PREFIX = "postgres17_lab_"
@@ -104,17 +105,19 @@ def sanitized_summary(
     }
 
 
-def _free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-
-
 def create_staging_workspace(output: Path) -> Path:
     output.parent.mkdir(parents=True, exist_ok=True)
-    return Path(
+    workspace = Path(
         tempfile.mkdtemp(prefix=f".{output.name}.", dir=output.parent.resolve())
     )
+    workspace.chmod(0o700)
+    return workspace
+
+
+def write_private_text(path: Path, content: str) -> None:
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as target:
+        target.write(content)
 
 
 class Cluster:
@@ -122,7 +125,9 @@ class Cluster:
         self.pg_root = pg_root.resolve()
         self.bin = self.pg_root / "usr/lib/postgresql/17/bin"
         self.data = workspace / "cluster"
-        self.port = _free_port()
+        self.socket_dir = workspace / "socket"
+        self.socket_dir.mkdir(mode=0o700, parents=True)
+        self.identity = f"postgres17_disposable_{uuid.uuid4().hex}"
         self.process: subprocess.Popen[str] | None = None
         self.env = os.environ.copy()
         libraries = [
@@ -131,8 +136,7 @@ class Cluster:
         ]
         self.env.update(
             LD_LIBRARY_PATH=":".join(str(path) for path in libraries),
-            PGHOST="127.0.0.1",
-            PGPORT=str(self.port),
+            PGHOST=str(self.socket_dir),
             PGUSER="postgres",
             PGSSLMODE="disable",
         )
@@ -149,11 +153,11 @@ class Cluster:
             "-D",
             str(self.data),
             "-h",
-            "127.0.0.1",
-            "-p",
-            str(self.port),
+            "",
             "-k",
-            str(self.data.parent),
+            str(self.socket_dir),
+            "-c",
+            f"cluster_name={self.identity}",
         ]
 
     def start(self) -> None:
@@ -180,6 +184,8 @@ class Cluster:
             text=True,
         )
         for _ in range(100):
+            if self.process.poll() is not None:
+                raise RuntimeError("PostgreSQL 17 exited before readiness")
             ready = subprocess.run(
                 [str(self.executable("pg_isready")), "-d", "postgres"],
                 env=self.env,
@@ -187,11 +193,19 @@ class Cluster:
                 text=True,
             )
             if ready.returncode == 0:
+                self.assert_owned_server()
                 return
-            if self.process.poll() is not None:
-                raise RuntimeError("PostgreSQL 17 exited before readiness")
             time.sleep(0.05)
         raise RuntimeError("PostgreSQL 17 readiness timed out")
+
+    def assert_owned_server(self) -> None:
+        if self.process is None or self.process.poll() is not None:
+            raise RuntimeError("owned PostgreSQL process exited")
+        observed = self.sql("postgres", "show cluster_name")
+        if observed != self.identity:
+            raise RuntimeError("PostgreSQL cluster identity mismatch")
+        if self.process.poll() is not None:
+            raise RuntimeError("owned PostgreSQL process exited")
 
     def stop(self) -> None:
         if self.process is None:
@@ -201,6 +215,7 @@ class Cluster:
             env=self.env,
             capture_output=True,
             text=True,
+            timeout=15,
         )
         try:
             self.process.wait(timeout=10)
@@ -234,6 +249,7 @@ class Cluster:
 
     def create_database(self, database: str) -> None:
         validate_destructive_target(database, DESTRUCTIVE_OPT_IN)
+        self.assert_owned_server()
         subprocess.run(
             [str(self.executable("createdb")), database],
             env=self.env,
@@ -241,10 +257,13 @@ class Cluster:
             capture_output=True,
             text=True,
         )
+        self.assert_owned_server()
 
     def url(self, database: str) -> str:
         validate_destructive_target(database, DESTRUCTIVE_OPT_IN)
-        return f"postgresql://postgres@127.0.0.1:{self.port}/{database}?sslmode=disable"
+        self.assert_owned_server()
+        host = quote(str(self.socket_dir), safe="")
+        return f"postgresql:///{database}?host={host}&sslmode=disable"
 
 
 def _roles_and_defaults(cluster: Cluster, database: str) -> None:
@@ -306,11 +325,11 @@ def _clean_stack(repo: Path, cluster: Cluster, output: Path) -> tuple[str, int, 
     parsed = json.loads(manifest)
     if not isinstance(parsed, list) or len(parsed) < 3:
         raise RuntimeError("schema contract manifest is invalid")
-    output.mkdir(parents=True, exist_ok=False)
-    (output / "expected-prefix-schema-contract.json").write_text(
-        prefix_manifest + "\n"
+    output.mkdir(mode=0o700, parents=True, exist_ok=False)
+    write_private_text(
+        output / "expected-prefix-schema-contract.json", prefix_manifest + "\n"
     )
-    (output / "full-stack-schema-contract.json").write_text(manifest + "\n")
+    write_private_text(output / "full-stack-schema-contract.json", manifest + "\n")
     return version, len(stack), len(fingerprints), len(acl)
 
 
@@ -342,6 +361,10 @@ def _cli_failure_probe(repo: Path, cluster: Cluster, workspace: Path) -> dict[st
         text=True,
         timeout=180,
     )
+    if result.returncode == 0 or "intentional_disposable_failure" not in (
+        result.stdout + result.stderr
+    ):
+        raise RuntimeError("Supabase CLI did not reach the intentional failure")
     history = cluster.sql(
         database,
         """
@@ -375,6 +398,13 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def cleanup_cluster(cluster: Any, workspace: Path) -> None:
+    try:
+        cluster.stop()
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
 def main() -> int:
     args = parse_args()
     validate_destructive_target(f"{DATABASE_PREFIX}guard", args.destructive_opt_in)
@@ -401,16 +431,16 @@ def main() -> int:
         )
         if summary["status"] != "pass":
             raise RuntimeError("disposable lab remained blocked")
-        (private_output / "summary.json").write_text(
-            json.dumps(summary, indent=2, sort_keys=True) + "\n"
+        write_private_text(
+            private_output / "summary.json",
+            json.dumps(summary, indent=2, sort_keys=True) + "\n",
         )
         output.parent.mkdir(parents=True, exist_ok=True)
         os.replace(private_output, output)
         print(json.dumps(summary, sort_keys=True))
         return 0
     finally:
-        cluster.stop()
-        shutil.rmtree(workspace, ignore_errors=True)
+        cleanup_cluster(cluster, workspace)
 
 
 if __name__ == "__main__":

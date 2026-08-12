@@ -77,14 +77,16 @@ para `db push` 2.113.0.
 El daemon Docker no estaba disponible. Luego se ejecutó un cluster PostgreSQL
 17.10 rootless desde paquetes extraídos y el clean install de las 17 migraciones
 pasó con los inventarios checked-in. El failure injection de Supabase CLI 2.113.0
-también pasó: la migración anterior quedó aplicada/registrada y ni la fallida ni
-la posterior dejaron objeto o tracking. Ver
+también pasó contra PostgreSQL 17 local: la migración anterior quedó
+aplicada/registrada y ni la fallida ni la posterior dejaron objeto o tracking.
+La equivalencia de plataforma hosted sigue separada. Ver
 [`2026-08-12-postgres17-disposable-release-lab.md`](2026-08-12-postgres17-disposable-release-lab.md).
 
 ## Reasons del bloqueo
 
 ```text
 prefix_exact_equivalence_unproved
+supabase_hosted_disposable_failure_mode_unproved
 migration_tracking_empty
 production_ddl_not_authorized
 postflight_not_applicable_before_deploy

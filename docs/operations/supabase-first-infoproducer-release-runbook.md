@@ -104,7 +104,8 @@ uv run python scripts/run_postgres17_disposable_lab.py \
 
 El laboratorio también ejecuta el CLI fijado contra tres migraciones sintéticas
 `before → raise exception → after` y exige que sólo `before` quede registrada y
-aplicada. La evidencia sanitizada está en
+aplicada en PostgreSQL 17 local. No prueba por sí solo diferencias de plataforma
+de un proyecto hosted disposable. La evidencia sanitizada está en
 [`2026-08-12-postgres17-disposable-release-lab.md`](2026-08-12-postgres17-disposable-release-lab.md).
 PGlite sigue sin contar como evidencia para estos gates.
 
