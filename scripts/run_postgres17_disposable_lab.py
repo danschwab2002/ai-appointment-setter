@@ -210,18 +210,33 @@ class Cluster:
     def stop(self) -> None:
         if self.process is None:
             return
-        subprocess.run(
-            [str(self.executable("pg_ctl")), "-D", str(self.data), "-m", "immediate", "stop"],
-            env=self.env,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
         try:
-            self.process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            self.process.kill()
-            self.process.wait()
+            subprocess.run(
+                [
+                    str(self.executable("pg_ctl")),
+                    "-D",
+                    str(self.data),
+                    "-m",
+                    "immediate",
+                    "stop",
+                ],
+                env=self.env,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+        finally:
+            if self.process.poll() is None:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait(timeout=5)
+            if self.process.poll() is None:
+                raise RuntimeError("owned PostgreSQL process survived shutdown")
 
     def command(self, database: str, *args: str) -> list[str]:
         return [str(self.executable("psql")), "-X", "-v", "ON_ERROR_STOP=1", "-d", database, *args]

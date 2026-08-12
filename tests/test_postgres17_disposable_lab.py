@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import subprocess
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -217,3 +218,50 @@ def test_cleanup_workspace_survives_stop_failure(tmp_path: Path) -> None:
         module.cleanup_cluster(BrokenCluster(), workspace)
 
     assert not workspace.exists()
+
+
+def test_stop_kills_owned_process_when_pg_ctl_times_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = load_module()
+    pg_root = tmp_path / "pg-root"
+    pg_ctl = pg_root / "usr/lib/postgresql/17/bin/pg_ctl"
+    pg_ctl.parent.mkdir(parents=True)
+    pg_ctl.touch()
+    cluster = module.Cluster(pg_root, tmp_path / "workspace")
+
+    class Process:
+        alive = True
+        terminated = False
+        killed = False
+
+        def poll(self):
+            return None if self.alive else -9
+
+        def wait(self, timeout=None):
+            if self.alive:
+                raise subprocess.TimeoutExpired("postgres", float(timeout or 0))
+            return -9
+
+        def terminate(self):
+            self.terminated = True
+
+        def kill(self):
+            self.killed = True
+            self.alive = False
+
+    process = Process()
+    cluster.process = process
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            subprocess.TimeoutExpired("pg_ctl", 15)
+        ),
+    )
+
+    cluster.stop()
+
+    assert process.terminated is True
+    assert process.killed is True
+    assert process.poll() is not None
