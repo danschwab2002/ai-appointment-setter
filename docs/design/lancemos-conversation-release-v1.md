@@ -44,7 +44,8 @@ No se incorpora agendamiento como objetivo mientras Juan no lo agregue explícit
 ```yaml
 release_id: lancemos-cart-recovery-v1
 release_version: 1
-status: draft_incomplete
+release_status: draft
+completeness: draft_incomplete
 scope:
   customer: lancemos
   offer_ref: PENDIENTE_NEGOCIO
@@ -150,33 +151,21 @@ accesos, sin copiar secretos al paquete.
 - nombre, idioma, variables y aprobación del template WABA;
 - mecanismo para fijar release y evidencias de evaluación antes de activarla.
 
-## 5. Clasificación obligatoria de cada dato
+## 5. Registro canónico de fuentes y decisiones
 
-Cada elemento recibido debe marcarse como uno de:
+El registro canónico reutilizable para una corrida de onboarding es
+[`first-infoproducer-source-register-template.md`](first-infoproducer-source-register-template.md).
+Ese artefacto define una sola vez:
 
-- `confirmed_fact`: hecho con fuente, responsable y vigencia;
-- `approved_rule`: comportamiento revisado y aprobado;
-- `example`: ejemplo sanitizado, nunca autoridad superior;
-- `unknown`: dato faltante que el agente no puede inventar;
-- `prohibited`: afirmación o conducta expresamente vedada;
-- `runtime_fact`: dato que debe llegar desde contexto canónico y no vivir en la release;
-- `kernel_rule`: restricción no editable por el negocio.
+- clasificación de cada unidad como `confirmed_fact`, `approved_rule`, `example`,
+  `unknown`, `prohibited`, `runtime_fact` o `kernel_rule`;
+- fuentes, owners, vigencia y sanitización;
+- conflicts y unknowns;
+- decisiones y trazabilidad hacia artefactos derivados.
 
-Una contradicción entre fuentes queda `unknown/conflict` y bloquea el uso del dato hasta que el responsable la resuelva.
-
-### Registro auditable de fuentes
-
-Cada fuente o decisión debe conservar, sin PII ni secretos:
-
-| Source ID | Artefacto/campos respaldados | Path o referencia | Owner | Consultada | Vigencia | Estado |
-|---|---|---|---|---|---|---|
-| source-001 | `PENDIENTE` | `PENDIENTE` | `PENDIENTE` | null | `PENDIENTE` | pending |
-
-Cada aprobación debe registrar:
-
-| Decision ID | Artefacto y versión | Decisión | Owner | Fecha | Evidencia sanitizada | Estado |
-|---|---|---|---|---|---|---|
-| decision-001 | `PENDIENTE` | approve/reject/request_changes | `PENDIENTE` | null | `PENDIENTE` | pending |
+Este manifiesto referencia los `item_id`, `source_refs` y `decision_refs` de ese
+registro; no mantiene una segunda tabla ni reclasifica los datos. Una contradicción
+abierta conserva el campo afectado como `unknown/conflict` y bloquea su uso.
 
 ## 6. Gate de preparación y aprobación
 
