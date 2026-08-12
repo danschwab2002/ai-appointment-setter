@@ -199,6 +199,26 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         + exists(select 1 from triggers where tgname = 'human_handoff_projection_effects_protect_identity')::int,
         6,
         'catalog_objects'
+    union all
+    select
+        '20260812000100',
+        '20260812000100_supabase_function_acl_hardening.sql',
+        (
+            select (
+                count(*) filter (
+                    where has_function_privilege('anon', oid, 'execute')
+                       or has_function_privilege('authenticated', oid, 'execute')
+                ) = 0
+                and count(*) filter (
+                    where prorettype = 'trigger'::regtype
+                      and has_function_privilege('service_role', oid, 'execute')
+                ) = 0
+            )::int
+            from pg_proc
+            where pronamespace = 'public'::regnamespace
+        ),
+        1,
+        'effective_acl'
 )
 select
     version,

@@ -1,10 +1,10 @@
 # Reconciliación de migraciones Supabase — piloto Lancemos
 
-- **Estado:** Propuesta operativa preparada; sin DDL aplicado
-- **Fecha de corte:** 2026-08-10
-- **Base auditada:** `main` en `5584a6a38feca508a5730639dd01e6228f1de3f4`
-- **Stack canónico del corte:** 15 migraciones
-- **Dependencia concurrente:** el handoff ejecutable D prepara una migración posterior; debe integrarse antes de congelar el bundle final
+- **Estado:** paquete de release preparado; DDL productivo bloqueado
+- **Fecha de corte:** 2026-08-12
+- **Base integrada auditada:** `main` en `13e120f1553a17037c5227c13494346004fb254d`
+- **Stack canónico preparado:** 17 migraciones, incluido hardening ACL forward-only
+- **Dependencias concurrentes:** handoff, portabilidad WABA y onboarding integrados; recongelar si `main` cambia
 
 ## 1. Problema
 
@@ -54,7 +54,9 @@ Fingerprints ausentes desde `20260808000400`:
 - opt-out inbound durable;
 - perímetro Lancemos;
 - abandono Hotmart autoritativo;
-- runtime del perímetro.
+- runtime del perímetro;
+- handoff humano ejecutable;
+- hardening exhaustivo de function ACL.
 
 No se observaron fingerprints parciales dentro de esos dos grupos en las consultas
 realizadas. La clasificación sigue siendo estructural, no una certificación de
@@ -79,6 +81,8 @@ que los nueve archivos iniciales fueron ejecutados byte por byte.
 | `20260810000100` | ausente | ausente | pendiente de aplicar |
 | `20260810000200` | ausente | ausente | pendiente de aplicar |
 | `20260810000300` | ausente | ausente | pendiente de aplicar |
+| `20260810000400` | ausente | ausente | pendiente de aplicar |
+| `20260812000100` | ACL remota abierta | ausente | pendiente; requerido para target final |
 
 La evidencia remota detallada queda en
 [`2026-08-10-supabase-schema-readiness.md`](../operations/2026-08-10-supabase-schema-readiness.md).
@@ -102,6 +106,8 @@ La evidencia remota detallada queda en
 | `20260810000100_lancemos_pilot_boundary.sql` | `3d325bb06ea802b6f8ffc318c061495ec2281ca8e80539e5fb2f1711990a68a9` |
 | `20260810000200_hotmart_cart_abandonment_authoritative.sql` | `94831d1cd6d834054d53a8c5902580b21fe29099b67207fae440a470f12f0664` |
 | `20260810000300_lancemos_pilot_boundary_runtime.sql` | `f363dc646e2fcef265756a554dddd153511334b43ec36ea827d8cc2f489d5e1c` |
+| `20260810000400_executable_human_handoff.sql` | `a59a3b7370202643691e01c77dec476801928ae947ebc4e7d5d28fbcc55a81da` |
+| `20260812000100_supabase_function_acl_hardening.sql` | regenerar desde commit aprobado |
 
 Estos hashes caducan si `main` incorpora otra migración. El preflight final debe
 regenerar el manifiesto desde el commit integrado que se vaya a desplegar.
@@ -110,7 +116,7 @@ regenerar el manifiesto desde el commit integrado que se vaya a desplegar.
 
 ### Fase A — congelar sin efectos
 
-1. integrar D y cualquier migración aceptada antes del freeze;
+1. integrar cualquier migración aceptada antes del freeze;
 2. fijar commit e image digest;
 3. mantener apagados perímetro, workers y outbound;
 4. ejecutar suite Python, PGlite y PostgreSQL disposable desde cero;
@@ -195,10 +201,10 @@ Exigir:
 - `/health` en receiver-only;
 - runtime durable todavía `inactive` y outbound apagado.
 
-El clean install actual todavía devuelve cinco leaks de funciones trigger-only;
-por lo tanto se requiere, después de integrar D, una nueva migración de hardening
-que cubra también cualquier función de D y deje el inventario en cero. Sólo después
-se sigue la activación por etapas de los runbooks E/F.
+El clean install con defaults Supabase y la migración de hardening devuelve cero
+leaks API, cero helpers trigger-only ejecutables por `service_role` y 27 RPC exactos
+permitidos. Esto fue ejecutado en PGlite; PostgreSQL 17 y el postflight remoto siguen
+siendo gates obligatorios antes de activar runtime.
 
 ## 6. Rollback
 
@@ -233,3 +239,7 @@ Estas migraciones son forward-only. El rollback operativo es:
 Este diseño no aplica migraciones, no repara tracking, no prueba comportamiento
 remoto nuevo y no despliega el bridge. Define el procedimiento seguro a ejecutar
 cuando exista autorización explícita de producción.
+
+El procedimiento y la evidencia del corte están en
+[`supabase-first-infoproducer-release-runbook.md`](../operations/supabase-first-infoproducer-release-runbook.md)
+y [`2026-08-12-supabase-release-readiness.md`](../operations/2026-08-12-supabase-release-readiness.md).
