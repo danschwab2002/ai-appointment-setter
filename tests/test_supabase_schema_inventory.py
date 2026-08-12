@@ -63,7 +63,7 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
 
-    assert len(allowlisted) == 23
+    assert len(allowlisted) == 27
     assert len(allowlisted) == len(set(allowlisted))
     assert "has_function_privilege('anon'" in sql
     assert "has_function_privilege('authenticated'" in sql
