@@ -100,5 +100,17 @@ if (result.api_leaks !== 0 || result.trigger_leaks !== 0
     || result.allowlist_mismatches !== 0 || result.expected_count !== 27) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
+const inventory = await db.query(readFileSync(
+  join(root, 'scripts/supabase_acl_inventory.sql'),
+  'utf8',
+));
+const inventoryExpected = inventory.rows.filter(
+  (row) => row.expected_service_role_execute === true,
+).length;
+if (inventory.rows.length !== result.total
+    || inventoryExpected !== result.expected_count
+    || inventory.rows.some((row) => row.acl_status !== 'ok')) {
+  throw new Error('checked-in ACL inventory disagrees with clean-stack probe');
+}
 console.log(`acl_hardening=OK positive_control_leaks=${before.rows[0].leaks} public_functions=${result.total} service_entrypoints=${result.expected_count}`);
 await db.close();
