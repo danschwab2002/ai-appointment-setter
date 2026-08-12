@@ -90,8 +90,36 @@ Antes de producción, usar otro proyecto Supabase disposable y el mismo CLI:
    posteriores no quedaron registradas ni aplicadas;
 6. borrar el proyecto disposable por su procedimiento normal.
 
-El daemon Docker local no estuvo disponible durante la preparación. PGlite probó
-sintaxis/ACL, pero no cuenta como evidencia de repair ni del failure mode del CLI.
+El daemon Docker local no estuvo disponible. El laboratorio rootless versionado
+en `scripts/run_postgres17_disposable_lab.py` ejecuta PostgreSQL 17 desde un
+prefijo extraído, exige opt-in destructivo y nombres de base disposable, aplica
+las 17 migraciones y destruye siempre el cluster:
+
+```bash
+uv run python scripts/run_postgres17_disposable_lab.py \
+  --pg-root /ruta/privada/postgres17-root \
+  --output data/postgres17-disposable-lab \
+  --destructive-opt-in I_UNDERSTAND_THIS_IS_DISPOSABLE
+```
+
+El laboratorio también ejecuta el CLI fijado contra tres migraciones sintéticas
+`before → raise exception → after` y exige que sólo `before` quede registrada y
+aplicada. La evidencia sanitizada está en
+[`2026-08-12-postgres17-disposable-release-lab.md`](2026-08-12-postgres17-disposable-release-lab.md).
+PGlite sigue sin contar como evidencia para estos gates.
+
+En hosts Debian sin daemon ni root, preparar el prefijo privado sin instalación
+global mediante el bootstrap versionado:
+
+```bash
+uv run python scripts/bootstrap_postgres17_rootless.py \
+  --output /ruta/privada/postgres17-root
+```
+
+El bootstrap descarga seis paquetes explícitos con `apt-get download`, extrae
+con `dpkg-deb`, exige binarios completos y major 17, y escribe un manifest local
+con filenames y SHA-256. No versionar los paquetes, el cluster ni los manifiestos
+exhaustivos. Conservar sólo hashes y el resumen sanitizado.
 
 ## 6. Aplicación productiva — requiere nueva autorización
 
