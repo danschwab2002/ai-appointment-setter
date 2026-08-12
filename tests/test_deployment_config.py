@@ -50,11 +50,15 @@ def test_deployment_declares_required_chatwoot_control_variables() -> None:
         "CHATWOOT_CONTROL_API_ACCESS_TOKEN",
         "CHATWOOT_AGENT_BOT_ID",
         "CHATWOOT_PAUSE_MACRO_ID",
+        "CHATWOOT_HUMAN_PAUSE_ENABLED",
     }
 
     for variable in required:
         assert f"{variable}=" in env_example
         assert f"{variable}:" in compose
+
+    assert "CHATWOOT_HUMAN_PAUSE_ENABLED=false" in env_example
+    assert "${CHATWOOT_HUMAN_PAUSE_ENABLED:-false}" in compose
 
 
 def test_deployment_declares_waba_pilot_contract_default_off() -> None:
@@ -120,6 +124,7 @@ def test_deployment_uses_supabase_service_role_only(
     assert settings.chatwoot_inbound_debounce_seconds == 30
     assert settings.reply_splitter_enabled is False
     assert settings.reply_part_delay_seconds == 2
+    assert settings.chatwoot_human_pause_enabled is False
     assert not hasattr(settings, "supabase_anon_key")
 
 

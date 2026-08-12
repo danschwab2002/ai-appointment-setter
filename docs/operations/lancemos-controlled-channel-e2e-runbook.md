@@ -52,6 +52,7 @@ no imprimir valores:
 - `DURABLE_OUTBOUND_ENABLED=false`;
 - `CHATWOOT_AUTOMATED_REPLIES_ENABLED=false`;
 - `CHATWOOT_REPLY_SPLITTER_ENABLED=false`;
+- `CHATWOOT_HUMAN_PAUSE_ENABLED=false`;
 - `HERMES_SHADOW_ENABLED=false`;
 - `RESOLUTION_WORKER_ENABLED=false` y `HOTMART_PURCHASE_WORKER_ENABLED=false`;
 - `CHATWOOT_DURABLE_OPT_OUT_ENABLED=false`;
@@ -111,6 +112,7 @@ CHATWOOT_INBOX_ID=<inbox WABA verificado>
 MESSAGING_CHANNEL=waba
 CHATWOOT_AUTOMATED_REPLIES_ENABLED=false
 CHATWOOT_REPLY_SPLITTER_ENABLED=false
+CHATWOOT_HUMAN_PAUSE_ENABLED=false
 HERMES_SHADOW_ENABLED=false
 CHATWOOT_DURABLE_OPT_OUT_ENABLED=false
 CHATWOOT_OPT_OUT_MACRO_ID=<unset>
@@ -187,8 +189,8 @@ flags de 4.1 en `false`/`unset`. Si aparece un efecto inesperado:
 
 1. detener el servicio bridge antes de investigar;
 2. no borrar la conversación, capturas ni efectos durables;
-3. confirmar nuevamente que los workers de reply, shadow, resolución, compra,
-   dispatcher, opt-out y handoff no fueron construidos;
+3. confirmar nuevamente que pausa humana y los workers de reply, shadow,
+   resolución, compra, dispatcher, opt-out y handoff quedaron deshabilitados;
 4. verificar backlog de ambas proyecciones y reconciliar cualquier lease o efecto
    incierto sin retry ciego;
 5. reanudar sólo con un snapshot nuevo que vuelva a producir `status=ready`.

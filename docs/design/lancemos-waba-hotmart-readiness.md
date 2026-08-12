@@ -66,8 +66,8 @@ Pendientes operativos:
 
 - cargar el account/inbox WABA y la referencia opaca de canal en el servicio;
 - mantener boundary, dispatcher, outbound, replies, splitter, shadow, resolución,
-  opt-out y handoff admission/projection en default-off, con backlogs de proyección
-  en cero;
+  compra, pausa humana, opt-out y handoff admission/projection en default-off,
+  con backlogs de proyección en cero;
 - retirar de Evolution su integración Chatwoot sin borrar el inbox histórico;
 - crear o seleccionar un Team humano y verificar sus miembros;
 - configurar el único destinatario de prueba en el secret store;
@@ -183,9 +183,10 @@ Hasta entonces pueden ejecutarse sin efectos externos:
 
 La corrida inbound previa al pago está definida separadamente en el runbook. Sólo
 prueba WABA → Chatwoot → bridge y debe ejecutarse con replies, splitter, shadow,
-resolución, compra Hotmart, dispatcher, outbound, opt-out durable/projection,
-handoff admission/projection y perímetro apagados. Los backlogs de proyección de
-opt-out y handoff deben ser cero. No usa template ni habilita Hotmart.
+resolución, compra Hotmart, pausa humana, dispatcher, outbound, opt-out
+durable/projection, handoff admission/projection y perímetro apagados. Los
+backlogs de proyección de opt-out y handoff deben ser cero. No usa template ni
+habilita Hotmart.
 
 ## 7. Criterio de cierre del Workstream E
 

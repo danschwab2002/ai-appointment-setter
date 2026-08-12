@@ -57,6 +57,7 @@ def _snapshot() -> dict[str, object]:
             "opt_out_projection_enabled": False,
             "human_handoff_admission_enabled": False,
             "human_handoff_projection_enabled": False,
+            "human_pause_enabled": False,
             "opt_out_projection_backlog_zero": True,
             "human_handoff_projection_backlog_zero": True,
             "sensitive_probe_value": "must-never-be-printed",
@@ -258,6 +259,7 @@ _OFF_STATE_GATES = [
     ("opt_out_projection_enabled", "bridge_opt_out_projection_not_off"),
     ("human_handoff_admission_enabled", "bridge_handoff_admission_not_off"),
     ("human_handoff_projection_enabled", "bridge_handoff_projection_not_off"),
+    ("human_pause_enabled", "bridge_human_pause_not_off"),
 ]
 
 
