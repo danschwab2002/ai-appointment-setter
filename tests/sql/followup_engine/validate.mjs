@@ -23,6 +23,10 @@ const perCaseAnchorMigration = await readFile(
   `${root}/supabase/migrations/20260805000300_per_case_conversation_anchor.sql`,
   'utf8',
 );
+const absoluteDeadlinesMigration = await readFile(
+  `${root}/supabase/migrations/20260813000100_absolute_followup_deadlines.sql`,
+  'utf8',
+);
 const finalE2ePolicySeed = await readFile(
   `${root}/supabase/seeds/20260806000100_cart_recovery_e2e_final_v1.sql`,
   'utf8',
@@ -41,6 +45,47 @@ await db.exec(contactAuthorizationGrantMigration);
 console.log('contact_authorization_grant_migration_apply=OK');
 await db.exec(perCaseAnchorMigration);
 console.log('per_case_anchor_migration_apply=OK');
+await db.exec(absoluteDeadlinesMigration);
+console.log('absolute_deadlines_migration_apply=OK');
+const requestStartsBeforeNegativePolicy = await db.query(`
+  select count(*)::int as count
+  from public.followup_delivery_attempts
+  where phase='request_started'
+`);
+let negativePolicyRejected = false;
+try {
+  await db.exec(`
+    insert into public.followup_policy_versions (
+      policy_key, version, status, purpose, timezone, business_windows,
+      grace_period, expires_after, max_automatic_messages, steps,
+      approved_by, approved_at, published_at
+    ) values (
+      'negative-offset-probe', 1, 'published', 'cart_recovery', 'UTC',
+      '[{"days":[1,2,3,4,5,6,7],"start":"00:00","end":"23:59"}]',
+      interval '0', interval '1 day', 2,
+      '[{"step_key":"first_contact","mode":"freeform"},{"step_key":"followup_1","delay":"-2 seconds","mode":"freeform"}]',
+      'probe', now(), now()
+    )
+  `);
+} catch (error) {
+  negativePolicyRejected = String(error?.message ?? error).includes(
+    'negative_policy_step_offset',
+  );
+}
+if (!negativePolicyRejected) throw new Error('negative policy offset was accepted');
+const negativePolicyEvidence = await db.query(`
+  select
+    (select count(*)::int from public.followup_policy_versions
+     where policy_key='negative-offset-probe') as policy_count,
+    (select count(*)::int from public.followup_delivery_attempts
+     where phase='request_started') as request_started_count
+`);
+if (negativePolicyEvidence.rows[0].policy_count !== 0
+    || negativePolicyEvidence.rows[0].request_started_count
+       !== requestStartsBeforeNegativePolicy.rows[0].count) {
+  throw new Error('negative policy produced durable request-start evidence');
+}
+console.log('negative_policy_blocked_before_request_start=OK');
 await db.exec(finalE2ePolicySeed);
 const finalE2ePolicy = await db.query(`
   select grace_period = interval '0 seconds' as immediate_first_message,
@@ -114,7 +159,7 @@ await db.exec(`
     'cart-recovery-test', 1, 'published', 'cart_recovery', 'UTC',
     '[{"days":[1,2,3,4,5,6,7],"start":"00:00","end":"23:59"}]'::jsonb,
     interval '1 hour', interval '7 days', 3,
-    '[{"step_key":"first_contact","mode":"freeform"},{"step_key":"followup_1","delay":"24 hours","mode":"freeform"}]'::jsonb,
+    '[{"step_key":"first_contact","mode":"freeform"},{"step_key":"followup_1","delay":"24 hours","mode":"freeform"},{"step_key":"followup_2","delay":"48 hours","mode":"freeform"}]'::jsonb,
     'operator-test', now(), now()
   );
   insert into public.webhook_events (
@@ -518,6 +563,75 @@ const successor = await db.query(`
 `, [plan1.rows[0].followup_sequence_id]);
 if (successor.rows.length !== 1 || successor.rows[0].action_type !== 'no_reply_review') throw new Error('next review missing');
 if (successor.rows[0].anchor_type !== 'accepted_outbound_message') throw new Error('next review anchor missing');
+
+await db.exec('begin');
+try {
+  const absoluteClaim = await db.query(`
+    select * from public.claim_due_followup_actions(
+      'absolute-deadline-worker', now() + interval '25 hours', interval '5 minutes', 10
+    )
+  `);
+  const absoluteAction = absoluteClaim.rows.find((row) => row.id === successor.rows[0].id);
+  if (!absoluteAction) throw new Error('absolute deadline successor not claimed');
+  const absoluteFence = await db.query(`
+    select revision from public.followup_sequences where id=$1
+  `, [plan1.rows[0].followup_sequence_id]);
+  await authorizeExecute(
+    absoluteAction.id,
+    'absolute-deadline-worker',
+    absoluteAction.lease_generation,
+    successor.rows[0].expected_case_version,
+    absoluteFence.rows[0].revision,
+  );
+  const absoluteAttempt = await db.query(`
+    select * from public.reserve_followup_delivery_attempt(
+      $1, 'absolute-deadline-worker', $2, $3, $4,
+      'whatsapp', 'freeform', now() + interval '25 hours'
+    )
+  `, [
+    absoluteAction.id,
+    absoluteAction.lease_generation,
+    successor.rows[0].expected_case_version,
+    absoluteFence.rows[0].revision,
+  ]);
+  await db.query(`
+    select * from public.mark_followup_request_started(
+      $1, $2, 'absolute-deadline-worker', $3, now() + interval '25 hours'
+    )
+  `, [absoluteAction.id, absoluteAttempt.rows[0].id, absoluteAction.lease_generation]);
+  await db.query(`
+    select * from public.record_and_finalize_followup_acceptance(
+      $1, $2, 'absolute-deadline-worker', $3,
+      '7001', 'absolute-deadline-message', 'Mensaje tardío de prueba',
+      now() + interval '25 hours'
+    )
+  `, [absoluteAction.id, absoluteAttempt.rows[0].id, absoluteAction.lease_generation]);
+  const absoluteDue = await db.query(`
+    select extract(epoch from (
+      next_action.due_at - first_attempt.accepted_at
+    ))::int as seconds_from_sequence_start
+    from public.scheduled_actions next_action
+    cross join lateral (
+      select min(attempt.accepted_at) as accepted_at
+      from public.followup_delivery_attempts attempt
+      join public.scheduled_actions prior_action on prior_action.id=attempt.action_id
+      where prior_action.followup_sequence_id=next_action.followup_sequence_id
+        and attempt.outcome='accepted_by_chatwoot'
+    ) first_attempt
+    where next_action.followup_sequence_id=$1
+      and next_action.status='pending'
+      and next_action.step_key='followup_2'
+  `, [plan1.rows[0].followup_sequence_id]);
+  if (absoluteDue.rows.length !== 1
+      || absoluteDue.rows[0].seconds_from_sequence_start !== 48 * 60 * 60) {
+    throw new Error(
+      `follow-up deadline was chained instead of absolute: ${JSON.stringify(absoluteDue.rows)}`,
+    );
+  }
+  console.log('absolute_followup_deadline=OK');
+} finally {
+  await db.exec('rollback');
+}
 
 const successorFence = await db.query(`
   select revision from public.followup_sequences where id=$1
@@ -2090,8 +2204,8 @@ if (finalE2ePlan.rows.length !== 1 || finalE2ePlan.rows[0].created !== true) {
 const finalE2eAcceptedAt = [
   '2099-02-01T00:00:00.000Z',
   '2099-02-01T00:02:00.000Z',
-  '2099-02-01T00:07:00.000Z',
-  '2099-02-01T00:17:00.000Z',
+  '2099-02-01T00:05:00.000Z',
+  '2099-02-01T00:10:00.000Z',
 ];
 for (let index = 0; index < finalE2eAcceptedAt.length; index += 1) {
   const pending = await db.query(`
@@ -2103,7 +2217,7 @@ for (let index = 0; index < finalE2eAcceptedAt.length; index += 1) {
     throw new Error(`final E2E expected one pending action before message ${index + 1}`);
   }
   if (!pending.rows[0].due_at_matches) {
-    throw new Error(`final E2E message ${index + 1} was not due at the exact relative delay`);
+    throw new Error(`final E2E message ${index + 1} was not due at the exact absolute offset`);
   }
   const claimed = await db.query(`
     select * from public.claim_due_followup_actions(

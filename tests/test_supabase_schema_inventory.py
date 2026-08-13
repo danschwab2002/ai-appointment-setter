@@ -59,6 +59,15 @@ def test_supabase_schema_inventory_reports_non_authoritative_fingerprints() -> N
     assert "select\n    version" in sql.lower()
 
 
+def test_absolute_deadline_fingerprint_checks_semantics_and_rejects_chaining() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+
+    assert "min(attempt.accepted_at)" in sql
+    assert "v_next_due_at := v_sequence_started_at + v_next_delay" in sql
+    assert "v_next_due_at := p_now + v_next_delay" in sql
+    assert "followup_policy_step_offsets_validate" in sql
+
+
 def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
