@@ -1263,6 +1263,12 @@ para owner, generación y lease.
 
 ### Corte C — efecto saliente simulado
 
+Subset C1 implementado fixture-only: `delivery_unknown`, observación tardía accepted,
+claim fenced del reconciliador, resolución `found`, conflicto de referencias finales,
+`unresolved` antes del deadline y bloqueo al vencer. Usa app interna con grant/token
+separado y no ejecuta POST ni conector. Permanecen pendientes los puntos 2–3,
+`rejected`, `not_applied` con nuevo attempt y el conector simulado stateful.
+
 1. Reserva no llama al conector.
 2. Revocación antes de request-start produce `cancelled_before_request` y cero POST.
 3. Request-start confirmado permite exactamente un POST.

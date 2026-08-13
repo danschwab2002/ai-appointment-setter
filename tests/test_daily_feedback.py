@@ -23,9 +23,12 @@ from bridge.daily_feedback import (
     LogicalBatchConflictError,
     FixtureOperatorGrant,
     FixtureReviewerGrant,
+    FixtureReconciliationGrant,
     ReviewPrincipal,
     ReviewAuthorizationError,
     ReviewDeliveryConflictError,
+    ReconciliationPrincipal,
+    ReconciliationServiceGrant,
     SessionClaimConflictError,
     StorageConflictError,
     WorkerPrincipal,
@@ -87,6 +90,68 @@ def _worker_store(
             )
         },
     )
+
+
+def _reconciliation_store(
+    root: Path, now: datetime
+) -> DailyFeedbackBatchStore:
+    return DailyFeedbackBatchStore(
+        root,
+        worker_grants={
+            "fixture-worker": WorkerLeaseGrant(
+                worker_owner="fixture-worker",
+                worker_lease_generation=1,
+                lease_expires_at=now + timedelta(minutes=5),
+                active=True,
+            )
+        },
+        reconciliation_grants={
+            "fixture-reconciler": ReconciliationServiceGrant(
+                reconciliation_owner="fixture-reconciler",
+                active=True,
+            ),
+            "fixture-reconciler-rival": ReconciliationServiceGrant(
+                reconciliation_owner="fixture-reconciler-rival",
+                active=True,
+            ),
+        },
+    )
+
+
+def _started_delivery(
+    root: Path, now: datetime
+) -> tuple[
+    DailyFeedbackBatchStore,
+    CreateBatchResult,
+    ReviewPrincipal,
+    WorkerPrincipal,
+    str,
+]:
+    store = _worker_store(root, now)
+    created = _create_batch(store, fixture_set=_fixture_set("a"))
+    reviewer = ReviewPrincipal("reviewer-1", "binding-1", "session-1", True)
+    worker = WorkerPrincipal("fixture-worker", 1, True)
+    claim = store.claim_review_session(
+        command_id="claim-1", batch_id=created.batch.batch_id,
+        principal=reviewer, expected_batch_revision=1,
+        lease_seconds=120, now=now,
+    )
+    item = store.get_next_review_item(
+        batch_id=created.batch.batch_id, principal=reviewer,
+        session_fence=claim.session_fence, now=now,
+    )
+    reserved = store.reserve_review_delivery(
+        command_id="reserve-1", batch_id=created.batch.batch_id,
+        snapshot_id=item.snapshot_id, payload_hash=item.payload_hash,
+        reviewer=reviewer, session_fence=claim.session_fence, worker=worker,
+        worker_lease_expires_at=now + timedelta(seconds=90), now=now,
+    )
+    store.mark_review_delivery_request_started(
+        command_id="start-1", delivery_attempt_id=reserved.delivery_attempt_id,
+        reviewer=reviewer, session_fence=claim.session_fence,
+        worker=worker, now=now + timedelta(seconds=1),
+    )
+    return store, created, reviewer, worker, reserved.delivery_attempt_id
 
 
 def test_creates_ready_batch_with_stable_fixture_order(tmp_path: Path) -> None:
@@ -608,6 +673,530 @@ def test_simulated_delivery_commands_replay_exact_durable_results(
     assert _worker_store(root, now).finalize_review_delivery(
         **finalize_args
     ).status == "replayed"
+
+
+def test_unknown_finalization_preserves_item_and_sets_reconciliation_deadline(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, _reviewer, worker, attempt_id = _started_delivery(root, now)
+    deadline = now + timedelta(minutes=15)
+
+    result = store.finalize_review_delivery(
+        command_id="finalize-unknown",
+        delivery_attempt_id=attempt_id,
+        worker=worker,
+        observed_result="delivery_unknown",
+        remote_reference="simulated-ambiguous-1",
+        reconciliation_deadline=deadline,
+        now=now + timedelta(seconds=2),
+    )
+
+    assert result.outcome == "delivery_unknown"
+    assert result.phase == "finalized"
+    assert result.item_status == "pending"
+    assert result.batch_status == "ready"
+    runtime = json.loads(
+        (root / "runtime" / f"{created.batch.batch_id}.json").read_text()
+    )
+    attempt = runtime["delivery_attempts"][attempt_id]
+    assert attempt["reconciliation_deadline"] == deadline.isoformat()
+    with pytest.raises(ReviewDeliveryConflictError, match="delivery_phase_conflict"):
+        store.finalize_review_delivery(
+            command_id="finalize-conflicting",
+            delivery_attempt_id=attempt_id,
+            worker=worker,
+            observed_result="accepted",
+            remote_reference="simulated-message-1",
+            now=now + timedelta(seconds=3),
+        )
+
+
+def test_late_observation_is_append_only_and_bound_to_historical_worker(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, _reviewer, worker, attempt_id = _started_delivery(root, now)
+    store.finalize_review_delivery(
+        command_id="finalize-unknown", delivery_attempt_id=attempt_id,
+        worker=worker, observed_result="delivery_unknown",
+        remote_reference="simulated-ambiguous-1",
+        reconciliation_deadline=now + timedelta(minutes=15),
+        now=now + timedelta(seconds=2),
+    )
+
+    observation = store.submit_late_delivery_observation(
+        command_id="observe-accepted",
+        delivery_attempt_id=attempt_id,
+        worker=worker,
+        observed_result="accepted",
+        remote_reference="simulated-message-1",
+        observed_at=now + timedelta(seconds=3),
+        submitted_at=now + timedelta(minutes=6),
+    )
+
+    assert observation.status == "applied"
+    assert observation.observed_result == "accepted"
+    assert observation.observation_fingerprint.startswith("sha256:")
+    runtime = json.loads(
+        (root / "runtime" / f"{created.batch.batch_id}.json").read_text()
+    )
+    attempt = runtime["delivery_attempts"][attempt_id]
+    assert attempt["outcome"] == "delivery_unknown"
+    assert runtime["items"][0]["status"] == "pending"
+    assert len(runtime["delivery_observations"]) == 1
+
+    with pytest.raises(ReviewDeliveryConflictError, match="worker_fence_stale"):
+        store.submit_late_delivery_observation(
+            command_id="observe-wrong-worker",
+            delivery_attempt_id=attempt_id,
+            worker=WorkerPrincipal("fixture-worker", 2, True),
+            observed_result="accepted",
+            remote_reference="simulated-message-1",
+            observed_at=now + timedelta(seconds=3),
+            submitted_at=now + timedelta(minutes=6),
+        )
+
+
+def test_late_observation_requires_active_server_side_historical_grant(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, _created, _reviewer, worker, attempt_id = _started_delivery(root, now)
+    store.finalize_review_delivery(
+        command_id="unknown", delivery_attempt_id=attempt_id,
+        worker=worker, observed_result="delivery_unknown",
+        remote_reference="ambiguous",
+        reconciliation_deadline=now + timedelta(minutes=15),
+        now=now + timedelta(seconds=2),
+    )
+    unauthorized = DailyFeedbackBatchStore(root)
+    with pytest.raises(ReviewDeliveryConflictError, match="worker_fence_stale"):
+        unauthorized.submit_late_delivery_observation(
+            command_id="forged-late", delivery_attempt_id=attempt_id,
+            worker=worker, observed_result="accepted", remote_reference="message-1",
+            observed_at=now + timedelta(minutes=2),
+            submitted_at=now + timedelta(minutes=6),
+        )
+
+
+def test_tampered_late_observation_content_fails_integrity_validation(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, reviewer, worker, attempt_id = _started_delivery(root, now)
+    store.finalize_review_delivery(
+        command_id="unknown", delivery_attempt_id=attempt_id,
+        worker=worker, observed_result="delivery_unknown",
+        remote_reference="ambiguous",
+        reconciliation_deadline=now + timedelta(minutes=15),
+        now=now + timedelta(seconds=2),
+    )
+    observation = store.submit_late_delivery_observation(
+        command_id="observe", delivery_attempt_id=attempt_id,
+        worker=worker, observed_result="accepted", remote_reference="message-1",
+        observed_at=now + timedelta(minutes=2),
+        submitted_at=now + timedelta(minutes=6),
+    )
+    runtime_path = root / "runtime" / f"{created.batch.batch_id}.json"
+    runtime = json.loads(runtime_path.read_text())
+    runtime["delivery_observations"][observation.observation_fingerprint][
+        "remote_reference"
+    ] = "tampered-message"
+    runtime_path.write_text(json.dumps(runtime) + "\n")
+    runtime_path.chmod(0o600)
+
+    with pytest.raises(StorageConflictError, match="daily_feedback_runtime_invalid"):
+        store.get_next_review_item(
+            batch_id=created.batch.batch_id, principal=reviewer,
+            session_fence=1, now=now,
+        )
+
+
+def test_reconciler_claim_consumes_compatible_observation_exactly_once(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store = _reconciliation_store(root, now)
+    created = _create_batch(store, fixture_set=_fixture_set("a"))
+    reviewer = ReviewPrincipal("reviewer-1", "binding-1", "session-1", True)
+    worker = WorkerPrincipal("fixture-worker", 1, True)
+    claim = store.claim_review_session(
+        command_id="claim-1", batch_id=created.batch.batch_id,
+        principal=reviewer, expected_batch_revision=1,
+        lease_seconds=120, now=now,
+    )
+    item = store.get_next_review_item(
+        batch_id=created.batch.batch_id, principal=reviewer,
+        session_fence=claim.session_fence, now=now,
+    )
+    reserved = store.reserve_review_delivery(
+        command_id="reserve-1", batch_id=created.batch.batch_id,
+        snapshot_id=item.snapshot_id, payload_hash=item.payload_hash,
+        reviewer=reviewer, session_fence=claim.session_fence, worker=worker,
+        worker_lease_expires_at=now + timedelta(seconds=90), now=now,
+    )
+    store.mark_review_delivery_request_started(
+        command_id="start-1", delivery_attempt_id=reserved.delivery_attempt_id,
+        reviewer=reviewer, session_fence=claim.session_fence,
+        worker=worker, now=now + timedelta(seconds=1),
+    )
+    store.finalize_review_delivery(
+        command_id="finalize-unknown",
+        delivery_attempt_id=reserved.delivery_attempt_id,
+        worker=worker, observed_result="delivery_unknown",
+        remote_reference="simulated-ambiguous-1",
+        reconciliation_deadline=now + timedelta(minutes=15),
+        now=now + timedelta(seconds=2),
+    )
+    observation = store.submit_late_delivery_observation(
+        command_id="observe-accepted",
+        delivery_attempt_id=reserved.delivery_attempt_id,
+        worker=worker, observed_result="accepted",
+        remote_reference="simulated-message-1",
+        observed_at=now + timedelta(seconds=3),
+        submitted_at=now + timedelta(minutes=6),
+    )
+    reconciler = ReconciliationPrincipal("fixture-reconciler", True)
+
+    reconciliation_claim = store.claim_delivery_reconciliation(
+        command_id="claim-reconciliation",
+        delivery_attempt_id=reserved.delivery_attempt_id,
+        reconciler=reconciler,
+        lease_seconds=120,
+        now=now + timedelta(minutes=6),
+    )
+    assert reconciliation_claim.reconciliation_generation == 1
+    with pytest.raises(ReviewDeliveryConflictError, match="reconciliation_lease_active"):
+        store.claim_delivery_reconciliation(
+            command_id="claim-reconciliation-rival",
+            delivery_attempt_id=reserved.delivery_attempt_id,
+            reconciler=ReconciliationPrincipal("fixture-reconciler-rival", True),
+            lease_seconds=120,
+            now=now + timedelta(minutes=6),
+        )
+
+    reconciled = store.reconcile_review_delivery(
+        command_id="reconcile-found",
+        delivery_attempt_id=reserved.delivery_attempt_id,
+        reconciler=reconciler,
+        reconciliation_generation=reconciliation_claim.reconciliation_generation,
+        resolution="found",
+        observation_fingerprint=observation.observation_fingerprint,
+        now=now + timedelta(minutes=6, seconds=1),
+    )
+
+    assert reconciled.outcome == "accepted"
+    assert reconciled.item_status == "presented"
+    assert reconciled.batch_status == "in_review"
+    replay = store.reconcile_review_delivery(
+        command_id="reconcile-found",
+        delivery_attempt_id=reserved.delivery_attempt_id,
+        reconciler=reconciler,
+        reconciliation_generation=reconciliation_claim.reconciliation_generation,
+        resolution="found",
+        observation_fingerprint=observation.observation_fingerprint,
+        now=now + timedelta(minutes=6, seconds=1),
+    )
+    assert replay.status == "replayed"
+
+
+def test_reconciliation_rejects_conflicting_final_observations(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, _created, _reviewer, worker, attempt_id = _started_delivery(root, now)
+    store.finalize_review_delivery(
+        command_id="unknown", delivery_attempt_id=attempt_id,
+        worker=worker, observed_result="delivery_unknown",
+        remote_reference="ambiguous",
+        reconciliation_deadline=now + timedelta(minutes=15),
+        now=now + timedelta(seconds=2),
+    )
+    first = store.submit_late_delivery_observation(
+        command_id="observe-1", delivery_attempt_id=attempt_id,
+        worker=worker, observed_result="accepted",
+        remote_reference="simulated-message-1",
+        observed_at=now + timedelta(seconds=3),
+        submitted_at=now + timedelta(minutes=6),
+    )
+    store.submit_late_delivery_observation(
+        command_id="observe-2", delivery_attempt_id=attempt_id,
+        worker=worker, observed_result="accepted",
+        remote_reference="simulated-message-2",
+        observed_at=now + timedelta(seconds=4),
+        submitted_at=now + timedelta(minutes=6),
+    )
+    store = _reconciliation_store(root, now)
+    reconciler = ReconciliationPrincipal("fixture-reconciler", True)
+    lease = store.claim_delivery_reconciliation(
+        command_id="claim-reconcile", delivery_attempt_id=attempt_id,
+        reconciler=reconciler, lease_seconds=120,
+        now=now + timedelta(minutes=6),
+    )
+
+    with pytest.raises(ReviewDeliveryConflictError, match="delivery_result_conflict"):
+        store.reconcile_review_delivery(
+            command_id="reconcile", delivery_attempt_id=attempt_id,
+            reconciler=reconciler,
+            reconciliation_generation=lease.reconciliation_generation,
+            resolution="found", observation_fingerprint=first.observation_fingerprint,
+            now=now + timedelta(minutes=6, seconds=1),
+        )
+
+
+def test_unresolved_reconciliation_waits_then_blocks_at_deadline(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, _reviewer, worker, attempt_id = _started_delivery(root, now)
+    deadline = now + timedelta(minutes=15)
+    store.finalize_review_delivery(
+        command_id="unknown", delivery_attempt_id=attempt_id,
+        worker=worker, observed_result="delivery_unknown",
+        remote_reference="ambiguous", reconciliation_deadline=deadline,
+        now=now + timedelta(seconds=2),
+    )
+    store = _reconciliation_store(root, now)
+    reconciler = ReconciliationPrincipal("fixture-reconciler", True)
+    first_lease = store.claim_delivery_reconciliation(
+        command_id="claim-before", delivery_attempt_id=attempt_id,
+        reconciler=reconciler, lease_seconds=60,
+        now=now + timedelta(minutes=10),
+    )
+    pending = store.reconcile_review_delivery(
+        command_id="unresolved-before", delivery_attempt_id=attempt_id,
+        reconciler=reconciler,
+        reconciliation_generation=first_lease.reconciliation_generation,
+        resolution="unresolved", observation_fingerprint=None,
+        now=now + timedelta(minutes=10, seconds=1),
+    )
+    assert pending.outcome == "delivery_unknown"
+    assert pending.batch_status == "ready"
+
+    second_lease = store.claim_delivery_reconciliation(
+        command_id="claim-after", delivery_attempt_id=attempt_id,
+        reconciler=reconciler, lease_seconds=60,
+        now=now + timedelta(minutes=16),
+    )
+    blocked = store.reconcile_review_delivery(
+        command_id="unresolved-after", delivery_attempt_id=attempt_id,
+        reconciler=reconciler,
+        reconciliation_generation=second_lease.reconciliation_generation,
+        resolution="unresolved", observation_fingerprint=None,
+        now=now + timedelta(minutes=16, seconds=1),
+    )
+    assert blocked.outcome == "delivery_unknown"
+    assert blocked.item_status == "pending"
+    assert blocked.batch_status == "blocked"
+    runtime = json.loads(
+        (root / "runtime" / f"{created.batch.batch_id}.json").read_text()
+    )
+    assert runtime["batch_status"] == "blocked"
+
+
+def test_found_after_deadline_block_fails_without_corrupting_runtime(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, _reviewer, worker, attempt_id = _started_delivery(root, now)
+    store.finalize_review_delivery(
+        command_id="unknown", delivery_attempt_id=attempt_id,
+        worker=worker, observed_result="delivery_unknown", remote_reference="ambiguous",
+        reconciliation_deadline=now + timedelta(minutes=7),
+        now=now + timedelta(seconds=2),
+    )
+    observation = store.submit_late_delivery_observation(
+        command_id="observe", delivery_attempt_id=attempt_id,
+        worker=worker, observed_result="accepted", remote_reference="message-1",
+        observed_at=now + timedelta(minutes=6),
+        submitted_at=now + timedelta(minutes=6),
+    )
+    store = _reconciliation_store(root, now)
+    reconciler = ReconciliationPrincipal("fixture-reconciler", True)
+    claim = store.claim_delivery_reconciliation(
+        command_id="claim", delivery_attempt_id=attempt_id,
+        reconciler=reconciler, lease_seconds=120,
+        now=now + timedelta(minutes=6),
+    )
+    store.reconcile_review_delivery(
+        command_id="block", delivery_attempt_id=attempt_id,
+        reconciler=reconciler,
+        reconciliation_generation=claim.reconciliation_generation,
+        resolution="unresolved", observation_fingerprint=None,
+        now=now + timedelta(minutes=7),
+    )
+    runtime_path = root / "runtime" / f"{created.batch.batch_id}.json"
+    before = runtime_path.read_bytes()
+    with pytest.raises(ReviewDeliveryConflictError, match="delivery_result_conflict"):
+        store.reconcile_review_delivery(
+            command_id="found-after-block", delivery_attempt_id=attempt_id,
+            reconciler=reconciler,
+            reconciliation_generation=claim.reconciliation_generation,
+            resolution="found",
+            observation_fingerprint=observation.observation_fingerprint,
+            now=now + timedelta(minutes=7, seconds=1),
+        )
+    assert runtime_path.read_bytes() == before
+    with pytest.raises(ReviewDeliveryConflictError, match="delivery_result_conflict"):
+        store.claim_delivery_reconciliation(
+            command_id="claim-after-block", delivery_attempt_id=attempt_id,
+            reconciler=reconciler, lease_seconds=120,
+            now=now + timedelta(minutes=7, seconds=1),
+        )
+    assert runtime_path.read_bytes() == before
+
+
+def test_reconciliation_takeover_fences_expired_generation(tmp_path: Path) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, _created, _reviewer, worker, attempt_id = _started_delivery(root, now)
+    store.finalize_review_delivery(
+        command_id="unknown", delivery_attempt_id=attempt_id,
+        worker=worker, observed_result="delivery_unknown",
+        remote_reference="ambiguous",
+        reconciliation_deadline=now + timedelta(minutes=15),
+        now=now + timedelta(seconds=2),
+    )
+    store = _reconciliation_store(root, now)
+    first = ReconciliationPrincipal("fixture-reconciler", True)
+    second = ReconciliationPrincipal("fixture-reconciler-rival", True)
+    first_claim = store.claim_delivery_reconciliation(
+        command_id="claim-first", delivery_attempt_id=attempt_id,
+        reconciler=first, lease_seconds=10, now=now + timedelta(minutes=6),
+    )
+    second_claim = store.claim_delivery_reconciliation(
+        command_id="claim-second", delivery_attempt_id=attempt_id,
+        reconciler=second, lease_seconds=60,
+        now=now + timedelta(minutes=6, seconds=11),
+    )
+    assert second_claim.reconciliation_generation == (
+        first_claim.reconciliation_generation + 1
+    )
+
+    with pytest.raises(ReviewDeliveryConflictError, match="reconciliation_fence_stale"):
+        store.reconcile_review_delivery(
+            command_id="stale-unresolved", delivery_attempt_id=attempt_id,
+            reconciler=first,
+            reconciliation_generation=first_claim.reconciliation_generation,
+            resolution="unresolved", observation_fingerprint=None,
+            now=now + timedelta(minutes=6, seconds=12),
+        )
+    current = store.reconcile_review_delivery(
+        command_id="current-unresolved", delivery_attempt_id=attempt_id,
+        reconciler=second,
+        reconciliation_generation=second_claim.reconciliation_generation,
+        resolution="unresolved", observation_fingerprint=None,
+        now=now + timedelta(minutes=6, seconds=12),
+    )
+    assert current.outcome == "delivery_unknown"
+
+
+def test_new_same_owner_reconciliation_claim_fences_prior_claim(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, _created, _reviewer, worker, attempt_id = _started_delivery(root, now)
+    store.finalize_review_delivery(
+        command_id="unknown", delivery_attempt_id=attempt_id,
+        worker=worker, observed_result="delivery_unknown",
+        remote_reference="ambiguous",
+        reconciliation_deadline=now + timedelta(minutes=15),
+        now=now + timedelta(seconds=2),
+    )
+    store = _reconciliation_store(root, now)
+    reconciler = ReconciliationPrincipal("fixture-reconciler", True)
+    first = store.claim_delivery_reconciliation(
+        command_id="claim-first", delivery_attempt_id=attempt_id,
+        reconciler=reconciler, lease_seconds=120,
+        now=now + timedelta(minutes=6),
+    )
+    second = store.claim_delivery_reconciliation(
+        command_id="claim-second", delivery_attempt_id=attempt_id,
+        reconciler=reconciler, lease_seconds=120,
+        now=now + timedelta(minutes=6, seconds=1),
+    )
+    assert second.reconciliation_generation == first.reconciliation_generation + 1
+    with pytest.raises(ReviewDeliveryConflictError, match="reconciliation_fence_stale"):
+        store.reconcile_review_delivery(
+            command_id="stale", delivery_attempt_id=attempt_id,
+            reconciler=reconciler,
+            reconciliation_generation=first.reconciliation_generation,
+            resolution="unresolved", observation_fingerprint=None,
+            now=now + timedelta(minutes=6, seconds=2),
+        )
+
+
+def test_reconciliation_rejects_non_utc_clock_without_mutation(tmp_path: Path) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, _created, _reviewer, worker, attempt_id = _started_delivery(root, now)
+    store.finalize_review_delivery(
+        command_id="unknown", delivery_attempt_id=attempt_id,
+        worker=worker, observed_result="delivery_unknown",
+        remote_reference="ambiguous",
+        reconciliation_deadline=now + timedelta(minutes=15),
+        now=now + timedelta(seconds=2),
+    )
+    store = _reconciliation_store(root, now)
+    before = (root / "runtime" / next((root / "runtime").iterdir()).name).read_bytes()
+    with pytest.raises(ReviewDeliveryConflictError, match="invalid_reconciliation_clock"):
+        store.claim_delivery_reconciliation(
+            command_id="naive", delivery_attempt_id=attempt_id,
+            reconciler=ReconciliationPrincipal("fixture-reconciler", True),
+            lease_seconds=60, now=datetime(2026, 8, 13, 12, 6),
+        )
+    after = (root / "runtime" / next((root / "runtime").iterdir()).name).read_bytes()
+    assert after == before
+
+
+@pytest.mark.parametrize("mutation", ["blocked_without_attempt", "orphan_observation"])
+def test_reconciliation_runtime_tampering_fails_closed(
+    tmp_path: Path, mutation: str
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store = _reconciliation_store(root, now)
+    created = _create_batch(store, fixture_set=_fixture_set("a"))
+    reviewer = ReviewPrincipal("reviewer-1", "binding-1", "owner", True)
+    claim = store.claim_review_session(
+        command_id="claim", batch_id=created.batch.batch_id,
+        principal=reviewer, expected_batch_revision=1,
+        lease_seconds=120, now=now,
+    )
+    runtime_path = root / "runtime" / f"{created.batch.batch_id}.json"
+    runtime = json.loads(runtime_path.read_text())
+    if mutation == "blocked_without_attempt":
+        runtime["batch_status"] = "blocked"
+        runtime["batch_revision"] = 2
+    else:
+        runtime["delivery_observations"] = {
+            "sha256:orphan": {
+                "delivery_attempt_id": "attempt_missing",
+                "observation_fingerprint": "sha256:orphan",
+                "observed_result": "accepted",
+                "remote_reference": "message",
+                "observed_at": now.isoformat(),
+                "submitted_at": now.isoformat(),
+            }
+        }
+    runtime_path.write_text(json.dumps(runtime) + "\n")
+    runtime_path.chmod(0o600)
+
+    with pytest.raises(StorageConflictError, match="daily_feedback_runtime_invalid"):
+        store.get_next_review_item(
+            batch_id=created.batch.batch_id, principal=reviewer,
+            session_fence=claim.session_fence, now=now,
+        )
 
 
 def test_delivery_reservation_rejects_tampered_payload_and_duplicate_operation(
@@ -1240,6 +1829,75 @@ def test_review_session_claim_and_next_item_over_real_http(tmp_path: Path) -> No
     assert item.json()["position"] == 1
     assert item.json()["total"] == 2
     assert item.json()["presentation_snapshot"]["sanitized"] is True
+
+
+def test_reconciliation_claim_and_unresolved_over_real_http(tmp_path: Path) -> None:
+    root = tmp_path / "feedback"
+    now = datetime.now(UTC)
+    store, _created, _reviewer, worker, attempt_id = _started_delivery(root, now)
+    store.finalize_review_delivery(
+        command_id="unknown-http", delivery_attempt_id=attempt_id,
+        worker=worker, observed_result="delivery_unknown",
+        remote_reference="ambiguous-http",
+        reconciliation_deadline=now + timedelta(minutes=15),
+        now=now + timedelta(seconds=2),
+    )
+    store = DailyFeedbackBatchStore(
+        root,
+        reconciliation_grants={
+            "http-reconciler": ReconciliationServiceGrant(
+                reconciliation_owner="http-reconciler", active=True
+            )
+        },
+    )
+    app = create_daily_feedback_fixture_app(
+        store=store,
+        operator_grant=FixtureOperatorGrant(
+            token="controlled-operator-token", tenant_id="tenant-1",
+            scope_id="scope-1", reviewer_id="reviewer-1",
+            reviewer_binding_id="binding-1",
+            fixture_set_ids=frozenset({"fixtures-v1"}), active=True,
+        ),
+        reviewer_grant=FixtureReviewerGrant(
+            token="controlled-reviewer-token", reviewer_id="reviewer-1",
+            reviewer_binding_id="binding-1", session_owner="owner", active=True,
+        ),
+        reconciliation_grant=FixtureReconciliationGrant(
+            token="controlled-reconciliation-token",
+            reconciliation_owner="http-reconciler", active=True,
+        ),
+        fixture_sets={"fixtures-v1": _fixture_set("a")},
+    )
+
+    with _real_http_server(app) as base_url:
+        denied = httpx.post(
+            f"{base_url}/internal/daily-feedback/deliveries/reconciliation-claims",
+            headers={"Authorization": "Bearer controlled-reviewer-token"},
+            json={"command_id": "denied", "delivery_attempt_id": attempt_id,
+                  "lease_seconds": 120}, timeout=5,
+        )
+        claim = httpx.post(
+            f"{base_url}/internal/daily-feedback/deliveries/reconciliation-claims",
+            headers={"Authorization": "Bearer controlled-reconciliation-token"},
+            json={"command_id": "claim-http-reconcile",
+                  "delivery_attempt_id": attempt_id, "lease_seconds": 120},
+            timeout=5,
+        )
+        reconcile = httpx.post(
+            f"{base_url}/internal/daily-feedback/deliveries/reconcile",
+            headers={"Authorization": "Bearer controlled-reconciliation-token"},
+            json={"command_id": "reconcile-http", "delivery_attempt_id": attempt_id,
+                  "reconciliation_generation": claim.json()["reconciliation_generation"],
+                  "resolution": "unresolved", "observation_fingerprint": None},
+            timeout=5,
+        )
+
+    assert denied.status_code == 401
+    assert claim.status_code == 200
+    assert claim.json()["reconciliation_owner"] == "http-reconciler"
+    assert reconcile.status_code == 200
+    assert reconcile.json()["outcome"] == "delivery_unknown"
+    assert reconcile.json()["batch_status"] == "ready"
 
 
 def test_fixture_batch_http_rejects_missing_operator_token(tmp_path: Path) -> None:

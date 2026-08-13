@@ -1,11 +1,11 @@
-# Contrato implementado — lote y presentación diaria con fixtures (Cortes A–B)
+# Contrato implementado — lote, presentación y reconciliación fixture-only (Cortes A–C1)
 
 - **Estado:** Implementado y verificado localmente
-- **Versión:** `daily-owner-feedback-cut-b-v1`
+- **Versión:** `daily-owner-feedback-cut-c1-v1`
 - **Implementación:** `src/bridge/daily_feedback.py`
 - **Pruebas:** `tests/test_daily_feedback.py`
 - **Diseño rector:** [Contrato técnico propuesto del corte vertical](../design/client-copilot-feedback-vertical-slice-contract.md)
-- **Alcance:** lote durable, sesión fenced, lectura del próximo ítem y presentación simulada aceptada
+- **Alcance:** lote durable, sesión fenced, presentación simulada y reconciliación de aceptación ambigua
 
 ## 1. Límite implementado
 
@@ -22,9 +22,14 @@ fixture set sanitizado registrado en proceso
 → lectura pura del primer ítem no terminal
 → reserve → request_started → finalized(accepted)
 → proyección atómica a item=presented y batch=in_review
+→ request_started → finalized(delivery_unknown) con deadline
+→ observación tardía append-only
+→ claim exclusivo de reconciliación con lease/generación
+→ found → accepted/presented/in_review sin segundo POST
+→ unresolved vencido → batch=blocked
 ```
 
-No implementa scheduler, conversaciones reales, canal productivo, decisiones, feedback, interpretación, candidatos ni Conversation Releases. Tampoco implementa aún resultados `rejected`/`delivery_unknown`, conector externo, observaciones tardías ni reconciliación: pertenecen al Corte C.
+No implementa scheduler, conversaciones reales, canal productivo, decisiones, feedback, interpretación, candidatos ni Conversation Releases. Dentro del Corte C siguen pendientes `rejected`, `cancelled_before_request`, resolución demostrada `not_applied` con retry, conector simulado stateful y POST real/simulado contabilizado.
 
 ## 2. Frontera HTTP controlada
 
@@ -82,7 +87,16 @@ Un claim exitoso incrementa `session_fence`; no cambia `ready` a `in_review`. Ot
 
 Exige el mismo grant, owner, fence y lease vigente. Es lectura pura: devuelve el ítem no terminal de menor posición y su snapshot sanitizado, hash y release fixture sin modificar el runtime.
 
-Las fases de worker no se exponen por HTTP en este corte. Se invocan como operaciones internas determinísticas del store.
+Las fases de worker y la observación tardía no se exponen por HTTP. Se invocan como operaciones internas determinísticas del store.
+
+### Reconciliación interna fixture-only
+
+Un `FixtureReconciliationGrant` separado liga otro bearer token al `reconciliation_owner`; el token de reviewer no autoriza esta superficie. Los endpoints internos son:
+
+- `POST /internal/daily-feedback/deliveries/reconciliation-claims` con `command_id`, `delivery_attempt_id` y lease de 1–300 segundos;
+- `POST /internal/daily-feedback/deliveries/reconcile` con generación exacta, resolución `found`/`unresolved` y fingerprint de observación sólo cuando aplica.
+
+El reloj es server-owned. Errores de token devuelven `401`; grant inactivo `403`; payload inválido `422`; idempotencia, lease/fence, evidencia o resultado conflictivo `409` sin filtrar el runtime.
 
 ## 3. Clave lógica e idempotencia
 
@@ -128,7 +142,7 @@ Los snapshots contienen únicamente el fixture sanitizado registrado, incluyendo
 
 Cada batch con sesión posee un único registro runtime reemplazado atómicamente bajo un `flock` global compartido también con creación, con archivo temporal, `fsync`, `os.replace` y `fsync` del directorio. Conserva status/revision actuales, lease/fence, ítems, attempts y resultados de comandos. Antes de cualquier lectura o mutación, el store valida exactamente `(fixture_id, position, snapshot_id)` contra el batch comprometido y cada snapshot debe declarar el fixture correspondiente.
 
-Las únicas proyecciones aceptadas en Corte B son `pending/revision 1` y `presented/revision 2`. `ready/revision 1` exige cero ítems presentados; `in_review/revision 2` exige al menos uno. Cualquier combinación individualmente plausible pero semánticamente contradictoria falla cerrado.
+Las proyecciones de ítem aceptadas son `pending/revision 1` y `presented/revision 2`. `ready/revision 1` exige cero ítems presentados; `in_review/revision 2` exige al menos uno. `blocked/revision 2` exige cero presentados y exactamente un attempt `delivery_unknown` con evidencia durable de bloqueo posterior o igual al deadline. Observaciones deben apuntar a un attempt existente; su envelope conserva owner/generación históricos y el runtime recalcula el fingerprint canónico sobre todos sus campos antes de confiar en resultado o referencia final. Cualquier combinación contradictoria falla cerrado.
 
 `commands/` y `runtime_commands/` forman un único namespace global de `command_id`. El primero conserva comandos de creación comprometidos; el segundo materializa `command_id → fingerprint + batch + resultado` para runtime. Si un crash ocurre después del reemplazo runtime y antes del índice, el próximo lookup reconcilia el resultado desde todos los runtimes bajo el mismo lock antes de evaluar semántica nueva. Replay se resuelve antes de CAS/revisión/fence; reutilización entre creación/runtime, otro batch o tipo de comando falla `idempotency_conflict`.
 
@@ -153,12 +167,17 @@ reserve_review_delivery
 
 Reserva y request-start exigen reviewer/binding/session owner/fence vigentes y un `WorkerLeaseGrant` server-side activo cuyo owner, generación y vencimiento dominan exactamente al attempt. El worker no crea autoridad mediante el payload. Después de `request_started`, una aceptación demostrada puede proyectarse aunque el lease de sesión haya vencido, pero sigue exigiendo el grant worker capturado y vigente. Un reclaim con nueva generación cerca inmediatamente la generación anterior. Un payload hash distinto, segundo attempt para la misma clave semántica, fase incorrecta o autoridad stale falla cerrado. Cada comando persiste fingerprint y resultado durable para replay exacto.
 
+`delivery_unknown` exige referencia ambigua y deadline UTC futuro; mantiene item `pending` y batch `ready`, y bloquea otra finalización normal. `submit_late_delivery_observation` acepta únicamente `accepted` del worker owner/generación históricos exactos, respaldados todavía por un grant server-side activo de la misma generación; el lease temporal sí puede estar vencido. Agrega evidencia sin finalizar ni proyectar.
+
+`claim_delivery_reconciliation` usa identidad/grant separados, lease y generación monotónica. Cada claim nuevo aplicado —incluso del mismo owner durante su lease— incrementa la generación y cerca el claim anterior; otro owner sólo puede tomar control tras expiración. `reconcile_review_delivery(found)` exige una única referencia accepted compatible entre todas las observaciones y proyecta exactamente una vez. `unresolved` antes del deadline conserva unknown; al vencer persiste `blocked/revision 2`, que rechaza nuevos claims y reconciliaciones dentro de C1. Los replay exactos se resuelven antes de esa guardia terminal. Generación stale o evidencia conflictiva no mutan.
+
 ## 6. Estados producidos
 
 - `ready`: uno o más ítems materializados;
 - `completed_empty`: selección vacía;
 - `in_review`: primera aceptación proyectada;
 - revisión inicial del lote: `1`; primera proyección aceptada: `2`.
+- `blocked`: ambigüedad no resuelta al vencer el deadline, sin presentar el ítem ni habilitar retry.
 
 Cada ítem runtime empieza `pending/revision=1` y la aceptación lo lleva a `presented/revision=2`. El orden coincide exactamente con el fixture set registrado.
 
@@ -197,3 +216,14 @@ Cada ítem runtime empieza `pending/revision=1` y la aceptación lo lleva a `pre
 - rechazo de parejas item status/revision y proyección batch contradictorias;
 - worker generation vieja cercada tras reclaim server-side;
 - rechazo de reviewer grant con token vacío al construir la aplicación.
+- finalización `delivery_unknown` con deadline y sin proyección;
+- observación tardía append-only ligada al worker histórico;
+- rechazo de observación tardía autoafirmada sin grant histórico activo;
+- rechazo de contenido de observación adulterado mediante recálculo del fingerprint;
+- claim, exclusividad, takeover y fencing del reconciliador;
+- fencing inmediato ante un segundo claim aplicado del mismo owner;
+- reconciliación found aceptada, replay exacto y conflicto entre referencias finales;
+- unresolved antes del deadline y bloqueo durable al vencer;
+- rechazo sin mutación de `found` posterior a un bloqueo;
+- rechazo de runtime blocked sin attempt y de observación huérfana;
+- claim/reconcile por HTTP real con token separado del reviewer.
