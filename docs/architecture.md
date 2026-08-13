@@ -8,7 +8,7 @@ WhatsApp -> Evolution API -> Chatwoot -> POST /webhooks/chatwoot -> captura priv
 
 El primer receptor no llama a un modelo ni envía mensajes. Su objetivo es obtener un evento real y confirmar el contrato de Chatwoot 4.13.0 con la integración de Evolution API 2.3.7.
 
-## Lote diario de feedback — Cortes A–C2 fixture-only
+## Lote diario de feedback — Cortes A–D1 fixture-only
 
 `src/bridge/daily_feedback.py` implementa el primer tracer bullet determinístico
 del ciclo diario: creación manual e idempotente de un lote a partir de fixtures
@@ -56,6 +56,32 @@ runtime valida la cadena, referencias determinísticas, contadores y coherencia 
 ledger y resultado final antes de operar.
 Un POST externo, scheduler y cadenas de retry posteriores a attempt 2 siguen fuera
 de alcance.
+
+El Corte D1 agrega la primera mutación del reviewer sobre un ítem ya `presented`.
+`record_review_decision` exige grant reviewer, session owner, fence, lease, reloj UTC
+y revisión exacta; resuelve replay antes de esos guards. `correct` y
+`correct_with_feedback` proyectan `reviewed/revision 3`; `skip` proyecta
+`skipped/revision 3`. La variante con feedback materializa atómicamente una decisión
+append-only y un artifact `owner_feedback` separado con texto literal, ID y hash
+determinísticos. El binding runtime valida item, puntero, decisión y feedback como una
+cadena coherente y rechaza artifacts huérfanos o alterados. Los contadores se derivan
+del runtime. Una secuencia server-owned, contigua e incluida en cada `decision_id`
+liga además el command result histórico completo; el último ítem terminal produce
+`completed/revision 3`.
+
+La raíz de confianza D1 no reside únicamente en el runtime reemplazable. Cada comando
+publica intent primero, artifacts write-once de decisión/feedback/resultado, runtime
+atómico y commit al final. Lectura y recovery validan hashes y relaciones contra esos
+artifacts externos; una reescritura coordinada del grafo runtime no puede
+autoconsistirse ni contaminar el índice global reconstruido. El inventario exige
+correspondencia exacta intent↔result↔commit y, por batch, command↔decision; artifacts
+o grafos huérfanos son inválidos.
+
+La app FastAPI interna fixture-only expone
+`POST /internal/daily-feedback/review-decisions` con bearer reviewer y payload
+cerrado. Permanece separada de `src/bridge/app.py`; no constituye una superficie
+productiva ni habilita conversaciones reales. D1 no interpreta ni clasifica el
+feedback, no crea candidatos y no modifica ni activa Conversation Releases.
 
 Creación y comandos runtime comparten un namespace y lock global; el índice runtime
 es reconciliable y replay ocurre antes de CAS. Cada acceso valida el binding exacto

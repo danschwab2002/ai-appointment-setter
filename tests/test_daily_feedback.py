@@ -27,6 +27,7 @@ from bridge.daily_feedback import (
     FixtureReconciliationGrant,
     ReviewPrincipal,
     ReviewAuthorizationError,
+    ReviewDecisionConflictError,
     ReviewDeliveryConflictError,
     ReconciliationPrincipal,
     ReconciliationServiceGrant,
@@ -188,6 +189,997 @@ def _reserved_delivery(
         store, created, reviewer, worker, claim.session_fence,
         reserved.delivery_attempt_id,
     )
+
+
+def _presented_review_item(
+    root: Path, now: datetime, *, fixture_ids: tuple[str, ...] = ("a", "b")
+) -> tuple[DailyFeedbackBatchStore, CreateBatchResult, ReviewPrincipal, int]:
+    store = _worker_store(root, now)
+    created = _create_batch(store, fixture_set=_fixture_set(*fixture_ids))
+    reviewer = ReviewPrincipal("reviewer-1", "binding-1", "session-1", True)
+    worker = WorkerPrincipal("fixture-worker", 1, True)
+    claim = store.claim_review_session(
+        command_id="claim-1", batch_id=created.batch.batch_id,
+        principal=reviewer, expected_batch_revision=1,
+        lease_seconds=120, now=now,
+    )
+    item = store.get_next_review_item(
+        batch_id=created.batch.batch_id, principal=reviewer,
+        session_fence=claim.session_fence, now=now,
+    )
+    reserved = store.reserve_review_delivery(
+        command_id="reserve-1", batch_id=created.batch.batch_id,
+        snapshot_id=item.snapshot_id, payload_hash=item.payload_hash,
+        reviewer=reviewer, session_fence=claim.session_fence, worker=worker,
+        worker_lease_expires_at=now + timedelta(seconds=90), now=now,
+    )
+    store.mark_review_delivery_request_started(
+        command_id="start-1", delivery_attempt_id=reserved.delivery_attempt_id,
+        reviewer=reviewer, session_fence=claim.session_fence,
+        worker=worker, now=now + timedelta(seconds=1),
+    )
+    effect = store.invoke_simulated_delivery_connector(
+        command_id="invoke-1", delivery_attempt_id=reserved.delivery_attempt_id,
+        worker=worker, configured_result="accepted",
+        now=now + timedelta(seconds=2),
+    )
+    store.finalize_review_delivery(
+        command_id="finalize-1", delivery_attempt_id=reserved.delivery_attempt_id,
+        worker=worker, observed_result="accepted",
+        remote_reference=effect.remote_reference,
+        now=now + timedelta(seconds=3),
+    )
+    return store, created, reviewer, claim.session_fence
+
+
+def test_correct_decision_terminalizes_presented_item_and_advances(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, reviewer, fence = _presented_review_item(root, now)
+
+    result = store.record_review_decision(
+        command_id="decide-correct",
+        batch_id=created.batch.batch_id,
+        snapshot_id=created.batch.items[0].snapshot_id,
+        expected_item_revision=2,
+        decision_type="correct",
+        verbatim_feedback=None,
+        principal=reviewer,
+        session_fence=fence,
+        now=now + timedelta(seconds=4),
+    )
+
+    assert result.status == "applied"
+    assert result.decision_type == "correct"
+    assert result.verbatim_feedback is None
+    assert result.item_status == "reviewed"
+    assert result.item_revision == 3
+    assert result.batch_status == "in_review"
+    assert result.reviewed_count == 1
+    assert result.with_feedback_count == 0
+    assert result.skipped_count == 0
+    next_item = store.get_next_review_item(
+        batch_id=created.batch.batch_id,
+        principal=reviewer,
+        session_fence=fence,
+        now=now + timedelta(seconds=5),
+    )
+    assert next_item.fixture_id == "b"
+    assert next_item.status == "pending"
+
+
+def test_correct_decision_replays_before_expired_session_and_rejects_reuse(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, reviewer, fence = _presented_review_item(root, now)
+    kwargs = {
+        "command_id": "decide-correct",
+        "batch_id": created.batch.batch_id,
+        "snapshot_id": created.batch.items[0].snapshot_id,
+        "expected_item_revision": 2,
+        "decision_type": "correct",
+        "verbatim_feedback": None,
+        "principal": reviewer,
+        "session_fence": fence,
+    }
+    first = store.record_review_decision(
+        **kwargs, now=now + timedelta(seconds=4),
+    )
+    runtime_path = root / "runtime" / f"{created.batch.batch_id}.json"
+    before_replay = runtime_path.read_bytes()
+    command_index = root / "runtime_commands" / (
+        hashlib.sha256(b"decide-correct").hexdigest() + ".json"
+    )
+    assert not command_index.exists()
+
+    replay = DailyFeedbackBatchStore(root).record_review_decision(
+        **kwargs, now=now + timedelta(minutes=3),
+    )
+
+    assert replay.status == "replayed"
+    assert replay.decision_id == first.decision_id
+    assert replay.item_revision == first.item_revision
+    assert runtime_path.read_bytes() == before_replay
+    assert command_index.exists()
+    with pytest.raises(IdempotencyConflictError, match="idempotency_conflict"):
+        store.record_review_decision(
+            **{**kwargs, "verbatim_feedback": "contenido distinto"},
+            now=now + timedelta(seconds=5),
+        )
+
+
+def test_historical_decision_replay_survives_later_skip_and_batch_completion(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, reviewer, fence = _presented_review_item(root, now)
+    def record_first(target: DailyFeedbackBatchStore, at: datetime):
+        return target.record_review_decision(
+            command_id="decide-first-feedback",
+            batch_id=created.batch.batch_id,
+            snapshot_id=created.batch.items[0].snapshot_id,
+            expected_item_revision=2,
+            decision_type="correct_with_feedback",
+            verbatim_feedback="Responder el precio primero",
+            principal=reviewer,
+            session_fence=fence,
+            now=at,
+        )
+
+    first = record_first(store, now + timedelta(seconds=4))
+    second_item = store.get_next_review_item(
+        batch_id=created.batch.batch_id, principal=reviewer,
+        session_fence=fence, now=now + timedelta(seconds=5),
+    )
+    worker = WorkerPrincipal("fixture-worker", 1, True)
+    reserved = store.reserve_review_delivery(
+        command_id="reserve-second", batch_id=created.batch.batch_id,
+        snapshot_id=second_item.snapshot_id, payload_hash=second_item.payload_hash,
+        reviewer=reviewer, session_fence=fence, worker=worker,
+        worker_lease_expires_at=now + timedelta(seconds=90),
+        now=now + timedelta(seconds=5),
+    )
+    store.mark_review_delivery_request_started(
+        command_id="start-second", delivery_attempt_id=reserved.delivery_attempt_id,
+        reviewer=reviewer, session_fence=fence, worker=worker,
+        now=now + timedelta(seconds=6),
+    )
+    effect = store.invoke_simulated_delivery_connector(
+        command_id="invoke-second", delivery_attempt_id=reserved.delivery_attempt_id,
+        worker=worker, configured_result="accepted",
+        now=now + timedelta(seconds=7),
+    )
+    store.finalize_review_delivery(
+        command_id="finalize-second", delivery_attempt_id=reserved.delivery_attempt_id,
+        worker=worker, observed_result="accepted",
+        remote_reference=effect.remote_reference,
+        now=now + timedelta(seconds=8),
+    )
+    second = store.record_review_decision(
+        command_id="decide-second-skip",
+        batch_id=created.batch.batch_id,
+        snapshot_id=second_item.snapshot_id,
+        expected_item_revision=2,
+        decision_type="skip",
+        verbatim_feedback=None,
+        principal=reviewer,
+        session_fence=fence,
+        now=now + timedelta(seconds=9),
+    )
+
+    replay = record_first(DailyFeedbackBatchStore(root), now + timedelta(minutes=3))
+
+    assert second.batch_status == "completed"
+    assert second.reviewed_count == 1
+    assert second.with_feedback_count == 1
+    assert second.skipped_count == 1
+    assert replay.status == "replayed"
+    assert replay.decision_id == first.decision_id
+    assert replay.batch_status == "in_review"
+    assert replay.batch_revision == 2
+    assert replay.reviewed_count == 1
+    assert replay.with_feedback_count == 1
+    assert replay.skipped_count == 0
+
+
+def test_correct_with_feedback_preserves_verbatim_text_and_advances(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, reviewer, fence = _presented_review_item(root, now)
+    verbatim = "  Primero debía responder el precio.\nDespués, preguntar el objetivo.  "
+
+    result = store.record_review_decision(
+        command_id="decide-with-feedback",
+        batch_id=created.batch.batch_id,
+        snapshot_id=created.batch.items[0].snapshot_id,
+        expected_item_revision=2,
+        decision_type="correct_with_feedback",
+        verbatim_feedback=verbatim,
+        principal=reviewer,
+        session_fence=fence,
+        now=now + timedelta(seconds=4),
+    )
+
+    assert result.status == "applied"
+    assert result.decision_type == "correct_with_feedback"
+    assert result.verbatim_feedback == verbatim
+    assert result.item_status == "reviewed"
+    assert result.reviewed_count == 1
+    assert result.with_feedback_count == 1
+    assert result.skipped_count == 0
+    runtime = json.loads(
+        (root / "runtime" / f"{created.batch.batch_id}.json").read_text()
+    )
+    decision = runtime["review_decisions"][result.decision_id]
+    feedback_id = decision["owner_feedback_id"]
+    feedback = runtime["owner_feedback"][feedback_id]
+    assert decision["verbatim_feedback"] is None
+    assert feedback["decision_id"] == result.decision_id
+    assert feedback["snapshot_id"] == created.batch.items[0].snapshot_id
+    assert feedback["verbatim_text"] == verbatim
+    assert feedback["content_hash"] == (
+        "sha256:" + hashlib.sha256(verbatim.encode("utf-8")).hexdigest()
+    )
+    assert store.get_next_review_item(
+        batch_id=created.batch.batch_id,
+        principal=reviewer,
+        session_fence=fence,
+        now=now + timedelta(seconds=5),
+    ).fixture_id == "b"
+
+
+@pytest.mark.parametrize("verbatim_feedback", [None, "", "   ", "\n\t"])
+def test_correct_with_feedback_rejects_empty_literal_without_mutation(
+    tmp_path: Path, verbatim_feedback: str | None,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, reviewer, fence = _presented_review_item(root, now)
+    runtime_path = root / "runtime" / f"{created.batch.batch_id}.json"
+    before = runtime_path.read_bytes()
+
+    with pytest.raises(ReviewDecisionConflictError, match="invalid_review_decision"):
+        store.record_review_decision(
+            command_id="decide-empty-feedback",
+            batch_id=created.batch.batch_id,
+            snapshot_id=created.batch.items[0].snapshot_id,
+            expected_item_revision=2,
+            decision_type="correct_with_feedback",
+            verbatim_feedback=verbatim_feedback,
+            principal=reviewer,
+            session_fence=fence,
+            now=now + timedelta(seconds=4),
+        )
+
+    assert runtime_path.read_bytes() == before
+
+
+def test_correct_with_feedback_rejects_more_than_4000_characters(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, reviewer, fence = _presented_review_item(root, now)
+    runtime_path = root / "runtime" / f"{created.batch.batch_id}.json"
+    before = runtime_path.read_bytes()
+
+    with pytest.raises(ReviewDecisionConflictError, match="invalid_review_decision"):
+        store.record_review_decision(
+            command_id="decide-feedback-too-long",
+            batch_id=created.batch.batch_id,
+            snapshot_id=created.batch.items[0].snapshot_id,
+            expected_item_revision=2,
+            decision_type="correct_with_feedback",
+            verbatim_feedback="á" * 4001,
+            principal=reviewer,
+            session_fence=fence,
+            now=now + timedelta(seconds=4),
+        )
+    assert runtime_path.read_bytes() == before
+
+
+def test_skip_decision_records_no_judgment_and_advances(tmp_path: Path) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, reviewer, fence = _presented_review_item(root, now)
+
+    result = store.record_review_decision(
+        command_id="decide-skip",
+        batch_id=created.batch.batch_id,
+        snapshot_id=created.batch.items[0].snapshot_id,
+        expected_item_revision=2,
+        decision_type="skip",
+        verbatim_feedback=None,
+        principal=reviewer,
+        session_fence=fence,
+        now=now + timedelta(seconds=4),
+    )
+
+    assert result.decision_type == "skip"
+    assert result.verbatim_feedback is None
+    assert result.item_status == "skipped"
+    assert result.item_revision == 3
+    assert result.reviewed_count == 0
+    assert result.with_feedback_count == 0
+    assert result.skipped_count == 1
+    assert store.get_next_review_item(
+        batch_id=created.batch.batch_id,
+        principal=reviewer,
+        session_fence=fence,
+        now=now + timedelta(seconds=5),
+    ).fixture_id == "b"
+
+
+def test_skip_decision_rejects_feedback_without_mutation(tmp_path: Path) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, reviewer, fence = _presented_review_item(root, now)
+    runtime_path = root / "runtime" / f"{created.batch.batch_id}.json"
+    before = runtime_path.read_bytes()
+
+    with pytest.raises(ReviewDecisionConflictError, match="invalid_review_decision"):
+        store.record_review_decision(
+            command_id="skip-with-feedback",
+            batch_id=created.batch.batch_id,
+            snapshot_id=created.batch.items[0].snapshot_id,
+            expected_item_revision=2,
+            decision_type="skip",
+            verbatim_feedback="No revisar",
+            principal=reviewer,
+            session_fence=fence,
+            now=now + timedelta(seconds=4),
+        )
+
+    assert runtime_path.read_bytes() == before
+
+
+def test_last_terminal_decision_completes_batch(tmp_path: Path) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, reviewer, fence = _presented_review_item(
+        root, now, fixture_ids=("a",)
+    )
+
+    result = store.record_review_decision(
+        command_id="decide-last",
+        batch_id=created.batch.batch_id,
+        snapshot_id=created.batch.items[0].snapshot_id,
+        expected_item_revision=2,
+        decision_type="correct",
+        verbatim_feedback=None,
+        principal=reviewer,
+        session_fence=fence,
+        now=now + timedelta(seconds=4),
+    )
+
+    assert result.batch_status == "completed"
+    assert result.batch_revision == 3
+    with pytest.raises(ReviewAuthorizationError, match="no_review_item_available"):
+        store.get_next_review_item(
+            batch_id=created.batch.batch_id,
+            principal=reviewer,
+            session_fence=fence,
+            now=now + timedelta(seconds=5),
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "forged"),
+    [
+        ("decision_type", "skip"),
+        ("verbatim_feedback", "alterado"),
+        ("item_status", "skipped"),
+        ("item_revision", 99),
+        ("batch_status", "completed"),
+        ("batch_revision", 99),
+        ("reviewed_count", 99),
+        ("with_feedback_count", 99),
+        ("skipped_count", 99),
+    ],
+)
+def test_tampered_review_decision_command_result_fails_runtime_binding(
+    tmp_path: Path, field: str, forged: object,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, reviewer, fence = _presented_review_item(root, now)
+    store.record_review_decision(
+        command_id="decide-result-tamper",
+        batch_id=created.batch.batch_id,
+        snapshot_id=created.batch.items[0].snapshot_id,
+        expected_item_revision=2,
+        decision_type="correct_with_feedback",
+        verbatim_feedback="Responder el precio primero",
+        principal=reviewer,
+        session_fence=fence,
+        now=now + timedelta(seconds=4),
+    )
+    runtime_path = root / "runtime" / f"{created.batch.batch_id}.json"
+    runtime = json.loads(runtime_path.read_text())
+    runtime["commands"]["decide-result-tamper"]["review_decision_result"][field] = (
+        forged
+    )
+    runtime_path.write_text(json.dumps(runtime))
+
+    with pytest.raises(StorageConflictError, match="daily_feedback_runtime_invalid"):
+        store.get_next_review_item(
+            batch_id=created.batch.batch_id, principal=reviewer,
+            session_fence=fence, now=now + timedelta(seconds=5),
+        )
+
+
+@pytest.mark.parametrize(
+    "artifact_dir",
+    [
+        "review_decision_intents",
+        "review_decisions",
+        "owner_feedback",
+        "review_decision_results",
+        "review_decision_commits",
+    ],
+)
+def test_missing_immutable_decision_artifact_fails_closed(
+    tmp_path: Path, artifact_dir: str,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, reviewer, fence = _presented_review_item(root, now)
+    store.record_review_decision(
+        command_id="decide-artifact-missing",
+        batch_id=created.batch.batch_id,
+        snapshot_id=created.batch.items[0].snapshot_id,
+        expected_item_revision=2,
+        decision_type="correct_with_feedback",
+        verbatim_feedback="Responder el precio primero",
+        principal=reviewer,
+        session_fence=fence,
+        now=now + timedelta(seconds=4),
+    )
+    next((root / artifact_dir).glob("*.json")).unlink()
+
+    with pytest.raises(StorageConflictError, match="daily_feedback_runtime_invalid"):
+        store.get_next_review_item(
+            batch_id=created.batch.batch_id, principal=reviewer,
+            session_fence=fence, now=now + timedelta(seconds=5),
+        )
+
+
+def test_immutable_decision_artifacts_are_scoped_per_batch(tmp_path: Path) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    first_store, first, first_reviewer, first_fence = _presented_review_item(root, now)
+    first_store.record_review_decision(
+        command_id="decide-first-batch", batch_id=first.batch.batch_id,
+        snapshot_id=first.batch.items[0].snapshot_id, expected_item_revision=2,
+        decision_type="correct", verbatim_feedback=None,
+        principal=first_reviewer, session_fence=first_fence,
+        now=now + timedelta(seconds=4),
+    )
+    second = first_store.create_review_batch(
+        command_id="create-second-batch", tenant_id="tenant-1", scope_id="scope-1",
+        window_start=datetime(2026, 8, 14, tzinfo=UTC),
+        window_end=datetime(2026, 8, 15, tzinfo=UTC),
+        selection_contract_version="fixture-selection-v1",
+        selection_config_fingerprint="sha256:selection-v2",
+        reviewer_id="reviewer-1", reviewer_binding_id="binding-1",
+        fixture_set=_fixture_set("second-a", "second-b"),
+    )
+    second_reviewer = ReviewPrincipal("reviewer-1", "binding-1", "session-2", True)
+    second_claim = first_store.claim_review_session(
+        command_id="claim-second-batch", batch_id=second.batch.batch_id,
+        principal=second_reviewer, expected_batch_revision=1,
+        lease_seconds=120, now=now,
+    )
+
+    assert first_store.get_next_review_item(
+        batch_id=first.batch.batch_id, principal=first_reviewer,
+        session_fence=first_fence, now=now + timedelta(seconds=5),
+    ).fixture_id == "b"
+    assert first_store.get_next_review_item(
+        batch_id=second.batch.batch_id, principal=second_reviewer,
+        session_fence=second_claim.session_fence, now=now,
+    ).fixture_id == "second-a"
+
+
+def test_orphan_immutable_decision_artifact_for_same_batch_fails_closed(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, reviewer, fence = _presented_review_item(root, now)
+    store.record_review_decision(
+        command_id="decide-before-orphan", batch_id=created.batch.batch_id,
+        snapshot_id=created.batch.items[0].snapshot_id, expected_item_revision=2,
+        decision_type="correct", verbatim_feedback=None,
+        principal=reviewer, session_fence=fence,
+        now=now + timedelta(seconds=4),
+    )
+    orphan = {
+        "decision_id": "decision_orphan",
+        "batch_id": created.batch.batch_id,
+    }
+    orphan_path = root / "review_decisions" / "decision_orphan.json"
+    orphan_path.write_text(json.dumps(orphan))
+    orphan_path.chmod(0o600)
+
+    with pytest.raises(StorageConflictError, match="daily_feedback_runtime_invalid"):
+        store.get_next_review_item(
+            batch_id=created.batch.batch_id, principal=reviewer,
+            session_fence=fence, now=now + timedelta(seconds=5),
+        )
+
+
+def test_orphan_intent_result_commit_graph_for_same_batch_fails_closed(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, reviewer, fence = _presented_review_item(root, now)
+    store.record_review_decision(
+        command_id="decide-before-orphan-graph", batch_id=created.batch.batch_id,
+        snapshot_id=created.batch.items[0].snapshot_id, expected_item_revision=2,
+        decision_type="correct", verbatim_feedback=None,
+        principal=reviewer, session_fence=fence,
+        now=now + timedelta(seconds=4),
+    )
+    orphan_command = "orphan-decision-command"
+    stem = hashlib.sha256(orphan_command.encode()).hexdigest()
+    result = {
+        "decision_id": "decision_orphan_graph",
+        "decision_type": "correct",
+        "verbatim_feedback": None,
+        "item_status": "reviewed",
+        "item_revision": 3,
+        "batch_status": "in_review",
+        "batch_revision": 2,
+        "reviewed_count": 1,
+        "with_feedback_count": 0,
+        "skipped_count": 0,
+    }
+    result_hash = hashlib.sha256(
+        json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    runtime = json.loads(
+        (root / "runtime" / f"{created.batch.batch_id}.json").read_text()
+    )
+    runtime_hash = hashlib.sha256(
+        json.dumps(runtime, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    intent = {
+        "schema_version": 1,
+        "command_id": orphan_command,
+        "fingerprint": "orphan-fingerprint",
+        "batch_id": created.batch.batch_id,
+        "decision_id": "decision_orphan_graph",
+        "feedback_id": None,
+        "runtime_before_hash": "orphan-before",
+        "runtime_after_hash": runtime_hash,
+        "decision_hash": "orphan-decision-hash",
+        "feedback_hash": None,
+        "result_hash": result_hash,
+        "runtime_after": runtime,
+    }
+    intent_hash = hashlib.sha256(
+        json.dumps(intent, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    commit = {
+        "schema_version": 1,
+        "command_id": orphan_command,
+        "intent_hash": intent_hash,
+        "decision_hash": intent["decision_hash"],
+        "feedback_hash": None,
+        "result_hash": result_hash,
+        "runtime_after_hash": runtime_hash,
+    }
+    for directory, envelope in (
+        ("review_decision_intents", intent),
+        ("review_decision_results", result),
+        ("review_decision_commits", commit),
+    ):
+        path = root / directory / f"{stem}.json"
+        path.write_text(json.dumps(envelope))
+        path.chmod(0o600)
+
+    with pytest.raises(StorageConflictError, match="daily_feedback_runtime_invalid"):
+        store.get_next_review_item(
+            batch_id=created.batch.batch_id, principal=reviewer,
+            session_fence=fence, now=now + timedelta(seconds=5),
+        )
+
+
+def test_coordinated_runtime_decision_rewrite_fails_against_immutable_artifacts(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, reviewer, fence = _presented_review_item(root, now)
+    result = store.record_review_decision(
+        command_id="decide-coordinated-tamper",
+        batch_id=created.batch.batch_id,
+        snapshot_id=created.batch.items[0].snapshot_id,
+        expected_item_revision=2,
+        decision_type="correct_with_feedback",
+        verbatim_feedback="texto original",
+        principal=reviewer,
+        session_fence=fence,
+        now=now + timedelta(seconds=4),
+    )
+    runtime_path = root / "runtime" / f"{created.batch.batch_id}.json"
+    runtime = json.loads(runtime_path.read_text())
+    old_decision = runtime["review_decisions"].pop(result.decision_id)
+    old_feedback_id = old_decision["owner_feedback_id"]
+    runtime["owner_feedback"].pop(old_feedback_id)
+    payload = {
+        "batch_id": created.batch.batch_id,
+        "snapshot_id": created.batch.items[0].snapshot_id,
+        "expected_item_revision": 2,
+        "decision_type": "correct_with_feedback",
+        "verbatim_feedback": "texto adulterado",
+        "reviewer_id": "reviewer-forged",
+        "reviewer_binding_id": "binding-forged",
+        "session_owner": "session-forged",
+        "session_fence": 99,
+        "decision_sequence": 1,
+    }
+    forged_decision_id = "decision_" + hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    feedback_payload = {
+        "decision_id": forged_decision_id,
+        "snapshot_id": payload["snapshot_id"],
+        "verbatim_text": payload["verbatim_feedback"],
+        "reviewer_id": payload["reviewer_id"],
+        "reviewer_binding_id": payload["reviewer_binding_id"],
+    }
+    forged_feedback_id = "feedback_" + hashlib.sha256(
+        json.dumps(feedback_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    forged_decision = {
+        "decision_id": forged_decision_id,
+        "batch_id": payload["batch_id"],
+        "snapshot_id": payload["snapshot_id"],
+        "decision_type": payload["decision_type"],
+        "verbatim_feedback": None,
+        "owner_feedback_id": forged_feedback_id,
+        "reviewer_id": payload["reviewer_id"],
+        "reviewer_binding_id": payload["reviewer_binding_id"],
+        "session_owner": payload["session_owner"],
+        "session_fence": payload["session_fence"],
+        "expected_item_revision": 2,
+        "decision_sequence": 1,
+        "command_id": "decide-coordinated-tamper",
+        "recorded_at": old_decision["recorded_at"],
+    }
+    runtime["review_decisions"][forged_decision_id] = forged_decision
+    runtime["items"][0]["current_decision_id"] = forged_decision_id
+    runtime["owner_feedback"][forged_feedback_id] = {
+        "feedback_id": forged_feedback_id,
+        "decision_id": forged_decision_id,
+        "batch_id": payload["batch_id"],
+        "snapshot_id": payload["snapshot_id"],
+        "verbatim_text": payload["verbatim_feedback"],
+        "content_hash": "sha256:" + hashlib.sha256(b"texto adulterado").hexdigest(),
+        "reviewer_id": payload["reviewer_id"],
+        "reviewer_binding_id": payload["reviewer_binding_id"],
+        "command_id": "decide-coordinated-tamper",
+        "created_at": old_decision["recorded_at"],
+    }
+    command_payload = {key: value for key, value in payload.items() if key != "decision_sequence"}
+    runtime["commands"]["decide-coordinated-tamper"]["fingerprint"] = hashlib.sha256(
+        json.dumps(
+            {"command_type": "record_review_decision", **command_payload},
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    runtime["commands"]["decide-coordinated-tamper"]["review_decision_result"].update(
+        decision_id=forged_decision_id,
+        verbatim_feedback="texto adulterado",
+    )
+    runtime_path.write_text(json.dumps(runtime))
+
+    with pytest.raises(StorageConflictError, match="daily_feedback_runtime_invalid"):
+        store.get_next_review_item(
+            batch_id=created.batch.batch_id, principal=reviewer,
+            session_fence=fence, now=now + timedelta(seconds=5),
+        )
+
+
+@pytest.mark.parametrize("crash_after_publication", range(1, 7))
+def test_review_decision_crash_recovery_preserves_original_semantics(
+    tmp_path: Path, crash_after_publication: int,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, reviewer, fence = _presented_review_item(root, now)
+    original_write_once = store._write_once
+    original_write_replace = store._write_replace
+    publications = 0
+    decision_dirs = {
+        root / "review_decision_intents",
+        root / "review_decisions",
+        root / "owner_feedback",
+        root / "review_decision_results",
+        root / "review_decision_commits",
+    }
+
+    def maybe_crash() -> None:
+        nonlocal publications
+        publications += 1
+        if publications == crash_after_publication:
+            raise RuntimeError("simulated_decision_crash")
+
+    def crashing_write_once(path: Path, envelope: dict[str, object]) -> None:
+        original_write_once(path, envelope)
+        if path.parent in decision_dirs:
+            maybe_crash()
+
+    def crashing_write_replace(path: Path, envelope: dict[str, object]) -> None:
+        original_write_replace(path, envelope)
+        if path.parent == root / "runtime":
+            maybe_crash()
+
+    store._write_once = crashing_write_once  # type: ignore[method-assign]
+    store._write_replace = crashing_write_replace  # type: ignore[method-assign]
+    def record(target: DailyFeedbackBatchStore, feedback: str):
+        return target.record_review_decision(
+            command_id="decide-crash-recovery",
+            batch_id=created.batch.batch_id,
+            snapshot_id=created.batch.items[0].snapshot_id,
+            expected_item_revision=2,
+            decision_type="correct_with_feedback",
+            verbatim_feedback=feedback,
+            principal=reviewer,
+            session_fence=fence,
+            now=now + timedelta(seconds=4),
+        )
+
+    with pytest.raises(RuntimeError, match="simulated_decision_crash"):
+        record(store, "texto original durable")
+
+    recovered = DailyFeedbackBatchStore(root)
+    replay = record(recovered, "texto original durable")
+
+    assert replay.status == "replayed"
+    assert replay.decision_type == "correct_with_feedback"
+    assert replay.verbatim_feedback == "texto original durable"
+    assert replay.reviewed_count == 1
+    assert replay.with_feedback_count == 1
+    assert replay.skipped_count == 0
+    with pytest.raises(IdempotencyConflictError, match="idempotency_conflict"):
+        record(recovered, "texto conflictivo")
+
+
+def test_decision_requires_presented_item_and_exact_revision(tmp_path: Path) -> None:
+    root = tmp_path / "feedback"
+    store = DailyFeedbackBatchStore(root)
+    created = _create_batch(store, fixture_set=_fixture_set("a"))
+    reviewer = ReviewPrincipal("reviewer-1", "binding-1", "session-1", True)
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    claim = store.claim_review_session(
+        command_id="claim-pending", batch_id=created.batch.batch_id,
+        principal=reviewer, expected_batch_revision=1,
+        lease_seconds=120, now=now,
+    )
+    runtime_path = root / "runtime" / f"{created.batch.batch_id}.json"
+    before = runtime_path.read_bytes()
+
+    with pytest.raises(
+        ReviewDecisionConflictError, match="review_item_revision_conflict"
+    ):
+        store.record_review_decision(
+            command_id="decide-pending",
+            batch_id=created.batch.batch_id,
+            snapshot_id=created.batch.items[0].snapshot_id,
+            expected_item_revision=1,
+            decision_type="correct",
+            verbatim_feedback=None,
+            principal=reviewer,
+            session_fence=claim.session_fence,
+            now=now + timedelta(seconds=1),
+        )
+    assert runtime_path.read_bytes() == before
+
+
+def test_decision_rejects_later_presented_item_while_earlier_item_is_pending_review(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, reviewer, fence = _presented_review_item(root, now)
+    worker = WorkerPrincipal("fixture-worker", 1, True)
+    second_snapshot = json.loads(
+        (root / "snapshots" / f"{created.batch.items[1].snapshot_id}.json").read_text()
+    )
+    second_hash = "sha256:" + hashlib.sha256(
+        json.dumps(
+            second_snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    reserved = store.reserve_review_delivery(
+        command_id="reserve-out-of-order", batch_id=created.batch.batch_id,
+        snapshot_id=created.batch.items[1].snapshot_id, payload_hash=second_hash,
+        reviewer=reviewer, session_fence=fence, worker=worker,
+        worker_lease_expires_at=now + timedelta(seconds=90),
+        now=now + timedelta(seconds=4),
+    )
+    store.mark_review_delivery_request_started(
+        command_id="start-out-of-order",
+        delivery_attempt_id=reserved.delivery_attempt_id,
+        reviewer=reviewer, session_fence=fence, worker=worker,
+        now=now + timedelta(seconds=5),
+    )
+    effect = store.invoke_simulated_delivery_connector(
+        command_id="invoke-out-of-order",
+        delivery_attempt_id=reserved.delivery_attempt_id,
+        worker=worker, configured_result="accepted",
+        now=now + timedelta(seconds=6),
+    )
+    store.finalize_review_delivery(
+        command_id="finalize-out-of-order",
+        delivery_attempt_id=reserved.delivery_attempt_id,
+        worker=worker, observed_result="accepted",
+        remote_reference=effect.remote_reference,
+        now=now + timedelta(seconds=7),
+    )
+    runtime_path = root / "runtime" / f"{created.batch.batch_id}.json"
+    before = runtime_path.read_bytes()
+
+    with pytest.raises(ReviewDecisionConflictError, match="review_item_out_of_order"):
+        store.record_review_decision(
+            command_id="decide-out-of-order",
+            batch_id=created.batch.batch_id,
+            snapshot_id=created.batch.items[1].snapshot_id,
+            expected_item_revision=2,
+            decision_type="correct",
+            verbatim_feedback=None,
+            principal=reviewer,
+            session_fence=fence,
+            now=now + timedelta(seconds=8),
+        )
+    assert runtime_path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("principal", "fence", "elapsed", "error"),
+    [
+        (ReviewPrincipal("reviewer-1", "binding-1", "session-1", False), 1, 4,
+         "reviewer_binding_inactive"),
+        (ReviewPrincipal("reviewer-other", "binding-1", "session-1", True), 1, 4,
+         "reviewer_authority_mismatch"),
+        (ReviewPrincipal("reviewer-1", "binding-other", "session-1", True), 1, 4,
+         "reviewer_authority_mismatch"),
+        (ReviewPrincipal("reviewer-1", "binding-1", "session-other", True), 1, 4,
+         "session_owner_stale"),
+        (ReviewPrincipal("reviewer-1", "binding-1", "session-1", True), 2, 4,
+         "session_fence_stale"),
+        (ReviewPrincipal("reviewer-1", "binding-1", "session-1", True), 1, 120,
+         "session_lease_expired"),
+    ],
+)
+def test_decision_rejects_stale_authority_without_mutation(
+    tmp_path: Path,
+    principal: ReviewPrincipal,
+    fence: int,
+    elapsed: int,
+    error: str,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, _reviewer, _fence = _presented_review_item(root, now)
+    runtime_path = root / "runtime" / f"{created.batch.batch_id}.json"
+    before = runtime_path.read_bytes()
+
+    with pytest.raises(ReviewDecisionConflictError, match=error):
+        store.record_review_decision(
+            command_id=f"decide-stale-{error}",
+            batch_id=created.batch.batch_id,
+            snapshot_id=created.batch.items[0].snapshot_id,
+            expected_item_revision=2,
+            decision_type="correct",
+            verbatim_feedback=None,
+            principal=principal,
+            session_fence=fence,
+            now=now + timedelta(seconds=elapsed),
+        )
+    assert runtime_path.read_bytes() == before
+
+
+def test_decision_rejects_non_utc_clock_without_mutation(tmp_path: Path) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, reviewer, fence = _presented_review_item(root, now)
+    runtime_path = root / "runtime" / f"{created.batch.batch_id}.json"
+    before = runtime_path.read_bytes()
+
+    with pytest.raises(ReviewDecisionConflictError, match="invalid_review_time"):
+        store.record_review_decision(
+            command_id="decide-non-utc",
+            batch_id=created.batch.batch_id,
+            snapshot_id=created.batch.items[0].snapshot_id,
+            expected_item_revision=2,
+            decision_type="correct",
+            verbatim_feedback=None,
+            principal=reviewer,
+            session_fence=fence,
+            now=datetime(2026, 8, 13, 9, 0, tzinfo=timezone(timedelta(hours=-3))),
+        )
+    assert runtime_path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "decision", "pointer", "feedback_text", "feedback_hash", "feedback_link",
+        "reviewer", "binding", "session", "fence", "command", "timestamp",
+        "sequence",
+    ],
+)
+def test_tampered_review_decision_fails_runtime_binding(
+    tmp_path: Path, target: str,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, reviewer, fence = _presented_review_item(root, now)
+    result = store.record_review_decision(
+        command_id="decide-tamper",
+        batch_id=created.batch.batch_id,
+        snapshot_id=created.batch.items[0].snapshot_id,
+        expected_item_revision=2,
+        decision_type="correct_with_feedback",
+        verbatim_feedback="Responder el precio primero",
+        principal=reviewer,
+        session_fence=fence,
+        now=now + timedelta(seconds=4),
+    )
+    runtime_path = root / "runtime" / f"{created.batch.batch_id}.json"
+    runtime = json.loads(runtime_path.read_text())
+    if target == "decision":
+        runtime["review_decisions"][result.decision_id]["verbatim_feedback"] = (
+            "contenido alterado"
+        )
+    elif target == "pointer":
+        runtime["items"][0]["current_decision_id"] = "decision_forged"
+    elif target in {
+        "reviewer", "binding", "session", "fence", "command", "timestamp",
+        "sequence",
+    }:
+        decision = runtime["review_decisions"][result.decision_id]
+        field, value = {
+            "reviewer": ("reviewer_id", "reviewer-forged"),
+            "binding": ("reviewer_binding_id", "binding-forged"),
+            "session": ("session_owner", "session-forged"),
+            "fence": ("session_fence", 0),
+            "command": ("command_id", ""),
+            "timestamp": ("recorded_at", "not-a-timestamp"),
+            "sequence": ("decision_sequence", 2),
+        }[target]
+        decision[field] = value
+    else:
+        feedback_id = runtime["review_decisions"][result.decision_id][
+            "owner_feedback_id"
+        ]
+        if target == "feedback_text":
+            runtime["owner_feedback"][feedback_id]["verbatim_text"] = "alterado"
+        elif target == "feedback_hash":
+            runtime["owner_feedback"][feedback_id]["content_hash"] = "sha256:forged"
+        else:
+            runtime["owner_feedback"][feedback_id]["decision_id"] = "decision_forged"
+    runtime_path.write_text(json.dumps(runtime))
+
+    with pytest.raises(StorageConflictError, match="daily_feedback_runtime_invalid"):
+        store.get_next_review_item(
+            batch_id=created.batch.batch_id,
+            principal=reviewer,
+            session_fence=fence,
+            now=now + timedelta(seconds=5),
+        )
 
 
 def test_creates_ready_batch_with_stable_fixture_order(tmp_path: Path) -> None:
@@ -2270,6 +3262,94 @@ def _real_http_server(app: object) -> Iterator[str]:
         thread.join(timeout=5)
         sock.close()
         assert not thread.is_alive()
+
+
+def test_review_decision_over_real_http_is_authenticated_and_closed(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime.now(UTC)
+    store, created, _reviewer, fence = _presented_review_item(root, now)
+    app = create_daily_feedback_fixture_app(
+        store=store,
+        operator_grant=FixtureOperatorGrant(
+            token="operator", tenant_id="tenant-1", scope_id="scope-1",
+            reviewer_id="reviewer-1", reviewer_binding_id="binding-1",
+            fixture_set_ids=frozenset({"fixtures-v1"}), active=True,
+        ),
+        reviewer_grant=FixtureReviewerGrant(
+            token="reviewer-token", reviewer_id="reviewer-1",
+            reviewer_binding_id="binding-1", session_owner="session-1",
+            active=True,
+        ),
+        fixture_sets={"fixtures-v1": _fixture_set("a", "b")},
+    )
+    payload = {
+        "command_id": "decision-http",
+        "batch_id": created.batch.batch_id,
+        "snapshot_id": created.batch.items[0].snapshot_id,
+        "expected_item_revision": 2,
+        "decision_type": "correct_with_feedback",
+        "verbatim_feedback": "Responder el precio primero",
+        "session_fence": fence,
+    }
+
+    with _real_http_server(app) as base_url:
+        unauthorized = httpx.post(
+            f"{base_url}/internal/daily-feedback/review-decisions",
+            json=payload,
+            headers={"Authorization": "Bearer wrong"},
+        )
+        invalid = httpx.post(
+            f"{base_url}/internal/daily-feedback/review-decisions",
+            json={**payload, "unexpected": True},
+            headers={"Authorization": "Bearer reviewer-token"},
+        )
+        invalid_bool = httpx.post(
+            f"{base_url}/internal/daily-feedback/review-decisions",
+            json={**payload, "session_fence": True},
+            headers={"Authorization": "Bearer reviewer-token"},
+        )
+        stale = httpx.post(
+            f"{base_url}/internal/daily-feedback/review-decisions",
+            json={**payload, "session_fence": fence + 1},
+            headers={"Authorization": "Bearer reviewer-token"},
+        )
+        response = httpx.post(
+            f"{base_url}/internal/daily-feedback/review-decisions",
+            json=payload,
+            headers={"Authorization": "Bearer reviewer-token"},
+        )
+        replay = httpx.post(
+            f"{base_url}/internal/daily-feedback/review-decisions",
+            json=payload,
+            headers={"Authorization": "Bearer reviewer-token"},
+        )
+
+    assert unauthorized.status_code == 401
+    assert unauthorized.json() == {"detail": "invalid_reviewer_token"}
+    assert invalid.status_code == 422
+    assert invalid.json() == {"detail": "invalid_review_decision_payload"}
+    assert invalid_bool.status_code == 422
+    assert invalid_bool.json() == {"detail": "invalid_review_decision_payload"}
+    assert stale.status_code == 409
+    assert stale.json() == {"detail": "session_fence_stale"}
+    assert response.status_code == 201
+    assert response.json() == {
+        "status": "applied",
+        "decision_id": response.json()["decision_id"],
+        "decision_type": "correct_with_feedback",
+        "verbatim_feedback": "Responder el precio primero",
+        "item_status": "reviewed",
+        "item_revision": 3,
+        "batch_status": "in_review",
+        "batch_revision": 2,
+        "reviewed_count": 1,
+        "with_feedback_count": 1,
+        "skipped_count": 0,
+    }
+    assert replay.status_code == 200
+    assert replay.json() == {**response.json(), "status": "replayed"}
 
 
 def test_fixture_batch_creation_over_real_http(tmp_path: Path) -> None:

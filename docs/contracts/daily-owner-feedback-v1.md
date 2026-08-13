@@ -1,11 +1,11 @@
-# Contrato implementado — lote, presentación y retry fixture-only (Cortes A–C2)
+# Contrato implementado — lote, presentación, retry y decisiones fixture-only (A–D1)
 
 - **Estado:** Implementado y verificado localmente
-- **Versión:** `daily-owner-feedback-cut-c2-v1`
+- **Versión:** `daily-owner-feedback-decisions-d1-v1`
 - **Implementación:** `src/bridge/daily_feedback.py`
 - **Pruebas:** `tests/test_daily_feedback.py`
 - **Diseño rector:** [Contrato técnico propuesto del corte vertical](../design/client-copilot-feedback-vertical-slice-contract.md)
-- **Alcance:** lote durable, sesión fenced, conector simulado contabilizado, reconciliación y retry probado como no aplicado
+- **Alcance:** lote durable, sesión fenced, entrega/retry simulados y decisiones reviewer append-only
 
 ## 1. Límite implementado
 
@@ -33,9 +33,17 @@ fixture set sanitizado registrado en proceso
 → delivery_unknown → observación not_applied inequívoca
 → sesión reviewer renovada + reconciler fenced + worker nuevo
 → attempt 1 finalized(not_applied) + attempt 2 reserved
+→ item presented → correct / correct_with_feedback / skip
+→ decisión append-only + feedback literal append-only cuando corresponde
+→ siguiente ítem o batch completed
 ```
 
-No implementa scheduler, conversaciones reales, canal productivo, POST externo, decisiones, feedback, interpretación, candidatos ni Conversation Releases. El conector de C2 es exclusivamente stateful y fixture-only dentro del store; no tiene endpoint HTTP ni realiza red. El retry está acotado a un único successor (`attempt_number=2`) y no habilita cadenas abiertas de reintentos.
+No implementa scheduler, conversaciones reales, canal productivo, POST externo,
+interpretación, clasificación, candidatos, enmiendas ni Conversation Releases. El
+feedback literal de D1 no activa aprendizaje ni muta producción. El conector de C2
+es exclusivamente stateful y fixture-only dentro del store; no tiene endpoint HTTP
+ni realiza red. El retry está acotado a un único successor (`attempt_number=2`) y no
+habilita cadenas abiertas de reintentos.
 
 ## 2. Frontera HTTP controlada
 
@@ -93,6 +101,47 @@ Un claim exitoso incrementa `session_fence`; no cambia `ready` a `in_review`. Ot
 
 Exige el mismo grant, owner, fence y lease vigente. Es lectura pura: devuelve el ítem no terminal de menor posición y su snapshot sanitizado, hash y release fixture sin modificar el runtime.
 
+### `POST /internal/daily-feedback/review-decisions`
+
+Usa el mismo bearer reviewer ligado server-side. El reloj es server-owned y el
+payload es cerrado:
+
+```json
+{
+  "command_id": "opaque-command-id",
+  "batch_id": "batch_opaque",
+  "snapshot_id": "snapshot_opaque",
+  "expected_item_revision": 2,
+  "decision_type": "correct_with_feedback",
+  "verbatim_feedback": "Responder la duda directa primero",
+  "session_fence": 5
+}
+```
+
+Combinaciones válidas:
+
+| `decision_type` | `verbatim_feedback` | proyección |
+|---|---|---|
+| `correct` | `null` | `reviewed/revision 3` |
+| `correct_with_feedback` | UTF-8 no vacío, hasta 4000 caracteres tras normalizar saltos sólo para medir | `reviewed/revision 3` |
+| `skip` | `null` | `skipped/revision 3` |
+
+El texto se almacena sin trim ni normalización destructiva en un artifact
+`owner_feedback` separado, con ID y SHA-256 determinísticos. La decisión conserva el
+vínculo vigente. Un comando nuevo sólo puede decidir el ítem no terminal de menor
+posición; aunque una llamada interna hubiera presentado otro snapshot, D1 rechaza
+avanzar fuera de orden. Si todos los ítems son terminales, el lote pasa atómicamente a
+`completed/revision 3`; de lo contrario conserva `in_review/revision 2`. Los
+contadores `reviewed_count`, `with_feedback_count` y `skipped_count` se derivan del
+runtime y forman parte del resultado durable. Cada decisión recibe bajo lock una
+`decision_sequence` contigua, incluida en su ID; el binding reconstruye con ella la
+proyección histórica exacta del comando. Por eso un replay no puede devolver tipos,
+estados, revisiones, feedback o contadores alterados aunque el lote haya avanzado.
+
+Respuesta aplicada: HTTP `201`; replay exacto: HTTP `200`. Token inválido: `401`;
+payload inválido: `422`; idempotencia, estado, revisión, owner, fence o lease stale:
+`409`, sin filtrar el runtime.
+
 Las fases de worker y la observación tardía no se exponen por HTTP. Se invocan como operaciones internas determinísticas del store.
 
 ### Reconciliación interna fixture-only
@@ -134,6 +183,11 @@ El store crea:
 <root>/commits/
 <root>/runtime/
 <root>/runtime_commands/
+<root>/review_decision_intents/
+<root>/review_decisions/
+<root>/owner_feedback/
+<root>/review_decision_results/
+<root>/review_decision_commits/
 ```
 
 - directorios: modo `0700`;
@@ -148,7 +202,28 @@ Los snapshots contienen únicamente el fixture sanitizado registrado, incluyendo
 
 Cada batch con sesión posee un único registro runtime reemplazado atómicamente bajo un `flock` global compartido también con creación, con archivo temporal, `fsync`, `os.replace` y `fsync` del directorio. Conserva status/revision actuales, lease/fence, ítems, attempts y resultados de comandos. Antes de cualquier lectura o mutación, el store valida exactamente `(fixture_id, position, snapshot_id)` contra el batch comprometido y cada snapshot debe declarar el fixture correspondiente.
 
-Las proyecciones de ítem aceptadas son `pending/revision 1` y `presented/revision 2`. `ready/revision 1` exige cero ítems presentados; `in_review/revision 2` exige al menos uno. `blocked/revision 2` exige cero presentados y exactamente un attempt `delivery_unknown` con evidencia durable de bloqueo posterior o igual al deadline. Observaciones deben apuntar a un attempt existente; su envelope conserva owner/generación históricos y el runtime recalcula el fingerprint canónico sobre todos sus campos antes de confiar en resultado o referencia final. Cualquier combinación contradictoria falla cerrado.
+Una decisión D1 usa un protocolo multiartifact bajo el mismo lock: publica primero
+un intent write-once con fingerprints, hashes y las imágenes pre/post exactas del
+runtime; publica decisión, feedback opcional y resultado como artifacts write-once;
+reemplaza el runtime; y publica el commit al final. El binding compara el runtime
+mutable contra estos artifacts externos y el commit. Un retry tras crash completa
+sólo el intent original cuando el runtime coincide con su pre-state o post-state;
+un estado tercero falla cerrado. Un replay committed valida artifacts y runtime
+actual antes de reconstruir `runtime_commands`, sin retroceder un lote que avanzó.
+Los inventarios de intents, resultados y commits deben tener stems idénticos; dentro
+de cada batch, sus command IDs y decision IDs deben corresponder exactamente uno a
+uno con las decisiones runtime. Un grafo huérfano, aunque sea autoconsistente, falla
+cerrado.
+
+Las proyecciones de ítem aceptadas son `pending/revision 1`, `presented/revision 2`,
+`reviewed/revision 3` y `skipped/revision 3`. `ready/revision 1` exige cero ítems
+involucrados; `in_review/revision 2` exige al menos uno presentado o decidido;
+`completed/revision 3` exige que todos estén `reviewed` o `skipped` y ligados a una
+decisión válida. `blocked/revision 2` exige cero involucrados y exactamente un attempt
+`delivery_unknown` con evidencia durable de bloqueo posterior o igual al deadline.
+El binding recalcula IDs/hashes y valida item → decisión → feedback; artifacts
+huérfanos, vínculos rotos, secuencias no contiguas, resultados históricos o contenido
+alterado fallan cerrado.
 
 `commands/` y `runtime_commands/` forman un único namespace global de `command_id`. El primero conserva comandos de creación comprometidos; el segundo materializa `command_id → fingerprint + batch + resultado` para runtime. Si un crash ocurre después del reemplazo runtime y antes del índice, el próximo lookup reconcilia el resultado desde todos los runtimes bajo el mismo lock antes de evaluar semántica nueva. Replay se resuelve antes de CAS/revisión/fence; reutilización entre creación/runtime, otro batch o tipo de comando falla `idempotency_conflict`.
 
@@ -186,10 +261,13 @@ El Corte C2 añade `cancel_review_delivery_before_request`, válido sólo en `re
 - `ready`: uno o más ítems materializados;
 - `completed_empty`: selección vacía;
 - `in_review`: primera aceptación proyectada;
+- `completed`: todos los ítems tienen decisión terminal D1;
 - revisión inicial del lote: `1`; primera proyección aceptada: `2`.
 - `blocked`: ambigüedad no resuelta al vencer el deadline, sin presentar el ítem ni habilitar retry.
 
-Cada ítem runtime empieza `pending/revision=1` y la aceptación lo lleva a `presented/revision=2`. El orden coincide exactamente con el fixture set registrado.
+Cada ítem runtime empieza `pending/revision=1`; la aceptación lo lleva a
+`presented/revision=2`; una decisión D1 lo lleva a `reviewed/revision=3` o
+`skipped/revision=3`. El orden coincide exactamente con el fixture set registrado.
 
 ## 7. Evidencia
 
@@ -237,3 +315,10 @@ Cada ítem runtime empieza `pending/revision=1` y la aceptación lo lleva a `pre
 - rechazo sin mutación de `found` posterior a un bloqueo;
 - rechazo de runtime blocked sin attempt y de observación huérfana;
 - claim/reconcile por HTTP real con token separado del reviewer.
+- decisiones `correct`, `correct_with_feedback` y `skip`, avance uno por vez y cierre del lote;
+- texto literal preservado, límite de 4000, artifact/hash separados y contadores derivados;
+- replay antes de expiry/CAS, command ID conflictivo y rechazo de autoridad/revisión/reloj stale;
+- tampering de decisión, puntero, feedback, hash y vínculo;
+- reescritura coordinada del grafo runtime rechazada contra artifacts write-once;
+- recuperación exacta tras crash en cada publicación D1 y rechazo de artifacts faltantes;
+- decisión por HTTP real con bearer reviewer, payload cerrado y respuesta durable.

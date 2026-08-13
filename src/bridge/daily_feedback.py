@@ -12,7 +12,7 @@ import fcntl
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Mapping, Optional
+from typing import Mapping, cast, Optional
 
 from fastapi import FastAPI, Header, HTTPException, Response
 
@@ -197,6 +197,21 @@ class DeliveryRetryResult:
     phase: str
 
 
+@dataclass(frozen=True)
+class ReviewDecisionResult:
+    status: str
+    decision_id: str
+    decision_type: str
+    verbatim_feedback: str | None
+    item_status: str
+    item_revision: int
+    batch_status: str
+    batch_revision: int
+    reviewed_count: int
+    with_feedback_count: int
+    skipped_count: int
+
+
 class IdempotencyConflictError(RuntimeError):
     """A command ID was reused with different semantic inputs."""
 
@@ -229,6 +244,10 @@ class ReviewDeliveryConflictError(RuntimeError):
     """A simulated review delivery violates its durable authority or phase."""
 
 
+class ReviewDecisionConflictError(RuntimeError):
+    """A reviewer decision violates its durable authority or item state."""
+
+
 class DailyFeedbackBatchStore:
     """Materialize immutable, sanitized fixture batches on private storage."""
 
@@ -251,6 +270,11 @@ class DailyFeedbackBatchStore:
         self._commits_dir = root / "commits"
         self._runtime_dir = root / "runtime"
         self._runtime_commands_dir = root / "runtime_commands"
+        self._review_decision_intents_dir = root / "review_decision_intents"
+        self._review_decisions_dir = root / "review_decisions"
+        self._owner_feedback_dir = root / "owner_feedback"
+        self._review_decision_results_dir = root / "review_decision_results"
+        self._review_decision_commits_dir = root / "review_decision_commits"
         self._ensure_private_directory(self._root)
         self._ensure_private_directory(self._commands_dir)
         self._ensure_private_directory(self._batches_dir)
@@ -260,6 +284,11 @@ class DailyFeedbackBatchStore:
         self._ensure_private_directory(self._commits_dir)
         self._ensure_private_directory(self._runtime_dir)
         self._ensure_private_directory(self._runtime_commands_dir)
+        self._ensure_private_directory(self._review_decision_intents_dir)
+        self._ensure_private_directory(self._review_decisions_dir)
+        self._ensure_private_directory(self._owner_feedback_dir)
+        self._ensure_private_directory(self._review_decision_results_dir)
+        self._ensure_private_directory(self._review_decision_commits_dir)
 
     def _ensure_private_directory(self, directory: Path) -> None:
         directory.mkdir(parents=True, mode=0o700, exist_ok=True)
@@ -678,7 +707,10 @@ class DailyFeedbackBatchStore:
             for item in items
             if isinstance(item, dict)
             and item.get("status")
-            not in {"correct", "corrected", "skipped", "feedback_cancelled"}
+            not in {
+                "correct", "corrected", "reviewed", "skipped",
+                "feedback_cancelled",
+            }
         ]
         if not nonterminal:
             raise ReviewAuthorizationError("no_review_item_available")
@@ -705,6 +737,299 @@ class DailyFeedbackBatchStore:
             release_id=str(release["id"]),
             release_version=int(release["version"]),
             payload_hash=f"sha256:{_hash_json(snapshot)}",
+        )
+
+    def record_review_decision(
+        self,
+        *,
+        command_id: str,
+        batch_id: str,
+        snapshot_id: str,
+        expected_item_revision: int,
+        decision_type: str,
+        verbatim_feedback: str | None,
+        principal: ReviewPrincipal,
+        session_fence: int,
+        now: datetime,
+    ) -> ReviewDecisionResult:
+        payload = {
+            "batch_id": batch_id,
+            "snapshot_id": snapshot_id,
+            "expected_item_revision": expected_item_revision,
+            "decision_type": decision_type,
+            "verbatim_feedback": verbatim_feedback,
+            "reviewer_id": principal.reviewer_id,
+            "reviewer_binding_id": principal.reviewer_binding_id,
+            "session_owner": principal.session_owner,
+            "session_fence": session_fence,
+        }
+        command_fingerprint = _hash_json(
+            {"command_type": "record_review_decision", **payload}
+        )
+        committed_batch = self._load_committed_batch(
+            self._find_committed_manifest(batch_id)
+        )
+        batch_envelope = self._read_json(self._batches_dir / f"{batch_id}.json")
+        lock_fd = self._open_lock(self._root / ".command.lock")
+        try:
+            state_path = self._runtime_dir / f"{batch_id}.json"
+            if not state_path.exists():
+                raise ReviewDecisionConflictError("review_session_missing")
+            state = self._read_json(state_path)
+            recovered_decision = self._recover_review_decision_intent(
+                command_id=command_id,
+                fingerprint=command_fingerprint,
+                batch_id=batch_id,
+                state_path=state_path,
+                state=state,
+                committed_batch=committed_batch,
+            )
+            if recovered_decision is not None:
+                return self._review_decision_result(
+                    recovered_decision, status="replayed"
+                )
+            prior = self._read_global_runtime_command(
+                command_id, command_fingerprint
+            )
+            if prior is not None:
+                envelope = prior.get("review_decision_result")
+                if not isinstance(envelope, dict):
+                    raise IdempotencyConflictError("idempotency_conflict")
+                return self._review_decision_result(envelope, status="replayed")
+            if not (
+                (decision_type == "correct" and verbatim_feedback is None)
+                or (decision_type == "skip" and verbatim_feedback is None)
+                or (
+                    decision_type == "correct_with_feedback"
+                    and isinstance(verbatim_feedback, str)
+                    and bool(verbatim_feedback.strip())
+                    and len(
+                        verbatim_feedback.replace("\r\n", "\n").replace("\r", "\n")
+                    )
+                    <= 4000
+                )
+            ):
+                raise ReviewDecisionConflictError("invalid_review_decision")
+            if now.tzinfo is None or now.utcoffset() != UTC.utcoffset(now):
+                raise ReviewDecisionConflictError("invalid_review_time")
+            if (
+                batch_envelope.get("reviewer_id") != principal.reviewer_id
+                or batch_envelope.get("reviewer_binding_id")
+                != principal.reviewer_binding_id
+            ):
+                raise ReviewDecisionConflictError("reviewer_authority_mismatch")
+            try:
+                self._validate_active_session(
+                    state, principal, session_fence=session_fence, now=now
+                )
+            except ReviewDeliveryConflictError as exc:
+                raise ReviewDecisionConflictError(str(exc)) from exc
+            self._validate_runtime_binding(state, committed_batch)
+            matches = [
+                item
+                for item in self._runtime_items(state)
+                if item.get("snapshot_id") == snapshot_id
+            ]
+            if len(matches) != 1:
+                raise ReviewDecisionConflictError("review_item_not_found")
+            item = matches[0]
+            if (
+                item.get("status") != "presented"
+                or item.get("revision") != expected_item_revision
+            ):
+                raise ReviewDecisionConflictError("review_item_revision_conflict")
+            nonterminal = [
+                candidate
+                for candidate in self._runtime_items(state)
+                if candidate.get("status") not in {"reviewed", "skipped"}
+            ]
+            if (
+                not nonterminal
+                or min(
+                    nonterminal,
+                    key=lambda value: cast(int, value["position"]),
+                )
+                is not item
+            ):
+                raise ReviewDecisionConflictError("review_item_out_of_order")
+            runtime_before_hash = _hash_json(state)
+            decisions = state.setdefault("review_decisions", {})
+            if not isinstance(decisions, dict):
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+            decision_sequence = len(decisions) + 1
+            decision_id = f"decision_{_hash_json({
+                **payload,
+                'decision_sequence': decision_sequence,
+            })}"
+            if decision_id in decisions:
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+            feedback_id = None
+            if decision_type == "correct_with_feedback":
+                assert isinstance(verbatim_feedback, str)
+                feedback_id = f"feedback_{_hash_json({
+                    'decision_id': decision_id,
+                    'snapshot_id': snapshot_id,
+                    'verbatim_text': verbatim_feedback,
+                    'reviewer_id': principal.reviewer_id,
+                    'reviewer_binding_id': principal.reviewer_binding_id,
+                })}"
+                feedback_records = state.setdefault("owner_feedback", {})
+                if (
+                    not isinstance(feedback_records, dict)
+                    or feedback_id in feedback_records
+                ):
+                    raise StorageConflictError("daily_feedback_runtime_invalid")
+                feedback_records[feedback_id] = {
+                    "feedback_id": feedback_id,
+                    "decision_id": decision_id,
+                    "batch_id": batch_id,
+                    "snapshot_id": snapshot_id,
+                    "verbatim_text": verbatim_feedback,
+                    "content_hash": f"sha256:{_hash_text(verbatim_feedback)}",
+                    "reviewer_id": principal.reviewer_id,
+                    "reviewer_binding_id": principal.reviewer_binding_id,
+                    "command_id": command_id,
+                    "created_at": now.isoformat(),
+                }
+            envelope = {
+                "decision_id": decision_id,
+                "batch_id": batch_id,
+                "snapshot_id": snapshot_id,
+                "decision_type": decision_type,
+                "verbatim_feedback": None,
+                "owner_feedback_id": feedback_id,
+                "reviewer_id": principal.reviewer_id,
+                "reviewer_binding_id": principal.reviewer_binding_id,
+                "session_owner": principal.session_owner,
+                "session_fence": session_fence,
+                "expected_item_revision": expected_item_revision,
+                "decision_sequence": decision_sequence,
+                "command_id": command_id,
+                "recorded_at": now.isoformat(),
+            }
+            decisions[decision_id] = envelope
+            item["status"] = (
+                "skipped" if decision_type == "skip" else "reviewed"
+            )
+            item["revision"] = expected_item_revision + 1
+            item["current_decision_id"] = decision_id
+            terminal_statuses = {
+                "reviewed", "skipped", "corrected", "feedback_cancelled"
+            }
+            if all(
+                candidate.get("status") in terminal_statuses
+                for candidate in self._runtime_items(state)
+            ):
+                state["batch_status"] = "completed"
+                state["batch_revision"] = int(state["batch_revision"]) + 1
+            reviewed_count = sum(
+                candidate.get("status") == "reviewed"
+                for candidate in self._runtime_items(state)
+            )
+            skipped_count = sum(
+                candidate.get("status") == "skipped"
+                for candidate in self._runtime_items(state)
+            )
+            with_feedback_count = sum(
+                isinstance(candidate, dict)
+                and candidate.get("decision_type") == "correct_with_feedback"
+                for candidate in decisions.values()
+            )
+            result = self._review_decision_result(
+                {
+                    **envelope,
+                    "verbatim_feedback": verbatim_feedback,
+                    "item_status": item["status"],
+                    "item_revision": item["revision"],
+                    "batch_status": state["batch_status"],
+                    "batch_revision": state["batch_revision"],
+                    "reviewed_count": reviewed_count,
+                    "with_feedback_count": with_feedback_count,
+                    "skipped_count": skipped_count,
+                },
+                status="applied",
+            )
+            commands = state.get("commands")
+            if not isinstance(commands, dict):
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+            commands[command_id] = {
+                "fingerprint": command_fingerprint,
+                "review_decision_result": {
+                    "decision_id": result.decision_id,
+                    "decision_type": result.decision_type,
+                    "verbatim_feedback": result.verbatim_feedback,
+                    "item_status": result.item_status,
+                    "item_revision": result.item_revision,
+                    "batch_status": result.batch_status,
+                    "batch_revision": result.batch_revision,
+                    "reviewed_count": result.reviewed_count,
+                    "with_feedback_count": result.with_feedback_count,
+                    "skipped_count": result.skipped_count,
+                },
+            }
+            result_envelope = commands[command_id]["review_decision_result"]
+            assert isinstance(result_envelope, dict)
+            feedback_envelope = (
+                state["owner_feedback"].get(feedback_id)
+                if isinstance(state.get("owner_feedback"), dict)
+                and isinstance(feedback_id, str)
+                else None
+            )
+            intent = {
+                "schema_version": 1,
+                "command_id": command_id,
+                "fingerprint": command_fingerprint,
+                "batch_id": batch_id,
+                "decision_id": decision_id,
+                "feedback_id": feedback_id,
+                "runtime_before_hash": runtime_before_hash,
+                "runtime_after_hash": _hash_json(state),
+                "decision_hash": _hash_json(envelope),
+                "feedback_hash": (
+                    _hash_json(feedback_envelope)
+                    if isinstance(feedback_envelope, dict)
+                    else None
+                ),
+                "result_hash": _hash_json(result_envelope),
+                "runtime_after": state,
+            }
+            self._write_once(self._decision_intent_path(command_id), intent)
+            self._write_once(
+                self._review_decisions_dir / f"{decision_id}.json", envelope
+            )
+            if isinstance(feedback_id, str) and isinstance(feedback_envelope, dict):
+                self._write_once(
+                    self._owner_feedback_dir / f"{feedback_id}.json",
+                    feedback_envelope,
+                )
+            self._write_once(
+                self._decision_result_path(command_id), result_envelope
+            )
+            self._write_replace(state_path, state)
+            self._write_decision_commit(intent)
+            return result
+        finally:
+            os.close(lock_fd)
+
+    def _review_decision_result(
+        self, envelope: dict[str, object], *, status: str
+    ) -> ReviewDecisionResult:
+        return ReviewDecisionResult(
+            status=status,
+            decision_id=str(envelope["decision_id"]),
+            decision_type=str(envelope["decision_type"]),
+            verbatim_feedback=(
+                str(envelope["verbatim_feedback"])
+                if envelope.get("verbatim_feedback") is not None
+                else None
+            ),
+            item_status=str(envelope["item_status"]),
+            item_revision=int(envelope["item_revision"]),
+            batch_status=str(envelope["batch_status"]),
+            batch_revision=int(envelope["batch_revision"]),
+            reviewed_count=int(envelope["reviewed_count"]),
+            with_feedback_count=int(envelope["with_feedback_count"]),
+            skipped_count=int(envelope["skipped_count"]),
         )
 
     def reserve_review_delivery(
@@ -1763,11 +2088,297 @@ class DailyFeedbackBatchStore:
             if (item.get("status"), revision) not in {
                 ("pending", 1),
                 ("presented", 2),
+                ("reviewed", 3),
+                ("skipped", 3),
             }:
                 raise StorageConflictError("daily_feedback_runtime_invalid")
         if observed != expected:
             raise StorageConflictError("daily_feedback_runtime_invalid")
-        presented_count = sum(item.get("status") == "presented" for item in items)
+        engaged_count = sum(
+            item.get("status") in {"presented", "reviewed", "skipped"}
+            for item in items
+        )
+        decisions_value = state.get("review_decisions", {})
+        feedback_value = state.get("owner_feedback", {})
+        if not isinstance(decisions_value, dict) or not isinstance(
+            feedback_value, dict
+        ):
+            raise StorageConflictError("daily_feedback_runtime_invalid")
+        current_decisions: set[str] = set()
+        current_feedback: set[str] = set()
+        try:
+            decision_sequences = sorted(
+                int(decision["decision_sequence"])
+                for decision in decisions_value.values()
+                if isinstance(decision, dict)
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise StorageConflictError("daily_feedback_runtime_invalid") from exc
+        if decision_sequences != list(range(1, len(decisions_value) + 1)):
+            raise StorageConflictError("daily_feedback_runtime_invalid")
+        for item in items:
+            decision_id = item.get("current_decision_id")
+            if item.get("status") in {"reviewed", "skipped"}:
+                decision = (
+                    decisions_value.get(decision_id)
+                    if isinstance(decision_id, str)
+                    else None
+                )
+                feedback_id = (
+                    decision.get("owner_feedback_id")
+                    if isinstance(decision, dict)
+                    else None
+                )
+                feedback = (
+                    feedback_value.get(feedback_id)
+                    if isinstance(feedback_id, str)
+                    else None
+                )
+                verbatim = (
+                    feedback.get("verbatim_text")
+                    if isinstance(feedback, dict)
+                    else None
+                )
+                decision_type = (
+                    decision.get("decision_type")
+                    if isinstance(decision, dict)
+                    else None
+                )
+                command_id = (
+                    decision.get("command_id")
+                    if isinstance(decision, dict)
+                    else None
+                )
+                commands_value = state.get("commands")
+                command = (
+                    commands_value.get(command_id)
+                    if isinstance(commands_value, dict)
+                    and isinstance(command_id, str)
+                    else None
+                )
+                recorded_at = (
+                    decision.get("recorded_at")
+                    if isinstance(decision, dict)
+                    else None
+                )
+                try:
+                    recorded_time = (
+                        datetime.fromisoformat(recorded_at)
+                        if isinstance(recorded_at, str)
+                        else None
+                    )
+                except ValueError:
+                    recorded_time = None
+                expected_command_fingerprint = (
+                    _hash_json(
+                        {
+                            "command_type": "record_review_decision",
+                            "batch_id": decision.get("batch_id"),
+                            "snapshot_id": decision.get("snapshot_id"),
+                            "expected_item_revision": decision.get(
+                                "expected_item_revision"
+                            ),
+                            "decision_type": decision_type,
+                            "verbatim_feedback": verbatim,
+                            "reviewer_id": decision.get("reviewer_id"),
+                            "reviewer_binding_id": decision.get(
+                                "reviewer_binding_id"
+                            ),
+                            "session_owner": decision.get("session_owner"),
+                            "session_fence": decision.get("session_fence"),
+                        }
+                    )
+                    if isinstance(decision, dict)
+                    else None
+                )
+                decision_sequence = (
+                    decision.get("decision_sequence")
+                    if isinstance(decision, dict)
+                    else None
+                )
+                historical_decisions = [
+                    candidate
+                    for candidate in decisions_value.values()
+                    if isinstance(candidate, dict)
+                    and isinstance(candidate.get("decision_sequence"), int)
+                    and isinstance(decision_sequence, int)
+                    and candidate["decision_sequence"] <= decision_sequence
+                ]
+                expected_command_result = {
+                    "decision_id": decision_id,
+                    "decision_type": decision_type,
+                    "verbatim_feedback": verbatim,
+                    "item_status": (
+                        "skipped" if decision_type == "skip" else "reviewed"
+                    ),
+                    "item_revision": 3,
+                    "batch_status": (
+                        "completed"
+                        if decision_sequence == len(items)
+                        else "in_review"
+                    ),
+                    "batch_revision": 3 if decision_sequence == len(items) else 2,
+                    "reviewed_count": sum(
+                        candidate.get("decision_type") != "skip"
+                        for candidate in historical_decisions
+                    ),
+                    "with_feedback_count": sum(
+                        candidate.get("decision_type") == "correct_with_feedback"
+                        for candidate in historical_decisions
+                    ),
+                    "skipped_count": sum(
+                        candidate.get("decision_type") == "skip"
+                        for candidate in historical_decisions
+                    ),
+                }
+                valid_feedback = (
+                    decision_type == "correct_with_feedback"
+                    and isinstance(feedback_id, str)
+                    and isinstance(feedback, dict)
+                    and feedback.get("feedback_id") == feedback_id
+                    and feedback.get("decision_id") == decision_id
+                    and feedback.get("batch_id") == state.get("batch_id")
+                    and feedback.get("snapshot_id") == item.get("snapshot_id")
+                    and isinstance(verbatim, str)
+                    and bool(verbatim.strip())
+                    and len(verbatim.replace("\r\n", "\n").replace("\r", "\n"))
+                    <= 4000
+                    and feedback.get("content_hash")
+                    == f"sha256:{_hash_text(verbatim)}"
+                    and feedback.get("command_id") == command_id
+                    and feedback.get("created_at") == recorded_at
+                    and feedback_id
+                    == f"feedback_{_hash_json({
+                        'decision_id': decision_id,
+                        'snapshot_id': item.get('snapshot_id'),
+                        'verbatim_text': verbatim,
+                        'reviewer_id': decision.get('reviewer_id'),
+                        'reviewer_binding_id': decision.get('reviewer_binding_id'),
+                    })}"
+                )
+                valid_without_feedback = (
+                    decision_type in {"correct", "skip"}
+                    and feedback_id is None
+                    and feedback is None
+                )
+                if (
+                    not isinstance(decision, dict)
+                    or not isinstance(decision_id, str)
+                    or decision_id in current_decisions
+                    or decision.get("decision_id") != decision_id
+                    or decision.get("batch_id") != state.get("batch_id")
+                    or decision.get("snapshot_id") != item.get("snapshot_id")
+                    or decision.get("verbatim_feedback") is not None
+                    or not (valid_feedback or valid_without_feedback)
+                    or not isinstance(command_id, str)
+                    or not command_id
+                    or not isinstance(command, dict)
+                    or command.get("fingerprint") != expected_command_fingerprint
+                    or command.get("review_decision_result")
+                    != expected_command_result
+                    or recorded_time is None
+                    or recorded_time.tzinfo is None
+                    or recorded_time.utcoffset() != UTC.utcoffset(recorded_time)
+                    or (
+                        item.get("status") == "skipped"
+                        and decision_type != "skip"
+                    )
+                    or (
+                        item.get("status") == "reviewed"
+                        and decision_type == "skip"
+                    )
+                    or decision.get("expected_item_revision") != 2
+                    or decision_id
+                    != f"decision_{_hash_json({
+                        'batch_id': decision.get('batch_id'),
+                        'snapshot_id': decision.get('snapshot_id'),
+                        'expected_item_revision': decision.get('expected_item_revision'),
+                        'decision_type': decision_type,
+                        'verbatim_feedback': verbatim,
+                        'reviewer_id': decision.get('reviewer_id'),
+                        'reviewer_binding_id': decision.get('reviewer_binding_id'),
+                        'session_owner': decision.get('session_owner'),
+                        'session_fence': decision.get('session_fence'),
+                        'decision_sequence': decision_sequence,
+                    })}"
+                ):
+                    raise StorageConflictError("daily_feedback_runtime_invalid")
+                self._validate_committed_review_decision(
+                    command_id=command_id,
+                    decision_id=decision_id,
+                    feedback_id=feedback_id,
+                    decision=decision,
+                    feedback=feedback,
+                    result=expected_command_result,
+                    state=state,
+                )
+                current_decisions.add(decision_id)
+                if isinstance(feedback_id, str):
+                    current_feedback.add(feedback_id)
+            elif decision_id is not None:
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+        if current_decisions != set(decisions_value) or current_feedback != set(
+            feedback_value
+        ):
+            raise StorageConflictError("daily_feedback_runtime_invalid")
+        immutable_batch_decisions = {
+            path.stem
+            for path in self._review_decisions_dir.glob("*.json")
+            if self._read_json(path).get("batch_id") == state.get("batch_id")
+        }
+        immutable_batch_feedback = {
+            path.stem
+            for path in self._owner_feedback_dir.glob("*.json")
+            if self._read_json(path).get("batch_id") == state.get("batch_id")
+        }
+        intent_paths = list(self._review_decision_intents_dir.glob("*.json"))
+        result_stems = {
+            path.stem for path in self._review_decision_results_dir.glob("*.json")
+        }
+        commit_stems = {
+            path.stem for path in self._review_decision_commits_dir.glob("*.json")
+        }
+        intent_stems = {path.stem for path in intent_paths}
+        if intent_stems != result_stems or intent_stems != commit_stems:
+            raise StorageConflictError("daily_feedback_runtime_invalid")
+        expected_batch_commands = {
+            str(decision["command_id"])
+            for decision in decisions_value.values()
+            if isinstance(decision, dict)
+        }
+        batch_intents: dict[str, dict[str, object]] = {}
+        for path in intent_paths:
+            intent = self._read_json(path)
+            command_id = intent.get("command_id")
+            if (
+                not isinstance(command_id, str)
+                or path.stem != _hash_text(command_id)
+            ):
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+            if intent.get("batch_id") == state.get("batch_id"):
+                if command_id in batch_intents:
+                    raise StorageConflictError("daily_feedback_runtime_invalid")
+                batch_intents[command_id] = intent
+        if set(batch_intents) != expected_batch_commands:
+            raise StorageConflictError("daily_feedback_runtime_invalid")
+        for command_id, intent in batch_intents.items():
+            decision_id = intent.get("decision_id")
+            decision = (
+                decisions_value.get(decision_id)
+                if isinstance(decision_id, str)
+                else None
+            )
+            if (
+                not isinstance(decision, dict)
+                or decision.get("command_id") != command_id
+                or intent.get("feedback_id") != decision.get("owner_feedback_id")
+            ):
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+        if (
+            immutable_batch_decisions != current_decisions
+            or immutable_batch_feedback != current_feedback
+        ):
+            raise StorageConflictError("daily_feedback_runtime_invalid")
         attempts_value = state.get("delivery_attempts", {})
         observations_value = state.get("delivery_observations", {})
         if not isinstance(attempts_value, dict) or not isinstance(
@@ -1916,10 +2527,16 @@ class DailyFeedbackBatchStore:
         except (KeyError, TypeError, ValueError) as exc:
             raise StorageConflictError("daily_feedback_runtime_invalid") from exc
         if batch_projection == ("ready", 1):
-            if presented_count != 0:
+            if engaged_count != 0:
                 raise StorageConflictError("daily_feedback_runtime_invalid")
         elif batch_projection == ("in_review", 2):
-            if presented_count == 0:
+            if engaged_count == 0:
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+        elif batch_projection == ("completed", 3):
+            if engaged_count != len(items) or any(
+                item.get("status") not in {"reviewed", "skipped"}
+                for item in items
+            ):
                 raise StorageConflictError("daily_feedback_runtime_invalid")
         elif batch_projection == ("blocked", 2):
             blocked_attempts = []
@@ -1938,7 +2555,7 @@ class DailyFeedbackBatchStore:
                     ):
                         raise StorageConflictError("daily_feedback_runtime_invalid")
                     blocked_attempts.append(attempt)
-            if presented_count != 0 or len(blocked_attempts) != 1:
+            if engaged_count != 0 or len(blocked_attempts) != 1:
                 raise StorageConflictError("daily_feedback_runtime_invalid")
         else:
             raise StorageConflictError("daily_feedback_runtime_invalid")
@@ -2112,6 +2729,209 @@ class DailyFeedbackBatchStore:
             lease_expires_at=datetime.fromisoformat(str(value["lease_expires_at"])),
         )
 
+    def _decision_intent_path(self, command_id: str) -> Path:
+        return self._review_decision_intents_dir / f"{_hash_text(command_id)}.json"
+
+    def _decision_result_path(self, command_id: str) -> Path:
+        return self._review_decision_results_dir / f"{_hash_text(command_id)}.json"
+
+    def _decision_commit_path(self, command_id: str) -> Path:
+        return self._review_decision_commits_dir / f"{_hash_text(command_id)}.json"
+
+    def _write_decision_commit(self, intent: dict[str, object]) -> None:
+        command_id = intent.get("command_id")
+        if not isinstance(command_id, str):
+            raise StorageConflictError("daily_feedback_runtime_invalid")
+        self._write_once(
+            self._decision_commit_path(command_id),
+            {
+                "schema_version": 1,
+                "command_id": command_id,
+                "intent_hash": _hash_json(intent),
+                "decision_hash": intent.get("decision_hash"),
+                "feedback_hash": intent.get("feedback_hash"),
+                "result_hash": intent.get("result_hash"),
+                "runtime_after_hash": intent.get("runtime_after_hash"),
+            },
+        )
+
+    def _recover_review_decision_intent(
+        self,
+        *,
+        command_id: str,
+        fingerprint: str,
+        batch_id: str,
+        state_path: Path,
+        state: dict[str, object],
+        committed_batch: ReviewBatch,
+    ) -> dict[str, object] | None:
+        intent_path = self._decision_intent_path(command_id)
+        if not intent_path.exists():
+            return None
+        intent = self._read_json(intent_path)
+        runtime_after = intent.get("runtime_after")
+        if (
+            intent.get("schema_version") != 1
+            or intent.get("command_id") != command_id
+            or intent.get("fingerprint") != fingerprint
+            or intent.get("batch_id") != batch_id
+            or not isinstance(runtime_after, dict)
+            or intent.get("runtime_after_hash") != _hash_json(runtime_after)
+        ):
+            raise IdempotencyConflictError("idempotency_conflict")
+        current_hash = _hash_json(state)
+        if self._decision_commit_path(command_id).exists():
+            self._validate_runtime_binding(state, committed_batch)
+            result = self._read_json(self._decision_result_path(command_id))
+            if _hash_json(result) != intent.get("result_hash"):
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+            commands = state.get("commands")
+            prior = commands.get(command_id) if isinstance(commands, dict) else None
+            if not isinstance(prior, dict):
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+            self._write_global_runtime_command(
+                command_id, fingerprint, batch_id, prior
+            )
+            return result
+        if current_hash == intent.get("runtime_before_hash"):
+            self._publish_review_decision_artifacts(intent, runtime_after)
+            self._write_replace(state_path, runtime_after)
+        elif current_hash != intent.get("runtime_after_hash"):
+            raise StorageConflictError("daily_feedback_runtime_invalid")
+        self._publish_review_decision_artifacts(intent, runtime_after)
+        self._write_decision_commit(intent)
+        commands = runtime_after.get("commands")
+        prior = commands.get(command_id) if isinstance(commands, dict) else None
+        result = (
+            prior.get("review_decision_result")
+            if isinstance(prior, dict)
+            else None
+        )
+        if not isinstance(prior, dict) or not isinstance(result, dict):
+            raise StorageConflictError("daily_feedback_runtime_invalid")
+        self._write_global_runtime_command(command_id, fingerprint, batch_id, prior)
+        return result
+
+    def _publish_review_decision_artifacts(
+        self,
+        intent: dict[str, object],
+        runtime_after: dict[str, object],
+    ) -> None:
+        decision_id = intent.get("decision_id")
+        feedback_id = intent.get("feedback_id")
+        command_id = intent.get("command_id")
+        decisions = runtime_after.get("review_decisions")
+        feedback_records = runtime_after.get("owner_feedback")
+        commands = runtime_after.get("commands")
+        decision = (
+            decisions.get(decision_id)
+            if isinstance(decisions, dict) and isinstance(decision_id, str)
+            else None
+        )
+        command = (
+            commands.get(command_id)
+            if isinstance(commands, dict) and isinstance(command_id, str)
+            else None
+        )
+        result = (
+            command.get("review_decision_result")
+            if isinstance(command, dict)
+            else None
+        )
+        feedback = (
+            feedback_records.get(feedback_id)
+            if isinstance(feedback_records, dict) and isinstance(feedback_id, str)
+            else None
+        )
+        if (
+            not isinstance(decision_id, str)
+            or not isinstance(command_id, str)
+            or not isinstance(decision, dict)
+            or not isinstance(result, dict)
+            or _hash_json(decision) != intent.get("decision_hash")
+            or _hash_json(result) != intent.get("result_hash")
+            or (
+                isinstance(feedback_id, str)
+                and (
+                    not isinstance(feedback, dict)
+                    or _hash_json(feedback) != intent.get("feedback_hash")
+                )
+            )
+            or (feedback_id is None and intent.get("feedback_hash") is not None)
+        ):
+            raise StorageConflictError("daily_feedback_runtime_invalid")
+        self._write_once(
+            self._review_decisions_dir / f"{decision_id}.json", decision
+        )
+        if isinstance(feedback_id, str) and isinstance(feedback, dict):
+            self._write_once(
+                self._owner_feedback_dir / f"{feedback_id}.json", feedback
+            )
+        self._write_once(self._decision_result_path(command_id), result)
+
+    def _validate_committed_review_decision(
+        self,
+        *,
+        command_id: str,
+        decision_id: str,
+        feedback_id: object,
+        decision: dict[str, object],
+        feedback: object,
+        result: dict[str, object],
+        state: dict[str, object],
+    ) -> None:
+        intent_path = self._decision_intent_path(command_id)
+        commit_path = self._decision_commit_path(command_id)
+        decision_path = self._review_decisions_dir / f"{decision_id}.json"
+        result_path = self._decision_result_path(command_id)
+        if not all(
+            path.exists()
+            for path in (intent_path, commit_path, decision_path, result_path)
+        ):
+            raise StorageConflictError("daily_feedback_runtime_invalid")
+        intent = self._read_json(intent_path)
+        commit = self._read_json(commit_path)
+        immutable_decision = self._read_json(decision_path)
+        immutable_result = self._read_json(result_path)
+        commands = state.get("commands")
+        command = commands.get(command_id) if isinstance(commands, dict) else None
+        fingerprint = (
+            command.get("fingerprint") if isinstance(command, dict) else None
+        )
+        immutable_feedback = None
+        if isinstance(feedback_id, str):
+            feedback_path = self._owner_feedback_dir / f"{feedback_id}.json"
+            if not feedback_path.exists():
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+            immutable_feedback = self._read_json(feedback_path)
+        if (
+            intent.get("schema_version") != 1
+            or intent.get("command_id") != command_id
+            or intent.get("fingerprint") != fingerprint
+            or intent.get("batch_id") != state.get("batch_id")
+            or intent.get("decision_id") != decision_id
+            or intent.get("feedback_id") != feedback_id
+            or intent.get("decision_hash") != _hash_json(decision)
+            or intent.get("feedback_hash")
+            != (_hash_json(feedback) if isinstance(feedback, dict) else None)
+            or intent.get("result_hash") != _hash_json(result)
+            or intent.get("runtime_after_hash") != _hash_json(intent.get("runtime_after"))
+            or immutable_decision != decision
+            or immutable_result != result
+            or immutable_feedback != feedback
+            or commit
+            != {
+                "schema_version": 1,
+                "command_id": command_id,
+                "intent_hash": _hash_json(intent),
+                "decision_hash": intent.get("decision_hash"),
+                "feedback_hash": intent.get("feedback_hash"),
+                "result_hash": intent.get("result_hash"),
+                "runtime_after_hash": intent.get("runtime_after_hash"),
+            }
+        ):
+            raise StorageConflictError("daily_feedback_runtime_invalid")
+
     def _runtime_command_path(self, command_id: str) -> Path:
         return self._runtime_commands_dir / f"{_hash_text(command_id)}.json"
 
@@ -2140,6 +2960,21 @@ class DailyFeedbackBatchStore:
                 or not isinstance(envelope.get("result"), dict)
             ):
                 raise IdempotencyConflictError("idempotency_conflict")
+            result = envelope["result"]
+            if isinstance(result, dict) and isinstance(
+                result.get("review_decision_result"), dict
+            ):
+                batch_id = envelope.get("batch_id")
+                if not isinstance(batch_id, str):
+                    raise IdempotencyConflictError("idempotency_conflict")
+                state_path = self._runtime_dir / f"{batch_id}.json"
+                if not state_path.exists():
+                    raise StorageConflictError("daily_feedback_runtime_invalid")
+                state = self._read_json(state_path)
+                batch = self._load_committed_batch(
+                    self._find_committed_manifest(batch_id)
+                )
+                self._validate_runtime_binding(state, batch)
             return envelope["result"]  # type: ignore[return-value]
         recovered: list[tuple[str, dict[str, object]]] = []
         for runtime_path in self._runtime_dir.glob("*.json"):
@@ -2606,6 +3441,70 @@ def create_daily_feedback_fixture_app(
                 },
                 "payload_hash": item.payload_hash,
             },
+        }
+
+    @app.post("/internal/daily-feedback/review-decisions")
+    async def record_review_decision_http(
+        payload: dict[str, object],
+        response: Response,
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, object]:
+        principal = authorize_reviewer(authorization)
+        required = {
+            "command_id", "batch_id", "snapshot_id", "expected_item_revision",
+            "decision_type", "verbatim_feedback", "session_fence",
+        }
+        if (
+            set(payload) != required
+            or not all(
+                isinstance(payload.get(field), str) and bool(payload[field])
+                for field in (
+                    "command_id", "batch_id", "snapshot_id", "decision_type"
+                )
+            )
+            or type(payload.get("expected_item_revision")) is not int
+            or type(payload.get("session_fence")) is not int
+            or (
+                payload.get("verbatim_feedback") is not None
+                and not isinstance(payload.get("verbatim_feedback"), str)
+            )
+        ):
+            raise HTTPException(
+                status_code=422, detail="invalid_review_decision_payload"
+            )
+        try:
+            result = store.record_review_decision(
+                command_id=str(payload["command_id"]),
+                batch_id=str(payload["batch_id"]),
+                snapshot_id=str(payload["snapshot_id"]),
+                expected_item_revision=int(payload["expected_item_revision"]),
+                decision_type=str(payload["decision_type"]),
+                verbatim_feedback=(
+                    str(payload["verbatim_feedback"])
+                    if payload["verbatim_feedback"] is not None
+                    else None
+                ),
+                principal=principal,
+                session_fence=int(payload["session_fence"]),
+                now=datetime.now(UTC),
+            )
+        except IdempotencyConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ReviewDecisionConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        response.status_code = 201 if result.status == "applied" else 200
+        return {
+            "status": result.status,
+            "decision_id": result.decision_id,
+            "decision_type": result.decision_type,
+            "verbatim_feedback": result.verbatim_feedback,
+            "item_status": result.item_status,
+            "item_revision": result.item_revision,
+            "batch_status": result.batch_status,
+            "batch_revision": result.batch_revision,
+            "reviewed_count": result.reviewed_count,
+            "with_feedback_count": result.with_feedback_count,
+            "skipped_count": result.skipped_count,
         }
 
     @app.post("/internal/daily-feedback/deliveries/reconciliation-claims")
