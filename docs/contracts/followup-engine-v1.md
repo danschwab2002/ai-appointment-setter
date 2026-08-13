@@ -59,11 +59,26 @@ business timezone: tenant timezone
 business window: Monday-Saturday 09:00-19:00
 grace period: 1 hour
 step 1: first_contact
-step 2: no_reply_followup after 24 hours
-step 3: no_reply_followup after 72 hours
+step 2: no_reply_followup at +24 hours from the first accepted outbound message
+step 3: no_reply_followup at +72 hours from the first accepted outbound message
 max automatic messages: 3
 sequence expiry: 7 days from abandonment
 ```
+
+Los campos `steps[].delay` son **offsets absolutos** desde la primera aceptación
+outbound durable de la secuencia. No son demoras relativas encadenadas desde el
+mensaje anterior. Por ejemplo, `2 minutes`, `5 minutes`, `10 minutes` produce
+deadlines `T+2`, `T+5`, `T+10`, donde `T` es el `accepted_at` del primer intento
+aceptado. Una aceptación intermedia tardía no desplaza los pasos posteriores;
+la acción vencida se materializa con su deadline original y debe atravesar una
+nueva re-evaluación autoritativa antes de cualquier request externo. Los offsets
+negativos son inválidos y fallan cerrados.
+La base valida los offsets al insertar o cambiar `steps`; una policy con un
+offset negativo o no interpretable nunca puede llegar a reserva ni a
+`request_started`. La migración que introduce esta semántica también valida
+transaccionalmente todas las policies existentes y aborta sin cambios parciales
+si encuentra una incompatible. El finalizador conserva una comprobación
+secundaria, pero no es la primera frontera de validación.
 
 ## 3. Caso comercial
 
