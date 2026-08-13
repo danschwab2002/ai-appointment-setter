@@ -14,18 +14,21 @@ await db.exec(`
   alter default privileges in schema public grant all on functions to service_role;
 `);
 
-const files = [
-  join(root, 'supabase/baseline/20260803_public_schema.sql'),
-  ...readdirSync(join(root, 'supabase/migrations'))
-    .filter((name) => name.endsWith('.sql'))
-    .sort()
-    .map((name) => join(root, 'supabase/migrations', name)),
-];
-const hardening = files.pop();
-if (!hardening?.endsWith('20260812000100_supabase_function_acl_hardening.sql')) {
-  throw new Error('ACL hardening migration is not the final canonical migration');
+const baseline = join(root, 'supabase/baseline/20260803_public_schema.sql');
+const migrations = readdirSync(join(root, 'supabase/migrations'))
+  .filter((name) => name.endsWith('.sql'))
+  .sort()
+  .map((name) => join(root, 'supabase/migrations', name));
+const hardeningIndex = migrations.findIndex(
+  (file) => file.endsWith('20260812000100_supabase_function_acl_hardening.sql'),
+);
+if (hardeningIndex < 0) {
+  throw new Error('ACL hardening migration is missing from the canonical stack');
 }
-for (const file of files) {
+const hardening = migrations[hardeningIndex];
+const beforeHardening = [baseline, ...migrations.slice(0, hardeningIndex)];
+const afterHardening = migrations.slice(hardeningIndex + 1);
+for (const file of beforeHardening) {
   await db.exec(readFileSync(file, 'utf8').replace(
     /create extension if not exists pgcrypto;/gi,
     '-- pgcrypto is built into PGlite',
@@ -46,6 +49,9 @@ if (before.rows[0]?.leaks <= 0) {
   throw new Error('positive control failed: Supabase-style defaults produced no leaks');
 }
 await db.exec(readFileSync(hardening, 'utf8'));
+for (const file of afterHardening) {
+  await db.exec(readFileSync(file, 'utf8'));
+}
 
 const rows = await db.query(`
   with expected(signature) as (
