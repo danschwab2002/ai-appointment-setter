@@ -1,11 +1,11 @@
-# Contrato implementado — lote, presentación y reconciliación fixture-only (Cortes A–C1)
+# Contrato implementado — lote, presentación y retry fixture-only (Cortes A–C2)
 
 - **Estado:** Implementado y verificado localmente
-- **Versión:** `daily-owner-feedback-cut-c1-v1`
+- **Versión:** `daily-owner-feedback-cut-c2-v1`
 - **Implementación:** `src/bridge/daily_feedback.py`
 - **Pruebas:** `tests/test_daily_feedback.py`
 - **Diseño rector:** [Contrato técnico propuesto del corte vertical](../design/client-copilot-feedback-vertical-slice-contract.md)
-- **Alcance:** lote durable, sesión fenced, presentación simulada y reconciliación de aceptación ambigua
+- **Alcance:** lote durable, sesión fenced, conector simulado contabilizado, reconciliación y retry probado como no aplicado
 
 ## 1. Límite implementado
 
@@ -27,9 +27,15 @@ fixture set sanitizado registrado en proceso
 → claim exclusivo de reconciliación con lease/generación
 → found → accepted/presented/in_review sin segundo POST
 → unresolved vencido → batch=blocked
+→ reserved → cancelled_before_request sin invocar el conector
+→ request_started → conector simulado stateful, una invocación por attempt
+→ finalized(rejected) sin presentar el ítem
+→ delivery_unknown → observación not_applied inequívoca
+→ sesión reviewer renovada + reconciler fenced + worker nuevo
+→ attempt 1 finalized(not_applied) + attempt 2 reserved
 ```
 
-No implementa scheduler, conversaciones reales, canal productivo, decisiones, feedback, interpretación, candidatos ni Conversation Releases. Dentro del Corte C siguen pendientes `rejected`, `cancelled_before_request`, resolución demostrada `not_applied` con retry, conector simulado stateful y POST real/simulado contabilizado.
+No implementa scheduler, conversaciones reales, canal productivo, POST externo, decisiones, feedback, interpretación, candidatos ni Conversation Releases. El conector de C2 es exclusivamente stateful y fixture-only dentro del store; no tiene endpoint HTTP ni realiza red. El retry está acotado a un único successor (`attempt_number=2`) y no habilita cadenas abiertas de reintentos.
 
 ## 2. Frontera HTTP controlada
 
@@ -167,9 +173,13 @@ reserve_review_delivery
 
 Reserva y request-start exigen reviewer/binding/session owner/fence vigentes y un `WorkerLeaseGrant` server-side activo cuyo owner, generación y vencimiento dominan exactamente al attempt. El worker no crea autoridad mediante el payload. Después de `request_started`, una aceptación demostrada puede proyectarse aunque el lease de sesión haya vencido, pero sigue exigiendo el grant worker capturado y vigente. Un reclaim con nueva generación cerca inmediatamente la generación anterior. Un payload hash distinto, segundo attempt para la misma clave semántica, fase incorrecta o autoridad stale falla cerrado. Cada comando persiste fingerprint y resultado durable para replay exacto.
 
-`delivery_unknown` exige referencia ambigua y deadline UTC futuro; mantiene item `pending` y batch `ready`, y bloquea otra finalización normal. `submit_late_delivery_observation` acepta únicamente `accepted` del worker owner/generación históricos exactos, respaldados todavía por un grant server-side activo de la misma generación; el lease temporal sí puede estar vencido. Agrega evidencia sin finalizar ni proyectar.
+`delivery_unknown` exige referencia ambigua y deadline UTC futuro; mantiene item `pending` y batch `ready`, y bloquea otra finalización normal. `submit_late_delivery_observation` acepta `accepted` o `not_applied` del worker owner/generación históricos exactos, respaldados todavía por un grant server-side activo de la misma generación; el lease temporal sí puede estar vencido. Agrega evidencia sin finalizar ni proyectar.
 
 `claim_delivery_reconciliation` usa identidad/grant separados, lease y generación monotónica. Cada claim nuevo aplicado —incluso del mismo owner durante su lease— incrementa la generación y cerca el claim anterior; otro owner sólo puede tomar control tras expiración. `reconcile_review_delivery(found)` exige una única referencia accepted compatible entre todas las observaciones y proyecta exactamente una vez. `unresolved` antes del deadline conserva unknown; al vencer persiste `blocked/revision 2`, que rechaza nuevos claims y reconciliaciones dentro de C1. Los replay exactos se resuelven antes de esa guardia terminal. Generación stale o evidencia conflictiva no mutan.
+
+El Corte C2 añade `cancel_review_delivery_before_request`, válido sólo en `reserved`, con reason code cerrado y autoridad worker vigente. `invoke_simulated_delivery_connector` sólo acepta `request_started`, persiste un ledger determinístico con `invocation_count=1` y rechaza cualquier segundo comando para el mismo attempt. Si existe ledger, `finalize_review_delivery` exige que resultado y referencia coincidan exactamente; el binding runtime vuelve a comprobar esa relación en cada acceso, no sólo durante la finalización. `rejected` finaliza sin presentar ni avanzar el batch.
+
+`reconcile_review_delivery_not_applied` exige: reconciler/grant/lease/generación vigentes; una única clase de evidencia `not_applied` sin evidencia `accepted`; referencia de reconciliación exacta emitida server-side por el ledger del conector al configurar el resultado posterior del unknown; sesión reviewer con `session_owner` distinto y fence estrictamente mayor al attempt 1; y worker con owner distinto y generación estrictamente mayor, respaldado server-side. Una autoridad meramente vigente pero reutilizada no basta. Una afirmación `not_applied` del worker sin prueba del conector tampoco habilita retry. La transición atómica cierra attempt 1 como `not_applied` y crea attempt 2 `reserved` con la misma semantic key, batch, snapshot, payload, reviewer y binding, pero nueva sesión y worker generation. Replay exacto reproduce attempt 2 y nunca crea attempt 3. El binding runtime recalcula IDs y valida predecessor, numeración, evidencia, ledger del conector y su coherencia con el resultado final del attempt.
 
 ## 6. Estados producidos
 

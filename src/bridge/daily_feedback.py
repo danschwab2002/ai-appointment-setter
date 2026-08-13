@@ -178,6 +178,25 @@ class LateDeliveryObservationResult:
     submitted_at: datetime
 
 
+@dataclass(frozen=True)
+class SimulatedConnectorResult:
+    status: str
+    delivery_attempt_id: str
+    configured_result: str
+    remote_reference: str
+    invocation_count: int
+
+
+@dataclass(frozen=True)
+class DeliveryRetryResult:
+    status: str
+    delivery_attempt_id: str
+    previous_delivery_attempt_id: str
+    semantic_delivery_key: str
+    attempt_number: int
+    phase: str
+
+
 class IdempotencyConflictError(RuntimeError):
     """A command ID was reused with different semantic inputs."""
 
@@ -766,6 +785,8 @@ class DailyFeedbackBatchStore:
             attempt: dict[str, object] = {
                 "delivery_attempt_id": attempt_id,
                 "semantic_delivery_key": semantic_delivery_key,
+                "attempt_number": 1,
+                "previous_delivery_attempt_id": None,
                 "batch_id": batch_id,
                 "snapshot_id": snapshot_id,
                 "payload_hash": payload_hash,
@@ -852,6 +873,161 @@ class DailyFeedbackBatchStore:
         finally:
             os.close(lock_fd)
 
+    def cancel_review_delivery_before_request(
+        self,
+        *,
+        command_id: str,
+        delivery_attempt_id: str,
+        worker: WorkerPrincipal,
+        reason_code: str,
+        now: datetime,
+    ) -> ReviewDeliveryResult:
+        if reason_code not in {
+            "reviewer_authority_revoked",
+            "worker_cancelled",
+            "delivery_policy_revoked",
+        }:
+            raise ReviewDeliveryConflictError("invalid_cancellation_reason")
+        command_fingerprint = _hash_json(
+            {
+                "command_type": "cancel_review_delivery_before_request",
+                "delivery_attempt_id": delivery_attempt_id,
+                "worker_owner": worker.worker_owner,
+                "worker_lease_generation": worker.worker_lease_generation,
+                "reason_code": reason_code,
+            }
+        )
+        batch_id, state_path = self._find_runtime_attempt(delivery_attempt_id)
+        lock_fd = self._open_lock(self._root / ".command.lock")
+        try:
+            state = self._read_json(state_path)
+            replay = self._replay_runtime_command(
+                state, command_id, command_fingerprint, batch_id=batch_id
+            )
+            if replay is not None:
+                return replay
+            attempt = self._runtime_attempt(state, delivery_attempt_id)
+            lease_expires_at = datetime.fromisoformat(
+                str(attempt["worker_lease_expires_at"])
+            )
+            self._validate_worker(
+                worker, worker_lease_expires_at=lease_expires_at, now=now
+            )
+            self._validate_attempt_worker(attempt, worker)
+            if attempt.get("phase") != "reserved":
+                raise ReviewDeliveryConflictError("delivery_phase_conflict")
+            attempt["phase"] = "finalized"
+            attempt["outcome"] = "cancelled_before_request"
+            attempt["cancellation_reason"] = reason_code
+            result = self._delivery_result_from_state(
+                state, attempt, status="applied"
+            )
+            self._record_runtime_result(
+                state, command_id, command_fingerprint, result
+            )
+            self._write_replace(state_path, state)
+            return result
+        finally:
+            os.close(lock_fd)
+
+    def invoke_simulated_delivery_connector(
+        self,
+        *,
+        command_id: str,
+        delivery_attempt_id: str,
+        worker: WorkerPrincipal,
+        configured_result: str,
+        configured_reconciliation_result: str | None = None,
+        now: datetime,
+    ) -> SimulatedConnectorResult:
+        if configured_result not in {"accepted", "rejected", "delivery_unknown"}:
+            raise ReviewDeliveryConflictError("unsupported_simulated_result")
+        if (
+            configured_result == "delivery_unknown"
+            and configured_reconciliation_result not in {"accepted", "not_applied"}
+        ) or (
+            configured_result != "delivery_unknown"
+            and configured_reconciliation_result is not None
+        ):
+            raise ReviewDeliveryConflictError("unsupported_simulated_result")
+        command_fingerprint = _hash_json(
+            {
+                "command_type": "invoke_simulated_delivery_connector",
+                "delivery_attempt_id": delivery_attempt_id,
+                "worker_owner": worker.worker_owner,
+                "worker_lease_generation": worker.worker_lease_generation,
+                "configured_result": configured_result,
+                "configured_reconciliation_result": configured_reconciliation_result,
+            }
+        )
+        _batch_id, state_path = self._find_runtime_attempt(delivery_attempt_id)
+        lock_fd = self._open_lock(self._root / ".command.lock")
+        try:
+            state = self._read_json(state_path)
+            prior = self._read_global_runtime_command(
+                command_id, command_fingerprint
+            )
+            if prior is not None:
+                envelope = prior.get("simulated_connector_result")
+                if not isinstance(envelope, dict):
+                    raise IdempotencyConflictError("idempotency_conflict")
+                return self._simulated_connector_result(
+                    envelope, status="replayed"
+                )
+            attempt = self._runtime_attempt(state, delivery_attempt_id)
+            lease_expires_at = datetime.fromisoformat(
+                str(attempt["worker_lease_expires_at"])
+            )
+            self._validate_worker(
+                worker, worker_lease_expires_at=lease_expires_at, now=now
+            )
+            self._validate_attempt_worker(attempt, worker)
+            if attempt.get("phase") != "request_started":
+                raise ReviewDeliveryConflictError("delivery_phase_conflict")
+            effects = state.setdefault("simulated_connector_effects", {})
+            if not isinstance(effects, dict):
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+            if delivery_attempt_id in effects:
+                raise ReviewDeliveryConflictError("delivery_effect_already_invoked")
+            remote_reference = (
+                f"simulated_{_hash_json({'attempt_id': delivery_attempt_id, 'result': configured_result})}"
+            )
+            envelope = {
+                "delivery_attempt_id": delivery_attempt_id,
+                "configured_result": configured_result,
+                "remote_reference": remote_reference,
+                "invocation_count": 1,
+                "configured_reconciliation_result": configured_reconciliation_result,
+                "reconciliation_reference": (
+                    f"simulated_reconciliation_{_hash_json({'attempt_id': delivery_attempt_id, 'result': configured_reconciliation_result})}"
+                    if configured_reconciliation_result is not None
+                    else None
+                ),
+            }
+            effects[delivery_attempt_id] = envelope
+            commands = state.get("commands")
+            if not isinstance(commands, dict):
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+            commands[command_id] = {
+                "fingerprint": command_fingerprint,
+                "simulated_connector_result": envelope,
+            }
+            self._write_replace(state_path, state)
+            return self._simulated_connector_result(envelope, status="applied")
+        finally:
+            os.close(lock_fd)
+
+    def _simulated_connector_result(
+        self, envelope: dict[str, object], *, status: str
+    ) -> SimulatedConnectorResult:
+        return SimulatedConnectorResult(
+            status=status,
+            delivery_attempt_id=str(envelope["delivery_attempt_id"]),
+            configured_result=str(envelope["configured_result"]),
+            remote_reference=str(envelope["remote_reference"]),
+            invocation_count=int(envelope["invocation_count"]),
+        )
+
     def finalize_review_delivery(
         self,
         *,
@@ -902,6 +1078,16 @@ class DailyFeedbackBatchStore:
                 raise ReviewDeliveryConflictError("delivery_phase_conflict")
             if not remote_reference:
                 raise ReviewDeliveryConflictError("unsupported_simulated_result")
+            effects = state.get("simulated_connector_effects", {})
+            if not isinstance(effects, dict):
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+            connector_effect = effects.get(delivery_attempt_id)
+            if connector_effect is not None and (
+                not isinstance(connector_effect, dict)
+                or connector_effect.get("configured_result") != observed_result
+                or connector_effect.get("remote_reference") != remote_reference
+            ):
+                raise ReviewDeliveryConflictError("connector_result_mismatch")
             if observed_result == "delivery_unknown":
                 if (
                     reconciliation_deadline is None
@@ -919,6 +1105,18 @@ class DailyFeedbackBatchStore:
                 attempt["reconciliation_deadline"] = (
                     reconciliation_deadline.isoformat()
                 )
+                result = self._delivery_result_from_state(
+                    state, attempt, status="applied"
+                )
+                self._record_runtime_result(
+                    state, command_id, command_fingerprint, result
+                )
+                self._write_replace(state_path, state)
+                return result
+            if observed_result == "rejected" and reconciliation_deadline is None:
+                attempt["phase"] = "finalized"
+                attempt["outcome"] = "rejected"
+                attempt["remote_reference"] = remote_reference
                 result = self._delivery_result_from_state(
                     state, attempt, status="applied"
                 )
@@ -969,7 +1167,7 @@ class DailyFeedbackBatchStore:
         submitted_at: datetime,
     ) -> LateDeliveryObservationResult:
         if (
-            observed_result != "accepted"
+            observed_result not in {"accepted", "not_applied"}
             or not remote_reference
             or observed_at.tzinfo is None
             or submitted_at.tzinfo is None
@@ -1276,6 +1474,188 @@ class DailyFeedbackBatchStore:
         finally:
             os.close(lock_fd)
 
+    def reconcile_review_delivery_not_applied(
+        self,
+        *,
+        command_id: str,
+        delivery_attempt_id: str,
+        reconciler: ReconciliationPrincipal,
+        reconciliation_generation: int,
+        observation_fingerprint: str,
+        reviewer: ReviewPrincipal,
+        session_fence: int,
+        retry_worker: WorkerPrincipal,
+        retry_worker_lease_expires_at: datetime,
+        now: datetime,
+    ) -> DeliveryRetryResult:
+        fingerprint = _hash_json(
+            {
+                "command_type": "reconcile_review_delivery_not_applied",
+                "delivery_attempt_id": delivery_attempt_id,
+                "reconciliation_owner": reconciler.reconciliation_owner,
+                "reconciliation_generation": reconciliation_generation,
+                "observation_fingerprint": observation_fingerprint,
+                "reviewer_id": reviewer.reviewer_id,
+                "reviewer_binding_id": reviewer.reviewer_binding_id,
+                "session_owner": reviewer.session_owner,
+                "session_fence": session_fence,
+                "retry_worker_owner": retry_worker.worker_owner,
+                "retry_worker_lease_generation": retry_worker.worker_lease_generation,
+                "retry_worker_lease_expires_at": retry_worker_lease_expires_at.isoformat(),
+            }
+        )
+        batch_id, state_path = self._find_runtime_attempt(delivery_attempt_id)
+        lock_fd = self._open_lock(self._root / ".command.lock")
+        try:
+            state = self._read_json(state_path)
+            prior = self._read_global_runtime_command(command_id, fingerprint)
+            if prior is not None:
+                envelope = prior.get("delivery_retry_result")
+                if not isinstance(envelope, dict):
+                    raise IdempotencyConflictError("idempotency_conflict")
+                return self._delivery_retry_result(envelope, status="replayed")
+            grant = self._reconciliation_grants.get(reconciler.reconciliation_owner)
+            attempt = self._runtime_attempt(state, delivery_attempt_id)
+            reconciliation_lease = attempt.get("reconciliation_lease_expires_at")
+            if (
+                now.tzinfo is None
+                or now.utcoffset() != UTC.utcoffset(now)
+                or reconciler.active is not True
+                or grant is None
+                or grant.active is not True
+                or attempt.get("reconciliation_owner") != reconciler.reconciliation_owner
+                or attempt.get("reconciliation_generation") != reconciliation_generation
+                or not isinstance(reconciliation_lease, str)
+                or datetime.fromisoformat(reconciliation_lease) <= now
+            ):
+                raise ReviewDeliveryConflictError("reconciliation_fence_stale")
+            if state.get("batch_status") == "blocked" or attempt.get("outcome") != "delivery_unknown":
+                raise ReviewDeliveryConflictError("delivery_result_conflict")
+            observations = state.get("delivery_observations")
+            observation = observations.get(observation_fingerprint) if isinstance(observations, dict) else None
+            if (
+                not isinstance(observation, dict)
+                or observation.get("delivery_attempt_id") != delivery_attempt_id
+                or observation.get("observed_result") != "not_applied"
+                or not observation.get("remote_reference")
+            ):
+                raise ReviewDeliveryConflictError("delivery_result_conflict")
+            effects = state.get("simulated_connector_effects")
+            effect = (
+                effects.get(delivery_attempt_id)
+                if isinstance(effects, dict)
+                else None
+            )
+            if (
+                not isinstance(effect, dict)
+                or effect.get("configured_result") != "delivery_unknown"
+                or effect.get("configured_reconciliation_result") != "not_applied"
+                or effect.get("reconciliation_reference")
+                != observation.get("remote_reference")
+            ):
+                raise ReviewDeliveryConflictError("delivery_result_conflict")
+            observed_results = {
+                value.get("observed_result")
+                for value in observations.values()
+                if isinstance(value, dict)
+                and value.get("delivery_attempt_id") == delivery_attempt_id
+            }
+            if observed_results != {"not_applied"}:
+                raise ReviewDeliveryConflictError("delivery_result_conflict")
+            self._validate_active_session(
+                state, reviewer, session_fence=session_fence, now=now
+            )
+            if (
+                attempt.get("reviewer_id") != reviewer.reviewer_id
+                or attempt.get("reviewer_binding_id")
+                != reviewer.reviewer_binding_id
+            ):
+                raise ReviewDeliveryConflictError("reviewer_authority_mismatch")
+            try:
+                prior_session_fence = int(attempt["session_fence"])
+                prior_worker_generation = int(attempt["worker_lease_generation"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise StorageConflictError("daily_feedback_runtime_invalid") from exc
+            if (
+                reviewer.session_owner == attempt.get("session_owner")
+                or session_fence <= prior_session_fence
+                or retry_worker.worker_owner == attempt.get("worker_owner")
+                or retry_worker.worker_lease_generation <= prior_worker_generation
+            ):
+                raise ReviewDeliveryConflictError(
+                    "delivery_retry_authority_stale"
+                )
+            self._validate_worker(
+                retry_worker,
+                worker_lease_expires_at=retry_worker_lease_expires_at,
+                now=now,
+            )
+            semantic_key = str(attempt["semantic_delivery_key"])
+            attempts = state.get("delivery_attempts")
+            if not isinstance(attempts, dict):
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+            related = [
+                value for value in attempts.values()
+                if isinstance(value, dict)
+                and value.get("semantic_delivery_key") == semantic_key
+            ]
+            if len(related) != 1 or int(related[0].get("attempt_number", 1)) != 1:
+                raise ReviewDeliveryConflictError("delivery_retry_conflict")
+            successor_number = 2
+            successor_id = f"attempt_{_hash_json({'semantic_delivery_key': semantic_key, 'number': successor_number})}"
+            successor = {
+                "delivery_attempt_id": successor_id,
+                "semantic_delivery_key": semantic_key,
+                "attempt_number": successor_number,
+                "previous_delivery_attempt_id": delivery_attempt_id,
+                "batch_id": attempt["batch_id"],
+                "snapshot_id": attempt["snapshot_id"],
+                "payload_hash": attempt["payload_hash"],
+                "reviewer_id": reviewer.reviewer_id,
+                "reviewer_binding_id": reviewer.reviewer_binding_id,
+                "session_owner": reviewer.session_owner,
+                "session_fence": session_fence,
+                "worker_owner": retry_worker.worker_owner,
+                "worker_lease_generation": retry_worker.worker_lease_generation,
+                "worker_lease_expires_at": retry_worker_lease_expires_at.isoformat(),
+                "phase": "reserved",
+                "outcome": None,
+                "remote_reference": None,
+            }
+            attempt["outcome"] = "not_applied"
+            attempt["reconciled_from_observation"] = observation_fingerprint
+            attempts[successor_id] = successor
+            envelope = {
+                "delivery_attempt_id": successor_id,
+                "previous_delivery_attempt_id": delivery_attempt_id,
+                "semantic_delivery_key": semantic_key,
+                "attempt_number": successor_number,
+                "phase": "reserved",
+            }
+            commands = state.get("commands")
+            if not isinstance(commands, dict):
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+            commands[command_id] = {
+                "fingerprint": fingerprint,
+                "delivery_retry_result": envelope,
+            }
+            self._write_replace(state_path, state)
+            return self._delivery_retry_result(envelope, status="applied")
+        finally:
+            os.close(lock_fd)
+
+    def _delivery_retry_result(
+        self, envelope: dict[str, object], *, status: str
+    ) -> DeliveryRetryResult:
+        return DeliveryRetryResult(
+            status=status,
+            delivery_attempt_id=str(envelope["delivery_attempt_id"]),
+            previous_delivery_attempt_id=str(envelope["previous_delivery_attempt_id"]),
+            semantic_delivery_key=str(envelope["semantic_delivery_key"]),
+            attempt_number=int(envelope["attempt_number"]),
+            phase=str(envelope["phase"]),
+        )
+
     def _validate_active_session(
         self,
         state: dict[str, object],
@@ -1305,7 +1685,12 @@ class DailyFeedbackBatchStore:
     ) -> None:
         grant = self._worker_grants.get(worker.worker_owner)
         if (
-            worker.active is not True
+            now.tzinfo is None
+            or now.utcoffset() != UTC.utcoffset(now)
+            or worker_lease_expires_at.tzinfo is None
+            or worker_lease_expires_at.utcoffset()
+            != UTC.utcoffset(worker_lease_expires_at)
+            or worker.active is not True
             or grant is None
             or grant.active is not True
             or grant.worker_owner != worker.worker_owner
@@ -1412,9 +1797,116 @@ class DailyFeedbackBatchStore:
                 or observation_key
                 != f"sha256:{_hash_json(observation_payload)}"
                 or observation.get("delivery_attempt_id") not in attempts_value
-                or observation.get("observed_result") != "accepted"
+                or observation.get("observed_result")
+                not in {"accepted", "not_applied"}
                 or not observation.get("remote_reference")
             ):
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+        attempts_by_semantic_key: dict[str, list[dict[str, object]]] = {}
+        for attempt_key, attempt in attempts_value.items():
+            if not isinstance(attempt_key, str) or not isinstance(attempt, dict):
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+            try:
+                semantic_key = str(attempt["semantic_delivery_key"])
+                attempt_number = int(attempt.get("attempt_number", 1))
+            except (KeyError, TypeError, ValueError) as exc:
+                raise StorageConflictError("daily_feedback_runtime_invalid") from exc
+            expected_attempt_id = f"attempt_{_hash_json({'semantic_delivery_key': semantic_key, 'number': attempt_number})}"
+            if (
+                attempt_key != expected_attempt_id
+                or attempt.get("delivery_attempt_id") != attempt_key
+                or attempt_number not in {1, 2}
+            ):
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+            attempts_by_semantic_key.setdefault(semantic_key, []).append(attempt)
+        for related in attempts_by_semantic_key.values():
+            ordered = sorted(related, key=lambda value: int(value.get("attempt_number", 1)))
+            numbers = [int(value.get("attempt_number", 1)) for value in ordered]
+            if numbers == [1]:
+                predecessor = ordered[0].get("previous_delivery_attempt_id")
+                if predecessor not in {None, ""}:
+                    raise StorageConflictError("daily_feedback_runtime_invalid")
+                continue
+            if numbers != [1, 2]:
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+            first, second = ordered
+            immutable_fields = (
+                "semantic_delivery_key", "batch_id", "snapshot_id", "payload_hash",
+                "reviewer_id", "reviewer_binding_id",
+            )
+            observation_key = first.get("reconciled_from_observation")
+            observation = (
+                observations_value.get(observation_key)
+                if isinstance(observation_key, str)
+                else None
+            )
+            effects = state.get("simulated_connector_effects")
+            predecessor_effect = (
+                effects.get(first.get("delivery_attempt_id"))
+                if isinstance(effects, dict)
+                else None
+            )
+            if (
+                second.get("previous_delivery_attempt_id")
+                != first.get("delivery_attempt_id")
+                or any(first.get(field) != second.get(field) for field in immutable_fields)
+                or first.get("outcome") != "not_applied"
+                or not isinstance(observation, dict)
+                or observation.get("delivery_attempt_id")
+                != first.get("delivery_attempt_id")
+                or observation.get("observed_result") != "not_applied"
+                or not isinstance(predecessor_effect, dict)
+                or predecessor_effect.get("configured_result")
+                != "delivery_unknown"
+                or predecessor_effect.get("configured_reconciliation_result")
+                != "not_applied"
+                or predecessor_effect.get("reconciliation_reference")
+                != observation.get("remote_reference")
+            ):
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+        effects_value = state.get("simulated_connector_effects", {})
+        if not isinstance(effects_value, dict):
+            raise StorageConflictError("daily_feedback_runtime_invalid")
+        for attempt_id, effect in effects_value.items():
+            if not isinstance(effect, dict) or attempt_id not in attempts_value:
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+            attempt = attempts_value[attempt_id]
+            if not isinstance(attempt, dict):
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+            configured_result = effect.get("configured_result")
+            expected_reference = (
+                f"simulated_{_hash_json({'attempt_id': attempt_id, 'result': configured_result})}"
+            )
+            if (
+                configured_result not in {"accepted", "rejected", "delivery_unknown"}
+                or effect.get("delivery_attempt_id") != attempt_id
+                or effect.get("invocation_count") != 1
+                or effect.get("remote_reference") != expected_reference
+                or (
+                    configured_result == "delivery_unknown"
+                    and effect.get("configured_reconciliation_result")
+                    not in {"accepted", "not_applied"}
+                )
+                or (
+                    configured_result != "delivery_unknown"
+                    and effect.get("configured_reconciliation_result") is not None
+                )
+                or effect.get("reconciliation_reference")
+                != (
+                    f"simulated_reconciliation_{_hash_json({'attempt_id': attempt_id, 'result': effect.get('configured_reconciliation_result')})}"
+                    if effect.get("configured_reconciliation_result") is not None
+                    else None
+                )
+            ):
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+            attempt_outcome = attempt.get("outcome")
+            if attempt_outcome in {"accepted", "rejected", "delivery_unknown"} and (
+                configured_result != attempt_outcome
+                or effect.get("remote_reference")
+                != attempt.get("remote_reference")
+            ):
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+            if attempt_outcome == "cancelled_before_request":
                 raise StorageConflictError("daily_feedback_runtime_invalid")
         try:
             batch_projection = (

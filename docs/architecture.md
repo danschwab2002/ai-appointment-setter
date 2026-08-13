@@ -8,7 +8,7 @@ WhatsApp -> Evolution API -> Chatwoot -> POST /webhooks/chatwoot -> captura priv
 
 El primer receptor no llama a un modelo ni envía mensajes. Su objetivo es obtener un evento real y confirmar el contrato de Chatwoot 4.13.0 con la integración de Evolution API 2.3.7.
 
-## Lote diario de feedback — Cortes A–C1 fixture-only
+## Lote diario de feedback — Cortes A–C2 fixture-only
 
 `src/bridge/daily_feedback.py` implementa el primer tracer bullet determinístico
 del ciclo diario: creación manual e idempotente de un lote a partir de fixtures
@@ -41,8 +41,21 @@ accepted inequívoca proyecta sin segundo POST; observaciones con referencias fi
 conflictivas o fingerprints no recalculables fallan cerrado; una ambigüedad vencida
 bloquea el lote de forma terminal para C1. Cada claim aplicado incrementa la
 generación, incluso para el mismo owner. Claim y reconcile
-se exponen sólo en la app interna fixture-only con token propio. `rejected`,
-`cancelled_before_request`, `not_applied/retry` y conector stateful siguen pendientes.
+se exponen sólo en la app interna fixture-only con token propio.
+
+`cancelled_before_request`, `rejected`, el conector stateful y `not_applied/retry`
+se implementan en C2 dentro del store fixture-only. La cancelación sólo ocurre antes
+de `request_started`; el conector mantiene un ledger durable de una invocación por
+attempt y no expone red ni endpoint. `rejected` finaliza sin presentar. Una prueba
+inequívoca `not_applied`, cuya referencia debe coincidir con la prueba posterior
+emitida server-side por el ledger del conector, bajo reconciler fenced, una sesión
+reviewer con owner distinto y fence mayor, y un worker con owner distinto y
+generación mayor, cierra attempt 1 y crea exactamente attempt 2 `reserved` con la misma
+semantic key y payload. Evidencia accepted conflictiva impide el retry. El binding
+runtime valida la cadena, referencias determinísticas, contadores y coherencia entre
+ledger y resultado final antes de operar.
+Un POST externo, scheduler y cadenas de retry posteriores a attempt 2 siguen fuera
+de alcance.
 
 Creación y comandos runtime comparten un namespace y lock global; el índice runtime
 es reconciliable y replay ocurre antes de CAS. Cada acceso valida el binding exacto

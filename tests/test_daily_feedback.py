@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta, timezone
+import hashlib
 import json
 from pathlib import Path
 import socket
@@ -152,6 +153,41 @@ def _started_delivery(
         worker=worker, now=now + timedelta(seconds=1),
     )
     return store, created, reviewer, worker, reserved.delivery_attempt_id
+
+
+def _reserved_delivery(
+    root: Path, now: datetime
+) -> tuple[
+    DailyFeedbackBatchStore,
+    CreateBatchResult,
+    ReviewPrincipal,
+    WorkerPrincipal,
+    int,
+    str,
+]:
+    store = _worker_store(root, now)
+    created = _create_batch(store, fixture_set=_fixture_set("a"))
+    reviewer = ReviewPrincipal("reviewer-1", "binding-1", "session-1", True)
+    worker = WorkerPrincipal("fixture-worker", 1, True)
+    claim = store.claim_review_session(
+        command_id="claim-1", batch_id=created.batch.batch_id,
+        principal=reviewer, expected_batch_revision=1,
+        lease_seconds=120, now=now,
+    )
+    item = store.get_next_review_item(
+        batch_id=created.batch.batch_id, principal=reviewer,
+        session_fence=claim.session_fence, now=now,
+    )
+    reserved = store.reserve_review_delivery(
+        command_id="reserve-1", batch_id=created.batch.batch_id,
+        snapshot_id=item.snapshot_id, payload_hash=item.payload_hash,
+        reviewer=reviewer, session_fence=claim.session_fence, worker=worker,
+        worker_lease_expires_at=now + timedelta(seconds=90), now=now,
+    )
+    return (
+        store, created, reviewer, worker, claim.session_fence,
+        reserved.delivery_attempt_id,
+    )
 
 
 def test_creates_ready_batch_with_stable_fixture_order(tmp_path: Path) -> None:
@@ -353,6 +389,520 @@ def test_session_claim_replays_and_takeover_requires_expiry(tmp_path: Path) -> N
     )
     assert takeover.session_fence == 2
     assert takeover.session_owner == "session-owner-2"
+
+
+def test_reserved_delivery_can_cancel_before_request_without_presentation(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, reviewer, worker, fence, attempt_id = _reserved_delivery(
+        root, now
+    )
+
+    cancelled = store.cancel_review_delivery_before_request(
+        command_id="cancel-before-request",
+        delivery_attempt_id=attempt_id,
+        worker=worker,
+        reason_code="reviewer_authority_revoked",
+        now=now + timedelta(seconds=1),
+    )
+
+    assert cancelled.phase == "finalized"
+    assert cancelled.outcome == "cancelled_before_request"
+    assert cancelled.item_status == "pending"
+    assert cancelled.batch_status == "ready"
+    runtime = json.loads(
+        (root / "runtime" / f"{created.batch.batch_id}.json").read_text()
+    )
+    assert runtime["delivery_attempts"][attempt_id]["cancellation_reason"] == (
+        "reviewer_authority_revoked"
+    )
+    with pytest.raises(ReviewDeliveryConflictError, match="delivery_phase_conflict"):
+        store.mark_review_delivery_request_started(
+            command_id="start-after-cancel", delivery_attempt_id=attempt_id,
+            reviewer=reviewer, session_fence=fence, worker=worker,
+            now=now + timedelta(seconds=2),
+        )
+
+
+def test_stateful_connector_invokes_once_only_after_request_started(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, reviewer, worker, fence, attempt_id = _reserved_delivery(
+        root, now
+    )
+    with pytest.raises(ReviewDeliveryConflictError, match="delivery_phase_conflict"):
+        store.invoke_simulated_delivery_connector(
+            command_id="invoke-before-start", delivery_attempt_id=attempt_id,
+            worker=worker, configured_result="accepted",
+            now=now + timedelta(seconds=1),
+        )
+    store.mark_review_delivery_request_started(
+        command_id="start", delivery_attempt_id=attempt_id,
+        reviewer=reviewer, session_fence=fence, worker=worker,
+        now=now + timedelta(seconds=1),
+    )
+
+    first = store.invoke_simulated_delivery_connector(
+        command_id="invoke", delivery_attempt_id=attempt_id,
+        worker=worker, configured_result="accepted",
+        now=now + timedelta(seconds=2),
+    )
+    replay = _worker_store(root, now).invoke_simulated_delivery_connector(
+        command_id="invoke", delivery_attempt_id=attempt_id,
+        worker=worker, configured_result="accepted",
+        now=now + timedelta(seconds=3),
+    )
+
+    assert first.status == "applied"
+    assert replay.status == "replayed"
+    assert replay.remote_reference == first.remote_reference
+    runtime = json.loads(
+        (root / "runtime" / f"{created.batch.batch_id}.json").read_text()
+    )
+    effect = runtime["simulated_connector_effects"][attempt_id]
+    assert effect["invocation_count"] == 1
+    assert effect["configured_result"] == "accepted"
+
+
+def test_connector_rejection_finalizes_without_presenting_and_cannot_be_forged(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, reviewer, worker, fence, attempt_id = _reserved_delivery(
+        root, now
+    )
+    store.mark_review_delivery_request_started(
+        command_id="start", delivery_attempt_id=attempt_id,
+        reviewer=reviewer, session_fence=fence, worker=worker,
+        now=now + timedelta(seconds=1),
+    )
+    effect = store.invoke_simulated_delivery_connector(
+        command_id="invoke-rejected", delivery_attempt_id=attempt_id,
+        worker=worker, configured_result="rejected",
+        now=now + timedelta(seconds=2),
+    )
+    with pytest.raises(ReviewDeliveryConflictError, match="connector_result_mismatch"):
+        store.finalize_review_delivery(
+            command_id="forged-accept", delivery_attempt_id=attempt_id,
+            worker=worker, observed_result="accepted",
+            remote_reference=effect.remote_reference,
+            now=now + timedelta(seconds=3),
+        )
+
+    rejected = store.finalize_review_delivery(
+        command_id="finalize-rejected", delivery_attempt_id=attempt_id,
+        worker=worker, observed_result="rejected",
+        remote_reference=effect.remote_reference,
+        now=now + timedelta(seconds=3),
+    )
+    assert rejected.outcome == "rejected"
+    assert rejected.item_status == "pending"
+    assert rejected.batch_status == "ready"
+    runtime = json.loads(
+        (root / "runtime" / f"{created.batch.batch_id}.json").read_text()
+    )
+    assert runtime["simulated_connector_effects"][attempt_id]["invocation_count"] == 1
+
+
+def test_not_applied_observation_enables_exactly_one_fenced_retry_attempt(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, _reviewer, worker, attempt_id = _started_delivery(root, now)
+    effect = store.invoke_simulated_delivery_connector(
+        command_id="invoke-unknown", delivery_attempt_id=attempt_id,
+        worker=worker, configured_result="delivery_unknown",
+        configured_reconciliation_result="not_applied",
+        now=now + timedelta(seconds=2),
+    )
+    store.finalize_review_delivery(
+        command_id="finalize-unknown", delivery_attempt_id=attempt_id,
+        worker=worker, observed_result="delivery_unknown",
+        remote_reference=effect.remote_reference,
+        reconciliation_deadline=now + timedelta(minutes=15),
+        now=now + timedelta(seconds=3),
+    )
+    observation = store.submit_late_delivery_observation(
+        command_id="observe-not-applied", delivery_attempt_id=attempt_id,
+        worker=worker, observed_result="not_applied",
+        remote_reference=json.loads(
+            (root / "runtime" / f"{created.batch.batch_id}.json").read_text()
+        )["simulated_connector_effects"][attempt_id]["reconciliation_reference"],
+        observed_at=now + timedelta(minutes=2),
+        submitted_at=now + timedelta(minutes=3),
+    )
+    retry_store = DailyFeedbackBatchStore(
+        root,
+        worker_grants={
+            "retry-worker": WorkerLeaseGrant(
+                worker_owner="retry-worker", worker_lease_generation=2,
+                lease_expires_at=now + timedelta(minutes=10), active=True,
+            )
+        },
+        reconciliation_grants={
+            "fixture-reconciler": ReconciliationServiceGrant(
+                reconciliation_owner="fixture-reconciler", active=True
+            )
+        },
+    )
+    reconciler = ReconciliationPrincipal("fixture-reconciler", True)
+    claim = retry_store.claim_delivery_reconciliation(
+        command_id="claim-reconcile", delivery_attempt_id=attempt_id,
+        reconciler=reconciler, lease_seconds=120,
+        now=now + timedelta(minutes=3),
+    )
+    retry_reviewer = ReviewPrincipal(
+        "reviewer-1", "binding-1", "retry-session", True
+    )
+    retry_session = retry_store.claim_review_session(
+        command_id="claim-retry-session", batch_id=created.batch.batch_id,
+        principal=retry_reviewer, expected_batch_revision=1,
+        lease_seconds=120, now=now + timedelta(minutes=3),
+    )
+    retry_worker = WorkerPrincipal("retry-worker", 2, True)
+    retry = retry_store.reconcile_review_delivery_not_applied(
+        command_id="reconcile-not-applied", delivery_attempt_id=attempt_id,
+        reconciler=reconciler,
+        reconciliation_generation=claim.reconciliation_generation,
+        observation_fingerprint=observation.observation_fingerprint,
+        reviewer=retry_reviewer,
+        session_fence=retry_session.session_fence,
+        retry_worker=retry_worker,
+        retry_worker_lease_expires_at=now + timedelta(minutes=5),
+        now=now + timedelta(minutes=3, seconds=1),
+    )
+
+    assert retry.status == "applied"
+    assert retry.attempt_number == 2
+    assert retry.phase == "reserved"
+    assert retry.previous_delivery_attempt_id == attempt_id
+    runtime = json.loads(
+        (root / "runtime" / f"{created.batch.batch_id}.json").read_text()
+    )
+    previous = runtime["delivery_attempts"][attempt_id]
+    successor = runtime["delivery_attempts"][retry.delivery_attempt_id]
+    assert previous["outcome"] == "not_applied"
+    assert successor["semantic_delivery_key"] == previous["semantic_delivery_key"]
+    assert successor["attempt_number"] == 2
+    assert retry.delivery_attempt_id not in runtime["simulated_connector_effects"]
+
+    replay = retry_store.reconcile_review_delivery_not_applied(
+        command_id="reconcile-not-applied", delivery_attempt_id=attempt_id,
+        reconciler=reconciler,
+        reconciliation_generation=claim.reconciliation_generation,
+        observation_fingerprint=observation.observation_fingerprint,
+        reviewer=retry_reviewer,
+        session_fence=retry_session.session_fence,
+        retry_worker=retry_worker,
+        retry_worker_lease_expires_at=now + timedelta(minutes=5),
+        now=now + timedelta(minutes=3, seconds=2),
+    )
+    assert replay.status == "replayed"
+    assert replay.delivery_attempt_id == retry.delivery_attempt_id
+    retry_store.mark_review_delivery_request_started(
+        command_id="start-retry", delivery_attempt_id=retry.delivery_attempt_id,
+        reviewer=retry_reviewer,
+        session_fence=retry_session.session_fence, worker=retry_worker,
+        now=now + timedelta(minutes=3, seconds=3),
+    )
+    second_effect = retry_store.invoke_simulated_delivery_connector(
+        command_id="invoke-retry", delivery_attempt_id=retry.delivery_attempt_id,
+        worker=retry_worker, configured_result="accepted",
+        now=now + timedelta(minutes=3, seconds=4),
+    )
+    runtime = json.loads(
+        (root / "runtime" / f"{created.batch.batch_id}.json").read_text()
+    )
+    assert len(runtime["delivery_attempts"]) == 2
+    assert runtime["simulated_connector_effects"][attempt_id]["invocation_count"] == 1
+    assert runtime["simulated_connector_effects"][retry.delivery_attempt_id][
+        "invocation_count"
+    ] == 1
+    assert second_effect.remote_reference != effect.remote_reference
+    pristine = json.loads(json.dumps(runtime))
+    runtime_path = root / "runtime" / f"{created.batch.batch_id}.json"
+    mutations = (
+        ("retry", "previous_delivery_attempt_id", "attempt_forged"),
+        ("retry", "attempt_number", 1),
+        ("retry", "semantic_delivery_key", "delivery_forged"),
+        ("effect", "invocation_count", 2),
+        ("effect", "configured_result", "rejected"),
+        ("effect", "remote_reference", "simulated_forged"),
+    )
+    for target, field, value in mutations:
+        tampered = json.loads(json.dumps(pristine))
+        if target == "retry":
+            tampered["delivery_attempts"][retry.delivery_attempt_id][field] = value
+        else:
+            tampered["simulated_connector_effects"][retry.delivery_attempt_id][
+                field
+            ] = value
+        runtime_path.write_text(json.dumps(tampered) + "\n")
+        runtime_path.chmod(0o600)
+        with pytest.raises(StorageConflictError, match="daily_feedback_runtime_invalid"):
+            retry_store.get_next_review_item(
+                batch_id=created.batch.batch_id, principal=retry_reviewer,
+                session_fence=retry_session.session_fence,
+                now=now + timedelta(minutes=3, seconds=5),
+            )
+    tampered = json.loads(json.dumps(pristine))
+    predecessor_effect = tampered["simulated_connector_effects"][attempt_id]
+    predecessor_effect["configured_reconciliation_result"] = "accepted"
+    reconciliation_canonical = json.dumps(
+        {"attempt_id": attempt_id, "result": "accepted"},
+        ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    predecessor_effect["reconciliation_reference"] = (
+        "simulated_reconciliation_"
+        + hashlib.sha256(reconciliation_canonical).hexdigest()
+    )
+    runtime_path.write_text(json.dumps(tampered) + "\n")
+    runtime_path.chmod(0o600)
+    with pytest.raises(StorageConflictError, match="daily_feedback_runtime_invalid"):
+        retry_store.get_next_review_item(
+            batch_id=created.batch.batch_id, principal=retry_reviewer,
+            session_fence=retry_session.session_fence,
+            now=now + timedelta(minutes=3, seconds=5),
+        )
+    runtime_path.write_text(json.dumps(pristine) + "\n")
+    runtime_path.chmod(0o600)
+
+
+def test_conflicting_late_evidence_blocks_not_applied_retry_without_mutation(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, _reviewer, worker, attempt_id = _started_delivery(root, now)
+    effect = store.invoke_simulated_delivery_connector(
+        command_id="invoke-unknown-conflict", delivery_attempt_id=attempt_id,
+        worker=worker, configured_result="delivery_unknown",
+        configured_reconciliation_result="not_applied",
+        now=now + timedelta(seconds=1),
+    )
+    store.finalize_review_delivery(
+        command_id="unknown", delivery_attempt_id=attempt_id,
+        worker=worker, observed_result="delivery_unknown",
+        remote_reference=effect.remote_reference,
+        reconciliation_deadline=now + timedelta(minutes=15),
+        now=now + timedelta(seconds=2),
+    )
+    not_applied = store.submit_late_delivery_observation(
+        command_id="not-applied", delivery_attempt_id=attempt_id,
+        worker=worker, observed_result="not_applied",
+        remote_reference=json.loads(
+            (root / "runtime" / f"{created.batch.batch_id}.json").read_text()
+        )["simulated_connector_effects"][attempt_id]["reconciliation_reference"],
+        observed_at=now + timedelta(minutes=1),
+        submitted_at=now + timedelta(minutes=2),
+    )
+    store.submit_late_delivery_observation(
+        command_id="accepted", delivery_attempt_id=attempt_id,
+        worker=worker, observed_result="accepted", remote_reference="message-1",
+        observed_at=now + timedelta(minutes=1),
+        submitted_at=now + timedelta(minutes=2),
+    )
+    reconciler = ReconciliationPrincipal("fixture-reconciler", True)
+    retry_store = DailyFeedbackBatchStore(
+        root,
+        worker_grants={
+            "retry-worker": WorkerLeaseGrant(
+                "retry-worker", 2, now + timedelta(minutes=10), True
+            )
+        },
+        reconciliation_grants={
+            "fixture-reconciler": ReconciliationServiceGrant(
+                "fixture-reconciler", True
+            )
+        },
+    )
+    claim = retry_store.claim_delivery_reconciliation(
+        command_id="claim-r", delivery_attempt_id=attempt_id,
+        reconciler=reconciler, lease_seconds=120, now=now + timedelta(minutes=2),
+    )
+    reviewer = ReviewPrincipal("reviewer-1", "binding-1", "retry", True)
+    session = retry_store.claim_review_session(
+        command_id="claim-s", batch_id=created.batch.batch_id,
+        principal=reviewer, expected_batch_revision=1, lease_seconds=120,
+        now=now + timedelta(minutes=2),
+    )
+    runtime_path = root / "runtime" / f"{created.batch.batch_id}.json"
+    before = runtime_path.read_bytes()
+    with pytest.raises(ReviewDeliveryConflictError, match="delivery_result_conflict"):
+        retry_store.reconcile_review_delivery_not_applied(
+            command_id="retry", delivery_attempt_id=attempt_id,
+            reconciler=reconciler,
+            reconciliation_generation=claim.reconciliation_generation,
+            observation_fingerprint=not_applied.observation_fingerprint,
+            reviewer=reviewer, session_fence=session.session_fence,
+            retry_worker=WorkerPrincipal("retry-worker", 2, True),
+            retry_worker_lease_expires_at=now + timedelta(minutes=5),
+            now=now + timedelta(minutes=2, seconds=1),
+        )
+    assert runtime_path.read_bytes() == before
+
+def test_worker_asserted_not_applied_without_connector_proof_cannot_retry(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, _reviewer, worker, attempt_id = _started_delivery(root, now)
+    store.finalize_review_delivery(
+        command_id="unknown", delivery_attempt_id=attempt_id,
+        worker=worker, observed_result="delivery_unknown",
+        remote_reference="ambiguous", reconciliation_deadline=now + timedelta(minutes=15),
+        now=now + timedelta(seconds=1),
+    )
+    observation = store.submit_late_delivery_observation(
+        command_id="asserted-none", delivery_attempt_id=attempt_id,
+        worker=worker, observed_result="not_applied", remote_reference="asserted-proof",
+        observed_at=now + timedelta(minutes=1),
+        submitted_at=now + timedelta(minutes=2),
+    )
+    retry_store = DailyFeedbackBatchStore(
+        root,
+        worker_grants={
+            "retry-worker": WorkerLeaseGrant(
+                "retry-worker", 2, now + timedelta(minutes=10), True
+            )
+        },
+        reconciliation_grants={
+            "fixture-reconciler": ReconciliationServiceGrant(
+                "fixture-reconciler", True
+            )
+        },
+    )
+    reconciler = ReconciliationPrincipal("fixture-reconciler", True)
+    claim = retry_store.claim_delivery_reconciliation(
+        command_id="claim-r-asserted", delivery_attempt_id=attempt_id,
+        reconciler=reconciler, lease_seconds=120, now=now + timedelta(minutes=2),
+    )
+    reviewer = ReviewPrincipal("reviewer-1", "binding-1", "retry", True)
+    session = retry_store.claim_review_session(
+        command_id="claim-s-asserted", batch_id=created.batch.batch_id,
+        principal=reviewer, expected_batch_revision=1, lease_seconds=120,
+        now=now + timedelta(minutes=2),
+    )
+    runtime_path = root / "runtime" / f"{created.batch.batch_id}.json"
+    before = runtime_path.read_bytes()
+    with pytest.raises(ReviewDeliveryConflictError, match="delivery_result_conflict"):
+        retry_store.reconcile_review_delivery_not_applied(
+            command_id="retry-asserted", delivery_attempt_id=attempt_id,
+            reconciler=reconciler,
+            reconciliation_generation=claim.reconciliation_generation,
+            observation_fingerprint=observation.observation_fingerprint,
+            reviewer=reviewer, session_fence=session.session_fence,
+            retry_worker=WorkerPrincipal("retry-worker", 2, True),
+            retry_worker_lease_expires_at=now + timedelta(minutes=5),
+            now=now + timedelta(minutes=2, seconds=1),
+        )
+    assert runtime_path.read_bytes() == before
+
+
+def test_not_applied_retry_requires_new_session_and_worker_authority(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, reviewer, worker, attempt_id = _started_delivery(root, now)
+    effect = store.invoke_simulated_delivery_connector(
+        command_id="invoke-unknown-stale", delivery_attempt_id=attempt_id,
+        worker=worker, configured_result="delivery_unknown",
+        configured_reconciliation_result="not_applied",
+        now=now + timedelta(seconds=2),
+    )
+    store.finalize_review_delivery(
+        command_id="unknown-stale", delivery_attempt_id=attempt_id,
+        worker=worker, observed_result="delivery_unknown",
+        remote_reference=effect.remote_reference,
+        reconciliation_deadline=now + timedelta(minutes=10),
+        now=now + timedelta(seconds=3),
+    )
+    runtime_path = root / "runtime" / f"{created.batch.batch_id}.json"
+    runtime = json.loads(runtime_path.read_text())
+    proof = runtime["simulated_connector_effects"][attempt_id][
+        "reconciliation_reference"
+    ]
+    observation = store.submit_late_delivery_observation(
+        command_id="observe-stale", delivery_attempt_id=attempt_id,
+        worker=worker, observed_result="not_applied", remote_reference=proof,
+        observed_at=now + timedelta(seconds=4),
+        submitted_at=now + timedelta(seconds=5),
+    )
+    retry_store = DailyFeedbackBatchStore(
+        root,
+        worker_grants={
+            "fixture-worker": WorkerLeaseGrant(
+                "fixture-worker", 1, now + timedelta(minutes=5), True
+            )
+        },
+        reconciliation_grants={
+            "fixture-reconciler": ReconciliationServiceGrant(
+                "fixture-reconciler", True
+            )
+        },
+    )
+    reconciler = ReconciliationPrincipal("fixture-reconciler", True)
+    claim = retry_store.claim_delivery_reconciliation(
+        command_id="claim-stale", delivery_attempt_id=attempt_id,
+        reconciler=reconciler, lease_seconds=60, now=now + timedelta(seconds=6),
+    )
+    before = runtime_path.read_bytes()
+    with pytest.raises(ReviewDeliveryConflictError, match="delivery_retry_authority_stale"):
+        retry_store.reconcile_review_delivery_not_applied(
+            command_id="retry-stale", delivery_attempt_id=attempt_id,
+            reconciler=reconciler,
+            reconciliation_generation=claim.reconciliation_generation,
+            observation_fingerprint=observation.observation_fingerprint,
+            reviewer=reviewer, session_fence=1, retry_worker=worker,
+            retry_worker_lease_expires_at=now + timedelta(seconds=60),
+            now=now + timedelta(seconds=7),
+        )
+    assert runtime_path.read_bytes() == before
+
+
+def test_finalized_attempt_must_match_stateful_connector_ledger(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "feedback"
+    now = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    store, created, reviewer, worker, attempt_id = _started_delivery(root, now)
+    effect = store.invoke_simulated_delivery_connector(
+        command_id="invoke-accepted-binding", delivery_attempt_id=attempt_id,
+        worker=worker, configured_result="accepted",
+        now=now + timedelta(seconds=2),
+    )
+    store.finalize_review_delivery(
+        command_id="finalize-accepted-binding", delivery_attempt_id=attempt_id,
+        worker=worker, observed_result="accepted",
+        remote_reference=effect.remote_reference,
+        now=now + timedelta(seconds=3),
+    )
+    runtime_path = root / "runtime" / f"{created.batch.batch_id}.json"
+    runtime = json.loads(runtime_path.read_text())
+    ledger = runtime["simulated_connector_effects"][attempt_id]
+    ledger["configured_result"] = "rejected"
+    canonical = json.dumps(
+        {"attempt_id": attempt_id, "result": "rejected"},
+        ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    ledger["remote_reference"] = (
+        "simulated_" + hashlib.sha256(canonical).hexdigest()
+    )
+    runtime_path.write_text(json.dumps(runtime) + "\n")
+    runtime_path.chmod(0o600)
+
+    with pytest.raises(StorageConflictError, match="daily_feedback_runtime_invalid"):
+        store.get_next_review_item(
+            batch_id=created.batch.batch_id, principal=reviewer,
+            session_fence=1, now=now + timedelta(seconds=4),
+        )
 
 
 @pytest.mark.parametrize(
