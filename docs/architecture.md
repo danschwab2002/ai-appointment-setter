@@ -8,7 +8,7 @@ WhatsApp -> Evolution API -> Chatwoot -> POST /webhooks/chatwoot -> captura priv
 
 El primer receptor no llama a un modelo ni envía mensajes. Su objetivo es obtener un evento real y confirmar el contrato de Chatwoot 4.13.0 con la integración de Evolution API 2.3.7.
 
-## Lote diario de feedback — Cortes A–B fixture-only
+## Lote diario de feedback — Cortes A–C1 fixture-only
 
 `src/bridge/daily_feedback.py` implementa el primer tracer bullet determinístico
 del ciclo diario: creación manual e idempotente de un lote a partir de fixtures
@@ -32,13 +32,22 @@ El Corte B agrega un registro runtime atómico por batch con lease/fence de sesi
 lectura pura del próximo ítem y delivery attempts simulados. Un grant de revisor
 liga server-side reviewer, binding y session owner. La entrega interna recorre
 `reserved → request_started → finalized(accepted)`; aceptación, `presented` e
-`in_review` se proyectan en el mismo reemplazo durable. Resultados ambiguos,
-reconciliación y conectores externos siguen fuera de alcance.
+`in_review` se proyectan en el mismo reemplazo durable.
+
+El Corte C1 agrega la rama post-request ambigua sin conector externo:
+`delivery_unknown` con deadline, observaciones tardías append-only ligadas al worker
+histórico y un reconciliador con grant, lease y generación separados. Una evidencia
+accepted inequívoca proyecta sin segundo POST; observaciones con referencias finales
+conflictivas o fingerprints no recalculables fallan cerrado; una ambigüedad vencida
+bloquea el lote de forma terminal para C1. Cada claim aplicado incrementa la
+generación, incluso para el mismo owner. Claim y reconcile
+se exponen sólo en la app interna fixture-only con token propio. `rejected`,
+`cancelled_before_request`, `not_applied/retry` y conector stateful siguen pendientes.
 
 Creación y comandos runtime comparten un namespace y lock global; el índice runtime
 es reconciliable y replay ocurre antes de CAS. Cada acceso valida el binding exacto
 contra el aggregate inmutable y la coherencia `pending/1`, `presented/2`,
-`ready/1` e `in_review/2`. La autoridad del worker proviene de un
+`ready/1`, `in_review/2` y `blocked/2` con unknown vencido. La autoridad del worker proviene de un
 `WorkerLeaseGrant` server-side, no de datos autoafirmados por el comando.
 
 Contrato implementado: [daily-owner-feedback-v1](contracts/daily-owner-feedback-v1.md).

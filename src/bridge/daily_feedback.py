@@ -12,7 +12,7 @@ import fcntl
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, Optional
 
 from fastapi import FastAPI, Header, HTTPException, Response
 
@@ -78,6 +78,13 @@ class FixtureReviewerGrant:
 
 
 @dataclass(frozen=True)
+class FixtureReconciliationGrant:
+    token: str
+    reconciliation_owner: str
+    active: bool
+
+
+@dataclass(frozen=True)
 class ReviewPrincipal:
     reviewer_id: str
     reviewer_binding_id: str
@@ -128,6 +135,27 @@ class WorkerLeaseGrant:
 
 
 @dataclass(frozen=True)
+class ReconciliationServiceGrant:
+    reconciliation_owner: str
+    active: bool
+
+
+@dataclass(frozen=True)
+class ReconciliationPrincipal:
+    reconciliation_owner: str
+    active: bool
+
+
+@dataclass(frozen=True)
+class ReconciliationClaimResult:
+    status: str
+    delivery_attempt_id: str
+    reconciliation_owner: str
+    reconciliation_generation: int
+    lease_expires_at: datetime
+
+
+@dataclass(frozen=True)
 class ReviewDeliveryResult:
     status: str
     delivery_attempt_id: str
@@ -137,6 +165,17 @@ class ReviewDeliveryResult:
     item_status: str
     batch_status: str
     batch_revision: int
+
+
+@dataclass(frozen=True)
+class LateDeliveryObservationResult:
+    status: str
+    delivery_attempt_id: str
+    observation_fingerprint: str
+    observed_result: str
+    remote_reference: str
+    observed_at: datetime
+    submitted_at: datetime
 
 
 class IdempotencyConflictError(RuntimeError):
@@ -179,9 +218,12 @@ class DailyFeedbackBatchStore:
         root: Path,
         *,
         worker_grants: Mapping[str, WorkerLeaseGrant] | None = None,
+        reconciliation_grants: Mapping[str, ReconciliationServiceGrant]
+        | None = None,
     ) -> None:
         self._root = root
         self._worker_grants = dict(worker_grants or {})
+        self._reconciliation_grants = dict(reconciliation_grants or {})
         self._commands_dir = root / "commands"
         self._batches_dir = root / "batches"
         self._logical_dir = root / "logical"
@@ -819,6 +861,7 @@ class DailyFeedbackBatchStore:
         observed_result: str,
         remote_reference: str,
         now: datetime,
+        reconciliation_deadline: datetime | None = None,
     ) -> ReviewDeliveryResult:
         command_fingerprint = _hash_json(
             {
@@ -828,6 +871,11 @@ class DailyFeedbackBatchStore:
                 "worker_lease_generation": worker.worker_lease_generation,
                 "observed_result": observed_result,
                 "remote_reference": remote_reference,
+                "reconciliation_deadline": (
+                    reconciliation_deadline.isoformat()
+                    if reconciliation_deadline is not None
+                    else None
+                ),
             }
         )
         batch_id, state_path = self._find_runtime_attempt(delivery_attempt_id)
@@ -852,7 +900,34 @@ class DailyFeedbackBatchStore:
             self._validate_attempt_worker(attempt, worker)
             if attempt.get("phase") != "request_started":
                 raise ReviewDeliveryConflictError("delivery_phase_conflict")
-            if observed_result != "accepted" or not remote_reference:
+            if not remote_reference:
+                raise ReviewDeliveryConflictError("unsupported_simulated_result")
+            if observed_result == "delivery_unknown":
+                if (
+                    reconciliation_deadline is None
+                    or reconciliation_deadline.tzinfo is None
+                    or reconciliation_deadline.utcoffset()
+                    != UTC.utcoffset(reconciliation_deadline)
+                    or reconciliation_deadline <= now
+                ):
+                    raise ReviewDeliveryConflictError(
+                        "invalid_reconciliation_deadline"
+                    )
+                attempt["phase"] = "finalized"
+                attempt["outcome"] = "delivery_unknown"
+                attempt["remote_reference"] = remote_reference
+                attempt["reconciliation_deadline"] = (
+                    reconciliation_deadline.isoformat()
+                )
+                result = self._delivery_result_from_state(
+                    state, attempt, status="applied"
+                )
+                self._record_runtime_result(
+                    state, command_id, command_fingerprint, result
+                )
+                self._write_replace(state_path, state)
+                return result
+            if observed_result != "accepted" or reconciliation_deadline is not None:
                 raise ReviewDeliveryConflictError("unsupported_simulated_result")
             items = self._runtime_items(state)
             matches = [
@@ -877,6 +952,325 @@ class DailyFeedbackBatchStore:
             self._record_runtime_result(
                 state, command_id, command_fingerprint, result
             )
+            self._write_replace(state_path, state)
+            return result
+        finally:
+            os.close(lock_fd)
+
+    def submit_late_delivery_observation(
+        self,
+        *,
+        command_id: str,
+        delivery_attempt_id: str,
+        worker: WorkerPrincipal,
+        observed_result: str,
+        remote_reference: str,
+        observed_at: datetime,
+        submitted_at: datetime,
+    ) -> LateDeliveryObservationResult:
+        if (
+            observed_result != "accepted"
+            or not remote_reference
+            or observed_at.tzinfo is None
+            or submitted_at.tzinfo is None
+            or observed_at.utcoffset() != UTC.utcoffset(observed_at)
+            or submitted_at.utcoffset() != UTC.utcoffset(submitted_at)
+            or observed_at > submitted_at
+        ):
+            raise ReviewDeliveryConflictError("invalid_late_observation")
+        payload = {
+            "delivery_attempt_id": delivery_attempt_id,
+            "worker_owner": worker.worker_owner,
+            "worker_lease_generation": worker.worker_lease_generation,
+            "observed_result": observed_result,
+            "remote_reference": remote_reference,
+            "observed_at": observed_at.isoformat(),
+            "submitted_at": submitted_at.isoformat(),
+        }
+        fingerprint = f"sha256:{_hash_json(payload)}"
+        command_fingerprint = _hash_json(
+            {"command_type": "submit_late_delivery_observation", **payload}
+        )
+        _batch_id, state_path = self._find_runtime_attempt(delivery_attempt_id)
+        lock_fd = self._open_lock(self._root / ".command.lock")
+        try:
+            state = self._read_json(state_path)
+            prior = self._read_global_runtime_command(
+                command_id, command_fingerprint
+            )
+            if prior is not None:
+                result = prior.get("late_observation_result")
+                if not isinstance(result, dict):
+                    raise IdempotencyConflictError("idempotency_conflict")
+                return self._late_observation_result(result, status="replayed")
+            attempt = self._runtime_attempt(state, delivery_attempt_id)
+            historical_grant = self._worker_grants.get(worker.worker_owner)
+            if (
+                worker.active is not True
+                or historical_grant is None
+                or historical_grant.active is not True
+                or historical_grant.worker_owner != worker.worker_owner
+                or historical_grant.worker_lease_generation
+                != worker.worker_lease_generation
+                or
+                attempt.get("worker_owner") != worker.worker_owner
+                or attempt.get("worker_lease_generation")
+                != worker.worker_lease_generation
+            ):
+                raise ReviewDeliveryConflictError("worker_fence_stale")
+            if attempt.get("outcome") != "delivery_unknown":
+                raise ReviewDeliveryConflictError("delivery_phase_conflict")
+            observations = state.setdefault("delivery_observations", {})
+            if not isinstance(observations, dict):
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+            envelope = {
+                "delivery_attempt_id": delivery_attempt_id,
+                "worker_owner": worker.worker_owner,
+                "worker_lease_generation": worker.worker_lease_generation,
+                "observation_fingerprint": fingerprint,
+                "observed_result": observed_result,
+                "remote_reference": remote_reference,
+                "observed_at": observed_at.isoformat(),
+                "submitted_at": submitted_at.isoformat(),
+            }
+            existing = observations.get(fingerprint)
+            if existing is not None and existing != envelope:
+                raise ReviewDeliveryConflictError("delivery_result_conflict")
+            observations[fingerprint] = envelope
+            commands = state.get("commands")
+            if not isinstance(commands, dict):
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+            commands[command_id] = {
+                "fingerprint": command_fingerprint,
+                "late_observation_result": envelope,
+            }
+            self._write_replace(state_path, state)
+            return self._late_observation_result(envelope, status="applied")
+        finally:
+            os.close(lock_fd)
+
+    def _late_observation_result(
+        self, value: dict[str, object], *, status: str
+    ) -> LateDeliveryObservationResult:
+        return LateDeliveryObservationResult(
+            status=status,
+            delivery_attempt_id=str(value["delivery_attempt_id"]),
+            observation_fingerprint=str(value["observation_fingerprint"]),
+            observed_result=str(value["observed_result"]),
+            remote_reference=str(value["remote_reference"]),
+            observed_at=datetime.fromisoformat(str(value["observed_at"])),
+            submitted_at=datetime.fromisoformat(str(value["submitted_at"])),
+        )
+
+    def claim_delivery_reconciliation(
+        self,
+        *,
+        command_id: str,
+        delivery_attempt_id: str,
+        reconciler: ReconciliationPrincipal,
+        lease_seconds: int,
+        now: datetime,
+    ) -> ReconciliationClaimResult:
+        if now.tzinfo is None or now.utcoffset() != UTC.utcoffset(now):
+            raise ReviewDeliveryConflictError("invalid_reconciliation_clock")
+        grant = self._reconciliation_grants.get(
+            reconciler.reconciliation_owner
+        )
+        if (
+            reconciler.active is not True
+            or grant is None
+            or grant.active is not True
+            or grant.reconciliation_owner != reconciler.reconciliation_owner
+            or not 1 <= lease_seconds <= 300
+        ):
+            raise ReviewDeliveryConflictError("reconciliation_authority_invalid")
+        fingerprint = _hash_json(
+            {
+                "command_type": "claim_delivery_reconciliation",
+                "delivery_attempt_id": delivery_attempt_id,
+                "reconciliation_owner": reconciler.reconciliation_owner,
+                "lease_seconds": lease_seconds,
+            }
+        )
+        batch_id, state_path = self._find_runtime_attempt(delivery_attempt_id)
+        lock_fd = self._open_lock(self._root / ".command.lock")
+        try:
+            state = self._read_json(state_path)
+            prior = self._read_global_runtime_command(command_id, fingerprint)
+            if prior is not None:
+                value = prior.get("reconciliation_claim_result")
+                if not isinstance(value, dict):
+                    raise IdempotencyConflictError("idempotency_conflict")
+                return self._reconciliation_claim_result(value, status="replayed")
+            attempt = self._runtime_attempt(state, delivery_attempt_id)
+            if state.get("batch_status") == "blocked":
+                raise ReviewDeliveryConflictError("delivery_result_conflict")
+            if attempt.get("outcome") != "delivery_unknown":
+                raise ReviewDeliveryConflictError("delivery_phase_conflict")
+            lease_value = attempt.get("reconciliation_lease_expires_at")
+            lease_active = (
+                isinstance(lease_value, str)
+                and datetime.fromisoformat(lease_value) > now
+            )
+            current_owner = attempt.get("reconciliation_owner")
+            if lease_active and current_owner != reconciler.reconciliation_owner:
+                raise ReviewDeliveryConflictError("reconciliation_lease_active")
+            generation = int(attempt.get("reconciliation_generation", 0)) + 1
+            lease_expires_at = now + timedelta(seconds=lease_seconds)
+            attempt["reconciliation_owner"] = reconciler.reconciliation_owner
+            attempt["reconciliation_generation"] = generation
+            attempt["reconciliation_lease_expires_at"] = lease_expires_at.isoformat()
+            envelope = {
+                "delivery_attempt_id": delivery_attempt_id,
+                "reconciliation_owner": reconciler.reconciliation_owner,
+                "reconciliation_generation": generation,
+                "lease_expires_at": lease_expires_at.isoformat(),
+            }
+            commands = state.get("commands")
+            if not isinstance(commands, dict):
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+            commands[command_id] = {
+                "fingerprint": fingerprint,
+                "reconciliation_claim_result": envelope,
+            }
+            self._write_replace(state_path, state)
+            return self._reconciliation_claim_result(envelope, status="applied")
+        finally:
+            os.close(lock_fd)
+
+    def _reconciliation_claim_result(
+        self, value: dict[str, object], *, status: str
+    ) -> ReconciliationClaimResult:
+        return ReconciliationClaimResult(
+            status=status,
+            delivery_attempt_id=str(value["delivery_attempt_id"]),
+            reconciliation_owner=str(value["reconciliation_owner"]),
+            reconciliation_generation=int(value["reconciliation_generation"]),
+            lease_expires_at=datetime.fromisoformat(str(value["lease_expires_at"])),
+        )
+
+    def reconcile_review_delivery(
+        self,
+        *,
+        command_id: str,
+        delivery_attempt_id: str,
+        reconciler: ReconciliationPrincipal,
+        reconciliation_generation: int,
+        resolution: str,
+        observation_fingerprint: str | None,
+        now: datetime,
+    ) -> ReviewDeliveryResult:
+        if now.tzinfo is None or now.utcoffset() != UTC.utcoffset(now):
+            raise ReviewDeliveryConflictError("invalid_reconciliation_clock")
+        fingerprint = _hash_json(
+            {
+                "command_type": "reconcile_review_delivery",
+                "delivery_attempt_id": delivery_attempt_id,
+                "reconciliation_owner": reconciler.reconciliation_owner,
+                "reconciliation_generation": reconciliation_generation,
+                "resolution": resolution,
+                "observation_fingerprint": observation_fingerprint,
+            }
+        )
+        batch_id, state_path = self._find_runtime_attempt(delivery_attempt_id)
+        lock_fd = self._open_lock(self._root / ".command.lock")
+        try:
+            state = self._read_json(state_path)
+            replay = self._replay_runtime_command(
+                state, command_id, fingerprint, batch_id=batch_id
+            )
+            if replay is not None:
+                return replay
+            grant = self._reconciliation_grants.get(
+                reconciler.reconciliation_owner
+            )
+            attempt = self._runtime_attempt(state, delivery_attempt_id)
+            lease_value = attempt.get("reconciliation_lease_expires_at")
+            if (
+                reconciler.active is not True
+                or grant is None
+                or grant.active is not True
+                or attempt.get("reconciliation_owner")
+                != reconciler.reconciliation_owner
+                or attempt.get("reconciliation_generation")
+                != reconciliation_generation
+                or not isinstance(lease_value, str)
+                or datetime.fromisoformat(lease_value) <= now
+            ):
+                raise ReviewDeliveryConflictError("reconciliation_fence_stale")
+            if attempt.get("outcome") != "delivery_unknown":
+                raise ReviewDeliveryConflictError("delivery_result_conflict")
+            if state.get("batch_status") == "blocked":
+                raise ReviewDeliveryConflictError("delivery_result_conflict")
+            if resolution == "unresolved":
+                if observation_fingerprint is not None:
+                    raise ReviewDeliveryConflictError("delivery_result_conflict")
+                deadline_value = attempt.get("reconciliation_deadline")
+                if not isinstance(deadline_value, str):
+                    raise StorageConflictError("daily_feedback_runtime_invalid")
+                if now >= datetime.fromisoformat(deadline_value):
+                    state["batch_status"] = "blocked"
+                    state["batch_revision"] = 2
+                    attempt["reconciliation_blocked_at"] = now.isoformat()
+                result = self._delivery_result_from_state(
+                    state, attempt, status="applied"
+                )
+                self._record_runtime_result(
+                    state, command_id, fingerprint, result
+                )
+                self._write_replace(state_path, state)
+                return result
+            if resolution != "found" or observation_fingerprint is None:
+                raise ReviewDeliveryConflictError("delivery_result_conflict")
+            observations = state.get("delivery_observations")
+            observation = (
+                observations.get(observation_fingerprint)
+                if isinstance(observations, dict)
+                else None
+            )
+            if (
+                not isinstance(observation, dict)
+                or observation.get("delivery_attempt_id") != delivery_attempt_id
+                or observation.get("observed_result") != "accepted"
+                or not observation.get("remote_reference")
+            ):
+                raise ReviewDeliveryConflictError("delivery_result_conflict")
+            other_results = {
+                value.get("observed_result")
+                for value in observations.values()
+                if isinstance(value, dict)
+                and value.get("delivery_attempt_id") == delivery_attempt_id
+            }
+            if other_results != {"accepted"}:
+                raise ReviewDeliveryConflictError("delivery_result_conflict")
+            remote_references = {
+                value.get("remote_reference")
+                for value in observations.values()
+                if isinstance(value, dict)
+                and value.get("delivery_attempt_id") == delivery_attempt_id
+                and value.get("observed_result") == "accepted"
+            }
+            if remote_references != {observation.get("remote_reference")}:
+                raise ReviewDeliveryConflictError("delivery_result_conflict")
+            items = self._runtime_items(state)
+            matches = [
+                item for item in items
+                if item.get("snapshot_id") == attempt.get("snapshot_id")
+            ]
+            if len(matches) != 1 or matches[0].get("status") != "pending":
+                raise ReviewDeliveryConflictError("delivery_projection_conflict")
+            matches[0]["status"] = "presented"
+            matches[0]["revision"] = 2
+            attempt["outcome"] = "accepted"
+            attempt["remote_reference"] = observation["remote_reference"]
+            attempt["reconciled_from_observation"] = observation_fingerprint
+            if state.get("batch_status") == "ready":
+                state["batch_status"] = "in_review"
+                state["batch_revision"] = 2
+            result = self._delivery_result_from_state(
+                state, attempt, status="applied"
+            )
+            self._record_runtime_result(state, command_id, fingerprint, result)
             self._write_replace(state_path, state)
             return result
         finally:
@@ -989,6 +1383,39 @@ class DailyFeedbackBatchStore:
         if observed != expected:
             raise StorageConflictError("daily_feedback_runtime_invalid")
         presented_count = sum(item.get("status") == "presented" for item in items)
+        attempts_value = state.get("delivery_attempts", {})
+        observations_value = state.get("delivery_observations", {})
+        if not isinstance(attempts_value, dict) or not isinstance(
+            observations_value, dict
+        ):
+            raise StorageConflictError("daily_feedback_runtime_invalid")
+        for observation_key, observation in observations_value.items():
+            observation_payload = (
+                {
+                    "delivery_attempt_id": observation.get("delivery_attempt_id"),
+                    "worker_owner": observation.get("worker_owner"),
+                    "worker_lease_generation": observation.get(
+                        "worker_lease_generation"
+                    ),
+                    "observed_result": observation.get("observed_result"),
+                    "remote_reference": observation.get("remote_reference"),
+                    "observed_at": observation.get("observed_at"),
+                    "submitted_at": observation.get("submitted_at"),
+                }
+                if isinstance(observation, dict)
+                else None
+            )
+            if (
+                not isinstance(observation_key, str)
+                or not isinstance(observation, dict)
+                or observation.get("observation_fingerprint") != observation_key
+                or observation_key
+                != f"sha256:{_hash_json(observation_payload)}"
+                or observation.get("delivery_attempt_id") not in attempts_value
+                or observation.get("observed_result") != "accepted"
+                or not observation.get("remote_reference")
+            ):
+                raise StorageConflictError("daily_feedback_runtime_invalid")
         try:
             batch_projection = (
                 str(state["batch_status"]),
@@ -1001,6 +1428,25 @@ class DailyFeedbackBatchStore:
                 raise StorageConflictError("daily_feedback_runtime_invalid")
         elif batch_projection == ("in_review", 2):
             if presented_count == 0:
+                raise StorageConflictError("daily_feedback_runtime_invalid")
+        elif batch_projection == ("blocked", 2):
+            blocked_attempts = []
+            for attempt in attempts_value.values():
+                if not isinstance(attempt, dict):
+                    raise StorageConflictError("daily_feedback_runtime_invalid")
+                if attempt.get("reconciliation_blocked_at") is not None:
+                    deadline = attempt.get("reconciliation_deadline")
+                    blocked_at = attempt.get("reconciliation_blocked_at")
+                    if (
+                        attempt.get("outcome") != "delivery_unknown"
+                        or not isinstance(deadline, str)
+                        or not isinstance(blocked_at, str)
+                        or datetime.fromisoformat(blocked_at)
+                        < datetime.fromisoformat(deadline)
+                    ):
+                        raise StorageConflictError("daily_feedback_runtime_invalid")
+                    blocked_attempts.append(attempt)
+            if presented_count != 0 or len(blocked_attempts) != 1:
                 raise StorageConflictError("daily_feedback_runtime_invalid")
         else:
             raise StorageConflictError("daily_feedback_runtime_invalid")
@@ -1456,12 +1902,15 @@ def create_daily_feedback_fixture_app(
     operator_grant: FixtureOperatorGrant,
     fixture_sets: Mapping[str, FeedbackFixtureSet],
     reviewer_grant: FixtureReviewerGrant | None = None,
+    reconciliation_grant: FixtureReconciliationGrant | None = None,
 ) -> FastAPI:
     """Create the fixture-only internal HTTP boundary for controlled verification."""
     if not operator_grant.token:
         raise ValueError("daily_feedback_operator_token_required")
     if reviewer_grant is not None and not reviewer_grant.token:
         raise ValueError("daily_feedback_reviewer_token_required")
+    if reconciliation_grant is not None and not reconciliation_grant.token:
+        raise ValueError("daily_feedback_reconciliation_token_required")
     app = FastAPI()
 
     @app.get("/health")
@@ -1569,6 +2018,25 @@ def create_daily_feedback_fixture_app(
             active=True,
         )
 
+    def authorize_reconciler(
+        authorization: Optional[str],
+    ) -> ReconciliationPrincipal:
+        if reconciliation_grant is None:
+            raise HTTPException(
+                status_code=404, detail="reconciliation_boundary_disabled"
+            )
+        expected = f"Bearer {reconciliation_grant.token}"
+        if authorization is None or not hmac.compare_digest(authorization, expected):
+            raise HTTPException(status_code=401, detail="invalid_reconciliation_token")
+        if not reconciliation_grant.active:
+            raise HTTPException(
+                status_code=403, detail="reconciliation_binding_inactive"
+            )
+        return ReconciliationPrincipal(
+            reconciliation_owner=reconciliation_grant.reconciliation_owner,
+            active=True,
+        )
+
     @app.post("/internal/daily-feedback/review-sessions", status_code=201)
     async def claim_review_session_http(
         payload: dict[str, object],
@@ -1646,6 +2114,97 @@ def create_daily_feedback_fixture_app(
                 },
                 "payload_hash": item.payload_hash,
             },
+        }
+
+    @app.post("/internal/daily-feedback/deliveries/reconciliation-claims")
+    async def claim_delivery_reconciliation_http(
+        payload: dict[str, object],
+        authorization: Optional[str] = Header(default=None),
+    ) -> dict[str, object]:
+        reconciler = authorize_reconciler(authorization)
+        if set(payload) != {
+            "command_id", "delivery_attempt_id", "lease_seconds"
+        } or not all(
+            (
+                isinstance(payload.get("command_id"), str),
+                isinstance(payload.get("delivery_attempt_id"), str),
+                isinstance(payload.get("lease_seconds"), int),
+            )
+        ):
+            raise HTTPException(
+                status_code=422, detail="invalid_reconciliation_claim_payload"
+            )
+        try:
+            result = store.claim_delivery_reconciliation(
+                command_id=str(payload["command_id"]),
+                delivery_attempt_id=str(payload["delivery_attempt_id"]),
+                reconciler=reconciler,
+                lease_seconds=int(payload["lease_seconds"]),
+                now=datetime.now(UTC),
+            )
+        except IdempotencyConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ReviewDeliveryConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {
+            "status": result.status,
+            "delivery_attempt_id": result.delivery_attempt_id,
+            "reconciliation_owner": result.reconciliation_owner,
+            "reconciliation_generation": result.reconciliation_generation,
+            "lease_expires_at": result.lease_expires_at.isoformat(),
+        }
+
+    @app.post("/internal/daily-feedback/deliveries/reconcile")
+    async def reconcile_review_delivery_http(
+        payload: dict[str, object],
+        authorization: Optional[str] = Header(default=None),
+    ) -> dict[str, object]:
+        reconciler = authorize_reconciler(authorization)
+        required = {
+            "command_id", "delivery_attempt_id", "reconciliation_generation",
+            "resolution", "observation_fingerprint",
+        }
+        if set(payload) != required or not all(
+            (
+                isinstance(payload.get("command_id"), str),
+                isinstance(payload.get("delivery_attempt_id"), str),
+                isinstance(payload.get("reconciliation_generation"), int),
+                isinstance(payload.get("resolution"), str),
+                payload.get("observation_fingerprint") is None
+                or isinstance(payload.get("observation_fingerprint"), str),
+            )
+        ):
+            raise HTTPException(
+                status_code=422, detail="invalid_reconciliation_payload"
+            )
+        try:
+            result = store.reconcile_review_delivery(
+                command_id=str(payload["command_id"]),
+                delivery_attempt_id=str(payload["delivery_attempt_id"]),
+                reconciler=reconciler,
+                reconciliation_generation=int(
+                    payload["reconciliation_generation"]
+                ),
+                resolution=str(payload["resolution"]),
+                observation_fingerprint=(
+                    str(payload["observation_fingerprint"])
+                    if payload["observation_fingerprint"] is not None
+                    else None
+                ),
+                now=datetime.now(UTC),
+            )
+        except IdempotencyConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ReviewDeliveryConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {
+            "status": result.status,
+            "delivery_attempt_id": result.delivery_attempt_id,
+            "phase": result.phase,
+            "outcome": result.outcome,
+            "item_status": result.item_status,
+            "batch_status": result.batch_status,
+            "batch_revision": result.batch_revision,
         }
 
     return app
