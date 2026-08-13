@@ -1,8 +1,8 @@
 # Contrato técnico propuesto — primer corte vertical de feedback
 
-- **Estado:** Propuesta aceptada; implementación parcial de Cortes A–B
+- **Estado:** Propuesta aceptada; implementación parcial de Cortes A–D1
 - **Versión conceptual:** `daily-owner-feedback-v1`
-- **Implementación:** Corte A y subset controlado del Corte B implementados; resto no implementado
+- **Implementación:** Cortes A, B, C1, C2 y D1 fixture-only implementados; interpretación, clasificación y candidatos no implementados
 - **Alcance:** Lote manual con fixtures sanitizados, revisión de un ítem por vez, feedback confirmado, cambio candidato y entrega durable simulada
 - **Fuera de alcance:** Scheduler diario, conversaciones reales, publicación de releases, profile completo del Copilot y conectores productivos
 - **Fuente:** [Ciclo diario de feedback del Client Copilot](client-copilot-daily-feedback-cycle-mvp.md)
@@ -835,13 +835,22 @@ observaciones tardías:
 
 **Actor:** revisor.
 
+**Implementación D1 fixture-only:** para reducir un turno durable intermedio sin
+perder evidencia, `correcta_con_feedback` captura la decisión y el feedback literal
+en una única transición atómica. Persiste dos artifacts append-only separados y
+ligados (`review_decision` + `owner_feedback`). No propone interpretación, no
+clasifica y no crea candidatos.
+
 Payload:
 
 ```json
 {
-  "item_id": "item_opaque",
-  "decision": "correcta_con_feedback",
-  "supersedes_decision_id": null
+  "batch_id": "batch_opaque",
+  "snapshot_id": "snapshot_opaque",
+  "expected_item_revision": 2,
+  "decision_type": "correct_with_feedback",
+  "verbatim_feedback": "Responder la duda directa primero",
+  "session_fence": 5
 }
 ```
 
@@ -849,10 +858,16 @@ Transiciones:
 
 | Estado vigente | Decisión | Nuevo estado |
 |---|---|---|
-| `presented` | `correcta` | `accepted` |
-| `presented` | `correcta_con_feedback` | `awaiting_feedback` |
-| `presented` | `omitir` | `skipped` |
+| `presented/revision 2` | `correct` | `reviewed/revision 3` |
+| `presented/revision 2` | `correct_with_feedback` + literal válido | `reviewed/revision 3` |
+| `presented/revision 2` | `skip` | `skipped/revision 3` |
 | terminal | cualquiera | sólo mediante enmienda con `supersedes_decision_id` exacto |
+
+El último ítem terminal lleva el lote de `in_review/revision 2` a
+`completed/revision 3`. Los contadores son proyecciones derivadas. D1 no implementa
+todavía la fila de enmienda/supersession descrita debajo. Para preservar una sola
+conversación por vez, D1 sólo acepta una decisión nueva sobre el ítem no terminal de
+menor posición, incluso si una operación interna previa hubiera presentado otro ítem.
 
 Una enmienda invalida interpretaciones, clasificaciones y candidatos derivados de la decisión supersedida dentro de la misma transacción o falla completa.
 
@@ -889,6 +904,10 @@ Ejemplo parcial del CAS:
 ```
 
 ### 6.9. `record_owner_feedback`
+
+**No implementado como comando separado en D1.** D1 materializa este artifact dentro
+de `record_review_decision(correct_with_feedback)`; esta sección conserva la forma
+del flujo futuro si se desacopla la captura en más de un turno.
 
 Precondiciones:
 
@@ -1104,10 +1123,10 @@ fence según corresponda.
 | `claim_delivery_reconciliation` | huérfano `request_started` o `delivery_unknown` | reconciliation lease/generation | identidad separada de reconciliador |
 | `reconcile_review_delivery(found)` | `request_started` huérfano/`delivery_unknown` | `accepted` + proyección de ítem | reconciliation owner/generation/lease vigentes |
 | `reconcile_review_delivery(not_applied)` | `request_started` huérfano/`delivery_unknown` | attempt cerrado; operation retryable | reconciliation owner/generation/lease vigentes; nuevo attempt bajo lock |
-| `record_review_decision(correcta)` | ítem `presented` | `accepted` | reviewer/binding/owner/fence |
-| `record_review_decision(omitir)` | ítem `presented` | `skipped` | reviewer/binding/owner/fence |
-| `record_review_decision(correcta_con_feedback)` | ítem `presented` | `awaiting_feedback` | reviewer/binding/owner/fence |
-| `record_owner_feedback` | `awaiting_feedback` | `awaiting_confirmation` | reviewer/binding/owner/fence |
+| `record_review_decision(correct)` | ítem `presented/revision 2`, primero no terminal | `reviewed/revision 3` | reviewer/binding/owner/fence/lease vigentes |
+| `record_review_decision(skip)` | ítem `presented/revision 2`, primero no terminal | `skipped/revision 3` | reviewer/binding/owner/fence/lease vigentes |
+| `record_review_decision(correct_with_feedback)` | ítem `presented/revision 2`, primero no terminal + literal válido | decisión + owner feedback append-only; ítem `reviewed/revision 3` | reviewer/binding/owner/fence/lease vigentes |
+| `record_owner_feedback` | futuro; no comando separado en D1 | futuro `awaiting_confirmation` | no implementado |
 | `propose_feedback_interpretation` | ítem `awaiting_confirmation`, sin propuesta | interpretación `proposed` | servicio + sesión y feedback revision |
 | `confirm_feedback_interpretation(confirm/correct)` | `awaiting_confirmation` | ítem `corrected`; interpretación `confirmed`/`corrected` | reviewer/binding/owner/fence |
 | `confirm_feedback_interpretation(cancel)` | `awaiting_confirmation` | ítem `feedback_cancelled`; derivados supersedidos | CAS atómico de IDs/revisiones |
