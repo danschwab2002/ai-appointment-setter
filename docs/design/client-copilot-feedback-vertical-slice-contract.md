@@ -482,6 +482,17 @@ nuevo sólo puede crearse tras rechazo definitivo sin efecto o reconciliación q
 pruebe inequívocamente no aplicación; nunca mientras exista `request_started` o
 `delivery_unknown` sin resolver.
 
+**Estado implementado en el Corte C2 fixture-only:** el conector simulado persiste
+una única invocación por attempt después de `request_started`. La cancelación
+pre-request, `rejected` sin presentación y la resolución inequívoca `not_applied`
+están implementadas en el store local. `not_applied` exige ausencia de evidencia
+accepted conflictiva y una referencia exacta emitida server-side por el outcome
+posterior configurado en el ledger del conector; una afirmación worker no basta.
+También exige reconciler fenced, sesión reviewer con owner distinto y fence mayor,
+y worker con owner distinto y generación mayor que los del attempt 1;
+crea únicamente `attempt_number=2`. No existe POST externo, endpoint del conector,
+scheduler ni retry posterior a attempt 2.
+
 ## 5. Invariantes globales
 
 1. Un registro nunca cambia de tenant ni alcance.
