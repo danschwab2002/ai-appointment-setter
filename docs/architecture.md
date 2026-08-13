@@ -8,6 +8,28 @@ WhatsApp -> Evolution API -> Chatwoot -> POST /webhooks/chatwoot -> captura priv
 
 El primer receptor no llama a un modelo ni envía mensajes. Su objetivo es obtener un evento real y confirmar el contrato de Chatwoot 4.13.0 con la integración de Evolution API 2.3.7.
 
+## Lote diario de feedback — Corte A fixture-only
+
+`src/bridge/daily_feedback.py` implementa el primer tracer bullet determinístico
+del ciclo diario: creación manual e idempotente de un lote a partir de fixtures
+sanitizados registrados. Materializa snapshots privados e inmutables, conserva el
+orden estable, produce `ready` o `completed_empty` y falla cerrado ante reuso
+incompatible de una clave de comando o de una ventana lógica.
+
+La creación multiarchivo usa manifest de intención primero y commit record al
+final. Un retry completa una intención interrumpida bajo lock; un aggregate ya
+comprometido sólo se reproduce después de verificar hashes y completitud de todos
+sus artefactos. La credencial HTTP está ligada server-side al tenant, scope,
+reviewer, binding activo y fixture sets permitidos; el payload no otorga autoridad.
+
+La frontera `create_daily_feedback_fixture_app(...)` es una aplicación FastAPI
+interna y separada, protegida por token de operador y usada para verificación HTTP
+real. No está montada en el bridge productivo, no corre por scheduler y no admite
+conversaciones reales. La persistencia de este tracer bullet es filesystem local;
+el workflow distribuido y su persistencia SQL continúan fuera de alcance.
+
+Contrato implementado: [daily-owner-feedback-v1](contracts/daily-owner-feedback-v1.md).
+
 ## Restricción de prueba
 
 Solo se acepta para procesamiento el contacto cuyo identificador de WhatsApp
