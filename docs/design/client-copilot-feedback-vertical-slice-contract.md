@@ -1,8 +1,8 @@
 # Contrato técnico propuesto — primer corte vertical de feedback
 
-- **Estado:** Propuesta aceptada; implementación parcial del Corte A
+- **Estado:** Propuesta aceptada; implementación parcial de Cortes A–B
 - **Versión conceptual:** `daily-owner-feedback-v1`
-- **Implementación:** Corte A (`create_review_batch` fixture-only) implementado; resto no implementado
+- **Implementación:** Corte A y subset controlado del Corte B implementados; resto no implementado
 - **Alcance:** Lote manual con fixtures sanitizados, revisión de un ítem por vez, feedback confirmado, cambio candidato y entrega durable simulada
 - **Fuera de alcance:** Scheduler diario, conversaciones reales, publicación de releases, profile completo del Copilot y conectores productivos
 - **Fuente:** [Ciclo diario de feedback del Client Copilot](client-copilot-daily-feedback-cycle-mvp.md)
@@ -1250,6 +1250,16 @@ La implementación debe avanzar test por test, observando RED antes de GREEN.
 4. Fence viejo no puede avanzar.
 5. Snapshot existe antes de reservar entrega.
 6. Hash distinto falla cerrado.
+7. `get_next_review_item` es lectura pura y rechaza owner/fence/lease stale.
+8. El subset implementado agrega entrega simulada aceptada con fases durablemente separadas y proyección atómica a `presented/in_review`.
+
+El Corte B implementado no incluye `rejected`, `delivery_unknown`, POST real,
+observaciones tardías ni reconciliación; esas ramas permanecen en Corte C.
+
+La implementación fixture-only conserva unicidad global de `command_id` entre
+creación y runtime, resuelve replay antes de CAS, valida binding y coherencia de
+proyección contra snapshots/batch comprometidos y usa un grant worker server-side
+para owner, generación y lease.
 
 ### Corte C — efecto saliente simulado
 

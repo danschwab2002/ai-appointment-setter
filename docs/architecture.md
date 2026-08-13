@@ -8,7 +8,7 @@ WhatsApp -> Evolution API -> Chatwoot -> POST /webhooks/chatwoot -> captura priv
 
 El primer receptor no llama a un modelo ni envía mensajes. Su objetivo es obtener un evento real y confirmar el contrato de Chatwoot 4.13.0 con la integración de Evolution API 2.3.7.
 
-## Lote diario de feedback — Corte A fixture-only
+## Lote diario de feedback — Cortes A–B fixture-only
 
 `src/bridge/daily_feedback.py` implementa el primer tracer bullet determinístico
 del ciclo diario: creación manual e idempotente de un lote a partir de fixtures
@@ -27,6 +27,19 @@ interna y separada, protegida por token de operador y usada para verificación H
 real. No está montada en el bridge productivo, no corre por scheduler y no admite
 conversaciones reales. La persistencia de este tracer bullet es filesystem local;
 el workflow distribuido y su persistencia SQL continúan fuera de alcance.
+
+El Corte B agrega un registro runtime atómico por batch con lease/fence de sesión,
+lectura pura del próximo ítem y delivery attempts simulados. Un grant de revisor
+liga server-side reviewer, binding y session owner. La entrega interna recorre
+`reserved → request_started → finalized(accepted)`; aceptación, `presented` e
+`in_review` se proyectan en el mismo reemplazo durable. Resultados ambiguos,
+reconciliación y conectores externos siguen fuera de alcance.
+
+Creación y comandos runtime comparten un namespace y lock global; el índice runtime
+es reconciliable y replay ocurre antes de CAS. Cada acceso valida el binding exacto
+contra el aggregate inmutable y la coherencia `pending/1`, `presented/2`,
+`ready/1` e `in_review/2`. La autoridad del worker proviene de un
+`WorkerLeaseGrant` server-side, no de datos autoafirmados por el comando.
 
 Contrato implementado: [daily-owner-feedback-v1](contracts/daily-owner-feedback-v1.md).
 
