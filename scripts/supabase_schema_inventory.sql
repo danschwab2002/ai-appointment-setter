@@ -219,6 +219,50 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         ),
         1,
         'effective_acl'
+    union all
+    select
+        '20260813000100',
+        '20260813000100_absolute_followup_deadlines.sql',
+        (
+            position(
+                'min(attempt.accepted_at)'
+                in pg_get_functiondef(
+                    'public._finalize_followup_delivery_attempt(uuid,uuid,text,bigint,text,text,uuid,text,timestamp with time zone,timestamp with time zone,timestamp with time zone)'::regprocedure
+                )
+            ) > 0
+        )::int
+        + (
+            position(
+                'v_next_due_at := v_sequence_started_at + v_next_delay'
+                in pg_get_functiondef(
+                    'public._finalize_followup_delivery_attempt(uuid,uuid,text,bigint,text,text,uuid,text,timestamp with time zone,timestamp with time zone,timestamp with time zone)'::regprocedure
+                )
+            ) > 0
+        )::int
+        + (
+            position(
+                'v_next_due_at := p_now + v_next_delay'
+                in pg_get_functiondef(
+                    'public._finalize_followup_delivery_attempt(uuid,uuid,text,bigint,text,text,uuid,text,timestamp with time zone,timestamp with time zone,timestamp with time zone)'::regprocedure
+                )
+            ) = 0
+        )::int
+        + exists(
+            select 1
+            from pg_trigger
+            where tgrelid = 'public.followup_policy_versions'::regclass
+              and tgname = 'followup_policy_step_offsets_validate'
+              and not tgisinternal
+        )::int
+        + (
+            not has_function_privilege(
+                'service_role',
+                'public._finalize_followup_delivery_attempt(uuid,uuid,text,bigint,text,text,uuid,text,timestamp with time zone,timestamp with time zone,timestamp with time zone)',
+                'execute'
+            )
+        )::int,
+        5,
+        'function_body_trigger_and_acl'
 )
 select
     version,
