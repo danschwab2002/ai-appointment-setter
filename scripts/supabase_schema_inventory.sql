@@ -263,6 +263,24 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         5,
         'function_body_trigger_and_acl'
+    union all
+    select
+        '20260814000100',
+        '20260814000100_hotmart_purchase_worker_table_acl.sql',
+        (
+            select p.prosecdef::int
+            from pg_proc p
+            where p.oid = 'public.apply_hotmart_purchase_approved(
+                uuid,text,text,text,text,text,timestamp with time zone
+            )'::regprocedure
+        )
+        + (not has_table_privilege(
+              'service_role',
+              'public.followup_delivery_attempts',
+              'update'
+          ))::int,
+        2,
+        'security_definer_and_no_direct_update'
 )
 select
     version,
