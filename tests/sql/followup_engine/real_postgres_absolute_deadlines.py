@@ -28,13 +28,21 @@ def main()->None:
     try:
         cluster.start()
         migrations=sorted((ROOT/'supabase/migrations').glob('*.sql'))
-        require(len(migrations)==18,'expected 18 migrations')
+        absolute_matches=[
+            migration
+            for migration in migrations
+            if migration.name=='20260813000100_absolute_followup_deadlines.sql'
+        ]
+        require(len(absolute_matches)==1,'absolute deadlines migration missing or duplicated')
+        absolute_deadlines=absolute_matches[0]
+        absolute_index=migrations.index(absolute_deadlines)
+        before_absolute=migrations[:absolute_index]
 
         negative_database='postgres17_lab_absolute_negative_preflight'
         cluster.create_database(negative_database)
         MODULE._roles_and_defaults(cluster,negative_database)
         cluster.file(negative_database,ROOT/'supabase/baseline/20260803_public_schema.sql')
-        for migration in migrations[:-1]:
+        for migration in before_absolute:
             cluster.file(negative_database,migration)
         cluster.sql(negative_database,"""
           insert into public.followup_policy_versions(
@@ -51,7 +59,7 @@ def main()->None:
         """)
         migration_rejected=False
         try:
-            cluster.file(negative_database,migrations[-1])
+            cluster.file(negative_database,absolute_deadlines)
         except subprocess.CalledProcessError as error:
             migration_rejected='existing_policy_step_offset_negative' in (error.stderr or '')
         require(migration_rejected,'negative existing policy did not reject migration')
@@ -77,7 +85,13 @@ def main()->None:
         cluster.file(database,ROOT/'supabase/baseline/20260803_public_schema.sql')
         for migration in migrations: cluster.file(database,migration)
         fingerprints=[line.split('|') for line in cluster.file(database,ROOT/'scripts/supabase_schema_inventory.sql',tuples=True).splitlines() if line]
-        require(len(fingerprints)==18 and all(row[-1]=='fingerprint_present' for row in fingerprints),'fingerprints failed')
+        migration_versions={migration.name.split('_',1)[0] for migration in migrations}
+        fingerprint_versions={row[0] for row in fingerprints}
+        require(
+            fingerprint_versions==migration_versions
+            and all(row[-1]=='fingerprint_present' for row in fingerprints),
+            'fingerprints failed',
+        )
         cluster.sql(database,"""
           do $mutation$
           declare
@@ -110,7 +124,7 @@ def main()->None:
             and mutated_fingerprint[0][-1]!='fingerprint_present',
             'fingerprint accepted chained deadline mutation',
         )
-        cluster.file(database,migrations[-1])
+        cluster.file(database,absolute_deadlines)
         restored_fingerprint=[
             row.split('|') for row in cluster.file(
                 database,ROOT/'scripts/supabase_schema_inventory.sql',tuples=True
@@ -199,7 +213,7 @@ def main()->None:
             cluster.sql(database,f"select status from public.record_and_finalize_followup_acceptance('{action_id}','{attempt}','absolute-worker',{generation},'absolute-conversation','absolute-message-{index}','Message {index}',timestamptz '{when}')")
         seconds=int(cluster.sql(database,f"""select extract(epoch from (next_action.due_at-first_attempt.accepted_at))::int from public.scheduled_actions next_action cross join lateral (select min(a.accepted_at) accepted_at from public.followup_delivery_attempts a join public.scheduled_actions s on s.id=a.action_id where s.followup_sequence_id=next_action.followup_sequence_id and a.outcome='accepted_by_chatwoot') first_attempt where next_action.followup_sequence_id='{sequence_id}' and next_action.status='pending' and next_action.step_key='followup_2'"""))
         require(seconds==5,f'expected 5 seconds, got {seconds}')
-        print(json.dumps({'postgres_major':17,'migrations':18,'fingerprints':18,'acl_ok':True,'service_entrypoints':27,'absolute_offset_seconds':seconds,'negative_preflight_rollback':True,'fingerprint_mutation_rejected':True,'status':'pass'},sort_keys=True))
+        print(json.dumps({'postgres_major':17,'migrations':len(migrations),'fingerprints':len(fingerprints),'acl_ok':True,'service_entrypoints':27,'absolute_offset_seconds':seconds,'negative_preflight_rollback':True,'fingerprint_mutation_rejected':True,'status':'pass'},sort_keys=True))
     finally:
         cluster.stop();shutil.rmtree(workspace,ignore_errors=True)
 

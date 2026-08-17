@@ -133,6 +133,18 @@ if (!/alter\s+function\s+public\.apply_hotmart_purchase_approved[\s\S]*security\
 ) || /grant\s+(all|update)/iu.test(purchaseWorkerAclSql)) {
   throw new Error('purchase worker ACL repair must use a definer RPC without direct UPDATE');
 }
+const purchaseWorkerSearchPathRepair = migrations.find(
+  (file) => file.endsWith('20260814000150_hotmart_purchase_worker_search_path.sql'),
+);
+if (purchaseWorkerSearchPathRepair === undefined) {
+  throw new Error('purchase worker search_path repair migration is missing');
+}
+const purchaseWorkerSearchPathSql = readFileSync(purchaseWorkerSearchPathRepair, 'utf8');
+if (!/alter\s+function\s+public\.apply_hotmart_purchase_approved[\s\S]*set\s+search_path\s*=\s*pg_catalog\s*,\s*public\s*,\s*pg_temp/iu.test(
+  purchaseWorkerSearchPathSql,
+)) {
+  throw new Error('purchase worker search_path repair must pin pg_catalog, public, pg_temp');
+}
 const purchaseWorkerBoundary = await db.query(`
   select
     has_table_privilege(
@@ -147,7 +159,8 @@ const purchaseWorkerBoundary = await db.query(`
       )',
       'execute'
     ) rpc_execute,
-    p.prosecdef security_definer
+    p.prosecdef security_definer,
+    array_to_string(p.proconfig, ',') function_config
   from pg_proc p
   where p.oid = 'public.apply_hotmart_purchase_approved(
     uuid,text,text,text,text,text,timestamp with time zone
@@ -156,7 +169,8 @@ const purchaseWorkerBoundary = await db.query(`
 const purchaseBoundary = purchaseWorkerBoundary.rows[0];
 if (purchaseBoundary?.direct_update !== false
     || purchaseBoundary?.rpc_execute !== true
-    || purchaseBoundary?.security_definer !== true) {
+    || purchaseBoundary?.security_definer !== true
+    || purchaseBoundary?.function_config !== 'search_path=pg_catalog, public, pg_temp') {
   throw new Error(`purchase worker ACL boundary is unsafe: ${JSON.stringify(purchaseBoundary)}`);
 }
 let directUpdateBlocked = false;
