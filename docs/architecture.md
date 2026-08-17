@@ -273,9 +273,11 @@ inmutable y sin secuencias, intents de efecto, handoff, Hermes u outbound. Ver
 
 El wiring runtime [Chatwoot → Corte B](contracts/chatwoot-cut-b-wiring-v1.md) se
 distribuye detrás de `CHATWOOT_CUT_B_ADMISSION_ENABLED=false`. Al habilitarlo,
-los outcomes SQL terminan el envelope antes de Hermes o cualquier respuesta;
-errores operativos quedan retryables. Activar conversación o outbound continúa
-siendo un gate posterior.
+los outcomes SQL terminan el envelope antes de Hermes por defecto. El gate
+adicional `CHATWOOT_CUT_B_AGENT_ENABLED=false` permite que sólo `created` y
+`already_exists` continúen por historia canónica, Hermes y reply Chatwoot para el
+JID allowlisted. `evidence_conflict` siempre corta. Handoff, dispatcher,
+follow-ups y outbound proactivo permanecen en gates posteriores.
 
 ## Ingreso autoritativo de abandono de carrito
 

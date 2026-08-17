@@ -109,6 +109,15 @@ def test_deployment_declares_chatwoot_cut_b_admission_default_off() -> None:
     assert "${CHATWOOT_CUT_B_ADMISSION_ENABLED:-false}" in compose
 
 
+def test_deployment_declares_chatwoot_cut_b_agent_default_off() -> None:
+    env_example = (PROJECT_ROOT / ".env.example").read_text()
+    compose = (PROJECT_ROOT / "compose.yaml").read_text()
+
+    assert "CHATWOOT_CUT_B_AGENT_ENABLED=false" in env_example
+    assert "CHATWOOT_CUT_B_AGENT_ENABLED:" in compose
+    assert "${CHATWOOT_CUT_B_AGENT_ENABLED:-false}" in compose
+
+
 def test_deployment_uses_supabase_service_role_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
