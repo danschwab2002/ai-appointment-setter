@@ -7,6 +7,14 @@ const root = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../..');
 const db = new PGlite();
 await db.waitReady;
 
+await db.exec(`
+  create role anon nologin;
+  create role authenticated nologin;
+  create role service_role nologin;
+  alter default privileges in schema public grant execute on functions to anon, authenticated;
+  alter default privileges in schema public grant all on functions to service_role;
+`);
+
 const schemaFiles = [
   join(root, 'supabase/baseline/20260803_public_schema.sql'),
   ...readdirSync(join(root, 'supabase/migrations'))
@@ -129,6 +137,7 @@ await insertPurchase({
   phone: '5531999999999',
   transaction: 'HP17715690036014',
 });
+await db.exec('set role service_role');
 const applied = await db.query(`
   select * from public.apply_hotmart_purchase_approved(
     'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1'::uuid,
@@ -136,6 +145,7 @@ const applied = await db.query(`
     'HP17715690036014', '2026-08-08T00:00:05Z'::timestamptz
   );
 `);
+await db.exec('reset role');
 if (applied.rows[0]?.outcome !== 'applied') throw new Error('purchase RPC was not applied');
 const state1 = await db.query(`
   select rc.status as case_status, fs.status as sequence_status, sa.status as action_status,

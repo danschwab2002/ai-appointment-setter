@@ -118,5 +118,58 @@ if (inventory.rows.length !== result.total
     || inventory.rows.some((row) => row.acl_status !== 'ok')) {
   throw new Error('checked-in ACL inventory disagrees with clean-stack probe');
 }
+
+const purchaseWorkerAclRepair = migrations.find(
+  (file) => file.endsWith('20260814000100_hotmart_purchase_worker_table_acl.sql'),
+);
+if (purchaseWorkerAclRepair === undefined) {
+  throw new Error('purchase worker table ACL repair migration is missing');
+}
+const purchaseWorkerAclSql = readFileSync(purchaseWorkerAclRepair, 'utf8');
+if (!/alter\s+function\s+public\.apply_hotmart_purchase_approved[\s\S]*security\s+definer/iu.test(
+  purchaseWorkerAclSql,
+) || !/revoke[\s\S]*update[\s\S]*on\s+(table\s+)?public\.followup_delivery_attempts[\s\S]*from\s+service_role/iu.test(
+  purchaseWorkerAclSql,
+) || /grant\s+(all|update)/iu.test(purchaseWorkerAclSql)) {
+  throw new Error('purchase worker ACL repair must use a definer RPC without direct UPDATE');
+}
+const purchaseWorkerBoundary = await db.query(`
+  select
+    has_table_privilege(
+      'service_role',
+      'public.followup_delivery_attempts',
+      'update'
+    ) direct_update,
+    has_function_privilege(
+      'service_role',
+      'public.apply_hotmart_purchase_approved(
+        uuid,text,text,text,text,text,timestamp with time zone
+      )',
+      'execute'
+    ) rpc_execute,
+    p.prosecdef security_definer
+  from pg_proc p
+  where p.oid = 'public.apply_hotmart_purchase_approved(
+    uuid,text,text,text,text,text,timestamp with time zone
+  )'::regprocedure
+`);
+const purchaseBoundary = purchaseWorkerBoundary.rows[0];
+if (purchaseBoundary?.direct_update !== false
+    || purchaseBoundary?.rpc_execute !== true
+    || purchaseBoundary?.security_definer !== true) {
+  throw new Error(`purchase worker ACL boundary is unsafe: ${JSON.stringify(purchaseBoundary)}`);
+}
+let directUpdateBlocked = false;
+try {
+  await db.exec(`
+    set role service_role;
+    update public.followup_delivery_attempts set updated_at = updated_at where false;
+    reset role;
+  `);
+} catch (error) {
+  directUpdateBlocked = String(error).includes('permission denied');
+  await db.exec('reset role');
+}
+if (!directUpdateBlocked) throw new Error('service_role direct UPDATE was not blocked');
 console.log(`acl_hardening=OK positive_control_leaks=${before.rows[0].leaks} public_functions=${result.total} service_entrypoints=${result.expected_count}`);
 await db.close();
