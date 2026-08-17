@@ -53,6 +53,18 @@ class CartAbandonmentAdmissionResult:
 
 
 @dataclass(frozen=True)
+class InboundCommercialCaseAdmissionResult:
+    """Canonical draft-only admission outcome for one Chatwoot conversation."""
+
+    outcome: str
+    commercial_case_id: str
+    contact_id: str
+    channel_identity_id: str
+    conversation_id: str
+    automation_status: str
+
+
+@dataclass(frozen=True)
 class CartRecoveryPlan:
     """Durable case, sequence, and next action created by PostgreSQL."""
 
@@ -752,6 +764,57 @@ class SupabaseClient:
         return CartAbandonmentAdmissionResult(
             outcome=outcome,
             webhook_event_id=webhook_event_id,
+        )
+
+    async def admit_inbound_commercial_case(
+        self,
+        *,
+        scope_key: str,
+        scope_version: int,
+        external_conversation_id: int,
+        external_user_id: str,
+    ) -> InboundCommercialCaseAdmissionResult:
+        """Create or replay one canonical draft-only inbound commercial case."""
+        operation = "inbound_commercial_case_admission"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/admit_inbound_commercial_case",
+            content=json.dumps(
+                {
+                    "p_scope_key": scope_key,
+                    "p_scope_version": scope_version,
+                    "p_external_conversation_id": external_conversation_id,
+                    "p_external_user_id": external_user_id,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(
+                f"inbound_commercial_case_admission_failed: HTTP {response.status_code}"
+            )
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError("inbound_commercial_case_admission_invalid_shape")
+        row = rows[0]
+        outcome = row.get("outcome")
+        if outcome not in {"created", "already_exists", "evidence_conflict"}:
+            raise SupabaseError("inbound_commercial_case_admission_invalid_outcome")
+        if row.get("automation_status") != "draft_only":
+            raise SupabaseError("inbound_commercial_case_admission_not_draft_only")
+        return InboundCommercialCaseAdmissionResult(
+            outcome=outcome,
+            commercial_case_id=_required_string(
+                row, "commercial_case_id", operation=operation
+            ),
+            contact_id=_required_string(row, "contact_id", operation=operation),
+            channel_identity_id=_required_string(
+                row, "channel_identity_id", operation=operation
+            ),
+            conversation_id=_required_string(
+                row, "conversation_id", operation=operation
+            ),
+            automation_status="draft_only",
         )
 
     async def fetch_pending_events(
