@@ -258,8 +258,17 @@ La sincronización y la validación diferida usan autoridad interna acotada con
 `SECURITY DEFINER` y `search_path` endurecido. Sus `EXECUTE` permanecen revocados y
 los roles API no reciben DML sobre `commercial_cases`, pero un write históricamente
 autorizado sobre recovery no falla por ACL al mantener la sombra.
-El runtime sigue leyendo recovery como autoridad y la base rechaza todavía toda
-fila `inbound_sales`; no existen admisión inbound, handoff V2 ni efectos nuevos.
+El runtime sigue leyendo recovery como autoridad. Corte A aislado rechaza toda
+fila `inbound_sales`; no agrega admisión, handoff V2 ni efectos nuevos.
+
+El Corte B está implementado en feature branch; todavía no fue mergeado,
+desplegado ni activado. Agrega scope inbound versionado sin seeds
+productivos y admisión SQL idempotente que crea o reutiliza un contacto mínimo,
+identidad y conversación Chatwoot exactos sin correlación fuzzy. El scope y tenant
+quedan ligados físicamente a la raíz; los conflictos son append-only y la
+correlación de intención permanece separada. La raíz inbound queda `draft_only`,
+inmutable y sin secuencias, intents de efecto, handoff, Hermes u outbound. Ver
+[contrato de admisión inbound V1](contracts/inbound-commercial-case-admission-v1.md).
 
 ## Ingreso autoritativo de abandono de carrito
 
