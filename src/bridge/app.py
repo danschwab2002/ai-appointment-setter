@@ -210,6 +210,7 @@ class Settings:
     chatwoot_cut_b_admission_enabled: bool = False
     chatwoot_cut_b_scope_key: str | None = None
     chatwoot_cut_b_scope_version: int | None = None
+    chatwoot_cut_b_agent_enabled: bool = False
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -519,6 +520,10 @@ class Settings:
                 if chatwoot_cut_b_scope_version_raw
                 else None
             ),
+            chatwoot_cut_b_agent_enabled=(
+                os.getenv("CHATWOOT_CUT_B_AGENT_ENABLED", "false").lower()
+                == "true"
+            ),
         )
 
 
@@ -750,6 +755,14 @@ def create_app(
             "CHATWOOT_CUT_B_ADMISSION_ENABLED requires canonical Chatwoot IDs "
             "and scope"
         )
+    if settings.chatwoot_cut_b_agent_enabled and (
+        not settings.chatwoot_cut_b_admission_enabled
+        or not settings.automated_replies_enabled
+    ):
+        raise ValueError(
+            "CHATWOOT_CUT_B_AGENT_ENABLED requires Cut B admission and "
+            "automated replies"
+        )
     control_client = chatwoot_client
     if (
         control_client is None
@@ -821,6 +834,15 @@ def create_app(
         )
     if settings.chatwoot_cut_b_admission_enabled and shared_supabase is None:
         raise ValueError("CHATWOOT_CUT_B_ADMISSION_ENABLED requires Supabase")
+    if settings.chatwoot_cut_b_agent_enabled and (
+        shadow_processor is None
+        or control_client is None
+        or settings.agent_bot_id is None
+        or settings.agent_bot_id < 1
+    ):
+        raise ValueError(
+            "CHATWOOT_CUT_B_AGENT_ENABLED requires Hermes and Chatwoot control"
+        )
     if settings.human_handoff_admission_enabled:
         if (
             not settings.dispatcher_enabled
@@ -1394,7 +1416,11 @@ def create_app(
                 "chatwoot_cut_b_admitted outcome=%s",
                 admission.outcome,
             )
-            return
+            if (
+                not settings.chatwoot_cut_b_agent_enabled
+                or admission.outcome == "evidence_conflict"
+            ):
+                return
         context = _shadow_context(payload)
         if context is None:
             return

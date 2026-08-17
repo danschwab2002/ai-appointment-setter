@@ -18,7 +18,10 @@ from bridge.chatwoot_inbox import (
     RetryableChatwootWorkError,
 )
 from bridge.reply_splitter import HermesReplySplitter
-from bridge.supabase import InboundOptOutResult
+from bridge.supabase import (
+    InboundCommercialCaseAdmissionResult,
+    InboundOptOutResult,
+)
 
 
 class StubChatwootClient:
@@ -134,6 +137,28 @@ class StubShadowProcessor:
         if delivery_id not in self.completed_delivery_ids:
             return None
         return self.proposal
+
+
+class StubInboundCommercialSupabase:
+    def __init__(self, *, outcome: str = "created") -> None:
+        self.outcome = outcome
+        self.admission_calls: list[dict[str, object]] = []
+
+    async def admit_inbound_commercial_case(
+        self, **kwargs: object
+    ) -> InboundCommercialCaseAdmissionResult:
+        self.admission_calls.append(kwargs)
+        return InboundCommercialCaseAdmissionResult(
+            outcome=self.outcome,
+            commercial_case_id="case-1",
+            contact_id="contact-1",
+            channel_identity_id="identity-1",
+            conversation_id="conversation-1",
+            automation_status="draft_only",
+        )
+
+    async def has_chatwoot_opt_out_stop(self, **_: object) -> bool:
+        return False
 
 
 class StubOptOutSupabase:
@@ -3680,3 +3705,99 @@ def test_ignores_an_incoming_message_without_a_canonical_id(
         "reason": "invalid_message_id",
     }
     assert list((tmp_path / ".work").glob("*.json")) == []
+
+
+@pytest.mark.parametrize(
+    ("admission_outcome", "reply_expected"),
+    [
+        ("created", True),
+        ("already_exists", True),
+        ("evidence_conflict", False),
+    ],
+)
+def test_cut_b_agent_gate_admits_then_replies_through_canonical_chatwoot(
+    tmp_path: Path,
+    admission_outcome: str,
+    reply_expected: bool,
+) -> None:
+    secret = "webhook-secret"
+    payload: dict[str, object] = {
+        "event": "message_created",
+        "id": 901,
+        "content": "Quiero saber más",
+        "message_type": "incoming",
+        "private": False,
+        "account": {"id": 1},
+        "inbox": {"id": 7},
+        "conversation": {
+            "id": 321,
+            "inbox_id": 7,
+            "contact_inbox": {
+                "source_id": "12025550123@s.whatsapp.net",
+            },
+        },
+    }
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    supabase = StubInboundCommercialSupabase(outcome=admission_outcome)
+    shadow = StubShadowProcessor({"reply": "Claro, ¿qué te gustaría saber?"})
+    chatwoot = StubChatwootClient(
+        messages=[
+            {
+                "id": 901,
+                "created_at": 1786233960,
+                "message_type": 0,
+                "private": False,
+                "content": "Quiero saber más",
+                "sender": {"type": "contact", "id": 20},
+            }
+        ]
+    )
+    app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=7,
+            chatwoot_cut_b_admission_enabled=True,
+            chatwoot_cut_b_scope_key="libre-de-ansiedad-inbound",
+            chatwoot_cut_b_scope_version=1,
+            chatwoot_cut_b_agent_enabled=True,
+            automated_replies_enabled=True,
+        ),
+        chatwoot_client=chatwoot,
+        shadow_processor=shadow,
+        supabase_client=supabase,  # type: ignore[arg-type]
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(raw_body, secret=secret, delivery="cut-b-agent-reply"),
+    )
+    asyncio.run(app.state.chatwoot_worker.run_once())
+
+    assert response.status_code == 202
+    assert supabase.admission_calls == [
+        {
+            "scope_key": "libre-de-ansiedad-inbound",
+            "scope_version": 1,
+            "external_conversation_id": 321,
+            "external_user_id": "12025550123",
+        }
+    ]
+    if reply_expected:
+        assert len(shadow.calls) == 1
+        assert chatwoot.reply_calls == [
+            {
+                "conversation_id": 321,
+                "trigger_message_id": 901,
+                "delivery_id": "cut-b-agent-reply",
+                "content": "Claro, ¿qué te gustaría saber?",
+            }
+        ]
+    else:
+        assert shadow.calls == []
+        assert chatwoot.reply_calls == []
