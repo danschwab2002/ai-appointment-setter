@@ -1,9 +1,11 @@
 # Diseño propuesto — agregado comercial genérico para inbound y recovery
 
-- **Estado:** Diseño aceptado por [ADR 0013](../decisions/0013-commercial-case-root.md); Corte A implementado localmente
+- **Estado:** Diseño aceptado por [ADR 0013](../decisions/0013-commercial-case-root.md);
+  Corte A mergeado en `main` sin deploy/activación y Corte B implementado en
+  feature branch, sin merge/deploy/activación
 - **Fecha:** 2026-08-16
 - **Alcance:** crear un caso durable inbound sin fabricar un abandono Hotmart y preparar handoff stop-first reutilizable
-- **No implementa todavía:** admisión inbound, RPC, wiring, handoff V2, outbound ni cambios remotos
+- **No implementa todavía:** wiring inbound, publicación del scope real, handoff V2, outbound ni cambios remotos
 
 ## 1. Problema
 
@@ -117,10 +119,10 @@ El cutover debe mantener la RPC V1 como wrapper temporal sólo para `cart_recove
 ### Corte B — inbound draft-only
 
 - RPC idempotente de admisión Chatwoot;
-- contacto, identidad, conversación y caso canónicos;
-- vínculo de correlación en estados V1;
+- scope versionado server-side e identidad, conversación y caso canónicos;
+- conflicto semántico durable y vínculo de correlación en estados V1;
 - cero Hermes, handoff y outbound;
-- TCP/lifespan/restart con stateful PostgreSQL.
+- pruebas ejecutables en PostgreSQL; el TCP/lifespan queda para el wiring posterior.
 
 ### Corte C — handoff V2
 
@@ -167,6 +169,7 @@ Tiene mayor costo inicial, pero preserva la semántica de recovery y crea una ú
 ## 9. Decisión
 
 La introducción de `commercial_cases` como raíz común fue aceptada el 2026-08-16.
-El Corte A quedó implementado localmente en modo `shadow`, sin runtime ni efectos.
-Scope server-side, admisión inbound y cambio de autoridad continúan pendientes para
-los cortes posteriores.
+Corte A quedó mergeado en `main` en modo `shadow`, sin deploy ni activación.
+Corte B está implementado en feature branch en modo `draft_only`, sin merge,
+deploy, runtime ni efectos. La publicación del scope real, el wiring
+inbound y el cambio de autoridad continúan pendientes para cortes posteriores.

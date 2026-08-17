@@ -24,7 +24,7 @@ triggers as (
       and t.tgenabled <> 'D'
 ),
 indexes as (
-    select indexname
+    select indexname, indexdef
     from pg_indexes
     where schemaname = 'public'
 ),
@@ -407,6 +407,51 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         7,
         'shadow_root_and_closed_acl'
+    union all
+    select
+        '20260816000200',
+        '20260816000200_inbound_commercial_case_draft_only.sql',
+        (to_regclass('public.inbound_commercial_scope_versions') is not null)::int
+        + (to_regclass('public.inbound_commercial_case_admissions') is not null)::int
+        + (to_regclass('public.inbound_commercial_case_conflicts') is not null)::int
+        + (to_regclass('public.commercial_case_intent_correlations') is not null)::int
+        + exists(
+            select 1 from indexes
+            where indexname = 'commercial_cases_live_inbound_conversation_scope_idx'
+              and indexdef like '%conversation_id, inbound_scope_key, inbound_scope_version, product_ref%'
+        )::int
+        + (
+            select (count(*) = 3)::int
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'commercial_cases'
+              and column_name in (
+                  'inbound_scope_key', 'inbound_scope_version', 'tenant_ref'
+              )
+        )
+        + coalesce((
+            select (
+                p.prosecdef
+                and array_to_string(p.proconfig, ',') =
+                    'search_path=pg_catalog, public, pg_temp'
+                and has_function_privilege('service_role', p.oid, 'execute')
+                and not has_function_privilege('anon', p.oid, 'execute')
+                and not has_function_privilege('authenticated', p.oid, 'execute')
+            )::int
+            from pg_proc p
+            where p.oid = 'public.admit_inbound_commercial_case(
+                text,integer,bigint,text
+            )'::regprocedure
+        ), 0)
+        + (
+            not has_table_privilege('service_role', 'public.inbound_commercial_case_admissions', 'insert')
+            and not has_table_privilege('service_role', 'public.inbound_commercial_case_admissions', 'update')
+            and not has_table_privilege('service_role', 'public.inbound_commercial_case_admissions', 'delete')
+            and not has_table_privilege('anon', 'public.inbound_commercial_case_admissions', 'select')
+            and not has_table_privilege('authenticated', 'public.inbound_commercial_case_admissions', 'select')
+        )::int,
+        8,
+        'draft_only_canonical_admission_scoped_root_conflicts_correlation_and_acl'
 )
 select
     version,

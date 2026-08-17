@@ -2,7 +2,8 @@
 
 - **Estado:** Aceptada
 - **Fecha:** 2026-08-16
-- **Implementación:** Corte A implementado localmente; no desplegado
+- **Implementación:** Corte A mergeado en `main`, no desplegado ni activado;
+  Corte B implementado en feature branch, no mergeado, desplegado ni activado
 - **Complementa:** ADR-0008, ADR-0010 y ADR-0012
 
 ## Contexto
@@ -37,7 +38,8 @@ Reglas:
 
 ### Corte A — sombra de recovery
 
-Aceptado e implementado localmente en `20260816000100_commercial_case_root.sql`:
+Aceptado, implementado y mergeado en `main` como
+`20260816000100_commercial_case_root.sql`; no desplegado ni activado:
 
 - crea `commercial_cases` con RLS y sin acceso para API roles;
 - usa primary key compartida con `recovery_cases`;
@@ -57,14 +59,19 @@ Aceptado e implementado localmente en `20260816000100_commercial_case_root.sql`:
 
 ### Corte B — inbound draft-only
 
-Pendiente y requiere diseño/contrato ejecutable:
+Implementado en worktree y pendiente de commit, merge, deploy, publicación de
+scope y wiring:
 
-- scope server-side;
-- identidad y conversación canónicas de Chatwoot;
-- admisión idempotente;
-- correlación de intención separada;
-- estado `draft_only`;
-- cero agent calls y outbound.
+- scope server-side versionado, sin seed productivo;
+- creación o reutilización canónica y serializada de contacto mínimo, identidad y
+  conversación Chatwoot, sin correlación fuzzy;
+- admisión idempotente y conflicto semántico durable;
+- correlación de intención separada y cerrada;
+- estado `draft_only` e inbound inmutable durante este corte;
+- cero agent calls, handoff, scheduling y outbound.
+
+El contrato ejecutable es
+[inbound-commercial-case-admission-v1](../contracts/inbound-commercial-case-admission-v1.md).
 
 ### Corte C — handoff generalizado
 

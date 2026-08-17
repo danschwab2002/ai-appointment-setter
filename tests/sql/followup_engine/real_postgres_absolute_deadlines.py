@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verify absolute follow-up offsets on disposable PostgreSQL 17."""
 from __future__ import annotations
-import importlib.util,json,shutil,subprocess,tempfile,time
+import importlib.util,json,re,shutil,subprocess,tempfile,time
 from pathlib import Path
 from typing import Any
 
@@ -137,7 +137,15 @@ def main()->None:
         )
         acl=[line.split('|') for line in cluster.file(database,ROOT/'scripts/supabase_acl_inventory.sql',tuples=True).splitlines() if line]
         require(bool(acl) and all(row[-1]=='ok' for row in acl),'ACL failed')
-        require(sum(row[4]=='t' for row in acl)==27,'service role allowlist changed')
+        expected_acl_count=len(re.findall(
+            r"\('public\.[a-z0-9_]+\([^']*\)'\)",
+            (ROOT/'scripts/supabase_acl_inventory.sql').read_text(encoding='utf-8'),
+        ))
+        require(
+            expected_acl_count > 0
+            and sum(row[4]=='t' for row in acl)==expected_acl_count,
+            'service role allowlist changed',
+        )
         cluster.sql(database,"""
           insert into public.followup_policy_versions(policy_key,version,status,purpose,timezone,business_windows,grace_period,expires_after,max_automatic_messages,steps,approved_by,approved_at,published_at)
           values('absolute-pg17',1,'published','cart_recovery','UTC','[{"days":[1,2,3,4,5,6,7],"start":"00:00","end":"23:59"}]',interval '0',interval '7 days',3,'[{"step_key":"first_contact","mode":"freeform"},{"step_key":"followup_1","delay":"2 seconds","mode":"freeform"},{"step_key":"followup_2","delay":"5 seconds","mode":"freeform"}]','probe',now(),now());
@@ -213,7 +221,7 @@ def main()->None:
             cluster.sql(database,f"select status from public.record_and_finalize_followup_acceptance('{action_id}','{attempt}','absolute-worker',{generation},'absolute-conversation','absolute-message-{index}','Message {index}',timestamptz '{when}')")
         seconds=int(cluster.sql(database,f"""select extract(epoch from (next_action.due_at-first_attempt.accepted_at))::int from public.scheduled_actions next_action cross join lateral (select min(a.accepted_at) accepted_at from public.followup_delivery_attempts a join public.scheduled_actions s on s.id=a.action_id where s.followup_sequence_id=next_action.followup_sequence_id and a.outcome='accepted_by_chatwoot') first_attempt where next_action.followup_sequence_id='{sequence_id}' and next_action.status='pending' and next_action.step_key='followup_2'"""))
         require(seconds==5,f'expected 5 seconds, got {seconds}')
-        print(json.dumps({'postgres_major':17,'migrations':len(migrations),'fingerprints':len(fingerprints),'acl_ok':True,'service_entrypoints':27,'absolute_offset_seconds':seconds,'negative_preflight_rollback':True,'fingerprint_mutation_rejected':True,'status':'pass'},sort_keys=True))
+        print(json.dumps({'postgres_major':17,'migrations':len(migrations),'fingerprints':len(fingerprints),'acl_ok':True,'service_entrypoints':expected_acl_count,'absolute_offset_seconds':seconds,'negative_preflight_rollback':True,'fingerprint_mutation_rejected':True,'status':'pass'},sort_keys=True))
     finally:
         cluster.stop();shutil.rmtree(workspace,ignore_errors=True)
 
