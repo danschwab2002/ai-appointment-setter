@@ -236,6 +236,23 @@ implementación está presente en el árbol y
 tiene pruebas locales, PGlite y PostgreSQL real; todavía no constituye evidencia
 de migración aplicada ni de worker activo en producción.
 
+La [ADR 0013](decisions/0013-commercial-case-root.md) introduce
+`commercial_cases` como raíz común para no fabricar un abandono Hotmart al crear
+un caso inbound. El Corte A está implementado sólo como sombra local de
+`recovery_cases`: backfill uno-a-uno, sincronización y validación de consistencia.
+La sincronización se ejecuta después de que el recovery sea visible; la protección de
+la sombra es inmediata y la validación diferible relee el estado final, por lo que no
+bloquea constraints inmediatos ni ciclos update-delete/insert-delete válidos.
+La sombra no duplica FKs `SET NULL` de conversación/identidad: hereda esas transiciones
+desde recovery para conservar la semántica histórica. Los deletes directos o anidados
+de la raíz y las divergencias de timestamps se rechazan mientras exista el recovery.
+La sincronización y la validación diferida usan autoridad interna acotada con
+`SECURITY DEFINER` y `search_path` endurecido. Sus `EXECUTE` permanecen revocados y
+los roles API no reciben DML sobre `commercial_cases`, pero un write históricamente
+autorizado sobre recovery no falla por ACL al mantener la sombra.
+El runtime sigue leyendo recovery como autoridad y la base rechaza todavía toda
+fila `inbound_sales`; no existen admisión inbound, handoff V2 ni efectos nuevos.
+
 ## Ingreso autoritativo de abandono de carrito
 
 `PURCHASE_OUT_OF_SHOPPING_CART` se autentica por Hottok y se valida contra el contrato Hotmart `2.0.0` antes de reservar identidad durable. La RPC `admit_hotmart_cart_abandonment` es la frontera transaccional que inserta el evento, reconoce replays exactos y registra diferencias bajo el mismo `external_event_id` como conflictos semánticos.

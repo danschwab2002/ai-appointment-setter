@@ -7,6 +7,8 @@ functions as (
     select
         p.oid,
         p.proname,
+        p.prosecdef,
+        p.proconfig,
         pg_get_functiondef(p.oid) as definition
     from pg_proc p
     join pg_namespace n on n.oid = p.pronamespace
@@ -281,6 +283,113 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
           ))::int,
         2,
         'security_definer_and_no_direct_update'
+    union all
+    select
+        '20260816000100',
+        '20260816000100_commercial_case_root.sql',
+        (to_regclass('public.commercial_cases') is not null)::int
+        + exists(
+            select 1
+            from information_schema.columns c
+            where c.table_schema = 'public'
+              and c.table_name = 'recovery_cases'
+              and c.column_name = 'commercial_case_id'
+              and c.is_nullable = 'NO'
+        )::int
+        + (
+            select (count(*) = 4)::int
+            from pg_trigger t
+            join pg_class relation on relation.oid = t.tgrelid
+            join pg_namespace namespace on namespace.oid = relation.relnamespace
+            where namespace.nspname = 'public'
+              and t.tgname in (
+                  'recovery_cases_bind_commercial_case_id',
+                  'recovery_cases_sync_commercial_case',
+                  'commercial_cases_protect_shadow',
+                  'recovery_cases_validate_commercial_case_shadow'
+              )
+              and not t.tgisinternal
+        )
+        + (
+            select (count(*) = 4)::int
+            from functions
+            where proname in (
+                'bind_recovery_commercial_case_id',
+                'sync_recovery_commercial_case',
+                'protect_commercial_case_shadow',
+                'validate_recovery_commercial_case_shadow'
+            )
+        )
+        + (
+            select (count(*) = 2)::int
+            from functions
+            where proname in (
+                'sync_recovery_commercial_case',
+                'validate_recovery_commercial_case_shadow'
+            )
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+        )
+        + coalesce((
+            select relation.relrowsecurity::int
+            from pg_class relation
+            join pg_namespace namespace on namespace.oid = relation.relnamespace
+            where namespace.nspname = 'public'
+              and relation.relname = 'commercial_cases'
+        ), 0)
+        + (
+            not has_table_privilege('anon', 'public.commercial_cases', 'select')
+            and not has_table_privilege('anon', 'public.commercial_cases', 'insert')
+            and not has_table_privilege('anon', 'public.commercial_cases', 'update')
+            and not has_table_privilege('anon', 'public.commercial_cases', 'delete')
+            and not has_table_privilege('authenticated', 'public.commercial_cases', 'select')
+            and not has_table_privilege('authenticated', 'public.commercial_cases', 'insert')
+            and not has_table_privilege('authenticated', 'public.commercial_cases', 'update')
+            and not has_table_privilege('authenticated', 'public.commercial_cases', 'delete')
+            and not has_table_privilege('service_role', 'public.commercial_cases', 'select')
+            and not has_table_privilege('service_role', 'public.commercial_cases', 'insert')
+            and not has_table_privilege('service_role', 'public.commercial_cases', 'update')
+            and not has_table_privilege('service_role', 'public.commercial_cases', 'delete')
+            and not has_function_privilege(
+                'anon', 'public.bind_recovery_commercial_case_id()', 'execute'
+            )
+            and not has_function_privilege(
+                'anon', 'public.sync_recovery_commercial_case()', 'execute'
+            )
+            and not has_function_privilege(
+                'anon', 'public.protect_commercial_case_shadow()', 'execute'
+            )
+            and not has_function_privilege(
+                'anon', 'public.validate_recovery_commercial_case_shadow()', 'execute'
+            )
+            and not has_function_privilege(
+                'authenticated', 'public.bind_recovery_commercial_case_id()', 'execute'
+            )
+            and not has_function_privilege(
+                'authenticated', 'public.sync_recovery_commercial_case()', 'execute'
+            )
+            and not has_function_privilege(
+                'authenticated', 'public.protect_commercial_case_shadow()', 'execute'
+            )
+            and not has_function_privilege(
+                'authenticated', 'public.validate_recovery_commercial_case_shadow()', 'execute'
+            )
+            and not has_function_privilege(
+                'service_role', 'public.bind_recovery_commercial_case_id()', 'execute'
+            )
+            and not has_function_privilege(
+                'service_role', 'public.sync_recovery_commercial_case()', 'execute'
+            )
+            and not has_function_privilege(
+                'service_role', 'public.protect_commercial_case_shadow()', 'execute'
+            )
+            and not has_function_privilege(
+                'service_role', 'public.validate_recovery_commercial_case_shadow()', 'execute'
+            )
+        )::int,
+        7,
+        'shadow_root_and_closed_acl'
 )
 select
     version,
