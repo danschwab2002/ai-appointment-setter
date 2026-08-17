@@ -236,6 +236,14 @@ implementación está presente en el árbol y
 tiene pruebas locales, PGlite y PostgreSQL real; todavía no constituye evidencia
 de migración aplicada ni de worker activo en producción.
 
+El hotfix ACL específico del purchase worker `20260814000100` sí se aplicó en
+Supabase Cloud el 2026-08-17: la RPC quedó `SECURITY DEFINER` y `service_role`
+perdió el `UPDATE` directo sobre delivery attempts. El postflight detectó que la
+función conservaba `search_path=public, pg_temp`; no hay `CREATE` no confiable
+sobre `public`, pero el orden explícito acordado requiere una corrección
+incremental. `20260814000150` la implementa en el árbol y permanece sin aplicar;
+Corte A continúa bloqueado hasta su postflight remoto.
+
 La [ADR 0013](decisions/0013-commercial-case-root.md) introduce
 `commercial_cases` como raíz común para no fabricar un abandono Hotmart al crear
 un caso inbound. El Corte A está implementado sólo como sombra local de

@@ -285,6 +285,23 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         'security_definer_and_no_direct_update'
     union all
     select
+        '20260814000150',
+        '20260814000150_hotmart_purchase_worker_search_path.sql',
+        coalesce((
+            select (
+                p.prosecdef
+                and array_to_string(p.proconfig, ',') =
+                    'search_path=pg_catalog, public, pg_temp'
+            )::int
+            from pg_proc p
+            where p.oid = 'public.apply_hotmart_purchase_approved(
+                uuid,text,text,text,text,text,timestamp with time zone
+            )'::regprocedure
+        ), 0),
+        1,
+        'explicit_definer_search_path'
+    union all
+    select
         '20260816000100',
         '20260816000100_commercial_case_root.sql',
         (to_regclass('public.commercial_cases') is not null)::int
