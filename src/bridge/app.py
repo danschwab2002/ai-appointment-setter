@@ -8,6 +8,7 @@ import json
 import logging
 import math
 import os
+import re
 import tempfile
 import time
 from contextlib import asynccontextmanager
@@ -206,6 +207,9 @@ class Settings:
     waba_followup_template_name: str | None = None
     waba_template_language: str | None = None
     waba_template_category: str | None = None
+    chatwoot_cut_b_admission_enabled: bool = False
+    chatwoot_cut_b_scope_key: str | None = None
+    chatwoot_cut_b_scope_version: int | None = None
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -404,6 +408,9 @@ class Settings:
         pilot_scope_version_raw = os.getenv(
             "LANCEMOS_PILOT_SCOPE_VERSION", ""
         ).strip()
+        chatwoot_cut_b_scope_version_raw = os.getenv(
+            "CHATWOOT_CUT_B_SCOPE_VERSION", ""
+        ).strip()
 
         return cls(
             webhook_secret=os.environ["CHATWOOT_WEBHOOK_SECRET"],
@@ -499,6 +506,18 @@ class Settings:
             ),
             waba_template_category=(
                 os.getenv("WABA_TEMPLATE_CATEGORY", "").strip().upper() or None
+            ),
+            chatwoot_cut_b_admission_enabled=(
+                os.getenv("CHATWOOT_CUT_B_ADMISSION_ENABLED", "false").lower()
+                == "true"
+            ),
+            chatwoot_cut_b_scope_key=(
+                os.getenv("CHATWOOT_CUT_B_SCOPE_KEY", "").strip() or None
+            ),
+            chatwoot_cut_b_scope_version=(
+                int(chatwoot_cut_b_scope_version_raw)
+                if chatwoot_cut_b_scope_version_raw
+                else None
             ),
         )
 
@@ -708,6 +727,29 @@ def create_app(
         raise ValueError(
             "CHATWOOT_DURABLE_OPT_OUT_ENABLED requires canonical Chatwoot IDs"
         )
+    if settings.chatwoot_cut_b_admission_enabled and (
+        settings.chatwoot_account_id is None
+        or settings.chatwoot_account_id < 1
+        or settings.chatwoot_inbox_id is None
+        or settings.chatwoot_inbox_id < 1
+        or settings.chatwoot_cut_b_scope_key is None
+        or re.fullmatch(
+            r"[a-z0-9_-]{1,100}",
+            settings.chatwoot_cut_b_scope_key,
+        )
+        is None
+        or settings.chatwoot_cut_b_scope_version is None
+        or settings.chatwoot_cut_b_scope_version < 1
+        or re.fullmatch(
+            r"[1-9][0-9]{6,14}@s\.whatsapp\.net",
+            settings.allowed_jid,
+        )
+        is None
+    ):
+        raise ValueError(
+            "CHATWOOT_CUT_B_ADMISSION_ENABLED requires canonical Chatwoot IDs "
+            "and scope"
+        )
     control_client = chatwoot_client
     if (
         control_client is None
@@ -752,7 +794,11 @@ def create_app(
         )
     chatwoot_inbox = (
         DurableChatwootInbox(Path(settings.capture_dir) / ".work")
-        if shadow_processor is not None or control_client is not None
+        if (
+            shadow_processor is not None
+            or control_client is not None
+            or settings.chatwoot_cut_b_admission_enabled
+        )
         else None
     )
 
@@ -773,6 +819,8 @@ def create_app(
         raise ValueError(
             "CHATWOOT_DURABLE_OPT_OUT_ENABLED requires Supabase and Chatwoot control"
         )
+    if settings.chatwoot_cut_b_admission_enabled and shared_supabase is None:
+        raise ValueError("CHATWOOT_CUT_B_ADMISSION_ENABLED requires Supabase")
     if settings.human_handoff_admission_enabled:
         if (
             not settings.dispatcher_enabled
@@ -1309,6 +1357,44 @@ def create_app(
             raise RuntimeError("chatwoot_invalid_message_id")
         if not decision.accepted:
             return
+        if settings.chatwoot_cut_b_admission_enabled:
+            assert shared_supabase is not None
+            assert settings.chatwoot_cut_b_scope_key is not None
+            assert settings.chatwoot_cut_b_scope_version is not None
+            conversation = payload.get("conversation")
+            conversation_id = (
+                conversation.get("id") if isinstance(conversation, dict) else None
+            )
+            sender_jid = decision.sender_jid
+            external_user_id = (
+                sender_jid.removesuffix("@s.whatsapp.net")
+                if isinstance(sender_jid, str)
+                and sender_jid.endswith("@s.whatsapp.net")
+                else ""
+            )
+            if (
+                not isinstance(conversation_id, int)
+                or isinstance(conversation_id, bool)
+                or conversation_id < 1
+                or not external_user_id.isdigit()
+            ):
+                raise RuntimeError("chatwoot_cut_b_canonical_identity_invalid")
+            try:
+                admission = await shared_supabase.admit_inbound_commercial_case(
+                    scope_key=settings.chatwoot_cut_b_scope_key,
+                    scope_version=settings.chatwoot_cut_b_scope_version,
+                    external_conversation_id=conversation_id,
+                    external_user_id=external_user_id,
+                )
+            except SupabaseError as exc:
+                raise RetryableChatwootWorkError(
+                    "chatwoot_cut_b_admission_failed"
+                ) from exc
+            logger.info(
+                "chatwoot_cut_b_admitted outcome=%s",
+                admission.outcome,
+            )
+            return
         context = _shadow_context(payload)
         if context is None:
             return
@@ -1631,8 +1717,12 @@ def create_app(
                 shadow_processor is not None
                 or opt_out_enforcement_enabled
                 or settings.chatwoot_durable_opt_out_enabled
+                or settings.chatwoot_cut_b_admission_enabled
             )
-            and context is not None
+            and (
+                context is not None
+                or settings.chatwoot_cut_b_admission_enabled
+            )
         ):
             admitted = chatwoot_inbox.admit(
                 delivery_id=x_chatwoot_delivery,

@@ -93,6 +93,22 @@ def test_deployment_declares_waba_pilot_contract_default_off() -> None:
     assert "${DURABLE_OUTBOUND_ENABLED:-false}" in compose
 
 
+def test_deployment_declares_chatwoot_cut_b_admission_default_off() -> None:
+    env_example = (PROJECT_ROOT / ".env.example").read_text()
+    compose = (PROJECT_ROOT / "compose.yaml").read_text()
+
+    for variable in (
+        "CHATWOOT_CUT_B_ADMISSION_ENABLED",
+        "CHATWOOT_CUT_B_SCOPE_KEY",
+        "CHATWOOT_CUT_B_SCOPE_VERSION",
+    ):
+        assert f"{variable}=" in env_example
+        assert f"{variable}:" in compose
+
+    assert "CHATWOOT_CUT_B_ADMISSION_ENABLED=false" in env_example
+    assert "${CHATWOOT_CUT_B_ADMISSION_ENABLED:-false}" in compose
+
+
 def test_deployment_uses_supabase_service_role_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
