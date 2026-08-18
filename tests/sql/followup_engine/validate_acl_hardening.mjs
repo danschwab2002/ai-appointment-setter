@@ -60,6 +60,7 @@ const rows = await db.query(`
       ('admit_hotmart_cart_abandonment(text,jsonb)'),
       ('admit_hotmart_purchase_approved(text,jsonb)'),
       ('admit_precheckout_form_submission(text,jsonb,jsonb)'),
+      ('begin_precheckout_test_first_touch(text,uuid,text,bigint,bigint)'),
       ('admit_inbound_commercial_case(text,integer,bigint,text)'),
       ('apply_chatwoot_inbound_opt_out(bigint,bigint,bigint,bigint,text,timestamp with time zone,text)'),
       ('apply_hotmart_purchase_approved(uuid,text,text,text,text,text,timestamp with time zone)'),
@@ -67,6 +68,7 @@ const rows = await db.query(`
       ('claim_due_followup_actions(text,timestamp with time zone,interval,integer)'),
       ('claim_human_handoff_projection_effects(text,integer,integer,timestamp with time zone)'),
       ('evaluate_lancemos_pilot_scope(text,integer,text,bigint,bigint,text,text,text,text,text,text,uuid)'),
+      ('finish_precheckout_test_first_touch(uuid,text,bigint,bigint,text)'),
       ('finalize_chatwoot_opt_out_projection(uuid,text,bigint,boolean,text,integer,timestamp with time zone)'),
       ('finalize_followup_delivery_attempt(uuid,uuid,text,bigint,text,text,uuid,text,timestamp with time zone,timestamp with time zone,timestamp with time zone)'),
       ('finalize_human_handoff_projection_effect(uuid,text,bigint,text,text,timestamp with time zone,timestamp with time zone)'),
@@ -105,7 +107,7 @@ const rows = await db.query(`
 `);
 const result = rows.rows[0];
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 29) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 31) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const inventory = await db.query(readFileSync(

@@ -35,13 +35,23 @@ class WhatsAppTemplateConfig:
     followup_name: str
     language: str
     category: str
+    first_touch_parameter: str = "content"
 
-    def params(self, *, content: str, followup: bool) -> dict[str, object]:
+    def params(
+        self,
+        *,
+        content: str,
+        followup: bool,
+        buyer_name: str | None = None,
+    ) -> dict[str, object]:
+        parameter = content
+        if not followup and self.first_touch_parameter == "buyer_name":
+            parameter = buyer_name or ""
         return {
             "name": self.followup_name if followup else self.first_touch_name,
             "category": self.category,
             "language": self.language,
-            "processed_params": {"body": {"1": content}},
+            "processed_params": {"body": {"1": parameter}},
         }
 
 
@@ -54,6 +64,16 @@ class MessageSender(Protocol):
         phone: str,
         buyer_name: str | None,
         buyer_email: str | None,
+        content: str,
+        delivery_id: str,
+    ) -> FirstTouchResult: ...
+
+    async def send_first_touch_to_conversation(
+        self,
+        *,
+        conversation_id: int,
+        phone: str,
+        buyer_name: str,
         content: str,
         delivery_id: str,
     ) -> FirstTouchResult: ...
@@ -171,7 +191,11 @@ class ChatwootMessageSender:
                 content=content,
                 delivery_id=delivery_id,
                 template_params=(
-                    self._template.params(content=content, followup=False)
+                    self._template.params(
+                        content=content,
+                        followup=False,
+                        buyer_name=buyer_name,
+                    )
                     if self._template is not None
                     else None
                 ),
@@ -203,6 +227,52 @@ class ChatwootMessageSender:
             conversation_id=conversation_id,
             message_id=message_id,
         )
+
+    async def send_first_touch_to_conversation(
+        self,
+        *,
+        conversation_id: int,
+        phone: str,
+        buyer_name: str,
+        content: str,
+        delivery_id: str,
+    ) -> FirstTouchResult:
+        """Send a first-touch template in an existing canonical conversation."""
+        if not is_allowed_whatsapp_target(phone, self._allowed_jid):
+            return FirstTouchResult("blocked", None, None, "target_not_allowed")
+        if (
+            not isinstance(conversation_id, int)
+            or isinstance(conversation_id, bool)
+            or conversation_id < 1
+            or not buyer_name.strip()
+            or self._template is None
+        ):
+            return FirstTouchResult(
+                "blocked", conversation_id, None, "invalid_first_touch"
+            )
+        try:
+            result = await self._chatwoot.send_followup_message(
+                conversation_id=conversation_id,
+                content=content,
+                delivery_id=delivery_id,
+                template_params=self._template.params(
+                    content=content,
+                    followup=False,
+                    buyer_name=buyer_name,
+                ),
+            )
+        except ChatwootProtocolError:
+            return FirstTouchResult(
+                "failed", conversation_id, None, "chatwoot_protocol_error"
+            )
+        except httpx.HTTPError:
+            return FirstTouchResult(
+                "failed", conversation_id, None, "chatwoot_http_error"
+            )
+        message_id = result.get("message_id")
+        if not isinstance(message_id, int) or isinstance(message_id, bool):
+            message_id = None
+        return FirstTouchResult("sent", conversation_id, message_id)
 
     async def send_followup(
         self,

@@ -12,6 +12,7 @@ import os
 import re
 import tempfile
 import time
+import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -55,6 +56,7 @@ from bridge.messaging import (
     ChatwootMessageSender,
     MessageSender,
     WhatsAppTemplateConfig,
+    allowed_phone_from_jid,
 )
 from bridge.opt_out import detect_explicit_opt_out
 from bridge.precheckout import PrecheckoutScope, parse_emulated_precheckout_submission
@@ -78,6 +80,8 @@ logger = logging.getLogger(__name__)
 CHATWOOT_WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024
 HOTMART_WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024
 PRECHECKOUT_WEBHOOK_BODY_LIMIT_BYTES = 64 * 1024
+PRECHECKOUT_FIRST_TOUCH_TEMPLATE_NAME = "libre_ansiedad_test_first_touch_v1"
+PRECHECKOUT_FIRST_TOUCH_COPY_VERSION = "libre-ansiedad-precheckout-first-touch-v1"
 
 
 class CanonicalHistoryIncompleteError(RetryableChatwootWorkError):
@@ -186,6 +190,8 @@ class Settings:
     precheckout_product_ref: str = "F106691755G"
     precheckout_offer_ref: str = "bxjge6zq"
     precheckout_consent_copy_version: str = "form-screenshot-2026-08-14"
+    precheckout_first_touch_enabled: bool = False
+    precheckout_first_touch_token: str | None = None
     supabase_base_url: str | None = None
     supabase_service_role_key: str | None = None
     worker_poll_interval_seconds: float = 5.0
@@ -348,6 +354,12 @@ class Settings:
         precheckout_test_phone_e164 = (
             os.getenv("PRECHECKOUT_TEST_PHONE_E164", "").strip() or None
         )
+        precheckout_first_touch_enabled = (
+            os.getenv("PRECHECKOUT_FIRST_TOUCH_ENABLED", "false").lower() == "true"
+        )
+        precheckout_first_touch_token = (
+            os.getenv("PRECHECKOUT_FIRST_TOUCH_TOKEN", "").strip() or None
+        )
         allowed_jid = os.environ["ALLOWED_WHATSAPP_JID"].strip()
         allowed_phone = allowed_jid.removesuffix("@s.whatsapp.net")
         if precheckout_form_enabled and not precheckout_test_mode_enabled:
@@ -358,6 +370,14 @@ class Settings:
             raise ValueError("PRECHECKOUT_TEST_MODE_ENABLED requires PRECHECKOUT_FORM_ENABLED")
         if precheckout_form_enabled and precheckout_form_token is None:
             raise ValueError("PRECHECKOUT_FORM_TOKEN is required")
+        if precheckout_first_touch_enabled and (
+            not precheckout_form_enabled
+            or not precheckout_test_mode_enabled
+            or precheckout_first_touch_token is None
+        ):
+            raise ValueError(
+                "PRECHECKOUT_FIRST_TOUCH_ENABLED requires test-only receiver and token"
+            )
         if precheckout_test_mode_enabled and (
             precheckout_test_phone_e164 is None
             or re.fullmatch(r"\+[1-9][0-9]{7,14}", precheckout_test_phone_e164)
@@ -503,6 +523,8 @@ class Settings:
             precheckout_max_age_seconds=precheckout_max_age_seconds,
             precheckout_test_mode_enabled=precheckout_test_mode_enabled,
             precheckout_test_phone_e164=precheckout_test_phone_e164,
+            precheckout_first_touch_enabled=precheckout_first_touch_enabled,
+            precheckout_first_touch_token=precheckout_first_touch_token,
             supabase_base_url=supabase_base_url,
             supabase_service_role_key=supabase_service_role_key,
             worker_poll_interval_seconds=worker_poll_interval,
@@ -884,6 +906,40 @@ def create_app(
             base_url=settings.supabase_base_url,
             service_role_key=settings.supabase_service_role_key,
         )
+    first_touch_sender = message_sender
+    if settings.precheckout_first_touch_enabled:
+        canonical_phone = allowed_phone_from_jid(settings.allowed_jid)
+        if (
+            shared_supabase is None
+            or settings.precheckout_first_touch_token is None
+            or not settings.precheckout_form_enabled
+            or not settings.precheckout_test_mode_enabled
+            or settings.precheckout_test_phone_e164 != (
+                f"+{canonical_phone}" if canonical_phone is not None else None
+            )
+            or settings.pilot_channel_provider != "waba"
+            or settings.chatwoot_account_id is None
+            or settings.chatwoot_inbox_id is None
+            or canonical_phone is None
+        ):
+            raise ValueError(
+                "precheckout first touch requires Supabase, WABA, inbox, token, and canonical JID"
+            )
+        if first_touch_sender is None:
+            if not isinstance(control_client, ChatwootClient):
+                raise ValueError("precheckout first touch requires Chatwoot control")
+            first_touch_sender = ChatwootMessageSender(
+                chatwoot=control_client,
+                inbox_id=settings.chatwoot_inbox_id,
+                allowed_jid=settings.allowed_jid,
+                template=WhatsAppTemplateConfig(
+                    first_touch_name=PRECHECKOUT_FIRST_TOUCH_TEMPLATE_NAME,
+                    followup_name=PRECHECKOUT_FIRST_TOUCH_TEMPLATE_NAME,
+                    language="es_AR",
+                    category="MARKETING",
+                    first_touch_parameter="buyer_name",
+                ),
+            )
     if settings.chatwoot_durable_opt_out_enabled and (
         shared_supabase is None or control_client is None
     ):
@@ -1941,6 +1997,156 @@ def create_app(
             "test_only": True,
             "generalizable": False,
         }
+
+    @app.post(
+        "/internal/precheckout/test-first-touch",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def send_precheckout_test_first_touch(
+        request: Request,
+        response: Response,
+        x_precheckout_first_touch_token: str = Header(default=""),
+    ) -> dict[str, object]:
+        if not settings.precheckout_first_touch_enabled:
+            raise HTTPException(
+                status_code=503, detail="precheckout_first_touch_not_enabled"
+            )
+        if settings.precheckout_first_touch_token is None:
+            raise HTTPException(
+                status_code=503, detail="precheckout_first_touch_not_configured"
+            )
+        if not hmac.compare_digest(
+            x_precheckout_first_touch_token.encode(),
+            settings.precheckout_first_touch_token.encode(),
+        ):
+            raise HTTPException(status_code=401, detail="invalid_token")
+        body = await request.body()
+        if len(body) > 4096:
+            raise HTTPException(status_code=413, detail="first_touch_body_too_large")
+        try:
+            payload = json.loads(body)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise HTTPException(status_code=400, detail="invalid_json") from exc
+        if not isinstance(payload, dict) or set(payload) != {
+            "command_key",
+            "purchase_intent_id",
+        }:
+            raise HTTPException(status_code=400, detail="invalid_first_touch_request")
+        command_key = payload.get("command_key")
+        purchase_intent_id = payload.get("purchase_intent_id")
+        if (
+            not isinstance(command_key, str)
+            or re.fullmatch(r"[A-Za-z0-9._:-]{1,120}", command_key) is None
+            or not isinstance(purchase_intent_id, str)
+        ):
+            raise HTTPException(status_code=400, detail="invalid_first_touch_request")
+        try:
+            if str(uuid.UUID(purchase_intent_id)) != purchase_intent_id:
+                raise ValueError
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400, detail="invalid_first_touch_request"
+            ) from exc
+        allowed_phone = allowed_phone_from_jid(settings.allowed_jid)
+        if allowed_phone is None or shared_supabase is None or first_touch_sender is None:
+            raise HTTPException(
+                status_code=503, detail="precheckout_first_touch_not_configured"
+            )
+        try:
+            started = await shared_supabase.begin_precheckout_test_first_touch(
+                command_key=command_key,
+                purchase_intent_id=purchase_intent_id,
+                allowed_external_user_id=allowed_phone,
+                chatwoot_account_id=settings.chatwoot_account_id,  # type: ignore[arg-type]
+                chatwoot_inbox_id=settings.chatwoot_inbox_id,  # type: ignore[arg-type]
+            )
+        except SupabaseError as exc:
+            raise HTTPException(
+                status_code=409, detail="precheckout_first_touch_not_eligible"
+            ) from exc
+        if started.outcome == "replay":
+            if started.command_status == "accepted_by_chatwoot":
+                response.status_code = status.HTTP_200_OK
+                return {
+                    "status": "accepted_by_chatwoot",
+                    "command_id": started.command_id,
+                    "message_count": 1,
+                    "followups_allowed": 0,
+                    "test_only": True,
+                    "generalizable": False,
+                }
+            raise HTTPException(
+                status_code=409,
+                detail="precheckout_first_touch_reconciliation_required",
+            )
+        metadata_valid = (
+            started.command_status == "request_started"
+            and started.target_phone == allowed_phone
+            and started.template_name == PRECHECKOUT_FIRST_TOUCH_TEMPLATE_NAME
+            and started.template_language == "es_AR"
+            and started.template_category == "MARKETING"
+            and started.copy_version == PRECHECKOUT_FIRST_TOUCH_COPY_VERSION
+        )
+        if not metadata_valid:
+            await shared_supabase.finish_precheckout_test_first_touch(
+                command_id=started.command_id,
+                outcome="failed",
+                chatwoot_conversation_id=None,
+                chatwoot_message_id=None,
+                failure_code="configuration_mismatch",
+            )
+            raise HTTPException(
+                status_code=503, detail="precheckout_first_touch_not_configured"
+            )
+        buyer_name = started.buyer_name.strip()
+        content = (
+            f"¡Hola, {buyer_name}! Te habla el equipo de Johanna. "
+            "Vimos que completaste el formulario de Libre de Ansiedad. "
+            "¿Te parece si avanzamos por acá?"
+        )
+        result = await first_touch_sender.send_first_touch_to_conversation(
+            conversation_id=started.chatwoot_conversation_id,
+            phone=started.target_phone,
+            buyer_name=buyer_name,
+            content=content,
+            delivery_id=started.command_id,
+        )
+        if (
+            result.status == "sent"
+            and result.conversation_id is not None
+            and result.message_id is not None
+        ):
+            try:
+                await shared_supabase.finish_precheckout_test_first_touch(
+                    command_id=started.command_id,
+                    outcome="accepted_by_chatwoot",
+                    chatwoot_conversation_id=result.conversation_id,
+                    chatwoot_message_id=result.message_id,
+                    failure_code=None,
+                )
+            except SupabaseError as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail="precheckout_first_touch_reconciliation_required",
+                ) from exc
+            return {
+                "status": "accepted_by_chatwoot",
+                "command_id": started.command_id,
+                "message_count": 1,
+                "followups_allowed": 0,
+                "test_only": True,
+                "generalizable": False,
+            }
+        failure_code = (result.reason or "sender_failed")[:120]
+        terminal_outcome = "failed" if result.status == "blocked" else "delivery_unknown"
+        await shared_supabase.finish_precheckout_test_first_touch(
+            command_id=started.command_id,
+            outcome=terminal_outcome,
+            chatwoot_conversation_id=None,
+            chatwoot_message_id=None,
+            failure_code=failure_code,
+        )
+        raise HTTPException(status_code=502, detail="precheckout_first_touch_failed")
 
     @app.post("/webhooks/hotmart", status_code=status.HTTP_202_ACCEPTED)
     async def receive_hotmart_webhook(
