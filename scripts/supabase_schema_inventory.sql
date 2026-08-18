@@ -302,6 +302,46 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         'explicit_definer_search_path'
     union all
     select
+        '20260814000200',
+        '20260814000200_precheckout_purchase_intents.sql',
+        (to_regclass('public.precheckout_submissions') is not null)::int
+        + (to_regclass('public.purchase_intents') is not null)::int
+        + (to_regclass('public.purchase_intent_submissions') is not null)::int
+        + (to_regclass('public.precheckout_submission_conflicts') is not null)::int
+        + exists(
+            select 1
+            from functions
+            where proname = 'admit_precheckout_form_submission'
+        )::int
+        + coalesce((
+            select (
+                has_function_privilege('service_role', oid, 'execute')
+                and not has_function_privilege('anon', oid, 'execute')
+                and not has_function_privilege('authenticated', oid, 'execute')
+            )::int
+            from functions
+            where proname = 'admit_precheckout_form_submission'
+        ), 0)
+        + coalesce((
+            select (
+                array_to_string(p.proconfig, ',') =
+                    'search_path=pg_catalog, public, pg_temp'
+            )::int
+            from pg_proc p
+            where p.oid = 'public.admit_precheckout_form_submission(
+                text,jsonb,jsonb
+            )'::regprocedure
+        ), 0)
+        + (
+            not has_table_privilege('service_role', 'public.precheckout_submissions', 'insert')
+            and not has_table_privilege('service_role', 'public.purchase_intents', 'insert')
+            and not has_table_privilege('service_role', 'public.purchase_intent_submissions', 'insert')
+            and not has_table_privilege('service_role', 'public.precheckout_submission_conflicts', 'insert')
+        )::int,
+        8,
+        'catalog_objects_and_effective_acl'
+    union all
+    select
         '20260816000100',
         '20260816000100_commercial_case_root.sql',
         (to_regclass('public.commercial_cases') is not null)::int

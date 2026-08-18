@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import json
 import logging
 import math
@@ -56,6 +57,7 @@ from bridge.messaging import (
     WhatsAppTemplateConfig,
 )
 from bridge.opt_out import detect_explicit_opt_out
+from bridge.precheckout import PrecheckoutScope, parse_emulated_precheckout_submission
 from bridge.recovery_agent import RecoveryAgentClient
 from bridge.reply_splitter import (
     HermesReplySplitter,
@@ -75,6 +77,7 @@ from bridge.worker import (
 logger = logging.getLogger(__name__)
 CHATWOOT_WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024
 HOTMART_WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024
+PRECHECKOUT_WEBHOOK_BODY_LIMIT_BYTES = 64 * 1024
 
 
 class CanonicalHistoryIncompleteError(RetryableChatwootWorkError):
@@ -172,6 +175,17 @@ class Settings:
     hotmart_hottok: str | None = None
     hotmart_max_age_seconds: int = 300
     hotmart_purchase_worker_enabled: bool = False
+    precheckout_form_enabled: bool = False
+    precheckout_form_token: str | None = None
+    precheckout_max_age_seconds: int = 300
+    precheckout_test_mode_enabled: bool = False
+    precheckout_test_phone_e164: str | None = None
+    precheckout_tenant_ref: str = "joana"
+    precheckout_funnel_ref: str = "libre-de-ansiedad"
+    precheckout_landing_ref: str = "bcl-main"
+    precheckout_product_ref: str = "F106691755G"
+    precheckout_offer_ref: str = "bxjge6zq"
+    precheckout_consent_copy_version: str = "form-screenshot-2026-08-14"
     supabase_base_url: str | None = None
     supabase_service_role_key: str | None = None
     worker_poll_interval_seconds: float = 5.0
@@ -322,6 +336,45 @@ class Settings:
         hotmart_max_age_seconds = int(
             os.getenv("HOTMART_MAX_AGE_SECONDS", "300")
         )
+        precheckout_form_enabled = (
+            os.getenv("PRECHECKOUT_FORM_ENABLED", "false").lower() == "true"
+        )
+        precheckout_form_token = (
+            os.getenv("PRECHECKOUT_FORM_TOKEN", "").strip() or None
+        )
+        precheckout_test_mode_enabled = (
+            os.getenv("PRECHECKOUT_TEST_MODE_ENABLED", "false").lower() == "true"
+        )
+        precheckout_test_phone_e164 = (
+            os.getenv("PRECHECKOUT_TEST_PHONE_E164", "").strip() or None
+        )
+        allowed_jid = os.environ["ALLOWED_WHATSAPP_JID"].strip()
+        allowed_phone = allowed_jid.removesuffix("@s.whatsapp.net")
+        if precheckout_form_enabled and not precheckout_test_mode_enabled:
+            raise ValueError(
+                "pre-checkout provisional contract cannot be enabled from deployment env"
+            )
+        if precheckout_test_mode_enabled and not precheckout_form_enabled:
+            raise ValueError("PRECHECKOUT_TEST_MODE_ENABLED requires PRECHECKOUT_FORM_ENABLED")
+        if precheckout_form_enabled and precheckout_form_token is None:
+            raise ValueError("PRECHECKOUT_FORM_TOKEN is required")
+        if precheckout_test_mode_enabled and (
+            precheckout_test_phone_e164 is None
+            or re.fullmatch(r"\+[1-9][0-9]{7,14}", precheckout_test_phone_e164)
+            is None
+        ):
+            raise ValueError("PRECHECKOUT_TEST_PHONE_E164 must be canonical E.164")
+        if precheckout_test_mode_enabled and (
+            precheckout_test_phone_e164 != f"+{allowed_phone}"
+        ):
+            raise ValueError(
+                "PRECHECKOUT_TEST_PHONE_E164 must match ALLOWED_WHATSAPP_JID"
+            )
+        precheckout_max_age_seconds = int(
+            os.getenv("PRECHECKOUT_MAX_AGE_SECONDS", "300")
+        )
+        if precheckout_max_age_seconds < 1:
+            raise ValueError("PRECHECKOUT_MAX_AGE_SECONDS must be positive")
         supabase_base_url = os.getenv("SUPABASE_BASE_URL", "").strip() or None
         supabase_service_role_key = (
             os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip() or None
@@ -415,7 +468,7 @@ class Settings:
 
         return cls(
             webhook_secret=os.environ["CHATWOOT_WEBHOOK_SECRET"],
-            allowed_jid=os.environ["ALLOWED_WHATSAPP_JID"],
+            allowed_jid=allowed_jid,
             capture_dir=Path(os.getenv("CAPTURE_DIR", "./data/captures")),
             max_age_seconds=int(os.getenv("WEBHOOK_MAX_AGE_SECONDS", "300")),
             agent_bot_id=int(os.environ["CHATWOOT_AGENT_BOT_ID"]),
@@ -445,6 +498,11 @@ class Settings:
             hotmart_hottok=hotmart_hottok,
             hotmart_max_age_seconds=hotmart_max_age_seconds,
             hotmart_purchase_worker_enabled=hotmart_purchase_worker_enabled,
+            precheckout_form_enabled=precheckout_form_enabled,
+            precheckout_form_token=precheckout_form_token,
+            precheckout_max_age_seconds=precheckout_max_age_seconds,
+            precheckout_test_mode_enabled=precheckout_test_mode_enabled,
+            precheckout_test_phone_e164=precheckout_test_phone_e164,
             supabase_base_url=supabase_base_url,
             supabase_service_role_key=supabase_service_role_key,
             worker_poll_interval_seconds=worker_poll_interval,
@@ -1773,6 +1831,115 @@ def create_app(
         return {
             "status": "captured",
             "delivery_id": x_chatwoot_delivery,
+        }
+
+    @app.post("/webhooks/precheckout", status_code=status.HTTP_202_ACCEPTED)
+    async def receive_precheckout_webhook(
+        request: Request,
+        response: Response,
+        x_precheckout_token: str = Header(default=""),
+    ) -> dict[str, object]:
+        if not settings.precheckout_form_enabled:
+            raise HTTPException(status_code=503, detail="precheckout_not_enabled")
+        if settings.precheckout_form_token is None:
+            raise HTTPException(status_code=503, detail="precheckout_not_configured")
+        if not hmac.compare_digest(
+            x_precheckout_token.encode("utf-8"),
+            settings.precheckout_form_token.encode("utf-8"),
+        ):
+            raise HTTPException(status_code=401, detail="invalid_token")
+
+        body = bytearray()
+        async for chunk in request.stream():
+            if len(body) + len(chunk) > PRECHECKOUT_WEBHOOK_BODY_LIMIT_BYTES:
+                raise HTTPException(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    detail="precheckout_webhook_body_too_large",
+                )
+            body.extend(chunk)
+        try:
+            payload = json.loads(bytes(body))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise HTTPException(status_code=400, detail="invalid_json") from exc
+
+        submission = parse_emulated_precheckout_submission(
+            payload,
+            scope=PrecheckoutScope(
+                tenant_ref=settings.precheckout_tenant_ref,
+                funnel_ref=settings.precheckout_funnel_ref,
+                landing_ref=settings.precheckout_landing_ref,
+                product_ref=settings.precheckout_product_ref,
+                offer_ref=settings.precheckout_offer_ref,
+                consent_copy_version=settings.precheckout_consent_copy_version,
+            ),
+        )
+        if submission is None:
+            raise HTTPException(status_code=400, detail="invalid_precheckout_payload")
+        if (
+            not settings.precheckout_test_mode_enabled
+            or settings.precheckout_test_phone_e164 is None
+        ):
+            raise HTTPException(status_code=503, detail="precheckout_test_mode_required")
+        allowed_jid_match = re.fullmatch(
+            r"([1-9][0-9]{7,14})@s\.whatsapp\.net",
+            settings.allowed_jid,
+        )
+        allowed_jid_phone_e164 = (
+            f"+{allowed_jid_match.group(1)}" if allowed_jid_match is not None else None
+        )
+        if (
+            allowed_jid_phone_e164 is None
+            or settings.precheckout_test_phone_e164 != allowed_jid_phone_e164
+            or f"+{submission.normalized_phone}" != allowed_jid_phone_e164
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="precheckout_test_phone_not_allowed",
+            )
+        age_seconds = (datetime.now(UTC) - submission.submitted_at).total_seconds()
+        if age_seconds < -60 or age_seconds > settings.precheckout_max_age_seconds:
+            raise HTTPException(status_code=401, detail="stale_precheckout_submission")
+        if shared_supabase is None:
+            raise HTTPException(status_code=503, detail="supabase_not_configured")
+        assert isinstance(payload, dict)
+        try:
+            admission = await shared_supabase.admit_precheckout_form_submission(
+                external_submission_id=submission.external_submission_id,
+                raw_payload=payload,
+                canonical_payload=submission.as_canonical_payload(),
+            )
+        except SupabaseError as exc:
+            raise HTTPException(
+                status_code=503, detail="precheckout_persist_unavailable"
+            ) from exc
+
+        if admission.outcome == "semantic_conflict":
+            response.status_code = status.HTTP_200_OK
+            return {
+                "status": "conflict",
+                "submission_id": submission.external_submission_id,
+                "purchase_intent_id": admission.purchase_intent_id,
+                "activation_authorized": False,
+                "test_only": True,
+                "generalizable": False,
+            }
+        if admission.outcome == "duplicate":
+            response.status_code = status.HTTP_200_OK
+            return {
+                "status": "duplicate",
+                "submission_id": submission.external_submission_id,
+                "purchase_intent_id": admission.purchase_intent_id,
+                "activation_authorized": False,
+                "test_only": True,
+                "generalizable": False,
+            }
+        return {
+            "status": "received",
+            "submission_id": submission.external_submission_id,
+            "purchase_intent_id": admission.purchase_intent_id,
+            "activation_authorized": False,
+            "test_only": True,
+            "generalizable": False,
         }
 
     @app.post("/webhooks/hotmart", status_code=status.HTTP_202_ACCEPTED)

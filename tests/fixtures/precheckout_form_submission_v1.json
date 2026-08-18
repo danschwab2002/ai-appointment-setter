@@ -1,0 +1,10 @@
+{
+  "id": "form-submit-fixture-0001",
+  "event": "PRECHECKOUT_FORM_SUBMITTED",
+  "version": "1.0.0-emulated",
+  "created_at": "2026-08-14T22:15:00Z",
+  "lead": {
+    "full_name": "Lead de Prueba",
+    "phone_e164": "+12025550123"
+  }
+}

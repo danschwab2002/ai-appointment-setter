@@ -279,6 +279,21 @@ adicional `CHATWOOT_CUT_B_AGENT_ENABLED=false` permite que sólo `created` y
 JID allowlisted. `evidence_conflict` siempre corta. Handoff, dispatcher,
 follow-ups y outbound proactivo permanecen en gates posteriores.
 
+## Ingreso provisional de intención pre-checkout
+
+El repositorio implementa `POST /webhooks/precheckout` y la RPC
+`admit_precheckout_form_submission` como raíz durable e idempotente para el contrato emulado
+`1.0.0-emulated`. La transacción crea una submission append-only y crea o reutiliza un
+`purchase_intent` vivo por tenant, funnel, teléfono, producto y oferta. Un replay exacto devuelve
+la misma intención; una diferencia bajo el mismo ID registra conflicto semántico.
+
+El receptor está default-off y todavía no está desplegado. Sólo puede habilitarse en modo
+`test_only` cuando el teléfono E.164 server-side coincide exactamente con el único JID
+allowlisted. Aun así, toda intención conserva `provisional=true`, `provider_observed=false` y
+`activation_authorized=false`: no programa acciones ni concede autorización comercial. El
+request-start sigue requiriendo por separado la cohorte y el ledger del perímetro durable del
+piloto. Ver [contrato pre-checkout V1](contracts/precheckout-form-submission-v1.md).
+
 ## Ingreso autoritativo de abandono de carrito
 
 `PURCHASE_OUT_OF_SHOPPING_CART` se autentica por Hottok y se valida contra el contrato Hotmart `2.0.0` antes de reservar identidad durable. La RPC `admit_hotmart_cart_abandonment` es la frontera transaccional que inserta el evento, reconoce replays exactos y registra diferencias bajo el mismo `external_event_id` como conflictos semánticos.

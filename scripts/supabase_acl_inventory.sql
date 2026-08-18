@@ -7,6 +7,7 @@ expected_service_role(signature) as (
         ('public.activate_lancemos_pilot_scope_version(text, integer, bigint, text, text)'),
         ('public.admit_hotmart_cart_abandonment(text, jsonb)'),
         ('public.admit_hotmart_purchase_approved(text, jsonb)'),
+        ('public.admit_precheckout_form_submission(text, jsonb, jsonb)'),
         ('public.admit_inbound_commercial_case(text, integer, bigint, text)'),
         ('public.apply_chatwoot_inbound_opt_out(bigint, bigint, bigint, bigint, text, timestamp with time zone, text)'),
         ('public.apply_hotmart_purchase_approved(uuid, text, text, text, text, text, timestamp with time zone)'),
