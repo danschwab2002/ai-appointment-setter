@@ -118,6 +118,27 @@ def test_deployment_declares_chatwoot_cut_b_agent_default_off() -> None:
     assert "${CHATWOOT_CUT_B_AGENT_ENABLED:-false}" in compose
 
 
+def test_deployment_declares_precheckout_test_receiver_default_off() -> None:
+    env_example = (PROJECT_ROOT / ".env.example").read_text()
+    compose = (PROJECT_ROOT / "compose.yaml").read_text()
+
+    required = {
+        "PRECHECKOUT_FORM_ENABLED",
+        "PRECHECKOUT_FORM_TOKEN",
+        "PRECHECKOUT_TEST_MODE_ENABLED",
+        "PRECHECKOUT_TEST_PHONE_E164",
+        "PRECHECKOUT_MAX_AGE_SECONDS",
+    }
+    for variable in required:
+        assert f"{variable}=" in env_example
+        assert f"{variable}:" in compose
+
+    assert "PRECHECKOUT_FORM_ENABLED=false" in env_example
+    assert "PRECHECKOUT_TEST_MODE_ENABLED=false" in env_example
+    assert "${PRECHECKOUT_FORM_ENABLED:-false}" in compose
+    assert "${PRECHECKOUT_TEST_MODE_ENABLED:-false}" in compose
+
+
 def test_deployment_uses_supabase_service_role_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
