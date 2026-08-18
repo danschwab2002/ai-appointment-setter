@@ -492,6 +492,76 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         8,
         'draft_only_canonical_admission_scoped_root_conflicts_correlation_and_acl'
+    union all
+    select
+        '20260818000100',
+        '20260818000100_precheckout_test_first_touch.sql',
+        (to_regclass('public.precheckout_test_first_touch_commands') is not null)::int
+        + (
+            select (count(*) = 2)::int
+            from functions
+            where proname in (
+                'begin_precheckout_test_first_touch',
+                'finish_precheckout_test_first_touch'
+            )
+        )
+        + (
+            select (count(*) = 2)::int
+            from functions
+            where proname in (
+                'begin_precheckout_test_first_touch',
+                'finish_precheckout_test_first_touch'
+            )
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+        )
+        + (
+            has_function_privilege(
+                'service_role',
+                'public.begin_precheckout_test_first_touch(text,uuid,text,bigint,bigint)',
+                'execute'
+            )
+            and has_function_privilege(
+                'service_role',
+                'public.finish_precheckout_test_first_touch(uuid,text,bigint,bigint,text)',
+                'execute'
+            )
+            and not has_function_privilege(
+                'anon',
+                'public.begin_precheckout_test_first_touch(text,uuid,text,bigint,bigint)',
+                'execute'
+            )
+            and not has_function_privilege(
+                'authenticated',
+                'public.finish_precheckout_test_first_touch(uuid,text,bigint,bigint,text)',
+                'execute'
+            )
+        )::int
+        + (
+            not has_table_privilege(
+                'service_role',
+                'public.precheckout_test_first_touch_commands',
+                'select'
+            )
+            and not has_table_privilege(
+                'service_role',
+                'public.precheckout_test_first_touch_commands',
+                'insert'
+            )
+            and not has_table_privilege(
+                'anon',
+                'public.precheckout_test_first_touch_commands',
+                'select'
+            )
+            and not has_table_privilege(
+                'authenticated',
+                'public.precheckout_test_first_touch_commands',
+                'select'
+            )
+        )::int,
+        5,
+        'one_shot_test_only_at_most_once_and_closed_acl'
 )
 select
     version,

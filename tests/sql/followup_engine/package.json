@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node validate.mjs && node validate_purchase.mjs && node validate_opt_out.mjs && node validate_cart_abandonment.mjs && node validate_precheckout.mjs && node validate_handoff.mjs && node validate_acl_hardening.mjs && node validate_commercial_case_root.mjs && node validate_inbound_commercial_case_draft_only.mjs",
+    "test": "node validate.mjs && node validate_purchase.mjs && node validate_opt_out.mjs && node validate_cart_abandonment.mjs && node validate_precheckout.mjs && node validate_precheckout_first_touch.mjs && node validate_handoff.mjs && node validate_acl_hardening.mjs && node validate_commercial_case_root.mjs && node validate_inbound_commercial_case_draft_only.mjs",
     "test:real-postgres": "uv run python real_postgres_concurrency.py"
   },
   "dependencies": {

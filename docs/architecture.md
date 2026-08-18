@@ -287,12 +287,20 @@ El repositorio implementa `POST /webhooks/precheckout` y la RPC
 `purchase_intent` vivo por tenant, funnel, teléfono, producto y oferta. Un replay exacto devuelve
 la misma intención; una diferencia bajo el mismo ID registra conflicto semántico.
 
-El receptor está default-off y todavía no está desplegado. Sólo puede habilitarse en modo
-`test_only` cuando el teléfono E.164 server-side coincide exactamente con el único JID
-allowlisted. Aun así, toda intención conserva `provisional=true`, `provider_observed=false` y
-`activation_authorized=false`: no programa acciones ni concede autorización comercial. El
-request-start sigue requiriendo por separado la cohorte y el ledger del perímetro durable del
-piloto. Ver [contrato pre-checkout V1](contracts/precheckout-form-submission-v1.md).
+El receptor fue desplegado y validado en modo `test_only`; sólo admite el teléfono E.164
+server-side que coincide exactamente con el único JID allowlisted. Toda intención conserva
+`provisional=true`, `provider_observed=false` y `activation_authorized=false`: el ingreso por sí
+solo no programa acciones ni concede autorización comercial. Ver
+[contrato pre-checkout V1](contracts/precheckout-form-submission-v1.md).
+
+El corte one-shot agrega una command durable separada para un único template WABA controlado.
+La command se persiste como `request_started` antes de Chatwoot, fija un presupuesto de un
+mensaje y cero follow-ups, y nunca reenvía un replay ambiguo. Un scope singleton durable impide
+que una intención sucesora consuma un segundo mensaje del rollout. Revalida intención, target
+exacto, identidad, opt-out, bloqueo y takeover bajo locks canónicos. No clasifica abandono ni usa
+el scheduler general. Está default-off; el template versionado ya fue aprobado por Meta y el E2E
+outbound sigue pendiente. Ver
+[contrato first touch test-only V1](contracts/precheckout-test-first-touch-v1.md).
 
 ## Ingreso autoritativo de abandono de carrito
 

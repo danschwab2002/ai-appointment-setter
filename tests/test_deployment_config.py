@@ -128,6 +128,8 @@ def test_deployment_declares_precheckout_test_receiver_default_off() -> None:
         "PRECHECKOUT_TEST_MODE_ENABLED",
         "PRECHECKOUT_TEST_PHONE_E164",
         "PRECHECKOUT_MAX_AGE_SECONDS",
+        "PRECHECKOUT_FIRST_TOUCH_ENABLED",
+        "PRECHECKOUT_FIRST_TOUCH_TOKEN",
     }
     for variable in required:
         assert f"{variable}=" in env_example
@@ -135,8 +137,10 @@ def test_deployment_declares_precheckout_test_receiver_default_off() -> None:
 
     assert "PRECHECKOUT_FORM_ENABLED=false" in env_example
     assert "PRECHECKOUT_TEST_MODE_ENABLED=false" in env_example
+    assert "PRECHECKOUT_FIRST_TOUCH_ENABLED=false" in env_example
     assert "${PRECHECKOUT_FORM_ENABLED:-false}" in compose
     assert "${PRECHECKOUT_TEST_MODE_ENABLED:-false}" in compose
+    assert "${PRECHECKOUT_FIRST_TOUCH_ENABLED:-false}" in compose
 
 
 def test_deployment_uses_supabase_service_role_only(
