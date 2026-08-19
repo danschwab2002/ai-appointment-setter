@@ -798,6 +798,48 @@ class SupabaseClient:
             purchase_intent_id=purchase_intent_id,
         )
 
+    async def admit_observed_lead_precheckout(
+        self,
+        *,
+        external_submission_id: str,
+        raw_payload: dict[str, object],
+        canonical_payload: dict[str, object],
+    ) -> PrecheckoutAdmissionResult:
+        """Atomically admit an authenticated Lancemos lead intent."""
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/admit_observed_lead_precheckout",
+            content=json.dumps(
+                {
+                    "p_external_submission_id": external_submission_id,
+                    "p_raw_payload": raw_payload,
+                    "p_canonical_payload": canonical_payload,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(
+                f"observed_lead_precheckout_admission_failed: HTTP {response.status_code}"
+            )
+        rows = _response_rows(response, operation="observed_lead_precheckout_admission")
+        if len(rows) != 1:
+            raise SupabaseError("observed_lead_precheckout_admission_invalid_shape")
+        outcome = rows[0].get("outcome")
+        submission_id = rows[0].get("submission_id")
+        purchase_intent_id = rows[0].get("purchase_intent_id")
+        if outcome not in {"inserted", "duplicate", "semantic_conflict"}:
+            raise SupabaseError("observed_lead_precheckout_admission_invalid_outcome")
+        if not isinstance(submission_id, str) or not submission_id:
+            raise SupabaseError("observed_lead_precheckout_admission_invalid_submission_id")
+        if not isinstance(purchase_intent_id, str) or not purchase_intent_id:
+            raise SupabaseError("observed_lead_precheckout_admission_invalid_purchase_intent_id")
+        return PrecheckoutAdmissionResult(
+            outcome=outcome,
+            submission_id=submission_id,
+            purchase_intent_id=purchase_intent_id,
+        )
+
     async def begin_precheckout_test_first_touch(
         self,
         *,

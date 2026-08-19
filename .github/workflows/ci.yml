@@ -54,3 +54,13 @@ jobs:
         run: >-
           uv run python tests/sql/followup_engine/validate_handoff_postgres.py
           --pg-bin /usr/bin --host 127.0.0.1 --port 5432
+      - name: Verify observed lead admission on PostgreSQL
+        env:
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          DATABASE_URL: postgresql://postgres@127.0.0.1:5432/observed_lead_precheckout_ci
+          PSQL: /usr/bin/psql
+          ALLOW_DISPOSABLE_DATABASE: observed-lead-precheckout
+        run: >-
+          createdb -h 127.0.0.1 -p 5432 observed_lead_precheckout_ci
+          && uv run python tests/sql/followup_engine/real_postgres_observed_lead.py
