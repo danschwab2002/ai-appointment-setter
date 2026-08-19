@@ -293,6 +293,21 @@ server-side que coincide exactamente con el único JID allowlisted. Toda intenci
 solo no programa acciones ni concede autorización comercial. Ver
 [contrato pre-checkout V1](contracts/precheckout-form-submission-v1.md).
 
+## Ingreso autenticado `lead.precheckout` de Lancemos
+
+El adapter observado V1 está implementado localmente y permanece default-off, sin
+deploy ni conexión a la landing. El endpoint `POST /webhooks/lead` verifica HMAC-SHA256
+sobre el body crudo, valida el contrato exacto `1.0.0`, freshness, headers y scope antes
+de llamar a la RPC separada `admit_observed_lead_precheckout`.
+
+El corte inicial sólo admite `psicologajohanna / ads-a / bxjge6zq`. Persiste intención
+con `provider_observed=true`, pero conserva `activation_authorized=false` y
+`whatsapp_contact_authorized=false` porque el formulario declara
+`marketing_optin=false`. Un teléfono inválido se guarda como identidad incompleta y no
+se usa para WhatsApp. La recepción no crea secuencias, mensajes ni clasificación de
+abandono. Hotmart mantiene su endpoint y autenticación propios. Ver
+[contrato lead.precheckout V1](contracts/lead-precheckout-v1.md).
+
 El corte one-shot agrega una command durable separada para un único template WABA controlado.
 La command se persiste como `request_started` antes de Chatwoot, fija un presupuesto de un
 mensaje y cero follow-ups, y nunca reenvía un replay ambiguo. Un scope singleton durable impide

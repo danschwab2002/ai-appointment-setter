@@ -562,6 +562,45 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         5,
         'one_shot_test_only_at_most_once_and_closed_acl'
+    union all
+    select
+        '20260818000200',
+        '20260818000200_observed_lead_precheckout.sql',
+        (
+            select (count(*) = 1)::int
+            from functions
+            where proname = 'admit_observed_lead_precheckout'
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+        )
+        + (
+            has_function_privilege(
+                'service_role',
+                'public.admit_observed_lead_precheckout(text,jsonb,jsonb)',
+                'execute'
+            )
+            and not has_function_privilege(
+                'anon',
+                'public.admit_observed_lead_precheckout(text,jsonb,jsonb)',
+                'execute'
+            )
+            and not has_function_privilege(
+                'authenticated',
+                'public.admit_observed_lead_precheckout(text,jsonb,jsonb)',
+                'execute'
+            )
+        )::int
+        + (
+            select (is_nullable = 'YES')::int
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'purchase_intents'
+              and column_name = 'normalized_phone'
+        )
+        + (to_regclass('public.purchase_intents_one_observed_email_idx') is not null)::int,
+        4,
+        'observed_intent_only_nullable_phone_and_closed_rpc_acl'
 )
 select
     version,

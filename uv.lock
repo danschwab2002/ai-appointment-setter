@@ -9,6 +9,7 @@ source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "phonenumbers" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -21,6 +22,7 @@ dev = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115,<1" },
     { name = "httpx", specifier = ">=0.28,<1" },
+    { name = "phonenumbers", specifier = ">=9,<10" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34,<1" },
 ]
 
@@ -202,6 +204,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d7/f1/e7a6dd94a8d4a5626c03e4e99c87f241ba9e350cd9e6d75123f992427270/packaging-26.2.tar.gz", hash = "sha256:ff452ff5a3e828ce110190feff1178bb1f2ea2281fa2075aadb987c2fb221661", size = 228134, upload-time = "2026-04-24T20:15:23.917Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/df/b2/87e62e8c3e2f4b32e5fe99e0b86d576da1312593b39f47d8ceef365e95ed/packaging-26.2-py3-none-any.whl", hash = "sha256:5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e", size = 100195, upload-time = "2026-04-24T20:15:22.081Z" },
+]
+
+[[package]]
+name = "phonenumbers"
+version = "9.0.37"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/4c/36/ee5b6d7ccc28cb7848e8dfefce94df9178b6318ed56adab97550b6ba99ec/phonenumbers-9.0.37.tar.gz", hash = "sha256:8923ab413c575b27da2815c9bef48290181aab565398b5e7e23cc7ace212a293", size = 2312364, upload-time = "2026-08-14T05:29:13.533Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/99/68/544cb901964e8bfc3c8d215d5620e63a009b32437efaec905fdefdf59e26/phonenumbers-9.0.37-py2.py3-none-any.whl", hash = "sha256:55ae8243c1e2fe8ae2548d979e57155d9ae0f6084f8a1d6884050b143aff0a7c", size = 2595712, upload-time = "2026-08-14T05:29:10.464Z" },
 ]
 
 [[package]]

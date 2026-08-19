@@ -143,6 +143,26 @@ def test_deployment_declares_precheckout_test_receiver_default_off() -> None:
     assert "${PRECHECKOUT_FIRST_TOUCH_ENABLED:-false}" in compose
 
 
+def test_deployment_declares_observed_lead_receiver_default_off() -> None:
+    env_example = (PROJECT_ROOT / ".env.example").read_text()
+    compose = (PROJECT_ROOT / "compose.yaml").read_text()
+
+    required = {
+        "LEAD_PRECHECKOUT_ENABLED",
+        "LEAD_PRECHECKOUT_SECRET",
+        "LEAD_PRECHECKOUT_MAX_AGE_SECONDS",
+        "LEAD_PRECHECKOUT_SITE",
+        "LEAD_PRECHECKOUT_LANDING_ID",
+        "LEAD_PRECHECKOUT_OFFER_CODE",
+    }
+    for variable in required:
+        assert f"{variable}=" in env_example
+        assert f"{variable}:" in compose
+
+    assert "LEAD_PRECHECKOUT_ENABLED=false" in env_example
+    assert "${LEAD_PRECHECKOUT_ENABLED:-false}" in compose
+
+
 def test_deployment_uses_supabase_service_role_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

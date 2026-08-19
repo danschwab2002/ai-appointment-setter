@@ -52,6 +52,7 @@ from bridge.hotmart import (
     parse_hotmart_payload,
     verify_hotmart_token,
 )
+from bridge.lead_precheckout import parse_lead_precheckout
 from bridge.messaging import (
     ChatwootMessageSender,
     MessageSender,
@@ -190,6 +191,12 @@ class Settings:
     precheckout_product_ref: str = "F106691755G"
     precheckout_offer_ref: str = "bxjge6zq"
     precheckout_consent_copy_version: str = "form-screenshot-2026-08-14"
+    lead_precheckout_enabled: bool = False
+    lead_precheckout_secret: str | None = None
+    lead_precheckout_max_age_seconds: int = 300
+    lead_precheckout_site: str = "psicologajohanna"
+    lead_precheckout_landing_id: str = "ads-a"
+    lead_precheckout_offer_code: str = "bxjge6zq"
     precheckout_first_touch_enabled: bool = False
     precheckout_first_touch_token: str | None = None
     supabase_base_url: str | None = None
@@ -360,6 +367,24 @@ class Settings:
         precheckout_first_touch_token = (
             os.getenv("PRECHECKOUT_FIRST_TOUCH_TOKEN", "").strip() or None
         )
+        lead_precheckout_enabled = (
+            os.getenv("LEAD_PRECHECKOUT_ENABLED", "false").lower() == "true"
+        )
+        lead_precheckout_secret = (
+            os.getenv("LEAD_PRECHECKOUT_SECRET", "").strip() or None
+        )
+        lead_precheckout_max_age_seconds = int(
+            os.getenv("LEAD_PRECHECKOUT_MAX_AGE_SECONDS", "300")
+        )
+        lead_precheckout_site = os.getenv(
+            "LEAD_PRECHECKOUT_SITE", "psicologajohanna"
+        ).strip()
+        lead_precheckout_landing_id = os.getenv(
+            "LEAD_PRECHECKOUT_LANDING_ID", "ads-a"
+        ).strip()
+        lead_precheckout_offer_code = os.getenv(
+            "LEAD_PRECHECKOUT_OFFER_CODE", "bxjge6zq"
+        ).strip()
         allowed_jid = os.environ["ALLOWED_WHATSAPP_JID"].strip()
         allowed_phone = allowed_jid.removesuffix("@s.whatsapp.net")
         if precheckout_form_enabled and not precheckout_test_mode_enabled:
@@ -395,6 +420,19 @@ class Settings:
         )
         if precheckout_max_age_seconds < 1:
             raise ValueError("PRECHECKOUT_MAX_AGE_SECONDS must be positive")
+        if lead_precheckout_enabled and lead_precheckout_secret is None:
+            raise ValueError("LEAD_PRECHECKOUT_SECRET is required")
+        if lead_precheckout_max_age_seconds < 1:
+            raise ValueError("LEAD_PRECHECKOUT_MAX_AGE_SECONDS must be positive")
+        if lead_precheckout_enabled and any(
+            not value
+            for value in (
+                lead_precheckout_site,
+                lead_precheckout_landing_id,
+                lead_precheckout_offer_code,
+            )
+        ):
+            raise ValueError("lead precheckout scope must be complete")
         supabase_base_url = os.getenv("SUPABASE_BASE_URL", "").strip() or None
         supabase_service_role_key = (
             os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip() or None
@@ -523,6 +561,12 @@ class Settings:
             precheckout_max_age_seconds=precheckout_max_age_seconds,
             precheckout_test_mode_enabled=precheckout_test_mode_enabled,
             precheckout_test_phone_e164=precheckout_test_phone_e164,
+            lead_precheckout_enabled=lead_precheckout_enabled,
+            lead_precheckout_secret=lead_precheckout_secret,
+            lead_precheckout_max_age_seconds=lead_precheckout_max_age_seconds,
+            lead_precheckout_site=lead_precheckout_site,
+            lead_precheckout_landing_id=lead_precheckout_landing_id,
+            lead_precheckout_offer_code=lead_precheckout_offer_code,
             precheckout_first_touch_enabled=precheckout_first_touch_enabled,
             precheckout_first_touch_token=precheckout_first_touch_token,
             supabase_base_url=supabase_base_url,
@@ -729,6 +773,25 @@ def create_app(
     recovery_agent_client: RecoveryAgentClient | None = None,
     message_sender: MessageSender | None = None,
 ) -> FastAPI:
+    if settings.lead_precheckout_enabled and settings.lead_precheckout_secret is None:
+        raise ValueError("LEAD_PRECHECKOUT_SECRET is required")
+    if settings.lead_precheckout_max_age_seconds < 1:
+        raise ValueError("LEAD_PRECHECKOUT_MAX_AGE_SECONDS must be positive")
+    if settings.lead_precheckout_enabled and any(
+        not value
+        for value in (
+            settings.lead_precheckout_site,
+            settings.lead_precheckout_landing_id,
+            settings.lead_precheckout_offer_code,
+        )
+    ):
+        raise ValueError("lead precheckout scope must be complete")
+    if settings.lead_precheckout_enabled and (
+        settings.lead_precheckout_site,
+        settings.lead_precheckout_landing_id,
+        settings.lead_precheckout_offer_code,
+    ) != ("psicologajohanna", "ads-a", "bxjge6zq"):
+        raise ValueError("lead precheckout scope is fixed for the initial pilot")
     pilot_fields = (
         (settings.pilot_scope_key, "LANCEMOS_PILOT_SCOPE_KEY"),
         (settings.pilot_scope_version, "LANCEMOS_PILOT_SCOPE_VERSION"),
@@ -1887,6 +1950,95 @@ def create_app(
         return {
             "status": "captured",
             "delivery_id": x_chatwoot_delivery,
+        }
+
+    @app.post("/webhooks/lead", status_code=status.HTTP_200_OK)
+    async def receive_lead_precheckout_webhook(
+        request: Request,
+        content_type: str = Header(default=""),
+        user_agent: str = Header(default=""),
+        x_lancemos_event: str = Header(default=""),
+        x_lancemos_delivery: str = Header(default=""),
+        x_lancemos_signature: str = Header(default=""),
+    ) -> dict[str, object]:
+        if not settings.lead_precheckout_enabled:
+            raise HTTPException(status_code=503, detail="lead_precheckout_not_enabled")
+        if settings.lead_precheckout_secret is None:
+            raise HTTPException(status_code=503, detail="lead_precheckout_not_configured")
+        normalized_content_type = ";".join(
+            part.strip().lower() for part in content_type.split(";")
+        )
+        if (
+            normalized_content_type != "application/json;charset=utf-8"
+            or user_agent != "lancemos-lead-relay/1.0"
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="invalid_lead_transport_headers",
+            )
+
+        body = bytearray()
+        async for chunk in request.stream():
+            if len(body) + len(chunk) > PRECHECKOUT_WEBHOOK_BODY_LIMIT_BYTES:
+                raise HTTPException(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    detail="lead_precheckout_body_too_large",
+                )
+            body.extend(chunk)
+        raw_body = bytes(body)
+        expected_signature = "sha256=" + hmac.new(
+            settings.lead_precheckout_secret.encode("utf-8"),
+            raw_body,
+            hashlib.sha256,
+        ).hexdigest()
+        if not hmac.compare_digest(x_lancemos_signature, expected_signature):
+            raise HTTPException(status_code=401, detail="invalid_lead_signature")
+        try:
+            payload = json.loads(raw_body)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise HTTPException(status_code=400, detail="invalid_json") from exc
+        submission = parse_lead_precheckout(payload)
+        if submission is None:
+            raise HTTPException(status_code=400, detail="invalid_lead_precheckout_payload")
+        if (
+            x_lancemos_event != "lead.precheckout"
+            or x_lancemos_event != payload.get("event")
+            or x_lancemos_delivery != submission.external_submission_id
+        ):
+            raise HTTPException(status_code=400, detail="lead_header_payload_mismatch")
+        if (
+            submission.site != settings.lead_precheckout_site
+            or submission.landing_id != settings.lead_precheckout_landing_id
+            or submission.offer_code != settings.lead_precheckout_offer_code
+        ):
+            raise HTTPException(status_code=403, detail="lead_precheckout_outside_scope")
+        age_seconds = (datetime.now(UTC) - submission.submitted_at).total_seconds()
+        if age_seconds < -60 or age_seconds > settings.lead_precheckout_max_age_seconds:
+            raise HTTPException(status_code=401, detail="stale_lead_precheckout")
+        if shared_supabase is None:
+            raise HTTPException(status_code=503, detail="supabase_not_configured")
+        assert isinstance(payload, dict)
+        try:
+            admission = await shared_supabase.admit_observed_lead_precheckout(
+                external_submission_id=submission.external_submission_id,
+                raw_payload=payload,
+                canonical_payload=submission.as_canonical_payload(),
+            )
+        except SupabaseError as exc:
+            raise HTTPException(
+                status_code=503, detail="lead_precheckout_persist_unavailable"
+            ) from exc
+        response_status = {
+            "inserted": "received",
+            "duplicate": "duplicate",
+            "semantic_conflict": "conflict",
+        }[admission.outcome]
+        return {
+            "status": response_status,
+            "delivery_id": submission.external_submission_id,
+            "purchase_intent_id": admission.purchase_intent_id,
+            "activation_authorized": False,
+            "contact_authorized": False,
         }
 
     @app.post("/webhooks/precheckout", status_code=status.HTTP_202_ACCEPTED)
