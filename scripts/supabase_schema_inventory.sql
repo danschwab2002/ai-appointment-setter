@@ -623,6 +623,27 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         5,
         'atomic_canonical_hotmart_intent_correlation_without_effects'
+    union all
+    select
+        '20260820000200',
+        '20260820000200_hotmart_intent_base_search_path.sql',
+        exists(
+            select 1 from functions
+            where oid in (
+                to_regprocedure(
+                    'public._admit_hotmart_purchase_approved_base(text,jsonb)'
+                ),
+                to_regprocedure(
+                    'public._admit_hotmart_cart_abandonment_base(text,jsonb)'
+                )
+            )
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+            having count(*) = 2
+        )::int,
+        1,
+        'owner_only_hotmart_admission_bases_catalog_first_search_path'
 )
 select
     version,

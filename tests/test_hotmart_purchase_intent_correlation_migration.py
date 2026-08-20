@@ -5,6 +5,10 @@ MIGRATION = (
     Path(__file__).parents[1]
     / "supabase/migrations/20260820000100_hotmart_purchase_intent_correlation.sql"
 )
+SEARCH_PATH_HOTFIX = (
+    Path(__file__).parents[1]
+    / "supabase/migrations/20260820000200_hotmart_intent_base_search_path.sql"
+)
 
 
 def _sql() -> str:
@@ -152,3 +156,13 @@ def test_rpc_and_tables_are_closed_to_api_roles() -> None:
     assert "grant execute on function public.admit_and_correlate_hotmart_cart_abandonment" in sql
     assert "revoke all on function public._admit_hotmart_purchase_approved_base(text, jsonb) from service_role" in sql
     assert "revoke all on function public._admit_hotmart_cart_abandonment_base(text, jsonb) from service_role" in sql
+
+
+def test_base_admission_functions_receive_catalog_first_search_path_hotfix() -> None:
+    sql = SEARCH_PATH_HOTFIX.read_text().lower()
+    compact_sql = " ".join(sql.split())
+
+    assert "begin;" in sql and "commit;" in sql
+    assert "alter function public._admit_hotmart_purchase_approved_base(text, jsonb) set search_path = pg_catalog, public, pg_temp" in compact_sql
+    assert "alter function public._admit_hotmart_cart_abandonment_base(text, jsonb) set search_path = pg_catalog, public, pg_temp" in compact_sql
+    assert "grant " not in sql

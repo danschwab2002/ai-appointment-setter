@@ -68,6 +68,21 @@ def test_absolute_deadline_fingerprint_checks_semantics_and_rejects_chaining() -
     assert "followup_policy_step_offsets_validate" in sql
 
 
+def test_hotmart_base_search_path_fingerprint_uses_exact_signatures() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    fingerprint = sql.split("'20260820000200'", 1)[1].split(")\nselect", 1)[0]
+
+    assert re.search(
+        r"to_regprocedure\(\s*'public\._admit_hotmart_purchase_approved_base\(text,jsonb\)'\s*\)",
+        fingerprint,
+    )
+    assert re.search(
+        r"to_regprocedure\(\s*'public\._admit_hotmart_cart_abandonment_base\(text,jsonb\)'\s*\)",
+        fingerprint,
+    )
+    assert "proname in" not in fingerprint
+
+
 def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
