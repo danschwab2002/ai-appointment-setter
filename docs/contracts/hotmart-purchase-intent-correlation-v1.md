@@ -1,6 +1,7 @@
 # Correlación Hotmart ↔ intención pre-checkout — V1
 
-- **Estado:** Contrato implementado localmente; migración Cloud y E2E oficial pendientes
+- **Estado:** Correlación y contract aplicados/verificados en Cloud; delivery originado
+  oficialmente por Hotmart pendiente
 - **Versión:** `1.0.0`
 - **Ámbito:** `lead.precheckout` observado ↔ `PURCHASE_APPROVED` / `PURCHASE_OUT_OF_SHOPPING_CART`
 - **Efectos externos:** ninguno
@@ -37,10 +38,10 @@ Para **contract**, el orden es deliberadamente inverso y obligatorio:
 3. aplicar `20260820000400` para revocar ambos shims de `service_role`;
 4. comprobar rechazo legacy, wrappers correlacionados operativos y delta comercial cero.
 
-El prerrequisito de cero réplicas pre-correlación activas ya tiene gate runtime. Los
-cuatro pasos contract quedan pendientes del merge y despliegue de la imagen contract;
-`20260820000400` está implementada localmente pero aún no aplicada en Cloud. Los wrappers
-correlacionados son las únicas fronteras Hotmart autorizadas en el contrato final.
+Los cuatro pasos contract se ejecutaron en ese orden. La imagen contract quedó sana con
+un único task antes de aplicar `20260820000400`; el postflight confirmó ambos shims en
+403, ambos wrappers alcanzando validación, cero filas de probe y delta comercial cero.
+Los wrappers correlacionados son las únicas fronteras Hotmart autorizadas.
 
 ## 2. Scope server-side
 
@@ -145,4 +146,4 @@ Este contrato no:
 - ejecuta dispatcher, AgentBot, WhatsApp o email;
 - activa workers generales;
 - interpreta pago rechazado o estado incierto;
-- prueba todavía un evento Hotmart fresco en Supabase Cloud.
+- acredita procedencia oficial de una entrega emitida por Hotmart.

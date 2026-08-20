@@ -308,8 +308,8 @@ se usa para WhatsApp. La recepción no crea secuencias, mensajes ni clasificaci�
 abandono. Hotmart mantiene su endpoint y autenticación propios. Ver
 [contrato lead.precheckout V1](contracts/lead-precheckout-v1.md).
 
-La correlación Hotmart ↔ intención está implementada y verificada localmente, pero todavía
-no se aplicó en Supabase Cloud. Un scope server-side traduce `product.id=8104005` al hotlink
+La correlación Hotmart ↔ intención y su fase contract están aplicadas y verificadas en
+Supabase Cloud. Un scope server-side traduce `product.id=8104005` al hotlink
 `F106691755G` y exige oferta `bxjge6zq`, tenant, funnel y una ventana de 24 horas. Cada evento
 procesable nuevo produce en su misma transacción un outcome append-only `resolved`,
 `unmatched`, `ambiguous` o `conflict`. Una compra resuelta mueve la intención a `purchased`;
@@ -334,10 +334,10 @@ canónica es `admit_and_correlate_hotmart_cart_abandonment`: inserta
 el evento, vincula identidad derivada del payload y produce correlación durable en una
 sola transacción. La firma histórica `admit_hotmart_cart_abandonment` se mantuvo durante
 la fase expand como shim correlacionado para réplicas viejas. Tras comprobar cero
-réplicas legacy activas, `20260820000400`, implementada localmente y pendiente de
-aplicación Cloud, revoca su ejecución para `service_role`; lo mismo aplica al shim
-histórico de compra aprobada. Los wrappers correlacionados serán las únicas fronteras
-Hotmart autorizadas para ese rol después del contract.
+réplicas legacy activas, `20260820000400`, aplicada después de desplegar la imagen
+contract, revoca su ejecución para `service_role`; lo mismo aplica al shim histórico de
+compra aprobada. Los wrappers correlacionados son las únicas fronteras Hotmart autorizadas
+para ese rol.
 
 La resolución consulta email y teléfono y falla cerrado si apuntan a contactos distintos o si un identificador tiene múltiples dueños. La planificación sigue siendo asíncrona, pero un trigger de base valida en la misma transacción que evento, contacto, producto, oferta y timestamp coincidan exactamente antes de asociar el evento con un caso. Conflictos semánticos no resueltos bloquean globalmente el inicio de requests outbound. El contrato detallado está en `docs/contracts/hotmart-cart-abandonment-v1.md`.
 
@@ -475,12 +475,14 @@ confundir ausencia de confirmación con ausencia de efecto.
 El contrato detallado se encuentra en
 [Compra aprobada de Hotmart V1](contracts/hotmart-purchase-approved-v1.md). El DDL
 expand, el bridge correlacionado y el E2E controlado `lead → abandono → compra` están
-verificados en Cloud. Esa reproducción autenticada no fue originada por Hotmart. La
-imagen contract sin métodos legacy, la aplicación/postflight de `20260820000400` y una
-entrega originada oficialmente por Hotmart siguen pendientes y requieren evidencia
-separada. Los cortes relevantes se registran en
+verificados en Cloud. La imagen contract sin métodos legacy y `20260820000400` también
+fueron desplegadas y verificadas en ese orden. Esa reproducción autenticada no fue
+originada por Hotmart; una entrega oficial sigue pendiente y requiere evidencia separada.
+Los cortes relevantes se registran en
 [Postflight Supabase del 2026-08-08](operations/2026-08-08-hotmart-purchase-cancellation-supabase.md)
-y [E2E Cloud del 2026-08-20](operations/2026-08-20-hotmart-intent-correlation-cloud-e2e.md).
+y [E2E Cloud del 2026-08-20](operations/2026-08-20-hotmart-intent-correlation-cloud-e2e.md),
+seguido por el
+[postflight contract del 2026-08-20](operations/2026-08-20-hotmart-intent-contract-postflight.md).
 
 ## Decisiones arquitectónicas
 

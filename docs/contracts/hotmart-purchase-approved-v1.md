@@ -1,7 +1,7 @@
 # Contrato de compra aprobada de Hotmart V1
 
-- **Estado:** Expand, bridge y E2E controlado verificados en Cloud; contract
-  `20260820000400` implementado localmente y pendiente de aplicación/postflight Cloud.
+- **Estado:** Expand, bridge, E2E controlado y contract `20260820000400` verificados en
+  Cloud. Postflight: shim legacy denegado y wrapper canónico disponible.
   Sigue pendiente evidencia de una entrega originada oficialmente por Hotmart.
 - **Evento:** `PURCHASE_APPROVED`
 - **Versión de payload:** `2.0.0`
@@ -183,9 +183,8 @@ operativa.
 La fase expand conservó temporalmente la firma histórica
 `admit_hotmart_purchase_approved(text,jsonb)` como shim correlacionado. Tras comprobar
 que no quedaban réplicas viejas, la migración contract
-`20260820000400_hotmart_intent_correlation_contract.sql` implementa localmente la
-revocación de su `EXECUTE` para `service_role`; su aplicación Cloud está pendiente del
-merge y postflight. La única frontera API autorizada en el contrato final es
+`20260820000400_hotmart_intent_correlation_contract.sql` revocó en Cloud su `EXECUTE`
+para `service_role`; el postflight confirmó rechazo 403. La única frontera API autorizada es
 `admit_and_correlate_hotmart_purchase_approved(text,jsonb,text,text)`.
 
 Si la compra llega antes que el abandono, una guarda diferida al planificar la
@@ -216,15 +215,13 @@ El DDL expand, sus permisos efectivos, el bridge correlacionado y un E2E control
 `docs/operations/2026-08-20-hotmart-intent-correlation-cloud-e2e.md`; la reproducción
 autenticada usó el contrato HTTP oficial pero no fue originada por Hotmart.
 
-Todavía no constituye evidencia de:
+La imagen contract se desplegó antes de aplicar `20260820000400`. El postflight confirmó
+permisos, rechazo de shims, llegada de wrappers a validación, ledgers sin filas de probe
+y delta comercial cero. Esa evidencia está en
+`docs/operations/2026-08-20-hotmart-intent-contract-postflight.md`.
 
-- imagen contract desplegada sin métodos legacy;
-- migración `20260820000400` aplicada y postflight contract aprobado;
-- delivery originado oficialmente por Hotmart ni compra real del cliente.
-
-El cierre contract requiere desplegar primero la imagen nueva, aplicar después la
-migración y consultar permisos, wrappers, ledgers y deltas de efectos. Una entrega
-oficial de Hotmart requiere evidencia separada de procedencia.
+Todavía no constituye evidencia de un delivery originado oficialmente por Hotmart ni de
+una compra real del cliente; esa procedencia requiere evidencia separada.
 
 La página oficial describe un payload común para varios eventos de compra y su
 ejemplo no es evidencia de un delivery concreto de Lancemos. Por seguridad, V1
