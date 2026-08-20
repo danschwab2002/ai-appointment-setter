@@ -644,6 +644,37 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         1,
         'owner_only_hotmart_admission_bases_catalog_first_search_path'
+    union all
+    select
+        '20260820000300',
+        '20260820000300_hotmart_confirmed_abandonment.sql',
+        exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.correlate_hotmart_purchase_intent(uuid)'
+            )
+              and position('confirmed_abandonment' in definition) > 0
+              and position('abandonment_candidate' in definition) = 0
+        )::int
+        + exists(
+            select 1 from pg_constraint constraint_row
+            where constraint_row.conrelid = 'public.purchase_intents'::regclass
+              and constraint_row.contype = 'c'
+              and position(
+                  'current_classification' in
+                  pg_get_constraintdef(constraint_row.oid)
+              ) > 0
+              and position(
+                  'confirmed_abandonment' in
+                  pg_get_constraintdef(constraint_row.oid)
+              ) > 0
+              and position(
+                  'abandonment_candidate' in
+                  pg_get_constraintdef(constraint_row.oid)
+              ) = 0
+        )::int,
+        2,
+        'authoritative_confirmed_abandonment_classification'
 )
 select
     version,

@@ -112,7 +112,31 @@ def install_schema() -> None:
     apply(ROOT / "supabase/baseline/20260803_public_schema.sql")
     migrations = sorted((ROOT / "supabase/migrations").glob("*.sql"))
     for migration in migrations:
+        if migration.name == "20260820000300_hotmart_confirmed_abandonment.sql":
+            query(
+                "insert into public.purchase_intents ("
+                "tenant_ref,funnel_ref,landing_ref,product_ref,offer_ref,"
+                "normalized_email,normalized_phone,submitted_at,lifecycle_state,"
+                "current_classification,whatsapp_contact_authorized,provisional,"
+                "provider_observed,activation_authorized"
+                ") values ("
+                "'lancemos','psicologajohanna','ads-a','F106691755G','bxjge6zq',"
+                "'backfill@example.test','12025550199',clock_timestamp(),"
+                "'waiting_for_purchase','abandonment_candidate',false,false,true,false)"
+            )
         apply(migration)
+        if migration.name == "20260820000300_hotmart_confirmed_abandonment.sql":
+            require(
+                query(
+                    "select count(*) filter (where current_classification="
+                    "'confirmed_abandonment')||'|'||count(*) filter (where "
+                    "current_classification='abandonment_candidate') from "
+                    "public.purchase_intents where normalized_email="
+                    "'backfill@example.test'"
+                ) == "1|0",
+                "confirmed abandonment backfill failed",
+            )
+            print("hotmart_intent_confirmed_abandonment_backfill=OK")
     print(f"hotmart_intent_correlation_migrations={len(migrations)}")
 
 
@@ -241,7 +265,7 @@ def main() -> None:
         f"where id={resolved_intent!r}::uuid"
     )
     require(
-        state == "waiting_for_purchase|abandonment_candidate|f|f",
+        state == "waiting_for_purchase|confirmed_abandonment|f|f",
         f"unsafe abandonment state: {state}",
     )
     replay = query(

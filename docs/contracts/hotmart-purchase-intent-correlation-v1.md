@@ -89,7 +89,7 @@ Cada evento produce como máximo una fila append-only en
 
 ```text
 lifecycle_state            waiting_for_purchase
-current_classification     abandonment_candidate
+current_classification     confirmed_abandonment
 activation_authorized      false
 ```
 

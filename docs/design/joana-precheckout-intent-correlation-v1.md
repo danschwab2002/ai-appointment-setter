@@ -112,13 +112,13 @@ admitted → observing → recovery_eligible → outbound_started
                          ↘ purchased | cancelled | paused_unknown
 
 current_classification:
-none | payment_failure_supported | abandonment_candidate
+none | payment_failure_supported | confirmed_abandonment
 | identity_conflict | tracking_incomplete | expired_unknown
 ```
 
 La clasificación vigente es mutuamente excluyente y su historial es append-only. No es el
 estado terminal de autoridad: `PURCHASE_APPROVED` puede superseder monotonamente
-`payment_failure_supported` o `abandonment_candidate` y mover el lifecycle a `purchased`.
+`payment_failure_supported` o `confirmed_abandonment` y mover el lifecycle a `purchased`.
 Nunca se borra la clasificación anterior ni se reescribe un efecto empezado como si no hubiera
 ocurrido. `purchased` y `cancelled` son terminales para nuevos efectos comerciales.
 
@@ -228,7 +228,7 @@ vuelve a leer hechos actuales y aplica esta precedencia:
 |---|---|---|
 | compra aprobada correlacionada | `purchased` | cancelar/cerrar; cero contacto de recuperación |
 | evento de fallo soportado correlacionado | `payment_failure_supported` | caso C sólo si opt-in, template y demás gates pasan |
-| no compra con observación completa y política aprobada | `abandonment_candidate` | caso B sólo si opt-in, template y demás gates pasan |
+| salida de carrito confirmada por evento autoritativo | `confirmed_abandonment` | caso B sólo si opt-in, template y demás gates pasan |
 | identidad conflictiva o varias intenciones candidatas | `identity_conflict` | cero contacto; revisión humana |
 | fuente caída, backlog, webhook desactivado o cobertura incierta | `tracking_incomplete` | cero contacto; incidente operativo |
 | no existe forma autoritativa de probar la negativa | `expired_unknown` | cero contacto; medir como bloqueado |
@@ -242,7 +242,7 @@ sucesores; no se declara que el mensaje no fue enviado.
 ## 7. Qué significa “no compró”
 
 No observar `PURCHASE_APPROVED` no basta. La salud del ingreso es necesaria pero no suficiente.
-Para declarar `abandonment_candidate` se requiere además una de estas autoridades:
+Para declarar `confirmed_abandonment` se requiere además una de estas autoridades:
 
 1. consulta autoritativa que confirme la negativa para la identidad/producto/oferta; o
 2. contrato del proveedor demostrado como exhaustivo para esa ventana y esos hechos.
@@ -364,7 +364,7 @@ B/C. formulario intermedio
 → intención durable
 → correlación de identidad
 → observación después de X
-→ purchased | failure_supported | abandonment_candidate | unknown
+→ purchased | failure_supported | confirmed_abandonment | unknown
 → autorización por caso
 → outbound controlado
 ```
