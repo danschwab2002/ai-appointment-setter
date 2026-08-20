@@ -9,6 +9,10 @@ SEARCH_PATH_HOTFIX = (
     Path(__file__).parents[1]
     / "supabase/migrations/20260820000200_hotmart_intent_base_search_path.sql"
 )
+CONFIRMED_ABANDONMENT_MIGRATION = (
+    Path(__file__).parents[1]
+    / "supabase/migrations/20260820000300_hotmart_confirmed_abandonment.sql"
+)
 
 
 def _sql() -> str:
@@ -165,4 +169,20 @@ def test_base_admission_functions_receive_catalog_first_search_path_hotfix() -> 
     assert "begin;" in sql and "commit;" in sql
     assert "alter function public._admit_hotmart_purchase_approved_base(text, jsonb) set search_path = pg_catalog, public, pg_temp" in compact_sql
     assert "alter function public._admit_hotmart_cart_abandonment_base(text, jsonb) set search_path = pg_catalog, public, pg_temp" in compact_sql
+    assert "grant " not in sql
+
+
+def test_confirmed_abandonment_migration_renames_state_forward_only() -> None:
+    sql = CONFIRMED_ABANDONMENT_MIGRATION.read_text().lower()
+    compact_sql = " ".join(sql.split())
+
+    assert "begin;" in sql and "commit;" in sql
+    assert "update public.purchase_intents" in sql
+    assert "current_classification = 'confirmed_abandonment'" in sql
+    assert "where current_classification = 'abandonment_candidate'" in sql
+    assert "create or replace function public.correlate_hotmart_purchase_intent" not in sql
+    assert "pg_get_functiondef" in sql
+    assert "v_occurrences <> 1" in sql
+    assert "to_regprocedure('public.correlate_hotmart_purchase_intent(uuid)')" in compact_sql
+    assert "alter function public.correlate_hotmart_purchase_intent(uuid) set search_path = pg_catalog, public, pg_temp" in compact_sql
     assert "grant " not in sql

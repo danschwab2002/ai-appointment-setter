@@ -313,7 +313,7 @@ no se aplicó en Supabase Cloud. Un scope server-side traduce `product.id=810400
 `F106691755G` y exige oferta `bxjge6zq`, tenant, funnel y una ventana de 24 horas. Cada evento
 procesable nuevo produce en su misma transacción un outcome append-only `resolved`,
 `unmatched`, `ambiguous` o `conflict`. Una compra resuelta mueve la intención a `purchased`;
-una salida de carrito resuelta fija `abandonment_candidate`; ningún outcome concede
+una salida de carrito resuelta fija `confirmed_abandonment`; ningún outcome concede
 `activation_authorized` ni crea efectos. Ver
 [contrato de correlación V1](contracts/hotmart-purchase-intent-correlation-v1.md).
 
