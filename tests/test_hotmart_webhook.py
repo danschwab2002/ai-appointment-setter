@@ -106,6 +106,19 @@ def test_parse_hotmart_payload_accepts_checkout_phone_fallback() -> None:
     assert parsed.buyer_phone == "5531988887777"
 
 
+@pytest.mark.parametrize("phone", ["0", "1234567", "0123456789", "1" * 16])
+def test_parse_hotmart_payload_rejects_non_e164_digit_shape(phone: str) -> None:
+    payload = copy.deepcopy(EXAMPLE_PAYLOAD)
+    data = payload["data"]
+    assert isinstance(data, dict)
+    buyer = data["buyer"]
+    assert isinstance(buyer, dict)
+    buyer["email"] = None
+    buyer["phone"] = phone
+
+    assert parse_hotmart_payload(payload) is None
+
+
 def test_parse_hotmart_payload_rejects_zero_creation_date() -> None:
     payload = copy.deepcopy(EXAMPLE_PAYLOAD)
     payload["creation_date"] = 0
@@ -493,10 +506,14 @@ def test_persists_purchase_approved_for_deferred_processing(tmp_path) -> None:
                 supabase_service_role_key="fake-service-role-key",
             )
         )
-        response = _post_hotmart(
-            app,
-            json.dumps(PURCHASE_APPROVED_PAYLOAD).encode(),
-        )
+        payload = copy.deepcopy(PURCHASE_APPROVED_PAYLOAD)
+        data = payload["data"]
+        assert isinstance(data, dict)
+        buyer = data["buyer"]
+        assert isinstance(buyer, dict)
+        buyer["email"] = " Buyer@Email.com.br "
+        buyer["checkout_phone"] = "+55 (31) 99999-9999"
+        response = _post_hotmart(app, json.dumps(payload).encode())
     finally:
         supabase_mod.SupabaseClient.__init__ = original_init
 
@@ -507,11 +524,13 @@ def test_persists_purchase_approved_for_deferred_processing(tmp_path) -> None:
     }
     assert len(transport.requests) == 1
     assert transport.requests[0].url.path == (
-        "/rest/v1/rpc/admit_hotmart_purchase_approved"
+        "/rest/v1/rpc/admit_and_correlate_hotmart_purchase_approved"
     )
     body = json.loads(transport.requests[0].content)
     assert body["p_external_event_id"] == "purchase-event-001"
     assert body["p_payload"]["event"] == "PURCHASE_APPROVED"
+    assert body["p_normalized_email"] == "buyer@email.com.br"
+    assert body["p_normalized_phone"] == "5531999999999"
 
 
 def test_purchase_semantic_conflict_is_durable_and_not_reported_as_duplicate(
@@ -555,7 +574,7 @@ def test_purchase_semantic_conflict_is_durable_and_not_reported_as_duplicate(
         "reason": "purchase_semantic_conflict",
     }
     assert transport.requests[0].url.path == (
-        "/rest/v1/rpc/admit_hotmart_purchase_approved"
+        "/rest/v1/rpc/admit_and_correlate_hotmart_purchase_approved"
     )
 
 
@@ -756,10 +775,14 @@ def test_persists_valid_event_to_supabase(tmp_path) -> None:
     }
     assert len(transport.requests) == 1
     req = transport.requests[0]
-    assert req.url.path == "/rest/v1/rpc/admit_hotmart_cart_abandonment"
+    assert req.url.path == (
+        "/rest/v1/rpc/admit_and_correlate_hotmart_cart_abandonment"
+    )
     body = json.loads(req.content)
     assert body["p_external_event_id"] == "0d7aa966-b887-4617-8c56-9e865bfc8ce4"
     assert body["p_payload"]["data"]["buyer"]["email"] == "buyer@email.com.br"
+    assert body["p_normalized_email"] == "buyer@email.com.br"
+    assert body["p_normalized_phone"] == "5531999999999"
 
 
 def test_returns_duplicate_for_already_stored_event(tmp_path) -> None:

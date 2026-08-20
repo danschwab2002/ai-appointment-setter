@@ -601,6 +601,28 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         + (to_regclass('public.purchase_intents_one_observed_email_idx') is not null)::int,
         4,
         'observed_intent_only_nullable_phone_and_closed_rpc_acl'
+    union all
+    select
+        '20260820000100',
+        '20260820000100_hotmart_purchase_intent_correlation.sql',
+        (to_regclass('public.hotmart_purchase_intent_scopes') is not null)::int
+        + (to_regclass('public.hotmart_purchase_intent_event_identities') is not null)::int
+        + (to_regclass('public.hotmart_purchase_intent_correlations') is not null)::int
+        + (to_regclass('public.hotmart_purchase_intent_correlation_candidates') is not null)::int
+        + exists(
+            select 1 from functions
+            where proname in (
+                'correlate_hotmart_purchase_intent',
+                'admit_and_correlate_hotmart_purchase_approved',
+                'admit_and_correlate_hotmart_cart_abandonment'
+            )
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+            having count(*) = 3
+        )::int,
+        5,
+        'atomic_canonical_hotmart_intent_correlation_without_effects'
 )
 select
     version,

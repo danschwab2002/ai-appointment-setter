@@ -24,11 +24,12 @@ cancelar seguimientos.
 4. `event = PURCHASE_APPROVED`;
 5. `version = 2.0.0`;
 6. `creation_date` dentro de la ventana anti-replay;
-7. admisión transaccional mediante `admit_hotmart_purchase_approved(...)` antes
-   de responder.
+7. admisión y correlación transaccional mediante
+   `admit_and_correlate_hotmart_purchase_approved(...)` antes de responder.
 
 Una admisión nueva responde `202 received`; un replay semánticamente idéntico
-responde `200 duplicate`. La admisión no correlaciona un comprador con un caso.
+responde `200 duplicate`. La correlación nueva vincula únicamente una
+`purchase_intent`; no correlaciona por sí sola un comprador con un recovery case.
 La única excepción es una colisión semántica de transacción: se persiste como
 incidente y activa el bloqueo global fail-closed de `request_started` antes de
 responder `202 conflict`.
@@ -151,7 +152,7 @@ operativa.
 - `(source, external_event_id)` evita admisiones duplicadas;
 - un índice parcial único por `data.purchase.transaction` evita aplicar la
   misma transacción con IDs externos diferentes;
-- `admit_hotmart_purchase_approved(...)` serializa la admisión y compara la
+- `admit_and_correlate_hotmart_purchase_approved(...)` serializa la admisión y compara la
   tupla normalizada `evento + versión + estado + transacción + identidad +
   producto + oferta + fecha aprobada`;
 - una tupla idéntica es `duplicate`, incluso si Hotmart cambia el ID externo;
@@ -177,6 +178,11 @@ operativa.
   y permite reintento del worker sin bloquear el resto del batch;
 - un rechazo RPC HTTP 4xx se cuarentena como
   `purchase_rpc_permanent_failure` para que no envenene la cola.
+
+Durante la fase expand del rollout, la firma histórica
+`admit_hotmart_purchase_approved(text,jsonb)` permanece como shim compatible para
+réplicas viejas: deriva la identidad del payload y delega en el wrapper correlacionado.
+No constituye un bypass. Se revocará en una migración contract posterior al rollout.
 
 Si la compra llega antes que el abandono, una guarda diferida al planificar la
 recuperación reevalúa compras conocidas. Sólo cierra cuando identidad,

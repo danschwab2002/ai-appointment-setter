@@ -1,10 +1,10 @@
 # Intención pre-checkout y correlación de compra de Joana — V1
 
-- **Estado:** Parcialmente implementada; admisión emulada durable local, correlación real pendiente de evidencia
+- **Estado:** Parcialmente implementada; admisión observada en Cloud y correlación Hotmart implementada/verificada localmente, E2E oficial pendiente
 - **Fecha:** 2026-08-14
 - **Alcance:** formulario intermedio → intención durable → observación Hotmart → clasificación fail-closed
 - **Oferta:** `Libre de Ansiedad`
-- **No implica:** payload real aprobado, API de consulta disponible, eventos de fallo observados, template aprobado ni contacto general autorizado
+- **No implica:** API de consulta disponible, eventos de fallo observados, E2E oficial de correlación ni contacto general autorizado
 - **Evidencia visual:** captura suministrada por el usuario el 2026-08-14, preservada fuera de Git; SHA-256 `e3e263c32ff6ea3f5e114891bf0adc9e38ffa4063a810d15d5948427a807dab4`
 - **Relacionado con:** [tracer del app setter](joana-app-setter-pilot-v1.md), [readiness WABA/Hotmart](lancemos-waba-hotmart-readiness.md), [compra aprobada implementada](../contracts/hotmart-purchase-approved-v1.md)
 
@@ -22,9 +22,10 @@ landing/BCL
 → compra | fallo explícito | abandono candidato | pendiente/desconocido
 ```
 
-El efecto externo nunca se dispara directamente al enviar el formulario. El corte implementado
-sólo admite una intención; todavía no programa una reevaluación. Un corte posterior podrá
-programarla después de un plazo `X` aprobado.
+El efecto externo nunca se dispara directamente al enviar el formulario. El adapter observado
+ya admite una intención durable y la correlación local consume sólo eventos autoritativos
+Hotmart. Ninguno de esos cortes programa reevaluación ni outbound. Un corte posterior podrá
+programar una reevaluación después de un plazo `X` aprobado.
 
 Abandono y fallo de pago comparten esta intención de origen, pero conservan mensajes,
 políticas y gates diferentes. Una misma intención no puede abrir simultáneamente ambos casos.
@@ -96,9 +97,12 @@ correlation_outcome
 policy_ref/version
 ```
 
-Los nombres son conceptuales, no un schema aprobado. El contrato físico se define recién
-cuando se conozca el payload real del formulario, su autenticación y los eventos/consultas
-Hotmart disponibles.
+Los nombres anteriores conservan valor conceptual. El schema físico de admisión y
+correlación ya está implementado en `purchase_intents`,
+`hotmart_purchase_intent_scopes`, `hotmart_purchase_intent_event_identities`,
+`hotmart_purchase_intent_correlations` y
+`hotmart_purchase_intent_correlation_candidates`; se documenta en el
+[contrato de correlación V1](../contracts/hotmart-purchase-intent-correlation-v1.md).
 
 ### Lifecycle y clasificación conceptual
 
@@ -329,22 +333,25 @@ No se atribuye una compra al agente sólo porque ocurrió después de un mensaje
 `assisted_after_message` como señal observacional y reservar causalidad para un diseño de
 medición posterior.
 
-## 11. Gates antes del adapter real o la activación general
+## 11. Gates antes de la activación general
 
-1. capturar el payload real del formulario sin PII en Git;
-2. definir autenticación, replay window y ownership del formulario;
+1. ~~capturar el payload real del formulario sin PII en Git~~ — contrato observado y fixtures sanitizados disponibles;
+2. ~~definir autenticación, replay window y ownership del formulario~~ — HMAC server-side y bridge implementados;
 3. confirmar campos exactos y copy/version de opt-in;
 4. comprobar si un correlation ID puede viajar hasta y desde Hotmart;
-5. identificar la fuente autoritativa para compra y para una negativa de compra;
+5. ~~identificar la fuente autoritativa para compra y abandono~~ —
+   `PURCHASE_APPROVED` y `PURCHASE_OUT_OF_SHOPPING_CART`; pago rechazado sigue abierto;
 6. observar/confirmar eventos de fallo y su catálogo de causas;
-7. definir normalización y reglas de identidad con fixtures conflictivos;
+7. ~~definir normalización y reglas de identidad con fixtures conflictivos~~ — implementado y probado localmente;
 8. aprobar `X`, expiración, lineage de submissions repetidas y si una repetición conserva o
    modifica el deadline, sin reiniciar autorización ni first-touch;
 9. definir retención, acceso y borrado de PII;
-10. reemplazar el adapter emulado mediante contratos observados y TDD.
+10. ~~reemplazar el adapter emulado mediante contratos observados y TDD~~ — adapter
+    `lead.precheckout` observado desplegado; correlación Hotmart todavía no aplicada en Cloud.
 
-Hasta completar esos gates, el estado general sigue `partial / no effects`; sólo existe el
-tracer emulado test-only descrito en el contrato V1.
+Hasta completar los gates abiertos y el E2E oficial, el estado general sigue
+`partial / no effects`. Existen admisión observada durable y correlación fail-closed local,
+pero no autorización comercial derivada.
 
 ## 12. Impacto en el roadmap
 
@@ -363,5 +370,5 @@ B/C. formulario intermedio
 ```
 
 El siguiente trabajo de producto para B/C no es escribir templates ni programar el timer. Es
-obtener el formulario real, diseñar el opt-in y demostrar cómo se correlacionará una compra o
-una ausencia confiable de compra.
+aplicar la correlación en Cloud, demostrar un evento Hotmart fresco contra una intención
+observada y resolver el opt-in específico. La ausencia de compra no se considera evidencia.

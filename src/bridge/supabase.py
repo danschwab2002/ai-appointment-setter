@@ -132,6 +132,17 @@ class PurchaseCorrelationResult:
 
 
 @dataclass(frozen=True)
+class PurchaseIntentCorrelationResult:
+    """Durable identity outcome for one Hotmart event and purchase intent."""
+
+    outcome: str
+    purchase_intent_id: str | None
+    matched_by: str | None
+    candidate_count: int
+    manual_handoff_required: bool
+
+
+@dataclass(frozen=True)
 class InboundOptOutResult:
     """Authoritative outcome of one canonical inbound opt-out."""
 
@@ -756,6 +767,40 @@ class SupabaseClient:
             webhook_event_id=webhook_event_id,
         )
 
+    async def admit_and_correlate_hotmart_purchase_approved(
+        self,
+        *,
+        external_event_id: str,
+        payload: dict[str, Any],
+        normalized_email: str | None,
+        normalized_phone: str | None,
+    ) -> PurchaseAdmissionResult:
+        """Atomically admit a purchase and correlate its canonical identity."""
+        operation = "purchase_correlation_admission"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/admit_and_correlate_hotmart_purchase_approved",
+            content=json.dumps(
+                {
+                    "p_external_event_id": external_event_id,
+                    "p_payload": payload,
+                    "p_normalized_email": normalized_email,
+                    "p_normalized_phone": normalized_phone,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        rows = _response_rows(response, operation=operation)
+        if response.status_code != 200 or len(rows) != 1:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        outcome = rows[0].get("outcome")
+        webhook_event_id = rows[0].get("webhook_event_id")
+        if outcome not in {"inserted", "duplicate", "semantic_conflict"}:
+            raise SupabaseError(f"{operation}_invalid_outcome")
+        if not isinstance(webhook_event_id, str) or not webhook_event_id:
+            raise SupabaseError(f"{operation}_invalid_event_id")
+        return PurchaseAdmissionResult(outcome, webhook_event_id)
+
     async def admit_precheckout_form_submission(
         self,
         *,
@@ -975,6 +1020,103 @@ class SupabaseClient:
         return CartAbandonmentAdmissionResult(
             outcome=outcome,
             webhook_event_id=webhook_event_id,
+        )
+
+    async def admit_and_correlate_hotmart_cart_abandonment(
+        self,
+        *,
+        external_event_id: str,
+        payload: dict[str, Any],
+        normalized_email: str | None,
+        normalized_phone: str | None,
+    ) -> CartAbandonmentAdmissionResult:
+        """Atomically admit an abandonment and correlate canonical identity."""
+        operation = "cart_abandonment_correlation_admission"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/admit_and_correlate_hotmart_cart_abandonment",
+            content=json.dumps(
+                {
+                    "p_external_event_id": external_event_id,
+                    "p_payload": payload,
+                    "p_normalized_email": normalized_email,
+                    "p_normalized_phone": normalized_phone,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        rows = _response_rows(response, operation=operation)
+        if response.status_code != 200 or len(rows) != 1:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        outcome = rows[0].get("outcome")
+        webhook_event_id = rows[0].get("webhook_event_id")
+        if outcome not in {"inserted", "duplicate", "semantic_conflict"}:
+            raise SupabaseError(f"{operation}_invalid_outcome")
+        if not isinstance(webhook_event_id, str) or not webhook_event_id:
+            raise SupabaseError(f"{operation}_invalid_event_id")
+        return CartAbandonmentAdmissionResult(outcome, webhook_event_id)
+
+    async def correlate_hotmart_purchase_intent(
+        self,
+        *,
+        webhook_event_id: str,
+    ) -> PurchaseIntentCorrelationResult:
+        """Correlate one exact durable Hotmart event without creating effects."""
+        operation = "hotmart_purchase_intent_correlation"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/correlate_hotmart_purchase_intent",
+            content=json.dumps({"p_webhook_event_id": webhook_event_id}),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        correlation_outcome = row.get("outcome")
+        if correlation_outcome not in {
+            "resolved",
+            "unmatched",
+            "ambiguous",
+            "conflict",
+        }:
+            raise SupabaseError(f"{operation}_invalid_outcome")
+        purchase_intent_id = _optional_string(
+            row, "purchase_intent_id", operation=operation
+        )
+        matched_by = _optional_enum(
+            row,
+            "matched_by",
+            {"email", "phone", "email_and_phone"},
+            operation=operation,
+        )
+        candidate_count = _required_nonnegative_int(
+            row, "candidate_count", operation=operation
+        )
+        manual_handoff_required = row.get("manual_handoff_required")
+        if not isinstance(manual_handoff_required, bool):
+            raise SupabaseError(f"{operation}_invalid_row")
+        if correlation_outcome == "resolved":
+            if (
+                purchase_intent_id is None
+                or matched_by is None
+                or candidate_count != 1
+                or manual_handoff_required
+            ):
+                raise SupabaseError(f"{operation}_invalid_row")
+        elif (
+            purchase_intent_id is not None
+            or matched_by is not None
+            or not manual_handoff_required
+        ):
+            raise SupabaseError(f"{operation}_invalid_row")
+        return PurchaseIntentCorrelationResult(
+            outcome=correlation_outcome,
+            purchase_intent_id=purchase_intent_id,
+            matched_by=matched_by,
+            candidate_count=candidate_count,
+            manual_handoff_required=manual_handoff_required,
         )
 
     async def admit_inbound_commercial_case(

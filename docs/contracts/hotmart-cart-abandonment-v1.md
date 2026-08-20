@@ -38,9 +38,13 @@ identidad durable:
 La RPC SQL rechaza directamente cualquier `creation_date <= 0` o payload no
 procesable con `invalid_cart_abandonment_admission_input`.
 
-## Admisión semántica
+## Admisión semántica y correlación
 
-La única frontera de persistencia admitida es la RPC `public.admit_hotmart_cart_abandonment(text, jsonb)`.
+La frontera canónica es
+`public.admit_and_correlate_hotmart_cart_abandonment(text,jsonb,text,text)`, que
+admite y correlaciona atómicamente. Durante el rolling deploy, la firma histórica
+`public.admit_hotmart_cart_abandonment(text,jsonb)` permanece como shim seguro:
+deriva la identidad exclusivamente del payload y delega en la frontera canónica.
 
 La tupla semántica canónica está formada por:
 
@@ -98,4 +102,7 @@ Los blockers durables de opt-out/denegación y los conflictos semánticos se ree
 
 ## Privilegios
 
-`admit_hotmart_cart_abandonment(text, jsonb)` sólo puede ejecutarse con `service_role`. Las funciones internas de tupla, validación y guards no tienen `EXECUTE` público.
+Los wrappers canónicos y, sólo durante la fase expand, el shim histórico pueden
+ejecutarse con `service_role`. Las implementaciones base, funciones internas de
+identidad, validación y guards no tienen `EXECUTE` público. El shim se revocará en una
+migración contract después de confirmar que no quedan réplicas viejas.

@@ -20,12 +20,17 @@ El transporte productivo actual es Evolution API detrás de Chatwoot. La fronter
 El endpoint `POST /webhooks/hotmart`:
 
 1. autentica `X-HOTMART-HOTTOK` y aplica anti-replay;
-2. acepta eventos Hotmart v2.0.0 `PURCHASE_OUT_OF_SHOPPING_CART`;
+2. acepta eventos Hotmart v2.0.0 `PURCHASE_OUT_OF_SHOPPING_CART` y
+   `PURCHASE_APPROVED`;
 3. normaliza identidad y persiste el evento de forma idempotente en Supabase;
-4. planifica una próxima acción bajo una política publicada e inmutable;
-5. reevalúa autorización, identidad, compra, opt-out, intervención humana, vigencia y límites antes de cada efecto;
-6. permite que Hermes redacte únicamente dentro de la decisión autorizada por el bridge;
-7. envía el primer contacto o seguimiento por Chatwoot usando el único JID allowlisted durante las pruebas.
+4. en el corte local pendiente de Cloud, correlaciona atómicamente ambos eventos con
+   una intención pre-checkout durable y falla cerrado ante ausencia, ambigüedad o
+   conflicto;
+5. planifica una próxima acción bajo una política publicada e inmutable sólo por el
+   flujo de recuperación ya autorizado;
+6. reevalúa autorización, identidad, compra, opt-out, intervención humana, vigencia y límites antes de cada efecto;
+7. permite que Hermes redacte únicamente dentro de la decisión autorizada por el bridge;
+8. envía el primer contacto o seguimiento por Chatwoot usando el único JID allowlisted durante las pruebas.
 
 El flujo completo Hotmart → primer WhatsApp → respuesta atendida por el mismo agente comercial fue validado E2E. La evidencia sanitizada está en [`docs/operations/2026-08-02-hotmart-recovery-e2e.md`](docs/operations/2026-08-02-hotmart-recovery-e2e.md).
 

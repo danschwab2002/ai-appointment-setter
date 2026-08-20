@@ -180,13 +180,17 @@ def _build_app(transport: E2ETransport, tmp_path: Path):
 def _setup_mocks(transport: E2ETransport) -> None:
     """Configure all mock responses for the full flow."""
     # ── Supabase: semantic cart-abandonment admission ───────────────
-    transport.set("POST", "/rest/v1/rpc/admit_hotmart_cart_abandonment", [
-        {
-            "_status": 200,
-            "outcome": "inserted",
-            "webhook_event_id": "we-e2e-001",
-        },
-    ])
+    transport.set(
+        "POST",
+        "/rest/v1/rpc/admit_and_correlate_hotmart_cart_abandonment",
+        [
+            {
+                "_status": 200,
+                "outcome": "inserted",
+                "webhook_event_id": "we-e2e-001",
+            },
+        ],
+    )
     # ── Supabase: contact_points lookups (email + phone → empty) ────
     transport.set("GET", "/rest/v1/contact_points", [
         {"_status": 200},

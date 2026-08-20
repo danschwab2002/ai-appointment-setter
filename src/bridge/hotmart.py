@@ -68,6 +68,7 @@ class HotmartPurchaseData:
 # before normalization.
 _NON_DIGIT = re.compile(r"\D")
 _PHONE_INPUT = re.compile(r"\+?[0-9 ()-]+")
+_INTERNATIONAL_PHONE_DIGITS = re.compile(r"[1-9][0-9]{7,14}")
 _TRANSACTION_REFERENCE = re.compile(r"HP[A-Z0-9]{6,62}")
 _MAX_DATETIME_TIMESTAMP_MS = 253_402_300_799_999
 
@@ -85,7 +86,7 @@ def normalize_phone(raw: str | None) -> str | None:
     if not isinstance(raw, str) or _PHONE_INPUT.fullmatch(raw) is None:
         return None
     digits = _NON_DIGIT.sub("", raw)
-    return digits or None
+    return digits if _INTERNATIONAL_PHONE_DIGITS.fullmatch(digits) else None
 
 
 def _str(value: Any) -> str | None:
