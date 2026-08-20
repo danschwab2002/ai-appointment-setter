@@ -57,6 +57,8 @@ const rows = await db.query(`
   with expected(signature) as (
     values
       ('activate_lancemos_pilot_scope_version(text,integer,bigint,text,text)'),
+      ('admit_and_correlate_hotmart_cart_abandonment(text,jsonb,text,text)'),
+      ('admit_and_correlate_hotmart_purchase_approved(text,jsonb,text,text)'),
       ('admit_hotmart_cart_abandonment(text,jsonb)'),
       ('admit_hotmart_purchase_approved(text,jsonb)'),
       ('admit_observed_lead_precheckout(text,jsonb,jsonb)'),
@@ -68,6 +70,7 @@ const rows = await db.query(`
       ('claim_chatwoot_opt_out_projections(text,timestamp with time zone,interval,integer)'),
       ('claim_due_followup_actions(text,timestamp with time zone,interval,integer)'),
       ('claim_human_handoff_projection_effects(text,integer,integer,timestamp with time zone)'),
+      ('correlate_hotmart_purchase_intent(uuid)'),
       ('evaluate_lancemos_pilot_scope(text,integer,text,bigint,bigint,text,text,text,text,text,text,uuid)'),
       ('finish_precheckout_test_first_touch(uuid,text,bigint,bigint,text)'),
       ('finalize_chatwoot_opt_out_projection(uuid,text,bigint,boolean,text,integer,timestamp with time zone)'),
@@ -108,7 +111,7 @@ const rows = await db.query(`
 `);
 const result = rows.rows[0];
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 32) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 35) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const inventory = await db.query(readFileSync(

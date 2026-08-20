@@ -5,6 +5,8 @@ with
 expected_service_role(signature) as (
     values
         ('public.activate_lancemos_pilot_scope_version(text, integer, bigint, text, text)'),
+        ('public.admit_and_correlate_hotmart_cart_abandonment(text, jsonb, text, text)'),
+        ('public.admit_and_correlate_hotmart_purchase_approved(text, jsonb, text, text)'),
         ('public.admit_hotmart_cart_abandonment(text, jsonb)'),
         ('public.admit_hotmart_purchase_approved(text, jsonb)'),
         ('public.admit_precheckout_form_submission(text, jsonb, jsonb)'),
@@ -16,6 +18,7 @@ expected_service_role(signature) as (
         ('public.claim_chatwoot_opt_out_projections(text, timestamp with time zone, interval, integer)'),
         ('public.claim_due_followup_actions(text, timestamp with time zone, interval, integer)'),
         ('public.claim_human_handoff_projection_effects(text, integer, integer, timestamp with time zone)'),
+        ('public.correlate_hotmart_purchase_intent(uuid)'),
         ('public.evaluate_lancemos_pilot_scope(text, integer, text, bigint, bigint, text, text, text, text, text, text, uuid)'),
         ('public.finish_precheckout_test_first_touch(uuid, text, bigint, bigint, text)'),
         ('public.finalize_chatwoot_opt_out_projection(uuid, text, bigint, boolean, text, integer, timestamp with time zone)'),

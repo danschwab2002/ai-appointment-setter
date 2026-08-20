@@ -295,8 +295,8 @@ solo no programa acciones ni concede autorización comercial. Ver
 
 ## Ingreso autenticado `lead.precheckout` de Lancemos
 
-El adapter observado V1 está implementado localmente y permanece default-off, sin
-deploy ni conexión a la landing. El endpoint `POST /webhooks/lead` verifica HMAC-SHA256
+El adapter observado V1 está desplegado para el scope piloto y conectado al relay preview
+de la landing. El endpoint `POST /webhooks/lead` verifica HMAC-SHA256
 sobre el body crudo, valida el contrato exacto `1.0.0`, freshness, headers y scope antes
 de llamar a la RPC separada `admit_observed_lead_precheckout`.
 
@@ -307,6 +307,15 @@ con `provider_observed=true`, pero conserva `activation_authorized=false` y
 se usa para WhatsApp. La recepción no crea secuencias, mensajes ni clasificación de
 abandono. Hotmart mantiene su endpoint y autenticación propios. Ver
 [contrato lead.precheckout V1](contracts/lead-precheckout-v1.md).
+
+La correlación Hotmart ↔ intención está implementada y verificada localmente, pero todavía
+no se aplicó en Supabase Cloud. Un scope server-side traduce `product.id=8104005` al hotlink
+`F106691755G` y exige oferta `bxjge6zq`, tenant, funnel y una ventana de 24 horas. Cada evento
+procesable nuevo produce en su misma transacción un outcome append-only `resolved`,
+`unmatched`, `ambiguous` o `conflict`. Una compra resuelta mueve la intención a `purchased`;
+una salida de carrito resuelta fija `abandonment_candidate`; ningún outcome concede
+`activation_authorized` ni crea efectos. Ver
+[contrato de correlación V1](contracts/hotmart-purchase-intent-correlation-v1.md).
 
 El corte one-shot agrega una command durable separada para un único template WABA controlado.
 La command se persiste como `request_started` antes de Chatwoot, fija un presupuesto de un
@@ -319,7 +328,13 @@ outbound sigue pendiente. Ver
 
 ## Ingreso autoritativo de abandono de carrito
 
-`PURCHASE_OUT_OF_SHOPPING_CART` se autentica por Hottok y se valida contra el contrato Hotmart `2.0.0` antes de reservar identidad durable. La RPC `admit_hotmart_cart_abandonment` es la frontera transaccional que inserta el evento, reconoce replays exactos y registra diferencias bajo el mismo `external_event_id` como conflictos semánticos.
+`PURCHASE_OUT_OF_SHOPPING_CART` se autentica por Hottok y se valida contra el contrato
+Hotmart `2.0.0` antes de reservar identidad durable. En el corte local pendiente de
+Cloud, la frontera canónica es `admit_and_correlate_hotmart_cart_abandonment`: inserta
+el evento, vincula identidad derivada del payload y produce correlación durable en una
+sola transacción. La firma histórica `admit_hotmart_cart_abandonment` permanece durante
+la fase expand como shim correlacionado para réplicas viejas; no permite omitir la
+correlación y se revocará en una fase contract posterior al rollout.
 
 La resolución consulta email y teléfono y falla cerrado si apuntan a contactos distintos o si un identificador tiene múltiples dueños. La planificación sigue siendo asíncrona, pero un trigger de base valida en la misma transacción que evento, contacto, producto, oferta y timestamp coincidan exactamente antes de asociar el evento con un caso. Conflictos semánticos no resueltos bloquean globalmente el inicio de requests outbound. El contrato detallado está en `docs/contracts/hotmart-cart-abandonment-v1.md`.
 

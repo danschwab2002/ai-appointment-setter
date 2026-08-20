@@ -64,3 +64,13 @@ jobs:
         run: >-
           createdb -h 127.0.0.1 -p 5432 observed_lead_precheckout_ci
           && uv run python tests/sql/followup_engine/real_postgres_observed_lead.py
+      - name: Verify Hotmart purchase-intent correlation on PostgreSQL
+        env:
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          DATABASE_URL: postgresql://postgres@127.0.0.1:5432/hotmart_intent_correlation_ci
+          PSQL: /usr/bin/psql
+          ALLOW_DISPOSABLE_DATABASE: hotmart-intent-correlation
+        run: >-
+          createdb -h 127.0.0.1 -p 5432 hotmart_intent_correlation_ci
+          && uv run python tests/sql/followup_engine/real_postgres_hotmart_intent_correlation.py

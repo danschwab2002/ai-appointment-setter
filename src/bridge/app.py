@@ -2364,16 +2364,19 @@ def create_app(
             )
         try:
             if event_type == EVENT_PURCHASE_APPROVED:
-                if parse_hotmart_purchase_payload(payload) is None:
+                parsed_purchase = parse_hotmart_purchase_payload(payload)
+                if parsed_purchase is None:
                     response.status_code = status.HTTP_200_OK
                     return {
                         "status": "ignored",
                         "reason": "invalid_purchase_payload",
                     }
                 purchase_admission = (
-                    await shared_supabase.admit_hotmart_purchase_approved(
+                    await shared_supabase.admit_and_correlate_hotmart_purchase_approved(
                         external_event_id=event_id,
                         payload=payload,
+                        normalized_email=parsed_purchase.buyer_email,
+                        normalized_phone=parsed_purchase.buyer_phone,
                     )
                 )
                 if purchase_admission.outcome == "semantic_conflict":
@@ -2392,19 +2395,19 @@ def create_app(
                     "status": "received",
                     "event_id": event_id,
                 }
-            if (
-                event_type == EVENT_CART_ABANDONMENT
-                and parse_hotmart_payload(payload) is None
-            ):
+            parsed_abandonment = parse_hotmart_payload(payload)
+            if parsed_abandonment is None:
                 response.status_code = status.HTTP_200_OK
                 return {
                     "status": "ignored",
                     "reason": "invalid_cart_abandonment_payload",
                 }
             abandonment_admission = (
-                await shared_supabase.admit_hotmart_cart_abandonment(
+                await shared_supabase.admit_and_correlate_hotmart_cart_abandonment(
                     external_event_id=event_id,
                     payload=payload,
+                    normalized_email=parsed_abandonment.buyer_email,
+                    normalized_phone=parsed_abandonment.buyer_phone,
                 )
             )
             if abandonment_admission.outcome == "semantic_conflict":
