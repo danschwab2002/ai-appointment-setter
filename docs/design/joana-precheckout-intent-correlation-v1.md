@@ -1,10 +1,12 @@
 # Intención pre-checkout y correlación de compra de Joana — V1
 
-- **Estado:** Parcialmente implementada; admisión observada en Cloud y correlación Hotmart implementada/verificada localmente, E2E oficial pendiente
+- **Estado:** Admisión observada, correlación y contract verificados en Cloud; E2E
+  controlado completo y delivery originado oficialmente por Hotmart pendiente
 - **Fecha:** 2026-08-14
 - **Alcance:** formulario intermedio → intención durable → observación Hotmart → clasificación fail-closed
 - **Oferta:** `Libre de Ansiedad`
-- **No implica:** API de consulta disponible, eventos de fallo observados, E2E oficial de correlación ni contacto general autorizado
+- **No implica:** API de consulta disponible, eventos de fallo observados, delivery
+  originado oficialmente por Hotmart ni contacto general autorizado
 - **Evidencia visual:** captura suministrada por el usuario el 2026-08-14, preservada fuera de Git; SHA-256 `e3e263c32ff6ea3f5e114891bf0adc9e38ffa4063a810d15d5948427a807dab4`
 - **Relacionado con:** [tracer del app setter](joana-app-setter-pilot-v1.md), [readiness WABA/Hotmart](lancemos-waba-hotmart-readiness.md), [compra aprobada implementada](../contracts/hotmart-purchase-approved-v1.md)
 
@@ -19,13 +21,15 @@ landing/BCL
 → purchase_intent durable
 → checkout Hotmart
 → observación y correlación
-→ compra | fallo explícito | abandono candidato | pendiente/desconocido
+→ compra | fallo explícito | abandono confirmado | correlación no resuelta
 ```
 
 El efecto externo nunca se dispara directamente al enviar el formulario. El adapter observado
-ya admite una intención durable y la correlación local consume sólo eventos autoritativos
-Hotmart. Ninguno de esos cortes programa reevaluación ni outbound. Un corte posterior podrá
-programar una reevaluación después de un plazo `X` aprobado.
+ya admite una intención durable y la correlación Cloud procesa sólo los dos tipos de evento
+con autoridad contractual Hotmart. El E2E vigente reprodujo payloads oficiales autenticados,
+pero no acredita que la entrega se haya originado en Hotmart. Ninguno de esos cortes programa
+reevaluación ni outbound. Un corte posterior podrá programar una reevaluación después de un
+plazo `X` aprobado.
 
 Abandono y fallo de pago comparten esta intención de origen, pero conservan mensajes,
 políticas y gates diferentes. Una misma intención no puede abrir simultáneamente ambos casos.
@@ -310,7 +314,7 @@ La intención permite un funnel mínimo medible:
 landing/BCL visto —si existe tracking autorizado—
 → formulario enviado
 → checkout iniciado
-→ compra aprobada / fallo soportado / abandono candidato / unknown
+→ compra aprobada / fallo soportado / abandono confirmado / correlación no resuelta
 → mensaje autorizado
 → respuesta
 → compra posterior / handoff / opt-out / cierre
@@ -321,7 +325,7 @@ Métricas V1:
 - submissions admitidas y duplicadas;
 - compras correlacionadas;
 - fallos correlacionados por causa soportada;
-- abandonos candidatos;
+- abandonos confirmados por evento autoritativo;
 - identidad conflictiva;
 - tracking incompleto/unknown;
 - contactos bloqueados por falta de opt-in;
@@ -342,16 +346,17 @@ medición posterior.
 5. ~~identificar la fuente autoritativa para compra y abandono~~ —
    `PURCHASE_APPROVED` y `PURCHASE_OUT_OF_SHOPPING_CART`; pago rechazado sigue abierto;
 6. observar/confirmar eventos de fallo y su catálogo de causas;
-7. ~~definir normalización y reglas de identidad con fixtures conflictivos~~ — implementado y probado localmente;
+7. ~~definir normalización y reglas de identidad con fixtures conflictivos~~ — implementado,
+   probado localmente y verificado en Cloud;
 8. aprobar `X`, expiración, lineage de submissions repetidas y si una repetición conserva o
    modifica el deadline, sin reiniciar autorización ni first-touch;
 9. definir retención, acceso y borrado de PII;
 10. ~~reemplazar el adapter emulado mediante contratos observados y TDD~~ — adapter
-    `lead.precheckout` observado desplegado; correlación Hotmart todavía no aplicada en Cloud.
+    `lead.precheckout`, correlación Hotmart y contract desplegados/verificados en Cloud.
 
-Hasta completar los gates abiertos y el E2E oficial, el estado general sigue
-`partial / no effects`. Existen admisión observada durable y correlación fail-closed local,
-pero no autorización comercial derivada.
+Hasta completar los gates de producto y una entrega originada oficialmente por Hotmart,
+el estado general sigue `partial / no effects`. El circuito acotado de admisión y
+correlación fail-closed está implementado en Cloud, pero no deriva autorización comercial.
 
 ## 12. Impacto en el roadmap
 
@@ -364,11 +369,12 @@ B/C. formulario intermedio
 → intención durable
 → correlación de identidad
 → observación después de X
-→ purchased | failure_supported | confirmed_abandonment | unknown
+→ purchased | failure_supported | confirmed_abandonment | correlation_unresolved
 → autorización por caso
 → outbound controlado
 ```
 
 El siguiente trabajo de producto para B/C no es escribir templates ni programar el timer. Es
-aplicar la correlación en Cloud, demostrar un evento Hotmart fresco contra una intención
-observada y resolver el opt-in específico. La ausencia de compra no se considera evidencia.
+obtener evidencia de una entrega originada oficialmente por Hotmart y resolver los gates de
+producto, opt-in específico, retención y operación. La ausencia de compra no se considera
+evidencia.
