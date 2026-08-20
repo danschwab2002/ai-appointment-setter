@@ -413,6 +413,32 @@ def main() -> None:
         )
     """)
     require(legacy_acl == "t|t", f"safe expand shims unavailable: {legacy_acl}")
+    base_search_paths = query("""
+      select string_agg(
+        p.proname||'='||array_to_string(p.proconfig,','),
+        '|' order by p.proname
+      )
+      from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+      where n.nspname='public'
+        and p.oid in (
+          to_regprocedure(
+            'public._admit_hotmart_purchase_approved_base(text,jsonb)'
+          ),
+          to_regprocedure(
+            'public._admit_hotmart_cart_abandonment_base(text,jsonb)'
+          )
+        )
+    """)
+    require(
+        base_search_paths == (
+            "_admit_hotmart_cart_abandonment_base="
+            "search_path=pg_catalog, public, pg_temp|"
+            "_admit_hotmart_purchase_approved_base="
+            "search_path=pg_catalog, public, pg_temp"
+        ),
+        f"base search paths are not catalog-first: {base_search_paths}",
+    )
+    print("hotmart_intent_base_search_paths=OK")
     legacy_intent = insert_intent("legacy@example.test", None)
     legacy_payload = cart_payload(
         "corr-cart-legacy-shim-001",
