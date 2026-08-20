@@ -329,12 +329,15 @@ outbound sigue pendiente. Ver
 ## Ingreso autoritativo de abandono de carrito
 
 `PURCHASE_OUT_OF_SHOPPING_CART` se autentica por Hottok y se valida contra el contrato
-Hotmart `2.0.0` antes de reservar identidad durable. En el corte local pendiente de
-Cloud, la frontera canónica es `admit_and_correlate_hotmart_cart_abandonment`: inserta
+Hotmart `2.0.0` antes de reservar identidad durable. En Supabase Cloud, la frontera
+canónica es `admit_and_correlate_hotmart_cart_abandonment`: inserta
 el evento, vincula identidad derivada del payload y produce correlación durable en una
-sola transacción. La firma histórica `admit_hotmart_cart_abandonment` permanece durante
-la fase expand como shim correlacionado para réplicas viejas; no permite omitir la
-correlación y se revocará en una fase contract posterior al rollout.
+sola transacción. La firma histórica `admit_hotmart_cart_abandonment` se mantuvo durante
+la fase expand como shim correlacionado para réplicas viejas. Tras comprobar cero
+réplicas legacy activas, `20260820000400`, implementada localmente y pendiente de
+aplicación Cloud, revoca su ejecución para `service_role`; lo mismo aplica al shim
+histórico de compra aprobada. Los wrappers correlacionados serán las únicas fronteras
+Hotmart autorizadas para ese rol después del contract.
 
 La resolución consulta email y teléfono y falla cerrado si apuntan a contactos distintos o si un identificador tiene múltiples dueños. La planificación sigue siendo asíncrona, pero un trigger de base valida en la misma transacción que evento, contacto, producto, oferta y timestamp coincidan exactamente antes de asociar el evento con un caso. Conflictos semánticos no resueltos bloquean globalmente el inicio de requests outbound. El contrato detallado está en `docs/contracts/hotmart-cart-abandonment-v1.md`.
 
@@ -470,12 +473,14 @@ con resultado externo incierto conservan su estado `delivery_unknown` para no
 confundir ausencia de confirmación con ausencia de efecto.
 
 El contrato detallado se encuentra en
-[Compra aprobada de Hotmart V1](contracts/hotmart-purchase-approved-v1.md). La
-implementación y el DDL están presentes en Supabase, con permisos efectivos y
-ambos órdenes de eventos verificados mediante un probe transaccional con
-rollback. Esto no prueba que el bridge desplegado use esta versión ni que una
-compra real haya sido verificada end-to-end. La evidencia se registra en
-[Postflight Supabase del 2026-08-08](operations/2026-08-08-hotmart-purchase-cancellation-supabase.md).
+[Compra aprobada de Hotmart V1](contracts/hotmart-purchase-approved-v1.md). El DDL
+expand, el bridge correlacionado y el E2E controlado `lead → abandono → compra` están
+verificados en Cloud. Esa reproducción autenticada no fue originada por Hotmart. La
+imagen contract sin métodos legacy, la aplicación/postflight de `20260820000400` y una
+entrega originada oficialmente por Hotmart siguen pendientes y requieren evidencia
+separada. Los cortes relevantes se registran en
+[Postflight Supabase del 2026-08-08](operations/2026-08-08-hotmart-purchase-cancellation-supabase.md)
+y [E2E Cloud del 2026-08-20](operations/2026-08-20-hotmart-intent-correlation-cloud-e2e.md).
 
 ## Decisiones arquitectónicas
 

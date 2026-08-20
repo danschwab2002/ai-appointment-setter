@@ -675,6 +675,44 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'authoritative_confirmed_abandonment_classification'
+    union all
+    select
+        '20260820000400',
+        '20260820000400_hotmart_intent_correlation_contract.sql',
+        (
+            not has_function_privilege(
+                'service_role',
+                to_regprocedure(
+                    'public.admit_hotmart_purchase_approved(text,jsonb)'
+                ),
+                'execute'
+            )
+            and not has_function_privilege(
+                'service_role',
+                to_regprocedure(
+                    'public.admit_hotmart_cart_abandonment(text,jsonb)'
+                ),
+                'execute'
+            )
+        )::int
+        + (
+            has_function_privilege(
+                'service_role',
+                to_regprocedure(
+                    'public.admit_and_correlate_hotmart_purchase_approved(text,jsonb,text,text)'
+                ),
+                'execute'
+            )
+            and has_function_privilege(
+                'service_role',
+                to_regprocedure(
+                    'public.admit_and_correlate_hotmart_cart_abandonment(text,jsonb,text,text)'
+                ),
+                'execute'
+            )
+        )::int,
+        2,
+        'legacy_hotmart_shims_revoked_correlated_wrappers_preserved'
 )
 select
     version,

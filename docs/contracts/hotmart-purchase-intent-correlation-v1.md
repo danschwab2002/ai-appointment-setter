@@ -22,14 +22,25 @@ correlación en una sola transacción. El RPC exact-ID
 `correlate_hotmart_purchase_intent(uuid)` permite replay controlado y devuelve el ledger
 existente sin reescribirlo.
 
-La migración es una fase **expand** compatible con rolling deploy. Las firmas históricas
+La migración inicial fue una fase **expand** compatible con rolling deploy. Las firmas históricas
 `admit_hotmart_purchase_approved(text,jsonb)` y
-`admit_hotmart_cart_abandonment(text,jsonb)` se conservan temporalmente como shims
+`admit_hotmart_cart_abandonment(text,jsonb)` se conservaron temporalmente como shims
 seguros: derivan la identidad del payload y delegan en los wrappers correlacionados.
-Por eso el orden permitido es migración primero y bridge después; réplicas viejas y
-nuevas producen la misma correlación atómica. Las implementaciones base renombradas y
-los helpers no son ejecutables por `service_role`. Una futura fase **contract**, sólo
-después de comprobar cero réplicas viejas, revocará los dos shims.
+Para **expand**, el orden permitido fue migración primero y bridge después; réplicas
+viejas y nuevas producían la misma correlación atómica. Las implementaciones base
+renombradas y los helpers no son ejecutables por `service_role`.
+
+Para **contract**, el orden es deliberadamente inverso y obligatorio:
+
+1. desplegar el bridge que ya no expone métodos legacy;
+2. verificar imagen/task sanos y cero réplicas o servicios legacy activos;
+3. aplicar `20260820000400` para revocar ambos shims de `service_role`;
+4. comprobar rechazo legacy, wrappers correlacionados operativos y delta comercial cero.
+
+El prerrequisito de cero réplicas pre-correlación activas ya tiene gate runtime. Los
+cuatro pasos contract quedan pendientes del merge y despliegue de la imagen contract;
+`20260820000400` está implementada localmente pero aún no aplicada en Cloud. Los wrappers
+correlacionados son las únicas fronteras Hotmart autorizadas en el contrato final.
 
 ## 2. Scope server-side
 
@@ -119,8 +130,8 @@ Todos los candidatos quedan con `activation_authorized=false`:
 - `webhook_event_id` es la clave primaria del ledger de correlación;
 - un replay exact-ID devuelve el resultado ya persistido;
 - correlaciones y candidatos rechazan `UPDATE` y `DELETE`;
-- `service_role` puede ejecutar los dos wrappers, el RPC exact-ID y, durante la fase
-  expand, los dos shims históricos seguros;
+- después de aplicar `20260820000400`, `service_role` puede ejecutar los dos wrappers y
+  el RPC exact-ID, pero no los dos shims históricos;
 - `anon` y `authenticated` no tienen acceso a tablas ni RPC;
 - los helpers internos no son ejecutables por roles API ni por `service_role`;
 - un replay con el mismo payload y otra identidad canónica falla y conserva el ledger.

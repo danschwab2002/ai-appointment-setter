@@ -171,7 +171,7 @@ def main() -> None:
     """)
     event_id = query("""
       select webhook_event_id
-      from public.admit_hotmart_cart_abandonment(
+      from public.admit_and_correlate_hotmart_cart_abandonment(
         'runtime-real-event',
         jsonb_build_object(
           'id','runtime-real-event',
@@ -185,7 +185,9 @@ def main() -> None:
             'product',jsonb_build_object('id',3526906,'name','Product One'),
             'offer',jsonb_build_object('code','offer-1')
           )
-        )
+        ),
+        'runtime@example.com',
+        '5491100000200'
       )
     """)
     query(f"""

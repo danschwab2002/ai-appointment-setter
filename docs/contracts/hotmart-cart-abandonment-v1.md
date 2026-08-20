@@ -1,6 +1,8 @@
 # Contrato de ingreso de abandono de carrito Hotmart v1
 
-- **Estado:** Implementado localmente; pendiente de despliegue y E2E remoto
+- **Estado:** Expand, bridge y E2E controlado verificados en Cloud; contract
+  `20260820000400` implementado localmente y pendiente de aplicación/postflight Cloud.
+  Sigue pendiente evidencia de una entrega originada oficialmente por Hotmart.
 - **Evento:** `PURCHASE_OUT_OF_SHOPPING_CART`
 - **Versión de payload:** `2.0.0`
 - **Endpoint:** `POST /webhooks/hotmart`
@@ -43,8 +45,9 @@ procesable con `invalid_cart_abandonment_admission_input`.
 La frontera canónica es
 `public.admit_and_correlate_hotmart_cart_abandonment(text,jsonb,text,text)`, que
 admite y correlaciona atómicamente. Durante el rolling deploy, la firma histórica
-`public.admit_hotmart_cart_abandonment(text,jsonb)` permanece como shim seguro:
-deriva la identidad exclusivamente del payload y delega en la frontera canónica.
+`public.admit_hotmart_cart_abandonment(text,jsonb)` permaneció como shim seguro. La
+fase contract `20260820000400`, implementada localmente y pendiente de aplicación Cloud,
+revoca su ejecución para `service_role` tras verificar que no quedaban réplicas viejas.
 
 La tupla semántica canónica está formada por:
 
@@ -102,7 +105,7 @@ Los blockers durables de opt-out/denegación y los conflictos semánticos se ree
 
 ## Privilegios
 
-Los wrappers canónicos y, sólo durante la fase expand, el shim histórico pueden
-ejecutarse con `service_role`. Las implementaciones base, funciones internas de
-identidad, validación y guards no tienen `EXECUTE` público. El shim se revocará en una
-migración contract después de confirmar que no quedan réplicas viejas.
+Sólo los wrappers canónicos pueden ejecutarse con `service_role`. Los shims históricos,
+las implementaciones base y las funciones internas de identidad, validación y guards no
+tienen `EXECUTE` para roles API. La revocación contract se materializa en `20260820000400`.
+Hasta aplicar esa migración en Cloud, este párrafo describe el contrato final pendiente.

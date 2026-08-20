@@ -13,6 +13,10 @@ CONFIRMED_ABANDONMENT_MIGRATION = (
     Path(__file__).parents[1]
     / "supabase/migrations/20260820000300_hotmart_confirmed_abandonment.sql"
 )
+CONTRACT_MIGRATION = (
+    Path(__file__).parents[1]
+    / "supabase/migrations/20260820000400_hotmart_intent_correlation_contract.sql"
+)
 
 
 def _sql() -> str:
@@ -186,3 +190,30 @@ def test_confirmed_abandonment_migration_renames_state_forward_only() -> None:
     assert "to_regprocedure('public.correlate_hotmart_purchase_intent(uuid)')" in compact_sql
     assert "alter function public.correlate_hotmart_purchase_intent(uuid) set search_path = pg_catalog, public, pg_temp" in compact_sql
     assert "grant " not in sql
+
+
+def test_contract_migration_revokes_only_legacy_service_role_entrypoints() -> None:
+    sql = CONTRACT_MIGRATION.read_text().lower()
+    compact_sql = " ".join(sql.split())
+
+    assert "begin;" in sql and "commit;" in sql
+    for signature in (
+        "public.admit_hotmart_purchase_approved(text, jsonb)",
+        "public.admit_hotmart_cart_abandonment(text, jsonb)",
+    ):
+        assert f"revoke all on function {signature} from service_role" in compact_sql
+    assert "admit_and_correlate_hotmart_purchase_approved" not in sql
+    assert "admit_and_correlate_hotmart_cart_abandonment" not in sql
+    assert "grant " not in sql
+
+
+def test_full_stack_probes_do_not_call_legacy_hotmart_entrypoints() -> None:
+    probe_root = Path(__file__).parent / "sql/followup_engine"
+    for filename in (
+        "validate_purchase.mjs",
+        "validate_pilot_boundary.mjs",
+        "validate_pilot_boundary_runtime.mjs",
+    ):
+        source = (probe_root / filename).read_text()
+        assert "public.admit_hotmart_purchase_approved(" not in source
+        assert "public.admit_hotmart_cart_abandonment(" not in source

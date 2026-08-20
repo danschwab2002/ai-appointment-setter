@@ -7,8 +7,6 @@ expected_service_role(signature) as (
         ('public.activate_lancemos_pilot_scope_version(text, integer, bigint, text, text)'),
         ('public.admit_and_correlate_hotmart_cart_abandonment(text, jsonb, text, text)'),
         ('public.admit_and_correlate_hotmart_purchase_approved(text, jsonb, text, text)'),
-        ('public.admit_hotmart_cart_abandonment(text, jsonb)'),
-        ('public.admit_hotmart_purchase_approved(text, jsonb)'),
         ('public.admit_precheckout_form_submission(text, jsonb, jsonb)'),
         ('public.admit_observed_lead_precheckout(text, jsonb, jsonb)'),
         ('public.begin_precheckout_test_first_touch(text, uuid, text, bigint, bigint)'),

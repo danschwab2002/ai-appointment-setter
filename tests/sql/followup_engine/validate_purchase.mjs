@@ -408,7 +408,7 @@ console.log('AMBIGUOUS_INVERSE_PURCHASE_FAILS_CLOSED_OK');
 let malformedAdmissionBlocked = false;
 try {
   await db.query(`
-    select * from public.admit_hotmart_purchase_approved(
+    select * from public._admit_hotmart_purchase_approved_base(
       'purchase-semantic-malformed',
       jsonb_build_object(
         'id', 'purchase-semantic-malformed',
@@ -434,7 +434,7 @@ if (!malformedAdmissionBlocked) {
   throw new Error('unprocessable purchase was admitted');
 }
 const correctedAfterMalformed = await db.query(`
-  select * from public.admit_hotmart_purchase_approved(
+  select * from public._admit_hotmart_purchase_approved_base(
     'purchase-semantic-corrected-after-malformed',
     jsonb_build_object(
       'id', 'purchase-semantic-corrected-after-malformed',
@@ -485,7 +485,7 @@ await db.exec(`
   );
 `);
 const correctedLegacy = await db.query(`
-  select * from public.admit_hotmart_purchase_approved(
+  select * from public._admit_hotmart_purchase_approved_base(
     'purchase-semantic-legacy-corrected',
     jsonb_build_object(
       'id', 'purchase-semantic-legacy-corrected',
@@ -527,7 +527,7 @@ const plan7 = await plan({
   contactId: 'cccccccc-cccc-4ccc-8ccc-ccccccccccc7',
 });
 const firstAdmission = await db.query(`
-  select * from public.admit_hotmart_purchase_approved(
+  select * from public._admit_hotmart_purchase_approved_base(
     'purchase-semantic-1',
     jsonb_build_object(
       'id', 'purchase-semantic-1',
@@ -554,7 +554,7 @@ if (firstAdmission.rows[0]?.outcome !== 'inserted') {
   throw new Error(`first semantic admission failed: ${JSON.stringify(firstAdmission.rows[0])}`);
 }
 const exactReplay = await db.query(`
-  select * from public.admit_hotmart_purchase_approved(
+  select * from public._admit_hotmart_purchase_approved_base(
     'purchase-semantic-exact-replay',
     jsonb_build_object(
       'id', 'purchase-semantic-exact-replay',
@@ -597,7 +597,7 @@ if (exactReplay.rows[0]?.outcome !== 'duplicate'
 console.log('PURCHASE_SEMANTIC_EXACT_REPLAY_OK');
 
 const semanticConflict = await db.query(`
-  select * from public.admit_hotmart_purchase_approved(
+  select * from public._admit_hotmart_purchase_approved_base(
     'purchase-semantic-corrected',
     jsonb_build_object(
       'id', 'purchase-semantic-corrected',
@@ -686,7 +686,7 @@ await db.exec(`
   where incoming_external_event_id = 'purchase-semantic-corrected';
 `);
 const replayAfterResolution = await db.query(`
-  select * from public.admit_hotmart_purchase_approved(
+  select * from public._admit_hotmart_purchase_approved_base(
     'purchase-semantic-corrected',
     jsonb_build_object(
       'id', 'purchase-semantic-corrected',

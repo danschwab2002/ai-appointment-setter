@@ -724,49 +724,6 @@ class SupabaseClient:
             raise SupabaseError("webhook_event_insert_invalid_cardinality")
         return InsertResult(inserted=True)
 
-    async def admit_hotmart_purchase_approved(
-        self,
-        *,
-        external_event_id: str,
-        payload: dict[str, Any],
-    ) -> PurchaseAdmissionResult:
-        """Admit a purchase with transaction-level semantic replay checks."""
-        response = await self._request(
-            "POST",
-            "/rest/v1/rpc/admit_hotmart_purchase_approved",
-            content=json.dumps(
-                {
-                    "p_external_event_id": external_event_id,
-                    "p_payload": payload,
-                },
-                ensure_ascii=False,
-            ),
-        )
-        if response.status_code != 200:
-            raise SupabaseError(
-                f"purchase_admission_failed: HTTP {response.status_code}"
-            )
-        try:
-            rows = response.json()
-        except ValueError as exc:
-            raise SupabaseError("purchase_admission_invalid_json") from exc
-        if (
-            not isinstance(rows, list)
-            or len(rows) != 1
-            or not isinstance(rows[0], dict)
-        ):
-            raise SupabaseError("purchase_admission_invalid_shape")
-        outcome = rows[0].get("outcome")
-        webhook_event_id = rows[0].get("webhook_event_id")
-        if outcome not in {"inserted", "duplicate", "semantic_conflict"}:
-            raise SupabaseError("purchase_admission_invalid_outcome")
-        if not isinstance(webhook_event_id, str) or not webhook_event_id:
-            raise SupabaseError("purchase_admission_invalid_event_id")
-        return PurchaseAdmissionResult(
-            outcome=outcome,
-            webhook_event_id=webhook_event_id,
-        )
-
     async def admit_and_correlate_hotmart_purchase_approved(
         self,
         *,
@@ -982,45 +939,6 @@ class SupabaseClient:
         if not isinstance(result_id, str) or not isinstance(result_status, str):
             raise SupabaseError(f"{operation}_invalid_row")
         return PrecheckoutFirstTouchFinish(result_id, result_status)
-
-    async def admit_hotmart_cart_abandonment(
-        self,
-        *,
-        external_event_id: str,
-        payload: dict[str, Any],
-    ) -> CartAbandonmentAdmissionResult:
-        """Admit an abandonment with normalized semantic replay checks."""
-        response = await self._request(
-            "POST",
-            "/rest/v1/rpc/admit_hotmart_cart_abandonment",
-            content=json.dumps(
-                {
-                    "p_external_event_id": external_event_id,
-                    "p_payload": payload,
-                },
-                ensure_ascii=False,
-            ),
-        )
-        if response.status_code != 200:
-            raise SupabaseError(
-                f"cart_abandonment_admission_failed: HTTP {response.status_code}"
-            )
-        rows = _response_rows(
-            response,
-            operation="cart_abandonment_admission",
-        )
-        if len(rows) != 1:
-            raise SupabaseError("cart_abandonment_admission_invalid_shape")
-        outcome = rows[0].get("outcome")
-        webhook_event_id = rows[0].get("webhook_event_id")
-        if outcome not in {"inserted", "duplicate", "semantic_conflict"}:
-            raise SupabaseError("cart_abandonment_admission_invalid_outcome")
-        if not isinstance(webhook_event_id, str) or not webhook_event_id:
-            raise SupabaseError("cart_abandonment_admission_invalid_event_id")
-        return CartAbandonmentAdmissionResult(
-            outcome=outcome,
-            webhook_event_id=webhook_event_id,
-        )
 
     async def admit_and_correlate_hotmart_cart_abandonment(
         self,

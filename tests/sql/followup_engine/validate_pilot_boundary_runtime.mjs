@@ -99,8 +99,15 @@ await db.exec(`
 `);
 
 const admitted = one((await db.query(
-  'select * from public.admit_hotmart_cart_abandonment($1,$2::jsonb)',
-  [payload.id, JSON.stringify(payload)],
+  `select * from public.admit_and_correlate_hotmart_cart_abandonment(
+    $1, $2::jsonb, $3, $4
+  )`,
+  [
+    payload.id,
+    JSON.stringify(payload),
+    'pilot-runtime@example.com',
+    '5491100000100',
+  ],
 )).rows, 'admission');
 const eventId = admitted.webhook_event_id;
 await db.query(`
