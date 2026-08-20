@@ -161,8 +161,10 @@ async function admitCartAbandonment(externalEventId, email, phone) {
     },
   };
   const result = await db.query(
-    'select * from public.admit_hotmart_cart_abandonment($1, $2::jsonb)',
-    [externalEventId, JSON.stringify(payload)],
+    `select * from public.admit_and_correlate_hotmart_cart_abandonment(
+      $1, $2::jsonb, $3, $4
+    )`,
+    [externalEventId, JSON.stringify(payload), email, phone],
   );
   const admitted = assertOne(result.rows, 'cart abandonment admission');
   if (admitted.outcome !== 'inserted') throw new Error('cart abandonment was not inserted');

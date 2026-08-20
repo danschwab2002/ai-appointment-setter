@@ -436,7 +436,7 @@ def main() -> None:
           'execute'
         )
     """)
-    require(legacy_acl == "t|t", f"safe expand shims unavailable: {legacy_acl}")
+    require(legacy_acl == "f|f", f"legacy shims still executable: {legacy_acl}")
     base_search_paths = query("""
       select string_agg(
         p.proname||'='||array_to_string(p.proconfig,','),
@@ -463,31 +463,29 @@ def main() -> None:
         f"base search paths are not catalog-first: {base_search_paths}",
     )
     print("hotmart_intent_base_search_paths=OK")
-    legacy_intent = insert_intent("legacy@example.test", None)
     legacy_payload = cart_payload(
         "corr-cart-legacy-shim-001",
         email="legacy@example.test",
         phone=None,
     )
-    legacy_result = query(
+    legacy_count_before = query(
+        "select count(*) from public.webhook_events where external_event_id="
+        "'corr-cart-legacy-shim-001'"
+    )
+    query(
         "set role service_role; select outcome||'|'||webhook_event_id "
         "from public.admit_hotmart_cart_abandonment("
-        f"'corr-cart-legacy-shim-001',{json_literal(legacy_payload)})"
-    )
-    legacy_outcome, legacy_event = legacy_result.split("|")
-    require(legacy_outcome == "inserted", f"legacy shim admission failed: {legacy_result}")
-    require(
-        correlation(legacy_event) == f"resolved|{legacy_intent}|email|1|f",
-        "legacy shim did not correlate atomically",
+        f"'corr-cart-legacy-shim-001',{json_literal(legacy_payload)})",
+        expect_failure=True,
     )
     require(
-        query(
-            "select (select count(*) from public.recovery_cases),"
-            "(select count(*) from public.followup_sequences),"
-            "(select count(*) from public.scheduled_actions)"
-        ) == "0|0|0",
-        "legacy shim created commercial effects",
+        legacy_count_before == "0" and query(
+            "select count(*) from public.webhook_events where external_event_id="
+            "'corr-cart-legacy-shim-001'"
+        ) == "0",
+        "revoked legacy shim created durable state",
     )
+    print("hotmart_intent_contract_legacy_denied=OK")
     require(
         query(
             "select public._normalize_hotmart_purchase_intent_phone(' +573009999999') "
@@ -506,7 +504,7 @@ def main() -> None:
         numeric_email_identity == "NULL|573008888888",
         f"Python/SQL identity rules diverged: {numeric_email_identity}",
     )
-    print("hotmart_intent_rolling_expand_shim=OK")
+    print("hotmart_intent_payload_identity_edge_cases=OK")
     print("hotmart_intent_python_sql_identity_parity=OK")
     query(
         "update public.hotmart_purchase_intent_correlations set reason_code='tampered' "

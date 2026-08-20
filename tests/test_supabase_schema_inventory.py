@@ -83,19 +83,34 @@ def test_hotmart_base_search_path_fingerprint_uses_exact_signatures() -> None:
     assert "proname in" not in fingerprint
 
 
+def test_hotmart_contract_fingerprint_uses_exact_legacy_and_wrapper_signatures() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    fingerprint = sql.split("'20260820000400'", 1)[1].split(")\nselect", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", fingerprint)
+
+    for signature in (
+        "public.admit_hotmart_purchase_approved(text,jsonb)",
+        "public.admit_hotmart_cart_abandonment(text,jsonb)",
+        "public.admit_and_correlate_hotmart_purchase_approved(text,jsonb,text,text)",
+        "public.admit_and_correlate_hotmart_cart_abandonment(text,jsonb,text,text)",
+    ):
+        assert f"to_regprocedure('{signature}')" in compact_fingerprint
+    assert "proname" not in fingerprint
+
+
 def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
 
-    assert len(allowlisted) == 35
+    assert len(allowlisted) == 33
     assert len(allowlisted) == len(set(allowlisted))
     assert "admit_precheckout_form_submission(text, jsonb, jsonb)" in allowlisted
     assert "admit_observed_lead_precheckout(text, jsonb, jsonb)" in allowlisted
     assert "correlate_hotmart_purchase_intent(uuid)" in allowlisted
     assert "admit_and_correlate_hotmart_purchase_approved(text, jsonb, text, text)" in allowlisted
     assert "admit_and_correlate_hotmart_cart_abandonment(text, jsonb, text, text)" in allowlisted
-    assert "admit_hotmart_purchase_approved(text, jsonb)" in allowlisted
-    assert "admit_hotmart_cart_abandonment(text, jsonb)" in allowlisted
+    assert "admit_hotmart_purchase_approved(text, jsonb)" not in allowlisted
+    assert "admit_hotmart_cart_abandonment(text, jsonb)" not in allowlisted
     assert "begin_precheckout_test_first_touch(text, uuid, text, bigint, bigint)" in allowlisted
     assert "finish_precheckout_test_first_touch(uuid, text, bigint, bigint, text)" in allowlisted
     assert "has_function_privilege('anon'" in sql

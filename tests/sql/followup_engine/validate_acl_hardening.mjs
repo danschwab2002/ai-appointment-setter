@@ -59,8 +59,6 @@ const rows = await db.query(`
       ('activate_lancemos_pilot_scope_version(text,integer,bigint,text,text)'),
       ('admit_and_correlate_hotmart_cart_abandonment(text,jsonb,text,text)'),
       ('admit_and_correlate_hotmart_purchase_approved(text,jsonb,text,text)'),
-      ('admit_hotmart_cart_abandonment(text,jsonb)'),
-      ('admit_hotmart_purchase_approved(text,jsonb)'),
       ('admit_observed_lead_precheckout(text,jsonb,jsonb)'),
       ('admit_precheckout_form_submission(text,jsonb,jsonb)'),
       ('begin_precheckout_test_first_touch(text,uuid,text,bigint,bigint)'),
@@ -111,7 +109,7 @@ const rows = await db.query(`
 `);
 const result = rows.rows[0];
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 35) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 33) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const inventory = await db.query(readFileSync(
