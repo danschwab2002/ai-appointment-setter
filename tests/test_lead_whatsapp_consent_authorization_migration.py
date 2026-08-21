@@ -37,9 +37,17 @@ def test_v1_1_authority_is_derived_from_exact_canonical_evidence() -> None:
 def test_signed_raw_identity_is_bound_to_the_canonical_identity() -> None:
     sql = _sql()
 
+    assert "{created_at}" in sql
+    assert "{source,site}" in sql
+    assert "{source,landing_id}" in sql
     assert "{data,buyer,email}" in sql
     assert "{data,buyer,phone_country_code}" in sql
     assert "{data,buyer,phone_national}" in sql
+    assert "{data,product,hotlink}" in sql
+    assert "{data,offer,code}" in sql
+    assert "{data,checkout_url}" in sql
+    assert "{dedupe_key}" in sql
+    assert "observed_precheckout_raw_canonical_mismatch" in sql
     assert "observed_precheckout_identity_mismatch" in sql
 
 

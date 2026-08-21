@@ -178,6 +178,20 @@ def test_v1_1_signed_consent_reaches_canonical_admission_but_response_stays_clos
     assert canonical["assurance"]["activation_authorized"] is True  # type: ignore[index]
 
 
+def test_contract_version_with_whitespace_is_rejected_before_rpc() -> None:
+    for version in ("1.0.0 ", "1.1.0 "):
+        supabase = _FakeSupabase()
+        app = create_app(_settings(), supabase_client=supabase)  # type: ignore[arg-type]
+        payload = _authorized_payload() if version.startswith("1.1.0") else _payload()
+        payload["version"] = version
+
+        response = _post(app, payload)
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "invalid_lead_precheckout_payload"
+        assert supabase.calls == []
+
+
 def test_equivalent_float_price_reaches_rpc_in_canonical_form() -> None:
     payload = _payload()
     payload["data"]["product"]["price"] = 49.0  # type: ignore[index]

@@ -42,6 +42,7 @@ El bridge sólo deriva autorización durable cuando también se cumplen:
 - teléfono E.164 válido y consistente con país/prefijo;
 - copy version exacta;
 - identidad raw firmada igual a la identidad canónica persistida;
+- scope, comercio y timestamp raw firmados iguales a su representación canónica;
 - identidad no conflictiva.
 
 Para una admisión V1.1.0 válida, la representación canónica fija:

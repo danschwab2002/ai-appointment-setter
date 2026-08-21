@@ -32,6 +32,12 @@ declare
     v_contract_version text;
     v_contact_authorized boolean;
     v_activation_authorized boolean;
+    v_raw_submitted_at timestamptz;
+    v_raw_price numeric;
+    v_raw_email text;
+    v_raw_phone_country_code text;
+    v_raw_phone_national text;
+    v_trim_chars text := E' \t\n\r\f' || chr(11);
 begin
     if p_external_submission_id is null
        or btrim(p_external_submission_id) = ''
@@ -55,11 +61,21 @@ begin
        or jsonb_typeof(p_canonical_payload #> '{source,tenant_ref}') is distinct from 'string'
        or jsonb_typeof(p_canonical_payload #> '{source,funnel_ref}') is distinct from 'string'
        or jsonb_typeof(p_canonical_payload #> '{source,landing_ref}') is distinct from 'string'
+       or jsonb_typeof(p_canonical_payload #> '{source,page_url}') is distinct from 'string'
+       or jsonb_typeof(p_canonical_payload #> '{source,aliado}') is distinct from 'string'
        or jsonb_typeof(p_canonical_payload #> '{identity,email}') is distinct from 'string'
        or jsonb_typeof(p_canonical_payload #> '{identity,phone_valid}') is distinct from 'boolean'
+       or jsonb_typeof(p_canonical_payload #> '{identity,phone_country_iso}') is distinct from 'string'
        or jsonb_typeof(p_canonical_payload #> '{lead,full_name}') is distinct from 'string'
        or jsonb_typeof(p_canonical_payload #> '{commerce,product_ref}') is distinct from 'string'
+       or jsonb_typeof(p_canonical_payload #> '{commerce,product_name}') is distinct from 'string'
        or jsonb_typeof(p_canonical_payload #> '{commerce,offer_ref}') is distinct from 'string'
+       or jsonb_typeof(p_canonical_payload #> '{commerce,price}') is distinct from 'string'
+       or jsonb_typeof(p_canonical_payload #> '{commerce,currency}') is distinct from 'string'
+       or jsonb_typeof(p_canonical_payload #> '{commerce,checkout_url}') is distinct from 'string'
+       or jsonb_typeof(p_canonical_payload #> '{dedupe_key}') is distinct from 'string'
+       or jsonb_typeof(p_canonical_payload #> '{consent,terms_accepted}') is distinct from 'boolean'
+       or jsonb_typeof(p_canonical_payload #> '{consent,privacy_accepted}') is distinct from 'boolean'
        or jsonb_typeof(p_canonical_payload #> '{consent,marketing_optin}') is distinct from 'boolean'
        or jsonb_typeof(p_canonical_payload #> '{consent,whatsapp_contact}') is distinct from 'boolean'
        or jsonb_typeof(p_canonical_payload #> '{consent,copy_version}') is distinct from 'string'
@@ -68,6 +84,8 @@ begin
        or jsonb_typeof(p_canonical_payload #> '{assurance,activation_authorized}') is distinct from 'boolean'
        or p_canonical_payload #>> '{assurance,provisional}' is distinct from 'false'
        or p_canonical_payload #>> '{assurance,provider_observed}' is distinct from 'true'
+       or p_canonical_payload #>> '{consent,terms_accepted}' is distinct from 'false'
+       or p_canonical_payload #>> '{consent,privacy_accepted}' is distinct from 'false'
        or p_canonical_payload #>> '{source,tenant_ref}' is distinct from 'lancemos'
        or p_canonical_payload #>> '{source,funnel_ref}' is distinct from 'psicologajohanna'
        or p_canonical_payload #>> '{source,landing_ref}' is distinct from 'ads-a'
@@ -107,7 +125,10 @@ begin
     v_contact_authorized := (p_canonical_payload #>> '{consent,whatsapp_contact}')::boolean;
     v_activation_authorized := (p_canonical_payload #>> '{assurance,activation_authorized}')::boolean;
 
-    v_email := nullif(lower(btrim(p_canonical_payload #>> '{identity,email}')), '');
+    v_email := nullif(lower(btrim(
+        p_canonical_payload #>> '{identity,email}',
+        v_trim_chars
+    )), '');
     v_phone := nullif(p_canonical_payload #>> '{identity,phone}', '');
     begin
         v_submitted_at := (p_canonical_payload #>> '{submitted_at}')::timestamptz;
@@ -119,12 +140,92 @@ begin
        or v_email !~ '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$'
        or (v_phone is not null and v_phone !~ '^[1-9][0-9]{7,14}$')
        or v_submitted_at is null
-       or nullif(btrim(p_canonical_payload #>> '{lead,full_name}'), '') is null then
+       or nullif(btrim(
+            p_canonical_payload #>> '{lead,full_name}',
+            v_trim_chars
+       ), '') is null then
         raise exception using errcode = '22023', message = 'observed_precheckout_invalid_canonical_payload';
     end if;
 
-    if nullif(lower(btrim(p_raw_payload #>> '{data,buyer,email}')), '')
-           is distinct from v_email
+    if jsonb_typeof(p_raw_payload #> '{created_at}') is distinct from 'string'
+       or jsonb_typeof(p_raw_payload #> '{data,product,price}') is distinct from 'number' then
+        raise exception using
+            errcode = '22023',
+            message = 'observed_precheckout_raw_canonical_mismatch';
+    end if;
+
+    begin
+        v_raw_submitted_at := (btrim(
+            p_raw_payload #>> '{created_at}',
+            v_trim_chars
+        ))::timestamptz;
+        v_raw_price := (p_raw_payload #>> '{data,product,price}')::numeric;
+    exception when others then
+        raise exception using
+            errcode = '22023',
+            message = 'observed_precheckout_raw_canonical_mismatch';
+    end;
+
+    if v_raw_submitted_at is distinct from v_submitted_at
+       or btrim(p_raw_payload #>> '{source,system}', v_trim_chars)
+           is distinct from 'landing'
+       or btrim(p_raw_payload #>> '{source,site}', v_trim_chars)
+           is distinct from p_canonical_payload #>> '{source,funnel_ref}'
+       or btrim(p_raw_payload #>> '{source,landing_id}', v_trim_chars)
+           is distinct from p_canonical_payload #>> '{source,landing_ref}'
+       or btrim(p_raw_payload #>> '{source,page_url}', v_trim_chars)
+           is distinct from p_canonical_payload #>> '{source,page_url}'
+       or btrim(p_raw_payload #>> '{source,aliado}', v_trim_chars)
+           is distinct from p_canonical_payload #>> '{source,aliado}'
+       or btrim(p_raw_payload #>> '{data,buyer,name}', v_trim_chars)
+           is distinct from p_canonical_payload #>> '{lead,full_name}'
+       or upper(btrim(
+            p_raw_payload #>> '{data,checkout_country,iso}',
+            v_trim_chars
+       )) is distinct from p_canonical_payload #>> '{identity,phone_country_iso}'
+       or btrim(
+            p_raw_payload #>> '{data,checkout_country,source}',
+            v_trim_chars
+       ) is distinct from 'phone_country_code'
+       or lower(btrim(
+            p_raw_payload #>> '{data,product,hotlink}',
+            v_trim_chars
+       )) is distinct from lower(p_canonical_payload #>> '{commerce,product_ref}')
+       or p_raw_payload #> '{data,product,id}' is distinct from 'null'::jsonb
+       or btrim(p_raw_payload #>> '{data,product,name}', v_trim_chars)
+           is distinct from p_canonical_payload #>> '{commerce,product_name}'
+       or v_raw_price is distinct from (
+            p_canonical_payload #>> '{commerce,price}'
+       )::numeric
+       or upper(btrim(
+            p_raw_payload #>> '{data,product,currency}',
+            v_trim_chars
+       )) is distinct from upper(p_canonical_payload #>> '{commerce,currency}')
+       or btrim(p_raw_payload #>> '{data,offer,code}', v_trim_chars)
+           is distinct from p_canonical_payload #>> '{commerce,offer_ref}'
+       or btrim(p_raw_payload #>> '{data,checkout_url}', v_trim_chars)
+           is distinct from p_canonical_payload #>> '{commerce,checkout_url}'
+       or btrim(p_raw_payload #>> '{dedupe_key}', v_trim_chars)
+           is distinct from p_canonical_payload #>> '{dedupe_key}' then
+        raise exception using
+            errcode = '22023',
+            message = 'observed_precheckout_raw_canonical_mismatch';
+    end if;
+
+    v_raw_email := nullif(lower(btrim(
+        p_raw_payload #>> '{data,buyer,email}',
+        v_trim_chars
+    )), '');
+    v_raw_phone_country_code := btrim(
+        p_raw_payload #>> '{data,buyer,phone_country_code}',
+        v_trim_chars
+    );
+    v_raw_phone_national := btrim(
+        p_raw_payload #>> '{data,buyer,phone_national}',
+        v_trim_chars
+    );
+
+    if v_raw_email is distinct from v_email
        or (
             v_phone is not null
             and (
@@ -134,14 +235,10 @@ begin
                 or jsonb_typeof(
                     p_raw_payload #> '{data,buyer,phone_national}'
                 ) is distinct from 'string'
-                or p_raw_payload #>> '{data,buyer,phone_country_code}'
-                    !~ '^[1-9][0-9]{0,3}$'
-                or p_raw_payload #>> '{data,buyer,phone_national}'
-                    !~ '^[0-9]{4,14}$'
-                or concat(
-                    p_raw_payload #>> '{data,buyer,phone_country_code}',
-                    p_raw_payload #>> '{data,buyer,phone_national}'
-                ) is distinct from v_phone
+                or v_raw_phone_country_code !~ '^[1-9][0-9]{0,3}$'
+                or v_raw_phone_national !~ '^[0-9]{4,14}$'
+                or concat(v_raw_phone_country_code, v_raw_phone_national)
+                    is distinct from v_phone
             )
        ) then
         raise exception using

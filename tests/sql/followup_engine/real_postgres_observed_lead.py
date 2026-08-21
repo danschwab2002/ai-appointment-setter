@@ -70,9 +70,10 @@ def payloads(
     name: str = "Maria Example",
     phone: str | None = "573001234567",
 ) -> tuple[dict[str, object], dict[str, object]]:
-    buyer: dict[str, object] = {"email": email}
+    buyer: dict[str, object] = {"name": name, "email": email}
     if phone is not None:
         buyer.update(
+            phone=f"+{phone}",
             phone_country_code=phone[:2],
             phone_national=phone[2:],
         )
@@ -81,16 +82,40 @@ def payloads(
         "event": "lead.precheckout",
         "version": "1.0.0",
         "created_at": "2026-08-19T11:00:00Z",
+        "source": {
+            "system": "landing",
+            "site": "psicologajohanna",
+            "aliado": "Psicologa Johanna",
+            "landing_id": "ads-a",
+            "page_url": "https://psicologajohanna.com/ldla/evg/vsl/ads-a",
+        },
         "data": {
-            "lead": {"email": email},
             "buyer": buyer,
+            "product": {
+                "hotlink": "F106691755G",
+                "id": None,
+                "name": "Liberate De La Ansiedad",
+                "price": 49,
+                "currency": "USD",
+            },
+            "offer": {"code": "bxjge6zq"},
+            "checkout_url": "https://pay.hotmart.com/F106691755G?off=bxjge6zq",
+            "checkout_country": {
+                "iso": "CO",
+                "source": "phone_country_code",
+            },
             "consent": {
                 "marketing_optin": False,
                 "notice": "sin consentimiento explicito - dato entregado para completar una compra",
             },
         },
+        "dedupe_key": f"psicologajohanna:bxjge6zq:{email.lower()}",
     }
-    identity: dict[str, object] = {"email": email, "phone_valid": phone is not None}
+    identity: dict[str, object] = {
+        "email": email,
+        "phone_valid": phone is not None,
+        "phone_country_iso": "CO",
+    }
     if phone is not None:
         identity["phone"] = phone
     canonical: dict[str, object] = {
@@ -102,16 +127,22 @@ def payloads(
             "tenant_ref": "lancemos",
             "funnel_ref": "psicologajohanna",
             "landing_ref": "ads-a",
+            "page_url": "https://psicologajohanna.com/ldla/evg/vsl/ads-a",
+            "aliado": "Psicologa Johanna",
         },
         "identity": identity,
         "lead": {"full_name": name},
         "commerce": {
             "product_ref": "F106691755G",
+            "product_name": "Liberate De La Ansiedad",
             "offer_ref": "bxjge6zq",
             "price": "49",
             "currency": "USD",
+            "checkout_url": "https://pay.hotmart.com/F106691755G?off=bxjge6zq",
         },
         "consent": {
+            "terms_accepted": False,
+            "privacy_accepted": False,
             "marketing_optin": False,
             "whatsapp_contact": False,
             "copy_version": "lead-precheckout-v1-no-explicit-optin",
@@ -121,6 +152,7 @@ def payloads(
             "provider_observed": True,
             "activation_authorized": False,
         },
+        "dedupe_key": f"psicologajohanna:bxjge6zq:{email.lower()}",
     }
     return raw, canonical
 
@@ -196,10 +228,12 @@ def main() -> None:
     require(duplicate == ["duplicate", inserted[1], inserted[2]], f"unexpected replay: {duplicate}")
     print("observed_lead_insert_and_replay=OK")
 
+    conflicting_raw = json.loads(json.dumps(raw1))
+    conflicting_raw["data"]["buyer"]["name"] = "Different Name"
     conflicting = json.loads(json.dumps(canonical1))
     conflicting["lead"]["full_name"] = "Different Name"
-    first_conflict = admit(str(raw1["id"]), raw1, conflicting)
-    second_conflict = admit(str(raw1["id"]), raw1, conflicting)
+    first_conflict = admit(str(raw1["id"]), conflicting_raw, conflicting)
+    second_conflict = admit(str(raw1["id"]), conflicting_raw, conflicting)
     require(first_conflict[0] == "semantic_conflict", f"unexpected conflict: {first_conflict}")
     require(second_conflict == first_conflict, "conflict replay changed")
     conflict_count = query(

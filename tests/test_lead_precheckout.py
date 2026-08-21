@@ -214,6 +214,29 @@ def test_rejects_unknown_or_extra_contract_fields() -> None:
     assert parse_lead_precheckout(payload) is None
 
 
+def test_contract_version_must_match_exactly_without_whitespace_normalization() -> None:
+    for version in ("1.0.0 ", " 1.0.0", "1.1.0 ", " 1.1.0"):
+        payload = _authorized_payload() if "1.1.0" in version else _payload()
+        payload["version"] = version
+
+        assert parse_lead_precheckout(payload) is None
+
+
+def test_identity_ascii_whitespace_uses_the_canonical_trim_rule() -> None:
+    payload = _authorized_payload()
+    payload["data"]["buyer"]["email"] = (  # type: ignore[index]
+        "\tMARIA.EXAMPLE@EXAMPLE.COM\r\n"
+    )
+    payload["data"]["buyer"]["phone_country_code"] = "\t1\n"  # type: ignore[index]
+    payload["data"]["buyer"]["phone_national"] = "\r2025550123\v"  # type: ignore[index]
+
+    parsed = parse_lead_precheckout(payload)
+
+    assert parsed is not None
+    assert parsed.normalized_email == "maria.example@example.com"
+    assert parsed.normalized_phone == "12025550123"
+
+
 def test_rejects_non_ulid_delivery_id() -> None:
     payload = _payload()
     payload["id"] = "form-submit-1"

@@ -41,6 +41,7 @@ _CONSENT_KEYS_V1_1 = {"marketing_optin", "whatsapp_contact", "copy_version"}
 _SUPPORTED_VERSIONS = {"1.0.0", "1.1.0"}
 _V1_COPY_VERSION = "lead-precheckout-v1-no-explicit-optin"
 _V1_1_COPY_VERSION = "johanna-precheckout-whatsapp-disclosure-v1"
+_ASCII_TRIM_CHARS = " \t\n\r\f\v"
 _ULID = re.compile(r"[0-9A-HJKMNP-TV-Z]{26}")
 _EMAIL = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+")
 _E164_SHAPE = re.compile(r"\+[1-9][0-9]{1,14}")
@@ -143,7 +144,7 @@ def _object(value: object, keys: set[str]) -> dict[str, Any] | None:
 def _text(value: object, *, allow_empty: bool = False) -> str | None:
     if not isinstance(value, str):
         return None
-    cleaned = value.strip()
+    cleaned = value.strip(_ASCII_TRIM_CHARS)
     if not cleaned and not allow_empty:
         return None
     return cleaned
@@ -201,7 +202,12 @@ def parse_lead_precheckout(payload: object) -> LeadPrecheckoutSubmission | None:
     offer = _object(data.get("offer"), _OFFER_KEYS)
     country = _object(data.get("checkout_country"), _COUNTRY_KEYS)
     attribution = _object(data.get("attribution"), _ATTRIBUTION_KEYS)
-    contract_version = _text(event.get("version"))
+    contract_version = event.get("version")
+    if (
+        not isinstance(contract_version, str)
+        or contract_version not in _SUPPORTED_VERSIONS
+    ):
+        return None
     consent_keys = (
         _CONSENT_KEYS_V1_1
         if contract_version == "1.1.0"

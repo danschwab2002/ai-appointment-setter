@@ -94,6 +94,12 @@ def admit_observed_lead(
     raw_copy_version: str | None = None,
     raw_email: str | None = None,
     raw_phone: str | None = None,
+    raw_phone_country_code: str | None = None,
+    raw_phone_national: str | None = None,
+    raw_version: str | None = None,
+    raw_landing_id: str | None = None,
+    raw_product_ref: str | None = None,
+    raw_submitted_at: str | None = None,
     expect_failure: bool = False,
 ) -> str:
     authorized = version == "1.1.0"
@@ -117,15 +123,41 @@ def admit_observed_lead(
     raw = {
         "id": tag,
         "event": "lead.precheckout",
-        "version": version,
+        "version": raw_version or version,
+        "created_at": raw_submitted_at or helpers.SUBMITTED_AT,
+        "source": {
+            "system": "landing",
+            "site": "psicologajohanna",
+            "aliado": "Psicologa Johanna",
+            "landing_id": raw_landing_id or "ads-a",
+            "page_url": "https://psicologajohanna.com/ldla/evg/vsl/ads-a",
+        },
         "data": {
             "buyer": {
+                "name": "Fixture Buyer",
                 "email": raw_email or email,
-                "phone_country_code": (raw_phone or phone)[:2],
-                "phone_national": (raw_phone or phone)[2:],
+                "phone": f"+{raw_phone or phone}",
+                "phone_country_code": (
+                    raw_phone_country_code or (raw_phone or phone)[:2]
+                ),
+                "phone_national": raw_phone_national or (raw_phone or phone)[2:],
+            },
+            "product": {
+                "hotlink": raw_product_ref or "F106691755G",
+                "id": None,
+                "name": "Liberate De La Ansiedad",
+                "price": 49,
+                "currency": "USD",
+            },
+            "offer": {"code": "bxjge6zq"},
+            "checkout_url": "https://pay.hotmart.com/F106691755G?off=bxjge6zq",
+            "checkout_country": {
+                "iso": "CO",
+                "source": "phone_country_code",
             },
             "consent": raw_consent,
         },
+        "dedupe_key": f"psicologajohanna:bxjge6zq:{email}",
     }
     canonical = {
         "event_type": "PRECHECKOUT_FORM_SUBMITTED",
@@ -136,18 +168,23 @@ def admit_observed_lead(
             "tenant_ref": "lancemos",
             "funnel_ref": "psicologajohanna",
             "landing_ref": "ads-a",
+            "page_url": "https://psicologajohanna.com/ldla/evg/vsl/ads-a",
+            "aliado": "Psicologa Johanna",
         },
         "identity": {
             "email": email,
             "phone": phone,
             "phone_valid": True,
+            "phone_country_iso": "CO",
         },
         "lead": {"full_name": "Fixture Buyer"},
         "commerce": {
             "product_ref": "F106691755G",
+            "product_name": "Liberate De La Ansiedad",
             "offer_ref": "bxjge6zq",
             "price": "49",
             "currency": "USD",
+            "checkout_url": "https://pay.hotmart.com/F106691755G?off=bxjge6zq",
         },
         "consent": {
             "terms_accepted": False,
@@ -161,6 +198,7 @@ def admit_observed_lead(
             "provider_observed": True,
             "activation_authorized": authorized,
         },
+        "dedupe_key": f"psicologajohanna:bxjge6zq:{email}",
     }
     result = q(
         "select outcome||'|'||submission_id||'|'||purchase_intent_id from "
@@ -421,6 +459,71 @@ def main() -> None:
         == "0",
         "consent mismatch left durable residue",
     )
+    admit_observed_lead(
+        "consent-v1-1-version-whitespace-001",
+        version="1.1.0",
+        email="timer-version-whitespace@example.test",
+        phone="573001211097",
+        raw_version="1.1.0 ",
+        expect_failure=True,
+    )
+    require(
+        q(
+            "select count(*) from public.precheckout_submissions where "
+            "external_submission_id='consent-v1-1-version-whitespace-001'"
+        )
+        == "0",
+        "non-exact raw contract version left durable residue",
+    )
+    trimmed_intent = admit_observed_lead(
+        "consent-v1-1-ascii-trim-001",
+        version="1.1.0",
+        email="timer-ascii-trim@example.test",
+        phone="573001211096",
+        raw_email="\tTIMER-ASCII-TRIM@EXAMPLE.TEST\r\n",
+        raw_phone_country_code="\t57\n",
+        raw_phone_national="\r3001211096\v",
+    ).split("|")[2]
+    require(
+        q(
+            "select normalized_email||'|'||normalized_phone||'|'||"
+            "whatsapp_contact_authorized||'|'||activation_authorized "
+            "from public.purchase_intents where id="
+            f"{trimmed_intent!r}::uuid"
+        )
+        == "timer-ascii-trim@example.test|573001211096|true|true",
+        "ASCII trim parity failed between parser contract and RPC",
+    )
+    for mismatch_tag, mismatch_overrides in (
+        (
+            "consent-v1-1-scope-mismatch-001",
+            {"raw_landing_id": "ads-b"},
+        ),
+        (
+            "consent-v1-1-product-mismatch-001",
+            {"raw_product_ref": "OTHER_PRODUCT"},
+        ),
+        (
+            "consent-v1-1-time-mismatch-001",
+            {"raw_submitted_at": "2026-08-19T13:54:59Z"},
+        ),
+    ):
+        admit_observed_lead(
+            mismatch_tag,
+            version="1.1.0",
+            email=f"{mismatch_tag}@example.test",
+            phone="573001211095",
+            expect_failure=True,
+            **mismatch_overrides,  # type: ignore[arg-type]
+        )
+        require(
+            q(
+                "select count(*) from public.precheckout_submissions where "
+                f"external_submission_id={mismatch_tag!r}"
+            )
+            == "0",
+            "raw/canonical scope, commerce, or time mismatch left durable residue",
+        )
     for identity_tag, identity_overrides in (
         (
             "consent-v1-1-email-mismatch-001",
