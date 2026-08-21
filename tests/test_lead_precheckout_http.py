@@ -96,6 +96,18 @@ def _payload() -> dict[str, object]:
     }
 
 
+def _authorized_payload() -> dict[str, object]:
+    payload = _payload()
+    payload["version"] = "1.1.0"
+    payload["data"]["buyer"]["phone"] = "+12025550123"  # type: ignore[index]
+    payload["data"]["consent"] = {  # type: ignore[index]
+        "marketing_optin": True,
+        "whatsapp_contact": True,
+        "copy_version": "johanna-precheckout-whatsapp-disclosure-v1",
+    }
+    return payload
+
+
 def _post(
     app: object,
     payload: object,
@@ -146,6 +158,24 @@ def test_signed_scoped_event_is_durably_admitted_without_outbound_authority() ->
         "contact_authorized": False,
     }
     assert len(supabase.calls) == 1
+
+
+def test_v1_1_signed_consent_reaches_canonical_admission_but_response_stays_closed() -> None:
+    supabase = _FakeSupabase()
+    app = create_app(_settings(), supabase_client=supabase)  # type: ignore[arg-type]
+
+    response = _post(app, _authorized_payload())
+
+    assert response.status_code == 200
+    assert response.json()["activation_authorized"] is False
+    assert response.json()["contact_authorized"] is False
+    canonical = supabase.calls[0]["canonical_payload"]
+    assert isinstance(canonical, dict)
+    assert canonical["contract_version"] == "1.1.0"
+    assert canonical["consent"]["copy_version"] == (  # type: ignore[index]
+        "johanna-precheckout-whatsapp-disclosure-v1"
+    )
+    assert canonical["assurance"]["activation_authorized"] is True  # type: ignore[index]
 
 
 def test_equivalent_float_price_reaches_rpc_in_canonical_form() -> None:

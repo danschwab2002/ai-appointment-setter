@@ -85,6 +85,83 @@ def admit_purchase(tag: str, transaction: str, email: str, phone: str) -> str:
     return helpers.insert_event(payload)
 
 
+def admit_observed_lead(
+    tag: str,
+    *,
+    version: str,
+    email: str,
+    phone: str,
+    raw_copy_version: str | None = None,
+    expect_failure: bool = False,
+) -> str:
+    authorized = version == "1.1.0"
+    copy_version = (
+        "johanna-precheckout-whatsapp-disclosure-v1"
+        if authorized
+        else "lead-precheckout-v1-no-explicit-optin"
+    )
+    raw_consent: dict[str, object] = (
+        {
+            "marketing_optin": True,
+            "whatsapp_contact": True,
+            "copy_version": raw_copy_version or copy_version,
+        }
+        if authorized
+        else {
+            "marketing_optin": False,
+            "notice": "sin consentimiento explicito - dato entregado para completar una compra",
+        }
+    )
+    raw = {
+        "id": tag,
+        "event": "lead.precheckout",
+        "version": version,
+        "data": {"consent": raw_consent},
+    }
+    canonical = {
+        "event_type": "PRECHECKOUT_FORM_SUBMITTED",
+        "contract_version": version,
+        "external_submission_id": tag,
+        "submitted_at": helpers.SUBMITTED_AT,
+        "source": {
+            "tenant_ref": "lancemos",
+            "funnel_ref": "psicologajohanna",
+            "landing_ref": "ads-a",
+        },
+        "identity": {
+            "email": email,
+            "phone": phone,
+            "phone_valid": True,
+        },
+        "lead": {"full_name": "Fixture Buyer"},
+        "commerce": {
+            "product_ref": "F106691755G",
+            "offer_ref": "bxjge6zq",
+            "price": "49",
+            "currency": "USD",
+        },
+        "consent": {
+            "terms_accepted": False,
+            "privacy_accepted": False,
+            "marketing_optin": authorized,
+            "whatsapp_contact": authorized,
+            "copy_version": copy_version,
+        },
+        "assurance": {
+            "provisional": False,
+            "provider_observed": True,
+            "activation_authorized": authorized,
+        },
+    }
+    result = q(
+        "select outcome||'|'||submission_id||'|'||purchase_intent_id from "
+        "public.admit_observed_lead_precheckout("
+        f"{tag!r},{helpers.json_literal(raw)},{helpers.json_literal(canonical)})",
+        expect_failure=expect_failure,
+    )
+    return result.splitlines()[-1] if result else ""
+
+
 def main() -> None:
     require(
         os.environ.get("ALLOW_HOTMART_TIMER_PROBE") == "hotmart-abandonment-timer",
@@ -97,7 +174,8 @@ def main() -> None:
 
     baseline_effects = q(
         "select (select count(*) from public.scheduled_actions)||'|'||"
-        "(select count(*) from public.followup_delivery_attempts)"
+        "(select count(*) from public.followup_delivery_attempts)||'|'||"
+        "(select count(*) from public.messages)"
     )
 
     policy("timer-default-10m", 1, "10 minutes")
@@ -265,20 +343,85 @@ def main() -> None:
         "enabled=true,generation=generation+1 "
         f"where id={exact_binding!r}::uuid"
     )
-    authorized_email = "timer-authorized@example.test"
+    authorized_email = "timer-consented@example.test"
     authorized_phone = "573001211004"
-    authorized_intent, authorized_event = admit_cart(
-        "timer-cart-authorized-001", authorized_email, authorized_phone
+    v1_admission = admit_observed_lead(
+        "consent-v1-001",
+        version="1.0.0",
+        email=authorized_email,
+        phone=authorized_phone,
     )
+    authorized_intent = v1_admission.split("|")[2]
+    require(
+        q(
+            "select whatsapp_contact_authorized||'|'||activation_authorized "
+            "from public.purchase_intents where id="
+            f"{authorized_intent!r}::uuid"
+        )
+        == "false|false",
+        "V1.0 unexpectedly granted authority",
+    )
+    v1_1_admission = admit_observed_lead(
+        "consent-v1-1-001",
+        version="1.1.0",
+        email=authorized_email,
+        phone=authorized_phone,
+    )
+    require(
+        v1_1_admission.split("|")[2] == authorized_intent,
+        "V1.1 did not reuse the consistent live intent",
+    )
+    require(
+        q(
+            "select whatsapp_contact_authorized||'|'||activation_authorized "
+            "from public.purchase_intents where id="
+            f"{authorized_intent!r}::uuid"
+        )
+        == "true|true",
+        "V1.1 did not promote durable authority",
+    )
+    admit_observed_lead(
+        "consent-v1-after-001",
+        version="1.0.0",
+        email=authorized_email,
+        phone=authorized_phone,
+    )
+    require(
+        q(
+            "select whatsapp_contact_authorized||'|'||activation_authorized "
+            "from public.purchase_intents where id="
+            f"{authorized_intent!r}::uuid"
+        )
+        == "true|true",
+        "V1.0 absence revoked prior explicit consent",
+    )
+    mismatch_tag = "consent-v1-1-mismatch-001"
+    admit_observed_lead(
+        mismatch_tag,
+        version="1.1.0",
+        email="timer-consent-mismatch@example.test",
+        phone="573001211099",
+        raw_copy_version="unapproved-copy",
+        expect_failure=True,
+    )
+    require(
+        q(
+            "select count(*) from public.precheckout_submissions where "
+            f"external_submission_id={mismatch_tag!r}"
+        )
+        == "0",
+        "consent mismatch left durable residue",
+    )
+    authorized_payload = helpers.cart_payload(
+        "timer-cart-authorized-001",
+        email=authorized_email,
+        phone=f"+{authorized_phone}",
+    )
+    authorized_event = helpers.insert_event(authorized_payload)
     authorized_timer = timer_for(authorized_event).split("|")[0]
     authorized_due = q(
         "select due_at from public.hotmart_abandonment_reevaluations where id="
         f"{authorized_timer!r}::uuid"
-    )
-    q(
-        "update public.purchase_intents set activation_authorized=true,"
-        "whatsapp_contact_authorized=true where id="
-        f"{authorized_intent!r}::uuid"
     )
     missing_binding = q(
         "set role service_role; select reevaluation_outcome from "
@@ -287,7 +430,7 @@ def main() -> None:
     ).splitlines()[-1]
     require(
         missing_binding == "blocked_contact_binding_missing",
-        "authorized flags bypassed canonical contact binding",
+        f"authorized timer reached unexpected outcome: {missing_binding}",
     )
 
     require(
@@ -324,7 +467,8 @@ def main() -> None:
 
     final_effects = q(
         "select (select count(*) from public.scheduled_actions)||'|'||"
-        "(select count(*) from public.followup_delivery_attempts)"
+        "(select count(*) from public.followup_delivery_attempts)||'|'||"
+        "(select count(*) from public.messages)"
     )
     require(final_effects == baseline_effects, "timer created commercial effects")
     require(

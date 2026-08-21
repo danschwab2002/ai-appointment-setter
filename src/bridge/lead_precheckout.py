@@ -36,7 +36,11 @@ _ATTRIBUTION_KEYS = {
     "fbclid",
     "referrer",
 }
-_CONSENT_KEYS = {"marketing_optin", "notice"}
+_CONSENT_KEYS_V1 = {"marketing_optin", "notice"}
+_CONSENT_KEYS_V1_1 = {"marketing_optin", "whatsapp_contact", "copy_version"}
+_SUPPORTED_VERSIONS = {"1.0.0", "1.1.0"}
+_V1_COPY_VERSION = "lead-precheckout-v1-no-explicit-optin"
+_V1_1_COPY_VERSION = "johanna-precheckout-whatsapp-disclosure-v1"
 _ULID = re.compile(r"[0-9A-HJKMNP-TV-Z]{26}")
 _EMAIL = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+")
 _E164_SHAPE = re.compile(r"\+[1-9][0-9]{1,14}")
@@ -53,6 +57,7 @@ _LANDING_OFFERS = {
 @dataclass(frozen=True)
 class LeadPrecheckoutSubmission:
     external_submission_id: str
+    contract_version: str
     submitted_at: datetime
     site: str
     aliado: str
@@ -71,15 +76,24 @@ class LeadPrecheckoutSubmission:
     checkout_url: str
     dedupe_key: str
     marketing_optin: bool
+    consent_copy_version: str
 
     @property
     def whatsapp_contact_authorized(self) -> bool:
-        return self.marketing_optin and self.phone_valid
+        return (
+            self.contract_version == "1.1.0"
+            and self.marketing_optin
+            and self.phone_valid
+        )
+
+    @property
+    def activation_authorized(self) -> bool:
+        return self.whatsapp_contact_authorized
 
     def as_canonical_payload(self) -> dict[str, object]:
         return {
             "event_type": "PRECHECKOUT_FORM_SUBMITTED",
-            "contract_version": "1.0.0",
+            "contract_version": self.contract_version,
             "external_submission_id": self.external_submission_id,
             "submitted_at": self.submitted_at.isoformat().replace("+00:00", "Z"),
             "source": {
@@ -109,13 +123,13 @@ class LeadPrecheckoutSubmission:
                 "privacy_accepted": False,
                 "whatsapp_contact": self.whatsapp_contact_authorized,
                 "marketing_optin": self.marketing_optin,
-                "copy_version": "lead-precheckout-v1-no-explicit-optin",
+                "copy_version": self.consent_copy_version,
             },
             "dedupe_key": self.dedupe_key,
             "assurance": {
                 "provisional": False,
                 "provider_observed": True,
-                "activation_authorized": False,
+                "activation_authorized": self.activation_authorized,
             },
         }
 
@@ -187,7 +201,13 @@ def parse_lead_precheckout(payload: object) -> LeadPrecheckoutSubmission | None:
     offer = _object(data.get("offer"), _OFFER_KEYS)
     country = _object(data.get("checkout_country"), _COUNTRY_KEYS)
     attribution = _object(data.get("attribution"), _ATTRIBUTION_KEYS)
-    consent = _object(data.get("consent"), _CONSENT_KEYS)
+    contract_version = _text(event.get("version"))
+    consent_keys = (
+        _CONSENT_KEYS_V1_1
+        if contract_version == "1.1.0"
+        else _CONSENT_KEYS_V1
+    )
+    consent = _object(data.get("consent"), consent_keys)
     if None in (buyer, product, offer, country, attribution, consent):
         return None
     assert buyer is not None and product is not None and offer is not None
@@ -247,7 +267,7 @@ def parse_lead_precheckout(payload: object) -> LeadPrecheckoutSubmission | None:
     if (
         _ULID.fullmatch(delivery_id) is None
         or event.get("event") != "lead.precheckout"
-        or event.get("version") != "1.0.0"
+        or contract_version not in _SUPPORTED_VERSIONS
         or source.get("system") != "landing"
         or site != "psicologajohanna"
         or landing_id not in _LANDING_OFFERS
@@ -272,8 +292,22 @@ def parse_lead_precheckout(payload: object) -> LeadPrecheckoutSubmission | None:
         or country_iso != country_iso.upper()
         or len(country_iso) != 2
         or country.get("source") != "phone_country_code"
-        or consent.get("marketing_optin") is not False
-        or _text(consent.get("notice")) is None
+        or (
+            contract_version == "1.0.0"
+            and consent.get("marketing_optin") is not False
+        )
+        or (
+            contract_version == "1.1.0"
+            and (
+                consent.get("marketing_optin") is not True
+                or consent.get("whatsapp_contact") is not True
+                or consent.get("copy_version") != _V1_1_COPY_VERSION
+            )
+        )
+        or (
+            contract_version == "1.0.0"
+            and _text(consent.get("notice")) is None
+        )
         or any(not isinstance(value, str) for value in attribution.values())
         or dedupe_key != f"{site}:{offer_code}:{email}"
     ):
@@ -282,8 +316,11 @@ def parse_lead_precheckout(payload: object) -> LeadPrecheckoutSubmission | None:
     normalized_phone = _valid_phone(
         phone, phone_country_code, phone_national, country_iso
     )
+    if contract_version == "1.1.0" and normalized_phone is None:
+        return None
     return LeadPrecheckoutSubmission(
         external_submission_id=delivery_id,
+        contract_version=contract_version,
         submitted_at=submitted_at,  # type: ignore[arg-type]
         site=site,
         aliado=aliado,  # type: ignore[arg-type]
@@ -301,5 +338,10 @@ def parse_lead_precheckout(payload: object) -> LeadPrecheckoutSubmission | None:
         offer_code=offer_code,
         checkout_url=checkout_url,
         dedupe_key=dedupe_key,
-        marketing_optin=False,
+        marketing_optin=contract_version == "1.1.0",
+        consent_copy_version=(
+            _V1_1_COPY_VERSION
+            if contract_version == "1.1.0"
+            else _V1_COPY_VERSION
+        ),
     )
