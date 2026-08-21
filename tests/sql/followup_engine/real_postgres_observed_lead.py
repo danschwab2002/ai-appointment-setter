@@ -75,7 +75,13 @@ def payloads(
         "event": "lead.precheckout",
         "version": "1.0.0",
         "created_at": "2026-08-19T11:00:00Z",
-        "data": {"lead": {"email": email}},
+        "data": {
+            "lead": {"email": email},
+            "consent": {
+                "marketing_optin": False,
+                "notice": "sin consentimiento explicito - dato entregado para completar una compra",
+            },
+        },
     }
     identity: dict[str, object] = {"email": email, "phone_valid": phone is not None}
     if phone is not None:
@@ -98,7 +104,11 @@ def payloads(
             "price": "49",
             "currency": "USD",
         },
-        "consent": {"marketing_optin": False, "whatsapp_contact": False},
+        "consent": {
+            "marketing_optin": False,
+            "whatsapp_contact": False,
+            "copy_version": "lead-precheckout-v1-no-explicit-optin",
+        },
         "assurance": {
             "provisional": False,
             "provider_observed": True,
