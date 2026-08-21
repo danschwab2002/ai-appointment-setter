@@ -94,6 +94,7 @@ def admit_observed_lead(
     raw_copy_version: str | None = None,
     raw_email: str | None = None,
     raw_phone: str | None = None,
+    raw_phone_display: str | None = None,
     raw_phone_country_code: str | None = None,
     raw_phone_national: str | None = None,
     raw_version: str | None = None,
@@ -136,7 +137,7 @@ def admit_observed_lead(
             "buyer": {
                 "name": "Fixture Buyer",
                 "email": raw_email or email,
-                "phone": f"+{raw_phone or phone}",
+                "phone": raw_phone_display or f"+{raw_phone or phone}",
                 "phone_country_code": (
                     raw_phone_country_code or (raw_phone or phone)[:2]
                 ),
@@ -532,6 +533,10 @@ def main() -> None:
         (
             "consent-v1-1-phone-mismatch-001",
             {"raw_phone": "573001211098"},
+        ),
+        (
+            "consent-v1-1-phone-display-mismatch-001",
+            {"raw_phone_display": "+573001211094"},
         ),
     ):
         admit_observed_lead(

@@ -100,7 +100,8 @@ La RPC vuelve a comprobar que el timestamp, scope, nombre, país, producto, ofer
 precio, moneda, checkout y dedupe raw firmados coincidan con su representación
 canónica. También exige que `data.buyer.email` normalizado coincida con
 `identity.email` y, cuando el teléfono es válido, que
-`phone_country_code + phone_national` coincida con `identity.phone`. Una divergencia
+`buyer.phone == '+' + phone_country_code + phone_national` y que esa composición
+coincida con `identity.phone`. Una divergencia
 produce `observed_precheckout_raw_canonical_mismatch` o
 `observed_precheckout_identity_mismatch` y rollback total.
 

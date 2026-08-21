@@ -41,6 +41,7 @@ def test_signed_raw_identity_is_bound_to_the_canonical_identity() -> None:
     assert "{source,site}" in sql
     assert "{source,landing_id}" in sql
     assert "{data,buyer,email}" in sql
+    assert "{data,buyer,phone}" in sql
     assert "{data,buyer,phone_country_code}" in sql
     assert "{data,buyer,phone_national}" in sql
     assert "{data,product,hotlink}" in sql

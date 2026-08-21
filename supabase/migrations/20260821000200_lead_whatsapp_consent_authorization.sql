@@ -229,7 +229,9 @@ begin
        or (
             v_phone is not null
             and (
-                jsonb_typeof(
+                jsonb_typeof(p_raw_payload #> '{data,buyer,phone}')
+                    is distinct from 'string'
+                or jsonb_typeof(
                     p_raw_payload #> '{data,buyer,phone_country_code}'
                 ) is distinct from 'string'
                 or jsonb_typeof(
@@ -237,6 +239,10 @@ begin
                 ) is distinct from 'string'
                 or v_raw_phone_country_code !~ '^[1-9][0-9]{0,3}$'
                 or v_raw_phone_national !~ '^[0-9]{4,14}$'
+                or btrim(
+                    p_raw_payload #>> '{data,buyer,phone}',
+                    v_trim_chars
+                ) is distinct from '+' || v_phone
                 or concat(v_raw_phone_country_code, v_raw_phone_national)
                     is distinct from v_phone
             )
