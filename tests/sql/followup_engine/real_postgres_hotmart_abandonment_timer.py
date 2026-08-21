@@ -100,6 +100,8 @@ def admit_observed_lead(
     raw_version: str | None = None,
     raw_landing_id: str | None = None,
     raw_product_ref: str | None = None,
+    raw_currency: str | None = None,
+    raw_country_iso: str | None = None,
     raw_submitted_at: str | None = None,
     expect_failure: bool = False,
 ) -> str:
@@ -148,12 +150,12 @@ def admit_observed_lead(
                 "id": None,
                 "name": "Liberate De La Ansiedad",
                 "price": 49,
-                "currency": "USD",
+                "currency": raw_currency or "USD",
             },
             "offer": {"code": "bxjge6zq"},
             "checkout_url": "https://pay.hotmart.com/F106691755G?off=bxjge6zq",
             "checkout_country": {
-                "iso": "CO",
+                "iso": raw_country_iso or "CO",
                 "source": "phone_country_code",
             },
             "consent": raw_consent,
@@ -502,7 +504,15 @@ def main() -> None:
         ),
         (
             "consent-v1-1-product-mismatch-001",
-            {"raw_product_ref": "OTHER_PRODUCT"},
+            {"raw_product_ref": "f106691755g"},
+        ),
+        (
+            "consent-v1-1-currency-case-mismatch-001",
+            {"raw_currency": "usd"},
+        ),
+        (
+            "consent-v1-1-country-case-mismatch-001",
+            {"raw_country_iso": "co"},
         ),
         (
             "consent-v1-1-time-mismatch-001",

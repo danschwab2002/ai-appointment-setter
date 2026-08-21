@@ -89,10 +89,10 @@ begin
        or p_canonical_payload #>> '{source,tenant_ref}' is distinct from 'lancemos'
        or p_canonical_payload #>> '{source,funnel_ref}' is distinct from 'psicologajohanna'
        or p_canonical_payload #>> '{source,landing_ref}' is distinct from 'ads-a'
-       or lower(p_canonical_payload #>> '{commerce,product_ref}') is distinct from 'f106691755g'
+       or p_canonical_payload #>> '{commerce,product_ref}' is distinct from 'F106691755G'
        or p_canonical_payload #>> '{commerce,offer_ref}' is distinct from 'bxjge6zq'
        or p_canonical_payload #>> '{commerce,price}' is distinct from '49'
-       or lower(p_canonical_payload #>> '{commerce,currency}') is distinct from 'usd' then
+       or p_canonical_payload #>> '{commerce,currency}' is distinct from 'USD' then
         raise exception using errcode = '22023', message = 'observed_precheckout_assurance_mismatch';
     end if;
 
@@ -179,28 +179,28 @@ begin
            is distinct from p_canonical_payload #>> '{source,aliado}'
        or btrim(p_raw_payload #>> '{data,buyer,name}', v_trim_chars)
            is distinct from p_canonical_payload #>> '{lead,full_name}'
-       or upper(btrim(
+       or btrim(
             p_raw_payload #>> '{data,checkout_country,iso}',
             v_trim_chars
-       )) is distinct from p_canonical_payload #>> '{identity,phone_country_iso}'
+       ) is distinct from p_canonical_payload #>> '{identity,phone_country_iso}'
        or btrim(
             p_raw_payload #>> '{data,checkout_country,source}',
             v_trim_chars
        ) is distinct from 'phone_country_code'
-       or lower(btrim(
+       or btrim(
             p_raw_payload #>> '{data,product,hotlink}',
             v_trim_chars
-       )) is distinct from lower(p_canonical_payload #>> '{commerce,product_ref}')
+       ) is distinct from p_canonical_payload #>> '{commerce,product_ref}'
        or p_raw_payload #> '{data,product,id}' is distinct from 'null'::jsonb
        or btrim(p_raw_payload #>> '{data,product,name}', v_trim_chars)
            is distinct from p_canonical_payload #>> '{commerce,product_name}'
        or v_raw_price is distinct from (
             p_canonical_payload #>> '{commerce,price}'
        )::numeric
-       or upper(btrim(
+       or btrim(
             p_raw_payload #>> '{data,product,currency}',
             v_trim_chars
-       )) is distinct from upper(p_canonical_payload #>> '{commerce,currency}')
+       ) is distinct from p_canonical_payload #>> '{commerce,currency}'
        or btrim(p_raw_payload #>> '{data,offer,code}', v_trim_chars)
            is distinct from p_canonical_payload #>> '{commerce,offer_ref}'
        or btrim(p_raw_payload #>> '{data,checkout_url}', v_trim_chars)
