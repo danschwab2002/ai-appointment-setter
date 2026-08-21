@@ -143,6 +143,17 @@ class PurchaseIntentCorrelationResult:
 
 
 @dataclass(frozen=True)
+class HotmartAbandonmentReevaluationResult:
+    """Terminal or replayed result of one durable abandonment timer."""
+
+    reevaluation_id: str
+    status: str
+    outcome: str
+    completed_at: str
+    replayed: bool
+
+
+@dataclass(frozen=True)
 class InboundOptOutResult:
     """Authoritative outcome of one canonical inbound opt-out."""
 
@@ -1035,6 +1046,85 @@ class SupabaseClient:
             matched_by=matched_by,
             candidate_count=candidate_count,
             manual_handoff_required=manual_handoff_required,
+        )
+
+    async def list_due_hotmart_abandonment_reevaluations(
+        self,
+        *,
+        now: str,
+        batch_size: int,
+    ) -> list[str]:
+        """List due timer IDs without exposing purchase-intent PII."""
+        operation = "hotmart_abandonment_reevaluation_due_list"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/list_due_hotmart_abandonment_reevaluations",
+            content=json.dumps({"p_now": now, "p_batch_size": batch_size}),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        ids: list[str] = []
+        for row in rows:
+            reevaluation_id = _required_uuid(
+                row, "reevaluation_id", operation=operation
+            )
+            if reevaluation_id in ids:
+                raise SupabaseError(f"{operation}_duplicate_id")
+            ids.append(reevaluation_id)
+        return ids
+
+    async def reevaluate_hotmart_abandonment_timer(
+        self,
+        *,
+        reevaluation_id: str,
+        now: str,
+    ) -> HotmartAbandonmentReevaluationResult:
+        """Re-read one due intent and terminalize its timer idempotently."""
+        operation = "hotmart_abandonment_timer_reevaluation"
+        expected_id = _required_uuid(
+            {"reevaluation_id": reevaluation_id},
+            "reevaluation_id",
+            operation=operation,
+        )
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/reevaluate_hotmart_abandonment_timer",
+            content=json.dumps(
+                {"p_reevaluation_id": expected_id, "p_now": now}
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        result_id = _required_uuid(row, "reevaluation_id", operation=operation)
+        status = _required_enum(
+            row, "reevaluation_status", {"completed"}, operation=operation
+        )
+        outcome = _required_enum(
+            row,
+            "reevaluation_outcome",
+            {
+                "cancelled_purchased",
+                "blocked_not_authorized",
+                "blocked_contact_binding_missing",
+                "cancelled_intent_changed",
+            },
+            operation=operation,
+        )
+        completed_at = _required_string(row, "completed_at", operation=operation)
+        replayed = row.get("replayed")
+        if result_id != expected_id or not isinstance(replayed, bool):
+            raise SupabaseError(f"{operation}_invalid_row")
+        return HotmartAbandonmentReevaluationResult(
+            reevaluation_id=result_id,
+            status=status,
+            outcome=outcome,
+            completed_at=completed_at,
+            replayed=replayed,
         )
 
     async def admit_inbound_commercial_case(

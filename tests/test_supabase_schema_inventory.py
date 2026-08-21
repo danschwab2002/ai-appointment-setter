@@ -102,11 +102,19 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
 
-    assert len(allowlisted) == 33
+    assert len(allowlisted) == 35
     assert len(allowlisted) == len(set(allowlisted))
     assert "admit_precheckout_form_submission(text, jsonb, jsonb)" in allowlisted
     assert "admit_observed_lead_precheckout(text, jsonb, jsonb)" in allowlisted
     assert "correlate_hotmart_purchase_intent(uuid)" in allowlisted
+    assert (
+        "list_due_hotmart_abandonment_reevaluations(timestamp with time zone, integer)"
+        in allowlisted
+    )
+    assert (
+        "reevaluate_hotmart_abandonment_timer(uuid, timestamp with time zone)"
+        in allowlisted
+    )
     assert "admit_and_correlate_hotmart_purchase_approved(text, jsonb, text, text)" in allowlisted
     assert "admit_and_correlate_hotmart_cart_abandonment(text, jsonb, text, text)" in allowlisted
     assert "admit_hotmart_purchase_approved(text, jsonb)" not in allowlisted

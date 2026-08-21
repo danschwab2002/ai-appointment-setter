@@ -29,6 +29,7 @@ from bridge.supabase import (
 import bridge.worker as worker_module
 from bridge.worker import (
     DurableDispatcher,
+    HotmartAbandonmentTimerWorker,
     OptOutProjectionWorker,
     ResolutionWorker,
     _await_despite_cancellation,
@@ -1978,3 +1979,67 @@ def test_opt_out_projection_worker_records_retryable_chatwoot_failure() -> None:
     assert supabase.finalizations[0]["error_code"] == (
         "chatwoot_ChatwootProtocolError"
     )
+
+
+class StubHotmartTimerSupabase:
+    def __init__(self, *, fail_id: str | None = None) -> None:
+        self.fail_id = fail_id
+        self.list_calls: list[dict[str, object]] = []
+        self.reevaluation_calls: list[dict[str, object]] = []
+
+    async def list_due_hotmart_abandonment_reevaluations(
+        self, **kwargs: object
+    ) -> list[str]:
+        self.list_calls.append(kwargs)
+        return ["timer-001", "timer-002"]
+
+    async def reevaluate_hotmart_abandonment_timer(
+        self, **kwargs: object
+    ) -> object:
+        self.reevaluation_calls.append(kwargs)
+        if kwargs["reevaluation_id"] == self.fail_id:
+            raise SupabaseError("timer_probe_failure")
+        return SimpleNamespace(
+            reevaluation_id=kwargs["reevaluation_id"],
+            outcome="blocked_not_authorized",
+        )
+
+
+def test_hotmart_timer_worker_processes_only_due_ids() -> None:
+    supabase = StubHotmartTimerSupabase()
+    worker = HotmartAbandonmentTimerWorker(
+        supabase=supabase,  # type: ignore[arg-type]
+        poll_interval_seconds=0.1,
+        batch_size=25,
+        clock=lambda: "2026-08-21T16:00:00+00:00",
+    )
+
+    assert asyncio.run(worker.run_once()) == 2
+    assert supabase.list_calls == [
+        {"now": "2026-08-21T16:00:00+00:00", "batch_size": 25}
+    ]
+    assert supabase.reevaluation_calls == [
+        {
+            "reevaluation_id": "timer-001",
+            "now": "2026-08-21T16:00:00+00:00",
+        },
+        {
+            "reevaluation_id": "timer-002",
+            "now": "2026-08-21T16:00:00+00:00",
+        },
+    ]
+
+
+def test_hotmart_timer_worker_continues_after_one_rpc_failure() -> None:
+    supabase = StubHotmartTimerSupabase(fail_id="timer-001")
+    worker = HotmartAbandonmentTimerWorker(
+        supabase=supabase,  # type: ignore[arg-type]
+        batch_size=10,
+        clock=lambda: "2026-08-21T16:00:00+00:00",
+    )
+
+    assert asyncio.run(worker.run_once()) == 1
+    assert [call["reevaluation_id"] for call in supabase.reevaluation_calls] == [
+        "timer-001",
+        "timer-002",
+    ]
