@@ -123,6 +123,32 @@ begin
         raise exception using errcode = '22023', message = 'observed_precheckout_invalid_canonical_payload';
     end if;
 
+    if nullif(lower(btrim(p_raw_payload #>> '{data,buyer,email}')), '')
+           is distinct from v_email
+       or (
+            v_phone is not null
+            and (
+                jsonb_typeof(
+                    p_raw_payload #> '{data,buyer,phone_country_code}'
+                ) is distinct from 'string'
+                or jsonb_typeof(
+                    p_raw_payload #> '{data,buyer,phone_national}'
+                ) is distinct from 'string'
+                or p_raw_payload #>> '{data,buyer,phone_country_code}'
+                    !~ '^[1-9][0-9]{0,3}$'
+                or p_raw_payload #>> '{data,buyer,phone_national}'
+                    !~ '^[0-9]{4,14}$'
+                or concat(
+                    p_raw_payload #>> '{data,buyer,phone_country_code}',
+                    p_raw_payload #>> '{data,buyer,phone_national}'
+                ) is distinct from v_phone
+            )
+       ) then
+        raise exception using
+            errcode = '22023',
+            message = 'observed_precheckout_identity_mismatch';
+    end if;
+
     if (p_canonical_payload #>> '{identity,phone_valid}')::boolean
        is distinct from (v_phone is not null) then
         raise exception using errcode = '22023', message = 'observed_precheckout_phone_assurance_mismatch';

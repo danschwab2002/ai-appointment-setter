@@ -70,6 +70,12 @@ def payloads(
     name: str = "Maria Example",
     phone: str | None = "573001234567",
 ) -> tuple[dict[str, object], dict[str, object]]:
+    buyer: dict[str, object] = {"email": email}
+    if phone is not None:
+        buyer.update(
+            phone_country_code=phone[:2],
+            phone_national=phone[2:],
+        )
     raw: dict[str, object] = {
         "id": external_id,
         "event": "lead.precheckout",
@@ -77,6 +83,7 @@ def payloads(
         "created_at": "2026-08-19T11:00:00Z",
         "data": {
             "lead": {"email": email},
+            "buyer": buyer,
             "consent": {
                 "marketing_optin": False,
                 "notice": "sin consentimiento explicito - dato entregado para completar una compra",

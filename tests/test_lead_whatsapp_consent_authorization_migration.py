@@ -34,6 +34,15 @@ def test_v1_1_authority_is_derived_from_exact_canonical_evidence() -> None:
     assert "v_activation_authorized" in sql
 
 
+def test_signed_raw_identity_is_bound_to_the_canonical_identity() -> None:
+    sql = _sql()
+
+    assert "{data,buyer,email}" in sql
+    assert "{data,buyer,phone_country_code}" in sql
+    assert "{data,buyer,phone_national}" in sql
+    assert "observed_precheckout_identity_mismatch" in sql
+
+
 def test_authorized_admission_persists_version_and_promotes_consistent_intent() -> None:
     sql = _sql()
 

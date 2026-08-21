@@ -92,6 +92,8 @@ def admit_observed_lead(
     email: str,
     phone: str,
     raw_copy_version: str | None = None,
+    raw_email: str | None = None,
+    raw_phone: str | None = None,
     expect_failure: bool = False,
 ) -> str:
     authorized = version == "1.1.0"
@@ -116,7 +118,14 @@ def admit_observed_lead(
         "id": tag,
         "event": "lead.precheckout",
         "version": version,
-        "data": {"consent": raw_consent},
+        "data": {
+            "buyer": {
+                "email": raw_email or email,
+                "phone_country_code": (raw_phone or phone)[:2],
+                "phone_national": (raw_phone or phone)[2:],
+            },
+            "consent": raw_consent,
+        },
     }
     canonical = {
         "event_type": "PRECHECKOUT_FORM_SUBMITTED",
@@ -412,6 +421,32 @@ def main() -> None:
         == "0",
         "consent mismatch left durable residue",
     )
+    for identity_tag, identity_overrides in (
+        (
+            "consent-v1-1-email-mismatch-001",
+            {"raw_email": "different-signed-email@example.test"},
+        ),
+        (
+            "consent-v1-1-phone-mismatch-001",
+            {"raw_phone": "573001211098"},
+        ),
+    ):
+        admit_observed_lead(
+            identity_tag,
+            version="1.1.0",
+            email="timer-identity-mismatch@example.test",
+            phone="573001211099",
+            expect_failure=True,
+            **identity_overrides,  # type: ignore[arg-type]
+        )
+        require(
+            q(
+                "select count(*) from public.precheckout_submissions where "
+                f"external_submission_id={identity_tag!r}"
+            )
+            == "0",
+            "signed/canonical identity mismatch left durable residue",
+        )
     authorized_payload = helpers.cart_payload(
         "timer-cart-authorized-001",
         email=authorized_email,

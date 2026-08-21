@@ -91,6 +91,11 @@ El relay server-side fija esos valores después de la interacción correspondien
 en la landing; no toma `copy_version` ni la autoridad desde parámetros libres del
 navegador. El HMAC cubre el body exacto.
 
+La RPC vuelve a comprobar que `data.buyer.email` normalizado coincida con
+`identity.email` canónico y, cuando el teléfono es válido, que
+`phone_country_code + phone_national` coincida exactamente con `identity.phone`.
+Una divergencia produce `observed_precheckout_identity_mismatch` y rollback total.
+
 En V1.0.0, un teléfono presente pero inválido no invalida la intención: se
 persiste como `normalized_phone=NULL`, `tracking_incomplete` y sin autoridad. En
 V1.1.0, teléfono inválido bloquea la admisión completa.
