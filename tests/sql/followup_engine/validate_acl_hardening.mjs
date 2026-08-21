@@ -79,11 +79,13 @@ const rows = await db.query(`
       ('get_human_handoff_projection_status()'),
       ('get_lancemos_pilot_runtime_status(text,integer,text,text,text)'),
       ('has_chatwoot_opt_out_stop(bigint,bigint,bigint,text)'),
+      ('list_due_hotmart_abandonment_reevaluations(timestamp with time zone,integer)'),
       ('mark_lancemos_pilot_request_started(uuid,uuid,text,bigint,timestamp with time zone)'),
       ('plan_lancemos_pilot_cart_recovery(uuid,uuid,text,text,text,text,integer,timestamp with time zone,bigint,bigint,text,text,integer)'),
       ('reconcile_chatwoot_opt_out_stop(bigint,bigint,bigint,text)'),
       ('reconcile_followup_delivery_attempt(uuid,uuid,bigint,text,text,uuid,timestamp with time zone,text,timestamp with time zone)'),
       ('record_and_finalize_followup_acceptance(uuid,uuid,text,bigint,text,text,text,timestamp with time zone)'),
+      ('reevaluate_hotmart_abandonment_timer(uuid,timestamp with time zone)'),
       ('reevaluate_followup_action(uuid,text,bigint,timestamp with time zone,boolean,text,text,timestamp with time zone,text,boolean,boolean,boolean,boolean,boolean)'),
       ('request_human_handoff(uuid,text,text,text,text,integer,uuid,uuid,text,bigint,timestamp with time zone)'),
       ('reserve_followup_delivery_attempt(uuid,text,bigint,bigint,bigint,text,text,timestamp with time zone)'),
@@ -109,7 +111,7 @@ const rows = await db.query(`
 `);
 const result = rows.rows[0];
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 33) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 35) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const inventory = await db.query(readFileSync(

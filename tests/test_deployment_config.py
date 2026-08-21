@@ -7,6 +7,63 @@ from bridge.app import Settings, create_app
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_hotmart_abandonment_timer_worker_is_declared_default_off(
+    tmp_path: Path,
+) -> None:
+    env_example = (PROJECT_ROOT / ".env.example").read_text()
+    compose = (PROJECT_ROOT / "compose.yaml").read_text()
+
+    assert "HOTMART_ABANDONMENT_TIMER_WORKER_ENABLED=false" in env_example
+    assert "HOTMART_ABANDONMENT_TIMER_WORKER_ENABLED:" in compose
+    settings = Settings(
+        webhook_secret="test-secret",
+        allowed_jid="12025550123@s.whatsapp.net",
+        capture_dir=tmp_path,
+        max_age_seconds=300,
+    )
+    assert settings.hotmart_abandonment_timer_worker_enabled is False
+    assert settings.hotmart_abandonment_timer_poll_interval_seconds == 5.0
+    assert settings.hotmart_abandonment_timer_batch_size == 10
+
+
+def test_hotmart_abandonment_timer_worker_requires_only_supabase(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        webhook_secret="test-secret",
+        allowed_jid="12025550123@s.whatsapp.net",
+        capture_dir=tmp_path,
+        max_age_seconds=300,
+        hotmart_abandonment_timer_worker_enabled=True,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Supabase is required when HOTMART_ABANDONMENT_TIMER_WORKER_ENABLED=true",
+    ):
+        create_app(settings)
+
+
+def test_hotmart_abandonment_timer_worker_builds_without_outbound_dependencies(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        webhook_secret="test-secret",
+        allowed_jid="12025550123@s.whatsapp.net",
+        capture_dir=tmp_path,
+        max_age_seconds=300,
+        supabase_base_url="https://supabase.example.test",
+        supabase_service_role_key="test-service-role",
+        hotmart_abandonment_timer_worker_enabled=True,
+    )
+
+    app = create_app(settings)
+
+    assert app.state.hotmart_abandonment_timer_worker is not None
+    assert app.state.resolution_worker is None
+    assert app.state.durable_dispatcher is None
+
+
 def test_purchase_worker_flag_is_declared_and_disabled_by_default(
     tmp_path: Path,
 ) -> None:

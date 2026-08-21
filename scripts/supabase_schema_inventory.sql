@@ -713,6 +713,68 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'legacy_hotmart_shims_revoked_correlated_wrappers_preserved'
+    union all
+    select
+        '20260821000100',
+        '20260821000100_hotmart_abandonment_timer.sql',
+        (to_regclass('public.hotmart_abandonment_timer_policy_bindings') is not null)::int
+        + (to_regclass('public.hotmart_abandonment_timer_policy_binding_events') is not null)::int
+        + (to_regclass('public.hotmart_abandonment_reevaluations') is not null)::int
+        + (to_regclass('public.hotmart_abandonment_reevaluation_events') is not null)::int
+        + exists(
+            select 1 from triggers
+            where tgname = 'hotmart_abandonment_reevaluation_events_append_only'
+        )::int
+        + exists(
+            select 1 from functions
+            where oid in (
+                to_regprocedure(
+                    'public.schedule_hotmart_abandonment_reevaluation(uuid)'
+                ),
+                to_regprocedure(
+                    'public.list_due_hotmart_abandonment_reevaluations(timestamp with time zone,integer)'
+                ),
+                to_regprocedure(
+                    'public.reevaluate_hotmart_abandonment_timer(uuid,timestamp with time zone)'
+                )
+            )
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+            having count(*) = 3
+        )::int
+        + (
+            has_function_privilege(
+                'service_role',
+                to_regprocedure(
+                    'public.list_due_hotmart_abandonment_reevaluations(timestamp with time zone,integer)'
+                ),
+                'execute'
+            )
+            and has_function_privilege(
+                'service_role',
+                to_regprocedure(
+                    'public.reevaluate_hotmart_abandonment_timer(uuid,timestamp with time zone)'
+                ),
+                'execute'
+            )
+            and not has_function_privilege(
+                'anon',
+                to_regprocedure(
+                    'public.list_due_hotmart_abandonment_reevaluations(timestamp with time zone,integer)'
+                ),
+                'execute'
+            )
+            and not has_function_privilege(
+                'authenticated',
+                to_regprocedure(
+                    'public.reevaluate_hotmart_abandonment_timer(uuid,timestamp with time zone)'
+                ),
+                'execute'
+            )
+        )::int,
+        7,
+        'versioned_producer_delay_snapshot_and_db_only_reevaluation'
 )
 select
     version,

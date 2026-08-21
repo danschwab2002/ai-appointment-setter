@@ -1176,6 +1176,88 @@ class DurableDispatcher:
         return decisions
 
 
+class HotmartAbandonmentTimerWorker:
+    """Poll due Hotmart timers and perform DB-only reevaluation."""
+
+    def __init__(
+        self,
+        *,
+        supabase: SupabaseClient,
+        poll_interval_seconds: float = 5.0,
+        batch_size: int = 10,
+        clock: Callable[[], str] | None = None,
+    ) -> None:
+        self._supabase = supabase
+        self._poll_interval = poll_interval_seconds
+        self._batch_size = batch_size
+        self._clock = clock or (lambda: datetime.now(UTC).isoformat())
+        self._stopped = asyncio.Event()
+        self._task: asyncio.Task[None] | None = None
+
+    async def start(self) -> None:
+        if self._task is not None:
+            return
+        self._stopped.clear()
+        self._task = asyncio.create_task(self._run())
+
+    async def stop(self, *, timeout: float = 10.0) -> None:
+        self._stopped.set()
+        if self._task is not None:
+            try:
+                await asyncio.wait_for(self._task, timeout=timeout)
+            except asyncio.TimeoutError:
+                self._task.cancel()
+            self._task = None
+
+    async def _run(self) -> None:
+        while not self._stopped.is_set():
+            try:
+                await self.run_once()
+            except SupabaseError:
+                logger.warning("hotmart_abandonment_timer_due_list_failed")
+            except Exception:
+                logger.exception("hotmart_abandonment_timer_worker_unexpected_error")
+            try:
+                await asyncio.wait_for(
+                    self._stopped.wait(), timeout=self._poll_interval
+                )
+            except asyncio.TimeoutError:
+                pass
+
+    async def run_once(self) -> int:
+        now = self._clock()
+        reevaluation_ids = (
+            await self._supabase.list_due_hotmart_abandonment_reevaluations(
+                now=now,
+                batch_size=self._batch_size,
+            )
+        )
+        processed = 0
+        for reevaluation_id in reevaluation_ids:
+            if self._stopped.is_set():
+                break
+            try:
+                result = await self._supabase.reevaluate_hotmart_abandonment_timer(
+                    reevaluation_id=reevaluation_id,
+                    now=now,
+                )
+            except SupabaseError:
+                logger.warning(
+                    "hotmart_abandonment_timer_reevaluation_failed "
+                    "reevaluation_id=%s",
+                    reevaluation_id,
+                )
+                continue
+            processed += 1
+            logger.info(
+                "hotmart_abandonment_timer_reevaluated "
+                "reevaluation_id=%s outcome=%s",
+                result.reevaluation_id,
+                result.outcome,
+            )
+        return processed
+
+
 class ResolutionWorker:
     """Consume ingress events and, in durable mode, dispatch due actions."""
 

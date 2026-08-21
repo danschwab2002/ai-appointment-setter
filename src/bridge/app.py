@@ -72,6 +72,7 @@ from bridge.security import verify_chatwoot_signature
 from bridge.supabase import PilotBoundaryConfig, SupabaseClient, SupabaseError
 from bridge.worker import (
     DurableDispatcher,
+    HotmartAbandonmentTimerWorker,
     HumanHandoffProjectionWorker,
     OptOutProjectionWorker,
     ResolutionWorker,
@@ -180,6 +181,9 @@ class Settings:
     hotmart_hottok: str | None = None
     hotmart_max_age_seconds: int = 300
     hotmart_purchase_worker_enabled: bool = False
+    hotmart_abandonment_timer_worker_enabled: bool = False
+    hotmart_abandonment_timer_poll_interval_seconds: float = 5.0
+    hotmart_abandonment_timer_batch_size: int = 10
     precheckout_form_enabled: bool = False
     precheckout_form_token: str | None = None
     precheckout_max_age_seconds: int = 300
@@ -444,6 +448,18 @@ class Settings:
             os.getenv("HOTMART_PURCHASE_WORKER_ENABLED", "false").lower()
             == "true"
         )
+        hotmart_abandonment_timer_worker_enabled = (
+            os.getenv(
+                "HOTMART_ABANDONMENT_TIMER_WORKER_ENABLED", "false"
+            ).lower()
+            == "true"
+        )
+        hotmart_abandonment_timer_poll_interval_seconds = float(
+            os.getenv("HOTMART_ABANDONMENT_TIMER_POLL_INTERVAL", "5.0")
+        )
+        hotmart_abandonment_timer_batch_size = int(
+            os.getenv("HOTMART_ABANDONMENT_TIMER_BATCH_SIZE", "10")
+        )
         if hotmart_purchase_worker_enabled and not worker_enabled:
             raise ValueError(
                 "HOTMART_PURCHASE_WORKER_ENABLED requires "
@@ -556,6 +572,15 @@ class Settings:
             hotmart_hottok=hotmart_hottok,
             hotmart_max_age_seconds=hotmart_max_age_seconds,
             hotmart_purchase_worker_enabled=hotmart_purchase_worker_enabled,
+            hotmart_abandonment_timer_worker_enabled=(
+                hotmart_abandonment_timer_worker_enabled
+            ),
+            hotmart_abandonment_timer_poll_interval_seconds=(
+                hotmart_abandonment_timer_poll_interval_seconds
+            ),
+            hotmart_abandonment_timer_batch_size=(
+                hotmart_abandonment_timer_batch_size
+            ),
             precheckout_form_enabled=precheckout_form_enabled,
             precheckout_form_token=precheckout_form_token,
             precheckout_max_age_seconds=precheckout_max_age_seconds,
@@ -1081,7 +1106,34 @@ def create_app(
 
     # Build background workers only when explicitly enabled.
     resolution_worker: ResolutionWorker | None = None
+    hotmart_abandonment_timer_worker: HotmartAbandonmentTimerWorker | None = None
     durable_dispatcher: DurableDispatcher | None = None
+    if settings.hotmart_abandonment_timer_worker_enabled:
+        if shared_supabase is None:
+            raise ValueError(
+                "Supabase is required when "
+                "HOTMART_ABANDONMENT_TIMER_WORKER_ENABLED=true"
+            )
+        if (
+            not math.isfinite(
+                settings.hotmart_abandonment_timer_poll_interval_seconds
+            )
+            or settings.hotmart_abandonment_timer_poll_interval_seconds <= 0
+        ):
+            raise ValueError(
+                "HOTMART_ABANDONMENT_TIMER_POLL_INTERVAL must be positive"
+            )
+        if not 1 <= settings.hotmart_abandonment_timer_batch_size <= 100:
+            raise ValueError(
+                "HOTMART_ABANDONMENT_TIMER_BATCH_SIZE must be between 1 and 100"
+            )
+        hotmart_abandonment_timer_worker = HotmartAbandonmentTimerWorker(
+            supabase=shared_supabase,
+            poll_interval_seconds=(
+                settings.hotmart_abandonment_timer_poll_interval_seconds
+            ),
+            batch_size=settings.hotmart_abandonment_timer_batch_size,
+        )
     if settings.worker_enabled and shared_supabase is None:
         raise ValueError("Supabase is required when RESOLUTION_WORKER_ENABLED=true")
     if (
@@ -1290,6 +1342,8 @@ def create_app(
         try:
             if resolution_worker is not None:
                 await resolution_worker.start()
+            if hotmart_abandonment_timer_worker is not None:
+                await hotmart_abandonment_timer_worker.start()
             if durable_dispatcher is not None:
                 await durable_dispatcher.start()
             if opt_out_projection_worker is not None:
@@ -1305,6 +1359,7 @@ def create_app(
                 ("opt_out_projection", opt_out_projection_worker),
                 ("human_handoff_projection", human_handoff_projection_worker),
                 ("dispatcher", durable_dispatcher),
+                ("hotmart_abandonment_timer", hotmart_abandonment_timer_worker),
                 ("resolution", resolution_worker),
             ):
                 if worker is None:
@@ -1320,6 +1375,7 @@ def create_app(
 
     app = FastAPI(title="AI Appointment Setter Bridge", lifespan=lifespan)
     app.state.resolution_worker = resolution_worker
+    app.state.hotmart_abandonment_timer_worker = hotmart_abandonment_timer_worker
     app.state.durable_dispatcher = durable_dispatcher
     app.state.opt_out_projection_worker = opt_out_projection_worker
     app.state.human_handoff_projection_worker = human_handoff_projection_worker

@@ -317,6 +317,21 @@ una salida de carrito resuelta fija `confirmed_abandonment`; ningún outcome con
 `activation_authorized` ni crea efectos. Ver
 [contrato de correlación V1](contracts/hotmart-purchase-intent-correlation-v1.md).
 
+El árbol implementa localmente un timer durable de reevaluación para
+`resolved + confirmed_abandonment`. El plazo es un número variable tomado de
+`followup_policy_versions.grace_period` y se asigna por `tenant_ref + funnel_ref`,
+con overrides opcionales por producto y oferta. Cada timer congela binding,
+generación, policy, versión, segundos y `due_at`; un cambio posterior sólo afecta
+timers nuevos. Ausencia de binding o un override específico deshabilitado produce
+cero timer. Al vencer, un worker DB-only default-off relee `purchase_intents` y
+termina sin crear `scheduled_actions`, delivery attempts ni outbound. La compra
+puede superseder una reevaluación previa porque todavía no ocurrió un efecto
+externo. Este corte tiene evidencia local en PostgreSQL 17, pero la migración no
+fue aplicada en Supabase Cloud, el worker no fue desplegado y no se configuró un
+plazo real para Johanna. Ver
+[contrato de reevaluación Hotmart V1](contracts/hotmart-abandonment-reevaluation-v1.md)
+y [ADR-0014](decisions/0014-configurable-abandonment-reevaluation-timer.md).
+
 El corte one-shot agrega una command durable separada para un único template WABA controlado.
 La command se persiste como `request_started` antes de Chatwoot, fija un presupuesto de un
 mensaje y cero follow-ups, y nunca reenvía un replay ambiguo. Un scope singleton durable impide
@@ -493,6 +508,7 @@ seguido por el
 - [ADR-0005: Empaquetado reproducible y aislamiento por cliente](decisions/0005-reproducible-client-deployments.md)
 - [ADR-0006: Superficie de producto de tres agentes](decisions/0006-three-agent-product-surface.md)
 - [ADR-0007: Motor durable de próxima acción](decisions/0007-durable-next-action-engine.md)
+- [ADR-0014: Timer configurable de reevaluación de abandono](decisions/0014-configurable-abandonment-reevaluation-timer.md)
 
 ## Estado operativo
 
