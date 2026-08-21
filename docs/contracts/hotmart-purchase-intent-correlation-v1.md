@@ -102,10 +102,13 @@ Cada evento produce como máximo una fila append-only en
 ```text
 lifecycle_state            waiting_for_purchase
 current_classification     confirmed_abandonment
-activation_authorized      false
+activation_authorized      conserva el valor previo de la intención
 ```
 
-Confirma abandono oficial, pero no concede consentimiento ni autoriza contacto.
+Confirma abandono oficial, pero no concede consentimiento por sí mismo. Una intención
+V1.0.0 permanece en `false`; una intención V1.1.0 ya autorizada conserva `true`. Compra,
+`ambiguous`, `conflict`, identidad conflictiva y cualquier bloqueo posterior siguen
+revocando o impidiendo activación.
 
 ### `PURCHASE_APPROVED` resuelto
 

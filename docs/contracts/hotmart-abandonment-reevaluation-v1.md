@@ -1,8 +1,8 @@
 # Contrato V1: reevaluación durable de abandono Hotmart
 
-- **Estado:** Implementado localmente; no desplegado ni activado
+- **Estado:** Implementado, migrado y desplegado; worker default-off
 - **Fecha:** 2026-08-21
-- **ADR:** [ADR-0014](../decisions/0014-configurable-abandonment-reevaluation-timer.md)
+- **ADR:** [ADR-0014](../decisions/0014-configurable-abandonment-reevaluation-timer.md), [ADR-0015](../decisions/0015-versioned-landing-whatsapp-consent.md)
 - **Alcance:** programación y reevaluación interna; cero outbound
 
 ## 1. Fuente del plazo
@@ -179,6 +179,15 @@ Resultados:
 | `waiting_for_purchase + confirmed_abandonment` y alguna autorización local es falsa | `blocked_not_authorized` |
 | ambas autorizaciones locales verdaderas, sin binding comercial canónico | `blocked_contact_binding_missing` |
 | cualquier otro estado | `cancelled_intent_changed` |
+
+La admisión `lead.precheckout` V1.1.0 puede fijar ambas autorizaciones locales
+como verdaderas cuando el consentimiento y teléfono son exactos. Una correlación
+de abandono `resolved` preserva esas marcas; compra, `conflict` y `ambiguous` las
+revocan o vuelven irrelevantes. V1.0.0 continúa sin autoridad.
+
+`blocked_contact_binding_missing` no significa “listo para enviar”: demuestra
+únicamente que la autorización local superó su gate y que falta el binding
+comercial canónico requerido por el siguiente contrato.
 
 Un timer no vencido es rechazado. Un replay de reevaluación sobre un timer
 completado devuelve el outcome corriente sin escribir otro evento. La única

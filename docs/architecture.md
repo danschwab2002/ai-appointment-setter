@@ -295,7 +295,7 @@ solo no programa acciones ni concede autorización comercial. Ver
 
 ## Ingreso autenticado `lead.precheckout` de Lancemos
 
-El adapter observado V1 está desplegado para el scope piloto y conectado al relay preview
+El adapter observado V1.0.0 está desplegado para el scope piloto y conectado al relay preview
 de la landing. El endpoint `POST /webhooks/lead` verifica HMAC-SHA256
 sobre el body crudo, valida el contrato exacto `1.0.0`, freshness, headers y scope antes
 de llamar a la RPC separada `admit_observed_lead_precheckout`.
@@ -308,6 +308,14 @@ se usa para WhatsApp. La recepción no crea secuencias, mensajes ni clasificaci�
 abandono. Hotmart mantiene su endpoint y autenticación propios. Ver
 [contrato lead.precheckout V1](contracts/lead-precheckout-v1.md).
 
+El árbol implementa localmente V1.1.0 como extensión aditiva: exige consentimiento
+WhatsApp y `copy_version` exactos, teléfono válido y firma del relay. La RPC
+promueve una intención consistente a autorización local y una correlación de
+abandono `resolved` la preserva. Esto habilita sólo la reevaluación interna; no
+crea contacto, caso, acción ni outbound. Producción continúa en V1.0.0 hasta el
+merge, migración, actualización del relay y E2E controlado. Ver
+[ADR-0015](decisions/0015-versioned-landing-whatsapp-consent.md).
+
 La correlación Hotmart ↔ intención y su fase contract están aplicadas y verificadas en
 Supabase Cloud. Un scope server-side traduce `product.id=8104005` al hotlink
 `F106691755G` y exige oferta `bxjge6zq`, tenant, funnel y una ventana de 24 horas. Cada evento
@@ -317,7 +325,7 @@ una salida de carrito resuelta fija `confirmed_abandonment`; ningún outcome con
 `activation_authorized` ni crea efectos. Ver
 [contrato de correlación V1](contracts/hotmart-purchase-intent-correlation-v1.md).
 
-El árbol implementa localmente un timer durable de reevaluación para
+El runtime productivo implementa un timer durable de reevaluación para
 `resolved + confirmed_abandonment`. El plazo es un número variable tomado de
 `followup_policy_versions.grace_period` y se asigna por `tenant_ref + funnel_ref`,
 con overrides opcionales por producto y oferta. Cada timer congela binding,
@@ -326,9 +334,11 @@ timers nuevos. Ausencia de binding o un override específico deshabilitado produ
 cero timer. Al vencer, un worker DB-only default-off relee `purchase_intents` y
 termina sin crear `scheduled_actions`, delivery attempts ni outbound. La compra
 puede superseder una reevaluación previa porque todavía no ocurrió un efecto
-externo. Este corte tiene evidencia local en PostgreSQL 17, pero la migración no
-fue aplicada en Supabase Cloud, el worker no fue desplegado y no se configuró un
-plazo real para Johanna. Ver
+externo. La migración está aplicada en Supabase Cloud, el runtime correspondiente
+está desplegado y Johanna tiene una policy publicada de 300 segundos para la
+oferta piloto exacta. Dos E2E Cloud verificaron `blocked_not_authorized` y
+`cancelled_purchased` con delta comercial cero; el worker quedó nuevamente
+default-off. Ver
 [contrato de reevaluación Hotmart V1](contracts/hotmart-abandonment-reevaluation-v1.md)
 y [ADR-0014](decisions/0014-configurable-abandonment-reevaluation-timer.md).
 

@@ -775,6 +775,46 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         7,
         'versioned_producer_delay_snapshot_and_db_only_reevaluation'
+    union all
+    select
+        '20260821000200',
+        '20260821000200_lead_whatsapp_consent_authorization.sql',
+        exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.admit_observed_lead_precheckout(text,jsonb,jsonb)'
+            )
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+              and position('1.1.0' in definition) > 0
+              and position(
+                  'johanna-precheckout-whatsapp-disclosure-v1' in definition
+              ) > 0
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.correlate_hotmart_purchase_intent(uuid)'
+            )
+              and position(
+                  'set current_classification = ''confirmed_abandonment'', updated_at = clock_timestamp()'
+                  in regexp_replace(definition, '[[:space:]]+', ' ', 'g')
+              ) > 0
+        )::int
+        + coalesce((
+            select (
+                has_function_privilege('service_role', oid, 'execute')
+                and not has_function_privilege('anon', oid, 'execute')
+                and not has_function_privilege('authenticated', oid, 'execute')
+            )::int
+            from functions
+            where oid = to_regprocedure(
+                'public.admit_observed_lead_precheckout(text,jsonb,jsonb)'
+            )
+        ), 0),
+        3,
+        'versioned_landing_consent_preserved_for_internal_reevaluation'
 )
 select
     version,

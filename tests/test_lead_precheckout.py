@@ -60,6 +60,17 @@ def _payload() -> dict[str, object]:
     }
 
 
+def _authorized_payload() -> dict[str, object]:
+    payload = deepcopy(_payload())
+    payload["version"] = "1.1.0"
+    payload["data"]["consent"] = {  # type: ignore[index]
+        "marketing_optin": True,
+        "whatsapp_contact": True,
+        "copy_version": "johanna-precheckout-whatsapp-disclosure-v1",
+    }
+    return payload
+
+
 def test_parses_observed_contract_into_non_contactable_intent() -> None:
     parsed = parse_lead_precheckout(_payload())
 
@@ -76,6 +87,56 @@ def test_parses_observed_contract_into_non_contactable_intent() -> None:
         "provider_observed": True,
         "activation_authorized": False,
     }
+
+
+def test_v1_1_explicit_whatsapp_consent_authorizes_internal_reevaluation() -> None:
+    parsed = parse_lead_precheckout(_authorized_payload())
+
+    assert parsed is not None
+    assert parsed.contract_version == "1.1.0"
+    assert parsed.marketing_optin is True
+    assert parsed.whatsapp_contact_authorized is True
+    assert parsed.consent_copy_version == (
+        "johanna-precheckout-whatsapp-disclosure-v1"
+    )
+    canonical = parsed.as_canonical_payload()
+    assert canonical["contract_version"] == "1.1.0"
+    assert canonical["consent"] == {
+        "terms_accepted": False,
+        "privacy_accepted": False,
+        "whatsapp_contact": True,
+        "marketing_optin": True,
+        "copy_version": "johanna-precheckout-whatsapp-disclosure-v1",
+    }
+    assert canonical["assurance"]["activation_authorized"] is True  # type: ignore[index]
+
+
+def test_v1_1_rejects_unapproved_copy_version() -> None:
+    payload = _authorized_payload()
+    payload["data"]["consent"]["copy_version"] = "unapproved-copy"  # type: ignore[index]
+
+    assert parse_lead_precheckout(payload) is None
+
+
+def test_v1_1_rejects_missing_consent_or_extra_consent_keys() -> None:
+    for field in ("marketing_optin", "whatsapp_contact"):
+        payload = _authorized_payload()
+        payload["data"]["consent"][field] = False  # type: ignore[index]
+        assert parse_lead_precheckout(payload) is None
+
+    payload = _authorized_payload()
+    payload["data"]["consent"]["browser_claim"] = True  # type: ignore[index]
+    assert parse_lead_precheckout(payload) is None
+
+
+def test_v1_1_rejects_authorization_when_phone_is_invalid() -> None:
+    payload = _authorized_payload()
+    buyer = payload["data"]["buyer"]  # type: ignore[index]
+    buyer.update(  # type: ignore[union-attr]
+        phone="+57123", phone_country_code="57", phone_national="123"
+    )
+
+    assert parse_lead_precheckout(payload) is None
 
 
 def test_invalid_country_phone_is_admitted_as_non_contactable() -> None:
@@ -151,6 +212,29 @@ def test_rejects_unknown_or_extra_contract_fields() -> None:
     payload["unexpected"] = "field"
 
     assert parse_lead_precheckout(payload) is None
+
+
+def test_contract_version_must_match_exactly_without_whitespace_normalization() -> None:
+    for version in ("1.0.0 ", " 1.0.0", "1.1.0 ", " 1.1.0"):
+        payload = _authorized_payload() if "1.1.0" in version else _payload()
+        payload["version"] = version
+
+        assert parse_lead_precheckout(payload) is None
+
+
+def test_identity_ascii_whitespace_uses_the_canonical_trim_rule() -> None:
+    payload = _authorized_payload()
+    payload["data"]["buyer"]["email"] = (  # type: ignore[index]
+        "\tMARIA.EXAMPLE@EXAMPLE.COM\r\n"
+    )
+    payload["data"]["buyer"]["phone_country_code"] = "\t1\n"  # type: ignore[index]
+    payload["data"]["buyer"]["phone_national"] = "\r2025550123\v"  # type: ignore[index]
+
+    parsed = parse_lead_precheckout(payload)
+
+    assert parsed is not None
+    assert parsed.normalized_email == "maria.example@example.com"
+    assert parsed.normalized_phone == "12025550123"
 
 
 def test_rejects_non_ulid_delivery_id() -> None:
