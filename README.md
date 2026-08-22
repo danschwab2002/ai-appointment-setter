@@ -40,8 +40,9 @@ El endpoint `POST /webhooks/chatwoot`:
 
 - verifica autenticación, anti-replay y el JID autorizado;
 - persiste la admisión antes de devolver HTTP 202;
-- agrupa mensajes públicos entrantes después de 30 segundos de silencio por conversación;
+- agrupa mensajes públicos entrantes después de una ventana configurable de silencio por conversación (30 segundos por defecto);
 - consulta y valida el historial canónico de Chatwoot;
+- reconoce el comando exacto `/nuevo`, confirma `Memoria eliminada.` sin invocar Hermes y excluye del contexto conversacional todo lo anterior;
 - invoca al profile Hermes `agente-comercial`;
 - vuelve a verificar pausas, intervención humana, avance de conversación e idempotencia antes de responder.
 

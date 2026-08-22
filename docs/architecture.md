@@ -108,9 +108,10 @@ Chatwoot -> POST /webhooks/chatwoot
          -> captura privada + admisión atómica en CAPTURE_DIR/.work
          -> HTTP 202
 
-worker local -> debounce durable + lock hasheado por conversación (30 s)
+worker local -> debounce durable configurable + lock hasheado por conversación
              -> líder por mayor message_id canónico
              -> historial de Chatwoot validado contra todos los IDs del batch
+             -> límite de contexto posterior al último /nuevo exacto
              -> detector determinista de baja explícita
                 -> RPC SQL autoritativa + corte del turno
              -> API Server de agente-comercial
@@ -129,7 +130,8 @@ evaluaciones y los efectos externos ante replay.
 
 El historial se trunca en el ID canónico del mensaje que originó el webhook.
 Para mensajes públicos entrantes, cada nueva admisión de la conversación reinicia
-una ventana durable de 30 segundos. Cuando vence, el mayor `message_id` canónico
+una ventana durable configurable, con valor por defecto de 30 segundos. Cuando
+vence, el mayor `message_id` canónico
 del grupo se convierte en el trigger aunque los webhooks hayan llegado fuera de
 orden. El cliente pagina el historial con `before`, y los mensajes anteriores del
 mismo turno forman parte de una única evaluación. Los mensajes posteriores al
@@ -138,6 +140,14 @@ lectura acotada, el bridge falla cerrado y no invoca Hermes. Las intervenciones
 humanas no esperan esta ventana. El worker repite el scan y la decisión del turno
 bajo el lock conversacional para que una admisión ocurrida entre el scan inicial y
 el lock reinicie efectivamente el deadline.
+
+El mensaje público entrante exacto `/nuevo` es un control determinista y no
+espera el debounce. El bridge no invoca Hermes: publica `Memoria eliminada.` por
+el AgentBot bajo las guardas de salida existentes. En turnos posteriores,
+excluye del contexto el último `/nuevo`, su confirmación y todo mensaje anterior,
+sin borrar la historia operativa de Chatwoot ni mutar estados durables. El
+contrato exacto está en
+[`chatwoot-conversation-reset-v1`](contracts/chatwoot-conversation-reset-v1.md).
 
 La lectura canónica conserva una ventana reciente mínima y pagina hasta encontrar
 los IDs requeridos del batch, alcanzar el inicio real o agotar 100 páginas. Ese

@@ -82,6 +82,8 @@ logger = logging.getLogger(__name__)
 CHATWOOT_WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024
 HOTMART_WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024
 PRECHECKOUT_WEBHOOK_BODY_LIMIT_BYTES = 64 * 1024
+CHATWOOT_CONVERSATION_RESET_COMMAND = "/nuevo"
+CHATWOOT_CONVERSATION_RESET_CONFIRMATION = "Memoria eliminada."
 PRECHECKOUT_FIRST_TOUCH_TEMPLATE_NAME = "libre_ansiedad_test_first_touch_v1"
 PRECHECKOUT_FIRST_TOUCH_COPY_VERSION = "libre-ansiedad-precheckout-first-touch-v1"
 
@@ -773,6 +775,8 @@ def _normalize_chatwoot_history(
             actor = "assistant"
         if actor is not None:
             normalized_message = {"actor": actor, "text": content.strip()}
+            if actor == "prospect" and content == CHATWOOT_CONVERSATION_RESET_COMMAND:
+                normalized_message["_conversation_reset"] = "true"
             message_id = message.get("id")
             if isinstance(message_id, int) and not isinstance(message_id, bool):
                 normalized_message["_message_ref"] = str(message_id)
@@ -785,6 +789,35 @@ def _normalize_chatwoot_history(
                 normalized_message["_created_at"] = str(created_at)
             normalized.append(normalized_message)
     return normalized
+
+
+def _is_conversation_reset_message(payload: dict[str, object]) -> bool:
+    return payload.get("content") == CHATWOOT_CONVERSATION_RESET_COMMAND
+
+
+def _history_after_latest_reset(
+    messages: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    reset_index = next(
+        (
+            index
+            for index in range(len(messages) - 1, -1, -1)
+            if messages[index].get("actor") == "prospect"
+            and messages[index].get("_conversation_reset") == "true"
+        ),
+        None,
+    )
+    if reset_index is None:
+        return messages
+    reset_history = messages[reset_index + 1 :]
+    if (
+        reset_history
+        and reset_history[0].get("actor") == "assistant"
+        and reset_history[0].get("text")
+        == CHATWOOT_CONVERSATION_RESET_CONFIRMATION
+    ):
+        return reset_history[1:]
+    return reset_history
 
 
 def create_app(
@@ -1540,6 +1573,7 @@ def create_app(
             default=current_index,
         )
         normalized = normalized[max(0, first_batch_index - 19) :]
+        normalized = _history_after_latest_reset(normalized)
         public_messages = [
             {
                 "actor": message["actor"],
@@ -1611,6 +1645,81 @@ def create_app(
         if decision.reason == "invalid_message_id":
             raise RuntimeError("chatwoot_invalid_message_id")
         if not decision.accepted:
+            return
+        if _is_conversation_reset_message(payload):
+            if not settings.automated_replies_enabled:
+                return
+            message_id = payload.get("id")
+            conversation = payload.get("conversation")
+            conversation_id = (
+                conversation.get("id") if isinstance(conversation, dict) else None
+            )
+            if (
+                control_client is None
+                or not isinstance(message_id, int)
+                or isinstance(message_id, bool)
+                or not isinstance(conversation_id, int)
+                or isinstance(conversation_id, bool)
+            ):
+                raise RuntimeError("chatwoot_reset_reply_not_configured")
+            if opt_out_enforcement_enabled:
+                assert shared_supabase is not None
+                assert settings.chatwoot_account_id is not None
+                assert settings.chatwoot_inbox_id is not None
+                external_user_id = (
+                    settings.allowed_jid.split("@", 1)[0]
+                    if settings.allowed_jid is not None
+                    else ""
+                )
+                if not external_user_id.isdigit():
+                    raise RuntimeError("chatwoot_reset_external_user_id_invalid")
+                try:
+                    stopped = await shared_supabase.has_chatwoot_opt_out_stop(
+                        chatwoot_account_id=settings.chatwoot_account_id,
+                        chatwoot_inbox_id=settings.chatwoot_inbox_id,
+                        chatwoot_conversation_id=conversation_id,
+                        external_user_id=external_user_id,
+                    )
+                except SupabaseError as exc:
+                    raise RetryableChatwootWorkError(
+                        "chatwoot_reset_opt_out_stop_check_failed"
+                    ) from exc
+                if stopped:
+                    try:
+                        reconciliation = (
+                            await shared_supabase.reconcile_chatwoot_opt_out_stop(
+                                chatwoot_account_id=settings.chatwoot_account_id,
+                                chatwoot_inbox_id=settings.chatwoot_inbox_id,
+                                chatwoot_conversation_id=conversation_id,
+                                external_user_id=external_user_id,
+                            )
+                        )
+                    except SupabaseError as exc:
+                        raise RetryableChatwootWorkError(
+                            "chatwoot_reset_opt_out_reconciliation_failed"
+                        ) from exc
+                    logger.info(
+                        "chatwoot_reset_opt_out_reconciled outcome=%s event_id=%s",
+                        reconciliation.outcome,
+                        reconciliation.opt_out_event_id,
+                    )
+                    return
+            try:
+                reply_result = await control_client.send_agent_bot_reply(
+                    conversation_id=conversation_id,
+                    trigger_message_id=message_id,
+                    delivery_id=delivery_id,
+                    content=CHATWOOT_CONVERSATION_RESET_CONFIRMATION,
+                )
+            except ChatwootReplyDeliveryUnknownError as exc:
+                raise RetryableChatwootWorkError(
+                    "reset_reply_delivery_unknown"
+                ) from exc
+            reply_status = reply_result.get("status")
+            if reply_status == "blocked":
+                return
+            if reply_status not in {"sent", "duplicate"}:
+                raise RuntimeError("invalid_chatwoot_reset_reply_result")
             return
         if settings.chatwoot_cut_b_admission_enabled:
             assert shared_supabase is not None
@@ -1779,6 +1888,8 @@ def create_app(
         def inbound_debounce_key(payload: dict[str, object]) -> str | None:
             decision = classify_scoped_chatwoot_event(payload)
             if not decision.accepted:
+                return None
+            if _is_conversation_reset_message(payload):
                 return None
             conversation = payload.get("conversation")
             conversation_id = (

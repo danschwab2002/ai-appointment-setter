@@ -1350,6 +1350,266 @@ def test_processes_a_normalized_shadow_evaluation_for_an_allowed_message(
     assert chatwoot.reply_calls == []
 
 
+def test_nuevo_bypasses_debounce_and_confirms_without_invoking_hermes(
+    tmp_path: Path,
+) -> None:
+    secret = "webhook-secret"
+    payload = {
+        "event": "message_created",
+        "id": 790,
+        "content": "/nuevo",
+        "message_type": "incoming",
+        "private": False,
+        "conversation": {
+            "id": 123,
+            "contact_inbox": {
+                "source_id": "12025550123@s.whatsapp.net",
+            },
+        },
+    }
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    shadow = StubShadowProcessor()
+    chatwoot = StubChatwootClient()
+    app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            automated_replies_enabled=True,
+            chatwoot_inbound_debounce_seconds=30,
+        ),
+        chatwoot_client=chatwoot,
+        shadow_processor=shadow,
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(raw_body, secret=secret, delivery="reset-delivery"),
+    )
+    assert response.status_code == 202
+
+    asyncio.run(app.state.chatwoot_worker.run_once())
+
+    assert shadow.calls == []
+    assert chatwoot.history_calls == []
+    assert chatwoot.reply_calls == [
+        {
+            "conversation_id": 123,
+            "trigger_message_id": 790,
+            "delivery_id": "reset-delivery",
+            "content": "Memoria eliminada.",
+        }
+    ]
+
+
+def test_nuevo_cannot_bypass_an_existing_durable_opt_out(
+    tmp_path: Path,
+) -> None:
+    secret = "webhook-secret"
+    payload = {
+        "event": "message_created",
+        "id": 791,
+        "content": "/nuevo",
+        "message_type": "incoming",
+        "private": False,
+        "account": {"id": 1},
+        "inbox": {"id": 7},
+        "conversation": {
+            "id": 123,
+            "inbox_id": 7,
+            "contact_inbox": {
+                "source_id": "12025550123@s.whatsapp.net",
+            },
+        },
+    }
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    shadow = StubShadowProcessor()
+    chatwoot = StubChatwootClient()
+    supabase = StubOptOutSupabase(stopped=True)
+    app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=7,
+            automated_replies_enabled=True,
+            chatwoot_inbound_debounce_seconds=30,
+        ),
+        chatwoot_client=chatwoot,
+        shadow_processor=shadow,
+        supabase_client=supabase,  # type: ignore[arg-type]
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(raw_body, secret=secret, delivery="stopped-reset-delivery"),
+    )
+    assert response.status_code == 202
+    asyncio.run(app.state.chatwoot_worker.run_once())
+
+    assert supabase.stop_checks == [
+        {
+            "chatwoot_account_id": 1,
+            "chatwoot_inbox_id": 7,
+            "chatwoot_conversation_id": 123,
+            "external_user_id": "12025550123",
+        }
+    ]
+    assert len(supabase.reconcile_calls) == 1
+    assert shadow.calls == []
+    assert chatwoot.reply_calls == []
+
+
+def test_canonical_context_starts_after_the_latest_nuevo_command(
+    tmp_path: Path,
+) -> None:
+    secret = "webhook-secret"
+    payload = {
+        "event": "message_created",
+        "id": 904,
+        "content": "¿Cuánto cuesta?",
+        "message_type": "incoming",
+        "private": False,
+        "conversation": {
+            "id": 123,
+            "contact_inbox": {
+                "source_id": "12025550123@s.whatsapp.net",
+            },
+        },
+    }
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    shadow = StubShadowProcessor()
+    chatwoot = StubChatwootClient(
+        messages=[
+            {
+                "id": 900,
+                "message_type": 0,
+                "private": False,
+                "content": "Tengo un problema anterior",
+                "sender": {"type": "contact", "id": 20},
+            },
+            {
+                "id": 901,
+                "message_type": 1,
+                "private": False,
+                "content": "Respuesta anterior",
+                "sender": {"type": "agent_bot", "id": 1},
+            },
+            {
+                "id": 902,
+                "message_type": 0,
+                "private": False,
+                "content": "/nuevo",
+                "sender": {"type": "contact", "id": 20},
+            },
+            {
+                "id": 903,
+                "message_type": 1,
+                "private": False,
+                "content": "Memoria eliminada.",
+                "sender": {"type": "agent_bot", "id": 1},
+            },
+            {
+                "id": 904,
+                "message_type": 0,
+                "private": False,
+                "content": "¿Cuánto cuesta?",
+                "sender": {"type": "contact", "id": 20},
+            },
+        ]
+    )
+    app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+        ),
+        chatwoot_client=chatwoot,
+        shadow_processor=shadow,
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(raw_body, secret=secret, delivery="post-reset-delivery"),
+    )
+    assert response.status_code == 202
+    asyncio.run(app.state.chatwoot_worker.run_once())
+
+    assert len(shadow.calls) == 1
+    _, context = shadow.calls[0]
+    assert context["messages"] == [
+        {"actor": "prospect", "text": "¿Cuánto cuesta?"}
+    ]
+
+
+@pytest.mark.parametrize("content", ["/Nuevo", " /nuevo", "/nuevo "])
+def test_only_the_exact_nuevo_command_resets_the_conversation(
+    tmp_path: Path,
+    content: str,
+) -> None:
+    secret = "webhook-secret"
+    payload = {
+        "event": "message_created",
+        "id": 905,
+        "content": content,
+        "message_type": "incoming",
+        "private": False,
+        "conversation": {
+            "id": 123,
+            "contact_inbox": {
+                "source_id": "12025550123@s.whatsapp.net",
+            },
+        },
+    }
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    shadow = StubShadowProcessor()
+    chatwoot = StubChatwootClient(
+        messages=[
+            {
+                "id": 905,
+                "message_type": 0,
+                "private": False,
+                "content": content,
+                "sender": {"type": "contact", "id": 20},
+            }
+        ]
+    )
+    app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+        ),
+        chatwoot_client=chatwoot,
+        shadow_processor=shadow,
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(raw_body, secret=secret, delivery=f"non-reset-{content!r}"),
+    )
+    assert response.status_code == 202
+    asyncio.run(app.state.chatwoot_worker.run_once())
+
+    assert len(shadow.calls) == 1
+    _, context = shadow.calls[0]
+    assert context["messages"] == [{"actor": "prospect", "text": content.strip()}]
+    assert chatwoot.reply_calls == []
+
+
 def test_applies_canonical_opt_out_before_shadow_or_reply(tmp_path: Path) -> None:
     secret = "webhook-secret"
     payload = {
