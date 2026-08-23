@@ -815,6 +815,37 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         ), 0),
         3,
         'versioned_landing_consent_preserved_for_internal_reevaluation'
+    union all
+    select
+        '20260823000100',
+        '20260823000100_inbound_durable_handoff.sql',
+        exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.request_inbound_human_handoff(uuid,text,text,text,integer,timestamp with time zone)'
+            )
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+        )::int
+        + exists(
+            select 1 from triggers
+            where tgname = 'human_handoff_requests_bind_commercial_case'
+        )::int
+        + exists(
+            select 1 from indexes
+            where indexname =
+                'human_handoff_requests_one_live_per_commercial_case_idx'
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.claim_human_handoff_projection_effects(text,integer,integer,timestamp with time zone)'
+            )
+              and position('inbound_commercial_case_admissions' in definition) > 0
+        )::int,
+        4,
+        'commercial_case_root_inbound_handoff_and_projection'
 )
 select
     version,

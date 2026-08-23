@@ -471,3 +471,22 @@ def test_enabling_shadow_mode_rejects_https_without_a_hostname(
 
     with pytest.raises(ValueError, match="valid hostname"):
         Settings.from_env()
+
+
+def test_compose_passes_through_durable_handoff_configuration() -> None:
+    env_example = (PROJECT_ROOT / ".env.example").read_text()
+    compose = (PROJECT_ROOT / "compose.yaml").read_text()
+    required = {
+        "HUMAN_HANDOFF_ADMISSION_ENABLED",
+        "HUMAN_HANDOFF_PROJECTION_ENABLED",
+        "HUMAN_HANDOFF_PROJECTION_WORKER_ID",
+        "HANDOFF_PROJECTION_POLICY_KEY",
+        "HANDOFF_PROJECTION_POLICY_VERSION",
+    }
+
+    for variable in required:
+        assert f"{variable}=" in env_example
+        assert f"{variable}:" in compose
+
+    assert "HUMAN_HANDOFF_ADMISSION_ENABLED=false" in env_example
+    assert "HUMAN_HANDOFF_PROJECTION_ENABLED=false" in env_example

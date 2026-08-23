@@ -499,6 +499,7 @@ def _response_rows(
 
 _COMMITTED_HANDOFF_OPERATIONS = {
     "claim_human_handoff_projection_effects",
+    "request_inbound_human_handoff",
     "request_human_handoff",
     "finalize_human_handoff_projection_effect",
 }
@@ -1804,6 +1805,56 @@ class SupabaseClient:
                 row,
                 "outcome",
                 {"requested", "already_requested", "evidence_appended"},
+                operation=operation,
+            ),
+            handoff_request_id=_required_uuid(
+                row, "handoff_request_id", operation=operation
+            ),
+            affected_actions=_required_nonnegative_int(
+                row, "affected_actions", operation=operation
+            ),
+            affected_attempts=_required_nonnegative_int(
+                row, "affected_attempts", operation=operation
+            ),
+        )
+
+    async def request_inbound_human_handoff(
+        self,
+        *,
+        commercial_case_id: str,
+        command_key: str,
+        reason_code: str,
+        projection_policy_key: str,
+        projection_policy_version: int,
+        now: str,
+    ) -> HumanHandoffRequestResult:
+        """Atomically stop one inbound case and enqueue its handoff effects."""
+        operation = "request_inbound_human_handoff"
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps({
+                "p_commercial_case_id": commercial_case_id,
+                "p_command_key": command_key,
+                "p_reason_code": reason_code,
+                "p_projection_policy_key": projection_policy_key,
+                "p_projection_policy_version": projection_policy_version,
+                "p_now": now,
+            }),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _committed_response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseCommittedResponseError(
+                f"{operation}_committed_response_invalid"
+            )
+        row = rows[0]
+        return HumanHandoffRequestResult(
+            outcome=_required_enum(
+                row,
+                "outcome",
+                {"requested", "already_requested"},
                 operation=operation,
             ),
             handoff_request_id=_required_uuid(
