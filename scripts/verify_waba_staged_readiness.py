@@ -125,7 +125,11 @@ def evaluate_snapshot(
     )
     for field, reason in common_template_fields:
         _require_true(template, field, reason, controlled)
-    if template_version == 2 and not isinstance(template_version, bool):
+    if (
+        isinstance(template_version, int)
+        and not isinstance(template_version, bool)
+        and template_version == 2
+    ):
         versioned_template_fields = (
             ("followup_disabled", "followup_not_disabled"),
             ("first_touch_name_present", "first_touch_template_name_missing"),

@@ -45,7 +45,7 @@ Un nombre o producto ausente/vacío bloquea el sender antes de cualquier lookup,
 }
 ```
 
-Todos los campos son atestaciones booleanas exactas. Strings, `0`, `1`, `null`, ausencia o una versión booleana fallan cerrado. Todo `contract_version` que no sea el entero exacto `2` produce `template_contract_version_unsupported` para readiness controlado.
+Salvo `contract_version`, todos los campos del bloque son atestaciones booleanas exactas. Strings, `0`, `1`, `null` o ausencia fallan cerrado. `contract_version` debe ser el entero JSON exacto `2`; floats como `2.0`, strings y booleanos producen `template_contract_version_unsupported` para readiness controlado.
 
 ## Reason codes V2
 

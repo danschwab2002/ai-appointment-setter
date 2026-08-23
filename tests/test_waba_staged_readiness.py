@@ -158,7 +158,7 @@ def test_single_touch_contract_gates_fail_closed(field: str, reason: str) -> Non
     assert reason in controlled["reasons"]
 
 
-@pytest.mark.parametrize("invalid_version", [True, 3, "2"])
+@pytest.mark.parametrize("invalid_version", [True, 2.0, 2e0, 3, "2"])
 def test_template_contract_version_fails_closed(invalid_version: object) -> None:
     snapshot = _single_touch_snapshot()
     template = snapshot["template"]
