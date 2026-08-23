@@ -87,6 +87,7 @@ const rows = await db.query(`
       ('record_and_finalize_followup_acceptance(uuid,uuid,text,bigint,text,text,text,timestamp with time zone)'),
       ('reevaluate_hotmart_abandonment_timer(uuid,timestamp with time zone)'),
       ('reevaluate_followup_action(uuid,text,bigint,timestamp with time zone,boolean,text,text,timestamp with time zone,text,boolean,boolean,boolean,boolean,boolean)'),
+      ('request_inbound_human_handoff(uuid,text,text,text,integer,timestamp with time zone)'),
       ('request_human_handoff(uuid,text,text,text,text,integer,uuid,uuid,text,bigint,timestamp with time zone)'),
       ('reserve_followup_delivery_attempt(uuid,text,bigint,bigint,bigint,text,text,timestamp with time zone)'),
       ('set_lancemos_pilot_cohort_member(text,integer,uuid,bigint,text,text,text)'),
@@ -111,7 +112,7 @@ const rows = await db.query(`
 `);
 const result = rows.rows[0];
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 35) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 36) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const inventory = await db.query(readFileSync(

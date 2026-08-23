@@ -143,6 +143,7 @@ class StubInboundCommercialSupabase:
     def __init__(self, *, outcome: str = "created") -> None:
         self.outcome = outcome
         self.admission_calls: list[dict[str, object]] = []
+        self.handoff_calls: list[dict[str, object]] = []
 
     async def admit_inbound_commercial_case(
         self, **kwargs: object
@@ -159,6 +160,14 @@ class StubInboundCommercialSupabase:
 
     async def has_chatwoot_opt_out_stop(self, **_: object) -> bool:
         return False
+
+    async def request_inbound_human_handoff(self, **kwargs: object) -> object:
+        self.handoff_calls.append(kwargs)
+        return type(
+            "HandoffResult",
+            (),
+            {"outcome": "requested", "handoff_request_id": "handoff-1"},
+        )()
 
 
 class StubOptOutSupabase:
@@ -4061,3 +4070,81 @@ def test_cut_b_agent_gate_admits_then_replies_through_canonical_chatwoot(
     else:
         assert shadow.calls == []
         assert chatwoot.reply_calls == []
+
+
+def test_cut_b_handoff_is_durable_before_reply(tmp_path: Path) -> None:
+    secret = "webhook-secret"
+    payload: dict[str, object] = {
+        "event": "message_created",
+        "id": 902,
+        "content": "Me cobraron dos veces y quiero una devolución",
+        "message_type": "incoming",
+        "private": False,
+        "account": {"id": 1},
+        "inbox": {"id": 9},
+        "conversation": {
+            "id": 322,
+            "inbox_id": 9,
+            "contact_inbox": {"source_id": "12025550123@s.whatsapp.net"},
+        },
+    }
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    supabase = StubInboundCommercialSupabase()
+    shadow = StubShadowProcessor(
+        {"decision": "handoff", "reply": "Este caso requiere revisión humana."}
+    )
+    chatwoot = StubChatwootClient(
+        messages=[
+            {
+                "id": 902,
+                "created_at": 1786233960,
+                "message_type": 0,
+                "private": False,
+                "content": "Me cobraron dos veces y quiero una devolución",
+                "sender": {"type": "contact", "id": 20},
+            }
+        ]
+    )
+    app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=9,
+            chatwoot_cut_b_admission_enabled=True,
+            chatwoot_cut_b_scope_key="libre-de-ansiedad-inbound",
+            chatwoot_cut_b_scope_version=2,
+            chatwoot_cut_b_agent_enabled=True,
+            automated_replies_enabled=True,
+            human_handoff_admission_enabled=True,
+            human_handoff_projection_enabled=True,
+            handoff_projection_policy_key="lancemos-inbound-handoff",
+            handoff_projection_policy_version=1,
+            human_handoff_projection_worker_id="handoff-projection-test",
+        ),
+        chatwoot_client=chatwoot,
+        shadow_processor=shadow,
+        supabase_client=supabase,  # type: ignore[arg-type]
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(raw_body, secret=secret, delivery="cut-b-handoff"),
+    )
+    asyncio.run(app.state.chatwoot_worker.run_once())
+
+    assert response.status_code == 202
+    assert len(supabase.handoff_calls) == 1
+    assert supabase.handoff_calls[0]["commercial_case_id"] == "case-1"
+    assert chatwoot.reply_calls == [
+        {
+            "conversation_id": 322,
+            "trigger_message_id": 902,
+            "delivery_id": "cut-b-handoff",
+            "content": "Este caso requiere revisión humana.",
+        }
+    ]

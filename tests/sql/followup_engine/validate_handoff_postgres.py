@@ -470,6 +470,7 @@ def verify_effective_acls(harness: PostgresHarness) -> None:
                 case
                   when role_name = 'service_role'
                    and proname in (
+                     'request_inbound_human_handoff',
                      'request_human_handoff',
                      'claim_human_handoff_projection_effects',
                      'finalize_human_handoff_projection_effect',
