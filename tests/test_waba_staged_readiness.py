@@ -41,17 +41,17 @@ def _snapshot() -> dict[str, object]:
             "pilot_boundary_enabled": False,
         },
         "template": {
+            "contract_version": 2,
             "selection_unambiguous": True,
             "first_touch_meta_approved": True,
             "first_touch_business_approved": True,
-            "followup_meta_approved": True,
-            "followup_business_approved": True,
-            "names_present": True,
+            "followup_disabled": True,
+            "first_touch_name_present": True,
             "language_present": True,
             "category_present": True,
             "category_runtime_supported": True,
-            "body_placeholder_one_exact": True,
-            "pair_runtime_compatible": True,
+            "body_placeholders_two_exact": True,
+            "single_touch_runtime_compatible": True,
         },
         "controlled_template": {
             "payment_method_operational": True,
@@ -84,6 +84,10 @@ def _snapshot() -> dict[str, object]:
             "sensitive_value": "must-never-be-printed",
         },
     }
+
+
+def _single_touch_snapshot() -> dict[str, object]:
+    return _snapshot()
 
 
 def _run(snapshot: object, *, account: str = "101", inbox: str = "303", previous: str = "202") -> subprocess.CompletedProcess[str]:
@@ -121,6 +125,63 @@ def test_all_three_readiness_levels_can_be_ready_without_handoff() -> None:
     assert "303" not in result.stdout
     assert "must-never-be-printed" not in result.stdout
     assert result.stderr == ""
+
+
+def test_single_touch_two_variable_contract_can_reach_all_levels() -> None:
+    result = _run(_single_touch_snapshot())
+
+    assert result.returncode == 0
+    body = _body(result)
+    assert body["highest_ready_level"] == "ready_for_supervised_pilot"
+    assert all(level["ready"] is True for level in body["levels"].values())  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize(
+    ("field", "reason"),
+    [
+        ("followup_disabled", "followup_not_disabled"),
+        ("first_touch_name_present", "first_touch_template_name_missing"),
+        ("body_placeholders_two_exact", "template_placeholder_schema_mismatch"),
+        ("single_touch_runtime_compatible", "single_touch_runtime_mismatch"),
+    ],
+)
+def test_single_touch_contract_gates_fail_closed(field: str, reason: str) -> None:
+    snapshot = _single_touch_snapshot()
+    template = snapshot["template"]
+    assert isinstance(template, dict)
+    template[field] = False
+
+    result = _run(snapshot)
+
+    controlled = _body(result)["levels"]["ready_for_controlled_template"]  # type: ignore[index]
+    assert controlled["ready"] is False
+    assert reason in controlled["reasons"]
+
+
+@pytest.mark.parametrize("invalid_version", [True, 3, "2"])
+def test_template_contract_version_fails_closed(invalid_version: object) -> None:
+    snapshot = _single_touch_snapshot()
+    template = snapshot["template"]
+    assert isinstance(template, dict)
+    template["contract_version"] = invalid_version
+
+    result = _run(snapshot)
+
+    reasons = _body(result)["levels"]["ready_for_controlled_template"]["reasons"]  # type: ignore[index]
+    assert "template_contract_version_unsupported" in reasons
+
+
+def test_legacy_template_contract_cannot_authorize_current_runtime() -> None:
+    snapshot = _snapshot()
+    template = snapshot["template"]
+    assert isinstance(template, dict)
+    template["contract_version"] = 1
+
+    result = _run(snapshot)
+
+    controlled = _body(result)["levels"]["ready_for_controlled_template"]  # type: ignore[index]
+    assert controlled["ready"] is False
+    assert "template_contract_version_unsupported" in controlled["reasons"]
 
 
 def test_observational_inbound_does_not_require_team_template_payment_or_schema() -> None:
@@ -162,7 +223,7 @@ def test_controlled_template_does_not_enable_supervised_pilot() -> None:
         ("template", "selection_unambiguous", "template_selection_ambiguous"),
         ("template", "first_touch_meta_approved", "first_touch_meta_not_approved"),
         ("template", "category_runtime_supported", "template_category_runtime_unsupported"),
-        ("template", "pair_runtime_compatible", "template_pair_runtime_mismatch"),
+        ("template", "single_touch_runtime_compatible", "single_touch_runtime_mismatch"),
         ("controlled_template", "provider_mode_compatible", "provider_mode_incompatible"),
         ("controlled_template", "eligible_backlog_zero", "eligible_backlog_not_zero"),
         ("supervised_pilot", "durable_scope_inactive", "durable_scope_not_inactive"),

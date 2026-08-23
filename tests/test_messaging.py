@@ -596,15 +596,17 @@ def test_chatwoot_sender_sends_waba_first_touch_template() -> None:
         allowed_jid="5531999999999@s.whatsapp.net",
         template=WhatsAppTemplateConfig(
             first_touch_name="cart_recovery_first",
-            followup_name="cart_recovery_followup",
+            followup_name=None,
             language="es_AR",
             category="MARKETING",
+            first_touch_parameter="buyer_name_and_product",
         ),
     )
     result = _run(sender.send_first_touch(
         phone="5531999999999",
         buyer_name="Test Buyer",
         buyer_email="buyer@test.com",
+        product_name="Libre de Ansiedad",
         content="¡Hola! Soy el asistente virtual de Dan.",
         delivery_id="evt-001",
     ))
@@ -617,9 +619,45 @@ def test_chatwoot_sender_sends_waba_first_touch_template() -> None:
         "category": "MARKETING",
         "language": "es_AR",
         "processed_params": {
-            "body": {"1": "¡Hola! Soy el asistente virtual de Dan."}
+            "body": {"1": "Test Buyer", "2": "Libre de Ansiedad"}
         },
     }
+
+
+@pytest.mark.parametrize(
+    ("buyer_name", "product_name"),
+    [(None, "Libre de Ansiedad"), ("Test Buyer", None)],
+)
+def test_chatwoot_sender_blocks_missing_two_variable_template_data(
+    buyer_name: str | None,
+    product_name: str | None,
+) -> None:
+    transport = MockTransport()
+    sender = ChatwootMessageSender(
+        chatwoot=_chatwoot(transport),
+        inbox_id=1,
+        allowed_jid="5531999999999@s.whatsapp.net",
+        template=WhatsAppTemplateConfig(
+            first_touch_name="cart_recovery_first",
+            followup_name=None,
+            language="es_AR",
+            category="MARKETING",
+            first_touch_parameter="buyer_name_and_product",
+        ),
+    )
+
+    result = _run(sender.send_first_touch(
+        phone="5531999999999",
+        buyer_name=buyer_name,
+        buyer_email="buyer@test.com",
+        product_name=product_name,
+        content="contenido no usado por el template",
+        delivery_id="evt-missing-template-data",
+    ))
+
+    assert result.status == "blocked"
+    assert result.reason == "template_parameters_missing"
+    assert transport.requests == []
 
 
 def test_chatwoot_sender_sends_waba_followup_template() -> None:
@@ -674,6 +712,33 @@ def test_chatwoot_sender_sends_waba_followup_template() -> None:
     assert body["template_params"]["processed_params"] == {
         "body": {"1": "¿Te quedó alguna duda?"}
     }
+
+
+def test_chatwoot_sender_blocks_followup_when_template_is_disabled() -> None:
+    transport = MockTransport()
+    sender = ChatwootMessageSender(
+        chatwoot=_chatwoot(transport),
+        inbox_id=1,
+        allowed_jid="5531999999999@s.whatsapp.net",
+        template=WhatsAppTemplateConfig(
+            first_touch_name="cart_recovery_first",
+            followup_name=None,
+            language="es_AR",
+            category="MARKETING",
+            first_touch_parameter="buyer_name_and_product",
+        ),
+    )
+
+    result = _run(sender.send_followup(
+        conversation_id=200,
+        phone="5531999999999",
+        content="¿Te quedó alguna duda?",
+        delivery_id="attempt-disabled",
+    ))
+
+    assert result.status == "blocked"
+    assert result.reason == "followup_template_disabled"
+    assert transport.requests == []
 
 
 def test_evolution_sender_reuses_existing_contact() -> None:
