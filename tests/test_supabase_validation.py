@@ -849,3 +849,84 @@ def test_reconcile_chatwoot_opt_out_stop_parses_authoritative_result() -> None:
     ))
     assert result.outcome == "already_applied"
     assert result.contact_id == "contact-1"
+
+
+def test_request_inbound_human_handoff_calls_strict_atomic_rpc() -> None:
+    requests: list[httpx.Request] = []
+    commercial_case_id = "00000000-0000-0000-0000-000000000101"
+    handoff_request_id = "00000000-0000-0000-0000-000000000102"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=[{
+            "outcome": "requested",
+            "handoff_request_id": handoff_request_id,
+            "affected_actions": 0,
+            "affected_attempts": 0,
+        }], request=request)
+
+    client = SupabaseClient(
+        base_url="https://fake.supabase.co",
+        service_role_key="fake-service-role-key",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = asyncio.run(client.request_inbound_human_handoff(
+        commercial_case_id=commercial_case_id,
+        command_key="inbound:conversation:42:handoff:v1",
+        reason_code="explicit_human_request",
+        projection_policy_key="inbound-support-v1",
+        projection_policy_version=1,
+        now="2026-08-23T22:30:00+00:00",
+    ))
+
+    assert result.outcome == "requested"
+    assert result.handoff_request_id == handoff_request_id
+    assert result.affected_actions == 0
+    assert result.affected_attempts == 0
+    assert requests[0].url.path == (
+        "/rest/v1/rpc/request_inbound_human_handoff"
+    )
+    assert json.loads(requests[0].content) == {
+        "p_commercial_case_id": commercial_case_id,
+        "p_command_key": "inbound:conversation:42:handoff:v1",
+        "p_reason_code": "explicit_human_request",
+        "p_projection_policy_key": "inbound-support-v1",
+        "p_projection_policy_version": 1,
+        "p_now": "2026-08-23T22:30:00+00:00",
+    }
+
+
+@pytest.mark.parametrize("body", [
+    [],
+    [{
+        "outcome": "requested",
+        "handoff_request_id": "not-a-uuid",
+        "affected_actions": 0,
+        "affected_attempts": 0,
+    }],
+    [{
+        "outcome": "evidence_appended",
+        "handoff_request_id": "00000000-0000-0000-0000-000000000102",
+        "affected_actions": 0,
+        "affected_attempts": 0,
+    }],
+    [{
+        "outcome": "already_requested",
+        "handoff_request_id": "00000000-0000-0000-0000-000000000102",
+        "affected_actions": -1,
+        "affected_attempts": 0,
+    }],
+])
+def test_request_inbound_human_handoff_rejects_invalid_committed_row(
+    body: object,
+) -> None:
+    with pytest.raises(SupabaseCommittedResponseError):
+        asyncio.run(_client(body).request_inbound_human_handoff(
+            commercial_case_id="00000000-0000-0000-0000-000000000101",
+            command_key="inbound:conversation:42:handoff:v1",
+            reason_code="explicit_human_request",
+            projection_policy_key="inbound-support-v1",
+            projection_policy_version=1,
+            now="2026-08-23T22:30:00+00:00",
+        ))

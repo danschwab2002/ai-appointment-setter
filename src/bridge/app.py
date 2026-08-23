@@ -52,6 +52,7 @@ from bridge.hotmart import (
     parse_hotmart_payload,
     verify_hotmart_token,
 )
+from bridge.inbound_handoff import request_handoff_for_inbound_proposal
 from bridge.lead_precheckout import parse_lead_precheckout
 from bridge.messaging import (
     ChatwootMessageSender,
@@ -1079,15 +1080,21 @@ def create_app(
             "CHATWOOT_CUT_B_AGENT_ENABLED requires Hermes and Chatwoot control"
         )
     if settings.human_handoff_admission_enabled:
-        if (
-            not settings.dispatcher_enabled
-            or not settings.dispatcher_outbound_enabled
-            or not settings.pilot_boundary_enabled
-            or not settings.human_handoff_projection_enabled
+        inbound_handoff_enabled = (
+            settings.chatwoot_cut_b_admission_enabled
+            and settings.chatwoot_cut_b_agent_enabled
+        )
+        dispatcher_handoff_enabled = (
+            settings.dispatcher_enabled
+            and settings.dispatcher_outbound_enabled
+            and settings.pilot_boundary_enabled
+        )
+        if not settings.human_handoff_projection_enabled or not (
+            inbound_handoff_enabled or dispatcher_handoff_enabled
         ):
             raise ValueError(
-                "HUMAN_HANDOFF_ADMISSION_ENABLED requires outbound dispatcher, "
-                "pilot boundary, and handoff projection"
+                "HUMAN_HANDOFF_ADMISSION_ENABLED requires Cut B agent or outbound "
+                "dispatcher, plus handoff projection"
             )
         if (
             not settings.handoff_projection_policy_key
@@ -1099,7 +1106,7 @@ def create_app(
                 "HANDOFF_PROJECTION_POLICY_VERSION are required"
             )
     if settings.human_handoff_projection_enabled:
-        if shared_supabase is None or not isinstance(control_client, ChatwootClient):
+        if shared_supabase is None or control_client is None:
             raise ValueError(
                 "HUMAN_HANDOFF_PROJECTION_ENABLED requires Supabase and "
                 "Chatwoot control"
@@ -1354,11 +1361,11 @@ def create_app(
         )
     if settings.human_handoff_projection_enabled:
         assert shared_supabase is not None
-        assert isinstance(control_client, ChatwootClient)
+        assert control_client is not None
         assert settings.human_handoff_projection_worker_id is not None
         human_handoff_projection_worker = HumanHandoffProjectionWorker(
             supabase=shared_supabase,
-            chatwoot=control_client,
+            chatwoot=control_client,  # type: ignore[arg-type]
             worker_id=settings.human_handoff_projection_worker_id,
             poll_interval_seconds=(
                 settings.human_handoff_projection_poll_interval_seconds
@@ -1721,6 +1728,7 @@ def create_app(
             if reply_status not in {"sent", "duplicate"}:
                 raise RuntimeError("invalid_chatwoot_reset_reply_result")
             return
+        admission = None
         if settings.chatwoot_cut_b_admission_enabled:
             assert shared_supabase is not None
             assert settings.chatwoot_cut_b_scope_key is not None
@@ -1808,6 +1816,37 @@ def create_app(
             or not isinstance(reply, str)
         ):
             raise RuntimeError("chatwoot_reply_not_configured")
+        if settings.human_handoff_admission_enabled and (
+            completed_proposal.get("decision") == "handoff"
+        ):
+            assert shared_supabase is not None
+            assert admission is not None
+            assert settings.handoff_projection_policy_key is not None
+            assert settings.handoff_projection_policy_version is not None
+            try:
+                handoff = await request_handoff_for_inbound_proposal(
+                    proposal=completed_proposal,
+                    admission=admission,
+                    external_conversation_id=conversation_id,
+                    trigger_message_id=message_id,
+                    projection_policy_key=settings.handoff_projection_policy_key,
+                    projection_policy_version=(
+                        settings.handoff_projection_policy_version
+                    ),
+                    supabase=shared_supabase,
+                    now=datetime.now(UTC).isoformat(),
+                )
+            except SupabaseError as exc:
+                raise RetryableChatwootWorkError(
+                    "chatwoot_inbound_handoff_failed"
+                ) from exc
+            if handoff is None:
+                raise RuntimeError("chatwoot_inbound_handoff_not_requested")
+            logger.info(
+                "chatwoot_inbound_handoff_requested outcome=%s request_id=%s",
+                getattr(handoff, "outcome", "unknown"),
+                getattr(handoff, "handoff_request_id", "unknown"),
+            )
         parts = (reply,)
         try:
             persisted_parts = await reply_manifest_reader.load_existing(
