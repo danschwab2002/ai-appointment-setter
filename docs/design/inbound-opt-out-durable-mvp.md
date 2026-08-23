@@ -51,6 +51,7 @@ El MVP sólo aplicará automáticamente frases cuyo significado sea global e
 inequívoco, por ejemplo familias equivalentes a:
 
 - «no me escriban más»;
+- «no más mensajes», como mensaje completo;
 - «dejen de contactarme»;
 - «quiero darme de baja»;
 - «no quiero recibir más mensajes».
@@ -58,6 +59,11 @@ inequívoco, por ejemplo familias equivalentes a:
 La implementación utilizará normalización Unicode, minúsculas, espacios y
 puntuación, seguida por patrones cerrados y testeados. No utilizará substring
 libre, similitud semántica ni un modelo como autoridad.
+
+El literal breve «No más mensajes», indicado por Marcela para la operación de
+Lancemos, utiliza la misma transición global `stop_receiving_messages`. Sólo
+coincide como mensaje completo después de normalizar puntuación y mayúsculas;
+una cita o una referencia dentro de otra frase no activa la baja.
 
 Quedan fuera de la baja automática:
 

@@ -11,6 +11,14 @@ def test_detects_direct_do_not_write_again_request() -> None:
     assert match.message_index == 0
 
 
+def test_detects_marcela_exact_no_more_messages_phrase() -> None:
+    match = detect_explicit_opt_out(["No más mensajes"])
+
+    assert match is not None
+    assert match.rule_key == "stop_receiving_messages"
+    assert match.message_index == 0
+
+
 @pytest.mark.parametrize(
     ("message", "rule_key"),
     [
@@ -50,6 +58,7 @@ def test_scans_the_complete_canonical_batch() -> None:
     [
         "No quiero dejar de recibir mensajes",
         "Juan dijo: no me escriban más",
+        "Juan dijo: no más mensajes",
         "No gracias",
         "Ahora no",
         "Quiero darme de baja el precio",
@@ -95,7 +104,12 @@ def test_detects_clear_singular_and_equivalent_global_phrases(
     "message",
     [
         '"No me escriban más"',
+        '"No más mensajes"',
+        '`No más mensajes`',
+        '> No más mensajes',
+        '"No más mensajes" 🙄',
         "«No me escriban más»",
+        "«No más mensajes»",
         "“No me escriban más”",
         "‘No me escriban más’",
         "＂No me escriban más＂",
@@ -103,7 +117,9 @@ def test_detects_clear_singular_and_equivalent_global_phrases(
         "“No me escriban más”.",
     ],
 )
-def test_does_not_treat_a_fully_quoted_phrase_as_an_opt_out(message: str) -> None:
+def test_does_not_treat_a_quoted_or_referenced_phrase_as_an_opt_out(
+    message: str,
+) -> None:
     assert detect_explicit_opt_out([message]) is None
 
 

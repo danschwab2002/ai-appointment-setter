@@ -16,6 +16,7 @@ _POLITE_PREFIX = r"(?:(?:por favor|hola|buenas|buen dia|buenos dias) )*"
 _POLITE_SUFFIX = r"(?: (?:por favor|gracias))*"
 MAX_MESSAGE_CHARS = 2_000
 _QUOTE_PAIRS = (
+    ("`", "`"),
     ("\"", "\""),
     ("'", "'"),
     ("«", "»"),
@@ -28,6 +29,10 @@ _QUOTE_PAIRS = (
     ("『", "』"),
 )
 _RULES = (
+    (
+        "stop_receiving_messages",
+        re.compile(_POLITE_PREFIX + r"no mas mensajes" + _POLITE_SUFFIX),
+    ),
     (
         "do_not_write_again",
         re.compile(
@@ -82,8 +87,10 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", words_only).strip()
 
 
-def _is_fully_quoted(text: str) -> bool:
+def _is_quoted_or_referenced(text: str) -> bool:
     stripped = text.strip()
+    if stripped.startswith(">"):
+        return True
     for start, end in _QUOTE_PAIRS:
         if not stripped.startswith(start):
             continue
@@ -91,13 +98,7 @@ def _is_fully_quoted(text: str) -> bool:
         closing_index = remainder.rfind(end)
         if closing_index <= 0:
             continue
-        suffix = remainder[closing_index + len(end) :]
-        if all(
-            character.isspace()
-            or unicodedata.category(character).startswith("P")
-            for character in suffix
-        ):
-            return True
+        return True
     return False
 
 
@@ -106,7 +107,7 @@ def detect_explicit_opt_out(messages: Sequence[object]) -> OptOutMatch | None:
         if (
             not isinstance(message, str)
             or len(message) > MAX_MESSAGE_CHARS
-            or _is_fully_quoted(message)
+            or _is_quoted_or_referenced(message)
         ):
             continue
         normalized = _normalize(message)
