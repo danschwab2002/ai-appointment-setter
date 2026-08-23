@@ -10,7 +10,13 @@ from pathlib import Path
 import httpx
 import pytest
 
-from bridge.app import Settings, _capture_payload, build_app, create_app
+from bridge.app import (
+    Settings,
+    _capture_payload,
+    _requires_medication_guidance_handoff,
+    build_app,
+    create_app,
+)
 from bridge.chatwoot import ChatwootProtocolError
 from bridge.chatwoot_inbox import (
     ChatwootWorker,
@@ -4148,3 +4154,100 @@ def test_cut_b_handoff_is_durable_before_reply(tmp_path: Path) -> None:
             "content": "Este caso requiere revisión humana.",
         }
     ]
+
+
+def test_cut_b_direct_medication_guidance_forces_durable_handoff(
+    tmp_path: Path,
+) -> None:
+    secret = "webhook-secret"
+    content = (
+        "Necesito saber si debo dejar mi medicación psiquiátrica para hacer "
+        "el programa y qué dosis debería tomar"
+    )
+    payload: dict[str, object] = {
+        "event": "message_created",
+        "id": 903,
+        "content": content,
+        "message_type": "incoming",
+        "private": False,
+        "account": {"id": 1},
+        "inbox": {"id": 9},
+        "conversation": {
+            "id": 323,
+            "inbox_id": 9,
+            "contact_inbox": {"source_id": "12025550123@s.whatsapp.net"},
+        },
+    }
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    supabase = StubInboundCommercialSupabase()
+    safe_reply = "No puedo orientar sobre medicación; consultá a tu profesional."
+    shadow = StubShadowProcessor({"decision": "reply", "reply": safe_reply})
+    chatwoot = StubChatwootClient(
+        messages=[
+            {
+                "id": 903,
+                "created_at": 1786233960,
+                "message_type": 0,
+                "private": False,
+                "content": content,
+                "sender": {"type": "contact", "id": 20},
+            }
+        ]
+    )
+    app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=9,
+            chatwoot_cut_b_admission_enabled=True,
+            chatwoot_cut_b_scope_key="libre-de-ansiedad-inbound",
+            chatwoot_cut_b_scope_version=2,
+            chatwoot_cut_b_agent_enabled=True,
+            automated_replies_enabled=True,
+            human_handoff_admission_enabled=True,
+            human_handoff_projection_enabled=True,
+            handoff_projection_policy_key="lancemos-inbound-handoff",
+            handoff_projection_policy_version=1,
+            human_handoff_projection_worker_id="handoff-projection-test",
+        ),
+        chatwoot_client=chatwoot,
+        shadow_processor=shadow,
+        supabase_client=supabase,  # type: ignore[arg-type]
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(raw_body, secret=secret, delivery="clinical-handoff"),
+    )
+    asyncio.run(app.state.chatwoot_worker.run_once())
+
+    assert response.status_code == 202
+    assert len(supabase.handoff_calls) == 1
+    assert supabase.handoff_calls[0]["commercial_case_id"] == "case-1"
+    assert chatwoot.reply_calls == [
+        {
+            "conversation_id": 323,
+            "trigger_message_id": 903,
+            "delivery_id": "clinical-handoff",
+            "content": safe_reply,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "¿El programa incluye información general sobre medicación?",
+        "¿Cuántas dosis semanales incluye el programa?",
+        None,
+    ],
+)
+def test_medication_handoff_guard_ignores_general_or_non_text_content(
+    content: object,
+) -> None:
+    assert _requires_medication_guidance_handoff(content) is False
