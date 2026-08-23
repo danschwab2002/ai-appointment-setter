@@ -12,6 +12,7 @@ import os
 import re
 import tempfile
 import time
+import unicodedata
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -87,6 +88,27 @@ CHATWOOT_CONVERSATION_RESET_COMMAND = "/nuevo"
 CHATWOOT_CONVERSATION_RESET_CONFIRMATION = "Memoria eliminada."
 PRECHECKOUT_FIRST_TOUCH_TEMPLATE_NAME = "libre_ansiedad_test_first_touch_v1"
 PRECHECKOUT_FIRST_TOUCH_COPY_VERSION = "libre-ansiedad-precheckout-first-touch-v1"
+
+_MEDICATION_GUIDANCE_SUBJECT_RE = re.compile(
+    r"\b(?:medicacion|medicamento|farmaco|pastilla|antidepresiv|ansiolitic)\w*\b"
+)
+_MEDICATION_GUIDANCE_ACTION_RE = re.compile(
+    r"\b(?:dejar|suspender|interrumpir|cambiar|reducir|aumentar|tomar|dosis|dosificacion)\w*\b"
+)
+
+
+def _requires_medication_guidance_handoff(content: object) -> bool:
+    if not isinstance(content, str):
+        return False
+    normalized = "".join(
+        character
+        for character in unicodedata.normalize("NFKD", content.casefold())
+        if not unicodedata.combining(character)
+    )
+    return bool(
+        _MEDICATION_GUIDANCE_SUBJECT_RE.search(normalized)
+        and _MEDICATION_GUIDANCE_ACTION_RE.search(normalized)
+    )
 
 
 class CanonicalHistoryIncompleteError(RetryableChatwootWorkError):
@@ -1806,6 +1828,16 @@ def create_app(
         conversation_id = (
             conversation.get("id") if isinstance(conversation, dict) else None
         )
+        if (
+            settings.human_handoff_admission_enabled
+            and completed_proposal.get("decision") != "handoff"
+            and _requires_medication_guidance_handoff(payload.get("content"))
+        ):
+            completed_proposal = {**completed_proposal, "decision": "handoff"}
+            logger.info(
+                "chatwoot_inbound_handoff_forced "
+                "reason=direct_medication_guidance"
+            )
         reply = completed_proposal.get("reply")
         if (
             control_client is None
