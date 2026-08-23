@@ -150,7 +150,7 @@ def _pilot_boundary_settings() -> dict[str, object]:
         "pilot_channel_provider": "waba",
         "pilot_channel_account_ref": "opaque-account-ref",
         "waba_first_touch_template_name": "cart_recovery_first",
-        "waba_followup_template_name": "cart_recovery_followup",
+        "waba_followup_template_name": None,
         "waba_template_language": "es_AR",
         "waba_template_category": "MARKETING",
     }
@@ -295,7 +295,6 @@ def test_enabled_pilot_boundary_requires_complete_configuration(
     "missing_field,expected_name",
     [
         ("waba_first_touch_template_name", "WABA_FIRST_TOUCH_TEMPLATE_NAME"),
-        ("waba_followup_template_name", "WABA_FOLLOWUP_TEMPLATE_NAME"),
         ("waba_template_language", "WABA_TEMPLATE_LANGUAGE"),
         ("waba_template_category", "WABA_TEMPLATE_CATEGORY"),
     ],
@@ -370,9 +369,10 @@ def test_dispatcher_outbound_builds_chatwoot_sender_for_waba_scope() -> None:
     assert isinstance(sender, ChatwootMessageSender)
     assert sender._template == WhatsAppTemplateConfig(
         first_touch_name="cart_recovery_first",
-        followup_name="cart_recovery_followup",
+        followup_name=None,
         language="es_AR",
         category="MARKETING",
+        first_touch_parameter="buyer_name_and_product",
     )
 
 

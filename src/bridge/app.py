@@ -875,7 +875,6 @@ def create_app(
     ):
         template_fields = (
             (settings.waba_first_touch_template_name, "WABA_FIRST_TOUCH_TEMPLATE_NAME"),
-            (settings.waba_followup_template_name, "WABA_FOLLOWUP_TEMPLATE_NAME"),
             (settings.waba_template_language, "WABA_TEMPLATE_LANGUAGE"),
             (settings.waba_template_category, "WABA_TEMPLATE_CATEGORY"),
         )
@@ -889,6 +888,7 @@ def create_app(
             followup_name=settings.waba_followup_template_name,  # type: ignore[arg-type]
             language=settings.waba_template_language,  # type: ignore[arg-type]
             category=settings.waba_template_category,  # type: ignore[arg-type]
+            first_touch_parameter="buyer_name_and_product",
         )
     pilot_boundary = (
         PilotBoundaryConfig(

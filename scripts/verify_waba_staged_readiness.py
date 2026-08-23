@@ -114,19 +114,32 @@ def evaluate_snapshot(
         ("provider_mode_compatible", "provider_mode_incompatible"),
     ):
         _require_true(control, field, reason, controlled)
-    for field, reason in (
+    template_version = template.get("contract_version") if template is not None else None
+    common_template_fields = (
         ("selection_unambiguous", "template_selection_ambiguous"),
         ("first_touch_meta_approved", "first_touch_meta_not_approved"),
         ("first_touch_business_approved", "first_touch_business_not_approved"),
-        ("followup_meta_approved", "followup_meta_not_approved"),
-        ("followup_business_approved", "followup_business_not_approved"),
-        ("names_present", "template_names_missing"),
         ("language_present", "template_language_missing"),
         ("category_present", "template_category_missing"),
         ("category_runtime_supported", "template_category_runtime_unsupported"),
-        ("body_placeholder_one_exact", "template_placeholder_schema_mismatch"),
-        ("pair_runtime_compatible", "template_pair_runtime_mismatch"),
+    )
+    for field, reason in common_template_fields:
+        _require_true(template, field, reason, controlled)
+    if (
+        isinstance(template_version, int)
+        and not isinstance(template_version, bool)
+        and template_version == 2
     ):
+        versioned_template_fields = (
+            ("followup_disabled", "followup_not_disabled"),
+            ("first_touch_name_present", "first_touch_template_name_missing"),
+            ("body_placeholders_two_exact", "template_placeholder_schema_mismatch"),
+            ("single_touch_runtime_compatible", "single_touch_runtime_mismatch"),
+        )
+    else:
+        controlled.add("template_contract_version_unsupported")
+        versioned_template_fields = ()
+    for field, reason in versioned_template_fields:
         _require_true(template, field, reason, controlled)
 
     supervised = set(controlled)

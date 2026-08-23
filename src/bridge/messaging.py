@@ -29,10 +29,10 @@ class FirstTouchResult:
 
 @dataclass(frozen=True)
 class WhatsAppTemplateConfig:
-    """Approved Chatwoot WABA templates with one body placeholder."""
+    """Approved Chatwoot WABA templates and their body placeholders."""
 
     first_touch_name: str
-    followup_name: str
+    followup_name: str | None
     language: str
     category: str
     first_touch_parameter: str = "content"
@@ -43,15 +43,24 @@ class WhatsAppTemplateConfig:
         content: str,
         followup: bool,
         buyer_name: str | None = None,
+        product_name: str | None = None,
     ) -> dict[str, object]:
-        parameter = content
+        name = self.followup_name if followup else self.first_touch_name
+        if name is None:
+            raise ValueError("template_disabled")
+        body = {"1": content}
         if not followup and self.first_touch_parameter == "buyer_name":
-            parameter = buyer_name or ""
+            body = {"1": buyer_name or ""}
+        elif (
+            not followup
+            and self.first_touch_parameter == "buyer_name_and_product"
+        ):
+            body = {"1": buyer_name or "", "2": product_name or ""}
         return {
-            "name": self.followup_name if followup else self.first_touch_name,
+            "name": name,
             "category": self.category,
             "language": self.language,
-            "processed_params": {"body": {"1": parameter}},
+            "processed_params": {"body": body},
         }
 
 
@@ -64,6 +73,7 @@ class MessageSender(Protocol):
         phone: str,
         buyer_name: str | None,
         buyer_email: str | None,
+        product_name: str | None,
         content: str,
         delivery_id: str,
     ) -> FirstTouchResult: ...
@@ -149,6 +159,7 @@ class ChatwootMessageSender:
         phone: str,
         buyer_name: str | None,
         buyer_email: str | None,
+        product_name: str | None = None,
         content: str,
         delivery_id: str,
     ) -> FirstTouchResult:
@@ -166,6 +177,22 @@ class ChatwootMessageSender:
                 conversation_id=None,
                 message_id=None,
                 reason="target_not_allowed",
+            )
+        if (
+            self._template is not None
+            and self._template.first_touch_parameter == "buyer_name_and_product"
+            and (
+                not isinstance(buyer_name, str)
+                or not buyer_name.strip()
+                or not isinstance(product_name, str)
+                or not product_name.strip()
+            )
+        ):
+            return FirstTouchResult(
+                status="blocked",
+                conversation_id=None,
+                message_id=None,
+                reason="template_parameters_missing",
             )
 
         e164 = _to_e164(normalized)
@@ -195,6 +222,7 @@ class ChatwootMessageSender:
                         content=content,
                         followup=False,
                         buyer_name=buyer_name,
+                        product_name=product_name,
                     )
                     if self._template is not None
                     else None
@@ -300,6 +328,13 @@ class ChatwootMessageSender:
                 conversation_id=None,
                 message_id=None,
                 reason="invalid_conversation_id",
+            )
+        if self._template is not None and self._template.followup_name is None:
+            return FirstTouchResult(
+                status="blocked",
+                conversation_id=conversation_id,
+                message_id=None,
+                reason="followup_template_disabled",
             )
 
         try:

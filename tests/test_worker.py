@@ -863,6 +863,7 @@ def test_dispatcher_marks_started_immediately_before_sender_and_finalizes_accept
     reservation_modes: list[object] = []
     request_start_hook: Callable[[], Any] | None = None
     finalizations: list[dict[str, object]] = []
+    sender_calls: list[dict[str, object]] = []
     final_override: ReevaluationDecision | None = None
     action = ScheduledAction(
         action_id="action-send", recovery_case_id="case-001",
@@ -969,7 +970,8 @@ def test_dispatcher_marks_started_immediately_before_sender_and_finalizes_accept
             )
 
     class SenderStub:
-        async def send_first_touch(self, **_: object) -> FirstTouchResult:
+        async def send_first_touch(self, **kwargs: object) -> FirstTouchResult:
+            sender_calls.append(kwargs)
             events.append("sender")
             return FirstTouchResult(
                 status="sent", reason="sent", conversation_id=7001,
@@ -1008,6 +1010,7 @@ def test_dispatcher_marks_started_immediately_before_sender_and_finalizes_accept
     ]
     assert request_start_times == ["2026-08-03T13:01:00+00:00"]
     assert reservation_modes == ["approved_template"]
+    assert sender_calls[0]["product_name"] == "Curso Uno"
     assert request_start_boundaries[0] is not None
 
     events.clear()

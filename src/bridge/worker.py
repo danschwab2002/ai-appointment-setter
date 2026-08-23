@@ -956,6 +956,7 @@ class DurableDispatcher:
                                         phone=execution_context.buyer_phone or "",
                                         buyer_name=execution_context.buyer_name,
                                         buyer_email=execution_context.buyer_email,
+                                        product_name=execution_context.product_name,
                                         content=proposal.message,
                                         delivery_id=attempt.attempt_id,
                                     )
@@ -1532,6 +1533,7 @@ class ResolutionWorker:
                     phone=report.buyer_phone,
                     buyer_name=report.buyer_name,
                     buyer_email=report.buyer_email,
+                    product_name=report.product_name,
                     content=message,
                     delivery_id=report.event_id,
                 )

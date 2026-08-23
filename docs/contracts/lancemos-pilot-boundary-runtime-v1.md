@@ -90,10 +90,11 @@ No expone IDs de contacto, JID, teléfonos, emails, payloads, URLs ni credencial
 ## 6. Operación y compatibilidad
 
 - La migración es aditiva, salvo el cierre explícito de los entrypoints históricos que permitían bypass.
-- Con `channel_provider=waba`, outbound exige nombres de templates aprobados
-  para primer contacto y seguimiento, idioma y categoría. Ambos templates
-  tienen exactamente un placeholder de body (`{{1}}`); el bridge envía por el
-  inbox WABA de Chatwoot usando `template_params` y nunca cae a texto libre.
+- Con `channel_provider=waba`, outbound exige un template aprobado de primer
+  contacto, idioma y categoría. Para el corte single-touch de carrito el body
+  usa exactamente `{{1}} = nombre` y `{{2}} = oferta/producto`; un follow-up es
+  opcional y, si no está configurado, se bloquea antes del POST. El bridge envía
+  por el inbox WABA de Chatwoot usando `template_params` y nunca cae a texto libre.
 - El dispatcher deriva el modo durable del provider: WABA reserva y audita
   `approved_template`; Evolution reserva y audita `freeform`.
 - Request-start rechaza atómicamente `waba + freeform` y cualquier otra

@@ -1,9 +1,10 @@
 # Contrato WABA de template y readiness por etapas V1
 
-- **Estado:** Contrato implementado por el verificador local; evidencia externa pendiente
+- **Estado:** histórico y reemplazado por V2 para readiness controlado
 - **Versión:** 1
 - **Interfaz:** `scripts/verify_waba_staged_readiness.py`
 - **No habilita:** conexión productiva, envío, activación, migración ni creación de templates
+- **Compatibilidad:** contrato histórico de par primer contacto + follow-up; el corte single-touch de dos variables usa [V2](waba-template-readiness-v2.md)
 
 ## Frontera
 
@@ -42,3 +43,5 @@ Las secciones son `channel`, `runtime`, `template`, `controlled_template`, `supe
 ## Compatibilidad
 
 Agregar gates requiere una nueva versión o un cambio backward-compatible que permanezca fail-closed. Renombrar niveles/reasons o relajar un booleano exacto es breaking. La aprobación o conexión externa no cambia por sí misma el runtime ni eleva un nivel: primero debe existir una lectura nueva y sanitizada.
+
+El verificador actual conserva inbound observacional, pero bloquea readiness controlado V1 con `template_contract_version_unsupported`. No debe usarse V1 para atestar el sender single-touch actual.

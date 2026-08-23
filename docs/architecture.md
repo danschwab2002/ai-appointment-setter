@@ -430,9 +430,10 @@ o una versión incoherentes producen HTTP 503. Docker y Compose usan `/ready`,
 por lo que el diagnóstico normal no depende de consola interactiva.
 
 El sender local usa siempre la API de Chatwoot. Para un scope `waba`, el factory
-exige templates aprobados separados para primer contacto y seguimiento y envía
-`template_params` con un único placeholder de body. No existe fallback a texto
-libre ni a Evolution cuando el scope durable declara WABA. El dispatcher registra
+exige un template aprobado de primer contacto y envía `template_params` con
+`body.1 = nombre` y `body.2 = oferta/producto`. El template de seguimiento es
+opcional; si está ausente, todo follow-up se bloquea antes del POST. No existe
+fallback a texto libre ni a Evolution cuando el scope durable declara WABA. El dispatcher registra
 esos intentos como `approved_template`; la frontera SQL request-start rechaza
 fail-closed una reserva WABA marcada como `freeform`.
 
