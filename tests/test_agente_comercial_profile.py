@@ -47,3 +47,23 @@ def test_agente_comercial_profile_has_restrictive_human_review_policy() -> None:
 
     assert "`decision` siempre es `ask_question`" not in content
     assert "No inventes handoff" not in content
+
+
+def test_agente_comercial_profile_avoids_observed_e2e_misrepresentations() -> None:
+    content = SOUL.read_text(encoding="utf-8")
+    normalized = " ".join(content.split())
+
+    for required in (
+        "No afirmes que no almacenás datos personales",
+        "No prometas que la revisión humana gestionará una devolución",
+        "enviá exactamente `/nuevo`",
+        "No digas que no hay comandos disponibles",
+    ):
+        assert required in normalized
+
+    for prohibited_example in (
+        "no almaceno datos personales",
+        "no tengo comandos disponibles",
+        "gestionar la devolución correctamente",
+    ):
+        assert f"No uses: “{prohibited_example}”" in normalized
