@@ -4089,7 +4089,7 @@ def test_cut_b_agent_gate_admits_then_replies_through_canonical_chatwoot(
     ("label_error", "expected_work_status"),
     [(None, "completed"), (ChatwootProtocolError("not confirmed"), "admitted")],
 )
-def test_cut_b_handoff_replies_then_confirms_automation_pause(
+def test_cut_b_handoff_confirms_automation_pause_without_reply(
     tmp_path: Path,
     label_error: Exception | None,
     expected_work_status: str,
@@ -4162,16 +4162,9 @@ def test_cut_b_handoff_replies_then_confirms_automation_pause(
     assert response.status_code == 202
     assert len(supabase.handoff_calls) == 1
     assert supabase.handoff_calls[0]["commercial_case_id"] == "case-1"
-    assert chatwoot.reply_calls == [
-        {
-            "conversation_id": 322,
-            "trigger_message_id": 902,
-            "delivery_id": "cut-b-handoff",
-            "content": "Este caso requiere revisión humana.",
-        }
-    ]
+    assert chatwoot.reply_calls == []
     assert chatwoot.calls == [(322, "automation_paused")]
-    assert chatwoot.events == ["reply", "label:automation_paused"]
+    assert chatwoot.events == ["label:automation_paused"]
     envelope = json.loads(next((tmp_path / ".work").glob("*.json")).read_text())
     assert envelope["status"] == expected_work_status
     if label_error is not None:
@@ -4251,14 +4244,9 @@ def test_cut_b_direct_medication_guidance_forces_durable_handoff(
     assert response.status_code == 202
     assert len(supabase.handoff_calls) == 1
     assert supabase.handoff_calls[0]["commercial_case_id"] == "case-1"
-    assert chatwoot.reply_calls == [
-        {
-            "conversation_id": 323,
-            "trigger_message_id": 903,
-            "delivery_id": "clinical-handoff",
-            "content": safe_reply,
-        }
-    ]
+    assert chatwoot.reply_calls == []
+    assert chatwoot.calls == [(323, "automation_paused")]
+    assert chatwoot.events == ["label:automation_paused"]
 
 
 @pytest.mark.parametrize(

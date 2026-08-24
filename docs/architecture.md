@@ -461,9 +461,8 @@ Hermes suggest_handoff
      -> reconcilia assignment sin sobrescribir persona/otro equipo
      -> reconcilia nota privada por marcador estable
      -> finaliza cada efecto con lease fenced
-  -> work inbound envía/reconcilia una respuesta segura
-     -> asegura y confirma automation_paused
-     -> sólo entonces completa el work
+  -> work inbound asegura y confirma automation_paused
+     -> termina sin reply automático
 ```
 
 Supabase es autoridad del stop y Chatwoot es una proyección operativa. Cada
@@ -471,9 +470,9 @@ request fija policy, scope, account, inbox, conversación externa, equipo y nota
 La admisión y la proyección son flags separados y default-off; apagar admisión no
 detiene el drain de efectos existentes. La proyección durable no crea
 conversaciones, labels, macros ni mensajes externos al contacto. El flujo inbound
-que originó el handoff sí aplica, después de su única respuesta segura, el macro
-existente y confirma `automation_paused`; si no puede confirmarlo, el work queda
-en retry fail-closed.
+que originó el handoff sí aplica y confirma el macro existente
+`automation_paused`, y termina sin responder al mensaje que disparó la
+derivación; si no puede confirmarlo, el work queda en retry fail-closed.
 
 `/ready` publica conteos sanitizados del backlog cuando la proyección está
 habilitada. Esta implementación tiene evidencia local y PGlite, pero no acredita

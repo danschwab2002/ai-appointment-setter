@@ -100,14 +100,16 @@ La proyección durable no muta labels, macros ni mensajes públicos. En el flujo
 inbound con respuesta automática, el work que originó el handoff aplica una
 postcondición adicional y ordenada:
 
-1. envía o reconcilia exactamente una respuesta pública segura;
+1. registra o reconcilia el handoff durable;
 2. ejecuta el macro de pausa para asegurar `automation_paused`;
-3. confirma la etiqueta antes de completar el work.
+3. confirma la etiqueta y termina el work sin ejecutar ningún reply público.
 
 La etiqueta ya presente es éxito idempotente. Un error HTTP/protocolo o una
-postcondición no confirmada conserva el work en retry; nunca habilita una segunda
-respuesta. Esta postcondición no agrega un tercer efecto durable ni cambia que
-`assignment` y `private_note` gobiernan el estado `projected` del request.
+postcondición no confirmada conserva el work en retry. El mensaje inbound que
+dispara la derivación no recibe una respuesta automática: desde ese punto la
+respuesta pertenece exclusivamente al equipo humano. Esta postcondición no
+agrega un tercer efecto durable ni cambia que `assignment` y `private_note`
+gobiernan el estado `projected` del request.
 
 ## 5. Estados
 
