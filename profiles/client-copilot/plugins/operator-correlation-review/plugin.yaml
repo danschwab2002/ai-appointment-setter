@@ -1,0 +1,9 @@
+name: operator-correlation-review
+version: "0.1.0"
+description: Read-only unresolved deterministic correlation review
+provides_tools:
+  - list_unresolved_correlations
+  - get_unresolved_correlation
+requires_env:
+  - OPERATOR_CORRELATION_API_URL
+  - OPERATOR_CORRELATION_API_TOKEN

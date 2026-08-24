@@ -1049,6 +1049,96 @@ class SupabaseClient:
             manual_handoff_required=manual_handoff_required,
         )
 
+    async def list_unresolved_purchase_intent_correlations(
+        self,
+        *,
+        tenant_ref: str,
+        funnel_ref: str,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Read unresolved correlation evidence without creating any effect."""
+        if isinstance(limit, bool) or limit < 1 or limit > 50:
+            raise ValueError("limit must be between 1 and 50")
+        tenant = _required_string(
+            {"tenant_ref": tenant_ref},
+            "tenant_ref",
+            operation="operator_unresolved_correlation_list",
+        )
+        funnel = _required_string(
+            {"funnel_ref": funnel_ref},
+            "funnel_ref",
+            operation="operator_unresolved_correlation_list",
+        )
+        return await self._read_operator_correlation_rpc(
+            operation="operator_unresolved_correlation_list",
+            path="/rest/v1/rpc/list_operator_unresolved_correlations",
+            payload={
+                "p_tenant_ref": tenant,
+                "p_funnel_ref": funnel,
+                "p_limit": limit,
+                "p_webhook_event_id": None,
+            },
+        )
+
+    async def get_unresolved_purchase_intent_correlation(
+        self,
+        *,
+        tenant_ref: str,
+        funnel_ref: str,
+        webhook_event_id: str,
+    ) -> dict[str, Any] | None:
+        """Read one exact unresolved correlation, or return no result."""
+        expected_id = _required_uuid(
+            {"webhook_event_id": webhook_event_id},
+            "webhook_event_id",
+            operation="unresolved_purchase_intent_correlation_get",
+        )
+        tenant = _required_string(
+            {"tenant_ref": tenant_ref},
+            "tenant_ref",
+            operation="operator_unresolved_correlation_get",
+        )
+        funnel = _required_string(
+            {"funnel_ref": funnel_ref},
+            "funnel_ref",
+            operation="operator_unresolved_correlation_get",
+        )
+        rows = await self._read_operator_correlation_rpc(
+            operation="operator_unresolved_correlation_get",
+            path="/rest/v1/rpc/get_operator_unresolved_correlation",
+            payload={
+                "p_tenant_ref": tenant,
+                "p_funnel_ref": funnel,
+                "p_webhook_event_id": expected_id,
+            },
+        )
+        if len(rows) > 1:
+            raise SupabaseError("unresolved_purchase_intent_correlation_get_ambiguous")
+        return rows[0] if rows else None
+
+    async def _read_operator_correlation_rpc(
+        self,
+        *,
+        operation: str,
+        path: str,
+        payload: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        response = await self._request(
+            "POST",
+            path,
+            content=json.dumps(payload),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            case_data = row.get("case_data")
+            if not isinstance(case_data, dict):
+                raise SupabaseError(f"{operation}_invalid_shape")
+            result.append(case_data)
+        return result
+
     async def list_due_hotmart_abandonment_reevaluations(
         self,
         *,
