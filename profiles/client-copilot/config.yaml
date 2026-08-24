@@ -1,0 +1,69 @@
+_config_version: 34
+
+model:
+  provider: openai-codex
+  default: gpt-5.6-sol
+
+agent:
+  max_turns: 20
+  disabled_toolsets:
+    - terminal
+    - file
+    - code_execution
+    - coding
+    - web
+    - search
+    - browser
+    - computer_use
+    - vision
+    - image_gen
+    - video
+    - video_gen
+    - tts
+    - memory
+    - session_search
+    - skills
+    - delegation
+    - cronjob
+    - project
+    - debugging
+
+memory:
+  memory_enabled: false
+  user_profile_enabled: false
+
+security:
+  redact_secrets: true
+  tirith_enabled: true
+  tirith_fail_open: false
+
+terminal:
+  backend: local
+  home_mode: profile
+  env_passthrough: []
+
+platform_toolsets:
+  cli:
+    - operator_correlation_review
+  api_server:
+    - operator_correlation_review
+
+platforms:
+  api_server:
+    enabled: false
+
+plugins:
+  enabled:
+    - operator-correlation-review
+
+approvals:
+  mode: manual
+  cron_mode: deny
+
+tool_loop_guardrails:
+  warnings_enabled: true
+  hard_stop_enabled: true
+
+onboarding:
+  seen:
+    profile_build_offered: true

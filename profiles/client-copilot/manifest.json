@@ -1,0 +1,25 @@
+{
+  "profile_name": "client-copilot",
+  "package_version": "0.1.0",
+  "package_status": "candidate",
+  "bundled_skills": false,
+  "memory_seed": false,
+  "production_credentials": false,
+  "activation_capability": false,
+  "session_launch": {
+    "required_skills": [],
+    "toolsets": [
+      "operator_correlation_review"
+    ]
+  },
+  "files": [
+    ".no-bundled-skills",
+    "SOUL.md",
+    "config.yaml",
+    "distribution.yaml",
+    "plugins/operator-correlation-review/__init__.py",
+    "plugins/operator-correlation-review/plugin.yaml",
+    "plugins/operator-correlation-review/schemas.py",
+    "plugins/operator-correlation-review/tools.py"
+  ]
+}
