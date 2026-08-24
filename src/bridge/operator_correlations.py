@@ -180,7 +180,7 @@ def build_unresolved_correlation(
     ):
         raise InvalidCorrelationEvidence("invalid_candidate_count")
     candidates = _build_candidates(raw.get("candidates", []))
-    if len(candidates) != candidate_count:
+    if len(candidates) > candidate_count:
         raise InvalidCorrelationEvidence("candidate_count_mismatch")
     if outcome == "unmatched" and candidate_count != 0:
         raise InvalidCorrelationEvidence("invalid_unmatched_candidates")

@@ -44,6 +44,10 @@ Cada candidato proyectado debe coincidir además con `tenant_ref`, `funnel_ref`,
 `product_ref` y `offer_ref` del scope de la correlación. Una asociación durable cruzada
 se excluye y nunca proyecta identidad de otro tenant.
 
+Por eso, `candidates` puede ser un subconjunto seguro de `candidate_count`: el contador
+preserva la evidencia durable original, mientras cualquier candidato fuera del scope se
+omite. La proyección se rechaza si devuelve más candidatos que el contador durable.
+
 ## 3. RPC autorizadas
 
 ```text

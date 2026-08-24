@@ -91,6 +91,18 @@ def test_unresolved_correlation_explains_conflict_without_exposing_identity() ->
     assert "593991234567" not in rendered
 
 
+def test_scoped_projection_may_omit_foreign_candidates_fail_closed() -> None:
+    raw = _raw_conflict()
+    raw["candidate_count"] = 1
+    raw["candidates"] = []
+
+    case = build_unresolved_correlation(raw, include_candidates=True)
+
+    assert case["candidate_count"] == 1
+    assert case["candidates"] == []
+    assert case["automation_blocked"] is True
+
+
 def test_non_handoff_correlation_cannot_be_presented_as_unresolved() -> None:
     with pytest.raises(InvalidCorrelationEvidence, match="not_unresolved"):
         build_unresolved_correlation(
