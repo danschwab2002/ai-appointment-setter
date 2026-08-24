@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from importlib import import_module
 import json
 import os
 from urllib.error import HTTPError, URLError
@@ -18,9 +19,17 @@ class _NoRedirectHandler(HTTPRedirectHandler):
         return None
 
 
+def _profile_setting(name: str) -> str:
+    try:
+        get_secret = import_module("agent.secret_scope").get_secret
+    except ImportError:
+        return os.getenv(name, "")
+    return get_secret(name, "") or ""
+
+
 def _api_settings() -> tuple[str, str]:
-    base_url = os.getenv("OPERATOR_CORRELATION_API_URL", "").strip().rstrip("/")
-    token = os.getenv("OPERATOR_CORRELATION_API_TOKEN", "").strip()
+    base_url = _profile_setting("OPERATOR_CORRELATION_API_URL").strip().rstrip("/")
+    token = _profile_setting("OPERATOR_CORRELATION_API_TOKEN").strip()
     parsed = urlparse(base_url)
     if (
         parsed.scheme != "https"
