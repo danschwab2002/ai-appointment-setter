@@ -782,16 +782,21 @@ class ChatwootClient:
         meta = conversation.get("meta")
         sender = meta.get("sender") if isinstance(meta, dict) else None
         identifier = sender.get("identifier") if isinstance(sender, dict) else None
-        if not isinstance(identifier, str):
+        if not isinstance(identifier, str) or not identifier:
             contact_inbox = conversation.get("contact_inbox")
             identifier = (
                 contact_inbox.get("source_id")
                 if isinstance(contact_inbox, dict)
                 else None
             )
+        if (not isinstance(identifier, str) or not identifier) and isinstance(
+            sender, dict
+        ):
+            identifier = sender.get("phone_number")
         return matches_allowed_whatsapp_identity(
             identifier,
             allowed_jid=self._allowed_jid,
+            allow_e164=True,
         )
 
     async def validate_conversation_authority(

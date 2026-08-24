@@ -16,7 +16,7 @@ from bridge.chatwoot import (
 ALLOWED_JID = "12025550123@s.whatsapp.net"
 
 
-def test_authorizes_waba_digit_source_id_for_the_configured_jid(
+def test_authorizes_waba_e164_phone_number_for_the_configured_jid(
     tmp_path: Path,
 ) -> None:
     client = ChatwootClient(
@@ -32,8 +32,12 @@ def test_authorizes_waba_digit_source_id_for_the_configured_jid(
         200,
         json={
             "id": 39,
-            "meta": {"sender": {}},
-            "contact_inbox": {"source_id": "12025550123"},
+            "meta": {
+                "sender": {
+                    "identifier": None,
+                    "phone_number": "+12025550123",
+                }
+            },
         },
     )
 

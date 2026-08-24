@@ -37,6 +37,7 @@ def matches_allowed_whatsapp_identity(
     observed_identity: object,
     *,
     allowed_jid: object,
+    allow_e164: bool = False,
 ) -> bool:
     """Match Evolution JIDs and official-WABA digit source IDs fail-closed."""
     if not isinstance(observed_identity, str) or not isinstance(allowed_jid, str):
@@ -46,10 +47,10 @@ def matches_allowed_whatsapp_identity(
     if not allowed_jid.endswith(_WHATSAPP_JID_SUFFIX):
         return False
     allowed_digits = allowed_jid[: -len(_WHATSAPP_JID_SUFFIX)]
-    return (
-        bool(allowed_digits)
-        and allowed_digits.isdigit()
-        and observed_identity == allowed_digits
+    if not allowed_digits or not allowed_digits.isdigit():
+        return False
+    return observed_identity == allowed_digits or (
+        allow_e164 and observed_identity == f"+{allowed_digits}"
     )
 
 
