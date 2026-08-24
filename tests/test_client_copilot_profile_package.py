@@ -1,6 +1,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import sys
 from types import ModuleType
 from typing import Any
 
@@ -78,6 +79,33 @@ def test_plugin_list_handler_calls_only_bounded_read_endpoint(
 
     assert result == {"count": 0, "cases": []}
     assert seen["path"] == "/internal/operator/correlations/unresolved?limit=12"
+
+
+def test_plugin_reads_settings_from_multiplexed_profile_secret_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPERATOR_CORRELATION_API_URL", raising=False)
+    monkeypatch.delenv("OPERATOR_CORRELATION_API_TOKEN", raising=False)
+    scoped_values = {
+        "OPERATOR_CORRELATION_API_URL": "https://bridge.example.test",
+        "OPERATOR_CORRELATION_API_TOKEN": "t" * 32,
+    }
+    agent = ModuleType("agent")
+    secret_scope = ModuleType("agent.secret_scope")
+    setattr(
+        secret_scope,
+        "get_secret",
+        lambda name, default="": scoped_values.get(name, default),
+    )
+    monkeypatch.setitem(sys.modules, "agent", agent)
+    monkeypatch.setitem(sys.modules, "agent.secret_scope", secret_scope)
+
+    tools = _load_plugin_tools()
+
+    assert tools._api_settings() == (
+        "https://bridge.example.test",
+        "t" * 32,
+    )
 
 
 def test_plugin_detail_handler_rejects_non_uuid_without_network(
