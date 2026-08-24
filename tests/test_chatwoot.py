@@ -16,6 +16,52 @@ from bridge.chatwoot import (
 ALLOWED_JID = "12025550123@s.whatsapp.net"
 
 
+def test_authorizes_waba_digit_source_id_for_the_configured_jid(
+    tmp_path: Path,
+) -> None:
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        agent_bot_access_token="agent-bot-token",
+        agent_bot_id=1,
+        reply_dir=tmp_path,
+    )
+    response = httpx.Response(
+        200,
+        json={
+            "id": 39,
+            "meta": {"sender": {}},
+            "contact_inbox": {"source_id": "12025550123"},
+        },
+    )
+
+    assert client._is_authorized_conversation(response, conversation_id=39) is True
+
+
+def test_rejects_a_different_waba_digit_source_id(tmp_path: Path) -> None:
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        agent_bot_access_token="agent-bot-token",
+        agent_bot_id=1,
+        reply_dir=tmp_path,
+    )
+    response = httpx.Response(
+        200,
+        json={
+            "id": 39,
+            "meta": {"sender": {}},
+            "contact_inbox": {"source_id": "12025550124"},
+        },
+    )
+
+    assert client._is_authorized_conversation(response, conversation_id=39) is False
+
+
 class AuthorizedConversationTransport(httpx.AsyncBaseTransport):
     def __init__(self, inner: httpx.AsyncBaseTransport) -> None:
         self._inner = inner

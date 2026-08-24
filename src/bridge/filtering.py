@@ -12,6 +12,7 @@ EventAction = Literal[
 ]
 
 _SCOPE_UNSET = object()
+_WHATSAPP_JID_SUFFIX = "@s.whatsapp.net"
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,26 @@ def _canonical_positive_id(value: object) -> int | None:
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
         return None
     return value
+
+
+def matches_allowed_whatsapp_identity(
+    observed_identity: object,
+    *,
+    allowed_jid: object,
+) -> bool:
+    """Match Evolution JIDs and official-WABA digit source IDs fail-closed."""
+    if not isinstance(observed_identity, str) or not isinstance(allowed_jid, str):
+        return False
+    if observed_identity == allowed_jid:
+        return True
+    if not allowed_jid.endswith(_WHATSAPP_JID_SUFFIX):
+        return False
+    allowed_digits = allowed_jid[: -len(_WHATSAPP_JID_SUFFIX)]
+    return (
+        bool(allowed_digits)
+        and allowed_digits.isdigit()
+        and observed_identity == allowed_digits
+    )
 
 
 def classify_chatwoot_event(
@@ -80,8 +101,9 @@ def classify_chatwoot_event(
             != expected_inbox_id
         ):
             return EventDecision(False, "inbox_not_allowed", sender_jid, "ignore")
-    if sender_jid != allowed_jid:
+    if not matches_allowed_whatsapp_identity(sender_jid, allowed_jid=allowed_jid):
         return EventDecision(False, "sender_not_allowed", sender_jid, "ignore")
+    sender_jid = allowed_jid
 
     message_type = event.get("message_type")
     event_sender = _json_object(event.get("sender"))
