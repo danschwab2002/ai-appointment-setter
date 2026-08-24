@@ -12,6 +12,7 @@ from pathlib import Path
 
 import httpx
 
+from bridge.filtering import matches_allowed_whatsapp_identity
 from bridge.reply_splitter import reply_batch_hash, reply_part_hash
 
 
@@ -788,7 +789,10 @@ class ChatwootClient:
                 if isinstance(contact_inbox, dict)
                 else None
             )
-        return isinstance(identifier, str) and identifier == self._allowed_jid
+        return matches_allowed_whatsapp_identity(
+            identifier,
+            allowed_jid=self._allowed_jid,
+        )
 
     async def validate_conversation_authority(
         self, *, conversation_id: int, expected_inbox_id: int
