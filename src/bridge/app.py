@@ -1848,6 +1848,7 @@ def create_app(
             or not isinstance(reply, str)
         ):
             raise RuntimeError("chatwoot_reply_not_configured")
+        handoff_requested = False
         if settings.human_handoff_admission_enabled and (
             completed_proposal.get("decision") == "handoff"
         ):
@@ -1879,6 +1880,7 @@ def create_app(
                 getattr(handoff, "outcome", "unknown"),
                 getattr(handoff, "handoff_request_id", "unknown"),
             )
+            handoff_requested = True
         parts = (reply,)
         try:
             persisted_parts = await reply_manifest_reader.load_existing(
@@ -1954,6 +1956,16 @@ def create_app(
                     raise RuntimeError("invalid_chatwoot_reply_result")
         except ChatwootReplyDeliveryUnknownError as exc:
             raise RetryableChatwootWorkError("reply_delivery_unknown") from exc
+        if handoff_requested:
+            try:
+                await control_client.ensure_conversation_label(
+                    conversation_id=conversation_id,
+                    label="automation_paused",
+                )
+            except (httpx.HTTPError, ChatwootProtocolError) as exc:
+                raise RetryableChatwootWorkError(
+                    "handoff_automation_pause_not_confirmed"
+                ) from exc
 
     if chatwoot_inbox is not None:
         def inbound_debounce_key(payload: dict[str, object]) -> str | None:
