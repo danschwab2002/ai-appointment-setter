@@ -935,6 +935,79 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         ), 0),
         4,
         'effect_free_proactive_identity_bootstrap'
+    union all
+    select
+        '20260825000200',
+        '20260825000200_johanna_abandonment_one_shot.sql',
+        (to_regclass('public.johanna_abandonment_one_shot_commands') is not null)::int
+        + (
+            select (count(*) = 2)::int
+            from functions
+            where oid in (
+                to_regprocedure(
+                    'public.begin_johanna_abandonment_one_shot(text,uuid,text,bigint,bigint,text,integer,bigint)'
+                ),
+                to_regprocedure(
+                    'public.finish_johanna_abandonment_one_shot(uuid,text,bigint,bigint,text)'
+                )
+            )
+        )
+        + (
+            select (count(*) = 2)::int
+            from functions
+            where oid in (
+                to_regprocedure(
+                    'public.begin_johanna_abandonment_one_shot(text,uuid,text,bigint,bigint,text,integer,bigint)'
+                ),
+                to_regprocedure(
+                    'public.finish_johanna_abandonment_one_shot(uuid,text,bigint,bigint,text)'
+                )
+            )
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+        )
+        + (
+            has_function_privilege(
+                'service_role',
+                'public.begin_johanna_abandonment_one_shot(text,uuid,text,bigint,bigint,text,integer,bigint)',
+                'execute'
+            )
+            and has_function_privilege(
+                'service_role',
+                'public.finish_johanna_abandonment_one_shot(uuid,text,bigint,bigint,text)',
+                'execute'
+            )
+            and not has_function_privilege(
+                'anon',
+                'public.begin_johanna_abandonment_one_shot(text,uuid,text,bigint,bigint,text,integer,bigint)',
+                'execute'
+            )
+            and not has_function_privilege(
+                'authenticated',
+                'public.finish_johanna_abandonment_one_shot(uuid,text,bigint,bigint,text)',
+                'execute'
+            )
+        )::int
+        + (
+            not has_table_privilege(
+                'service_role',
+                'public.johanna_abandonment_one_shot_commands',
+                'select'
+            )
+            and not has_table_privilege(
+                'anon',
+                'public.johanna_abandonment_one_shot_commands',
+                'select'
+            )
+            and not has_table_privilege(
+                'authenticated',
+                'public.johanna_abandonment_one_shot_commands',
+                'select'
+            )
+        )::int,
+        5,
+        'johanna_v1_1_single_budget_template_command_closed_acl'
 )
 select
     version,

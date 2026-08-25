@@ -363,14 +363,16 @@ default-off. Ver
 [contrato de reevaluación Hotmart V1](contracts/hotmart-abandonment-reevaluation-v1.md)
 y [ADR-0014](decisions/0014-configurable-abandonment-reevaluation-timer.md).
 
-El corte one-shot agrega una command durable separada para un único template WABA controlado.
-La command se persiste como `request_started` antes de Chatwoot, fija un presupuesto de un
-mensaje y cero follow-ups, y nunca reenvía un replay ambiguo. Un scope singleton durable impide
-que una intención sucesora consuma un segundo mensaje del rollout. Revalida intención, target
-exacto, identidad, opt-out, bloqueo y takeover bajo locks canónicos. No clasifica abandono ni usa
-el scheduler general. Está default-off; el template versionado ya fue aprobado por Meta y el E2E
-outbound sigue pendiente. Ver
-[contrato first touch test-only V1](contracts/precheckout-test-first-touch-v1.md).
+Existen dos cortes one-shot separados y default-off. El histórico pre-checkout test-only exige
+identidad y conversación previas y conserva su ledger sin cambios. El corte Johanna V1.1 reserva
+un presupuesto singleton antes de Chatwoot y usa el sender de first-touch para buscar o crear el
+contacto, crear una conversación y enviar únicamente `johanna_carrito_abandonado_01`; por eso no
+exige un inbound WhatsApp previo. Ambos fijan un mensaje, cero follow-ups y bloquean el replay
+ambiguo. El corte nuevo revalida consentimiento V1.1, target allowlisted, scope, runtime inactivo,
+producto/oferta y bloqueos internos sin activar scheduler, dispatcher ni outbound general. Está
+implementado y verificado localmente; migración, despliegue y evidencia física siguen pendientes.
+Ver [contrato histórico test-only V1](contracts/precheckout-test-first-touch-v1.md) y
+[contrato one-shot Johanna V1](contracts/johanna-abandonment-one-shot-v1.md).
 
 ## Ingreso autoritativo de abandono de carrito
 

@@ -220,6 +220,21 @@ def test_deployment_declares_observed_lead_receiver_default_off() -> None:
     assert "${LEAD_PRECHECKOUT_ENABLED:-false}" in compose
 
 
+def test_deployment_declares_johanna_one_shot_default_off() -> None:
+    env_example = (PROJECT_ROOT / ".env.example").read_text()
+    compose = (PROJECT_ROOT / "compose.yaml").read_text()
+
+    for variable in (
+        "JOHANNA_ABANDONMENT_ONE_SHOT_ENABLED",
+        "JOHANNA_ABANDONMENT_ONE_SHOT_TOKEN",
+    ):
+        assert f"{variable}=" in env_example
+        assert f"{variable}:" in compose
+
+    assert "JOHANNA_ABANDONMENT_ONE_SHOT_ENABLED=false" in env_example
+    assert "${JOHANNA_ABANDONMENT_ONE_SHOT_ENABLED:-false}" in compose
+
+
 def test_deployment_uses_supabase_service_role_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -82,6 +82,27 @@ class PrecheckoutFirstTouchFinish:
 
 
 @dataclass(frozen=True)
+class JohannaAbandonmentOneShotStart:
+    outcome: str
+    command_id: str
+    command_status: str
+    target_phone: str
+    buyer_name: str
+    buyer_email: str
+    product_name: str
+    template_name: str
+    template_language: str
+    template_category: str
+    copy_version: str
+
+
+@dataclass(frozen=True)
+class JohannaAbandonmentOneShotFinish:
+    command_id: str
+    command_status: str
+
+
+@dataclass(frozen=True)
 class InboundCommercialCaseAdmissionResult:
     """Canonical draft-only admission outcome for one Chatwoot conversation."""
 
@@ -951,6 +972,106 @@ class SupabaseClient:
         if not isinstance(result_id, str) or not isinstance(result_status, str):
             raise SupabaseError(f"{operation}_invalid_row")
         return PrecheckoutFirstTouchFinish(result_id, result_status)
+
+    async def begin_johanna_abandonment_one_shot(
+        self,
+        *,
+        command_key: str,
+        purchase_intent_id: str,
+        allowed_external_user_id: str,
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+        scope_key: str,
+        scope_version: int,
+        expected_generation: int,
+    ) -> JohannaAbandonmentOneShotStart:
+        operation = "johanna_abandonment_one_shot_begin"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/begin_johanna_abandonment_one_shot",
+            content=json.dumps(
+                {
+                    "p_command_key": command_key,
+                    "p_purchase_intent_id": purchase_intent_id,
+                    "p_allowed_external_user_id": allowed_external_user_id,
+                    "p_chatwoot_account_id": chatwoot_account_id,
+                    "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                    "p_scope_key": scope_key,
+                    "p_scope_version": scope_version,
+                    "p_expected_generation": expected_generation,
+                }
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        required_text = (
+            "command_id",
+            "command_status",
+            "target_phone",
+            "buyer_name",
+            "buyer_email",
+            "product_name",
+            "template_name",
+            "template_language",
+            "template_category",
+            "copy_version",
+        )
+        if row.get("outcome") not in {"started", "replay"} or any(
+            not isinstance(row.get(field), str) or not row[field]
+            for field in required_text
+        ):
+            raise SupabaseError(f"{operation}_invalid_row")
+        return JohannaAbandonmentOneShotStart(
+            outcome=row["outcome"],
+            command_id=row["command_id"],
+            command_status=row["command_status"],
+            target_phone=row["target_phone"],
+            buyer_name=row["buyer_name"],
+            buyer_email=row["buyer_email"],
+            product_name=row["product_name"],
+            template_name=row["template_name"],
+            template_language=row["template_language"],
+            template_category=row["template_category"],
+            copy_version=row["copy_version"],
+        )
+
+    async def finish_johanna_abandonment_one_shot(
+        self,
+        *,
+        command_id: str,
+        outcome: str,
+        chatwoot_conversation_id: int | None,
+        chatwoot_message_id: int | None,
+        failure_code: str | None,
+    ) -> JohannaAbandonmentOneShotFinish:
+        operation = "johanna_abandonment_one_shot_finish"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/finish_johanna_abandonment_one_shot",
+            content=json.dumps(
+                {
+                    "p_command_id": command_id,
+                    "p_outcome": outcome,
+                    "p_chatwoot_conversation_id": chatwoot_conversation_id,
+                    "p_chatwoot_message_id": chatwoot_message_id,
+                    "p_failure_code": failure_code,
+                }
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        result_id = rows[0].get("command_id")
+        result_status = rows[0].get("command_status")
+        if not isinstance(result_id, str) or not isinstance(result_status, str):
+            raise SupabaseError(f"{operation}_invalid_row")
+        return JohannaAbandonmentOneShotFinish(result_id, result_status)
 
     async def admit_and_correlate_hotmart_cart_abandonment(
         self,
