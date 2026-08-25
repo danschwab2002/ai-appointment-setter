@@ -907,6 +907,34 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         4,
         'scoped_masked_operator_read_without_direct_table_access'
+    union all
+    select
+        '20260825000100',
+        '20260825000100_proactive_lead_identity_bootstrap.sql',
+        (to_regclass('public.proactive_lead_bootstrap_targets') is not null)::int
+        + (to_regclass('public.proactive_lead_identity_bootstrap_commands') is not null)::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.bootstrap_proactive_lead_identity(text,uuid,text,integer,bigint,text,text)'
+            )
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+        )::int
+        + coalesce((
+            select (
+                has_function_privilege('service_role', oid, 'execute')
+                and not has_function_privilege('anon', oid, 'execute')
+                and not has_function_privilege('authenticated', oid, 'execute')
+            )::int
+            from functions
+            where oid = to_regprocedure(
+                'public.bootstrap_proactive_lead_identity(text,uuid,text,integer,bigint,text,text)'
+            )
+        ), 0),
+        4,
+        'effect_free_proactive_identity_bootstrap'
 )
 select
     version,

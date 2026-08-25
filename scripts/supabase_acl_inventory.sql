@@ -13,6 +13,7 @@ expected_service_role(signature) as (
         ('public.admit_inbound_commercial_case(text, integer, bigint, text)'),
         ('public.apply_chatwoot_inbound_opt_out(bigint, bigint, bigint, bigint, text, timestamp with time zone, text)'),
         ('public.apply_hotmart_purchase_approved(uuid, text, text, text, text, text, timestamp with time zone)'),
+        ('public.bootstrap_proactive_lead_identity(text, uuid, text, integer, bigint, text, text)'),
         ('public.claim_chatwoot_opt_out_projections(text, timestamp with time zone, interval, integer)'),
         ('public.claim_due_followup_actions(text, timestamp with time zone, interval, integer)'),
         ('public.claim_human_handoff_projection_effects(text, integer, integer, timestamp with time zone)'),
