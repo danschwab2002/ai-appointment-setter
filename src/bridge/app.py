@@ -92,6 +92,9 @@ CHATWOOT_CONVERSATION_RESET_COMMAND = "/nuevo"
 CHATWOOT_CONVERSATION_RESET_CONFIRMATION = "Memoria eliminada."
 PRECHECKOUT_FIRST_TOUCH_TEMPLATE_NAME = "libre_ansiedad_test_first_touch_v1"
 PRECHECKOUT_FIRST_TOUCH_COPY_VERSION = "libre-ansiedad-precheckout-first-touch-v1"
+JOHANNA_ABANDONMENT_TEMPLATE_NAME = "johanna_carrito_abandonado_01"
+JOHANNA_ABANDONMENT_COPY_VERSION = "johanna-abandonment-one-shot-v1"
+JOHANNA_ABANDONMENT_BODY_LIMIT_BYTES = 8 * 1024
 
 _MEDICATION_GUIDANCE_SUBJECT_RE = re.compile(
     r"\b(?:medicacion|medicamento|farmaco|pastilla|antidepresiv|ansiolitic)\w*\b"
@@ -232,6 +235,8 @@ class Settings:
     lead_precheckout_offer_code: str = "bxjge6zq"
     precheckout_first_touch_enabled: bool = False
     precheckout_first_touch_token: str | None = None
+    johanna_abandonment_one_shot_enabled: bool = False
+    johanna_abandonment_one_shot_token: str | None = None
     supabase_base_url: str | None = None
     supabase_service_role_key: str | None = None
     worker_poll_interval_seconds: float = 5.0
@@ -404,6 +409,13 @@ class Settings:
         precheckout_first_touch_token = (
             os.getenv("PRECHECKOUT_FIRST_TOUCH_TOKEN", "").strip() or None
         )
+        johanna_abandonment_one_shot_enabled = (
+            os.getenv("JOHANNA_ABANDONMENT_ONE_SHOT_ENABLED", "false").lower()
+            == "true"
+        )
+        johanna_abandonment_one_shot_token = (
+            os.getenv("JOHANNA_ABANDONMENT_ONE_SHOT_TOKEN", "").strip() or None
+        )
         lead_precheckout_enabled = (
             os.getenv("LEAD_PRECHECKOUT_ENABLED", "false").lower() == "true"
         )
@@ -439,6 +451,13 @@ class Settings:
         ):
             raise ValueError(
                 "PRECHECKOUT_FIRST_TOUCH_ENABLED requires test-only receiver and token"
+            )
+        if johanna_abandonment_one_shot_enabled and (
+            johanna_abandonment_one_shot_token is None
+            or len(johanna_abandonment_one_shot_token) < 32
+        ):
+            raise ValueError(
+                "JOHANNA_ABANDONMENT_ONE_SHOT_TOKEN must contain at least 32 characters"
             )
         if precheckout_test_mode_enabled and (
             precheckout_test_phone_e164 is None
@@ -627,6 +646,12 @@ class Settings:
             lead_precheckout_offer_code=lead_precheckout_offer_code,
             precheckout_first_touch_enabled=precheckout_first_touch_enabled,
             precheckout_first_touch_token=precheckout_first_touch_token,
+            johanna_abandonment_one_shot_enabled=(
+                johanna_abandonment_one_shot_enabled
+            ),
+            johanna_abandonment_one_shot_token=(
+                johanna_abandonment_one_shot_token
+            ),
             supabase_base_url=supabase_base_url,
             supabase_service_role_key=supabase_service_role_key,
             worker_poll_interval_seconds=worker_poll_interval,
@@ -875,6 +900,13 @@ def create_app(
     recovery_agent_client: RecoveryAgentClient | None = None,
     message_sender: MessageSender | None = None,
 ) -> FastAPI:
+    if settings.johanna_abandonment_one_shot_enabled and (
+        settings.johanna_abandonment_one_shot_token is None
+        or len(settings.johanna_abandonment_one_shot_token) < 32
+    ):
+        raise ValueError(
+            "JOHANNA_ABANDONMENT_ONE_SHOT_TOKEN must contain at least 32 characters"
+        )
     if settings.operator_correlation_read_enabled and (
         settings.operator_correlation_read_token is None
         or len(settings.operator_correlation_read_token) < 32
@@ -928,8 +960,8 @@ def create_app(
     waba_template: WhatsAppTemplateConfig | None = None
     if (
         settings.dispatcher_outbound_enabled
-        and settings.pilot_channel_provider == "waba"
-    ):
+        or settings.johanna_abandonment_one_shot_enabled
+    ) and settings.pilot_channel_provider == "waba":
         template_fields = (
             (settings.waba_first_touch_template_name, "WABA_FIRST_TOUCH_TEMPLATE_NAME"),
             (settings.waba_template_language, "WABA_TEMPLATE_LANGUAGE"),
@@ -1120,6 +1152,59 @@ def create_app(
                     category="MARKETING",
                     first_touch_parameter="buyer_name",
                 ),
+            )
+    johanna_abandonment_sender = message_sender
+    if settings.johanna_abandonment_one_shot_enabled:
+        canonical_phone = allowed_phone_from_jid(settings.allowed_jid)
+        johanna_boundary = (
+            settings.lead_precheckout_enabled,
+            settings.pilot_scope_key,
+            settings.pilot_scope_version,
+            settings.pilot_tenant_key,
+            settings.pilot_channel_provider,
+            settings.pilot_channel_account_ref,
+            settings.chatwoot_account_id,
+            settings.chatwoot_inbox_id,
+            settings.waba_first_touch_template_name,
+            settings.waba_followup_template_name,
+            settings.waba_template_language,
+            settings.waba_template_category,
+        )
+        if (
+            shared_supabase is None
+            or settings.johanna_abandonment_one_shot_token is None
+            or canonical_phone is None
+            or johanna_boundary
+            != (
+                True,
+                "johanna-abandonment-template-e2e",
+                1,
+                "psicologajohanna",
+                "waba",
+                "chatwoot-inbox:9",
+                1,
+                9,
+                JOHANNA_ABANDONMENT_TEMPLATE_NAME,
+                None,
+                "es_EC",
+                "MARKETING",
+            )
+            or waba_template is None
+        ):
+            raise ValueError(
+                "Johanna abandonment one-shot requires exact V1.1 scope and template"
+            )
+        if johanna_abandonment_sender is None:
+            if not isinstance(control_client, ChatwootClient):
+                raise ValueError(
+                    "Johanna abandonment one-shot requires Chatwoot control"
+                )
+            assert settings.chatwoot_inbox_id is not None
+            johanna_abandonment_sender = ChatwootMessageSender(
+                chatwoot=control_client,
+                inbox_id=settings.chatwoot_inbox_id,
+                allowed_jid=settings.allowed_jid,
+                template=waba_template,
             )
     if settings.chatwoot_durable_opt_out_enabled and (
         shared_supabase is None or control_client is None
@@ -2525,6 +2610,207 @@ def create_app(
             "test_only": True,
             "generalizable": False,
         }
+
+    @app.post(
+        "/internal/johanna/abandonment-one-shot",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def send_johanna_abandonment_one_shot(
+        request: Request,
+        response: Response,
+        x_johanna_one_shot_token: str = Header(default=""),
+    ) -> dict[str, object]:
+        if not settings.johanna_abandonment_one_shot_enabled:
+            raise HTTPException(
+                status_code=503,
+                detail="johanna_abandonment_one_shot_not_enabled",
+            )
+        if settings.johanna_abandonment_one_shot_token is None:
+            raise HTTPException(
+                status_code=503,
+                detail="johanna_abandonment_one_shot_not_configured",
+            )
+        if not hmac.compare_digest(
+            x_johanna_one_shot_token.encode(),
+            settings.johanna_abandonment_one_shot_token.encode(),
+        ):
+            raise HTTPException(
+                status_code=401,
+                detail="invalid_johanna_abandonment_one_shot_token",
+            )
+
+        raw = bytearray()
+        async for chunk in request.stream():
+            if len(raw) + len(chunk) > JOHANNA_ABANDONMENT_BODY_LIMIT_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail="johanna_abandonment_one_shot_body_too_large",
+                )
+            raw.extend(chunk)
+        try:
+            payload = json.loads(bytes(raw))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="invalid_johanna_abandonment_one_shot_payload",
+            ) from exc
+        if not isinstance(payload, dict) or set(payload) != {
+            "command_key",
+            "purchase_intent_id",
+        }:
+            raise HTTPException(
+                status_code=400,
+                detail="invalid_johanna_abandonment_one_shot_payload",
+            )
+        command_key = payload.get("command_key")
+        purchase_intent_id = payload.get("purchase_intent_id")
+        if (
+            not isinstance(command_key, str)
+            or re.fullmatch(r"[a-z0-9:_-]{1,200}", command_key) is None
+            or not isinstance(purchase_intent_id, str)
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="invalid_johanna_abandonment_one_shot_payload",
+            )
+        try:
+            uuid.UUID(purchase_intent_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="invalid_johanna_abandonment_one_shot_payload",
+            ) from exc
+
+        canonical_phone = allowed_phone_from_jid(settings.allowed_jid)
+        if (
+            shared_supabase is None
+            or johanna_abandonment_sender is None
+            or canonical_phone is None
+            or settings.chatwoot_account_id != 1
+            or settings.chatwoot_inbox_id != 9
+            or settings.pilot_scope_key != "johanna-abandonment-template-e2e"
+            or settings.pilot_scope_version != 1
+        ):
+            raise HTTPException(
+                status_code=503,
+                detail="johanna_abandonment_one_shot_not_configured",
+            )
+        try:
+            started = await shared_supabase.begin_johanna_abandonment_one_shot(
+                command_key=command_key,
+                purchase_intent_id=purchase_intent_id,
+                allowed_external_user_id=canonical_phone,
+                chatwoot_account_id=settings.chatwoot_account_id,
+                chatwoot_inbox_id=settings.chatwoot_inbox_id,
+                scope_key=settings.pilot_scope_key,
+                scope_version=settings.pilot_scope_version,
+                expected_generation=0,
+            )
+        except SupabaseError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="johanna_abandonment_one_shot_not_authorized",
+            ) from exc
+
+        expected_metadata = (
+            JOHANNA_ABANDONMENT_TEMPLATE_NAME,
+            "es_EC",
+            "MARKETING",
+            JOHANNA_ABANDONMENT_COPY_VERSION,
+            canonical_phone,
+        )
+        actual_metadata = (
+            started.template_name,
+            started.template_language,
+            started.template_category,
+            started.copy_version,
+            started.target_phone,
+        )
+        if actual_metadata != expected_metadata:
+            raise HTTPException(
+                status_code=409,
+                detail="johanna_abandonment_one_shot_metadata_mismatch",
+            )
+        if started.outcome == "replay":
+            if started.command_status == "accepted_by_chatwoot":
+                response.status_code = status.HTTP_200_OK
+                return {
+                    "status": "accepted_by_chatwoot",
+                    "command_id": started.command_id,
+                    "message_count": 1,
+                    "followups_allowed": 0,
+                    "test_only": True,
+                    "generalizable": False,
+                }
+            raise HTTPException(
+                status_code=409,
+                detail="johanna_abandonment_one_shot_reconciliation_required",
+            )
+
+        result = await johanna_abandonment_sender.send_first_touch(
+            phone=started.target_phone,
+            buyer_name=started.buyer_name,
+            buyer_email=started.buyer_email,
+            product_name=started.product_name,
+            content="Recuperación supervisada de carrito de Libre de Ansiedad.",
+            delivery_id=started.command_id,
+        )
+        if (
+            result.status == "sent"
+            and result.conversation_id is not None
+            and result.message_id is not None
+        ):
+            try:
+                await shared_supabase.finish_johanna_abandonment_one_shot(
+                    command_id=started.command_id,
+                    outcome="accepted_by_chatwoot",
+                    chatwoot_conversation_id=result.conversation_id,
+                    chatwoot_message_id=result.message_id,
+                    failure_code=None,
+                )
+            except SupabaseError as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail="johanna_abandonment_one_shot_finalization_unknown",
+                ) from exc
+            return {
+                "status": "accepted_by_chatwoot",
+                "command_id": started.command_id,
+                "message_count": 1,
+                "followups_allowed": 0,
+                "test_only": True,
+                "generalizable": False,
+            }
+
+        stable_failure = (
+            result.reason
+            if result.reason
+            in {
+                "chatwoot_http_error",
+                "chatwoot_protocol_error",
+                "invalid_phone",
+                "target_not_allowed",
+                "template_parameters_missing",
+            }
+            else "sender_failed"
+        )
+        try:
+            await shared_supabase.finish_johanna_abandonment_one_shot(
+                command_id=started.command_id,
+                outcome="delivery_unknown",
+                chatwoot_conversation_id=None,
+                chatwoot_message_id=None,
+                failure_code=stable_failure,
+            )
+        except SupabaseError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="johanna_abandonment_one_shot_finalization_unknown",
+            ) from exc
+        raise HTTPException(
+            status_code=502,
+            detail="johanna_abandonment_one_shot_failed",
+        )
 
     @app.post(
         "/internal/precheckout/test-first-touch",
