@@ -6,6 +6,7 @@ import asyncio
 import copy
 import json
 import time
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -14,6 +15,7 @@ from starlette.requests import Request
 
 from bridge.app import Settings, create_app
 from bridge.hotmart import parse_hotmart_payload
+from bridge.messaging import FirstTouchResult
 
 # ── Fixtures ────────────────────────────────────────────────────────
 
@@ -859,6 +861,214 @@ def test_cart_abandonment_semantic_conflict_is_not_reported_as_duplicate(
         "event_id": "0d7aa966-b887-4617-8c56-9e865bfc8ce4",
         "reason": "cart_abandonment_semantic_conflict",
     }
+
+
+class _JohannaAutoSupabase:
+    def __init__(
+        self,
+        *,
+        admission_outcome: str = "inserted",
+        begin_outcome: str = "started",
+        command_status: str = "request_started",
+    ) -> None:
+        self.admission_outcome = admission_outcome
+        self.begin_outcome = begin_outcome
+        self.command_status = command_status
+        self.begin_calls: list[dict[str, object]] = []
+        self.finish_calls: list[dict[str, object]] = []
+
+    async def admit_and_correlate_hotmart_cart_abandonment(
+        self, **kwargs: object
+    ) -> object:
+        return SimpleNamespace(
+            outcome=self.admission_outcome,
+            webhook_event_id="93f3fc37-5f92-4966-af71-b37c9bbac45e",
+        )
+
+    async def correlate_hotmart_purchase_intent(self, **kwargs: object) -> object:
+        return SimpleNamespace(
+            outcome="resolved",
+            purchase_intent_id="1f581f3a-c469-45da-8208-9483d1b26f0b",
+            candidate_count=1,
+            manual_handoff_required=False,
+        )
+
+    async def begin_johanna_abandonment_hotmart_auto(
+        self, **kwargs: object
+    ) -> object:
+        self.begin_calls.append(kwargs)
+        return SimpleNamespace(
+            outcome=self.begin_outcome,
+            command_id="bfc778e7-5c9f-45e6-a910-651f92312157",
+            command_status=self.command_status,
+            target_phone="12025550123",
+            buyer_name="Lead de Prueba",
+            buyer_email="lead@example.com",
+            product_name="Libre de Ansiedad",
+            template_name="johanna_carrito_abandonado_01",
+            template_language="es_EC",
+            template_category="MARKETING",
+            copy_version="johanna-abandonment-one-shot-v1",
+        )
+
+    async def finish_johanna_abandonment_one_shot(self, **kwargs: object) -> object:
+        self.finish_calls.append(kwargs)
+        return SimpleNamespace(
+            command_id=kwargs["command_id"],
+            command_status=kwargs["outcome"],
+        )
+
+
+class _JohannaAutoSender:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def send_first_touch(self, **kwargs: object) -> FirstTouchResult:
+        self.calls.append(kwargs)
+        return FirstTouchResult("sent", 321, 654)
+
+
+def _johanna_auto_settings(tmp_path, **overrides: object) -> Settings:
+    values: dict[str, object] = {
+        "capture_dir": tmp_path,
+        "allowed_jid": "12025550123@s.whatsapp.net",
+        "lead_precheckout_enabled": True,
+        "lead_precheckout_secret": "lead-secret",
+        "johanna_abandonment_one_shot_enabled": False,
+        "johanna_abandonment_hotmart_auto_enabled": True,
+        "chatwoot_account_id": 1,
+        "chatwoot_inbox_id": 9,
+        "pilot_scope_key": "johanna-abandonment-template-e2e",
+        "pilot_scope_version": 2,
+        "pilot_tenant_key": "psicologajohanna",
+        "pilot_channel_provider": "waba",
+        "pilot_channel_account_ref": "chatwoot-inbox:9",
+        "waba_first_touch_template_name": "johanna_carrito_abandonado_01",
+        "waba_followup_template_name": None,
+        "waba_template_language": "es_EC",
+        "waba_template_category": "MARKETING",
+    }
+    values.update(overrides)
+    return _hotmart_settings(**values)
+
+
+def test_hotmart_resolved_abandonment_triggers_johanna_auto_once(tmp_path) -> None:
+    supabase = _JohannaAutoSupabase()
+    sender = _JohannaAutoSender()
+    app = create_app(
+        _johanna_auto_settings(tmp_path),
+        supabase_client=supabase,  # type: ignore[arg-type]
+        message_sender=sender,  # type: ignore[arg-type]
+    )
+
+    payload = copy.deepcopy(EXAMPLE_PAYLOAD)
+    data = payload["data"]
+    assert isinstance(data, dict)
+    product = data["product"]
+    offer = data["offer"]
+    assert isinstance(product, dict) and isinstance(offer, dict)
+    product["id"] = 8104005
+    offer["code"] = "bxjge6zq"
+
+    response = _post_hotmart(app, json.dumps(payload).encode())
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "accepted_by_chatwoot"
+    assert supabase.begin_calls == [{
+        "command_key": "johanna-hotmart-auto:93f3fc37-5f92-4966-af71-b37c9bbac45e",
+        "hotmart_webhook_event_id": "93f3fc37-5f92-4966-af71-b37c9bbac45e",
+        "purchase_intent_id": "1f581f3a-c469-45da-8208-9483d1b26f0b",
+        "allowed_external_user_id": "12025550123",
+        "chatwoot_account_id": 1,
+        "chatwoot_inbox_id": 9,
+        "scope_key": "johanna-abandonment-template-e2e",
+        "scope_version": 2,
+        "expected_generation": 1,
+    }]
+    assert len(sender.calls) == 1
+    assert len(supabase.finish_calls) == 1
+    assert app.state.resolution_worker is None
+    assert app.state.durable_dispatcher is None
+
+
+def test_hotmart_duplicate_replays_accepted_auto_without_second_send(tmp_path) -> None:
+    supabase = _JohannaAutoSupabase(
+        admission_outcome="duplicate",
+        begin_outcome="replay",
+        command_status="accepted_by_chatwoot",
+    )
+    sender = _JohannaAutoSender()
+    app = create_app(
+        _johanna_auto_settings(tmp_path),
+        supabase_client=supabase,  # type: ignore[arg-type]
+        message_sender=sender,  # type: ignore[arg-type]
+    )
+    payload = copy.deepcopy(EXAMPLE_PAYLOAD)
+    data = payload["data"]
+    assert isinstance(data, dict)
+    product = data["product"]
+    offer = data["offer"]
+    assert isinstance(product, dict) and isinstance(offer, dict)
+    product["id"] = 8104005
+    offer["code"] = "bxjge6zq"
+
+    response = _post_hotmart(app, json.dumps(payload).encode())
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "accepted_by_chatwoot"
+    assert len(supabase.begin_calls) == 1
+    assert sender.calls == []
+    assert supabase.finish_calls == []
+
+
+def test_hotmart_auto_acknowledges_consumed_v1_budget_without_send(tmp_path) -> None:
+    supabase = _JohannaAutoSupabase(
+        begin_outcome="budget_consumed",
+        command_status="accepted_by_chatwoot",
+    )
+    sender = _JohannaAutoSender()
+    app = create_app(
+        _johanna_auto_settings(tmp_path),
+        supabase_client=supabase,  # type: ignore[arg-type]
+        message_sender=sender,  # type: ignore[arg-type]
+    )
+    payload = copy.deepcopy(EXAMPLE_PAYLOAD)
+    data = payload["data"]
+    assert isinstance(data, dict)
+    product = data["product"]
+    offer = data["offer"]
+    assert isinstance(product, dict) and isinstance(offer, dict)
+    product["id"] = 8104005
+    offer["code"] = "bxjge6zq"
+
+    response = _post_hotmart(app, json.dumps(payload).encode())
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ignored",
+        "reason": "contact_budget_consumed",
+        "message_count": 1,
+        "followups_allowed": 0,
+        "test_only": True,
+        "generalizable": False,
+    }
+    assert sender.calls == []
+    assert supabase.finish_calls == []
+
+
+def test_johanna_manual_and_hotmart_auto_cannot_be_enabled_together(tmp_path) -> None:
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        create_app(
+            _johanna_auto_settings(
+                tmp_path,
+                johanna_abandonment_one_shot_enabled=True,
+                johanna_abandonment_one_shot_token=(
+                    "isolated-johanna-one-shot-token-v1"
+                ),
+            ),
+            supabase_client=_JohannaAutoSupabase(),  # type: ignore[arg-type]
+            message_sender=_JohannaAutoSender(),  # type: ignore[arg-type]
+        )
 
 
 def test_returns_503_when_supabase_fails(tmp_path) -> None:

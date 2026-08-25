@@ -366,13 +366,27 @@ y [ADR-0014](decisions/0014-configurable-abandonment-reevaluation-timer.md).
 Existen dos cortes one-shot separados y default-off. El histórico pre-checkout test-only exige
 identidad y conversación previas y conserva su ledger sin cambios. El corte Johanna V1.1 reserva
 un presupuesto singleton antes de Chatwoot y usa el sender de first-touch para buscar o crear el
-contacto, crear una conversación y enviar únicamente `johanna_carrito_abandonado_01`; por eso no
+contacto, resolver el `source_id` del vínculo contacto–inbox WABA, crear una conversación y enviar
+únicamente `johanna_carrito_abandonado_01`; por eso no
 exige un inbound WhatsApp previo. Ambos fijan un mensaje, cero follow-ups y bloquean el replay
 ambiguo. El corte nuevo revalida consentimiento V1.1, target allowlisted, scope, runtime inactivo,
 producto/oferta y bloqueos internos sin activar scheduler, dispatcher ni outbound general. Está
-implementado y verificado localmente; migración, despliegue y evidencia física siguen pendientes.
+desplegado y produjo una recepción física confirmada. Una respuesta inicialmente ambigua puede
+reconciliarse durablemente con IDs canónicos mediante un RPC service-role-only, sin repetir el
+efecto externo.
 Ver [contrato histórico test-only V1](contracts/precheckout-test-first-touch-v1.md) y
 [contrato one-shot Johanna V1](contracts/johanna-abandonment-one-shot-v1.md).
+
+La automatización Hotmart usa policy y scope V2 inmutables. El scope
+mantiene account `1`, inbox `9`, evento `PURCHASE_OUT_OF_SHOPPING_CART`, producto `8104005`,
+oferta `bxjge6zq`, una sola persona en cohorte y presupuestos total/diario de un request-start.
+Un bridge síncrono y default-off en el receiver sólo continúa después de una correlación durable
+`resolved`, con candidato único y sin handoff manual. Su RPC relee evento, correlación, intención,
+consentimiento, allowlist y opt-out antes de reservar el presupuesto singleton V2; luego reutiliza
+el mismo sender WABA y ledger de finalización del one-shot. Un unique index por teléfono y el gate
+transaccional hacen que el command V1 ya observado consuma también el presupuesto V2 para ese
+destinatario. El runtime V2 permanece `inactive` y
+general dispatcher, resolution worker, durable outbound y follow-ups permanecen apagados.
 
 ## Ingreso autoritativo de abandono de carrito
 

@@ -237,6 +237,7 @@ class Settings:
     precheckout_first_touch_token: str | None = None
     johanna_abandonment_one_shot_enabled: bool = False
     johanna_abandonment_one_shot_token: str | None = None
+    johanna_abandonment_hotmart_auto_enabled: bool = False
     supabase_base_url: str | None = None
     supabase_service_role_key: str | None = None
     worker_poll_interval_seconds: float = 5.0
@@ -415,6 +416,13 @@ class Settings:
         )
         johanna_abandonment_one_shot_token = (
             os.getenv("JOHANNA_ABANDONMENT_ONE_SHOT_TOKEN", "").strip() or None
+        )
+        johanna_abandonment_hotmart_auto_enabled = (
+            os.getenv(
+                "JOHANNA_ABANDONMENT_HOTMART_AUTO_ENABLED",
+                "false",
+            ).lower()
+            == "true"
         )
         lead_precheckout_enabled = (
             os.getenv("LEAD_PRECHECKOUT_ENABLED", "false").lower() == "true"
@@ -651,6 +659,9 @@ class Settings:
             ),
             johanna_abandonment_one_shot_token=(
                 johanna_abandonment_one_shot_token
+            ),
+            johanna_abandonment_hotmart_auto_enabled=(
+                johanna_abandonment_hotmart_auto_enabled
             ),
             supabase_base_url=supabase_base_url,
             supabase_service_role_key=supabase_service_role_key,
@@ -900,6 +911,13 @@ def create_app(
     recovery_agent_client: RecoveryAgentClient | None = None,
     message_sender: MessageSender | None = None,
 ) -> FastAPI:
+    if (
+        settings.johanna_abandonment_one_shot_enabled
+        and settings.johanna_abandonment_hotmart_auto_enabled
+    ):
+        raise ValueError(
+            "Johanna manual one-shot and Hotmart auto-trigger are mutually exclusive"
+        )
     if settings.johanna_abandonment_one_shot_enabled and (
         settings.johanna_abandonment_one_shot_token is None
         or len(settings.johanna_abandonment_one_shot_token) < 32
@@ -961,6 +979,7 @@ def create_app(
     if (
         settings.dispatcher_outbound_enabled
         or settings.johanna_abandonment_one_shot_enabled
+        or settings.johanna_abandonment_hotmart_auto_enabled
     ) and settings.pilot_channel_provider == "waba":
         template_fields = (
             (settings.waba_first_touch_template_name, "WABA_FIRST_TOUCH_TEMPLATE_NAME"),
@@ -1154,8 +1173,14 @@ def create_app(
                 ),
             )
     johanna_abandonment_sender = message_sender
-    if settings.johanna_abandonment_one_shot_enabled:
+    if (
+        settings.johanna_abandonment_one_shot_enabled
+        or settings.johanna_abandonment_hotmart_auto_enabled
+    ):
         canonical_phone = allowed_phone_from_jid(settings.allowed_jid)
+        expected_scope_version = (
+            2 if settings.johanna_abandonment_hotmart_auto_enabled else 1
+        )
         johanna_boundary = (
             settings.lead_precheckout_enabled,
             settings.pilot_scope_key,
@@ -1172,13 +1197,20 @@ def create_app(
         )
         if (
             shared_supabase is None
-            or settings.johanna_abandonment_one_shot_token is None
+            or (
+                settings.johanna_abandonment_one_shot_enabled
+                and settings.johanna_abandonment_one_shot_token is None
+            )
+            or (
+                settings.johanna_abandonment_hotmart_auto_enabled
+                and settings.hotmart_hottok is None
+            )
             or canonical_phone is None
             or johanna_boundary
             != (
                 True,
                 "johanna-abandonment-template-e2e",
-                1,
+                expected_scope_version,
                 "psicologajohanna",
                 "waba",
                 "chatwoot-inbox:9",
@@ -2611,6 +2643,164 @@ def create_app(
             "generalizable": False,
         }
 
+    async def _execute_johanna_abandonment_delivery(
+        *,
+        command_key: str,
+        purchase_intent_id: str,
+        hotmart_webhook_event_id: str | None,
+    ) -> tuple[int, dict[str, object]]:
+        canonical_phone = allowed_phone_from_jid(settings.allowed_jid)
+        expected_scope_version = 2 if hotmart_webhook_event_id is not None else 1
+        expected_generation = 1 if hotmart_webhook_event_id is not None else 0
+        if (
+            shared_supabase is None
+            or johanna_abandonment_sender is None
+            or canonical_phone is None
+            or settings.chatwoot_account_id != 1
+            or settings.chatwoot_inbox_id != 9
+            or settings.pilot_scope_key != "johanna-abandonment-template-e2e"
+            or settings.pilot_scope_version != expected_scope_version
+        ):
+            raise HTTPException(
+                status_code=503,
+                detail="johanna_abandonment_one_shot_not_configured",
+            )
+        begin_args: dict[str, object] = {
+            "command_key": command_key,
+            "purchase_intent_id": purchase_intent_id,
+            "allowed_external_user_id": canonical_phone,
+            "chatwoot_account_id": settings.chatwoot_account_id,
+            "chatwoot_inbox_id": settings.chatwoot_inbox_id,
+            "scope_key": settings.pilot_scope_key,
+            "scope_version": settings.pilot_scope_version,
+            "expected_generation": expected_generation,
+        }
+        try:
+            if hotmart_webhook_event_id is None:
+                started = await shared_supabase.begin_johanna_abandonment_one_shot(
+                    **begin_args,  # type: ignore[arg-type]
+                )
+            else:
+                started = (
+                    await shared_supabase.begin_johanna_abandonment_hotmart_auto(
+                        hotmart_webhook_event_id=hotmart_webhook_event_id,
+                        **begin_args,  # type: ignore[arg-type]
+                    )
+                )
+        except SupabaseError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="johanna_abandonment_one_shot_not_authorized",
+            ) from exc
+
+        expected_metadata = (
+            JOHANNA_ABANDONMENT_TEMPLATE_NAME,
+            "es_EC",
+            "MARKETING",
+            JOHANNA_ABANDONMENT_COPY_VERSION,
+            canonical_phone,
+        )
+        actual_metadata = (
+            started.template_name,
+            started.template_language,
+            started.template_category,
+            started.copy_version,
+            started.target_phone,
+        )
+        if actual_metadata != expected_metadata:
+            raise HTTPException(
+                status_code=409,
+                detail="johanna_abandonment_one_shot_metadata_mismatch",
+            )
+        if started.outcome == "budget_consumed":
+            return 200, {
+                "status": "ignored",
+                "reason": "contact_budget_consumed",
+                "message_count": 1,
+                "followups_allowed": 0,
+                "test_only": True,
+                "generalizable": False,
+            }
+        if started.outcome == "replay":
+            if started.command_status == "accepted_by_chatwoot":
+                return 200, {
+                    "status": "accepted_by_chatwoot",
+                    "command_id": started.command_id,
+                    "message_count": 1,
+                    "followups_allowed": 0,
+                    "test_only": True,
+                    "generalizable": False,
+                }
+            raise HTTPException(
+                status_code=409,
+                detail="johanna_abandonment_one_shot_reconciliation_required",
+            )
+
+        result = await johanna_abandonment_sender.send_first_touch(
+            phone=started.target_phone,
+            buyer_name=started.buyer_name,
+            buyer_email=started.buyer_email,
+            product_name=started.product_name,
+            content="Recuperación supervisada de carrito de Libre de Ansiedad.",
+            delivery_id=started.command_id,
+        )
+        if (
+            result.status == "sent"
+            and result.conversation_id is not None
+            and result.message_id is not None
+        ):
+            try:
+                await shared_supabase.finish_johanna_abandonment_one_shot(
+                    command_id=started.command_id,
+                    outcome="accepted_by_chatwoot",
+                    chatwoot_conversation_id=result.conversation_id,
+                    chatwoot_message_id=result.message_id,
+                    failure_code=None,
+                )
+            except SupabaseError as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail="johanna_abandonment_one_shot_finalization_unknown",
+                ) from exc
+            return 202, {
+                "status": "accepted_by_chatwoot",
+                "command_id": started.command_id,
+                "message_count": 1,
+                "followups_allowed": 0,
+                "test_only": True,
+                "generalizable": False,
+            }
+
+        stable_failure = (
+            result.reason
+            if result.reason
+            in {
+                "chatwoot_http_error",
+                "chatwoot_protocol_error",
+                "invalid_phone",
+                "target_not_allowed",
+                "template_parameters_missing",
+            }
+            else "sender_failed"
+        )
+        try:
+            await shared_supabase.finish_johanna_abandonment_one_shot(
+                command_id=started.command_id,
+                outcome="delivery_unknown",
+                chatwoot_conversation_id=None,
+                chatwoot_message_id=None,
+                failure_code=stable_failure,
+            )
+        except SupabaseError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="johanna_abandonment_one_shot_finalization_unknown",
+            ) from exc
+        raise HTTPException(
+            status_code=502,
+            detail="johanna_abandonment_one_shot_failed",
+        )
+
     @app.post(
         "/internal/johanna/abandonment-one-shot",
         status_code=status.HTTP_202_ACCEPTED,
@@ -2681,136 +2871,13 @@ def create_app(
                 detail="invalid_johanna_abandonment_one_shot_payload",
             ) from exc
 
-        canonical_phone = allowed_phone_from_jid(settings.allowed_jid)
-        if (
-            shared_supabase is None
-            or johanna_abandonment_sender is None
-            or canonical_phone is None
-            or settings.chatwoot_account_id != 1
-            or settings.chatwoot_inbox_id != 9
-            or settings.pilot_scope_key != "johanna-abandonment-template-e2e"
-            or settings.pilot_scope_version != 1
-        ):
-            raise HTTPException(
-                status_code=503,
-                detail="johanna_abandonment_one_shot_not_configured",
-            )
-        try:
-            started = await shared_supabase.begin_johanna_abandonment_one_shot(
-                command_key=command_key,
-                purchase_intent_id=purchase_intent_id,
-                allowed_external_user_id=canonical_phone,
-                chatwoot_account_id=settings.chatwoot_account_id,
-                chatwoot_inbox_id=settings.chatwoot_inbox_id,
-                scope_key=settings.pilot_scope_key,
-                scope_version=settings.pilot_scope_version,
-                expected_generation=0,
-            )
-        except SupabaseError as exc:
-            raise HTTPException(
-                status_code=409,
-                detail="johanna_abandonment_one_shot_not_authorized",
-            ) from exc
-
-        expected_metadata = (
-            JOHANNA_ABANDONMENT_TEMPLATE_NAME,
-            "es_EC",
-            "MARKETING",
-            JOHANNA_ABANDONMENT_COPY_VERSION,
-            canonical_phone,
+        result_status, result_body = await _execute_johanna_abandonment_delivery(
+            command_key=command_key,
+            purchase_intent_id=purchase_intent_id,
+            hotmart_webhook_event_id=None,
         )
-        actual_metadata = (
-            started.template_name,
-            started.template_language,
-            started.template_category,
-            started.copy_version,
-            started.target_phone,
-        )
-        if actual_metadata != expected_metadata:
-            raise HTTPException(
-                status_code=409,
-                detail="johanna_abandonment_one_shot_metadata_mismatch",
-            )
-        if started.outcome == "replay":
-            if started.command_status == "accepted_by_chatwoot":
-                response.status_code = status.HTTP_200_OK
-                return {
-                    "status": "accepted_by_chatwoot",
-                    "command_id": started.command_id,
-                    "message_count": 1,
-                    "followups_allowed": 0,
-                    "test_only": True,
-                    "generalizable": False,
-                }
-            raise HTTPException(
-                status_code=409,
-                detail="johanna_abandonment_one_shot_reconciliation_required",
-            )
-
-        result = await johanna_abandonment_sender.send_first_touch(
-            phone=started.target_phone,
-            buyer_name=started.buyer_name,
-            buyer_email=started.buyer_email,
-            product_name=started.product_name,
-            content="Recuperación supervisada de carrito de Libre de Ansiedad.",
-            delivery_id=started.command_id,
-        )
-        if (
-            result.status == "sent"
-            and result.conversation_id is not None
-            and result.message_id is not None
-        ):
-            try:
-                await shared_supabase.finish_johanna_abandonment_one_shot(
-                    command_id=started.command_id,
-                    outcome="accepted_by_chatwoot",
-                    chatwoot_conversation_id=result.conversation_id,
-                    chatwoot_message_id=result.message_id,
-                    failure_code=None,
-                )
-            except SupabaseError as exc:
-                raise HTTPException(
-                    status_code=503,
-                    detail="johanna_abandonment_one_shot_finalization_unknown",
-                ) from exc
-            return {
-                "status": "accepted_by_chatwoot",
-                "command_id": started.command_id,
-                "message_count": 1,
-                "followups_allowed": 0,
-                "test_only": True,
-                "generalizable": False,
-            }
-
-        stable_failure = (
-            result.reason
-            if result.reason
-            in {
-                "chatwoot_http_error",
-                "chatwoot_protocol_error",
-                "invalid_phone",
-                "target_not_allowed",
-                "template_parameters_missing",
-            }
-            else "sender_failed"
-        )
-        try:
-            await shared_supabase.finish_johanna_abandonment_one_shot(
-                command_id=started.command_id,
-                outcome="delivery_unknown",
-                chatwoot_conversation_id=None,
-                chatwoot_message_id=None,
-                failure_code=stable_failure,
-            )
-        except SupabaseError as exc:
-            raise HTTPException(
-                status_code=503,
-                detail="johanna_abandonment_one_shot_finalization_unknown",
-            ) from exc
-        raise HTTPException(
-            status_code=502,
-            detail="johanna_abandonment_one_shot_failed",
-        )
+        response.status_code = result_status
+        return result_body
 
     @app.post(
         "/internal/precheckout/test-first-touch",
@@ -3079,6 +3146,30 @@ def create_app(
                     "event_id": event_id,
                     "reason": "cart_abandonment_semantic_conflict",
                 }
+            if settings.johanna_abandonment_hotmart_auto_enabled:
+                correlation = await shared_supabase.correlate_hotmart_purchase_intent(
+                    webhook_event_id=abandonment_admission.webhook_event_id,
+                )
+                if (
+                    correlation.outcome == "resolved"
+                    and correlation.purchase_intent_id is not None
+                    and correlation.candidate_count == 1
+                    and not correlation.manual_handoff_required
+                ):
+                    result_status, result_body = (
+                        await _execute_johanna_abandonment_delivery(
+                            command_key=(
+                                "johanna-hotmart-auto:"
+                                f"{abandonment_admission.webhook_event_id}"
+                            ),
+                            purchase_intent_id=correlation.purchase_intent_id,
+                            hotmart_webhook_event_id=(
+                                abandonment_admission.webhook_event_id
+                            ),
+                        )
+                    )
+                    response.status_code = result_status
+                    return result_body
             if abandonment_admission.outcome == "duplicate":
                 response.status_code = status.HTTP_200_OK
                 return {
