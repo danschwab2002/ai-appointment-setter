@@ -1931,7 +1931,10 @@ class StubProjectionSupabase:
     ) -> list[OptOutProjectionClaim]:
         return [OptOutProjectionClaim(
             opt_out_event_id="opt-out-event-1",
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=9,
             chatwoot_conversation_id=42,
+            external_user_id="12025550124",
             lease_generation=3,
         )]
 
@@ -1945,10 +1948,10 @@ class StubProjectionSupabase:
 class StubProjectionChatwoot:
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail
-        self.calls: list[int] = []
+        self.calls: list[dict[str, object]] = []
 
-    async def apply_opt_out_macro(self, *, conversation_id: int) -> None:
-        self.calls.append(conversation_id)
+    async def apply_opt_out_macro(self, **kwargs: object) -> None:
+        self.calls.append(kwargs)
         if self.fail:
             raise ChatwootProtocolError("macro failed")
 
@@ -1963,7 +1966,12 @@ def test_opt_out_projection_worker_finalizes_confirmed_macro() -> None:
     )
 
     assert asyncio.run(worker.run_once()) == 1
-    assert chatwoot.calls == [42]
+    assert chatwoot.calls == [{
+        "conversation_id": 42,
+        "expected_account_id": 1,
+        "expected_inbox_id": 9,
+        "expected_jid": "12025550124@s.whatsapp.net",
+    }]
     assert supabase.finalizations[0]["applied"] is True
     assert supabase.finalizations[0]["error_code"] is None
 

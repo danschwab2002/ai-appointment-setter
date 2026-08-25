@@ -18,10 +18,14 @@ from typing import Any, Literal
 
 EVENT_CART_ABANDONMENT = "PURCHASE_OUT_OF_SHOPPING_CART"
 EVENT_PURCHASE_APPROVED = "PURCHASE_APPROVED"
+EVENT_PURCHASE_CANCELED = "PURCHASE_CANCELED"
 EVENT_VERSION = "2.0.0"
+JOHANNA_HOTMART_PRODUCT_ID = 8104005
+JOHANNA_HOTMART_OFFER_CODE = "bxjge6zq"
 SUPPORTED_EVENT_TYPES = frozenset({
     EVENT_CART_ABANDONMENT,
     EVENT_PURCHASE_APPROVED,
+    EVENT_PURCHASE_CANCELED,
 })
 
 
@@ -61,6 +65,22 @@ class HotmartPurchaseData:
     offer_code: str | None
 
 
+@dataclass(frozen=True)
+class HotmartPaymentFailureData:
+    """Canonical fields for an explicit provider-declined purchase."""
+
+    event_id: str
+    creation_date_ms: int
+    transaction: str
+    status: str
+    refusal_reason: str
+    buyer_email: str | None
+    buyer_phone: str | None
+    product_id: int
+    product_ucode: str | None
+    offer_code: str
+
+
 # ── Normalisation helpers ────────────────────────────────────────────
 
 # Hotmart normally sends DDI and digits without "+". Accept conventional
@@ -70,6 +90,7 @@ _NON_DIGIT = re.compile(r"\D")
 _PHONE_INPUT = re.compile(r"\+?[0-9 ()-]+")
 _INTERNATIONAL_PHONE_DIGITS = re.compile(r"[1-9][0-9]{7,14}")
 _TRANSACTION_REFERENCE = re.compile(r"HP[A-Z0-9]{6,62}")
+_PAYMENT_FAILURE_EMAIL = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+")
 _MAX_DATETIME_TIMESTAMP_MS = 253_402_300_799_999
 
 
@@ -79,6 +100,16 @@ def normalize_email(raw: str | None) -> str | None:
         return None
     cleaned = raw.strip().lower()
     return cleaned or None
+
+
+def _normalize_payment_failure_email(raw: object) -> str | None:
+    """Match the payment-failure RPC's space trim and email predicate."""
+    if not isinstance(raw, str):
+        return None
+    cleaned = raw.strip(" ").lower()
+    if _PAYMENT_FAILURE_EMAIL.fullmatch(cleaned) is None:
+        return None
+    return cleaned
 
 
 def normalize_phone(raw: str | None) -> str | None:
@@ -202,6 +233,57 @@ def parse_hotmart_purchase_payload(payload: object) -> HotmartPurchaseData | Non
         product_ucode=_str(product.get("ucode")),
         offer_code=_str(offer.get("code")),
     )
+
+def parse_hotmart_payment_failure_payload(
+    payload: object,
+) -> HotmartPaymentFailureData | None:
+    """Parse only PURCHASE_CANCELED events explicitly refused for no funds."""
+    event = _json_object(payload)
+    data = _json_object(event.get("data"))
+    buyer = _json_object(data.get("buyer"))
+    product = _json_object(data.get("product"))
+    purchase = _json_object(data.get("purchase"))
+    offer = _json_object(purchase.get("offer"))
+    payment = _json_object(purchase.get("payment"))
+
+    event_id = _str(event.get("id"))
+    creation_date = _int(event.get("creation_date"))
+    transaction = _str(purchase.get("transaction"))
+    buyer_email = _normalize_payment_failure_email(buyer.get("email"))
+    buyer_phone = normalize_phone(buyer.get("checkout_phone"))
+    if buyer_phone is None:
+        buyer_phone = normalize_phone(buyer.get("phone"))
+    product_id = _int(product.get("id"))
+    offer_code = _str(offer.get("code"))
+    if (
+        event_id is None
+        or event.get("event") != EVENT_PURCHASE_CANCELED
+        or event.get("version") != EVENT_VERSION
+        or creation_date is None
+        or not 0 < creation_date <= _MAX_DATETIME_TIMESTAMP_MS
+        or transaction is None
+        or _TRANSACTION_REFERENCE.fullmatch(transaction) is None
+        or purchase.get("status") != "CANCELLED"
+        or payment.get("refusal_reason") != "NO_FUNDS"
+        or (buyer_email is None and buyer_phone is None)
+        or product_id != JOHANNA_HOTMART_PRODUCT_ID
+        or offer_code != JOHANNA_HOTMART_OFFER_CODE
+    ):
+        return None
+
+    return HotmartPaymentFailureData(
+        event_id=event_id,
+        creation_date_ms=creation_date,
+        transaction=transaction,
+        status="CANCELLED",
+        refusal_reason="NO_FUNDS",
+        buyer_email=buyer_email,
+        buyer_phone=buyer_phone,
+        product_id=product_id,
+        product_ucode=_str(product.get("ucode")),
+        offer_code=offer_code,
+    )
+
 
 # ── Decision types ───────────────────────────────────────────────────
 

@@ -1,6 +1,7 @@
 """Deterministic filtering for Chatwoot webhook events."""
 
 from dataclasses import dataclass
+import re
 from typing import Any, Literal
 
 
@@ -13,6 +14,7 @@ EventAction = Literal[
 
 _SCOPE_UNSET = object()
 _WHATSAPP_JID_SUFFIX = "@s.whatsapp.net"
+_WHATSAPP_DIGITS = re.compile(r"[1-9][0-9]{6,14}")
 
 
 @dataclass(frozen=True)
@@ -54,6 +56,15 @@ def matches_allowed_whatsapp_identity(
     )
 
 
+def _canonical_whatsapp_jid(observed_identity: object) -> str | None:
+    if not isinstance(observed_identity, str):
+        return None
+    digits = observed_identity.removesuffix(_WHATSAPP_JID_SUFFIX)
+    if _WHATSAPP_DIGITS.fullmatch(digits) is None:
+        return None
+    return f"{digits}{_WHATSAPP_JID_SUFFIX}"
+
+
 def classify_chatwoot_event(
     payload: object,
     *,
@@ -61,6 +72,7 @@ def classify_chatwoot_event(
     agent_bot_id: int | None = None,
     expected_account_id: int | None | object = _SCOPE_UNSET,
     expected_inbox_id: int | None | object = _SCOPE_UNSET,
+    allow_any_scoped_sender: bool = False,
 ) -> EventDecision:
     """Classify an event before any agent can be invoked."""
     event = _json_object(payload)
@@ -102,9 +114,22 @@ def classify_chatwoot_event(
             != expected_inbox_id
         ):
             return EventDecision(False, "inbox_not_allowed", sender_jid, "ignore")
-    if not matches_allowed_whatsapp_identity(sender_jid, allowed_jid=allowed_jid):
-        return EventDecision(False, "sender_not_allowed", sender_jid, "ignore")
-    sender_jid = allowed_jid
+    if allow_any_scoped_sender:
+        if (
+            _canonical_positive_id(expected_account_id) is None
+            or _canonical_positive_id(expected_inbox_id) is None
+        ):
+            return EventDecision(
+                False, "scope_configuration_incomplete", sender_jid, "ignore"
+            )
+        canonical_sender_jid = _canonical_whatsapp_jid(sender_jid)
+        if canonical_sender_jid is None:
+            return EventDecision(False, "sender_not_allowed", sender_jid, "ignore")
+        sender_jid = canonical_sender_jid
+    else:
+        if not matches_allowed_whatsapp_identity(sender_jid, allowed_jid=allowed_jid):
+            return EventDecision(False, "sender_not_allowed", sender_jid, "ignore")
+        sender_jid = allowed_jid
 
     message_type = event.get("message_type")
     event_sender = _json_object(event.get("sender"))

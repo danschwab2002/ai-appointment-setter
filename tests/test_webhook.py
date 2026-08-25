@@ -51,12 +51,24 @@ class StubChatwootClient:
         self.history_calls: list[tuple[int, int]] = []
         self.history_required_ids: list[tuple[int, ...]] = []
         self.reply_calls: list[dict[str, object]] = []
+        self.authority_calls: list[dict[str, object]] = []
         self.opt_out_macro_calls: list[int] = []
         self.events: list[str] = []
 
     async def validate_conversation_authority(
-        self, *, conversation_id: int, expected_inbox_id: int
+        self,
+        *,
+        conversation_id: int,
+        expected_inbox_id: int,
+        expected_jid: str | None = None,
     ) -> None:
+        self.authority_calls.append(
+            {
+                "conversation_id": conversation_id,
+                "expected_inbox_id": expected_inbox_id,
+                "expected_jid": expected_jid,
+            }
+        )
         if self.authority_error is not None:
             raise self.authority_error
 
@@ -77,7 +89,12 @@ class StubChatwootClient:
         return self.messages[-limit:]
 
     async def ensure_conversation_label(
-        self, *, conversation_id: int, label: str
+        self,
+        *,
+        conversation_id: int,
+        label: str,
+        expected_inbox_id: int | None = None,
+        expected_jid: str | None = None,
     ) -> bool:
         self.events.append(f"label:{label}")
         self.calls.append((conversation_id, label))
@@ -104,6 +121,7 @@ class StubChatwootClient:
         part_index: int = 1,
         part_count: int = 1,
         prior_parts: tuple[str, ...] = (),
+        expected_jid: str | None = None,
     ) -> dict[str, object]:
         self.events.append("reply")
         call: dict[str, object] = {
@@ -120,6 +138,8 @@ class StubChatwootClient:
                     "prior_parts": prior_parts,
                 }
             )
+        if expected_jid is not None:
+            call["expected_jid"] = expected_jid
         self.reply_calls.append(call)
         return {"status": "sent", "message_id": 900}
 
@@ -1482,6 +1502,91 @@ def test_nuevo_cannot_bypass_an_existing_durable_opt_out(
             "chatwoot_inbox_id": 7,
             "chatwoot_conversation_id": 123,
             "external_user_id": "12025550123",
+        }
+    ]
+    assert len(supabase.reconcile_calls) == 1
+    assert shadow.calls == []
+    assert chatwoot.reply_calls == []
+
+
+def test_scoped_nuevo_checks_opt_out_for_the_observed_sender(
+    tmp_path: Path,
+) -> None:
+    secret = "webhook-secret"
+    observed_user_id = "12025550124"
+    payload = {
+        "event": "message_created",
+        "id": 792,
+        "content": "/nuevo",
+        "message_type": "incoming",
+        "private": False,
+        "account": {"id": 1},
+        "inbox": {"id": 9},
+        "conversation": {
+            "id": 123,
+            "inbox_id": 9,
+            "contact_inbox": {
+                "source_id": f"{observed_user_id}@s.whatsapp.net",
+            },
+        },
+    }
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    shadow = StubShadowProcessor()
+    chatwoot = StubChatwootClient()
+
+    class SenderScopedOptOutSupabase(StubOptOutSupabase):
+        async def has_chatwoot_opt_out_stop(
+            self,
+            **kwargs: object,
+        ) -> bool:
+            self.stop_checks.append(dict(kwargs))
+            return kwargs.get("external_user_id") == observed_user_id
+
+    supabase = SenderScopedOptOutSupabase(stopped=False)
+    app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=9,
+            chatwoot_cut_b_admission_enabled=True,
+            chatwoot_cut_b_scope_key="libre-de-ansiedad-inbound",
+            chatwoot_cut_b_scope_version=2,
+            chatwoot_cut_b_agent_enabled=True,
+            chatwoot_scoped_inbound_senders_enabled=True,
+            automated_replies_enabled=True,
+            chatwoot_durable_opt_out_enabled=True,
+            chatwoot_human_pause_enabled=True,
+            chatwoot_opt_out_macro_id=2,
+            opt_out_projection_worker_id="opt-out-test",
+            human_handoff_admission_enabled=True,
+            human_handoff_projection_enabled=True,
+            handoff_projection_policy_key="lancemos-inbound-handoff",
+            handoff_projection_policy_version=1,
+            human_handoff_projection_worker_id="handoff-projection-test",
+        ),
+        chatwoot_client=chatwoot,
+        shadow_processor=shadow,
+        supabase_client=supabase,  # type: ignore[arg-type]
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(raw_body, secret=secret, delivery="scoped-stopped-reset"),
+    )
+    assert response.status_code == 202
+    asyncio.run(app.state.chatwoot_worker.run_once())
+
+    assert supabase.stop_checks == [
+        {
+            "chatwoot_account_id": 1,
+            "chatwoot_inbox_id": 9,
+            "chatwoot_conversation_id": 123,
+            "external_user_id": observed_user_id,
         }
     ]
     assert len(supabase.reconcile_calls) == 1
@@ -4010,12 +4115,12 @@ def test_cut_b_agent_gate_admits_then_replies_through_canonical_chatwoot(
         "message_type": "incoming",
         "private": False,
         "account": {"id": 1},
-        "inbox": {"id": 7},
+        "inbox": {"id": 9},
         "conversation": {
             "id": 321,
-            "inbox_id": 7,
+            "inbox_id": 9,
             "contact_inbox": {
-                "source_id": "12025550123@s.whatsapp.net",
+                "source_id": "12025550124@s.whatsapp.net",
             },
         },
     }
@@ -4042,12 +4147,22 @@ def test_cut_b_agent_gate_admits_then_replies_through_canonical_chatwoot(
             max_age_seconds=300,
             agent_bot_id=1,
             chatwoot_account_id=1,
-            chatwoot_inbox_id=7,
+            chatwoot_inbox_id=9,
             chatwoot_cut_b_admission_enabled=True,
             chatwoot_cut_b_scope_key="libre-de-ansiedad-inbound",
-            chatwoot_cut_b_scope_version=1,
+            chatwoot_cut_b_scope_version=2,
             chatwoot_cut_b_agent_enabled=True,
+            chatwoot_scoped_inbound_senders_enabled=True,
             automated_replies_enabled=True,
+            chatwoot_durable_opt_out_enabled=True,
+            chatwoot_human_pause_enabled=True,
+            chatwoot_opt_out_macro_id=2,
+            opt_out_projection_worker_id="opt-out-test",
+            human_handoff_admission_enabled=True,
+            human_handoff_projection_enabled=True,
+            handoff_projection_policy_key="lancemos-inbound-handoff",
+            handoff_projection_policy_version=1,
+            human_handoff_projection_worker_id="handoff-projection-test",
         ),
         chatwoot_client=chatwoot,
         shadow_processor=shadow,
@@ -4065,9 +4180,9 @@ def test_cut_b_agent_gate_admits_then_replies_through_canonical_chatwoot(
     assert supabase.admission_calls == [
         {
             "scope_key": "libre-de-ansiedad-inbound",
-            "scope_version": 1,
+            "scope_version": 2,
             "external_conversation_id": 321,
-            "external_user_id": "12025550123",
+            "external_user_id": "12025550124",
         }
     ]
     if reply_expected:
@@ -4078,6 +4193,7 @@ def test_cut_b_agent_gate_admits_then_replies_through_canonical_chatwoot(
                 "trigger_message_id": 901,
                 "delivery_id": "cut-b-agent-reply",
                 "content": "Claro, ¿qué te gustaría saber?",
+                "expected_jid": "12025550124@s.whatsapp.net",
             }
         ]
     else:
@@ -4106,7 +4222,7 @@ def test_cut_b_handoff_confirms_automation_pause_without_reply(
         "conversation": {
             "id": 322,
             "inbox_id": 9,
-            "contact_inbox": {"source_id": "12025550123@s.whatsapp.net"},
+            "contact_inbox": {"source_id": "12025550124@s.whatsapp.net"},
         },
     }
     raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
@@ -4140,7 +4256,12 @@ def test_cut_b_handoff_confirms_automation_pause_without_reply(
             chatwoot_cut_b_scope_key="libre-de-ansiedad-inbound",
             chatwoot_cut_b_scope_version=2,
             chatwoot_cut_b_agent_enabled=True,
+            chatwoot_scoped_inbound_senders_enabled=True,
             automated_replies_enabled=True,
+            chatwoot_durable_opt_out_enabled=True,
+            chatwoot_human_pause_enabled=True,
+            chatwoot_opt_out_macro_id=2,
+            opt_out_projection_worker_id="opt-out-test",
             human_handoff_admission_enabled=True,
             human_handoff_projection_enabled=True,
             handoff_projection_policy_key="lancemos-inbound-handoff",
@@ -4163,6 +4284,13 @@ def test_cut_b_handoff_confirms_automation_pause_without_reply(
     assert len(supabase.handoff_calls) == 1
     assert supabase.handoff_calls[0]["commercial_case_id"] == "case-1"
     assert chatwoot.reply_calls == []
+    assert chatwoot.authority_calls == [
+        {
+            "conversation_id": 322,
+            "expected_inbox_id": 9,
+            "expected_jid": "12025550124@s.whatsapp.net",
+        }
+    ]
     assert chatwoot.calls == [(322, "automation_paused")]
     assert chatwoot.events == ["label:automation_paused"]
     envelope = json.loads(next((tmp_path / ".work").glob("*.json")).read_text())

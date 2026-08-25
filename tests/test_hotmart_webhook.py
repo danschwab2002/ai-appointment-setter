@@ -14,7 +14,7 @@ from fastapi import HTTPException, Response
 from starlette.requests import Request
 
 from bridge.app import Settings, create_app
-from bridge.hotmart import parse_hotmart_payload
+from bridge.hotmart import parse_hotmart_payment_failure_payload, parse_hotmart_payload
 from bridge.messaging import FirstTouchResult
 
 # ── Fixtures ────────────────────────────────────────────────────────
@@ -63,6 +63,79 @@ PURCHASE_APPROVED_PAYLOAD: dict[str, object] = {
         },
     },
 }
+
+
+def test_parses_explicit_hotmart_payment_failure() -> None:
+    payload = copy.deepcopy(EXAMPLE_PAYLOAD)
+    payload["event"] = "PURCHASE_CANCELED"
+    data = payload["data"]
+    assert isinstance(data, dict)
+    product = data["product"]
+    assert isinstance(product, dict)
+    product["id"] = 8104005
+    buyer = data["buyer"]
+    assert isinstance(buyer, dict)
+    buyer["checkout_phone"] = buyer.pop("phone")
+    data["purchase"] = {
+        "transaction": "HP12345678",
+        "status": "CANCELLED",
+        "offer": {"code": "bxjge6zq"},
+        "payment": {"refusal_reason": "NO_FUNDS"},
+    }
+
+    parsed = parse_hotmart_payment_failure_payload(payload)
+
+    assert parsed is not None
+    assert parsed.event_id == payload["id"]
+    assert parsed.status == "CANCELLED"
+    assert parsed.refusal_reason == "NO_FUNDS"
+    assert parsed.transaction == "HP12345678"
+    assert parsed.buyer_phone == "5531999999999"
+
+
+def test_rejects_canceled_purchase_without_supported_refusal_reason() -> None:
+    payload = copy.deepcopy(EXAMPLE_PAYLOAD)
+    payload["event"] = "PURCHASE_CANCELED"
+    data = payload["data"]
+    assert isinstance(data, dict)
+    data["purchase"] = {
+        "transaction": "HP12345678",
+        "status": "CANCELLED",
+        "offer": {"code": "n82b9jqz"},
+        "payment": {"refusal_reason": "OTHER"},
+    }
+
+    assert parse_hotmart_payment_failure_payload(payload) is None
+
+
+@pytest.mark.parametrize(
+    "buyer_email",
+    [
+        "not-an-email",
+        "\tbuyer@example.test\t",
+        "\u00a0buyer@example.test\u00a0",
+    ],
+)
+def test_payment_failure_rejects_email_that_sql_would_not_canonicalize(
+    buyer_email: str,
+) -> None:
+    payload = copy.deepcopy(EXAMPLE_PAYLOAD)
+    payload["event"] = "PURCHASE_CANCELED"
+    data = payload["data"]
+    assert isinstance(data, dict)
+    buyer = data["buyer"]
+    assert isinstance(buyer, dict)
+    buyer["email"] = buyer_email
+    buyer.pop("checkout_phone", None)
+    buyer.pop("phone", None)
+    data["purchase"] = {
+        "transaction": "HP12345678",
+        "status": "CANCELLED",
+        "offer": {"code": "bxjge6zq"},
+        "payment": {"refusal_reason": "NO_FUNDS"},
+    }
+
+    assert parse_hotmart_payment_failure_payload(payload) is None
 
 
 def test_parse_hotmart_payload_rejects_phone_with_non_phone_suffix() -> None:
@@ -533,6 +606,187 @@ def test_persists_purchase_approved_for_deferred_processing(tmp_path) -> None:
     assert body["p_payload"]["event"] == "PURCHASE_APPROVED"
     assert body["p_normalized_email"] == "buyer@email.com.br"
     assert body["p_normalized_phone"] == "5531999999999"
+
+
+def test_payment_failure_enters_dedicated_human_review_path(tmp_path) -> None:
+    transport = _MockSupabaseTransport(
+        status_code=200,
+        response_body=[{
+            "outcome": "inserted",
+            "payment_failure_case_id": "failure-case-1",
+            "correlation_outcome": "resolved",
+            "case_status": "pending_human_review",
+        }],
+    )
+    import bridge.supabase as supabase_mod
+
+    original_init = supabase_mod.SupabaseClient.__init__
+
+    def _patched_init(self, **kwargs):
+        kwargs["transport"] = transport
+        original_init(self, **kwargs)
+
+    payload = copy.deepcopy(EXAMPLE_PAYLOAD)
+    payload["event"] = "PURCHASE_CANCELED"
+    data = payload["data"]
+    assert isinstance(data, dict)
+    buyer = data["buyer"]
+    assert isinstance(buyer, dict)
+    product = data["product"]
+    assert isinstance(product, dict)
+    product["id"] = 8104005
+    buyer["checkout_phone"] = buyer.pop("phone")
+    data["purchase"] = {
+        "transaction": "HP12345678",
+        "status": "CANCELLED",
+        "offer": {"code": "bxjge6zq"},
+        "payment": {"refusal_reason": "NO_FUNDS"},
+    }
+
+    supabase_mod.SupabaseClient.__init__ = _patched_init
+    try:
+        app = create_app(_hotmart_settings(
+            capture_dir=tmp_path,
+            supabase_base_url="https://fake-supabase.supabase.co",
+            supabase_service_role_key="fake-service-role-key",
+            johanna_payment_failure_hotmart_enabled=True,
+        ))
+        response = _post_hotmart(app, json.dumps(payload).encode())
+    finally:
+        supabase_mod.SupabaseClient.__init__ = original_init
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "status": "received",
+        "event_id": EXAMPLE_PAYLOAD["id"],
+        "case_status": "pending_human_review",
+        "correlation_outcome": "resolved",
+    }
+    assert len(transport.requests) == 1
+    assert transport.requests[0].url.path == (
+        "/rest/v1/rpc/admit_johanna_payment_failure"
+    )
+    body = json.loads(transport.requests[0].content)
+    assert body["p_payload"]["event"] == "PURCHASE_CANCELED"
+    assert body["p_normalized_email"] == "buyer@email.com.br"
+    assert body["p_normalized_phone"] == "5531999999999"
+
+
+@pytest.mark.parametrize("case_status", ["outbound_accepted", "delivery_unknown"])
+def test_payment_failure_terminal_replay_returns_200_without_another_effect(
+    tmp_path,
+    case_status,
+) -> None:
+    transport = _MockSupabaseTransport(
+        status_code=200,
+        response_body=[{
+            "outcome": "duplicate",
+            "payment_failure_case_id": "failure-case-terminal",
+            "correlation_outcome": "resolved",
+            "case_status": case_status,
+        }],
+    )
+    import bridge.supabase as supabase_mod
+
+    original_init = supabase_mod.SupabaseClient.__init__
+
+    def _patched_init(self, **kwargs):
+        kwargs["transport"] = transport
+        original_init(self, **kwargs)
+
+    payload = copy.deepcopy(EXAMPLE_PAYLOAD)
+    payload["event"] = "PURCHASE_CANCELED"
+    data = payload["data"]
+    assert isinstance(data, dict)
+    product = data["product"]
+    assert isinstance(product, dict)
+    product["id"] = 8104005
+    data["purchase"] = {
+        "transaction": "HP12345678",
+        "status": "CANCELLED",
+        "offer": {"code": "bxjge6zq"},
+        "payment": {"refusal_reason": "NO_FUNDS"},
+    }
+
+    supabase_mod.SupabaseClient.__init__ = _patched_init
+    try:
+        app = create_app(
+            _hotmart_settings(
+                capture_dir=tmp_path,
+                supabase_base_url="https://fake-supabase.supabase.co",
+                supabase_service_role_key="fake-service-role-key",
+                johanna_payment_failure_hotmart_enabled=True,
+                johanna_payment_failure_outbound_enabled=True,
+                chatwoot_account_id=1,
+                chatwoot_inbox_id=9,
+                pilot_channel_provider="waba",
+                pilot_channel_account_ref="chatwoot-inbox:9",
+            ),
+            message_sender=_JohannaAutoSender(),  # type: ignore[arg-type]
+        )
+        response = _post_hotmart(app, json.dumps(payload).encode())
+    finally:
+        supabase_mod.SupabaseClient.__init__ = original_init
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": case_status,
+        "event_id": EXAMPLE_PAYLOAD["id"],
+        "case_status": case_status,
+        "correlation_outcome": "resolved",
+    }
+    assert len(transport.requests) == 1
+
+
+@pytest.mark.parametrize(
+    ("product_id", "offer_code"),
+    [(9999999, "bxjge6zq"), (8104005, "wrong-offer")],
+)
+def test_payment_failure_rejects_scope_mismatch_before_rpc(
+    tmp_path,
+    product_id,
+    offer_code,
+) -> None:
+    transport = _MockSupabaseTransport(status_code=500)
+    import bridge.supabase as supabase_mod
+
+    original_init = supabase_mod.SupabaseClient.__init__
+
+    def _patched_init(self, **kwargs):
+        kwargs["transport"] = transport
+        original_init(self, **kwargs)
+
+    payload = copy.deepcopy(EXAMPLE_PAYLOAD)
+    payload["event"] = "PURCHASE_CANCELED"
+    data = payload["data"]
+    assert isinstance(data, dict)
+    product = data["product"]
+    assert isinstance(product, dict)
+    product["id"] = product_id
+    data["purchase"] = {
+        "transaction": "HP12345678",
+        "status": "CANCELLED",
+        "offer": {"code": offer_code},
+        "payment": {"refusal_reason": "NO_FUNDS"},
+    }
+
+    supabase_mod.SupabaseClient.__init__ = _patched_init
+    try:
+        app = create_app(
+            _hotmart_settings(
+                capture_dir=tmp_path,
+                supabase_base_url="https://fake-supabase.supabase.co",
+                supabase_service_role_key="fake-service-role-key",
+                johanna_payment_failure_hotmart_enabled=True,
+            )
+        )
+        response = _post_hotmart(app, json.dumps(payload).encode())
+    finally:
+        supabase_mod.SupabaseClient.__init__ = original_init
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "invalid_payment_failure_payload"}
+    assert transport.requests == []
 
 
 def test_purchase_semantic_conflict_is_durable_and_not_reported_as_duplicate(
@@ -1054,6 +1308,96 @@ def test_hotmart_auto_acknowledges_consumed_v1_budget_without_send(tmp_path) -> 
     }
     assert sender.calls == []
     assert supabase.finish_calls == []
+
+
+class _PaymentFailureAutoSupabase:
+    def __init__(self) -> None:
+        self.begin_calls: list[dict[str, object]] = []
+        self.finish_calls: list[dict[str, object]] = []
+
+    async def admit_johanna_payment_failure(self, **kwargs: object) -> object:
+        return SimpleNamespace(
+            outcome="inserted",
+            payment_failure_case_id="0cb2dca0-dad6-49d3-9732-8656dd35f4bb",
+            correlation_outcome="resolved",
+            case_status="pending_human_review",
+        )
+
+    async def begin_johanna_payment_failure_hotmart_auto(
+        self, **kwargs: object
+    ) -> object:
+        self.begin_calls.append(kwargs)
+        return SimpleNamespace(
+            outcome="started",
+            command_id="b94c6a6b-3e29-4cbb-90cb-4acbfc5934e4",
+            command_status="request_started",
+            target_phone="12025550124",
+            buyer_name="Lead de Pago",
+            buyer_email="payment@example.test",
+            product_name="Libre de Ansiedad",
+            template_name="johanna_compra_fallida_01",
+            template_language="es_EC",
+            template_category="MARKETING",
+            copy_version="johanna-payment-failure-one-shot-v1",
+        )
+
+    async def finish_johanna_abandonment_one_shot(self, **kwargs: object) -> object:
+        self.finish_calls.append(kwargs)
+        return SimpleNamespace(
+            command_id=kwargs["command_id"],
+            command_status=kwargs["outcome"],
+        )
+
+
+def test_payment_failure_resolved_case_sends_approved_template_once(tmp_path) -> None:
+    supabase = _PaymentFailureAutoSupabase()
+    sender = _JohannaAutoSender()
+    app = create_app(
+        _hotmart_settings(
+            capture_dir=tmp_path,
+            johanna_payment_failure_hotmart_enabled=True,
+            johanna_payment_failure_outbound_enabled=True,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=9,
+            pilot_channel_provider="waba",
+            pilot_channel_account_ref="chatwoot-inbox:9",
+        ),
+        supabase_client=supabase,  # type: ignore[arg-type]
+        message_sender=sender,  # type: ignore[arg-type]
+    )
+    payload = copy.deepcopy(EXAMPLE_PAYLOAD)
+    payload["event"] = "PURCHASE_CANCELED"
+    data = payload["data"]
+    assert isinstance(data, dict)
+    product = data["product"]
+    assert isinstance(product, dict)
+    product["id"] = 8104005
+    data["purchase"] = {
+        "transaction": "HP12345678",
+        "status": "CANCELLED",
+        "offer": {"code": "bxjge6zq"},
+        "payment": {"refusal_reason": "NO_FUNDS"},
+    }
+
+    response = _post_hotmart(app, json.dumps(payload).encode())
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "accepted_by_chatwoot"
+    assert supabase.begin_calls == [{
+        "command_key": (
+            "johanna-payment-failure-auto:"
+            "0cb2dca0-dad6-49d3-9732-8656dd35f4bb"
+        ),
+        "payment_failure_case_id": "0cb2dca0-dad6-49d3-9732-8656dd35f4bb",
+        "chatwoot_account_id": 1,
+        "chatwoot_inbox_id": 9,
+    }]
+    assert len(sender.calls) == 1
+    assert sender.calls[0]["phone"] == "12025550124"
+    assert sender.calls[0]["delivery_id"] == (
+        "b94c6a6b-3e29-4cbb-90cb-4acbfc5934e4"
+    )
+    assert len(supabase.finish_calls) == 1
 
 
 def test_johanna_manual_and_hotmart_auto_cannot_be_enabled_together(tmp_path) -> None:

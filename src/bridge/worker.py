@@ -246,7 +246,10 @@ class OptOutProjectionWorker:
             error_code: str | None = None
             try:
                 await self._chatwoot.apply_opt_out_macro(
-                    conversation_id=claim.chatwoot_conversation_id
+                    conversation_id=claim.chatwoot_conversation_id,
+                    expected_account_id=claim.chatwoot_account_id,
+                    expected_inbox_id=claim.chatwoot_inbox_id,
+                    expected_jid=f"{claim.external_user_id}@s.whatsapp.net",
                 )
                 applied = True
             except (httpx.HTTPError, ChatwootProtocolError) as exc:
@@ -360,8 +363,16 @@ class HumanHandoffProjectionWorker:
             outcome = "applied"
             error_code: str | None = None
             retry_at: str | None = None
+            expected_jid = f"{claim.external_user_id}@s.whatsapp.net"
             try:
-                if claim.chatwoot_account_id != self._chatwoot.account_id:
+                if (
+                    not claim.external_user_id.isdigit()
+                    or not 7 <= len(claim.external_user_id) <= 15
+                    or claim.external_user_id.startswith("0")
+                ):
+                    outcome = "dead_letter"
+                    error_code = "invalid_external_user_id"
+                elif claim.chatwoot_account_id != self._chatwoot.account_id:
                     outcome = "dead_letter"
                     error_code = "chatwoot_account_mismatch"
                 elif claim.effect_kind == "assignment":
@@ -369,11 +380,13 @@ class HumanHandoffProjectionWorker:
                         conversation_id=claim.chatwoot_conversation_id,
                         expected_inbox_id=claim.chatwoot_inbox_id,
                         expected_team_id=claim.expected_team_id,
+                        expected_jid=expected_jid,
                     )
                 elif claim.effect_kind == "private_note":
                     applied = await self._chatwoot.ensure_private_handoff_note(
                         conversation_id=claim.chatwoot_conversation_id,
                         expected_inbox_id=claim.chatwoot_inbox_id,
+                        expected_jid=expected_jid,
                         note_body=claim.private_note_body,
                         idempotency_marker=claim.idempotency_marker,
                         create_if_missing=(

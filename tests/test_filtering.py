@@ -31,6 +31,47 @@ def test_accepts_only_the_configured_account_and_inbox() -> None:
     assert decision.reason == "accepted"
 
 
+def test_scoped_inbound_mode_accepts_canonical_sender_from_exact_scope() -> None:
+    payload = _scoped_incoming_payload()
+    conversation = payload["conversation"]
+    assert isinstance(conversation, dict)
+    metadata = conversation["meta"]
+    assert isinstance(metadata, dict)
+    metadata["sender"] = {"identifier": "12025550999"}
+
+    decision = classify_chatwoot_event(
+        payload,
+        allowed_jid="12025550123@s.whatsapp.net",
+        expected_account_id=1,
+        expected_inbox_id=6,
+        allow_any_scoped_sender=True,
+    )
+
+    assert decision.accepted is True
+    assert decision.sender_jid == "12025550999@s.whatsapp.net"
+
+
+@pytest.mark.parametrize("identifier", ["", "not-a-phone", "+12025550999", True, None])
+def test_scoped_inbound_mode_rejects_malformed_sender(identifier: object) -> None:
+    payload = _scoped_incoming_payload()
+    conversation = payload["conversation"]
+    assert isinstance(conversation, dict)
+    metadata = conversation["meta"]
+    assert isinstance(metadata, dict)
+    metadata["sender"] = {"identifier": identifier}
+
+    decision = classify_chatwoot_event(
+        payload,
+        allowed_jid="12025550123@s.whatsapp.net",
+        expected_account_id=1,
+        expected_inbox_id=6,
+        allow_any_scoped_sender=True,
+    )
+
+    assert decision.accepted is False
+    assert decision.reason == "sender_not_allowed"
+
+
 @pytest.mark.parametrize(
     ("payload", "reason"),
     [

@@ -271,23 +271,35 @@ autorizado sobre recovery no falla por ACL al mantener la sombra.
 El runtime sigue leyendo recovery como autoridad. Corte A aislado rechaza toda
 fila `inbound_sales`; no agrega admisión, handoff V2 ni efectos nuevos.
 
-Los Cortes A y B están mergeados y desplegados en Supabase Cloud. Existe un único
-scope inbound publicado para Libre de Ansiedad, account `1`, inbox `7`, producto
-`F106691755G` y oferta `bxjge6zq`. Corte B agrega admisión SQL idempotente que crea
-o reutiliza un contacto mínimo,
-identidad y conversación Chatwoot exactos sin correlación fuzzy. El scope y tenant
-quedan ligados físicamente a la raíz; los conflictos son append-only y la
-correlación de intención permanece separada. La raíz inbound queda `draft_only`,
-inmutable y sin secuencias, intents de efecto, handoff, Hermes u outbound. Ver
+Los Cortes A y B históricos están mergeados y desplegados en Supabase Cloud. El
+scope inicialmente publicado para Libre de Ansiedad usa account `1`, inbox `7`,
+producto `F106691755G` y oferta `bxjge6zq`; crea una raíz inbound `draft_only` sin
+correlación fuzzy ni efectos. Ver
 [contrato de admisión inbound V1](contracts/inbound-commercial-case-admission-v1.md).
 
-El wiring runtime [Chatwoot → Corte B](contracts/chatwoot-cut-b-wiring-v1.md) se
-distribuye detrás de `CHATWOOT_CUT_B_ADMISSION_ENABLED=false`. Al habilitarlo,
-los outcomes SQL terminan el envelope antes de Hermes por defecto. El gate
-adicional `CHATWOOT_CUT_B_AGENT_ENABLED=false` permite que sólo `created` y
-`already_exists` continúen por historia canónica, Hermes y reply Chatwoot para el
-JID allowlisted. `evidence_conflict` siempre corta. Handoff, dispatcher,
-follow-ups y outbound proactivo permanecen en gates posteriores.
+El candidato de activación del MVP implementa un modo adicional, default-off, para
+el scope productivo exacto de Johanna: account `1`, inbox `9`,
+`libre-de-ansiedad-inbound` versión `2`. Ya no extiende la allowlist de una única
+persona borrando identidad: canonicaliza al remitente observado por operación y
+propaga esa identidad hasta la reautorización previa a historia, reply, assignment
+y nota privada. El startup sólo acepta este modo con admisión, agente, replies,
+opt-out durable, pausa humana y handoff completos. `evidence_conflict` siempre
+corta; handoff pausa sin reply adicional. Este candidato está implementado y
+verificado localmente, pero no debe describirse como desplegado hasta su release y
+postflight. Ver
+[contrato de activación del MVP V1](contracts/johanna-mvp-activation-v1.md).
+
+El mismo candidato agrega una tercera clasificación Hotmart estricta para
+`PURCHASE_CANCELED + CANCELLED + NO_FUNDS`, producto `8104005` y oferta
+`bxjge6zq`. La RPC service-role-only vuelve a derivar identidad y scope, correlaciona
+contra intents activos y crea un caso `pending_human_review` idempotente. Un gate
+outbound separado y default-off puede convertir únicamente casos `resolved` en un
+command de first-touch para `johanna_compra_fallida_01`. El begin relee intención,
+consentimiento explícito, opt-out, propiedad única del teléfono, compra aprobada y
+scope exacto antes de `request_started`. Pago fallido reutiliza el ledger físico de
+commands —no la plantilla de carrito— para que ambas rutas compartan un único
+presupuesto por teléfono y la misma reconciliación sin resend. El candidato está
+implementado y verificado focalmente, pero aún no publicado ni desplegado.
 
 ## Ingreso provisional de intención pre-checkout
 
@@ -387,6 +399,13 @@ el mismo sender WABA y ledger de finalización del one-shot. Un unique index por
 transaccional hacen que el command V1 ya observado consuma también el presupuesto V2 para ese
 destinatario. El runtime V2 permanece `inactive` y
 general dispatcher, resolution worker, durable outbound y follow-ups permanecen apagados.
+
+Pago fallido agrega otro scope inmutable, default-off, para account `1`, inbox `9`,
+evento `PURCHASE_CANCELED`, producto Hotmart `8104005` y oferta `bxjge6zq`. Sólo
+`CANCELLED + NO_FUNDS` es elegible. Su command fija un mensaje, cero follow-ups y
+la plantilla `johanna_compra_fallida_01`; el unique index por teléfono arbitra el
+presupuesto físico contra el command de carrito. La admisión y el efecto tienen
+flags separados para poder desplegar el receiver sin autorizar envíos.
 
 ## Ingreso autoritativo de abandono de carrito
 

@@ -47,9 +47,11 @@ from bridge.hermes import HermesShadowProcessor
 from bridge.hotmart import (
     EVENT_CART_ABANDONMENT,
     EVENT_PURCHASE_APPROVED,
+    EVENT_PURCHASE_CANCELED,
     classify_hotmart_event,
     is_stale_event,
     parse_hotmart_purchase_payload,
+    parse_hotmart_payment_failure_payload,
     parse_hotmart_payload,
     verify_hotmart_token,
 )
@@ -94,6 +96,8 @@ PRECHECKOUT_FIRST_TOUCH_TEMPLATE_NAME = "libre_ansiedad_test_first_touch_v1"
 PRECHECKOUT_FIRST_TOUCH_COPY_VERSION = "libre-ansiedad-precheckout-first-touch-v1"
 JOHANNA_ABANDONMENT_TEMPLATE_NAME = "johanna_carrito_abandonado_01"
 JOHANNA_ABANDONMENT_COPY_VERSION = "johanna-abandonment-one-shot-v1"
+JOHANNA_PAYMENT_FAILURE_TEMPLATE_NAME = "johanna_compra_fallida_01"
+JOHANNA_PAYMENT_FAILURE_COPY_VERSION = "johanna-payment-failure-one-shot-v1"
 JOHANNA_ABANDONMENT_BODY_LIMIT_BYTES = 8 * 1024
 
 _MEDICATION_GUIDANCE_SUBJECT_RE = re.compile(
@@ -130,7 +134,11 @@ class CanonicalWorkResult:
 
 class ChatwootControl(Protocol):
     async def validate_conversation_authority(
-        self, *, conversation_id: int, expected_inbox_id: int
+        self,
+        *,
+        conversation_id: int,
+        expected_inbox_id: int,
+        expected_jid: str | None = None,
     ) -> None: ...
 
     async def get_conversation_messages(
@@ -142,10 +150,22 @@ class ChatwootControl(Protocol):
     ) -> list[dict[str, object]]: ...
 
     async def ensure_conversation_label(
-        self, *, conversation_id: int, label: str
+        self,
+        *,
+        conversation_id: int,
+        label: str,
+        expected_inbox_id: int | None = None,
+        expected_jid: str | None = None,
     ) -> bool: ...
 
-    async def apply_opt_out_macro(self, *, conversation_id: int) -> None: ...
+    async def apply_opt_out_macro(
+        self,
+        *,
+        conversation_id: int,
+        expected_account_id: int,
+        expected_inbox_id: int,
+        expected_jid: str,
+    ) -> None: ...
 
     async def send_agent_bot_reply(
         self,
@@ -157,6 +177,7 @@ class ChatwootControl(Protocol):
         part_index: int = 1,
         part_count: int = 1,
         prior_parts: tuple[str, ...] = (),
+        expected_jid: str | None = None,
     ) -> dict[str, object]: ...
 
 
@@ -238,6 +259,8 @@ class Settings:
     johanna_abandonment_one_shot_enabled: bool = False
     johanna_abandonment_one_shot_token: str | None = None
     johanna_abandonment_hotmart_auto_enabled: bool = False
+    johanna_payment_failure_hotmart_enabled: bool = False
+    johanna_payment_failure_outbound_enabled: bool = False
     supabase_base_url: str | None = None
     supabase_service_role_key: str | None = None
     worker_poll_interval_seconds: float = 5.0
@@ -277,6 +300,7 @@ class Settings:
     chatwoot_cut_b_scope_key: str | None = None
     chatwoot_cut_b_scope_version: int | None = None
     chatwoot_cut_b_agent_enabled: bool = False
+    chatwoot_scoped_inbound_senders_enabled: bool = False
     operator_correlation_read_enabled: bool = False
     operator_correlation_read_token: str | None = None
     operator_correlation_tenant_ref: str | None = None
@@ -420,6 +444,20 @@ class Settings:
         johanna_abandonment_hotmart_auto_enabled = (
             os.getenv(
                 "JOHANNA_ABANDONMENT_HOTMART_AUTO_ENABLED",
+                "false",
+            ).lower()
+            == "true"
+        )
+        johanna_payment_failure_hotmart_enabled = (
+            os.getenv(
+                "JOHANNA_PAYMENT_FAILURE_HOTMART_ENABLED",
+                "false",
+            ).lower()
+            == "true"
+        )
+        johanna_payment_failure_outbound_enabled = (
+            os.getenv(
+                "JOHANNA_PAYMENT_FAILURE_OUTBOUND_ENABLED",
                 "false",
             ).lower()
             == "true"
@@ -663,6 +701,12 @@ class Settings:
             johanna_abandonment_hotmart_auto_enabled=(
                 johanna_abandonment_hotmart_auto_enabled
             ),
+            johanna_payment_failure_hotmart_enabled=(
+                johanna_payment_failure_hotmart_enabled
+            ),
+            johanna_payment_failure_outbound_enabled=(
+                johanna_payment_failure_outbound_enabled
+            ),
             supabase_base_url=supabase_base_url,
             supabase_service_role_key=supabase_service_role_key,
             worker_poll_interval_seconds=worker_poll_interval,
@@ -740,6 +784,12 @@ class Settings:
             ),
             chatwoot_cut_b_agent_enabled=(
                 os.getenv("CHATWOOT_CUT_B_AGENT_ENABLED", "false").lower()
+                == "true"
+            ),
+            chatwoot_scoped_inbound_senders_enabled=(
+                os.getenv(
+                    "CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED", "false"
+                ).lower()
                 == "true"
             ),
             operator_correlation_read_enabled=(
@@ -911,6 +961,29 @@ def create_app(
     recovery_agent_client: RecoveryAgentClient | None = None,
     message_sender: MessageSender | None = None,
 ) -> FastAPI:
+    if settings.chatwoot_scoped_inbound_senders_enabled and (
+        settings.chatwoot_account_id != 1
+        or settings.chatwoot_inbox_id != 9
+        or settings.chatwoot_cut_b_scope_key != "libre-de-ansiedad-inbound"
+        or settings.chatwoot_cut_b_scope_version != 2
+    ):
+        raise ValueError(
+            "CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED requires the exact Johanna "
+            "inbound scope"
+        )
+    if settings.chatwoot_scoped_inbound_senders_enabled and not all((
+        settings.chatwoot_cut_b_admission_enabled,
+        settings.chatwoot_cut_b_agent_enabled,
+        settings.automated_replies_enabled,
+        settings.chatwoot_durable_opt_out_enabled,
+        settings.chatwoot_human_pause_enabled,
+        settings.human_handoff_admission_enabled,
+        settings.human_handoff_projection_enabled,
+    )):
+        raise ValueError(
+            "CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED requires all stop and "
+            "handoff gates"
+        )
     if (
         settings.johanna_abandonment_one_shot_enabled
         and settings.johanna_abandonment_hotmart_auto_enabled
@@ -1073,6 +1146,7 @@ def create_app(
             "CHATWOOT_CUT_B_AGENT_ENABLED requires Cut B admission and "
             "automated replies"
         )
+
     control_client = chatwoot_client
     if (
         control_client is None
@@ -1237,6 +1311,19 @@ def create_app(
                 inbox_id=settings.chatwoot_inbox_id,
                 allowed_jid=settings.allowed_jid,
                 template=waba_template,
+            )
+    if settings.johanna_payment_failure_outbound_enabled:
+        if (
+            not settings.johanna_payment_failure_hotmart_enabled
+            or shared_supabase is None
+            or (message_sender is None and control_client is None)
+            or settings.chatwoot_account_id != 1
+            or settings.chatwoot_inbox_id != 9
+            or settings.pilot_channel_provider != "waba"
+            or settings.pilot_channel_account_ref != "chatwoot-inbox:9"
+        ):
+            raise ValueError(
+                "Johanna payment-failure outbound requires exact WABA scope and admission"
             )
     if settings.chatwoot_durable_opt_out_enabled and (
         shared_supabase is None or control_client is None
@@ -1604,6 +1691,7 @@ def create_app(
         current_message_id: int | None,
         batch_message_ids: tuple[int, ...],
         context: dict[str, object],
+        expected_jid: str | None = None,
     ) -> CanonicalWorkResult:
         if control_client is None or settings.agent_bot_id is None:
             if shadow_processor is not None:
@@ -1619,6 +1707,11 @@ def create_app(
                 await control_client.validate_conversation_authority(
                     conversation_id=conversation_id,
                     expected_inbox_id=settings.chatwoot_inbox_id,
+                    **(
+                        {"expected_jid": expected_jid}
+                        if expected_jid is not None
+                        else {}
+                    ),
                 )
             history = await control_client.get_conversation_messages(
                 conversation_id=conversation_id,
@@ -1659,8 +1752,8 @@ def create_app(
                 "batched_messages_not_in_canonical_history"
             )
         external_user_id = (
-            settings.allowed_jid.split("@", 1)[0]
-            if settings.allowed_jid is not None
+            (expected_jid or settings.allowed_jid).split("@", 1)[0]
+            if (expected_jid or settings.allowed_jid) is not None
             else ""
         )
         if not external_user_id.isdigit():
@@ -1799,6 +1892,9 @@ def create_app(
             agent_bot_id=settings.agent_bot_id,
             expected_account_id=settings.chatwoot_account_id,
             expected_inbox_id=settings.chatwoot_inbox_id,
+            allow_any_scoped_sender=(
+                settings.chatwoot_scoped_inbound_senders_enabled
+            ),
         )
 
     async def process_chatwoot_work(
@@ -1823,12 +1919,54 @@ def create_app(
             await control_client.ensure_conversation_label(
                 conversation_id=conversation_id,
                 label="automation_paused",
+                expected_inbox_id=(
+                    settings.chatwoot_inbox_id
+                    if settings.chatwoot_scoped_inbound_senders_enabled
+                    else None
+                ),
+                expected_jid=(
+                    decision.sender_jid
+                    if settings.chatwoot_scoped_inbound_senders_enabled
+                    else None
+                ),
             )
             return
         if decision.reason == "invalid_message_id":
             raise RuntimeError("chatwoot_invalid_message_id")
         if not decision.accepted:
             return
+        scoped_expected_jid = (
+            decision.sender_jid
+            if settings.chatwoot_scoped_inbound_senders_enabled
+            else None
+        )
+
+        async def send_scoped_agent_bot_reply(
+            *,
+            conversation_id: int,
+            trigger_message_id: int,
+            content: str,
+            part_index: int = 1,
+            part_count: int = 1,
+            prior_parts: tuple[str, ...] = (),
+        ) -> dict[str, object]:
+            if control_client is None:
+                raise RuntimeError("chatwoot_reply_not_configured")
+            send_args = {
+                "conversation_id": conversation_id,
+                "trigger_message_id": trigger_message_id,
+                "delivery_id": delivery_id,
+                "content": content,
+                "part_index": part_index,
+                "part_count": part_count,
+                "prior_parts": prior_parts,
+            }
+            if scoped_expected_jid is None:
+                return await control_client.send_agent_bot_reply(**send_args)
+            return await control_client.send_agent_bot_reply(
+                **send_args,
+                expected_jid=scoped_expected_jid,
+            )
         if _is_conversation_reset_message(payload):
             if not settings.automated_replies_enabled:
                 return
@@ -1849,10 +1987,9 @@ def create_app(
                 assert shared_supabase is not None
                 assert settings.chatwoot_account_id is not None
                 assert settings.chatwoot_inbox_id is not None
-                external_user_id = (
-                    settings.allowed_jid.split("@", 1)[0]
-                    if settings.allowed_jid is not None
-                    else ""
+                reset_expected_jid = scoped_expected_jid or settings.allowed_jid
+                external_user_id = reset_expected_jid.removesuffix(
+                    "@s.whatsapp.net"
                 )
                 if not external_user_id.isdigit():
                     raise RuntimeError("chatwoot_reset_external_user_id_invalid")
@@ -1888,10 +2025,9 @@ def create_app(
                     )
                     return
             try:
-                reply_result = await control_client.send_agent_bot_reply(
+                reply_result = await send_scoped_agent_bot_reply(
                     conversation_id=conversation_id,
                     trigger_message_id=message_id,
-                    delivery_id=delivery_id,
                     content=CHATWOOT_CONVERSATION_RESET_CONFIRMATION,
                 )
             except ChatwootReplyDeliveryUnknownError as exc:
@@ -1970,6 +2106,7 @@ def create_app(
                 ),
                 batch_message_ids=batch_message_ids,
                 context=context,
+                expected_jid=scoped_expected_jid,
             )
             if canonical_result.stopped:
                 return
@@ -2037,6 +2174,12 @@ def create_app(
                 await control_client.ensure_conversation_label(
                     conversation_id=conversation_id,
                     label="automation_paused",
+                    expected_inbox_id=(
+                        settings.chatwoot_inbox_id
+                        if scoped_expected_jid is not None
+                        else None
+                    ),
+                    expected_jid=scoped_expected_jid,
                 )
             except (httpx.HTTPError, ChatwootProtocolError) as exc:
                 raise RetryableChatwootWorkError(
@@ -2095,17 +2238,15 @@ def create_app(
                 if offset > 0:
                     await reply_part_sleep(settings.reply_part_delay_seconds)
                 if len(parts) == 1:
-                    reply_result = await control_client.send_agent_bot_reply(
+                    reply_result = await send_scoped_agent_bot_reply(
                         conversation_id=conversation_id,
                         trigger_message_id=message_id,
-                        delivery_id=delivery_id,
                         content=part,
                     )
                 else:
-                    reply_result = await control_client.send_agent_bot_reply(
+                    reply_result = await send_scoped_agent_bot_reply(
                         conversation_id=conversation_id,
                         trigger_message_id=message_id,
-                        delivery_id=delivery_id,
                         content=part,
                         part_index=offset + 1,
                         part_count=len(parts),
@@ -3029,6 +3170,132 @@ def create_app(
         )
         raise HTTPException(status_code=502, detail="precheckout_first_touch_failed")
 
+    async def _execute_johanna_payment_failure_delivery(
+        *, payment_failure_case_id: str
+    ) -> tuple[int, dict[str, object]]:
+        if (
+            shared_supabase is None
+            or settings.chatwoot_account_id != 1
+            or settings.chatwoot_inbox_id != 9
+        ):
+            raise HTTPException(
+                status_code=503,
+                detail="johanna_payment_failure_outbound_not_configured",
+            )
+        try:
+            started = (
+                await shared_supabase.begin_johanna_payment_failure_hotmart_auto(
+                    command_key=(
+                        "johanna-payment-failure-auto:"
+                        f"{payment_failure_case_id}"
+                    ),
+                    payment_failure_case_id=payment_failure_case_id,
+                    chatwoot_account_id=settings.chatwoot_account_id,
+                    chatwoot_inbox_id=settings.chatwoot_inbox_id,
+                )
+            )
+        except SupabaseError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="johanna_payment_failure_outbound_not_authorized",
+            ) from exc
+
+        if (
+            started.template_name,
+            started.template_language,
+            started.template_category,
+            started.copy_version,
+        ) != (
+            JOHANNA_PAYMENT_FAILURE_TEMPLATE_NAME,
+            "es_EC",
+            "MARKETING",
+            JOHANNA_PAYMENT_FAILURE_COPY_VERSION,
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="johanna_payment_failure_outbound_metadata_mismatch",
+            )
+        if started.outcome == "budget_consumed":
+            return 200, {
+                "status": "ignored",
+                "reason": "contact_budget_consumed",
+                "message_count": 1,
+                "followups_allowed": 0,
+            }
+        if started.outcome == "replay":
+            if started.command_status == "accepted_by_chatwoot":
+                return 200, {
+                    "status": "accepted_by_chatwoot",
+                    "command_id": started.command_id,
+                    "message_count": 1,
+                    "followups_allowed": 0,
+                }
+            raise HTTPException(
+                status_code=409,
+                detail="johanna_payment_failure_reconciliation_required",
+            )
+
+        payment_sender = message_sender
+        if payment_sender is None:
+            if not isinstance(control_client, ChatwootClient):
+                raise HTTPException(
+                    status_code=503,
+                    detail="johanna_payment_failure_sender_not_configured",
+                )
+            payment_sender = ChatwootMessageSender(
+                chatwoot=control_client,
+                inbox_id=9,
+                allowed_jid=f"{started.target_phone}@s.whatsapp.net",
+                template=WhatsAppTemplateConfig(
+                    first_touch_name=JOHANNA_PAYMENT_FAILURE_TEMPLATE_NAME,
+                    followup_name=None,
+                    language="es_EC",
+                    category="MARKETING",
+                    first_touch_parameter="buyer_name_and_product",
+                ),
+            )
+        result = await payment_sender.send_first_touch(
+            phone=started.target_phone,
+            buyer_name=started.buyer_name,
+            buyer_email=started.buyer_email,
+            product_name=started.product_name,
+            content="Recuperación de compra rechazada por falta de fondos.",
+            delivery_id=started.command_id,
+        )
+        accepted = (
+            result.status == "sent"
+            and result.conversation_id is not None
+            and result.message_id is not None
+        )
+        try:
+            await shared_supabase.finish_johanna_abandonment_one_shot(
+                command_id=started.command_id,
+                outcome=(
+                    "accepted_by_chatwoot" if accepted else "delivery_unknown"
+                ),
+                chatwoot_conversation_id=(
+                    result.conversation_id if accepted else None
+                ),
+                chatwoot_message_id=result.message_id if accepted else None,
+                failure_code=None if accepted else (result.reason or "sender_failed"),
+            )
+        except SupabaseError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="johanna_payment_failure_finalization_unknown",
+            ) from exc
+        if not accepted:
+            raise HTTPException(
+                status_code=502,
+                detail="johanna_payment_failure_outbound_failed",
+            )
+        return 202, {
+            "status": "accepted_by_chatwoot",
+            "command_id": started.command_id,
+            "message_count": 1,
+            "followups_allowed": 0,
+        }
+
     @app.post("/webhooks/hotmart", status_code=status.HTTP_202_ACCEPTED)
     async def receive_hotmart_webhook(
         request: Request,
@@ -3092,6 +3359,85 @@ def create_app(
                 status_code=503, detail="supabase_not_configured"
             )
         try:
+            if event_type == EVENT_PURCHASE_CANCELED:
+                if not settings.johanna_payment_failure_hotmart_enabled:
+                    response.status_code = status.HTTP_200_OK
+                    return {
+                        "status": "ignored",
+                        "reason": "payment_failure_disabled",
+                    }
+                parsed_failure = parse_hotmart_payment_failure_payload(payload)
+                if parsed_failure is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                        detail="invalid_payment_failure_payload",
+                    )
+                failure_admission = await shared_supabase.admit_johanna_payment_failure(
+                    external_event_id=event_id,
+                    payload=payload,
+                    normalized_email=parsed_failure.buyer_email,
+                    normalized_phone=parsed_failure.buyer_phone,
+                )
+                if failure_admission.outcome == "semantic_conflict":
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="payment_failure_semantic_conflict",
+                    )
+                if failure_admission.outcome == "duplicate":
+                    if failure_admission.case_status in {
+                        "outbound_accepted",
+                        "delivery_unknown",
+                    }:
+                        response.status_code = status.HTTP_200_OK
+                        return {
+                            "status": failure_admission.case_status,
+                            "event_id": event_id,
+                            "case_status": failure_admission.case_status,
+                            "correlation_outcome": (
+                                failure_admission.correlation_outcome
+                            ),
+                        }
+                    if (
+                        settings.johanna_payment_failure_outbound_enabled
+                        and failure_admission.correlation_outcome == "resolved"
+                    ):
+                        result_status, result_body = (
+                            await _execute_johanna_payment_failure_delivery(
+                                payment_failure_case_id=(
+                                    failure_admission.payment_failure_case_id
+                                )
+                            )
+                        )
+                        response.status_code = result_status
+                        return result_body
+                    response.status_code = status.HTTP_200_OK
+                    return {
+                        "status": "duplicate",
+                        "event_id": event_id,
+                        "case_status": failure_admission.case_status,
+                        "correlation_outcome": (
+                            failure_admission.correlation_outcome
+                        ),
+                    }
+                if (
+                    settings.johanna_payment_failure_outbound_enabled
+                    and failure_admission.correlation_outcome == "resolved"
+                ):
+                    result_status, result_body = (
+                        await _execute_johanna_payment_failure_delivery(
+                            payment_failure_case_id=(
+                                failure_admission.payment_failure_case_id
+                            )
+                        )
+                    )
+                    response.status_code = result_status
+                    return result_body
+                return {
+                    "status": "received",
+                    "event_id": event_id,
+                    "case_status": failure_admission.case_status,
+                    "correlation_outcome": failure_admission.correlation_outcome,
+                }
             if event_type == EVENT_PURCHASE_APPROVED:
                 parsed_purchase = parse_hotmart_purchase_payload(payload)
                 if parsed_purchase is None:

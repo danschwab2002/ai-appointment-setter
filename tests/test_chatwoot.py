@@ -66,9 +66,45 @@ def test_rejects_a_different_waba_digit_source_id(tmp_path: Path) -> None:
     assert client._is_authorized_conversation(response, conversation_id=39) is False
 
 
+def test_authorizes_conversation_against_operation_scoped_jid(tmp_path: Path) -> None:
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        agent_bot_access_token="agent-bot-token",
+        agent_bot_id=1,
+        reply_dir=tmp_path,
+    )
+    response = httpx.Response(
+        200,
+        json={
+            "id": 39,
+            "meta": {"sender": {"identifier": "12025550999"}},
+        },
+    )
+
+    assert client._is_authorized_conversation(
+        response,
+        conversation_id=39,
+        expected_jid="12025550999@s.whatsapp.net",
+    ) is True
+    assert client._is_authorized_conversation(
+        response,
+        conversation_id=39,
+        expected_jid="12025550888@s.whatsapp.net",
+    ) is False
+
+
 class AuthorizedConversationTransport(httpx.AsyncBaseTransport):
-    def __init__(self, inner: httpx.AsyncBaseTransport) -> None:
+    def __init__(
+        self,
+        inner: httpx.AsyncBaseTransport,
+        *,
+        authorized_jid: str = ALLOWED_JID,
+    ) -> None:
         self._inner = inner
+        self._authorized_jid = authorized_jid
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         if request.method == "GET" and request.url.path.endswith("/conversations/2"):
@@ -76,7 +112,7 @@ class AuthorizedConversationTransport(httpx.AsyncBaseTransport):
                 200,
                 json={
                     "id": 2,
-                    "meta": {"sender": {"identifier": ALLOWED_JID}},
+                    "meta": {"sender": {"identifier": self._authorized_jid}},
                 },
             )
         return await self._inner.handle_async_request(request)
@@ -88,6 +124,7 @@ def test_sends_an_idempotent_agent_bot_reply_after_authorization(
     requests: list[httpx.Request] = []
     delivery_id = "delivery-123"
     reply_hash = hashlib.sha256(b"2:10").hexdigest()
+    scoped_jid = "12025550999@s.whatsapp.net"
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
@@ -142,7 +179,10 @@ def test_sends_an_idempotent_agent_bot_reply_after_authorization(
         agent_bot_access_token="agent-bot-token",
         agent_bot_id=1,
         reply_dir=tmp_path,
-        transport=AuthorizedConversationTransport(httpx.MockTransport(handler)),
+        transport=AuthorizedConversationTransport(
+            httpx.MockTransport(handler),
+            authorized_jid=scoped_jid,
+        ),
     )
 
     result = asyncio.run(
@@ -151,6 +191,7 @@ def test_sends_an_idempotent_agent_bot_reply_after_authorization(
             trigger_message_id=10,
             delivery_id=delivery_id,
             content="¡Hola! Soy el asistente virtual de Dan. ¿Cómo te llamás?",
+            expected_jid=scoped_jid,
         )
     )
 
@@ -1457,6 +1498,48 @@ def test_does_not_update_chatwoot_when_pause_label_already_exists() -> None:
     assert [request.method for request in requests] == ["GET"]
 
 
+def test_pause_label_revalidates_expected_jid_before_macro_mutation() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/conversations/2"):
+            return httpx.Response(
+                200,
+                json={
+                    "id": 2,
+                    "inbox_id": 9,
+                    "meta": {
+                        "sender": {
+                            "identifier": "12025550123@s.whatsapp.net",
+                        }
+                    },
+                },
+            )
+        raise AssertionError("label mutation reached after identity mismatch")
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid="12025550123@s.whatsapp.net",
+        pause_macro_id=1,
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(ChatwootProtocolError, match="conversation_identity_mismatch"):
+        asyncio.run(
+            client.ensure_conversation_label(
+                conversation_id=2,
+                label="automation_paused",
+                expected_inbox_id=9,
+                expected_jid="12025550124@s.whatsapp.net",
+            )
+        )
+
+    assert [request.method for request in requests] == ["GET"]
+
+
 def test_reads_a_bounded_conversation_history_from_chatwoot() -> None:
     messages = [
         {
@@ -1587,6 +1670,7 @@ def test_fails_explicitly_when_required_ids_exceed_the_history_scan_limit() -> N
 
 def test_reads_canonical_snapshot_and_detects_inbound_after_anchor() -> None:
     requests: list[httpx.Request] = []
+    scoped_jid = "12025550999@s.whatsapp.net"
     messages = [
         {"id": 40, "created_at": 100, "message_type": 1, "private": False,
          "sender": {"type": "agent_bot", "id": 1}},
@@ -1604,7 +1688,7 @@ def test_reads_canonical_snapshot_and_detects_inbound_after_anchor() -> None:
             "status": "open",
             "can_reply": True,
             "labels": ["cart_recovery"],
-            "meta": {"sender": {"identifier": ALLOWED_JID}},
+            "meta": {"sender": {"identifier": scoped_jid}},
         })
 
     client = ChatwootClient(
@@ -1618,6 +1702,7 @@ def test_reads_canonical_snapshot_and_detects_inbound_after_anchor() -> None:
         conversation_id=2,
         expected_inbox_id=7,
         anchor_message_id=40,
+        expected_jid=scoped_jid,
     ))
 
     assert snapshot.anchor_found is True
@@ -1720,6 +1805,12 @@ def test_apply_opt_out_macro_confirms_stop_and_pause_labels() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal posted
         requests.append(request)
+        if request.url.path.endswith("/conversations/42"):
+            return httpx.Response(200, json={
+                "id": 42,
+                "inbox_id": 9,
+                "meta": {"sender": {"identifier": ALLOWED_JID}},
+            })
         if request.method == "POST":
             posted = True
             assert request.url.path.endswith("/macros/9/execute")
@@ -1740,8 +1831,46 @@ def test_apply_opt_out_macro_confirms_stop_and_pause_labels() -> None:
         transport=httpx.MockTransport(handler),
     )
 
-    asyncio.run(client.apply_opt_out_macro(conversation_id=42))
-    assert [request.method for request in requests] == ["GET", "POST", "GET"]
+    asyncio.run(client.apply_opt_out_macro(
+        conversation_id=42,
+        expected_account_id=1,
+        expected_inbox_id=9,
+        expected_jid=ALLOWED_JID,
+    ))
+    assert [request.method for request in requests] == [
+        "GET", "GET", "POST", "GET",
+    ]
+
+
+def test_apply_opt_out_macro_rejects_sender_mismatch_before_post() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.method == "GET"
+        assert request.url.path.endswith("/conversations/42")
+        return httpx.Response(200, json={
+            "id": 42,
+            "inbox_id": 9,
+            "meta": {"sender": {"identifier": "12025550999@s.whatsapp.net"}},
+        })
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="token",
+        opt_out_macro_id=9,
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(ChatwootProtocolError, match="conversation_identity_mismatch"):
+        asyncio.run(client.apply_opt_out_macro(
+            conversation_id=42,
+            expected_account_id=1,
+            expected_inbox_id=9,
+            expected_jid="12025550124@s.whatsapp.net",
+        ))
+    assert [request.method for request in requests] == ["GET"]
 
 
 def test_validate_conversation_authority_rejects_wrong_inbox() -> None:
@@ -1766,12 +1895,43 @@ def test_validate_conversation_authority_rejects_wrong_inbox() -> None:
         ))
 
 
+def test_validate_conversation_authority_accepts_operation_scoped_jid() -> None:
+    scoped_jid = "12025550999@s.whatsapp.net"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "id": 42,
+            "inbox_id": 7,
+            "meta": {"sender": {"identifier": scoped_jid}},
+        })
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="token",
+        allowed_jid=ALLOWED_JID,
+        transport=httpx.MockTransport(handler),
+    )
+
+    asyncio.run(client.validate_conversation_authority(
+        conversation_id=42,
+        expected_inbox_id=7,
+        expected_jid=scoped_jid,
+    ))
+
+
 def test_apply_opt_out_macro_skips_post_when_labels_already_projected() -> None:
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         assert request.method == "GET"
+        if request.url.path.endswith("/conversations/42"):
+            return httpx.Response(200, json={
+                "id": 42,
+                "inbox_id": 9,
+                "meta": {"sender": {"identifier": ALLOWED_JID}},
+            })
         return httpx.Response(
             200,
             json={"payload": ["automation_opted_out", "automation_paused"]},
@@ -1785,5 +1945,10 @@ def test_apply_opt_out_macro_skips_post_when_labels_already_projected() -> None:
         transport=httpx.MockTransport(handler),
     )
 
-    asyncio.run(client.apply_opt_out_macro(conversation_id=42))
-    assert [request.method for request in requests] == ["GET"]
+    asyncio.run(client.apply_opt_out_macro(
+        conversation_id=42,
+        expected_account_id=1,
+        expected_inbox_id=9,
+        expected_jid=ALLOWED_JID,
+    ))
+    assert [request.method for request in requests] == ["GET", "GET"]
