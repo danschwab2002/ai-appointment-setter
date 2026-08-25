@@ -1120,6 +1120,50 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         6,
         'johanna_waba_policy_scope_runtime_and_hotmart_auto_v2'
+    union all
+    select
+        '20260825000500',
+        '20260825000500_johanna_mvp_full_activation.sql',
+        (to_regclass('public.johanna_payment_failure_cases') is not null)::int
+        + (to_regprocedure(
+            'public.admit_johanna_payment_failure(text,jsonb,text,text)'
+        ) is not null)::int
+        + coalesce((
+            select (
+                prosecdef
+                and proconfig @> array[
+                    'search_path=pg_catalog, public, pg_temp'
+                ]
+            )::int
+            from functions
+            where oid = to_regprocedure(
+                'public.admit_johanna_payment_failure(text,jsonb,text,text)'
+            )
+        ), 0)
+        + (
+            has_function_privilege(
+                'service_role',
+                'public.admit_johanna_payment_failure(text,jsonb,text,text)',
+                'execute'
+            )
+            and not has_function_privilege(
+                'anon',
+                'public.admit_johanna_payment_failure(text,jsonb,text,text)',
+                'execute'
+            )
+            and not has_function_privilege(
+                'authenticated',
+                'public.admit_johanna_payment_failure(text,jsonb,text,text)',
+                'execute'
+            )
+        )::int
+        + (
+            pg_get_function_result(to_regprocedure(
+                'public.claim_human_handoff_projection_effects(text,integer,integer,timestamp with time zone)'
+            )) like '%external_user_id text%'
+        )::int,
+        5,
+        'payment_failure_review_and_scoped_handoff_identity'
 )
 select
     version,

@@ -53,6 +53,16 @@ class CartAbandonmentAdmissionResult:
 
 
 @dataclass(frozen=True)
+class PaymentFailureAdmissionResult:
+    """Durable Johanna payment-failure review admission."""
+
+    outcome: str
+    payment_failure_case_id: str
+    correlation_outcome: str
+    case_status: str
+
+
+@dataclass(frozen=True)
 class PrecheckoutAdmissionResult:
     """Atomic admission outcome for one provisional form submission."""
 
@@ -189,7 +199,10 @@ class InboundOptOutResult:
 @dataclass(frozen=True)
 class OptOutProjectionClaim:
     opt_out_event_id: str
+    chatwoot_account_id: int
+    chatwoot_inbox_id: int
     chatwoot_conversation_id: int
+    external_user_id: str
     lease_generation: int
 
 
@@ -205,6 +218,7 @@ class HumanHandoffProjectionClaim:
     chatwoot_account_id: int
     chatwoot_inbox_id: int
     chatwoot_conversation_id: int
+    external_user_id: str
     private_note_body: str
     idempotency_marker: str
 
@@ -1111,6 +1125,68 @@ class SupabaseClient:
             copy_version=row["copy_version"],
         )
 
+    async def begin_johanna_payment_failure_hotmart_auto(
+        self,
+        *,
+        command_key: str,
+        payment_failure_case_id: str,
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+    ) -> JohannaAbandonmentOneShotStart:
+        operation = "johanna_payment_failure_hotmart_auto_begin"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/begin_johanna_payment_failure_hotmart_auto",
+            content=json.dumps(
+                {
+                    "p_command_key": command_key,
+                    "p_payment_failure_case_id": payment_failure_case_id,
+                    "p_chatwoot_account_id": chatwoot_account_id,
+                    "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                }
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        required_text = (
+            "command_id",
+            "command_status",
+            "target_phone",
+            "buyer_name",
+            "buyer_email",
+            "product_name",
+            "template_name",
+            "template_language",
+            "template_category",
+            "copy_version",
+        )
+        if row.get("outcome") not in {
+            "started",
+            "replay",
+            "budget_consumed",
+        } or any(
+            not isinstance(row.get(field), str) or not row[field]
+            for field in required_text
+        ):
+            raise SupabaseError(f"{operation}_invalid_row")
+        return JohannaAbandonmentOneShotStart(
+            outcome=row["outcome"],
+            command_id=row["command_id"],
+            command_status=row["command_status"],
+            target_phone=row["target_phone"],
+            buyer_name=row["buyer_name"],
+            buyer_email=row["buyer_email"],
+            product_name=row["product_name"],
+            template_name=row["template_name"],
+            template_language=row["template_language"],
+            template_category=row["template_category"],
+            copy_version=row["copy_version"],
+        )
+
     async def finish_johanna_abandonment_one_shot(
         self,
         *,
@@ -1144,6 +1220,61 @@ class SupabaseClient:
         if not isinstance(result_id, str) or not isinstance(result_status, str):
             raise SupabaseError(f"{operation}_invalid_row")
         return JohannaAbandonmentOneShotFinish(result_id, result_status)
+
+    async def admit_johanna_payment_failure(
+        self,
+        *,
+        external_event_id: str,
+        payload: dict[str, Any],
+        normalized_email: str | None,
+        normalized_phone: str | None,
+    ) -> PaymentFailureAdmissionResult:
+        operation = "johanna_payment_failure_admission"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/admit_johanna_payment_failure",
+            content=json.dumps(
+                {
+                    "p_external_event_id": external_event_id,
+                    "p_payload": payload,
+                    "p_normalized_email": normalized_email,
+                    "p_normalized_phone": normalized_phone,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        rows = _response_rows(response, operation=operation)
+        if response.status_code != 200 or len(rows) != 1:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        row = rows[0]
+        outcome = row.get("outcome")
+        case_id = row.get("payment_failure_case_id")
+        correlation_outcome = row.get("correlation_outcome")
+        case_status = row.get("case_status")
+        if outcome not in {"inserted", "duplicate", "semantic_conflict"}:
+            raise SupabaseError(f"{operation}_invalid_outcome")
+        if not isinstance(case_id, str) or not case_id:
+            raise SupabaseError(f"{operation}_invalid_case_id")
+        if correlation_outcome not in {
+            "resolved",
+            "unmatched",
+            "ambiguous",
+            "conflict",
+        }:
+            raise SupabaseError(f"{operation}_invalid_correlation")
+        if case_status not in {
+            "pending_human_review",
+            "outbound_started",
+            "outbound_accepted",
+            "delivery_unknown",
+        }:
+            raise SupabaseError(f"{operation}_invalid_status")
+        return PaymentFailureAdmissionResult(
+            outcome,
+            case_id,
+            correlation_outcome,
+            case_status,
+        )
 
     async def admit_and_correlate_hotmart_cart_abandonment(
         self,
@@ -1927,8 +2058,17 @@ class SupabaseClient:
                 opt_out_event_id=_required_string(
                     row, "opt_out_event_id", operation=operation
                 ),
+                chatwoot_account_id=_required_int(
+                    row, "chatwoot_account_id", operation=operation
+                ),
+                chatwoot_inbox_id=_required_int(
+                    row, "chatwoot_inbox_id", operation=operation
+                ),
                 chatwoot_conversation_id=_required_int(
                     row, "chatwoot_conversation_id", operation=operation
+                ),
+                external_user_id=_required_string(
+                    row, "external_user_id", operation=operation
                 ),
                 lease_generation=_required_int(
                     row, "lease_generation", operation=operation
@@ -2031,6 +2171,9 @@ class SupabaseClient:
                 ),
                 chatwoot_conversation_id=_required_positive_int(
                     row, "chatwoot_conversation_id", operation=operation
+                ),
+                external_user_id=_required_string(
+                    row, "external_user_id", operation=operation
                 ),
                 private_note_body=_required_string(
                     row, "private_note_body", operation=operation

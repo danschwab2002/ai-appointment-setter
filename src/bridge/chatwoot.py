@@ -105,6 +105,7 @@ class ChatwootClient:
         anchor_message_id: int | None,
         anchor_observed_at_epoch: int | None = None,
         message_limit: int = 100,
+        expected_jid: str | None = None,
     ) -> CanonicalConversationSnapshot:
         """Read and validate current conversation facts from Chatwoot.
 
@@ -150,7 +151,9 @@ class ChatwootClient:
         ):
             raise ChatwootProtocolError("invalid_conversation_authority")
         if not self._is_authorized_conversation(
-            response, conversation_id=conversation_id
+            response,
+            conversation_id=conversation_id,
+            expected_jid=expected_jid,
         ):
             raise ChatwootProtocolError("conversation_identity_mismatch")
         meta = details.get("meta")
@@ -333,6 +336,7 @@ class ChatwootClient:
         part_index: int = 1,
         part_count: int = 1,
         prior_parts: tuple[str, ...] = (),
+        expected_jid: str | None = None,
     ) -> dict[str, object]:
         """Authorize and send one idempotent part of a public AgentBot reply."""
         if (
@@ -389,6 +393,7 @@ class ChatwootClient:
                 part_count=part_count,
                 prior_parts=prior_parts,
                 reply_dir_fd=reply_dir_fd,
+                expected_jid=expected_jid,
             )
         finally:
             if lock_fd >= 0:
@@ -511,6 +516,7 @@ class ChatwootClient:
         part_count: int,
         prior_parts: tuple[str, ...],
         reply_dir_fd: int,
+        expected_jid: str | None,
     ) -> dict[str, object]:
         agent_bot_access_token = self._agent_bot_access_token
         if agent_bot_access_token is None:
@@ -538,6 +544,7 @@ class ChatwootClient:
             "part_index": part_index,
             "part_count": part_count,
             "prior_parts": prior_parts,
+            "expected_jid": expected_jid,
         }
         async with httpx.AsyncClient(
             base_url=self._base_url,
@@ -644,12 +651,14 @@ class ChatwootClient:
         part_index: int,
         part_count: int,
         prior_parts: tuple[str, ...],
+        expected_jid: str | None,
     ) -> dict[str, object] | None:
         conversation_response = await control_client.get(conversation_path)
         conversation_response.raise_for_status()
         if not self._is_authorized_conversation(
             conversation_response,
             conversation_id=conversation_id,
+            expected_jid=expected_jid,
         ):
             return {"status": "blocked", "reason": "jid_not_authorized"}
 
@@ -772,6 +781,7 @@ class ChatwootClient:
         response: httpx.Response,
         *,
         conversation_id: int,
+        expected_jid: str | None = None,
     ) -> bool:
         try:
             conversation = response.json()
@@ -795,12 +805,16 @@ class ChatwootClient:
             identifier = sender.get("phone_number")
         return matches_allowed_whatsapp_identity(
             identifier,
-            allowed_jid=self._allowed_jid,
+            allowed_jid=expected_jid or self._allowed_jid,
             allow_e164=True,
         )
 
     async def validate_conversation_authority(
-        self, *, conversation_id: int, expected_inbox_id: int
+        self,
+        *,
+        conversation_id: int,
+        expected_inbox_id: int,
+        expected_jid: str | None = None,
     ) -> None:
         """Fail closed unless Chatwoot confirms the configured inbox and JID."""
         if conversation_id <= 0 or expected_inbox_id <= 0:
@@ -828,12 +842,18 @@ class ChatwootClient:
         ):
             raise ChatwootProtocolError("invalid_conversation_authority")
         if not self._is_authorized_conversation(
-            response, conversation_id=conversation_id
+            response,
+            conversation_id=conversation_id,
+            expected_jid=expected_jid,
         ):
             raise ChatwootProtocolError("conversation_identity_mismatch")
 
     async def _get_handoff_conversation(
-        self, *, conversation_id: int, expected_inbox_id: int
+        self,
+        *,
+        conversation_id: int,
+        expected_inbox_id: int,
+        expected_jid: str | None = None,
     ) -> dict[str, object]:
         if conversation_id <= 0 or expected_inbox_id <= 0:
             raise ValueError("conversation and inbox IDs must be positive")
@@ -860,7 +880,9 @@ class ChatwootClient:
         ):
             raise ChatwootProtocolError("invalid_conversation_authority")
         if not self._is_authorized_conversation(
-            response, conversation_id=conversation_id
+            response,
+            conversation_id=conversation_id,
+            expected_jid=expected_jid,
         ):
             raise ChatwootProtocolError("conversation_identity_mismatch")
         return conversation
@@ -906,6 +928,7 @@ class ChatwootClient:
         conversation_id: int,
         expected_inbox_id: int,
         expected_team_id: int,
+        expected_jid: str | None = None,
     ) -> str:
         """Assign the expected team only when no person or team owns the case."""
         if expected_team_id <= 0:
@@ -913,6 +936,7 @@ class ChatwootClient:
         conversation = await self._get_handoff_conversation(
             conversation_id=conversation_id,
             expected_inbox_id=expected_inbox_id,
+            expected_jid=expected_jid,
         )
         state = self._handoff_assignment_state(
             conversation, expected_team_id=expected_team_id
@@ -939,6 +963,7 @@ class ChatwootClient:
             confirmed = await self._get_handoff_conversation(
                 conversation_id=conversation_id,
                 expected_inbox_id=expected_inbox_id,
+                expected_jid=expected_jid,
             )
             state = self._handoff_assignment_state(
                 confirmed, expected_team_id=expected_team_id
@@ -954,6 +979,7 @@ class ChatwootClient:
         *,
         conversation_id: int,
         expected_inbox_id: int,
+        expected_jid: str | None = None,
         note_body: str,
         idempotency_marker: str,
         create_if_missing: bool,
@@ -970,6 +996,7 @@ class ChatwootClient:
         await self._get_handoff_conversation(
             conversation_id=conversation_id,
             expected_inbox_id=expected_inbox_id,
+            expected_jid=expected_jid,
         )
         messages = await self.get_conversation_messages(
             conversation_id=conversation_id,
@@ -1113,9 +1140,22 @@ class ChatwootClient:
         return [collected[message_id] for message_id in sorted(selected_ids)]
 
     async def ensure_conversation_label(
-        self, *, conversation_id: int, label: str
+        self,
+        *,
+        conversation_id: int,
+        label: str,
+        expected_inbox_id: int | None = None,
+        expected_jid: str | None = None,
     ) -> bool:
         """Ensure a label exists, returning whether Chatwoot was changed."""
+        if expected_jid is not None:
+            if expected_inbox_id is None:
+                raise ValueError("expected inbox is required with expected JID")
+            await self.validate_conversation_authority(
+                conversation_id=conversation_id,
+                expected_inbox_id=expected_inbox_id,
+                expected_jid=expected_jid,
+            )
         path = (
             f"/api/v1/accounts/{self._account_id}"
             f"/conversations/{conversation_id}/labels"
@@ -1155,10 +1195,24 @@ class ChatwootClient:
 
             raise ChatwootProtocolError("macro_label_not_confirmed")
 
-    async def apply_opt_out_macro(self, *, conversation_id: int) -> None:
+    async def apply_opt_out_macro(
+        self,
+        *,
+        conversation_id: int,
+        expected_account_id: int,
+        expected_inbox_id: int,
+        expected_jid: str,
+    ) -> None:
         """Apply and verify the dedicated durable opt-out projection macro."""
         if self._opt_out_macro_id is None:
             raise ChatwootProtocolError("opt_out_macro_not_configured")
+        if expected_account_id != self._account_id:
+            raise ChatwootProtocolError("invalid_conversation_authority")
+        await self.validate_conversation_authority(
+            conversation_id=conversation_id,
+            expected_inbox_id=expected_inbox_id,
+            expected_jid=expected_jid,
+        )
         labels_path = (
             f"/api/v1/accounts/{self._account_id}"
             f"/conversations/{conversation_id}/labels"

@@ -175,6 +175,96 @@ def test_deployment_declares_chatwoot_cut_b_agent_default_off() -> None:
     assert "${CHATWOOT_CUT_B_AGENT_ENABLED:-false}" in compose
 
 
+def test_deployment_declares_johanna_full_mvp_flags_default_off(
+    tmp_path: Path,
+) -> None:
+    env_example = (PROJECT_ROOT / ".env.example").read_text()
+    compose = (PROJECT_ROOT / "compose.yaml").read_text()
+
+    for variable in (
+        "CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED",
+        "JOHANNA_PAYMENT_FAILURE_HOTMART_ENABLED",
+        "JOHANNA_PAYMENT_FAILURE_OUTBOUND_ENABLED",
+    ):
+        assert f"{variable}=false" in env_example
+        assert f"{variable}:" in compose
+        assert f"${{{variable}:-false}}" in compose
+
+    settings = Settings(
+        webhook_secret="test-secret",
+        allowed_jid="12025550123@s.whatsapp.net",
+        capture_dir=tmp_path,
+        max_age_seconds=300,
+    )
+    assert settings.chatwoot_scoped_inbound_senders_enabled is False
+    assert settings.johanna_payment_failure_hotmart_enabled is False
+    assert settings.johanna_payment_failure_outbound_enabled is False
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("chatwoot_account_id", 2),
+        ("chatwoot_inbox_id", 8),
+        ("chatwoot_cut_b_scope_key", "other-scope"),
+        ("chatwoot_cut_b_scope_version", 3),
+    ],
+)
+def test_scoped_inbound_requires_exact_johanna_scope(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    values: dict[str, object] = {
+        "webhook_secret": "test-secret",
+        "allowed_jid": "12025550123@s.whatsapp.net",
+        "capture_dir": tmp_path,
+        "max_age_seconds": 300,
+        "chatwoot_account_id": 1,
+        "chatwoot_inbox_id": 9,
+        "chatwoot_cut_b_scope_key": "libre-de-ansiedad-inbound",
+        "chatwoot_cut_b_scope_version": 2,
+        "chatwoot_cut_b_admission_enabled": True,
+        "chatwoot_cut_b_agent_enabled": True,
+        "chatwoot_scoped_inbound_senders_enabled": True,
+        "automated_replies_enabled": True,
+        "chatwoot_durable_opt_out_enabled": True,
+        "chatwoot_human_pause_enabled": True,
+        "human_handoff_admission_enabled": True,
+        "human_handoff_projection_enabled": True,
+    }
+    values[field] = value
+
+    with pytest.raises(ValueError, match="exact Johanna inbound scope"):
+        create_app(Settings(**values))  # type: ignore[arg-type]
+
+
+def test_scoped_inbound_requires_all_stop_and_handoff_gates(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        webhook_secret="test-secret",
+        allowed_jid="12025550123@s.whatsapp.net",
+        capture_dir=tmp_path,
+        max_age_seconds=300,
+        chatwoot_account_id=1,
+        chatwoot_inbox_id=9,
+        chatwoot_cut_b_scope_key="libre-de-ansiedad-inbound",
+        chatwoot_cut_b_scope_version=2,
+        chatwoot_cut_b_admission_enabled=True,
+        chatwoot_cut_b_agent_enabled=True,
+        chatwoot_scoped_inbound_senders_enabled=True,
+        automated_replies_enabled=True,
+        chatwoot_durable_opt_out_enabled=False,
+        chatwoot_human_pause_enabled=True,
+        human_handoff_admission_enabled=True,
+        human_handoff_projection_enabled=True,
+    )
+
+    with pytest.raises(ValueError, match="stop and handoff gates"):
+        create_app(settings)
+
+
 def test_deployment_declares_precheckout_test_receiver_default_off() -> None:
     env_example = (PROJECT_ROOT / ".env.example").read_text()
     compose = (PROJECT_ROOT / "compose.yaml").read_text()

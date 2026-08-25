@@ -71,7 +71,10 @@ class StatefulOptOutAuthority:
         return [
             OptOutProjectionClaim(
                 opt_out_event_id="controlled-opt-out-event",
+                chatwoot_account_id=1,
+                chatwoot_inbox_id=7,
                 chatwoot_conversation_id=123,
+                external_user_id="12025550123",
                 lease_generation=1,
             )
         ]
@@ -109,7 +112,17 @@ class ControlledChatwoot:
         assert set(required_message_ids) <= available
         return self.messages[-limit:]
 
-    async def apply_opt_out_macro(self, *, conversation_id: int) -> None:
+    async def apply_opt_out_macro(
+        self,
+        *,
+        conversation_id: int,
+        expected_account_id: int,
+        expected_inbox_id: int,
+        expected_jid: str,
+    ) -> None:
+        assert expected_account_id == 1
+        assert expected_inbox_id == 7
+        assert expected_jid == ALLOWED_JID
         self.macro_calls.append(conversation_id)
 
     async def send_agent_bot_reply(self, **kwargs: object) -> dict[str, object]:

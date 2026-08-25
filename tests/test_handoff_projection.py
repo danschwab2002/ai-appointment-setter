@@ -45,6 +45,7 @@ def test_supabase_claims_typed_handoff_projection_effects() -> None:
                     "chatwoot_account_id": 1,
                     "chatwoot_inbox_id": 7,
                     "chatwoot_conversation_id": 42,
+                    "external_user_id": "12025550999",
                     "private_note_body": "Revisá la conversación.",
                     "idempotency_marker": "[supportmagician-handoff:test:v1]",
                 }
@@ -71,6 +72,7 @@ def test_supabase_claims_typed_handoff_projection_effects() -> None:
     assert claims[0].attempt_count == 2
     assert claims[0].chatwoot_conversation_id == 42
     assert claims[0].expected_team_id == 17
+    assert claims[0].external_user_id == "12025550999"
     assert requests[0].url.path.endswith(
         "/rest/v1/rpc/claim_human_handoff_projection_effects"
     )
@@ -183,12 +185,13 @@ def _conversation(
     assignee: object = None,
     assignee_type: object = "User",
     team: object = None,
+    sender_jid: str = ALLOWED_JID,
 ) -> dict[str, object]:
     return {
         "id": 42,
         "inbox_id": 7,
         "meta": {
-            "sender": {"identifier": ALLOWED_JID},
+            "sender": {"identifier": sender_jid},
             "assignee": assignee,
             "assignee_type": assignee_type,
             "team": team,
@@ -226,6 +229,7 @@ def test_handoff_assignment_respects_an_existing_human() -> None:
 
 def test_handoff_assignment_replaces_agent_bot_with_expected_team() -> None:
     requests: list[httpx.Request] = []
+    scoped_jid = "12025550999@s.whatsapp.net"
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
@@ -236,6 +240,7 @@ def test_handoff_assignment_replaces_agent_bot_with_expected_team() -> None:
             assignee={"id": 77},
             assignee_type="AgentBot",
             team=team,
+            sender_jid=scoped_jid,
         ))
 
     outcome = asyncio.run(
@@ -243,6 +248,7 @@ def test_handoff_assignment_replaces_agent_bot_with_expected_team() -> None:
             conversation_id=42,
             expected_inbox_id=7,
             expected_team_id=17,
+            expected_jid=scoped_jid,
         )
     )
     assert outcome == "team_assigned"
@@ -440,6 +446,7 @@ def _claim(
         chatwoot_account_id=1,
         chatwoot_inbox_id=7,
         chatwoot_conversation_id=42,
+        external_user_id="12025550999",
         private_note_body="Revisá la conversación.",
         idempotency_marker="[supportmagician-handoff:test:v1]",
     )
@@ -497,6 +504,10 @@ def test_handoff_worker_projects_both_effects_and_finalizes_them() -> None:
     assert asyncio.run(worker.run_once()) == 2
     assert len(chatwoot.assignments) == 1
     assert len(chatwoot.notes) == 1
+    assert chatwoot.assignments[0]["expected_jid"] == (
+        "12025550999@s.whatsapp.net"
+    )
+    assert chatwoot.notes[0]["expected_jid"] == "12025550999@s.whatsapp.net"
     assert chatwoot.notes[0]["create_if_missing"] is True
     assert [item["outcome"] for item in supabase.finalizations] == [
         "applied",
