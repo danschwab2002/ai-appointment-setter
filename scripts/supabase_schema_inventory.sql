@@ -848,6 +848,67 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         'commercial_case_root_inbound_handoff_and_projection'
     union all
     select
+        '20260824000100',
+        '20260824000100_operator_correlation_review_read.sql',
+        (
+            select count(*)::int
+            from functions
+            where oid in (
+                to_regprocedure(
+                    'public.list_operator_unresolved_correlations(text,text,integer,uuid)'
+                ),
+                to_regprocedure(
+                    'public.get_operator_unresolved_correlation(text,text,uuid)'
+                )
+            )
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+        )
+        + (
+            has_function_privilege(
+                'service_role',
+                to_regprocedure(
+                    'public.list_operator_unresolved_correlations(text,text,integer,uuid)'
+                ),
+                'execute'
+            )
+            and has_function_privilege(
+                'service_role',
+                to_regprocedure(
+                    'public.get_operator_unresolved_correlation(text,text,uuid)'
+                ),
+                'execute'
+            )
+            and not has_function_privilege(
+                'anon',
+                to_regprocedure(
+                    'public.list_operator_unresolved_correlations(text,text,integer,uuid)'
+                ),
+                'execute'
+            )
+            and not has_function_privilege(
+                'authenticated',
+                to_regprocedure(
+                    'public.get_operator_unresolved_correlation(text,text,uuid)'
+                ),
+                'execute'
+            )
+        )::int
+        + (
+            not has_table_privilege(
+                'service_role', 'public.purchase_intents', 'select'
+            )
+            and not has_table_privilege(
+                'service_role',
+                'public.hotmart_purchase_intent_correlations',
+                'select'
+            )
+        )::int,
+        4,
+        'scoped_masked_operator_read_without_direct_table_access'
+    union all
+    select
         '20260825000100',
         '20260825000100_proactive_lead_identity_bootstrap.sql',
         (to_regclass('public.proactive_lead_bootstrap_targets') is not null)::int

@@ -96,7 +96,20 @@ La nota usa un marcador estable:
 
 El worker escanea hasta un límite explícito que falla cerrado si no alcanza el borde del historial. Cero marcadores permite un POST; uno confirma idempotencia; más de uno es conflicto. Tras un POST incierto, el estado `delivery_unknown` sólo permite escanear: nunca vuelve a crear la nota automáticamente y termina en `dead_letter` al alcanzar el límite de intentos.
 
-No se mutan labels, macros ni mensajes públicos.
+La proyección durable no muta labels, macros ni mensajes públicos. En el flujo
+inbound con respuesta automática, el work que originó el handoff aplica una
+postcondición adicional y ordenada:
+
+1. registra o reconcilia el handoff durable;
+2. ejecuta el macro de pausa para asegurar `automation_paused`;
+3. confirma la etiqueta y termina el work sin ejecutar ningún reply público.
+
+La etiqueta ya presente es éxito idempotente. Un error HTTP/protocolo o una
+postcondición no confirmada conserva el work en retry. El mensaje inbound que
+dispara la derivación no recibe una respuesta automática: desde ese punto la
+respuesta pertenece exclusivamente al equipo humano. Esta postcondición no
+agrega un tercer efecto durable ni cambia que `assignment` y `private_note`
+gobiernan el estado `projected` del request.
 
 ## 5. Estados
 

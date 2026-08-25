@@ -335,6 +335,17 @@ una salida de carrito resuelta fija `confirmed_abandonment`; ningún outcome con
 `activation_authorized` ni crea efectos. Ver
 [contrato de correlación V1](contracts/hotmart-purchase-intent-correlation-v1.md).
 
+El árbol implementa localmente una consulta administrativa read-only para los outcomes
+no resueltos, todavía sin despliegue en Supabase Cloud ni runtime. Dos RPC
+`SECURITY DEFINER` proyectan únicamente casos `manual_handoff_required=true` del
+`tenant_ref + funnel_ref` configurados, con identidad enmascarada dentro de PostgreSQL;
+`service_role` conserva revocado el `SELECT` directo. El bridge expone lista y detalle
+por bearer independiente, default-off, y el paquete candidato del Client Copilot registra
+sólo esas dos tools. La capacidad no selecciona candidatos, no cambia correlaciones, no
+notifica y no activa el resolution worker. Casos sin scope atribuible quedan excluidos
+fail-closed. Ver el
+[contrato de consulta V1](contracts/operator-correlation-review-v1.md).
+
 El runtime productivo implementa un timer durable de reevaluación para
 `resolved + confirmed_abandonment`. El plazo es un número variable tomado de
 `followup_policy_versions.grace_period` y se asigna por `tenant_ref + funnel_ref`,
@@ -461,13 +472,18 @@ Hermes suggest_handoff
      -> reconcilia assignment sin sobrescribir persona/otro equipo
      -> reconcilia nota privada por marcador estable
      -> finaliza cada efecto con lease fenced
+  -> work inbound asegura y confirma automation_paused
+     -> termina sin reply automático
 ```
 
 Supabase es autoridad del stop y Chatwoot es una proyección operativa. Cada
 request fija policy, scope, account, inbox, conversación externa, equipo y nota.
 La admisión y la proyección son flags separados y default-off; apagar admisión no
-detiene el drain de efectos existentes. No se crean conversaciones, labels,
-macros ni mensajes externos al contacto.
+detiene el drain de efectos existentes. La proyección durable no crea
+conversaciones, labels, macros ni mensajes externos al contacto. El flujo inbound
+que originó el handoff sí aplica y confirma el macro existente
+`automation_paused`, y termina sin responder al mensaje que disparó la
+derivación; si no puede confirmarlo, el work queda en retry fail-closed.
 
 `/ready` publica conteos sanitizados del backlog cuando la proyección está
 habilitada. Esta implementación tiene evidencia local y PGlite, pero no acredita

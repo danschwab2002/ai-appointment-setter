@@ -39,6 +39,7 @@ class StubChatwootClient:
         messages: list[dict[str, object]] | None = None,
         history_error: Exception | None = None,
         authority_error: Exception | None = None,
+        label_error: Exception | None = None,
     ) -> None:
         self.changed = changed
         self.fail = fail
@@ -46,10 +47,12 @@ class StubChatwootClient:
         self.messages = messages or []
         self.history_error = history_error
         self.authority_error = authority_error
+        self.label_error = label_error
         self.history_calls: list[tuple[int, int]] = []
         self.history_required_ids: list[tuple[int, ...]] = []
         self.reply_calls: list[dict[str, object]] = []
         self.opt_out_macro_calls: list[int] = []
+        self.events: list[str] = []
 
     async def validate_conversation_authority(
         self, *, conversation_id: int, expected_inbox_id: int
@@ -76,7 +79,10 @@ class StubChatwootClient:
     async def ensure_conversation_label(
         self, *, conversation_id: int, label: str
     ) -> bool:
+        self.events.append(f"label:{label}")
         self.calls.append((conversation_id, label))
+        if self.label_error is not None:
+            raise self.label_error
         if self.fail:
             request = httpx.Request("GET", "https://chatwoot.example.test")
             raise httpx.ConnectError("unavailable", request=request)
@@ -99,6 +105,7 @@ class StubChatwootClient:
         part_count: int = 1,
         prior_parts: tuple[str, ...] = (),
     ) -> dict[str, object]:
+        self.events.append("reply")
         call: dict[str, object] = {
             "conversation_id": conversation_id,
             "trigger_message_id": trigger_message_id,
@@ -4078,7 +4085,15 @@ def test_cut_b_agent_gate_admits_then_replies_through_canonical_chatwoot(
         assert chatwoot.reply_calls == []
 
 
-def test_cut_b_handoff_is_durable_before_reply(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("label_error", "expected_work_status"),
+    [(None, "completed"), (ChatwootProtocolError("not confirmed"), "admitted")],
+)
+def test_cut_b_handoff_confirms_automation_pause_without_reply(
+    tmp_path: Path,
+    label_error: Exception | None,
+    expected_work_status: str,
+) -> None:
     secret = "webhook-secret"
     payload: dict[str, object] = {
         "event": "message_created",
@@ -4100,6 +4115,7 @@ def test_cut_b_handoff_is_durable_before_reply(tmp_path: Path) -> None:
         {"decision": "handoff", "reply": "Este caso requiere revisión humana."}
     )
     chatwoot = StubChatwootClient(
+        label_error=label_error,
         messages=[
             {
                 "id": 902,
@@ -4146,14 +4162,13 @@ def test_cut_b_handoff_is_durable_before_reply(tmp_path: Path) -> None:
     assert response.status_code == 202
     assert len(supabase.handoff_calls) == 1
     assert supabase.handoff_calls[0]["commercial_case_id"] == "case-1"
-    assert chatwoot.reply_calls == [
-        {
-            "conversation_id": 322,
-            "trigger_message_id": 902,
-            "delivery_id": "cut-b-handoff",
-            "content": "Este caso requiere revisión humana.",
-        }
-    ]
+    assert chatwoot.reply_calls == []
+    assert chatwoot.calls == [(322, "automation_paused")]
+    assert chatwoot.events == ["label:automation_paused"]
+    envelope = json.loads(next((tmp_path / ".work").glob("*.json")).read_text())
+    assert envelope["status"] == expected_work_status
+    if label_error is not None:
+        assert envelope["last_error_type"] == "RetryableChatwootWorkError"
 
 
 def test_cut_b_direct_medication_guidance_forces_durable_handoff(
@@ -4229,14 +4244,9 @@ def test_cut_b_direct_medication_guidance_forces_durable_handoff(
     assert response.status_code == 202
     assert len(supabase.handoff_calls) == 1
     assert supabase.handoff_calls[0]["commercial_case_id"] == "case-1"
-    assert chatwoot.reply_calls == [
-        {
-            "conversation_id": 323,
-            "trigger_message_id": 903,
-            "delivery_id": "clinical-handoff",
-            "content": safe_reply,
-        }
-    ]
+    assert chatwoot.reply_calls == []
+    assert chatwoot.calls == [(323, "automation_paused")]
+    assert chatwoot.events == ["label:automation_paused"]
 
 
 @pytest.mark.parametrize(

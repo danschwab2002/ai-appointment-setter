@@ -62,6 +62,10 @@ from bridge.messaging import (
     allowed_phone_from_jid,
 )
 from bridge.opt_out import detect_explicit_opt_out
+from bridge.operator_correlations import (
+    InvalidCorrelationEvidence,
+    build_unresolved_correlation,
+)
 from bridge.precheckout import PrecheckoutScope, parse_emulated_precheckout_submission
 from bridge.recovery_agent import RecoveryAgentClient
 from bridge.reply_splitter import (
@@ -267,6 +271,10 @@ class Settings:
     chatwoot_cut_b_scope_key: str | None = None
     chatwoot_cut_b_scope_version: int | None = None
     chatwoot_cut_b_agent_enabled: bool = False
+    operator_correlation_read_enabled: bool = False
+    operator_correlation_read_token: str | None = None
+    operator_correlation_tenant_ref: str | None = None
+    operator_correlation_funnel_ref: str | None = None
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -698,6 +706,19 @@ class Settings:
                 os.getenv("CHATWOOT_CUT_B_AGENT_ENABLED", "false").lower()
                 == "true"
             ),
+            operator_correlation_read_enabled=(
+                os.getenv("OPERATOR_CORRELATION_READ_ENABLED", "false").lower()
+                == "true"
+            ),
+            operator_correlation_read_token=(
+                os.getenv("OPERATOR_CORRELATION_READ_TOKEN", "").strip() or None
+            ),
+            operator_correlation_tenant_ref=(
+                os.getenv("OPERATOR_CORRELATION_TENANT_REF", "").strip() or None
+            ),
+            operator_correlation_funnel_ref=(
+                os.getenv("OPERATOR_CORRELATION_FUNNEL_REF", "").strip() or None
+            ),
         )
 
 
@@ -854,6 +875,20 @@ def create_app(
     recovery_agent_client: RecoveryAgentClient | None = None,
     message_sender: MessageSender | None = None,
 ) -> FastAPI:
+    if settings.operator_correlation_read_enabled and (
+        settings.operator_correlation_read_token is None
+        or len(settings.operator_correlation_read_token) < 32
+    ):
+        raise ValueError(
+            "OPERATOR_CORRELATION_READ_TOKEN must contain at least 32 characters"
+        )
+    if settings.operator_correlation_read_enabled and (
+        settings.operator_correlation_tenant_ref is None
+        or settings.operator_correlation_funnel_ref is None
+    ):
+        raise ValueError(
+            "operator correlation tenant and funnel scope must be configured"
+        )
     if settings.lead_precheckout_enabled and settings.lead_precheckout_secret is None:
         raise ValueError("LEAD_PRECHECKOUT_SECRET is required")
     if settings.lead_precheckout_max_age_seconds < 1:
@@ -1050,6 +1085,8 @@ def create_app(
             base_url=settings.supabase_base_url,
             service_role_key=settings.supabase_service_role_key,
         )
+    if settings.operator_correlation_read_enabled and shared_supabase is None:
+        raise ValueError("operator correlation reads require Supabase")
     first_touch_sender = message_sender
     if settings.precheckout_first_touch_enabled:
         canonical_phone = allowed_phone_from_jid(settings.allowed_jid)
@@ -1879,6 +1916,16 @@ def create_app(
                 getattr(handoff, "outcome", "unknown"),
                 getattr(handoff, "handoff_request_id", "unknown"),
             )
+            try:
+                await control_client.ensure_conversation_label(
+                    conversation_id=conversation_id,
+                    label="automation_paused",
+                )
+            except (httpx.HTTPError, ChatwootProtocolError) as exc:
+                raise RetryableChatwootWorkError(
+                    "handoff_automation_pause_not_confirmed"
+                ) from exc
+            return
         parts = (reply,)
         try:
             persisted_parts = await reply_manifest_reader.load_existing(
@@ -1954,7 +2001,6 @@ def create_app(
                     raise RuntimeError("invalid_chatwoot_reply_result")
         except ChatwootReplyDeliveryUnknownError as exc:
             raise RetryableChatwootWorkError("reply_delivery_unknown") from exc
-
     if chatwoot_inbox is not None:
         def inbound_debounce_key(payload: dict[str, object]) -> str | None:
             decision = classify_scoped_chatwoot_event(payload)
@@ -1979,6 +2025,98 @@ def create_app(
             debounce_seconds=settings.chatwoot_inbound_debounce_seconds,
         )
         app.state.chatwoot_worker = chatwoot_worker
+
+    if settings.operator_correlation_read_enabled:
+        operator_token = settings.operator_correlation_read_token
+        operator_tenant = settings.operator_correlation_tenant_ref
+        operator_funnel = settings.operator_correlation_funnel_ref
+        assert operator_token is not None
+        assert operator_tenant is not None
+        assert operator_funnel is not None
+        assert shared_supabase is not None
+
+        def require_operator_token(authorization: str | None) -> None:
+            expected = f"Bearer {operator_token}"
+            if authorization is None or not hmac.compare_digest(
+                authorization.encode("utf-8"), expected.encode("utf-8")
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="operator_authentication_required",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
+        @app.get("/internal/operator/correlations/unresolved")
+        async def list_unresolved_correlations(
+            limit: int = 20,
+            authorization: str | None = Header(default=None, alias="Authorization"),
+        ) -> dict[str, object]:
+            require_operator_token(authorization)
+            if limit < 1 or limit > 50:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="limit_out_of_range",
+                )
+            try:
+                raw_rows = (
+                    await shared_supabase.list_unresolved_purchase_intent_correlations(
+                        tenant_ref=operator_tenant,
+                        funnel_ref=operator_funnel,
+                        limit=limit
+                    )
+                )
+                cases = [
+                    build_unresolved_correlation(row, include_candidates=False)
+                    for row in raw_rows
+                ]
+            except (SupabaseError, InvalidCorrelationEvidence) as exc:
+                logger.warning(
+                    "operator_correlation_list_failed error_type=%s",
+                    type(exc).__name__,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="operator_correlation_read_unavailable",
+                ) from exc
+            return {"count": len(cases), "cases": cases}
+
+        @app.get("/internal/operator/correlations/unresolved/{case_id}")
+        async def get_unresolved_correlation(
+            case_id: str,
+            authorization: str | None = Header(default=None, alias="Authorization"),
+        ) -> dict[str, object]:
+            require_operator_token(authorization)
+            try:
+                normalized_case_id = str(uuid.UUID(case_id))
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="invalid_case_id",
+                ) from exc
+            try:
+                raw = await shared_supabase.get_unresolved_purchase_intent_correlation(
+                    tenant_ref=operator_tenant,
+                    funnel_ref=operator_funnel,
+                    webhook_event_id=normalized_case_id
+                )
+                if raw is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="unresolved_correlation_not_found",
+                    )
+                case = build_unresolved_correlation(raw, include_candidates=True)
+            except HTTPException:
+                raise
+            except (SupabaseError, InvalidCorrelationEvidence) as exc:
+                logger.warning(
+                    "operator_correlation_get_failed error_type=%s",
+                    type(exc).__name__,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="operator_correlation_read_unavailable",
+                ) from exc
+            return {"case": case}
 
     @app.get("/health")
     async def health() -> dict[str, str]:
