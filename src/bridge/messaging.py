@@ -198,20 +198,31 @@ class ChatwootMessageSender:
         e164 = _to_e164(normalized)
 
         try:
-            contact_id = await self._chatwoot.find_contact_by_phone(
+            contact_binding = await self._chatwoot.find_contact_inbox_by_phone(
                 inbox_id=self._inbox_id,
                 phone_number=e164,
             )
-            if contact_id is None:
-                contact_id = await self._chatwoot.create_contact(
+            if contact_binding is None:
+                created_contact_id = await self._chatwoot.create_contact(
                     inbox_id=self._inbox_id,
                     name=buyer_name,
                     phone_number=e164,
                     email=buyer_email,
                 )
+                contact_binding = await self._chatwoot.find_contact_inbox_by_phone(
+                    inbox_id=self._inbox_id,
+                    phone_number=e164,
+                )
+                if (
+                    contact_binding is None
+                    or contact_binding[0] != created_contact_id
+                ):
+                    raise ChatwootProtocolError("contact_inbox_binding_missing")
+            contact_id, source_id = contact_binding
             conversation_id = await self._chatwoot.create_conversation(
                 inbox_id=self._inbox_id,
                 contact_id=contact_id,
+                source_id=source_id,
             )
             result = await self._chatwoot.send_first_message(
                 conversation_id=conversation_id,

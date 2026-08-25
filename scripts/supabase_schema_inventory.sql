@@ -1008,6 +1008,118 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         5,
         'johanna_v1_1_single_budget_template_command_closed_acl'
+    union all
+    select
+        '20260825000300',
+        '20260825000300_reconcile_johanna_abandonment_one_shot.sql',
+        (to_regprocedure(
+            'public.reconcile_johanna_abandonment_one_shot(text,bigint,bigint)'
+        ) is not null)::int
+        + coalesce((
+            select (
+                prosecdef
+                and array_to_string(proconfig, ',') =
+                    'search_path=pg_catalog, public, pg_temp'
+            )::int
+            from functions
+            where oid = to_regprocedure(
+                'public.reconcile_johanna_abandonment_one_shot(text,bigint,bigint)'
+            )
+        ), 0)
+        + (
+            has_function_privilege(
+                'service_role',
+                'public.reconcile_johanna_abandonment_one_shot(text,bigint,bigint)',
+                'execute'
+            )
+            and not has_function_privilege(
+                'anon',
+                'public.reconcile_johanna_abandonment_one_shot(text,bigint,bigint)',
+                'execute'
+            )
+            and not has_function_privilege(
+                'authenticated',
+                'public.reconcile_johanna_abandonment_one_shot(text,bigint,bigint)',
+                'execute'
+            )
+        )::int,
+        3,
+        'reconcile_observed_one_shot_without_resend'
+    union all
+    select
+        '20260825000400',
+        '20260825000400_johanna_waba_single_touch_policy.sql',
+        exists (
+            select 1
+            from public.followup_policy_versions
+            where policy_key = 'johanna-abandonment-single-touch-e2e'
+              and version = 2
+              and status = 'published'
+              and purpose = 'cart_recovery'
+              and max_automatic_messages = 1
+              and steps =
+                  '[{"step_key":"first_contact","mode":"approved_template"}]'::jsonb
+        )::int
+        + exists (
+            select 1
+            from public.pilot_scope_versions
+            where scope_key = 'johanna-abandonment-template-e2e'
+              and version = 2
+              and status = 'published'
+              and policy_key = 'johanna-abandonment-single-touch-e2e'
+              and policy_version = 2
+              and channel_provider = 'waba'
+              and chatwoot_account_id = 1
+              and chatwoot_inbox_id = 9
+              and source_event_type = 'PURCHASE_OUT_OF_SHOPPING_CART'
+              and external_product_id = '8104005'
+              and offer_code = 'bxjge6zq'
+              and max_cohort_contacts = 1
+              and max_outbound_request_starts_total = 1
+              and max_outbound_request_starts_per_day = 1
+        )::int
+        + exists (
+            select 1
+            from public.pilot_runtime_controls
+            where scope_key = 'johanna-abandonment-template-e2e'
+              and scope_version = 2
+              and runtime_state = 'inactive'
+              and generation = 1
+        )::int
+        + (to_regprocedure(
+            'public.begin_johanna_abandonment_hotmart_auto(text,uuid,uuid,text,bigint,bigint,text,integer,bigint)'
+        ) is not null)::int
+        + coalesce((
+            select (
+                prosecdef
+                and proconfig @> array[
+                    'search_path=pg_catalog, public, pg_temp'
+                ]
+            )::int
+            from functions
+            where oid = to_regprocedure(
+                'public.begin_johanna_abandonment_hotmart_auto(text,uuid,uuid,text,bigint,bigint,text,integer,bigint)'
+            )
+        ), 0)
+        + (
+            has_function_privilege(
+                'service_role',
+                'public.begin_johanna_abandonment_hotmart_auto(text,uuid,uuid,text,bigint,bigint,text,integer,bigint)',
+                'execute'
+            )
+            and not has_function_privilege(
+                'anon',
+                'public.begin_johanna_abandonment_hotmart_auto(text,uuid,uuid,text,bigint,bigint,text,integer,bigint)',
+                'execute'
+            )
+            and not has_function_privilege(
+                'authenticated',
+                'public.begin_johanna_abandonment_hotmart_auto(text,uuid,uuid,text,bigint,bigint,text,integer,bigint)',
+                'execute'
+            )
+        )::int,
+        6,
+        'johanna_waba_policy_scope_runtime_and_hotmart_auto_v2'
 )
 select
     version,

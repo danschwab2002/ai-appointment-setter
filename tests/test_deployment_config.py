@@ -227,12 +227,15 @@ def test_deployment_declares_johanna_one_shot_default_off() -> None:
     for variable in (
         "JOHANNA_ABANDONMENT_ONE_SHOT_ENABLED",
         "JOHANNA_ABANDONMENT_ONE_SHOT_TOKEN",
+        "JOHANNA_ABANDONMENT_HOTMART_AUTO_ENABLED",
     ):
         assert f"{variable}=" in env_example
         assert f"{variable}:" in compose
 
     assert "JOHANNA_ABANDONMENT_ONE_SHOT_ENABLED=false" in env_example
     assert "${JOHANNA_ABANDONMENT_ONE_SHOT_ENABLED:-false}" in compose
+    assert "JOHANNA_ABANDONMENT_HOTMART_AUTO_ENABLED=false" in env_example
+    assert "${JOHANNA_ABANDONMENT_HOTMART_AUTO_ENABLED:-false}" in compose
 
 
 def test_deployment_uses_supabase_service_role_only(

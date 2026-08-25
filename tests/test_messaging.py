@@ -81,7 +81,7 @@ def test_find_contact_by_phone_returns_exact_inbox_match() -> None:
                         "id": 41,
                         "phone_number": "+553****9999",
                         "blocked": False,
-                        "contact_inboxes": [{"inbox": {"id": 1}}],
+                        "contact_inboxes": [{"source_id": "source-55", "inbox": {"id": 1}}],
                     },
                 ],
             },
@@ -96,6 +96,68 @@ def test_find_contact_by_phone_returns_exact_inbox_match() -> None:
 
     assert contact_id == 41
     assert transport.query_params[0] == {"q": "+553****9999"}
+
+
+def test_find_contact_inbox_by_phone_returns_waba_source_id() -> None:
+    transport = MockTransport()
+    transport.set(
+        "/api/v1/accounts/1/contacts/search",
+        httpx.Response(
+            200,
+            json={
+                "payload": [
+                    {
+                        "id": 41,
+                        "phone_number": "+553****9999",
+                        "blocked": False,
+                        "contact_inboxes": [
+                            {"source_id": "source-41", "inbox": {"id": 1}}
+                        ],
+                    },
+                ],
+            },
+            request=httpx.Request("GET", "https://chatwoot.test"),
+        ),
+    )
+
+    binding = _run(_chatwoot(transport).find_contact_inbox_by_phone(
+        inbox_id=1,
+        phone_number="+553****9999",
+    ))
+
+    assert binding == (41, "source-41")
+
+
+def test_find_contact_inbox_by_phone_rejects_conflicting_source_ids() -> None:
+    transport = MockTransport()
+    transport.set(
+        "/api/v1/accounts/1/contacts/search",
+        httpx.Response(
+            200,
+            json={
+                "payload": [
+                    {
+                        "id": 42,
+                        "phone_number": "+5531999999999",
+                        "blocked": False,
+                        "contact_inboxes": [
+                            {"source_id": "source-a", "inbox": {"id": 1}},
+                            {"source_id": "source-b", "inbox": {"id": 1}},
+                        ],
+                    }
+                ]
+            },
+            request=httpx.Request("GET", "https://chatwoot.test"),
+        ),
+    )
+
+    with pytest.raises(ChatwootProtocolError, match="ambiguous_contact_inbox_source"):
+        _run(
+            _chatwoot(transport).find_contact_inbox_by_phone(
+                inbox_id=1,
+                phone_number="+5531999999999",
+            )
+        )
 
 
 def test_find_contact_by_phone_returns_none_for_empty_result() -> None:
@@ -129,7 +191,7 @@ def test_find_contact_by_phone_rejects_blocked_match() -> None:
                         "id": 41,
                         "phone_number": "+553****9999",
                         "blocked": True,
-                        "contact_inboxes": [{"inbox": {"id": 1}}],
+                        "contact_inboxes": [{"source_id": "source-55", "inbox": {"id": 1}}],
                     },
                 ],
             },
@@ -156,7 +218,7 @@ def test_find_contact_by_phone_rejects_non_positive_id() -> None:
                         "id": 0,
                         "phone_number": "+553****9999",
                         "blocked": False,
-                        "contact_inboxes": [{"inbox": {"id": 1}}],
+                        "contact_inboxes": [{"source_id": "source-55", "inbox": {"id": 1}}],
                     },
                 ],
             },
@@ -201,7 +263,7 @@ def test_find_contact_by_phone_rejects_distinct_exact_matches() -> None:
                         "id": 41,
                         "phone_number": "+553****9999",
                         "blocked": False,
-                        "contact_inboxes": [{"inbox": {"id": 1}}],
+                        "contact_inboxes": [{"source_id": "source-55", "inbox": {"id": 1}}],
                     },
                     {
                         "id": 42,
@@ -326,6 +388,7 @@ def test_create_conversation_returns_conversation_id() -> None:
     conv_id = _run(client.create_conversation(
         inbox_id=1,
         contact_id=42,
+        source_id="source-42",
     ))
     assert conv_id == 123
     method, path, body = transport.requests[0]
@@ -333,6 +396,7 @@ def test_create_conversation_returns_conversation_id() -> None:
     req_body = json.loads(body)
     assert req_body["inbox_id"] == 1
     assert req_body["contact_id"] == 42
+    assert req_body["source_id"] == "source-42"
 
 
 # ── ChatwootClient.send_first_message ────────────────────────────────
@@ -551,6 +615,25 @@ def test_chatwoot_sender_sends_waba_first_touch_template() -> None:
             request=httpx.Request("GET", "https://chatwoot.test"),
         ),
     )
+    transport.set(
+        "/api/v1/accounts/1/contacts/search",
+        httpx.Response(
+            200,
+            json={
+                "payload": [
+                    {
+                        "id": 55,
+                        "phone_number": "+5531999999999",
+                        "blocked": False,
+                        "contact_inboxes": [
+                            {"source_id": "source-55", "inbox": {"id": 1}}
+                        ],
+                    }
+                ]
+            },
+            request=httpx.Request("GET", "https://chatwoot.test"),
+        ),
+    )
     # create_contact
     transport.set(
         "/api/v1/accounts/1/contacts",
@@ -613,6 +696,8 @@ def test_chatwoot_sender_sends_waba_first_touch_template() -> None:
     assert result.status == "sent"
     assert result.conversation_id == 200
     assert result.message_id == 888
+    conversation_body = json.loads(transport.requests[-2][2])
+    assert conversation_body["source_id"] == "source-55"
     body = json.loads(transport.requests[-1][2])
     assert body["template_params"] == {
         "name": "cart_recovery_first",
@@ -753,7 +838,7 @@ def test_evolution_sender_reuses_existing_contact() -> None:
                         "id": 55,
                         "phone_number": "+15555550100",
                         "blocked": False,
-                        "contact_inboxes": [{"inbox": {"id": 1}}],
+                        "contact_inboxes": [{"source_id": "source-55", "inbox": {"id": 1}}],
                     },
                 ],
             },
@@ -806,6 +891,8 @@ def test_evolution_sender_reuses_existing_contact() -> None:
         method == "POST" and path == "/api/v1/accounts/1/contacts"
         for method, path, _ in transport.requests
     )
+    conversation_body = json.loads(transport.requests[1][2])
+    assert conversation_body["source_id"] == "source-55"
     body = json.loads(transport.requests[-1][2])
     assert "template_params" not in body
 
