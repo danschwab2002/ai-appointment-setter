@@ -160,6 +160,41 @@ def test_find_contact_inbox_by_phone_rejects_conflicting_source_ids() -> None:
         )
 
 
+@pytest.mark.parametrize("malformed_source_id", [None, "", 42])
+def test_find_contact_inbox_by_phone_rejects_malformed_duplicate_source_id(
+    malformed_source_id: object,
+) -> None:
+    transport = MockTransport()
+    transport.set(
+        "/api/v1/accounts/1/contacts/search",
+        httpx.Response(
+            200,
+            json={
+                "payload": [
+                    {
+                        "id": 42,
+                        "phone_number": "+553****9999",
+                        "blocked": False,
+                        "contact_inboxes": [
+                            {"source_id": "source-a", "inbox": {"id": 1}},
+                            {"source_id": malformed_source_id, "inbox": {"id": 1}},
+                        ],
+                    }
+                ]
+            },
+            request=httpx.Request("GET", "https://chatwoot.test"),
+        ),
+    )
+
+    with pytest.raises(ChatwootProtocolError, match="invalid_contact_inbox_source"):
+        _run(
+            _chatwoot(transport).find_contact_inbox_by_phone(
+                inbox_id=1,
+                phone_number="+553****9999",
+            )
+        )
+
+
 def test_find_contact_by_phone_returns_none_for_empty_result() -> None:
     transport = MockTransport()
     transport.set(
