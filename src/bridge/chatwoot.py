@@ -1324,6 +1324,10 @@ class ChatwootClient:
                 linked_inbox_ids.add(linked_id)
                 if linked_id == inbox_id:
                     source_id = contact_inbox.get("source_id")
+                    if require_source_id and (
+                        not isinstance(source_id, str) or not source_id.strip()
+                    ):
+                        raise ChatwootProtocolError("invalid_contact_inbox_source")
                     if isinstance(source_id, str) and source_id:
                         linked_source_ids.add(source_id)
             if len(linked_source_ids) > 1:
