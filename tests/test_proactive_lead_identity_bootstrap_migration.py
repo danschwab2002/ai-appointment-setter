@@ -73,4 +73,9 @@ def test_bootstrap_rpc_is_service_role_only() -> None:
     assert "security definer" in sql
     assert "set search_path = pg_catalog, public, pg_temp" in sql
     assert "revoke all on function public.bootstrap_proactive_lead_identity" in sql
+    assert "if exists (select 1 from pg_roles where rolname = 'anon')" in sql
+    assert "if exists (select 1 from pg_roles where rolname = 'authenticated')" in sql
+    assert ") from anon, authenticated;" not in sql
+    assert "revoke all on function public.protect_proactive_lead_identity_bootstrap_command()" in sql
+    assert "from service_role" in sql
     assert "grant execute on function public.bootstrap_proactive_lead_identity" in sql

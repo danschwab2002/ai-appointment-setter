@@ -303,14 +303,30 @@ revoke all on table public.proactive_lead_bootstrap_targets from public;
 revoke all on function public.bootstrap_proactive_lead_identity(
     text, uuid, text, integer, bigint, text, text
 ) from public;
-
-revoke all on function public.bootstrap_proactive_lead_identity(
-    text, uuid, text, integer, bigint, text, text
-) from anon, authenticated;
+revoke all on function public.protect_proactive_lead_identity_bootstrap_command()
+from public;
 
 do $roles$
 begin
+    if exists (select 1 from pg_roles where rolname = 'anon') then
+        revoke all on function public.bootstrap_proactive_lead_identity(
+            text, uuid, text, integer, bigint, text, text
+        ) from anon;
+        revoke all on function public.protect_proactive_lead_identity_bootstrap_command()
+        from anon;
+    end if;
+
+    if exists (select 1 from pg_roles where rolname = 'authenticated') then
+        revoke all on function public.bootstrap_proactive_lead_identity(
+            text, uuid, text, integer, bigint, text, text
+        ) from authenticated;
+        revoke all on function public.protect_proactive_lead_identity_bootstrap_command()
+        from authenticated;
+    end if;
+
     if exists (select 1 from pg_roles where rolname = 'service_role') then
+        revoke all on function public.protect_proactive_lead_identity_bootstrap_command()
+        from service_role;
         grant execute on function public.bootstrap_proactive_lead_identity(
             text, uuid, text, integer, bigint, text, text
         ) to service_role;
