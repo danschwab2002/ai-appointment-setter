@@ -68,6 +68,13 @@ from bridge.operator_correlations import (
     InvalidCorrelationEvidence,
     build_unresolved_correlation,
 )
+from bridge.operator_correlation_resolutions import (
+    InvalidCorrelationResolution,
+    build_resolution_command,
+    build_resolution_result,
+    validate_confirm_resolution,
+    validate_prepare_resolution,
+)
 from bridge.precheckout import PrecheckoutScope, parse_emulated_precheckout_submission
 from bridge.recovery_agent import RecoveryAgentClient
 from bridge.reply_splitter import (
@@ -77,7 +84,12 @@ from bridge.reply_splitter import (
     validate_reply_parts,
 )
 from bridge.security import verify_chatwoot_signature
-from bridge.supabase import PilotBoundaryConfig, SupabaseClient, SupabaseError
+from bridge.supabase import (
+    OperatorCorrelationResolutionError,
+    PilotBoundaryConfig,
+    SupabaseClient,
+    SupabaseError,
+)
 from bridge.worker import (
     DurableDispatcher,
     HotmartAbandonmentTimerWorker,
@@ -305,6 +317,9 @@ class Settings:
     operator_correlation_read_token: str | None = None
     operator_correlation_tenant_ref: str | None = None
     operator_correlation_funnel_ref: str | None = None
+    operator_correlation_write_enabled: bool = False
+    operator_correlation_write_token: str | None = None
+    operator_correlation_actor_ref: str | None = None
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -809,6 +824,16 @@ class Settings:
             operator_correlation_funnel_ref=(
                 os.getenv("OPERATOR_CORRELATION_FUNNEL_REF", "").strip() or None
             ),
+            operator_correlation_write_enabled=(
+                os.getenv("OPERATOR_CORRELATION_WRITE_ENABLED", "false").lower()
+                == "true"
+            ),
+            operator_correlation_write_token=(
+                os.getenv("OPERATOR_CORRELATION_WRITE_TOKEN", "").strip() or None
+            ),
+            operator_correlation_actor_ref=(
+                os.getenv("OPERATOR_CORRELATION_ACTOR_REF", "").strip() or None
+            ),
         )
 
 
@@ -1016,6 +1041,25 @@ def create_app(
         raise ValueError(
             "operator correlation tenant and funnel scope must be configured"
         )
+    if settings.operator_correlation_write_enabled and (
+        not settings.operator_correlation_read_enabled
+        or settings.operator_correlation_write_token is None
+        or len(settings.operator_correlation_write_token) < 32
+        or settings.operator_correlation_actor_ref is None
+        or re.fullmatch(
+            r"[a-z0-9][a-z0-9._-]{1,63}",
+            settings.operator_correlation_actor_ref,
+        )
+        is None
+    ):
+        raise ValueError(
+            "operator correlation writes require reads, a write token, and actor ref"
+        )
+    if settings.operator_correlation_write_enabled and hmac.compare_digest(
+        settings.operator_correlation_write_token or "",
+        settings.operator_correlation_read_token or "",
+    ):
+        raise ValueError("operator correlation read and write tokens must differ")
     if settings.lead_precheckout_enabled and settings.lead_precheckout_secret is None:
         raise ValueError("LEAD_PRECHECKOUT_SECRET is required")
     if settings.lead_precheckout_max_age_seconds < 1:
@@ -1217,8 +1261,11 @@ def create_app(
             base_url=settings.supabase_base_url,
             service_role_key=settings.supabase_service_role_key,
         )
-    if settings.operator_correlation_read_enabled and shared_supabase is None:
-        raise ValueError("operator correlation reads require Supabase")
+    if (
+        settings.operator_correlation_read_enabled
+        or settings.operator_correlation_write_enabled
+    ) and shared_supabase is None:
+        raise ValueError("operator correlation access requires Supabase")
     first_touch_sender = message_sender
     if settings.precheckout_first_touch_enabled:
         canonical_phone = allowed_phone_from_jid(settings.allowed_jid)
@@ -2419,6 +2466,120 @@ def create_app(
                     detail="operator_correlation_read_unavailable",
                 ) from exc
             return {"case": case}
+
+    if settings.operator_correlation_write_enabled:
+        operator_write_token = settings.operator_correlation_write_token
+        operator_tenant = settings.operator_correlation_tenant_ref
+        operator_funnel = settings.operator_correlation_funnel_ref
+        operator_actor = settings.operator_correlation_actor_ref
+        assert operator_write_token is not None
+        assert operator_tenant is not None
+        assert operator_funnel is not None
+        assert operator_actor is not None
+        assert shared_supabase is not None
+
+        def require_operator_write_token(authorization: str | None) -> None:
+            expected = f"Bearer {operator_write_token}"
+            if authorization is None or not hmac.compare_digest(
+                authorization.encode("utf-8"), expected.encode("utf-8")
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="operator_write_authentication_required",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
+        def operator_resolution_domain_error(
+            exc: OperatorCorrelationResolutionError,
+        ) -> HTTPException:
+            status_by_reason = {
+                "invalid_operator_correlation_resolution": (
+                    status.HTTP_422_UNPROCESSABLE_CONTENT
+                ),
+                "operator_correlation_case_not_found": status.HTTP_404_NOT_FOUND,
+                "operator_correlation_stale_evidence": status.HTTP_409_CONFLICT,
+                "operator_correlation_command_expired": status.HTTP_409_CONFLICT,
+                "operator_correlation_already_resolved": status.HTTP_409_CONFLICT,
+                "operator_correlation_idempotency_conflict": status.HTTP_409_CONFLICT,
+            }
+            return HTTPException(
+                status_code=status_by_reason[exc.reason],
+                detail=exc.reason,
+            )
+
+        @app.post("/internal/operator/correlations/resolutions/prepare")
+        async def prepare_operator_correlation_resolution(
+            payload: dict[str, object],
+            authorization: str | None = Header(default=None, alias="Authorization"),
+        ) -> dict[str, object]:
+            require_operator_write_token(authorization)
+            try:
+                prepared = validate_prepare_resolution(payload)
+                raw = await shared_supabase.prepare_operator_correlation_resolution(
+                    tenant_ref=operator_tenant,
+                    funnel_ref=operator_funnel,
+                    actor_ref=operator_actor,
+                    idempotency_key=prepared["idempotency_key"],
+                    webhook_event_id=prepared["case_id"],
+                    action=prepared["action"],
+                    selected_purchase_intent_id=prepared["candidate_id"],
+                    verification_basis=prepared["verification_basis"],
+                )
+                command = build_resolution_command(raw)
+            except InvalidCorrelationResolution as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail="invalid_operator_correlation_resolution",
+                ) from exc
+            except OperatorCorrelationResolutionError as exc:
+                raise operator_resolution_domain_error(exc) from exc
+            except SupabaseError as exc:
+                logger.warning(
+                    "operator_correlation_prepare_failed error_type=%s",
+                    type(exc).__name__,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="operator_correlation_write_unavailable",
+                ) from exc
+            return {"command": command}
+
+        @app.post("/internal/operator/correlations/resolutions/confirm")
+        async def confirm_operator_correlation_resolution(
+            payload: dict[str, object],
+            authorization: str | None = Header(default=None, alias="Authorization"),
+        ) -> dict[str, object]:
+            require_operator_write_token(authorization)
+            try:
+                confirmation = validate_confirm_resolution(payload)
+                raw = await shared_supabase.confirm_operator_correlation_resolution(
+                    tenant_ref=operator_tenant,
+                    funnel_ref=operator_funnel,
+                    actor_ref=operator_actor,
+                    command_id=confirmation["command_id"],
+                    expected_action=confirmation["expected_action"],
+                    expected_purchase_intent_id=confirmation[
+                        "expected_candidate_id"
+                    ],
+                )
+                resolution = build_resolution_result(raw)
+            except InvalidCorrelationResolution as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail="invalid_operator_correlation_resolution",
+                ) from exc
+            except OperatorCorrelationResolutionError as exc:
+                raise operator_resolution_domain_error(exc) from exc
+            except SupabaseError as exc:
+                logger.warning(
+                    "operator_correlation_confirm_failed error_type=%s",
+                    type(exc).__name__,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="operator_correlation_write_unavailable",
+                ) from exc
+            return {"resolution": resolution}
 
     @app.get("/health")
     async def health() -> dict[str, str]:

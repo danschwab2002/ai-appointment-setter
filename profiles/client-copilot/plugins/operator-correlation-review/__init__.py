@@ -1,7 +1,18 @@
 """Hermes plugin registration for operator correlation review."""
 
-from .schemas import GET_UNRESOLVED_CORRELATION, LIST_UNRESOLVED_CORRELATIONS
-from .tools import get_unresolved_correlation, list_unresolved_correlations
+from .schemas import (
+    CONFIRM_CORRELATION_RESOLUTION,
+    GET_UNRESOLVED_CORRELATION,
+    LIST_UNRESOLVED_CORRELATIONS,
+    PREPARE_CORRELATION_RESOLUTION,
+)
+from .tools import (
+    confirm_correlation_resolution,
+    get_unresolved_correlation,
+    list_unresolved_correlations,
+    prepare_correlation_resolution,
+    require_resolution_confirmation,
+)
 
 
 def register(ctx):
@@ -17,3 +28,16 @@ def register(ctx):
         schema=GET_UNRESOLVED_CORRELATION,
         handler=get_unresolved_correlation,
     )
+    ctx.register_tool(
+        name="prepare_correlation_resolution",
+        toolset="operator_correlation_review",
+        schema=PREPARE_CORRELATION_RESOLUTION,
+        handler=prepare_correlation_resolution,
+    )
+    ctx.register_tool(
+        name="confirm_correlation_resolution",
+        toolset="operator_correlation_review",
+        schema=CONFIRM_CORRELATION_RESOLUTION,
+        handler=confirm_correlation_resolution,
+    )
+    ctx.register_hook("pre_tool_call", require_resolution_confirmation)

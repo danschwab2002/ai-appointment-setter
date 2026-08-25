@@ -12,6 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 PROFILE = ROOT / "profiles" / "client-copilot"
 PLUGIN = PROFILE / "plugins" / "operator-correlation-review"
 INSTALLER = ROOT / "scripts" / "install_client_copilot_profile.py"
+COMMAND_ID = "55555555-5555-4555-8555-555555555555"
+IDEMPOTENCY_KEY = "77777777-7777-4777-8777-777777777777"
 
 
 def _load_plugin_tools() -> ModuleType:
@@ -34,10 +36,15 @@ def _load_installer() -> ModuleType:
 
 def test_client_copilot_package_exposes_only_correlation_review_toolset() -> None:
     manifest = json.loads((PROFILE / "manifest.json").read_text(encoding="utf-8"))
+    distribution = yaml.safe_load(
+        (PROFILE / "distribution.yaml").read_text(encoding="utf-8")
+    )
     config = yaml.safe_load((PROFILE / "config.yaml").read_text(encoding="utf-8"))
     plugin = yaml.safe_load((PLUGIN / "plugin.yaml").read_text(encoding="utf-8"))
 
     assert manifest["profile_name"] == "client-copilot"
+    assert distribution["package_version"] == manifest["package_version"]
+    assert plugin["version"] == manifest["package_version"]
     assert manifest["package_status"] == "candidate"
     assert manifest["activation_capability"] is False
     assert manifest["session_launch"]["toolsets"] == [
@@ -52,11 +59,29 @@ def test_client_copilot_package_exposes_only_correlation_review_toolset() -> Non
     assert plugin["provides_tools"] == [
         "list_unresolved_correlations",
         "get_unresolved_correlation",
+        "prepare_correlation_resolution",
+        "confirm_correlation_resolution",
     ]
+    assert plugin["provides_hooks"] == ["pre_tool_call"]
     assert plugin["requires_env"] == [
         "OPERATOR_CORRELATION_API_URL",
         "OPERATOR_CORRELATION_API_TOKEN",
+        "OPERATOR_CORRELATION_WRITE_TOKEN",
     ]
+    assert config["approvals"]["mode"] == "manual"
+    assert "register_hook" in (PLUGIN / "__init__.py").read_text(encoding="utf-8")
+
+
+def test_resolution_contract_keeps_actor_out_of_profile_configuration() -> None:
+    contract = (
+        ROOT / "docs/contracts/operator-correlation-resolution-v1.md"
+    ).read_text(encoding="utf-8")
+    profile_block = contract.split("Profile:", 1)[1].split("##", 1)[0]
+    profile_environment = profile_block.split("```text", 1)[1].split("```", 1)[0]
+
+    assert "OPERATOR_CORRELATION_WRITE_TOKEN" in profile_environment
+    assert "OPERATOR_CORRELATION_API_WRITE_TOKEN" not in profile_environment
+    assert "OPERATOR_CORRELATION_ACTOR_REF" not in profile_environment
 
 
 def test_plugin_list_handler_calls_only_bounded_read_endpoint(
@@ -125,6 +150,87 @@ def test_plugin_detail_handler_rejects_non_uuid_without_network(
 
     assert result == {"error": "invalid_case_id"}
     assert called is False
+
+
+def test_plugin_prepare_handler_uses_separate_write_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tools = _load_plugin_tools()
+    monkeypatch.setenv(
+        "OPERATOR_CORRELATION_API_URL", "https://bridge.example.test"
+    )
+    monkeypatch.setenv("OPERATOR_CORRELATION_WRITE_TOKEN", "w" * 32)
+    seen: dict[str, object] = {}
+
+    def fake_post(path: str, payload: dict[str, object]) -> dict[str, object]:
+        seen.update({"path": path, "payload": payload})
+        return {"command": {"command_id": COMMAND_ID}}
+
+    monkeypatch.setattr(tools, "_post_json", fake_post)
+    result = json.loads(
+        tools.prepare_correlation_resolution(
+            {
+                "case_id": "11111111-1111-4111-8111-111111111111",
+                "idempotency_key": IDEMPOTENCY_KEY,
+                "action": "resolve_with_candidate",
+                "candidate_id": "33333333-3333-4333-8333-333333333333",
+                "verification_basis": "operator_source_record",
+            }
+        )
+    )
+
+    assert result == {"command": {"command_id": COMMAND_ID}}
+    assert seen == {
+        "path": "/internal/operator/correlations/resolutions/prepare",
+        "payload": {
+            "case_id": "11111111-1111-4111-8111-111111111111",
+            "idempotency_key": IDEMPOTENCY_KEY,
+            "action": "resolve_with_candidate",
+            "candidate_id": "33333333-3333-4333-8333-333333333333",
+            "verification_basis": "operator_source_record",
+        },
+    }
+
+
+def test_confirm_tool_is_always_elevated_to_human_approval() -> None:
+    tools = _load_plugin_tools()
+
+    directive = tools.require_resolution_confirmation(
+        "confirm_correlation_resolution",
+        {
+            "command_id": COMMAND_ID,
+            "expected_action": "resolve_with_candidate",
+            "expected_candidate_id": "33333333-3333-4333-8333-333333333333",
+        },
+    )
+
+    assert directive == {
+        "action": "approve",
+        "message": "Confirmar la resolución manual preparada",
+        "rule_key": f"operator-correlation-resolution:{COMMAND_ID}",
+    }
+    assert tools.require_resolution_confirmation(
+        "get_unresolved_correlation", {"case_id": COMMAND_ID}
+    ) is None
+
+
+def test_confirm_hook_denies_malformed_confirmation() -> None:
+    tools = _load_plugin_tools()
+
+    directive = tools.require_resolution_confirmation(
+        "confirm_correlation_resolution",
+        {
+            "command_id": COMMAND_ID,
+            "expected_action": "close_without_match",
+            "expected_candidate_id": "33333333-3333-4333-8333-333333333333",
+        },
+    )
+
+    assert directive == {
+        "action": "deny",
+        "message": "Confirmación de resolución inválida",
+        "rule_key": "operator-correlation-resolution:invalid",
+    }
 
 
 def test_plugin_refuses_redirects_before_reusing_authorization() -> None:

@@ -4,6 +4,10 @@ MIGRATION = (
     Path(__file__).parents[1]
     / "supabase/migrations/20260824000100_operator_correlation_review_read.sql"
 )
+RESOLUTION_MIGRATION = (
+    Path(__file__).parents[1]
+    / "supabase/migrations/20260824000200_operator_correlation_manual_resolution.sql"
+)
 
 
 def _sql() -> str:
@@ -44,6 +48,51 @@ def test_operator_correlation_read_rpcs_are_service_role_only() -> None:
     signatures = (
         "public.list_operator_unresolved_correlations(text, text, integer, uuid)",
         "public.get_operator_unresolved_correlation(text, text, uuid)",
+    )
+    for signature in signatures:
+        for role in ("public", "anon", "authenticated"):
+            assert f"revoke execute on function {signature} from {role}" in compact
+        assert f"grant execute on function {signature} to service_role" in compact
+
+
+def test_manual_resolution_is_separate_immutable_and_effect_free() -> None:
+    sql = RESOLUTION_MIGRATION.read_text(encoding="utf-8").lower()
+    compact = " ".join(sql.split())
+
+    assert "create table public.operator_correlation_resolution_commands" in sql
+    assert "create table public.operator_correlation_resolutions" in sql
+    assert "create or replace function public.prepare_operator_correlation_resolution" in sql
+    assert "create or replace function public.confirm_operator_correlation_resolution" in sql
+    assert compact.count("security definer") == 3
+    assert compact.count("set search_path = pg_catalog, public, pg_temp") >= 3
+    assert "candidate_snapshot jsonb not null" in sql
+    assert "idempotency_key uuid not null unique" in sql
+    assert "request_fingerprint jsonb not null" in sql
+    assert "operator_correlation_idempotency_conflict" in sql
+    assert "order by intent.id for share of intent" in compact
+    assert "unique (webhook_event_id)" in sql
+    assert "operator_correlation_resolution_rows_are_immutable" in sql
+    assert "validate_operator_correlation_resolution_command_insert" in sql
+    assert "validate_operator_correlation_command_before_insert" in sql
+    assert "operator_correlation_resolution_command_invalid" in sql
+    assert "not exists" in sql
+    assert "public.operator_correlation_resolutions" in sql
+    for forbidden_effect in (
+        "update public.purchase_intents",
+        "insert into public.hotmart_abandonment_reevaluations",
+        "insert into public.followup_actions",
+        "activation_authorized = true",
+    ):
+        assert forbidden_effect not in compact
+
+
+def test_manual_resolution_rpcs_are_service_role_only() -> None:
+    compact = " ".join(
+        RESOLUTION_MIGRATION.read_text(encoding="utf-8").lower().split()
+    )
+    signatures = (
+        "public.prepare_operator_correlation_resolution(text, text, text, uuid, text, uuid, text, uuid)",
+        "public.confirm_operator_correlation_resolution(text, text, text, uuid, text, uuid)",
     )
     for signature in signatures:
         for role in ("public", "anon", "authenticated"):

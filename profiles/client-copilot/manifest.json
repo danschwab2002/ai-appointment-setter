@@ -1,6 +1,6 @@
 {
   "profile_name": "client-copilot",
-  "package_version": "0.1.0",
+  "package_version": "0.2.0",
   "package_status": "candidate",
   "bundled_skills": false,
   "memory_seed": false,
