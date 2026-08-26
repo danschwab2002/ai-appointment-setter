@@ -1,6 +1,6 @@
 # Contrato V1 — handoff humano ejecutable
 
-- **Estado:** Implementado en el árbol; no desplegado
+- **Estado:** Handoff V1 desplegado; guard de replay pausado implementado localmente y pendiente de publicación/migración/deploy
 - **Versión:** 1
 - **Fecha:** 2026-08-10
 - **Alcance:** casos Lancemos con conversación Chatwoot canónica existente
@@ -73,6 +73,41 @@ En una sola transacción:
 7. pausa secuencia, caso y conversación.
 
 Un replay con la misma command key y semántica responde `already_requested`, incluso si llega concurrentemente. La RPC serializa por command key antes de leer el replay. Cambiar motivo, requester, source o policy bajo la misma key produce `human_handoff_command_conflict`. Un request ya existente tampoco acepta evidencia bajo otra versión de policy.
+
+### Replay de admisión inbound después del handoff
+
+La existencia de una fila en `inbound_commercial_case_admissions` no concede
+autoridad permanente para responder. `admit_inbound_commercial_case_v2` vuelve a
+bloquear y releer, en la misma transacción:
+
+- el caso exacto de la admisión;
+- la conversación canónica del mismo contacto e identidad;
+- scope y conversación externa de Chatwoot.
+
+Sólo devuelve `created` o `already_exists` como replyable cuando el caso sigue
+`active/draft_only`, la conversación sigue en un estado no terminal con
+`automation_status=draft_only`, y `human_takeover=false`. Cualquier pausa,
+deshabilitación o takeover devuelve:
+
+```text
+outcome=blocked
+automation_status=disabled
+```
+
+El Bridge debe terminar ante `blocked` antes de reconstruir contexto o invocar
+Hermes. La primera admisión no conserva autoridad durante el resto del work: el
+Bridge vuelve a llamar al RPC V2 inmediatamente antes de leer o crear el
+manifiesto multipart y dentro de la frontera del sender antes de cada parte. Un
+`blocked`, `evidence_conflict` o error de reautorización produce cero efectos
+nuevos; un error queda retryable. Esto cubre también propuestas y manifiestos ya
+persistidos, que no pueden actuar como permiso de envío.
+
+La reautorización durable precede al adapter externo y se complementa con las
+dos lecturas canónicas finales de Chatwoot; no pretende convertir PostgreSQL y el
+POST remoto en una transacción distribuida. Durante el rollout, el RPC legacy
+`admit_inbound_commercial_case` traduce `blocked` a `evidence_conflict`, que las
+versiones anteriores del Bridge ya bloquean. La función base queda sin `EXECUTE`
+para roles API y `service_role`.
 
 ## 4. Proyección Chatwoot
 
@@ -148,4 +183,6 @@ Desactivar una policy impide requests nuevos y no altera snapshots ni efectos ex
 
 La migración y el runtime son aditivos y default-off. Las tablas niegan DML directo a roles API; sólo los RPC explícitos tienen `EXECUTE` para `service_role`. Policies, identidad de request, evidencia y tipo de efecto están protegidos contra mutación.
 
-Las pruebas locales y PGlite no acreditan migración remota, Chatwoot real, equipo real, worker productivo ni mensajes enviados.
+Las pruebas locales y PGlite del guard de replay no acreditan su migración remota
+ni despliegue. La evidencia real del bypass y sus límites está en
+`docs/operations/2026-08-26-inbound-paused-replay-e2e.md`.

@@ -173,8 +173,14 @@ class StubShadowProcessor:
 
 
 class StubInboundCommercialSupabase:
-    def __init__(self, *, outcome: str = "created") -> None:
+    def __init__(
+        self,
+        *,
+        outcome: str = "created",
+        outcomes: tuple[str, ...] | None = None,
+    ) -> None:
         self.outcome = outcome
+        self.outcomes = list(outcomes or ())
         self.admission_calls: list[dict[str, object]] = []
         self.handoff_calls: list[dict[str, object]] = []
 
@@ -182,13 +188,14 @@ class StubInboundCommercialSupabase:
         self, **kwargs: object
     ) -> InboundCommercialCaseAdmissionResult:
         self.admission_calls.append(kwargs)
+        outcome = self.outcomes.pop(0) if self.outcomes else self.outcome
         return InboundCommercialCaseAdmissionResult(
-            outcome=self.outcome,
+            outcome=outcome,
             commercial_case_id="case-1",
             contact_id="contact-1",
             channel_identity_id="identity-1",
             conversation_id="conversation-1",
-            automation_status="draft_only",
+            automation_status=("disabled" if outcome == "blocked" else "draft_only"),
         )
 
     async def has_chatwoot_opt_out_stop(self, **_: object) -> bool:
@@ -4100,6 +4107,7 @@ def test_ignores_an_incoming_message_without_a_canonical_id(
         ("created", True),
         ("already_exists", True),
         ("evidence_conflict", False),
+        ("blocked", False),
     ],
 )
 def test_cut_b_agent_gate_admits_then_replies_through_canonical_chatwoot(
@@ -4177,14 +4185,15 @@ def test_cut_b_agent_gate_admits_then_replies_through_canonical_chatwoot(
     asyncio.run(app.state.chatwoot_worker.run_once())
 
     assert response.status_code == 202
-    assert supabase.admission_calls == [
-        {
-            "scope_key": "libre-de-ansiedad-inbound",
-            "scope_version": 2,
-            "external_conversation_id": 321,
-            "external_user_id": "12025550124",
-        }
-    ]
+    expected_admission_call = {
+        "scope_key": "libre-de-ansiedad-inbound",
+        "scope_version": 2,
+        "external_conversation_id": 321,
+        "external_user_id": "12025550124",
+    }
+    assert supabase.admission_calls == [expected_admission_call] * (
+        3 if reply_expected else 1
+    )
     if reply_expected:
         assert len(shadow.calls) == 1
         assert chatwoot.reply_calls == [
@@ -4199,6 +4208,148 @@ def test_cut_b_agent_gate_admits_then_replies_through_canonical_chatwoot(
     else:
         assert shadow.calls == []
         assert chatwoot.reply_calls == []
+
+
+def _cut_b_cached_reply_app(
+    *,
+    tmp_path: Path,
+    supabase: StubInboundCommercialSupabase,
+    shadow: StubShadowProcessor,
+    splitter: StubReplySplitter,
+    chatwoot: StubChatwootClient,
+) -> object:
+    return create_app(
+        Settings(
+            webhook_secret="webhook-secret",
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=9,
+            chatwoot_cut_b_admission_enabled=True,
+            chatwoot_cut_b_scope_key="libre-de-ansiedad-inbound",
+            chatwoot_cut_b_scope_version=2,
+            chatwoot_cut_b_agent_enabled=True,
+            chatwoot_scoped_inbound_senders_enabled=True,
+            automated_replies_enabled=True,
+            reply_dir=tmp_path / "replies",
+            reply_splitter_enabled=True,
+            chatwoot_durable_opt_out_enabled=True,
+            chatwoot_human_pause_enabled=True,
+            chatwoot_opt_out_macro_id=2,
+            opt_out_projection_worker_id="opt-out-test",
+            human_handoff_admission_enabled=True,
+            human_handoff_projection_enabled=True,
+            handoff_projection_policy_key="lancemos-inbound-handoff",
+            handoff_projection_policy_version=1,
+            human_handoff_projection_worker_id="handoff-projection-test",
+        ),
+        chatwoot_client=chatwoot,
+        shadow_processor=shadow,
+        reply_splitter=splitter,
+        supabase_client=supabase,  # type: ignore[arg-type]
+    )
+
+
+def _cut_b_cached_reply_payload() -> dict[str, object]:
+    return {
+        "event": "message_created",
+        "id": 904,
+        "content": "Quiero saber más",
+        "message_type": "incoming",
+        "private": False,
+        "account": {"id": 1},
+        "inbox": {"id": 9},
+        "conversation": {
+            "id": 324,
+            "inbox_id": 9,
+            "contact_inbox": {"source_id": "12025550124@s.whatsapp.net"},
+        },
+    }
+
+
+def _cut_b_cached_reply_chatwoot() -> StubChatwootClient:
+    return StubChatwootClient(
+        messages=[
+            {
+                "id": 904,
+                "created_at": 1786233960,
+                "message_type": 0,
+                "private": False,
+                "content": "Quiero saber más",
+                "sender": {"type": "contact", "id": 20},
+            }
+        ]
+    )
+
+
+def test_cut_b_cached_reply_stops_before_splitter_after_durable_pause(
+    tmp_path: Path,
+) -> None:
+    delivery_id = "cut-b-cached-reply-paused"
+    payload = _cut_b_cached_reply_payload()
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    supabase = StubInboundCommercialSupabase(outcomes=("created", "blocked"))
+    shadow = StubShadowProcessor({"reply": "Respuesta cacheada"})
+    shadow.completed_delivery_ids.add(delivery_id)
+    splitter = StubReplySplitter(("Respuesta", "cacheada"))
+    chatwoot = _cut_b_cached_reply_chatwoot()
+    app = _cut_b_cached_reply_app(
+        tmp_path=tmp_path,
+        supabase=supabase,
+        shadow=shadow,
+        splitter=splitter,
+        chatwoot=chatwoot,
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(raw_body, secret="webhook-secret", delivery=delivery_id),
+    )
+    asyncio.run(app.state.chatwoot_worker.run_once())
+
+    assert response.status_code == 202
+    assert len(supabase.admission_calls) == 2
+    assert shadow.calls == []
+    assert splitter.calls == []
+    assert chatwoot.reply_calls == []
+
+
+def test_cut_b_cached_reply_sends_when_final_durable_checks_remain_active(
+    tmp_path: Path,
+) -> None:
+    delivery_id = "cut-b-cached-reply-active"
+    payload = _cut_b_cached_reply_payload()
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    supabase = StubInboundCommercialSupabase(
+        outcomes=("created", "already_exists", "already_exists", "already_exists")
+    )
+    shadow = StubShadowProcessor({"reply": "Respuesta cacheada"})
+    shadow.completed_delivery_ids.add(delivery_id)
+    splitter = StubReplySplitter(("Respuesta", "cacheada"))
+    chatwoot = _cut_b_cached_reply_chatwoot()
+    app = _cut_b_cached_reply_app(
+        tmp_path=tmp_path,
+        supabase=supabase,
+        shadow=shadow,
+        splitter=splitter,
+        chatwoot=chatwoot,
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(raw_body, secret="webhook-secret", delivery=delivery_id),
+    )
+    asyncio.run(app.state.chatwoot_worker.run_once())
+
+    assert response.status_code == 202
+    assert shadow.calls == []
+    assert splitter.calls == [(324, 904, "Respuesta cacheada")]
+    assert len(chatwoot.reply_calls) == 2
+    assert len(supabase.admission_calls) == 4
 
 
 @pytest.mark.parametrize(

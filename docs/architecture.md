@@ -528,10 +528,26 @@ que originó el handoff sí aplica y confirma el macro existente
 `automation_paused`, y termina sin responder al mensaje que disparó la
 derivación; si no puede confirmarlo, el work queda en retry fail-closed.
 
+Una admisión inbound existente tampoco es autoridad permanente para responder.
+El árbol local incorpora `admit_inbound_commercial_case_v2`, que bajo locks
+revalida caso y conversación antes de cada replay. Sólo un agregado
+`active/draft_only`, sin takeover humano, continúa hacia Hermes; una pausa o
+deshabilitación devuelve `blocked` y el Bridge termina antes del modelo.
+
+La autoridad se relee además antes del splitter/manifiesto y dentro del sender
+antes de cada parte. Así una propuesta cacheada o un multipart persistido no
+pueden saltar un handoff durable ocurrido después de la admisión inicial. Cada
+parte conserva también las revalidaciones canónicas de Chatwoot inmediatamente
+antes del POST. El nombre RPC legacy se conserva como wrapper rolling-compatible
+y traduce el stop a `evidence_conflict`, mientras la función base queda
+inaccesible a roles API. Esta corrección todavía no está publicada, migrada ni
+desplegada; producción conserva el bypass documentado en la evidencia operativa
+del 26 de agosto.
+
 `/ready` publica conteos sanitizados del backlog cuando la proyección está
-habilitada. Esta implementación tiene evidencia local y PGlite, pero no acredita
-migración aplicada, IDs/equipo reales ni worker o Chatwoot productivos. La
-decisión está en [ADR-0010](decisions/0010-executable-human-handoff.md) y la
+habilitada. El handoff V1 tiene evidencia productiva separada; el guard de replay
+pausado sólo tiene evidencia local y PGlite y no acredita su migración ni deploy.
+La decisión está en [ADR-0010](decisions/0010-executable-human-handoff.md) y la
 interfaz exacta en [Handoff humano V1](contracts/executable-human-handoff-v1.md).
 
 ## Cierre determinístico por compra aprobada

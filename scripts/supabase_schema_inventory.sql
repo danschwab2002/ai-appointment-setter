@@ -1203,6 +1203,53 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'durable_dynamic_johanna_recipient'
+    union all
+    select
+        '20260826000200',
+        '20260826000200_inbound_paused_replay_guard.sql',
+        (to_regprocedure(
+            'public.admit_inbound_commercial_case_v2(text,integer,bigint,text)'
+        ) is not null)::int
+        + coalesce((
+            select (
+                prosecdef
+                and proconfig @> array[
+                    'search_path=pg_catalog, public, pg_temp'
+                ]
+                and position('outcome := ''blocked''' in definition) > 0
+                and position('not v_conversation.human_takeover' in definition) > 0
+            )::int
+            from functions
+            where oid = to_regprocedure(
+                'public.admit_inbound_commercial_case_v2(text,integer,bigint,text)'
+            )
+        ), 0)
+        + (
+            has_function_privilege(
+                'service_role',
+                'public.admit_inbound_commercial_case_v2(text,integer,bigint,text)',
+                'execute'
+            )
+            and not has_function_privilege(
+                'anon',
+                'public.admit_inbound_commercial_case_v2(text,integer,bigint,text)',
+                'execute'
+            )
+            and not has_function_privilege(
+                'authenticated',
+                'public.admit_inbound_commercial_case_v2(text,integer,bigint,text)',
+                'execute'
+            )
+        )::int
+        + (
+            not has_function_privilege(
+                'service_role',
+                'public.admit_inbound_commercial_case_base(text,integer,bigint,text)',
+                'execute'
+            )
+        )::int,
+        4,
+        'inbound_replay_revalidates_durable_stop'
 )
 select
     version,

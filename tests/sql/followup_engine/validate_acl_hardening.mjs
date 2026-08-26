@@ -65,6 +65,7 @@ const rows = await db.query(`
       ('begin_johanna_abandonment_one_shot(text,uuid,text,bigint,bigint,text,integer,bigint)'),
       ('begin_precheckout_test_first_touch(text,uuid,text,bigint,bigint)'),
       ('admit_inbound_commercial_case(text,integer,bigint,text)'),
+      ('admit_inbound_commercial_case_v2(text,integer,bigint,text)'),
       ('apply_chatwoot_inbound_opt_out(bigint,bigint,bigint,bigint,text,timestamp with time zone,text)'),
       ('apply_hotmart_purchase_approved(uuid,text,text,text,text,text,timestamp with time zone)'),
       ('bootstrap_proactive_lead_identity(text,uuid,text,integer,bigint,text,text)'),
@@ -122,7 +123,7 @@ const rows = await db.query(`
 `);
 const result = rows.rows[0];
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 46) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 47) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const inventory = await db.query(readFileSync(
