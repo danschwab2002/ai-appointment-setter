@@ -363,6 +363,31 @@ def test_deployment_uses_supabase_service_role_only(
     assert not hasattr(settings, "supabase_anon_key")
 
 
+def test_deployment_does_not_require_fixed_allowed_jid_for_dynamic_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_example = (PROJECT_ROOT / ".env.example").read_text()
+    compose = (PROJECT_ROOT / "compose.yaml").read_text()
+    assert "ALLOWED_WHATSAPP_JID=\n" in env_example
+    assert "ALLOWED_WHATSAPP_JID: ${ALLOWED_WHATSAPP_JID:-}" in compose
+
+    required_environment = {
+        "CHATWOOT_WEBHOOK_SECRET": "test-secret",
+        "CHATWOOT_AGENT_BOT_ID": "1",
+        "CHATWOOT_BASE_URL": "https://chatwoot.example.test",
+        "CHATWOOT_ACCOUNT_ID": "1",
+        "CHATWOOT_CONTROL_API_ACCESS_TOKEN": "test-control-token",
+        "CHATWOOT_PAUSE_MACRO_ID": "1",
+    }
+    for name, value in required_environment.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("ALLOWED_WHATSAPP_JID", raising=False)
+
+    settings = Settings.from_env()
+
+    assert settings.allowed_jid is None
+
+
 def test_deployment_declares_optional_hermes_shadow_variables() -> None:
     env_example = (PROJECT_ROOT / ".env.example").read_text()
     compose = (PROJECT_ROOT / "compose.yaml").read_text()

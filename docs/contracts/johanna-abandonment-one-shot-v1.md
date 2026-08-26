@@ -95,14 +95,15 @@ actions ni delivery attempts del dispatcher general.
 Cuando el flag automático está activo, el receiver autenticado de
 `PURCHASE_OUT_OF_SHOPPING_CART` reutiliza la admisión y correlación canónicas. Sólo un outcome
 `resolved`, con una intención, `candidate_count=1` y sin handoff manual, puede invocar
-`begin_johanna_abandonment_hotmart_auto`.
+`begin_johanna_abandonment_hotmart_auto_v2`.
 
 El RPC exige además:
 
 - evento durable exacto, clasificación `confirmed_abandonment` e intención correlacionada;
 - scope publicado V2 y runtime promovido V1→V2 en `inactive`, generación `1`;
 - account/inbox `1/9`, producto `8104005` y oferta `bxjge6zq`;
-- los mismos gates de consentimiento, allowlist y opt-out del V1;
+- los mismos gates de consentimiento y opt-out del V1, reemplazando el JID global
+  por el teléfono canónico derivado de la intención durable;
 - presupuesto singleton compartido por destinatario entre V1 y V2. El mensaje físico V1 ya
   consume permanentemente el presupuesto de ese teléfono, aunque un evento futuro use otra
   intención o command key.
@@ -110,6 +111,12 @@ El RPC exige además:
 La clave deriva del UUID interno del evento. Un replay Hotmart idéntico relee la misma command:
 si está aceptada responde sin llamar al sender; si quedó ambiguo exige reconciliación. El
 trigger estrecho no enciende resolution worker, dispatcher, durable outbound ni follow-ups.
+
+El caller del RPC V2 no envía `allowed_external_user_id`: Supabase relee
+`purchase_intents.normalized_phone`, valida su forma y recién entonces delega en la
+reserva durable. Para el efecto, el bridge crea un `ChatwootMessageSender` efímero
+fenced a ese único teléfono. `ALLOWED_WHATSAPP_JID` permanece requerido para el
+endpoint manual V1, pero no para el trigger Hotmart automático.
 
 ## Efecto Chatwoot
 

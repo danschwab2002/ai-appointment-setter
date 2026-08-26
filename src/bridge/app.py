@@ -208,7 +208,7 @@ class ReplySplitter(Protocol):
 @dataclass(frozen=True)
 class Settings:
     webhook_secret: str
-    allowed_jid: str
+    allowed_jid: str | None
     capture_dir: Path
     max_age_seconds: int
     agent_bot_id: int | None = None
@@ -480,8 +480,12 @@ class Settings:
         lead_precheckout_offer_code = os.getenv(
             "LEAD_PRECHECKOUT_OFFER_CODE", "bxjge6zq"
         ).strip()
-        allowed_jid = os.environ["ALLOWED_WHATSAPP_JID"].strip()
-        allowed_phone = allowed_jid.removesuffix("@s.whatsapp.net")
+        allowed_jid = os.getenv("ALLOWED_WHATSAPP_JID", "").strip() or None
+        allowed_phone = (
+            allowed_jid.removesuffix("@s.whatsapp.net")
+            if allowed_jid is not None
+            else None
+        )
         if precheckout_form_enabled and not precheckout_test_mode_enabled:
             raise ValueError(
                 "pre-checkout provisional contract cannot be enabled from deployment env"
@@ -1128,12 +1132,15 @@ def create_app(
         is None
         or settings.chatwoot_cut_b_scope_version is None
         or settings.chatwoot_cut_b_scope_version < 1
-        or re.fullmatch(
-            r"[1-9][0-9]{6,14}@s\.whatsapp\.net",
-            settings.allowed_jid,
+        or (
+            not settings.chatwoot_scoped_inbound_senders_enabled
+            and re.fullmatch(
+                r"[1-9][0-9]{6,14}@s\.whatsapp\.net",
+                settings.allowed_jid or "",
+            )
+            is None
         )
-        is None
-    ):
+        ):
         raise ValueError(
             "CHATWOOT_CUT_B_ADMISSION_ENABLED requires canonical Chatwoot IDs "
             "and scope"
@@ -1234,6 +1241,7 @@ def create_app(
         if first_touch_sender is None:
             if not isinstance(control_client, ChatwootClient):
                 raise ValueError("precheckout first touch requires Chatwoot control")
+            assert settings.allowed_jid is not None
             first_touch_sender = ChatwootMessageSender(
                 chatwoot=control_client,
                 inbox_id=settings.chatwoot_inbox_id,
@@ -1279,7 +1287,10 @@ def create_app(
                 settings.johanna_abandonment_hotmart_auto_enabled
                 and settings.hotmart_hottok is None
             )
-            or canonical_phone is None
+            or (
+                settings.johanna_abandonment_one_shot_enabled
+                and canonical_phone is None
+            )
             or johanna_boundary
             != (
                 True,
@@ -1300,12 +1311,16 @@ def create_app(
             raise ValueError(
                 "Johanna abandonment one-shot requires exact V1.1 scope and template"
             )
-        if johanna_abandonment_sender is None:
+        if (
+            settings.johanna_abandonment_one_shot_enabled
+            and johanna_abandonment_sender is None
+        ):
             if not isinstance(control_client, ChatwootClient):
                 raise ValueError(
                     "Johanna abandonment one-shot requires Chatwoot control"
                 )
             assert settings.chatwoot_inbox_id is not None
+            assert settings.allowed_jid is not None
             johanna_abandonment_sender = ChatwootMessageSender(
                 chatwoot=control_client,
                 inbox_id=settings.chatwoot_inbox_id,
@@ -1560,6 +1575,7 @@ def create_app(
                 outbound_sender is None
                 and settings.pilot_channel_provider in {"evolution", "waba"}
                 and settings.chatwoot_inbox_id is not None
+                and settings.allowed_jid is not None
                 and isinstance(control_client, ChatwootClient)
             ):
                 outbound_sender = ChatwootMessageSender(
@@ -1751,11 +1767,8 @@ def create_app(
             raise CanonicalHistoryIncompleteError(
                 "batched_messages_not_in_canonical_history"
             )
-        external_user_id = (
-            (expected_jid or settings.allowed_jid).split("@", 1)[0]
-            if (expected_jid or settings.allowed_jid) is not None
-            else ""
-        )
+        sender_jid = expected_jid or settings.allowed_jid
+        external_user_id = sender_jid.split("@", 1)[0] if sender_jid else ""
         if not external_user_id.isdigit():
             raise CanonicalHistoryIncompleteError(
                 "canonical_external_user_id_invalid"
@@ -1988,6 +2001,8 @@ def create_app(
                 assert settings.chatwoot_account_id is not None
                 assert settings.chatwoot_inbox_id is not None
                 reset_expected_jid = scoped_expected_jid or settings.allowed_jid
+                if reset_expected_jid is None:
+                    raise RuntimeError("chatwoot_reset_external_user_id_invalid")
                 external_user_id = reset_expected_jid.removesuffix(
                     "@s.whatsapp.net"
                 )
@@ -2724,7 +2739,7 @@ def create_app(
             raise HTTPException(status_code=503, detail="precheckout_test_mode_required")
         allowed_jid_match = re.fullmatch(
             r"([1-9][0-9]{7,14})@s\.whatsapp\.net",
-            settings.allowed_jid,
+            settings.allowed_jid or "",
         )
         allowed_jid_phone_e164 = (
             f"+{allowed_jid_match.group(1)}" if allowed_jid_match is not None else None
@@ -2795,12 +2810,19 @@ def create_app(
         expected_generation = 1 if hotmart_webhook_event_id is not None else 0
         if (
             shared_supabase is None
-            or johanna_abandonment_sender is None
-            or canonical_phone is None
             or settings.chatwoot_account_id != 1
             or settings.chatwoot_inbox_id != 9
             or settings.pilot_scope_key != "johanna-abandonment-template-e2e"
             or settings.pilot_scope_version != expected_scope_version
+            or (
+                hotmart_webhook_event_id is None
+                and (johanna_abandonment_sender is None or canonical_phone is None)
+            )
+            or (
+                hotmart_webhook_event_id is not None
+                and johanna_abandonment_sender is None
+                and not isinstance(control_client, ChatwootClient)
+            )
         ):
             raise HTTPException(
                 status_code=503,
@@ -2809,7 +2831,6 @@ def create_app(
         begin_args: dict[str, object] = {
             "command_key": command_key,
             "purchase_intent_id": purchase_intent_id,
-            "allowed_external_user_id": canonical_phone,
             "chatwoot_account_id": settings.chatwoot_account_id,
             "chatwoot_inbox_id": settings.chatwoot_inbox_id,
             "scope_key": settings.pilot_scope_key,
@@ -2818,7 +2839,9 @@ def create_app(
         }
         try:
             if hotmart_webhook_event_id is None:
+                assert canonical_phone is not None
                 started = await shared_supabase.begin_johanna_abandonment_one_shot(
+                    allowed_external_user_id=canonical_phone,
                     **begin_args,  # type: ignore[arg-type]
                 )
             else:
@@ -2839,16 +2862,25 @@ def create_app(
             "es_EC",
             "MARKETING",
             JOHANNA_ABANDONMENT_COPY_VERSION,
-            canonical_phone,
         )
         actual_metadata = (
             started.template_name,
             started.template_language,
             started.template_category,
             started.copy_version,
-            started.target_phone,
         )
-        if actual_metadata != expected_metadata:
+        target_phone_is_canonical = (
+            isinstance(started.target_phone, str)
+            and re.fullmatch(r"[1-9][0-9]{7,14}", started.target_phone) is not None
+        )
+        if (
+            actual_metadata != expected_metadata
+            or not target_phone_is_canonical
+            or (
+                hotmart_webhook_event_id is None
+                and started.target_phone != canonical_phone
+            )
+        ):
             raise HTTPException(
                 status_code=409,
                 detail="johanna_abandonment_one_shot_metadata_mismatch",
@@ -2877,7 +2909,25 @@ def create_app(
                 detail="johanna_abandonment_one_shot_reconciliation_required",
             )
 
-        result = await johanna_abandonment_sender.send_first_touch(
+        delivery_sender = johanna_abandonment_sender
+        if hotmart_webhook_event_id is not None and message_sender is None:
+            if not isinstance(control_client, ChatwootClient) or waba_template is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="johanna_abandonment_one_shot_not_configured",
+                )
+            delivery_sender = ChatwootMessageSender(
+                chatwoot=control_client,
+                inbox_id=9,
+                allowed_jid=f"{started.target_phone}@s.whatsapp.net",
+                template=waba_template,
+            )
+        if delivery_sender is None:
+            raise HTTPException(
+                status_code=503,
+                detail="johanna_abandonment_one_shot_not_configured",
+            )
+        result = await delivery_sender.send_first_touch(
             phone=started.target_phone,
             buyer_name=started.buyer_name,
             buyer_email=started.buyer_email,

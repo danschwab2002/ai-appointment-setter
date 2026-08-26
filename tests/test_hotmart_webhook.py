@@ -14,6 +14,7 @@ from fastapi import HTTPException, Response
 from starlette.requests import Request
 
 from bridge.app import Settings, create_app
+from bridge.chatwoot import ChatwootClient
 from bridge.hotmart import parse_hotmart_payment_failure_payload, parse_hotmart_payload
 from bridge.messaging import FirstTouchResult
 
@@ -1124,10 +1125,12 @@ class _JohannaAutoSupabase:
         admission_outcome: str = "inserted",
         begin_outcome: str = "started",
         command_status: str = "request_started",
+        target_phone: str = "12025550123",
     ) -> None:
         self.admission_outcome = admission_outcome
         self.begin_outcome = begin_outcome
         self.command_status = command_status
+        self.target_phone = target_phone
         self.begin_calls: list[dict[str, object]] = []
         self.finish_calls: list[dict[str, object]] = []
 
@@ -1155,7 +1158,7 @@ class _JohannaAutoSupabase:
             outcome=self.begin_outcome,
             command_id="bfc778e7-5c9f-45e6-a910-651f92312157",
             command_status=self.command_status,
-            target_phone="12025550123",
+            target_phone=self.target_phone,
             buyer_name="Lead de Prueba",
             buyer_email="lead@example.com",
             product_name="Libre de Ansiedad",
@@ -1232,7 +1235,6 @@ def test_hotmart_resolved_abandonment_triggers_johanna_auto_once(tmp_path) -> No
         "command_key": "johanna-hotmart-auto:93f3fc37-5f92-4966-af71-b37c9bbac45e",
         "hotmart_webhook_event_id": "93f3fc37-5f92-4966-af71-b37c9bbac45e",
         "purchase_intent_id": "1f581f3a-c469-45da-8208-9483d1b26f0b",
-        "allowed_external_user_id": "12025550123",
         "chatwoot_account_id": 1,
         "chatwoot_inbox_id": 9,
         "scope_key": "johanna-abandonment-template-e2e",
@@ -1243,6 +1245,121 @@ def test_hotmart_resolved_abandonment_triggers_johanna_auto_once(tmp_path) -> No
     assert len(supabase.finish_calls) == 1
     assert app.state.resolution_worker is None
     assert app.state.durable_dispatcher is None
+
+
+def test_hotmart_auto_uses_durable_recipient_without_fixed_allowed_jid(
+    tmp_path,
+) -> None:
+    supabase = _JohannaAutoSupabase(target_phone="12025550999")
+    sender = _JohannaAutoSender()
+    app = create_app(
+        _johanna_auto_settings(tmp_path, allowed_jid=None),
+        supabase_client=supabase,  # type: ignore[arg-type]
+        message_sender=sender,  # type: ignore[arg-type]
+    )
+    payload = copy.deepcopy(EXAMPLE_PAYLOAD)
+    data = payload["data"]
+    assert isinstance(data, dict)
+    product = data["product"]
+    offer = data["offer"]
+    assert isinstance(product, dict) and isinstance(offer, dict)
+    product["id"] = 8104005
+    offer["code"] = "bxjge6zq"
+
+    response = _post_hotmart(app, json.dumps(payload).encode())
+
+    assert response.status_code == 202
+    assert supabase.begin_calls == [{
+        "command_key": "johanna-hotmart-auto:93f3fc37-5f92-4966-af71-b37c9bbac45e",
+        "hotmart_webhook_event_id": "93f3fc37-5f92-4966-af71-b37c9bbac45e",
+        "purchase_intent_id": "1f581f3a-c469-45da-8208-9483d1b26f0b",
+        "chatwoot_account_id": 1,
+        "chatwoot_inbox_id": 9,
+        "scope_key": "johanna-abandonment-template-e2e",
+        "scope_version": 2,
+        "expected_generation": 1,
+    }]
+    assert sender.calls == [{
+        "phone": "12025550999",
+        "buyer_name": "Lead de Prueba",
+        "buyer_email": "lead@example.com",
+        "product_name": "Libre de Ansiedad",
+        "content": "Recuperación supervisada de carrito de Libre de Ansiedad.",
+        "delivery_id": "bfc778e7-5c9f-45e6-a910-651f92312157",
+    }]
+
+
+def test_hotmart_auto_factory_fences_sender_to_durable_recipient(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    constructed_jids: list[str] = []
+
+    class _DynamicSender(_JohannaAutoSender):
+        def __init__(self, **kwargs: object) -> None:
+            super().__init__()
+            allowed_jid = kwargs.get("allowed_jid")
+            assert isinstance(allowed_jid, str)
+            constructed_jids.append(allowed_jid)
+
+    monkeypatch.setattr("bridge.app.ChatwootMessageSender", _DynamicSender)
+    supabase = _JohannaAutoSupabase(target_phone="12025550999")
+    control = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=None,
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(500, request=request)
+        ),
+    )
+    app = create_app(
+        _johanna_auto_settings(tmp_path, allowed_jid=None),
+        supabase_client=supabase,  # type: ignore[arg-type]
+        chatwoot_client=control,
+    )
+    payload = copy.deepcopy(EXAMPLE_PAYLOAD)
+    data = payload["data"]
+    assert isinstance(data, dict)
+    product = data["product"]
+    offer = data["offer"]
+    assert isinstance(product, dict) and isinstance(offer, dict)
+    product["id"] = 8104005
+    offer["code"] = "bxjge6zq"
+
+    response = _post_hotmart(app, json.dumps(payload).encode())
+
+    assert response.status_code == 202
+    assert constructed_jids == ["12025550999@s.whatsapp.net"]
+
+
+def test_hotmart_auto_rejects_noncanonical_durable_recipient_before_sender(
+    tmp_path,
+) -> None:
+    supabase = _JohannaAutoSupabase(target_phone="invalid-recipient")
+    sender = _JohannaAutoSender()
+    app = create_app(
+        _johanna_auto_settings(tmp_path, allowed_jid=None),
+        supabase_client=supabase,  # type: ignore[arg-type]
+        message_sender=sender,  # type: ignore[arg-type]
+    )
+    payload = copy.deepcopy(EXAMPLE_PAYLOAD)
+    data = payload["data"]
+    assert isinstance(data, dict)
+    product = data["product"]
+    offer = data["offer"]
+    assert isinstance(product, dict) and isinstance(offer, dict)
+    product["id"] = 8104005
+    offer["code"] = "bxjge6zq"
+
+    response = _post_hotmart(app, json.dumps(payload).encode())
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "johanna_abandonment_one_shot_metadata_mismatch"
+    )
+    assert sender.calls == []
+    assert supabase.finish_calls == []
 
 
 def test_hotmart_duplicate_replays_accepted_auto_without_second_send(tmp_path) -> None:

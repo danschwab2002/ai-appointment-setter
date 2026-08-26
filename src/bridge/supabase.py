@@ -1059,7 +1059,6 @@ class SupabaseClient:
         command_key: str,
         hotmart_webhook_event_id: str,
         purchase_intent_id: str,
-        allowed_external_user_id: str,
         chatwoot_account_id: int,
         chatwoot_inbox_id: int,
         scope_key: str,
@@ -1069,13 +1068,12 @@ class SupabaseClient:
         operation = "johanna_abandonment_hotmart_auto_begin"
         response = await self._request(
             "POST",
-            "/rest/v1/rpc/begin_johanna_abandonment_hotmart_auto",
+            "/rest/v1/rpc/begin_johanna_abandonment_hotmart_auto_v2",
             content=json.dumps(
                 {
                     "p_command_key": command_key,
                     "p_hotmart_webhook_event_id": hotmart_webhook_event_id,
                     "p_purchase_intent_id": purchase_intent_id,
-                    "p_allowed_external_user_id": allowed_external_user_id,
                     "p_chatwoot_account_id": chatwoot_account_id,
                     "p_chatwoot_inbox_id": chatwoot_inbox_id,
                     "p_scope_key": scope_key,

@@ -148,7 +148,18 @@ copy antes del POST. La finalización común persiste `outbound_accepted` o
 
 ## Carrito abandonado
 
-La ruta existente `PURCHASE_OUT_OF_SHOPPING_CART → begin_johanna_abandonment_hotmart_auto` conserva su plantilla y comportamiento. Su ledger ahora es también la frontera de presupuesto compartida con pago fallido. Ver [contrato one-shot de abandono V1](johanna-abandonment-one-shot-v1.md).
+La ruta `PURCHASE_OUT_OF_SHOPPING_CART → begin_johanna_abandonment_hotmart_auto_v2`
+no recibe un teléfono del caller. El RPC deriva el destinatario desde la intención
+correlacionada, valida forma canónica y delega en la reserva durable existente. El
+bridge construye después un sender cuyo único JID permitido corresponde exactamente
+a ese `target_phone`.
+
+`ALLOWED_WHATSAPP_JID` no limita inbound scoped, carrito automático ni pago fallido y
+puede estar ausente en esa configuración productiva. Sigue siendo obligatorio sólo
+para endpoints manuales/test y motores legacy que permanezcan habilitados. El ledger
+de carrito continúa siendo la frontera de presupuesto compartida con pago fallido:
+un mensaje máximo por teléfono entre ambos triggers. Ver [contrato one-shot de
+abandono V1](johanna-abandonment-one-shot-v1.md) y [ADR-0016](../decisions/0016-durable-dynamic-recipient-authorization.md).
 
 ## HTTP
 
