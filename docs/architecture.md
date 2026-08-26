@@ -390,15 +390,23 @@ Ver [contrato histórico test-only V1](contracts/precheckout-test-first-touch-v1
 [contrato one-shot Johanna V1](contracts/johanna-abandonment-one-shot-v1.md).
 
 La automatización Hotmart usa policy y scope V2 inmutables. El scope
-mantiene account `1`, inbox `9`, evento `PURCHASE_OUT_OF_SHOPPING_CART`, producto `8104005`,
-oferta `bxjge6zq`, una sola persona en cohorte y presupuestos total/diario de un request-start.
+mantiene account `1`, inbox `9`, evento `PURCHASE_OUT_OF_SHOPPING_CART`, producto `8104005`
+y oferta `bxjge6zq`. La metadata de cohorte conserva el rollout histórico, pero el RPC dedicado
+autoriza físicamente por intención y teléfono durable, no por un JID global.
 Un bridge síncrono y default-off en el receiver sólo continúa después de una correlación durable
 `resolved`, con candidato único y sin handoff manual. Su RPC relee evento, correlación, intención,
-consentimiento, allowlist y opt-out antes de reservar el presupuesto singleton V2; luego reutiliza
-el mismo sender WABA y ledger de finalización del one-shot. Un unique index por teléfono y el gate
+consentimiento, identidad y opt-out antes de reservar el presupuesto singleton por persona. El
+wrapper V2 deriva `target_phone` desde la intención; la app no lo suministra. Luego el bridge crea
+un sender WABA efímero fenced exactamente a ese teléfono. Un unique index por teléfono y el gate
 transaccional hacen que el command V1 ya observado consuma también el presupuesto V2 para ese
 destinatario. El runtime V2 permanece `inactive` y
 general dispatcher, resolution worker, durable outbound y follow-ups permanecen apagados.
+
+En las rutas productivas Johanna, `ALLOWED_WHATSAPP_JID` ya no es autoridad. Inbound usa el
+`expected_jid` canónico de la conversación y lo revalida antes de cada efecto; carrito y pago
+fallido usan el teléfono devuelto por su RPC durable. La variable permanece sólo como fence
+legacy para endpoints manuales/test y motores generales default-off. Ver
+[ADR-0016](decisions/0016-durable-dynamic-recipient-authorization.md).
 
 Pago fallido agrega otro scope inmutable, default-off, para account `1`, inbox `9`,
 evento `PURCHASE_CANCELED`, producto Hotmart `8104005` y oferta `bxjge6zq`. Sólo

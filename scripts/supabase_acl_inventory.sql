@@ -26,6 +26,7 @@ expected_service_role(signature) as (
         ('public.finish_johanna_abandonment_one_shot(uuid, text, bigint, bigint, text)'),
         ('public.reconcile_johanna_abandonment_one_shot(text, bigint, bigint)'),
         ('public.begin_johanna_abandonment_hotmart_auto(text, uuid, uuid, text, bigint, bigint, text, integer, bigint)'),
+        ('public.begin_johanna_abandonment_hotmart_auto_v2(text, uuid, uuid, bigint, bigint, text, integer, bigint)'),
         ('public.finalize_chatwoot_opt_out_projection(uuid, text, bigint, boolean, text, integer, timestamp with time zone)'),
         ('public.finalize_followup_delivery_attempt(uuid, uuid, text, bigint, text, text, uuid, text, timestamp with time zone, timestamp with time zone, timestamp with time zone)'),
         ('public.finalize_human_handoff_projection_effect(uuid, text, bigint, text, text, timestamp with time zone, timestamp with time zone)'),

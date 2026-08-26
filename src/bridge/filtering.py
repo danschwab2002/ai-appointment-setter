@@ -68,7 +68,7 @@ def _canonical_whatsapp_jid(observed_identity: object) -> str | None:
 def classify_chatwoot_event(
     payload: object,
     *,
-    allowed_jid: str,
+    allowed_jid: str | None,
     agent_bot_id: int | None = None,
     expected_account_id: int | None | object = _SCOPE_UNSET,
     expected_inbox_id: int | None | object = _SCOPE_UNSET,

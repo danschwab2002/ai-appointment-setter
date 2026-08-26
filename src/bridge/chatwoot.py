@@ -343,7 +343,7 @@ class ChatwootClient:
             self._agent_bot_access_token is None
             or self._agent_bot_id is None
             or self._reply_dir is None
-            or self._allowed_jid is None
+            or (expected_jid is None and self._allowed_jid is None)
         ):
             raise ChatwootProtocolError("agent_bot_reply_not_configured")
         if (

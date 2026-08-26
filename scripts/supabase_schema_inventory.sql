@@ -1164,6 +1164,45 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         5,
         'payment_failure_review_and_scoped_handoff_identity'
+    union all
+    select
+        '20260826000100',
+        '20260826000100_johanna_dynamic_recipients.sql',
+        (to_regprocedure(
+            'public.begin_johanna_abandonment_hotmart_auto_v2(text,uuid,uuid,bigint,bigint,text,integer,bigint)'
+        ) is not null)::int
+        + coalesce((
+            select (
+                prosecdef
+                and proconfig @> array[
+                    'search_path=pg_catalog, public, pg_temp'
+                ]
+                and position('intent.normalized_phone' in definition) > 0
+            )::int
+            from functions
+            where oid = to_regprocedure(
+                'public.begin_johanna_abandonment_hotmart_auto_v2(text,uuid,uuid,bigint,bigint,text,integer,bigint)'
+            )
+        ), 0)
+        + (
+            has_function_privilege(
+                'service_role',
+                'public.begin_johanna_abandonment_hotmart_auto_v2(text,uuid,uuid,bigint,bigint,text,integer,bigint)',
+                'execute'
+            )
+            and not has_function_privilege(
+                'anon',
+                'public.begin_johanna_abandonment_hotmart_auto_v2(text,uuid,uuid,bigint,bigint,text,integer,bigint)',
+                'execute'
+            )
+            and not has_function_privilege(
+                'authenticated',
+                'public.begin_johanna_abandonment_hotmart_auto_v2(text,uuid,uuid,bigint,bigint,text,integer,bigint)',
+                'execute'
+            )
+        )::int,
+        3,
+        'durable_dynamic_johanna_recipient'
 )
 select
     version,
