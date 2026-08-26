@@ -1552,7 +1552,7 @@ class SupabaseClient:
         operation = "inbound_commercial_case_admission"
         response = await self._request(
             "POST",
-            "/rest/v1/rpc/admit_inbound_commercial_case",
+            "/rest/v1/rpc/admit_inbound_commercial_case_v2",
             content=json.dumps(
                 {
                     "p_scope_key": scope_key,
@@ -1572,10 +1572,20 @@ class SupabaseClient:
             raise SupabaseError("inbound_commercial_case_admission_invalid_shape")
         row = rows[0]
         outcome = row.get("outcome")
-        if outcome not in {"created", "already_exists", "evidence_conflict"}:
+        if outcome not in {
+            "created",
+            "already_exists",
+            "evidence_conflict",
+            "blocked",
+        }:
             raise SupabaseError("inbound_commercial_case_admission_invalid_outcome")
-        if row.get("automation_status") != "draft_only":
+        automation_status = row.get("automation_status")
+        if automation_status not in {"draft_only", "disabled"}:
             raise SupabaseError("inbound_commercial_case_admission_not_draft_only")
+        if outcome == "blocked" and automation_status != "disabled":
+            raise SupabaseError("inbound_commercial_case_admission_blocked_state_invalid")
+        if outcome != "blocked" and automation_status != "draft_only":
+            raise SupabaseError("inbound_commercial_case_admission_replyable_state_invalid")
         return InboundCommercialCaseAdmissionResult(
             outcome=outcome,
             commercial_case_id=_required_string(
@@ -1588,7 +1598,7 @@ class SupabaseClient:
             conversation_id=_required_string(
                 row, "conversation_id", operation=operation
             ),
-            automation_status="draft_only",
+            automation_status=automation_status,
         )
 
     async def fetch_pending_events(

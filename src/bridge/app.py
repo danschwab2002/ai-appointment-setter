@@ -1953,6 +1953,7 @@ def create_app(
             if settings.chatwoot_scoped_inbound_senders_enabled
             else None
         )
+        durable_reply_authorizer: Callable[[], Awaitable[bool]] | None = None
 
         async def send_scoped_agent_bot_reply(
             *,
@@ -1965,6 +1966,11 @@ def create_app(
         ) -> dict[str, object]:
             if control_client is None:
                 raise RuntimeError("chatwoot_reply_not_configured")
+            if (
+                durable_reply_authorizer is not None
+                and not await durable_reply_authorizer()
+            ):
+                return {"status": "blocked", "reason": "durable_automation_stop"}
             send_args = {
                 "conversation_id": conversation_id,
                 "trigger_message_id": trigger_message_id,
@@ -2089,13 +2095,31 @@ def create_app(
                 raise RetryableChatwootWorkError(
                     "chatwoot_cut_b_admission_failed"
                 ) from exc
+
+            async def reauthorize_durable_reply() -> bool:
+                try:
+                    authorization = (
+                        await shared_supabase.admit_inbound_commercial_case(
+                            scope_key=settings.chatwoot_cut_b_scope_key,
+                            scope_version=settings.chatwoot_cut_b_scope_version,
+                            external_conversation_id=conversation_id,
+                            external_user_id=external_user_id,
+                        )
+                    )
+                except SupabaseError as exc:
+                    raise RetryableChatwootWorkError(
+                        "chatwoot_cut_b_reauthorization_failed"
+                    ) from exc
+                return authorization.outcome in {"created", "already_exists"}
+
+            durable_reply_authorizer = reauthorize_durable_reply
             logger.info(
                 "chatwoot_cut_b_admitted outcome=%s",
                 admission.outcome,
             )
             if (
                 not settings.chatwoot_cut_b_agent_enabled
-                or admission.outcome == "evidence_conflict"
+                or admission.outcome in {"evidence_conflict", "blocked"}
             ):
                 return
         context = _shadow_context(payload)
@@ -2200,6 +2224,11 @@ def create_app(
                 raise RetryableChatwootWorkError(
                     "handoff_automation_pause_not_confirmed"
                 ) from exc
+            return
+        if (
+            durable_reply_authorizer is not None
+            and not await durable_reply_authorizer()
+        ):
             return
         parts = (reply,)
         try:

@@ -106,7 +106,7 @@ def test_supabase_admits_one_inbound_commercial_case() -> None:
     assert result.automation_status == "draft_only"
     assert len(requests) == 1
     assert requests[0].url.path.endswith(
-        "/rest/v1/rpc/admit_inbound_commercial_case"
+        "/rest/v1/rpc/admit_inbound_commercial_case_v2"
     )
     assert json.loads(requests[0].content) == {
         "p_scope_key": "libre-de-ansiedad-inbound",
@@ -114,6 +114,41 @@ def test_supabase_admits_one_inbound_commercial_case() -> None:
         "p_external_conversation_id": 123,
         "p_external_user_id": "12025550123",
     }
+
+
+def test_supabase_accepts_durable_blocked_inbound_replay() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "outcome": "blocked",
+                    "commercial_case_id": "case-1",
+                    "contact_id": "contact-1",
+                    "channel_identity_id": "identity-1",
+                    "conversation_id": "conversation-1",
+                    "automation_status": "disabled",
+                }
+            ],
+        )
+
+    client = SupabaseClient(
+        base_url="https://example.supabase.co",
+        service_role_key="service-role",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = asyncio.run(
+        client.admit_inbound_commercial_case(
+            scope_key="libre-de-ansiedad-inbound",
+            scope_version=2,
+            external_conversation_id=123,
+            external_user_id="12025550123",
+        )
+    )
+
+    assert result.outcome == "blocked"
+    assert result.automation_status == "disabled"
 
 
 def test_enabled_cut_b_admits_scoped_inbound_without_invoking_hermes(

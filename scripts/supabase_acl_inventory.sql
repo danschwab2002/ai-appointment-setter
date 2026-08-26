@@ -14,6 +14,7 @@ expected_service_role(signature) as (
         ('public.admit_johanna_payment_failure(text, jsonb, text, text)'),
         ('public.begin_johanna_payment_failure_hotmart_auto(text, uuid, bigint, bigint)'),
         ('public.admit_inbound_commercial_case(text, integer, bigint, text)'),
+        ('public.admit_inbound_commercial_case_v2(text, integer, bigint, text)'),
         ('public.apply_chatwoot_inbound_opt_out(bigint, bigint, bigint, bigint, text, timestamp with time zone, text)'),
         ('public.apply_hotmart_purchase_approved(uuid, text, text, text, text, text, timestamp with time zone)'),
         ('public.bootstrap_proactive_lead_identity(text, uuid, text, integer, bigint, text, text)'),
