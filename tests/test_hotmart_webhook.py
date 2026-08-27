@@ -79,34 +79,41 @@ def test_parses_explicit_hotmart_payment_failure() -> None:
     buyer["checkout_phone"] = buyer.pop("phone")
     data["purchase"] = {
         "transaction": "HP12345678",
-        "status": "CANCELLED",
+        "status": "CANCELED",
         "offer": {"code": "bxjge6zq"},
-        "payment": {"refusal_reason": "NO_FUNDS"},
+        "payment": {"refusal_reason": "processor-specific card rejection"},
     }
 
     parsed = parse_hotmart_payment_failure_payload(payload)
 
     assert parsed is not None
     assert parsed.event_id == payload["id"]
-    assert parsed.status == "CANCELLED"
-    assert parsed.refusal_reason == "NO_FUNDS"
+    assert parsed.status == "CANCELED"
+    assert parsed.refusal_reason == "processor-specific card rejection"
     assert parsed.transaction == "HP12345678"
     assert parsed.buyer_phone == "5531999999999"
 
 
-def test_rejects_canceled_purchase_without_supported_refusal_reason() -> None:
+def test_parses_canceled_purchase_without_refusal_reason() -> None:
     payload = copy.deepcopy(EXAMPLE_PAYLOAD)
     payload["event"] = "PURCHASE_CANCELED"
     data = payload["data"]
     assert isinstance(data, dict)
+    product = data["product"]
+    assert isinstance(product, dict)
+    product["id"] = 8104005
     data["purchase"] = {
         "transaction": "HP12345678",
-        "status": "CANCELLED",
-        "offer": {"code": "n82b9jqz"},
-        "payment": {"refusal_reason": "OTHER"},
+        "status": "CANCELED",
+        "offer": {"code": "bxjge6zq"},
+        "payment": {},
     }
 
-    assert parse_hotmart_payment_failure_payload(payload) is None
+    parsed = parse_hotmart_payment_failure_payload(payload)
+
+    assert parsed is not None
+    assert parsed.status == "CANCELED"
+    assert parsed.refusal_reason is None
 
 
 @pytest.mark.parametrize(
@@ -131,7 +138,7 @@ def test_payment_failure_rejects_email_that_sql_would_not_canonicalize(
     buyer.pop("phone", None)
     data["purchase"] = {
         "transaction": "HP12345678",
-        "status": "CANCELLED",
+        "status": "CANCELED",
         "offer": {"code": "bxjge6zq"},
         "payment": {"refusal_reason": "NO_FUNDS"},
     }
@@ -639,7 +646,7 @@ def test_payment_failure_enters_dedicated_human_review_path(tmp_path) -> None:
     buyer["checkout_phone"] = buyer.pop("phone")
     data["purchase"] = {
         "transaction": "HP12345678",
-        "status": "CANCELLED",
+        "status": "CANCELED",
         "offer": {"code": "bxjge6zq"},
         "payment": {"refusal_reason": "NO_FUNDS"},
     }
@@ -704,7 +711,7 @@ def test_payment_failure_terminal_replay_returns_200_without_another_effect(
     product["id"] = 8104005
     data["purchase"] = {
         "transaction": "HP12345678",
-        "status": "CANCELLED",
+        "status": "CANCELED",
         "offer": {"code": "bxjge6zq"},
         "payment": {"refusal_reason": "NO_FUNDS"},
     }
@@ -766,7 +773,7 @@ def test_payment_failure_rejects_scope_mismatch_before_rpc(
     product["id"] = product_id
     data["purchase"] = {
         "transaction": "HP12345678",
-        "status": "CANCELLED",
+        "status": "CANCELED",
         "offer": {"code": offer_code},
         "payment": {"refusal_reason": "NO_FUNDS"},
     }
@@ -1491,7 +1498,7 @@ def test_payment_failure_resolved_case_sends_approved_template_once(tmp_path) ->
     product["id"] = 8104005
     data["purchase"] = {
         "transaction": "HP12345678",
-        "status": "CANCELLED",
+        "status": "CANCELED",
         "offer": {"code": "bxjge6zq"},
         "payment": {"refusal_reason": "NO_FUNDS"},
     }

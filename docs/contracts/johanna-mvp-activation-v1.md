@@ -72,14 +72,18 @@ El handoff primero persiste el stop durable. Si se decide handoff, no se envía 
 
 ## Pago fallido soportado
 
-El receiver sólo procesa esta conjunción exacta:
+El receiver procesa toda compra cancelada dentro del scope autorizado cuando se
+cumple esta conjunción exacta:
 
 ```text
 event = PURCHASE_CANCELED
 version = 2.0.0
-data.purchase.status = CANCELLED
-data.purchase.payment.refusal_reason = NO_FUNDS
+data.purchase.status = CANCELED
 ```
+
+`data.purchase.payment.refusal_reason` es metadata opcional del proveedor. Se
+preserva cuando existe, pero su ausencia o contenido no autoriza ni bloquea la
+recuperación.
 
 Además exige:
 
@@ -89,8 +93,6 @@ Además exige:
 - timestamp positivo;
 - email o teléfono canónico derivado del payload;
 - igualdad exacta entre identidades derivadas en Python y las recibidas por la RPC.
-
-`PURCHASE_CANCELED` sin la razón soportada se ignora; no se interpreta como fallo de pago.
 
 ### Admisión durable
 

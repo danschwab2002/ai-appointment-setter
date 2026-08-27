@@ -290,8 +290,9 @@ postflight. Ver
 [contrato de activación del MVP V1](contracts/johanna-mvp-activation-v1.md).
 
 El mismo candidato agrega una tercera clasificación Hotmart estricta para
-`PURCHASE_CANCELED + CANCELLED + NO_FUNDS`, producto `8104005` y oferta
-`bxjge6zq`. La RPC service-role-only vuelve a derivar identidad y scope, correlaciona
+`PURCHASE_CANCELED + CANCELED`, producto `8104005` y oferta `bxjge6zq`. El motivo
+de rechazo es metadata opcional y no participa de la elegibilidad. La RPC
+service-role-only vuelve a derivar identidad y scope, correlaciona
 contra intents activos y crea un caso `pending_human_review` idempotente. Un gate
 outbound separado y default-off puede convertir únicamente casos `resolved` en un
 command de first-touch para `johanna_compra_fallida_01`. El begin relee intención,
@@ -410,7 +411,8 @@ legacy para endpoints manuales/test y motores generales default-off. Ver
 
 Pago fallido agrega otro scope inmutable, default-off, para account `1`, inbox `9`,
 evento `PURCHASE_CANCELED`, producto Hotmart `8104005` y oferta `bxjge6zq`. Sólo
-`CANCELLED + NO_FUNDS` es elegible. Su command fija un mensaje, cero follow-ups y
+el estado `CANCELED` es elegible; cualquier motivo de rechazo, incluido ausente,
+se procesa igual. Su command fija un mensaje, cero follow-ups y
 la plantilla `johanna_compra_fallida_01`; el unique index por teléfono arbitra el
 presupuesto físico contra el command de carrito. La admisión y el efecto tienen
 flags separados para poder desplegar el receiver sin autorizar envíos.

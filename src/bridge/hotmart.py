@@ -73,7 +73,7 @@ class HotmartPaymentFailureData:
     creation_date_ms: int
     transaction: str
     status: str
-    refusal_reason: str
+    refusal_reason: str | None
     buyer_email: str | None
     buyer_phone: str | None
     product_id: int
@@ -237,7 +237,7 @@ def parse_hotmart_purchase_payload(payload: object) -> HotmartPurchaseData | Non
 def parse_hotmart_payment_failure_payload(
     payload: object,
 ) -> HotmartPaymentFailureData | None:
-    """Parse only PURCHASE_CANCELED events explicitly refused for no funds."""
+    """Parse a scoped Hotmart purchase canceled by the provider."""
     event = _json_object(payload)
     data = _json_object(event.get("data"))
     buyer = _json_object(data.get("buyer"))
@@ -255,6 +255,7 @@ def parse_hotmart_payment_failure_payload(
         buyer_phone = normalize_phone(buyer.get("phone"))
     product_id = _int(product.get("id"))
     offer_code = _str(offer.get("code"))
+    refusal_reason = _str(payment.get("refusal_reason"))
     if (
         event_id is None
         or event.get("event") != EVENT_PURCHASE_CANCELED
@@ -263,8 +264,7 @@ def parse_hotmart_payment_failure_payload(
         or not 0 < creation_date <= _MAX_DATETIME_TIMESTAMP_MS
         or transaction is None
         or _TRANSACTION_REFERENCE.fullmatch(transaction) is None
-        or purchase.get("status") != "CANCELLED"
-        or payment.get("refusal_reason") != "NO_FUNDS"
+        or purchase.get("status") != "CANCELED"
         or (buyer_email is None and buyer_phone is None)
         or product_id != JOHANNA_HOTMART_PRODUCT_ID
         or offer_code != JOHANNA_HOTMART_OFFER_CODE
@@ -275,8 +275,8 @@ def parse_hotmart_payment_failure_payload(
         event_id=event_id,
         creation_date_ms=creation_date,
         transaction=transaction,
-        status="CANCELLED",
-        refusal_reason="NO_FUNDS",
+        status="CANCELED",
+        refusal_reason=refusal_reason,
         buyer_email=buyer_email,
         buyer_phone=buyer_phone,
         product_id=product_id,

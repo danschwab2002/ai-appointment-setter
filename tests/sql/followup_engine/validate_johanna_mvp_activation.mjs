@@ -84,9 +84,9 @@ function payload(id, transaction = 'HP12345678', productId = 8104005) {
       buyer: { email, checkout_phone: phone },
       purchase: {
         transaction,
-        status: 'CANCELLED',
+        status: 'CANCELED',
         offer: { code: 'bxjge6zq' },
-        payment: { refusal_reason: 'NO_FUNDS' },
+        payment: { refusal_reason: 'processor-specific card rejection' },
       },
     },
   };
@@ -236,7 +236,7 @@ if (!wrongScopeRejected) {
   throw new Error('wrong product did not fail closed');
 }
 
-async function provisionAuthorizedFailure(suffix) {
+async function provisionAuthorizedFailure(suffix, includeRefusalReason = true) {
   const fixtureEmail = `payment-${suffix}@example.test`;
   const fixturePhone = `155501${suffix.padStart(5, '0')}`;
   const intentRow = await db.query(`
@@ -285,6 +285,9 @@ async function provisionAuthorizedFailure(suffix) {
   );
   eventPayload.data.buyer.email = fixtureEmail;
   eventPayload.data.buyer.checkout_phone = fixturePhone;
+  if (!includeRefusalReason) {
+    delete eventPayload.data.purchase.payment.refusal_reason;
+  }
   const admission = await db.query(`
     select * from public.admit_johanna_payment_failure(
       $1, $2::jsonb, $3, $4
@@ -441,6 +444,25 @@ const concurrentCount = await db.query(`
 `, [concurrentKey]);
 if (concurrentCount.rows[0]?.count !== 1) {
   throw new Error('concurrent replay created multiple commands');
+}
+
+// Refusal reason is provider metadata, not an eligibility gate.
+const noReasonFixture = await provisionAuthorizedFailure('206', false);
+const noReasonStarted = await beginFailure(
+  noReasonFixture,
+  'johanna-payment-failure-auto:no-reason-206',
+);
+if (noReasonStarted.rows[0]?.outcome !== 'started') {
+  throw new Error(
+    `missing refusal reason blocked recovery: ${JSON.stringify(noReasonStarted.rows)}`,
+  );
+}
+const noReasonCase = await db.query(`
+  select refusal_reason from public.johanna_payment_failure_cases
+  where id = $1::uuid
+`, [noReasonFixture.caseId]);
+if (noReasonCase.rows[0]?.refusal_reason !== null) {
+  throw new Error('missing refusal reason was not preserved as null');
 }
 
 const acl = await db.query(`

@@ -1250,6 +1250,71 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         4,
         'inbound_replay_revalidates_durable_stop'
+    union all
+    select
+        '20260827000100',
+        '20260827000100_hotmart_canceled_any_reason.sql',
+        exists(
+            select 1
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'johanna_payment_failure_cases'
+              and column_name = 'refusal_reason'
+              and is_nullable = 'YES'
+        )::int
+        + coalesce((
+            select (
+                prosecdef
+                and proconfig @> array[
+                    'search_path=pg_catalog, public, pg_temp'
+                ]
+                and position(
+                    'purchase,status}'' is distinct from ''CANCELED'''
+                    in definition
+                ) > 0
+                and position('NO_FUNDS' in definition) = 0
+            )::int
+            from functions
+            where oid = to_regprocedure(
+                'public.admit_johanna_payment_failure(text,jsonb,text,text)'
+            )
+        ), 0)
+        + coalesce((
+            select (
+                prosecdef
+                and proconfig @> array[
+                    'search_path=pg_catalog, public, pg_temp'
+                ]
+                and position(
+                    'failure_case.purchase_status <> ''CANCELED'''
+                    in definition
+                ) > 0
+                and position('failure_case.refusal_reason <>' in definition) = 0
+            )::int
+            from functions
+            where oid = to_regprocedure(
+                'public.begin_johanna_payment_failure_hotmart_auto(text,uuid,bigint,bigint)'
+            )
+        ), 0)
+        + (
+            has_function_privilege(
+                'service_role',
+                'public.admit_johanna_payment_failure(text,jsonb,text,text)',
+                'execute'
+            )
+            and not has_function_privilege(
+                'anon',
+                'public.admit_johanna_payment_failure(text,jsonb,text,text)',
+                'execute'
+            )
+            and not has_function_privilege(
+                'authenticated',
+                'public.admit_johanna_payment_failure(text,jsonb,text,text)',
+                'execute'
+            )
+        )::int,
+        4,
+        'hotmart_canceled_status_with_optional_refusal_reason'
 )
 select
     version,
