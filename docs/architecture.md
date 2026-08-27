@@ -299,8 +299,13 @@ command de first-touch para `johanna_compra_fallida_01`. El begin relee intenci�
 consentimiento explícito, opt-out, propiedad única del teléfono, compra aprobada y
 scope exacto antes de `request_started`. Pago fallido reutiliza el ledger físico de
 commands —no la plantilla de carrito— para que ambas rutas compartan un único
-presupuesto por teléfono y la misma reconciliación sin resend. El candidato está
-implementado y verificado focalmente, pero aún no publicado ni desplegado.
+presupuesto por teléfono y la misma reconciliación sin resend. La base de pago
+fallido está desplegada. El amendment local de retry para `invalid_contact_id`
+permite una sola transición durable `delivery_unknown → request_started` cuando
+no existen IDs de conversación/mensaje y el contador es cero. La RPC revalida las
+autoridades vigentes y el sender exige reutilizar un contacto exacto ya existente;
+no puede repetir la creación del contacto. Ese amendment aún no está publicado,
+migrado ni desplegado.
 
 ## Ingreso provisional de intención pre-checkout
 

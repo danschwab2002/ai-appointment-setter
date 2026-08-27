@@ -13,6 +13,7 @@ expected_service_role(signature) as (
         ('public.begin_johanna_abandonment_one_shot(text, uuid, text, bigint, bigint, text, integer, bigint)'),
         ('public.admit_johanna_payment_failure(text, jsonb, text, text)'),
         ('public.begin_johanna_payment_failure_hotmart_auto(text, uuid, bigint, bigint)'),
+        ('public.prepare_johanna_payment_failure_invalid_contact_retry(text, uuid, bigint, bigint)'),
         ('public.admit_inbound_commercial_case(text, integer, bigint, text)'),
         ('public.admit_inbound_commercial_case_v2(text, integer, bigint, text)'),
         ('public.apply_chatwoot_inbound_opt_out(bigint, bigint, bigint, bigint, text, timestamp with time zone, text)'),

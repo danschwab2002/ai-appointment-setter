@@ -1185,6 +1185,67 @@ class SupabaseClient:
             copy_version=row["copy_version"],
         )
 
+    async def prepare_johanna_payment_failure_invalid_contact_retry(
+        self,
+        *,
+        command_key: str,
+        payment_failure_case_id: str,
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+    ) -> JohannaAbandonmentOneShotStart:
+        operation = "johanna_payment_failure_invalid_contact_retry_prepare"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/prepare_johanna_payment_failure_invalid_contact_retry",
+            content=json.dumps(
+                {
+                    "p_command_key": command_key,
+                    "p_payment_failure_case_id": payment_failure_case_id,
+                    "p_chatwoot_account_id": chatwoot_account_id,
+                    "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                }
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        required_text = (
+            "command_id",
+            "command_status",
+            "target_phone",
+            "buyer_name",
+            "buyer_email",
+            "product_name",
+            "template_name",
+            "template_language",
+            "template_category",
+            "copy_version",
+        )
+        if row.get("outcome") not in {
+            "retry_started",
+            "not_retryable",
+        } or any(
+            not isinstance(row.get(field), str) or not row[field]
+            for field in required_text
+        ):
+            raise SupabaseError(f"{operation}_invalid_row")
+        return JohannaAbandonmentOneShotStart(
+            outcome=row["outcome"],
+            command_id=row["command_id"],
+            command_status=row["command_status"],
+            target_phone=row["target_phone"],
+            buyer_name=row["buyer_name"],
+            buyer_email=row["buyer_email"],
+            product_name=row["product_name"],
+            template_name=row["template_name"],
+            template_language=row["template_language"],
+            template_category=row["template_category"],
+            copy_version=row["copy_version"],
+        )
+
     async def finish_johanna_abandonment_one_shot(
         self,
         *,

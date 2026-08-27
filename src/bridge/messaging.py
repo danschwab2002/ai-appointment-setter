@@ -76,6 +76,7 @@ class MessageSender(Protocol):
         product_name: str | None,
         content: str,
         delivery_id: str,
+        require_existing_contact: bool = False,
     ) -> FirstTouchResult: ...
 
     async def send_first_touch_to_conversation(
@@ -162,6 +163,7 @@ class ChatwootMessageSender:
         product_name: str | None = None,
         content: str,
         delivery_id: str,
+        require_existing_contact: bool = False,
     ) -> FirstTouchResult:
         normalized = normalize_phone(phone)
         if normalized is None:
@@ -203,6 +205,8 @@ class ChatwootMessageSender:
                 phone_number=e164,
             )
             if contact_binding is None:
+                if require_existing_contact:
+                    raise ChatwootProtocolError("existing_contact_required")
                 created_contact_id = await self._chatwoot.create_contact(
                     inbox_id=self._inbox_id,
                     name=buyer_name,

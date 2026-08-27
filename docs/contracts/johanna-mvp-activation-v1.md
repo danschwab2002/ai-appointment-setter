@@ -1,6 +1,6 @@
 # Contrato de activación del MVP de Johanna V1
 
-- **Estado:** Implementado y verificado localmente; publicación, migración, despliegue y activación productiva pendientes
+- **Estado:** Base productiva desplegada; retry acotado de `invalid_contact_id` implementado y verificado localmente, con publicación, migración y despliegue pendientes
 - **Versión:** 1
 - **Scope inbound público:** Chatwoot account `1`, inbox `9`, `libre-de-ansiedad-inbound` versión `2`
 - **Scope Hotmart:** producto `8104005`, oferta `bxjge6zq`, payload `2.0.0`
@@ -142,6 +142,21 @@ budget por teléfono. Si cualquiera ya reservó contacto, el otro devuelve
 de `request_started` cambia el intent a comprado y elimina autoridad para recuperar
 el pago. Después de `request_started`, una respuesta ambigua nunca se reenvía a
 ciegas: queda `delivery_unknown` hasta reconciliación.
+
+Existe una única excepción durable y tipada para el fallo histórico observado
+antes de cualquier conversación o mensaje: `failure_code = invalid_contact_id`,
+ambos IDs remotos nulos y `invalid_contact_retry_count = 0`. La RPC
+`prepare_johanna_payment_failure_invalid_contact_retry` vuelve a validar scope,
+intención, consentimiento, opt-out, propiedad del teléfono y presupuesto. Sólo
+entonces cambia el mismo command a `request_started` e incrementa el contador a
+`1`. Cualquier otro `delivery_unknown`, un segundo intento o un stop nuevo devuelve
+`not_retryable` o falla cerrado sin sender.
+
+El sender de ese retry exige encontrar exactamente un contacto existente y ligado
+al inbox. No puede crear otro contacto. La respuesta oficial de creación inicial
+`payload.contact.id` se acepta además de las formas históricas. Si el contacto no
+es visible de forma exacta y única, el retry termina nuevamente en
+`delivery_unknown` sin POST de contacto, conversación ni mensaje.
 
 Chatwoot acepta la plantilla mediante un sender construido para el teléfono que
 la RPC acaba de autorizar. El bridge valida nombre, idioma, categoría y versión de

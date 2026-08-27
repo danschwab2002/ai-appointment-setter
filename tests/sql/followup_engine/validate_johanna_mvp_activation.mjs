@@ -147,6 +147,16 @@ const unknown = await db.query(`
 if (unknown.rows[0]?.case_status !== 'delivery_unknown') {
   throw new Error(`payment failure unknown state failed: ${JSON.stringify(unknown.rows)}`);
 }
+const ordinaryUnknownRetry = await prepareInvalidContactRetry(
+  { caseId },
+  `johanna-payment-failure-auto:${caseId}`,
+);
+if (ordinaryUnknownRetry.rows[0]?.outcome !== 'not_retryable'
+    || ordinaryUnknownRetry.rows[0]?.command_status !== 'delivery_unknown') {
+  throw new Error(
+    `ordinary unknown became retryable: ${JSON.stringify(ordinaryUnknownRetry.rows)}`,
+  );
+}
 const reconciled = await db.query(`
   select * from public.reconcile_johanna_abandonment_one_shot(
     $1, 901, 902
@@ -317,6 +327,15 @@ async function beginFailure(fixture, key) {
   `, [key, fixture.caseId]);
 }
 
+async function prepareInvalidContactRetry(fixture, key) {
+  return db.query(`
+    select *
+    from public.prepare_johanna_payment_failure_invalid_contact_retry(
+      $1, $2::uuid, 1, 9
+    )
+  `, [key, fixture.caseId]);
+}
+
 // Carrito and payment failure consume one physical budget per person.
 const budgetFixture = await provisionAuthorizedFailure('201');
 await db.query(`
@@ -465,6 +484,84 @@ if (noReasonCase.rows[0]?.refusal_reason !== null) {
   throw new Error('missing refusal reason was not preserved as null');
 }
 
+// Only the observed legacy nested-contact parse failure gets one retry.
+const retryFixture = await provisionAuthorizedFailure('207');
+const retryKey = 'johanna-payment-failure-auto:invalid-contact-207';
+const retryCommand = await beginFailure(retryFixture, retryKey);
+await db.query(`
+  select * from public.finish_johanna_abandonment_one_shot(
+    $1::uuid, 'delivery_unknown', null, null, 'invalid_contact_id'
+  )
+`, [retryCommand.rows[0].command_id]);
+const retryStarted = await prepareInvalidContactRetry(retryFixture, retryKey);
+if (retryStarted.rows[0]?.outcome !== 'retry_started'
+    || retryStarted.rows[0]?.command_status !== 'request_started') {
+  throw new Error(`invalid contact retry did not start: ${JSON.stringify(retryStarted.rows)}`);
+}
+const retryState = await db.query(`
+  select cmd.status, cmd.invalid_contact_retry_count,
+         cmd.failure_code, cmd.finalized_at, payment_case.case_status
+  from public.johanna_abandonment_one_shot_commands cmd
+  join public.johanna_payment_failure_cases payment_case
+    on payment_case.outbound_command_id = cmd.id
+  where cmd.id = $1::uuid
+`, [retryCommand.rows[0].command_id]);
+if (retryState.rows[0]?.status !== 'request_started'
+    || retryState.rows[0]?.invalid_contact_retry_count !== 1
+    || retryState.rows[0]?.failure_code !== null
+    || retryState.rows[0]?.finalized_at !== null
+    || retryState.rows[0]?.case_status !== 'outbound_started') {
+  throw new Error(`invalid contact retry state mismatch: ${JSON.stringify(retryState.rows)}`);
+}
+const retryReplay = await prepareInvalidContactRetry(retryFixture, retryKey);
+if (retryReplay.rows[0]?.outcome !== 'not_retryable'
+    || retryReplay.rows[0]?.command_status !== 'request_started') {
+  throw new Error(`invalid contact retry budget repeated: ${JSON.stringify(retryReplay.rows)}`);
+}
+
+// A stop arriving before retry preserves the unknown predecessor without mutation.
+const retryStoppedFixture = await provisionAuthorizedFailure('208');
+const retryStoppedKey = 'johanna-payment-failure-auto:invalid-contact-stopped-208';
+const retryStoppedCommand = await beginFailure(retryStoppedFixture, retryStoppedKey);
+await db.query(`
+  select * from public.finish_johanna_abandonment_one_shot(
+    $1::uuid, 'delivery_unknown', null, null, 'invalid_contact_id'
+  )
+`, [retryStoppedCommand.rows[0].command_id]);
+await db.query(`
+  insert into public.contact_opt_out_events (
+    channel, purpose, source, canonical_account_id, canonical_inbox_id,
+    canonical_conversation_id, canonical_message_id, external_user_id,
+    occurred_at, normalized_rule_key, correlation_status
+  ) values (
+    'whatsapp', 'cart_recovery', 'chatwoot', 1, 9, 9208, 9308, $1,
+    '2026-08-25T20:30:00Z', 'no_more_messages', 'unmatched'
+  )
+`, [retryStoppedFixture.phone]);
+let retryStopRejected = false;
+try {
+  await prepareInvalidContactRetry(retryStoppedFixture, retryStoppedKey);
+} catch (error) {
+  retryStopRejected = String(error).includes(
+    'johanna_payment_failure_invalid_contact_retry_contact_blocked',
+  );
+}
+if (!retryStopRejected) {
+  throw new Error('durable opt-out did not block invalid contact retry');
+}
+const retryStoppedState = await db.query(`
+  select cmd.status, cmd.invalid_contact_retry_count, payment_case.case_status
+  from public.johanna_abandonment_one_shot_commands cmd
+  join public.johanna_payment_failure_cases payment_case
+    on payment_case.outbound_command_id = cmd.id
+  where cmd.id = $1::uuid
+`, [retryStoppedCommand.rows[0].command_id]);
+if (retryStoppedState.rows[0]?.status !== 'delivery_unknown'
+    || retryStoppedState.rows[0]?.invalid_contact_retry_count !== 0
+    || retryStoppedState.rows[0]?.case_status !== 'delivery_unknown') {
+  throw new Error(`blocked retry mutated state: ${JSON.stringify(retryStoppedState.rows)}`);
+}
+
 const acl = await db.query(`
   select
     has_function_privilege(
@@ -476,9 +573,22 @@ const acl = await db.query(`
       'service_role',
       'public.admit_johanna_payment_failure(text,jsonb,text,text)',
       'execute'
-    ) service_execute
+    ) service_execute,
+    has_function_privilege(
+      'anon',
+      'public.prepare_johanna_payment_failure_invalid_contact_retry(text,uuid,bigint,bigint)',
+      'execute'
+    ) retry_anon_execute,
+    has_function_privilege(
+      'service_role',
+      'public.prepare_johanna_payment_failure_invalid_contact_retry(text,uuid,bigint,bigint)',
+      'execute'
+    ) retry_service_execute
 `);
-if (acl.rows[0]?.anon_execute !== false || acl.rows[0]?.service_execute !== true) {
+if (acl.rows[0]?.anon_execute !== false
+    || acl.rows[0]?.service_execute !== true
+    || acl.rows[0]?.retry_anon_execute !== false
+    || acl.rows[0]?.retry_service_execute !== true) {
   throw new Error(`payment failure ACL failed: ${JSON.stringify(acl.rows)}`);
 }
 

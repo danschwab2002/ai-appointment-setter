@@ -1315,6 +1315,52 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         4,
         'hotmart_canceled_status_with_optional_refusal_reason'
+    union all
+    select
+        '20260827000200',
+        '20260827000200_chatwoot_invalid_contact_retry.sql',
+        exists(
+            select 1
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'johanna_abandonment_one_shot_commands'
+              and column_name = 'invalid_contact_retry_count'
+              and is_nullable = 'NO'
+        )::int
+        + coalesce((
+            select (
+                prosecdef
+                and proconfig @> array[
+                    'search_path=pg_catalog, public, pg_temp'
+                ]
+                and position('invalid_contact_id' in definition) > 0
+                and position('invalid_contact_retry_count <> 0' in definition) > 0
+                and position('''retry_started''::text' in definition) > 0
+            )::int
+            from functions
+            where oid = to_regprocedure(
+                'public.prepare_johanna_payment_failure_invalid_contact_retry(text,uuid,bigint,bigint)'
+            )
+        ), 0)
+        + (
+            has_function_privilege(
+                'service_role',
+                'public.prepare_johanna_payment_failure_invalid_contact_retry(text,uuid,bigint,bigint)',
+                'execute'
+            )
+            and not has_function_privilege(
+                'anon',
+                'public.prepare_johanna_payment_failure_invalid_contact_retry(text,uuid,bigint,bigint)',
+                'execute'
+            )
+            and not has_function_privilege(
+                'authenticated',
+                'public.prepare_johanna_payment_failure_invalid_contact_retry(text,uuid,bigint,bigint)',
+                'execute'
+            )
+        )::int,
+        3,
+        'single_bounded_invalid_contact_retry'
 )
 select
     version,
