@@ -346,6 +346,31 @@ def test_create_contact_returns_contact_id() -> None:
     assert req_body["inbox_id"] == 1
 
 
+def test_create_contact_handles_current_official_nested_contact_response() -> None:
+    transport = MockTransport()
+    transport.set(
+        "/api/v1/accounts/1/contacts",
+        httpx.Response(
+            200,
+            json={
+                "payload": {
+                    "contact": {"id": 91, "name": "Test"},
+                    "contact_inbox": {"source_id": "source-91"},
+                }
+            },
+            request=httpx.Request("POST", "https://chatwoot.test"),
+        ),
+    )
+
+    contact_id = _run(_chatwoot(transport).create_contact(
+        inbox_id=1,
+        name="Test",
+        phone_number="+553****9999",
+    ))
+
+    assert contact_id == 91
+
+
 def test_create_contact_handles_direct_response() -> None:
     """Chatwoot may return the contact without a 'payload' wrapper."""
     transport = MockTransport()
@@ -778,6 +803,44 @@ def test_chatwoot_sender_blocks_missing_two_variable_template_data(
     assert result.status == "blocked"
     assert result.reason == "template_parameters_missing"
     assert transport.requests == []
+
+
+def test_chatwoot_sender_retry_requires_existing_contact_without_create() -> None:
+    transport = MockTransport()
+    transport.set(
+        "/api/v1/accounts/1/contacts/search",
+        httpx.Response(
+            200,
+            json={"payload": []},
+            request=httpx.Request("GET", "https://chatwoot.test"),
+        ),
+    )
+    sender = ChatwootMessageSender(
+        chatwoot=_chatwoot(transport),
+        inbox_id=1,
+        allowed_jid="5531999999999@s.whatsapp.net",
+        template=WhatsAppTemplateConfig(
+            first_touch_name="cart_recovery_first",
+            followup_name=None,
+            language="es_AR",
+            category="MARKETING",
+            first_touch_parameter="buyer_name_and_product",
+        ),
+    )
+
+    result = _run(sender.send_first_touch(
+        phone="5531999999999",
+        buyer_name="Test Buyer",
+        buyer_email="buyer@test.com",
+        product_name="Libre de Ansiedad",
+        content="contenido no usado por el template",
+        delivery_id="evt-contact-retry",
+        require_existing_contact=True,
+    ))
+
+    assert result.status == "failed"
+    assert result.reason == "existing_contact_required"
+    assert [method for method, _, _ in transport.requests] == ["GET"]
 
 
 def test_chatwoot_sender_sends_waba_followup_template() -> None:

@@ -3250,7 +3250,9 @@ def create_app(
         raise HTTPException(status_code=502, detail="precheckout_first_touch_failed")
 
     async def _execute_johanna_payment_failure_delivery(
-        *, payment_failure_case_id: str
+        *,
+        payment_failure_case_id: str,
+        retry_invalid_contact: bool = False,
     ) -> tuple[int, dict[str, object]]:
         if (
             shared_supabase is None
@@ -3262,17 +3264,28 @@ def create_app(
                 detail="johanna_payment_failure_outbound_not_configured",
             )
         try:
-            started = (
-                await shared_supabase.begin_johanna_payment_failure_hotmart_auto(
-                    command_key=(
-                        "johanna-payment-failure-auto:"
-                        f"{payment_failure_case_id}"
-                    ),
-                    payment_failure_case_id=payment_failure_case_id,
-                    chatwoot_account_id=settings.chatwoot_account_id,
-                    chatwoot_inbox_id=settings.chatwoot_inbox_id,
-                )
+            command_key = (
+                "johanna-payment-failure-auto:"
+                f"{payment_failure_case_id}"
             )
+            if retry_invalid_contact:
+                started = (
+                    await shared_supabase.prepare_johanna_payment_failure_invalid_contact_retry(
+                        command_key=command_key,
+                        payment_failure_case_id=payment_failure_case_id,
+                        chatwoot_account_id=settings.chatwoot_account_id,
+                        chatwoot_inbox_id=settings.chatwoot_inbox_id,
+                    )
+                )
+            else:
+                started = (
+                    await shared_supabase.begin_johanna_payment_failure_hotmart_auto(
+                        command_key=command_key,
+                        payment_failure_case_id=payment_failure_case_id,
+                        chatwoot_account_id=settings.chatwoot_account_id,
+                        chatwoot_inbox_id=settings.chatwoot_inbox_id,
+                    )
+                )
         except SupabaseError as exc:
             raise HTTPException(
                 status_code=409,
@@ -3301,10 +3314,24 @@ def create_app(
                 "message_count": 1,
                 "followups_allowed": 0,
             }
+        if started.outcome == "not_retryable":
+            return 200, {
+                "status": "delivery_unknown",
+                "command_id": started.command_id,
+                "message_count": 1,
+                "followups_allowed": 0,
+            }
         if started.outcome == "replay":
             if started.command_status == "accepted_by_chatwoot":
                 return 200, {
                     "status": "accepted_by_chatwoot",
+                    "command_id": started.command_id,
+                    "message_count": 1,
+                    "followups_allowed": 0,
+                }
+            if started.command_status == "delivery_unknown":
+                return 200, {
+                    "status": "delivery_unknown",
                     "command_id": started.command_id,
                     "message_count": 1,
                     "followups_allowed": 0,
@@ -3340,6 +3367,7 @@ def create_app(
             product_name=started.product_name,
             content="Recuperación de compra rechazada por falta de fondos.",
             delivery_id=started.command_id,
+            require_existing_contact=retry_invalid_contact,
         )
         accepted = (
             result.status == "sent"
@@ -3463,10 +3491,32 @@ def create_app(
                         detail="payment_failure_semantic_conflict",
                     )
                 if failure_admission.outcome == "duplicate":
-                    if failure_admission.case_status in {
-                        "outbound_accepted",
-                        "delivery_unknown",
-                    }:
+                    if failure_admission.case_status == "outbound_accepted":
+                        response.status_code = status.HTTP_200_OK
+                        return {
+                            "status": failure_admission.case_status,
+                            "event_id": event_id,
+                            "case_status": failure_admission.case_status,
+                            "correlation_outcome": (
+                                failure_admission.correlation_outcome
+                            ),
+                        }
+                    if (
+                        failure_admission.case_status == "delivery_unknown"
+                        and settings.johanna_payment_failure_outbound_enabled
+                        and failure_admission.correlation_outcome == "resolved"
+                    ):
+                        result_status, result_body = (
+                            await _execute_johanna_payment_failure_delivery(
+                                payment_failure_case_id=(
+                                    failure_admission.payment_failure_case_id
+                                ),
+                                retry_invalid_contact=True,
+                            )
+                        )
+                        response.status_code = result_status
+                        return result_body
+                    if failure_admission.case_status == "delivery_unknown":
                         response.status_code = status.HTTP_200_OK
                         return {
                             "status": failure_admission.case_status,

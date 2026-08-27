@@ -1461,7 +1461,11 @@ class ChatwootClient:
         embedded = payload.get("payload")
         if not isinstance(contact_id, int) or isinstance(contact_id, bool):
             if isinstance(embedded, dict):
-                contact_id = embedded.get("id")
+                nested_contact = embedded.get("contact")
+                if isinstance(nested_contact, dict):
+                    contact_id = nested_contact.get("id")
+                else:
+                    contact_id = embedded.get("id")
             elif (
                 isinstance(embedded, list)
                 and embedded

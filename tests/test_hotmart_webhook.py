@@ -17,6 +17,7 @@ from bridge.app import Settings, create_app
 from bridge.chatwoot import ChatwootClient
 from bridge.hotmart import parse_hotmart_payment_failure_payload, parse_hotmart_payload
 from bridge.messaging import FirstTouchResult
+from bridge.supabase import SupabaseClient, SupabaseError
 
 # ── Fixtures ────────────────────────────────────────────────────────
 
@@ -680,11 +681,10 @@ def test_payment_failure_enters_dedicated_human_review_path(tmp_path) -> None:
     assert body["p_normalized_phone"] == "5531999999999"
 
 
-@pytest.mark.parametrize("case_status", ["outbound_accepted", "delivery_unknown"])
-def test_payment_failure_terminal_replay_returns_200_without_another_effect(
+def test_payment_failure_accepted_replay_returns_200_without_another_effect(
     tmp_path,
-    case_status,
 ) -> None:
+    case_status = "outbound_accepted"
     transport = _MockSupabaseTransport(
         status_code=200,
         response_body=[{
@@ -744,6 +744,74 @@ def test_payment_failure_terminal_replay_returns_200_without_another_effect(
         "correlation_outcome": "resolved",
     }
     assert len(transport.requests) == 1
+
+
+def test_payment_failure_nonretryable_unknown_returns_200_without_send(
+    tmp_path,
+) -> None:
+    class NonRetryablePaymentFailureSupabase(_PaymentFailureAutoSupabase):
+        async def admit_johanna_payment_failure(self, **kwargs: object) -> object:
+            return SimpleNamespace(
+                outcome="duplicate",
+                payment_failure_case_id="0cb2dca0-dad6-49d3-9732-8656dd35f4bb",
+                correlation_outcome="resolved",
+                case_status="delivery_unknown",
+            )
+
+        async def prepare_johanna_payment_failure_invalid_contact_retry(
+            self, **kwargs: object
+        ) -> object:
+            self.begin_calls.append(kwargs)
+            return SimpleNamespace(
+                outcome="not_retryable",
+                command_id="b94c6a6b-3e29-4cbb-90cb-4acbfc5934e4",
+                command_status="delivery_unknown",
+                target_phone="12025550124",
+                buyer_name="Lead de Pago",
+                buyer_email="payment@example.test",
+                product_name="Libre de Ansiedad",
+                template_name="johanna_compra_fallida_01",
+                template_language="es_EC",
+                template_category="MARKETING",
+                copy_version="johanna-payment-failure-one-shot-v1",
+            )
+
+    supabase = NonRetryablePaymentFailureSupabase()
+    sender = _JohannaAutoSender()
+    app = create_app(
+        _hotmart_settings(
+            capture_dir=tmp_path,
+            johanna_payment_failure_hotmart_enabled=True,
+            johanna_payment_failure_outbound_enabled=True,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=9,
+            pilot_channel_provider="waba",
+            pilot_channel_account_ref="chatwoot-inbox:9",
+        ),
+        supabase_client=supabase,  # type: ignore[arg-type]
+        message_sender=sender,  # type: ignore[arg-type]
+    )
+    payload = copy.deepcopy(EXAMPLE_PAYLOAD)
+    payload["event"] = "PURCHASE_CANCELED"
+    data = payload["data"]
+    assert isinstance(data, dict)
+    product = data["product"]
+    assert isinstance(product, dict)
+    product["id"] = 8104005
+    data["purchase"] = {
+        "transaction": "HP12345678",
+        "status": "CANCELED",
+        "offer": {"code": "bxjge6zq"},
+        "payment": {"refusal_reason": "processor-specific rejection"},
+    }
+
+    response = _post_hotmart(app, json.dumps(payload).encode())
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "delivery_unknown"
+    assert len(supabase.begin_calls) == 1
+    assert sender.calls == []
+    assert supabase.finish_calls == []
 
 
 @pytest.mark.parametrize(
@@ -998,6 +1066,85 @@ class _MockSupabaseTransport(httpx.AsyncBaseTransport):
             self.status_code,
             json=self.response_body,
             request=request,
+        )
+
+
+def test_supabase_prepares_exact_invalid_contact_retry_contract() -> None:
+    transport = _MockSupabaseTransport(
+        status_code=200,
+        response_body=[{
+            "outcome": "retry_started",
+            "command_id": "command-1",
+            "command_status": "request_started",
+            "target_phone": "12025550124",
+            "buyer_name": "Synthetic Buyer",
+            "buyer_email": "synthetic@example.test",
+            "product_name": "Libre de Ansiedad",
+            "template_name": "johanna_compra_fallida_01",
+            "template_language": "es_EC",
+            "template_category": "MARKETING",
+            "copy_version": "johanna-payment-failure-one-shot-v1",
+        }],
+    )
+    client = SupabaseClient(
+        base_url="https://fake-supabase.example.test",
+        service_role_key="test-service-role",
+        transport=transport,
+    )
+
+    result = asyncio.run(
+        client.prepare_johanna_payment_failure_invalid_contact_retry(
+            command_key="johanna-payment-failure-auto:case-1",
+            payment_failure_case_id="case-1",
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=9,
+        )
+    )
+
+    assert result.outcome == "retry_started"
+    assert result.command_status == "request_started"
+    assert transport.requests[0].url.path == (
+        "/rest/v1/rpc/prepare_johanna_payment_failure_invalid_contact_retry"
+    )
+    assert json.loads(transport.requests[0].content) == {
+        "p_command_key": "johanna-payment-failure-auto:case-1",
+        "p_payment_failure_case_id": "case-1",
+        "p_chatwoot_account_id": 1,
+        "p_chatwoot_inbox_id": 9,
+    }
+
+
+def test_supabase_invalid_contact_retry_rejects_unknown_outcome() -> None:
+    transport = _MockSupabaseTransport(
+        status_code=200,
+        response_body=[{
+            "outcome": "started",
+            "command_id": "command-1",
+            "command_status": "request_started",
+            "target_phone": "12025550124",
+            "buyer_name": "Synthetic Buyer",
+            "buyer_email": "synthetic@example.test",
+            "product_name": "Libre de Ansiedad",
+            "template_name": "johanna_compra_fallida_01",
+            "template_language": "es_EC",
+            "template_category": "MARKETING",
+            "copy_version": "johanna-payment-failure-one-shot-v1",
+        }],
+    )
+    client = SupabaseClient(
+        base_url="https://fake-supabase.example.test",
+        service_role_key="test-service-role",
+        transport=transport,
+    )
+
+    with pytest.raises(SupabaseError, match="invalid_row"):
+        asyncio.run(
+            client.prepare_johanna_payment_failure_invalid_contact_retry(
+                command_key="johanna-payment-failure-auto:case-1",
+                payment_failure_case_id="case-1",
+                chatwoot_account_id=1,
+                chatwoot_inbox_id=9,
+            )
         )
 
 
@@ -1521,6 +1668,73 @@ def test_payment_failure_resolved_case_sends_approved_template_once(tmp_path) ->
     assert sender.calls[0]["delivery_id"] == (
         "b94c6a6b-3e29-4cbb-90cb-4acbfc5934e4"
     )
+    assert len(supabase.finish_calls) == 1
+
+
+def test_payment_failure_exact_invalid_contact_retry_sends_once(tmp_path) -> None:
+    class RetryablePaymentFailureSupabase(_PaymentFailureAutoSupabase):
+        async def admit_johanna_payment_failure(self, **kwargs: object) -> object:
+            return SimpleNamespace(
+                outcome="duplicate",
+                payment_failure_case_id="0cb2dca0-dad6-49d3-9732-8656dd35f4bb",
+                correlation_outcome="resolved",
+                case_status="delivery_unknown",
+            )
+
+        async def prepare_johanna_payment_failure_invalid_contact_retry(
+            self, **kwargs: object
+        ) -> object:
+            self.begin_calls.append(kwargs)
+            return SimpleNamespace(
+                outcome="retry_started",
+                command_id="b94c6a6b-3e29-4cbb-90cb-4acbfc5934e4",
+                command_status="request_started",
+                target_phone="12025550124",
+                buyer_name="Lead de Pago",
+                buyer_email="payment@example.test",
+                product_name="Libre de Ansiedad",
+                template_name="johanna_compra_fallida_01",
+                template_language="es_EC",
+                template_category="MARKETING",
+                copy_version="johanna-payment-failure-one-shot-v1",
+            )
+
+    supabase = RetryablePaymentFailureSupabase()
+    sender = _JohannaAutoSender()
+    app = create_app(
+        _hotmart_settings(
+            capture_dir=tmp_path,
+            johanna_payment_failure_hotmart_enabled=True,
+            johanna_payment_failure_outbound_enabled=True,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=9,
+            pilot_channel_provider="waba",
+            pilot_channel_account_ref="chatwoot-inbox:9",
+        ),
+        supabase_client=supabase,  # type: ignore[arg-type]
+        message_sender=sender,  # type: ignore[arg-type]
+    )
+    payload = copy.deepcopy(EXAMPLE_PAYLOAD)
+    payload["event"] = "PURCHASE_CANCELED"
+    data = payload["data"]
+    assert isinstance(data, dict)
+    product = data["product"]
+    assert isinstance(product, dict)
+    product["id"] = 8104005
+    data["purchase"] = {
+        "transaction": "HP12345678",
+        "status": "CANCELED",
+        "offer": {"code": "bxjge6zq"},
+        "payment": {"refusal_reason": "processor-specific rejection"},
+    }
+
+    response = _post_hotmart(app, json.dumps(payload).encode())
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "accepted_by_chatwoot"
+    assert len(supabase.begin_calls) == 1
+    assert len(sender.calls) == 1
+    assert sender.calls[0]["require_existing_contact"] is True
     assert len(supabase.finish_calls) == 1
 
 
