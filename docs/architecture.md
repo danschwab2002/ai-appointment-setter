@@ -353,16 +353,22 @@ una salida de carrito resuelta fija `confirmed_abandonment`; ningún outcome con
 `activation_authorized` ni crea efectos. Ver
 [contrato de correlación V1](contracts/hotmart-purchase-intent-correlation-v1.md).
 
-El árbol implementa localmente una consulta administrativa read-only para los outcomes
-no resueltos, todavía sin despliegue en Supabase Cloud ni runtime. Dos RPC
-`SECURITY DEFINER` proyectan únicamente casos `manual_handoff_required=true` del
-`tenant_ref + funnel_ref` configurados, con identidad enmascarada dentro de PostgreSQL;
-`service_role` conserva revocado el `SELECT` directo. El bridge expone lista y detalle
-por bearer independiente, default-off, y el paquete candidato del Client Copilot registra
-sólo esas dos tools. La capacidad no selecciona candidatos, no cambia correlaciones, no
-notifica y no activa el resolution worker. Casos sin scope atribuible quedan excluidos
-fail-closed. Ver el
-[contrato de consulta V1](contracts/operator-correlation-review-v1.md).
+La consulta administrativa read-only de outcomes no resueltos está desplegada en
+Supabase Cloud y bridge, con dos RPC `SECURITY DEFINER`, scope server-owned e identidad
+enmascarada antes de salir de PostgreSQL. `service_role` conserva revocado el `SELECT`
+directo y el Profile no recibe esa key.
+
+El árbol agrega localmente, todavía sin deploy, resolución manual supervisada en dos
+pasos. `prepare_operator_correlation_resolution` congela evidencia y crea un comando
+expirable; `confirm_operator_correlation_resolution` revalida estado/scope/candidatos y
+crea una resolución append-only idempotente. El outcome determinístico y
+`purchase_intents` permanecen intactos. La lista read-only excluye el caso por existencia
+de la resolución, no por reescribirlo. Bridge usa bearer mutante separado y actor
+server-owned; Hermes exige aprobación humana nativa por `command_id`. No se crean timers,
+activaciones, mensajes, deliveries ni outbound. Ver
+[consulta V1](contracts/operator-correlation-review-v1.md),
+[resolución V1](contracts/operator-correlation-resolution-v1.md) y
+[ADR-0016](decisions/0016-supervised-manual-correlation-resolution.md).
 
 El runtime productivo implementa un timer durable de reevaluación para
 `resolved + confirmed_abandonment`. El plazo es un número variable tomado de

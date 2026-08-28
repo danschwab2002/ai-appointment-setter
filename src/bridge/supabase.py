@@ -26,6 +26,45 @@ class SupabaseCommittedResponseError(SupabaseError):
     """Raised when a successful mutating RPC returns an invalid committed row."""
 
 
+class OperatorCorrelationResolutionError(SupabaseError):
+    """Known fail-closed domain rejection from a resolution RPC."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
+
+
+_OPERATOR_CORRELATION_RESOLUTION_ERRORS = frozenset(
+    {
+        ("22023", "invalid_operator_correlation_resolution"),
+        ("P0002", "operator_correlation_case_not_found"),
+        ("55000", "operator_correlation_stale_evidence"),
+        ("55000", "operator_correlation_command_expired"),
+        ("23505", "operator_correlation_already_resolved"),
+        ("23505", "operator_correlation_idempotency_conflict"),
+    }
+)
+
+
+def _raise_operator_correlation_resolution_error(
+    response: httpx.Response, *, operation: str
+) -> None:
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict):
+        code = payload.get("code")
+        message = payload.get("message")
+        if (
+            isinstance(code, str)
+            and isinstance(message, str)
+            and (code, message) in _OPERATOR_CORRELATION_RESOLUTION_ERRORS
+        ):
+            raise OperatorCorrelationResolutionError(message)
+    raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+
+
 # ── Data classes for resolution results ──────────────────────────────
 
 
@@ -1498,6 +1537,125 @@ class SupabaseClient:
         if len(rows) > 1:
             raise SupabaseError("unresolved_purchase_intent_correlation_get_ambiguous")
         return rows[0] if rows else None
+
+    async def prepare_operator_correlation_resolution(
+        self,
+        *,
+        tenant_ref: str,
+        funnel_ref: str,
+        actor_ref: str,
+        idempotency_key: str,
+        webhook_event_id: str,
+        action: str,
+        selected_purchase_intent_id: str | None,
+        verification_basis: str,
+    ) -> dict[str, Any]:
+        """Prepare an expiring command without applying a resolution."""
+        operation = "operator_correlation_resolution_prepare"
+        tenant = _required_string(
+            {"tenant_ref": tenant_ref}, "tenant_ref", operation=operation
+        )
+        funnel = _required_string(
+            {"funnel_ref": funnel_ref}, "funnel_ref", operation=operation
+        )
+        actor = _required_string(
+            {"actor_ref": actor_ref}, "actor_ref", operation=operation
+        )
+        expected_idempotency_key = _required_uuid(
+            {"idempotency_key": idempotency_key},
+            "idempotency_key",
+            operation=operation,
+        )
+        event_id = _required_uuid(
+            {"webhook_event_id": webhook_event_id},
+            "webhook_event_id",
+            operation=operation,
+        )
+        candidate_id = None
+        if selected_purchase_intent_id is not None:
+            candidate_id = _required_uuid(
+                {"selected_purchase_intent_id": selected_purchase_intent_id},
+                "selected_purchase_intent_id",
+                operation=operation,
+            )
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/prepare_operator_correlation_resolution",
+            content=json.dumps(
+                {
+                    "p_tenant_ref": tenant,
+                    "p_funnel_ref": funnel,
+                    "p_actor_ref": actor,
+                    "p_idempotency_key": expected_idempotency_key,
+                    "p_webhook_event_id": event_id,
+                    "p_action": action,
+                    "p_selected_purchase_intent_id": candidate_id,
+                    "p_verification_basis": verification_basis,
+                }
+            ),
+        )
+        if response.status_code != 200:
+            _raise_operator_correlation_resolution_error(
+                response, operation=operation
+            )
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1 or not isinstance(rows[0].get("command_data"), dict):
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return rows[0]["command_data"]
+
+    async def confirm_operator_correlation_resolution(
+        self,
+        *,
+        tenant_ref: str,
+        funnel_ref: str,
+        actor_ref: str,
+        command_id: str,
+        expected_action: str,
+        expected_purchase_intent_id: str | None,
+    ) -> dict[str, Any]:
+        """Apply one immutable prepared command or replay its result."""
+        operation = "operator_correlation_resolution_confirm"
+        tenant = _required_string(
+            {"tenant_ref": tenant_ref}, "tenant_ref", operation=operation
+        )
+        funnel = _required_string(
+            {"funnel_ref": funnel_ref}, "funnel_ref", operation=operation
+        )
+        actor = _required_string(
+            {"actor_ref": actor_ref}, "actor_ref", operation=operation
+        )
+        expected_command_id = _required_uuid(
+            {"command_id": command_id}, "command_id", operation=operation
+        )
+        expected_intent_id = None
+        if expected_purchase_intent_id is not None:
+            expected_intent_id = _required_uuid(
+                {"expected_purchase_intent_id": expected_purchase_intent_id},
+                "expected_purchase_intent_id",
+                operation=operation,
+            )
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/confirm_operator_correlation_resolution",
+            content=json.dumps(
+                {
+                    "p_tenant_ref": tenant,
+                    "p_funnel_ref": funnel,
+                    "p_actor_ref": actor,
+                    "p_command_id": expected_command_id,
+                    "p_expected_action": expected_action,
+                    "p_expected_purchase_intent_id": expected_intent_id,
+                }
+            ),
+        )
+        if response.status_code != 200:
+            _raise_operator_correlation_resolution_error(
+                response, operation=operation
+            )
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1 or not isinstance(rows[0].get("resolution_data"), dict):
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return rows[0]["resolution_data"]
 
     async def _read_operator_correlation_rpc(
         self,

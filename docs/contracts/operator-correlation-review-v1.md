@@ -145,14 +145,18 @@ Los local-parts de email de uno o dos caracteres se reemplazan completamente por
 
 No se incluyen nombre, payload Hotmart, JID, teléfono completo, email completo, dirección, tokens ni secretos.
 
-## 7. Plugin del Client Copilot
+## 7. Superficie de lectura del Client Copilot
 
-El toolset `operator_correlation_review` expone sólo:
+La superficie V1 de lectura del toolset `operator_correlation_review` expone:
 
 - `list_unresolved_correlations(limit?)`;
 - `get_unresolved_correlation(case_id)`.
 
 El perfil mantiene deshabilitados terminal, archivos, código y web general. El plugin usa `OPERATOR_CORRELATION_API_URL` y `OPERATOR_CORRELATION_API_TOKEN` desde el `.env` privado del perfil. No recibe la key `service_role`.
+
+La extensión mutante supervisada está definida por
+[`operator-correlation-resolution-v1.md`](operator-correlation-resolution-v1.md).
+Agrega prepare/confirm sin cambiar este contrato de lectura ni entregar acceso SQL.
 
 ## 8. Exclusiones V1
 
@@ -164,4 +168,4 @@ Este contrato no:
 - crea notas, Team, etiquetas, tareas o notificaciones;
 - activa `RESOLUTION_WORKER_ENABLED`;
 - crea recovery cases, follow-ups, acciones ni outbound;
-- define todavía el comando durable de decisión humana.
+- otorga por sí mismo autoridad de resolución manual.

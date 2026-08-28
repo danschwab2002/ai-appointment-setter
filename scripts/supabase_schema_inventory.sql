@@ -909,6 +909,97 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         'scoped_masked_operator_read_without_direct_table_access'
     union all
     select
+        '20260824000200',
+        '20260824000200_operator_correlation_manual_resolution.sql',
+        (to_regclass('public.operator_correlation_resolution_commands') is not null)::int
+        + (to_regclass('public.operator_correlation_resolutions') is not null)::int
+        + (
+            select count(*)::int
+            from functions
+            where oid in (
+                to_regprocedure(
+                    'public.prepare_operator_correlation_resolution(text,text,text,uuid,text,uuid,text,uuid)'
+                ),
+                to_regprocedure(
+                    'public.confirm_operator_correlation_resolution(text,text,text,uuid,text,uuid)'
+                )
+            )
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+        )
+        + (
+            has_function_privilege(
+                'service_role',
+                to_regprocedure(
+                    'public.prepare_operator_correlation_resolution(text,text,text,uuid,text,uuid,text,uuid)'
+                ),
+                'execute'
+            )
+            and has_function_privilege(
+                'service_role',
+                to_regprocedure(
+                    'public.confirm_operator_correlation_resolution(text,text,text,uuid,text,uuid)'
+                ),
+                'execute'
+            )
+            and not has_function_privilege(
+                'anon',
+                to_regprocedure(
+                    'public.prepare_operator_correlation_resolution(text,text,text,uuid,text,uuid,text,uuid)'
+                ),
+                'execute'
+            )
+            and not has_function_privilege(
+                'authenticated',
+                to_regprocedure(
+                    'public.confirm_operator_correlation_resolution(text,text,text,uuid,text,uuid)'
+                ),
+                'execute'
+            )
+        )::int
+        + (
+            not has_table_privilege(
+                'service_role',
+                'public.operator_correlation_resolution_commands',
+                'select,insert,update,delete'
+            )
+            and not has_table_privilege(
+                'service_role',
+                'public.operator_correlation_resolutions',
+                'select,insert,update,delete'
+            )
+        )::int
+        + coalesce((
+            select (
+                not command_guard.prosecdef
+                and array_to_string(command_guard.proconfig, ',') =
+                    'search_path=pg_catalog, public, pg_temp'
+                and not has_function_privilege(
+                    'anon', command_guard.oid, 'execute'
+                )
+                and not has_function_privilege(
+                    'authenticated', command_guard.oid, 'execute'
+                )
+                and not has_function_privilege(
+                    'service_role', command_guard.oid, 'execute'
+                )
+                and exists (
+                    select 1
+                    from triggers
+                    where tgname =
+                        'validate_operator_correlation_command_before_insert'
+                )
+            )::int
+            from functions command_guard
+            where command_guard.oid = to_regprocedure(
+                'public.validate_operator_correlation_resolution_command_insert()'
+            )
+        ), 0),
+        7,
+        'supervised_manual_resolution_overlay_without_direct_table_access'
+    union all
+    select
         '20260825000100',
         '20260825000100_proactive_lead_identity_bootstrap.sql',
         (to_regclass('public.proactive_lead_bootstrap_targets') is not null)::int
