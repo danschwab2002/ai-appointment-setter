@@ -99,11 +99,14 @@ const rows = await db.query(`
       ('reconcile_chatwoot_opt_out_stop(bigint,bigint,bigint,text)'),
       ('reconcile_followup_delivery_attempt(uuid,uuid,bigint,text,text,uuid,timestamp with time zone,text,timestamp with time zone)'),
       ('record_and_finalize_followup_acceptance(uuid,uuid,text,bigint,text,text,text,timestamp with time zone)'),
+      ('get_precheckout_delayed_one_shot_command(uuid)'),
+      ('list_due_hotmart_abandonment_reevaluations_v2(timestamp with time zone,integer,boolean)'),
       ('reevaluate_hotmart_abandonment_timer(uuid,timestamp with time zone)'),
       ('reevaluate_followup_action(uuid,text,bigint,timestamp with time zone,boolean,text,text,timestamp with time zone,text,boolean,boolean,boolean,boolean,boolean)'),
       ('request_inbound_human_handoff(uuid,text,text,text,integer,timestamp with time zone)'),
       ('request_human_handoff(uuid,text,text,text,text,integer,uuid,uuid,text,bigint,timestamp with time zone)'),
       ('reserve_followup_delivery_attempt(uuid,text,bigint,bigint,bigint,text,text,timestamp with time zone)'),
+      ('schedule_precheckout_first_touch_reevaluation(uuid,uuid)'),
       ('set_lancemos_pilot_cohort_member(text,integer,uuid,bigint,text,text,text)'),
       ('set_lancemos_pilot_runtime_state(text,integer,bigint,text,text,text)')
   ), functions as (
@@ -126,7 +129,7 @@ const rows = await db.query(`
 `);
 const result = rows.rows[0];
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 50) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 53) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const inventory = await db.query(readFileSync(

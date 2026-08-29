@@ -44,6 +44,20 @@ class _FakeSupabase:
         )
 
 
+class _TimerFakeSupabase(_FakeSupabase):
+    def __init__(self) -> None:
+        super().__init__()
+        self.timer_polled = threading.Event()
+        self.timer_calls: list[dict[str, object]] = []
+
+    async def list_due_hotmart_abandonment_reevaluations(
+        self, **kwargs: object
+    ) -> list[str]:
+        self.timer_calls.append(kwargs)
+        self.timer_polled.set()
+        return []
+
+
 def _settings(**overrides: object) -> Settings:
     defaults: dict[str, object] = {
         "webhook_secret": "unused",
@@ -153,6 +167,36 @@ def test_minimal_submission_crosses_real_tcp_and_asgi_lifespan() -> None:
     assert response.json()["status"] == "received"
     assert response.json()["activation_authorized"] is False
     assert len(supabase.calls) == 1
+
+
+def test_real_tcp_lifespan_polls_precheckout_timer_default_effect_free() -> None:
+    supabase = _TimerFakeSupabase()
+    app = create_app(
+        _settings(
+            precheckout_form_enabled=False,
+            hotmart_abandonment_timer_worker_enabled=True,
+            hotmart_abandonment_timer_poll_interval_seconds=0.01,
+            precheckout_delayed_first_touch_enabled=True,
+            chatwoot_base_url="https://chatwoot.example.invalid",
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=9,
+            chatwoot_control_api_access_token="test-control-token",
+            chatwoot_pause_macro_id=11,
+            agent_bot_id=7,
+            chatwoot_agent_bot_access_token="test-agent-bot-token",
+            pilot_channel_provider="waba",
+        ),
+        supabase_client=supabase,  # type: ignore[arg-type]
+    )
+
+    with _real_http_server(app) as base_url:
+        response = httpx.get(f"{base_url}/health", timeout=3)
+        assert supabase.timer_polled.wait(timeout=3)
+
+    assert response.status_code == 200
+    assert supabase.timer_calls
+    assert supabase.timer_calls[0]["include_precheckout"] is True
+    assert supabase.calls == []
 
 
 def test_receiver_is_disabled_by_default() -> None:

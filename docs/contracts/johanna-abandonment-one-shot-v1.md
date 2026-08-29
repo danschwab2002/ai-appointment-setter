@@ -1,9 +1,10 @@
-# Contrato one-shot de abandono Johanna V1
+# Contrato one-shot comercial Johanna V1
 
-- **Estado:** Implementado y verificado localmente; promoción productiva pendiente
+- **Estado:** abandono desplegado y verificado E2E; macro precheckout completa localmente, efecto productivo pendiente
 - **Versión:** 1
 - **Interfaz:** `POST /internal/johanna/abandonment-one-shot`
-- **Plantilla única:** `johanna_carrito_abandonado_01`, `es_EC`, `MARKETING`
+- **Plantilla vigente de abandono:** `johanna_carrito_abandonado_01`, `es_EC`, `MARKETING`
+- **Plantilla futura de precheckout:** `johanna_interes_precheckout_01`, `es_EC`, `MARKETING`
 - **No habilita:** dispatcher, scheduler, workers Hotmart, outbound general ni follow-ups
 
 ## Propósito
@@ -115,6 +116,72 @@ El RPC exige además:
 La clave deriva del UUID interno del evento. Un replay Hotmart idéntico relee la misma command:
 si está aceptada responde sin llamar al sender; si quedó ambiguo exige reconciliación. El
 trigger estrecho no enciende resolution worker, dispatcher, durable outbound ni follow-ups.
+
+## Trigger precheckout diferido V1
+
+- **Estado:** timer, reserva one-shot y conexión al worker/sender implementados y verificados localmente; template Meta, deploy y activación pendientes.
+- **Diseño:** [first-touch diferido desde precheckout](../design/precheckout-delayed-first-touch.md).
+
+Una intención real V1.1.0 puede competir por el mismo ledger cuando transcurren
+60 minutos desde `submitted_at` sin compra ni evento Hotmart específico admitido.
+El vencimiento no clasifica la intención como abandono: sólo autoriza el mensaje
+genérico basado en el formulario.
+
+La reserva implementada relee bajo lock:
+
+- evidencia V1.1.0 exacta con `marketing_optin=true`,
+  `whatsapp_contact=true` y
+  `copy_version=johanna-precheckout-whatsapp-disclosure-v1`;
+- intención `waiting_for_purchase`, observada, no provisional y autorizada;
+- scope Johanna/Lancemos, producto `F106691755G`, oferta `bxjge6zq` y routing WABA
+  account/inbox `1/9`;
+- teléfono canónico, ownership único, opt-out, bloqueo, restricción y takeover;
+- ausencia de compra aprobada y de un evento Hotmart de abandono o pago fallido
+  ya admitido para la intención;
+- ausencia de cualquier command físico previo para el teléfono.
+
+Un command previo de abandono, pago fallido o precheckout devuelve
+`budget_consumed`. Un evento Hotmart específico anterior devuelve
+`superseded_by_provider_event`. En ambos casos hay cero POST a Chatwoot. Si el
+precheckout reserva primero, un Hotmart tardío se admite y audita, pero el índice
+singleton por teléfono impide un segundo command.
+
+La command precheckout fija igualmente `max_messages=1` y
+`followups_allowed=0`. Usa:
+
+```yaml
+template_name: johanna_interes_precheckout_01
+template_language: es_EC
+template_category: MARKETING
+copy_version: johanna-precheckout-delayed-first-touch-v1
+body_variables:
+  "1": buyer_name
+```
+
+Body contractual exacto:
+
+```text
+Hola, {{1}}. Te escribe el equipo de la Psic. Johanna. Vimos que completaste el formulario de Libre de Ansiedad. ¿Quieres que te ayudemos a continuar? Si no deseas recibir más mensajes, responde “No más mensajes”.
+```
+
+El copy no afirma checkout, abandono, pago fallido ni ausencia de compra; no
+incluye enlace y conserva el opt-out operativo. La aprobación documental no
+equivale a aprobación Meta ni a activación productiva.
+
+La reserva crea una command `reserved`; no declara todavía request-start. Antes
+del POST, el RPC service-role-only toma los locks canónicos compartidos con compra,
+opt-out, ownership/takeover y presupuesto, vuelve a leer lifecycle, señales
+Hotmart, autorización y scope, y recién entonces transiciona atómicamente a
+`request_started`. Sólo devuelve PII y `send_authorized=true` si todas las guardas
+siguen vigentes; un stop iniciado antes de ese fence terminaliza sin llamar al
+sender. La última submission V1.1.0
+autorizada y consistente de la intención aporta el nombre. Una cancelación en
+vuelo termina el proceso hijo aislado que ejecuta el POST y luego ejecuta una
+finalización `delivery_unknown` protegida y acotada; si la
+persistencia no la confirma, la command queda para reconciliación y nunca autoriza
+resend. El due-list recupera tanto `reserved` como `request_started`: el primero
+puede reintentar únicamente el RPC de autoridad; el segundo se terminaliza
+`delivery_unknown` sin ejecutar otro POST.
 
 El caller del RPC V2 no envía `allowed_external_user_id`: Supabase relee
 `purchase_intents.normalized_phone`, valida su forma y recién entonces delega en la

@@ -70,11 +70,12 @@ def test_lists_ids_and_reevaluates_without_exposing_intent_data() -> None:
     )
 
     assert requests[0].url.path == (
-        "/rest/v1/rpc/list_due_hotmart_abandonment_reevaluations"
+        "/rest/v1/rpc/list_due_hotmart_abandonment_reevaluations_v2"
     )
     assert json.loads(requests[0].content) == {
         "p_now": now,
         "p_batch_size": 10,
+        "p_include_precheckout": False,
     }
     assert requests[1].url.path == (
         "/rest/v1/rpc/reevaluate_hotmart_abandonment_timer"

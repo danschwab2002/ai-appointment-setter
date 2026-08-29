@@ -339,10 +339,21 @@ abandono. Hotmart mantiene su endpoint y autenticación propios. Ver
 El árbol implementa localmente V1.1.0 como extensión aditiva: exige consentimiento
 WhatsApp y `copy_version` exactos, teléfono válido y firma del relay. La RPC
 promueve una intención consistente a autorización local y una correlación de
-abandono `resolved` la preserva. Esto habilita sólo la reevaluación interna; no
-crea contacto, caso, acción ni outbound. Producción continúa en V1.0.0 hasta el
-merge, migración, actualización del relay y E2E controlado. Ver
-[ADR-0015](decisions/0015-versioned-landing-whatsapp-consent.md).
+abandono `resolved` la preserva. Sobre esa autoridad, un timer de 60 minutos
+puede reservar el mismo ledger físico one-shot usado por abandono y pago fallido.
+El worker existente incorpora la fuente sólo con
+`PRECHECKOUT_DELAYED_FIRST_TOUCH_ENABLED=true`, proyecta la command exacta y usa
+el sender WABA existente con `johanna_interes_precheckout_01`; replay y
+`delivery_unknown` no autorizan otro POST. Una proyección inmediatamente anterior
+al sender relee stops y oculta PII si la autoridad cambió; la cancelación en vuelo
+termina el proceso hijo aislado del POST y ejecuta una finalización ambigua
+protegida y acotada, resistente a cancelaciones repetidas y sin autorizar resend
+si no se confirma. Todo permanece local y default-off:
+no existe scope publicado, template Meta aprobado, deploy ni envío real para esta
+ruta. Producción continúa en V1.0.0 hasta el merge, migración, actualización del
+relay y E2E controlado. Ver
+[ADR-0015](decisions/0015-versioned-landing-whatsapp-consent.md) y la
+[verificación local integral](operations/2026-08-29-precheckout-delayed-first-touch-local.md).
 
 La correlación Hotmart ↔ intención y su fase contract están aplicadas y verificadas en
 Supabase Cloud. Un scope server-side traduce `product.id=8104005` al hotlink
@@ -413,6 +424,14 @@ un sender WABA efímero fenced exactamente a ese teléfono. Un unique index por 
 transaccional hacen que el command V1 ya observado consuma también el presupuesto V2 para ese
 destinatario. El runtime V2 permanece `inactive` y
 general dispatcher, resolution worker, durable outbound y follow-ups permanecen apagados.
+
+En el first-touch diferido precheckout, la reevaluación sólo reserva una command
+`reserved`. Un RPC separado, ejecutado inmediatamente antes del POST, comparte los
+locks de compra, opt-out, ownership/conversación y presupuesto; sólo tras revalidar
+la autoridad cambia a `request_started`. Una submission autorizada posterior
+reinicia el timer a 60 minutos desde su propio `submitted_at`. El due-list recupera
+commands `reserved` y `request_started`: una falla previa al fence reintenta sólo
+la autorización y un request-start huérfano termina `delivery_unknown` sin resend.
 
 En las rutas productivas Johanna, `ALLOWED_WHATSAPP_JID` ya no es autoridad. Inbound usa el
 `expected_jid` canónico de la conversación y lo revalida antes de cada efecto; carrito y pago

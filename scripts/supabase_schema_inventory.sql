@@ -1573,6 +1573,186 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         ), 0),
         2,
         'operator_resolution_authorizes_exact_one_shot_candidate'
+    union all
+    select
+        '20260829000200',
+        '20260829000200_precheckout_delayed_first_touch_timer.sql',
+        (
+            exists(
+                select 1 from functions
+                where oid = to_regprocedure(
+                    'public.schedule_precheckout_first_touch_reevaluation(uuid,uuid)'
+                )
+                  and prosecdef
+                  and proconfig @> array[
+                      'search_path=pg_catalog, public, pg_temp'
+                  ]
+                  and position(
+                      'precheckout_first_touch_enabled'
+                      in definition
+                  ) > 0
+                  and position(
+                      'v_delay_seconds <> 3600'
+                      in definition
+                  ) > 0
+            )
+        )::int
+        + (
+            exists(
+                select 1
+                from pg_attribute attribute
+                where attribute.attrelid =
+                    'public.hotmart_abandonment_reevaluations'::regclass
+                  and attribute.attname = 'source_kind'
+                  and not attribute.attisdropped
+            )
+            and exists(
+                select 1
+                from pg_attribute attribute
+                where attribute.attrelid =
+                    'public.hotmart_abandonment_reevaluations'::regclass
+                  and attribute.attname = 'source_submission_id'
+                  and not attribute.attisdropped
+            )
+        )::int
+        + (
+            exists(
+                select 1 from functions
+                where oid = to_regprocedure(
+                    'public.admit_observed_lead_precheckout(text,jsonb,jsonb)'
+                )
+                  and position(
+                      'schedule_precheckout_first_touch_reevaluation'
+                      in definition
+                  ) > 0
+            )
+            and exists(
+                select 1 from functions
+                where oid = to_regprocedure(
+                    'public.list_due_hotmart_abandonment_reevaluations(timestamptz,integer)'
+                )
+                  and position(
+                      'reevaluation.source_kind = ''hotmart_event'''
+                      in definition
+                  ) > 0
+            )
+        )::int,
+        3,
+        'precheckout_delayed_timer_durable_default_off'
+    union all
+    select
+        '20260829000300',
+        '20260829000300_precheckout_delayed_one_shot_reservation.sql',
+        (
+            exists(
+                select 1 from functions
+                where oid = to_regprocedure(
+                    'public._reevaluate_precheckout_delayed_first_touch(uuid,timestamptz)'
+                )
+                  and prosecdef
+                  and proconfig @> array[
+                      'search_path=pg_catalog, public, pg_temp'
+                  ]
+                  and position(
+                      'insert into public.johanna_abandonment_one_shot_commands'
+                      in definition
+                  ) > 0
+                  and position(
+                      'johanna-abandonment-template-e2e-v2'
+                      in definition
+                  ) > 0
+                  and position(
+                      'johanna-recovery-budget:'
+                      in definition
+                  ) > 0
+            )
+        )::int
+        + (
+            exists(
+                select 1
+                from pg_attribute attribute
+                where attribute.attrelid =
+                    'public.johanna_abandonment_one_shot_commands'::regclass
+                  and attribute.attname = 'source_reevaluation_id'
+                  and not attribute.attisdropped
+            )
+        )::int
+        + (
+            exists(
+                select 1 from functions
+                where oid = to_regprocedure(
+                    'public.reevaluate_hotmart_abandonment_timer(uuid,timestamptz)'
+                )
+                  and position(
+                      '_reevaluate_precheckout_delayed_first_touch'
+                      in definition
+                  ) > 0
+            )
+        )::int
+        + (
+            exists(
+                select 1
+                from pg_indexes index_row
+                where index_row.schemaname = 'public'
+                  and index_row.indexname =
+                      'johanna_abandonment_one_shot_commands_target_phone_idx'
+                  and index_row.indexdef like '%UNIQUE%target_phone%'
+            )
+        )::int,
+        4,
+        'precheckout_delayed_reserves_shared_one_shot_budget'
+    union all
+    select
+        '20260829000400',
+        '20260829000400_precheckout_delayed_worker_sender.sql',
+        (
+            exists(
+                select 1 from functions
+                where oid = to_regprocedure(
+                    'public.list_due_hotmart_abandonment_reevaluations_v2(timestamptz,integer,boolean)'
+                )
+                  and prosecdef
+                  and proconfig @> array[
+                      'search_path=pg_catalog, public, pg_temp'
+                  ]
+                  and position('p_include_precheckout' in definition) > 0
+                  and position('precheckout_intent' in definition) > 0
+            )
+        )::int
+        + (
+            exists(
+                select 1 from functions
+                where oid = to_regprocedure(
+                    'public.get_precheckout_delayed_one_shot_command(uuid)'
+                )
+                  and prosecdef
+                  and proconfig @> array[
+                      'search_path=pg_catalog, public, pg_temp'
+                  ]
+                  and position('source_reevaluation_id' in definition) > 0
+                  and position('intent_submission.purchase_intent_id' in definition) > 0
+                  and position('submitted_at' in definition) > 0
+                  and position('send_authorized' in definition) > 0
+                  and position('cancelled_purchased' in definition) > 0
+                  and position(
+                      'johanna_interes_precheckout_01' in definition
+                  ) > 0
+            )
+        )::int
+        + (
+            not has_function_privilege(
+                'public',
+                'public.list_due_hotmart_abandonment_reevaluations_v2(timestamptz,integer,boolean)',
+                'EXECUTE'
+            )
+            and not has_function_privilege(
+                'public',
+                'public.get_precheckout_delayed_one_shot_command(uuid)',
+                'EXECUTE'
+            )
+        )::int,
+        3,
+        'precheckout_delayed_worker_sender_default_off'
 )
 select
     version,

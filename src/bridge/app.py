@@ -268,6 +268,7 @@ class Settings:
     lead_precheckout_offer_code: str = "bxjge6zq"
     precheckout_first_touch_enabled: bool = False
     precheckout_first_touch_token: str | None = None
+    precheckout_delayed_first_touch_enabled: bool = False
     johanna_abandonment_one_shot_enabled: bool = False
     johanna_abandonment_one_shot_token: str | None = None
     johanna_abandonment_hotmart_auto_enabled: bool = False
@@ -448,6 +449,12 @@ class Settings:
         )
         precheckout_first_touch_token = (
             os.getenv("PRECHECKOUT_FIRST_TOUCH_TOKEN", "").strip() or None
+        )
+        precheckout_delayed_first_touch_enabled = (
+            os.getenv(
+                "PRECHECKOUT_DELAYED_FIRST_TOUCH_ENABLED", "false"
+            ).lower()
+            == "true"
         )
         johanna_abandonment_one_shot_enabled = (
             os.getenv("JOHANNA_ABANDONMENT_ONE_SHOT_ENABLED", "false").lower()
@@ -711,6 +718,9 @@ class Settings:
             lead_precheckout_offer_code=lead_precheckout_offer_code,
             precheckout_first_touch_enabled=precheckout_first_touch_enabled,
             precheckout_first_touch_token=precheckout_first_touch_token,
+            precheckout_delayed_first_touch_enabled=(
+                precheckout_delayed_first_touch_enabled
+            ),
             johanna_abandonment_one_shot_enabled=(
                 johanna_abandonment_one_shot_enabled
             ),
@@ -1301,6 +1311,49 @@ def create_app(
                     first_touch_parameter="buyer_name",
                 ),
             )
+    delayed_precheckout_sender = message_sender
+    delayed_precheckout_sender_factory = None
+    if settings.precheckout_delayed_first_touch_enabled:
+        if not settings.hotmart_abandonment_timer_worker_enabled:
+            raise ValueError(
+                "PRECHECKOUT_DELAYED_FIRST_TOUCH_ENABLED requires "
+                "HOTMART_ABANDONMENT_TIMER_WORKER_ENABLED"
+            )
+        if (
+            shared_supabase is None
+            or settings.pilot_channel_provider != "waba"
+            or settings.chatwoot_account_id != 1
+            or settings.chatwoot_inbox_id != 9
+        ):
+            raise ValueError(
+                "delayed precheckout first touch requires exact Supabase, "
+                "WABA, account, and inbox"
+            )
+        if delayed_precheckout_sender is None:
+            if not isinstance(control_client, ChatwootClient):
+                raise ValueError(
+                    "delayed precheckout first touch requires Chatwoot control"
+                )
+            delayed_control_client = control_client
+            delayed_inbox_id = settings.chatwoot_inbox_id
+
+            def build_delayed_precheckout_sender(
+                target_phone: str,
+            ) -> ChatwootMessageSender:
+                return ChatwootMessageSender(
+                    chatwoot=delayed_control_client,
+                    inbox_id=delayed_inbox_id,
+                    allowed_jid=f"{target_phone}@s.whatsapp.net",
+                    template=WhatsAppTemplateConfig(
+                        first_touch_name="johanna_interes_precheckout_01",
+                        followup_name=None,
+                        language="es_EC",
+                        category="MARKETING",
+                        first_touch_parameter="buyer_name",
+                    ),
+                )
+
+            delayed_precheckout_sender_factory = build_delayed_precheckout_sender
     johanna_abandonment_sender = message_sender
     if (
         settings.johanna_abandonment_one_shot_enabled
@@ -1498,6 +1551,11 @@ def create_app(
                 settings.hotmart_abandonment_timer_poll_interval_seconds
             ),
             batch_size=settings.hotmart_abandonment_timer_batch_size,
+            message_sender=delayed_precheckout_sender,
+            precheckout_sender_factory=delayed_precheckout_sender_factory,
+            precheckout_first_touch_enabled=(
+                settings.precheckout_delayed_first_touch_enabled
+            ),
         )
     if settings.worker_enabled and shared_supabase is None:
         raise ValueError("Supabase is required when RESOLUTION_WORKER_ENABLED=true")
