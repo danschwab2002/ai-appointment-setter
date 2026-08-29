@@ -102,7 +102,7 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
 
-    assert len(allowlisted) == 50
+    assert len(allowlisted) == 53
     assert len(allowlisted) == len(set(allowlisted))
     assert "admit_precheckout_form_submission(text, jsonb, jsonb)" in allowlisted
     assert "admit_observed_lead_precheckout(text, jsonb, jsonb)" in allowlisted
@@ -156,11 +156,17 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
         "reevaluate_hotmart_abandonment_timer(uuid, timestamp with time zone)"
         in allowlisted
     )
+    assert (
+        "list_due_hotmart_abandonment_reevaluations_v2(timestamp with time zone, integer, boolean)"
+        in allowlisted
+    )
+    assert "get_precheckout_delayed_one_shot_command(uuid)" in allowlisted
     assert "admit_and_correlate_hotmart_purchase_approved(text, jsonb, text, text)" in allowlisted
     assert "admit_and_correlate_hotmart_cart_abandonment(text, jsonb, text, text)" in allowlisted
     assert "admit_hotmart_purchase_approved(text, jsonb)" not in allowlisted
     assert "admit_hotmart_cart_abandonment(text, jsonb)" not in allowlisted
     assert "begin_precheckout_test_first_touch(text, uuid, text, bigint, bigint)" in allowlisted
+    assert "schedule_precheckout_first_touch_reevaluation(uuid, uuid)" in allowlisted
     assert "finish_precheckout_test_first_touch(uuid, text, bigint, bigint, text)" in allowlisted
     assert "has_function_privilege('anon'" in sql
     assert "has_function_privilege('authenticated'" in sql

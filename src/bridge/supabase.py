@@ -224,6 +224,24 @@ class HotmartAbandonmentReevaluationResult:
 
 
 @dataclass(frozen=True)
+class PrecheckoutDelayedOneShotCommand:
+    """Exact sender projection for one reserved delayed precheckout command."""
+
+    command_id: str
+    command_status: str
+    target_phone: str
+    buyer_name: str | None
+    buyer_email: str | None
+    product_name: str | None
+    template_name: str
+    template_language: str
+    template_category: str
+    copy_version: str
+    send_authorized: bool
+    authorization_reason: str | None
+
+
+@dataclass(frozen=True)
 class InboundOptOutResult:
     """Authoritative outcome of one canonical inbound opt-out."""
 
@@ -1685,13 +1703,20 @@ class SupabaseClient:
         *,
         now: str,
         batch_size: int,
+        include_precheckout: bool = False,
     ) -> list[str]:
         """List due timer IDs without exposing purchase-intent PII."""
         operation = "hotmart_abandonment_reevaluation_due_list"
         response = await self._request(
             "POST",
-            "/rest/v1/rpc/list_due_hotmart_abandonment_reevaluations",
-            content=json.dumps({"p_now": now, "p_batch_size": batch_size}),
+            "/rest/v1/rpc/list_due_hotmart_abandonment_reevaluations_v2",
+            content=json.dumps(
+                {
+                    "p_now": now,
+                    "p_batch_size": batch_size,
+                    "p_include_precheckout": include_precheckout,
+                }
+            ),
         )
         if response.status_code != 200:
             raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
@@ -1744,6 +1769,12 @@ class SupabaseClient:
                 "blocked_not_authorized",
                 "blocked_contact_binding_missing",
                 "cancelled_intent_changed",
+                "superseded_by_provider_event",
+                "blocked_contact",
+                "blocked_identity",
+                "blocked_handoff",
+                "budget_consumed",
+                "command_reserved",
             },
             operation=operation,
         )
@@ -1758,6 +1789,89 @@ class SupabaseClient:
             completed_at=completed_at,
             replayed=replayed,
         )
+
+    async def get_precheckout_delayed_one_shot_command(
+        self,
+        *,
+        reevaluation_id: str,
+    ) -> PrecheckoutDelayedOneShotCommand:
+        """Read the exact sender context for one reserved precheckout command."""
+        operation = "precheckout_delayed_one_shot_command"
+        expected_id = _required_uuid(
+            {"reevaluation_id": reevaluation_id},
+            "reevaluation_id",
+            operation=operation,
+        )
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_precheckout_delayed_one_shot_command",
+            content=json.dumps({"p_reevaluation_id": expected_id}),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        send_authorized = row.get("send_authorized")
+        if not isinstance(send_authorized, bool):
+            raise SupabaseError(f"{operation}_invalid_row")
+        authorization_reason = _optional_enum(
+            row,
+            "authorization_reason",
+            {
+                "command_terminal",
+                "template_metadata_mismatch",
+                "cancelled_purchased",
+                "cancelled_intent_changed",
+                "superseded_by_provider_event",
+                "blocked_identity",
+                "blocked_not_authorized",
+                "blocked_contact_binding_missing",
+                "blocked_contact",
+                "blocked_handoff",
+            },
+            operation=operation,
+        )
+        buyer_name = _optional_string(row, "buyer_name", operation=operation)
+        buyer_email = _optional_string(row, "buyer_email", operation=operation)
+        product_name = _optional_string(row, "product_name", operation=operation)
+        if send_authorized:
+            if (
+                authorization_reason is not None
+                or not buyer_name
+                or not buyer_email
+                or not product_name
+            ):
+                raise SupabaseError(f"{operation}_invalid_authorization")
+        elif authorization_reason is None or any(
+            value is not None for value in (buyer_name, buyer_email, product_name)
+        ):
+            raise SupabaseError(f"{operation}_invalid_authorization")
+        return PrecheckoutDelayedOneShotCommand(
+            command_id=_required_uuid(row, "command_id", operation=operation),
+            command_status=_required_enum(
+                row,
+                "command_status",
+                {"request_started", "accepted_by_chatwoot", "delivery_unknown"},
+                operation=operation,
+            ),
+            target_phone=_required_string(row, "target_phone", operation=operation),
+            buyer_name=buyer_name,
+            buyer_email=buyer_email,
+            product_name=product_name,
+            template_name=_required_string(row, "template_name", operation=operation),
+            template_language=_required_string(
+                row, "template_language", operation=operation
+            ),
+            template_category=_required_string(
+                row, "template_category", operation=operation
+            ),
+            copy_version=_required_string(row, "copy_version", operation=operation),
+            send_authorized=send_authorized,
+            authorization_reason=authorization_reason,
+        )
+
 
     async def admit_inbound_commercial_case(
         self,

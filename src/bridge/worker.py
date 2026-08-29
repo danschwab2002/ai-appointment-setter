@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import multiprocessing
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any, Callable
 
@@ -50,6 +51,73 @@ from bridge.supabase import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _precheckout_sender_process_entry(
+    sender: MessageSender,
+    kwargs: dict[str, Any],
+    connection: Any,
+) -> None:
+    """Run the irreversible sender in a process the supervisor can terminate."""
+    try:
+        result = asyncio.run(sender.send_first_touch(**kwargs))
+        connection.send(("ok", result))
+    except BaseException as exc:
+        connection.send(("error", type(exc).__name__))
+    finally:
+        connection.close()
+
+
+def _terminate_process(process: Any) -> None:
+    if not process.is_alive():
+        process.join(timeout=0)
+        return
+    process.terminate()
+    process.join(timeout=0.5)
+    if process.is_alive():
+        process.kill()
+        process.join(timeout=0.5)
+
+
+async def _send_precheckout_in_terminable_process(
+    sender: MessageSender,
+    kwargs: dict[str, Any],
+) -> FirstTouchResult:
+    """Return a sender result while making cancellation a hard process boundary."""
+    context = multiprocessing.get_context("spawn")
+    receiving, sending = context.Pipe(duplex=False)
+    process = context.Process(
+        target=_precheckout_sender_process_entry,
+        args=(sender, kwargs, sending),
+        daemon=True,
+    )
+    process.start()
+    sending.close()
+    try:
+        while True:
+            if receiving.poll():
+                status, result = receiving.recv()
+                process.join(timeout=0.5)
+                if status == "ok":
+                    return result
+                logger.warning(
+                    "precheckout_sender_process_failed error_type=%s", result
+                )
+                raise RuntimeError("precheckout_sender_process_failed")
+            if not process.is_alive():
+                process.join(timeout=0)
+                if receiving.poll():
+                    status, result = receiving.recv()
+                    if status == "ok":
+                        return result
+                raise RuntimeError("precheckout_sender_process_exited")
+            await asyncio.sleep(0.01)
+    except asyncio.CancelledError:
+        _terminate_process(process)
+        raise
+    finally:
+        _terminate_process(process)
+        receiving.close()
 
 
 def _consume_detached_task_result(task: asyncio.Task[Any]) -> None:
@@ -1191,7 +1259,7 @@ class DurableDispatcher:
 
 
 class HotmartAbandonmentTimerWorker:
-    """Poll due Hotmart timers and perform DB-only reevaluation."""
+    """Reevaluate durable timers and optionally dispatch delayed precheckout."""
 
     def __init__(
         self,
@@ -1200,11 +1268,25 @@ class HotmartAbandonmentTimerWorker:
         poll_interval_seconds: float = 5.0,
         batch_size: int = 10,
         clock: Callable[[], str] | None = None,
+        message_sender: MessageSender | None = None,
+        precheckout_sender_factory: Callable[[str], MessageSender] | None = None,
+        precheckout_first_touch_enabled: bool = False,
+        isolate_precheckout_sender_process: bool = True,
     ) -> None:
+        if (
+            precheckout_first_touch_enabled
+            and message_sender is None
+            and precheckout_sender_factory is None
+        ):
+            raise ValueError("precheckout first touch requires a message sender")
         self._supabase = supabase
         self._poll_interval = poll_interval_seconds
         self._batch_size = batch_size
         self._clock = clock or (lambda: datetime.now(UTC).isoformat())
+        self._message_sender = message_sender
+        self._precheckout_sender_factory = precheckout_sender_factory
+        self._precheckout_first_touch_enabled = precheckout_first_touch_enabled
+        self._isolate_precheckout_sender_process = isolate_precheckout_sender_process
         self._stopped = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
 
@@ -1215,13 +1297,24 @@ class HotmartAbandonmentTimerWorker:
         self._task = asyncio.create_task(self._run())
 
     async def stop(self, *, timeout: float = 10.0) -> None:
+        await _await_despite_cancellation(self._stop_bounded(timeout=timeout))
+
+    async def _stop_bounded(self, *, timeout: float) -> None:
         self._stopped.set()
-        if self._task is not None:
-            try:
-                await asyncio.wait_for(self._task, timeout=timeout)
-            except asyncio.TimeoutError:
-                self._task.cancel()
-            self._task = None
+        task = self._task
+        if task is None:
+            return
+        done, _ = await asyncio.wait({task}, timeout=timeout)
+        if not done:
+            task.cancel()
+            done, _ = await asyncio.wait({task}, timeout=max(timeout, 1.0))
+        if not done:
+            logger.warning("hotmart_abandonment_timer_shutdown_timed_out")
+            return
+        self._task = None
+        if task.cancelled():
+            return
+        task.result()
 
     async def _run(self) -> None:
         while not self._stopped.is_set():
@@ -1244,6 +1337,7 @@ class HotmartAbandonmentTimerWorker:
             await self._supabase.list_due_hotmart_abandonment_reevaluations(
                 now=now,
                 batch_size=self._batch_size,
+                include_precheckout=self._precheckout_first_touch_enabled,
             )
         )
         processed = 0
@@ -1263,6 +1357,13 @@ class HotmartAbandonmentTimerWorker:
                 )
                 continue
             processed += 1
+            if (
+                result.outcome == "command_reserved"
+                and self._precheckout_first_touch_enabled
+            ):
+                await self._dispatch_precheckout_first_touch(
+                    reevaluation_id=result.reevaluation_id
+                )
             logger.info(
                 "hotmart_abandonment_timer_reevaluated "
                 "reevaluation_id=%s outcome=%s",
@@ -1270,6 +1371,238 @@ class HotmartAbandonmentTimerWorker:
                 result.outcome,
             )
         return processed
+
+    async def _dispatch_precheckout_first_touch(
+        self,
+        *,
+        reevaluation_id: str,
+    ) -> None:
+        try:
+            command = await self._supabase.get_precheckout_delayed_one_shot_command(
+                reevaluation_id=reevaluation_id
+            )
+        except SupabaseError:
+            logger.warning(
+                "precheckout_delayed_command_projection_failed "
+                "reevaluation_id=%s",
+                reevaluation_id,
+            )
+            return
+
+        expected_metadata = (
+            "johanna_interes_precheckout_01",
+            "es_EC",
+            "MARKETING",
+            "johanna-precheckout-delayed-first-touch-v1",
+        )
+        actual_metadata = (
+            command.template_name,
+            command.template_language,
+            command.template_category,
+            command.copy_version,
+        )
+        if command.command_status != "request_started":
+            return
+        if actual_metadata != expected_metadata:
+            await self._finalize_precheckout_unknown(
+                command_id=command.command_id,
+                conversation_id=None,
+                message_id=None,
+                failure_code="template_metadata_mismatch",
+            )
+            return
+        if not command.send_authorized:
+            await self._finalize_precheckout_unknown(
+                command_id=command.command_id,
+                conversation_id=None,
+                message_id=None,
+                failure_code=(
+                    command.authorization_reason or "sender_authority_changed"
+                ),
+            )
+            return
+
+        sender = self._message_sender
+        try:
+            if self._precheckout_sender_factory is not None:
+                sender = self._precheckout_sender_factory(command.target_phone)
+        except Exception:
+            await self._finalize_precheckout_unknown(
+                command_id=command.command_id,
+                conversation_id=None,
+                message_id=None,
+                failure_code="sender_factory_failed",
+            )
+            return
+        if sender is None:
+            await self._finalize_precheckout_unknown(
+                command_id=command.command_id,
+                conversation_id=None,
+                message_id=None,
+                failure_code="sender_unavailable",
+            )
+            return
+
+        assert command.buyer_name is not None
+        assert command.buyer_email is not None
+        assert command.product_name is not None
+        buyer_name = command.buyer_name.strip()
+        content = (
+            f"Hola, {buyer_name}. Te escribe el equipo de la Psic. Johanna. "
+            "Vimos que completaste el formulario de Libre de Ansiedad. "
+            "¿Quieres que te ayudemos a continuar? Si no deseas recibir "
+            "más mensajes, responde “No más mensajes”."
+        )
+        sender_kwargs: dict[str, Any] = {
+            "phone": command.target_phone,
+            "buyer_name": buyer_name,
+            "buyer_email": command.buyer_email,
+            "product_name": command.product_name,
+            "content": content,
+            "delivery_id": command.command_id,
+        }
+        try:
+            if self._isolate_precheckout_sender_process:
+                result = await _send_precheckout_in_terminable_process(
+                    sender, sender_kwargs
+                )
+            else:
+                result = await sender.send_first_touch(**sender_kwargs)
+        except asyncio.CancelledError:
+            await self._finalize_precheckout_after_cancellation(
+                command_id=command.command_id,
+                conversation_id=None,
+                message_id=None,
+                failure_code="sender_cancelled",
+            )
+            raise
+        except Exception:
+            await self._finalize_precheckout_unknown(
+                command_id=command.command_id,
+                conversation_id=None,
+                message_id=None,
+                failure_code="sender_exception",
+            )
+            return
+
+        if not isinstance(result, FirstTouchResult):
+            await self._finalize_precheckout_unknown(
+                command_id=command.command_id,
+                conversation_id=None,
+                message_id=None,
+                failure_code="sender_invalid_result",
+            )
+            return
+
+        if (
+            result.status == "sent"
+            and result.conversation_id is not None
+            and result.message_id is not None
+        ):
+            try:
+                await self._supabase.finish_johanna_abandonment_one_shot(
+                    command_id=command.command_id,
+                    outcome="accepted_by_chatwoot",
+                    chatwoot_conversation_id=result.conversation_id,
+                    chatwoot_message_id=result.message_id,
+                    failure_code=None,
+                )
+            except asyncio.CancelledError:
+                await self._finalize_precheckout_after_cancellation(
+                    command_id=command.command_id,
+                    conversation_id=result.conversation_id,
+                    message_id=result.message_id,
+                    failure_code="acceptance_finalization_cancelled",
+                )
+                raise
+            except SupabaseError:
+                await self._finalize_precheckout_unknown(
+                    command_id=command.command_id,
+                    conversation_id=result.conversation_id,
+                    message_id=result.message_id,
+                    failure_code="acceptance_finalization_failed",
+                )
+            return
+
+        stable_failure = (
+            result.reason
+            if result.reason
+            in {
+                "chatwoot_http_error",
+                "chatwoot_protocol_error",
+                "invalid_phone",
+                "target_not_allowed",
+                "template_parameters_missing",
+            }
+            else "sender_failed"
+        )
+        try:
+            await self._finalize_precheckout_unknown(
+                command_id=command.command_id,
+                conversation_id=result.conversation_id,
+                message_id=result.message_id,
+                failure_code=stable_failure,
+            )
+        except asyncio.CancelledError:
+            await self._finalize_precheckout_after_cancellation(
+                command_id=command.command_id,
+                conversation_id=result.conversation_id,
+                message_id=result.message_id,
+                failure_code=stable_failure,
+            )
+            raise
+
+    async def _finalize_precheckout_after_cancellation(
+        self,
+        *,
+        command_id: str,
+        conversation_id: int | None,
+        message_id: int | None,
+        failure_code: str,
+    ) -> None:
+        finalization = asyncio.create_task(
+            self._finalize_precheckout_unknown(
+                command_id=command_id,
+                conversation_id=conversation_id,
+                message_id=message_id,
+                failure_code=failure_code,
+            )
+        )
+        done, _ = await _await_despite_cancellation(
+            asyncio.wait({finalization}, timeout=5.0)
+        )
+        if done:
+            finalization.result()
+            return
+        finalization.cancel()
+        logger.warning(
+            "precheckout_delayed_cancellation_finalization_timed_out "
+            "command_id=%s",
+            command_id,
+        )
+
+    async def _finalize_precheckout_unknown(
+        self,
+        *,
+        command_id: str,
+        conversation_id: int | None,
+        message_id: int | None,
+        failure_code: str,
+    ) -> None:
+        try:
+            await self._supabase.finish_johanna_abandonment_one_shot(
+                command_id=command_id,
+                outcome="delivery_unknown",
+                chatwoot_conversation_id=conversation_id,
+                chatwoot_message_id=message_id,
+                failure_code=failure_code,
+            )
+        except SupabaseError:
+            logger.warning(
+                "precheckout_delayed_command_finalization_unknown "
+                "command_id=%s",
+                command_id,
+            )
 
 
 class ResolutionWorker:

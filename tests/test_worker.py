@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import multiprocessing
 import time
 from types import SimpleNamespace
 from typing import Any, Callable
@@ -2027,7 +2028,11 @@ def test_hotmart_timer_worker_processes_only_due_ids() -> None:
 
     assert asyncio.run(worker.run_once()) == 2
     assert supabase.list_calls == [
-        {"now": "2026-08-21T16:00:00+00:00", "batch_size": 25}
+        {
+            "now": "2026-08-21T16:00:00+00:00",
+            "batch_size": 25,
+            "include_precheckout": False,
+        }
     ]
     assert supabase.reevaluation_calls == [
         {
@@ -2054,3 +2059,671 @@ def test_hotmart_timer_worker_continues_after_one_rpc_failure() -> None:
         "timer-001",
         "timer-002",
     ]
+
+
+class StubPrecheckoutTimerSupabase:
+    def __init__(
+        self,
+        *,
+        sender_outcome: str = "accepted_by_chatwoot",
+        fail_acceptance_finish: bool = False,
+        send_authorized: bool = True,
+        authorization_reason: str | None = None,
+        fail_projection_once: bool = False,
+        recover_inflight: bool = False,
+    ) -> None:
+        self.sender_outcome = sender_outcome
+        self.fail_acceptance_finish = fail_acceptance_finish
+        self.send_authorized = send_authorized
+        self.authorization_reason = authorization_reason
+        self.fail_projection_once = fail_projection_once
+        self.recover_inflight = recover_inflight
+        self.list_calls: list[dict[str, object]] = []
+        self.reevaluation_calls = 0
+        self.projection_calls: list[dict[str, object]] = []
+        self.finish_calls: list[dict[str, object]] = []
+
+    async def list_due_hotmart_abandonment_reevaluations(
+        self, **kwargs: object
+    ) -> list[str]:
+        self.list_calls.append(kwargs)
+        if self.finish_calls:
+            return []
+        return ["00000000-0000-0000-0000-000000000101"]
+
+    async def reevaluate_hotmart_abandonment_timer(
+        self, **kwargs: object
+    ) -> object:
+        self.reevaluation_calls += 1
+        return SimpleNamespace(
+            reevaluation_id=kwargs["reevaluation_id"],
+            outcome="command_reserved",
+            replayed=self.reevaluation_calls > 1,
+        )
+
+    async def get_precheckout_delayed_one_shot_command(
+        self, **kwargs: object
+    ) -> object:
+        self.projection_calls.append(kwargs)
+        if self.fail_projection_once:
+            self.fail_projection_once = False
+            raise SupabaseError("projection_transient_failure")
+        command_status = (
+            "delivery_unknown"
+            if self.recover_inflight
+            else str(self.finish_calls[-1]["outcome"])
+            if self.finish_calls
+            else "request_started"
+        )
+        return SimpleNamespace(
+            command_id="00000000-0000-0000-0000-000000000201",
+            command_status=command_status,
+            target_phone="593999999999",
+            buyer_name="Nombre",
+            buyer_email="buyer@example.invalid",
+            product_name="Libre de Ansiedad",
+            template_name="johanna_interes_precheckout_01",
+            template_language="es_EC",
+            template_category="MARKETING",
+            copy_version="johanna-precheckout-delayed-first-touch-v1",
+            send_authorized=self.send_authorized,
+            authorization_reason=self.authorization_reason,
+        )
+
+    async def finish_johanna_abandonment_one_shot(
+        self, **kwargs: object
+    ) -> object:
+        self.finish_calls.append(kwargs)
+        if (
+            self.fail_acceptance_finish
+            and kwargs["outcome"] == "accepted_by_chatwoot"
+        ):
+            raise SupabaseError("acceptance_finish_failed")
+        return SimpleNamespace(
+            command_id=kwargs["command_id"], command_status=kwargs["outcome"]
+        )
+
+
+class CancellationDuringFinishSupabase(StubPrecheckoutTimerSupabase):
+    def __init__(self) -> None:
+        super().__init__()
+        self.acceptance_started = asyncio.Event()
+        self.block = asyncio.Event()
+
+    async def finish_johanna_abandonment_one_shot(
+        self, **kwargs: object
+    ) -> object:
+        self.finish_calls.append(kwargs)
+        if kwargs["outcome"] == "accepted_by_chatwoot":
+            self.acceptance_started.set()
+            await self.block.wait()
+            raise AssertionError("cancelled acceptance must not complete normally")
+        return SimpleNamespace(
+            command_id=kwargs["command_id"], command_status=kwargs["outcome"]
+        )
+
+
+class StubPrecheckoutSender:
+    def __init__(self, result: object) -> None:
+        self.result = result
+        self.calls: list[dict[str, object]] = []
+
+    async def send_first_touch(self, **kwargs: object) -> Any:
+        self.calls.append(kwargs)
+        return self.result
+
+    async def send_first_touch_to_conversation(self, **_: object) -> object:
+        raise AssertionError("precheckout must provision first touch")
+
+    async def send_followup(self, **_: object) -> object:
+        raise AssertionError("precheckout must not send follow-ups")
+
+
+class CancellationProbePrecheckoutSender:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.block = asyncio.Event()
+
+    async def send_first_touch(self, **_: object) -> FirstTouchResult:
+        self.started.set()
+        await self.block.wait()
+        raise AssertionError("cancelled sender must not complete normally")
+
+    async def send_first_touch_to_conversation(self, **_: object) -> object:
+        raise AssertionError("precheckout must provision first touch")
+
+    async def send_followup(self, **_: object) -> object:
+        raise AssertionError("precheckout must not send follow-ups")
+
+
+class CancellationSuppressingPrecheckoutSender:
+    def __init__(self) -> None:
+        context = multiprocessing.get_context("spawn")
+        self.started = context.Event()
+        self.cancel_seen = context.Event()
+        self.release = context.Event()
+
+    async def send_first_touch(self, **_: object) -> FirstTouchResult:
+        self.started.set()
+        while not self.release.is_set():
+            try:
+                await asyncio.sleep(0.01)
+            except asyncio.CancelledError:
+                self.cancel_seen.set()
+        return FirstTouchResult("failed", None, None, "chatwoot_http_error")
+
+    async def send_first_touch_to_conversation(self, **_: object) -> object:
+        raise AssertionError("precheckout must provision first touch")
+
+    async def send_followup(self, **_: object) -> object:
+        raise AssertionError("precheckout must not send follow-ups")
+
+
+class ProcessRecordingPrecheckoutSender:
+    def __init__(self) -> None:
+        context = multiprocessing.get_context("spawn")
+        self.receiving, self.sending = context.Pipe(duplex=False)
+
+    async def send_first_touch(self, **kwargs: object) -> FirstTouchResult:
+        self.sending.send(kwargs)
+        return FirstTouchResult("sent", 701, 801)
+
+    async def send_first_touch_to_conversation(self, **_: object) -> object:
+        raise AssertionError("precheckout must provision first touch")
+
+    async def send_followup(self, **_: object) -> object:
+        raise AssertionError("precheckout must not send follow-ups")
+
+
+class RepeatedCancellationFinishSupabase(StubPrecheckoutTimerSupabase):
+    def __init__(self) -> None:
+        super().__init__()
+        self.acceptance_started = asyncio.Event()
+        self.unknown_started = asyncio.Event()
+        self.release_unknown = asyncio.Event()
+
+    async def finish_johanna_abandonment_one_shot(
+        self, **kwargs: object
+    ) -> object:
+        self.finish_calls.append(kwargs)
+        if kwargs["outcome"] == "accepted_by_chatwoot":
+            self.acceptance_started.set()
+            await asyncio.Event().wait()
+        self.unknown_started.set()
+        await self.release_unknown.wait()
+        return SimpleNamespace(
+            command_id=kwargs["command_id"], command_status=kwargs["outcome"]
+        )
+
+
+def test_precheckout_timer_worker_sends_once_and_replay_is_silent() -> None:
+    supabase = StubPrecheckoutTimerSupabase()
+    sender = StubPrecheckoutSender(FirstTouchResult("sent", 701, 801))
+    worker = HotmartAbandonmentTimerWorker(
+        supabase=supabase,  # type: ignore[arg-type]
+        message_sender=sender,  # type: ignore[arg-type]
+        precheckout_first_touch_enabled=True,
+        isolate_precheckout_sender_process=False,
+        clock=lambda: "2026-08-29T18:00:00+00:00",
+    )
+
+    assert asyncio.run(worker.run_once()) == 1
+    assert asyncio.run(worker.run_once()) == 0
+
+    assert supabase.list_calls == [
+        {
+            "now": "2026-08-29T18:00:00+00:00",
+            "batch_size": 10,
+            "include_precheckout": True,
+        },
+        {
+            "now": "2026-08-29T18:00:00+00:00",
+            "batch_size": 10,
+            "include_precheckout": True,
+        },
+    ]
+    assert supabase.projection_calls == [
+        {"reevaluation_id": "00000000-0000-0000-0000-000000000101"}
+    ]
+    assert sender.calls == [
+        {
+            "phone": "593999999999",
+            "buyer_name": "Nombre",
+            "buyer_email": "buyer@example.invalid",
+            "product_name": "Libre de Ansiedad",
+            "content": (
+                "Hola, Nombre. Te escribe el equipo de la Psic. Johanna. "
+                "Vimos que completaste el formulario de Libre de Ansiedad. "
+                "¿Quieres que te ayudemos a continuar? Si no deseas recibir "
+                "más mensajes, responde “No más mensajes”."
+            ),
+            "delivery_id": "00000000-0000-0000-0000-000000000201",
+        }
+    ]
+    assert supabase.finish_calls == [
+        {
+            "command_id": "00000000-0000-0000-0000-000000000201",
+            "outcome": "accepted_by_chatwoot",
+            "chatwoot_conversation_id": 701,
+            "chatwoot_message_id": 801,
+            "failure_code": None,
+        }
+    ]
+
+
+def test_precheckout_timer_worker_process_boundary_posts_once() -> None:
+    supabase = StubPrecheckoutTimerSupabase()
+    sender = ProcessRecordingPrecheckoutSender()
+    worker = HotmartAbandonmentTimerWorker(
+        supabase=supabase,  # type: ignore[arg-type]
+        message_sender=sender,  # type: ignore[arg-type]
+        precheckout_first_touch_enabled=True,
+    )
+
+    assert asyncio.run(worker.run_once()) == 1
+    assert sender.receiving.poll(1)
+    assert sender.receiving.recv()["delivery_id"] == (
+        "00000000-0000-0000-0000-000000000201"
+    )
+    assert supabase.finish_calls == [
+        {
+            "command_id": "00000000-0000-0000-0000-000000000201",
+            "outcome": "accepted_by_chatwoot",
+            "chatwoot_conversation_id": 701,
+            "chatwoot_message_id": 801,
+            "failure_code": None,
+        }
+    ]
+
+
+def test_precheckout_timer_worker_retries_reserved_projection_without_losing_command() -> None:
+    supabase = StubPrecheckoutTimerSupabase(fail_projection_once=True)
+    sender = StubPrecheckoutSender(FirstTouchResult("sent", 701, 801))
+    worker = HotmartAbandonmentTimerWorker(
+        supabase=supabase,  # type: ignore[arg-type]
+        message_sender=sender,  # type: ignore[arg-type]
+        precheckout_first_touch_enabled=True,
+        isolate_precheckout_sender_process=False,
+    )
+
+    assert asyncio.run(worker.run_once()) == 1
+    assert sender.calls == []
+    assert asyncio.run(worker.run_once()) == 1
+    assert len(supabase.projection_calls) == 2
+    assert len(sender.calls) == 1
+    assert supabase.finish_calls[-1]["outcome"] == "accepted_by_chatwoot"
+
+
+def test_precheckout_timer_worker_recovers_inflight_without_resend() -> None:
+    supabase = StubPrecheckoutTimerSupabase(recover_inflight=True)
+    sender = StubPrecheckoutSender(FirstTouchResult("sent", 701, 801))
+    worker = HotmartAbandonmentTimerWorker(
+        supabase=supabase,  # type: ignore[arg-type]
+        message_sender=sender,  # type: ignore[arg-type]
+        precheckout_first_touch_enabled=True,
+        isolate_precheckout_sender_process=False,
+    )
+
+    assert asyncio.run(worker.run_once()) == 1
+    assert len(supabase.projection_calls) == 1
+    assert sender.calls == []
+
+
+def test_precheckout_timer_worker_records_sender_ambiguity_without_retry() -> None:
+    supabase = StubPrecheckoutTimerSupabase()
+    sender = StubPrecheckoutSender(
+        FirstTouchResult("failed", None, None, "chatwoot_http_error")
+    )
+    worker = HotmartAbandonmentTimerWorker(
+        supabase=supabase,  # type: ignore[arg-type]
+        message_sender=sender,  # type: ignore[arg-type]
+        precheckout_first_touch_enabled=True,
+        isolate_precheckout_sender_process=False,
+    )
+
+    assert asyncio.run(worker.run_once()) == 1
+    assert asyncio.run(worker.run_once()) == 0
+    assert len(sender.calls) == 1
+    assert supabase.finish_calls == [
+        {
+            "command_id": "00000000-0000-0000-0000-000000000201",
+            "outcome": "delivery_unknown",
+            "chatwoot_conversation_id": None,
+            "chatwoot_message_id": None,
+            "failure_code": "chatwoot_http_error",
+        }
+    ]
+
+
+def test_precheckout_timer_worker_rejects_malformed_sender_result() -> None:
+    supabase = StubPrecheckoutTimerSupabase()
+    sender = StubPrecheckoutSender(object())
+    worker = HotmartAbandonmentTimerWorker(
+        supabase=supabase,  # type: ignore[arg-type]
+        message_sender=sender,  # type: ignore[arg-type]
+        precheckout_first_touch_enabled=True,
+        isolate_precheckout_sender_process=False,
+    )
+
+    assert asyncio.run(worker.run_once()) == 1
+    assert supabase.finish_calls == [
+        {
+            "command_id": "00000000-0000-0000-0000-000000000201",
+            "outcome": "delivery_unknown",
+            "chatwoot_conversation_id": None,
+            "chatwoot_message_id": None,
+            "failure_code": "sender_invalid_result",
+        }
+    ]
+
+
+def test_precheckout_timer_worker_honors_pre_send_authority_stop() -> None:
+    supabase = StubPrecheckoutTimerSupabase(
+        send_authorized=False,
+        authorization_reason="cancelled_purchased",
+    )
+    sender = StubPrecheckoutSender(FirstTouchResult("sent", 701, 801))
+    worker = HotmartAbandonmentTimerWorker(
+        supabase=supabase,  # type: ignore[arg-type]
+        message_sender=sender,  # type: ignore[arg-type]
+        precheckout_first_touch_enabled=True,
+        isolate_precheckout_sender_process=False,
+    )
+
+    assert asyncio.run(worker.run_once()) == 1
+    assert sender.calls == []
+    assert supabase.finish_calls == [
+        {
+            "command_id": "00000000-0000-0000-0000-000000000201",
+            "outcome": "delivery_unknown",
+            "chatwoot_conversation_id": None,
+            "chatwoot_message_id": None,
+            "failure_code": "cancelled_purchased",
+        }
+    ]
+
+
+def test_precheckout_timer_worker_finalizes_unknown_when_stopped_during_send() -> None:
+    async def scenario() -> tuple[StubPrecheckoutTimerSupabase, float]:
+        supabase = StubPrecheckoutTimerSupabase()
+        sender = CancellationProbePrecheckoutSender()
+        worker = HotmartAbandonmentTimerWorker(
+            supabase=supabase,  # type: ignore[arg-type]
+            message_sender=sender,  # type: ignore[arg-type]
+            precheckout_first_touch_enabled=True,
+            isolate_precheckout_sender_process=False,
+            poll_interval_seconds=60,
+        )
+        await worker.start()
+        await asyncio.wait_for(sender.started.wait(), timeout=1)
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        await worker.stop(timeout=0.1)
+        return supabase, loop.time() - started
+
+    supabase, shutdown_seconds = asyncio.run(scenario())
+
+    assert shutdown_seconds < 1
+    assert supabase.finish_calls == [
+        {
+            "command_id": "00000000-0000-0000-0000-000000000201",
+            "outcome": "delivery_unknown",
+            "chatwoot_conversation_id": None,
+            "chatwoot_message_id": None,
+            "failure_code": "sender_cancelled",
+        }
+    ]
+
+
+def test_precheckout_timer_worker_hard_stops_sender_that_suppresses_cancel() -> None:
+    async def scenario() -> tuple[StubPrecheckoutTimerSupabase, bool]:
+        supabase = StubPrecheckoutTimerSupabase()
+        sender = CancellationSuppressingPrecheckoutSender()
+        worker = HotmartAbandonmentTimerWorker(
+            supabase=supabase,  # type: ignore[arg-type]
+            message_sender=sender,  # type: ignore[arg-type]
+            precheckout_first_touch_enabled=True,
+            poll_interval_seconds=60,
+        )
+        await worker.start()
+        assert await asyncio.to_thread(sender.started.wait, 3)
+        try:
+            await worker.stop(timeout=0.05)
+            return supabase, worker._task is None
+        finally:
+            sender.release.set()
+            if worker._task is not None:
+                await asyncio.wait_for(worker._task, timeout=1)
+
+    supabase, worker_released = asyncio.run(scenario())
+
+    assert worker_released is True
+    assert supabase.finish_calls == [
+        {
+            "command_id": "00000000-0000-0000-0000-000000000201",
+            "outcome": "delivery_unknown",
+            "chatwoot_conversation_id": None,
+            "chatwoot_message_id": None,
+            "failure_code": "sender_cancelled",
+        }
+    ]
+
+
+def test_precheckout_timer_worker_preserves_ids_when_stopped_during_finish() -> None:
+    async def scenario() -> CancellationDuringFinishSupabase:
+        supabase = CancellationDuringFinishSupabase()
+        sender = StubPrecheckoutSender(FirstTouchResult("sent", 701, 801))
+        worker = HotmartAbandonmentTimerWorker(
+            supabase=supabase,  # type: ignore[arg-type]
+            message_sender=sender,  # type: ignore[arg-type]
+            precheckout_first_touch_enabled=True,
+            isolate_precheckout_sender_process=False,
+            poll_interval_seconds=60,
+        )
+        await worker.start()
+        await asyncio.wait_for(supabase.acceptance_started.wait(), timeout=1)
+        await worker.stop(timeout=0.1)
+        return supabase
+
+    supabase = asyncio.run(scenario())
+
+    assert supabase.finish_calls[-1] == {
+        "command_id": "00000000-0000-0000-0000-000000000201",
+        "outcome": "delivery_unknown",
+        "chatwoot_conversation_id": 701,
+        "chatwoot_message_id": 801,
+        "failure_code": "acceptance_finalization_cancelled",
+    }
+
+
+def test_precheckout_cancellation_finalization_survives_repeated_cancel() -> None:
+    async def scenario() -> RepeatedCancellationFinishSupabase:
+        supabase = RepeatedCancellationFinishSupabase()
+        sender = StubPrecheckoutSender(FirstTouchResult("sent", 701, 801))
+        worker = HotmartAbandonmentTimerWorker(
+            supabase=supabase,  # type: ignore[arg-type]
+            message_sender=sender,  # type: ignore[arg-type]
+            precheckout_first_touch_enabled=True,
+            isolate_precheckout_sender_process=False,
+            poll_interval_seconds=60,
+        )
+        await worker.start()
+        await asyncio.wait_for(supabase.acceptance_started.wait(), timeout=1)
+        stop_task = asyncio.create_task(worker.stop(timeout=0.05))
+        await asyncio.wait_for(supabase.unknown_started.wait(), timeout=1)
+        stop_task.cancel()
+        stop_task.cancel()
+        await asyncio.sleep(0)
+        assert not stop_task.done()
+        supabase.release_unknown.set()
+        await asyncio.wait_for(stop_task, timeout=1)
+        return supabase
+
+    supabase = asyncio.run(scenario())
+
+    assert supabase.finish_calls[-1] == {
+        "command_id": "00000000-0000-0000-0000-000000000201",
+        "outcome": "delivery_unknown",
+        "chatwoot_conversation_id": 701,
+        "chatwoot_message_id": 801,
+        "failure_code": "acceptance_finalization_cancelled",
+    }
+
+
+def test_precheckout_timer_worker_preserves_remote_ids_when_finish_is_ambiguous() -> None:
+    supabase = StubPrecheckoutTimerSupabase(fail_acceptance_finish=True)
+    sender = StubPrecheckoutSender(FirstTouchResult("sent", 701, 801))
+    worker = HotmartAbandonmentTimerWorker(
+        supabase=supabase,  # type: ignore[arg-type]
+        message_sender=sender,  # type: ignore[arg-type]
+        precheckout_first_touch_enabled=True,
+        isolate_precheckout_sender_process=False,
+    )
+
+    assert asyncio.run(worker.run_once()) == 1
+    assert len(sender.calls) == 1
+    assert supabase.finish_calls[-1] == {
+        "command_id": "00000000-0000-0000-0000-000000000201",
+        "outcome": "delivery_unknown",
+        "chatwoot_conversation_id": 701,
+        "chatwoot_message_id": 801,
+        "failure_code": "acceptance_finalization_failed",
+    }
+
+
+def test_supabase_lists_precheckout_only_through_explicit_v2_flag() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            200,
+            json=[{"reevaluation_id": "00000000-0000-0000-0000-000000000101"}],
+            request=request,
+        )
+
+    client = _make_supabase(httpx.MockTransport(handler))  # type: ignore[arg-type]
+    result = _run(
+        client.list_due_hotmart_abandonment_reevaluations(
+            now="2026-08-29T18:00:00+00:00",
+            batch_size=10,
+            include_precheckout=True,
+        )
+    )
+
+    assert result == ["00000000-0000-0000-0000-000000000101"]
+    assert seen[0].url.path.endswith(
+        "/rpc/list_due_hotmart_abandonment_reevaluations_v2"
+    )
+    assert json.loads(seen[0].content) == {
+        "p_now": "2026-08-29T18:00:00+00:00",
+        "p_batch_size": 10,
+        "p_include_precheckout": True,
+    }
+
+
+def test_supabase_parses_command_reserved_reevaluation() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "reevaluation_id": "00000000-0000-0000-0000-000000000101",
+                    "reevaluation_status": "completed",
+                    "reevaluation_outcome": "command_reserved",
+                    "completed_at": "2026-08-29T18:00:00+00:00",
+                    "replayed": False,
+                }
+            ],
+            request=request,
+        )
+
+    client = _make_supabase(httpx.MockTransport(handler))  # type: ignore[arg-type]
+    result = _run(
+        client.reevaluate_hotmart_abandonment_timer(
+            reevaluation_id="00000000-0000-0000-0000-000000000101",
+            now="2026-08-29T18:00:00+00:00",
+        )
+    )
+
+    assert result.outcome == "command_reserved"
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "superseded_by_provider_event",
+        "blocked_contact",
+        "blocked_identity",
+        "blocked_handoff",
+        "budget_consumed",
+    ],
+)
+def test_supabase_parses_every_terminal_precheckout_reevaluation_outcome(
+    outcome: str,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "reevaluation_id": "00000000-0000-0000-0000-000000000101",
+                    "reevaluation_status": "completed",
+                    "reevaluation_outcome": outcome,
+                    "completed_at": "2026-08-29T18:00:00+00:00",
+                    "replayed": False,
+                }
+            ],
+            request=request,
+        )
+
+    client = _make_supabase(httpx.MockTransport(handler))  # type: ignore[arg-type]
+    result = _run(
+        client.reevaluate_hotmart_abandonment_timer(
+            reevaluation_id="00000000-0000-0000-0000-000000000101",
+            now="2026-08-29T18:00:00+00:00",
+        )
+    )
+
+    assert result.outcome == outcome
+    assert result.replayed is False
+
+
+def test_supabase_parses_exact_precheckout_sender_projection() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith(
+            "/rpc/get_precheckout_delayed_one_shot_command"
+        )
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "command_id": "00000000-0000-0000-0000-000000000201",
+                    "command_status": "request_started",
+                    "target_phone": "593999999999",
+                    "buyer_name": "Nombre",
+                    "buyer_email": "buyer@example.invalid",
+                    "product_name": "Libre de Ansiedad",
+                    "template_name": "johanna_interes_precheckout_01",
+                    "template_language": "es_EC",
+                    "template_category": "MARKETING",
+                    "copy_version": "johanna-precheckout-delayed-first-touch-v1",
+                    "send_authorized": True,
+                    "authorization_reason": None,
+                }
+            ],
+            request=request,
+        )
+
+    client = _make_supabase(httpx.MockTransport(handler))  # type: ignore[arg-type]
+    command = _run(
+        client.get_precheckout_delayed_one_shot_command(
+            reevaluation_id="00000000-0000-0000-0000-000000000101"
+        )
+    )
+
+    assert command.command_id == "00000000-0000-0000-0000-000000000201"
+    assert command.command_status == "request_started"
+    assert command.template_name == "johanna_interes_precheckout_01"
+    assert command.send_authorized is True
+    assert command.authorization_reason is None

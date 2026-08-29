@@ -1,6 +1,6 @@
 # Contrato `lead.precheckout` V1 — Lancemos → bridge
 
-- **Estado:** V1.0.0 desplegado; V1.1.0 implementado localmente y pendiente de despliegue
+- **Estado:** V1.0.0 y V1.1.0 desplegados; macro first-touch diferida completa localmente y pendiente de promoción
 - **Versiones externas:** `1.0.0`, `1.1.0`
 - **Endpoint:** `POST /webhooks/lead`
 - **Emisor previsto:** `/api/lead` server-side de la landing
@@ -9,13 +9,15 @@
 
 El evento prueba que una persona presionó **Continuar al pago**. Crea o enlaza una
 `purchase_intent`; no prueba que abrió Hotmart, abandonó ni falló un pago. V1.0.0
-no concede autorización. V1.1.0 puede aportar evidencia versionada de una
-autorización explícita mostrada por la landing, pero no autoriza un request outbound.
+no concede autorización. V1.1.0 aporta evidencia versionada de una autorización
+comercial explícita para WhatsApp, pero el request outbound continúa sujeto a
+reevaluación temporal, stops autoritativos y presupuesto compartido.
 
 La ausencia de un evento posterior nunca se convierte en abandono. Sólo
 `PURCHASE_OUT_OF_SHOPPING_CART` confirma abandono y sólo `PURCHASE_APPROVED`
-confirma compra. Un vencimiento sin señal oficial queda desconocido o requiere
-revisión humana.
+confirma compra. La extensión diferida puede ofrecer ayuda después de 60 minutos
+basándose únicamente en el formulario autorizado; su copy no puede afirmar
+abandono, intento de pago ni ausencia de compra.
 
 ## Transporte autenticado
 
@@ -156,6 +158,50 @@ La RPC es `SECURITY DEFINER`, fija `search_path` y sólo `service_role` recibe
 `EXECUTE`. La admisión no crea acciones, secuencias, mensajes ni llamadas a
 Hermes.
 
+## Extensión first-touch diferido
+
+- **Estado:** contrato, timer, reserva one-shot y conexión al worker/sender implementados y verificados localmente; deploy, template Meta y activación pendientes.
+- **Diseño:** [first-touch diferido desde precheckout](../design/precheckout-delayed-first-touch.md).
+
+Una admisión V1.1.0 nueva y autorizada crea o reutiliza localmente y de forma atómica un
+timer durable:
+
+```text
+observed_at = submitted_at
+due_at = submitted_at + 60 minutos
+source_kind = precheckout_intent
+```
+
+Un replay exacto conserva el mismo intent y timer. Una submission V1.1.0
+autorizada posterior para la misma intención mantiene ese único timer, actualiza
+su fuente y reinicia `due_at` a 60 minutos desde su propio `submitted_at`; una
+submission anterior no puede adelantarlo. V1.0.0, consentimiento falso,
+teléfono inválido, conflicto durable o lifecycle distinto de
+`waiting_for_purchase` no programan.
+
+Al vencer, PostgreSQL vuelve a comprobar consentimiento, lifecycle, compra,
+opt-out, takeover, ownership, scope, producto, oferta y account/inbox. Un evento
+Hotmart específico ya admitido prevalece y terminaliza el timer sin mensaje
+genérico. Sólo la ausencia de esa señal y de todos los stops permite competir por
+el ledger físico compartido.
+
+La reserva deja la command en `reserved`, no en request-start. Inmediatamente
+antes del POST, el RPC de autoridad comparte locks con los stop writers, vuelve a
+comprobar las mismas autoridades y recién entonces cambia atómicamente a
+`request_started`; oculta nombre/email/producto y terminaliza sin envío cuando
+aparece un stop. Commands `reserved` se reproyectan sin POST tras una falla y un
+`request_started` recuperado termina `delivery_unknown` sin resend. La cancelación
+durante el sender o su
+finalización corta el proceso hijo aislado del POST y ejecuta una persistencia
+`delivery_unknown` protegida y acotada, incluso ante cancelaciones repetidas; una
+confirmación ausente exige reconciliación, y replay/restart hacen cero POST
+adicionales.
+
+El template definido para esta situación es
+`johanna_interes_precheckout_01`, `es_EC`, `MARKETING`, copy version
+`johanna-precheckout-delayed-first-touch-v1`. Producción exige aprobación Meta
+del body exacto y sincronización en Chatwoot; este contrato no las presume.
+
 ## Respuestas
 
 | HTTP | Resultado |
@@ -177,9 +223,11 @@ fuente autoritativa es `purchase_intents`, no la respuesta de transporte.
 
 1. Hotmart mantiene `POST /webhooks/hotmart` y Hottok. Los eventos se normalizan
    internamente, pero no comparten la puerta ni el secreto de la landing.
-2. Silencio después del pre-checkout no autoriza inferir abandono ni enviar.
-3. V1.0.0 bloquea todo contacto proactivo; V1.1.0 sólo supera el gate local de
-   autorización y continúa bloqueado por las fronteras comerciales posteriores.
+2. Silencio después del pre-checkout no autoriza inferir abandono. La extensión
+   pendiente permite un first-touch veraz después de 60 minutos, sin atribuir a
+   Hotmart un evento inexistente.
+3. V1.0.0 bloquea todo contacto proactivo; V1.1.0 supera el gate local de
+   autorización y continúa bloqueado por reevaluación y fronteras comerciales.
 4. La respuesta llega después de persistir durably; no se usa una cola en memoria.
 5. No existe fallback a email en este corte: teléfono inválido queda para revisión.
 6. El wording concreto se administra en la landing. El relay sólo puede emitir

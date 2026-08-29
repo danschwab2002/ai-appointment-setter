@@ -1,8 +1,10 @@
+import pickle
 from pathlib import Path
 
 import pytest
 
 from bridge.app import Settings, create_app
+from bridge.messaging import ChatwootMessageSender
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -62,6 +64,106 @@ def test_hotmart_abandonment_timer_worker_builds_without_outbound_dependencies(
     assert app.state.hotmart_abandonment_timer_worker is not None
     assert app.state.resolution_worker is None
     assert app.state.durable_dispatcher is None
+
+
+def test_precheckout_delayed_first_touch_is_declared_default_off(
+    tmp_path: Path,
+) -> None:
+    env_example = (PROJECT_ROOT / ".env.example").read_text()
+    compose = (PROJECT_ROOT / "compose.yaml").read_text()
+
+    assert "PRECHECKOUT_DELAYED_FIRST_TOUCH_ENABLED=false" in env_example
+    assert "PRECHECKOUT_DELAYED_FIRST_TOUCH_ENABLED:" in compose
+    assert "${PRECHECKOUT_DELAYED_FIRST_TOUCH_ENABLED:-false}" in compose
+    settings = Settings(
+        webhook_secret="test-secret",
+        allowed_jid="12025550123@s.whatsapp.net",
+        capture_dir=tmp_path,
+        max_age_seconds=300,
+    )
+    assert settings.precheckout_delayed_first_touch_enabled is False
+
+
+def test_precheckout_delayed_first_touch_flag_is_parsed_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    required_environment = {
+        "CHATWOOT_WEBHOOK_SECRET": "test-secret",
+        "ALLOWED_WHATSAPP_JID": "12025550123@s.whatsapp.net",
+        "CHATWOOT_AGENT_BOT_ID": "1",
+        "CHATWOOT_BASE_URL": "https://chatwoot.example.test",
+        "CHATWOOT_ACCOUNT_ID": "1",
+        "CHATWOOT_CONTROL_API_ACCESS_TOKEN": "test-control-token",
+        "CHATWOOT_PAUSE_MACRO_ID": "1",
+        "PRECHECKOUT_DELAYED_FIRST_TOUCH_ENABLED": "true",
+    }
+    for name, value in required_environment.items():
+        monkeypatch.setenv(name, value)
+
+    assert Settings.from_env().precheckout_delayed_first_touch_enabled is True
+
+
+def test_precheckout_delayed_first_touch_requires_timer_worker(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        webhook_secret="test-secret",
+        allowed_jid="12025550123@s.whatsapp.net",
+        capture_dir=tmp_path,
+        max_age_seconds=300,
+        precheckout_delayed_first_touch_enabled=True,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="PRECHECKOUT_DELAYED_FIRST_TOUCH_ENABLED requires "
+        "HOTMART_ABANDONMENT_TIMER_WORKER_ENABLED",
+    ):
+        create_app(settings)
+
+
+def test_precheckout_delayed_first_touch_builds_dynamic_fenced_waba_sender(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        webhook_secret="test-secret",
+        allowed_jid="12025550123@s.whatsapp.net",
+        capture_dir=tmp_path,
+        max_age_seconds=300,
+        agent_bot_id=7,
+        chatwoot_base_url="https://chatwoot.example.test",
+        chatwoot_account_id=1,
+        chatwoot_control_api_access_token="control-token",
+        chatwoot_agent_bot_access_token="agent-bot-token",
+        chatwoot_pause_macro_id=11,
+        chatwoot_inbox_id=9,
+        supabase_base_url="https://supabase.example.test",
+        supabase_service_role_key="test-service-role",
+        pilot_channel_provider="waba",
+        hotmart_abandonment_timer_worker_enabled=True,
+        precheckout_delayed_first_touch_enabled=True,
+    )
+
+    app = create_app(settings)
+    worker = app.state.hotmart_abandonment_timer_worker
+
+    assert worker is not None
+    assert worker._precheckout_first_touch_enabled is True
+    assert worker._isolate_precheckout_sender_process is True
+    assert worker._message_sender is None
+    assert worker._precheckout_sender_factory is not None
+    sender = worker._precheckout_sender_factory("12025550999")
+    assert isinstance(sender, ChatwootMessageSender)
+    round_tripped = pickle.loads(pickle.dumps(sender))
+    assert round_tripped._inbox_id == 9
+    assert round_tripped._allowed_jid == "12025550999@s.whatsapp.net"
+    assert sender._template is not None
+    assert sender._template.first_touch_name == (
+        "johanna_interes_precheckout_01"
+    )
+    assert sender._template.language == "es_EC"
+    assert sender._template.category == "MARKETING"
+    assert sender._template.first_touch_parameter == "buyer_name"
 
 
 def test_purchase_worker_flag_is_declared_and_disabled_by_default(
