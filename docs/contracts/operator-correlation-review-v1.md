@@ -1,6 +1,6 @@
 # Consulta de correlaciones pendientes para operadores — V1
 
-- **Estado:** Implementado localmente; migración y runtime todavía no desplegados
+- **Estado:** Implementado; activación runtime default-off
 - **Versión:** `1.0.0`
 - **Ámbito:** lectura bajo demanda de `unmatched`, `ambiguous` y `conflict`
 - **Efectos externos:** ninguno
@@ -41,8 +41,10 @@ scope.funnel_ref = funnel configurado
 Una correlación sin `scope_id` durable no puede atribuirse con seguridad a un tenant y queda excluida fail-closed de V1. Esto incluye `scope_not_configured` sin ownership durable. No se corrige mediante payload, heurística ni suposición single-tenant.
 
 Cada candidato proyectado debe coincidir además con `tenant_ref`, `funnel_ref`,
-`product_ref` y `offer_ref` del scope de la correlación. Una asociación durable cruzada
-se excluye y nunca proyecta identidad de otro tenant.
+`product_ref` y `offer_ref` del scope de la correlación. `tenant_ref`, `funnel_ref` y
+`offer_ref` usan igualdad exacta; `product_ref` usa igualdad case-insensitive, igual que
+el correlador Hotmart canónico. Una asociación durable cruzada se excluye y nunca
+proyecta identidad de otro tenant.
 
 Por eso, `candidates` puede ser un subconjunto seguro de `candidate_count`: el contador
 preserva la evidencia durable original, mientras cualquier candidato fuera del scope se

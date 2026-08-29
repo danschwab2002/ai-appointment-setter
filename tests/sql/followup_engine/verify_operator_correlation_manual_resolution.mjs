@@ -36,7 +36,7 @@ insert into public.purchase_intents (
  '2026-08-24T09:00:00Z', 'waiting_for_purchase', 'tracking_incomplete',
  false, true, false, false),
 ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2', 'lancemos', 'psicologajohanna',
- 'fixture', 'f106691755g', 'bxjge6zq', 'a@resolution.invalid', '593999999992',
+ 'fixture', 'F106691755G', 'bxjge6zq', 'a@resolution.invalid', '593999999992',
  '2026-08-24T09:05:00Z', 'waiting_for_purchase', 'tracking_incomplete',
  false, true, false, false),
 ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3', 'lancemos', 'psicologajohanna',
@@ -94,6 +94,20 @@ insert into public.hotmart_purchase_intent_correlation_candidates (
 ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3',
  'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4', true, false);
 `);
+
+const caseFoldedDetail = await db.query(`
+  select case_data from public.get_operator_unresolved_correlation(
+    'lancemos', 'psicologajohanna',
+    'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1'::uuid
+  )
+`);
+const caseFoldedCandidates = caseFoldedDetail.rows[0]?.case_data?.candidates;
+if (!Array.isArray(caseFoldedCandidates)
+    || caseFoldedCandidates.length !== 2
+    || !caseFoldedCandidates.some((candidate) =>
+      candidate.purchase_intent_id === 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2')) {
+  throw new Error(`case-folded candidate missing: ${JSON.stringify(caseFoldedCandidates)}`);
+}
 
 const before = await db.query(`
   select id, lifecycle_state, current_classification, activation_authorized, updated_at
