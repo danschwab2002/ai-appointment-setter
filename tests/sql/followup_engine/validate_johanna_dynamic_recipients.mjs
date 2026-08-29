@@ -27,7 +27,11 @@ for (const file of files) {
   ));
 }
 
-async function fixture({ suffix, email, phone, eventTime }) {
+async function fixture({
+  suffix, email, phone, eventTime,
+  eventEmail = email,
+  expectedOutcome = 'resolved',
+}) {
   const intent = await db.query(`
     insert into public.purchase_intents (
       tenant_ref, funnel_ref, landing_ref, product_ref, offer_ref,
@@ -74,7 +78,7 @@ async function fixture({ suffix, email, phone, eventTime }) {
     event: 'PURCHASE_OUT_OF_SHOPPING_CART',
     version: '2.0.0',
     data: {
-      buyer: { name: `Lead ${suffix}`, email, phone },
+      buyer: { name: `Lead ${suffix}`, email: eventEmail, phone },
       product: { id: 8104005, name: 'Libre de Ansiedad' },
       offer: { code: 'bxjge6zq' },
     },
@@ -88,8 +92,9 @@ async function fixture({ suffix, email, phone, eventTime }) {
     'select * from public.correlate_hotmart_purchase_intent($1::uuid)',
     [eventId],
   );
-  if (correlated.rows[0]?.outcome !== 'resolved'
-      || correlated.rows[0]?.purchase_intent_id !== intentId) {
+  if (correlated.rows[0]?.outcome !== expectedOutcome
+      || (expectedOutcome === 'resolved'
+        && correlated.rows[0]?.purchase_intent_id !== intentId)) {
     throw new Error(`correlation failed: ${JSON.stringify(correlated.rows)}`);
   }
   return { intentId, eventId, phone };
@@ -135,5 +140,37 @@ const commands = await db.query(`
 if (JSON.stringify(commands.rows.map((row) => row.target_phone))
     !== JSON.stringify([first.phone, second.phone])) {
   throw new Error(`unexpected recipients: ${JSON.stringify(commands.rows)}`);
+}
+
+const operatorResolved = await fixture({
+  suffix: 'operator',
+  email: 'dynamic-operator-form@example.test',
+  eventEmail: 'dynamic-operator-hotmart@example.test',
+  phone: '15550003333',
+  eventTime: '2026-08-25T20:32:00Z',
+  expectedOutcome: 'conflict',
+});
+await db.exec('set role service_role');
+const prepared = await db.query(`
+  select command_data from public.prepare_operator_correlation_resolution(
+    'lancemos', 'psicologajohanna', 'test-operator', $1::uuid,
+    'resolve_with_candidate', $2::uuid, 'operator_source_record',
+    '99999999-9999-4999-8999-999999999991'::uuid
+  )
+`, [operatorResolved.eventId, operatorResolved.intentId]);
+const commandId = prepared.rows[0]?.command_data?.command_id;
+await db.query(`
+  select resolution_data from public.confirm_operator_correlation_resolution(
+    'lancemos', 'psicologajohanna', 'test-operator', $1::uuid,
+    'resolve_with_candidate', $2::uuid
+  )
+`, [commandId, operatorResolved.intentId]);
+const operatorStarted = await begin(operatorResolved, 'operator');
+await db.exec('reset role');
+if (operatorStarted.rows[0]?.outcome !== 'started'
+    || operatorStarted.rows[0]?.target_phone !== operatorResolved.phone) {
+  throw new Error(`operator resolution did not authorize one-shot: ${JSON.stringify(
+    operatorStarted.rows,
+  )}`);
 }
 console.log('JOHANNA_DYNAMIC_RECIPIENTS_SQL_OK');

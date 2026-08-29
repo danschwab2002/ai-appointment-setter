@@ -1519,6 +1519,60 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'operator_correlation_product_scope_casefolded'
+    union all
+    select
+        '20260829000100',
+        '20260829000100_johanna_operator_resolution_one_shot.sql',
+        (
+            exists(
+                select 1 from functions
+                where oid = to_regprocedure(
+                    'public.begin_johanna_abandonment_hotmart_auto(text,uuid,uuid,text,bigint,bigint,text,integer,bigint)'
+                )
+                  and prosecdef
+                  and proconfig @> array[
+                      'search_path=pg_catalog, public, pg_temp'
+                  ]
+            )
+        )::int
+        + coalesce((
+            select (
+                (
+                    length(definition)
+                    - length(replace(
+                        definition,
+                        'operator_resolution_authorized',
+                        ''
+                    ))
+                ) / length('operator_resolution_authorized') = 5
+                and position(
+                    'resolution.resolution_outcome = ''linked_candidate'''
+                    in definition
+                ) > 0
+                and position(
+                    'correlation.reason_code = ''email_phone_conflict'''
+                    in definition
+                ) > 0
+                and position(
+                    'intent.current_classification = ''identity_conflict'''
+                    in definition
+                ) > 0
+                and position(
+                    'not intent.whatsapp_contact_authorized'
+                    in definition
+                ) > 0
+                and position(
+                    'from public.contact_opt_out_events stop'
+                    in definition
+                ) > 0
+            )::int
+            from functions
+            where oid = to_regprocedure(
+                'public.begin_johanna_abandonment_hotmart_auto(text,uuid,uuid,text,bigint,bigint,text,integer,bigint)'
+            )
+        ), 0),
+        2,
+        'operator_resolution_authorizes_exact_one_shot_candidate'
 )
 select
     version,

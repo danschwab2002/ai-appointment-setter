@@ -7,6 +7,12 @@ MIGRATION = (
     / "migrations"
     / "20260826000100_johanna_dynamic_recipients.sql"
 )
+OPERATOR_RESOLUTION_MIGRATION = (
+    Path(__file__).resolve().parents[1]
+    / "supabase"
+    / "migrations"
+    / "20260829000100_johanna_operator_resolution_one_shot.sql"
+)
 
 
 def test_dynamic_abandonment_rpc_derives_recipient_from_durable_intent() -> None:
@@ -34,3 +40,18 @@ def test_dynamic_abandonment_rpc_is_service_role_only() -> None:
     assert f"revoke all on function {signature} from anon" in sql
     assert f"revoke all on function {signature} from authenticated" in sql
     assert f"grant execute on function {signature} to service_role" in sql
+
+
+def test_operator_resolution_authorizes_only_the_exact_conflict_candidate() -> None:
+    sql = OPERATOR_RESOLUTION_MIGRATION.read_text().lower()
+
+    assert "operator_correlation_resolutions" in sql
+    assert "resolution.resolution_outcome = ''linked_candidate''" in sql
+    assert "resolution.effective_purchase_intent_id = p_purchase_intent_id" in sql
+    assert "resolution.deterministic_outcome = ''conflict''" in sql
+    assert "correlation.reason_code = ''email_phone_conflict''" in sql
+    assert "correlation.candidate_count = 1" in sql
+    assert "correlation.manual_handoff_required" in sql
+    assert "intent.current_classification = ''identity_conflict''" in sql
+    assert "not intent.whatsapp_contact_authorized" in sql
+    assert "contact_opt_out_events" in sql
