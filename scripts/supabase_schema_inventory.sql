@@ -1452,6 +1452,73 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'single_bounded_invalid_contact_retry'
+    union all
+    select
+        '20260828000100',
+        '20260828000100_operator_correlation_product_casefold.sql',
+        coalesce((
+            select (
+                count(*) = 4
+                and sum(
+                    (
+                        length(definition)
+                        - length(replace(
+                            definition,
+                            'lower(intent.product_ref) = lower(',
+                            ''
+                        ))
+                    ) / length('lower(intent.product_ref) = lower(')
+                ) = 6
+            )::int
+            from functions
+            where oid in (
+                to_regprocedure(
+                    'public.validate_operator_correlation_resolution_command_insert()'
+                ),
+                to_regprocedure(
+                    'public.prepare_operator_correlation_resolution(text,text,text,uuid,text,uuid,text,uuid)'
+                ),
+                to_regprocedure(
+                    'public.confirm_operator_correlation_resolution(text,text,text,uuid,text,uuid)'
+                ),
+                to_regprocedure(
+                    'public.list_operator_unresolved_correlations(text,text,integer,uuid)'
+                )
+            )
+        ), 0)
+        + (
+            exists(
+                select 1 from functions
+                where oid = to_regprocedure(
+                    'public.validate_operator_correlation_resolution_command_insert()'
+                )
+                  and not prosecdef
+                  and proconfig @> array[
+                      'search_path=pg_catalog, public, pg_temp'
+                  ]
+            )
+            and (
+                select count(*) = 3
+                from functions
+                where oid in (
+                    to_regprocedure(
+                        'public.prepare_operator_correlation_resolution(text,text,text,uuid,text,uuid,text,uuid)'
+                    ),
+                    to_regprocedure(
+                        'public.confirm_operator_correlation_resolution(text,text,text,uuid,text,uuid)'
+                    ),
+                    to_regprocedure(
+                        'public.list_operator_unresolved_correlations(text,text,integer,uuid)'
+                    )
+                )
+                  and prosecdef
+                  and proconfig @> array[
+                      'search_path=pg_catalog, public, pg_temp'
+                  ]
+            )
+        )::int,
+        2,
+        'operator_correlation_product_scope_casefolded'
 )
 select
     version,

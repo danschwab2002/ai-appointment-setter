@@ -8,6 +8,10 @@ RESOLUTION_MIGRATION = (
     Path(__file__).parents[1]
     / "supabase/migrations/20260824000200_operator_correlation_manual_resolution.sql"
 )
+CASEFOLD_MIGRATION = (
+    Path(__file__).parents[1]
+    / "supabase/migrations/20260828000100_operator_correlation_product_casefold.sql"
+)
 
 
 def _sql() -> str:
@@ -98,3 +102,33 @@ def test_manual_resolution_rpcs_are_service_role_only() -> None:
         for role in ("public", "anon", "authenticated"):
             assert f"revoke execute on function {signature} from {role}" in compact
         assert f"grant execute on function {signature} to service_role" in compact
+
+
+def test_operator_correlation_product_scope_matches_case_insensitively() -> None:
+    sql = CASEFOLD_MIGRATION.read_text(encoding="utf-8").lower()
+    compact = " ".join(sql.split())
+
+    for signature in (
+        "public.validate_operator_correlation_resolution_command_insert()",
+        "public.prepare_operator_correlation_resolution(text,text,text,uuid,text,uuid,text,uuid)",
+        "public.confirm_operator_correlation_resolution(text,text,text,uuid,text,uuid)",
+        "public.list_operator_unresolved_correlations(text,text,integer,uuid)",
+    ):
+        assert signature in compact
+    assert "v_expected_occurrences integer[] := array[2, 1, 2, 1]" in compact
+    assert (
+        "v_expected_security_definer boolean[] := array[false, true, true, true]"
+        in compact
+    )
+    assert (
+        "lower(intent.product_ref) = lower(v_scope.purchase_intent_product_ref)"
+        in compact
+    )
+    assert (
+        "lower(intent.product_ref) = lower(scope.purchase_intent_product_ref)"
+        in compact
+    )
+    assert "pg_get_functiondef(v_function)" in compact
+    assert "operator_correlation_casefold_definition_mismatch" in compact
+    assert "grant " not in compact
+    assert "revoke " not in compact

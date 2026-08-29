@@ -2,7 +2,7 @@
 
 - **Estado:** Contrato aceptado
 - **Versión:** `1.0.0`
-- **Implementación:** local verificada; no mergeada ni desplegada
+- **Implementación:** implementada; activación runtime default-off
 - **Complementa:** `operator-correlation-review-v1.md`
 
 ## Propósito
@@ -188,6 +188,7 @@ La transacción debe comprobar:
 - ausencia de resolución aplicada;
 - conjunto scoped completo: cantidad proyectada igual a `candidate_count` durable;
 - cada candidato conserva tenant, funnel, producto, oferta y `waiting_for_purchase`;
+  producto se compara case-insensitive, como en el correlador Hotmart canónico;
 - compatibilidad acción/candidato/motivo.
 
 El snapshot almacena únicamente UUID, señales booleanas, lifecycle y `updated_at`; no contiene email, teléfono ni nombre.
