@@ -93,9 +93,13 @@ actions ni delivery attempts del dispatcher general.
 ## Trigger Hotmart V2
 
 Cuando el flag automático está activo, el receiver autenticado de
-`PURCHASE_OUT_OF_SHOPPING_CART` reutiliza la admisión y correlación canónicas. Sólo un outcome
-`resolved`, con una intención, `candidate_count=1` y sin handoff manual, puede invocar
-`begin_johanna_abandonment_hotmart_auto_v2`.
+`PURCHASE_OUT_OF_SHOPPING_CART` reutiliza la admisión y correlación canónicas. Puede invocar
+`begin_johanna_abandonment_hotmart_auto_v2` un outcome automático `resolved`, con una
+intención, `candidate_count=1` y sin handoff manual, o un `email_phone_conflict` con
+candidato único que tenga una resolución administrativa inmutable `linked_candidate`.
+Esta resolución sustituye únicamente los gates locales `activation_authorized=false` e
+`identity_conflict`; no reescribe la correlación ni relaja consentimiento, destinatario,
+scope, producto, oferta, opt-out o presupuesto.
 
 El RPC exige además:
 
