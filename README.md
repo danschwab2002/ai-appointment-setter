@@ -7,11 +7,14 @@ Bridge conversacional y motor durable de próxima acción para recuperación de 
 El sistema conecta actualmente:
 
 ```text
-Hotmart -> bridge/FastAPI -> Supabase -> Hermes Agent -> Chatwoot -> Evolution API -> WhatsApp
-WhatsApp -> Evolution API -> Chatwoot -> bridge/FastAPI -> Hermes Agent -> Chatwoot -> WhatsApp
+Hotmart -> bridge/FastAPI -> Supabase -> Hermes Agent -> Chatwoot/WABA -> WhatsApp
+WhatsApp -> WABA/Chatwoot -> bridge/FastAPI -> Hermes Agent -> Chatwoot/WABA -> WhatsApp
 ```
 
-El transporte productivo actual es Evolution API detrás de Chatwoot. La frontera de mensajería está abstraída para una migración futura a WhatsApp Business Platform (WABA), incluidos templates aprobados cuando el canal los requiera.
+El canal productivo validado para los scopes vigentes es WhatsApp Business
+Platform (WABA) detrás de Chatwoot. Evolution API queda aislada como transporte
+legacy y no es fallback de WABA. La frontera de mensajería conserva adapters
+separados y exige templates aprobados cuando el canal los requiere.
 
 ## Estado implementado
 
@@ -50,14 +53,20 @@ El batching inbound fue validado E2E en producción. Ver [`docs/operations/2026-
 
 ### División de respuestas salientes
 
-La división opcional de una respuesta lógica en 1–4 burbujas está implementada y validada localmente. Conserva el texto original, persiste un manifiesto durable y reautoriza cada parte antes del envío.
+La división opcional de una respuesta lógica en 1–4 burbujas está implementada y
+fue validada E2E productivamente sobre un único contacto autorizado. Conserva el
+texto original, persiste un manifiesto durable y reautoriza cada parte antes del
+envío.
 
-Continúa apagada por defecto con `CHATWOOT_REPLY_SPLITTER_ENABLED=false` y todavía no tiene evidencia de despliegue ni E2E real por WhatsApp. Ver [`docs/design/outbound-reply-splitting-mvp.md`](docs/design/outbound-reply-splitting-mvp.md).
+Continúa apagada por defecto en entornos nuevos con
+`CHATWOOT_REPLY_SPLITTER_ENABLED=false`. Ver el
+[diseño](docs/design/outbound-reply-splitting-mvp.md) y la
+[evidencia E2E productiva](docs/operations/2026-08-08-outbound-reply-splitting-e2e.md).
 
-El adapter local de primer contacto y seguimiento soporta también inboxes WABA
-de Chatwoot mediante templates aprobados. WABA permanece sin evidencia de
-despliegue o envío real; la configuración incompleta falla al arrancar y no cae
-a texto libre ni a Evolution.
+El adapter de primer contacto y seguimiento soporta inboxes WABA de Chatwoot
+mediante templates aprobados. Hay evidencia de envíos físicos WABA acotados, pero
+esa evidencia no acredita automáticamente cada template o scope nuevo. La
+configuración incompleta falla al arrancar y no cae a texto libre ni a Evolution.
 
 ## Fronteras de responsabilidad
 
@@ -76,7 +85,8 @@ Las decisiones principales están documentadas en [`docs/architecture.md`](docs/
 - Supabase Cloud / Postgres / PostgREST
 - Chatwoot Community Edition
 - Hermes Agent con profiles especializados
-- Evolution API como transporte actual
+- WABA oficial vía Chatwoot como canal productivo de los scopes validados
+- Evolution API aislada como adapter legacy, sin fallback desde WABA
 - `uv` para dependencias, ejecución y pruebas
 
 ## Desarrollo local

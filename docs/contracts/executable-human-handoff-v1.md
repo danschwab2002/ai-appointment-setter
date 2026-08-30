@@ -1,6 +1,6 @@
 # Contrato V1 — handoff humano ejecutable
 
-- **Estado:** Handoff V1 desplegado; guard de replay pausado implementado localmente y pendiente de publicación/migración/deploy
+- **Estado:** Handoff V1 desplegado; guard de replay pausado publicado en `main` y pendiente de evidencia de migración/deploy/E2E actualizado
 - **Versión:** 1
 - **Fecha:** 2026-08-10
 - **Alcance:** casos Lancemos con conversación Chatwoot canónica existente

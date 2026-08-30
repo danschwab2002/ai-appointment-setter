@@ -1,6 +1,6 @@
 # Contrato de ingreso Chatwoot v1
 
-- **Estado:** Implementado localmente; pendiente de despliegue y verificación HTTP productiva
+- **Estado:** Núcleo autenticado, batching e inbound WABA allowlisted desplegados y verificados E2E en cortes acotados; guards posteriores se acreditan por separado y pueden permanecer mergeadas/default-off o pendientes de deploy, activación y E2E
 - **Versión:** 1
 - **Endpoint:** `POST /webhooks/chatwoot`
 
