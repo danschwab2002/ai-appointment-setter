@@ -1,6 +1,6 @@
 # Contrato `lead.precheckout` V1 — Lancemos → bridge
 
-- **Estado:** V1.0.0 y V1.1.0 desplegados; macro first-touch diferida completa localmente y pendiente de promoción
+- **Estado:** V1.0.0 y V1.1.0 desplegados; first-touch diferida publicada default-off, con DDL físico reportado y activación/E2E pendientes
 - **Versiones externas:** `1.0.0`, `1.1.0`
 - **Endpoint:** `POST /webhooks/lead`
 - **Emisor previsto:** `/api/lead` server-side de la landing
