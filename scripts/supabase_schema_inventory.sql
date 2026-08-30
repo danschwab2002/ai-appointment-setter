@@ -1753,6 +1753,90 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'precheckout_delayed_worker_sender_default_off'
+    union all
+    select
+        '20260829000500',
+        '20260829000500_precheckout_production_readiness.sql',
+        (
+            exists(
+                select 1 from functions
+                where oid = to_regprocedure(
+                    'public.get_precheckout_delayed_first_touch_readiness()'
+                )
+                  and prosecdef
+                  and proconfig @> array[
+                      'search_path=pg_catalog, public, pg_temp'
+                  ]
+                  and position('migration_tracking_incomplete' in definition) > 0
+                  and position('precheckout_first_touch_ready' in definition) > 0
+            )
+        )::int
+        + (
+            exists(
+                select 1 from public.pilot_scope_versions scope
+                where scope.scope_key =
+                        'johanna-precheckout-delayed-first-touch'
+                  and scope.version = 1
+                  and scope.status = 'published'
+                  and scope.max_cohort_contacts = 1
+                  and scope.max_outbound_request_starts_total = 1
+                  and scope.max_outbound_request_starts_per_day = 1
+            )
+        )::int
+        + (
+            exists(
+                select 1 from public.pilot_runtime_controls runtime
+                where runtime.scope_key =
+                        'johanna-precheckout-delayed-first-touch'
+                  and runtime.scope_version = 1
+                  and runtime.runtime_state = 'inactive'
+                  and runtime.generation = 0
+            )
+        )::int
+        + (
+            exists(
+                select 1
+                from public.hotmart_abandonment_timer_policy_bindings binding
+                join public.followup_policy_versions policy
+                  on policy.policy_key = binding.policy_key
+                 and policy.version = binding.policy_version
+                where binding.tenant_ref = 'lancemos'
+                  and binding.funnel_ref = 'psicologajohanna'
+                  and lower(binding.product_ref) = lower('F106691755G')
+                  and binding.offer_ref = 'bxjge6zq'
+                  and binding.enabled
+                  and not binding.precheckout_first_touch_enabled
+                  and binding.policy_key =
+                        'johanna-precheckout-delayed-first-touch-timer'
+                  and binding.policy_version = 1
+                  and policy.status = 'published'
+                  and policy.grace_period = interval '60 minutes'
+            )
+        )::int
+        + (
+            exists(
+                select 1 from public.followup_policy_versions policy
+                where policy.policy_key =
+                        'johanna-precheckout-delayed-first-touch-timer'
+                  and policy.version = 1
+                  and policy.status = 'published'
+                  and policy.grace_period = interval '60 minutes'
+            )
+        )::int
+        + (
+            not has_function_privilege(
+                'public',
+                'public.get_precheckout_delayed_first_touch_readiness()',
+                'EXECUTE'
+            )
+            and has_function_privilege(
+                'service_role',
+                'public.get_precheckout_delayed_first_touch_readiness()',
+                'EXECUTE'
+            )
+        )::int,
+        6,
+        'precheckout_production_readiness_default_off'
 )
 select
     version,

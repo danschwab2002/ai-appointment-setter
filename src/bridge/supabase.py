@@ -304,6 +304,22 @@ class HumanHandoffProjectionStatus:
 
 
 @dataclass(frozen=True)
+class PrecheckoutDelayedFirstTouchReadiness:
+    migration_tracking_complete: bool
+    scope_configured: bool
+    runtime_state: str | None
+    runtime_generation: int | None
+    timer_binding_enabled: bool
+    timer_binding_generation: int | None
+    first_touch_binding_enabled: bool
+    due_count: int
+    reserved_count: int
+    request_started_count: int
+    delivery_unknown_count: int
+    reason_code: str
+
+
+@dataclass(frozen=True)
 class ScheduledAction:
     """An action atomically claimed by a dispatcher lease."""
 
@@ -675,6 +691,15 @@ def _required_int(
 ) -> int:
     value = row.get(key)
     if not isinstance(value, int) or isinstance(value, bool):
+        raise _invalid_row_error(operation)
+    return value
+
+
+def _required_bool(
+    row: dict[str, Any], key: str, *, operation: str
+) -> bool:
+    value = row.get(key)
+    if not isinstance(value, bool):
         raise _invalid_row_error(operation)
     return value
 
@@ -2726,6 +2751,81 @@ class SupabaseClient:
             dead_letter_count=_required_nonnegative_int(
                 row, "dead_letter_count", operation=operation
             ),
+        )
+
+    async def get_precheckout_delayed_first_touch_readiness(
+        self,
+    ) -> PrecheckoutDelayedFirstTouchReadiness:
+        operation = "get_precheckout_delayed_first_touch_readiness"
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content="{}",
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        migration_tracking_complete = _required_bool(
+            row, "migration_tracking_complete", operation=operation
+        )
+        scope_configured = _required_bool(
+            row, "scope_configured", operation=operation
+        )
+        timer_binding_enabled = _required_bool(
+            row, "timer_binding_enabled", operation=operation
+        )
+        first_touch_binding_enabled = _required_bool(
+            row, "first_touch_binding_enabled", operation=operation
+        )
+        runtime_state = row.get("runtime_state")
+        if runtime_state is not None and runtime_state not in {
+            "inactive", "armed", "paused", "closed",
+        }:
+            raise SupabaseCommittedResponseError(operation)
+        runtime_generation = row.get("runtime_generation")
+        timer_binding_generation = row.get("timer_binding_generation")
+        for value in (runtime_generation, timer_binding_generation):
+            if value is not None and (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value < 0
+            ):
+                raise SupabaseCommittedResponseError(operation)
+        reason_code = _required_string(row, "reason_code", operation=operation)
+        if reason_code not in {
+            "migration_tracking_incomplete",
+            "precheckout_scope_not_configured",
+            "precheckout_runtime_not_inactive",
+            "timer_binding_disabled",
+            "timer_binding_policy_mismatch",
+            "first_touch_binding_disabled",
+            "precheckout_first_touch_ready",
+        }:
+            raise SupabaseCommittedResponseError(operation)
+        return PrecheckoutDelayedFirstTouchReadiness(
+            migration_tracking_complete=migration_tracking_complete,
+            scope_configured=scope_configured,
+            runtime_state=runtime_state,
+            runtime_generation=runtime_generation,
+            timer_binding_enabled=timer_binding_enabled,
+            timer_binding_generation=timer_binding_generation,
+            first_touch_binding_enabled=first_touch_binding_enabled,
+            due_count=_required_nonnegative_int(
+                row, "due_count", operation=operation
+            ),
+            reserved_count=_required_nonnegative_int(
+                row, "reserved_count", operation=operation
+            ),
+            request_started_count=_required_nonnegative_int(
+                row, "request_started_count", operation=operation
+            ),
+            delivery_unknown_count=_required_nonnegative_int(
+                row, "delivery_unknown_count", operation=operation
+            ),
+            reason_code=reason_code,
         )
 
     async def claim_due_followup_actions(

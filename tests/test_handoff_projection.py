@@ -677,6 +677,7 @@ def test_handoff_readiness_reports_only_sanitized_projection_counts(
         "pilot_boundary": "disabled",
         "automation_state": "default_off",
         "reason_code": "pilot_boundary_disabled",
+        "precheckout_delayed_first_touch": "disabled",
         "human_handoff_projection": "configured",
         "human_handoff_pending": "2",
         "human_handoff_retryable": "1",

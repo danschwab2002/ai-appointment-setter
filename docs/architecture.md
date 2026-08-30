@@ -348,12 +348,23 @@ el sender WABA existente con `johanna_interes_precheckout_01`; replay y
 al sender relee stops y oculta PII si la autoridad cambió; la cancelación en vuelo
 termina el proceso hijo aislado del POST y ejecuta una finalización ambigua
 protegida y acotada, resistente a cancelaciones repetidas y sin autorizar resend
-si no se confirma. Todo permanece local y default-off:
-no existe scope publicado, template Meta aprobado, deploy ni envío real para esta
-ruta. Producción continúa en V1.0.0 hasta el merge, migración, actualización del
-relay y E2E controlado. Ver
+si no se confirma. La migración preparatoria `20260829000500` publica el scope
+dedicado con presupuesto `1/1/1`, runtime `inactive/generation=0`, binding de timer
+de 60 minutos con first-touch apagado y una RPC sanitaria service-role-only. Cuando
+el proceso first-touch está encendido, `/ready` exige que tracking, scope, runtime
+y binding coincidan exactamente y publica sólo conteos agregados; cualquier
+ausencia o contradicción responde `503` antes de acreditar readiness.
+
+Esta promoción sigue default-off y no activa efectos. En producción existen el DDL
+físico `00200`–`00400` y el bridge desplegado, pero el scope dedicado no está
+publicado, el binding first-touch está apagado y el tracking continúa pendiente de
+reconciliación. La migración `00500`, su deploy y la aprobación productiva del
+template Meta todavía no tienen evidencia remota; no hubo envío real para esta
+ruta. Ver
 [ADR-0015](decisions/0015-versioned-landing-whatsapp-consent.md) y la
-[verificación local integral](operations/2026-08-29-precheckout-delayed-first-touch-local.md).
+[verificación local integral](operations/2026-08-29-precheckout-delayed-first-touch-local.md),
+el [contrato de readiness V1](contracts/precheckout-production-readiness-v1.md) y
+la [evidencia de preparación](operations/2026-08-30-precheckout-production-readiness-local.md).
 
 La correlación Hotmart ↔ intención y su fase contract están aplicadas y verificadas en
 Supabase Cloud. Un scope server-side traduce `product.id=8104005` al hotlink

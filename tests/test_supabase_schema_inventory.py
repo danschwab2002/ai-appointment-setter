@@ -98,11 +98,28 @@ def test_hotmart_contract_fingerprint_uses_exact_legacy_and_wrapper_signatures()
     assert "proname" not in fingerprint
 
 
+def test_precheckout_readiness_fingerprint_binds_timer_to_exact_policy() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    fingerprint = sql.split("'20260829000500'", 1)[1].split(")\nselect", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", " ", fingerprint)
+
+    assert "join public.followup_policy_versions policy" in compact_fingerprint
+    assert "policy.policy_key = binding.policy_key" in compact_fingerprint
+    assert "policy.version = binding.policy_version" in compact_fingerprint
+    assert (
+        "binding.policy_key = 'johanna-precheckout-delayed-first-touch-timer'"
+        in compact_fingerprint
+    )
+    assert "binding.policy_version = 1" in compact_fingerprint
+    assert "policy.status = 'published'" in compact_fingerprint
+    assert "policy.grace_period = interval '60 minutes'" in compact_fingerprint
+
+
 def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
 
-    assert len(allowlisted) == 53
+    assert len(allowlisted) == 54
     assert len(allowlisted) == len(set(allowlisted))
     assert "admit_precheckout_form_submission(text, jsonb, jsonb)" in allowlisted
     assert "admit_observed_lead_precheckout(text, jsonb, jsonb)" in allowlisted

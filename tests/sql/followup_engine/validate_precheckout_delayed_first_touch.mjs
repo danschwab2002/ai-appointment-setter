@@ -48,13 +48,15 @@ await db.exec(`
       'operator-test', now(), now()
     );
 
-  insert into public.hotmart_abandonment_timer_policy_bindings (
-    tenant_ref, funnel_ref, product_ref, offer_ref, enabled,
-    precheckout_first_touch_enabled, policy_key, policy_version
-  ) values (
-    'lancemos', 'psicologajohanna', 'F106691755G', 'bxjge6zq', true,
-    true, 'precheckout-delayed-test', 1
-  );
+  update public.hotmart_abandonment_timer_policy_bindings
+  set precheckout_first_touch_enabled = true,
+      policy_key = 'precheckout-delayed-test',
+      policy_version = 1,
+      generation = generation + 1
+  where tenant_ref = 'lancemos'
+    and funnel_ref = 'psicologajohanna'
+    and lower(product_ref) = lower('F106691755G')
+    and offer_ref = 'bxjge6zq';
 `);
 
 function payload(suffix, version = '1.1.0') {
@@ -226,7 +228,7 @@ try {
 }
 if (!inactiveRejected) throw new Error('arbitrary source ID was accepted as reevaluation ID');
 const timerId = timerRow.id;
-const unpublishedScope = await db.query(`
+const publishedScope = await db.query(`
   select * from public.reevaluate_hotmart_abandonment_timer(
     $1::uuid, '2026-08-29T17:00:00Z'::timestamptz
   )
@@ -236,12 +238,11 @@ const unpublishedCommands = await db.query(`
   from public.johanna_abandonment_one_shot_commands
   where source_reevaluation_id = $1::uuid
 `, [timerId]);
-if (unpublishedScope.rows[0]?.reevaluation_outcome
-      !== 'blocked_contact_binding_missing'
-    || unpublishedCommands.rows[0]?.count !== 0) {
-  throw new Error('unpublished scope did not keep precheckout reservation inert');
+if (publishedScope.rows[0]?.reevaluation_outcome !== 'command_reserved'
+    || unpublishedCommands.rows[0]?.count !== 1) {
+  throw new Error('published scope did not reserve exactly one precheckout command');
 }
-console.log('PRECHECKOUT_DELAYED_TIMER_SCHEDULE_REPLAY_INERT_OK');
+console.log('PRECHECKOUT_DELAYED_TIMER_PUBLISHED_SCOPE_RESERVATION_OK');
 
 await db.exec(`
   update public.hotmart_abandonment_timer_policy_bindings
