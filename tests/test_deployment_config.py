@@ -533,6 +533,28 @@ def test_deployment_declares_automated_reply_variables_disabled_by_default() -> 
     assert "CHATWOOT_REPLY_PART_DELAY_SECONDS=2" in env_example
 
 
+def test_deployment_declares_durable_opt_out_variables_disabled_by_default() -> None:
+    env_example = (PROJECT_ROOT / ".env.example").read_text()
+    compose = (PROJECT_ROOT / "compose.yaml").read_text()
+    expected_compose = {
+        "CHATWOOT_DURABLE_OPT_OUT_ENABLED": (
+            "${CHATWOOT_DURABLE_OPT_OUT_ENABLED:-false}"
+        ),
+        "CHATWOOT_OPT_OUT_MACRO_ID": "${CHATWOOT_OPT_OUT_MACRO_ID:-}",
+        "CHATWOOT_OPT_OUT_PROJECTION_WORKER_ID": (
+            "${CHATWOOT_OPT_OUT_PROJECTION_WORKER_ID:-}"
+        ),
+    }
+
+    for variable, mapping in expected_compose.items():
+        assert f"{variable}=" in env_example
+        assert f"{variable}: {mapping}" in compose
+
+    assert "CHATWOOT_DURABLE_OPT_OUT_ENABLED=false" in env_example
+    assert "CHATWOOT_OPT_OUT_MACRO_ID=\n" in env_example
+    assert "CHATWOOT_OPT_OUT_PROJECTION_WORKER_ID=\n" in env_example
+
+
 def test_enabling_replies_requires_shadow_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
