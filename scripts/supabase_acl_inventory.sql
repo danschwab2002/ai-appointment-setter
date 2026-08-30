@@ -36,6 +36,7 @@ expected_service_role(signature) as (
         ('public.get_followup_chatwoot_context(uuid, text, bigint, timestamp with time zone)'),
         ('public.get_followup_execution_context(uuid, text, bigint, timestamp with time zone)'),
         ('public.get_human_handoff_projection_status()'),
+        ('public.get_precheckout_delayed_first_touch_readiness()'),
         ('public.get_lancemos_pilot_runtime_status(text, integer, text, text, text)'),
         ('public.get_operator_unresolved_correlation(text, text, uuid)'),
         ('public.has_chatwoot_opt_out_stop(bigint, bigint, bigint, text)'),

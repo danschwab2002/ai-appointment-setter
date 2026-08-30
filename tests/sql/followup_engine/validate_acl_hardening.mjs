@@ -88,6 +88,7 @@ const rows = await db.query(`
       ('get_followup_chatwoot_context(uuid,text,bigint,timestamp with time zone)'),
       ('get_followup_execution_context(uuid,text,bigint,timestamp with time zone)'),
       ('get_human_handoff_projection_status()'),
+      ('get_precheckout_delayed_first_touch_readiness()'),
       ('get_lancemos_pilot_runtime_status(text,integer,text,text,text)'),
       ('get_operator_unresolved_correlation(text,text,uuid)'),
       ('has_chatwoot_opt_out_stop(bigint,bigint,bigint,text)'),
@@ -129,7 +130,7 @@ const rows = await db.query(`
 `);
 const result = rows.rows[0];
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 53) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 54) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const inventory = await db.query(readFileSync(

@@ -4,7 +4,11 @@ import json
 import httpx
 import pytest
 
-from bridge.supabase import SupabaseClient, SupabaseError
+from bridge.supabase import (
+    SupabaseClient,
+    SupabaseCommittedResponseError,
+    SupabaseError,
+)
 
 
 def test_precheckout_admission_uses_exact_rpc_contract() -> None:
@@ -155,3 +159,108 @@ def test_precheckout_first_touch_uses_exact_rpc_contracts() -> None:
             },
         ),
     ]
+
+
+def test_precheckout_delayed_readiness_uses_exact_sanitized_rpc_contract() -> None:
+    observed: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed["path"] = request.url.path
+        observed["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json=[{
+                "migration_tracking_complete": True,
+                "scope_configured": True,
+                "runtime_state": "inactive",
+                "runtime_generation": 0,
+                "timer_binding_enabled": True,
+                "timer_binding_generation": 2,
+                "first_touch_binding_enabled": False,
+                "due_count": 0,
+                "reserved_count": 0,
+                "request_started_count": 0,
+                "delivery_unknown_count": 0,
+                "reason_code": "first_touch_binding_disabled",
+            }],
+        )
+
+    client = SupabaseClient(
+        base_url="https://supabase.example.test",
+        service_role_key="service-role",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = asyncio.run(client.get_precheckout_delayed_first_touch_readiness())
+
+    assert observed == {
+        "path": "/rest/v1/rpc/get_precheckout_delayed_first_touch_readiness",
+        "body": {},
+    }
+    assert result.migration_tracking_complete is True
+    assert result.scope_configured is True
+    assert result.runtime_state == "inactive"
+    assert result.runtime_generation == 0
+    assert result.timer_binding_enabled is True
+    assert result.timer_binding_generation == 2
+    assert result.first_touch_binding_enabled is False
+    assert result.due_count == 0
+    assert result.reserved_count == 0
+    assert result.request_started_count == 0
+    assert result.delivery_unknown_count == 0
+    assert result.reason_code == "first_touch_binding_disabled"
+
+
+def test_precheckout_delayed_readiness_rejects_unknown_reason_code() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{
+            "migration_tracking_complete": True,
+            "scope_configured": True,
+            "runtime_state": "inactive",
+            "runtime_generation": 0,
+            "timer_binding_enabled": True,
+            "timer_binding_generation": 2,
+            "first_touch_binding_enabled": True,
+            "due_count": 0,
+            "reserved_count": 0,
+            "request_started_count": 0,
+            "delivery_unknown_count": 0,
+            "reason_code": "untrusted database detail",
+        }])
+
+    client = SupabaseClient(
+        base_url="https://supabase.example.test",
+        service_role_key="service-role",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(SupabaseCommittedResponseError):
+        asyncio.run(client.get_precheckout_delayed_first_touch_readiness())
+
+
+def test_precheckout_delayed_readiness_accepts_timer_policy_mismatch() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{
+            "migration_tracking_complete": True,
+            "scope_configured": True,
+            "runtime_state": "inactive",
+            "runtime_generation": 0,
+            "timer_binding_enabled": True,
+            "timer_binding_generation": 3,
+            "first_touch_binding_enabled": True,
+            "due_count": 0,
+            "reserved_count": 0,
+            "request_started_count": 0,
+            "delivery_unknown_count": 0,
+            "reason_code": "timer_binding_policy_mismatch",
+        }])
+
+    client = SupabaseClient(
+        base_url="https://supabase.example.test",
+        service_role_key="service-role",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = asyncio.run(client.get_precheckout_delayed_first_touch_readiness())
+
+    assert result.reason_code == "timer_binding_policy_mismatch"
