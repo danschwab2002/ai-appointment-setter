@@ -149,6 +149,7 @@ def test_precheckout_delayed_first_touch_builds_dynamic_fenced_waba_sender(
 
     assert worker is not None
     assert worker._precheckout_first_touch_enabled is True
+    assert worker._precheckout_outbound_enabled is False
     assert worker._isolate_precheckout_sender_process is True
     assert worker._message_sender is None
     assert worker._precheckout_sender_factory is not None
@@ -164,6 +165,39 @@ def test_precheckout_delayed_first_touch_builds_dynamic_fenced_waba_sender(
     assert sender._template.language == "es_EC"
     assert sender._template.category == "MARKETING"
     assert sender._template.first_touch_parameter == "buyer_name"
+
+
+def test_precheckout_delayed_outbound_is_declared_default_off() -> None:
+    env_example = (PROJECT_ROOT / ".env.example").read_text()
+    compose = (PROJECT_ROOT / "compose.yaml").read_text()
+
+    assert "PRECHECKOUT_DELAYED_OUTBOUND_ENABLED=false" in env_example
+    assert "PRECHECKOUT_DELAYED_OUTBOUND_ENABLED:" in compose
+    assert "${PRECHECKOUT_DELAYED_OUTBOUND_ENABLED:-false}" in compose
+
+
+def test_precheckout_delayed_outbound_rejects_invalid_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    required_environment = {
+        "CHATWOOT_WEBHOOK_SECRET": "test-secret",
+        "ALLOWED_WHATSAPP_JID": "12025550123@s.whatsapp.net",
+        "CHATWOOT_AGENT_BOT_ID": "1",
+        "CHATWOOT_BASE_URL": "https://chatwoot.example.test",
+        "CHATWOOT_ACCOUNT_ID": "1",
+        "CHATWOOT_CONTROL_API_ACCESS_TOKEN": "test-control-token",
+        "CHATWOOT_PAUSE_MACRO_ID": "1",
+        "HOTMART_ABANDONMENT_TIMER_WORKER_ENABLED": "false",
+        "PRECHECKOUT_DELAYED_OUTBOUND_ENABLED": "invalid",
+    }
+    for name, value in required_environment.items():
+        monkeypatch.setenv(name, value)
+
+    with pytest.raises(
+        ValueError,
+        match="PRECHECKOUT_DELAYED_OUTBOUND_ENABLED must be true or false",
+    ):
+        Settings.from_env()
 
 
 def test_purchase_worker_flag_is_declared_and_disabled_by_default(

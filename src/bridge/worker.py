@@ -1271,6 +1271,7 @@ class HotmartAbandonmentTimerWorker:
         message_sender: MessageSender | None = None,
         precheckout_sender_factory: Callable[[str], MessageSender] | None = None,
         precheckout_first_touch_enabled: bool = False,
+        precheckout_outbound_enabled: bool = False,
         isolate_precheckout_sender_process: bool = True,
     ) -> None:
         if (
@@ -1286,6 +1287,7 @@ class HotmartAbandonmentTimerWorker:
         self._message_sender = message_sender
         self._precheckout_sender_factory = precheckout_sender_factory
         self._precheckout_first_touch_enabled = precheckout_first_touch_enabled
+        self._precheckout_outbound_enabled = precheckout_outbound_enabled
         self._isolate_precheckout_sender_process = isolate_precheckout_sender_process
         self._stopped = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
@@ -1360,6 +1362,7 @@ class HotmartAbandonmentTimerWorker:
             if (
                 result.outcome == "command_reserved"
                 and self._precheckout_first_touch_enabled
+                and self._precheckout_outbound_enabled
             ):
                 await self._dispatch_precheckout_first_touch(
                     reevaluation_id=result.reevaluation_id

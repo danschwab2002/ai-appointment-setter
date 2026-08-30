@@ -1,8 +1,8 @@
 # Contrato V1 de readiness para first-touch pre-checkout
 
-- **Estado:** Implementado localmente; no migrado ni desplegado
-- **Versión:** 1.0.0
-- **Alcance:** promoción default-off y diagnóstico sanitario del first-touch diferido
+- **Estado:** Implementado; activación selectiva preparada y pendiente de deploy
+- **Versión:** 1.1.0
+- **Alcance:** promoción, diagnóstico sanitario y gate final del first-touch diferido
 - **No acredita:** aprobación Meta, envío WABA, entrega física ni activación productiva
 
 ## 1. Frontera durable preparada
@@ -114,16 +114,43 @@ El endpoint responde `503` cuando:
 
 Ningún error devuelve SQL, nombres de host, tokens, PII ni bodies.
 
-## 4. Compatibilidad y rollout
+## 4. Gate final de salida
+
+`PRECHECKOUT_DELAYED_FIRST_TOUCH_ENABLED=true` habilita al worker para listar,
+reevaluar y reservar el caso pre-checkout. No autoriza por sí solo el efecto HTTP.
+
+`PRECHECKOUT_DELAYED_OUTBOUND_ENABLED=false` es el default y se evalúa después de
+obtener `command_reserved`, pero antes de invocar la RPC que cambia el comando a
+`request_started`. En ese estado:
+
+- admisión, timer de 60 minutos, reevaluación y reserva siguen operativos;
+- el comando permanece `reserved` y puede reanudarse al habilitar el gate;
+- no se obtiene PII para el sender, no se construye el request y no existe POST;
+- reinicios y polls repetidos no consumen el único intento.
+
+Un valor distinto de `true` o `false` impide el arranque. Cuando el flag pasa a
+`true`, las autoridades durables se releen en la RPC de request-start antes de
+obtener permiso de envío. Un comando bloqueado por compra, opt-out, takeover,
+identidad o scope no se envía.
+
+La coordenada `runtime_state=inactive / generation=0` se conserva en V1 porque
+las funciones SQL publicadas la exigen como parte de la versión de policy. En
+este flujo el interruptor de admisión operativa es el binding
+`precheckout_first_touch_enabled`; cambiar el runtime a `armed` requiere una
+nueva versión de policy y no forma parte de esta activación.
+
+## 5. Compatibilidad y rollout
 
 Orden compatible:
 
 1. aplicar y registrar migraciones `00200`–`00500`;
-2. desplegar el bridge con first-touch todavía apagado;
-3. verificar scope/runtime/binding, backlog cero y aprobación Meta por canales
-   separados;
-4. activar sólo mediante una operación autorizada y acotada;
-5. comprobar `/ready` y deltas durables antes de abrir ingreso real.
+2. desplegar el bridge con `PRECHECKOUT_DELAYED_OUTBOUND_ENABLED=false`;
+3. habilitar worker y binding first-touch para que el pipeline llegue hasta
+   `reserved`;
+4. comprobar `/ready` y que `request_started` no aumente mientras el gate final
+   permanezca apagado;
+5. después de la aprobación Meta, activar sólo el gate final mediante una
+   operación autorizada y acotada.
 
-La migración preparatoria no constituye la operación del paso 4. Un `502`, timeout
+La migración preparatoria no constituye la operación del paso 3. Un `502`, timeout
 o resultado ambiguo nunca autoriza reintento del POST externo.

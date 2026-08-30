@@ -2263,6 +2263,7 @@ def test_precheckout_timer_worker_sends_once_and_replay_is_silent() -> None:
         supabase=supabase,  # type: ignore[arg-type]
         message_sender=sender,  # type: ignore[arg-type]
         precheckout_first_touch_enabled=True,
+        precheckout_outbound_enabled=True,
         isolate_precheckout_sender_process=False,
         clock=lambda: "2026-08-29T18:00:00+00:00",
     )
@@ -2311,6 +2312,33 @@ def test_precheckout_timer_worker_sends_once_and_replay_is_silent() -> None:
     ]
 
 
+def test_precheckout_timer_worker_reserves_without_request_start_when_outbound_off() -> None:
+    supabase = StubPrecheckoutTimerSupabase()
+    sender = StubPrecheckoutSender(FirstTouchResult("sent", 701, 801))
+    worker = HotmartAbandonmentTimerWorker(
+        supabase=supabase,  # type: ignore[arg-type]
+        message_sender=sender,  # type: ignore[arg-type]
+        precheckout_first_touch_enabled=True,
+        precheckout_outbound_enabled=False,
+        isolate_precheckout_sender_process=False,
+        clock=lambda: "2026-08-29T18:00:00+00:00",
+    )
+
+    assert asyncio.run(worker.run_once()) == 1
+
+    assert supabase.list_calls == [
+        {
+            "now": "2026-08-29T18:00:00+00:00",
+            "batch_size": 10,
+            "include_precheckout": True,
+        }
+    ]
+    assert supabase.reevaluation_calls == 1
+    assert supabase.projection_calls == []
+    assert sender.calls == []
+    assert supabase.finish_calls == []
+
+
 def test_precheckout_timer_worker_process_boundary_posts_once() -> None:
     supabase = StubPrecheckoutTimerSupabase()
     sender = ProcessRecordingPrecheckoutSender()
@@ -2318,6 +2346,7 @@ def test_precheckout_timer_worker_process_boundary_posts_once() -> None:
         supabase=supabase,  # type: ignore[arg-type]
         message_sender=sender,  # type: ignore[arg-type]
         precheckout_first_touch_enabled=True,
+        precheckout_outbound_enabled=True,
     )
 
     assert asyncio.run(worker.run_once()) == 1
@@ -2343,6 +2372,7 @@ def test_precheckout_timer_worker_retries_reserved_projection_without_losing_com
         supabase=supabase,  # type: ignore[arg-type]
         message_sender=sender,  # type: ignore[arg-type]
         precheckout_first_touch_enabled=True,
+        precheckout_outbound_enabled=True,
         isolate_precheckout_sender_process=False,
     )
 
@@ -2361,6 +2391,7 @@ def test_precheckout_timer_worker_recovers_inflight_without_resend() -> None:
         supabase=supabase,  # type: ignore[arg-type]
         message_sender=sender,  # type: ignore[arg-type]
         precheckout_first_touch_enabled=True,
+        precheckout_outbound_enabled=True,
         isolate_precheckout_sender_process=False,
     )
 
@@ -2378,6 +2409,7 @@ def test_precheckout_timer_worker_records_sender_ambiguity_without_retry() -> No
         supabase=supabase,  # type: ignore[arg-type]
         message_sender=sender,  # type: ignore[arg-type]
         precheckout_first_touch_enabled=True,
+        precheckout_outbound_enabled=True,
         isolate_precheckout_sender_process=False,
     )
 
@@ -2402,6 +2434,7 @@ def test_precheckout_timer_worker_rejects_malformed_sender_result() -> None:
         supabase=supabase,  # type: ignore[arg-type]
         message_sender=sender,  # type: ignore[arg-type]
         precheckout_first_touch_enabled=True,
+        precheckout_outbound_enabled=True,
         isolate_precheckout_sender_process=False,
     )
 
@@ -2427,6 +2460,7 @@ def test_precheckout_timer_worker_honors_pre_send_authority_stop() -> None:
         supabase=supabase,  # type: ignore[arg-type]
         message_sender=sender,  # type: ignore[arg-type]
         precheckout_first_touch_enabled=True,
+        precheckout_outbound_enabled=True,
         isolate_precheckout_sender_process=False,
     )
 
@@ -2451,6 +2485,7 @@ def test_precheckout_timer_worker_finalizes_unknown_when_stopped_during_send() -
             supabase=supabase,  # type: ignore[arg-type]
             message_sender=sender,  # type: ignore[arg-type]
             precheckout_first_touch_enabled=True,
+            precheckout_outbound_enabled=True,
             isolate_precheckout_sender_process=False,
             poll_interval_seconds=60,
         )
@@ -2483,6 +2518,7 @@ def test_precheckout_timer_worker_hard_stops_sender_that_suppresses_cancel() -> 
             supabase=supabase,  # type: ignore[arg-type]
             message_sender=sender,  # type: ignore[arg-type]
             precheckout_first_touch_enabled=True,
+            precheckout_outbound_enabled=True,
             poll_interval_seconds=60,
         )
         await worker.start()
@@ -2517,6 +2553,7 @@ def test_precheckout_timer_worker_preserves_ids_when_stopped_during_finish() -> 
             supabase=supabase,  # type: ignore[arg-type]
             message_sender=sender,  # type: ignore[arg-type]
             precheckout_first_touch_enabled=True,
+            precheckout_outbound_enabled=True,
             isolate_precheckout_sender_process=False,
             poll_interval_seconds=60,
         )
@@ -2544,6 +2581,7 @@ def test_precheckout_cancellation_finalization_survives_repeated_cancel() -> Non
             supabase=supabase,  # type: ignore[arg-type]
             message_sender=sender,  # type: ignore[arg-type]
             precheckout_first_touch_enabled=True,
+            precheckout_outbound_enabled=True,
             isolate_precheckout_sender_process=False,
             poll_interval_seconds=60,
         )
@@ -2577,6 +2615,7 @@ def test_precheckout_timer_worker_preserves_remote_ids_when_finish_is_ambiguous(
         supabase=supabase,  # type: ignore[arg-type]
         message_sender=sender,  # type: ignore[arg-type]
         precheckout_first_touch_enabled=True,
+        precheckout_outbound_enabled=True,
         isolate_precheckout_sender_process=False,
     )
 

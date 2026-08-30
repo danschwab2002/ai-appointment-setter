@@ -269,6 +269,7 @@ class Settings:
     precheckout_first_touch_enabled: bool = False
     precheckout_first_touch_token: str | None = None
     precheckout_delayed_first_touch_enabled: bool = False
+    precheckout_delayed_outbound_enabled: bool = False
     johanna_abandonment_one_shot_enabled: bool = False
     johanna_abandonment_one_shot_token: str | None = None
     johanna_abandonment_hotmart_auto_enabled: bool = False
@@ -455,6 +456,16 @@ class Settings:
                 "PRECHECKOUT_DELAYED_FIRST_TOUCH_ENABLED", "false"
             ).lower()
             == "true"
+        )
+        precheckout_delayed_outbound_value = os.getenv(
+            "PRECHECKOUT_DELAYED_OUTBOUND_ENABLED", "false"
+        ).strip().lower()
+        if precheckout_delayed_outbound_value not in {"true", "false"}:
+            raise ValueError(
+                "PRECHECKOUT_DELAYED_OUTBOUND_ENABLED must be true or false"
+            )
+        precheckout_delayed_outbound_enabled = (
+            precheckout_delayed_outbound_value == "true"
         )
         johanna_abandonment_one_shot_enabled = (
             os.getenv("JOHANNA_ABANDONMENT_ONE_SHOT_ENABLED", "false").lower()
@@ -720,6 +731,9 @@ class Settings:
             precheckout_first_touch_token=precheckout_first_touch_token,
             precheckout_delayed_first_touch_enabled=(
                 precheckout_delayed_first_touch_enabled
+            ),
+            precheckout_delayed_outbound_enabled=(
+                precheckout_delayed_outbound_enabled
             ),
             johanna_abandonment_one_shot_enabled=(
                 johanna_abandonment_one_shot_enabled
@@ -1555,6 +1569,9 @@ def create_app(
             precheckout_sender_factory=delayed_precheckout_sender_factory,
             precheckout_first_touch_enabled=(
                 settings.precheckout_delayed_first_touch_enabled
+            ),
+            precheckout_outbound_enabled=(
+                settings.precheckout_delayed_outbound_enabled
             ),
         )
     if settings.worker_enabled and shared_supabase is None:
