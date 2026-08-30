@@ -2645,6 +2645,59 @@ def create_app(
 
     @app.get("/ready")
     async def readiness() -> dict[str, str]:
+        precheckout_readiness: dict[str, str] = {
+            "precheckout_delayed_first_touch": "disabled",
+        }
+        if settings.precheckout_delayed_first_touch_enabled:
+            if shared_supabase is None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="precheckout_delayed_readiness_unavailable",
+                )
+            try:
+                precheckout_status = await (
+                    shared_supabase.get_precheckout_delayed_first_touch_readiness()
+                )
+            except Exception as exc:
+                logger.warning(
+                    "precheckout_delayed_readiness_check_failed error_type=%s",
+                    type(exc).__name__,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="precheckout_delayed_readiness_unavailable",
+                ) from exc
+            if precheckout_status.reason_code != "precheckout_first_touch_ready":
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=precheckout_status.reason_code,
+                )
+            if (
+                not precheckout_status.migration_tracking_complete
+                or not precheckout_status.scope_configured
+                or precheckout_status.runtime_state != "inactive"
+                or precheckout_status.runtime_generation != 0
+                or not precheckout_status.timer_binding_enabled
+                or not precheckout_status.first_touch_binding_enabled
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="precheckout_delayed_state_mismatch",
+                )
+            precheckout_readiness = {
+                "precheckout_delayed_first_touch": "enabled",
+                "precheckout_delayed_database": precheckout_status.reason_code,
+                "precheckout_delayed_due": str(precheckout_status.due_count),
+                "precheckout_delayed_reserved": str(
+                    precheckout_status.reserved_count
+                ),
+                "precheckout_delayed_request_started": str(
+                    precheckout_status.request_started_count
+                ),
+                "precheckout_delayed_delivery_unknown": str(
+                    precheckout_status.delivery_unknown_count
+                ),
+            }
         handoff_readiness: dict[str, str] = {}
         if settings.human_handoff_projection_enabled:
             if shared_supabase is None:
@@ -2683,6 +2736,7 @@ def create_app(
                 "pilot_boundary": "disabled",
                 "automation_state": "default_off",
                 "reason_code": "pilot_boundary_disabled",
+                **precheckout_readiness,
                 **handoff_readiness,
             }
         if shared_supabase is None:
@@ -2713,6 +2767,7 @@ def create_app(
             "pilot_boundary": "configured",
             "automation_state": pilot_status.runtime_state,
             "reason_code": pilot_status.reason_code,
+            **precheckout_readiness,
             **handoff_readiness,
         }
 

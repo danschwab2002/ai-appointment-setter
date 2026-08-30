@@ -28,50 +28,13 @@ for (const file of files) {
 }
 
 await db.exec(`
-  insert into public.followup_policy_versions (
-    policy_key, version, status, purpose, timezone, business_windows,
-    grace_period, expires_after, max_automatic_messages, steps,
-    approved_by, approved_at, published_at
-  ) values (
-    'precheckout-delayed-reservation-test', 1, 'published', 'cart_recovery', 'UTC',
-    '[{"days":[1,2,3,4,5,6,7],"start":"00:00","end":"23:59"}]'::jsonb,
-    interval '60 minutes', interval '7 days', 1,
-    '[{"step_key":"first_contact","mode":"approved_template"}]'::jsonb,
-    'fixture-only', now(), now()
-  );
-
-  insert into public.hotmart_abandonment_timer_policy_bindings (
-    tenant_ref, funnel_ref, product_ref, offer_ref, enabled,
-    precheckout_first_touch_enabled, policy_key, policy_version
-  ) values (
-    'lancemos', 'psicologajohanna', 'F106691755G', 'bxjge6zq', true,
-    true, 'precheckout-delayed-reservation-test', 1
-  );
-
-  insert into public.pilot_scope_versions (
-    scope_key, version, status, tenant_key,
-    chatwoot_account_id, chatwoot_inbox_id,
-    channel, channel_provider, channel_account_ref,
-    source, source_event_type, external_product_id, offer_code, purpose,
-    policy_key, policy_version, timezone,
-    max_cohort_contacts, max_outbound_request_starts_total,
-    max_outbound_request_starts_per_day,
-    approved_by, approved_at, published_at
-  ) values (
-    'johanna-precheckout-delayed-first-touch', 1, 'published', 'lancemos',
-    1, 9, 'whatsapp', 'waba', 'chatwoot-inbox:9',
-    'landing', 'PRECHECKOUT_FORM_SUBMITTED', 'F106691755G', 'bxjge6zq',
-    'cart_recovery', 'precheckout-delayed-reservation-test', 1, 'UTC',
-    100, 100, 100, 'fixture-only', now(), now()
-  );
-
-  insert into public.pilot_runtime_controls (
-    scope_key, scope_version, runtime_state, generation,
-    changed_by, change_reason
-  ) values (
-    'johanna-precheckout-delayed-first-touch', 1, 'inactive', 0,
-    'fixture-only', 'Reservation SQL tracer only; no sender is active.'
-  );
+  update public.hotmart_abandonment_timer_policy_bindings
+  set precheckout_first_touch_enabled = true,
+      generation = generation + 1
+  where tenant_ref = 'lancemos'
+    and funnel_ref = 'psicologajohanna'
+    and lower(product_ref) = lower('F106691755G')
+    and offer_ref = 'bxjge6zq';
 `);
 
 const dueAt = '2026-08-29T16:00:00Z';

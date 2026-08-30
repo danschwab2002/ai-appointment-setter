@@ -108,6 +108,7 @@ def test_handoff_projection_readiness_over_real_http(tmp_path: Path) -> None:
         "pilot_boundary": "disabled",
         "automation_state": "default_off",
         "reason_code": "pilot_boundary_disabled",
+        "precheckout_delayed_first_touch": "disabled",
         "human_handoff_projection": "configured",
         "human_handoff_pending": "2",
         "human_handoff_retryable": "1",
