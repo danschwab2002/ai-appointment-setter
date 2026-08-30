@@ -355,12 +355,21 @@ el proceso first-touch está encendido, `/ready` exige que tracking, scope, runt
 y binding coincidan exactamente y publica sólo conteos agregados; cualquier
 ausencia o contradicción responde `503` antes de acreditar readiness.
 
-Esta promoción sigue default-off y no activa efectos. En producción existen el DDL
-físico `00200`–`00400` y el bridge desplegado, pero el scope dedicado no está
-publicado, el binding first-touch está apagado y el tracking continúa pendiente de
-reconciliación. La migración `00500`, su deploy y la aprobación productiva del
-template Meta todavía no tienen evidencia remota; no hubo envío real para esta
-ruta. Ver
+La salida HTTP tiene un gate adicional, default-off y específico:
+`PRECHECKOUT_DELAYED_OUTBOUND_ENABLED=false`. Se evalúa después de
+`command_reserved` y antes de la RPC que registra `request_started`; por lo tanto
+el timer, la reevaluación y la reserva pueden operar sin construir ni emitir el
+POST. Al habilitarlo, la misma command reservada vuelve a atravesar todos los
+fences durables antes del único intento. La coordenada SQL V1 continúa
+`inactive/generation=0`; el binding first-touch es el interruptor operativo de
+admisión para este scope versionado.
+
+En producción están aplicadas y registradas `00200`–`00500`, el scope está
+publicado y el bridge de preparación está desplegado. El release preparado para
+la activación selectiva mantendrá el gate HTTP apagado mientras Meta revisa
+`johanna_interes_precheckout_01`; todavía no fue desplegado y no hubo envío real
+para esta ruta. Ver la
+[evidencia remota de baseline](operations/2026-08-30-precheckout-selective-activation.md),
 [ADR-0015](decisions/0015-versioned-landing-whatsapp-consent.md) y la
 [verificación local integral](operations/2026-08-29-precheckout-delayed-first-touch-local.md),
 el [contrato de readiness V1](contracts/precheckout-production-readiness-v1.md) y
