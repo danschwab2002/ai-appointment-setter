@@ -164,7 +164,15 @@ def test_precheckout_delayed_first_touch_builds_dynamic_fenced_waba_sender(
     )
     assert sender._template.language == "es_EC"
     assert sender._template.category == "MARKETING"
-    assert sender._template.first_touch_parameter == "buyer_name"
+    assert sender._template.first_touch_parameter == "buyer_name_and_product"
+    assert sender._template.params(
+        content="unused",
+        followup=False,
+        buyer_name="María",
+        product_name="Libre de Ansiedad",
+    )["processed_params"] == {
+        "body": {"1": "María", "2": "Libre de Ansiedad"}
+    }
 
 
 def test_precheckout_delayed_outbound_is_declared_default_off() -> None:
