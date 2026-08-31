@@ -119,6 +119,11 @@ Ningún error devuelve SQL, nombres de host, tokens, PII ni bodies.
 `PRECHECKOUT_DELAYED_FIRST_TOUCH_ENABLED=true` habilita al worker para listar,
 reevaluar y reservar el caso pre-checkout. No autoriza por sí solo el efecto HTTP.
 
+El template productivo `johanna_interes_precheckout_01` usa exactamente dos
+parámetros de body, en este orden: `{{1}} = buyer_name` y
+`{{2}} = product_name`. El sender debe construir ambos; una aceptación sincrónica
+de Chatwoot no reemplaza la observación posterior del estado WABA.
+
 `PRECHECKOUT_DELAYED_OUTBOUND_ENABLED=false` es el default y se evalúa después de
 obtener `command_reserved`, pero antes de invocar la RPC que cambia el comando a
 `request_started`. En ese estado:
