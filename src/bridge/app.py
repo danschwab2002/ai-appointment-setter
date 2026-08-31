@@ -1363,7 +1363,7 @@ def create_app(
                         followup_name=None,
                         language="es_EC",
                         category="MARKETING",
-                        first_touch_parameter="buyer_name",
+                        first_touch_parameter="buyer_name_and_product",
                     ),
                 )
 
