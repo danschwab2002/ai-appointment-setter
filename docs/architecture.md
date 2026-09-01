@@ -647,6 +647,30 @@ y [E2E Cloud del 2026-08-20](operations/2026-08-20-hotmart-intent-correlation-cl
 seguido por el
 [postflight contract del 2026-08-20](operations/2026-08-20-hotmart-intent-contract-postflight.md).
 
+## Runtime portable por aliada comercial
+
+El árbol local incorpora una frontera de configuración para instalaciones
+single-tenant aisladas. Un manifiesto JSON no secreto y versionado declara la
+identidad operativa, producto, oferta y scope Chatwoot de una aliada. Supabase
+conserva el binding durable equivalente en
+`commercial_ally_runtime_bindings`; `/ready` sólo acepta una coincidencia exacta
+con una versión `active`.
+
+La activación del binding no autoriza automatización. Para cualquier manifiesto
+suministrado —incluso si copia valores legacy—, el bridge conserva esa procedencia,
+valida tipos estrictos y rechaza al arrancar cualquier flag booleano activo,
+credencial Hotmart o cadena comercial todavía ligada a Johanna. Los
+parsers parametrizados son sólo validación de entrada: no acreditan admisión
+durable, workers ni efectos externos portables.
+
+La migración `20260901000100_commercial_ally_portability.sql` crea el contrato
+sin sembrar clientes ni secretos. Esta implementación tiene pruebas y evidencia
+HTTP locales, permanece default-off y no acredita DDL aplicado, credenciales,
+despliegue ni contacto real. El diseño está en
+[Runtime portable single-tenant V1](design/portable-single-tenant-runtime-v1.md)
+y el contrato en
+[Runtime de aliada comercial V1](contracts/commercial-ally-runtime-v1.md).
+
 ## Decisiones arquitectónicas
 
 - [ADR-0001: Profile comercial como motor de razonamiento aislado](decisions/0001-commercial-profile-boundary.md)

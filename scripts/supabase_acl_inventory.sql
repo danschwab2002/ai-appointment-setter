@@ -55,6 +55,7 @@ expected_service_role(signature) as (
         ('public.reserve_followup_delivery_attempt(uuid, text, bigint, bigint, bigint, text, text, timestamp with time zone)'),
         ('public.request_inbound_human_handoff(uuid, text, text, text, integer, timestamp with time zone)'),
         ('public.request_human_handoff(uuid, text, text, text, text, integer, uuid, uuid, text, bigint, timestamp with time zone)'),
+        ('public.resolve_commercial_ally_runtime_binding(text, text, integer)'),
         ('public.schedule_precheckout_first_touch_reevaluation(uuid, uuid)'),
         ('public.set_lancemos_pilot_cohort_member(text, integer, uuid, bigint, text, text, text)'),
         ('public.set_lancemos_pilot_runtime_state(text, integer, bigint, text, text, text)')

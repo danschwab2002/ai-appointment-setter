@@ -14,14 +14,16 @@ import time
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from .commercial_ally import CommercialAllyConfig, JOHANNA_COMMERCIAL_ALLY
+
 # ── Event constants (v2.0.0) ─────────────────────────────────────────
 
 EVENT_CART_ABANDONMENT = "PURCHASE_OUT_OF_SHOPPING_CART"
 EVENT_PURCHASE_APPROVED = "PURCHASE_APPROVED"
 EVENT_PURCHASE_CANCELED = "PURCHASE_CANCELED"
 EVENT_VERSION = "2.0.0"
-JOHANNA_HOTMART_PRODUCT_ID = 8104005
-JOHANNA_HOTMART_OFFER_CODE = "bxjge6zq"
+JOHANNA_HOTMART_PRODUCT_ID = JOHANNA_COMMERCIAL_ALLY.hotmart_product_id
+JOHANNA_HOTMART_OFFER_CODE = JOHANNA_COMMERCIAL_ALLY.offer_code
 SUPPORTED_EVENT_TYPES = frozenset({
     EVENT_CART_ABANDONMENT,
     EVENT_PURCHASE_APPROVED,
@@ -236,6 +238,8 @@ def parse_hotmart_purchase_payload(payload: object) -> HotmartPurchaseData | Non
 
 def parse_hotmart_payment_failure_payload(
     payload: object,
+    *,
+    config: CommercialAllyConfig = JOHANNA_COMMERCIAL_ALLY,
 ) -> HotmartPaymentFailureData | None:
     """Parse a scoped Hotmart purchase canceled by the provider."""
     event = _json_object(payload)
@@ -266,11 +270,12 @@ def parse_hotmart_payment_failure_payload(
         or _TRANSACTION_REFERENCE.fullmatch(transaction) is None
         or purchase.get("status") != "CANCELED"
         or (buyer_email is None and buyer_phone is None)
-        or product_id != JOHANNA_HOTMART_PRODUCT_ID
-        or offer_code != JOHANNA_HOTMART_OFFER_CODE
+        or product_id != config.hotmart_product_id
+        or offer_code != config.offer_code
     ):
         return None
 
+    assert product_id is not None and offer_code is not None
     return HotmartPaymentFailureData(
         event_id=event_id,
         creation_date_ms=creation_date,

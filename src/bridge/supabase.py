@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import httpx
+
+from bridge.commercial_ally import CommercialAllyConfig
 
 
 class SupabaseError(RuntimeError):
@@ -805,6 +808,44 @@ class SupabaseClient:
                 )
         except httpx.HTTPError as exc:
             raise SupabaseError(f"supabase_request_failed: {method} {path}") from exc
+
+    async def resolve_commercial_ally_runtime_binding(
+        self,
+        expected: CommercialAllyConfig,
+    ) -> CommercialAllyConfig:
+        """Resolve and verify the exact active durable binding for this runtime."""
+
+        operation = "commercial_ally_runtime_binding_resolve"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/resolve_commercial_ally_runtime_binding",
+            content=json.dumps(
+                {
+                    "p_tenant_ref": expected.tenant_ref,
+                    "p_funnel_ref": expected.funnel_ref,
+                    "p_binding_version": expected.binding_version,
+                }
+            ),
+        )
+        rows = _response_rows(response, operation=operation)
+        if response.status_code != 200 or len(rows) != 1:
+            raise SupabaseError(f"{operation}_not_active")
+        row = rows[0]
+        supported = {item.name for item in fields(CommercialAllyConfig)}
+        if any(name not in row for name in supported) or row.get("status") != "active":
+            raise SupabaseError(f"{operation}_invalid_row")
+        values = {name: row[name] for name in supported}
+        try:
+            price = values["product_price"]
+            if isinstance(price, bool) or not isinstance(price, (str, int, float)):
+                raise ValueError
+            values["product_price"] = Decimal(str(price))
+            resolved = CommercialAllyConfig(**values)
+        except (AttributeError, InvalidOperation, TypeError, ValueError) as exc:
+            raise SupabaseError(f"{operation}_invalid_row") from exc
+        if resolved != expected:
+            raise SupabaseError(f"{operation}_config_drift")
+        return resolved
 
     # ── Webhook event persistence ──────────────────────────────────
 

@@ -15,7 +15,7 @@ import time
 import unicodedata
 import uuid
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, fields as dataclass_fields
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import AsyncGenerator, Awaitable, Callable, Protocol
@@ -42,6 +42,7 @@ from bridge.chatwoot_inbox import (
     DurableChatwootInbox,
     RetryableChatwootWorkError,
 )
+from bridge.commercial_ally import CommercialAllyConfig, JOHANNA_COMMERCIAL_ALLY
 from bridge.filtering import EventDecision, classify_chatwoot_event
 from bridge.hermes import HermesShadowProcessor
 from bridge.hotmart import (
@@ -223,6 +224,8 @@ class Settings:
     allowed_jid: str | None
     capture_dir: Path
     max_age_seconds: int
+    commercial_ally_config: CommercialAllyConfig = JOHANNA_COMMERCIAL_ALLY
+    commercial_ally_manifest_path: Path | None = None
     agent_bot_id: int | None = None
     chatwoot_base_url: str | None = None
     chatwoot_account_id: int | None = None
@@ -325,6 +328,14 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> Settings:
+        commercial_ally_config_path = os.getenv(
+            "COMMERCIAL_ALLY_CONFIG_PATH", ""
+        ).strip()
+        commercial_ally_config = (
+            CommercialAllyConfig.from_json_file(Path(commercial_ally_config_path))
+            if commercial_ally_config_path
+            else JOHANNA_COMMERCIAL_ALLY
+        )
         shadow_enabled = os.getenv("HERMES_SHADOW_ENABLED", "false").lower() == "true"
         automated_replies_enabled = (
             os.getenv("CHATWOOT_AUTOMATED_REPLIES_ENABLED", "false").lower()
@@ -505,13 +516,13 @@ class Settings:
             os.getenv("LEAD_PRECHECKOUT_MAX_AGE_SECONDS", "300")
         )
         lead_precheckout_site = os.getenv(
-            "LEAD_PRECHECKOUT_SITE", "psicologajohanna"
+            "LEAD_PRECHECKOUT_SITE", commercial_ally_config.lead_site
         ).strip()
         lead_precheckout_landing_id = os.getenv(
-            "LEAD_PRECHECKOUT_LANDING_ID", "ads-a"
+            "LEAD_PRECHECKOUT_LANDING_ID", commercial_ally_config.lead_landing_id
         ).strip()
         lead_precheckout_offer_code = os.getenv(
-            "LEAD_PRECHECKOUT_OFFER_CODE", "bxjge6zq"
+            "LEAD_PRECHECKOUT_OFFER_CODE", commercial_ally_config.offer_code
         ).strip()
         allowed_jid = os.getenv("ALLOWED_WHATSAPP_JID", "").strip() or None
         allowed_phone = (
@@ -606,8 +617,23 @@ class Settings:
         worker_batch_size = int(
             os.getenv("RESOLUTION_WORKER_BATCH_SIZE", "10")
         )
+        chatwoot_account_id = int(os.environ["CHATWOOT_ACCOUNT_ID"])
         chatwoot_inbox_id_raw = os.getenv("CHATWOOT_INBOX_ID", "").strip()
         chatwoot_inbox_id = int(chatwoot_inbox_id_raw) if chatwoot_inbox_id_raw else None
+        configured_chatwoot_scope = (chatwoot_account_id, chatwoot_inbox_id)
+        expected_chatwoot_scope = (
+            commercial_ally_config.chatwoot_account_id,
+            commercial_ally_config.chatwoot_inbox_id,
+        )
+        if commercial_ally_config_path:
+            if configured_chatwoot_scope != expected_chatwoot_scope:
+                raise ValueError(
+                    "Chatwoot account and inbox must match commercial ally config"
+                )
+        elif chatwoot_account_id != 1 or chatwoot_inbox_id not in {None, 9}:
+            raise ValueError(
+                "COMMERCIAL_ALLY_CONFIG_PATH is required for non-legacy Chatwoot scope"
+            )
         messaging_channel = os.getenv("MESSAGING_CHANNEL", "evolution").strip().lower()
         followup_policy_key = os.getenv("FOLLOWUP_POLICY_KEY", "").strip() or None
         followup_policy_version_raw = os.getenv(
@@ -680,9 +706,15 @@ class Settings:
             allowed_jid=allowed_jid,
             capture_dir=Path(os.getenv("CAPTURE_DIR", "./data/captures")),
             max_age_seconds=int(os.getenv("WEBHOOK_MAX_AGE_SECONDS", "300")),
+            commercial_ally_config=commercial_ally_config,
+            commercial_ally_manifest_path=(
+                Path(commercial_ally_config_path)
+                if commercial_ally_config_path
+                else None
+            ),
             agent_bot_id=int(os.environ["CHATWOOT_AGENT_BOT_ID"]),
             chatwoot_base_url=os.environ["CHATWOOT_BASE_URL"],
-            chatwoot_account_id=int(os.environ["CHATWOOT_ACCOUNT_ID"]),
+            chatwoot_account_id=chatwoot_account_id,
             chatwoot_control_api_access_token=os.environ[
                 "CHATWOOT_CONTROL_API_ACCESS_TOKEN"
             ],
@@ -1014,14 +1046,50 @@ def create_app(
     recovery_agent_client: RecoveryAgentClient | None = None,
     message_sender: MessageSender | None = None,
 ) -> FastAPI:
+    boolean_fields = [
+        field
+        for field in dataclass_fields(settings)
+        if field.type in (bool, "bool")
+    ]
+    invalid_boolean_fields = sorted(
+        field.name
+        for field in boolean_fields
+        if type(getattr(settings, field.name)) is not bool
+    )
+    if invalid_boolean_fields:
+        raise ValueError(
+            "Settings boolean fields must be bool: "
+            + ", ".join(invalid_boolean_fields)
+        )
+    portable_runtime = (
+        settings.commercial_ally_manifest_path is not None
+        or settings.commercial_ally_config != JOHANNA_COMMERCIAL_ALLY
+    )
+    if portable_runtime:
+        enabled_unported = sorted(
+            field.name
+            for field in boolean_fields
+            if getattr(settings, field.name) is True
+        )
+        if settings.hotmart_hottok is not None:
+            enabled_unported.append("hotmart_hottok")
+        if enabled_unported:
+            raise ValueError(
+                "ATT1 runtime capabilities are not portable: "
+                + ", ".join(enabled_unported)
+            )
     if settings.chatwoot_scoped_inbound_senders_enabled and (
-        settings.chatwoot_account_id != 1
-        or settings.chatwoot_inbox_id != 9
-        or settings.chatwoot_cut_b_scope_key != "libre-de-ansiedad-inbound"
-        or settings.chatwoot_cut_b_scope_version != 2
+        settings.chatwoot_account_id
+        != settings.commercial_ally_config.chatwoot_account_id
+        or settings.chatwoot_inbox_id
+        != settings.commercial_ally_config.chatwoot_inbox_id
+        or settings.chatwoot_cut_b_scope_key
+        != settings.commercial_ally_config.inbound_scope_key
+        or settings.chatwoot_cut_b_scope_version
+        != settings.commercial_ally_config.inbound_scope_version
     ):
         raise ValueError(
-            "CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED requires the exact Johanna "
+            "CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED must match commercial ally "
             "inbound scope"
         )
     if settings.chatwoot_scoped_inbound_senders_enabled and not all((
@@ -1101,8 +1169,12 @@ def create_app(
         settings.lead_precheckout_site,
         settings.lead_precheckout_landing_id,
         settings.lead_precheckout_offer_code,
-    ) != ("psicologajohanna", "ads-a", "bxjge6zq"):
-        raise ValueError("lead precheckout scope is fixed for the initial pilot")
+    ) != (
+        settings.commercial_ally_config.lead_site,
+        settings.commercial_ally_config.lead_landing_id,
+        settings.commercial_ally_config.offer_code,
+    ):
+        raise ValueError("lead precheckout scope must match commercial ally config")
     pilot_fields = (
         (settings.pilot_scope_key, "LANCEMOS_PILOT_SCOPE_KEY"),
         (settings.pilot_scope_version, "LANCEMOS_PILOT_SCOPE_VERSION"),
@@ -2662,6 +2734,29 @@ def create_app(
 
     @app.get("/ready")
     async def readiness() -> dict[str, str]:
+        commercial_ally_readiness: dict[str, str] = {}
+        if portable_runtime:
+            if shared_supabase is None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="commercial_ally_binding_unavailable",
+                )
+            try:
+                await shared_supabase.resolve_commercial_ally_runtime_binding(
+                    settings.commercial_ally_config
+                )
+            except Exception as exc:
+                logger.warning(
+                    "commercial_ally_binding_check_failed error_type=%s",
+                    type(exc).__name__,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="commercial_ally_binding_unavailable",
+                ) from exc
+            commercial_ally_readiness = {
+                "commercial_ally_binding": "active",
+            }
         precheckout_readiness: dict[str, str] = {
             "precheckout_delayed_first_touch": "disabled",
         }
@@ -2753,6 +2848,7 @@ def create_app(
                 "pilot_boundary": "disabled",
                 "automation_state": "default_off",
                 "reason_code": "pilot_boundary_disabled",
+                **commercial_ally_readiness,
                 **precheckout_readiness,
                 **handoff_readiness,
             }
@@ -2784,6 +2880,7 @@ def create_app(
             "pilot_boundary": "configured",
             "automation_state": pilot_status.runtime_state,
             "reason_code": pilot_status.reason_code,
+            **commercial_ally_readiness,
             **precheckout_readiness,
             **handoff_readiness,
         }
@@ -2966,7 +3063,10 @@ def create_app(
             payload = json.loads(raw_body)
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise HTTPException(status_code=400, detail="invalid_json") from exc
-        submission = parse_lead_precheckout(payload)
+        submission = parse_lead_precheckout(
+            payload,
+            config=settings.commercial_ally_config,
+        )
         if submission is None:
             raise HTTPException(status_code=400, detail="invalid_lead_precheckout_payload")
         if (
@@ -3764,7 +3864,10 @@ def create_app(
                         "status": "ignored",
                         "reason": "payment_failure_disabled",
                     }
-                parsed_failure = parse_hotmart_payment_failure_payload(payload)
+                parsed_failure = parse_hotmart_payment_failure_payload(
+                    payload,
+                    config=settings.commercial_ally_config,
+                )
                 if parsed_failure is None:
                     raise HTTPException(
                         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

@@ -1,4 +1,5 @@
 import pickle
+import json
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,81 @@ from bridge.app import Settings, create_app
 from bridge.messaging import ChatwootMessageSender
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_commercial_ally_manifest_is_declared_and_loaded_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    manifest = {
+        "tenant_ref": "att1",
+        "funnel_ref": "att1-main",
+        "binding_version": 1,
+        "ally_ref": "ally-one",
+        "lead_ally_name": "Ally One",
+        "lead_site": "ally-one-site",
+        "lead_landing_id": "main",
+        "lead_page_host": "ally-one.example",
+        "lead_page_path": "/offer/main",
+        "product_hotlink": "ATT1HOTLINK",
+        "product_name": "ATT1 Offer",
+        "product_price": "49",
+        "currency": "USD",
+        "offer_code": "att1offer",
+        "consent_copy_version": "att1-whatsapp-v1",
+        "hotmart_product_id": 123456,
+        "chatwoot_account_id": 42,
+        "chatwoot_inbox_id": 24,
+        "inbound_scope_key": "att1-inbound",
+        "inbound_scope_version": 1,
+    }
+    path = tmp_path / "commercial-ally.json"
+    path.write_text(json.dumps(manifest))
+    required_environment = {
+        "CHATWOOT_WEBHOOK_SECRET": "test-secret",
+        "ALLOWED_WHATSAPP_JID": "12025550123@s.whatsapp.net",
+        "CHATWOOT_AGENT_BOT_ID": "1",
+        "CHATWOOT_BASE_URL": "https://chatwoot.example.test",
+        "CHATWOOT_ACCOUNT_ID": "42",
+        "CHATWOOT_CONTROL_API_ACCESS_TOKEN": "test-control-token",
+        "CHATWOOT_PAUSE_MACRO_ID": "1",
+        "CHATWOOT_INBOX_ID": "24",
+        "COMMERCIAL_ALLY_CONFIG_PATH": str(path),
+    }
+    for name, value in required_environment.items():
+        monkeypatch.setenv(name, value)
+
+    settings = Settings.from_env()
+
+    assert settings.commercial_ally_config.tenant_ref == "att1"
+    assert settings.lead_precheckout_site == "ally-one-site"
+    assert settings.lead_precheckout_landing_id == "main"
+    assert settings.lead_precheckout_offer_code == "att1offer"
+    assert "COMMERCIAL_ALLY_CONFIG_PATH=" in (PROJECT_ROOT / ".env.example").read_text()
+    assert "COMMERCIAL_ALLY_CONFIG_PATH:" in (PROJECT_ROOT / "compose.yaml").read_text()
+
+
+def test_nonlegacy_chatwoot_scope_requires_a_commercial_ally_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    required_environment = {
+        "CHATWOOT_WEBHOOK_SECRET": "test-secret",
+        "ALLOWED_WHATSAPP_JID": "12025550123@s.whatsapp.net",
+        "CHATWOOT_AGENT_BOT_ID": "1",
+        "CHATWOOT_BASE_URL": "https://chatwoot.example.test",
+        "CHATWOOT_ACCOUNT_ID": "42",
+        "CHATWOOT_CONTROL_API_ACCESS_TOKEN": "test-control-token",
+        "CHATWOOT_PAUSE_MACRO_ID": "1",
+        "CHATWOOT_INBOX_ID": "24",
+    }
+    for name, value in required_environment.items():
+        monkeypatch.setenv(name, value)
+
+    with pytest.raises(
+        ValueError,
+        match="COMMERCIAL_ALLY_CONFIG_PATH is required for non-legacy Chatwoot scope",
+    ):
+        Settings.from_env()
 
 
 def test_hotmart_abandonment_timer_worker_is_declared_default_off(
@@ -354,7 +430,7 @@ def test_deployment_declares_johanna_full_mvp_flags_default_off(
         ("chatwoot_cut_b_scope_version", 3),
     ],
 )
-def test_scoped_inbound_requires_exact_johanna_scope(
+def test_scoped_inbound_requires_exact_commercial_ally_scope(
     tmp_path: Path,
     field: str,
     value: object,
@@ -379,7 +455,7 @@ def test_scoped_inbound_requires_exact_johanna_scope(
     }
     values[field] = value
 
-    with pytest.raises(ValueError, match="exact Johanna inbound scope"):
+    with pytest.raises(ValueError, match="match commercial ally inbound scope"):
         create_app(Settings(**values))  # type: ignore[arg-type]
 
 

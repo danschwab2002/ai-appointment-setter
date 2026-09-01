@@ -249,7 +249,7 @@ def test_delivery_and_event_headers_must_match_signed_body() -> None:
         assert supabase.calls == []
 
 
-def test_unscoped_offer_is_rejected_before_persistence() -> None:
+def test_unscoped_offer_is_rejected_as_invalid_before_persistence() -> None:
     payload = _payload()
     payload["source"]["landing_id"] = "org-b"  # type: ignore[index]
     payload["source"]["page_url"] = "https://psicologajohanna.com/ldla/evg/vsl/org-b"  # type: ignore[index]
@@ -261,8 +261,8 @@ def test_unscoped_offer_is_rejected_before_persistence() -> None:
 
     response = _post(app, payload)
 
-    assert response.status_code == 403
-    assert response.json()["detail"] == "lead_precheckout_outside_scope"
+    assert response.status_code == 400
+    assert response.json()["detail"] == "invalid_lead_precheckout_payload"
     assert supabase.calls == []
 
 
@@ -296,7 +296,7 @@ def test_enabled_receiver_without_secret_fails_at_startup() -> None:
 
 
 def test_enabled_receiver_rejects_scope_expansion_at_startup() -> None:
-    with pytest.raises(ValueError, match="scope is fixed"):
+    with pytest.raises(ValueError, match="scope must match commercial ally config"):
         create_app(
             _settings(
                 lead_precheckout_landing_id="org-b",

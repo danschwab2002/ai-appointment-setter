@@ -12,6 +12,7 @@ await db.exec(`
   create role service_role nologin;
   alter default privileges in schema public grant execute on functions to anon, authenticated;
   alter default privileges in schema public grant all on functions to service_role;
+  alter default privileges in schema public grant all on tables to service_role;
 `);
 
 const baseline = join(root, 'supabase/baseline/20260803_public_schema.sql');
@@ -49,7 +50,28 @@ if (before.rows[0]?.leaks <= 0) {
   throw new Error('positive control failed: Supabase-style defaults produced no leaks');
 }
 await db.exec(readFileSync(hardening, 'utf8'));
-for (const file of afterHardening) {
+const portabilityIndex = afterHardening.findIndex(
+  (file) => file.endsWith('20260901000100_commercial_ally_portability.sql'),
+);
+if (portabilityIndex < 0) {
+  throw new Error('commercial ally portability migration is missing');
+}
+for (const file of afterHardening.slice(0, portabilityIndex)) {
+  await db.exec(readFileSync(file, 'utf8'));
+}
+const prePortabilityInventory = await db.query(readFileSync(
+  join(root, 'scripts/supabase_schema_inventory.sql'),
+  'utf8',
+));
+const absentPortabilityFingerprint = prePortabilityInventory.rows.find(
+  (row) => row.filename === '20260901000100_commercial_ally_portability.sql',
+);
+if (absentPortabilityFingerprint?.fingerprint_status !== 'fingerprint_absent') {
+  throw new Error(
+    `pre-portability schema fingerprint failed: ${JSON.stringify(absentPortabilityFingerprint)}`,
+  );
+}
+for (const file of afterHardening.slice(portabilityIndex)) {
   await db.exec(readFileSync(file, 'utf8'));
 }
 
@@ -107,6 +129,7 @@ const rows = await db.query(`
       ('request_inbound_human_handoff(uuid,text,text,text,integer,timestamp with time zone)'),
       ('request_human_handoff(uuid,text,text,text,text,integer,uuid,uuid,text,bigint,timestamp with time zone)'),
       ('reserve_followup_delivery_attempt(uuid,text,bigint,bigint,bigint,text,text,timestamp with time zone)'),
+      ('resolve_commercial_ally_runtime_binding(text,text,integer)'),
       ('schedule_precheckout_first_touch_reevaluation(uuid,uuid)'),
       ('set_lancemos_pilot_cohort_member(text,integer,uuid,bigint,text,text,text)'),
       ('set_lancemos_pilot_runtime_state(text,integer,bigint,text,text,text)')
@@ -130,8 +153,42 @@ const rows = await db.query(`
 `);
 const result = rows.rows[0];
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 54) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 55) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
+}
+const bindingAcl = await db.query(`
+  select
+    has_table_privilege(
+      'service_role', 'public.commercial_ally_runtime_bindings', 'select'
+    ) select_allowed,
+    has_table_privilege(
+      'service_role', 'public.commercial_ally_runtime_bindings', 'insert'
+    ) insert_allowed,
+    has_table_privilege(
+      'service_role', 'public.commercial_ally_runtime_bindings', 'update'
+    ) update_allowed,
+    has_table_privilege(
+      'service_role', 'public.commercial_ally_runtime_bindings', 'delete'
+    ) delete_allowed,
+    has_table_privilege(
+      'service_role', 'public.commercial_ally_runtime_bindings', 'truncate'
+    ) truncate_allowed,
+    has_table_privilege(
+      'service_role', 'public.commercial_ally_runtime_bindings', 'references'
+    ) references_allowed,
+    has_table_privilege(
+      'service_role', 'public.commercial_ally_runtime_bindings', 'trigger'
+    ) trigger_allowed
+`);
+const bindingPrivileges = bindingAcl.rows[0];
+if (bindingPrivileges?.select_allowed !== true
+    || bindingPrivileges.insert_allowed !== false
+    || bindingPrivileges.update_allowed !== false
+    || bindingPrivileges.delete_allowed !== false
+    || bindingPrivileges.truncate_allowed !== false
+    || bindingPrivileges.references_allowed !== false
+    || bindingPrivileges.trigger_allowed !== false) {
+  throw new Error(`commercial ally binding ACL failed: ${JSON.stringify(bindingPrivileges)}`);
 }
 const inventory = await db.query(readFileSync(
   join(root, 'scripts/supabase_acl_inventory.sql'),
@@ -144,6 +201,18 @@ if (inventory.rows.length !== result.total
     || inventoryExpected !== result.expected_count
     || inventory.rows.some((row) => row.acl_status !== 'ok')) {
   throw new Error('checked-in ACL inventory disagrees with clean-stack probe');
+}
+const schemaInventory = await db.query(readFileSync(
+  join(root, 'scripts/supabase_schema_inventory.sql'),
+  'utf8',
+));
+const portabilityFingerprint = schemaInventory.rows.find(
+  (row) => row.filename === '20260901000100_commercial_ally_portability.sql',
+);
+if (portabilityFingerprint?.fingerprint_status !== 'fingerprint_present') {
+  throw new Error(
+    `commercial ally schema fingerprint failed: ${JSON.stringify(portabilityFingerprint)}`,
+  );
 }
 
 const purchaseWorkerAclRepair = migrations.find(

@@ -40,8 +40,8 @@ del navegador, query strings, logs o Git.
 
 ## Alcance implementado
 
-Aunque el parser conoce los seis pares landing-oferta congelados, el endpoint
-sólo admite inicialmente:
+El parser acepta un único binding activo suministrado por la configuración del
+runtime. En compatibilidad legada ese binding es:
 
 ```text
 site       = psicologajohanna
@@ -50,9 +50,11 @@ offer.code = bxjge6zq
 hotlink    = F106691755G
 ```
 
-Las otras cinco variantes fallan con `403 lead_precheckout_outside_scope` hasta
-confirmar precio y oferta. Expandir el alcance requiere reemplazar la
-configuración, no eliminarla.
+Un payload que no coincide exactamente con el binding configurado se clasifica
+como inválido y devuelve `400 invalid_lead_precheckout_payload`. Expandir el
+alcance requiere reemplazar el binding y portar la RPC durable; para un manifiesto
+no legado, el runtime bloquea `LEAD_PRECHECKOUT_ENABLED=true` al iniciar hasta que
+esa RPC deje de ser específica de Johanna.
 
 ## Payload
 
@@ -209,7 +211,6 @@ del body exacto y sincronización en Chatwoot; este contrato no las presume.
 | `200` | `received`, `duplicate` o `conflict`, después de admisión durable |
 | `400` | JSON, forma o headers incoherentes |
 | `401` | firma inválida o evento stale/futuro |
-| `403` | evento válido fuera del scope activo |
 | `413` | body mayor a 64 KiB |
 | `503` | receiver apagado/configuración o persistencia no disponible |
 

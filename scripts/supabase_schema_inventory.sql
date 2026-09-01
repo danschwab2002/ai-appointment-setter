@@ -1837,6 +1837,82 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         6,
         'precheckout_production_readiness_default_off'
+    union all
+    select
+        '20260901000100',
+        '20260901000100_commercial_ally_portability.sql',
+        (to_regclass('public.commercial_ally_runtime_bindings') is not null)::int
+        + exists(
+            select 1 from indexes
+            where indexname = 'commercial_ally_runtime_bindings_one_active'
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                    'public.resolve_commercial_ally_runtime_binding(text,text,integer)'
+                )
+              and not prosecdef
+              and proconfig @> array['search_path=""']
+        )::int
+        + (
+            to_regprocedure(
+                'public.resolve_commercial_ally_runtime_binding(text,text,integer)'
+            ) is not null
+            and not has_function_privilege(
+                'public',
+                to_regprocedure(
+                    'public.resolve_commercial_ally_runtime_binding(text,text,integer)'
+                ),
+                'EXECUTE'
+            )
+            and has_function_privilege(
+                'service_role',
+                to_regprocedure(
+                    'public.resolve_commercial_ally_runtime_binding(text,text,integer)'
+                ),
+                'EXECUTE'
+            )
+        )::int
+        + (
+            to_regclass('public.commercial_ally_runtime_bindings') is not null
+            and has_table_privilege(
+                'service_role',
+                to_regclass('public.commercial_ally_runtime_bindings'),
+                'select'
+            )
+            and not has_table_privilege(
+                'service_role',
+                to_regclass('public.commercial_ally_runtime_bindings'),
+                'insert'
+            )
+            and not has_table_privilege(
+                'service_role',
+                to_regclass('public.commercial_ally_runtime_bindings'),
+                'update'
+            )
+            and not has_table_privilege(
+                'service_role',
+                to_regclass('public.commercial_ally_runtime_bindings'),
+                'delete'
+            )
+            and not has_table_privilege(
+                'service_role',
+                to_regclass('public.commercial_ally_runtime_bindings'),
+                'truncate'
+            )
+            and not has_table_privilege(
+                'service_role',
+                to_regclass('public.commercial_ally_runtime_bindings'),
+                'references'
+            )
+            and not has_table_privilege(
+                'service_role',
+                to_regclass('public.commercial_ally_runtime_bindings'),
+                'trigger'
+            )
+        )::int,
+        5,
+        'commercial_ally_binding_default_off'
 )
 select
     version,
