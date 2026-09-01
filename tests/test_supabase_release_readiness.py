@@ -28,6 +28,7 @@ def test_bundle_covers_exact_pending_tail_and_is_deterministic(tmp_path: Path) -
     assert observed == expected
     assert observed[0] == "20260808000400_hotmart_purchase_safety_fences.sql"
     assert "20260812000100_supabase_function_acl_hardening.sql" in observed
+    assert "20260831000100_johanna_funnel_dashboard_read.sql" in observed
     assert observed[-1] == (
         "20260903000300_commercial_ally_payment_failure_recovery.sql"
     )

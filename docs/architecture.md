@@ -716,6 +716,27 @@ El diseño está en
 y el contrato en
 [Runtime de aliada comercial V1](contracts/commercial-ally-runtime-v1.md).
 
+## Visibilidad on-demand del funnel Johanna
+
+El sistema incorpora una superficie manual y read-only para los casos comerciales
+durables. `read_johanna_funnel_dashboard_v1` proyecta desde Supabase únicamente
+UUID internos, categorías, etapas, resultados independientes, timestamps y
+referencias canónicas de conversación. Es `STABLE SECURITY DEFINER`, no amplía
+`SELECT` directo de `service_role` y mantiene cerrados `PUBLIC`, `anon` y
+`authenticated`.
+
+`scripts/generate_johanna_funnel_dashboard.py` invoca exclusivamente ese RPC,
+valida una forma allowlisted, agrega en memoria y genera un HTML temporal sin
+backend. Los conteos usan la cohorte completa; la tabla limita el detalle a 100
+casos sanitarios. Chatwoot no se consulta para mensajes ni reportes: cuando se
+configuran URL y account ID sólo se construyen enlaces a conversaciones canónicas.
+El contrato exacto está en
+[Dashboard on-demand Johanna V1](contracts/johanna-funnel-dashboard.md).
+
+La implementación fue probada con PostgreSQL 17, suite Python y un recorrido HTTP
+real efímero. La migración y la CLI deben desplegarse antes de que esta superficie
+quede operativa sobre Supabase Cloud.
+
 ## Decisiones arquitectónicas
 
 - [ADR-0001: Profile comercial como motor de razonamiento aislado](decisions/0001-commercial-profile-boundary.md)
