@@ -22,8 +22,8 @@ scope:
   primary_objective: purchase_recovery
   success_outcome: purchase_observed
   channel: whatsapp_official
-  pilot_language: null
-  pilot_countries: null
+  pilot_language: spanish_latam_neutral
+  pilot_countries: [MX]
 handoff:
   recipient_ref: mariana-marin
   recipient_role_reported: chat_responder
@@ -42,17 +42,19 @@ de Lancemos: abandono Hotmart, primer contacto por WhatsApp oficial, conversaci�
 en Chatwoot y cierre por compra u otra causa permitida. La entrevista sólo fija
 para ATT1 la oferta candidata y el outcome de compra.
 
-El precio y la moneda fueron recibidos en entrevista, pero aún no deben presentarse como facts aprobados al prospecto hasta contrastarlos con la oferta vigente y registrar owner/vigencia.
+El operador confirmó precio y moneda como facts básicos candidatos del intake.
+Marcela todavía debe ratificarlos y no deben presentarse al prospecto hasta
+contrastarlos con la oferta vigente y registrar owner/vigencia.
 
 ## 2. Audiencia recibida
 
 La audiencia principal reportada son mujeres de 35 a 55 años, trabajadoras o emprendedoras, con ingresos propios y diagnosticadas con hipotiroidismo y/o Hashimoto. La distribución declarada fue México 60%, USA 15%, Colombia 10%, Canadá 3% y España 3%.
 
-Esto desbloquea el borrador de audience fit, no una regla de elegibilidad ni contacto. La suma declarada es 91%; no se completa el resto por inferencia. Tampoco se interpreta la distribución como selección automática de países del piloto.
+Esto desbloquea el borrador de audience fit, no una regla general de elegibilidad ni contacto. La suma declarada es 91% y no se completa el resto por inferencia. El operador confirmó México como alcance candidato; Marcela debe ratificarlo y la distribución no habilita ningún otro país.
 
 ## 3. Objetivo y éxito
 
-El objetivo comercial inicial es recuperar una compra. El outcome observable propuesto es `purchase_observed`, sustentado únicamente por una señal autoritativa y correlacionada de compra. Una respuesta, clic, interés, handoff o aceptación del proveedor de mensajería no equivale a conversión.
+El objetivo comercial inicial es recuperar una compra. El outcome observable confirmado por el operador y pendiente de ratificación de Marcela es `purchase_observed`, sustentado únicamente por una señal autoritativa y correlacionada de compra. Una respuesta, clic, interés, handoff o aceptación del proveedor de mensajería no equivale a conversión.
 
 La mecánica ya existente permanece fuera de esta release: no se cambia cantidad de mensajes, posiciones, demoras, condiciones de envío, stops, prioridades, budgets, workers ni delivery attempts.
 
@@ -84,7 +86,7 @@ Se reportó que existen materiales sobre:
 
 Hasta recibirlos en custodia privada, sanitizarlos, registrar vigencia/owner y resolver contradicciones, esos materiales no forman parte del conocimiento del agente ni de esta release.
 
-## 6. Política sanitaria provisional
+## 6. Baseline sanitario confirmado por el operador
 
 Dado que la oferta y audiencia pertenecen al dominio de salud, la release falla cerrada ante consejo clínico. El agente no puede:
 
@@ -94,7 +96,9 @@ Dado que la oferta y audiencia pertenecen al dominio de salud, la release falla 
 - pedir historia clínica o información médica innecesaria;
 - presentar el producto como sustituto de atención profesional.
 
-Los límites definitivos requieren revisión y aprobación del negocio y, cuando corresponda, revisión sanitaria/legal.
+Estos límites sanitarios permanecen fail-closed y pendientes de ratificación de
+Marcela. Cualquier ampliación requiere una versión posterior y, cuando
+corresponda, revisión sanitaria/legal.
 
 ## 7. Estado técnico desbloqueado
 
@@ -108,10 +112,11 @@ Permanece bloqueada hasta completar y aprobar:
 
 - [ ] owner comercial y owner operativo;
 - [ ] precio/moneda/facts con fuente y vigencia;
-- [ ] país(es) e idioma del piloto;
+- [ ] ratificación comercial de país e idioma candidatos — México y español latino neutral;
 - [ ] referencias canónicas de producto, oferta, landing y checkout;
 - [ ] consentimiento comercial para WhatsApp;
-- [ ] claims permitidos/prohibidos y límites sanitarios;
+- [ ] ratificación comercial del baseline sanitario fail-closed;
+- [ ] claims comerciales específicos derivados de materiales aprobados;
 - [ ] FAQs, casos, Brand Voice y ejemplos sanitizados;
 - [ ] política económica publicada, si habrá descuento;
 - [ ] templates WABA aprobados;

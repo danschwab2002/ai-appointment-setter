@@ -4,7 +4,8 @@
   "status": "received_unverified",
   "ally_public_identity_reported": "Dra. Nina Garza",
   "source_refs": [
-    "operator-interview:2026-09-01-mariana-01"
+    "operator-interview:2026-09-01-mariana-01",
+    "operator-confirmation:2026-09-02-authority-content-health-language-countries"
   ],
   "offer": {
     "public_name": "Alimenta Tu Tiroides",
@@ -33,6 +34,7 @@
     }
   },
   "success_outcome": "purchase_observed",
+  "commercial_approval_authority_ref": "marcela",
   "business_owner_ref": null,
   "operational_owner_ref": null,
   "human_handoff": {
@@ -51,19 +53,41 @@
     "upsell_and_post_offer"
   ],
   "materials_received_and_sanitized": false,
-  "pilot_language": null,
-  "pilot_countries": null,
+  "commercial_information_approval": {
+    "artifact_ref": "docs/design/att1-commercial-information-approval-v1.md",
+    "status": "pending_external_approval",
+    "approval_authority_ref": "marcela",
+    "decision_evidence_ref": "operator-confirmation:2026-09-02-authority-content-health-language-countries",
+    "decisions": {
+      "materials": "pending_external_input",
+      "content": "operator_confirmed_pending_marcela_ratification",
+      "health_limits": "operator_confirmed_pending_marcela_ratification",
+      "language": "operator_confirmed_pending_marcela_ratification",
+      "countries": "operator_confirmed_pending_marcela_ratification",
+      "discount": "pending_external_approval"
+    },
+    "approved_by": null,
+    "approved_at": null
+  },
+  "health_safety_baseline": {
+    "policy_ref": "docs/design/att1-commercial-information-approval-v1.md#att1-commercial-003-health-limits--límites-sanitarios",
+    "status": "operator_confirmed_pending_marcela_ratification"
+  },
+  "pilot_scope_status": "operator_confirmed_pending_marcela_ratification",
+  "pilot_language": "spanish_latam_neutral",
+  "pilot_countries": [
+    "MX"
+  ],
   "canonical_provider_scope_verified": false,
   "conversation_release_approved": false,
   "activation_authorized": false,
   "open_questions": [
-    "business_owner_and_approval_authority",
+    "business_owner_scope",
     "operational_owner_scope",
-    "pilot_language",
-    "pilot_country_scope",
     "canonical_hotmart_product_and_offer",
     "chatwoot_handoff_target_and_sla",
     "materials_custody_sanitization_and_vigency",
+    "discount_policy",
     "conversation_release_content_and_approval"
   ]
 }

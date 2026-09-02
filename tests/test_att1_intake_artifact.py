@@ -65,22 +65,31 @@ def test_att1_intake_preserves_audience_and_material_inventory_as_reported() -> 
     assert intake["materials_received_and_sanitized"] is False
 
 
-def test_att1_intake_keeps_unanswered_or_ambiguous_gates_open() -> None:
+def test_att1_intake_records_partial_commercial_confirmation_without_activation() -> None:
     intake = _load()
 
-    assert intake["pilot_language"] is None
-    assert intake["pilot_countries"] is None
+    assert intake["pilot_language"] == "spanish_latam_neutral"
+    assert intake["pilot_countries"] == ["MX"]
+    assert intake["commercial_approval_authority_ref"] == "marcela"
+    assert intake["health_safety_baseline"] == {
+        "policy_ref": "docs/design/att1-commercial-information-approval-v1.md#att1-commercial-003-health-limits--límites-sanitarios",
+        "status": "operator_confirmed_pending_marcela_ratification",
+    }
     assert intake["business_owner_ref"] is None
     assert intake["operational_owner_ref"] is None
     assert intake["canonical_provider_scope_verified"] is False
-    assert intake["source_refs"] == ["operator-interview:2026-09-01-mariana-01"]
+    assert intake["source_refs"] == [
+        "operator-interview:2026-09-01-mariana-01",
+        "operator-confirmation:2026-09-02-authority-content-health-language-countries",
+    ]
     assert set(intake["open_questions"]) == {
-        "business_owner_and_approval_authority",
+        "business_owner_scope",
         "operational_owner_scope",
-        "pilot_language",
-        "pilot_country_scope",
         "canonical_hotmart_product_and_offer",
         "chatwoot_handoff_target_and_sla",
         "materials_custody_sanitization_and_vigency",
+        "discount_policy",
         "conversation_release_content_and_approval",
     }
+    assert intake["conversation_release_approved"] is False
+    assert intake["activation_authorized"] is False

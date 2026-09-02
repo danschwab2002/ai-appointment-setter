@@ -4,6 +4,7 @@
 - **Fecha:** 2026-09-01
 - **Fuente:** `Documentación de Procesos Carritos Abandonados, Pagos Declinados y Pagos Offline.pdf`, entregada por el usuario
 - **Alcance:** diseñar únicamente la política de descuento; no modificar cantidad de mensajes, triggers, delays, cadencia ni condiciones de los flujos ya aprobados
+- **Gate comercial consolidado:** [aprobación de información comercial V1](att1-commercial-information-approval-v1.md), decisión `att1-commercial-006-discount`
 
 ## Lectura aplicable de la fuente
 
@@ -63,29 +64,38 @@ modifican por publicar una política.
 
 Publicar la política no activa envíos. También se requieren binding activo, Conversation Release aprobada, template WABA sincronizado, scope/cohorte, budgets y kill switch.
 
-## Única decisión de contenido pendiente
+## Decisiones de política pendientes
 
-Debe consultarse a los responsables de Lancemos si la **primera plantilla existente** de recuperación —tanto para carrito abandonado como para form sin compra observada— debe:
+La política económica permanece completamente sin publicar hasta aprobar en
+conjunto:
 
-1. ofrecer concretamente el descuento desde el primer contacto; o
-2. limitarse a ofrecer ayuda y presentar el descuento sólo en una interacción posterior ya prevista por el flujo.
+- porcentaje o importe exacto;
+- triggers autorizados;
+- posición existente (`first_touch` o `later_step`);
+- cupón o fuente canónica del código;
+- inicio y duración exacta;
+- países y monedas aplicables;
+- texto permitido sobre urgencia;
+- approver y vigencia de la decisión.
 
-Esta decisión cambia únicamente el contenido/template asociado a una posición existente, no la mecánica del flujo. Bodies, placeholders, idioma, categoría, botones y assets pertenecen a la Conversation Release y deben coincidir exactamente con templates `APPROVED` de Meta/Chatwoot.
+La posición sólo cambia el contenido/template asociado a un paso existente, no
+la mecánica ni la cadencia del flujo. Bodies, placeholders, categoría, botones y
+assets pertenecen a la Conversation Release y deben coincidir exactamente con
+templates `APPROVED` de Meta/Chatwoot.
 
 ## Inconsistencia a resolver
 
-La fuente dice que el bono vence **estrictamente a las 6 horas** (p. 2), pero que después de dos días y en cualquier contacto posterior el bono **sigue activo** (p. 3). No pueden ser verdad simultáneamente.
+La fuente dice que el bono vence **estrictamente a las 6 horas** (p. 2), pero
+que después de dos días y en cualquier contacto posterior el bono **sigue
+activo** (p. 3). No pueden ser verdad simultáneamente. La duración debe quedar
+resuelta aunque el primer copy no la mencione, porque gobierna la elegibilidad
+durable del incentivo.
 
 - **Recomendación:** oferta inicial válida 6 horas; cualquier incentivo posterior es una nueva oferta/version autorizada, no una extensión silenciosa.
 - Alternativa: vigencia abierta hasta compra/retirada, eliminando la urgencia de 6 horas.
 
-Hasta resolverlo, ninguna plantilla puede afirmar vencimiento ni permanencia.
-
-## Consulta pendiente a Lancemos
-
-> Para ATT1, ¿quieren que la primera plantilla de recuperación —tanto ante un carrito abandonado como ante un formulario completado sin compra observada— ya mencione y ofrezca concretamente el descuento, o prefieren que esa primera plantilla sólo ofrezca ayuda y que el descuento aparezca después dentro del flujo existente?
-
-Después de esa respuesta se redactan las variantes exactas de Conversation Release. La contradicción de vigencia `6 horas` frente a `sigue activo después de 2 días` sólo necesita resolverse si el contenido aprobado afirma una duración.
+Hasta resolver todos los campos anteriores, ninguna política se publica y
+ninguna plantilla puede afirmar vencimiento, permanencia o elegibilidad.
 
 ## Estado de implementación
 
