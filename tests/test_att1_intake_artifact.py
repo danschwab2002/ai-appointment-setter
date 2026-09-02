@@ -81,6 +81,8 @@ def test_att1_intake_records_partial_commercial_confirmation_without_activation(
     assert intake["source_refs"] == [
         "operator-interview:2026-09-01-mariana-01",
         "operator-confirmation:2026-09-02-authority-content-health-language-countries",
+        "operator-confirmation:2026-09-02-discount",
+        "operator-confirmation:2026-09-02-discount-approver-marcela",
     ]
     assert set(intake["open_questions"]) == {
         "business_owner_scope",
@@ -88,7 +90,9 @@ def test_att1_intake_records_partial_commercial_confirmation_without_activation(
         "canonical_hotmart_product_and_offer",
         "chatwoot_handoff_target_and_sla",
         "materials_custody_sanitization_and_vigency",
-        "discount_policy",
+        "discount_template_copy_and_variable_mapping",
+        "commercial_approval_authority_direct_confirmation",
+        "discount_runtime_indefinite_validity_compatibility",
         "conversation_release_content_and_approval",
     }
     assert intake["conversation_release_approved"] is False

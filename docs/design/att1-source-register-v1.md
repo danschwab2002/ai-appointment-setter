@@ -1,10 +1,12 @@
 # ATT1 — registro de fuentes y decisiones V1
 
-- **Estado:** Valores candidatos confirmados por el operador; ratificación de Marcela, materiales y descuento pendientes
+- **Estado:** Valores candidatos confirmados por el operador; ratificación de Marcela, materiales y cierre técnico del descuento pendientes
 - **Fechas de fuente:** 2026-09-01 y 2026-09-02
 - **Alcance:** respuestas iniciales de Mariana sobre una oferta del piloto
 - **Fuente opaca:** `operator-interview:2026-09-01-mariana-01`
 - **Confirmación posterior:** `operator-confirmation:2026-09-02-authority-content-health-language-countries`
+- **Confirmación de descuento:** `operator-confirmation:2026-09-02-discount`
+- **Aprobadora de descuento reportada:** `operator-confirmation:2026-09-02-discount-approver-marcela`
 - **Custodia:** las capturas originales permanecen fuera de Git; este documento conserva sólo información comercial sanitizada
 - **No implica:** Conversation Release aprobada, binding productivo, autorización comercial, deploy ni contacto real
 - **Paquete de cierre comercial:** [aprobación de información comercial V1](att1-commercial-information-approval-v1.md)
@@ -44,6 +46,14 @@ Marcela todavía debe ratificarlos. Estas decisiones no validan el resto de la
 distribución de audiencia, no sustituyen los materiales ATT1 y no autorizan
 activación.
 
+El operador confirmó además un cupón general de 10 %, sin vencimiento ni copy de
+urgencia, para los tres triggers durables existentes y sólo en `later_step`, una
+vez recibida al menos una respuesta inbound posterior a la plantilla inicial de inicio de conversación de Meta. El código será una variable de Meta.
+La aprobación de Marcela fue reportada por el operador. La plantilla, su mapeo y
+el soporte runtime para vigencia indefinida siguen pendientes; no existe una
+política publicada. Su confirmación directa como autoridad comercial general
+permanece en el gate consolidado.
+
 ## 3. Materiales declarados disponibles
 
 - historia y autoridad de la aliada;
@@ -66,6 +76,7 @@ Esta lista demuestra disponibilidad declarada, no recepción, vigencia, permiso 
 | Condición de éxito | faltante | `purchase_observed` confirmado por el operador y pendiente de ratificación de Marcela |
 | Receptor humano | faltante | Mariana identificada; falta Team/assignee Chatwoot, horario y SLA |
 | Inventario de fuentes | faltante | categorías declaradas; archivos y custodia pendientes |
+| Política de descuento | faltante | aprobación de Marcela reportada por el operador; plantilla y compatibilidad runtime pendientes; no publicada |
 
 ## 5. Bloqueos conservados
 
@@ -78,7 +89,7 @@ Esta lista demuestra disponibilidad declarada, no recepción, vigencia, permiso 
 - recepción privada, escaneo, vigencia y permiso de uso de los materiales;
 - claims comerciales específicos y cualquier ampliación futura del baseline sanitario;
 - templates WABA y Conversation Release completa;
-- decisión sobre el momento del descuento y política económica publicada;
+- texto/template y variable del cupón, soporte durable para vigencia indefinida y política económica publicada;
 - autorización separada para contactar personas reales.
 
 ## 6. Límite sanitario fail-closed

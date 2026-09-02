@@ -1,14 +1,14 @@
 # ATT1 — aprobación de información comercial V1
 
-- **Estado:** Confirmación del operador registrada; ratificación de Marcela, materiales y descuento pendientes
+- **Estado:** Confirmación del operador registrada; ratificación de Marcela, materiales y cierre técnico del descuento pendientes
 - **Gate:** Estado: Pendiente de aprobación externa
 - **Alcance:** materiales, contenido comercial, límites sanitarios, idioma, países y descuento
-- **Fuentes:** [registro ATT1 V1](att1-source-register-v1.md), `operator-confirmation:2026-09-02-authority-content-health-language-countries` y `Documentación de Procesos Carritos Abandonados, Pagos Declinados y Pagos Offline.pdf`
+- **Fuentes:** [registro ATT1 V1](att1-source-register-v1.md), `operator-confirmation:2026-09-02-authority-content-health-language-countries`, `operator-confirmation:2026-09-02-discount` y `Documentación de Procesos Carritos Abandonados, Pagos Declinados y Pagos Offline.pdf`
 - **No implica:** Conversation Release aprobada, templates aprobados, configuración de proveedores, despliegue ni autorización para contactar personas reales
 
 ## Regla de cierre
 
-Esta macro tarea sólo queda aprobada cuando una autoridad comercial identificada responde por escrito las seis decisiones y, para los materiales, existe recepción y sanitización verificadas. La confirmación del operador del 2026-09-02 identifica a Marcela como autoridad y confirma valores candidatos para contenido, límites sanitarios, idioma y países; no constituye una respuesta ni ratificación de Marcela. Ratificación comercial, materiales y descuento permanecen abiertos, por lo que el gate continúa `pending_external_approval`.
+Esta macro tarea sólo queda aprobada cuando la autoridad comercial identificada ratifica por escrito contenido, límites sanitarios, idioma y países y, para los materiales, existe recepción y sanitización verificadas. La confirmación del operador del 2026-09-02 identifica a Marcela como autoridad y confirma esos valores candidatos; no constituye una respuesta ni ratificación directa de Marcela. La aprobación de Marcela sobre el descuento fue reportada posteriormente por el operador: la decisión comercial del descuento ya no está abierta, aunque su plantilla, mapeo de variable, soporte runtime y publicación continúan pendientes. La ratificación comercial general y los materiales mantienen el gate `pending_external_approval`.
 
 ## Información recibida y confirmada por el operador, pendiente de ratificación de Marcela
 
@@ -66,20 +66,13 @@ El alcance candidato del piloto inicial queda limitado a México (`MX`), pendien
 
 ### `att1-commercial-006-discount` — política económica
 
-**Estado:** pendiente; no publicada.
+**Estado:** aprobación de Marcela reportada por el operador; plantilla y soporte runtime pendientes; no publicada.
 
-La fuente propone 10 % de descuento, pero contradice una vigencia estricta de seis horas con la afirmación de que sigue activo después de dos días. Deben aprobarse conjuntamente:
+La decisión comercial es un cupón porcentual de **10 %**, sin restricciones propias por país o moneda. Sólo puede ofrecerse en `payment_failure`, `confirmed_cart_abandonment` y `precheckout_without_purchase_signal`, después de recibir al menos una respuesta inbound posterior a la plantilla inicial de inicio de conversación de Meta; por eso su posición es `later_step`. Esto no amplía el piloto más allá de México ni modifica consentimiento, opt-out, stops, cantidad de mensajes o cadencia.
 
-- porcentaje o importe exacto;
-- triggers autorizados;
-- posición existente en la que se presenta (`first_touch` o `later_step`);
-- cupón o fuente canónica del código;
-- inicio y duración exacta;
-- países/monedas a los que aplica;
-- texto permitido sobre urgencia;
-- approver y vigencia de la política.
+El cupón no vence y no se permite urgencia, escasez ni afirmaciones de expiración. El código será contenido variable de una plantilla de Meta, pero el texto final, la plantilla exacta y el mapeo de la variable continúan pendientes. La referencia concreta del cupón no se guarda ni se inventa antes de ese cierre.
 
-Recomendación: si se usa el incentivo, emitir una oferta versionada de 10 % con vigencia de seis horas desde su presentación; cualquier incentivo posterior debe ser una nueva versión autorizada, nunca una extensión silenciosa. La política durable continúa sin seeds y no publicada hasta recibir la decisión completa.
+La política durable continúa sin seeds y no publicada. Además, el esquema local vigente exige `offer_valid_for > 0`, por lo que es incompatible con una oferta sin vencimiento. Antes de publicar deberá adaptarse y probarse el contrato durable. El operador identifica a Marcela como aprobadora de esta decisión; la confirmación directa de su autoridad comercial general continúa siendo un gate separado.
 
 ## Respuesta mínima solicitada a la autoridad comercial
 
@@ -90,8 +83,8 @@ Responder por escrito, en texto normal, estas líneas:
 3. **Límites sanitarios:** “Apruebo el baseline fail-closed” o cambios exactos con responsable de revisión.
 4. **Idioma:** idioma único autorizado para el piloto.
 5. **Países:** lista exacta de países autorizados.
-6. **Descuento:** porcentaje/importe, triggers, `first_touch` o `later_step`, cupón/fuente, duración, alcance y approver.
-7. **Autoridad:** nombre o referencia de quién emite esta aprobación comercial.
+6. **Descuento:** no requiere repetir la decisión comercial; texto/template y variable se cerrarán en su gate técnico separado.
+7. **Autoridad:** confirmación directa de Marcela como autoridad comercial general.
 
 ## Efecto de la aprobación
 

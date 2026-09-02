@@ -5,7 +5,9 @@
   "ally_public_identity_reported": "Dra. Nina Garza",
   "source_refs": [
     "operator-interview:2026-09-01-mariana-01",
-    "operator-confirmation:2026-09-02-authority-content-health-language-countries"
+    "operator-confirmation:2026-09-02-authority-content-health-language-countries",
+    "operator-confirmation:2026-09-02-discount",
+    "operator-confirmation:2026-09-02-discount-approver-marcela"
   ],
   "offer": {
     "public_name": "Alimenta Tu Tiroides",
@@ -64,7 +66,7 @@
       "health_limits": "operator_confirmed_pending_marcela_ratification",
       "language": "operator_confirmed_pending_marcela_ratification",
       "countries": "operator_confirmed_pending_marcela_ratification",
-      "discount": "pending_external_approval"
+      "discount": "operator_reported_marcela_approved_pending_template_and_runtime_support"
     },
     "approved_by": null,
     "approved_at": null
@@ -78,6 +80,32 @@
   "pilot_countries": [
     "MX"
   ],
+  "discount_policy_candidate": {
+    "status": "operator_reported_marcela_approved_pending_template_and_runtime_support",
+    "evidence_ref": "operator-confirmation:2026-09-02-discount",
+    "approval_evidence_ref": "operator-confirmation:2026-09-02-discount-approver-marcela",
+    "approval_evidence_kind": "operator_reported",
+    "discount_kind": "percentage",
+    "discount_value": 10,
+    "currency": null,
+    "trigger_kinds": [
+      "payment_failure",
+      "confirmed_cart_abandonment",
+      "precheckout_without_purchase_signal"
+    ],
+    "requires_inbound_reply_after_initial_meta_conversation_start_template": true,
+    "presentation_stage": "later_step",
+    "coupon_delivery": "meta_template_variable",
+    "coupon_reference": null,
+    "offer_expiration": "none",
+    "urgency_copy_allowed": false,
+    "country_restrictions": [],
+    "currency_restrictions": [],
+    "template_copy_status": "pending_external_approval",
+    "approved_by_ref": "marcela",
+    "runtime_policy_status": "unpublished",
+    "runtime_schema_compatibility": "blocked_offer_valid_for_requires_finite_interval"
+  },
   "canonical_provider_scope_verified": false,
   "conversation_release_approved": false,
   "activation_authorized": false,
@@ -87,7 +115,9 @@
     "canonical_hotmart_product_and_offer",
     "chatwoot_handoff_target_and_sla",
     "materials_custody_sanitization_and_vigency",
-    "discount_policy",
+    "discount_template_copy_and_variable_mapping",
+    "commercial_approval_authority_direct_confirmation",
+    "discount_runtime_indefinite_validity_compatibility",
     "conversation_release_content_and_approval"
   ]
 }

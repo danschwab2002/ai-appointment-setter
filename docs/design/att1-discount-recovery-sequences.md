@@ -42,7 +42,7 @@ flujo durable existente sin cambios
 → mantener la misma reserva, presupuesto, request_started y finalización
 ```
 
-La política puede asociarse a las posiciones ya existentes de `precheckout_without_purchase_signal` y `confirmed_cart_abandonment`, sin crear nuevas acciones, timers o secuencias. El caso y presupuesto compartidos continúan evitando doble contacto.
+La política puede asociarse a las posiciones ya existentes de `payment_failure`, `confirmed_cart_abandonment` y `precheckout_without_purchase_signal`, sin crear nuevas acciones, timers o secuencias. El caso y presupuesto compartidos continúan evitando doble contacto.
 
 ## Política durable de incentivo
 
@@ -64,38 +64,41 @@ modifican por publicar una política.
 
 Publicar la política no activa envíos. También se requieren binding activo, Conversation Release aprobada, template WABA sincronizado, scope/cohorte, budgets y kill switch.
 
-## Decisiones de política pendientes
+## Decisión comercial confirmada por el operador
 
-La política económica permanece completamente sin publicar hasta aprobar en
-conjunto:
+- descuento porcentual de **10 %**;
+- triggers: `payment_failure`, `confirmed_cart_abandonment` y
+  `precheckout_without_purchase_signal`;
+- elegibilidad adicional: al menos una respuesta inbound posterior a la plantilla inicial de inicio de conversación de Meta;
+- posición existente: `later_step`;
+- entrega: código variable de la plantilla de Meta, sin valor hardcodeado;
+- duración: el cupón no vence;
+- alcance económico: sin restricciones propias por país o moneda;
+- copy: no se permite urgencia, escasez ni vencimiento;
+- aprobadora: Marcela, según confirmación reportada por el operador.
 
-- porcentaje o importe exacto;
-- triggers autorizados;
-- posición existente (`first_touch` o `later_step`);
-- cupón o fuente canónica del código;
-- inicio y duración exacta;
-- países y monedas aplicables;
-- texto permitido sobre urgencia;
-- approver y vigencia de la decisión.
+El alcance general del cupón no amplía el piloto, que permanece candidato sólo
+para México. Consentimiento, opt-out, stops, condiciones y cadencia existentes
+siguen siendo determinísticos y no cambian por esta decisión.
 
 La posición sólo cambia el contenido/template asociado a un paso existente, no
 la mecánica ni la cadencia del flujo. Bodies, placeholders, categoría, botones y
 assets pertenecen a la Conversation Release y deben coincidir exactamente con
 templates `APPROVED` de Meta/Chatwoot.
 
-## Inconsistencia a resolver
+## Pendientes e incompatibilidad de implementación
 
-La fuente dice que el bono vence **estrictamente a las 6 horas** (p. 2), pero
-que después de dos días y en cualquier contacto posterior el bono **sigue
-activo** (p. 3). No pueden ser verdad simultáneamente. La duración debe quedar
-resuelta aunque el primer copy no la mencione, porque gobierna la elegibilidad
-durable del incentivo.
+La decisión elimina la contradicción de la fuente: se adopta vigencia abierta y
+se descarta la urgencia de seis horas. El texto final de la plantilla, su clave y
+el mapeo exacto de la variable del cupón todavía deben aprobarse. La aprobación
+de Marcela fue reportada por el operador; su confirmación directa como autoridad
+comercial general permanece en el gate consolidado.
 
-- **Recomendación:** oferta inicial válida 6 horas; cualquier incentivo posterior es una nueva oferta/version autorizada, no una extensión silenciosa.
-- Alternativa: vigencia abierta hasta compra/retirada, eliminando la urgencia de 6 horas.
-
-Hasta resolver todos los campos anteriores, ninguna política se publica y
-ninguna plantilla puede afirmar vencimiento, permanencia o elegibilidad.
+El esquema local vigente exige `offer_valid_for` positivo. Esa restricción es
+incompatible con una oferta que no vence; no debe codificarse una duración ficticia
+para sortearla. Hasta adaptar y probar el contrato durable, ninguna política se publica.
+La política seguirá versionada: puede retirarse mediante una transición explícita,
+pero no expira automáticamente ni habilita texto de urgencia.
 
 ## Estado de implementación
 

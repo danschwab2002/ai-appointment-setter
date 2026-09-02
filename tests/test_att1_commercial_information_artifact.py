@@ -24,7 +24,7 @@ def test_commercial_information_gate_is_explicit_and_fail_closed() -> None:
             "health_limits": "operator_confirmed_pending_marcela_ratification",
             "language": "operator_confirmed_pending_marcela_ratification",
             "countries": "operator_confirmed_pending_marcela_ratification",
-            "discount": "pending_external_approval",
+            "discount": "operator_reported_marcela_approved_pending_template_and_runtime_support",
         },
         "approved_by": None,
         "approved_at": None,
@@ -38,6 +38,36 @@ def test_commercial_information_gate_is_explicit_and_fail_closed() -> None:
     assert intake["pilot_scope_status"] == (
         "operator_confirmed_pending_marcela_ratification"
     )
+    assert intake["discount_policy_candidate"] == {
+        "status": "operator_reported_marcela_approved_pending_template_and_runtime_support",
+        "evidence_ref": "operator-confirmation:2026-09-02-discount",
+        "approval_evidence_ref": (
+            "operator-confirmation:2026-09-02-discount-approver-marcela"
+        ),
+        "approval_evidence_kind": "operator_reported",
+        "discount_kind": "percentage",
+        "discount_value": 10,
+        "currency": None,
+        "trigger_kinds": [
+            "payment_failure",
+            "confirmed_cart_abandonment",
+            "precheckout_without_purchase_signal",
+        ],
+        "requires_inbound_reply_after_initial_meta_conversation_start_template": True,
+        "presentation_stage": "later_step",
+        "coupon_delivery": "meta_template_variable",
+        "coupon_reference": None,
+        "offer_expiration": "none",
+        "urgency_copy_allowed": False,
+        "country_restrictions": [],
+        "currency_restrictions": [],
+        "template_copy_status": "pending_external_approval",
+        "approved_by_ref": "marcela",
+        "runtime_policy_status": "unpublished",
+        "runtime_schema_compatibility": (
+            "blocked_offer_valid_for_requires_finite_interval"
+        ),
+    }
     assert intake["conversation_release_approved"] is False
     assert intake["activation_authorized"] is False
 
@@ -59,26 +89,40 @@ def test_approval_packet_covers_every_macro_two_decision_without_inference() -> 
     assert "No se infiere el alcance geográfico" in text
     assert "no publicada" in text
     assert "no autoriza activación" in text
+    assert "materiales y descuento permanecen abiertos" not in text
+    assert "la decisión comercial del descuento ya no está abierta" in text
+    assert "Descuento: porcentaje/importe" not in text
 
 
-def test_discount_document_keeps_every_policy_field_pending() -> None:
+def test_discount_document_records_decision_without_publishing_policy() -> None:
     text = (ROOT / "docs" / "design" / "att1-discount-recovery-sequences.md").read_text(
         encoding="utf-8"
     )
 
-    assert "Decisiones de política pendientes" in text
-    for field in (
-        "porcentaje o importe exacto",
-        "triggers autorizados",
-        "posición existente",
-        "cupón o fuente canónica",
-        "inicio y duración exacta",
-        "países y monedas",
-        "texto permitido sobre urgencia",
-        "approver y vigencia",
+    for decision in (
+        "10 %",
+        "payment_failure",
+        "confirmed_cart_abandonment",
+        "precheckout_without_purchase_signal",
+        "later_step",
+        "respuesta inbound posterior a la plantilla inicial de inicio de conversación de Meta",
+        "variable de la plantilla de Meta",
+        "no vence",
+        "sin restricciones propias por país o moneda",
+        "no se permite urgencia",
     ):
-        assert field in text
-    assert "sólo necesita resolverse si" not in text
+        assert decision in text
+    assert "offer_valid_for" in text
+    assert "incompatible" in text
+    assert "ninguna política se publica" in text
+    assert "texto final de la plantilla" in text
+    assert "Marcela" in text
+    assert "reportada por el operador" in text
+    assert "identidad exacta del aprobador" not in text
+    assert (
+        "`payment_failure`, `confirmed_cart_abandonment` y "
+        "`precheckout_without_purchase_signal`" in text
+    )
 
 
 def test_derived_documents_reflect_partial_commercial_confirmation() -> None:
