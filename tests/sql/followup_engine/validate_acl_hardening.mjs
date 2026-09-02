@@ -83,6 +83,8 @@ const rows = await db.query(`
       ('admit_and_correlate_hotmart_purchase_approved(text,jsonb,text,text)'),
       ('admit_johanna_payment_failure(text,jsonb,text,text)'),
       ('admit_observed_lead_precheckout(text,jsonb,jsonb)'),
+      ('admit_portable_observed_lead_precheckout(text,text,integer,text,jsonb,jsonb)'),
+      ('admit_portable_hotmart_purchase_approved(text,text,integer,text,jsonb,text,text)'),
       ('admit_precheckout_form_submission(text,jsonb,jsonb)'),
       ('begin_johanna_abandonment_one_shot(text,uuid,text,bigint,bigint,text,integer,bigint)'),
       ('begin_precheckout_test_first_touch(text,uuid,text,bigint,bigint)'),
@@ -130,6 +132,7 @@ const rows = await db.query(`
       ('request_human_handoff(uuid,text,text,text,text,integer,uuid,uuid,text,bigint,timestamp with time zone)'),
       ('reserve_followup_delivery_attempt(uuid,text,bigint,bigint,bigint,text,text,timestamp with time zone)'),
       ('resolve_commercial_ally_runtime_binding(text,text,integer)'),
+      ('resolve_commercial_ally_discount_policy(text,text,integer,text)'),
       ('schedule_precheckout_first_touch_reevaluation(uuid,uuid)'),
       ('set_lancemos_pilot_cohort_member(text,integer,uuid,bigint,text,text,text)'),
       ('set_lancemos_pilot_runtime_state(text,integer,bigint,text,text,text)')
@@ -153,7 +156,7 @@ const rows = await db.query(`
 `);
 const result = rows.rows[0];
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 55) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 58) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const bindingAcl = await db.query(`

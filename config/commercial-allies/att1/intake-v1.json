@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "customer_ref": "att1",
+  "status": "received_unverified",
+  "ally_public_identity_reported": "Dra. Nina Garza",
+  "source_refs": [
+    "operator-interview:2026-09-01-mariana-01"
+  ],
+  "offer": {
+    "public_name": "Alimenta Tu Tiroides",
+    "base_price": "47",
+    "currency": "USD"
+  },
+  "audience": {
+    "age_min": 35,
+    "age_max": 55,
+    "primary_gender": "women",
+    "occupational_profiles": [
+      "workers",
+      "entrepreneurs"
+    ],
+    "own_income_reported": true,
+    "reported_conditions": [
+      "hypothyroidism",
+      "hashimoto"
+    ],
+    "market_share_percent": {
+      "MX": 60,
+      "US": 15,
+      "CO": 10,
+      "CA": 3,
+      "ES": 3
+    }
+  },
+  "success_outcome": "purchase_observed",
+  "business_owner_ref": null,
+  "operational_owner_ref": null,
+  "human_handoff": {
+    "recipient_ref": "mariana-marin",
+    "recipient_role_reported": "chat_responder",
+    "chatwoot_target_verified": false,
+    "schedule_and_sla_verified": false
+  },
+  "materials_reported_available": [
+    "ally_history_and_authority",
+    "offer_transformation_curriculum_price_and_order_bumps",
+    "detailed_audience_profile",
+    "copy_promise_pillars_and_core_messages",
+    "web_pages",
+    "ads",
+    "upsell_and_post_offer"
+  ],
+  "materials_received_and_sanitized": false,
+  "pilot_language": null,
+  "pilot_countries": null,
+  "canonical_provider_scope_verified": false,
+  "conversation_release_approved": false,
+  "activation_authorized": false,
+  "open_questions": [
+    "business_owner_and_approval_authority",
+    "operational_owner_scope",
+    "pilot_language",
+    "pilot_country_scope",
+    "canonical_hotmart_product_and_offer",
+    "chatwoot_handoff_target_and_sla",
+    "materials_custody_sanitization_and_vigency",
+    "conversation_release_content_and_approval"
+  ]
+}

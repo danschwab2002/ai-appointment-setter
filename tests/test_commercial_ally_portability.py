@@ -179,7 +179,7 @@ def test_att1_config_accepts_only_its_hotmart_payment_failure_scope() -> None:
     assert parse_hotmart_payment_failure_payload(wrong_offer, config=_config()) is None
 
 
-def test_app_factory_blocks_att1_lead_admission_until_its_rpc_is_portable() -> None:
+def test_app_factory_allows_only_portable_lead_admission_for_att1() -> None:
     config = _config()
     settings = Settings(
         webhook_secret="test-secret",
@@ -187,6 +187,7 @@ def test_app_factory_blocks_att1_lead_admission_until_its_rpc_is_portable() -> N
         capture_dir=Path("/tmp/att1-portability-captures"),
         max_age_seconds=300,
         commercial_ally_config=config,
+        commercial_ally_manifest_path=Path("/runtime/commercial-ally.json"),
         lead_precheckout_enabled=True,
         lead_precheckout_secret="test-lead-secret",
         lead_precheckout_site=config.lead_site,
@@ -194,13 +195,22 @@ def test_app_factory_blocks_att1_lead_admission_until_its_rpc_is_portable() -> N
         lead_precheckout_offer_code=config.offer_code,
     )
 
-    with pytest.raises(ValueError, match="ATT1 runtime capabilities are not portable"):
-        create_app(settings, supabase_client=object())  # type: ignore[arg-type]
+    app = create_app(settings, supabase_client=object())  # type: ignore[arg-type]
+
+    assert app is not None
 
 
 @pytest.mark.parametrize(
     "enabled_capability",
-    [field.name for field in fields(Settings) if field.type in (bool, "bool")],
+    [
+        field.name
+        for field in fields(Settings)
+        if field.type in (bool, "bool")
+        and field.name not in {
+            "lead_precheckout_enabled",
+            "portable_hotmart_purchase_stop_enabled",
+        }
+    ],
 )
 def test_att1_runtime_rejects_every_unported_effect_or_admission_capability(
     enabled_capability: str,
@@ -211,6 +221,7 @@ def test_att1_runtime_rejects_every_unported_effect_or_admission_capability(
         capture_dir=Path("/tmp/att1-portability-captures"),
         max_age_seconds=300,
         commercial_ally_config=_config(),
+        commercial_ally_manifest_path=Path("/runtime/commercial-ally.json"),
     )
     settings = replace(settings, **{enabled_capability: True})
 
@@ -351,6 +362,44 @@ def test_supabase_resolves_the_exact_active_att1_binding() -> None:
         "p_funnel_ref": "att1-main",
         "p_binding_version": 1,
     }]
+
+
+def test_supabase_portable_lead_admission_sends_server_owned_binding_identity() -> None:
+    config = _config()
+    seen: list[tuple[str, dict[str, object]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json=[{
+            "outcome": "inserted",
+            "submission_id": "bfc778e7-5c9f-45e6-a910-651f92312157",
+            "purchase_intent_id": "1f581f3a-c469-45da-8208-9483d1b26f0b",
+        }])
+
+    client = SupabaseClient(
+        base_url="https://example.supabase.co",
+        service_role_key="test-secret",
+        transport=httpx.MockTransport(handler),
+    )
+
+    asyncio.run(client.admit_portable_observed_lead_precheckout(
+        config=config,
+        external_submission_id="submission-att1",
+        raw_payload={"id": "submission-att1"},
+        canonical_payload={"source": {"tenant_ref": "att1"}},
+    ))
+
+    assert seen == [(
+        "/rest/v1/rpc/admit_portable_observed_lead_precheckout",
+        {
+            "p_tenant_ref": "att1",
+            "p_funnel_ref": "att1-main",
+            "p_binding_version": 1,
+            "p_external_submission_id": "submission-att1",
+            "p_raw_payload": {"id": "submission-att1"},
+            "p_canonical_payload": {"source": {"tenant_ref": "att1"}},
+        },
+    )]
 
 
 def test_att1_readiness_fails_closed_without_durable_binding_authority() -> None:

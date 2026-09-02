@@ -9,6 +9,8 @@ expected_service_role(signature) as (
         ('public.admit_and_correlate_hotmart_purchase_approved(text, jsonb, text, text)'),
         ('public.admit_precheckout_form_submission(text, jsonb, jsonb)'),
         ('public.admit_observed_lead_precheckout(text, jsonb, jsonb)'),
+        ('public.admit_portable_observed_lead_precheckout(text, text, integer, text, jsonb, jsonb)'),
+        ('public.admit_portable_hotmart_purchase_approved(text, text, integer, text, jsonb, text, text)'),
         ('public.begin_precheckout_test_first_touch(text, uuid, text, bigint, bigint)'),
         ('public.begin_johanna_abandonment_one_shot(text, uuid, text, bigint, bigint, text, integer, bigint)'),
         ('public.admit_johanna_payment_failure(text, jsonb, text, text)'),
@@ -56,6 +58,7 @@ expected_service_role(signature) as (
         ('public.request_inbound_human_handoff(uuid, text, text, text, integer, timestamp with time zone)'),
         ('public.request_human_handoff(uuid, text, text, text, text, integer, uuid, uuid, text, bigint, timestamp with time zone)'),
         ('public.resolve_commercial_ally_runtime_binding(text, text, integer)'),
+        ('public.resolve_commercial_ally_discount_policy(text, text, integer, text)'),
         ('public.schedule_precheckout_first_touch_reevaluation(uuid, uuid)'),
         ('public.set_lancemos_pilot_cohort_member(text, integer, uuid, bigint, text, text, text)'),
         ('public.set_lancemos_pilot_runtime_state(text, integer, bigint, text, text, text)')

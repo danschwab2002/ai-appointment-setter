@@ -1913,6 +1913,136 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         5,
         'commercial_ally_binding_default_off'
+    union all
+    select
+        '20260901000200',
+        '20260901000200_commercial_ally_portable_precheckout.sql',
+        exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.admit_portable_observed_lead_precheckout(text,text,integer,text,jsonb,jsonb)'
+            )
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.admit_portable_observed_lead_precheckout(text,text,integer,text,jsonb,jsonb)'
+            )
+              and position('commercial_ally_runtime_bindings' in definition) > 0
+              and position('b.status = ''active''' in definition) > 0
+              and position('FOR UPDATE' in definition) > 0
+        )::int
+        + (
+            to_regprocedure(
+                'public.admit_portable_observed_lead_precheckout(text,text,integer,text,jsonb,jsonb)'
+            ) is not null
+            and not has_function_privilege(
+                'public',
+                to_regprocedure(
+                    'public.admit_portable_observed_lead_precheckout(text,text,integer,text,jsonb,jsonb)'
+                ),
+                'EXECUTE'
+            )
+            and has_function_privilege(
+                'service_role',
+                to_regprocedure(
+                    'public.admit_portable_observed_lead_precheckout(text,text,integer,text,jsonb,jsonb)'
+                ),
+                'EXECUTE'
+            )
+        )::int,
+        3,
+        'portable_precheckout_binding_fenced_admission'
+    union all
+    select
+        '20260901000300',
+        '20260901000300_commercial_ally_portable_purchase_stop.sql',
+        (to_regclass(
+            'public.commercial_ally_hotmart_purchase_policies'
+        ) is not null)::int
+        + (to_regclass(
+            'public.portable_hotmart_purchase_correlations'
+        ) is not null)::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.admit_portable_hotmart_purchase_approved(text,text,integer,text,jsonb,text,text)'
+            )
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+              and position('commercial_ally_runtime_bindings' in definition) > 0
+              and position('FOR UPDATE' in definition) > 0
+        )::int
+        + (
+            to_regprocedure(
+                'public.admit_portable_hotmart_purchase_approved(text,text,integer,text,jsonb,text,text)'
+            ) is not null
+            and not has_function_privilege(
+                'public',
+                to_regprocedure(
+                    'public.admit_portable_hotmart_purchase_approved(text,text,integer,text,jsonb,text,text)'
+                ),
+                'EXECUTE'
+            )
+            and has_function_privilege(
+                'service_role',
+                to_regprocedure(
+                    'public.admit_portable_hotmart_purchase_approved(text,text,integer,text,jsonb,text,text)'
+                ),
+                'EXECUTE'
+            )
+        )::int,
+        4,
+        'portable_purchase_stop_binding_fenced_default_off'
+    union all
+    select
+        '20260901000400',
+        '20260901000400_commercial_ally_discount_policies.sql',
+        (to_regclass(
+            'public.commercial_ally_discount_policy_versions'
+        ) is not null)::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.resolve_commercial_ally_discount_policy(text,text,integer,text)'
+            )
+              and prosecdef
+              and proconfig @> array['search_path=""']
+              and position('commercial_ally_runtime_bindings' in definition) > 0
+              and position('statement_timestamp()' in definition) > 0
+        )::int
+        + exists(
+            select 1
+            from pg_trigger
+            where tgrelid = to_regclass(
+                'public.commercial_ally_discount_policy_versions'
+            )
+              and tgname = 'commercial_ally_discount_policy_guard'
+              and not tgisinternal
+        )::int
+        + (
+            to_regprocedure(
+                'public.resolve_commercial_ally_discount_policy(text,text,integer,text)'
+            ) is not null
+            and not has_function_privilege(
+                'public',
+                to_regprocedure(
+                    'public.resolve_commercial_ally_discount_policy(text,text,integer,text)'
+                ),
+                'EXECUTE'
+            )
+            and has_function_privilege(
+                'service_role',
+                to_regprocedure(
+                    'public.resolve_commercial_ally_discount_policy(text,text,integer,text)'
+                ),
+                'EXECUTE'
+            )
+        )::int,
+        4,
+        'versioned_discount_policy_default_off'
 )
 select
     version,

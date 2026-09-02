@@ -928,6 +928,44 @@ class SupabaseClient:
             raise SupabaseError(f"{operation}_invalid_event_id")
         return PurchaseAdmissionResult(outcome, webhook_event_id)
 
+    async def admit_portable_hotmart_purchase_approved(
+        self,
+        *,
+        config: CommercialAllyConfig,
+        external_event_id: str,
+        payload: dict[str, Any],
+        normalized_email: str | None,
+        normalized_phone: str | None,
+    ) -> PurchaseAdmissionResult:
+        """Admit an approved purchase against an exact durable ally binding."""
+        operation = "portable_purchase_stop_admission"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/admit_portable_hotmart_purchase_approved",
+            content=json.dumps(
+                {
+                    "p_tenant_ref": config.tenant_ref,
+                    "p_funnel_ref": config.funnel_ref,
+                    "p_binding_version": config.binding_version,
+                    "p_external_event_id": external_event_id,
+                    "p_payload": payload,
+                    "p_normalized_email": normalized_email,
+                    "p_normalized_phone": normalized_phone,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        rows = _response_rows(response, operation=operation)
+        if response.status_code != 200 or len(rows) != 1:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        outcome = rows[0].get("outcome")
+        webhook_event_id = rows[0].get("webhook_event_id")
+        if outcome not in {"inserted", "duplicate", "semantic_conflict"}:
+            raise SupabaseError(f"{operation}_invalid_outcome")
+        if not isinstance(webhook_event_id, str) or not webhook_event_id:
+            raise SupabaseError(f"{operation}_invalid_event_id")
+        return PurchaseAdmissionResult(outcome, webhook_event_id)
+
     async def admit_precheckout_form_submission(
         self,
         *,
@@ -1006,6 +1044,52 @@ class SupabaseClient:
             raise SupabaseError("observed_lead_precheckout_admission_invalid_submission_id")
         if not isinstance(purchase_intent_id, str) or not purchase_intent_id:
             raise SupabaseError("observed_lead_precheckout_admission_invalid_purchase_intent_id")
+        return PrecheckoutAdmissionResult(
+            outcome=outcome,
+            submission_id=submission_id,
+            purchase_intent_id=purchase_intent_id,
+        )
+
+    async def admit_portable_observed_lead_precheckout(
+        self,
+        *,
+        config: CommercialAllyConfig,
+        external_submission_id: str,
+        raw_payload: dict[str, object],
+        canonical_payload: dict[str, object],
+    ) -> PrecheckoutAdmissionResult:
+        """Admit a lead against the runtime's exact durable binding identity."""
+        operation = "portable_observed_lead_precheckout_admission"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/admit_portable_observed_lead_precheckout",
+            content=json.dumps(
+                {
+                    "p_tenant_ref": config.tenant_ref,
+                    "p_funnel_ref": config.funnel_ref,
+                    "p_binding_version": config.binding_version,
+                    "p_external_submission_id": external_submission_id,
+                    "p_raw_payload": raw_payload,
+                    "p_canonical_payload": canonical_payload,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        outcome = row.get("outcome")
+        submission_id = row.get("submission_id")
+        purchase_intent_id = row.get("purchase_intent_id")
+        if outcome not in {"inserted", "duplicate", "semantic_conflict"}:
+            raise SupabaseError(f"{operation}_invalid_outcome")
+        if not isinstance(submission_id, str) or not submission_id:
+            raise SupabaseError(f"{operation}_invalid_submission_id")
+        if not isinstance(purchase_intent_id, str) or not purchase_intent_id:
+            raise SupabaseError(f"{operation}_invalid_purchase_intent_id")
         return PrecheckoutAdmissionResult(
             outcome=outcome,
             submission_id=submission_id,

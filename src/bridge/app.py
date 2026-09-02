@@ -248,6 +248,7 @@ class Settings:
     chatwoot_inbound_debounce_seconds: float = 0.0
     hotmart_hottok: str | None = None
     hotmart_max_age_seconds: int = 300
+    portable_hotmart_purchase_stop_enabled: bool = False
     hotmart_purchase_worker_enabled: bool = False
     hotmart_abandonment_timer_worker_enabled: bool = False
     hotmart_abandonment_timer_poll_interval_seconds: float = 5.0
@@ -441,6 +442,10 @@ class Settings:
             hermes_api_key = os.getenv("HERMES_API_KEY") or None
 
         hotmart_hottok = os.getenv("HOTMART_HOTTOK", "").strip() or None
+        portable_hotmart_purchase_stop_enabled = (
+            os.getenv("PORTABLE_HOTMART_PURCHASE_STOP_ENABLED", "false").lower()
+            == "true"
+        )
         hotmart_max_age_seconds = int(
             os.getenv("HOTMART_MAX_AGE_SECONDS", "300")
         )
@@ -738,6 +743,9 @@ class Settings:
             ),
             hotmart_hottok=hotmart_hottok,
             hotmart_max_age_seconds=hotmart_max_age_seconds,
+            portable_hotmart_purchase_stop_enabled=(
+                portable_hotmart_purchase_stop_enabled
+            ),
             hotmart_purchase_worker_enabled=hotmart_purchase_worker_enabled,
             hotmart_abandonment_timer_worker_enabled=(
                 hotmart_abandonment_timer_worker_enabled
@@ -1061,8 +1069,9 @@ def create_app(
             "Settings boolean fields must be bool: "
             + ", ".join(invalid_boolean_fields)
         )
+    explicit_manifest_runtime = settings.commercial_ally_manifest_path is not None
     portable_runtime = (
-        settings.commercial_ally_manifest_path is not None
+        explicit_manifest_runtime
         or settings.commercial_ally_config != JOHANNA_COMMERCIAL_ALLY
     )
     if portable_runtime:
@@ -1070,8 +1079,18 @@ def create_app(
             field.name
             for field in boolean_fields
             if getattr(settings, field.name) is True
+            and not (
+                explicit_manifest_runtime
+                and field.name in {
+                    "lead_precheckout_enabled",
+                    "portable_hotmart_purchase_stop_enabled",
+                }
+            )
         )
-        if settings.hotmart_hottok is not None:
+        if settings.hotmart_hottok is not None and not (
+            explicit_manifest_runtime
+            and settings.portable_hotmart_purchase_stop_enabled
+        ):
             enabled_unported.append("hotmart_hottok")
         if enabled_unported:
             raise ValueError(
@@ -3088,10 +3107,19 @@ def create_app(
             raise HTTPException(status_code=503, detail="supabase_not_configured")
         assert isinstance(payload, dict)
         try:
-            admission = await shared_supabase.admit_observed_lead_precheckout(
-                external_submission_id=submission.external_submission_id,
-                raw_payload=payload,
-                canonical_payload=submission.as_canonical_payload(),
+            admission = (
+                await shared_supabase.admit_portable_observed_lead_precheckout(
+                    config=settings.commercial_ally_config,
+                    external_submission_id=submission.external_submission_id,
+                    raw_payload=payload,
+                    canonical_payload=submission.as_canonical_payload(),
+                )
+                if explicit_manifest_runtime
+                else await shared_supabase.admit_observed_lead_precheckout(
+                    external_submission_id=submission.external_submission_id,
+                    raw_payload=payload,
+                    canonical_payload=submission.as_canonical_payload(),
+                )
             )
         except SupabaseError as exc:
             raise HTTPException(
@@ -3835,6 +3863,15 @@ def create_app(
                 "reason": decision.reason,
             }
 
+        if settings.portable_hotmart_purchase_stop_enabled and (
+            decision.event_type != EVENT_PURCHASE_APPROVED
+        ):
+            response.status_code = status.HTTP_200_OK
+            return {
+                "status": "ignored",
+                "reason": "portable_purchase_stop_event_ignored",
+            }
+
         event_id = decision.event_id
         assert event_id is not None  # classify guarantees this when accepted
         event_type = decision.event_type
@@ -3962,7 +3999,14 @@ def create_app(
                     "correlation_outcome": failure_admission.correlation_outcome,
                 }
             if event_type == EVENT_PURCHASE_APPROVED:
-                parsed_purchase = parse_hotmart_purchase_payload(payload)
+                parsed_purchase = parse_hotmart_purchase_payload(
+                    payload,
+                    config=(
+                        settings.commercial_ally_config
+                        if settings.portable_hotmart_purchase_stop_enabled
+                        else None
+                    ),
+                )
                 if parsed_purchase is None:
                     response.status_code = status.HTTP_200_OK
                     return {
@@ -3970,7 +4014,15 @@ def create_app(
                         "reason": "invalid_purchase_payload",
                     }
                 purchase_admission = (
-                    await shared_supabase.admit_and_correlate_hotmart_purchase_approved(
+                    await shared_supabase.admit_portable_hotmart_purchase_approved(
+                        config=settings.commercial_ally_config,
+                        external_event_id=event_id,
+                        payload=payload,
+                        normalized_email=parsed_purchase.buyer_email,
+                        normalized_phone=parsed_purchase.buyer_phone,
+                    )
+                    if settings.portable_hotmart_purchase_stop_enabled
+                    else await shared_supabase.admit_and_correlate_hotmart_purchase_approved(
                         external_event_id=event_id,
                         payload=payload,
                         normalized_email=parsed_purchase.buyer_email,

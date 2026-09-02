@@ -29,6 +29,21 @@ class _FakeSupabase:
         )
 
 
+class _PortableFakeSupabase:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def admit_portable_observed_lead_precheckout(
+        self, **kwargs: object
+    ) -> object:
+        self.calls.append(kwargs)
+        return SimpleNamespace(
+            outcome="inserted",
+            submission_id="bfc778e7-5c9f-45e6-a910-651f92312157",
+            purchase_intent_id="1f581f3a-c469-45da-8208-9483d1b26f0b",
+        )
+
+
 def _settings(**overrides: object) -> Settings:
     defaults: dict[str, object] = {
         "webhook_secret": "unused",
@@ -158,6 +173,20 @@ def test_signed_scoped_event_is_durably_admitted_without_outbound_authority() ->
         "contact_authorized": False,
     }
     assert len(supabase.calls) == 1
+
+
+def test_explicit_manifest_lead_uses_portable_rpc_with_server_binding() -> None:
+    supabase = _PortableFakeSupabase()
+    app = create_app(
+        _settings(commercial_ally_manifest_path="/runtime/commercial-ally.json"),
+        supabase_client=supabase,  # type: ignore[arg-type]
+    )
+
+    response = _post(app, _payload())
+
+    assert response.status_code == 200
+    assert len(supabase.calls) == 1
+    assert supabase.calls[0]["config"] == _settings().commercial_ally_config
 
 
 def test_v1_1_signed_consent_reaches_canonical_admission_but_response_stays_closed() -> None:

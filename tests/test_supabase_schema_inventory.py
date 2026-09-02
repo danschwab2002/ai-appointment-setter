@@ -119,14 +119,26 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
 
-    assert len(allowlisted) == 55
+    assert len(allowlisted) == 58
     assert len(allowlisted) == len(set(allowlisted))
     assert "admit_precheckout_form_submission(text, jsonb, jsonb)" in allowlisted
     assert "admit_observed_lead_precheckout(text, jsonb, jsonb)" in allowlisted
+    assert (
+        "admit_portable_observed_lead_precheckout"
+        "(text, text, integer, text, jsonb, jsonb)" in allowlisted
+    )
     assert "admit_inbound_commercial_case_v2(text, integer, bigint, text)" in allowlisted
     assert "admit_johanna_payment_failure(text, jsonb, text, text)" in allowlisted
     assert (
         "resolve_commercial_ally_runtime_binding(text, text, integer)" in allowlisted
+    )
+    assert (
+        "resolve_commercial_ally_discount_policy(text, text, integer, text)"
+        in allowlisted
+    )
+    assert (
+        "admit_portable_hotmart_purchase_approved"
+        "(text, text, integer, text, jsonb, text, text)" in allowlisted
     )
     assert (
         "prepare_johanna_payment_failure_invalid_contact_retry"

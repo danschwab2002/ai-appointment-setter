@@ -328,6 +328,17 @@ de la landing. El endpoint `POST /webhooks/lead` verifica HMAC-SHA256
 sobre el body crudo, valida el contrato exacto `1.0.0`, freshness, headers y scope antes
 de llamar a la RPC separada `admit_observed_lead_precheckout`.
 
+El árbol local agrega una admisión portable sólo para runtimes cuya procedencia
+es un manifiesto explícito. `POST /webhooks/lead` llama entonces a
+`admit_portable_observed_lead_precheckout` con tenant, funnel y versión tomados
+del manifiesto server-side. La transacción bloquea la fila activa exacta de
+`commercial_ally_runtime_bindings`, compara el scope comercial canónico completo
+y persiste únicamente submission, intent y link con replay/conflict idempotentes.
+No agenda el timer precheckout legado ni crea scheduled actions, commands,
+messages o delivery attempts. Sin manifiesto, la ruta y RPC legadas permanecen
+sin cambios. Todos los demás flags y `HOTMART_HOTTOK` siguen cerrados para el
+runtime portable.
+
 El corte inicial sólo admite `psicologajohanna / ads-a / bxjge6zq`. Persiste intención
 con `provider_observed=true`, pero conserva `activation_authorized=false` y
 `whatsapp_contact_authorized=false` porque el formulario declara
@@ -657,14 +668,29 @@ conserva el binding durable equivalente en
 con una versión `active`.
 
 La activación del binding no autoriza automatización. Para cualquier manifiesto
-suministrado —incluso si copia valores legacy—, el bridge conserva esa procedencia,
-valida tipos estrictos y rechaza al arrancar cualquier flag booleano activo,
-credencial Hotmart o cadena comercial todavía ligada a Johanna. Los
-parsers parametrizados son sólo validación de entrada: no acreditan admisión
-durable, workers ni efectos externos portables.
+suministrado —incluso si copia valores legacy—, el bridge conserva esa procedencia
+y valida tipos estrictos. Sólo permite la admisión portable de lead y el stop
+portable de `PURCHASE_APPROVED`, cada uno con flag default-off; rechaza el resto
+de cadenas ligadas a Johanna.
 
-La migración `20260901000100_commercial_ally_portability.sql` crea el contrato
-sin sembrar clientes ni secretos. Esta implementación tiene pruebas y evidencia
+El stop de compra acepta `HOTMART_HOTTOK` únicamente con
+`PORTABLE_HOTMART_PURCHASE_STOP_ENABLED=true`. Revalida producto/oferta contra el
+binding activo y exige una política temporal durable, explícita, sin seed y
+default-off. Correlaciona sólo dentro del binding; una coincidencia exacta marca
+el intent comprado y cancela una reevaluación existente en la misma transacción.
+Unmatched, ambiguous y conflict quedan append-only y sin efectos. No hay worker,
+scheduler, command, message, delivery ni outbound en este corte; las RPCs legacy
+no cambian.
+
+La política de descuento portable vive en
+`commercial_ally_discount_policy_versions`, ligada a la versión exacta del
+binding. El runtime carece de DML y lectura directa: sólo resuelve una versión
+`published`, vigente y exacta mediante una RPC fail-closed. La tabla nace vacía,
+las versiones aprobadas son inmutables y una publicación no crea ni modifica
+timers, acciones, mensajes, cadencia, stops, budgets o efectos.
+
+Las migraciones `20260901000100`–`20260901000400` crean el contrato sin sembrar
+clientes, políticas temporales, políticas de descuento ni secretos. Esta implementación tiene pruebas y evidencia
 HTTP locales, permanece default-off y no acredita DDL aplicado, credenciales,
 despliegue ni contacto real. El diseño está en
 [Runtime portable single-tenant V1](design/portable-single-tenant-runtime-v1.md)

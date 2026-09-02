@@ -192,7 +192,11 @@ def parse_hotmart_payload(payload: object) -> HotmartBuyerData | None:
     )
 
 
-def parse_hotmart_purchase_payload(payload: object) -> HotmartPurchaseData | None:
+def parse_hotmart_purchase_payload(
+    payload: object,
+    *,
+    config: CommercialAllyConfig | None = None,
+) -> HotmartPurchaseData | None:
     """Extract the fail-closed correlation fields from PURCHASE_APPROVED v2."""
     event = _json_object(payload)
     data = _json_object(event.get("data"))
@@ -221,6 +225,13 @@ def parse_hotmart_purchase_payload(payload: object) -> HotmartPurchaseData | Non
         or _TRANSACTION_REFERENCE.fullmatch(transaction) is None
         or product_id is None
         or (buyer_email is None and buyer_phone is None)
+        or (
+            config is not None
+            and (
+                product_id != config.hotmart_product_id
+                or _str(offer.get("code")) != config.offer_code
+            )
+        )
     ):
         return None
 
