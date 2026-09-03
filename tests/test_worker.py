@@ -6,6 +6,7 @@ import asyncio
 import json
 import multiprocessing
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
 
@@ -13,7 +14,11 @@ import httpx
 import pytest
 
 from bridge.chatwoot import CanonicalConversationSnapshot, ChatwootProtocolError
-from bridge.messaging import FirstTouchResult
+from bridge.messaging import (
+    FinalMetaEffectGate,
+    FirstTouchResult,
+    WhatsAppTemplateConfig,
+)
 from bridge.recovery_agent import FollowupHandoffSuggestion, FollowupMessageProposal
 from bridge.supabase import (
     ChatwootAuthorityContext,
@@ -855,7 +860,9 @@ def test_dispatcher_resolves_delivery_unknown_when_acceptance_finalization_fails
     assert mismatch["next_attempt_at"] is None
 
 
-def test_dispatcher_marks_started_immediately_before_sender_and_finalizes_acceptance() -> None:
+def test_dispatcher_marks_started_immediately_before_sender_and_finalizes_acceptance(
+    tmp_path: Path,
+) -> None:
     events: list[str] = []
     context_times: list[object] = []
     reevaluation_times: list[object] = []
@@ -1013,6 +1020,60 @@ def test_dispatcher_marks_started_immediately_before_sender_and_finalizes_accept
     assert reservation_modes == ["approved_template"]
     assert sender_calls[0]["product_name"] == "Curso Uno"
     assert request_start_boundaries[0] is not None
+
+    events.clear()
+    finalizations.clear()
+    sender_calls.clear()
+    SupabaseStub.reevaluations = 0
+    gated = DurableDispatcher(
+        supabase=SupabaseStub(),  # type: ignore[arg-type]
+        worker_id="dispatcher-test",
+        recovery_agent=AgentStub(),  # type: ignore[arg-type]
+        sender=SenderStub(),  # type: ignore[arg-type]
+        allowed_jid="15555550100@s.whatsapp.net",
+        clock=lambda: "2026-08-03T13:01:00+00:00",
+        pilot_boundary=PilotBoundaryConfig(
+            scope_key="lancemos-cart-recovery",
+            scope_version=1,
+            tenant_key="lancemos",
+            channel_provider="waba",
+            channel_account_ref="opaque-account-ref",
+        ),
+        final_meta_effect_gate=FinalMetaEffectGate(
+            enabled=False,
+            evidence_dir=tmp_path / "meta-effects",
+        ),
+        waba_template=WhatsAppTemplateConfig(
+            first_touch_name="att1_inicio_conversacion_v1",
+            followup_name="att1_seguimiento_v1",
+            language="es_MX",
+            category="MARKETING",
+            first_touch_parameter="buyer_name_and_product",
+        ),
+    )
+
+    gated_decisions = _run(
+        gated.dispatch_due(now="2026-08-03T13:00:00+00:00")
+    )
+
+    assert gated_decisions[-1].decision == "execute"
+    assert events == [
+        "reevaluate-1",
+        "reserve",
+        "hermes",
+        "reevaluate-2",
+    ]
+    assert sender_calls == []
+    assert finalizations[-1]["outcome"] == "failed_before_request"
+    assert finalizations[-1]["reason_code"] == "final_meta_gate_closed"
+    assert finalizations[-1]["next_attempt_at"] == "2026-08-03T13:02:00+00:00"
+    evidence_files = list((tmp_path / "meta-effects").glob("*.json"))
+    assert len(evidence_files) == 1
+    gate_evidence = json.loads(evidence_files[0].read_text())
+    assert gate_evidence["status"] == "final_meta_gate_closed"
+    assert gate_evidence["template_name"] == "att1_inicio_conversacion_v1"
+    assert gate_evidence["template_language"] == "es_MX"
+    assert "Ana" not in evidence_files[0].read_text()
 
     events.clear()
     final_override = ReevaluationDecision(

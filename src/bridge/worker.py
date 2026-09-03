@@ -29,7 +29,14 @@ from bridge.hotmart import (
     EVENT_PURCHASE_APPROVED,
     parse_hotmart_purchase_payload,
 )
-from bridge.messaging import FirstTouchResult, MessageSender, is_allowed_whatsapp_target
+from bridge.messaging import (
+    FinalMetaEffect,
+    FinalMetaEffectGate,
+    FirstTouchResult,
+    MessageSender,
+    WhatsAppTemplateConfig,
+    is_allowed_whatsapp_target,
+)
 from bridge.recovery_agent import (
     FollowupHandoffSuggestion,
     FollowupMessageProposal,
@@ -551,6 +558,8 @@ class DurableDispatcher:
         human_handoff_admission_enabled: bool = False,
         handoff_projection_policy_key: str | None = None,
         handoff_projection_policy_version: int | None = None,
+        final_meta_effect_gate: FinalMetaEffectGate | None = None,
+        waba_template: WhatsAppTemplateConfig | None = None,
     ) -> None:
         self._supabase = supabase
         self._worker_id = worker_id
@@ -566,6 +575,8 @@ class DurableDispatcher:
         self._human_handoff_admission_enabled = human_handoff_admission_enabled
         self._handoff_projection_policy_key = handoff_projection_policy_key
         self._handoff_projection_policy_version = handoff_projection_policy_version
+        self._final_meta_effect_gate = final_meta_effect_gate
+        self._waba_template = waba_template
         self._delivery_mode = (
             "approved_template"
             if pilot_boundary is not None
@@ -866,6 +877,7 @@ class DurableDispatcher:
                                 raise SupabaseError(
                                     "followup_recipient_not_allowlisted"
                                 )
+                            assert execution_context.buyer_phone is not None
                             final_now = self._clock()
                             try:
                                 final_evidence = (
@@ -930,6 +942,48 @@ class DurableDispatcher:
                                         "followup_conversation_not_available"
                                     )
                                 followup_conversation_id = int(raw_conversation_id)
+                            if self._final_meta_effect_gate is not None:
+                                action_kind = (
+                                    "followup"
+                                    if action.action_type == "no_reply_review"
+                                    else "first_touch"
+                                )
+                                template_name = (
+                                    self._waba_template.followup_name
+                                    if action_kind == "followup"
+                                    and self._waba_template is not None
+                                    else (
+                                        self._waba_template.first_touch_name
+                                        if self._waba_template is not None
+                                        else ""
+                                    )
+                                )
+                                authorized = self._final_meta_effect_gate.authorize(
+                                    FinalMetaEffect(
+                                        delivery_id=attempt.attempt_id,
+                                        action_kind=action_kind,
+                                        mode=attempt.mode,
+                                        target_phone=(
+                                            "+"
+                                            + execution_context.buyer_phone.lstrip("+")
+                                        ),
+                                        content=proposal.message,
+                                        template_name=template_name or "",
+                                        template_language=(
+                                            self._waba_template.language
+                                            if self._waba_template is not None
+                                            else ""
+                                        ),
+                                    )
+                                )
+                                if not authorized:
+                                    await self._finalize_pre_request_failure(
+                                        action=action,
+                                        attempt=attempt,
+                                        reason_code="final_meta_gate_closed",
+                                    )
+                                    decisions.append(decision)
+                                    continue
                             try:
                                 started, request_start_cancelled = (
                                     await _await_with_cancellation_state(

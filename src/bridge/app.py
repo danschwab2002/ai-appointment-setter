@@ -60,6 +60,7 @@ from bridge.inbound_handoff import request_handoff_for_inbound_proposal
 from bridge.lead_precheckout import parse_lead_precheckout
 from bridge.messaging import (
     ChatwootMessageSender,
+    FinalMetaEffectGate,
     MessageSender,
     WhatsAppTemplateConfig,
     allowed_phone_from_jid,
@@ -293,6 +294,8 @@ class Settings:
     dispatcher_poll_interval_seconds: float = 5.0
     dispatcher_batch_size: int = 10
     dispatcher_outbound_enabled: bool = False
+    meta_final_effect_enabled: bool = False
+    meta_final_effect_evidence_dir: Path = Path("./data/meta-final-effect-gate")
     chatwoot_durable_opt_out_enabled: bool = False
     opt_out_projection_worker_id: str | None = None
     human_handoff_projection_enabled: bool = False
@@ -664,6 +667,18 @@ class Settings:
         dispatcher_outbound_enabled = (
             os.getenv("DURABLE_OUTBOUND_ENABLED", "false").lower() == "true"
         )
+        meta_final_effect_value = os.getenv(
+            "META_FINAL_EFFECT_ENABLED", "false"
+        ).strip().lower()
+        if meta_final_effect_value not in {"true", "false"}:
+            raise ValueError("META_FINAL_EFFECT_ENABLED must be true or false")
+        meta_final_effect_enabled = meta_final_effect_value == "true"
+        meta_final_effect_evidence_dir = Path(
+            os.getenv(
+                "META_FINAL_EFFECT_EVIDENCE_DIR",
+                "./data/meta-final-effect-gate",
+            )
+        )
         chatwoot_durable_opt_out_enabled = (
             os.getenv("CHATWOOT_DURABLE_OPT_OUT_ENABLED", "false").lower()
             == "true"
@@ -804,6 +819,8 @@ class Settings:
             dispatcher_poll_interval_seconds=dispatcher_poll_interval_seconds,
             dispatcher_batch_size=dispatcher_batch_size,
             dispatcher_outbound_enabled=dispatcher_outbound_enabled,
+            meta_final_effect_enabled=meta_final_effect_enabled,
+            meta_final_effect_evidence_dir=meta_final_effect_evidence_dir,
             chatwoot_durable_opt_out_enabled=chatwoot_durable_opt_out_enabled,
             opt_out_projection_worker_id=opt_out_projection_worker_id,
             human_handoff_projection_enabled=human_handoff_projection_enabled,
@@ -1823,6 +1840,16 @@ def create_app(
             handoff_projection_policy_version=(
                 settings.handoff_projection_policy_version
             ),
+            final_meta_effect_gate=(
+                FinalMetaEffectGate(
+                    enabled=settings.meta_final_effect_enabled,
+                    evidence_dir=settings.meta_final_effect_evidence_dir,
+                )
+                if settings.dispatcher_outbound_enabled
+                and settings.pilot_channel_provider == "waba"
+                else None
+            ),
+            waba_template=waba_template,
         )
 
     opt_out_projection_worker: OptOutProjectionWorker | None = None

@@ -6,6 +6,7 @@ import asyncio
 import copy
 import json
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -398,7 +399,9 @@ def test_waba_outbound_requires_approved_template_configuration(
         )
 
 
-def test_dispatcher_outbound_injects_agent_sender_and_allowlist() -> None:
+def test_dispatcher_outbound_injects_agent_sender_allowlist_and_final_meta_gate(
+    tmp_path: Path,
+) -> None:
     agent = object()
     sender = object()
     app = create_app(
@@ -414,6 +417,8 @@ def test_dispatcher_outbound_injects_agent_sender_and_allowlist() -> None:
             chatwoot_control_api_access_token="control-token",
             chatwoot_pause_macro_id=1,
             messaging_channel="waba",
+            meta_final_effect_enabled=False,
+            meta_final_effect_evidence_dir=tmp_path / "meta-effects",
             **_pilot_boundary_settings(),
         ),
         recovery_agent_client=agent,  # type: ignore[arg-type]
@@ -425,6 +430,13 @@ def test_dispatcher_outbound_injects_agent_sender_and_allowlist() -> None:
     assert dispatcher._allowed_jid == "15555550100@s.whatsapp.net"
     assert dispatcher._pilot_boundary is not None
     assert dispatcher._pilot_boundary.scope_key == "lancemos-cart-recovery"
+    assert dispatcher._final_meta_effect_gate is not None
+    assert dispatcher._final_meta_effect_gate._enabled is False
+    assert dispatcher._final_meta_effect_gate._evidence_dir == (
+        tmp_path / "meta-effects"
+    )
+    assert dispatcher._waba_template is not None
+    assert dispatcher._waba_template.first_touch_name == "cart_recovery_first"
 
 
 def test_dispatcher_outbound_builds_chatwoot_sender_for_waba_scope() -> None:
