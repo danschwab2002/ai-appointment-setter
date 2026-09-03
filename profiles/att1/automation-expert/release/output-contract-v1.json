@@ -1,0 +1,9 @@
+{
+  "contract_version": 1,
+  "response_format": "json_object_only",
+  "fallback_proposal": {
+    "status": "unavailable",
+    "reason_code": "automation_expert_not_released",
+    "proposal": null
+  }
+}

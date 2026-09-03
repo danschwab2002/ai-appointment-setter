@@ -279,9 +279,14 @@ alterar la composición de tres agentes establecida aquí.
 El `agente-comercial` y su flujo E2E mediante Chatwoot, bridge y AgentBot están
 implementados y validados.
 
-`automation-expert` y `client-copilot` están definidos como componentes del
-producto, pero todavía no están implementados ni empaquetados como profiles
-reproducibles.
+Los tres componentes cuentan con un paquete ATT1 local, versionado y reproducible,
+descrito en
+[`att1-product-profiles-v1`](../design/att1-product-profiles-v1.md). El paquete
+todavía no está integrado ni desplegado. `automation-expert` permanece cerrado
+(`not_released`) y el empaquetado de `client-copilot` conserva únicamente la
+capacidad acotada de correlaciones ya implementada; no declara terminadas sus
+capacidades futuras.
 
-La decisión describe la arquitectura de producto aceptada; no declara terminadas
-las capacidades futuras de esos dos agentes.
+La decisión describe la arquitectura de producto aceptada. La topología runtime
+de los tres profiles se incorporará a `docs/architecture.md` cuando el paquete se
+integre al sistema vigente.

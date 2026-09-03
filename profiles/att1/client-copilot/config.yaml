@@ -1,0 +1,133 @@
+_config_version: 40
+
+model:
+  provider: openai-codex
+  default: gpt-5.6-sol
+
+toolsets: []
+
+agent:
+  max_turns: 20
+  disabled_toolsets:
+    - terminal
+    - file
+    - code_execution
+    - coding
+    - web
+    - search
+    - browser
+    - computer_use
+    - vision
+    - image_gen
+    - video
+    - video_gen
+    - tts
+    - memory
+    - session_search
+    - skills
+    - delegation
+    - cronjob
+    - project
+    - debugging
+
+memory:
+  memory_enabled: false
+  user_profile_enabled: false
+
+security:
+  redact_secrets: true
+  tirith_enabled: true
+  tirith_fail_open: false
+
+terminal:
+  backend: local
+  home_mode: profile
+  env_passthrough: []
+
+platform_toolsets:
+  cli:
+    - operator_correlation_review
+  telegram: []
+  discord: []
+  slack: []
+  whatsapp: []
+  whatsapp_cloud: []
+  signal: []
+  bluebubbles: []
+  email: []
+  homeassistant: []
+  mattermost: []
+  matrix: []
+  dingtalk: []
+  feishu: []
+  wecom: []
+  wecom_callback: []
+  weixin: []
+  qqbot: []
+  yuanbao: []
+  webhook: []
+  api_server:
+    - operator_correlation_review
+  cron: []
+
+platforms:
+  cli:
+    enabled: false
+  telegram:
+    enabled: false
+  discord:
+    enabled: false
+  slack:
+    enabled: false
+  whatsapp:
+    enabled: false
+  whatsapp_cloud:
+    enabled: false
+  signal:
+    enabled: false
+  bluebubbles:
+    enabled: false
+  email:
+    enabled: false
+  homeassistant:
+    enabled: false
+  mattermost:
+    enabled: false
+  matrix:
+    enabled: false
+  dingtalk:
+    enabled: false
+  feishu:
+    enabled: false
+  wecom:
+    enabled: false
+  wecom_callback:
+    enabled: false
+  weixin:
+    enabled: false
+  qqbot:
+    enabled: false
+  yuanbao:
+    enabled: false
+  webhook:
+    enabled: false
+  api_server:
+    enabled: true
+  cron:
+    enabled: false
+
+plugins:
+  enabled:
+    - operator-correlation-review
+
+approvals:
+  mode: manual
+  cron_mode: deny
+
+tool_loop_guardrails:
+  warnings_enabled: true
+  hard_stop_enabled: true
+
+onboarding:
+  seen:
+    profile_build_offered: true

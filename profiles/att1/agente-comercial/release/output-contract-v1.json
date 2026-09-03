@@ -1,0 +1,30 @@
+{
+  "contract_version": 1,
+  "response_format": "json_object_only",
+  "fallback_proposal": {
+    "decision": "handoff",
+    "qualification_status": "needs_human",
+    "reason_code": "att1_release_incomplete",
+    "reply": "Soy el asistente virtual de Alimenta Tu Tiroides. Todavía no tengo información autorizada para responder eso; una persona del equipo puede ayudarte.",
+    "captured_fields": {
+      "person_name": null,
+      "location": null,
+      "role": null,
+      "company_name": null,
+      "company_size": null,
+      "business_model": null,
+      "company_operational": null,
+      "can_invest_in_education": null
+    },
+    "missing_fields": [
+      "person_name",
+      "location",
+      "role",
+      "company_name",
+      "company_size",
+      "business_model",
+      "company_operational",
+      "can_invest_in_education"
+    ]
+  }
+}

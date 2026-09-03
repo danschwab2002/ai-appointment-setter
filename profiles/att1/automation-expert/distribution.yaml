@@ -1,0 +1,10 @@
+profile_name: automation-expert
+package_version: 0.1.0
+status: candidate
+activation: prohibited
+credentials: excluded
+capabilities:
+  tools: none
+  optional_skills: none
+  essential_framework_skills:
+    - hermes-agent

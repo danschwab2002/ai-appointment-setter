@@ -1,0 +1,16 @@
+{
+  "profile_name": "automation-expert",
+  "package_version": "0.1.0",
+  "package_status": "candidate",
+  "functional_release_status": "not_released",
+  "bundled_optional_skills": false,
+  "essential_framework_skills": ["hermes-agent"],
+  "memory_seed": false,
+  "production_credentials": false,
+  "activation_capability": false,
+  "scheduler_effect_capability": false,
+  "provider_effect_capability": false,
+  "permitted_runtime_surfaces": ["api_server"],
+  "verified_effective_toolsets": {"api_server": []},
+  "session_launch": {"required_skills": [], "toolsets": []}
+}

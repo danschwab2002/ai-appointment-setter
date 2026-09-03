@@ -1,0 +1,140 @@
+{
+  "activation_capability": false,
+  "bundle_name": "att1-product-profiles",
+  "bundle_version": "1.0.0",
+  "default_profile_exposed": false,
+  "files": [
+    {
+      "path": "agente-comercial/.no-bundled-skills",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "agente-comercial/SOUL.md",
+      "sha256": "e1f3ab8bb766f098cb95e13ea0fc732fc016f1b0a2d9d6df686da2eeaa8fd990",
+      "size": 1673
+    },
+    {
+      "path": "agente-comercial/config.yaml",
+      "sha256": "b087837c51880bfaa69437e1f4005f9b5f16999955bfb80ca8b6250838f2225b",
+      "size": 1756
+    },
+    {
+      "path": "agente-comercial/distribution.yaml",
+      "sha256": "b6e5621e7dec3935603970a25ba963c76a8d730bda4a07be97f14b28eff8c1f3",
+      "size": 218
+    },
+    {
+      "path": "agente-comercial/evaluations/fallback-scenarios-v1.jsonl",
+      "sha256": "6e84ecfbd8fca442c86ecd8882a22e0833d3585eb4f3a941ef200b85035853d8",
+      "size": 737
+    },
+    {
+      "path": "agente-comercial/manifest.json",
+      "sha256": "e6fecfe78e51cd7a5d3c4c1b0d50d2779fbf262beb1e82f6c70317570cda1eb0",
+      "size": 563
+    },
+    {
+      "path": "agente-comercial/release/commercial-knowledge-v1.yaml",
+      "sha256": "849fe85edff4f486e96d00a2ca41f715cf097a6ae8ea60d99c355bcf6efe0da2",
+      "size": 393
+    },
+    {
+      "path": "agente-comercial/release/conversation-policy-v1.md",
+      "sha256": "755ba6ba7da9dd1a04008ea683a3daad0e70147c5e63b10627a9e0c5f505252c",
+      "size": 579
+    },
+    {
+      "path": "agente-comercial/release/conversation-release-v1.yaml",
+      "sha256": "f11af52a66663a93527c5f1bb0c2a3e7f5d5085d40a14384f62505ec55982d67",
+      "size": 651
+    },
+    {
+      "path": "agente-comercial/release/output-contract-v1.json",
+      "sha256": "1172672241cca52e3a924134608598b8fbc2a6a3b9f60e6e28bdf3d2a03c32cc",
+      "size": 856
+    },
+    {
+      "path": "automation-expert/.no-bundled-skills",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "automation-expert/SOUL.md",
+      "sha256": "a278504dc8382144a897512a205cf6851a54932e78f1f8e1178e16fc2fcd0985",
+      "size": 830
+    },
+    {
+      "path": "automation-expert/config.yaml",
+      "sha256": "b087837c51880bfaa69437e1f4005f9b5f16999955bfb80ca8b6250838f2225b",
+      "size": 1756
+    },
+    {
+      "path": "automation-expert/distribution.yaml",
+      "sha256": "8d21e2478e295ecba788bd8a5c330249b20e79cb9e6e53962f8ff882711a0531",
+      "size": 219
+    },
+    {
+      "path": "automation-expert/manifest.json",
+      "sha256": "ee65f1486ebcc29fc6d00e0dbbae48d63f406a8dd457446cedd16f05da178508",
+      "size": 572
+    },
+    {
+      "path": "automation-expert/release/output-contract-v1.json",
+      "sha256": "813d72dcdb40a4de45771d181d1cc651b98b2ba6cefaf77ccda9ae3722226343",
+      "size": 202
+    },
+    {
+      "path": "client-copilot/.no-bundled-skills",
+      "sha256": "8567fe5feb47d4c7f3612e85b646066f4f5d79c5accc7150324acfcb4f5d9677",
+      "size": 86
+    },
+    {
+      "path": "client-copilot/SOUL.md",
+      "sha256": "3efc618d1d2977fd2d62ee6cd24d875ba8383e10fb5123a9af69010c4ed778c7",
+      "size": 1741
+    },
+    {
+      "path": "client-copilot/config.yaml",
+      "sha256": "ac9335ce5572cc81eddac0a73edcf9cab77e144c5581c18bb4fa278ef67d6d07",
+      "size": 1959
+    },
+    {
+      "path": "client-copilot/distribution.yaml",
+      "sha256": "94e56de0925be11703302e97188ef1d67d8ae30dab648cc99755cd400f498bac",
+      "size": 115
+    },
+    {
+      "path": "client-copilot/manifest.json",
+      "sha256": "91cb3e813b53450cc904da69fedebc3597c1b52a4db4a10c98658354bae754d9",
+      "size": 654
+    },
+    {
+      "path": "client-copilot/plugins/operator-correlation-review/__init__.py",
+      "sha256": "0b6006e5bd8da7389bcdc81ebd581651909b537463ddbc7d2de19527b35a439b",
+      "size": 1375
+    },
+    {
+      "path": "client-copilot/plugins/operator-correlation-review/plugin.yaml",
+      "sha256": "8e317b4bbeec53b5efcae0a38ede62358851952b4906e556a3ad4599d8a48b16",
+      "size": 428
+    },
+    {
+      "path": "client-copilot/plugins/operator-correlation-review/schemas.py",
+      "sha256": "1175dfa12d7b4f4f92bc9e4ea5603d4c05dda28b6687551b55ef69a7d061feee",
+      "size": 4203
+    },
+    {
+      "path": "client-copilot/plugins/operator-correlation-review/tools.py",
+      "sha256": "d31d9617543215a964b5ee0f7f2414a356d294eeba385433e36a9ad90313c3e0",
+      "size": 9289
+    }
+  ],
+  "package_status": "candidate",
+  "production_credentials": false,
+  "profiles": [
+    "agente-comercial",
+    "automation-expert",
+    "client-copilot"
+  ]
+}

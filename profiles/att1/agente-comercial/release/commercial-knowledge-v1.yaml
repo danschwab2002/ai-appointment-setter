@@ -1,0 +1,14 @@
+knowledge_version: 1
+status: fallback_only
+disclosable:
+  assistant_identity: virtual assistant
+  offer_public_name: Alimenta Tu Tiroides
+prohibited_without_new_release:
+  - personal_identity
+  - price_or_currency
+  - audience_or_health_claims
+  - transformation_or_curriculum
+  - guarantees_or_results
+  - checkout_or_other_links
+  - discounts_or_coupon_reference
+  - handoff_execution_claim

@@ -1,0 +1,14 @@
+name: operator-correlation-review
+version: 0.3.0
+description: Scoped review and human-approved manual correlation resolution
+provides_tools:
+  - list_unresolved_correlations
+  - get_unresolved_correlation
+  - prepare_correlation_resolution
+  - confirm_correlation_resolution
+provides_hooks:
+  - pre_tool_call
+requires_env:
+  - OPERATOR_CORRELATION_API_URL
+  - OPERATOR_CORRELATION_API_TOKEN
+  - OPERATOR_CORRELATION_WRITE_TOKEN

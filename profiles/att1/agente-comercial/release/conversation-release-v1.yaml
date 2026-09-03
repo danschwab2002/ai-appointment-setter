@@ -1,0 +1,22 @@
+release_id: att1-fallback-v1
+release_version: 1
+release_status: draft
+completeness: draft_incomplete
+platform_kernel: bridge-output-contract-v1
+commercial_knowledge: commercial-knowledge-v1
+conversation_policy: conversation-policy-v1
+output_contract: output-contract-v1
+activation: prohibited
+new_conversations: blocked
+provider_effects: prohibited
+runtime_binding: absent
+source_refs:
+  - att1-source-register-v1
+  - att1-commercial-information-approval-v1
+missing_external_gates:
+  - business_authority_ratification
+  - sanitized_materials
+  - runtime_binding
+  - approved_waba_templates
+  - handoff_target_and_sla
+  - conversation_release_approval

@@ -1,0 +1,16 @@
+{
+  "profile_name": "agente-comercial",
+  "package_version": "0.1.0",
+  "package_status": "candidate",
+  "conversation_release_status": "draft",
+  "bundled_optional_skills": false,
+  "essential_framework_skills": ["hermes-agent"],
+  "memory_seed": false,
+  "production_credentials": false,
+  "activation_capability": false,
+  "provider_effect_capability": false,
+  "runtime_binding_included": false,
+  "permitted_runtime_surfaces": ["api_server"],
+  "verified_effective_toolsets": {"api_server": []},
+  "session_launch": {"required_skills": [], "toolsets": []}
+}
