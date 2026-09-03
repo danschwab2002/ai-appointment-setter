@@ -736,9 +736,9 @@ El contrato exacto está en
 La primera versión fue desplegada, pero una revisión adversarial posterior
 demostró que no aislaba intents de otros tenants y mezclaba hechos posteriores al
 cutoff en consultas históricas. El artifact generado quedó invalidado y eliminado.
-La migración de contención revoca el acceso del rol de servicio; esta superficie
-permanece no operativa hasta desplegar esa contención y aceptar una proyección
-forward-only que pruebe ambos invariantes.
+La migración de contención fue desplegada y revocó el acceso de todos los roles
+API, incluido el rol de servicio. Esta superficie permanece no operativa hasta
+aceptar una proyección forward-only que pruebe ambos invariantes.
 
 ## Decisiones arquitectónicas
 
