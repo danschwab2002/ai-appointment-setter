@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from bridge.app import Settings, create_app
 from bridge.commercial_ally import CommercialAllyConfig, JOHANNA_COMMERCIAL_ALLY
-from bridge.hotmart import parse_hotmart_payment_failure_payload
+from bridge.hotmart import parse_hotmart_payment_failure_payload, parse_hotmart_payload
 from bridge.lead_precheckout import parse_lead_precheckout
 from bridge.supabase import SupabaseClient
 
@@ -179,6 +179,35 @@ def test_att1_config_accepts_only_its_hotmart_payment_failure_scope() -> None:
     assert parse_hotmart_payment_failure_payload(wrong_offer, config=_config()) is None
 
 
+def test_att1_config_accepts_only_its_hotmart_cart_abandonment_scope() -> None:
+    payload = {
+        "id": "event-att1-cart-abandonment",
+        "event": "PURCHASE_OUT_OF_SHOPPING_CART",
+        "version": "2.0.0",
+        "creation_date": 1788264000000,
+        "data": {
+            "buyer": {
+                "name": "Test Buyer",
+                "email": "buyer@example.test",
+                "phone": "+120****0123",
+            },
+            "product": {"id": 123456, "name": "ATT1 Offer"},
+            "offer": {"code": "att1offer"},
+            "checkout_country": {"iso": "MX", "name": "México"},
+        },
+    }
+
+    parsed = parse_hotmart_payload(payload, config=_config())
+
+    assert parsed is not None
+    assert parsed.product_id == 123456
+    assert parsed.offer_code == "att1offer"
+
+    wrong_offer = deepcopy(payload)
+    wrong_offer["data"]["offer"]["code"] = "other"  # type: ignore[index]
+    assert parse_hotmart_payload(wrong_offer, config=_config()) is None
+
+
 def test_app_factory_allows_only_portable_lead_admission_for_att1() -> None:
     config = _config()
     settings = Settings(
@@ -200,19 +229,22 @@ def test_app_factory_allows_only_portable_lead_admission_for_att1() -> None:
     assert app is not None
 
 
-@pytest.mark.parametrize(
-    "enabled_capability",
-    [
-        field.name
-        for field in fields(Settings)
-        if field.type in (bool, "bool")
-        and field.name not in {
-            "lead_precheckout_enabled",
-            "portable_hotmart_purchase_stop_enabled",
-        }
-    ],
-)
-def test_att1_runtime_rejects_every_unported_effect_or_admission_capability(
+LEGACY_ONLY_CAPABILITIES = {
+    "hotmart_abandonment_timer_worker_enabled",
+    "precheckout_form_enabled",
+    "precheckout_test_mode_enabled",
+    "precheckout_first_touch_enabled",
+    "precheckout_delayed_first_touch_enabled",
+    "precheckout_delayed_outbound_enabled",
+    "johanna_abandonment_one_shot_enabled",
+    "johanna_abandonment_hotmart_auto_enabled",
+    "johanna_payment_failure_hotmart_enabled",
+    "johanna_payment_failure_outbound_enabled",
+}
+
+
+@pytest.mark.parametrize("enabled_capability", sorted(LEGACY_ONLY_CAPABILITIES))
+def test_att1_runtime_rejects_legacy_only_effect_or_admission_capability(
     enabled_capability: str,
 ) -> None:
     settings = Settings(
@@ -227,6 +259,34 @@ def test_att1_runtime_rejects_every_unported_effect_or_admission_capability(
 
     with pytest.raises(ValueError, match="ATT1 runtime capabilities are not portable"):
         create_app(settings)
+
+
+@pytest.mark.parametrize(
+    "enabled_capability",
+    [
+        field.name
+        for field in fields(Settings)
+        if field.type in (bool, "bool")
+        and field.name not in LEGACY_ONLY_CAPABILITIES
+    ],
+)
+def test_att1_runtime_does_not_reject_generic_capability_as_unportable(
+    enabled_capability: str,
+) -> None:
+    settings = Settings(
+        webhook_secret="test-secret",
+        allowed_jid=None,
+        capture_dir=Path("/tmp/att1-portability-captures"),
+        max_age_seconds=300,
+        commercial_ally_config=_config(),
+        commercial_ally_manifest_path=Path("/runtime/commercial-ally.json"),
+    )
+    settings = replace(settings, **{enabled_capability: True})
+
+    try:
+        create_app(settings)
+    except ValueError as exc:
+        assert "ATT1 runtime capabilities are not portable" not in str(exc)
 
 
 def test_att1_runtime_rejects_generic_hotmart_admission() -> None:
@@ -312,7 +372,7 @@ def test_settings_reject_representative_non_boolean_truthy_and_falsey_values(
         create_app(settings)
 
 
-def test_scoped_inbound_gate_remains_blocked_for_att1() -> None:
+def test_scoped_inbound_gate_reaches_its_stop_and_handoff_dependency_check() -> None:
     config = _config()
     settings = Settings(
         webhook_secret="test-secret",
@@ -320,6 +380,7 @@ def test_scoped_inbound_gate_remains_blocked_for_att1() -> None:
         capture_dir=Path("/tmp/att1-portability-captures"),
         max_age_seconds=300,
         commercial_ally_config=config,
+        commercial_ally_manifest_path=Path("/runtime/commercial-ally.json"),
         chatwoot_account_id=config.chatwoot_account_id,
         chatwoot_inbox_id=config.chatwoot_inbox_id,
         chatwoot_cut_b_scope_key=config.inbound_scope_key,
@@ -327,7 +388,10 @@ def test_scoped_inbound_gate_remains_blocked_for_att1() -> None:
         chatwoot_scoped_inbound_senders_enabled=True,
     )
 
-    with pytest.raises(ValueError, match="ATT1 runtime capabilities are not portable"):
+    with pytest.raises(
+        ValueError,
+        match="requires all stop and handoff gates",
+    ):
         create_app(settings)
 
 

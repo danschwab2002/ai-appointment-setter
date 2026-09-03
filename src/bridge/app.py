@@ -113,6 +113,29 @@ JOHANNA_ABANDONMENT_COPY_VERSION = "johanna-abandonment-one-shot-v1"
 JOHANNA_PAYMENT_FAILURE_TEMPLATE_NAME = "johanna_compra_fallida_01"
 JOHANNA_PAYMENT_FAILURE_COPY_VERSION = "johanna-payment-failure-one-shot-v1"
 JOHANNA_ABANDONMENT_BODY_LIMIT_BYTES = 8 * 1024
+PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
+    "chatwoot_human_pause_enabled",
+    "hermes_shadow_enabled",
+    "automated_replies_enabled",
+    "reply_splitter_enabled",
+    "portable_hotmart_recovery_enabled",
+    "portable_hotmart_purchase_stop_enabled",
+    "hotmart_purchase_worker_enabled",
+    "lead_precheckout_enabled",
+    "worker_enabled",
+    "dispatcher_enabled",
+    "dispatcher_outbound_enabled",
+    "meta_final_effect_enabled",
+    "chatwoot_durable_opt_out_enabled",
+    "human_handoff_projection_enabled",
+    "human_handoff_admission_enabled",
+    "pilot_boundary_enabled",
+    "chatwoot_cut_b_admission_enabled",
+    "chatwoot_cut_b_agent_enabled",
+    "chatwoot_scoped_inbound_senders_enabled",
+    "operator_correlation_read_enabled",
+    "operator_correlation_write_enabled",
+})
 
 _MEDICATION_GUIDANCE_SUBJECT_RE = re.compile(
     r"\b(?:medicacion|medicamento|farmaco|pastilla|antidepresiv|ansiolitic)\w*\b"
@@ -249,6 +272,7 @@ class Settings:
     chatwoot_inbound_debounce_seconds: float = 0.0
     hotmart_hottok: str | None = None
     hotmart_max_age_seconds: int = 300
+    portable_hotmart_recovery_enabled: bool = False
     portable_hotmart_purchase_stop_enabled: bool = False
     hotmart_purchase_worker_enabled: bool = False
     hotmart_abandonment_timer_worker_enabled: bool = False
@@ -447,6 +471,10 @@ class Settings:
         hotmart_hottok = os.getenv("HOTMART_HOTTOK", "").strip() or None
         portable_hotmart_purchase_stop_enabled = (
             os.getenv("PORTABLE_HOTMART_PURCHASE_STOP_ENABLED", "false").lower()
+            == "true"
+        )
+        portable_hotmart_recovery_enabled = (
+            os.getenv("PORTABLE_HOTMART_RECOVERY_ENABLED", "false").lower()
             == "true"
         )
         hotmart_max_age_seconds = int(
@@ -761,6 +789,7 @@ class Settings:
             portable_hotmart_purchase_stop_enabled=(
                 portable_hotmart_purchase_stop_enabled
             ),
+            portable_hotmart_recovery_enabled=portable_hotmart_recovery_enabled,
             hotmart_purchase_worker_enabled=hotmart_purchase_worker_enabled,
             hotmart_abandonment_timer_worker_enabled=(
                 hotmart_abandonment_timer_worker_enabled
@@ -1096,12 +1125,9 @@ def create_app(
             field.name
             for field in boolean_fields
             if getattr(settings, field.name) is True
-            and not (
-                explicit_manifest_runtime
-                and field.name in {
-                    "lead_precheckout_enabled",
-                    "portable_hotmart_purchase_stop_enabled",
-                }
+            and (
+                not explicit_manifest_runtime
+                or field.name not in PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES
             )
         )
         if settings.hotmart_hottok is not None and not (
@@ -3890,8 +3916,15 @@ def create_app(
                 "reason": decision.reason,
             }
 
-        if settings.portable_hotmart_purchase_stop_enabled and (
+        if (
+            settings.portable_hotmart_purchase_stop_enabled
+            or settings.portable_hotmart_recovery_enabled
+        ) and (
             decision.event_type != EVENT_PURCHASE_APPROVED
+            and not (
+                settings.portable_hotmart_recovery_enabled
+                and decision.event_type == EVENT_CART_ABANDONMENT
+            )
         ):
             response.status_code = status.HTTP_200_OK
             return {
@@ -4072,7 +4105,14 @@ def create_app(
                     "status": "received",
                     "event_id": event_id,
                 }
-            parsed_abandonment = parse_hotmart_payload(payload)
+            parsed_abandonment = parse_hotmart_payload(
+                payload,
+                config=(
+                    settings.commercial_ally_config
+                    if settings.portable_hotmart_recovery_enabled
+                    else None
+                ),
+            )
             if parsed_abandonment is None:
                 response.status_code = status.HTTP_200_OK
                 return {

@@ -64,6 +64,26 @@ def _purchase(event_id: str = "portable-purchase-001") -> dict[str, object]:
     }
 
 
+def _cart_abandonment(
+    event_id: str = "portable-cart-abandonment-001",
+) -> dict[str, object]:
+    return {
+        "id": event_id,
+        "creation_date": int(time.time() * 1000),
+        "event": "PURCHASE_OUT_OF_SHOPPING_CART",
+        "version": "2.0.0",
+        "data": {
+            "product": {"id": 123456, "name": "ATT1 Offer"},
+            "buyer": {
+                "email": " Buyer@Example.test ",
+                "phone": "+1 (202) 555-0123",
+            },
+            "offer": {"code": "att1offer"},
+            "checkout_country": {"iso": "MX", "name": "México"},
+        },
+    }
+
+
 def _settings(**overrides: object) -> Settings:
     values: dict[str, object] = {
         "webhook_secret": "chatwoot-test-secret",
@@ -107,6 +127,18 @@ def test_portable_purchase_stop_environment_contract_is_default_off() -> None:
     assert (
         "PORTABLE_HOTMART_PURCHASE_STOP_ENABLED: "
         "${PORTABLE_HOTMART_PURCHASE_STOP_ENABLED:-false}" in compose
+    )
+
+
+def test_portable_hotmart_recovery_environment_contract_is_default_off() -> None:
+    root = Path(__file__).resolve().parents[1]
+    env_example = (root / ".env.example").read_text(encoding="utf-8")
+    compose = (root / "compose.yaml").read_text(encoding="utf-8")
+
+    assert "PORTABLE_HOTMART_RECOVERY_ENABLED=false" in env_example
+    assert (
+        "PORTABLE_HOTMART_RECOVERY_ENABLED: "
+        "${PORTABLE_HOTMART_RECOVERY_ENABLED:-false}" in compose
     )
 
 
@@ -154,6 +186,7 @@ def test_portable_purchase_client_sends_server_owned_binding_identity() -> None:
 class _SupabaseStub:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
+        self.cart_calls: list[dict[str, object]] = []
 
     async def admit_portable_hotmart_purchase_approved(
         self, **kwargs: object
@@ -162,6 +195,15 @@ class _SupabaseStub:
         return type("Admission", (), {
             "outcome": "inserted",
             "webhook_event_id": "8de61be1-81ae-4dcf-9f18-d24b8d71db5d",
+        })()
+
+    async def admit_and_correlate_hotmart_cart_abandonment(
+        self, **kwargs: object
+    ) -> object:
+        self.cart_calls.append(kwargs)
+        return type("Admission", (), {
+            "outcome": "inserted",
+            "webhook_event_id": "cf5ba605-2d3a-4e09-85da-1227632c598d",
         })()
 
 
@@ -188,6 +230,30 @@ def test_portable_handler_admits_only_purchase_approved() -> None:
     }
     assert len(supabase.calls) == 1
     assert supabase.calls[0]["config"] == _config()
+
+
+def test_portable_handler_admits_scoped_cart_abandonment_when_enabled() -> None:
+    supabase = _SupabaseStub()
+    response = _post(
+        create_app(
+            _settings(portable_hotmart_recovery_enabled=True),
+            supabase_client=supabase,  # type: ignore[arg-type]
+        ),
+        _cart_abandonment(),
+    )
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "status": "received",
+        "event_id": "portable-cart-abandonment-001",
+    }
+    assert supabase.calls == []
+    assert len(supabase.cart_calls) == 1
+    assert supabase.cart_calls[0]["external_event_id"] == (
+        "portable-cart-abandonment-001"
+    )
+    assert supabase.cart_calls[0]["normalized_email"] == "buyer@example.test"
+    assert supabase.cart_calls[0]["normalized_phone"] == "12025550123"
 
 
 @pytest.mark.parametrize(

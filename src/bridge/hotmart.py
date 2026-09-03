@@ -141,7 +141,11 @@ def _bool(value: Any) -> bool | None:
     return value
 
 
-def parse_hotmart_payload(payload: object) -> HotmartBuyerData | None:
+def parse_hotmart_payload(
+    payload: object,
+    *,
+    config: CommercialAllyConfig | None = None,
+) -> HotmartBuyerData | None:
     """Extract normalised buyer data from a Hotmart v2.0.0 payload.
 
     Returns ``None`` if the payload is structurally invalid.
@@ -173,6 +177,13 @@ def parse_hotmart_payload(payload: object) -> HotmartBuyerData | None:
         or product_id < 1
         or product_name is None
         or offer_code is None
+        or (
+            config is not None
+            and (
+                product_id != config.hotmart_product_id
+                or offer_code != config.offer_code
+            )
+        )
     ):
         return None
 
