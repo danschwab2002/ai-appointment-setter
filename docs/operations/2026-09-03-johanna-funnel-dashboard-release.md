@@ -1,6 +1,6 @@
 # Evidencia de release del dashboard Johanna
 
-- **Estado:** Verificado
+- **Estado:** Invalidado por revisión adversarial posterior
 - **Fecha UTC:** 2026-09-03
 - **Alcance:** merge, despliegue del RPC read-only y primer reporte live sanitario
 
@@ -59,3 +59,17 @@ artifact HTML resultante:
 
 El artifact reside fuera de Git en `/opt/data/cache/`, conforme a la política de
 PII y datos capturados.
+
+## Contención posterior
+
+Una revisión adversarial posterior reprodujo dos defectos de aislamiento: la
+proyección podía incluir intents de otro tenant y podía incorporar hechos
+posteriores al cutoff histórico. Por lo tanto, el reporte anterior no constituye
+evidencia válida y su artifact fue eliminado.
+
+La migración forward-only
+`20260831000200_disable_johanna_funnel_dashboard_read.sql` está preparada para
+revocar `EXECUTE` a todos los roles API, incluido `service_role`. En este punto
+la revocación aún requiere apply y postflight en Supabase Cloud; sólo el artifact
+anterior fue eliminado. No se debe volver a generar ni entregar un dashboard
+hasta contener el RPC e implementar y probar ambos invariantes.

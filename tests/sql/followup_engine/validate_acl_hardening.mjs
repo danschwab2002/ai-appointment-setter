@@ -129,7 +129,7 @@ const rows = await db.query(`
       ('reconcile_followup_delivery_attempt(uuid,uuid,bigint,text,text,uuid,timestamp with time zone,text,timestamp with time zone)'),
       ('record_and_finalize_followup_acceptance(uuid,uuid,text,bigint,text,text,text,timestamp with time zone)'),
       ('get_precheckout_delayed_one_shot_command(uuid)'),
-      ('read_johanna_funnel_dashboard_v1(timestamp with time zone,integer)'),
+
       ('list_due_hotmart_abandonment_reevaluations_v2(timestamp with time zone,integer,boolean)'),
       ('reevaluate_hotmart_abandonment_timer(uuid,timestamp with time zone)'),
       ('reevaluate_followup_action(uuid,text,bigint,timestamp with time zone,boolean,text,text,timestamp with time zone,text,boolean,boolean,boolean,boolean,boolean)'),
@@ -161,7 +161,7 @@ const rows = await db.query(`
 `);
 const result = rows.rows[0];
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 63) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 62) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const bindingAcl = await db.query(`

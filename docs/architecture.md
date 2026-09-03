@@ -733,9 +733,12 @@ configuran URL y account ID sólo se construyen enlaces a conversaciones canóni
 El contrato exacto está en
 [Dashboard on-demand Johanna V1](contracts/johanna-funnel-dashboard.md).
 
-La implementación fue probada con PostgreSQL 17, suite Python y un recorrido HTTP
-real efímero. La migración y la CLI deben desplegarse antes de que esta superficie
-quede operativa sobre Supabase Cloud.
+La primera versión fue desplegada, pero una revisión adversarial posterior
+demostró que no aislaba intents de otros tenants y mezclaba hechos posteriores al
+cutoff en consultas históricas. El artifact generado quedó invalidado y eliminado.
+La migración de contención revoca el acceso del rol de servicio; esta superficie
+permanece no operativa hasta desplegar esa contención y aceptar una proyección
+forward-only que pruebe ambos invariantes.
 
 ## Decisiones arquitectónicas
 

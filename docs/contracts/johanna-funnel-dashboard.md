@@ -1,6 +1,6 @@
 # Contrato del dashboard on-demand Johanna V1
 
-- **Estado:** Implementado y desplegado
+- **Estado:** Contención implementada; pendiente de despliegue
 - **Versión:** 1
 - **Alcance:** proyección sanitaria read-only de casos comerciales durables
 - **Fuera de alcance:** mensajes, PII, reportes conversacionales, mutaciones y servidor permanente
@@ -132,3 +132,9 @@ no amplía grants directos de tablas ni requiere cambiar el bridge productivo.
 
 La evidencia del despliegue inicial y del primer reporte live está en
 [Johanna funnel dashboard release](../operations/2026-09-03-johanna-funnel-dashboard-release.md).
+
+Una revisión adversarial detectó falta de scoping por tenant y semántica
+histórica incompleta respecto de `p_cutoff`. La migración de contención está
+implementada, pero el acceso live sólo queda revocado después de su apply y
+postflight en Supabase Cloud. La CLI no debe volver a ejecutarse hasta entonces
+ni hasta que una migración forward-only corregida sea aceptada y desplegada.

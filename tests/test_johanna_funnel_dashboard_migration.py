@@ -8,10 +8,27 @@ MIGRATION = (
     / "migrations"
     / "20260831000100_johanna_funnel_dashboard_read.sql"
 )
+CONTAINMENT = (
+    Path(__file__).parents[1]
+    / "supabase"
+    / "migrations"
+    / "20260831000200_disable_johanna_funnel_dashboard_read.sql"
+)
 
 
 def _sql() -> str:
     return MIGRATION.read_text(encoding="utf-8")
+
+
+def test_containment_revokes_dashboard_rpc_from_every_api_role() -> None:
+    lowered = CONTAINMENT.read_text(encoding="utf-8").lower()
+
+    assert "begin;" in lowered
+    assert lowered.count("revoke all on function public.read_johanna_funnel_dashboard_v1(") == 4
+    for role in ("public", "anon", "authenticated", "service_role"):
+        assert f") from {role};" in lowered
+    assert "grant execute" not in lowered
+    assert "commit;" in lowered
 
 
 def test_dashboard_read_rpc_is_stable_sanitary_and_service_role_only() -> None:
