@@ -40,8 +40,8 @@ del navegador, query strings, logs o Git.
 
 ## Alcance implementado
 
-Aunque el parser conoce los seis pares landing-oferta congelados, el endpoint
-sólo admite inicialmente:
+El parser acepta un único binding activo suministrado por la configuración del
+runtime. En compatibilidad legada ese binding es:
 
 ```text
 site       = psicologajohanna
@@ -50,9 +50,12 @@ offer.code = bxjge6zq
 hotlink    = F106691755G
 ```
 
-Las otras cinco variantes fallan con `403 lead_precheckout_outside_scope` hasta
-confirmar precio y oferta. Expandir el alcance requiere reemplazar la
-configuración, no eliminarla.
+Un payload que no coincide exactamente con el binding configurado se clasifica
+como inválido y devuelve `400 invalid_lead_precheckout_payload`. En runtimes con
+manifiesto explícito, el bridge envía tenant, funnel y versión server-owned a la
+RPC portable; ésta exige la fila durable activa exacta y vuelve a comprobar todo
+el scope comercial canónico contra esa fila. Sin manifiesto se conserva la RPC
+legada sin cambios.
 
 ## Payload
 
@@ -113,7 +116,8 @@ V1.1.0, teléfono inválido bloquea la admisión completa.
 
 ## Representación durable
 
-La RPC `admit_observed_lead_precheckout` escribe atómicamente:
+La RPC legada `admit_observed_lead_precheckout` y la RPC de manifiesto explícito
+`admit_portable_observed_lead_precheckout` escriben atómicamente:
 
 ```text
 precheckout_submissions
@@ -154,9 +158,12 @@ Una correlación `resolved` de `PURCHASE_OUT_OF_SHOPPING_CART` conserva las marc
 V1.1.0 para que el timer pueda reevaluarlas. Compra, `conflict`, `ambiguous`,
 opt-out, takeover y cualquier restricción autoritativa siguen prevaleciendo.
 
-La RPC es `SECURITY DEFINER`, fija `search_path` y sólo `service_role` recibe
-`EXECUTE`. La admisión no crea acciones, secuencias, mensajes ni llamadas a
-Hermes.
+Ambas RPC son `SECURITY DEFINER`, fijan `search_path` y sólo `service_role`
+recibe `EXECUTE`. La RPC portable además bloquea la fila exacta de
+`commercial_ally_runtime_bindings` con estado `active`. La admisión portable no
+crea timers, actions, commands, secuencias, mensajes, delivery attempts ni
+llamadas a Hermes; la extensión first-touch legada descrita abajo no se porta en
+este corte.
 
 ## Extensión first-touch diferido
 
@@ -209,7 +216,6 @@ del body exacto y sincronización en Chatwoot; este contrato no las presume.
 | `200` | `received`, `duplicate` o `conflict`, después de admisión durable |
 | `400` | JSON, forma o headers incoherentes |
 | `401` | firma inválida o evento stale/futuro |
-| `403` | evento válido fuera del scope activo |
 | `413` | body mayor a 64 KiB |
 | `503` | receiver apagado/configuración o persistencia no disponible |
 

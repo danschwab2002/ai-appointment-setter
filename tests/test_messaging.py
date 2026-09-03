@@ -13,6 +13,30 @@ from bridge.chatwoot import ChatwootClient, ChatwootProtocolError
 from bridge.messaging import ChatwootMessageSender, WhatsAppTemplateConfig, _to_e164
 
 
+def test_payment_failure_first_touch_uses_dedicated_approved_template() -> None:
+    template = WhatsAppTemplateConfig(
+        first_touch_name="att1_carrito_abandonado_01",
+        payment_failure_name="att1_compra_fallida_01",
+        followup_name="att1_seguimiento_v1",
+        language="es_MX",
+        category="MARKETING",
+        first_touch_parameter="buyer_name_and_product",
+    )
+
+    params = template.params(
+        content="copy controlled by Meta",
+        followup=False,
+        buyer_name="Ana",
+        product_name="ATT1",
+        trigger_kind="payment_failure",
+    )
+
+    assert params["name"] == "att1_compra_fallida_01"
+    assert params["processed_params"] == {
+        "body": {"1": "Ana", "2": "ATT1"}
+    }
+
+
 # ── E.164 helper ─────────────────────────────────────────────────────
 
 
@@ -609,6 +633,53 @@ def test_send_followup_message_rejects_wrong_sender(
 
 
 # ── ChatwootMessageSender end-to-end ────────────────────────────────
+
+
+def test_chatwoot_sender_requires_exactly_one_recipient_authority() -> None:
+    with pytest.raises(ValueError, match="recipient authority"):
+        ChatwootMessageSender(
+            chatwoot=object(),  # type: ignore[arg-type]
+            inbox_id=1,
+            allowed_jid=None,
+        )
+    with pytest.raises(ValueError, match="recipient authority"):
+        ChatwootMessageSender(
+            chatwoot=object(),  # type: ignore[arg-type]
+            inbox_id=1,
+            allowed_jid="15555550100@s.whatsapp.net",
+            dynamic_recipient_enabled=True,
+        )
+
+
+def test_chatwoot_sender_allows_valid_dynamic_recipient_explicitly() -> None:
+    calls: list[dict[str, object]] = []
+
+    class ChatwootStub:
+        async def send_followup_message(self, **kwargs: object) -> dict[str, object]:
+            calls.append(kwargs)
+            return {"message_id": 1}
+
+    sender = ChatwootMessageSender(
+        chatwoot=ChatwootStub(),  # type: ignore[arg-type]
+        inbox_id=24,
+        allowed_jid=None,
+        dynamic_recipient_enabled=True,
+    )
+
+    result = _run(sender.send_followup(
+        conversation_id=42,
+        phone="5215550100999",
+        content="Seguimiento",
+        delivery_id="attempt-portable",
+    ))
+
+    assert result.status == "sent"
+    assert calls == [{
+        "conversation_id": 42,
+        "content": "Seguimiento",
+        "delivery_id": "attempt-portable",
+        "template_params": None,
+    }]
 
 
 def test_evolution_sender_blocks_phone_outside_allowed_jid() -> None:

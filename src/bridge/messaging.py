@@ -7,8 +7,13 @@ official Meta WhatsApp Business API. See ADR-0004.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 import re
+import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from bridge.chatwoot import ChatwootClient, ChatwootProtocolError
@@ -36,6 +41,7 @@ class WhatsAppTemplateConfig:
     language: str
     category: str
     first_touch_parameter: str = "content"
+    payment_failure_name: str | None = None
 
     def params(
         self,
@@ -44,8 +50,15 @@ class WhatsAppTemplateConfig:
         followup: bool,
         buyer_name: str | None = None,
         product_name: str | None = None,
+        trigger_kind: str | None = None,
     ) -> dict[str, object]:
         name = self.followup_name if followup else self.first_touch_name
+        if (
+            not followup
+            and trigger_kind == "payment_failure"
+            and self.payment_failure_name is not None
+        ):
+            name = self.payment_failure_name
         if name is None:
             raise ValueError("template_disabled")
         body = {"1": content}
@@ -64,6 +77,102 @@ class WhatsAppTemplateConfig:
         }
 
 
+@dataclass(frozen=True)
+class FinalMetaEffect:
+    """Complete final Meta effect constructed before the provider boundary."""
+
+    delivery_id: str
+    action_kind: str
+    mode: str
+    target_phone: str
+    content: str
+    template_name: str
+    template_language: str
+
+    def validate(self) -> None:
+        if (
+            not self.delivery_id.strip()
+            or self.action_kind not in {"first_touch", "followup"}
+            or self.mode != "approved_template"
+            or re.fullmatch(r"\+[1-9]\d{6,14}", self.target_phone) is None
+            or not self.content.strip()
+            or not self.template_name.strip()
+            or not self.template_language.strip()
+        ):
+            raise ValueError("invalid_final_meta_effect")
+
+    def sanitized_evidence(self) -> dict[str, object]:
+        self.validate()
+        return {
+            "schema_version": 1,
+            "status": "final_meta_gate_closed",
+            "action_kind": self.action_kind,
+            "mode": self.mode,
+            "delivery_id_sha256": hashlib.sha256(
+                self.delivery_id.encode("utf-8")
+            ).hexdigest(),
+            "target_sha256": hashlib.sha256(
+                self.target_phone.encode("utf-8")
+            ).hexdigest(),
+            "content_sha256": hashlib.sha256(
+                self.content.encode("utf-8")
+            ).hexdigest(),
+            "template_name": self.template_name,
+            "template_language": self.template_language,
+        }
+
+
+class FinalMetaEffectGate:
+    """Allow the final Meta call or durably record a sanitized blocked effect."""
+
+    def __init__(self, *, enabled: bool, evidence_dir: Path) -> None:
+        if type(enabled) is not bool:
+            raise ValueError("invalid_final_meta_gate")
+        self._enabled = enabled
+        self._evidence_dir = evidence_dir
+
+    def authorize(self, effect: FinalMetaEffect) -> bool:
+        evidence = effect.sanitized_evidence()
+        if self._enabled:
+            return True
+
+        directory = self._evidence_dir
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(directory, 0o700)
+        digest = evidence["delivery_id_sha256"]
+        assert isinstance(digest, str)
+        path = directory / f"{digest}.json"
+        temporary = directory / f".{digest}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+        encoded = (json.dumps(evidence, sort_keys=True) + "\n").encode("utf-8")
+        try:
+            descriptor = os.open(
+                temporary,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(encoded)
+                stream.flush()
+                os.fsync(stream.fileno())
+            try:
+                os.link(temporary, path)
+            except FileExistsError:
+                try:
+                    existing = path.read_bytes()
+                except OSError as exc:
+                    raise ValueError("final_meta_effect_conflict") from exc
+                if existing != encoded:
+                    raise ValueError("final_meta_effect_conflict")
+            directory_fd = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return False
+
+
 class MessageSender(Protocol):
     """Interface for sending recovery first-touch messages."""
 
@@ -77,6 +186,7 @@ class MessageSender(Protocol):
         content: str,
         delivery_id: str,
         require_existing_contact: bool = False,
+        trigger_kind: str | None = None,
     ) -> FirstTouchResult: ...
 
     async def send_first_touch_to_conversation(
@@ -146,13 +256,28 @@ class ChatwootMessageSender:
         *,
         chatwoot: ChatwootClient,
         inbox_id: int,
-        allowed_jid: str,
+        allowed_jid: str | None,
+        dynamic_recipient_enabled: bool = False,
         template: WhatsAppTemplateConfig | None = None,
     ) -> None:
+        if (allowed_jid is None and not dynamic_recipient_enabled) or (
+            allowed_jid is not None and dynamic_recipient_enabled
+        ):
+            raise ValueError("exactly one recipient authority is required")
         self._chatwoot = chatwoot
         self._inbox_id = inbox_id
         self._allowed_jid = allowed_jid
+        self._dynamic_recipient_enabled = dynamic_recipient_enabled
         self._template = template
+
+    def _is_target_allowed(self, phone: str | None) -> bool:
+        if self._dynamic_recipient_enabled:
+            return (
+                isinstance(phone, str)
+                and _PHONE_INPUT_RE.fullmatch(phone) is not None
+                and normalize_phone(phone) is not None
+            )
+        return is_allowed_whatsapp_target(phone, self._allowed_jid)
 
     async def send_first_touch(
         self,
@@ -164,6 +289,7 @@ class ChatwootMessageSender:
         content: str,
         delivery_id: str,
         require_existing_contact: bool = False,
+        trigger_kind: str | None = None,
     ) -> FirstTouchResult:
         normalized = normalize_phone(phone)
         if normalized is None:
@@ -173,7 +299,7 @@ class ChatwootMessageSender:
                 message_id=None,
                 reason="invalid_phone",
             )
-        if not is_allowed_whatsapp_target(phone, self._allowed_jid):
+        if not self._is_target_allowed(phone):
             return FirstTouchResult(
                 status="blocked",
                 conversation_id=None,
@@ -238,6 +364,7 @@ class ChatwootMessageSender:
                         followup=False,
                         buyer_name=buyer_name,
                         product_name=product_name,
+                        trigger_kind=trigger_kind,
                     )
                     if self._template is not None
                     else None
@@ -281,7 +408,7 @@ class ChatwootMessageSender:
         delivery_id: str,
     ) -> FirstTouchResult:
         """Send a first-touch template in an existing canonical conversation."""
-        if not is_allowed_whatsapp_target(phone, self._allowed_jid):
+        if not self._is_target_allowed(phone):
             return FirstTouchResult("blocked", None, None, "target_not_allowed")
         if (
             not isinstance(conversation_id, int)
@@ -326,7 +453,7 @@ class ChatwootMessageSender:
         delivery_id: str,
     ) -> FirstTouchResult:
         """Send a follow-up without creating another Chatwoot conversation."""
-        if not is_allowed_whatsapp_target(phone, self._allowed_jid):
+        if not self._is_target_allowed(phone):
             return FirstTouchResult(
                 status="blocked",
                 conversation_id=None,

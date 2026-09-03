@@ -15,7 +15,7 @@ import time
 import unicodedata
 import uuid
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, fields as dataclass_fields
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import AsyncGenerator, Awaitable, Callable, Protocol
@@ -42,6 +42,7 @@ from bridge.chatwoot_inbox import (
     DurableChatwootInbox,
     RetryableChatwootWorkError,
 )
+from bridge.commercial_ally import CommercialAllyConfig, JOHANNA_COMMERCIAL_ALLY
 from bridge.filtering import EventDecision, classify_chatwoot_event
 from bridge.hermes import HermesShadowProcessor
 from bridge.hotmart import (
@@ -59,6 +60,7 @@ from bridge.inbound_handoff import request_handoff_for_inbound_proposal
 from bridge.lead_precheckout import parse_lead_precheckout
 from bridge.messaging import (
     ChatwootMessageSender,
+    FinalMetaEffectGate,
     MessageSender,
     WhatsAppTemplateConfig,
     allowed_phone_from_jid,
@@ -111,6 +113,30 @@ JOHANNA_ABANDONMENT_COPY_VERSION = "johanna-abandonment-one-shot-v1"
 JOHANNA_PAYMENT_FAILURE_TEMPLATE_NAME = "johanna_compra_fallida_01"
 JOHANNA_PAYMENT_FAILURE_COPY_VERSION = "johanna-payment-failure-one-shot-v1"
 JOHANNA_ABANDONMENT_BODY_LIMIT_BYTES = 8 * 1024
+PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
+    "chatwoot_human_pause_enabled",
+    "hermes_shadow_enabled",
+    "automated_replies_enabled",
+    "reply_splitter_enabled",
+    "portable_hotmart_recovery_enabled",
+    "portable_hotmart_payment_failure_enabled",
+    "portable_hotmart_purchase_stop_enabled",
+    "hotmart_purchase_worker_enabled",
+    "lead_precheckout_enabled",
+    "worker_enabled",
+    "dispatcher_enabled",
+    "dispatcher_outbound_enabled",
+    "meta_final_effect_enabled",
+    "chatwoot_durable_opt_out_enabled",
+    "human_handoff_projection_enabled",
+    "human_handoff_admission_enabled",
+    "pilot_boundary_enabled",
+    "chatwoot_cut_b_admission_enabled",
+    "chatwoot_cut_b_agent_enabled",
+    "chatwoot_scoped_inbound_senders_enabled",
+    "operator_correlation_read_enabled",
+    "operator_correlation_write_enabled",
+})
 
 _MEDICATION_GUIDANCE_SUBJECT_RE = re.compile(
     r"\b(?:medicacion|medicamento|farmaco|pastilla|antidepresiv|ansiolitic)\w*\b"
@@ -223,6 +249,8 @@ class Settings:
     allowed_jid: str | None
     capture_dir: Path
     max_age_seconds: int
+    commercial_ally_config: CommercialAllyConfig = JOHANNA_COMMERCIAL_ALLY
+    commercial_ally_manifest_path: Path | None = None
     agent_bot_id: int | None = None
     chatwoot_base_url: str | None = None
     chatwoot_account_id: int | None = None
@@ -245,6 +273,9 @@ class Settings:
     chatwoot_inbound_debounce_seconds: float = 0.0
     hotmart_hottok: str | None = None
     hotmart_max_age_seconds: int = 300
+    portable_hotmart_recovery_enabled: bool = False
+    portable_hotmart_payment_failure_enabled: bool = False
+    portable_hotmart_purchase_stop_enabled: bool = False
     hotmart_purchase_worker_enabled: bool = False
     hotmart_abandonment_timer_worker_enabled: bool = False
     hotmart_abandonment_timer_poll_interval_seconds: float = 5.0
@@ -289,6 +320,8 @@ class Settings:
     dispatcher_poll_interval_seconds: float = 5.0
     dispatcher_batch_size: int = 10
     dispatcher_outbound_enabled: bool = False
+    meta_final_effect_enabled: bool = False
+    meta_final_effect_evidence_dir: Path = Path("./data/meta-final-effect-gate")
     chatwoot_durable_opt_out_enabled: bool = False
     opt_out_projection_worker_id: str | None = None
     human_handoff_projection_enabled: bool = False
@@ -307,6 +340,7 @@ class Settings:
     pilot_channel_provider: str | None = None
     pilot_channel_account_ref: str | None = None
     waba_first_touch_template_name: str | None = None
+    waba_payment_failure_template_name: str | None = None
     waba_followup_template_name: str | None = None
     waba_template_language: str | None = None
     waba_template_category: str | None = None
@@ -325,6 +359,14 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> Settings:
+        commercial_ally_config_path = os.getenv(
+            "COMMERCIAL_ALLY_CONFIG_PATH", ""
+        ).strip()
+        commercial_ally_config = (
+            CommercialAllyConfig.from_json_file(Path(commercial_ally_config_path))
+            if commercial_ally_config_path
+            else JOHANNA_COMMERCIAL_ALLY
+        )
         shadow_enabled = os.getenv("HERMES_SHADOW_ENABLED", "false").lower() == "true"
         automated_replies_enabled = (
             os.getenv("CHATWOOT_AUTOMATED_REPLIES_ENABLED", "false").lower()
@@ -430,6 +472,20 @@ class Settings:
             hermes_api_key = os.getenv("HERMES_API_KEY") or None
 
         hotmart_hottok = os.getenv("HOTMART_HOTTOK", "").strip() or None
+        portable_hotmart_purchase_stop_enabled = (
+            os.getenv("PORTABLE_HOTMART_PURCHASE_STOP_ENABLED", "false").lower()
+            == "true"
+        )
+        portable_hotmart_recovery_enabled = (
+            os.getenv("PORTABLE_HOTMART_RECOVERY_ENABLED", "false").lower()
+            == "true"
+        )
+        portable_hotmart_payment_failure_enabled = (
+            os.getenv(
+                "PORTABLE_HOTMART_PAYMENT_FAILURE_ENABLED", "false"
+            ).lower()
+            == "true"
+        )
         hotmart_max_age_seconds = int(
             os.getenv("HOTMART_MAX_AGE_SECONDS", "300")
         )
@@ -505,13 +561,13 @@ class Settings:
             os.getenv("LEAD_PRECHECKOUT_MAX_AGE_SECONDS", "300")
         )
         lead_precheckout_site = os.getenv(
-            "LEAD_PRECHECKOUT_SITE", "psicologajohanna"
+            "LEAD_PRECHECKOUT_SITE", commercial_ally_config.lead_site
         ).strip()
         lead_precheckout_landing_id = os.getenv(
-            "LEAD_PRECHECKOUT_LANDING_ID", "ads-a"
+            "LEAD_PRECHECKOUT_LANDING_ID", commercial_ally_config.lead_landing_id
         ).strip()
         lead_precheckout_offer_code = os.getenv(
-            "LEAD_PRECHECKOUT_OFFER_CODE", "bxjge6zq"
+            "LEAD_PRECHECKOUT_OFFER_CODE", commercial_ally_config.offer_code
         ).strip()
         allowed_jid = os.getenv("ALLOWED_WHATSAPP_JID", "").strip() or None
         allowed_phone = (
@@ -606,8 +662,23 @@ class Settings:
         worker_batch_size = int(
             os.getenv("RESOLUTION_WORKER_BATCH_SIZE", "10")
         )
+        chatwoot_account_id = int(os.environ["CHATWOOT_ACCOUNT_ID"])
         chatwoot_inbox_id_raw = os.getenv("CHATWOOT_INBOX_ID", "").strip()
         chatwoot_inbox_id = int(chatwoot_inbox_id_raw) if chatwoot_inbox_id_raw else None
+        configured_chatwoot_scope = (chatwoot_account_id, chatwoot_inbox_id)
+        expected_chatwoot_scope = (
+            commercial_ally_config.chatwoot_account_id,
+            commercial_ally_config.chatwoot_inbox_id,
+        )
+        if commercial_ally_config_path:
+            if configured_chatwoot_scope != expected_chatwoot_scope:
+                raise ValueError(
+                    "Chatwoot account and inbox must match commercial ally config"
+                )
+        elif chatwoot_account_id != 1 or chatwoot_inbox_id not in {None, 9}:
+            raise ValueError(
+                "COMMERCIAL_ALLY_CONFIG_PATH is required for non-legacy Chatwoot scope"
+            )
         messaging_channel = os.getenv("MESSAGING_CHANNEL", "evolution").strip().lower()
         followup_policy_key = os.getenv("FOLLOWUP_POLICY_KEY", "").strip() or None
         followup_policy_version_raw = os.getenv(
@@ -632,6 +703,18 @@ class Settings:
         )
         dispatcher_outbound_enabled = (
             os.getenv("DURABLE_OUTBOUND_ENABLED", "false").lower() == "true"
+        )
+        meta_final_effect_value = os.getenv(
+            "META_FINAL_EFFECT_ENABLED", "false"
+        ).strip().lower()
+        if meta_final_effect_value not in {"true", "false"}:
+            raise ValueError("META_FINAL_EFFECT_ENABLED must be true or false")
+        meta_final_effect_enabled = meta_final_effect_value == "true"
+        meta_final_effect_evidence_dir = Path(
+            os.getenv(
+                "META_FINAL_EFFECT_EVIDENCE_DIR",
+                "./data/meta-final-effect-gate",
+            )
         )
         chatwoot_durable_opt_out_enabled = (
             os.getenv("CHATWOOT_DURABLE_OPT_OUT_ENABLED", "false").lower()
@@ -680,9 +763,15 @@ class Settings:
             allowed_jid=allowed_jid,
             capture_dir=Path(os.getenv("CAPTURE_DIR", "./data/captures")),
             max_age_seconds=int(os.getenv("WEBHOOK_MAX_AGE_SECONDS", "300")),
+            commercial_ally_config=commercial_ally_config,
+            commercial_ally_manifest_path=(
+                Path(commercial_ally_config_path)
+                if commercial_ally_config_path
+                else None
+            ),
             agent_bot_id=int(os.environ["CHATWOOT_AGENT_BOT_ID"]),
             chatwoot_base_url=os.environ["CHATWOOT_BASE_URL"],
-            chatwoot_account_id=int(os.environ["CHATWOOT_ACCOUNT_ID"]),
+            chatwoot_account_id=chatwoot_account_id,
             chatwoot_control_api_access_token=os.environ[
                 "CHATWOOT_CONTROL_API_ACCESS_TOKEN"
             ],
@@ -706,6 +795,13 @@ class Settings:
             ),
             hotmart_hottok=hotmart_hottok,
             hotmart_max_age_seconds=hotmart_max_age_seconds,
+            portable_hotmart_purchase_stop_enabled=(
+                portable_hotmart_purchase_stop_enabled
+            ),
+            portable_hotmart_recovery_enabled=portable_hotmart_recovery_enabled,
+            portable_hotmart_payment_failure_enabled=(
+                portable_hotmart_payment_failure_enabled
+            ),
             hotmart_purchase_worker_enabled=hotmart_purchase_worker_enabled,
             hotmart_abandonment_timer_worker_enabled=(
                 hotmart_abandonment_timer_worker_enabled
@@ -764,6 +860,8 @@ class Settings:
             dispatcher_poll_interval_seconds=dispatcher_poll_interval_seconds,
             dispatcher_batch_size=dispatcher_batch_size,
             dispatcher_outbound_enabled=dispatcher_outbound_enabled,
+            meta_final_effect_enabled=meta_final_effect_enabled,
+            meta_final_effect_evidence_dir=meta_final_effect_evidence_dir,
             chatwoot_durable_opt_out_enabled=chatwoot_durable_opt_out_enabled,
             opt_out_projection_worker_id=opt_out_projection_worker_id,
             human_handoff_projection_enabled=human_handoff_projection_enabled,
@@ -803,6 +901,9 @@ class Settings:
             ),
             waba_first_touch_template_name=(
                 os.getenv("WABA_FIRST_TOUCH_TEMPLATE_NAME", "").strip() or None
+            ),
+            waba_payment_failure_template_name=(
+                os.getenv("WABA_PAYMENT_FAILURE_TEMPLATE_NAME", "").strip() or None
             ),
             waba_followup_template_name=(
                 os.getenv("WABA_FOLLOWUP_TEMPLATE_NAME", "").strip() or None
@@ -1014,14 +1115,65 @@ def create_app(
     recovery_agent_client: RecoveryAgentClient | None = None,
     message_sender: MessageSender | None = None,
 ) -> FastAPI:
+    boolean_fields = [
+        field
+        for field in dataclass_fields(settings)
+        if field.type in (bool, "bool")
+    ]
+    invalid_boolean_fields = sorted(
+        field.name
+        for field in boolean_fields
+        if type(getattr(settings, field.name)) is not bool
+    )
+    if invalid_boolean_fields:
+        raise ValueError(
+            "Settings boolean fields must be bool: "
+            + ", ".join(invalid_boolean_fields)
+        )
+    explicit_manifest_runtime = settings.commercial_ally_manifest_path is not None
+    portable_dynamic_recipient = (
+        explicit_manifest_runtime
+        and (
+            settings.portable_hotmart_recovery_enabled
+            or settings.portable_hotmart_payment_failure_enabled
+        )
+    )
+    portable_runtime = (
+        explicit_manifest_runtime
+        or settings.commercial_ally_config != JOHANNA_COMMERCIAL_ALLY
+    )
+    if portable_runtime:
+        enabled_unported = sorted(
+            field.name
+            for field in boolean_fields
+            if getattr(settings, field.name) is True
+            and (
+                not explicit_manifest_runtime
+                or field.name not in PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES
+            )
+        )
+        if settings.hotmart_hottok is not None and not (
+            explicit_manifest_runtime
+            and settings.portable_hotmart_purchase_stop_enabled
+        ):
+            enabled_unported.append("hotmart_hottok")
+        if enabled_unported:
+            raise ValueError(
+                "ATT1 runtime capabilities are not portable: "
+                + ", ".join(enabled_unported)
+            )
     if settings.chatwoot_scoped_inbound_senders_enabled and (
-        settings.chatwoot_account_id != 1
-        or settings.chatwoot_inbox_id != 9
-        or settings.chatwoot_cut_b_scope_key != "libre-de-ansiedad-inbound"
-        or settings.chatwoot_cut_b_scope_version != 2
+        settings.chatwoot_account_id
+        != settings.commercial_ally_config.chatwoot_account_id
+        or settings.chatwoot_inbox_id
+        != settings.commercial_ally_config.chatwoot_inbox_id
+        or settings.chatwoot_cut_b_scope_key
+        != settings.commercial_ally_config.inbound_scope_key
+        or settings.chatwoot_cut_b_scope_version
+        != settings.commercial_ally_config.inbound_scope_version
     ):
         raise ValueError(
-            "CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED requires the exact Johanna "
+            "CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED must match commercial ally "
             "inbound scope"
         )
     if settings.chatwoot_scoped_inbound_senders_enabled and not all((
@@ -1101,8 +1253,12 @@ def create_app(
         settings.lead_precheckout_site,
         settings.lead_precheckout_landing_id,
         settings.lead_precheckout_offer_code,
-    ) != ("psicologajohanna", "ads-a", "bxjge6zq"):
-        raise ValueError("lead precheckout scope is fixed for the initial pilot")
+    ) != (
+        settings.commercial_ally_config.lead_site,
+        settings.commercial_ally_config.lead_landing_id,
+        settings.commercial_ally_config.offer_code,
+    ):
+        raise ValueError("lead precheckout scope must match commercial ally config")
     pilot_fields = (
         (settings.pilot_scope_key, "LANCEMOS_PILOT_SCOPE_KEY"),
         (settings.pilot_scope_version, "LANCEMOS_PILOT_SCOPE_VERSION"),
@@ -1134,6 +1290,14 @@ def create_app(
         for value, name in template_fields:
             if value is None or not value.strip():
                 raise ValueError(f"{name} is required for WABA outbound")
+        if (
+            settings.portable_hotmart_payment_failure_enabled
+            and not settings.waba_payment_failure_template_name
+        ):
+            raise ValueError(
+                "WABA_PAYMENT_FAILURE_TEMPLATE_NAME is required for portable "
+                "payment failure"
+            )
         if settings.waba_template_category not in {"MARKETING", "UTILITY"}:
             raise ValueError("WABA_TEMPLATE_CATEGORY must be MARKETING or UTILITY")
         waba_template = WhatsAppTemplateConfig(
@@ -1142,6 +1306,7 @@ def create_app(
             language=settings.waba_template_language,  # type: ignore[arg-type]
             category=settings.waba_template_category,  # type: ignore[arg-type]
             first_touch_parameter="buyer_name_and_product",
+            payment_failure_name=settings.waba_payment_failure_template_name,
         )
     pilot_boundary = (
         PilotBoundaryConfig(
@@ -1588,7 +1753,21 @@ def create_app(
                 "FOLLOWUP_POLICY_KEY and FOLLOWUP_POLICY_VERSION are required "
                 "when RESOLUTION_WORKER_ENABLED=true"
             )
-        if settings.allowed_jid is None:
+        if portable_dynamic_recipient and (
+            settings.pilot_tenant_key
+            != settings.commercial_ally_config.tenant_ref
+            or settings.pilot_channel_provider != "waba"
+            or settings.chatwoot_account_id
+            != settings.commercial_ally_config.chatwoot_account_id
+            or settings.chatwoot_inbox_id
+            != settings.commercial_ally_config.chatwoot_inbox_id
+            or settings.pilot_channel_account_ref
+            != f"chatwoot-inbox:{settings.commercial_ally_config.chatwoot_inbox_id}"
+        ):
+            raise ValueError(
+                "portable resolution worker requires exact ally pilot and Chatwoot scope"
+            )
+        if settings.allowed_jid is None and not portable_dynamic_recipient:
             raise ValueError(
                 "ALLOWED_WHATSAPP_JID is required when "
                 "RESOLUTION_WORKER_ENABLED=true"
@@ -1634,6 +1813,7 @@ def create_app(
                 chatwoot=control_client,
                 inbox_id=settings.chatwoot_inbox_id,
                 allowed_jid=settings.allowed_jid,
+                dynamic_recipient_enabled=portable_dynamic_recipient,
                 template=waba_template,
             )
         resolution_worker = ResolutionWorker(
@@ -1648,7 +1828,15 @@ def create_app(
             policy_key=settings.followup_policy_key,
             policy_version=settings.followup_policy_version,
             purchase_worker_enabled=settings.hotmart_purchase_worker_enabled,
+            payment_failure_enabled=(
+                settings.portable_hotmart_payment_failure_enabled
+            ),
             pilot_boundary=pilot_boundary,
+            commercial_ally_config=(
+                settings.commercial_ally_config
+                if portable_dynamic_recipient
+                else None
+            ),
         )
 
     if settings.dispatcher_enabled:
@@ -1697,13 +1885,17 @@ def create_app(
                 outbound_sender is None
                 and settings.pilot_channel_provider in {"evolution", "waba"}
                 and settings.chatwoot_inbox_id is not None
-                and settings.allowed_jid is not None
+                and (
+                    settings.allowed_jid is not None
+                    or portable_dynamic_recipient
+                )
                 and isinstance(control_client, ChatwootClient)
             ):
                 outbound_sender = ChatwootMessageSender(
                     chatwoot=control_client,
                     inbox_id=settings.chatwoot_inbox_id,
                     allowed_jid=settings.allowed_jid,
+                    dynamic_recipient_enabled=portable_dynamic_recipient,
                     template=waba_template,
                 )
             if outbound_agent is None or outbound_sender is None:
@@ -1724,7 +1916,14 @@ def create_app(
                 if settings.dispatcher_outbound_enabled
                 else None
             ),
+            commercial_ally_config=(
+                settings.commercial_ally_config
+                if portable_dynamic_recipient
+                else None
+            ),
+            portable_recipient_enabled=portable_dynamic_recipient,
             pilot_boundary=pilot_boundary,
+            chatwoot_inbox_id=settings.chatwoot_inbox_id,
             human_handoff_admission_enabled=(
                 settings.human_handoff_admission_enabled
             ),
@@ -1732,6 +1931,16 @@ def create_app(
             handoff_projection_policy_version=(
                 settings.handoff_projection_policy_version
             ),
+            final_meta_effect_gate=(
+                FinalMetaEffectGate(
+                    enabled=settings.meta_final_effect_enabled,
+                    evidence_dir=settings.meta_final_effect_evidence_dir,
+                )
+                if settings.dispatcher_outbound_enabled
+                and settings.pilot_channel_provider == "waba"
+                else None
+            ),
+            waba_template=waba_template,
         )
 
     opt_out_projection_worker: OptOutProjectionWorker | None = None
@@ -2662,6 +2871,29 @@ def create_app(
 
     @app.get("/ready")
     async def readiness() -> dict[str, str]:
+        commercial_ally_readiness: dict[str, str] = {}
+        if portable_runtime:
+            if shared_supabase is None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="commercial_ally_binding_unavailable",
+                )
+            try:
+                await shared_supabase.resolve_commercial_ally_runtime_binding(
+                    settings.commercial_ally_config
+                )
+            except Exception as exc:
+                logger.warning(
+                    "commercial_ally_binding_check_failed error_type=%s",
+                    type(exc).__name__,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="commercial_ally_binding_unavailable",
+                ) from exc
+            commercial_ally_readiness = {
+                "commercial_ally_binding": "active",
+            }
         precheckout_readiness: dict[str, str] = {
             "precheckout_delayed_first_touch": "disabled",
         }
@@ -2753,6 +2985,7 @@ def create_app(
                 "pilot_boundary": "disabled",
                 "automation_state": "default_off",
                 "reason_code": "pilot_boundary_disabled",
+                **commercial_ally_readiness,
                 **precheckout_readiness,
                 **handoff_readiness,
             }
@@ -2784,6 +3017,7 @@ def create_app(
             "pilot_boundary": "configured",
             "automation_state": pilot_status.runtime_state,
             "reason_code": pilot_status.reason_code,
+            **commercial_ally_readiness,
             **precheckout_readiness,
             **handoff_readiness,
         }
@@ -2966,7 +3200,10 @@ def create_app(
             payload = json.loads(raw_body)
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise HTTPException(status_code=400, detail="invalid_json") from exc
-        submission = parse_lead_precheckout(payload)
+        submission = parse_lead_precheckout(
+            payload,
+            config=settings.commercial_ally_config,
+        )
         if submission is None:
             raise HTTPException(status_code=400, detail="invalid_lead_precheckout_payload")
         if (
@@ -2988,10 +3225,19 @@ def create_app(
             raise HTTPException(status_code=503, detail="supabase_not_configured")
         assert isinstance(payload, dict)
         try:
-            admission = await shared_supabase.admit_observed_lead_precheckout(
-                external_submission_id=submission.external_submission_id,
-                raw_payload=payload,
-                canonical_payload=submission.as_canonical_payload(),
+            admission = (
+                await shared_supabase.admit_portable_observed_lead_precheckout(
+                    config=settings.commercial_ally_config,
+                    external_submission_id=submission.external_submission_id,
+                    raw_payload=payload,
+                    canonical_payload=submission.as_canonical_payload(),
+                )
+                if explicit_manifest_runtime
+                else await shared_supabase.admit_observed_lead_precheckout(
+                    external_submission_id=submission.external_submission_id,
+                    raw_payload=payload,
+                    canonical_payload=submission.as_canonical_payload(),
+                )
             )
         except SupabaseError as exc:
             raise HTTPException(
@@ -3735,6 +3981,27 @@ def create_app(
                 "reason": decision.reason,
             }
 
+        if (
+            settings.portable_hotmart_purchase_stop_enabled
+            or settings.portable_hotmart_recovery_enabled
+            or settings.portable_hotmart_payment_failure_enabled
+        ) and (
+            decision.event_type != EVENT_PURCHASE_APPROVED
+            and not (
+                settings.portable_hotmart_recovery_enabled
+                and decision.event_type == EVENT_CART_ABANDONMENT
+            )
+            and not (
+                settings.portable_hotmart_payment_failure_enabled
+                and decision.event_type == EVENT_PURCHASE_CANCELED
+            )
+        ):
+            response.status_code = status.HTTP_200_OK
+            return {
+                "status": "ignored",
+                "reason": "portable_purchase_stop_event_ignored",
+            }
+
         event_id = decision.event_id
         assert event_id is not None  # classify guarantees this when accepted
         event_type = decision.event_type
@@ -3758,18 +4025,43 @@ def create_app(
             )
         try:
             if event_type == EVENT_PURCHASE_CANCELED:
-                if not settings.johanna_payment_failure_hotmart_enabled:
+                if not (
+                    settings.johanna_payment_failure_hotmart_enabled
+                    or settings.portable_hotmart_payment_failure_enabled
+                ):
                     response.status_code = status.HTTP_200_OK
                     return {
                         "status": "ignored",
                         "reason": "payment_failure_disabled",
                     }
-                parsed_failure = parse_hotmart_payment_failure_payload(payload)
+                parsed_failure = parse_hotmart_payment_failure_payload(
+                    payload,
+                    config=settings.commercial_ally_config,
+                )
                 if parsed_failure is None:
                     raise HTTPException(
                         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                         detail="invalid_payment_failure_payload",
                     )
+                if settings.portable_hotmart_payment_failure_enabled:
+                    portable_failure_admission = (
+                        await shared_supabase.admit_portable_hotmart_payment_failure(
+                            config=settings.commercial_ally_config,
+                            external_event_id=event_id,
+                            payload=payload,
+                            normalized_email=parsed_failure.buyer_email,
+                            normalized_phone=parsed_failure.buyer_phone,
+                        )
+                    )
+                    if portable_failure_admission.outcome == "semantic_conflict":
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail="payment_failure_semantic_conflict",
+                        )
+                    if portable_failure_admission.outcome == "duplicate":
+                        response.status_code = status.HTTP_200_OK
+                        return {"status": "duplicate", "event_id": event_id}
+                    return {"status": "received", "event_id": event_id}
                 failure_admission = await shared_supabase.admit_johanna_payment_failure(
                     external_event_id=event_id,
                     payload=payload,
@@ -3859,7 +4151,14 @@ def create_app(
                     "correlation_outcome": failure_admission.correlation_outcome,
                 }
             if event_type == EVENT_PURCHASE_APPROVED:
-                parsed_purchase = parse_hotmart_purchase_payload(payload)
+                parsed_purchase = parse_hotmart_purchase_payload(
+                    payload,
+                    config=(
+                        settings.commercial_ally_config
+                        if settings.portable_hotmart_purchase_stop_enabled
+                        else None
+                    ),
+                )
                 if parsed_purchase is None:
                     response.status_code = status.HTTP_200_OK
                     return {
@@ -3867,7 +4166,15 @@ def create_app(
                         "reason": "invalid_purchase_payload",
                     }
                 purchase_admission = (
-                    await shared_supabase.admit_and_correlate_hotmart_purchase_approved(
+                    await shared_supabase.admit_portable_hotmart_purchase_approved(
+                        config=settings.commercial_ally_config,
+                        external_event_id=event_id,
+                        payload=payload,
+                        normalized_email=parsed_purchase.buyer_email,
+                        normalized_phone=parsed_purchase.buyer_phone,
+                    )
+                    if settings.portable_hotmart_purchase_stop_enabled
+                    else await shared_supabase.admit_and_correlate_hotmart_purchase_approved(
                         external_event_id=event_id,
                         payload=payload,
                         normalized_email=parsed_purchase.buyer_email,
@@ -3890,7 +4197,14 @@ def create_app(
                     "status": "received",
                     "event_id": event_id,
                 }
-            parsed_abandonment = parse_hotmart_payload(payload)
+            parsed_abandonment = parse_hotmart_payload(
+                payload,
+                config=(
+                    settings.commercial_ally_config
+                    if settings.portable_hotmart_recovery_enabled
+                    else None
+                ),
+            )
             if parsed_abandonment is None:
                 response.status_code = status.HTTP_200_OK
                 return {
@@ -3898,7 +4212,15 @@ def create_app(
                     "reason": "invalid_cart_abandonment_payload",
                 }
             abandonment_admission = (
-                await shared_supabase.admit_and_correlate_hotmart_cart_abandonment(
+                await shared_supabase.admit_portable_hotmart_cart_abandonment(
+                    config=settings.commercial_ally_config,
+                    external_event_id=event_id,
+                    payload=payload,
+                    normalized_email=parsed_abandonment.buyer_email,
+                    normalized_phone=parsed_abandonment.buyer_phone,
+                )
+                if settings.portable_hotmart_recovery_enabled
+                else await shared_supabase.admit_and_correlate_hotmart_cart_abandonment(
                     external_event_id=event_id,
                     payload=payload,
                     normalized_email=parsed_abandonment.buyer_email,

@@ -6,6 +6,7 @@ import asyncio
 import copy
 import json
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -398,7 +399,9 @@ def test_waba_outbound_requires_approved_template_configuration(
         )
 
 
-def test_dispatcher_outbound_injects_agent_sender_and_allowlist() -> None:
+def test_dispatcher_outbound_injects_agent_sender_allowlist_and_final_meta_gate(
+    tmp_path: Path,
+) -> None:
     agent = object()
     sender = object()
     app = create_app(
@@ -414,6 +417,8 @@ def test_dispatcher_outbound_injects_agent_sender_and_allowlist() -> None:
             chatwoot_control_api_access_token="control-token",
             chatwoot_pause_macro_id=1,
             messaging_channel="waba",
+            meta_final_effect_enabled=False,
+            meta_final_effect_evidence_dir=tmp_path / "meta-effects",
             **_pilot_boundary_settings(),
         ),
         recovery_agent_client=agent,  # type: ignore[arg-type]
@@ -423,8 +428,17 @@ def test_dispatcher_outbound_injects_agent_sender_and_allowlist() -> None:
     assert dispatcher._recovery_agent is agent
     assert dispatcher._sender is sender
     assert dispatcher._allowed_jid == "15555550100@s.whatsapp.net"
+    assert dispatcher._commercial_ally_config is None
+    assert dispatcher._portable_recipient_enabled is False
     assert dispatcher._pilot_boundary is not None
     assert dispatcher._pilot_boundary.scope_key == "lancemos-cart-recovery"
+    assert dispatcher._final_meta_effect_gate is not None
+    assert dispatcher._final_meta_effect_gate._enabled is False
+    assert dispatcher._final_meta_effect_gate._evidence_dir == (
+        tmp_path / "meta-effects"
+    )
+    assert dispatcher._waba_template is not None
+    assert dispatcher._waba_template.first_touch_name == "cart_recovery_first"
 
 
 def test_dispatcher_outbound_builds_chatwoot_sender_for_waba_scope() -> None:
@@ -1153,7 +1167,7 @@ def test_persists_valid_event_to_supabase(tmp_path) -> None:
         status_code=200,
         response_body=[{
             "outcome": "inserted",
-            "webhook_event_id": "inserted-event",
+            "webhook_event_id": "11111111-1111-4111-8111-111111111111",
         }],
     )
     # Patch SupabaseClient to use our mock transport
@@ -1187,7 +1201,7 @@ def test_persists_valid_event_to_supabase(tmp_path) -> None:
     assert len(transport.requests) == 1
     req = transport.requests[0]
     assert req.url.path == (
-        "/rest/v1/rpc/admit_and_correlate_hotmart_cart_abandonment"
+        "/rest/v1/rpc/admit_johanna_hotmart_cart_abandonment"
     )
     body = json.loads(req.content)
     assert body["p_external_event_id"] == "0d7aa966-b887-4617-8c56-9e865bfc8ce4"
@@ -1201,7 +1215,7 @@ def test_returns_duplicate_for_already_stored_event(tmp_path) -> None:
         status_code=200,
         response_body=[{
             "outcome": "duplicate",
-            "webhook_event_id": "existing-event",
+            "webhook_event_id": "22222222-2222-4222-8222-222222222222",
         }],
     )
     import bridge.supabase as supabase_mod
@@ -1240,7 +1254,7 @@ def test_cart_abandonment_semantic_conflict_is_not_reported_as_duplicate(
         status_code=200,
         response_body=[{
             "outcome": "semantic_conflict",
-            "webhook_event_id": "existing-event",
+            "webhook_event_id": "22222222-2222-4222-8222-222222222222",
         }],
     )
     import bridge.supabase as supabase_mod

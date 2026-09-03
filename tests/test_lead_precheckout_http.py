@@ -29,6 +29,21 @@ class _FakeSupabase:
         )
 
 
+class _PortableFakeSupabase:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def admit_portable_observed_lead_precheckout(
+        self, **kwargs: object
+    ) -> object:
+        self.calls.append(kwargs)
+        return SimpleNamespace(
+            outcome="inserted",
+            submission_id="bfc778e7-5c9f-45e6-a910-651f92312157",
+            purchase_intent_id="1f581f3a-c469-45da-8208-9483d1b26f0b",
+        )
+
+
 def _settings(**overrides: object) -> Settings:
     defaults: dict[str, object] = {
         "webhook_secret": "unused",
@@ -160,6 +175,20 @@ def test_signed_scoped_event_is_durably_admitted_without_outbound_authority() ->
     assert len(supabase.calls) == 1
 
 
+def test_explicit_manifest_lead_uses_portable_rpc_with_server_binding() -> None:
+    supabase = _PortableFakeSupabase()
+    app = create_app(
+        _settings(commercial_ally_manifest_path="/runtime/commercial-ally.json"),
+        supabase_client=supabase,  # type: ignore[arg-type]
+    )
+
+    response = _post(app, _payload())
+
+    assert response.status_code == 200
+    assert len(supabase.calls) == 1
+    assert supabase.calls[0]["config"] == _settings().commercial_ally_config
+
+
 def test_v1_1_signed_consent_reaches_canonical_admission_but_response_stays_closed() -> None:
     supabase = _FakeSupabase()
     app = create_app(_settings(), supabase_client=supabase)  # type: ignore[arg-type]
@@ -249,7 +278,7 @@ def test_delivery_and_event_headers_must_match_signed_body() -> None:
         assert supabase.calls == []
 
 
-def test_unscoped_offer_is_rejected_before_persistence() -> None:
+def test_unscoped_offer_is_rejected_as_invalid_before_persistence() -> None:
     payload = _payload()
     payload["source"]["landing_id"] = "org-b"  # type: ignore[index]
     payload["source"]["page_url"] = "https://psicologajohanna.com/ldla/evg/vsl/org-b"  # type: ignore[index]
@@ -261,8 +290,8 @@ def test_unscoped_offer_is_rejected_before_persistence() -> None:
 
     response = _post(app, payload)
 
-    assert response.status_code == 403
-    assert response.json()["detail"] == "lead_precheckout_outside_scope"
+    assert response.status_code == 400
+    assert response.json()["detail"] == "invalid_lead_precheckout_payload"
     assert supabase.calls == []
 
 
@@ -296,7 +325,7 @@ def test_enabled_receiver_without_secret_fails_at_startup() -> None:
 
 
 def test_enabled_receiver_rejects_scope_expansion_at_startup() -> None:
-    with pytest.raises(ValueError, match="scope is fixed"):
+    with pytest.raises(ValueError, match="scope must match commercial ally config"):
         create_app(
             _settings(
                 lead_precheckout_landing_id="org-b",

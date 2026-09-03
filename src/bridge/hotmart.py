@@ -14,14 +14,16 @@ import time
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from .commercial_ally import CommercialAllyConfig, JOHANNA_COMMERCIAL_ALLY
+
 # ── Event constants (v2.0.0) ─────────────────────────────────────────
 
 EVENT_CART_ABANDONMENT = "PURCHASE_OUT_OF_SHOPPING_CART"
 EVENT_PURCHASE_APPROVED = "PURCHASE_APPROVED"
 EVENT_PURCHASE_CANCELED = "PURCHASE_CANCELED"
 EVENT_VERSION = "2.0.0"
-JOHANNA_HOTMART_PRODUCT_ID = 8104005
-JOHANNA_HOTMART_OFFER_CODE = "bxjge6zq"
+JOHANNA_HOTMART_PRODUCT_ID = JOHANNA_COMMERCIAL_ALLY.hotmart_product_id
+JOHANNA_HOTMART_OFFER_CODE = JOHANNA_COMMERCIAL_ALLY.offer_code
 SUPPORTED_EVENT_TYPES = frozenset({
     EVENT_CART_ABANDONMENT,
     EVENT_PURCHASE_APPROVED,
@@ -139,7 +141,11 @@ def _bool(value: Any) -> bool | None:
     return value
 
 
-def parse_hotmart_payload(payload: object) -> HotmartBuyerData | None:
+def parse_hotmart_payload(
+    payload: object,
+    *,
+    config: CommercialAllyConfig | None = None,
+) -> HotmartBuyerData | None:
     """Extract normalised buyer data from a Hotmart v2.0.0 payload.
 
     Returns ``None`` if the payload is structurally invalid.
@@ -171,6 +177,13 @@ def parse_hotmart_payload(payload: object) -> HotmartBuyerData | None:
         or product_id < 1
         or product_name is None
         or offer_code is None
+        or (
+            config is not None
+            and (
+                product_id != config.hotmart_product_id
+                or offer_code != config.offer_code
+            )
+        )
     ):
         return None
 
@@ -190,7 +203,11 @@ def parse_hotmart_payload(payload: object) -> HotmartBuyerData | None:
     )
 
 
-def parse_hotmart_purchase_payload(payload: object) -> HotmartPurchaseData | None:
+def parse_hotmart_purchase_payload(
+    payload: object,
+    *,
+    config: CommercialAllyConfig | None = None,
+) -> HotmartPurchaseData | None:
     """Extract the fail-closed correlation fields from PURCHASE_APPROVED v2."""
     event = _json_object(payload)
     data = _json_object(event.get("data"))
@@ -219,6 +236,13 @@ def parse_hotmart_purchase_payload(payload: object) -> HotmartPurchaseData | Non
         or _TRANSACTION_REFERENCE.fullmatch(transaction) is None
         or product_id is None
         or (buyer_email is None and buyer_phone is None)
+        or (
+            config is not None
+            and (
+                product_id != config.hotmart_product_id
+                or _str(offer.get("code")) != config.offer_code
+            )
+        )
     ):
         return None
 
@@ -236,6 +260,8 @@ def parse_hotmart_purchase_payload(payload: object) -> HotmartPurchaseData | Non
 
 def parse_hotmart_payment_failure_payload(
     payload: object,
+    *,
+    config: CommercialAllyConfig = JOHANNA_COMMERCIAL_ALLY,
 ) -> HotmartPaymentFailureData | None:
     """Parse a scoped Hotmart purchase canceled by the provider."""
     event = _json_object(payload)
@@ -266,11 +292,12 @@ def parse_hotmart_payment_failure_payload(
         or _TRANSACTION_REFERENCE.fullmatch(transaction) is None
         or purchase.get("status") != "CANCELED"
         or (buyer_email is None and buyer_phone is None)
-        or product_id != JOHANNA_HOTMART_PRODUCT_ID
-        or offer_code != JOHANNA_HOTMART_OFFER_CODE
+        or product_id != config.hotmart_product_id
+        or offer_code != config.offer_code
     ):
         return None
 
+    assert product_id is not None and offer_code is not None
     return HotmartPaymentFailureData(
         event_id=event_id,
         creation_date_ms=creation_date,
@@ -282,6 +309,39 @@ def parse_hotmart_payment_failure_payload(
         product_id=product_id,
         product_ucode=_str(product.get("ucode")),
         offer_code=offer_code,
+    )
+
+
+def parse_hotmart_payment_failure_buyer_payload(
+    payload: object,
+    *,
+    config: CommercialAllyConfig,
+) -> HotmartBuyerData | None:
+    """Return the portable buyer projection for one scoped payment failure."""
+    failure = parse_hotmart_payment_failure_payload(payload, config=config)
+    if failure is None:
+        return None
+    event = _json_object(payload)
+    data = _json_object(event.get("data"))
+    buyer = _json_object(data.get("buyer"))
+    product = _json_object(data.get("product"))
+    country = _json_object(data.get("checkout_country"))
+    product_name = _str(product.get("name"))
+    if product_name != config.product_name:
+        return None
+    return HotmartBuyerData(
+        event_id=failure.event_id,
+        event_type=EVENT_PURCHASE_CANCELED,
+        creation_date_ms=failure.creation_date_ms,
+        buyer_name=_str(buyer.get("name")),
+        buyer_email=failure.buyer_email,
+        buyer_phone=failure.buyer_phone,
+        product_id=failure.product_id,
+        product_name=product_name,
+        offer_code=failure.offer_code,
+        checkout_country_iso=_str(country.get("iso")),
+        checkout_country_name=_str(country.get("name")),
+        affiliate=_bool(data.get("affiliate")),
     )
 
 

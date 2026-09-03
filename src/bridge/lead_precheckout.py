@@ -11,6 +11,8 @@ from urllib.parse import parse_qs, urlparse
 
 import phonenumbers
 
+from .commercial_ally import CommercialAllyConfig, JOHANNA_COMMERCIAL_ALLY
+
 _EVENT_KEYS = {"id", "event", "version", "created_at", "source", "data", "dedupe_key"}
 _SOURCE_KEYS = {"system", "site", "aliado", "landing_id", "page_url"}
 _DATA_KEYS = {
@@ -40,26 +42,17 @@ _CONSENT_KEYS_V1 = {"marketing_optin", "notice"}
 _CONSENT_KEYS_V1_1 = {"marketing_optin", "whatsapp_contact", "copy_version"}
 _SUPPORTED_VERSIONS = {"1.0.0", "1.1.0"}
 _V1_COPY_VERSION = "lead-precheckout-v1-no-explicit-optin"
-_V1_1_COPY_VERSION = "johanna-precheckout-whatsapp-disclosure-v1"
 _ASCII_TRIM_CHARS = " \t\n\r\f\v"
 _ULID = re.compile(r"[0-9A-HJKMNP-TV-Z]{26}")
 _EMAIL = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+")
 _E164_SHAPE = re.compile(r"\+[1-9][0-9]{1,14}")
-_LANDING_OFFERS = {
-    "ads-a": "bxjge6zq",
-    "ads-b": "mgbgpp19",
-    "ads-c": "s1qfxm7m",
-    "org-a": "jtt6fcsm",
-    "org-b": "ecyu87q0",
-    "org-c": "ulhzpw9a",
-}
-
-
 @dataclass(frozen=True)
 class LeadPrecheckoutSubmission:
     external_submission_id: str
     contract_version: str
     submitted_at: datetime
+    tenant_ref: str
+    funnel_ref: str
     site: str
     aliado: str
     landing_id: str
@@ -98,8 +91,8 @@ class LeadPrecheckoutSubmission:
             "external_submission_id": self.external_submission_id,
             "submitted_at": self.submitted_at.isoformat().replace("+00:00", "Z"),
             "source": {
-                "tenant_ref": "lancemos",
-                "funnel_ref": self.site,
+                "tenant_ref": self.tenant_ref,
+                "funnel_ref": self.funnel_ref,
                 "landing_ref": self.landing_id,
                 "page_url": self.page_url,
                 "aliado": self.aliado,
@@ -189,7 +182,11 @@ def _valid_phone(
     return phone[1:]
 
 
-def parse_lead_precheckout(payload: object) -> LeadPrecheckoutSubmission | None:
+def parse_lead_precheckout(
+    payload: object,
+    *,
+    config: CommercialAllyConfig = JOHANNA_COMMERCIAL_ALLY,
+) -> LeadPrecheckoutSubmission | None:
     event = _object(payload, _EVENT_KEYS)
     if event is None:
         return None
@@ -275,24 +272,25 @@ def parse_lead_precheckout(payload: object) -> LeadPrecheckoutSubmission | None:
         or event.get("event") != "lead.precheckout"
         or contract_version not in _SUPPORTED_VERSIONS
         or source.get("system") != "landing"
-        or site != "psicologajohanna"
-        or landing_id not in _LANDING_OFFERS
-        or _LANDING_OFFERS[landing_id] != offer_code
+        or site != config.lead_site
+        or aliado != config.lead_ally_name
+        or landing_id != config.lead_landing_id
+        or offer_code != config.offer_code
         or page.scheme != "https"
-        or page.netloc != "psicologajohanna.com"
-        or page.path != f"/ldla/evg/vsl/{landing_id}"
+        or page.netloc != config.lead_page_host
+        or page.path != config.lead_page_path
         or bool(page.query)
         or bool(page.fragment)
         or _EMAIL.fullmatch(email) is None
-        or product.get("hotlink") != "F106691755G"
+        or product.get("hotlink") != config.product_hotlink
         or product.get("id") is not None
-        or product.get("name") != "Liberate De La Ansiedad"
+        or product.get("name") != config.product_name
         or not price.is_finite()
-        or price != Decimal("49")
-        or product.get("currency") != "USD"
+        or price != config.product_price
+        or product.get("currency") != config.currency
         or checkout.scheme != "https"
         or checkout.netloc != "pay.hotmart.com"
-        or checkout.path != "/F106691755G"
+        or checkout.path != f"/{config.product_hotlink}"
         or bool(checkout.fragment)
         or checkout_query.get("off") != [offer_code]
         or country_iso != country_iso.upper()
@@ -307,7 +305,7 @@ def parse_lead_precheckout(payload: object) -> LeadPrecheckoutSubmission | None:
             and (
                 consent.get("marketing_optin") is not True
                 or consent.get("whatsapp_contact") is not True
-                or consent.get("copy_version") != _V1_1_COPY_VERSION
+                or consent.get("copy_version") != config.consent_copy_version
             )
         )
         or (
@@ -328,6 +326,8 @@ def parse_lead_precheckout(payload: object) -> LeadPrecheckoutSubmission | None:
         external_submission_id=delivery_id,
         contract_version=contract_version,
         submitted_at=submitted_at,  # type: ignore[arg-type]
+        tenant_ref=config.tenant_ref,
+        funnel_ref=config.funnel_ref,
         site=site,
         aliado=aliado,  # type: ignore[arg-type]
         landing_id=landing_id,
@@ -337,16 +337,16 @@ def parse_lead_precheckout(payload: object) -> LeadPrecheckoutSubmission | None:
         normalized_phone=normalized_phone,
         phone_valid=normalized_phone is not None,
         phone_country_iso=country_iso,
-        product_hotlink="F106691755G",
-        product_name="Liberate De La Ansiedad",
-        product_price=Decimal("49"),
-        currency="USD",
+        product_hotlink=config.product_hotlink,
+        product_name=config.product_name,
+        product_price=config.product_price,
+        currency=config.currency,
         offer_code=offer_code,
         checkout_url=checkout_url,
         dedupe_key=dedupe_key,
         marketing_optin=contract_version == "1.1.0",
         consent_copy_version=(
-            _V1_1_COPY_VERSION
+            config.consent_copy_version
             if contract_version == "1.1.0"
             else _V1_COPY_VERSION
         ),

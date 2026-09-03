@@ -620,6 +620,56 @@ def test_mark_request_started_with_pilot_uses_atomic_authorization_rpc() -> None
     }
 
 
+def test_payment_failure_request_start_uses_trigger_specific_atomic_rpc() -> None:
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=[{
+            "id": "attempt-payment-001",
+            "action_id": "action-payment-001",
+            "idempotency_key": "payment_failure:first_contact:case-001",
+            "attempt_number": 1,
+            "channel": "whatsapp",
+            "mode": "approved_template",
+            "phase": "request_started",
+            "lease_generation": 2,
+            "expected_case_version": 3,
+            "expected_sequence_revision": 4,
+            "pilot_authorization_id": "authorization-payment-001",
+            "pilot_runtime_generation": 9,
+            "pilot_authorization_replayed": False,
+        }], request=request)
+
+    client = SupabaseClient(
+        base_url="https://fake.supabase.co",
+        service_role_key="fake-service-role-key",
+        transport=httpx.MockTransport(handler),
+    )
+    pilot = PilotBoundaryConfig(
+        scope_key="att1-payment-failure",
+        scope_version=1,
+        tenant_key="att1",
+        channel_provider="waba",
+        channel_account_ref="123456",
+    )
+
+    attempt = asyncio.run(client.mark_followup_request_started(
+        action_id="action-payment-001",
+        attempt_id="attempt-payment-001",
+        worker_id="dispatcher-1",
+        lease_generation=2,
+        now="2026-09-03T13:00:01+00:00",
+        pilot_boundary=pilot,
+        anchor_type="payment_failure",
+    ))
+
+    assert attempt.phase == "request_started"
+    assert requests[0].url.path == (
+        "/rest/v1/rpc/mark_portable_payment_failure_request_started"
+    )
+
+
 def test_mark_followup_request_started_rejects_mismatched_attempt() -> None:
     client = _client([{
         "id": "different-attempt",

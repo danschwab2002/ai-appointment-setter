@@ -328,6 +328,25 @@ de la landing. El endpoint `POST /webhooks/lead` verifica HMAC-SHA256
 sobre el body crudo, valida el contrato exacto `1.0.0`, freshness, headers y scope antes
 de llamar a la RPC separada `admit_observed_lead_precheckout`.
 
+El árbol local agrega una admisión portable sólo para runtimes cuya procedencia
+es un manifiesto explícito. `POST /webhooks/lead` llama entonces a
+`admit_portable_observed_lead_precheckout` con tenant, funnel y versión tomados
+del manifiesto server-side. La transacción bloquea la fila activa exacta de
+`commercial_ally_runtime_bindings`, compara el scope comercial canónico completo
+y persiste únicamente submission, intent y link con replay/conflict idempotentes.
+No agenda el timer precheckout legado ni crea scheduled actions, commands,
+messages o delivery attempts. Sin manifiesto, la ruta y RPC legadas permanecen
+sin cambios. Todos los demás flags y `HOTMART_HOTTOK` siguen cerrados para el
+runtime portable.
+
+El árbol local también agrega admisión portable de salida de carrito, todavía
+sin deploy. La RPC binding-aware valida binding y scope antes de escribir y no
+agenda timers ni efectos. La tabla
+`commercial_ally_hotmart_event_bindings` fija procedencia inmutable por evento
+(tenant, funnel, versión, producto y oferta); un replay bajo otro binding o scope
+falla cerrado antes de reutilizar una correlación existente. Los roles API y
+`service_role` no poseen DML directo sobre ese ledger.
+
 El corte inicial sólo admite `psicologajohanna / ads-a / bxjge6zq`. Persiste intención
 con `provider_observed=true`, pero conserva `activation_authorized=false` y
 `whatsapp_contact_authorized=false` porque el formulario declara
@@ -646,6 +665,56 @@ Los cortes relevantes se registran en
 y [E2E Cloud del 2026-08-20](operations/2026-08-20-hotmart-intent-correlation-cloud-e2e.md),
 seguido por el
 [postflight contract del 2026-08-20](operations/2026-08-20-hotmart-intent-contract-postflight.md).
+
+## Runtime portable por aliada comercial
+
+El árbol local incorpora una frontera de configuración para instalaciones
+single-tenant aisladas. Un manifiesto JSON no secreto y versionado declara la
+identidad operativa, producto, oferta y scope Chatwoot de una aliada. Supabase
+conserva el binding durable equivalente en
+`commercial_ally_runtime_bindings`; `/ready` sólo acepta una coincidencia exacta
+con una versión `active`.
+
+La activación del binding no autoriza automatización. Para cualquier manifiesto
+suministrado —incluso si copia valores legacy—, el bridge conserva esa procedencia
+y valida tipos estrictos. Permite únicamente las cadenas portadas de admisión de lead, stop por
+`PURCHASE_APPROVED`, recuperación de carrito y recuperación de pago fallido hasta
+el dispatcher; cada una conserva flags default-off y scope exacto. Pago fallido
+entra por `PURCHASE_CANCELED`, se correlaciona y planifica con RPCs propias, y
+conserva `payment_failure` como event role, trigger y anchor para no confundirse
+con abandono confirmado. El evento no crea una autorización de contacto; la
+recuperación exige una autorización explícita y vigente. La recuperación usa sender dinámico sólo con manifiesto
+explícito y termina en el gate Meta default-off, que registra evidencia sanitizada
+sin marcar `request_started` ni iniciar la solicitud externa. Las demás cadenas
+ligadas a Johanna se rechazan.
+
+El stop de compra acepta `HOTMART_HOTTOK` únicamente con
+`PORTABLE_HOTMART_PURCHASE_STOP_ENABLED=true`. Revalida producto/oferta contra el
+binding activo y exige una política temporal durable, explícita, sin seed y
+default-off. Correlaciona sólo dentro del binding; una coincidencia exacta marca
+el intent comprado y cancela una reevaluación existente en la misma transacción.
+Unmatched, ambiguous y conflict quedan append-only y sin efectos. No hay worker,
+scheduler, command, message, delivery ni outbound en este corte; las RPCs legacy
+no cambian.
+
+La política de descuento portable vive en
+`commercial_ally_discount_policy_versions`, ligada a la versión exacta del
+binding. El runtime carece de DML y lectura directa: sólo resuelve una versión
+`published`, vigente y exacta mediante una RPC fail-closed. La tabla nace vacía,
+las versiones aprobadas son inmutables y una publicación no crea ni modifica
+timers, acciones, mensajes, cadencia, stops, budgets o efectos.
+
+Las migraciones portables, incluida
+`20260903000300_commercial_ally_payment_failure_recovery.sql`, crean el contrato
+sin sembrar clientes, políticas temporales, políticas de descuento ni secretos.
+Esta implementación tiene pruebas SQL agregadas y evidencia HTTP local; permanece
+default-off y no acredita DDL aplicado a Supabase Cloud, credenciales, despliegue
+ni contacto real. La evidencia del corte de pago fallido está en
+[E2E local de pago fallido ATT1](operations/2026-09-03-att1-payment-failure-production-like-e2e.md).
+El diseño está en
+[Runtime portable single-tenant V1](design/portable-single-tenant-runtime-v1.md)
+y el contrato en
+[Runtime de aliada comercial V1](contracts/commercial-ally-runtime-v1.md).
 
 ## Decisiones arquitectónicas
 

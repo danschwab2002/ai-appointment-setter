@@ -12,6 +12,7 @@ await db.exec(`
   create role service_role nologin;
   alter default privileges in schema public grant execute on functions to anon, authenticated;
   alter default privileges in schema public grant all on functions to service_role;
+  alter default privileges in schema public grant all on tables to service_role;
 `);
 
 const baseline = join(root, 'supabase/baseline/20260803_public_schema.sql');
@@ -49,7 +50,28 @@ if (before.rows[0]?.leaks <= 0) {
   throw new Error('positive control failed: Supabase-style defaults produced no leaks');
 }
 await db.exec(readFileSync(hardening, 'utf8'));
-for (const file of afterHardening) {
+const portabilityIndex = afterHardening.findIndex(
+  (file) => file.endsWith('20260901000100_commercial_ally_portability.sql'),
+);
+if (portabilityIndex < 0) {
+  throw new Error('commercial ally portability migration is missing');
+}
+for (const file of afterHardening.slice(0, portabilityIndex)) {
+  await db.exec(readFileSync(file, 'utf8'));
+}
+const prePortabilityInventory = await db.query(readFileSync(
+  join(root, 'scripts/supabase_schema_inventory.sql'),
+  'utf8',
+));
+const absentPortabilityFingerprint = prePortabilityInventory.rows.find(
+  (row) => row.filename === '20260901000100_commercial_ally_portability.sql',
+);
+if (absentPortabilityFingerprint?.fingerprint_status !== 'fingerprint_absent') {
+  throw new Error(
+    `pre-portability schema fingerprint failed: ${JSON.stringify(absentPortabilityFingerprint)}`,
+  );
+}
+for (const file of afterHardening.slice(portabilityIndex)) {
   await db.exec(readFileSync(file, 'utf8'));
 }
 
@@ -57,10 +79,14 @@ const rows = await db.query(`
   with expected(signature) as (
     values
       ('activate_lancemos_pilot_scope_version(text,integer,bigint,text,text)'),
-      ('admit_and_correlate_hotmart_cart_abandonment(text,jsonb,text,text)'),
+      ('admit_johanna_hotmart_cart_abandonment(text,jsonb,text,text)'),
       ('admit_and_correlate_hotmart_purchase_approved(text,jsonb,text,text)'),
       ('admit_johanna_payment_failure(text,jsonb,text,text)'),
       ('admit_observed_lead_precheckout(text,jsonb,jsonb)'),
+      ('admit_portable_observed_lead_precheckout(text,text,integer,text,jsonb,jsonb)'),
+      ('admit_portable_hotmart_cart_abandonment(text,text,integer,text,jsonb,text,text)'),
+      ('admit_portable_hotmart_payment_failure(text,text,integer,text,jsonb,text,text)'),
+      ('admit_portable_hotmart_purchase_approved(text,text,integer,text,jsonb,text,text)'),
       ('admit_precheckout_form_submission(text,jsonb,jsonb)'),
       ('begin_johanna_abandonment_one_shot(text,uuid,text,bigint,bigint,text,integer,bigint)'),
       ('begin_precheckout_test_first_touch(text,uuid,text,bigint,bigint)'),
@@ -95,7 +121,9 @@ const rows = await db.query(`
       ('list_due_hotmart_abandonment_reevaluations(timestamp with time zone,integer)'),
       ('list_operator_unresolved_correlations(text,text,integer,uuid)'),
       ('mark_lancemos_pilot_request_started(uuid,uuid,text,bigint,timestamp with time zone)'),
+      ('mark_portable_payment_failure_request_started(uuid,uuid,text,bigint,timestamp with time zone)'),
       ('plan_lancemos_pilot_cart_recovery(uuid,uuid,text,text,text,text,integer,timestamp with time zone,bigint,bigint,text,text,integer)'),
+      ('plan_portable_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,timestamp with time zone,bigint,bigint,text,text,integer)'),
       ('prepare_operator_correlation_resolution(text,text,text,uuid,text,uuid,text,uuid)'),
       ('reconcile_chatwoot_opt_out_stop(bigint,bigint,bigint,text)'),
       ('reconcile_followup_delivery_attempt(uuid,uuid,bigint,text,text,uuid,timestamp with time zone,text,timestamp with time zone)'),
@@ -107,6 +135,8 @@ const rows = await db.query(`
       ('request_inbound_human_handoff(uuid,text,text,text,integer,timestamp with time zone)'),
       ('request_human_handoff(uuid,text,text,text,text,integer,uuid,uuid,text,bigint,timestamp with time zone)'),
       ('reserve_followup_delivery_attempt(uuid,text,bigint,bigint,bigint,text,text,timestamp with time zone)'),
+      ('resolve_commercial_ally_runtime_binding(text,text,integer)'),
+      ('resolve_commercial_ally_discount_policy(text,text,integer,text)'),
       ('schedule_precheckout_first_touch_reevaluation(uuid,uuid)'),
       ('set_lancemos_pilot_cohort_member(text,integer,uuid,bigint,text,text,text)'),
       ('set_lancemos_pilot_runtime_state(text,integer,bigint,text,text,text)')
@@ -130,8 +160,42 @@ const rows = await db.query(`
 `);
 const result = rows.rows[0];
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 54) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 62) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
+}
+const bindingAcl = await db.query(`
+  select
+    has_table_privilege(
+      'service_role', 'public.commercial_ally_runtime_bindings', 'select'
+    ) select_allowed,
+    has_table_privilege(
+      'service_role', 'public.commercial_ally_runtime_bindings', 'insert'
+    ) insert_allowed,
+    has_table_privilege(
+      'service_role', 'public.commercial_ally_runtime_bindings', 'update'
+    ) update_allowed,
+    has_table_privilege(
+      'service_role', 'public.commercial_ally_runtime_bindings', 'delete'
+    ) delete_allowed,
+    has_table_privilege(
+      'service_role', 'public.commercial_ally_runtime_bindings', 'truncate'
+    ) truncate_allowed,
+    has_table_privilege(
+      'service_role', 'public.commercial_ally_runtime_bindings', 'references'
+    ) references_allowed,
+    has_table_privilege(
+      'service_role', 'public.commercial_ally_runtime_bindings', 'trigger'
+    ) trigger_allowed
+`);
+const bindingPrivileges = bindingAcl.rows[0];
+if (bindingPrivileges?.select_allowed !== true
+    || bindingPrivileges.insert_allowed !== false
+    || bindingPrivileges.update_allowed !== false
+    || bindingPrivileges.delete_allowed !== false
+    || bindingPrivileges.truncate_allowed !== false
+    || bindingPrivileges.references_allowed !== false
+    || bindingPrivileges.trigger_allowed !== false) {
+  throw new Error(`commercial ally binding ACL failed: ${JSON.stringify(bindingPrivileges)}`);
 }
 const inventory = await db.query(readFileSync(
   join(root, 'scripts/supabase_acl_inventory.sql'),
@@ -144,6 +208,42 @@ if (inventory.rows.length !== result.total
     || inventoryExpected !== result.expected_count
     || inventory.rows.some((row) => row.acl_status !== 'ok')) {
   throw new Error('checked-in ACL inventory disagrees with clean-stack probe');
+}
+const schemaInventory = await db.query(readFileSync(
+  join(root, 'scripts/supabase_schema_inventory.sql'),
+  'utf8',
+));
+const migrationNames = migrations.map((file) => file.split('/').at(-1));
+const missingFingerprints = migrationNames.filter(
+  (filename) => !schemaInventory.rows.some((row) => row.filename === filename),
+);
+const partialFingerprints = schemaInventory.rows.filter(
+  (row) => migrationNames.includes(row.filename)
+    && row.fingerprint_status !== 'fingerprint_present',
+);
+if (missingFingerprints.length !== 0 || partialFingerprints.length !== 0) {
+  throw new Error(`schema fingerprint inventory incomplete: ${JSON.stringify({
+    missingFingerprints,
+    partialFingerprints,
+  })}`);
+}
+const portabilityFingerprint = schemaInventory.rows.find(
+  (row) => row.filename === '20260901000100_commercial_ally_portability.sql',
+);
+if (portabilityFingerprint?.fingerprint_status !== 'fingerprint_present') {
+  throw new Error(
+    `commercial ally schema fingerprint failed: ${JSON.stringify(portabilityFingerprint)}`,
+  );
+}
+for (const filename of [
+  '20260820000400_hotmart_intent_correlation_contract.sql',
+  '20260903000100_commercial_ally_portable_recovery.sql',
+  '20260903000200_commercial_ally_indefinite_discount.sql',
+]) {
+  const fingerprint = schemaInventory.rows.find((row) => row.filename === filename);
+  if (fingerprint?.fingerprint_status !== 'fingerprint_present') {
+    throw new Error(`ATT1 schema fingerprint failed: ${JSON.stringify(fingerprint)}`);
+  }
 }
 
 const purchaseWorkerAclRepair = migrations.find(

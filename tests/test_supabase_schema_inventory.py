@@ -119,12 +119,40 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
 
-    assert len(allowlisted) == 54
+    assert len(allowlisted) == 62
     assert len(allowlisted) == len(set(allowlisted))
     assert "admit_precheckout_form_submission(text, jsonb, jsonb)" in allowlisted
     assert "admit_observed_lead_precheckout(text, jsonb, jsonb)" in allowlisted
+    assert (
+        "admit_portable_observed_lead_precheckout"
+        "(text, text, integer, text, jsonb, jsonb)" in allowlisted
+    )
     assert "admit_inbound_commercial_case_v2(text, integer, bigint, text)" in allowlisted
     assert "admit_johanna_payment_failure(text, jsonb, text, text)" in allowlisted
+    assert (
+        "resolve_commercial_ally_runtime_binding(text, text, integer)" in allowlisted
+    )
+    assert (
+        "resolve_commercial_ally_discount_policy(text, text, integer, text)"
+        in allowlisted
+    )
+    assert (
+        "admit_portable_hotmart_purchase_approved"
+        "(text, text, integer, text, jsonb, text, text)" in allowlisted
+    )
+    assert (
+        "admit_portable_hotmart_payment_failure"
+        "(text, text, integer, text, jsonb, text, text)" in allowlisted
+    )
+    assert (
+        "plan_portable_payment_failure_recovery"
+        "(uuid, uuid, text, text, text, text, integer, timestamp with time zone, "
+        "bigint, bigint, text, text, integer)" in allowlisted
+    )
+    assert (
+        "mark_portable_payment_failure_request_started"
+        "(uuid, uuid, text, bigint, timestamp with time zone)" in allowlisted
+    )
     assert (
         "prepare_johanna_payment_failure_invalid_contact_retry"
         "(text, uuid, bigint, bigint)" in allowlisted
@@ -179,7 +207,11 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     )
     assert "get_precheckout_delayed_one_shot_command(uuid)" in allowlisted
     assert "admit_and_correlate_hotmart_purchase_approved(text, jsonb, text, text)" in allowlisted
-    assert "admit_and_correlate_hotmart_cart_abandonment(text, jsonb, text, text)" in allowlisted
+    assert "admit_johanna_hotmart_cart_abandonment(text, jsonb, text, text)" in allowlisted
+    assert (
+        "admit_and_correlate_hotmart_cart_abandonment(text, jsonb, text, text)"
+        not in allowlisted
+    )
     assert "admit_hotmart_purchase_approved(text, jsonb)" not in allowlisted
     assert "admit_hotmart_cart_abandonment(text, jsonb)" not in allowlisted
     assert "begin_precheckout_test_first_touch(text, uuid, text, bigint, bigint)" in allowlisted

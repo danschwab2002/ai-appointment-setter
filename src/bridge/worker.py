@@ -24,12 +24,21 @@ from bridge.chatwoot import (
     ChatwootHandoffDeliveryUnknownError,
     ChatwootProtocolError,
 )
+from bridge.commercial_ally import CommercialAllyConfig
 from bridge.hotmart import (
     EVENT_CART_ABANDONMENT,
     EVENT_PURCHASE_APPROVED,
+    EVENT_PURCHASE_CANCELED,
     parse_hotmart_purchase_payload,
 )
-from bridge.messaging import FirstTouchResult, MessageSender, is_allowed_whatsapp_target
+from bridge.messaging import (
+    FinalMetaEffect,
+    FinalMetaEffectGate,
+    FirstTouchResult,
+    MessageSender,
+    WhatsAppTemplateConfig,
+    is_allowed_whatsapp_target,
+)
 from bridge.recovery_agent import (
     FollowupHandoffSuggestion,
     FollowupMessageProposal,
@@ -51,6 +60,19 @@ from bridge.supabase import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _first_touch_template_name(
+    template: WhatsAppTemplateConfig,
+    *,
+    anchor_type: str,
+) -> str:
+    if (
+        anchor_type == "payment_failure"
+        and template.payment_failure_name is not None
+    ):
+        return template.payment_failure_name
+    return template.first_touch_name
 
 
 def _precheckout_sender_process_entry(
@@ -179,6 +201,25 @@ def _validate_followup_execution_context(
         or context.recovery_case_id != action.recovery_case_id
     ):
         raise SupabaseError("followup_execution_context_mismatch")
+
+
+def _is_authorized_followup_recipient(
+    *,
+    execution_context: FollowupExecutionContext,
+    allowed_jid: str | None,
+    commercial_ally_config: CommercialAllyConfig | None,
+    portable_recipient_enabled: bool = False,
+) -> bool:
+    """Validate the recipient through the legacy or portable tenant boundary."""
+    if is_allowed_whatsapp_target(execution_context.buyer_phone, allowed_jid):
+        return True
+    return (
+        portable_recipient_enabled
+        and commercial_ally_config is not None
+        and execution_context.buyer_phone is not None
+        and execution_context.product_name == commercial_ally_config.product_name
+        and execution_context.offer_code == commercial_ally_config.offer_code
+    )
 
 
 def _validate_followup_message_proposal(
@@ -546,12 +587,47 @@ class DurableDispatcher:
         recovery_agent: RecoveryAgentClient | None = None,
         sender: MessageSender | None = None,
         allowed_jid: str | None = None,
+        commercial_ally_config: CommercialAllyConfig | None = None,
+        portable_recipient_enabled: bool = False,
         clock: Callable[[], str] | None = None,
         pilot_boundary: PilotBoundaryConfig | None = None,
+        chatwoot_inbox_id: int | None = None,
         human_handoff_admission_enabled: bool = False,
         handoff_projection_policy_key: str | None = None,
         handoff_projection_policy_version: int | None = None,
+        final_meta_effect_gate: FinalMetaEffectGate | None = None,
+        waba_template: WhatsAppTemplateConfig | None = None,
     ) -> None:
+        if commercial_ally_config is not None:
+            if not portable_recipient_enabled:
+                raise ValueError("portable recipient capability is not enabled")
+            if pilot_boundary is None:
+                raise ValueError("portable recipient boundary is required")
+            if pilot_boundary.tenant_key != commercial_ally_config.tenant_ref:
+                raise ValueError("portable recipient tenant does not match manifest")
+            if pilot_boundary.channel_provider != "waba":
+                raise ValueError("portable recipient provider must be waba")
+            if sender is not None and final_meta_effect_gate is None:
+                raise ValueError(
+                    "portable WABA outbound requires final Meta effect gate"
+                )
+            if chatwoot_account_id != commercial_ally_config.chatwoot_account_id:
+                raise ValueError(
+                    "portable recipient Chatwoot account does not match manifest"
+                )
+            if chatwoot_inbox_id != commercial_ally_config.chatwoot_inbox_id:
+                raise ValueError(
+                    "portable recipient Chatwoot inbox does not match manifest"
+                )
+            if (
+                pilot_boundary.channel_account_ref
+                != f"chatwoot-inbox:{commercial_ally_config.chatwoot_inbox_id}"
+            ):
+                raise ValueError(
+                    "portable recipient channel account does not match manifest"
+                )
+        elif portable_recipient_enabled:
+            raise ValueError("portable recipient capability requires a manifest")
         self._supabase = supabase
         self._worker_id = worker_id
         self._lease_duration = lease_duration
@@ -562,10 +638,14 @@ class DurableDispatcher:
         self._recovery_agent = recovery_agent
         self._sender = sender
         self._allowed_jid = allowed_jid
+        self._commercial_ally_config = commercial_ally_config
+        self._portable_recipient_enabled = portable_recipient_enabled
         self._pilot_boundary = pilot_boundary
         self._human_handoff_admission_enabled = human_handoff_admission_enabled
         self._handoff_projection_policy_key = handoff_projection_policy_key
         self._handoff_projection_policy_version = handoff_projection_policy_version
+        self._final_meta_effect_gate = final_meta_effect_gate
+        self._waba_template = waba_template
         self._delivery_mode = (
             "approved_template"
             if pilot_boundary is not None
@@ -854,9 +934,15 @@ class DurableDispatcher:
                             attempt.attempt_id,
                         )
                         if self._sender is not None:
-                            if not is_allowed_whatsapp_target(
-                                execution_context.buyer_phone,
-                                self._allowed_jid,
+                            if not _is_authorized_followup_recipient(
+                                execution_context=execution_context,
+                                allowed_jid=self._allowed_jid,
+                                commercial_ally_config=(
+                                    self._commercial_ally_config
+                                ),
+                                portable_recipient_enabled=(
+                                    self._portable_recipient_enabled
+                                ),
                             ):
                                 await self._finalize_pre_request_failure(
                                     action=action,
@@ -866,6 +952,7 @@ class DurableDispatcher:
                                 raise SupabaseError(
                                     "followup_recipient_not_allowlisted"
                                 )
+                            assert execution_context.buyer_phone is not None
                             final_now = self._clock()
                             try:
                                 final_evidence = (
@@ -930,6 +1017,51 @@ class DurableDispatcher:
                                         "followup_conversation_not_available"
                                     )
                                 followup_conversation_id = int(raw_conversation_id)
+                            if self._final_meta_effect_gate is not None:
+                                action_kind = (
+                                    "followup"
+                                    if action.action_type == "no_reply_review"
+                                    else "first_touch"
+                                )
+                                template_name = (
+                                    self._waba_template.followup_name
+                                    if action_kind == "followup"
+                                    and self._waba_template is not None
+                                    else (
+                                        _first_touch_template_name(
+                                            self._waba_template,
+                                            anchor_type=action.anchor_type,
+                                        )
+                                        if self._waba_template is not None
+                                        else ""
+                                    )
+                                )
+                                authorized = self._final_meta_effect_gate.authorize(
+                                    FinalMetaEffect(
+                                        delivery_id=attempt.attempt_id,
+                                        action_kind=action_kind,
+                                        mode=attempt.mode,
+                                        target_phone=(
+                                            "+"
+                                            + execution_context.buyer_phone.lstrip("+")
+                                        ),
+                                        content=proposal.message,
+                                        template_name=template_name or "",
+                                        template_language=(
+                                            self._waba_template.language
+                                            if self._waba_template is not None
+                                            else ""
+                                        ),
+                                    )
+                                )
+                                if not authorized:
+                                    await self._finalize_pre_request_failure(
+                                        action=action,
+                                        attempt=attempt,
+                                        reason_code="final_meta_gate_closed",
+                                    )
+                                    decisions.append(decision)
+                                    continue
                             try:
                                 started, request_start_cancelled = (
                                     await _await_with_cancellation_state(
@@ -940,6 +1072,7 @@ class DurableDispatcher:
                                             lease_generation=action.lease_generation,
                                             now=final_now,
                                             pilot_boundary=self._pilot_boundary,
+                                            anchor_type=action.anchor_type,
                                         )
                                     )
                                 )
@@ -1040,6 +1173,7 @@ class DurableDispatcher:
                                         product_name=execution_context.product_name,
                                         content=proposal.message,
                                         delivery_id=attempt.attempt_id,
+                                        trigger_kind=action.anchor_type,
                                     )
                             except asyncio.CancelledError:
                                 deadline = (
@@ -1626,6 +1760,8 @@ class ResolutionWorker:
         policy_version: int | None = None,
         purchase_worker_enabled: bool = False,
         pilot_boundary: PilotBoundaryConfig | None = None,
+        commercial_ally_config: CommercialAllyConfig | None = None,
+        payment_failure_enabled: bool = False,
     ) -> None:
         self._supabase = supabase
         self._poll_interval = poll_interval_seconds
@@ -1639,6 +1775,8 @@ class ResolutionWorker:
         self._policy_version = policy_version
         self._purchase_worker_enabled = purchase_worker_enabled
         self._pilot_boundary = pilot_boundary
+        self._commercial_ally_config = commercial_ally_config
+        self._payment_failure_enabled = payment_failure_enabled
         self._stopped = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
 
@@ -1741,7 +1879,10 @@ class ResolutionWorker:
                 result.outcome,
             )
             return
-        if event_type != EVENT_CART_ABANDONMENT:
+        if event_type != EVENT_CART_ABANDONMENT and not (
+            self._payment_failure_enabled
+            and event_type == EVENT_PURCHASE_CANCELED
+        ):
             await self._supabase.update_event_status(
                 event_id=event_id,
                 status="failed",
@@ -1749,6 +1890,9 @@ class ResolutionWorker:
             )
             return
         try:
+            resolver_kwargs: dict[str, Any] = {}
+            if self._commercial_ally_config is not None:
+                resolver_kwargs["commercial_ally_config"] = self._commercial_ally_config
             report = await resolve_event(
                 webhook_event_id=event_id,
                 payload=payload,
@@ -1759,6 +1903,8 @@ class ResolutionWorker:
                 chatwoot_account_id=self._chatwoot_account_id,
                 chatwoot_inbox_id=self._chatwoot_inbox_id,
                 pilot_boundary=self._pilot_boundary,
+                event_type=event_type,
+                **resolver_kwargs,
             )
         except ResolutionError:
             # resolve_event already marked the event as 'failed'.
