@@ -312,6 +312,39 @@ def parse_hotmart_payment_failure_payload(
     )
 
 
+def parse_hotmart_payment_failure_buyer_payload(
+    payload: object,
+    *,
+    config: CommercialAllyConfig,
+) -> HotmartBuyerData | None:
+    """Return the portable buyer projection for one scoped payment failure."""
+    failure = parse_hotmart_payment_failure_payload(payload, config=config)
+    if failure is None:
+        return None
+    event = _json_object(payload)
+    data = _json_object(event.get("data"))
+    buyer = _json_object(data.get("buyer"))
+    product = _json_object(data.get("product"))
+    country = _json_object(data.get("checkout_country"))
+    product_name = _str(product.get("name"))
+    if product_name != config.product_name:
+        return None
+    return HotmartBuyerData(
+        event_id=failure.event_id,
+        event_type=EVENT_PURCHASE_CANCELED,
+        creation_date_ms=failure.creation_date_ms,
+        buyer_name=_str(buyer.get("name")),
+        buyer_email=failure.buyer_email,
+        buyer_phone=failure.buyer_phone,
+        product_id=failure.product_id,
+        product_name=product_name,
+        offer_code=failure.offer_code,
+        checkout_country_iso=_str(country.get("iso")),
+        checkout_country_name=_str(country.get("name")),
+        affiliate=_bool(data.get("affiliate")),
+    )
+
+
 # ── Decision types ───────────────────────────────────────────────────
 
 HotmartAction = Literal["persist", "ignore"]

@@ -9,6 +9,8 @@ functions as (
         p.proname,
         p.prosecdef,
         p.proconfig,
+        p.proacl,
+        p.proowner,
         pg_get_functiondef(p.oid) as definition
     from pg_proc p
     join pg_namespace n on n.oid = p.pronamespace
@@ -1939,18 +1941,24 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
             )
               and position('commercial_ally_runtime_bindings' in definition) > 0
               and position('b.status = ''active''' in definition) > 0
-              and position('FOR UPDATE' in definition) > 0
+              and position('for update' in lower(definition)) > 0
         )::int
         + (
             to_regprocedure(
                 'public.admit_portable_observed_lead_precheckout(text,text,integer,text,jsonb,jsonb)'
             ) is not null
-            and not has_function_privilege(
-                'public',
-                to_regprocedure(
+            and not exists(
+                select 1
+                from functions function_row
+                cross join lateral aclexplode(coalesce(
+                    function_row.proacl,
+                    acldefault('f', function_row.proowner)
+                )) acl
+                where function_row.oid = to_regprocedure(
                     'public.admit_portable_observed_lead_precheckout(text,text,integer,text,jsonb,jsonb)'
-                ),
-                'EXECUTE'
+                )
+                  and acl.grantee = 0
+                  and acl.privilege_type = 'EXECUTE'
             )
             and has_function_privilege(
                 'service_role',
@@ -1980,18 +1988,24 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
               and prosecdef
               and proconfig @> array['search_path=pg_catalog, public, pg_temp']
               and position('commercial_ally_runtime_bindings' in definition) > 0
-              and position('FOR UPDATE' in definition) > 0
+              and position('for update' in lower(definition)) > 0
         )::int
         + (
             to_regprocedure(
                 'public.admit_portable_hotmart_purchase_approved(text,text,integer,text,jsonb,text,text)'
             ) is not null
-            and not has_function_privilege(
-                'public',
-                to_regprocedure(
+            and not exists(
+                select 1
+                from functions function_row
+                cross join lateral aclexplode(coalesce(
+                    function_row.proacl,
+                    acldefault('f', function_row.proowner)
+                )) acl
+                where function_row.oid = to_regprocedure(
                     'public.admit_portable_hotmart_purchase_approved(text,text,integer,text,jsonb,text,text)'
-                ),
-                'EXECUTE'
+                )
+                  and acl.grantee = 0
+                  and acl.privilege_type = 'EXECUTE'
             )
             and has_function_privilege(
                 'service_role',
@@ -2054,9 +2068,41 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
     select
         '20260903000100',
         '20260903000100_commercial_ally_portable_recovery.sql',
-        (to_regprocedure(
+        (to_regclass(
+            'public.commercial_ally_hotmart_event_bindings'
+        ) is not null)::int
+        + (to_regprocedure(
             'public.admit_portable_hotmart_cart_abandonment(text,text,integer,text,jsonb,text,text)'
         ) is not null)::int
+        + exists(
+            select 1 from pg_constraint
+            where conrelid = to_regclass(
+                'public.commercial_ally_hotmart_event_bindings'
+            )
+              and conname = 'commercial_ally_hotmart_event_bindings_scope_fk'
+              and contype = 'f'
+              and confrelid = to_regclass(
+                  'public.hotmart_purchase_intent_scopes'
+              )
+              and confdeltype = 'r'
+        )::int
+        + exists(
+            select 1 from pg_trigger
+            where tgrelid = to_regclass(
+                'public.commercial_ally_hotmart_event_bindings'
+            )
+              and tgname = 'commercial_ally_hotmart_event_bindings_append_only'
+              and not tgisinternal
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.protect_commercial_ally_hotmart_event_binding()'
+            )
+              and prosecdef
+              and not has_function_privilege('public', oid, 'EXECUTE')
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+        )::int
         + exists(
             select 1 from functions
             where oid = to_regprocedure(
@@ -2066,6 +2112,8 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
               and proconfig @> array['search_path=pg_catalog, public, pg_temp']
               and position('commercial_ally_runtime_bindings' in definition) > 0
               and position('hotmart_purchase_intent_scopes' in definition) > 0
+              and position('commercial_ally_hotmart_event_bindings' in definition) > 0
+              and position('portable_hotmart_cart_replay_binding_mismatch' in definition) > 0
         )::int
         + (
             not has_function_privilege(
@@ -2110,7 +2158,7 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
                 'EXECUTE'
             )
         )::int,
-        5,
+        9,
         'portable_cart_recovery_binding_fenced'
     union all
     select
@@ -2165,6 +2213,45 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         7,
         'indefinite_atomic_discount_release'
+    union all
+    select
+        '20260903000300',
+        '20260903000300_commercial_ally_payment_failure_recovery.sql',
+        (to_regclass('public.commercial_ally_payment_failure_details') is not null)::int
+        + (to_regclass('public.commercial_ally_payment_failure_conflicts') is not null)::int
+        + (to_regprocedure(
+            'public.admit_portable_hotmart_payment_failure(text,text,integer,text,jsonb,text,text)'
+        ) is not null)::int
+        + (to_regprocedure(
+            'public.plan_portable_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,timestamptz,bigint,bigint,text,text,integer)'
+        ) is not null)::int
+        + (to_regprocedure(
+            'public.mark_portable_payment_failure_request_started(uuid,uuid,text,bigint,timestamptz)'
+        ) is not null)::int
+        + exists(
+            select 1 from pg_constraint
+            where conrelid = to_regclass('public.recovery_case_events')
+              and conname = 'recovery_case_events_event_role_check'
+              and position('payment_failure' in pg_get_constraintdef(oid)) > 0
+        )::int
+        + (
+            not has_function_privilege(
+                'public',
+                to_regprocedure(
+                    'public.admit_portable_hotmart_payment_failure(text,text,integer,text,jsonb,text,text)'
+                ),
+                'EXECUTE'
+            )
+            and has_function_privilege(
+                'service_role',
+                to_regprocedure(
+                    'public.admit_portable_hotmart_payment_failure(text,text,integer,text,jsonb,text,text)'
+                ),
+                'EXECUTE'
+            )
+        )::int,
+        7,
+        'portable_payment_failure_recovery_fenced'
 )
 select
     version,

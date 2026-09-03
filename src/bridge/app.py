@@ -119,6 +119,7 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     "automated_replies_enabled",
     "reply_splitter_enabled",
     "portable_hotmart_recovery_enabled",
+    "portable_hotmart_payment_failure_enabled",
     "portable_hotmart_purchase_stop_enabled",
     "hotmart_purchase_worker_enabled",
     "lead_precheckout_enabled",
@@ -273,6 +274,7 @@ class Settings:
     hotmart_hottok: str | None = None
     hotmart_max_age_seconds: int = 300
     portable_hotmart_recovery_enabled: bool = False
+    portable_hotmart_payment_failure_enabled: bool = False
     portable_hotmart_purchase_stop_enabled: bool = False
     hotmart_purchase_worker_enabled: bool = False
     hotmart_abandonment_timer_worker_enabled: bool = False
@@ -338,6 +340,7 @@ class Settings:
     pilot_channel_provider: str | None = None
     pilot_channel_account_ref: str | None = None
     waba_first_touch_template_name: str | None = None
+    waba_payment_failure_template_name: str | None = None
     waba_followup_template_name: str | None = None
     waba_template_language: str | None = None
     waba_template_category: str | None = None
@@ -475,6 +478,12 @@ class Settings:
         )
         portable_hotmart_recovery_enabled = (
             os.getenv("PORTABLE_HOTMART_RECOVERY_ENABLED", "false").lower()
+            == "true"
+        )
+        portable_hotmart_payment_failure_enabled = (
+            os.getenv(
+                "PORTABLE_HOTMART_PAYMENT_FAILURE_ENABLED", "false"
+            ).lower()
             == "true"
         )
         hotmart_max_age_seconds = int(
@@ -790,6 +799,9 @@ class Settings:
                 portable_hotmart_purchase_stop_enabled
             ),
             portable_hotmart_recovery_enabled=portable_hotmart_recovery_enabled,
+            portable_hotmart_payment_failure_enabled=(
+                portable_hotmart_payment_failure_enabled
+            ),
             hotmart_purchase_worker_enabled=hotmart_purchase_worker_enabled,
             hotmart_abandonment_timer_worker_enabled=(
                 hotmart_abandonment_timer_worker_enabled
@@ -889,6 +901,9 @@ class Settings:
             ),
             waba_first_touch_template_name=(
                 os.getenv("WABA_FIRST_TOUCH_TEMPLATE_NAME", "").strip() or None
+            ),
+            waba_payment_failure_template_name=(
+                os.getenv("WABA_PAYMENT_FAILURE_TEMPLATE_NAME", "").strip() or None
             ),
             waba_followup_template_name=(
                 os.getenv("WABA_FOLLOWUP_TEMPLATE_NAME", "").strip() or None
@@ -1116,6 +1131,13 @@ def create_app(
             + ", ".join(invalid_boolean_fields)
         )
     explicit_manifest_runtime = settings.commercial_ally_manifest_path is not None
+    portable_dynamic_recipient = (
+        explicit_manifest_runtime
+        and (
+            settings.portable_hotmart_recovery_enabled
+            or settings.portable_hotmart_payment_failure_enabled
+        )
+    )
     portable_runtime = (
         explicit_manifest_runtime
         or settings.commercial_ally_config != JOHANNA_COMMERCIAL_ALLY
@@ -1268,6 +1290,14 @@ def create_app(
         for value, name in template_fields:
             if value is None or not value.strip():
                 raise ValueError(f"{name} is required for WABA outbound")
+        if (
+            settings.portable_hotmart_payment_failure_enabled
+            and not settings.waba_payment_failure_template_name
+        ):
+            raise ValueError(
+                "WABA_PAYMENT_FAILURE_TEMPLATE_NAME is required for portable "
+                "payment failure"
+            )
         if settings.waba_template_category not in {"MARKETING", "UTILITY"}:
             raise ValueError("WABA_TEMPLATE_CATEGORY must be MARKETING or UTILITY")
         waba_template = WhatsAppTemplateConfig(
@@ -1276,6 +1306,7 @@ def create_app(
             language=settings.waba_template_language,  # type: ignore[arg-type]
             category=settings.waba_template_category,  # type: ignore[arg-type]
             first_touch_parameter="buyer_name_and_product",
+            payment_failure_name=settings.waba_payment_failure_template_name,
         )
     pilot_boundary = (
         PilotBoundaryConfig(
@@ -1722,7 +1753,21 @@ def create_app(
                 "FOLLOWUP_POLICY_KEY and FOLLOWUP_POLICY_VERSION are required "
                 "when RESOLUTION_WORKER_ENABLED=true"
             )
-        if settings.allowed_jid is None:
+        if portable_dynamic_recipient and (
+            settings.pilot_tenant_key
+            != settings.commercial_ally_config.tenant_ref
+            or settings.pilot_channel_provider != "waba"
+            or settings.chatwoot_account_id
+            != settings.commercial_ally_config.chatwoot_account_id
+            or settings.chatwoot_inbox_id
+            != settings.commercial_ally_config.chatwoot_inbox_id
+            or settings.pilot_channel_account_ref
+            != f"chatwoot-inbox:{settings.commercial_ally_config.chatwoot_inbox_id}"
+        ):
+            raise ValueError(
+                "portable resolution worker requires exact ally pilot and Chatwoot scope"
+            )
+        if settings.allowed_jid is None and not portable_dynamic_recipient:
             raise ValueError(
                 "ALLOWED_WHATSAPP_JID is required when "
                 "RESOLUTION_WORKER_ENABLED=true"
@@ -1768,6 +1813,7 @@ def create_app(
                 chatwoot=control_client,
                 inbox_id=settings.chatwoot_inbox_id,
                 allowed_jid=settings.allowed_jid,
+                dynamic_recipient_enabled=portable_dynamic_recipient,
                 template=waba_template,
             )
         resolution_worker = ResolutionWorker(
@@ -1782,7 +1828,15 @@ def create_app(
             policy_key=settings.followup_policy_key,
             policy_version=settings.followup_policy_version,
             purchase_worker_enabled=settings.hotmart_purchase_worker_enabled,
+            payment_failure_enabled=(
+                settings.portable_hotmart_payment_failure_enabled
+            ),
             pilot_boundary=pilot_boundary,
+            commercial_ally_config=(
+                settings.commercial_ally_config
+                if portable_dynamic_recipient
+                else None
+            ),
         )
 
     if settings.dispatcher_enabled:
@@ -1831,13 +1885,17 @@ def create_app(
                 outbound_sender is None
                 and settings.pilot_channel_provider in {"evolution", "waba"}
                 and settings.chatwoot_inbox_id is not None
-                and settings.allowed_jid is not None
+                and (
+                    settings.allowed_jid is not None
+                    or portable_dynamic_recipient
+                )
                 and isinstance(control_client, ChatwootClient)
             ):
                 outbound_sender = ChatwootMessageSender(
                     chatwoot=control_client,
                     inbox_id=settings.chatwoot_inbox_id,
                     allowed_jid=settings.allowed_jid,
+                    dynamic_recipient_enabled=portable_dynamic_recipient,
                     template=waba_template,
                 )
             if outbound_agent is None or outbound_sender is None:
@@ -1858,7 +1916,14 @@ def create_app(
                 if settings.dispatcher_outbound_enabled
                 else None
             ),
+            commercial_ally_config=(
+                settings.commercial_ally_config
+                if portable_dynamic_recipient
+                else None
+            ),
+            portable_recipient_enabled=portable_dynamic_recipient,
             pilot_boundary=pilot_boundary,
+            chatwoot_inbox_id=settings.chatwoot_inbox_id,
             human_handoff_admission_enabled=(
                 settings.human_handoff_admission_enabled
             ),
@@ -3919,11 +3984,16 @@ def create_app(
         if (
             settings.portable_hotmart_purchase_stop_enabled
             or settings.portable_hotmart_recovery_enabled
+            or settings.portable_hotmart_payment_failure_enabled
         ) and (
             decision.event_type != EVENT_PURCHASE_APPROVED
             and not (
                 settings.portable_hotmart_recovery_enabled
                 and decision.event_type == EVENT_CART_ABANDONMENT
+            )
+            and not (
+                settings.portable_hotmart_payment_failure_enabled
+                and decision.event_type == EVENT_PURCHASE_CANCELED
             )
         ):
             response.status_code = status.HTTP_200_OK
@@ -3955,7 +4025,10 @@ def create_app(
             )
         try:
             if event_type == EVENT_PURCHASE_CANCELED:
-                if not settings.johanna_payment_failure_hotmart_enabled:
+                if not (
+                    settings.johanna_payment_failure_hotmart_enabled
+                    or settings.portable_hotmart_payment_failure_enabled
+                ):
                     response.status_code = status.HTTP_200_OK
                     return {
                         "status": "ignored",
@@ -3970,6 +4043,25 @@ def create_app(
                         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                         detail="invalid_payment_failure_payload",
                     )
+                if settings.portable_hotmart_payment_failure_enabled:
+                    portable_failure_admission = (
+                        await shared_supabase.admit_portable_hotmart_payment_failure(
+                            config=settings.commercial_ally_config,
+                            external_event_id=event_id,
+                            payload=payload,
+                            normalized_email=parsed_failure.buyer_email,
+                            normalized_phone=parsed_failure.buyer_phone,
+                        )
+                    )
+                    if portable_failure_admission.outcome == "semantic_conflict":
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail="payment_failure_semantic_conflict",
+                        )
+                    if portable_failure_admission.outcome == "duplicate":
+                        response.status_code = status.HTTP_200_OK
+                        return {"status": "duplicate", "event_id": event_id}
+                    return {"status": "received", "event_id": event_id}
                 failure_admission = await shared_supabase.admit_johanna_payment_failure(
                     external_event_id=event_id,
                     payload=payload,

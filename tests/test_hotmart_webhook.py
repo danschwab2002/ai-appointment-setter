@@ -428,6 +428,8 @@ def test_dispatcher_outbound_injects_agent_sender_allowlist_and_final_meta_gate(
     assert dispatcher._recovery_agent is agent
     assert dispatcher._sender is sender
     assert dispatcher._allowed_jid == "15555550100@s.whatsapp.net"
+    assert dispatcher._commercial_ally_config is None
+    assert dispatcher._portable_recipient_enabled is False
     assert dispatcher._pilot_boundary is not None
     assert dispatcher._pilot_boundary.scope_key == "lancemos-cart-recovery"
     assert dispatcher._final_meta_effect_gate is not None
@@ -1165,7 +1167,7 @@ def test_persists_valid_event_to_supabase(tmp_path) -> None:
         status_code=200,
         response_body=[{
             "outcome": "inserted",
-            "webhook_event_id": "inserted-event",
+            "webhook_event_id": "11111111-1111-4111-8111-111111111111",
         }],
     )
     # Patch SupabaseClient to use our mock transport
@@ -1213,7 +1215,7 @@ def test_returns_duplicate_for_already_stored_event(tmp_path) -> None:
         status_code=200,
         response_body=[{
             "outcome": "duplicate",
-            "webhook_event_id": "existing-event",
+            "webhook_event_id": "22222222-2222-4222-8222-222222222222",
         }],
     )
     import bridge.supabase as supabase_mod
@@ -1252,7 +1254,7 @@ def test_cart_abandonment_semantic_conflict_is_not_reported_as_duplicate(
         status_code=200,
         response_body=[{
             "outcome": "semantic_conflict",
-            "webhook_event_id": "existing-event",
+            "webhook_event_id": "22222222-2222-4222-8222-222222222222",
         }],
     )
     import bridge.supabase as supabase_mod

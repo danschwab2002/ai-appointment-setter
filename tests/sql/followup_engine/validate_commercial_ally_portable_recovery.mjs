@@ -53,11 +53,11 @@ const cart = (id, overrides = {}) => ({
   },
   ...overrides,
 });
-const admit = (tenant, version, payload) => db.query(`
+const admit = (tenant, version, payload, funnel = 'att1-main') => db.query(`
   select * from public.admit_portable_hotmart_cart_abandonment(
-    $1, 'att1-main', $2, $3, $4::jsonb, 'buyer@example.test', '12025550123'
+    $1, $2, $3, $4, $5::jsonb, 'buyer@example.test', '12025550123'
   )
-`, [tenant, version, payload.id, JSON.stringify(payload)]);
+`, [tenant, funnel, version, payload.id, JSON.stringify(payload)]);
 const expectRejected = async (label, action) => {
   try {
     await action();
@@ -83,13 +83,14 @@ if (await eventCount() !== baselineEvents) {
   throw new Error('rejected portable cart created durable events');
 }
 
-await db.query(`
+const originalScope = (await db.query(`
   insert into public.hotmart_purchase_intent_scopes
     (tenant_ref, funnel_ref, hotmart_product_id, purchase_intent_product_ref,
      offer_ref, max_lookback, active)
   values ('att1', 'att1-main', '123456', 'ATT1HOTLINK', 'att1offer',
           interval '2 hours', true)
-`);
+  returning id
+`)).rows[0].id;
 await db.query(`
   insert into public.hotmart_abandonment_timer_policy_bindings
     (tenant_ref, funnel_ref, product_ref, offer_ref, enabled,
@@ -143,6 +144,82 @@ if (inserted.rows[0]?.outcome !== 'inserted'
     || scheduledTimers !== 0) {
   throw new Error('portable cart correlation/replay contract diverged');
 }
+const provenance = (await db.query(`
+  select scope_id
+  from public.commercial_ally_hotmart_event_bindings
+  where webhook_event_id=$1
+`, [inserted.rows[0].webhook_event_id])).rows[0];
+if (provenance?.scope_id !== originalScope) {
+  throw new Error('portable cart provenance did not bind exact scope id');
+}
+await expectRejected('provenance update', () => db.query(`
+  update public.commercial_ally_hotmart_event_bindings
+  set created_at=created_at + interval '1 second'
+  where webhook_event_id=$1
+`, [inserted.rows[0].webhook_event_id]));
+await expectRejected('provenance delete', () => db.query(`
+  delete from public.commercial_ally_hotmart_event_bindings
+  where webhook_event_id=$1
+`, [inserted.rows[0].webhook_event_id]));
+
+await db.exec(`
+  update public.hotmart_purchase_intent_scopes
+  set active=false
+  where tenant_ref='att1' and funnel_ref='att1-main';
+  insert into public.commercial_ally_runtime_bindings
+    (tenant_ref, funnel_ref, binding_version, status, ally_ref, lead_ally_name,
+     lead_site, lead_landing_id, lead_page_host, lead_page_path, product_hotlink,
+     product_name, product_price, currency, offer_code, consent_copy_version,
+     hotmart_product_id, chatwoot_account_id, chatwoot_inbox_id,
+     inbound_scope_key, inbound_scope_version)
+  values
+    ('att2', 'att2-main', 1, 'active', 'ally-two', 'Ally Two',
+     'ally-two-site', 'main', 'ally-two.example', '/offer/main', 'ATT1HOTLINK',
+     'ATT1 Offer', 49, 'USD', 'att1offer', 'att2-whatsapp-v1', 123456,
+     52, 34, 'att2-inbound', 1);
+  insert into public.hotmart_purchase_intent_scopes
+    (tenant_ref, funnel_ref, hotmart_product_id, purchase_intent_product_ref,
+     offer_ref, max_lookback, active)
+  values
+    ('att2', 'att2-main', '123456', 'ATT1HOTLINK', 'att1offer',
+     interval '2 hours', true);
+`);
+await expectRejected(
+  'cross-binding replay',
+  () => admit('att2', 1, payload, 'att2-main'),
+);
+const preservedCorrelation = (await db.query(`
+  select pi.tenant_ref, pi.funnel_ref, c.purchase_intent_id
+  from public.hotmart_purchase_intent_correlations c
+  join public.webhook_events e on e.id=c.webhook_event_id
+  left join public.purchase_intents pi on pi.id=c.purchase_intent_id
+  where e.external_event_id='portable-cart-exact'
+`)).rows[0];
+if (preservedCorrelation?.tenant_ref !== 'att1'
+    || preservedCorrelation?.funnel_ref !== 'att1-main'
+    || preservedCorrelation?.purchase_intent_id !== intent) {
+  throw new Error('cross-binding replay changed durable correlation authority');
+}
+
+await db.exec(`
+  update public.hotmart_purchase_intent_scopes
+  set active=false
+  where tenant_ref='att2' and funnel_ref='att2-main';
+  insert into public.hotmart_purchase_intent_scopes
+    (tenant_ref, funnel_ref, hotmart_product_id, purchase_intent_product_ref,
+     offer_ref, max_lookback, active)
+  values
+    ('att1', 'att1-main', '123456', 'ATT1HOTLINK', 'att1offer',
+     interval '2 hours', true);
+`);
+await expectRejected(
+  'recreated-scope duplicate replay',
+  () => admit('att1', 1, payload),
+);
+await expectRejected(
+  'recreated-scope semantic-conflict replay',
+  () => admit('att1', 1, changed),
+);
 
 const acl = (await db.query(`
   select

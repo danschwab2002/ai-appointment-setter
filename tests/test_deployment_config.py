@@ -351,11 +351,13 @@ def test_deployment_declares_waba_pilot_contract_default_off() -> None:
         "LANCEMOS_PILOT_CHANNEL_PROVIDER",
         "LANCEMOS_PILOT_CHANNEL_ACCOUNT_REF",
         "WABA_FIRST_TOUCH_TEMPLATE_NAME",
+        "WABA_PAYMENT_FAILURE_TEMPLATE_NAME",
         "WABA_FOLLOWUP_TEMPLATE_NAME",
         "WABA_TEMPLATE_LANGUAGE",
         "WABA_TEMPLATE_CATEGORY",
         "DURABLE_DISPATCHER_ENABLED",
         "DURABLE_OUTBOUND_ENABLED",
+        "PORTABLE_HOTMART_PAYMENT_FAILURE_ENABLED",
     }
 
     for variable in required:
@@ -365,9 +367,11 @@ def test_deployment_declares_waba_pilot_contract_default_off() -> None:
     assert "LANCEMOS_PILOT_BOUNDARY_ENABLED=false" in env_example
     assert "DURABLE_DISPATCHER_ENABLED=false" in env_example
     assert "DURABLE_OUTBOUND_ENABLED=false" in env_example
+    assert "PORTABLE_HOTMART_PAYMENT_FAILURE_ENABLED=false" in env_example
     assert "${LANCEMOS_PILOT_BOUNDARY_ENABLED:-false}" in compose
     assert "${DURABLE_DISPATCHER_ENABLED:-false}" in compose
     assert "${DURABLE_OUTBOUND_ENABLED:-false}" in compose
+    assert "${PORTABLE_HOTMART_PAYMENT_FAILURE_ENABLED:-false}" in compose
 
 
 def test_deployment_declares_chatwoot_cut_b_admission_default_off() -> None:

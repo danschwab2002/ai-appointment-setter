@@ -6,6 +6,8 @@ import asyncio
 import json
 import multiprocessing
 import time
+from dataclasses import replace
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
@@ -33,6 +35,7 @@ from bridge.supabase import (
     SupabaseError,
 )
 import bridge.worker as worker_module
+from bridge.commercial_ally import CommercialAllyConfig
 from bridge.worker import (
     DurableDispatcher,
     HotmartAbandonmentTimerWorker,
@@ -46,6 +49,21 @@ from bridge.worker import (
 
 
 NOW_MS = int(time.time() * 1000)
+
+def test_payment_failure_final_effect_selects_declared_template() -> None:
+    template = WhatsAppTemplateConfig(
+        first_touch_name="att1_carrito_abandonado_01",
+        payment_failure_name="att1_compra_fallida_01",
+        followup_name="att1_seguimiento_v1",
+        language="es_MX",
+        category="MARKETING",
+    )
+
+    assert worker_module._first_touch_template_name(  # type: ignore[attr-defined]
+        template,
+        anchor_type="payment_failure",
+    ) == "att1_compra_fallida_01"
+
 
 PAYLOAD: dict[str, object] = {
     "id": "evt-worker-001",
@@ -1025,6 +1043,17 @@ def test_dispatcher_marks_started_immediately_before_sender_and_finalizes_accept
     finalizations.clear()
     sender_calls.clear()
     SupabaseStub.reevaluations = 0
+    action = replace(
+        action,
+        step_key="payment_failure_first_contact",
+        anchor_type="payment_failure",
+        idempotency_key="payment_failure:first_contact:case-001",
+    )
+    attempt = replace(
+        attempt,
+        idempotency_key="payment_failure:first_contact:case-001",
+    )
+    context = replace(context, step_key="payment_failure_first_contact")
     gated = DurableDispatcher(
         supabase=SupabaseStub(),  # type: ignore[arg-type]
         worker_id="dispatcher-test",
@@ -1045,6 +1074,7 @@ def test_dispatcher_marks_started_immediately_before_sender_and_finalizes_accept
         ),
         waba_template=WhatsAppTemplateConfig(
             first_touch_name="att1_inicio_conversacion_v1",
+            payment_failure_name="att1_compra_fallida_01",
             followup_name="att1_seguimiento_v1",
             language="es_MX",
             category="MARKETING",
@@ -1071,9 +1101,89 @@ def test_dispatcher_marks_started_immediately_before_sender_and_finalizes_accept
     assert len(evidence_files) == 1
     gate_evidence = json.loads(evidence_files[0].read_text())
     assert gate_evidence["status"] == "final_meta_gate_closed"
-    assert gate_evidence["template_name"] == "att1_inicio_conversacion_v1"
+    assert gate_evidence["template_name"] == "att1_compra_fallida_01"
     assert gate_evidence["template_language"] == "es_MX"
     assert "Ana" not in evidence_files[0].read_text()
+
+    action = replace(
+        action,
+        step_key="first_contact",
+        anchor_type="cart_abandonment",
+        idempotency_key="cart_recovery:first_contact:case-001",
+    )
+    attempt = replace(
+        attempt,
+        idempotency_key="cart_recovery:first_contact:case-001",
+    )
+    context = replace(context, step_key="first_contact")
+    events.clear()
+    finalizations.clear()
+    sender_calls.clear()
+    SupabaseStub.reevaluations = 0
+    portable = DurableDispatcher(
+        supabase=SupabaseStub(),  # type: ignore[arg-type]
+        worker_id="dispatcher-test",
+        recovery_agent=AgentStub(),  # type: ignore[arg-type]
+        sender=SenderStub(),  # type: ignore[arg-type]
+        allowed_jid=None,
+        portable_recipient_enabled=True,
+        commercial_ally_config=CommercialAllyConfig(
+            tenant_ref="att1",
+            funnel_ref="att1-main",
+            binding_version=1,
+            ally_ref="att1",
+            lead_ally_name="ATT1 Ally",
+            lead_site="att1",
+            lead_landing_id="att1-main",
+            lead_page_host="att1.example.test",
+            lead_page_path="/precheckout",
+            product_hotlink="att1-product",
+            product_name="Curso Uno",
+            product_price=Decimal("47"),
+            currency="USD",
+            offer_code="OFERTA1",
+            consent_copy_version="att1-consent-v1",
+            hotmart_product_id=123456,
+            chatwoot_account_id=42,
+            chatwoot_inbox_id=24,
+            inbound_scope_key="att1-inbound",
+            inbound_scope_version=1,
+        ),
+        clock=lambda: "2026-08-03T13:01:00+00:00",
+        chatwoot_account_id=42,
+        chatwoot_inbox_id=24,
+        pilot_boundary=PilotBoundaryConfig(
+            scope_key="att1-cart-recovery",
+            scope_version=1,
+            tenant_key="att1",
+            channel_provider="waba",
+            channel_account_ref="chatwoot-inbox:24",
+        ),
+        final_meta_effect_gate=FinalMetaEffectGate(
+            enabled=False,
+            evidence_dir=tmp_path / "portable-meta-effects",
+        ),
+        waba_template=WhatsAppTemplateConfig(
+            first_touch_name="att1_inicio_conversacion_v1",
+            followup_name="att1_seguimiento_v1",
+            language="es_MX",
+            category="MARKETING",
+            first_touch_parameter="buyer_name_and_product",
+        ),
+    )
+    portable_decisions = _run(
+        portable.dispatch_due(now="2026-08-03T13:00:00+00:00")
+    )
+
+    assert portable_decisions[-1].decision == "execute"
+    assert events == [
+        "reevaluate-1",
+        "reserve",
+        "hermes",
+        "reevaluate-2",
+    ]
+    assert sender_calls == []
+    assert finalizations[-1]["reason_code"] == "final_meta_gate_closed"
 
     events.clear()
     final_override = ReevaluationDecision(

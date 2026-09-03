@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import dataclass, field, fields
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -105,6 +106,14 @@ class PaymentFailureAdmissionResult:
 
 
 @dataclass(frozen=True)
+class PortablePaymentFailureAdmissionResult:
+    """Portable payment-failure event admission outcome."""
+
+    outcome: str
+    webhook_event_id: str
+
+
+@dataclass(frozen=True)
 class PrecheckoutAdmissionResult:
     """Atomic admission outcome for one provisional form submission."""
 
@@ -143,6 +152,14 @@ class CommercialAllyDiscountPolicy:
     release_requires_exact_trigger_set: bool
 
     def __post_init__(self) -> None:
+        if not isinstance(self.policy_key, str) or not self.policy_key.strip():
+            raise ValueError("invalid policy_key")
+        if (
+            isinstance(self.policy_version, bool)
+            or not isinstance(self.policy_version, int)
+            or self.policy_version <= 0
+        ):
+            raise ValueError("invalid policy_version")
         if self.trigger_kind not in {
             "payment_failure",
             "confirmed_cart_abandonment",
@@ -151,8 +168,36 @@ class CommercialAllyDiscountPolicy:
             raise ValueError("invalid trigger_kind")
         if self.discount_kind not in {"percentage", "fixed_amount"}:
             raise ValueError("invalid discount_kind")
-        if self.discount_value <= 0:
+        if not isinstance(self.discount_value, Decimal):
             raise ValueError("invalid discount_value")
+        if not self.discount_value.is_finite() or self.discount_value <= 0:
+            raise ValueError("invalid discount_value")
+        if self.discount_kind == "percentage":
+            if self.discount_value > 100 or self.currency is not None:
+                raise ValueError("invalid percentage discount")
+        elif (
+            not isinstance(self.currency, str)
+            or len(self.currency) != 3
+            or not self.currency.isalpha()
+            or not self.currency.isupper()
+        ):
+            raise ValueError("invalid fixed discount currency")
+        for field_name, value in (
+            ("coupon_reference", self.coupon_reference),
+            ("template_key", self.template_key),
+            ("copy_version", self.copy_version),
+            ("template_language", self.template_language),
+        ):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"invalid {field_name}")
+        for field_name, value in (
+            ("template_category", self.template_category),
+            ("coupon_template_component", self.coupon_template_component),
+        ):
+            if value is not None and (
+                not isinstance(value, str) or not value.strip()
+            ):
+                raise ValueError(f"invalid {field_name}")
         if self.offer_expiration_mode == "indefinite":
             if self.offer_valid_for_seconds is not None:
                 raise ValueError("invalid indefinite offer duration")
@@ -180,12 +225,14 @@ class CommercialAllyDiscountPolicy:
         ):
             if not isinstance(value, bool):
                 raise ValueError("invalid boolean policy field")
-        if not isinstance(self.valid_from, str) or not self.valid_from:
-            raise ValueError("invalid valid_from")
-        if self.valid_until is not None and (
-            not isinstance(self.valid_until, str) or not self.valid_until
-        ):
-            raise ValueError("invalid valid_until")
+        valid_from = self._parse_timestamp(self.valid_from, "valid_from")
+        valid_until = (
+            None
+            if self.valid_until is None
+            else self._parse_timestamp(self.valid_until, "valid_until")
+        )
+        if valid_until is not None and valid_until <= valid_from:
+            raise ValueError("invalid policy availability window")
         if self.requires_inbound_reply_after_initial_template and (
             self.presentation_stage != "later_step"
         ):
@@ -216,6 +263,18 @@ class CommercialAllyDiscountPolicy:
             or self.template_category != "marketing"
         ):
             raise ValueError("invalid strict discount release semantics")
+
+    @staticmethod
+    def _parse_timestamp(value: object, field_name: str) -> datetime:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"invalid {field_name}")
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError(f"invalid {field_name}") from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError(f"invalid {field_name}")
+        return parsed
 
 
 @dataclass(frozen=True)
@@ -965,6 +1024,22 @@ class SupabaseClient:
         """Resolve one exact active, published discount policy."""
 
         operation = "discount_policy_resolve"
+        if (
+            type(binding_version) is not int
+            or binding_version < 1
+            or type(expected_policy_version) is not int
+            or expected_policy_version < 1
+            or any(
+                not isinstance(value, str) or not value.strip()
+                for value in (
+                    tenant_ref,
+                    funnel_ref,
+                    trigger_kind,
+                    expected_policy_key,
+                )
+            )
+        ):
+            raise SupabaseError(f"{operation}_invalid_request")
         response = await self._request(
             "POST",
             "/rest/v1/rpc/resolve_commercial_ally_discount_policy",
@@ -1160,6 +1235,47 @@ class SupabaseClient:
             row, "webhook_event_id", operation=operation
         )
         return CartAbandonmentAdmissionResult(outcome, webhook_event_id)
+
+    async def admit_portable_hotmart_payment_failure(
+        self,
+        *,
+        config: CommercialAllyConfig,
+        external_event_id: str,
+        payload: dict[str, Any],
+        normalized_email: str | None,
+        normalized_phone: str | None,
+    ) -> PortablePaymentFailureAdmissionResult:
+        """Admit a payment failure against an exact durable ally binding."""
+        operation = "portable_payment_failure_admission"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/admit_portable_hotmart_payment_failure",
+            content=json.dumps(
+                {
+                    "p_tenant_ref": config.tenant_ref,
+                    "p_funnel_ref": config.funnel_ref,
+                    "p_binding_version": config.binding_version,
+                    "p_external_event_id": external_event_id,
+                    "p_payload": payload,
+                    "p_normalized_email": normalized_email,
+                    "p_normalized_phone": normalized_phone,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        rows = _response_rows(response, operation=operation)
+        if response.status_code != 200 or len(rows) != 1:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        row = rows[0]
+        if set(row) != {"outcome", "webhook_event_id"}:
+            raise _invalid_row_error(operation)
+        outcome = row.get("outcome")
+        if outcome not in {"inserted", "duplicate", "semantic_conflict"}:
+            raise SupabaseError(f"{operation}_invalid_outcome")
+        webhook_event_id = _required_uuid(
+            row, "webhook_event_id", operation=operation
+        )
+        return PortablePaymentFailureAdmissionResult(outcome, webhook_event_id)
 
     async def admit_precheckout_form_submission(
         self,
@@ -1763,12 +1879,13 @@ class SupabaseClient:
         rows = _response_rows(response, operation=operation)
         if response.status_code != 200 or len(rows) != 1:
             raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
-        outcome = rows[0].get("outcome")
-        webhook_event_id = rows[0].get("webhook_event_id")
+        row = rows[0]
+        if set(row) != {"outcome", "webhook_event_id"}:
+            raise SupabaseError(f"{operation}_invalid_row")
+        outcome = row.get("outcome")
         if outcome not in {"inserted", "duplicate", "semantic_conflict"}:
             raise SupabaseError(f"{operation}_invalid_outcome")
-        if not isinstance(webhook_event_id, str) or not webhook_event_id:
-            raise SupabaseError(f"{operation}_invalid_event_id")
+        webhook_event_id = _required_uuid(row, "webhook_event_id", operation=operation)
         return CartAbandonmentAdmissionResult(outcome, webhook_event_id)
 
     async def correlate_hotmart_purchase_intent(
@@ -2475,6 +2592,74 @@ class SupabaseClient:
             ),
             scheduled_action_id=_required_string(
                 row, "scheduled_action_id", operation="plan_cart_recovery"
+            ),
+            created=created,
+        )
+
+    async def plan_payment_failure_recovery(
+        self,
+        *,
+        webhook_event_id: str,
+        contact_id: str,
+        external_product_id: str,
+        product_name: str,
+        offer_code: str | None,
+        policy_key: str,
+        policy_version: int,
+        abandoned_at: str,
+        chatwoot_account_id: int | None = None,
+        chatwoot_inbox_id: int | None = None,
+        external_user_id: str | None = None,
+        pilot_boundary: PilotBoundaryConfig | None = None,
+    ) -> CartRecoveryPlan:
+        """Atomically create the portable payment-failure recovery plan."""
+        if (
+            pilot_boundary is None
+            or chatwoot_account_id is None
+            or chatwoot_inbox_id is None
+            or external_user_id is None
+        ):
+            raise SupabaseError(
+                "portable_payment_failure_plan_requires_scoped_identity"
+            )
+        operation = "plan_portable_payment_failure_recovery"
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps({
+                "p_webhook_event_id": webhook_event_id,
+                "p_contact_id": contact_id,
+                "p_external_product_id": external_product_id,
+                "p_product_name": product_name,
+                "p_offer_code": offer_code,
+                "p_policy_key": policy_key,
+                "p_policy_version": policy_version,
+                "p_failed_at": abandoned_at,
+                "p_chatwoot_account_id": chatwoot_account_id,
+                "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                "p_external_user_id": external_user_id,
+                "p_scope_key": pilot_boundary.scope_key,
+                "p_scope_version": pilot_boundary.scope_version,
+            }, ensure_ascii=False),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        created = row.get("created")
+        if not isinstance(created, bool):
+            raise SupabaseError(f"{operation}_invalid_row")
+        return CartRecoveryPlan(
+            recovery_case_id=_required_string(
+                row, "recovery_case_id", operation=operation
+            ),
+            followup_sequence_id=_required_string(
+                row, "followup_sequence_id", operation=operation
+            ),
+            scheduled_action_id=_required_string(
+                row, "scheduled_action_id", operation=operation
             ),
             created=created,
         )
@@ -3477,13 +3662,17 @@ class SupabaseClient:
         lease_generation: int,
         now: str,
         pilot_boundary: PilotBoundaryConfig | None = None,
+        anchor_type: str | None = None,
     ) -> DeliveryAttempt:
         """Persist the last authorization boundary immediately before HTTP."""
-        operation = (
-            "mark_lancemos_pilot_request_started"
-            if pilot_boundary is not None
-            else "mark_followup_request_started"
-        )
+        if anchor_type == "payment_failure":
+            if pilot_boundary is None:
+                raise SupabaseError("payment_failure_pilot_boundary_required")
+            operation = "mark_portable_payment_failure_request_started"
+        elif pilot_boundary is not None:
+            operation = "mark_lancemos_pilot_request_started"
+        else:
+            operation = "mark_followup_request_started"
         rpc_body: dict[str, object] = {
             "p_action_id": action_id,
             "p_attempt_id": attempt_id,

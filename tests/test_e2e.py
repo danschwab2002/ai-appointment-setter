@@ -187,7 +187,7 @@ def _setup_mocks(transport: E2ETransport) -> None:
             {
                 "_status": 200,
                 "outcome": "inserted",
-                "webhook_event_id": "we-e2e-001",
+                "webhook_event_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
             },
         ],
     )

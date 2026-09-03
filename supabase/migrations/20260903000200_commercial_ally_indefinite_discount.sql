@@ -5,24 +5,38 @@ begin;
 
 do $constraints$
 declare
-    v_constraint record;
+    v_expected_count integer;
 begin
-    for v_constraint in
-        select constraint_row.conname
-        from pg_catalog.pg_constraint constraint_row
-        where constraint_row.conrelid =
-                'public.commercial_ally_discount_policy_versions'::regclass
-          and constraint_row.contype = 'c'
-          and pg_catalog.pg_get_constraintdef(constraint_row.oid)
-                ilike '%offer_valid_for%'
-    loop
-        execute format(
-            'alter table public.commercial_ally_discount_policy_versions drop constraint %I',
-            v_constraint.conname
-        );
-    end loop;
+    select count(*)::integer
+    into v_expected_count
+    from pg_catalog.pg_constraint constraint_row
+    where constraint_row.conrelid =
+            'public.commercial_ally_discount_policy_versions'::regclass
+      and constraint_row.contype = 'c'
+      and constraint_row.conname =
+            'commercial_ally_discount_policy_versions_offer_valid_for_check'
+      and constraint_row.conkey = array[
+            (
+                select attribute_row.attnum
+                from pg_catalog.pg_attribute attribute_row
+                where attribute_row.attrelid = constraint_row.conrelid
+                  and attribute_row.attname = 'offer_valid_for'
+                  and not attribute_row.attisdropped
+            )
+        ]::smallint[]
+      and pg_catalog.pg_get_constraintdef(constraint_row.oid) =
+            'CHECK ((offer_valid_for > ''00:00:00''::interval))';
+
+    if v_expected_count <> 1 then
+        raise exception using
+            errcode = '55000',
+            message = 'commercial_ally_discount_offer_valid_for_constraint_drift';
+    end if;
 end
 $constraints$;
+
+alter table public.commercial_ally_discount_policy_versions
+    drop constraint commercial_ally_discount_policy_versions_offer_valid_for_check;
 
 alter table public.commercial_ally_discount_policy_versions
     alter column offer_valid_for drop not null,

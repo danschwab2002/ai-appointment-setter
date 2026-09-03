@@ -21,10 +21,27 @@ const stack = [
     .map((name) => join(root, 'supabase/migrations', name)),
 ];
 for (const file of stack) {
+  if (file.endsWith('20260903000200_commercial_ally_indefinite_discount.sql')) {
+    await db.exec(`
+      alter table public.commercial_ally_discount_policy_versions
+      add constraint commercial_ally_discount_policy_versions_offer_valid_for_upper_bound_check
+      check (offer_valid_for < interval '1 year');
+    `);
+  }
   await db.exec(readFileSync(file, 'utf8').replace(
     /create extension if not exists pgcrypto;/gi,
     '-- pgcrypto is built into PGlite',
   ));
+}
+
+const preservedOfferConstraint = (await db.query(`
+  select count(*)::integer as count
+  from pg_constraint
+  where conrelid = 'public.commercial_ally_discount_policy_versions'::regclass
+    and conname = 'commercial_ally_discount_policy_versions_offer_valid_for_upper_bound_check'
+`)).rows[0]?.count;
+if (preservedOfferConstraint !== 1) {
+  throw new Error('indefinite migration removed an unrelated offer-validity constraint');
 }
 
 await db.exec(`

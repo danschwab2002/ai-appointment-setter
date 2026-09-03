@@ -107,9 +107,62 @@ La transacción conserva las semánticas existentes de `inserted`, `duplicate` y
 reevaluaciones ni crea actions, commands, messages o delivery attempts. La RPC
 legada `admit_observed_lead_precheckout` no cambió.
 
+### Hotmart salida de carrito portable
+
+`PORTABLE_HOTMART_RECOVERY_ENABLED` es `false` por defecto y requiere un
+manifiesto explícito. Para `PURCHASE_OUT_OF_SHOPPING_CART` versión `2.0.0`, la
+RPC `admit_portable_hotmart_cart_abandonment` bloquea el binding activo exacto,
+deriva producto, oferta y scope server-side, y sólo admite/correlaciona el evento.
+No crea timers, actions, commands, mensajes ni efectos outbound.
+
+Cada evento portable nuevo queda ligado en
+`commercial_ally_hotmart_event_bindings` al tenant, funnel, versión de binding,
+UUID exacto de `hotmart_purchase_intent_scopes`, producto Hotmart, producto de
+intención y oferta usados al admitirlo. La FK al scope usa `ON DELETE RESTRICT` y
+un trigger bloquea físicamente `UPDATE` y `DELETE`, incluso para el owner. Un
+replay `duplicate` o `semantic_conflict` debe encontrar esa procedencia y
+coincidir con ella exactamente; ausencia o drift falla cerrado antes de
+reutilizar la correlación. La tabla no es accesible directamente por roles API
+ni por `service_role`; sólo la RPC `SECURITY DEFINER` la administra.
+
+Cuando el manifiesto explícito y todos los fences WABA coinciden, el factory
+construye un `ChatwootMessageSender` con capability dinámica explícita en vez de
+un JID fijo. El `DurableDispatcher` rechaza ese sender si falta
+`FinalMetaEffectGate`; el gate permanece default-off y registra evidencia
+sanitizada antes de cualquier `request_started` o llamada al proveedor.
+
 ### Hotmart pago fallido
 
-Producto y oferta deben coincidir con `hotmart_product_id` y `offer_code`. Una configuración ATT1 rechaza eventos Johanna y viceversa durante parsing. La RPC durable vigente sigue siendo exclusiva de Johanna; `JOHANNA_PAYMENT_FAILURE_HOTMART_ENABLED=true` con un manifiesto no legado impide iniciar.
+`PORTABLE_HOTMART_PAYMENT_FAILURE_ENABLED` es `false` por defecto y requiere un
+manifiesto explícito. Para `PURCHASE_CANCELED` versión `2.0.0`, producto y oferta
+deben coincidir exactamente con `hotmart_product_id` y `offer_code`; una
+configuración ATT1 rechaza eventos Johanna y viceversa durante parsing.
+
+`admit_portable_hotmart_payment_failure` fija tenant, funnel y versión desde el
+manifiesto, persiste el evento con idempotencia durable, conserva conflicto
+semántico y lo correlaciona como `payment_failure_supported`. El trigger mantiene
+identidad propia en todo el recorrido: `event_role=payment_failure`,
+`trigger_kind=payment_failure` y `anchor_type=payment_failure`; no reutiliza la
+semántica de abandono confirmado.
+
+`plan_portable_payment_failure_recovery` crea o reutiliza atómicamente el caso,
+la secuencia y la primera acción. El evento de pago fallido no concede permiso
+de contacto: la autorización debe existir antes de iniciar la salida y se
+comprueba en esa frontera. Antes de planificar, la RPC exige procedencia durable
+del webhook y correlación resuelta; además comprueba que tenant, binding activo,
+producto, oferta, cuenta, inbox, teléfono y contacto coincidan con el evento y
+la intención de compra, y deriva el instante de fallo del payload durable en vez
+de confiar en el timestamp del caller. El dispatcher selecciona
+`WABA_PAYMENT_FAILURE_TEMPLATE_NAME` (default
+`att1_compra_fallida_01`) y `mark_portable_payment_failure_request_started`
+revalida binding, consentimiento, opt-out, límites, lease y canal en la frontera
+durable previa al proveedor.
+
+`FinalMetaEffectGate` se evalúa después de componer y validar el efecto, pero
+antes de `request_started` y antes del sender. Con el gate cerrado se registra
+evidencia sanitizada `final_meta_gate_closed`/`final_effect_blocked`; no se inicia
+el request y no se representa el efecto como aceptado, enviado o entregado.
+Habilitar la admisión no habilita el request HTTP a Meta.
 
 ### Hotmart compra aprobada portable
 
@@ -197,6 +250,8 @@ Account, inbox, scope key y scope version del manifiesto se validan localmente. 
 - Binding activo no equivale a autorización de contacto, activación comercial, deploy o envío real.
 - Para cualquier manifiesto suministrado, startup permite únicamente
   `LEAD_PRECHECKOUT_ENABLED=true` y/o
-  `PORTABLE_HOTMART_PURCHASE_STOP_ENABLED=true`. `HOTMART_HOTTOK` sólo se admite
-  con el segundo flag. Cada otro flag booleano debe ser exactamente `False`.
+  `PORTABLE_HOTMART_PURCHASE_STOP_ENABLED=true` y/o
+  `PORTABLE_HOTMART_RECOVERY_ENABLED=true`. `HOTMART_HOTTOK` sólo se admite con
+  `PORTABLE_HOTMART_PURCHASE_STOP_ENABLED=true`. Cada otro flag booleano debe
+  ser exactamente `False`.
 - Las rutas outbound heredadas siguen fuera de este contrato.

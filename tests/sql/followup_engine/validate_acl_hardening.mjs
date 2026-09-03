@@ -85,6 +85,7 @@ const rows = await db.query(`
       ('admit_observed_lead_precheckout(text,jsonb,jsonb)'),
       ('admit_portable_observed_lead_precheckout(text,text,integer,text,jsonb,jsonb)'),
       ('admit_portable_hotmart_cart_abandonment(text,text,integer,text,jsonb,text,text)'),
+      ('admit_portable_hotmart_payment_failure(text,text,integer,text,jsonb,text,text)'),
       ('admit_portable_hotmart_purchase_approved(text,text,integer,text,jsonb,text,text)'),
       ('admit_precheckout_form_submission(text,jsonb,jsonb)'),
       ('begin_johanna_abandonment_one_shot(text,uuid,text,bigint,bigint,text,integer,bigint)'),
@@ -120,7 +121,9 @@ const rows = await db.query(`
       ('list_due_hotmart_abandonment_reevaluations(timestamp with time zone,integer)'),
       ('list_operator_unresolved_correlations(text,text,integer,uuid)'),
       ('mark_lancemos_pilot_request_started(uuid,uuid,text,bigint,timestamp with time zone)'),
+      ('mark_portable_payment_failure_request_started(uuid,uuid,text,bigint,timestamp with time zone)'),
       ('plan_lancemos_pilot_cart_recovery(uuid,uuid,text,text,text,text,integer,timestamp with time zone,bigint,bigint,text,text,integer)'),
+      ('plan_portable_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,timestamp with time zone,bigint,bigint,text,text,integer)'),
       ('prepare_operator_correlation_resolution(text,text,text,uuid,text,uuid,text,uuid)'),
       ('reconcile_chatwoot_opt_out_stop(bigint,bigint,bigint,text)'),
       ('reconcile_followup_delivery_attempt(uuid,uuid,bigint,text,text,uuid,timestamp with time zone,text,timestamp with time zone)'),
@@ -157,7 +160,7 @@ const rows = await db.query(`
 `);
 const result = rows.rows[0];
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 59) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 62) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const bindingAcl = await db.query(`
@@ -210,6 +213,20 @@ const schemaInventory = await db.query(readFileSync(
   join(root, 'scripts/supabase_schema_inventory.sql'),
   'utf8',
 ));
+const migrationNames = migrations.map((file) => file.split('/').at(-1));
+const missingFingerprints = migrationNames.filter(
+  (filename) => !schemaInventory.rows.some((row) => row.filename === filename),
+);
+const partialFingerprints = schemaInventory.rows.filter(
+  (row) => migrationNames.includes(row.filename)
+    && row.fingerprint_status !== 'fingerprint_present',
+);
+if (missingFingerprints.length !== 0 || partialFingerprints.length !== 0) {
+  throw new Error(`schema fingerprint inventory incomplete: ${JSON.stringify({
+    missingFingerprints,
+    partialFingerprints,
+  })}`);
+}
 const portabilityFingerprint = schemaInventory.rows.find(
   (row) => row.filename === '20260901000100_commercial_ally_portability.sql',
 );

@@ -100,6 +100,20 @@ def test_forward_migration_represents_indefinite_offer_as_null() -> None:
 
     assert "alter column offer_valid_for drop not null" in sql
     assert "offer_valid_for is null" in sql
+
+
+def test_forward_migration_drops_only_the_expected_duration_constraint() -> None:
+    sql = " ".join(INDEFINITE_MIGRATION.read_text(encoding="utf-8").lower().split())
+    assert (
+        "constraint_row.conname = "
+        "'commercial_ally_discount_policy_versions_offer_valid_for_check'"
+    ) in sql
+    assert (
+        "pg_catalog.pg_get_constraintdef(constraint_row.oid) = "
+        "'check ((offer_valid_for > ''00:00:00''::interval))'"
+    ) in sql
+    assert "commercial_ally_discount_offer_valid_for_constraint_drift" in sql
+    assert "ilike '%offer_valid_for%'" not in sql
     assert "offer_valid_for > interval '0'" in sql
     assert "update public.commercial_ally_discount_policy_versions" not in sql
     assert "insert into public.commercial_ally_discount_policy_versions" not in sql
@@ -214,6 +228,48 @@ def test_supabase_resolves_complete_typed_discount_policy() -> None:
     )]
 
 
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"binding_version": True},
+        {"binding_version": 1.0},
+        {"binding_version": 0},
+        {"expected_policy_version": True},
+        {"expected_policy_version": 1.0},
+        {"expected_policy_version": 0},
+        {"tenant_ref": ""},
+        {"funnel_ref": " "},
+        {"trigger_kind": ""},
+        {"expected_policy_key": ""},
+    ],
+)
+def test_discount_policy_request_identity_fails_before_http(
+    changes: dict[str, object],
+) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        raise AssertionError("invalid discount identity reached HTTP")
+
+    client = SupabaseClient(
+        base_url="https://example.supabase.co",
+        service_role_key="test-secret",
+        transport=httpx.MockTransport(handler),
+    )
+    kwargs: dict[str, object] = {
+        "tenant_ref": "att1",
+        "funnel_ref": "att1-main",
+        "binding_version": 1,
+        "trigger_kind": "payment_failure",
+        "expected_policy_key": "att1-recovery-triplet",
+        "expected_policy_version": 1,
+    }
+    kwargs.update(changes)
+
+    with pytest.raises(SupabaseError, match="discount_policy_resolve_invalid_request"):
+        asyncio.run(client.resolve_commercial_ally_discount_policy(
+            **kwargs,  # type: ignore[arg-type]
+        ))
+
+
 @pytest.mark.parametrize("rows", [[], [_resolved_policy_row(), _resolved_policy_row()]])
 def test_supabase_discount_policy_resolution_requires_exactly_one_row(
     rows: list[dict[str, object]],
@@ -243,6 +299,47 @@ def test_supabase_discount_policy_resolution_rejects_null_strict_transport() -> 
     row["template_category"] = None
     row["coupon_template_component"] = None
     row["coupon_template_parameter_index"] = None
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[row])
+
+    client = SupabaseClient(
+        base_url="https://example.supabase.co",
+        service_role_key="test-secret",
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(SupabaseError, match="discount_policy_resolve_invalid_row"):
+        asyncio.run(client.resolve_commercial_ally_discount_policy(
+            tenant_ref="att1",
+            funnel_ref="att1-main",
+            binding_version=1,
+            trigger_kind="payment_failure",
+            expected_policy_key="att1-recovery-triplet",
+            expected_policy_version=1,
+        ))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("policy_key", 1),
+        ("policy_version", True),
+        ("discount_value", "NaN"),
+        ("currency", 123),
+        ("coupon_reference", ""),
+        ("template_key", 1),
+        ("copy_version", []),
+        ("template_language", ""),
+        ("valid_from", "not-a-timestamp"),
+        ("valid_until", 1),
+    ],
+)
+def test_supabase_discount_policy_resolution_rejects_malformed_scalars(
+    field: str,
+    value: object,
+) -> None:
+    row = _resolved_policy_row()
+    row[field] = value
 
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=[row])

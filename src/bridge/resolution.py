@@ -10,7 +10,13 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from bridge.hotmart import HotmartBuyerData, parse_hotmart_payload
+from bridge.commercial_ally import CommercialAllyConfig
+from bridge.hotmart import (
+    EVENT_PURCHASE_CANCELED,
+    HotmartBuyerData,
+    parse_hotmart_payload,
+    parse_hotmart_payment_failure_buyer_payload,
+)
 from bridge.messaging import is_allowed_whatsapp_target
 from bridge.supabase import (
     ContactMatch,
@@ -40,6 +46,8 @@ async def resolve_event(
     chatwoot_account_id: int | None = None,
     chatwoot_inbox_id: int | None = None,
     pilot_boundary: PilotBoundaryConfig | None = None,
+    commercial_ally_config: CommercialAllyConfig | None = None,
+    event_type: str | None = None,
 ) -> SituationReport:
     """Resolve identity for one webhook event and return a situation report.
 
@@ -53,7 +61,21 @@ async def resolve_event(
     7. Build and return the SituationReport.
     8. Mark the webhook_event as 'processed'.
     """
-    buyer = parse_hotmart_payload(payload)
+    if event_type == EVENT_PURCHASE_CANCELED:
+        buyer = (
+            parse_hotmart_payment_failure_buyer_payload(
+                payload,
+                config=commercial_ally_config,
+            )
+            if commercial_ally_config is not None
+            else None
+        )
+    else:
+        buyer = (
+            parse_hotmart_payload(payload, config=commercial_ally_config)
+            if commercial_ally_config is not None
+            else parse_hotmart_payload(payload)
+        )
     if buyer is None:
         await supabase.update_event_status(
             event_id=webhook_event_id,
@@ -184,13 +206,32 @@ async def resolve_event(
                 buyer.creation_date_ms / 1000,
                 tz=timezone.utc,
             ).isoformat()
-            identity_allowed = (
+            portable_identity_allowed = (
+                commercial_ally_config is not None
+                and pilot_boundary is not None
+                and buyer.buyer_phone is not None
+                and chatwoot_account_id
+                == commercial_ally_config.chatwoot_account_id
+                and chatwoot_inbox_id == commercial_ally_config.chatwoot_inbox_id
+                and pilot_boundary.tenant_key
+                == commercial_ally_config.tenant_ref
+                and pilot_boundary.channel_provider == "waba"
+                and pilot_boundary.channel_account_ref
+                == f"chatwoot-inbox:{commercial_ally_config.chatwoot_inbox_id}"
+            )
+            legacy_identity_allowed = (
                 buyer.buyer_phone is not None
                 and chatwoot_account_id is not None
                 and chatwoot_inbox_id is not None
                 and is_allowed_whatsapp_target(buyer.buyer_phone, allowed_jid)
             )
-            plan = await supabase.plan_cart_recovery(
+            identity_allowed = portable_identity_allowed or legacy_identity_allowed
+            planner = (
+                supabase.plan_payment_failure_recovery
+                if buyer.event_type == EVENT_PURCHASE_CANCELED
+                else supabase.plan_cart_recovery
+            )
+            plan = await planner(
                 webhook_event_id=webhook_event_id,
                 contact_id=contact_id,
                 external_product_id=str(buyer.product_id),

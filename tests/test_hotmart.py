@@ -84,6 +84,32 @@ def _cart_abandonment(
     }
 
 
+def _payment_failure(
+    event_id: str = "portable-payment-failure-001",
+) -> dict[str, object]:
+    return {
+        "id": event_id,
+        "creation_date": int(time.time() * 1000),
+        "event": "PURCHASE_CANCELED",
+        "version": "2.0.0",
+        "data": {
+            "product": {"id": 123456, "name": "ATT1 Offer"},
+            "buyer": {
+                "name": "Synthetic Buyer",
+                "email": " Buyer@Example.test ",
+                "phone": "+1 (202) 555-0123",
+            },
+            "purchase": {
+                "status": "CANCELED",
+                "transaction": "HPATT1123456",
+                "offer": {"code": "att1offer"},
+                "payment": {"refusal_reason": "NO_FUNDS"},
+            },
+            "checkout_country": {"iso": "MX", "name": "México"},
+        },
+    }
+
+
 def _settings(**overrides: object) -> Settings:
     values: dict[str, object] = {
         "webhook_secret": "chatwoot-test-secret",
@@ -284,10 +310,45 @@ def test_legacy_cart_client_uses_scope_fixed_johanna_wrapper() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"outcome": "inserted", "webhook_event_id": "not-a-uuid"},
+        {
+            "outcome": "inserted",
+            "webhook_event_id": "cf5ba605-2d3a-4e09-85da-1227632c598d",
+            "unexpected": "accepted",
+        },
+    ],
+)
+def test_legacy_cart_client_rejects_malformed_committed_identity(
+    row: dict[str, object],
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[row])
+
+    client = SupabaseClient(
+        base_url="https://supabase.example.test",
+        service_role_key="service-role",
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(
+        SupabaseError,
+        match="cart_abandonment_correlation_admission_invalid_row",
+    ):
+        asyncio.run(client.admit_and_correlate_hotmart_cart_abandonment(
+            external_event_id="legacy-cart-001",
+            payload=_cart_abandonment(),
+            normalized_email="buyer@example.test",
+            normalized_phone="12025550123",
+        ))
+
+
 class _SupabaseStub:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
         self.cart_calls: list[dict[str, object]] = []
+        self.payment_failure_calls: list[dict[str, object]] = []
 
     async def admit_portable_hotmart_purchase_approved(
         self, **kwargs: object
@@ -305,6 +366,15 @@ class _SupabaseStub:
         return type("Admission", (), {
             "outcome": "inserted",
             "webhook_event_id": "cf5ba605-2d3a-4e09-85da-1227632c598d",
+        })()
+
+    async def admit_portable_hotmart_payment_failure(
+        self, **kwargs: object
+    ) -> object:
+        self.payment_failure_calls.append(kwargs)
+        return type("Admission", (), {
+            "outcome": "inserted",
+            "webhook_event_id": "77bc81f5-f84a-4a98-b4e1-566074370e5d",
         })()
 
 
@@ -356,6 +426,34 @@ def test_portable_handler_admits_scoped_cart_abandonment_when_enabled() -> None:
     assert supabase.cart_calls[0]["config"] == _config()
     assert supabase.cart_calls[0]["normalized_email"] == "buyer@example.test"
     assert supabase.cart_calls[0]["normalized_phone"] == "12025550123"
+
+
+def test_portable_handler_admits_scoped_payment_failure_when_enabled() -> None:
+    supabase = _SupabaseStub()
+    response = _post(
+        create_app(
+            _settings(portable_hotmart_payment_failure_enabled=True),
+            supabase_client=supabase,  # type: ignore[arg-type]
+        ),
+        _payment_failure(),
+    )
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "status": "received",
+        "event_id": "portable-payment-failure-001",
+    }
+    assert supabase.calls == []
+    assert supabase.cart_calls == []
+    assert len(supabase.payment_failure_calls) == 1
+    assert supabase.payment_failure_calls[0]["external_event_id"] == (
+        "portable-payment-failure-001"
+    )
+    assert supabase.payment_failure_calls[0]["config"] == _config()
+    assert supabase.payment_failure_calls[0]["normalized_email"] == (
+        "buyer@example.test"
+    )
+    assert supabase.payment_failure_calls[0]["normalized_phone"] == "12025550123"
 
 
 @pytest.mark.parametrize(

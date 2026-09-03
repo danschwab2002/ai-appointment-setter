@@ -339,6 +339,14 @@ messages o delivery attempts. Sin manifiesto, la ruta y RPC legadas permanecen
 sin cambios. Todos los demás flags y `HOTMART_HOTTOK` siguen cerrados para el
 runtime portable.
 
+El árbol local también agrega admisión portable de salida de carrito, todavía
+sin deploy. La RPC binding-aware valida binding y scope antes de escribir y no
+agenda timers ni efectos. La tabla
+`commercial_ally_hotmart_event_bindings` fija procedencia inmutable por evento
+(tenant, funnel, versión, producto y oferta); un replay bajo otro binding o scope
+falla cerrado antes de reutilizar una correlación existente. Los roles API y
+`service_role` no poseen DML directo sobre ese ledger.
+
 El corte inicial sólo admite `psicologajohanna / ads-a / bxjge6zq`. Persiste intención
 con `provider_observed=true`, pero conserva `activation_authorized=false` y
 `whatsapp_contact_authorized=false` porque el formulario declara
@@ -669,9 +677,16 @@ con una versión `active`.
 
 La activación del binding no autoriza automatización. Para cualquier manifiesto
 suministrado —incluso si copia valores legacy—, el bridge conserva esa procedencia
-y valida tipos estrictos. Sólo permite la admisión portable de lead y el stop
-portable de `PURCHASE_APPROVED`, cada uno con flag default-off; rechaza el resto
-de cadenas ligadas a Johanna.
+y valida tipos estrictos. Permite únicamente las cadenas portadas de admisión de lead, stop por
+`PURCHASE_APPROVED`, recuperación de carrito y recuperación de pago fallido hasta
+el dispatcher; cada una conserva flags default-off y scope exacto. Pago fallido
+entra por `PURCHASE_CANCELED`, se correlaciona y planifica con RPCs propias, y
+conserva `payment_failure` como event role, trigger y anchor para no confundirse
+con abandono confirmado. El evento no crea una autorización de contacto; la
+recuperación exige una autorización explícita y vigente. La recuperación usa sender dinámico sólo con manifiesto
+explícito y termina en el gate Meta default-off, que registra evidencia sanitizada
+sin marcar `request_started` ni iniciar la solicitud externa. Las demás cadenas
+ligadas a Johanna se rechazan.
 
 El stop de compra acepta `HOTMART_HOTTOK` únicamente con
 `PORTABLE_HOTMART_PURCHASE_STOP_ENABLED=true`. Revalida producto/oferta contra el
@@ -689,10 +704,14 @@ binding. El runtime carece de DML y lectura directa: sólo resuelve una versión
 las versiones aprobadas son inmutables y una publicación no crea ni modifica
 timers, acciones, mensajes, cadencia, stops, budgets o efectos.
 
-Las migraciones `20260901000100`–`20260901000400` crean el contrato sin sembrar
-clientes, políticas temporales, políticas de descuento ni secretos. Esta implementación tiene pruebas y evidencia
-HTTP locales, permanece default-off y no acredita DDL aplicado, credenciales,
-despliegue ni contacto real. El diseño está en
+Las migraciones portables, incluida
+`20260903000300_commercial_ally_payment_failure_recovery.sql`, crean el contrato
+sin sembrar clientes, políticas temporales, políticas de descuento ni secretos.
+Esta implementación tiene pruebas SQL agregadas y evidencia HTTP local; permanece
+default-off y no acredita DDL aplicado a Supabase Cloud, credenciales, despliegue
+ni contacto real. La evidencia del corte de pago fallido está en
+[E2E local de pago fallido ATT1](operations/2026-09-03-att1-payment-failure-production-like-e2e.md).
+El diseño está en
 [Runtime portable single-tenant V1](design/portable-single-tenant-runtime-v1.md)
 y el contrato en
 [Runtime de aliada comercial V1](contracts/commercial-ally-runtime-v1.md).
