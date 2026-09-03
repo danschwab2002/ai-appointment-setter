@@ -1,6 +1,6 @@
 # Evidencia de release del dashboard Johanna
 
-- **Estado:** Invalidado por revisión adversarial posterior
+- **Estado:** Reporte invalidado; contención verificada
 - **Fecha UTC:** 2026-09-03
 - **Alcance:** merge, despliegue del RPC read-only y primer reporte live sanitario
 
@@ -68,8 +68,19 @@ posteriores al cutoff histórico. Por lo tanto, el reporte anterior no constituy
 evidencia válida y su artifact fue eliminado.
 
 La migración forward-only
-`20260831000200_disable_johanna_funnel_dashboard_read.sql` está preparada para
-revocar `EXECUTE` a todos los roles API, incluido `service_role`. En este punto
-la revocación aún requiere apply y postflight en Supabase Cloud; sólo el artifact
-anterior fue eliminado. No se debe volver a generar ni entregar un dashboard
-hasta contener el RPC e implementar y probar ambos invariantes.
+`20260831000200_disable_johanna_funnel_dashboard_read.sql` fue integrada mediante
+PR `#97` y merge commit `491ac471ca17d3d1c82778f0823b3307204324d9`.
+No se debe volver a generar ni entregar un dashboard hasta implementar y probar
+ambos invariantes.
+
+## Postflight de contención
+
+- SHA-256 de la migración:
+  `e96359672780e312aaa286acd06e551ad7b86890e35f9c6c770023108c3f1094`;
+- apply limitado a `20260831000200`, exit `0`;
+- ledger `disable_johanna_funnel_dashboard_read / 4 statements`;
+- `EXECUTE=false` para `service_role`, `authenticated`, `anon` y `PUBLIC`;
+- invocación HTTP autenticada como `service_role`: `403` fail-closed;
+- dry-run final sin migraciones pendientes;
+- `pilot_boundary=disabled`, `automation_state=default_off` y backlog elegible
+  en cero antes y después del apply.
