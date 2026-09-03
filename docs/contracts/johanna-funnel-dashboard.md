@@ -1,6 +1,6 @@
 # Contrato del dashboard on-demand Johanna V1
 
-- **Estado:** Implementado; pendiente de merge y despliegue
+- **Estado:** Implementado y desplegado
 - **Versión:** 1
 - **Alcance:** proyección sanitaria read-only de casos comerciales durables
 - **Fuera de alcance:** mensajes, PII, reportes conversacionales, mutaciones y servidor permanente
@@ -129,3 +129,6 @@ La CLI live requiere que la migración
 `20260831000100_johanna_funnel_dashboard_read.sql` esté aplicada. Antes de esa
 migración, el RPC responde inexistente y la CLI falla cerrado. La implementación
 no amplía grants directos de tablas ni requiere cambiar el bridge productivo.
+
+La evidencia del despliegue inicial y del primer reporte live está en
+[Johanna funnel dashboard release](../operations/2026-09-03-johanna-funnel-dashboard-release.md).
