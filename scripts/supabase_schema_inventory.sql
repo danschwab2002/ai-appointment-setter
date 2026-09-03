@@ -1865,7 +1865,30 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
             )
         )::int
         + (
-            has_function_privilege(
+            not has_function_privilege(
+                'anon',
+                'public.read_johanna_funnel_dashboard_v1(timestamptz,integer)',
+                'EXECUTE'
+            )
+            and not has_function_privilege(
+                'authenticated',
+                'public.read_johanna_funnel_dashboard_v1(timestamptz,integer)',
+                'EXECUTE'
+            )
+            and not has_function_privilege(
+                'public',
+                'public.read_johanna_funnel_dashboard_v1(timestamptz,integer)',
+                'EXECUTE'
+            )
+        )::int,
+        2,
+        'sanitary_dashboard_projection'
+    union all
+    select
+        '20260831000200',
+        '20260831000200_disable_johanna_funnel_dashboard_read.sql',
+        (
+            not has_function_privilege(
                 'service_role',
                 'public.read_johanna_funnel_dashboard_v1(timestamptz,integer)',
                 'EXECUTE'
@@ -1880,9 +1903,14 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
                 'public.read_johanna_funnel_dashboard_v1(timestamptz,integer)',
                 'EXECUTE'
             )
+            and not has_function_privilege(
+                'public',
+                'public.read_johanna_funnel_dashboard_v1(timestamptz,integer)',
+                'EXECUTE'
+            )
         )::int,
-        2,
-        'sanitary_service_role_dashboard_projection'
+        1,
+        'dashboard_projection_contained'
     union all
     select
         '20260901000100',

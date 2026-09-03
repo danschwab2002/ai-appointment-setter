@@ -55,7 +55,7 @@ expected_service_role(signature) as (
         ('public.reconcile_followup_delivery_attempt(uuid, uuid, bigint, text, text, uuid, timestamp with time zone, text, timestamp with time zone)'),
         ('public.record_and_finalize_followup_acceptance(uuid, uuid, text, bigint, text, text, text, timestamp with time zone)'),
         ('public.get_precheckout_delayed_one_shot_command(uuid)'),
-        ('public.read_johanna_funnel_dashboard_v1(timestamp with time zone, integer)'),
+
         ('public.list_due_hotmart_abandonment_reevaluations_v2(timestamp with time zone, integer, boolean)'),
         ('public.reevaluate_hotmart_abandonment_timer(uuid, timestamp with time zone)'),
         ('public.reevaluate_followup_action(uuid, text, bigint, timestamp with time zone, boolean, text, text, timestamp with time zone, text, boolean, boolean, boolean, boolean, boolean)'),

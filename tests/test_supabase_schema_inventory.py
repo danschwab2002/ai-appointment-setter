@@ -119,7 +119,7 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
 
-    assert len(allowlisted) == 63
+    assert len(allowlisted) == 62
     assert len(allowlisted) == len(set(allowlisted))
     assert "admit_precheckout_form_submission(text, jsonb, jsonb)" in allowlisted
     assert "admit_observed_lead_precheckout(text, jsonb, jsonb)" in allowlisted
@@ -129,10 +129,7 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     )
     assert "admit_inbound_commercial_case_v2(text, integer, bigint, text)" in allowlisted
     assert "admit_johanna_payment_failure(text, jsonb, text, text)" in allowlisted
-    assert (
-        "read_johanna_funnel_dashboard_v1(timestamp with time zone, integer)"
-        in allowlisted
-    )
+    assert "read_johanna_funnel_dashboard_v1" not in "\n".join(allowlisted)
     assert (
         "resolve_commercial_ally_runtime_binding(text, text, integer)" in allowlisted
     )

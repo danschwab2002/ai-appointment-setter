@@ -475,7 +475,7 @@ def verify_effective_acls(harness: PostgresHarness) -> None:
                      'claim_human_handoff_projection_effects',
                      'finalize_human_handoff_projection_effect',
                      'get_human_handoff_projection_status',
-                     'read_johanna_funnel_dashboard_v1'
+
                    ) then has_function_privilege(role_name, oid, 'EXECUTE')
                   else not has_function_privilege(role_name, oid, 'EXECUTE')
                 end

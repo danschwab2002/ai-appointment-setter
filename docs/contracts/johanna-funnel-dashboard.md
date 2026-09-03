@@ -1,6 +1,6 @@
 # Contrato del dashboard on-demand Johanna V1
 
-- **Estado:** Implementado y desplegado
+- **Estado:** Retirado temporalmente por contención
 - **Versión:** 1
 - **Alcance:** proyección sanitaria read-only de casos comerciales durables
 - **Fuera de alcance:** mensajes, PII, reportes conversacionales, mutaciones y servidor permanente
@@ -132,3 +132,8 @@ no amplía grants directos de tablas ni requiere cambiar el bridge productivo.
 
 La evidencia del despliegue inicial y del primer reporte live está en
 [Johanna funnel dashboard release](../operations/2026-09-03-johanna-funnel-dashboard-release.md).
+
+El acceso live quedó revocado después de que una revisión adversarial detectara
+falta de scoping por tenant y semántica histórica incompleta respecto de
+`p_cutoff`. La CLI debe fallar cerrado hasta que una migración forward-only
+corregida sea aceptada y desplegada.

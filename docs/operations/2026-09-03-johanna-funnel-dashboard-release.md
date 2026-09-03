@@ -1,6 +1,6 @@
 # Evidencia de release del dashboard Johanna
 
-- **Estado:** Verificado
+- **Estado:** Invalidado por revisión adversarial posterior
 - **Fecha UTC:** 2026-09-03
 - **Alcance:** merge, despliegue del RPC read-only y primer reporte live sanitario
 
@@ -59,3 +59,15 @@ artifact HTML resultante:
 
 El artifact reside fuera de Git en `/opt/data/cache/`, conforme a la política de
 PII y datos capturados.
+
+## Contención posterior
+
+Una revisión adversarial posterior reprodujo dos defectos de aislamiento: la
+proyección podía incluir intents de otro tenant y podía incorporar hechos
+posteriores al cutoff histórico. Por lo tanto, el reporte anterior no constituye
+evidencia válida y su artifact fue eliminado.
+
+La migración forward-only
+`20260831000200_disable_johanna_funnel_dashboard_read.sql` revoca `EXECUTE` a
+todos los roles API, incluido `service_role`. El dashboard permanece retirado
+hasta implementar y probar ambos invariantes antes de volver a conceder acceso.
