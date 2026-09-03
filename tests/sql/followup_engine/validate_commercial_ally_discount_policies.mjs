@@ -253,6 +253,203 @@ if ((await resolvePolicy('precheckout_without_purchase_signal')).rows.length !==
   throw new Error('expired policy must not resolve');
 }
 
+let finiteNullDurationRejected = false;
+try {
+  await db.exec(`
+    insert into public.commercial_ally_discount_policy_versions (
+      tenant_ref, funnel_ref, binding_version, policy_key, policy_version,
+      trigger_kind, discount_kind, discount_value, coupon_reference,
+      offer_valid_for, offer_expiration_mode, presentation_stage,
+      template_key, copy_version
+    ) values (
+      'att1', 'att1-main', 1, 'invalid-finite-null-duration', 1,
+      'confirmed_cart_abandonment', 'percentage', 10, 'literal-coupon',
+      null, 'finite', 'later_step', 'finite_null', 'finite-null-v1'
+    );
+  `);
+} catch { finiteNullDurationRejected = true; }
+if (!finiteNullDurationRejected) {
+  throw new Error('finite offer accepted NULL duration');
+}
+
+let strictTransportNullRejected = false;
+try {
+  await db.exec(`
+    insert into public.commercial_ally_discount_policy_versions
+      (tenant_ref, funnel_ref, binding_version, policy_key, policy_version,
+       trigger_kind, status, discount_kind, discount_value, currency,
+       coupon_reference, offer_valid_for, offer_expiration_mode,
+       presentation_stage, template_key, copy_version,
+       requires_inbound_reply_after_initial_template, coupon_delivery_mode,
+       urgency_copy_allowed, channel_provider, delivery_mode, template_language,
+       template_category, coupon_template_component,
+       coupon_template_parameter_index, release_requires_exact_trigger_set)
+    values
+      ('att1','att1-main',1,'strict-null-bypass',1,'payment_failure','draft',
+       'percentage',10,null,'META_VARIABLE',null,'indefinite','later_step',
+       'att1_discount_later','att1-discount-v1',true,
+       'meta_template_variable',false,'waba','approved_template','es_MX',
+       null,null,null,true)
+  `);
+} catch { strictTransportNullRejected = true; }
+if (!strictTransportNullRejected) {
+  throw new Error('strict Meta-template policy accepted NULL transport fields');
+}
+
+let zeroDurationRejected = false;
+try {
+  await db.exec(`
+    insert into public.commercial_ally_discount_policy_versions (
+      tenant_ref, funnel_ref, binding_version, policy_key, policy_version,
+      trigger_kind, discount_kind, discount_value, coupon_reference,
+      offer_valid_for, presentation_stage, template_key, copy_version
+    ) values (
+      'att1', 'att1-main', 1, 'invalid-zero-duration', 1,
+      'confirmed_cart_abandonment', 'percentage', 10, 'variable-from-meta',
+      interval '0', 'later_step', 'att1_discount_later', 'att1-discount-v1'
+    );
+  `);
+} catch { zeroDurationRejected = true; }
+if (!zeroDurationRejected) throw new Error('zero offer duration was accepted');
+
+await db.exec(`
+  insert into public.commercial_ally_discount_policy_versions (
+    tenant_ref, funnel_ref, binding_version, policy_key, policy_version,
+    trigger_kind, discount_kind, discount_value, currency,
+    coupon_reference, offer_valid_for, offer_expiration_mode, presentation_stage,
+    template_key, copy_version, valid_from, valid_until
+  ) values (
+    'att1', 'att1-main', 1, 'att1-payment-failure-discount', 1,
+    'payment_failure', 'percentage', 10, null,
+    'variable-from-meta-template', null, 'indefinite', 'later_step',
+    'att1_discount_later', 'att1-discount-v1',
+    statement_timestamp() - interval '1 hour', null
+  );
+  update public.commercial_ally_discount_policy_versions
+  set status='approved', approved_by='operator-test',
+      approved_at=statement_timestamp()
+  where policy_key='att1-payment-failure-discount' and policy_version=1;
+  update public.commercial_ally_discount_policy_versions
+  set status='published', published_at=statement_timestamp()
+  where policy_key='att1-payment-failure-discount' and policy_version=1;
+`);
+const indefinite = (await resolvePolicy('payment_failure')).rows;
+if (indefinite.length !== 1
+    || Number(indefinite[0]?.discount_value) !== 10
+    || indefinite[0]?.offer_valid_for_seconds !== null
+    || indefinite[0]?.valid_until !== null
+    || indefinite[0]?.presentation_stage !== 'later_step') {
+  throw new Error(`indefinite policy did not resolve exactly: ${JSON.stringify(indefinite)}`);
+}
+
+await db.exec(`
+  update public.commercial_ally_discount_policy_versions
+  set status='retired'
+  where tenant_ref='att1' and funnel_ref='att1-main'
+    and binding_version=1 and status='published';
+
+  insert into public.commercial_ally_discount_policy_versions (
+    tenant_ref, funnel_ref, binding_version, policy_key, policy_version,
+    trigger_kind, discount_kind, discount_value, coupon_reference,
+    offer_valid_for, offer_expiration_mode, presentation_stage,
+    template_key, copy_version, release_requires_exact_trigger_set,
+    requires_inbound_reply_after_initial_template, coupon_delivery_mode,
+    urgency_copy_allowed, channel_provider, delivery_mode,
+    template_language, template_category,
+    coupon_template_component, coupon_template_parameter_index,
+    valid_from
+  ) values
+    ('att1','att1-main',1,'att1-recovery-triplet',1,
+     'payment_failure','percentage',10,'meta-variable',
+     null,'indefinite','later_step','att1_discount_later','att1-discount-v1',
+     true,true,'meta_template_variable',false,'waba','approved_template',
+     'es_MX','marketing','body',1,statement_timestamp()-interval '1 hour'),
+    ('att1','att1-main',1,'att1-recovery-triplet',1,
+     'confirmed_cart_abandonment','percentage',10,'meta-variable',
+     null,'indefinite','later_step','att1_discount_later','att1-discount-v1',
+     true,true,'meta_template_variable',false,'waba','approved_template',
+     'es_MX','marketing','body',1,statement_timestamp()-interval '1 hour'),
+    ('att1','att1-main',1,'att1-recovery-triplet',1,
+     'precheckout_without_purchase_signal','percentage',10,'meta-variable',
+     null,'indefinite','later_step','att1_discount_later','att1-discount-v1',
+     true,true,'meta_template_variable',false,'waba','approved_template',
+     'es_MX','marketing','body',1,statement_timestamp()-interval '1 hour');
+
+  update public.commercial_ally_discount_policy_versions
+  set status='approved', approved_by='operator-test',
+      approved_at=statement_timestamp()
+  where policy_key='att1-recovery-triplet' and policy_version=1;
+`);
+
+let partialPublishError = '';
+try {
+  await db.exec(`
+    update public.commercial_ally_discount_policy_versions
+    set status='published', published_at=statement_timestamp()
+    where policy_key='att1-recovery-triplet' and policy_version=1
+      and trigger_kind='payment_failure';
+  `);
+} catch (error) { partialPublishError = String(error?.message ?? error); }
+if (!partialPublishError.includes('commercial_ally_discount_release_')) {
+  throw new Error(`partial strict release failure was not authoritative: ${partialPublishError}`);
+}
+
+await db.exec(`
+  begin;
+  update public.commercial_ally_discount_policy_versions
+  set status='published', published_at=statement_timestamp()
+  where policy_key='att1-recovery-triplet' and policy_version=1;
+  commit;
+`);
+for (const trigger of [
+  'payment_failure',
+  'confirmed_cart_abandonment',
+  'precheckout_without_purchase_signal',
+]) {
+  const rows = (await resolvePolicy(trigger)).rows;
+  if (rows.length !== 1
+      || rows[0]?.policy_key !== 'att1-recovery-triplet'
+      || Number(rows[0]?.discount_value) !== 10
+      || rows[0]?.offer_expiration_mode !== 'indefinite'
+      || rows[0]?.requires_inbound_reply_after_initial_template !== true
+      || rows[0]?.coupon_delivery_mode !== 'meta_template_variable'
+      || rows[0]?.urgency_copy_allowed !== false
+      || rows[0]?.channel_provider !== 'waba'
+      || rows[0]?.delivery_mode !== 'approved_template'
+      || rows[0]?.coupon_template_component !== 'body'
+      || Number(rows[0]?.coupon_template_parameter_index) !== 1) {
+    throw new Error(`strict release did not resolve for ${trigger}: ${JSON.stringify(rows)}`);
+  }
+}
+
+let partialRetirementError = '';
+try {
+  await db.exec(`
+    update public.commercial_ally_discount_policy_versions
+    set status='retired'
+    where policy_key='att1-recovery-triplet' and policy_version=1
+      and trigger_kind='payment_failure';
+  `);
+} catch (error) { partialRetirementError = String(error?.message ?? error); }
+if (!partialRetirementError.includes('commercial_ally_discount_release_')) {
+  throw new Error(`partial strict retirement failure was not authoritative: ${partialRetirementError}`);
+}
+
+let partialDeleteError = '';
+try {
+  await db.exec(`
+    delete from public.commercial_ally_discount_policy_versions
+    where policy_key='att1-recovery-triplet' and policy_version=1
+      and trigger_kind='payment_failure';
+  `);
+} catch (error) { partialDeleteError = String(error?.message ?? error); }
+if (!partialDeleteError.includes('commercial_ally_discount_policy_content_immutable')
+    && !partialDeleteError.includes('commercial_ally_discount_release_')) {
+  throw new Error(`partial strict delete failure was not authoritative: ${partialDeleteError}`);
+}
+
 console.log('discount_policy_default_off=OK');
 console.log('discount_policy_single_published=OK');
 console.log('discount_policy_runtime_read_only=OK');
+console.log('discount_policy_indefinite_offer=OK');
+console.log('discount_policy_strict_triplet_atomic=OK');

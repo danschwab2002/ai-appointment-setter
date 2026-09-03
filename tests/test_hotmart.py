@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from bridge.app import Settings, create_app
 from bridge.commercial_ally import CommercialAllyConfig
 from bridge.hotmart import parse_hotmart_purchase_payload
-from bridge.supabase import SupabaseClient
+from bridge.supabase import SupabaseClient, SupabaseError
 
 
 def _config() -> CommercialAllyConfig:
@@ -183,6 +183,107 @@ def test_portable_purchase_client_sends_server_owned_binding_identity() -> None:
     }
 
 
+def test_portable_cart_client_sends_server_owned_binding_identity() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=[{
+            "outcome": "inserted",
+            "webhook_event_id": "cf5ba605-2d3a-4e09-85da-1227632c598d",
+        }])
+
+    client = SupabaseClient(
+        base_url="https://supabase.example.test",
+        service_role_key="service-role",
+        transport=httpx.MockTransport(handler),
+    )
+    payload = _cart_abandonment()
+
+    asyncio.run(client.admit_portable_hotmart_cart_abandonment(
+        config=_config(),
+        external_event_id="portable-cart-abandonment-001",
+        payload=payload,
+        normalized_email="buyer@example.test",
+        normalized_phone="12025550123",
+    ))
+
+    assert requests[0].url.path == (
+        "/rest/v1/rpc/admit_portable_hotmart_cart_abandonment"
+    )
+    assert json.loads(requests[0].content) == {
+        "p_tenant_ref": "att1",
+        "p_funnel_ref": "att1-main",
+        "p_binding_version": 1,
+        "p_external_event_id": "portable-cart-abandonment-001",
+        "p_payload": payload,
+        "p_normalized_email": "buyer@example.test",
+        "p_normalized_phone": "12025550123",
+    }
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {
+            "outcome": "inserted",
+            "webhook_event_id": "not-a-uuid",
+        },
+        {
+            "outcome": "inserted",
+            "webhook_event_id": "cf5ba605-2d3a-4e09-85da-1227632c598d",
+            "unexpected": "field",
+        },
+    ],
+)
+def test_portable_cart_client_rejects_malformed_committed_identity(
+    row: dict[str, str],
+) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[row])
+
+    client = SupabaseClient(
+        base_url="https://supabase.example.test",
+        service_role_key="service-role",
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(SupabaseError, match="portable_cart_abandonment_admission_invalid"):
+        asyncio.run(client.admit_portable_hotmart_cart_abandonment(
+            config=_config(),
+            external_event_id="portable-cart-abandonment-001",
+            payload=_cart_abandonment(),
+            normalized_email="buyer@example.test",
+            normalized_phone="12025550123",
+        ))
+
+
+def test_legacy_cart_client_uses_scope_fixed_johanna_wrapper() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=[{
+            "outcome": "inserted",
+            "webhook_event_id": "cf5ba605-2d3a-4e09-85da-1227632c598d",
+        }])
+
+    client = SupabaseClient(
+        base_url="https://supabase.example.test",
+        service_role_key="service-role",
+        transport=httpx.MockTransport(handler),
+    )
+    asyncio.run(client.admit_and_correlate_hotmart_cart_abandonment(
+        external_event_id="legacy-cart-001",
+        payload=_cart_abandonment(),
+        normalized_email="buyer@example.test",
+        normalized_phone="12025550123",
+    ))
+
+    assert requests[0].url.path.endswith(
+        "/rest/v1/rpc/admit_johanna_hotmart_cart_abandonment"
+    )
+
+
 class _SupabaseStub:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
@@ -197,7 +298,7 @@ class _SupabaseStub:
             "webhook_event_id": "8de61be1-81ae-4dcf-9f18-d24b8d71db5d",
         })()
 
-    async def admit_and_correlate_hotmart_cart_abandonment(
+    async def admit_portable_hotmart_cart_abandonment(
         self, **kwargs: object
     ) -> object:
         self.cart_calls.append(kwargs)
@@ -252,6 +353,7 @@ def test_portable_handler_admits_scoped_cart_abandonment_when_enabled() -> None:
     assert supabase.cart_calls[0]["external_event_id"] == (
         "portable-cart-abandonment-001"
     )
+    assert supabase.cart_calls[0]["config"] == _config()
     assert supabase.cart_calls[0]["normalized_email"] == "buyer@example.test"
     assert supabase.cart_calls[0]["normalized_phone"] == "12025550123"
 

@@ -5,11 +5,12 @@ with
 expected_service_role(signature) as (
     values
         ('public.activate_lancemos_pilot_scope_version(text, integer, bigint, text, text)'),
-        ('public.admit_and_correlate_hotmart_cart_abandonment(text, jsonb, text, text)'),
+        ('public.admit_johanna_hotmart_cart_abandonment(text, jsonb, text, text)'),
         ('public.admit_and_correlate_hotmart_purchase_approved(text, jsonb, text, text)'),
         ('public.admit_precheckout_form_submission(text, jsonb, jsonb)'),
         ('public.admit_observed_lead_precheckout(text, jsonb, jsonb)'),
         ('public.admit_portable_observed_lead_precheckout(text, text, integer, text, jsonb, jsonb)'),
+        ('public.admit_portable_hotmart_cart_abandonment(text, text, integer, text, jsonb, text, text)'),
         ('public.admit_portable_hotmart_purchase_approved(text, text, integer, text, jsonb, text, text)'),
         ('public.begin_precheckout_test_first_touch(text, uuid, text, bigint, bigint)'),
         ('public.begin_johanna_abandonment_one_shot(text, uuid, text, bigint, bigint, text, integer, bigint)'),

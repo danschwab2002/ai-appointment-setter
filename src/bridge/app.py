@@ -4120,7 +4120,15 @@ def create_app(
                     "reason": "invalid_cart_abandonment_payload",
                 }
             abandonment_admission = (
-                await shared_supabase.admit_and_correlate_hotmart_cart_abandonment(
+                await shared_supabase.admit_portable_hotmart_cart_abandonment(
+                    config=settings.commercial_ally_config,
+                    external_event_id=event_id,
+                    payload=payload,
+                    normalized_email=parsed_abandonment.buyer_email,
+                    normalized_phone=parsed_abandonment.buyer_phone,
+                )
+                if settings.portable_hotmart_recovery_enabled
+                else await shared_supabase.admit_and_correlate_hotmart_cart_abandonment(
                     external_event_id=event_id,
                     payload=payload,
                     normalized_email=parsed_abandonment.buyer_email,

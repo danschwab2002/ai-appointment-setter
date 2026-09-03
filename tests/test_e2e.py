@@ -182,7 +182,7 @@ def _setup_mocks(transport: E2ETransport) -> None:
     # ── Supabase: semantic cart-abandonment admission ───────────────
     transport.set(
         "POST",
-        "/rest/v1/rpc/admit_and_correlate_hotmart_cart_abandonment",
+        "/rest/v1/rpc/admit_johanna_hotmart_cart_abandonment",
         [
             {
                 "_status": 200,

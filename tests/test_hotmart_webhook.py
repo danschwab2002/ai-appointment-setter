@@ -1199,7 +1199,7 @@ def test_persists_valid_event_to_supabase(tmp_path) -> None:
     assert len(transport.requests) == 1
     req = transport.requests[0]
     assert req.url.path == (
-        "/rest/v1/rpc/admit_and_correlate_hotmart_cart_abandonment"
+        "/rest/v1/rpc/admit_johanna_hotmart_cart_abandonment"
     )
     body = json.loads(req.content)
     assert body["p_external_event_id"] == "0d7aa966-b887-4617-8c56-9e865bfc8ce4"

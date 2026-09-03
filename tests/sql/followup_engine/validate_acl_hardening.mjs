@@ -79,11 +79,12 @@ const rows = await db.query(`
   with expected(signature) as (
     values
       ('activate_lancemos_pilot_scope_version(text,integer,bigint,text,text)'),
-      ('admit_and_correlate_hotmart_cart_abandonment(text,jsonb,text,text)'),
+      ('admit_johanna_hotmart_cart_abandonment(text,jsonb,text,text)'),
       ('admit_and_correlate_hotmart_purchase_approved(text,jsonb,text,text)'),
       ('admit_johanna_payment_failure(text,jsonb,text,text)'),
       ('admit_observed_lead_precheckout(text,jsonb,jsonb)'),
       ('admit_portable_observed_lead_precheckout(text,text,integer,text,jsonb,jsonb)'),
+      ('admit_portable_hotmart_cart_abandonment(text,text,integer,text,jsonb,text,text)'),
       ('admit_portable_hotmart_purchase_approved(text,text,integer,text,jsonb,text,text)'),
       ('admit_precheckout_form_submission(text,jsonb,jsonb)'),
       ('begin_johanna_abandonment_one_shot(text,uuid,text,bigint,bigint,text,integer,bigint)'),
@@ -156,7 +157,7 @@ const rows = await db.query(`
 `);
 const result = rows.rows[0];
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 58) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 59) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const bindingAcl = await db.query(`
@@ -216,6 +217,16 @@ if (portabilityFingerprint?.fingerprint_status !== 'fingerprint_present') {
   throw new Error(
     `commercial ally schema fingerprint failed: ${JSON.stringify(portabilityFingerprint)}`,
   );
+}
+for (const filename of [
+  '20260820000400_hotmart_intent_correlation_contract.sql',
+  '20260903000100_commercial_ally_portable_recovery.sql',
+  '20260903000200_commercial_ally_indefinite_discount.sql',
+]) {
+  const fingerprint = schemaInventory.rows.find((row) => row.filename === filename);
+  if (fingerprint?.fingerprint_status !== 'fingerprint_present') {
+    throw new Error(`ATT1 schema fingerprint failed: ${JSON.stringify(fingerprint)}`);
+  }
 }
 
 const purchaseWorkerAclRepair = migrations.find(

@@ -703,16 +703,23 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
                 ),
                 'execute'
             )
-            and has_function_privilege(
+            and not has_function_privilege(
                 'service_role',
                 to_regprocedure(
                     'public.admit_and_correlate_hotmart_cart_abandonment(text,jsonb,text,text)'
                 ),
                 'execute'
             )
+            and has_function_privilege(
+                'service_role',
+                to_regprocedure(
+                    'public.admit_johanna_hotmart_cart_abandonment(text,jsonb,text,text)'
+                ),
+                'execute'
+            )
         )::int,
         2,
-        'legacy_hotmart_shims_revoked_correlated_wrappers_preserved'
+        'legacy_hotmart_shims_revoked_scope_fixed_wrappers_preserved'
     union all
     select
         '20260821000100',
@@ -2043,6 +2050,121 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         4,
         'versioned_discount_policy_default_off'
+    union all
+    select
+        '20260903000100',
+        '20260903000100_commercial_ally_portable_recovery.sql',
+        (to_regprocedure(
+            'public.admit_portable_hotmart_cart_abandonment(text,text,integer,text,jsonb,text,text)'
+        ) is not null)::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.admit_portable_hotmart_cart_abandonment(text,text,integer,text,jsonb,text,text)'
+            )
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+              and position('commercial_ally_runtime_bindings' in definition) > 0
+              and position('hotmart_purchase_intent_scopes' in definition) > 0
+        )::int
+        + (
+            not has_function_privilege(
+                'public',
+                to_regprocedure(
+                    'public.admit_portable_hotmart_cart_abandonment(text,text,integer,text,jsonb,text,text)'
+                ),
+                'EXECUTE'
+            )
+            and has_function_privilege(
+                'service_role',
+                to_regprocedure(
+                    'public.admit_portable_hotmart_cart_abandonment(text,text,integer,text,jsonb,text,text)'
+                ),
+                'EXECUTE'
+            )
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.admit_johanna_hotmart_cart_abandonment(text,jsonb,text,text)'
+            )
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+              and position('johanna_hotmart_cart_scope_mismatch' in definition) > 0
+              and position('8104005' in definition) > 0
+              and position('bxjge6zq' in definition) > 0
+        )::int
+        + (
+            has_function_privilege(
+                'service_role',
+                to_regprocedure(
+                    'public.admit_johanna_hotmart_cart_abandonment(text,jsonb,text,text)'
+                ),
+                'EXECUTE'
+            )
+            and not has_function_privilege(
+                'service_role',
+                to_regprocedure(
+                    'public.admit_and_correlate_hotmart_cart_abandonment(text,jsonb,text,text)'
+                ),
+                'EXECUTE'
+            )
+        )::int,
+        5,
+        'portable_cart_recovery_binding_fenced'
+    union all
+    select
+        '20260903000200',
+        '20260903000200_commercial_ally_indefinite_discount.sql',
+        (
+            select count(*)::int
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'commercial_ally_discount_policy_versions'
+              and column_name in (
+                  'offer_expiration_mode',
+                  'requires_inbound_reply_after_initial_template',
+                  'coupon_delivery_mode',
+                  'release_requires_exact_trigger_set'
+              )
+        )
+        + exists(
+            select 1 from pg_trigger
+            where tgrelid = to_regclass(
+                'public.commercial_ally_discount_policy_versions'
+            )
+              and tgname = 'commercial_ally_discount_release_complete'
+              and tgdeferrable
+              and tginitdeferred
+              and not tgisinternal
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.resolve_commercial_ally_discount_policy(text,text,integer,text)'
+            )
+              and prosecdef
+              and position('offer_valid_for_seconds' in definition) > 0
+              and position('coupon_delivery_mode' in definition) > 0
+        )::int
+        + (
+            not has_function_privilege(
+                'public',
+                to_regprocedure(
+                    'public.resolve_commercial_ally_discount_policy(text,text,integer,text)'
+                ),
+                'EXECUTE'
+            )
+            and has_function_privilege(
+                'service_role',
+                to_regprocedure(
+                    'public.resolve_commercial_ally_discount_policy(text,text,integer,text)'
+                ),
+                'EXECUTE'
+            )
+        )::int,
+        7,
+        'indefinite_atomic_discount_release'
 )
 select
     version,

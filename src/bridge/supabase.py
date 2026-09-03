@@ -114,6 +114,111 @@ class PrecheckoutAdmissionResult:
 
 
 @dataclass(frozen=True)
+class CommercialAllyDiscountPolicy:
+    """Exact published discount policy resolved for one trigger."""
+
+    policy_key: str
+    policy_version: int
+    trigger_kind: str
+    discount_kind: str
+    discount_value: Decimal
+    currency: str | None
+    coupon_reference: str
+    offer_valid_for_seconds: int | None
+    offer_expiration_mode: str
+    presentation_stage: str
+    template_key: str
+    copy_version: str
+    requires_inbound_reply_after_initial_template: bool
+    coupon_delivery_mode: str
+    urgency_copy_allowed: bool
+    channel_provider: str
+    delivery_mode: str
+    template_language: str
+    template_category: str | None
+    coupon_template_component: str | None
+    coupon_template_parameter_index: int | None
+    valid_from: str
+    valid_until: str | None
+    release_requires_exact_trigger_set: bool
+
+    def __post_init__(self) -> None:
+        if self.trigger_kind not in {
+            "payment_failure",
+            "confirmed_cart_abandonment",
+            "precheckout_without_purchase_signal",
+        }:
+            raise ValueError("invalid trigger_kind")
+        if self.discount_kind not in {"percentage", "fixed_amount"}:
+            raise ValueError("invalid discount_kind")
+        if self.discount_value <= 0:
+            raise ValueError("invalid discount_value")
+        if self.offer_expiration_mode == "indefinite":
+            if self.offer_valid_for_seconds is not None:
+                raise ValueError("invalid indefinite offer duration")
+        elif self.offer_expiration_mode == "finite":
+            if (
+                isinstance(self.offer_valid_for_seconds, bool)
+                or not isinstance(self.offer_valid_for_seconds, int)
+                or self.offer_valid_for_seconds <= 0
+            ):
+                raise ValueError("invalid finite offer duration")
+        else:
+            raise ValueError("invalid offer_expiration_mode")
+        if self.presentation_stage not in {"first_touch", "later_step"}:
+            raise ValueError("invalid presentation_stage")
+        if self.coupon_delivery_mode not in {"literal", "meta_template_variable"}:
+            raise ValueError("invalid coupon_delivery_mode")
+        if self.channel_provider not in {"evolution", "waba"}:
+            raise ValueError("invalid channel_provider")
+        if self.delivery_mode not in {"freeform", "approved_template"}:
+            raise ValueError("invalid delivery_mode")
+        for value in (
+            self.requires_inbound_reply_after_initial_template,
+            self.urgency_copy_allowed,
+            self.release_requires_exact_trigger_set,
+        ):
+            if not isinstance(value, bool):
+                raise ValueError("invalid boolean policy field")
+        if not isinstance(self.valid_from, str) or not self.valid_from:
+            raise ValueError("invalid valid_from")
+        if self.valid_until is not None and (
+            not isinstance(self.valid_until, str) or not self.valid_until
+        ):
+            raise ValueError("invalid valid_until")
+        if self.requires_inbound_reply_after_initial_template and (
+            self.presentation_stage != "later_step"
+        ):
+            raise ValueError("invalid reply-gated presentation stage")
+        if self.coupon_delivery_mode == "literal":
+            if (
+                self.coupon_template_component is not None
+                or self.coupon_template_parameter_index is not None
+            ):
+                raise ValueError("invalid literal coupon transport")
+        elif (
+            self.channel_provider != "waba"
+            or self.delivery_mode != "approved_template"
+            or self.coupon_template_component not in {"body", "button"}
+            or isinstance(self.coupon_template_parameter_index, bool)
+            or not isinstance(self.coupon_template_parameter_index, int)
+            or self.coupon_template_parameter_index <= 0
+        ):
+            raise ValueError("invalid Meta coupon transport")
+        if self.release_requires_exact_trigger_set and (
+            self.offer_expiration_mode != "indefinite"
+            or not self.requires_inbound_reply_after_initial_template
+            or self.coupon_delivery_mode != "meta_template_variable"
+            or self.urgency_copy_allowed
+            or self.channel_provider != "waba"
+            or self.delivery_mode != "approved_template"
+            or self.presentation_stage != "later_step"
+            or self.template_category != "marketing"
+        ):
+            raise ValueError("invalid strict discount release semantics")
+
+
+@dataclass(frozen=True)
 class PrecheckoutFirstTouchStart:
     outcome: str
     command_id: str
@@ -847,6 +952,55 @@ class SupabaseClient:
             raise SupabaseError(f"{operation}_config_drift")
         return resolved
 
+    async def resolve_commercial_ally_discount_policy(
+        self,
+        *,
+        tenant_ref: str,
+        funnel_ref: str,
+        binding_version: int,
+        trigger_kind: str,
+        expected_policy_key: str,
+        expected_policy_version: int,
+    ) -> CommercialAllyDiscountPolicy:
+        """Resolve one exact active, published discount policy."""
+
+        operation = "discount_policy_resolve"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/resolve_commercial_ally_discount_policy",
+            content=json.dumps({
+                "p_tenant_ref": tenant_ref,
+                "p_funnel_ref": funnel_ref,
+                "p_binding_version": binding_version,
+                "p_trigger_kind": trigger_kind,
+            }),
+        )
+        rows = _response_rows(response, operation=operation)
+        if response.status_code != 200 or len(rows) != 1:
+            raise SupabaseError(f"{operation}_not_published")
+        row = rows[0]
+        expected_fields = {item.name for item in fields(CommercialAllyDiscountPolicy)}
+        if set(row) != expected_fields:
+            raise SupabaseError(f"{operation}_invalid_row")
+        values = dict(row)
+        try:
+            raw_discount = values["discount_value"]
+            if isinstance(raw_discount, bool) or not isinstance(
+                raw_discount, (str, int, float)
+            ):
+                raise ValueError
+            values["discount_value"] = Decimal(str(raw_discount))
+            policy = CommercialAllyDiscountPolicy(**values)
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise SupabaseError(f"{operation}_invalid_row") from exc
+        if (
+            policy.policy_key != expected_policy_key
+            or policy.policy_version != expected_policy_version
+            or policy.trigger_kind != trigger_kind
+        ):
+            raise SupabaseError(f"{operation}_config_drift")
+        return policy
+
     # ── Webhook event persistence ──────────────────────────────────
 
     async def insert_webhook_event(
@@ -965,6 +1119,47 @@ class SupabaseClient:
         if not isinstance(webhook_event_id, str) or not webhook_event_id:
             raise SupabaseError(f"{operation}_invalid_event_id")
         return PurchaseAdmissionResult(outcome, webhook_event_id)
+
+    async def admit_portable_hotmart_cart_abandonment(
+        self,
+        *,
+        config: CommercialAllyConfig,
+        external_event_id: str,
+        payload: dict[str, Any],
+        normalized_email: str | None,
+        normalized_phone: str | None,
+    ) -> CartAbandonmentAdmissionResult:
+        """Admit a cart event against an exact durable ally binding."""
+        operation = "portable_cart_abandonment_admission"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/admit_portable_hotmart_cart_abandonment",
+            content=json.dumps(
+                {
+                    "p_tenant_ref": config.tenant_ref,
+                    "p_funnel_ref": config.funnel_ref,
+                    "p_binding_version": config.binding_version,
+                    "p_external_event_id": external_event_id,
+                    "p_payload": payload,
+                    "p_normalized_email": normalized_email,
+                    "p_normalized_phone": normalized_phone,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        rows = _response_rows(response, operation=operation)
+        if response.status_code != 200 or len(rows) != 1:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        row = rows[0]
+        if set(row) != {"outcome", "webhook_event_id"}:
+            raise _invalid_row_error(operation)
+        outcome = row.get("outcome")
+        if outcome not in {"inserted", "duplicate", "semantic_conflict"}:
+            raise SupabaseError(f"{operation}_invalid_outcome")
+        webhook_event_id = _required_uuid(
+            row, "webhook_event_id", operation=operation
+        )
+        return CartAbandonmentAdmissionResult(outcome, webhook_event_id)
 
     async def admit_precheckout_form_submission(
         self,
@@ -1554,7 +1749,7 @@ class SupabaseClient:
         operation = "cart_abandonment_correlation_admission"
         response = await self._request(
             "POST",
-            "/rest/v1/rpc/admit_and_correlate_hotmart_cart_abandonment",
+            "/rest/v1/rpc/admit_johanna_hotmart_cart_abandonment",
             content=json.dumps(
                 {
                     "p_external_event_id": external_event_id,
