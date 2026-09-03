@@ -8,6 +8,7 @@ functions as (
         p.oid,
         p.proname,
         p.prosecdef,
+        p.provolatile,
         p.proconfig,
         p.proacl,
         p.proowner,
@@ -1846,6 +1847,42 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         6,
         'precheckout_production_readiness_default_off'
+    union all
+    select
+        '20260831000100',
+        '20260831000100_johanna_funnel_dashboard_read.sql',
+        (
+            exists(
+                select 1 from functions
+                where oid = to_regprocedure(
+                    'public.read_johanna_funnel_dashboard_v1(timestamptz,integer)'
+                )
+                  and prosecdef
+                  and provolatile = 's'
+                  and proconfig @> array[
+                      'search_path=pg_catalog, public, pg_temp'
+                  ]
+            )
+        )::int
+        + (
+            has_function_privilege(
+                'service_role',
+                'public.read_johanna_funnel_dashboard_v1(timestamptz,integer)',
+                'EXECUTE'
+            )
+            and not has_function_privilege(
+                'anon',
+                'public.read_johanna_funnel_dashboard_v1(timestamptz,integer)',
+                'EXECUTE'
+            )
+            and not has_function_privilege(
+                'authenticated',
+                'public.read_johanna_funnel_dashboard_v1(timestamptz,integer)',
+                'EXECUTE'
+            )
+        )::int,
+        2,
+        'sanitary_service_role_dashboard_projection'
     union all
     select
         '20260901000100',
