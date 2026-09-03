@@ -68,6 +68,8 @@ posteriores al cutoff histórico. Por lo tanto, el reporte anterior no constituy
 evidencia válida y su artifact fue eliminado.
 
 La migración forward-only
-`20260831000200_disable_johanna_funnel_dashboard_read.sql` revoca `EXECUTE` a
-todos los roles API, incluido `service_role`. El dashboard permanece retirado
-hasta implementar y probar ambos invariantes antes de volver a conceder acceso.
+`20260831000200_disable_johanna_funnel_dashboard_read.sql` está preparada para
+revocar `EXECUTE` a todos los roles API, incluido `service_role`. En este punto
+la revocación aún requiere apply y postflight en Supabase Cloud; sólo el artifact
+anterior fue eliminado. No se debe volver a generar ni entregar un dashboard
+hasta contener el RPC e implementar y probar ambos invariantes.
