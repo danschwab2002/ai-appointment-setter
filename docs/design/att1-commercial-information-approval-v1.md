@@ -1,9 +1,9 @@
 # ATT1 — aprobación de información comercial V1
 
-- **Estado:** Confirmación del operador registrada; ratificación de Marcela, materiales y cierre técnico del descuento pendientes
+- **Estado:** Product ID confirmado y evidencia GHL registrada; ratificación general de Marcela, materiales, template y ejecución del descuento pendientes
 - **Gate:** Estado: Pendiente de aprobación externa
 - **Alcance:** materiales, contenido comercial, límites sanitarios, idioma, países y descuento
-- **Fuentes:** [registro ATT1 V1](att1-source-register-v1.md), `operator-confirmation:2026-09-02-authority-content-health-language-countries`, `operator-confirmation:2026-09-02-discount` y `Documentación de Procesos Carritos Abandonados, Pagos Declinados y Pagos Offline.pdf`
+- **Fuentes:** [registro ATT1 V1](att1-source-register-v1.md), `operator-confirmation:2026-09-02-authority-content-health-language-countries`, `operator-confirmation:2026-09-02-discount`, `operator-confirmation:2026-09-04-hotmart-product-id`, corpus GHL sanitizado y `Documentación de Procesos Carritos Abandonados, Pagos Declinados y Pagos Offline.pdf`
 - **No implica:** Conversation Release aprobada, templates aprobados, configuración de proveedores, despliegue ni autorización para contactar personas reales
 
 ## Regla de cierre
@@ -22,6 +22,16 @@ Esta macro tarea sólo queda aprobada cuando la autoridad comercial identificada
 - disponibilidad declarada de materiales de autoridad, oferta, audiencia, copy, páginas, ads y ofertas posteriores.
 
 Los porcentajes geográficos suman 91 %. No se infiere el alcance geográfico del piloto ni el 9 % restante.
+
+## Autoridad técnica UC-01 registrada
+
+- Product ID Hotmart **`5071808`**: confirmado directamente por el operador.
+- checkout/hotlink **`D98014973Y`**: observado de forma dominante en GHL; pendiente de ratificación como checkout canónico.
+- offer code **`83utgyow`**: candidato dominante observado en GHL; no aprobado como binding productivo.
+- landing **`raizana.com.mx/inscribirme-alimenta-tu-tiroides`**: candidata dominante observada en GHL; no acredita consentimiento ni vigencia.
+- cupón **`SOYRAIZANA10`**: candidato histórico dominante observado en GHL; no se publica ni se entrega hasta aprobar template, variable y política durable exacta.
+
+La evidencia ampliada cubre 768 conversaciones y 4.097 mensajes sanitizados. No sustituye autoridad de catálogo: carece de timestamps utilizables, mezcla campañas y mantiene pendiente la revisión humana de posibles nombres libres.
 
 ## Decisiones requeridas
 
@@ -66,13 +76,13 @@ El alcance candidato del piloto inicial queda limitado a México (`MX`), pendien
 
 ### `att1-commercial-006-discount` — política económica
 
-**Estado:** aprobación de Marcela reportada por el operador; plantilla y soporte runtime pendientes; no publicada.
+**Estado:** aprobación de Marcela reportada por el operador; vigencia indefinida representable; plantilla y ejecución runtime pendientes; no publicada.
 
 La decisión comercial es un cupón porcentual de **10 %**, sin restricciones propias por país o moneda. Sólo puede ofrecerse en `payment_failure`, `confirmed_cart_abandonment` y `precheckout_without_purchase_signal`, después de recibir al menos una respuesta inbound posterior a la plantilla inicial de inicio de conversación de Meta; por eso su posición es `later_step`. Esto no amplía el piloto más allá de México ni modifica consentimiento, opt-out, stops, cantidad de mensajes o cadencia.
 
 El cupón no vence y no se permite urgencia, escasez ni afirmaciones de expiración. El código será contenido variable de una plantilla de Meta, pero el texto final, la plantilla exacta y el mapeo de la variable continúan pendientes. La referencia concreta del cupón no se guarda ni se inventa antes de ese cierre.
 
-La política durable continúa sin seeds y no publicada. Además, el esquema local vigente exige `offer_valid_for > 0`, por lo que es incompatible con una oferta sin vencimiento. Antes de publicar deberá adaptarse y probarse el contrato durable. El operador identifica a Marcela como aprobadora de esta decisión; la confirmación directa de su autoridad comercial general continúa siendo un gate separado.
+La migración `20260903000200_commercial_ally_indefinite_discount.sql` permite representar explícitamente vigencia `indefinite`, `offer_valid_for = null`, respuesta inbound obligatoria, variable de template Meta y prohibición de urgencia. La política continúa sin seeds y no publicada porque aún faltan el template exacto, el mapeo de variable y la rama runtime inbound → `later_step`. El operador identifica a Marcela como aprobadora de esta decisión; la confirmación directa de su autoridad comercial general continúa siendo un gate separado.
 
 ## Respuesta mínima solicitada a la autoridad comercial
 
