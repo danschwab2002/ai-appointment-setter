@@ -1142,6 +1142,11 @@ def create_app(
         explicit_manifest_runtime
         or settings.commercial_ally_config != JOHANNA_COMMERCIAL_ALLY
     )
+    if (
+        settings.commercial_ally_config.tenant_ref == "att1"
+        and settings.meta_final_effect_enabled
+    ):
+        raise ValueError("ATT1 final Meta effect must remain disabled")
     if portable_runtime:
         enabled_unported = sorted(
             field.name

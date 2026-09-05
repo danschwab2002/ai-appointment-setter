@@ -3,11 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 import stat
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
-from bridge.app import Settings
+from bridge.app import Settings, create_app
+from bridge.commercial_ally import CommercialAllyConfig
 from bridge.messaging import FinalMetaEffect, FinalMetaEffectGate
 
 
@@ -176,3 +178,40 @@ def test_meta_final_effect_configuration_rejects_invalid_boolean(
         match="META_FINAL_EFFECT_ENABLED must be true or false",
     ):
         Settings.from_env()
+
+
+def test_att1_runtime_rejects_open_final_meta_effect_gate(tmp_path: Path) -> None:
+    att1 = CommercialAllyConfig(
+        tenant_ref="att1",
+        funnel_ref="att1-main",
+        binding_version=1,
+        ally_ref="att1",
+        lead_ally_name="Dra. Nina Garza",
+        lead_site="raizana",
+        lead_landing_id="inscribirme-alimenta-tu-tiroides",
+        lead_page_host="raizana.com.mx",
+        lead_page_path="/inscribirme-alimenta-tu-tiroides",
+        product_hotlink="D98014973Y",
+        product_name="Alimenta Tu Tiroides",
+        product_price=Decimal("47"),
+        currency="USD",
+        offer_code="83utgyow",
+        consent_copy_version="att1-whatsapp-consent-v1",
+        hotmart_product_id=5071808,
+        chatwoot_account_id=42,
+        chatwoot_inbox_id=24,
+        inbound_scope_key="att1-inbound",
+        inbound_scope_version=1,
+    )
+    settings = Settings(
+        webhook_secret="test-secret",
+        allowed_jid=None,
+        capture_dir=tmp_path / "captures",
+        max_age_seconds=300,
+        commercial_ally_config=att1,
+        commercial_ally_manifest_path=tmp_path / "att1.json",
+        meta_final_effect_enabled=True,
+    )
+
+    with pytest.raises(ValueError, match="ATT1 final Meta effect must remain disabled"):
+        create_app(settings)

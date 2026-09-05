@@ -384,6 +384,37 @@ if (started.phase !== 'request_started') {
 }
 await db.exec('rollback');
 
+await db.query(`
+  update public.scheduled_actions
+  set status='accepted_by_chatwoot'
+  where id=$1
+`, [planned.scheduled_action_id]);
+const terminalPayload = payload('att1-payment-failure-after-first-contact');
+terminalPayload.data.purchase.transaction = 'ATT1-PAYMENT-FAIL-3';
+const terminalAdmission = one(
+  (await admit(terminalPayload)).rows,
+  'post-contact payment admission',
+);
+const postContactPlan = one((await db.query(`
+  select * from public.plan_portable_payment_failure_recovery(
+    $1,$2,'123456','ATT1 Offer','att1offer',
+    'att1-payment-failure',1,$3,42,24,'${PHONE}',
+    'att1-payment-failure',1
+  )
+`, [terminalAdmission.webhook_event_id, contact.contact_id, FAILED_AT])).rows,
+'post-contact payment plan');
+const initialContactCount = one((await db.query(`
+  select count(*)::int as count
+  from public.scheduled_actions
+  where recovery_case_id=$1
+    and step_key='payment_failure_first_contact'
+`, [planned.recovery_case_id])).rows, 'initial contact count');
+if (postContactPlan.created
+    || postContactPlan.recovery_case_id !== planned.recovery_case_id
+    || Number(initialContactCount.count) !== 1) {
+  throw new Error('payment failure planned more than one initial contact');
+}
+
 await reject('payment evidence update', () => db.query(`
   update public.commercial_ally_payment_failure_details
   set transaction_ref='changed' where webhook_event_id=$1
