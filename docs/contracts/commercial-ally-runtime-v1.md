@@ -146,7 +146,10 @@ identidad propia en todo el recorrido: `event_role=payment_failure`,
 semántica de abandono confirmado.
 
 `plan_portable_payment_failure_recovery` crea o reutiliza atómicamente el caso,
-la secuencia y la primera acción. El evento de pago fallido no concede permiso
+la secuencia y la primera acción. Una vez que existe
+`payment_failure_first_contact`, cualquier pago fallido posterior del mismo caso
+se agrega como evidencia y reutiliza esa acción incluso si ya quedó terminal; no
+crea otra secuencia ni un segundo contacto inicial. El evento de pago fallido no concede permiso
 de contacto: la autorización debe existir antes de iniciar la salida y se
 comprueba en esa frontera. Antes de planificar, la RPC exige procedencia durable
 del webhook y correlación resuelta; además comprueba que tenant, binding activo,
@@ -163,6 +166,10 @@ antes de `request_started` y antes del sender. Con el gate cerrado se registra
 evidencia sanitizada `final_meta_gate_closed`/`final_effect_blocked`; no se inicia
 el request y no se representa el efecto como aceptado, enviado o entregado.
 Habilitar la admisión no habilita el request HTTP a Meta.
+Además del default-off general, un manifiesto cuyo `tenant_ref` sea `att1`
+rechaza el startup cuando `META_FINAL_EFFECT_ENABLED=true`. Abrir ese último gate
+requiere un cambio de release explícito; no puede hacerse sólo mediante una
+variable de entorno en la versión actual.
 
 ### Hotmart compra aprobada portable
 
@@ -236,6 +243,11 @@ La política fija tipo/valor del descuento, referencia de cupón, duración de l
 oferta, posición existente (`first_touch` o `later_step`) y versiones exactas de
 template/copy. Publicarla no crea timers, acciones, comandos, mensajes o intentos
 de entrega, no modifica la cadencia y no autoriza contacto ni outbound.
+La resolución de política tampoco agenda por sí sola el mensaje posterior a una
+respuesta inbound. Ese planificador y el transporte exacto de la variable de
+cupón permanecen bloqueados hasta que exista una plantilla WABA aprobada con su
+contrato de componentes; el runtime no reutiliza `no_reply_review` ni inventa una
+plantilla para cubrir ese hueco.
 
 ### Chatwoot inbound
 

@@ -682,10 +682,14 @@ y valida tipos estrictos. Permite únicamente las cadenas portadas de admisión 
 el dispatcher; cada una conserva flags default-off y scope exacto. Pago fallido
 entra por `PURCHASE_CANCELED`, se correlaciona y planifica con RPCs propias, y
 conserva `payment_failure` como event role, trigger y anchor para no confundirse
-con abandono confirmado. El evento no crea una autorización de contacto; la
+con abandono confirmado. El planificador conserva como máximo un
+`payment_failure_first_contact` por caso aun después de que la acción quede
+terminal; los fallos posteriores sólo agregan evidencia. El evento no crea una autorización de contacto; la
 recuperación exige una autorización explícita y vigente. La recuperación usa sender dinámico sólo con manifiesto
 explícito y termina en el gate Meta default-off, que registra evidencia sanitizada
-sin marcar `request_started` ni iniciar la solicitud externa. Las demás cadenas
+sin marcar `request_started` ni iniciar la solicitud externa. Para ATT1, el
+startup también rechaza físicamente `META_FINAL_EFFECT_ENABLED=true`; abrir el
+gate exige otro release de código. Las demás cadenas
 ligadas a Johanna se rechazan.
 
 El stop de compra acepta `HOTMART_HOTTOK` únicamente con
@@ -703,9 +707,14 @@ binding. El runtime carece de DML y lectura directa: sólo resuelve una versión
 `published`, vigente y exacta mediante una RPC fail-closed. La tabla nace vacía,
 las versiones aprobadas son inmutables y una publicación no crea ni modifica
 timers, acciones, mensajes, cadencia, stops, budgets o efectos.
+La rama respuesta inbound → descuento no está implementada todavía: depende de
+la plantilla WABA aprobada y de su contrato exacto de variables. Hasta entonces,
+resolver una política no crea un mensaje y el sistema no adapta semánticas de
+no-respuesta para simular ese envío.
 
 Las migraciones portables, incluida
-`20260903000300_commercial_ally_payment_failure_recovery.sql`, crean el contrato
+`20260903000300_commercial_ally_payment_failure_recovery.sql` y su corrección
+one-shot `20260904000100_att1_payment_failure_single_initial_contact.sql`, crean el contrato
 sin sembrar clientes, políticas temporales, políticas de descuento ni secretos.
 Esta implementación tiene pruebas SQL agregadas y evidencia HTTP local; permanece
 default-off y no acredita DDL aplicado a Supabase Cloud, credenciales, despliegue

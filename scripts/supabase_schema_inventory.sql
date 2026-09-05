@@ -2317,6 +2317,24 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         7,
         'portable_payment_failure_recovery_fenced'
+    union all
+    select
+        '20260904000100',
+        '20260904000100_att1_payment_failure_single_initial_contact.sql',
+        exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.plan_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,timestamptz)'
+            )
+              and position(
+                  'sa.step_key = ''payment_failure_first_contact'''
+                  in definition
+              ) > 0
+              and position('order by sa.created_at asc' in definition) > 0
+              and position('for update of fs, sa' in definition) > 0
+        )::int,
+        1,
+        'payment_failure_single_initial_contact_per_case'
 )
 select
     version,
