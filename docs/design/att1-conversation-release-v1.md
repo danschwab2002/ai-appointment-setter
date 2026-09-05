@@ -1,6 +1,6 @@
 # ATT1 — Conversation Release V1
 
-- **Estado:** Borrador incompleto con alcance comercial inicial recibido
+- **Estado:** Borrador incompleto con UC-01 y Brand Voice compilados; no aprobado ni activo
 - **Fecha:** 2026-09-01
 - **Oferta:** `Alimenta Tu Tiroides`
 - **Fuente de facts recién recibidos:** [registro ATT1 V1](att1-source-register-v1.md)
@@ -24,6 +24,11 @@ scope:
   channel: whatsapp_official
   pilot_language: spanish_latam_neutral
   pilot_countries: [MX]
+  hotmart_product_id: "5071808"
+  checkout_hotlink_observed: D98014973Y
+  checkout_url_observed: https://pay.hotmart.com/D98014973Y
+  offer_code_candidate: 83utgyow
+  lead_landing_candidate: raizana.com.mx/inscribirme-alimenta-tu-tiroides
 handoff:
   recipient_ref: mariana-marin
   recipient_role_reported: chat_responder
@@ -104,7 +109,18 @@ corresponda, revisión sanitaria/legal.
 
 La información recibida ya está preservada en el artefacto machine-readable `config/commercial-allies/att1/intake-v1.json`, con gates explícitos `false`. Puede alimentar la preparación posterior del manifiesto y del profile sin copiar estado de otra aliada.
 
-Aún no puede generarse el `CommercialAllyConfig` operativo porque faltan identificadores canónicos de landing, Hotmart y Chatwoot. No se usan los identificadores de Johanna como defaults.
+El Product ID Hotmart `5071808` está confirmado. GHL aporta checkout/hotlink,
+oferta y landing candidatos, pero el `CommercialAllyConfig` operativo todavía no
+puede publicarse porque faltan la ratificación del Offer code y landing, el
+consentimiento comercial y los identificadores reales de Chatwoot. No se usan
+identificadores de otra aliada como defaults.
+
+El Brand Voice V1 fue compilado desde 264 mensajes humanos de una muestra
+sanitizada de 25 conversaciones y validado técnicamente en el bundle ATT1. Esto
+no equivale a aprobación comercial ni activación. El corpus ampliado de 768
+conversaciones no añadió una décima familia de caso, pero confirmó riesgos de
+contacto repetido, urgencia, seguimiento por silencio y campañas posteriores a
+cancelación/reembolso.
 
 ## 8. Gate de publicación
 
@@ -113,11 +129,13 @@ Permanece bloqueada hasta completar y aprobar:
 - [ ] owner comercial y owner operativo;
 - [ ] precio/moneda/facts con fuente y vigencia;
 - [ ] ratificación comercial de país e idioma candidatos — México y español latino neutral;
-- [ ] referencias canónicas de producto, oferta, landing y checkout;
+- [x] Product ID Hotmart `5071808` confirmado;
+- [ ] ratificación de Offer code, landing y checkout candidatos observados en GHL;
 - [ ] consentimiento comercial para WhatsApp;
 - [ ] ratificación comercial del baseline sanitario fail-closed;
 - [ ] claims comerciales específicos derivados de materiales aprobados;
-- [ ] FAQs, casos, Brand Voice y ejemplos sanitizados;
+- [x] casos y Brand Voice candidatos compilados y sanitizados;
+- [ ] aprobación comercial de facts, FAQs, Brand Voice y ejemplos;
 - [ ] política económica publicada, si habrá descuento;
 - [ ] templates WABA aprobados;
 - [ ] destino operativo de handoff y SLA;

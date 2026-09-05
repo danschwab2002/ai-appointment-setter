@@ -2,7 +2,8 @@
 
 - **Estado:** Propuesta para revisión; no activa
 - **Fuente privada:** corpus sanitizado de GHL
-- **Muestra:** 25 conversaciones con intervención humana; 689 mensajes
+- **Muestra de descubrimiento:** 25 conversaciones con intervención humana; 689 mensajes
+- **Validación ampliada:** 768 conversaciones; 4.097 mensajes sanitizados
 - **Unidad de conteo:** conversación, como máximo una vez por categoría
 - **Clasificación:** multietiqueta; los conteos no deben sumarse como conversaciones únicas
 - **Alcance:** situaciones observadas y requisitos para diseñar casos; no define políticas ni autoriza acciones
@@ -34,6 +35,26 @@ frecuencia total en GHL.
 
 La prioridad sólo ordena el trabajo de definición y revisión. No habilita respuestas
 automáticas ni efectos.
+
+## Validación con el corpus completo
+
+Las nueve familias aparecieron también en el corpus ampliado; no surgió una
+décima familia material. La muestra inicial estaba saturada para descubrir la
+taxonomía, pero no para medir peso operativo, secuencias o stops. El corpus
+completo está dominado por automatizaciones: 2.035 mensajes frente a 493 de
+asesores humanos verificados; 251 salidas `app` mantienen autoría no resuelta.
+
+Para UC-01 se observaron 150 conversaciones con triggers automáticos de recupero
+y 37 con señal del cliente sobre intento incompleto, abandono o fallo. En 132 de
+las 150 hubo al menos una contradicción con la política vigente. La evidencia no
+autoriza copiar esos flujos: 123 presentaban el 10 % en el primer contacto con
+vencimiento, siete repetían el contacto inicial y 18 agregaban outbound antes de
+una respuesta.
+
+Las tres conversaciones con señal de cancelación o reembolso recibieron alguna
+automatización posterior. Por ello cancelación, devolución o reembolso deben
+suprimir inmediatamente recupero y promociones del caso; la atención humana
+transaccional puede continuar.
 
 ## Casos
 
@@ -186,11 +207,13 @@ automáticas ni efectos.
   cargo no reconocido o plazo vencido; rechazo explícito de soporte alternativo.
 - **Límites:** no obstaculizar con presión, prometer importe o plazo, ejecutar sin
   autorización ni declarar cierre antes de confirmación.
+- **Stop global:** una cancelación, devolución o reembolso autoritativos suprimen
+  recupero y promociones posteriores del caso.
 
 ## Brechas antes de convertir casos en una librería activa
 
-- La muestra no aporta distribución total, tasa de resolución ni tiempos del
-  universo GHL.
+- El corpus ampliado aporta cobertura temática, pero no timestamps, tasa de
+  resolución ni tiempos confiables.
 - Faltan fuentes versionadas para catálogo, precios, promociones, garantías,
   agenda y reembolsos.
 - Muchos hilos no contienen confirmación final del resultado.

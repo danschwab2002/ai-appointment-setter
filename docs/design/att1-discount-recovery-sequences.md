@@ -1,6 +1,6 @@
 # Secuencias de recuperación con descuento para ATT1
 
-- **Estado:** Frontera mínima de política implementada localmente; contenido y activación pendientes
+- **Estado:** Contrato durable para vigencia indefinida implementado; template, ejecución inbound y activación pendientes
 - **Fecha:** 2026-09-01
 - **Fuente:** `Documentación de Procesos Carritos Abandonados, Pagos Declinados y Pagos Offline.pdf`, entregada por el usuario
 - **Alcance:** diseñar únicamente la política de descuento; no modificar cantidad de mensajes, triggers, delays, cadencia ni condiciones de los flujos ya aprobados
@@ -86,7 +86,7 @@ la mecánica ni la cadencia del flujo. Bodies, placeholders, categoría, botones
 assets pertenecen a la Conversation Release y deben coincidir exactamente con
 templates `APPROVED` de Meta/Chatwoot.
 
-## Pendientes e incompatibilidad de implementación
+## Pendientes de implementación
 
 La decisión elimina la contradicción de la fuente: se adopta vigencia abierta y
 se descarta la urgencia de seis horas. El texto final de la plantilla, su clave y
@@ -94,22 +94,38 @@ el mapeo exacto de la variable del cupón todavía deben aprobarse. La aprobaci�
 de Marcela fue reportada por el operador; su confirmación directa como autoridad
 comercial general permanece en el gate consolidado.
 
-El esquema local vigente exige `offer_valid_for` positivo. Esa restricción es
-incompatible con una oferta que no vence; no debe codificarse una duración ficticia
-para sortearla. Hasta adaptar y probar el contrato durable, ninguna política se publica.
+La migración `20260903000200_commercial_ally_indefinite_discount.sql` eliminó esa
+incompatibilidad: la política puede declarar `offer_expiration_mode = indefinite`,
+`offer_valid_for = null`, `requires_inbound_reply_after_initial_template = true`,
+`coupon_delivery_mode = meta_template_variable` y `urgency_copy_allowed = false`.
 La política seguirá versionada: puede retirarse mediante una transición explícita,
 pero no expira automáticamente ni habilita texto de urgencia.
 
+El runtime todavía no crea ni ejecuta el `later_step` a partir de una respuesta
+inbound canónica y no existe template WABA aprobado con su variable. Esos dos
+límites, y no la representación de vigencia, bloquean la publicación.
+
 ## Estado de implementación
 
-La migración local `20260901000400_commercial_ally_discount_policies.sql` implementa la frontera mínima:
+Las migraciones `20260901000400_commercial_ally_discount_policies.sql` y
+`20260903000200_commercial_ally_indefinite_discount.sql` implementan la frontera mínima:
 
 - políticas por binding, trigger, clave y versión;
 - `draft | approved | published | retired`;
-- porcentaje o importe fijo, referencia de cupón, vigencia y etapa de presentación;
+- porcentaje o importe fijo, referencia de cupón, vigencia finita o indefinida y etapa de presentación;
+- respuesta inbound requerida, variable de template y prohibición de urgencia;
 - template/copy version exactos;
 - una sola versión `published` por binding y trigger;
 - cero semillas y resolución vacía por defecto;
 - runtime sin lectura directa ni DML de tabla; sólo puede ejecutar el resolver de una política publicada, vigente y ligada a un binding activo.
 
 La estructura no modifica efectos, mensajes, timers, cadencia, deploy ni activación. No existe aún ninguna política publicada y descuentos/outbound permanecen apagados.
+
+## Evidencia histórica ampliada
+
+En 150 conversaciones de recupero se observaron 123 primeros contactos con 10 %
+y vencimiento de seis horas. En 132 de las 150 apareció al menos un conflicto con
+las reglas vigentes; siete contenían más de un contacto inicial y 18 agregaban
+otro outbound antes de una respuesta. Ninguno de los 32 descuentos detectados
+después de inbound estaba libre de urgencia. Estos conteos justifican no reutilizar
+las secuencias históricas; no cambian la política aprobada.

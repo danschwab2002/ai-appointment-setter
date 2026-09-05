@@ -113,8 +113,15 @@ def test_discount_document_records_decision_without_publishing_policy() -> None:
     ):
         assert decision in text
     assert "offer_valid_for" in text
-    assert "incompatible" in text
-    assert "ninguna política se publica" in text
+    for implemented_guard in (
+        "offer_expiration_mode = indefinite",
+        "requires_inbound_reply_after_initial_template = true",
+        "coupon_delivery_mode = meta_template_variable",
+        "urgency_copy_allowed = false",
+    ):
+        assert implemented_guard in text
+    assert "runtime todavía no crea ni ejecuta el `later_step`" in text
+    assert "No existe aún ninguna política publicada" in text
     assert "texto final de la plantilla" in text
     assert "Marcela" in text
     assert "reportada por el operador" in text
