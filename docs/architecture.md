@@ -323,10 +323,21 @@ solo no programa acciones ni concede autorización comercial. Ver
 
 ## Ingreso autenticado `lead.precheckout` de Lancemos
 
-El adapter observado V1.0.0 está desplegado para el scope piloto y conectado al relay preview
-de la landing. El endpoint `POST /webhooks/lead` verifica HMAC-SHA256
-sobre el body crudo, valida el contrato exacto `1.0.0`, freshness, headers y scope antes
-de llamar a la RPC separada `admit_observed_lead_precheckout`.
+El endpoint `POST /webhooks/lead` verifica HMAC-SHA256 sobre el body crudo,
+freshness, headers y scope antes de llamar a la RPC separada
+`admit_observed_lead_precheckout`. El candidato de expansión acepta los contratos
+exactos `1.0.0` y `1.1.0` para una relación cerrada de seis pares publicados de
+Johanna (`ads-a/b/c` y `org-a/b/c` con su oferta correspondiente); no acepta
+cruces ni ofertas comodín. En `1.1.0`, un teléfono inválido ya no descarta la
+observación: se persiste la identidad utilizable, pero `phone_valid`,
+`whatsapp_contact` y `activation_authorized` quedan en falso.
+
+La migración `20260831000300_johanna_six_landing_precheckout.sql` lleva la misma
+relación a admisión, correlación Hotmart, scheduling, reevaluación y autorización
+final. Cada oferta mantiene un scope exacto. La publicación es prospectiva: no
+reprocesa submissions, timers ni commands históricos. Esta expansión no debe
+describirse como desplegada hasta aplicar DDL, desplegar el bridge y completar la
+matriz HTTP/Supabase de seis rutas.
 
 El árbol local agrega una admisión portable sólo para runtimes cuya procedencia
 es un manifiesto explícito. `POST /webhooks/lead` llama entonces a

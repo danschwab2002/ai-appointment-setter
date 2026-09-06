@@ -3,9 +3,12 @@
 import asyncio
 import json
 from copy import deepcopy
+from dataclasses import replace
 
 import httpx
+import pytest
 
+from bridge.commercial_ally import JOHANNA_COMMERCIAL_ALLY
 from bridge.lead_precheckout import parse_lead_precheckout
 from bridge.supabase import SupabaseClient
 
@@ -129,14 +132,21 @@ def test_v1_1_rejects_missing_consent_or_extra_consent_keys() -> None:
     assert parse_lead_precheckout(payload) is None
 
 
-def test_v1_1_rejects_authorization_when_phone_is_invalid() -> None:
+def test_v1_1_admits_invalid_phone_without_contact_authority() -> None:
     payload = _authorized_payload()
     buyer = payload["data"]["buyer"]  # type: ignore[index]
     buyer.update(  # type: ignore[union-attr]
         phone="+57123", phone_country_code="57", phone_national="123"
     )
 
-    assert parse_lead_precheckout(payload) is None
+    parsed = parse_lead_precheckout(payload)
+
+    assert parsed is not None
+    assert parsed.normalized_phone is None
+    assert parsed.phone_valid is False
+    assert parsed.marketing_optin is True
+    assert parsed.whatsapp_contact_authorized is False
+    assert parsed.as_canonical_payload()["assurance"]["activation_authorized"] is False
 
 
 def test_invalid_country_phone_is_admitted_as_non_contactable() -> None:
@@ -166,6 +176,59 @@ def test_rejects_landing_offer_mismatch() -> None:
     payload["data"]["offer"]["code"] = "ecyu87q0"  # type: ignore[index]
 
     assert parse_lead_precheckout(payload) is None
+
+
+@pytest.mark.parametrize(
+    ("landing_ref", "offer_ref"),
+    (
+        ("ads-a", "bxjge6zq"),
+        ("ads-b", "mgbgpp19"),
+        ("ads-c", "s1qfxm7m"),
+        ("org-a", "jtt6fcsm"),
+        ("org-b", "ecyu87q0"),
+        ("org-c", "ulhzpw9a"),
+    ),
+)
+@pytest.mark.parametrize("version", ("1.0.0", "1.1.0"))
+def test_accepts_each_published_landing_offer_pair(
+    landing_ref: str, offer_ref: str, version: str
+) -> None:
+    payload = _authorized_payload() if version == "1.1.0" else _payload()
+    payload["source"]["landing_id"] = landing_ref  # type: ignore[index]
+    payload["source"]["page_url"] = (  # type: ignore[index]
+        f"https://psicologajohanna.com/ldla/evg/vsl/{landing_ref}"
+    )
+    payload["data"]["offer"]["code"] = offer_ref  # type: ignore[index]
+    payload["data"]["checkout_url"] = (  # type: ignore[index]
+        f"https://pay.hotmart.com/F106691755G?off={offer_ref}&checkoutMode=10"
+    )
+    payload["dedupe_key"] = (
+        f"psicologajohanna:{offer_ref}:maria.example@example.com"
+    )
+
+    parsed = parse_lead_precheckout(payload)
+
+    assert parsed is not None
+    assert parsed.landing_id == landing_ref
+    assert parsed.offer_code == offer_ref
+
+
+def test_explicit_johanna_like_config_keeps_scalar_pair_authority() -> None:
+    explicit_config = replace(JOHANNA_COMMERCIAL_ALLY)
+    payload = _payload()
+    payload["source"]["landing_id"] = "ads-b"  # type: ignore[index]
+    payload["source"]["page_url"] = (  # type: ignore[index]
+        "https://psicologajohanna.com/ldla/evg/vsl/ads-b"
+    )
+    payload["data"]["offer"]["code"] = "mgbgpp19"  # type: ignore[index]
+    payload["data"]["checkout_url"] = (  # type: ignore[index]
+        "https://pay.hotmart.com/F106691755G?off=mgbgpp19&checkoutMode=10"
+    )
+    payload["dedupe_key"] = (
+        "psicologajohanna:mgbgpp19:maria.example@example.com"
+    )
+
+    assert parse_lead_precheckout(payload, config=explicit_config) is None
 
 
 def test_rejects_checkout_host_or_offer_mismatch() -> None:

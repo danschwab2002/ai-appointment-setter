@@ -57,6 +57,27 @@ RPC portable; ésta exige la fila durable activa exacta y vuelve a comprobar tod
 el scope comercial canónico contra esa fila. Sin manifiesto se conserva la RPC
 legada sin cambios.
 
+La autoridad PostgreSQL de Johanna se publica como una relación inmutable y
+cerrada de seis pares `landing_ref → offer_ref`; no admite ofertas comodín:
+
+```text
+ads-a → bxjge6zq
+ads-b → mgbgpp19
+ads-c → s1qfxm7m
+org-a → jtt6fcsm
+org-b → ecyu87q0
+org-c → ulhzpw9a
+```
+
+La misma relación se vuelve a comprobar en admisión, creación/reutilización de
+la intención, scheduling, reevaluación y autorización final del comando. Cada
+oferta tiene scopes exactos de correlación Hotmart y timer. El límite piloto
+histórico 1/1 no concede autoridad a esta ruta: el efecto usa
+`johanna-precheckout-delayed-first-touch-production / 1`, con control
+`inactive / 0` para conservar el contrato de readiness del runtime y con
+`PRECHECKOUT_DELAYED_OUTBOUND_ENABLED` como gate externo. Publicar la relación
+no recorre submissions, timers ni commands históricos.
+
 ## Payload
 
 Se aceptan exactamente las claves declaradas por el contrato externo:

@@ -1,33 +1,36 @@
 # Contrato V1 de readiness para first-touch pre-checkout
 
-- **Estado:** Implementado; activación selectiva preparada y pendiente de deploy
-- **Versión:** 1.1.0
+- **Estado:** Implementado; expansión de seis pares pendiente de deploy y postflight
+- **Versión:** 1.2.0
 - **Alcance:** promoción, diagnóstico sanitario y gate final del first-touch diferido
 - **No acredita:** aprobación Meta, envío WABA, entrega física ni activación productiva
 
 ## 1. Frontera durable preparada
 
-La migración `20260829000500_precheckout_production_readiness.sql` sólo prepara
-autoridad y observabilidad:
+La migración base `20260829000500_precheckout_production_readiness.sql` preparó
+la autoridad controlada original. La migración prospectiva
+`20260831000300_johanna_six_landing_precheckout.sql` la reemplaza para el funnel
+completo:
 
-- publica `johanna-precheckout-delayed-first-touch / 1` para tenant `lancemos`,
+- conserva `johanna-precheckout-delayed-first-touch / 1` como evidencia histórica
+  inactiva y publica `johanna-precheckout-delayed-first-touch-production / 1`
+  para tenant `lancemos`,
   Chatwoot `account=1/inbox=9`, provider `waba`, evento
-  `PRECHECKOUT_FORM_SUBMITTED`, producto `F106691755G` y oferta `bxjge6zq`;
-- fija presupuesto de scope `max_cohort_contacts=1`,
-  `max_outbound_request_starts_total=1` y
-  `max_outbound_request_starts_per_day=1`;
+  `PRECHECKOUT_FORM_SUBMITTED`, producto `F106691755G` y la relación cerrada de
+  seis pares landing-oferta publicada en el contrato `lead.precheckout`;
+- crea un scope de producción con topes operativos no bloqueantes y mantiene la
+  autoridad real en los seis pares exactos, sin oferta comodín;
 - crea runtime `inactive / generation=0`;
-- conserva o crea un binding de timer de 60 minutos con
-  `precheckout_first_touch_enabled=false`;
-- si encuentra el binding productivo histórico exacto de 5 minutos, lo migra a
-  la policy dedicada de 60 minutos, incrementa su generación y lo mantiene
-  apagado;
-- no cambia flags de proceso, no arma runtime, no crea timers/comandos y no hace
-  llamadas externas.
+- conserva o crea un binding exacto de timer de 60 minutos por oferta con
+  `precheckout_first_touch_enabled=true`;
+- si encuentra el binding histórico de `ads-a`, lo normaliza a la policy
+  dedicada de 60 minutos e incrementa su generación sólo cuando cambia;
+- no cambia flags de proceso, no arma runtime, no recorre filas históricas, no
+  crea timers/comandos retroactivos y no hace llamadas externas.
 
-Si ya existe un binding productivo, sólo se acepta la forma histórica exacta y
-apagada. Un binding divergente, un scope previo o backlog pre-checkout hacen fallar
-la transacción completa.
+La relación landing-oferta es append-only. Sus funciones auxiliares y tabla no
+son ejecutables ni mutables por roles API; las RPC service-role siguen siendo la
+única frontera de admisión y efecto.
 
 ## 2. RPC sanitaria
 
