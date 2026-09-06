@@ -123,6 +123,7 @@ const rows = await db.query(`
       ('mark_lancemos_pilot_request_started(uuid,uuid,text,bigint,timestamp with time zone)'),
       ('mark_portable_payment_failure_request_started(uuid,uuid,text,bigint,timestamp with time zone)'),
       ('plan_lancemos_pilot_cart_recovery(uuid,uuid,text,text,text,text,integer,timestamp with time zone,bigint,bigint,text,text,integer)'),
+      ('plan_commercial_ally_post_inbound_discount(text,text,integer,text,integer,bigint,bigint,bigint,bigint,text,timestamp with time zone)'),
       ('plan_portable_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,timestamp with time zone,bigint,bigint,text,text,integer)'),
       ('prepare_operator_correlation_resolution(text,text,text,uuid,text,uuid,text,uuid)'),
       ('reconcile_chatwoot_opt_out_stop(bigint,bigint,bigint,text)'),
@@ -161,7 +162,7 @@ const rows = await db.query(`
 `);
 const result = rows.rows[0];
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 62) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 63) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const bindingAcl = await db.query(`

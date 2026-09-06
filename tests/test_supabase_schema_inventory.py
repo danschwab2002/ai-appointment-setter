@@ -119,7 +119,7 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
 
-    assert len(allowlisted) == 62
+    assert len(allowlisted) == 63
     assert len(allowlisted) == len(set(allowlisted))
     assert "admit_precheckout_form_submission(text, jsonb, jsonb)" in allowlisted
     assert "admit_observed_lead_precheckout(text, jsonb, jsonb)" in allowlisted
@@ -149,6 +149,11 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
         "plan_portable_payment_failure_recovery"
         "(uuid, uuid, text, text, text, text, integer, timestamp with time zone, "
         "bigint, bigint, text, text, integer)" in allowlisted
+    )
+    assert (
+        "plan_commercial_ally_post_inbound_discount"
+        "(text, text, integer, text, integer, bigint, bigint, bigint, bigint, "
+        "text, timestamp with time zone)" in allowlisted
     )
     assert (
         "mark_portable_payment_failure_request_started"

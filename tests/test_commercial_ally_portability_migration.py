@@ -54,7 +54,7 @@ def test_canonical_acl_validator_includes_the_portable_readers() -> None:
 
     assert "resolve_commercial_ally_runtime_binding(text,text,integer)" in validator
     assert "resolve_commercial_ally_discount_policy(text,text,integer,text)" in validator
-    assert "result.expected_count !== 62" in validator
+    assert "result.expected_count !== 63" in validator
 
 
 def test_portability_migration_exposes_only_active_exact_binding_resolution() -> None:

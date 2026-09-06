@@ -389,6 +389,367 @@ await db.query(`
   set status='accepted_by_chatwoot'
   where id=$1
 `, [planned.scheduled_action_id]);
+
+const recoveryIdentity = one((await db.query(`
+  select rc.contact_id, rc.selected_channel_identity_id,
+         identity.external_user_id, identity.account_id,
+         identity.channel, identity.identity_status,
+         fs.id as initial_sequence_id
+  from public.recovery_cases rc
+  join public.followup_sequences fs on fs.recovery_case_id=rc.id
+  join public.channel_identities identity
+    on identity.id=rc.selected_channel_identity_id
+  where rc.id=$1
+`, [planned.recovery_case_id])).rows, 'payment recovery identity');
+const conversation = one((await db.query(`
+  insert into public.conversations (
+    contact_id, channel_identity_id, status, automation_status,
+    commercial_context
+  ) values (
+    $1,$2,'active','enabled',
+    jsonb_build_object('chatwoot_conversation_id','9001')
+  ) returning id
+`, [recoveryIdentity.contact_id,
+  recoveryIdentity.selected_channel_identity_id])).rows, 'payment conversation');
+await db.query(`
+  update public.channel_identities
+  set external_conversation_id='9001'
+  where id=$1
+`, [recoveryIdentity.selected_channel_identity_id]);
+const initialMessage = one((await db.query(`
+  insert into public.messages (
+    conversation_id, external_message_id, direction, actor_type,
+    message_type, content, delivery_status, semantic_metadata,
+    occurred_at, delivered_at
+  ) values (
+    $1,'8001','outbound','ai_agent','followup','[template]',
+    'accepted',jsonb_build_object('action_id',$2::text),
+    '2026-09-03T12:01:00Z','2026-09-03T12:01:00Z'
+  ) returning id
+`, [conversation.id, planned.scheduled_action_id])).rows,
+'initial accepted message');
+await db.query(`
+  update public.scheduled_actions
+  set conversation_id=$2
+  where id=$1
+`, [planned.scheduled_action_id, conversation.id]);
+await db.query(`
+  update public.followup_sequences
+  set status='completed', completed_at='2026-09-03T12:01:00Z',
+      conversation_id=$2, current_step=1
+  where id=$1
+`, [recoveryIdentity.initial_sequence_id, conversation.id]);
+await db.query(`
+  update public.recovery_cases
+  set conversation_id=$2, status='sequence_exhausted',
+      closed_at='2026-09-03T12:01:00Z', version=version+1
+  where id=$1
+`, [planned.recovery_case_id, conversation.id]);
+
+await db.exec(`
+  insert into public.commercial_ally_discount_policy_versions (
+    tenant_ref, funnel_ref, binding_version, policy_key, policy_version,
+    trigger_kind, discount_kind, discount_value, coupon_reference,
+    offer_valid_for, offer_expiration_mode, presentation_stage,
+    template_key, copy_version, release_requires_exact_trigger_set,
+    requires_inbound_reply_after_initial_template, coupon_delivery_mode,
+    urgency_copy_allowed, channel_provider, delivery_mode,
+    template_language, template_category,
+    coupon_template_component, coupon_template_parameter_index,
+    valid_from
+  ) values
+    ('att1','att1-main',1,'att1-recovery-triplet',1,
+     'payment_failure','percentage',10,'meta-variable',
+     null,'indefinite','later_step','att1_discount_later','att1-discount-v1',
+     true,true,'meta_template_variable',false,'waba','approved_template',
+     'es_MX','marketing','body',1,statement_timestamp()-interval '1 hour'),
+    ('att1','att1-main',1,'att1-recovery-triplet',1,
+     'confirmed_cart_abandonment','percentage',10,'meta-variable',
+     null,'indefinite','later_step','att1_discount_later','att1-discount-v1',
+     true,true,'meta_template_variable',false,'waba','approved_template',
+     'es_MX','marketing','body',1,statement_timestamp()-interval '1 hour'),
+    ('att1','att1-main',1,'att1-recovery-triplet',1,
+     'precheckout_without_purchase_signal','percentage',10,'meta-variable',
+     null,'indefinite','later_step','att1_discount_later','att1-discount-v1',
+     true,true,'meta_template_variable',false,'waba','approved_template',
+     'es_MX','marketing','body',1,statement_timestamp()-interval '1 hour');
+  update public.commercial_ally_discount_policy_versions
+  set status='approved', approved_by='operator-test',
+      approved_at=statement_timestamp()
+  where policy_key='att1-recovery-triplet' and policy_version=1;
+  update public.commercial_ally_discount_policy_versions
+  set status='published', published_at=statement_timestamp()
+  where policy_key='att1-recovery-triplet' and policy_version=1;
+`);
+
+const noSilenceAction = one((await db.query(`
+  select count(*)::int as count
+  from public.scheduled_actions
+  where recovery_case_id=$1 and step_key='payment_failure_discount_offer'
+`, [planned.recovery_case_id])).rows, 'silence action count');
+if (Number(noSilenceAction.count) !== 0) {
+  throw new Error('silence created a post-inbound discount action');
+}
+
+// A second runtime sharing account/inbox must not claim ATT1's recovery case.
+await db.exec(`
+  insert into public.commercial_ally_runtime_bindings
+    (tenant_ref, funnel_ref, binding_version, status, ally_ref, lead_ally_name,
+     lead_site, lead_landing_id, lead_page_host, lead_page_path, product_hotlink,
+     product_name, product_price, currency, offer_code, consent_copy_version,
+     hotmart_product_id, chatwoot_account_id, chatwoot_inbox_id,
+     inbound_scope_key, inbound_scope_version)
+  values
+    ('foreign','foreign-main',1,'active','foreign','Foreign','foreign-site','main',
+     'foreign.example','/offer','FOREIGNHOTLINK','Foreign Offer',49,'USD','foreignoffer',
+     'foreign-whatsapp-v1',654321,42,24,'foreign-inbound',1);
+
+  insert into public.commercial_ally_discount_policy_versions
+    (tenant_ref, funnel_ref, binding_version, policy_key, policy_version,
+     trigger_kind, status, discount_kind, discount_value, currency,
+     coupon_reference, offer_expiration_mode, offer_valid_for,
+     presentation_stage, template_key, copy_version,
+     requires_inbound_reply_after_initial_template,
+     coupon_delivery_mode, urgency_copy_allowed, channel_provider,
+     delivery_mode, template_language, template_category,
+     coupon_template_component, coupon_template_parameter_index,
+     release_requires_exact_trigger_set, approved_by, approved_at,
+     published_at, valid_from)
+  values
+    ('foreign','foreign-main',1,'foreign-discount',1,
+     'payment_failure','draft','percentage',10,null,
+     'FOREIGN10','indefinite',null,
+     'later_step','foreign_discount_template','foreign-copy-v1',true,
+     'meta_template_variable',false,'waba','approved_template','es_MX',
+     'marketing','body',1,false,null,null,null,now()-interval '1 hour');
+
+  update public.commercial_ally_discount_policy_versions
+  set status='approved', approved_by='operator-test', approved_at=now()
+  where tenant_ref='foreign' and funnel_ref='foreign-main'
+    and binding_version=1 and policy_key='foreign-discount';
+
+  update public.commercial_ally_discount_policy_versions
+  set status='published', published_at=now()
+  where tenant_ref='foreign' and funnel_ref='foreign-main'
+    and binding_version=1 and policy_key='foreign-discount';
+`);
+
+const foreignPlan = await db.query(
+  `select * from public.plan_commercial_ally_post_inbound_discount(
+     'foreign','foreign-main',1,'foreign-discount',1,
+     42,24,9001,9002,$1,now()
+   )`,
+  [recoveryIdentity.external_user_id],
+);
+if (foreignPlan.rows[0]?.outcome !== 'runtime_not_applicable') {
+  throw new Error(`cross-tenant case fence failed: ${JSON.stringify(foreignPlan.rows)}`);
+}
+
+await db.query(
+  `update public.channel_identities
+   set metadata=jsonb_set(metadata,'{inbox_id}','999'::jsonb)
+   where id=$1`,
+  [recoveryIdentity.selected_channel_identity_id],
+);
+const wrongInboxPlan = await db.query(
+  `select * from public.plan_commercial_ally_post_inbound_discount(
+     'att1','att1-main',1,'att1-recovery-triplet',1,
+     42,24,9001,9002,$1,now()
+   )`,
+  [recoveryIdentity.external_user_id],
+);
+if (wrongInboxPlan.rows[0]?.outcome !== 'identity_not_applicable') {
+  throw new Error(`identity inbox fence failed: ${JSON.stringify(wrongInboxPlan.rows)}`);
+}
+await db.query(
+  `update public.channel_identities
+   set metadata=jsonb_set(metadata,'{inbox_id}','24'::jsonb)
+   where id=$1`,
+  [recoveryIdentity.selected_channel_identity_id],
+);
+
+let infiniteTimestampRejected = false;
+try {
+  await db.query(
+    `select * from public.plan_commercial_ally_post_inbound_discount(
+       'att1','att1-main',1,'att1-recovery-triplet',1,
+       42,24,9001,9002,$1,'infinity'::timestamptz
+     )`,
+    [recoveryIdentity.external_user_id],
+  );
+} catch (error) {
+  infiniteTimestampRejected = String(error).includes(
+    'commercial_ally_post_inbound_discount_invalid',
+  );
+}
+if (!infiniteTimestampRejected) {
+  throw new Error('infinite inbound timestamp was not rejected at the RPC boundary');
+}
+
+const inboundPlan = async (messageId) => db.query(`
+  select * from public.plan_commercial_ally_post_inbound_discount(
+    'att1','att1-main',1,'att1-recovery-triplet',1,
+    42,24,9001,$1,$2,$3
+  )
+`, [messageId, recoveryIdentity.external_user_id, NOW]);
+const inboundPlanned = one((await inboundPlan(9002)).rows,
+  'post-inbound discount plan');
+if (inboundPlanned.outcome !== 'created'
+    || inboundPlanned.recovery_case_id !== planned.recovery_case_id) {
+  throw new Error(`post-inbound plan was not created exactly: ${JSON.stringify({inboundPlanned, recoveryIdentity})}`);
+}
+const inboundReplay = one((await inboundPlan(9002)).rows,
+  'post-inbound discount replay');
+const secondInbound = one((await inboundPlan(9003)).rows,
+  'second post-inbound message');
+if (inboundReplay.outcome !== 'already_exists'
+    || secondInbound.outcome !== 'already_exists'
+    || inboundReplay.scheduled_action_id !== inboundPlanned.scheduled_action_id
+    || secondInbound.scheduled_action_id !== inboundPlanned.scheduled_action_id) {
+  throw new Error('post-inbound planning was not idempotent per recovery case');
+}
+
+const replayAfterMutation = async (label, mutation, params, messageId) => {
+  await db.exec('begin');
+  await db.query(mutation, params);
+  const replay = one((await inboundPlan(messageId)).rows, label);
+  await db.exec('rollback');
+  if (replay.outcome !== 'already_exists'
+      || replay.scheduled_action_id !== inboundPlanned.scheduled_action_id
+      || replay.inbound_message_id !== inboundPlanned.inbound_message_id) {
+    throw new Error(`${label} did not resolve the immutable action`);
+  }
+};
+await replayAfterMutation(
+  'replay after runtime retirement',
+  `update public.commercial_ally_runtime_bindings
+   set status='retired'
+   where tenant_ref='att1' and funnel_ref='att1-main' and binding_version=1`,
+  [],
+  9010,
+);
+await replayAfterMutation(
+  'replay after policy retirement',
+  `update public.commercial_ally_discount_policy_versions
+   set status='retired'
+   where tenant_ref='att1' and funnel_ref='att1-main'
+     and binding_version=1 and policy_key='att1-recovery-triplet'
+     and policy_version=1 and trigger_kind='payment_failure'`,
+  [],
+  9011,
+);
+await replayAfterMutation(
+  'replay after human takeover',
+  `update public.conversations set human_takeover=true where id=$1`,
+  [conversation.id],
+  9012,
+);
+await replayAfterMutation(
+  'replay after automation disablement',
+  `update public.conversations set automation_status='disabled' where id=$1`,
+  [conversation.id],
+  9015,
+);
+await replayAfterMutation(
+  'replay after terminal case transition',
+  `update public.recovery_cases
+   set status='won', won_at=now(), closed_at=now()
+   where id=$1`,
+  [planned.recovery_case_id],
+  9013,
+);
+
+await db.exec('begin');
+await db.exec(`
+  update public.commercial_ally_discount_policy_versions
+  set status='retired'
+  where tenant_ref='att1' and funnel_ref='att1-main'
+    and binding_version=1 and policy_key='att1-recovery-triplet'
+    and policy_version=1 and trigger_kind='payment_failure';
+  insert into public.commercial_ally_discount_policy_versions (
+    tenant_ref, funnel_ref, binding_version, policy_key, policy_version,
+    trigger_kind, discount_kind, discount_value, coupon_reference,
+    offer_valid_for, offer_expiration_mode, presentation_stage,
+    template_key, copy_version, release_requires_exact_trigger_set,
+    requires_inbound_reply_after_initial_template, coupon_delivery_mode,
+    urgency_copy_allowed, channel_provider, delivery_mode,
+    template_language, template_category,
+    coupon_template_component, coupon_template_parameter_index,
+    valid_from
+  ) values (
+    'att1','att1-main',1,'att1-recovery-alternate',1,
+    'payment_failure','percentage',10,'meta-variable-alternate',
+    null,'indefinite','later_step','att1_discount_alternate',
+    'att1-discount-alternate-v1',true,true,'meta_template_variable',false,
+    'waba','approved_template','es_MX','marketing','body',1,
+    statement_timestamp()-interval '1 hour'
+  );
+  update public.commercial_ally_discount_policy_versions
+  set status='approved', approved_by='operator-test',
+      approved_at=statement_timestamp()
+  where tenant_ref='att1' and funnel_ref='att1-main'
+    and binding_version=1 and policy_key='att1-recovery-alternate'
+    and policy_version=1 and trigger_kind='payment_failure';
+  update public.commercial_ally_discount_policy_versions
+  set status='published', published_at=statement_timestamp()
+  where tenant_ref='att1' and funnel_ref='att1-main'
+    and binding_version=1 and policy_key='att1-recovery-alternate'
+    and policy_version=1 and trigger_kind='payment_failure';
+`);
+const crossPolicyReplay = one((await db.query(`
+  select * from public.plan_commercial_ally_post_inbound_discount(
+    'att1','att1-main',1,'att1-recovery-alternate',1,
+    42,24,9001,9014,$1,$2
+  )
+`, [recoveryIdentity.external_user_id, NOW])).rows, 'cross-policy replay');
+await db.exec('rollback');
+if (crossPolicyReplay.outcome !== 'recovery_case_not_applicable'
+    || crossPolicyReplay.scheduled_action_id !== null
+    || crossPolicyReplay.inbound_message_id !== null) {
+  throw new Error('cross-policy replay exposed the immutable original action');
+}
+const discountedAction = one((await db.query(`
+  select sa.action_type, sa.status, sa.step_key, sa.due_at,
+         binding.discount_value, binding.offer_expiration_mode,
+         binding.presentation_stage, binding.coupon_delivery_mode,
+         binding.urgency_copy_allowed, binding.inbound_external_message_id
+  from public.scheduled_actions sa
+  join public.commercial_ally_post_inbound_discount_bindings binding
+    on binding.scheduled_action_id=sa.id
+  where sa.id=$1
+`, [inboundPlanned.scheduled_action_id])).rows, 'discounted action');
+if (discountedAction.action_type !== 'inbound_reply_offer'
+    || discountedAction.status !== 'deferred'
+    || discountedAction.step_key !== 'payment_failure_discount_offer'
+    || Number(discountedAction.discount_value) !== 10
+    || discountedAction.offer_expiration_mode !== 'indefinite'
+    || discountedAction.presentation_stage !== 'later_step'
+    || discountedAction.coupon_delivery_mode !== 'meta_template_variable'
+    || discountedAction.urgency_copy_allowed !== false
+    || Number(discountedAction.inbound_external_message_id) !== 9002) {
+  throw new Error(`post-inbound action contract drifted: ${JSON.stringify(discountedAction)}`);
+}
+const onlyOneDiscount = one((await db.query(`
+  select count(*)::int as count
+  from public.commercial_ally_post_inbound_discount_bindings
+  where recovery_case_id=$1
+`, [planned.recovery_case_id])).rows, 'discount action count');
+if (Number(onlyOneDiscount.count) !== 1) {
+  throw new Error('more than one post-inbound discount action exists');
+}
+const prematurelyClaimed = (await db.query(`
+  select id from public.claim_due_followup_actions(
+    'discount-worker',$1,interval '5 minutes',100
+  ) where id=$2
+`, [NOW, inboundPlanned.scheduled_action_id])).rows;
+if (prematurelyClaimed.length !== 0) {
+  throw new Error('deferred discount action became claimable before activation');
+}
+await reject('post-inbound discount binding update', () => db.query(`
+  update public.commercial_ally_post_inbound_discount_bindings
+  set coupon_reference='changed' where recovery_case_id=$1
+`, [planned.recovery_case_id]));
+
 const terminalPayload = payload('att1-payment-failure-after-first-contact');
 terminalPayload.data.purchase.transaction = 'ATT1-PAYMENT-FAIL-3';
 const terminalAdmission = one(

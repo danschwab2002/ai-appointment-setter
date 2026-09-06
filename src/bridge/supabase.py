@@ -114,6 +114,16 @@ class PortablePaymentFailureAdmissionResult:
 
 
 @dataclass(frozen=True)
+class CommercialAllyPostInboundDiscountPlan:
+    """Durable outcome for one canonical post-inbound discount plan."""
+
+    outcome: str
+    recovery_case_id: str | None
+    scheduled_action_id: str | None
+    inbound_message_id: str | None
+
+
+@dataclass(frozen=True)
 class PrecheckoutAdmissionResult:
     """Atomic admission outcome for one provisional form submission."""
 
@@ -2394,6 +2404,105 @@ class SupabaseClient:
                 row, "conversation_id", operation=operation
             ),
             automation_status=automation_status,
+        )
+
+    async def plan_commercial_ally_post_inbound_discount(
+        self,
+        *,
+        tenant_ref: str,
+        funnel_ref: str,
+        binding_version: int,
+        discount_policy_key: str,
+        discount_policy_version: int,
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+        chatwoot_conversation_id: int,
+        chatwoot_message_id: int,
+        external_user_id: str,
+        inbound_received_at: str,
+    ) -> CommercialAllyPostInboundDiscountPlan:
+        """Plan at most one deferred discount action after canonical inbound."""
+        operation = "commercial_ally_post_inbound_discount_plan"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/plan_commercial_ally_post_inbound_discount",
+            content=json.dumps({
+                "p_tenant_ref": tenant_ref,
+                "p_funnel_ref": funnel_ref,
+                "p_binding_version": binding_version,
+                "p_discount_policy_key": discount_policy_key,
+                "p_discount_policy_version": discount_policy_version,
+                "p_chatwoot_account_id": chatwoot_account_id,
+                "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                "p_chatwoot_conversation_id": chatwoot_conversation_id,
+                "p_chatwoot_message_id": chatwoot_message_id,
+                "p_external_user_id": external_user_id,
+                "p_inbound_received_at": inbound_received_at,
+            }, ensure_ascii=False),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(
+                "commercial_ally_post_inbound_discount_plan_failed: "
+                f"HTTP {response.status_code}"
+            )
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(
+                "commercial_ally_post_inbound_discount_plan_invalid_shape"
+            )
+        row = rows[0]
+        if set(row) != {
+            "outcome",
+            "recovery_case_id",
+            "scheduled_action_id",
+            "inbound_message_id",
+        }:
+            raise SupabaseCommittedResponseError(operation)
+        outcome = row.get("outcome")
+        allowed_outcomes = {
+            "created",
+            "already_exists",
+            "runtime_not_applicable",
+            "discount_policy_not_applicable",
+            "identity_not_applicable",
+            "conversation_not_applicable",
+            "recovery_case_not_applicable",
+            "initial_contact_not_applicable",
+            "inbound_timing_not_applicable",
+        }
+        if outcome not in allowed_outcomes:
+            raise SupabaseCommittedResponseError(operation)
+        if outcome in {"created", "already_exists"}:
+            recovery_case_id = _required_uuid(
+                row, "recovery_case_id", operation=operation
+            )
+            scheduled_action_id = _required_uuid(
+                row, "scheduled_action_id", operation=operation
+            )
+            inbound_message_id = _required_uuid(
+                row, "inbound_message_id", operation=operation
+            )
+        else:
+            recovery_case_id = _optional_string(
+                row, "recovery_case_id", operation=operation
+            )
+            scheduled_action_id = _optional_string(
+                row, "scheduled_action_id", operation=operation
+            )
+            inbound_message_id = _optional_string(
+                row, "inbound_message_id", operation=operation
+            )
+            if any(identifier is not None for identifier in (
+                recovery_case_id,
+                scheduled_action_id,
+                inbound_message_id,
+            )):
+                raise SupabaseCommittedResponseError(operation)
+        return CommercialAllyPostInboundDiscountPlan(
+            outcome=outcome,
+            recovery_case_id=recovery_case_id,
+            scheduled_action_id=scheduled_action_id,
+            inbound_message_id=inbound_message_id,
         )
 
     async def fetch_pending_events(
