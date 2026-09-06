@@ -86,6 +86,31 @@ $acl$;
 
 -- One exact correlation scope per offer. Landing authority remains paired in the
 -- admission function and intent row; Hotmart itself carries the offer, not landing.
+do $preflight_correlation_scopes$
+begin
+    if exists (
+        select 1
+        from public.hotmart_purchase_intent_scopes existing
+        where existing.hotmart_product_id = '8104005'
+          and existing.offer_ref in (
+              'bxjge6zq', 'mgbgpp19', 's1qfxm7m',
+              'jtt6fcsm', 'ecyu87q0', 'ulhzpw9a'
+          )
+          and existing.active = true
+          and (
+              existing.tenant_ref is distinct from 'lancemos'
+              or existing.funnel_ref is distinct from 'psicologajohanna'
+              or lower(existing.purchase_intent_product_ref)
+                   is distinct from 'f106691755g'
+              or existing.max_lookback is distinct from interval '24 hours'
+          )
+    ) then
+        raise exception using errcode = '55000',
+            message = 'johanna_existing_correlation_scope_mismatch';
+    end if;
+end;
+$preflight_correlation_scopes$;
+
 insert into public.hotmart_purchase_intent_scopes (
     tenant_ref, funnel_ref, hotmart_product_id, purchase_intent_product_ref,
     offer_ref, max_lookback, active
@@ -436,6 +461,7 @@ declare
     v_tracking_complete boolean := false;
     v_scope_configured boolean := false;
     v_six_bindings boolean := false;
+    v_timer_binding_policy_matches boolean := false;
     v_runtime_state text;
     v_runtime_generation bigint;
     v_timer_binding_enabled boolean := false;
@@ -449,11 +475,11 @@ declare
 begin
     if to_regclass('supabase_migrations.schema_migrations') is not null then
         execute $tracking$
-            select count(*) = 5
+            select count(*) = 6
             from supabase_migrations.schema_migrations
             where version in (
                 '20260829000200', '20260829000300', '20260829000400',
-                '20260829000500', '20260831000300'
+                '20260829000500', '20260831000200', '20260831000300'
             )
         $tracking$ into v_tracking_complete;
     end if;
@@ -466,6 +492,10 @@ begin
              join public.johanna_precheckout_landing_offers pair
                on pair.offer_ref = correlation.offer_ref
              where correlation.hotmart_product_id = '8104005'
+               and correlation.tenant_ref = 'lancemos'
+               and correlation.funnel_ref = 'psicologajohanna'
+               and lower(correlation.purchase_intent_product_ref) = 'f106691755g'
+               and correlation.max_lookback = interval '24 hours'
                and correlation.active = true)
         and exists (
             select 1
@@ -499,23 +529,29 @@ begin
     select count(*) = 6,
            coalesce(bool_and(binding.enabled), false),
            max(binding.generation),
-           coalesce(bool_and(binding.precheckout_first_touch_enabled), false)
+           coalesce(bool_and(binding.precheckout_first_touch_enabled), false),
+           coalesce(bool_and(
+               binding.policy_key = 'johanna-precheckout-delayed-first-touch-timer'
+               and binding.policy_version = 1
+               and exists (
+                   select 1
+                   from public.followup_policy_versions policy
+                   where policy.policy_key = binding.policy_key
+                     and policy.version = binding.policy_version
+                     and policy.status = 'published'
+                     and policy.grace_period = interval '60 minutes'
+               )
+           ), false)
     into v_six_bindings, v_timer_binding_enabled,
-         v_timer_binding_generation, v_first_touch_binding_enabled
+         v_timer_binding_generation, v_first_touch_binding_enabled,
+         v_timer_binding_policy_matches
     from public.johanna_precheckout_landing_offers pair
     join public.hotmart_abandonment_timer_policy_bindings binding
       on binding.tenant_ref = 'lancemos'
      and binding.funnel_ref = 'psicologajohanna'
      and lower(binding.product_ref) = lower('F106691755G')
      and binding.offer_ref = pair.offer_ref
-    join public.followup_policy_versions policy
-      on policy.policy_key = binding.policy_key
-     and policy.version = binding.policy_version
-     and policy.status = 'published'
-     and policy.grace_period = interval '60 minutes'
-    where v_scope_configured
-      and binding.policy_key = 'johanna-precheckout-delayed-first-touch-timer'
-      and binding.policy_version = 1;
+    where v_scope_configured;
 
     v_scope_configured := v_scope_configured and v_six_bindings;
 
@@ -542,6 +578,7 @@ begin
           or v_runtime_generation is distinct from 0
             then 'precheckout_runtime_not_inactive'
         when not v_timer_binding_enabled then 'timer_binding_disabled'
+        when not v_timer_binding_policy_matches then 'timer_binding_policy_mismatch'
         when not v_first_touch_binding_enabled then 'first_touch_binding_disabled'
         else 'precheckout_first_touch_ready'
     end;

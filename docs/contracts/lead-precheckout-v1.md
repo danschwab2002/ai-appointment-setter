@@ -133,7 +133,10 @@ produce `observed_precheckout_raw_canonical_mismatch` o
 
 En V1.0.0, un teléfono presente pero inválido no invalida la intención: se
 persiste como `normalized_phone=NULL`, `tracking_incomplete` y sin autoridad. En
-V1.1.0, teléfono inválido bloquea la admisión completa.
+V1.1.0 se conserva la admisión durable y la identidad útil por email, pero el
+teléfono inválido se representa como `normalized_phone=NULL`,
+`whatsapp_contact_authorized=false` y `activation_authorized=false`; no se crea
+timer ni se concede autoridad de contacto.
 
 ## Representación durable
 

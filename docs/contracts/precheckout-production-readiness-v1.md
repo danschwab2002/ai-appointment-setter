@@ -50,7 +50,7 @@ Devuelve una fila con:
 
 | Campo | Tipo | Semántica |
 |---|---|---|
-| `migration_tracking_complete` | boolean | Existen en el ledger `00200`–`00500`. |
+| `migration_tracking_complete` | boolean | Existen en el ledger `20260829000200`–`20260829000500`, `20260831000200` y `20260831000300`. |
 | `scope_configured` | boolean | El scope publicado coincide campo por campo. |
 | `runtime_state` | text/null | Estado durable observado. |
 | `runtime_generation` | bigint/null | Generación durable observada. |

@@ -4,26 +4,92 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../..');
-const db = new PGlite();
-await db.waitReady;
-await db.exec(`
-  create role anon nologin;
-  create role authenticated nologin;
-  create role service_role nologin;
-`);
-const files = [
-  join(root, 'supabase/baseline/20260803_public_schema.sql'),
-  ...readdirSync(join(root, 'supabase/migrations'))
-    .filter((name) => name.endsWith('.sql'))
-    .sort()
-    .map((name) => join(root, 'supabase/migrations', name)),
-];
-for (const file of files) {
-  await db.exec(readFileSync(file, 'utf8').replace(
+const migrationDir = join(root, 'supabase/migrations');
+const migrationNames = readdirSync(migrationDir)
+  .filter((name) => name.endsWith('.sql'))
+  .sort();
+const targetMigration = '20260831000300_johanna_six_landing_precheckout.sql';
+const predecessorMigration = '20260831000200_disable_johanna_funnel_dashboard_read.sql';
+const prefixMigrationNames = migrationNames.filter((name) => name < targetMigration);
+
+function sqlFor(file) {
+  return readFileSync(file, 'utf8').replace(
     /create extension if not exists pgcrypto;/gi,
     '-- pgcrypto is built into PGlite',
-  ));
+  );
 }
+
+async function freshDb() {
+  const instance = new PGlite();
+  await instance.waitReady;
+  await instance.exec(`
+    create role anon nologin;
+    create role authenticated nologin;
+    create role service_role nologin;
+  `);
+  await instance.exec(sqlFor(join(root, 'supabase/baseline/20260803_public_schema.sql')));
+  return instance;
+}
+
+async function applyMigrations(instance, names) {
+  for (const name of names) {
+    await instance.exec(sqlFor(join(migrationDir, name)));
+  }
+}
+
+const missingPredecessorDb = await freshDb();
+await applyMigrations(
+  missingPredecessorDb,
+  prefixMigrationNames.filter((name) => name !== predecessorMigration),
+);
+await missingPredecessorDb.exec(`
+  create schema supabase_migrations;
+  create table supabase_migrations.schema_migrations (version text primary key);
+  insert into supabase_migrations.schema_migrations (version) values
+    ('20260829000200'), ('20260829000300'), ('20260829000400'),
+    ('20260829000500'), ('20260831000300');
+`);
+await applyMigrations(missingPredecessorDb, [targetMigration]);
+const missingPredecessorReadiness = await missingPredecessorDb.query(
+  'select migration_tracking_complete from public.get_precheckout_delayed_first_touch_readiness()',
+);
+if (missingPredecessorReadiness.rows[0]?.migration_tracking_complete !== false) {
+  throw new Error('readiness accepted a missing required 20260831000200 predecessor');
+}
+await missingPredecessorDb.close();
+
+const divergentScopeDb = await freshDb();
+await applyMigrations(divergentScopeDb, prefixMigrationNames);
+await divergentScopeDb.exec(`
+  insert into public.hotmart_purchase_intent_scopes (
+    tenant_ref, funnel_ref, hotmart_product_id, purchase_intent_product_ref,
+    offer_ref, max_lookback, active
+  ) values (
+    'wrong-tenant', 'wrong-funnel', '8104005', 'wrong-product',
+    'mgbgpp19', interval '1 minute', true
+  );
+`);
+try {
+  await applyMigrations(divergentScopeDb, [targetMigration]);
+  throw new Error('migration accepted a divergent active correlation scope');
+} catch (error) {
+  if (error?.message === 'migration accepted a divergent active correlation scope') throw error;
+  if (!error?.message?.includes('johanna_existing_correlation_scope_mismatch')) throw error;
+}
+await divergentScopeDb.close();
+
+const db = await freshDb();
+await applyMigrations(db, migrationNames);
+await db.exec(`
+  create schema if not exists supabase_migrations;
+  create table if not exists supabase_migrations.schema_migrations (
+    version text primary key
+  );
+  insert into supabase_migrations.schema_migrations (version) values
+    ('20260829000200'), ('20260829000300'), ('20260829000400'),
+    ('20260829000500'), ('20260831000200'), ('20260831000300')
+  on conflict (version) do nothing;
+`);
 
 const pairs = [
   ['ads-a', 'bxjge6zq'], ['ads-b', 'mgbgpp19'], ['ads-c', 's1qfxm7m'],
@@ -60,9 +126,42 @@ const readiness = await db.query(
 );
 if (readiness.rows[0]?.scope_configured !== true
     || readiness.rows[0]?.runtime_state !== 'inactive'
-    || readiness.rows[0]?.runtime_generation !== 0) {
+    || readiness.rows[0]?.runtime_generation !== 0
+    || readiness.rows[0]?.reason_code !== 'precheckout_first_touch_ready') {
   throw new Error(`application readiness contract changed: ${JSON.stringify(readiness.rows)}`);
 }
+await db.exec(`
+  insert into public.followup_policy_versions (
+    policy_key, version, status, purpose, timezone, business_windows,
+    grace_period, expires_after, max_automatic_messages, steps,
+    approved_by, approved_at, published_at
+  )
+  select 'johanna-precheckout-review-alternate', 1, 'published', purpose,
+         timezone, business_windows, interval '60 minutes', expires_after,
+         max_automatic_messages, steps, approved_by, approved_at, published_at
+  from public.followup_policy_versions
+  where policy_key = 'johanna-precheckout-delayed-first-touch-timer'
+    and version = 1;
+  update public.hotmart_abandonment_timer_policy_bindings
+  set policy_key = 'johanna-precheckout-review-alternate', policy_version = 1,
+      generation = generation + 1, updated_at = clock_timestamp()
+  where tenant_ref = 'lancemos' and funnel_ref = 'psicologajohanna'
+    and offer_ref = 'mgbgpp19';
+`);
+const mismatchedPolicyReadiness = await db.query(
+  'select * from public.get_precheckout_delayed_first_touch_readiness()',
+);
+if (mismatchedPolicyReadiness.rows[0]?.scope_configured !== true
+    || mismatchedPolicyReadiness.rows[0]?.reason_code !== 'timer_binding_policy_mismatch') {
+  throw new Error(`timer policy mismatch was misclassified: ${JSON.stringify(mismatchedPolicyReadiness.rows)}`);
+}
+await db.exec(`
+  update public.hotmart_abandonment_timer_policy_bindings
+  set policy_key = 'johanna-precheckout-delayed-first-touch-timer', policy_version = 1,
+      generation = generation + 1, updated_at = clock_timestamp()
+  where tenant_ref = 'lancemos' and funnel_ref = 'psicologajohanna'
+    and offer_ref = 'mgbgpp19';
+`);
 try {
   await db.exec("update public.johanna_precheckout_landing_offers set offer_ref='changed' where landing_ref='ads-a'");
   throw new Error('published pair was mutable');

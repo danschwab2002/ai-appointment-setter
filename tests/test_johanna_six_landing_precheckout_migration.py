@@ -91,6 +91,30 @@ def test_readiness_covers_all_exact_rows_and_preserves_inactive_zero_contract() 
     assert "max_cohort_contacts = 1000000" in sql
 
 
+def test_migration_requires_its_dashboard_acl_predecessor() -> None:
+    sql = _sql()
+
+    assert "'20260831000200'" in sql
+    assert "select count(*) = 6" in sql
+
+
+def test_migration_rejects_divergent_existing_correlation_scope() -> None:
+    sql = _sql()
+
+    assert "johanna_existing_correlation_scope_mismatch" in sql
+    assert "existing.tenant_ref is distinct from 'lancemos'" in sql
+    assert "existing.funnel_ref is distinct from 'psicologajohanna'" in sql
+    assert "lower(existing.purchase_intent_product_ref)" in sql
+    assert "existing.max_lookback is distinct from interval '24 hours'" in sql
+
+
+def test_readiness_reports_timer_policy_mismatch_separately() -> None:
+    sql = _sql()
+
+    assert "v_timer_binding_policy_matches" in sql
+    assert "then 'timer_binding_policy_mismatch'" in sql
+
+
 def test_migration_does_not_backfill_or_resend_historical_effects() -> None:
     sql = _sql()
 
