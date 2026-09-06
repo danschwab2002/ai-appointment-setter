@@ -40,13 +40,15 @@ del navegador, query strings, logs o Git.
 
 ## Alcance implementado
 
-El parser acepta un único binding activo suministrado por la configuración del
-runtime. En compatibilidad legada ese binding es:
+El singleton legado de Johanna acepta únicamente la relación cerrada de seis
+pares publicada abajo. Cada runtime con manifiesto explícito conserva un único
+binding escalar suministrado por su configuración; no hereda la relación
+multi-par de Johanna aunque copie alguno de sus valores.
 
 ```text
-site       = psicologajohanna
-landing_id = ads-a
-offer.code = bxjge6zq
+site       = <site configurado>
+landing_id = <landing configurada>
+offer.code = <oferta configurada>
 hotlink    = F106691755G
 ```
 
@@ -54,8 +56,8 @@ Un payload que no coincide exactamente con el binding configurado se clasifica
 como inválido y devuelve `400 invalid_lead_precheckout_payload`. En runtimes con
 manifiesto explícito, el bridge envía tenant, funnel y versión server-owned a la
 RPC portable; ésta exige la fila durable activa exacta y vuelve a comprobar todo
-el scope comercial canónico contra esa fila. Sin manifiesto se conserva la RPC
-legada sin cambios.
+el scope comercial canónico contra esa fila. Sin manifiesto, la RPC legada de
+Johanna aplica los seis pares exactos y rechaza cualquier cruce entre ellos.
 
 La autoridad PostgreSQL de Johanna se publica como una relación inmutable y
 cerrada de seis pares `landing_ref → offer_ref`; no admite ofertas comodín:

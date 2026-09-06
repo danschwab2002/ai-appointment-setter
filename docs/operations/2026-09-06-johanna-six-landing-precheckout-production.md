@@ -1,8 +1,8 @@
 # Johanna: autoridad precheckout de seis landings — evidencia local
 
 - **Fecha:** 2026-09-06
-- **Estado:** candidato local implementado; sin commit, deploy, backfill ni envío real
-- **Base integrada:** `df0faaa6cba3250622018691c3bdcebd57cf7c5f`
+- **Estado:** candidato publicado en PR #103; sin merge, deploy, backfill ni envío real
+- **Base del candidato:** `df0faaa6cba3250622018691c3bdcebd57cf7c5f`
 - **Migración:** `20260831000300_johanna_six_landing_precheckout.sql`
 
 ## Alcance publicado
@@ -42,7 +42,7 @@ recorre submissions históricas.
 
 ```text
 uv run pytest tests/test_johanna_six_landing_precheckout_migration.py -q
-.......                                                                  [100%]
+..........                                                               [100%]
 
 node tests/sql/followup_engine/validate_johanna_six_landing_precheckout.mjs
 JOHANNA_SIX_LANDING_PRECHECKOUT_SQL_OK
@@ -51,7 +51,7 @@ node tests/sql/followup_engine/validate_acl_hardening.mjs
 acl_hardening=OK positive_control_leaks=6 public_functions=149 service_entrypoints=63
 
 uv run pytest
-1500 passed, 1 warning in 57.75s
+1503 passed, 1 warning in 62.87s
 
 cd tests/sql/followup_engine && npm test
 exit 0; incluyó JOHANNA_SIX_LANDING_PRECHECKOUT_SQL_OK y acl_hardening=OK
