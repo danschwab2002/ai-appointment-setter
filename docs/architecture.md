@@ -336,7 +336,7 @@ solo no programa acciones ni concede autorización comercial. Ver
 
 El endpoint `POST /webhooks/lead` verifica HMAC-SHA256 sobre el body crudo,
 freshness, headers y scope antes de llamar a la RPC separada
-`admit_observed_lead_precheckout`. El candidato de expansión acepta los contratos
+`admit_observed_lead_precheckout`. El runtime productivo acepta los contratos
 exactos `1.0.0` y `1.1.0` para una relación cerrada de seis pares publicados de
 Johanna (`ads-a/b/c` y `org-a/b/c` con su oferta correspondiente); no acepta
 cruces ni ofertas comodín. En `1.1.0`, un teléfono inválido ya no descarta la
@@ -346,9 +346,11 @@ observación: se persiste la identidad utilizable, pero `phone_valid`,
 La migración `20260831000300_johanna_six_landing_precheckout.sql` lleva la misma
 relación a admisión, correlación Hotmart, scheduling, reevaluación y autorización
 final. Cada oferta mantiene un scope exacto. La publicación es prospectiva: no
-reprocesa submissions, timers ni commands históricos. Esta expansión no debe
-describirse como desplegada hasta aplicar DDL, desplegar el bridge y completar la
-matriz HTTP/Supabase de seis rutas.
+reprocesa submissions, timers ni commands históricos. La migración está aplicada
+y registrada en Supabase Cloud; el bridge desplegado preservó la compatibilidad
+V1.0.0 y completó la matriz HTTP/Supabase de seis rutas con V1.1.0. Las pruebas V1.1.0 con teléfono
+inválido persistieron sin autoridad de contacto ni timers y luego fueron eliminadas
+selectivamente junto con el resto del grafo sintético.
 
 El árbol local agrega una admisión portable sólo para runtimes cuya procedencia
 es un manifiesto explícito. `POST /webhooks/lead` llama entonces a
@@ -405,20 +407,23 @@ fences durables antes del único intento. La coordenada SQL V1 continúa
 `inactive/generation=0`; el binding first-touch es el interruptor operativo de
 admisión para este scope versionado.
 
-En producción están aplicadas y registradas `00200`–`00500`, el scope está
-publicado y el bridge de preparación está desplegado. El release preparado para
-la activación selectiva mantendrá el gate HTTP apagado mientras Meta revisa
-`johanna_interes_precheckout_01`; todavía no fue desplegado y no hubo envío real
-para esta ruta. Ver la
+En producción están aplicadas y registradas `20260829000200`–`20260829000500`,
+`20260831000200` y `20260831000300`; los seis pares y bindings están publicados y
+el bridge correspondiente está desplegado. `/ready` acredita
+`precheckout_first_touch_ready` con cero due/reserved/request-started/unknown. El
+pilot boundary y la automatización global permanecen default-off; no hubo envío
+real para esta ruta. Ver la
 [evidencia remota de baseline](operations/2026-08-30-precheckout-selective-activation.md),
+[evidencia productiva de seis rutas](operations/2026-09-06-johanna-six-landing-precheckout-production.md),
 [ADR-0015](decisions/0015-versioned-landing-whatsapp-consent.md) y la
 [verificación local integral](operations/2026-08-29-precheckout-delayed-first-touch-local.md),
 el [contrato de readiness V1](contracts/precheckout-production-readiness-v1.md) y
 la [evidencia de preparación](operations/2026-08-30-precheckout-production-readiness-local.md).
 
 La correlación Hotmart ↔ intención y su fase contract están aplicadas y verificadas en
-Supabase Cloud. Un scope server-side traduce `product.id=8104005` al hotlink
-`F106691755G` y exige oferta `bxjge6zq`, tenant, funnel y una ventana de 24 horas. Cada evento
+Supabase Cloud. Seis scopes server-side traducen `product.id=8104005` al hotlink
+`F106691755G` y exigen el par landing/oferta publicado, tenant, funnel y una
+ventana de 24 horas. Cada evento
 procesable nuevo produce en su misma transacción un outcome append-only `resolved`,
 `unmatched`, `ambiguous` o `conflict`. Una compra resuelta mueve la intención a `purchased`;
 una salida de carrito resuelta fija `confirmed_abandonment`; ningún outcome concede

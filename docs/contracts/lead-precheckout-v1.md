@@ -1,6 +1,6 @@
 # Contrato `lead.precheckout` V1 — Lancemos → bridge
 
-- **Estado:** V1.0.0 y V1.1.0 desplegados con el alcance previo; la enmienda de seis pares, admisión durable con teléfono inválido y macro first-touch diferida está publicada en PR #103, pendiente de merge, deploy y postflight
+- **Estado:** V1.0.0 y V1.1.0 desplegados; compatibilidad V1.0.0 preservada y matriz productiva V1.1.0 verificada para los seis pares; admisión durable con teléfono inválido verificada sin autoridad WhatsApp; first-touch preparado con efecto global default-off
 - **Versiones externas:** `1.0.0`, `1.1.0`
 - **Endpoint:** `POST /webhooks/lead`
 - **Emisor previsto:** `/api/lead` server-side de la landing
@@ -200,7 +200,7 @@ este corte.
 
 ## Extensión first-touch diferido
 
-- **Estado:** contrato, timer, reserva one-shot y conexión al worker/sender implementados y verificados localmente; deploy, template Meta y activación pendientes.
+- **Estado:** contrato, timer, reserva one-shot y conexión al worker/sender desplegados; base y bridge ready, sin activación global ni envío real.
 - **Diseño:** [first-touch diferido desde precheckout](../design/precheckout-delayed-first-touch.md).
 
 Una admisión V1.1.0 nueva y autorizada crea o reutiliza localmente y de forma atómica un
@@ -263,7 +263,7 @@ fuente autoritativa es `purchase_intents`, no la respuesta de transporte.
 1. Hotmart mantiene `POST /webhooks/hotmart` y Hottok. Los eventos se normalizan
    internamente, pero no comparten la puerta ni el secreto de la landing.
 2. Silencio después del pre-checkout no autoriza inferir abandono. La extensión
-   pendiente permite un first-touch veraz después de 60 minutos, sin atribuir a
+   desplegada permite, sólo bajo sus gates finales, un first-touch veraz después de 60 minutos, sin atribuir a
    Hotmart un evento inexistente.
 3. V1.0.0 bloquea todo contacto proactivo; V1.1.0 supera el gate local de
    autorización y continúa bloqueado por reevaluación y fronteras comerciales.
