@@ -103,8 +103,20 @@ matriz E2E de V1.0.0.
 
 `GET /health` y `GET /ready` respondieron `200`. Readiness informó
 `precheckout_first_touch_ready` y cero due, reserved, request-started y
-delivery-unknown; `pilot_boundary=disabled` y `automation_state=default_off`
-mantuvieron imposible el efecto global.
+delivery-unknown. Una comprobación sanitaria posterior confirmó, tanto en la
+definición persistida del servicio como en el task efectivo:
+
+```text
+HOTMART_ABANDONMENT_TIMER_WORKER_ENABLED=true
+PRECHECKOUT_DELAYED_FIRST_TOUCH_ENABLED=true
+PRECHECKOUT_DELAYED_OUTBOUND_ENABLED=true
+```
+
+`pilot_boundary=disabled` y `automation_state=default_off` pertenecen al camino
+general y no bloquean este sender selectivo. Las identidades inválidas del E2E no
+produjeron mensajes porque no tenían autoridad WhatsApp, no porque el outbound
+estuviera apagado. La entrega física histórica de la plantilla está registrada en
+[la activación productiva del 31 de agosto](2026-08-31-precheckout-production-activation.md).
 
 ## Reevaluación histórica y limpieza
 

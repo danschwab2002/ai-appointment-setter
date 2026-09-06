@@ -1,6 +1,6 @@
 # Contrato `lead.precheckout` V1 — Lancemos → bridge
 
-- **Estado:** V1.0.0 y V1.1.0 desplegados; compatibilidad V1.0.0 preservada y matriz productiva V1.1.0 verificada para los seis pares; admisión durable con teléfono inválido verificada sin autoridad WhatsApp; first-touch preparado con efecto global default-off
+- **Estado:** V1.0.0 y V1.1.0 desplegados; compatibilidad V1.0.0 preservada y matriz productiva V1.1.0 verificada para los seis pares; admisión durable con teléfono inválido verificada sin autoridad WhatsApp; first-touch selectivo activo y con entrega productiva acreditada
 - **Versiones externas:** `1.0.0`, `1.1.0`
 - **Endpoint:** `POST /webhooks/lead`
 - **Emisor previsto:** `/api/lead` server-side de la landing
@@ -200,7 +200,7 @@ este corte.
 
 ## Extensión first-touch diferido
 
-- **Estado:** contrato, timer, reserva one-shot y conexión al worker/sender desplegados; base y bridge ready, sin activación global ni envío real.
+- **Estado:** contrato, timer, reserva one-shot y conexión al worker/sender desplegados; gate outbound selectivo activo y entrega `delivered` acreditada; dispatcher general no requerido.
 - **Diseño:** [first-touch diferido desde precheckout](../design/precheckout-delayed-first-touch.md).
 
 Una admisión V1.1.0 nueva y autorizada crea o reutiliza localmente y de forma atómica un

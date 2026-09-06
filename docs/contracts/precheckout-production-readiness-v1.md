@@ -1,6 +1,6 @@
 # Contrato V1 de readiness para first-touch pre-checkout
 
-- **Estado:** Implementado, desplegado y con postflight productivo de seis pares; efecto global default-off
+- **Estado:** Implementado, desplegado y con postflight productivo de seis pares; worker, first-touch y outbound selectivo activos
 - **Versión:** 1.2.0
 - **Alcance:** promoción, diagnóstico sanitario y gate final del first-touch diferido
 - **No acredita:** aprobación Meta, envío WABA, entrega física ni activación productiva
