@@ -1,0 +1,54 @@
+{
+  "bundle_name": "att1-product-profiles",
+  "bundle_version": "0.1.0",
+  "profiles": [
+    "agente-comercial"
+  ],
+  "files": [
+    {
+      "path": "agente-comercial/.no-bundled-skills",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "agente-comercial/SOUL.md",
+      "size": 1699,
+      "sha256": "73c6be79da1577e585004846bc48193ebfebeb0f15df482c4f9e753e55e1b163"
+    },
+    {
+      "path": "agente-comercial/config.yaml",
+      "size": 1757,
+      "sha256": "87404aacb73f91552991ea390fe72336b91fabe310c02999a632bdd7a7a338d4"
+    },
+    {
+      "path": "agente-comercial/distribution.yaml",
+      "size": 218,
+      "sha256": "b6e5621e7dec3935603970a25ba963c76a8d730bda4a07be97f14b28eff8c1f3"
+    },
+    {
+      "path": "agente-comercial/manifest.json",
+      "size": 535,
+      "sha256": "7a68c968bc026926ed4e84790c32679b5d027446263ac0f26457b0813636377a"
+    },
+    {
+      "path": "agente-comercial/release/commercial-knowledge-v1.yaml",
+      "size": 375,
+      "sha256": "7f726f260c19c944e6229db04242e899aeca1228faad00cdab304183a0dba164"
+    },
+    {
+      "path": "agente-comercial/release/conversation-policy-v1.md",
+      "size": 538,
+      "sha256": "132900e4459324f237ef15c1924335b9f3540074255471926ba744dcf722cdf3"
+    },
+    {
+      "path": "agente-comercial/release/conversation-release-v1.yaml",
+      "size": 756,
+      "sha256": "f88bb55874e8ded1f929ab3a01750b60693467bb294980b34aede9ce41c0c880"
+    },
+    {
+      "path": "agente-comercial/release/output-contract-v1.json",
+      "size": 832,
+      "sha256": "141be4454ab63395c52fc6dcb0f5b9c00c08f21dadbb1371084fbd7aed26d6d0"
+    }
+  ]
+}

@@ -1,5 +1,16 @@
 # Arquitectura inicial
 
+## Paquete candidato de agente comercial ATT1
+
+El repositorio contiene una distribución versionada y create-only en
+`profiles/att1/agente-comercial/`. Es un candidato inerte: usa un fallback neutro,
+no incorpora Brand Voice ni facts comerciales pendientes, no tiene toolsets,
+memoria, credenciales, runtime binding ni capacidad de efectos. Su manifiesto y
+bundle fijan hashes verificables y `scripts/install_att1_product_profiles.py` sólo
+puede instalarlo en un home nuevo; nunca reemplaza el profile operativo de otro
+cliente. Una instalación aislada no equivale a una Conversation Release aprobada,
+conexión con el bridge ni activación comercial.
+
 ## Flujo del primer hito
 
 ```text
