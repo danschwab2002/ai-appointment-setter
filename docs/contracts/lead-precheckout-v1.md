@@ -167,9 +167,16 @@ Invariantes V1.1.0:
 contract_version=1.1.0
 provisional=false
 provider_observed=true
-activation_authorized=true
-whatsapp_contact_authorized=true
 consent.copy_version=johanna-precheckout-whatsapp-disclosure-v1
+
+si identity.phone_valid=true:
+  activation_authorized=true
+  whatsapp_contact_authorized=true
+
+si identity.phone_valid=false:
+  identity.phone ausente
+  activation_authorized=false
+  whatsapp_contact_authorized=false
 ```
 
 `id` deduplica retries exactos. Un body distinto bajo el mismo ID registra
