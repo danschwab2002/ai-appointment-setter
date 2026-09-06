@@ -133,6 +133,7 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     "pilot_boundary_enabled",
     "chatwoot_cut_b_admission_enabled",
     "chatwoot_cut_b_agent_enabled",
+    "chatwoot_post_inbound_discount_planning_enabled",
     "chatwoot_scoped_inbound_senders_enabled",
     "operator_correlation_read_enabled",
     "operator_correlation_write_enabled",
@@ -348,6 +349,9 @@ class Settings:
     chatwoot_cut_b_scope_key: str | None = None
     chatwoot_cut_b_scope_version: int | None = None
     chatwoot_cut_b_agent_enabled: bool = False
+    chatwoot_post_inbound_discount_planning_enabled: bool = False
+    commercial_ally_discount_policy_key: str | None = None
+    commercial_ally_discount_policy_version: int | None = None
     chatwoot_scoped_inbound_senders_enabled: bool = False
     operator_correlation_read_enabled: bool = False
     operator_correlation_read_token: str | None = None
@@ -757,6 +761,9 @@ class Settings:
         chatwoot_cut_b_scope_version_raw = os.getenv(
             "CHATWOOT_CUT_B_SCOPE_VERSION", ""
         ).strip()
+        commercial_ally_discount_policy_version_raw = os.getenv(
+            "COMMERCIAL_ALLY_DISCOUNT_POLICY_VERSION", ""
+        ).strip()
 
         return cls(
             webhook_secret=os.environ["CHATWOOT_WEBHOOK_SECRET"],
@@ -929,6 +936,21 @@ class Settings:
             chatwoot_cut_b_agent_enabled=(
                 os.getenv("CHATWOOT_CUT_B_AGENT_ENABLED", "false").lower()
                 == "true"
+            ),
+            chatwoot_post_inbound_discount_planning_enabled=(
+                os.getenv(
+                    "CHATWOOT_POST_INBOUND_DISCOUNT_PLANNING_ENABLED", "false"
+                ).lower()
+                == "true"
+            ),
+            commercial_ally_discount_policy_key=(
+                os.getenv("COMMERCIAL_ALLY_DISCOUNT_POLICY_KEY", "").strip()
+                or None
+            ),
+            commercial_ally_discount_policy_version=(
+                int(commercial_ally_discount_policy_version_raw)
+                if commercial_ally_discount_policy_version_raw
+                else None
             ),
             chatwoot_scoped_inbound_senders_enabled=(
                 os.getenv(
@@ -1194,6 +1216,51 @@ def create_app(
             "CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED requires all stop and "
             "handoff gates"
         )
+    if settings.chatwoot_post_inbound_discount_planning_enabled:
+        if settings.chatwoot_cut_b_agent_enabled:
+            raise ValueError(
+                "post-inbound discount planning cannot enable the Cut B agent"
+            )
+        if not explicit_manifest_runtime:
+            raise ValueError(
+                "post-inbound discount planning requires an explicit commercial "
+                "ally manifest"
+            )
+        if settings.commercial_ally_config.tenant_ref != "att1":
+            raise ValueError(
+                "post-inbound discount planning is restricted to ATT1"
+            )
+        if not all((
+            settings.chatwoot_cut_b_admission_enabled,
+            settings.supabase_base_url,
+            settings.supabase_service_role_key,
+            settings.commercial_ally_discount_policy_key,
+            settings.commercial_ally_discount_policy_version,
+        )):
+            raise ValueError(
+                "post-inbound discount planning requires Cut B, Supabase, and an "
+                "exact discount policy"
+            )
+        if settings.commercial_ally_discount_policy_version is None or (
+            settings.commercial_ally_discount_policy_version < 1
+        ):
+            raise ValueError(
+                "COMMERCIAL_ALLY_DISCOUNT_POLICY_VERSION must be positive"
+            )
+        if (
+            settings.chatwoot_account_id,
+            settings.chatwoot_inbox_id,
+            settings.chatwoot_cut_b_scope_key,
+            settings.chatwoot_cut_b_scope_version,
+        ) != (
+            settings.commercial_ally_config.chatwoot_account_id,
+            settings.commercial_ally_config.chatwoot_inbox_id,
+            settings.commercial_ally_config.inbound_scope_key,
+            settings.commercial_ally_config.inbound_scope_version,
+        ):
+            raise ValueError(
+                "post-inbound discount planning must match commercial ally scope"
+            )
     if (
         settings.johanna_abandonment_one_shot_enabled
         and settings.johanna_abandonment_hotmart_auto_enabled
@@ -2420,6 +2487,64 @@ def create_app(
                 or not external_user_id.isdigit()
             ):
                 raise RuntimeError("chatwoot_cut_b_canonical_identity_invalid")
+            if settings.chatwoot_post_inbound_discount_planning_enabled:
+                assert settings.commercial_ally_discount_policy_key is not None
+                assert settings.commercial_ally_discount_policy_version is not None
+                assert settings.chatwoot_account_id is not None
+                assert settings.chatwoot_inbox_id is not None
+                message_id = payload.get("id")
+                created_at = payload.get("created_at")
+                if (
+                    not isinstance(message_id, int)
+                    or isinstance(message_id, bool)
+                    or message_id < 1
+                    or not isinstance(created_at, (int, float))
+                    or isinstance(created_at, bool)
+                    or not math.isfinite(created_at)
+                    or created_at <= 0
+                ):
+                    raise RuntimeError(
+                        "chatwoot_post_inbound_discount_evidence_invalid"
+                    )
+                try:
+                    inbound_received_at = datetime.fromtimestamp(
+                        created_at, tz=UTC
+                    ).isoformat()
+                    discount_plan = (
+                        await shared_supabase.plan_commercial_ally_post_inbound_discount(
+                            tenant_ref=settings.commercial_ally_config.tenant_ref,
+                            funnel_ref=settings.commercial_ally_config.funnel_ref,
+                            binding_version=(
+                                settings.commercial_ally_config.binding_version
+                            ),
+                            discount_policy_key=(
+                                settings.commercial_ally_discount_policy_key
+                            ),
+                            discount_policy_version=(
+                                settings.commercial_ally_discount_policy_version
+                            ),
+                            chatwoot_account_id=settings.chatwoot_account_id,
+                            chatwoot_inbox_id=settings.chatwoot_inbox_id,
+                            chatwoot_conversation_id=conversation_id,
+                            chatwoot_message_id=message_id,
+                            external_user_id=external_user_id,
+                            inbound_received_at=inbound_received_at,
+                        )
+                    )
+                except (OverflowError, OSError, ValueError) as exc:
+                    raise RuntimeError(
+                        "chatwoot_post_inbound_discount_evidence_invalid"
+                    ) from exc
+                except SupabaseError as exc:
+                    raise RetryableChatwootWorkError(
+                        "chatwoot_post_inbound_discount_planning_failed"
+                    ) from exc
+                logger.info(
+                    "chatwoot_post_inbound_discount_planned outcome=%s",
+                    discount_plan.outcome,
+                )
+                return
+
             try:
                 admission = await shared_supabase.admit_inbound_commercial_case(
                     scope_key=settings.chatwoot_cut_b_scope_key,

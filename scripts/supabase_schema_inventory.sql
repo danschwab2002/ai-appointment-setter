@@ -2335,6 +2335,47 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         1,
         'payment_failure_single_initial_contact_per_case'
+    union all
+    select
+        '20260905000100',
+        '20260905000100_commercial_ally_post_inbound_discount.sql',
+        (
+            (to_regclass(
+                'public.commercial_ally_post_inbound_discount_bindings'
+            ) is not null)::int
+            + exists(
+                select 1 from functions
+                where oid = to_regprocedure(
+                    'public.plan_commercial_ally_post_inbound_discount(text,text,integer,text,integer,bigint,bigint,bigint,bigint,text,timestamptz)'
+                )
+            )::int
+            + exists(
+                select 1
+                from pg_constraint con
+                join pg_class rel on rel.oid = con.conrelid
+                join pg_namespace ns on ns.oid = rel.relnamespace
+                where ns.nspname = 'public'
+                  and rel.relname = 'scheduled_actions'
+                  and con.conname = 'scheduled_actions_action_type_check'
+                  and position(
+                      'inbound_reply_offer' in pg_get_constraintdef(con.oid)
+                  ) > 0
+            )::int
+            + (
+                to_regprocedure(
+                    'public.plan_commercial_ally_post_inbound_discount(text,text,integer,text,integer,bigint,bigint,bigint,bigint,text,timestamptz)'
+                ) is not null
+                and has_function_privilege(
+                    'service_role',
+                    to_regprocedure(
+                        'public.plan_commercial_ally_post_inbound_discount(text,text,integer,text,integer,bigint,bigint,bigint,bigint,text,timestamptz)'
+                    ),
+                    'EXECUTE'
+                )
+            )::int
+        )::int,
+        4,
+        'commercial_ally_post_inbound_discount_default_off'
 )
 select
     version,

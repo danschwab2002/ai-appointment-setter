@@ -692,6 +692,17 @@ startup también rechaza físicamente `META_FINAL_EFFECT_ENABLED=true`; abrir el
 gate exige otro release de código. Las demás cadenas
 ligadas a Johanna se rechazan.
 
+Para ATT1, un inbound Chatwoot canónico posterior al
+`payment_failure_first_contact` aceptado puede invocar, bajo
+`CHATWOOT_POST_INBOUND_DISCOUNT_PLANNING_ENABLED`, el planificador durable
+`plan_commercial_ally_post_inbound_discount`. Éste exige el binding exacto y una
+política publicada de 10 %, `later_step`, vigencia indefinida, variable Meta y
+copy sin urgencia. Persiste evidencia sanitizada y abre una segunda secuencia de
+un solo mensaje con una única acción `inbound_reply_offer`. La acción nace
+`deferred`, con `next_attempt_at = infinity` y `effect_authorized = false`: por
+silencio no se crea nada y el dispatcher no puede reclamarla. Activar template,
+transporte o Meta no forma parte de este corte.
+
 El stop de compra acepta `HOTMART_HOTTOK` únicamente con
 `PORTABLE_HOTMART_PURCHASE_STOP_ENABLED=true`. Revalida producto/oferta contra el
 binding activo y exige una política temporal durable, explícita, sin seed y
@@ -707,10 +718,10 @@ binding. El runtime carece de DML y lectura directa: sólo resuelve una versión
 `published`, vigente y exacta mediante una RPC fail-closed. La tabla nace vacía,
 las versiones aprobadas son inmutables y una publicación no crea ni modifica
 timers, acciones, mensajes, cadencia, stops, budgets o efectos.
-La rama respuesta inbound → descuento no está implementada todavía: depende de
-la plantilla WABA aprobada y de su contrato exacto de variables. Hasta entonces,
-resolver una política no crea un mensaje y el sistema no adapta semánticas de
-no-respuesta para simular ese envío.
+La planificación durable respuesta inbound → descuento está implementada y
+default-off. La activación y entrega del mensaje todavía no están implementadas:
+dependen de la plantilla WABA aprobada y de su contrato exacto de variables. No se
+adaptan semánticas de no-respuesta para simular ese envío.
 
 Las migraciones portables, incluida
 `20260903000300_commercial_ally_payment_failure_recovery.sql` y su corrección

@@ -1,6 +1,6 @@
 # Secuencias de recuperación con descuento para ATT1
 
-- **Estado:** Contrato durable para vigencia indefinida implementado; template, ejecución inbound y activación pendientes
+- **Estado:** Política y planificación post-inbound implementadas default-off; template y activación pendientes
 - **Fecha:** 2026-09-01
 - **Fuente:** `Documentación de Procesos Carritos Abandonados, Pagos Declinados y Pagos Offline.pdf`, entregada por el usuario
 - **Alcance:** diseñar únicamente la política de descuento; no modificar cantidad de mensajes, triggers, delays, cadencia ni condiciones de los flujos ya aprobados
@@ -42,7 +42,7 @@ flujo durable existente sin cambios
 → mantener la misma reserva, presupuesto, request_started y finalización
 ```
 
-La política puede asociarse a las posiciones ya existentes de `payment_failure`, `confirmed_cart_abandonment` y `precheckout_without_purchase_signal`, sin crear nuevas acciones, timers o secuencias. El caso y presupuesto compartidos continúan evitando doble contacto.
+La política puede asociarse a `payment_failure`, `confirmed_cart_abandonment` y `precheckout_without_purchase_signal`. Para `payment_failure`, una respuesta inbound canónica posterior al primer contacto abre una secuencia nueva de un solo mensaje y una acción `inbound_reply_offer`; no existe timer ni acción mientras hay silencio. Los otros dos triggers conservan sólo la representación de política y no fueron conectados por este corte. El caso compartido y la unicidad durable impiden duplicar el contacto adicional.
 
 ## Política durable de incentivo
 
@@ -81,8 +81,9 @@ El alcance general del cupón no amplía el piloto, que permanece candidato sól
 para México. Consentimiento, opt-out, stops, condiciones y cadencia existentes
 siguen siendo determinísticos y no cambian por esta decisión.
 
-La posición sólo cambia el contenido/template asociado a un paso existente, no
-la mecánica ni la cadencia del flujo. Bodies, placeholders, categoría, botones y
+La posición no introduce cadencia por tiempo. En `payment_failure`, el evento
+inbound crea una acción diferida única; ninguna ausencia de respuesta puede
+crearla ni volverla reclamable. Bodies, placeholders, categoría, botones y
 assets pertenecen a la Conversation Release y deben coincidir exactamente con
 templates `APPROVED` de Meta/Chatwoot.
 
@@ -101,14 +102,17 @@ incompatibilidad: la política puede declarar `offer_expiration_mode = indefinit
 La política seguirá versionada: puede retirarse mediante una transición explícita,
 pero no expira automáticamente ni habilita texto de urgencia.
 
-El runtime todavía no crea ni ejecuta el `later_step` a partir de una respuesta
-inbound canónica y no existe template WABA aprobado con su variable. Esos dos
-límites, y no la representación de vigencia, bloquean la publicación.
+El runtime ya puede crear el `later_step` diferido a partir de una respuesta
+inbound canónica para `payment_failure`, bajo un gate default-off. Todavía no
+existe template WABA aprobado con su variable ni una transición de activación
+que vuelva reclamable la acción. Esos límites bloquean el envío, no la
+planificación durable.
 
 ## Estado de implementación
 
-Las migraciones `20260901000400_commercial_ally_discount_policies.sql` y
-`20260903000200_commercial_ally_indefinite_discount.sql` implementan la frontera mínima:
+Las migraciones `20260901000400_commercial_ally_discount_policies.sql`,
+`20260903000200_commercial_ally_indefinite_discount.sql` y
+`20260905000100_commercial_ally_post_inbound_discount.sql` implementan la frontera mínima:
 
 - políticas por binding, trigger, clave y versión;
 - `draft | approved | published | retired`;
@@ -118,8 +122,11 @@ Las migraciones `20260901000400_commercial_ally_discount_policies.sql` y
 - una sola versión `published` por binding y trigger;
 - cero semillas y resolución vacía por defecto;
 - runtime sin lectura directa ni DML de tabla; sólo puede ejecutar el resolver de una política publicada, vigente y ligada a un binding activo.
+- evidencia inbound sanitizada, binding append-only y una única acción diferida por caso de pago fallido;
+- replay del mismo inbound o inbounds posteriores devuelven la misma acción;
+- `next_attempt_at = infinity` y `effect_authorized = false` hasta otro release explícito.
 
-La estructura no modifica efectos, mensajes, timers, cadencia, deploy ni activación. No existe aún ninguna política publicada y descuentos/outbound permanecen apagados.
+La estructura no activa efectos, timers, deploy ni salida a Meta. La política y el template productivos siguen sin publicarse; descuentos/outbound permanecen apagados.
 
 ## Evidencia histórica ampliada
 

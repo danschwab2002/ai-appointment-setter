@@ -1,4 +1,6 @@
 import asyncio
+from dataclasses import replace
+from datetime import UTC, datetime
 import hashlib
 import hmac
 import json
@@ -9,15 +11,22 @@ import httpx
 import pytest
 
 from bridge.app import Settings, create_app
-from bridge.supabase import InboundCommercialCaseAdmissionResult, SupabaseClient
+from bridge.commercial_ally import JOHANNA_COMMERCIAL_ALLY
+from bridge.supabase import (
+    CommercialAllyPostInboundDiscountPlan,
+    InboundCommercialCaseAdmissionResult,
+    SupabaseClient,
+)
 
 
 ALLOWED_JID = "12025550123@s.whatsapp.net"
 
 
 class StubSupabase:
-    def __init__(self) -> None:
+    def __init__(self, *, discount_outcome: str = "created") -> None:
         self.calls: list[dict[str, object]] = []
+        self.discount_calls: list[dict[str, object]] = []
+        self.discount_outcome = discount_outcome
 
     async def admit_inbound_commercial_case(
         self, **kwargs: object
@@ -30,6 +39,18 @@ class StubSupabase:
             channel_identity_id="identity-1",
             conversation_id="conversation-1",
             automation_status="draft_only",
+        )
+
+    async def plan_commercial_ally_post_inbound_discount(
+        self, **kwargs: object
+    ) -> CommercialAllyPostInboundDiscountPlan:
+        self.discount_calls.append(kwargs)
+        created = self.discount_outcome == "created"
+        return CommercialAllyPostInboundDiscountPlan(
+            outcome=self.discount_outcome,
+            recovery_case_id="recovery-1" if created else None,
+            scheduled_action_id="discount-action-1" if created else None,
+            inbound_message_id="inbound-message-1" if created else None,
         )
 
 
@@ -213,6 +234,174 @@ def test_enabled_cut_b_admits_scoped_inbound_without_invoking_hermes(
         }
     ]
     assert shadow.calls == []
+
+
+@pytest.mark.parametrize("discount_outcome", [
+    "created",
+    "recovery_case_not_applicable",
+])
+def test_enabled_post_inbound_discount_plans_without_generic_case_or_agent(
+    tmp_path: Path,
+    discount_outcome: str,
+) -> None:
+    supabase = StubSupabase(discount_outcome=discount_outcome)
+    created_at = int(time.time())
+    ally = replace(
+        JOHANNA_COMMERCIAL_ALLY,
+        tenant_ref="att1",
+        funnel_ref="att1-main",
+        binding_version=1,
+        chatwoot_account_id=2,
+        chatwoot_inbox_id=7,
+        inbound_scope_key="att1-inbound",
+        inbound_scope_version=1,
+    )
+    app = create_app(
+        Settings(
+            webhook_secret="webhook-secret",
+            allowed_jid=ALLOWED_JID,
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            commercial_ally_config=ally,
+            commercial_ally_manifest_path=tmp_path / "att1-manifest.json",
+            chatwoot_account_id=2,
+            chatwoot_inbox_id=7,
+            chatwoot_cut_b_admission_enabled=True,
+            chatwoot_cut_b_scope_key="att1-inbound",
+            chatwoot_cut_b_scope_version=1,
+            chatwoot_post_inbound_discount_planning_enabled=True,
+            commercial_ally_discount_policy_key="att1-recovery-triplet",
+            commercial_ally_discount_policy_version=1,
+            supabase_base_url="https://example.supabase.co",
+            supabase_service_role_key="service-role",
+        ),
+        supabase_client=supabase,  # type: ignore[arg-type]
+    )
+    payload = {
+        "event": "message_created",
+        "id": 9002,
+        "created_at": created_at,
+        "content": "Sí",
+        "message_type": "incoming",
+        "private": False,
+        "account": {"id": 2},
+        "inbox": {"id": 7},
+        "conversation": {
+            "id": 9001,
+            "inbox_id": 7,
+            "contact_inbox": {"source_id": ALLOWED_JID},
+        },
+    }
+    raw_body = json.dumps(payload, separators=(",", ":")).encode()
+
+    async def exercise() -> httpx.Response:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
+            response = await client.post(
+                "/webhooks/chatwoot",
+                content=raw_body,
+                headers=_headers(raw_body, delivery="discount-inbound-delivery"),
+            )
+        await app.state.chatwoot_worker.run_once()
+        return response
+
+    response = asyncio.run(exercise())
+
+    assert response.status_code == 202
+    assert supabase.calls == []
+    assert supabase.discount_calls == [{
+        "tenant_ref": "att1",
+        "funnel_ref": "att1-main",
+        "binding_version": 1,
+        "discount_policy_key": "att1-recovery-triplet",
+        "discount_policy_version": 1,
+        "chatwoot_account_id": 2,
+        "chatwoot_inbox_id": 7,
+        "chatwoot_conversation_id": 9001,
+        "chatwoot_message_id": 9002,
+        "external_user_id": "12025550123",
+        "inbound_received_at": datetime.fromtimestamp(
+            created_at, tz=UTC
+        ).isoformat(),
+    }]
+
+
+def test_post_inbound_discount_planning_rejects_non_att1_manifest(
+    tmp_path: Path,
+) -> None:
+    ally = replace(
+        JOHANNA_COMMERCIAL_ALLY,
+        tenant_ref="foreign",
+        funnel_ref="foreign-main",
+        binding_version=1,
+        chatwoot_account_id=2,
+        chatwoot_inbox_id=7,
+        inbound_scope_key="foreign-inbound",
+        inbound_scope_version=1,
+    )
+    with pytest.raises(ValueError, match="ATT1"):
+        create_app(
+            Settings(
+                webhook_secret="webhook-secret",
+                allowed_jid=ALLOWED_JID,
+                capture_dir=tmp_path,
+                max_age_seconds=300,
+                commercial_ally_config=ally,
+                commercial_ally_manifest_path=tmp_path / "foreign-manifest.json",
+                chatwoot_account_id=2,
+                chatwoot_inbox_id=7,
+                chatwoot_cut_b_admission_enabled=True,
+                chatwoot_cut_b_scope_key="foreign-inbound",
+                chatwoot_cut_b_scope_version=1,
+                chatwoot_post_inbound_discount_planning_enabled=True,
+                commercial_ally_discount_policy_key="foreign-discount",
+                commercial_ally_discount_policy_version=1,
+                supabase_base_url="https://example.supabase.co",
+                supabase_service_role_key="service-role",
+            )
+        )
+
+
+def test_post_inbound_discount_planning_rejects_cut_b_agent(
+    tmp_path: Path,
+) -> None:
+    ally = replace(
+        JOHANNA_COMMERCIAL_ALLY,
+        tenant_ref="att1",
+        funnel_ref="att1-main",
+        binding_version=1,
+        chatwoot_account_id=2,
+        chatwoot_inbox_id=7,
+        inbound_scope_key="att1-inbound",
+        inbound_scope_version=1,
+    )
+    with pytest.raises(
+        ValueError,
+        match="post-inbound discount planning cannot enable the Cut B agent",
+    ):
+        create_app(
+            Settings(
+                webhook_secret="webhook-secret",
+                allowed_jid=ALLOWED_JID,
+                capture_dir=tmp_path,
+                max_age_seconds=300,
+                commercial_ally_config=ally,
+                commercial_ally_manifest_path=tmp_path / "att1-manifest.json",
+                chatwoot_account_id=2,
+                chatwoot_inbox_id=7,
+                chatwoot_cut_b_admission_enabled=True,
+                chatwoot_cut_b_scope_key="att1-inbound",
+                chatwoot_cut_b_scope_version=1,
+                chatwoot_cut_b_agent_enabled=True,
+                chatwoot_post_inbound_discount_planning_enabled=True,
+                commercial_ally_discount_policy_key="att1-recovery-triplet",
+                commercial_ally_discount_policy_version=1,
+                supabase_base_url="https://example.supabase.co",
+                supabase_service_role_key="service-role",
+            )
+        )
 
 
 def test_enabled_cut_b_admits_scoped_attachment_without_text(

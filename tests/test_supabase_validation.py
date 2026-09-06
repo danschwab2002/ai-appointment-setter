@@ -139,6 +139,111 @@ def test_plan_cart_recovery_calls_authoritative_rpc() -> None:
     }
 
 
+def test_plan_post_inbound_discount_calls_exact_authoritative_rpc() -> None:
+    requests: list[httpx.Request] = []
+    recovery_case_id = "10000000-0000-4000-8000-000000000001"
+    scheduled_action_id = "10000000-0000-4000-8000-000000000002"
+    inbound_message_id = "10000000-0000-4000-8000-000000000003"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=[{
+            "outcome": "created",
+            "recovery_case_id": recovery_case_id,
+            "scheduled_action_id": scheduled_action_id,
+            "inbound_message_id": inbound_message_id,
+        }], request=request)
+
+    client = SupabaseClient(
+        base_url="https://fake.supabase.co",
+        service_role_key="fake-service-role-key",
+        transport=httpx.MockTransport(handler),
+    )
+    result = asyncio.run(client.plan_commercial_ally_post_inbound_discount(
+        tenant_ref="att1",
+        funnel_ref="att1-main",
+        binding_version=1,
+        discount_policy_key="att1-recovery-triplet",
+        discount_policy_version=1,
+        chatwoot_account_id=2,
+        chatwoot_inbox_id=7,
+        chatwoot_conversation_id=9001,
+        chatwoot_message_id=9002,
+        external_user_id="12025550124",
+        inbound_received_at="2026-09-05T16:00:00+00:00",
+    ))
+
+    assert result.outcome == "created"
+    assert result.recovery_case_id == recovery_case_id
+    assert result.scheduled_action_id == scheduled_action_id
+    assert result.inbound_message_id == inbound_message_id
+    assert requests[0].url.path == (
+        "/rest/v1/rpc/plan_commercial_ally_post_inbound_discount"
+    )
+    assert json.loads(requests[0].content) == {
+        "p_tenant_ref": "att1",
+        "p_funnel_ref": "att1-main",
+        "p_binding_version": 1,
+        "p_discount_policy_key": "att1-recovery-triplet",
+        "p_discount_policy_version": 1,
+        "p_chatwoot_account_id": 2,
+        "p_chatwoot_inbox_id": 7,
+        "p_chatwoot_conversation_id": 9001,
+        "p_chatwoot_message_id": 9002,
+        "p_external_user_id": "12025550124",
+        "p_inbound_received_at": "2026-09-05T16:00:00+00:00",
+    }
+
+
+def test_plan_post_inbound_discount_rejects_non_uuid_identifiers() -> None:
+    client = _client([{
+        "outcome": "created",
+        "recovery_case_id": "not-a-uuid",
+        "scheduled_action_id": "10000000-0000-4000-8000-000000000002",
+        "inbound_message_id": "10000000-0000-4000-8000-000000000003",
+    }])
+
+    with pytest.raises(SupabaseError):
+        asyncio.run(client.plan_commercial_ally_post_inbound_discount(
+            tenant_ref="att1",
+            funnel_ref="att1-main",
+            binding_version=1,
+            discount_policy_key="att1-recovery-triplet",
+            discount_policy_version=1,
+            chatwoot_account_id=2,
+            chatwoot_inbox_id=7,
+            chatwoot_conversation_id=9001,
+            chatwoot_message_id=9002,
+            external_user_id="12025550124",
+            inbound_received_at="2026-09-05T16:00:00+00:00",
+        ))
+
+
+def test_plan_post_inbound_discount_rejects_unexpected_response_fields() -> None:
+    client = _client([{
+        "outcome": "created",
+        "recovery_case_id": "10000000-0000-4000-8000-000000000001",
+        "scheduled_action_id": "10000000-0000-4000-8000-000000000002",
+        "inbound_message_id": "10000000-0000-4000-8000-000000000003",
+        "unexpected": "must-fail-closed",
+    }])
+
+    with pytest.raises(SupabaseError):
+        asyncio.run(client.plan_commercial_ally_post_inbound_discount(
+            tenant_ref="att1",
+            funnel_ref="att1-main",
+            binding_version=1,
+            discount_policy_key="att1-recovery-triplet",
+            discount_policy_version=1,
+            chatwoot_account_id=2,
+            chatwoot_inbox_id=7,
+            chatwoot_conversation_id=9001,
+            chatwoot_message_id=9002,
+            external_user_id="12025550124",
+            inbound_received_at="2026-09-05T16:00:00+00:00",
+        ))
+
+
 def test_plan_cart_recovery_with_pilot_uses_atomic_boundary_rpc() -> None:
     requests: list[httpx.Request] = []
 

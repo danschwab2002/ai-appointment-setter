@@ -120,8 +120,10 @@ def test_discount_document_records_decision_without_publishing_policy() -> None:
         "urgency_copy_allowed = false",
     ):
         assert implemented_guard in text
-    assert "runtime todavía no crea ni ejecuta el `later_step`" in text
-    assert "No existe aún ninguna política publicada" in text
+    assert "runtime ya puede crear el `later_step` diferido" in text
+    assert "`next_attempt_at = infinity`" in text
+    assert "existe template WABA aprobado" in text
+    assert "cero semillas y resolución vacía por defecto" in text
     assert "texto final de la plantilla" in text
     assert "Marcela" in text
     assert "reportada por el operador" in text
