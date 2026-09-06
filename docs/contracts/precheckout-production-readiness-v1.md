@@ -1,6 +1,6 @@
 # Contrato V1 de readiness para first-touch pre-checkout
 
-- **Estado:** Implementado; expansión de seis pares pendiente de deploy y postflight
+- **Estado:** Implementado, desplegado y con postflight productivo de seis pares; efecto global default-off
 - **Versión:** 1.2.0
 - **Alcance:** promoción, diagnóstico sanitario y gate final del first-touch diferido
 - **No acredita:** aprobación Meta, envío WABA, entrega física ni activación productiva
@@ -151,7 +151,8 @@ nueva versión de policy y no forma parte de esta activación.
 
 Orden compatible:
 
-1. aplicar y registrar migraciones `00200`–`00500`;
+1. aplicar y registrar migraciones `20260829000200`–`20260829000500`,
+   `20260831000200` y `20260831000300`;
 2. desplegar el bridge con `PRECHECKOUT_DELAYED_OUTBOUND_ENABLED=false`;
 3. habilitar worker y binding first-touch para que el pipeline llegue hasta
    `reserved`;
