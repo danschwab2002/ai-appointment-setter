@@ -411,9 +411,12 @@ En producción están aplicadas y registradas `20260829000200`–`20260829000500
 `20260831000200` y `20260831000300`; los seis pares y bindings están publicados y
 el bridge correspondiente está desplegado. `/ready` acredita
 `precheckout_first_touch_ready` con cero due/reserved/request-started/unknown. El
-pilot boundary y la automatización global permanecen default-off; no hubo envío
-real para esta ruta. Ver la
+worker, first-touch y gate outbound selectivo están activos tanto en la definición
+persistida del servicio como en el task efectivo. `pilot_boundary=disabled` y
+`automation_state=default_off` describen el camino general y no bloquean este
+sender dedicado; la plantilla ya alcanzó `delivered` en producción. Ver la
 [evidencia remota de baseline](operations/2026-08-30-precheckout-selective-activation.md),
+[activación y entrega productiva](operations/2026-08-31-precheckout-production-activation.md),
 [evidencia productiva de seis rutas](operations/2026-09-06-johanna-six-landing-precheckout-production.md),
 [ADR-0015](decisions/0015-versioned-landing-whatsapp-consent.md) y la
 [verificación local integral](operations/2026-08-29-precheckout-delayed-first-touch-local.md),
