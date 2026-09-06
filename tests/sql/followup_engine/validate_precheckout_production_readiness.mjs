@@ -69,7 +69,7 @@ if (initial.rows.length !== 1
     || initialRow?.runtime_state !== 'inactive'
     || initialRow?.runtime_generation !== 0
     || initialRow?.timer_binding_enabled !== true
-    || initialRow?.first_touch_binding_enabled !== false
+    || initialRow?.first_touch_binding_enabled !== true
     || initialRow?.due_count !== 0
     || initialRow?.reserved_count !== 0
     || initialRow?.request_started_count !== 0
@@ -87,7 +87,9 @@ await db.exec(`
     ('20260829000200'),
     ('20260829000300'),
     ('20260829000400'),
-    ('20260829000500');
+    ('20260829000500'),
+    ('20260831000200'),
+    ('20260831000300');
 `);
 await db.exec('set role service_role');
 const tracked = await db.query(
@@ -95,8 +97,8 @@ const tracked = await db.query(
 );
 await db.exec('reset role');
 if (tracked.rows[0]?.migration_tracking_complete !== true
-    || tracked.rows[0]?.reason_code !== 'first_touch_binding_disabled') {
-  throw new Error(`tracked default-off mismatch: ${JSON.stringify(tracked.rows)}`);
+    || tracked.rows[0]?.reason_code !== 'precheckout_first_touch_ready') {
+  throw new Error(`tracked production mismatch: ${JSON.stringify(tracked.rows)}`);
 }
 
 await db.exec(`
@@ -115,7 +117,7 @@ const ready = await db.query(
 await db.exec('reset role');
 const readyRow = ready.rows[0];
 if (readyRow?.reason_code !== 'precheckout_first_touch_ready'
-    || readyRow?.timer_binding_generation !== 2
+    || readyRow?.timer_binding_generation !== 3
     || readyRow?.first_touch_binding_enabled !== true
     || readyRow?.due_count !== 0
     || readyRow?.reserved_count !== 0
@@ -128,7 +130,7 @@ await db.exec('begin');
 await db.exec(`
   update public.pilot_runtime_controls
   set runtime_state = 'armed', generation = generation + 1
-  where scope_key = 'johanna-precheckout-delayed-first-touch'
+  where scope_key = 'johanna-precheckout-delayed-first-touch-production'
     and scope_version = 1
 `);
 await db.exec('set local role service_role');

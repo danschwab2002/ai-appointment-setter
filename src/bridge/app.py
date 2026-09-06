@@ -3344,8 +3344,16 @@ def create_app(
             raise HTTPException(status_code=400, detail="lead_header_payload_mismatch")
         if (
             submission.site != settings.lead_precheckout_site
-            or submission.landing_id != settings.lead_precheckout_landing_id
-            or submission.offer_code != settings.lead_precheckout_offer_code
+            or (
+                (
+                    explicit_manifest_runtime
+                    or settings.commercial_ally_config is not JOHANNA_COMMERCIAL_ALLY
+                )
+                and (
+                    submission.landing_id != settings.lead_precheckout_landing_id
+                    or submission.offer_code != settings.lead_precheckout_offer_code
+                )
+            )
         ):
             raise HTTPException(status_code=403, detail="lead_precheckout_outside_scope")
         age_seconds = (datetime.now(UTC) - submission.submitted_at).total_seconds()

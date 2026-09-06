@@ -278,13 +278,54 @@ def test_delivery_and_event_headers_must_match_signed_body() -> None:
         assert supabase.calls == []
 
 
-def test_unscoped_offer_is_rejected_as_invalid_before_persistence() -> None:
+@pytest.mark.parametrize(
+    ("landing_ref", "offer_ref"),
+    (
+        ("ads-a", "bxjge6zq"),
+        ("ads-b", "mgbgpp19"),
+        ("ads-c", "s1qfxm7m"),
+        ("org-a", "jtt6fcsm"),
+        ("org-b", "ecyu87q0"),
+        ("org-c", "ulhzpw9a"),
+    ),
+)
+def test_each_published_pair_reaches_durable_admission(
+    landing_ref: str, offer_ref: str
+) -> None:
+    payload = _payload()
+    payload["source"]["landing_id"] = landing_ref  # type: ignore[index]
+    payload["source"]["page_url"] = (  # type: ignore[index]
+        f"https://psicologajohanna.com/ldla/evg/vsl/{landing_ref}"
+    )
+    payload["data"]["offer"]["code"] = offer_ref  # type: ignore[index]
+    payload["data"]["checkout_url"] = (  # type: ignore[index]
+        f"https://pay.hotmart.com/F106691755G?off={offer_ref}"
+    )
+    payload["dedupe_key"] = (
+        f"psicologajohanna:{offer_ref}:test.person@example.com"
+    )
+    supabase = _FakeSupabase()
+    app = create_app(_settings(), supabase_client=supabase)  # type: ignore[arg-type]
+
+    response = _post(app, payload)
+
+    assert response.status_code == 200
+    assert len(supabase.calls) == 1
+
+
+def test_unpublished_landing_offer_pair_is_rejected_before_persistence() -> None:
     payload = _payload()
     payload["source"]["landing_id"] = "org-b"  # type: ignore[index]
-    payload["source"]["page_url"] = "https://psicologajohanna.com/ldla/evg/vsl/org-b"  # type: ignore[index]
-    payload["data"]["offer"]["code"] = "ecyu87q0"  # type: ignore[index]
-    payload["data"]["checkout_url"] = "https://pay.hotmart.com/F106691755G?off=ecyu87q0"  # type: ignore[index]
-    payload["dedupe_key"] = "psicologajohanna:ecyu87q0:test.person@example.com"
+    payload["source"]["page_url"] = (  # type: ignore[index]
+        "https://psicologajohanna.com/ldla/evg/vsl/org-b"
+    )
+    payload["data"]["offer"]["code"] = "mgbgpp19"  # type: ignore[index]
+    payload["data"]["checkout_url"] = (  # type: ignore[index]
+        "https://pay.hotmart.com/F106691755G?off=mgbgpp19"
+    )
+    payload["dedupe_key"] = (
+        "psicologajohanna:mgbgpp19:test.person@example.com"
+    )
     supabase = _FakeSupabase()
     app = create_app(_settings(), supabase_client=supabase)  # type: ignore[arg-type]
 

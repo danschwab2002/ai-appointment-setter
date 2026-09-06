@@ -123,6 +123,8 @@ const timer = await db.query(`
   join public.hotmart_abandonment_timer_policy_binding_events event
     on event.binding_id = binding.id and event.generation = binding.generation
   where binding.funnel_ref = 'psicologajohanna'
+    and lower(binding.product_ref) = lower('F106691755G')
+    and binding.offer_ref = 'bxjge6zq'
   returning id
 `, [intent.rows[0].id, latestSubmission.rows[0].id, '2026-08-29T15:30:00Z']);
 const timerId = timer.rows[0].id;

@@ -1815,7 +1815,15 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
                   and lower(binding.product_ref) = lower('F106691755G')
                   and binding.offer_ref = 'bxjge6zq'
                   and binding.enabled
-                  and not binding.precheckout_first_touch_enabled
+                  and (
+                      not binding.precheckout_first_touch_enabled
+                      or (
+                          to_regclass(
+                              'public.johanna_precheckout_landing_offers'
+                          ) is not null
+                          and binding.precheckout_first_touch_enabled
+                      )
+                  )
                   and binding.policy_key =
                         'johanna-precheckout-delayed-first-touch-timer'
                   and binding.policy_version = 1
@@ -1911,6 +1919,82 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         1,
         'dashboard_projection_contained'
+    union all
+    select
+        '20260831000300',
+        '20260831000300_johanna_six_landing_precheckout.sql',
+        (to_regclass('public.johanna_precheckout_landing_offers') is not null)::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                    'public.is_johanna_precheckout_pair(text,text)'
+                )
+              and prosecdef
+              and provolatile = 's'
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+              and not has_function_privilege('public', oid, 'execute')
+              and not has_function_privilege('anon', oid, 'execute')
+              and not has_function_privilege('authenticated', oid, 'execute')
+              and not has_function_privilege('service_role', oid, 'execute')
+        )::int
+        + (
+            exists(
+                select 1 from functions
+                where oid = to_regprocedure(
+                        'public.published_johanna_precheckout_pair_is_immutable()'
+                    )
+                  and not prosecdef
+                  and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+                  and not has_function_privilege('service_role', oid, 'execute')
+            )
+            and exists(
+                select 1 from triggers
+                where tgname = 'johanna_precheckout_landing_offers_immutable'
+            )
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                    'public.admit_observed_lead_precheckout(text,jsonb,jsonb)'
+                )
+              and position('is_johanna_precheckout_pair' in definition) > 0
+        )::int
+        + (
+            exists(
+                select 1 from functions
+                where oid = to_regprocedure(
+                        'public.schedule_precheckout_first_touch_reevaluation(uuid,uuid)'
+                    )
+                  and position('is_johanna_precheckout_pair' in definition) > 0
+            )
+            and exists(
+                select 1 from functions
+                where oid = to_regprocedure(
+                        'public._reevaluate_precheckout_delayed_first_touch(uuid,timestamptz)'
+                    )
+                  and position('is_johanna_precheckout_pair' in definition) > 0
+            )
+            and exists(
+                select 1 from functions
+                where oid = to_regprocedure(
+                        'public.get_precheckout_delayed_one_shot_command(uuid)'
+                    )
+                  and position('is_johanna_precheckout_pair' in definition) > 0
+            )
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                    'public.get_precheckout_delayed_first_touch_readiness()'
+                )
+              and position(
+                    'johanna-precheckout-delayed-first-touch-production'
+                    in definition
+                  ) > 0
+              and position('20260831000300' in definition) > 0
+        )::int,
+        6,
+        'johanna_six_pair_production_authority'
     union all
     select
         '20260901000100',

@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
+from types import MappingProxyType
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -46,6 +47,18 @@ _ASCII_TRIM_CHARS = " \t\n\r\f\v"
 _ULID = re.compile(r"[0-9A-HJKMNP-TV-Z]{26}")
 _EMAIL = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+")
 _E164_SHAPE = re.compile(r"\+[1-9][0-9]{1,14}")
+_JOHANNA_LANDING_OFFERS = MappingProxyType(
+    {
+        "ads-a": "bxjge6zq",
+        "ads-b": "mgbgpp19",
+        "ads-c": "s1qfxm7m",
+        "org-a": "jtt6fcsm",
+        "org-b": "ecyu87q0",
+        "org-c": "ulhzpw9a",
+    }
+)
+
+
 @dataclass(frozen=True)
 class LeadPrecheckoutSubmission:
     external_submission_id: str
@@ -267,6 +280,12 @@ def parse_lead_precheckout(
     if isinstance(product_price, bool) or not isinstance(product_price, (int, float)):
         return None
     price = Decimal(str(product_price))
+    if config is JOHANNA_COMMERCIAL_ALLY:
+        expected_offer_code = _JOHANNA_LANDING_OFFERS.get(landing_id)
+        expected_page_path = f"/ldla/evg/vsl/{landing_id}"
+    else:
+        expected_offer_code = config.offer_code
+        expected_page_path = config.lead_page_path
     if (
         _ULID.fullmatch(delivery_id) is None
         or event.get("event") != "lead.precheckout"
@@ -274,11 +293,10 @@ def parse_lead_precheckout(
         or source.get("system") != "landing"
         or site != config.lead_site
         or aliado != config.lead_ally_name
-        or landing_id != config.lead_landing_id
-        or offer_code != config.offer_code
+        or expected_offer_code != offer_code
         or page.scheme != "https"
         or page.netloc != config.lead_page_host
-        or page.path != config.lead_page_path
+        or page.path != expected_page_path
         or bool(page.query)
         or bool(page.fragment)
         or _EMAIL.fullmatch(email) is None
@@ -320,8 +338,6 @@ def parse_lead_precheckout(
     normalized_phone = _valid_phone(
         phone, phone_country_code, phone_national, country_iso
     )
-    if contract_version == "1.1.0" and normalized_phone is None:
-        return None
     return LeadPrecheckoutSubmission(
         external_submission_id=delivery_id,
         contract_version=contract_version,

@@ -323,10 +323,21 @@ solo no programa acciones ni concede autorización comercial. Ver
 
 ## Ingreso autenticado `lead.precheckout` de Lancemos
 
-El adapter observado V1.0.0 está desplegado para el scope piloto y conectado al relay preview
-de la landing. El endpoint `POST /webhooks/lead` verifica HMAC-SHA256
-sobre el body crudo, valida el contrato exacto `1.0.0`, freshness, headers y scope antes
-de llamar a la RPC separada `admit_observed_lead_precheckout`.
+El endpoint `POST /webhooks/lead` verifica HMAC-SHA256 sobre el body crudo,
+freshness, headers y scope antes de llamar a la RPC separada
+`admit_observed_lead_precheckout`. El candidato de expansión acepta los contratos
+exactos `1.0.0` y `1.1.0` para una relación cerrada de seis pares publicados de
+Johanna (`ads-a/b/c` y `org-a/b/c` con su oferta correspondiente); no acepta
+cruces ni ofertas comodín. En `1.1.0`, un teléfono inválido ya no descarta la
+observación: se persiste la identidad utilizable, pero `phone_valid`,
+`whatsapp_contact` y `activation_authorized` quedan en falso.
+
+La migración `20260831000300_johanna_six_landing_precheckout.sql` lleva la misma
+relación a admisión, correlación Hotmart, scheduling, reevaluación y autorización
+final. Cada oferta mantiene un scope exacto. La publicación es prospectiva: no
+reprocesa submissions, timers ni commands históricos. Esta expansión no debe
+describirse como desplegada hasta aplicar DDL, desplegar el bridge y completar la
+matriz HTTP/Supabase de seis rutas.
 
 El árbol local agrega una admisión portable sólo para runtimes cuya procedencia
 es un manifiesto explícito. `POST /webhooks/lead` llama entonces a
@@ -347,19 +358,17 @@ agenda timers ni efectos. La tabla
 falla cerrado antes de reutilizar una correlación existente. Los roles API y
 `service_role` no poseen DML directo sobre ese ledger.
 
-El corte inicial sólo admite `psicologajohanna / ads-a / bxjge6zq`. Persiste intención
-con `provider_observed=true`, pero conserva `activation_authorized=false` y
-`whatsapp_contact_authorized=false` porque el formulario declara
-`marketing_optin=false`. Un teléfono inválido se guarda como identidad incompleta y no
-se usa para WhatsApp. La recepción no crea secuencias, mensajes ni clasificación de
-abandono. Hotmart mantiene su endpoint y autenticación propios. Ver
-[contrato lead.precheckout V1](contracts/lead-precheckout-v1.md).
-
-El árbol implementa localmente V1.1.0 como extensión aditiva: exige consentimiento
-WhatsApp y `copy_version` exactos, teléfono válido y firma del relay. La RPC
+El singleton de Johanna admite una relación cerrada de seis pares landing/oferta;
+los manifiestos portables conservan un único binding escalar. V1.0.0 mantiene la
+admisión sin consentimiento de contacto. V1.1.0 exige consentimiento WhatsApp,
+`copy_version` exacto y firma del relay, pero separa admisión durable de autoridad:
+si el teléfono no normaliza, conserva la identidad útil por email con
+`normalized_phone=NULL`, `whatsapp_contact_authorized=false` y
+`activation_authorized=false`, sin timer ni contacto. Con teléfono válido, la RPC
 promueve una intención consistente a autorización local y una correlación de
-abandono `resolved` la preserva. Sobre esa autoridad, un timer de 60 minutos
-puede reservar el mismo ledger físico one-shot usado por abandono y pago fallido.
+abandono `resolved` la preserva. Sobre esa autoridad, un timer de 60 minutos puede
+reservar el mismo ledger físico one-shot usado por abandono y pago fallido. Ver
+[contrato lead.precheckout V1](contracts/lead-precheckout-v1.md).
 El worker existente incorpora la fuente sólo con
 `PRECHECKOUT_DELAYED_FIRST_TOUCH_ENABLED=true`, proyecta la command exacta y usa
 el sender WABA existente con `johanna_interes_precheckout_01`; replay y
@@ -367,12 +376,14 @@ el sender WABA existente con `johanna_interes_precheckout_01`; replay y
 al sender relee stops y oculta PII si la autoridad cambió; la cancelación en vuelo
 termina el proceso hijo aislado del POST y ejecuta una finalización ambigua
 protegida y acotada, resistente a cancelaciones repetidas y sin autorizar resend
-si no se confirma. La migración preparatoria `20260829000500` publica el scope
-dedicado con presupuesto `1/1/1`, runtime `inactive/generation=0`, binding de timer
-de 60 minutos con first-touch apagado y una RPC sanitaria service-role-only. Cuando
-el proceso first-touch está encendido, `/ready` exige que tracking, scope, runtime
-y binding coincidan exactamente y publica sólo conteos agregados; cualquier
-ausencia o contradicción responde `503` antes de acreditar readiness.
+si no se confirma. La migración preparatoria `20260829000500` conserva el scope histórico `1/1/1`.
+`20260831000300` publica por separado los seis pares, sus seis scopes Hotmart y
+bindings de timer, y el scope agregado
+`johanna-precheckout-delayed-first-touch-production / 1`, con runtime
+`inactive/generation=0`. Cuando el proceso first-touch está encendido, `/ready`
+exige el ledger completo, cada dimensión de los scopes, la policy exacta de 60
+minutos y los seis bindings; cualquier ausencia o contradicción responde `503`
+antes de acreditar readiness.
 
 La salida HTTP tiene un gate adicional, default-off y específico:
 `PRECHECKOUT_DELAYED_OUTBOUND_ENABLED=false`. Se evalúa después de

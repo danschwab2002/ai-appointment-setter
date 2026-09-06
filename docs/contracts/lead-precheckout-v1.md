@@ -1,6 +1,6 @@
 # Contrato `lead.precheckout` V1 — Lancemos → bridge
 
-- **Estado:** V1.0.0 y V1.1.0 desplegados; macro first-touch diferida completa localmente y pendiente de promoción
+- **Estado:** V1.0.0 y V1.1.0 desplegados con el alcance previo; la enmienda de seis pares, admisión durable con teléfono inválido y macro first-touch diferida está publicada en PR #103, pendiente de merge, deploy y postflight
 - **Versiones externas:** `1.0.0`, `1.1.0`
 - **Endpoint:** `POST /webhooks/lead`
 - **Emisor previsto:** `/api/lead` server-side de la landing
@@ -40,13 +40,15 @@ del navegador, query strings, logs o Git.
 
 ## Alcance implementado
 
-El parser acepta un único binding activo suministrado por la configuración del
-runtime. En compatibilidad legada ese binding es:
+El singleton legado de Johanna acepta únicamente la relación cerrada de seis
+pares publicada abajo. Cada runtime con manifiesto explícito conserva un único
+binding escalar suministrado por su configuración; no hereda la relación
+multi-par de Johanna aunque copie alguno de sus valores.
 
 ```text
-site       = psicologajohanna
-landing_id = ads-a
-offer.code = bxjge6zq
+site       = <site configurado>
+landing_id = <landing configurada>
+offer.code = <oferta configurada>
 hotlink    = F106691755G
 ```
 
@@ -54,8 +56,29 @@ Un payload que no coincide exactamente con el binding configurado se clasifica
 como inválido y devuelve `400 invalid_lead_precheckout_payload`. En runtimes con
 manifiesto explícito, el bridge envía tenant, funnel y versión server-owned a la
 RPC portable; ésta exige la fila durable activa exacta y vuelve a comprobar todo
-el scope comercial canónico contra esa fila. Sin manifiesto se conserva la RPC
-legada sin cambios.
+el scope comercial canónico contra esa fila. Sin manifiesto, la RPC legada de
+Johanna aplica los seis pares exactos y rechaza cualquier cruce entre ellos.
+
+La autoridad PostgreSQL de Johanna se publica como una relación inmutable y
+cerrada de seis pares `landing_ref → offer_ref`; no admite ofertas comodín:
+
+```text
+ads-a → bxjge6zq
+ads-b → mgbgpp19
+ads-c → s1qfxm7m
+org-a → jtt6fcsm
+org-b → ecyu87q0
+org-c → ulhzpw9a
+```
+
+La misma relación se vuelve a comprobar en admisión, creación/reutilización de
+la intención, scheduling, reevaluación y autorización final del comando. Cada
+oferta tiene scopes exactos de correlación Hotmart y timer. El límite piloto
+histórico 1/1 no concede autoridad a esta ruta: el efecto usa
+`johanna-precheckout-delayed-first-touch-production / 1`, con control
+`inactive / 0` para conservar el contrato de readiness del runtime y con
+`PRECHECKOUT_DELAYED_OUTBOUND_ENABLED` como gate externo. Publicar la relación
+no recorre submissions, timers ni commands históricos.
 
 ## Payload
 
@@ -112,7 +135,10 @@ produce `observed_precheckout_raw_canonical_mismatch` o
 
 En V1.0.0, un teléfono presente pero inválido no invalida la intención: se
 persiste como `normalized_phone=NULL`, `tracking_incomplete` y sin autoridad. En
-V1.1.0, teléfono inválido bloquea la admisión completa.
+V1.1.0 se conserva la admisión durable y la identidad útil por email, pero el
+teléfono inválido se representa como `normalized_phone=NULL`,
+`whatsapp_contact_authorized=false` y `activation_authorized=false`; no se crea
+timer ni se concede autoridad de contacto.
 
 ## Representación durable
 
@@ -141,9 +167,16 @@ Invariantes V1.1.0:
 contract_version=1.1.0
 provisional=false
 provider_observed=true
-activation_authorized=true
-whatsapp_contact_authorized=true
 consent.copy_version=johanna-precheckout-whatsapp-disclosure-v1
+
+si identity.phone_valid=true:
+  activation_authorized=true
+  whatsapp_contact_authorized=true
+
+si identity.phone_valid=false:
+  identity.phone ausente
+  activation_authorized=false
+  whatsapp_contact_authorized=false
 ```
 
 `id` deduplica retries exactos. Un body distinto bajo el mismo ID registra

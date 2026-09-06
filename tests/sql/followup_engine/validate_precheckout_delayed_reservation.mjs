@@ -108,6 +108,8 @@ async function fixture({ phone, email, classification = null, lifecycle = 'waiti
       on event.binding_id = binding.id and event.generation = binding.generation
     where binding.tenant_ref = 'lancemos'
       and binding.funnel_ref = 'psicologajohanna'
+      and lower(binding.product_ref) = lower('F106691755G')
+      and binding.offer_ref = 'bxjge6zq'
       and binding.precheckout_first_touch_enabled
     returning id
   `, [intent.rows[0].id, submission.rows[0].id, submittedAt]);
