@@ -287,6 +287,34 @@ def test_backup_rejects_delivered_audit_for_pending_notification(tmp_path) -> No
         store.backup_to(tmp_path / "backup.sqlite3")
 
 
+def test_backup_accepts_request_started_before_activation_is_initialized(tmp_path) -> None:
+    source = NotificationStore(tmp_path / "source.sqlite3")
+    source.initialize()
+    command = NotificationCommand(
+        event_id="44444444-4444-4444-8444-444444444444",
+        event_code="SYS-002",
+        dedupe_key="4" * 64,
+        occurred_at=datetime(2026, 9, 8, tzinfo=UTC),
+        subject_ref=None,
+        reason_code="synthetic_probe",
+    )
+    source.admit(tenant_ref="johanna", command=command)
+    claim = source.claim_next(worker_id="worker-1")
+    assert claim is not None
+    source.mark_request_started(claim)
+    backup = tmp_path / "backup.sqlite3"
+
+    source.backup_to(backup)
+
+    restored_path = tmp_path / "restored.sqlite3"
+    NotificationStore.restore_from(backup, restored_path)
+    restored = NotificationStore(restored_path)
+    restored.initialize()
+    record = restored.get(tenant_ref="johanna", notification_id=command.event_id)
+    assert record is not None
+    assert record.state == "request_started"
+
+
 def test_backup_restore_cli_executes_validated_workflow(tmp_path) -> None:
     source = tmp_path / "source.sqlite3"
     NotificationStore(source).initialize()

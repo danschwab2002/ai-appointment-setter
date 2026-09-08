@@ -1191,7 +1191,7 @@ def _validate_database(path: Path) -> None:
                 raise RuntimeError("invalid_backup")
             if state == "request_started" and (
                 row["request_started_at"] is None
-                or row["activation_generation_started"] is None
+                or (initialized and row["activation_generation_started"] is None)
                 or any(row[field] is not None for field in ("channel_id", "message_ts", "thread_ts", "failure_code"))
             ):
                 raise RuntimeError("invalid_backup")
