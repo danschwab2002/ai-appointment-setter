@@ -18,7 +18,7 @@ SPEC.loader.exec_module(MODULE)
 def test_cli_renders_one_sanitized_case_from_snapshot(tmp_path: Path) -> None:
     snapshot = {
         "version": 1,
-        "cutoff": "2026-08-31T13:00:00Z",
+        "snapshot_at": "2026-08-31T13:00:00Z",
         "window_start": "2026-08-24T13:00:00Z",
         "source_status": {"supabase": "complete", "chatwoot": "partial"},
         "cases": [
@@ -72,7 +72,7 @@ def test_cli_renders_one_sanitized_case_from_snapshot(tmp_path: Path) -> None:
 def test_renderer_uses_contrasting_surfaces_in_light_and_dark_modes() -> None:
     snapshot = {
         "version": 1,
-        "cutoff": "2026-08-31T13:00:00Z",
+        "snapshot_at": "2026-08-31T13:00:00Z",
         "window_start": "2026-08-24T13:00:00Z",
         "source_status": {"supabase": "complete", "chatwoot": "unavailable"},
         "cases": [],
@@ -92,6 +92,13 @@ def test_renderer_uses_contrasting_surfaces_in_light_and_dark_modes() -> None:
 def test_live_collection_uses_one_sanitary_read_only_rpc() -> None:
     intent_id = "11111111-1111-4111-8111-111111111111"
     rows = [{
+        "row_kind": "meta",
+        "snapshot_at": "2026-08-31T13:00:00Z",
+        "window_start": "2026-08-24T13:00:00Z",
+    }, {
+        "row_kind": "case",
+        "snapshot_at": "2026-08-31T13:00:00Z",
+        "window_start": "2026-08-24T13:00:00Z",
         "case_id": intent_id,
         "case_type": "precheckout_only",
         "provenance": "unknown",
@@ -104,6 +111,12 @@ def test_live_collection_uses_one_sanitary_read_only_rpc() -> None:
         "chatwoot_conversation_id": None,
         "chatwoot_status": None,
         "attention_reasons": ["provenance_unknown"],
+        "page_view_count": 3,
+        "preform_opened_count": 2,
+        "preform_submitted_count": 1,
+        "checkout_redirected_count": 1,
+        "last_funnel_event_at": "2026-08-31T09:30:00Z",
+        "last_funnel_event_type": "checkout_redirected",
     }]
     requests: list[httpx.Request] = []
 
@@ -116,7 +129,6 @@ def test_live_collection_uses_one_sanitary_read_only_rpc() -> None:
             client=client,
             supabase_base_url="https://supabase.invalid",
             service_role_key="secret-not-for-output",
-            cutoff="2026-08-31T13:00:00Z",
             window_days=7,
             precheckout_outbound_enabled=False,
         )
@@ -124,11 +136,8 @@ def test_live_collection_uses_one_sanitary_read_only_rpc() -> None:
     assert len(requests) == 1
     request = requests[0]
     assert request.method == "POST"
-    assert request.url.path == "/rest/v1/rpc/read_johanna_funnel_dashboard_v1"
-    assert json.loads(request.content) == {
-        "p_cutoff": "2026-08-31T13:00:00Z",
-        "p_window_days": 7,
-    }
+    assert request.url.path == "/rest/v1/rpc/read_johanna_funnel_dashboard_v2"
+    assert json.loads(request.content) == {"p_window_days": 7}
     assert request.headers["authorization"] == "Bearer secret-not-for-output"
     for forbidden in (
         b"raw_payload", b"canonical_payload", b"normalized_email",
@@ -139,6 +148,8 @@ def test_live_collection_uses_one_sanitary_read_only_rpc() -> None:
         "supabase": "complete",
         "chatwoot": "unavailable",
     }
+    assert snapshot["snapshot_at"] == "2026-08-31T13:00:00Z"
+    assert snapshot["window_start"] == "2026-08-24T13:00:00Z"
     assert snapshot["cases"] == [
         {
             "case_id": intent_id,
@@ -153,8 +164,87 @@ def test_live_collection_uses_one_sanitary_read_only_rpc() -> None:
             "chatwoot_conversation_id": None,
             "chatwoot_status": None,
             "attention_reasons": ["provenance_unknown"],
+            "page_view_count": 3,
+            "preform_opened_count": 2,
+            "preform_submitted_count": 1,
+            "checkout_redirected_count": 1,
+            "last_funnel_event_at": "2026-08-31T09:30:00Z",
+            "last_funnel_event_type": "checkout_redirected",
         }
     ]
+
+
+def test_live_collection_uses_server_metadata_when_there_are_no_cases() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=[{
+                "row_kind": "meta",
+                "snapshot_at": "2026-08-31T13:00:00Z",
+                "window_start": "2026-08-24T13:00:00Z",
+            }],
+            request=request,
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        snapshot = MODULE.collect_live_snapshot(
+            client=client,
+            supabase_base_url="https://supabase.invalid",
+            service_role_key="secret-not-for-output",
+            window_days=7,
+        )
+
+    assert snapshot["snapshot_at"] == "2026-08-31T13:00:00Z"
+    assert snapshot["window_start"] == "2026-08-24T13:00:00Z"
+    assert snapshot["cases"] == []
+
+
+def test_sanitizer_rejects_invalid_funnel_aggregate_shape() -> None:
+    base_case = {
+        "case_id": "11111111-1111-4111-8111-111111111111",
+        "case_type": "precheckout_only",
+        "provenance": "unknown",
+        "stage": "reserved",
+        "commercial_outcome": "unknown",
+        "control_outcomes": [],
+        "created_at": "2026-08-30T10:00:00Z",
+        "updated_at": "2026-08-31T10:00:00Z",
+        "conversation_id": None,
+        "chatwoot_conversation_id": None,
+        "chatwoot_status": None,
+        "attention_reasons": [],
+        "page_view_count": 1,
+        "preform_opened_count": 1,
+        "preform_submitted_count": 0,
+        "checkout_redirected_count": 0,
+        "last_funnel_event_at": "2026-08-31T09:30:00Z",
+        "last_funnel_event_type": "preform_opened",
+    }
+    snapshot = {
+        "version": 1,
+        "snapshot_at": "2026-08-31T13:00:00Z",
+        "window_start": "2026-08-24T13:00:00Z",
+        "source_status": {"supabase": "complete", "chatwoot": "unavailable"},
+        "cases": [base_case],
+    }
+
+    sanitized = MODULE.sanitize_snapshot(snapshot)
+    assert sanitized["cases"][0]["last_funnel_event_type"] == "preform_opened"
+    html = MODULE.render_dashboard(sanitized)
+    assert "Vistas de landing" in html
+    assert "Preformularios abiertos" in html
+    assert "Última actividad del funnel" in html
+    assert "preform_opened" in html
+
+    for field, invalid in (
+        ("page_view_count", -1),
+        ("preform_opened_count", True),
+        ("last_funnel_event_type", "email_collected"),
+    ):
+        broken = json.loads(json.dumps(snapshot))
+        broken["cases"][0][field] = invalid
+        with pytest.raises(ValueError):
+            MODULE.sanitize_snapshot(broken)
 
 
 def test_live_cli_uses_environment_without_printing_credentials(
@@ -164,14 +254,14 @@ def test_live_cli_uses_environment_without_printing_credentials(
     monkeypatch.setenv("SUPABASE_BASE_URL", "https://supabase.invalid")
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "secret-must-stay-hidden")
     monkeypatch.setenv("CHATWOOT_BASE_URL", "https://chatwoot.example")
-    monkeypatch.setenv("CHATWOOT_ACCOUNT_ID", "7")
+    monkeypatch.setenv("CHATWOOT_ACCOUNT_ID", "1")
     observed: dict[str, object] = {}
 
     def collect(**kwargs: object) -> dict[str, object]:
         observed.update(kwargs)
         return {
             "version": 1,
-            "cutoff": "2026-08-31T13:00:00Z",
+            "snapshot_at": "2026-08-31T13:00:00Z",
             "window_start": "2026-08-24T13:00:00Z",
             "source_status": {
                 "supabase": "complete",
@@ -185,8 +275,6 @@ def test_live_cli_uses_environment_without_printing_credentials(
     result = MODULE.main(
         [
             "--live",
-            "--cutoff",
-            "2026-08-31T13:00:00Z",
             "--window-days",
             "7",
             "--precheckout-outbound-enabled",
@@ -204,18 +292,61 @@ def test_live_cli_uses_environment_without_printing_credentials(
     assert observed["service_role_key"] == "secret-must-stay-hidden"
     assert observed["precheckout_outbound_enabled"] is False
     assert observed["chatwoot_app_base_url"] == "https://chatwoot.example"
-    assert observed["chatwoot_account_id"] == 7
+    assert observed["chatwoot_account_id"] == 1
     assert output.read_text(encoding="utf-8").startswith("<!doctype html>")
+
+
+def test_live_cli_rejects_noncanonical_chatwoot_account(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "dashboard.html"
+    monkeypatch.setenv("SUPABASE_BASE_URL", "https://supabase.invalid")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "secret-must-stay-hidden")
+    monkeypatch.setenv("CHATWOOT_BASE_URL", "https://chatwoot.example")
+    monkeypatch.setenv("CHATWOOT_ACCOUNT_ID", "7")
+
+    def unexpected_collect(**kwargs: object) -> dict[str, object]:
+        raise AssertionError("noncanonical account reached live collection")
+
+    monkeypatch.setattr(MODULE, "collect_live_snapshot", unexpected_collect)
+
+    result = MODULE.main(
+        [
+            "--live",
+            "--precheckout-outbound-enabled",
+            "false",
+            "--output",
+            str(output),
+        ]
+    )
+
+    assert result == 2
+    assert not output.exists()
+
+
+def test_snapshot_rejects_noncanonical_chatwoot_account() -> None:
+    raw = {
+        "version": 1,
+        "snapshot_at": "2026-08-31T13:00:00Z",
+        "window_start": "2026-08-24T13:00:00Z",
+        "source_status": {"supabase": "complete", "chatwoot": "partial"},
+        "chatwoot_app_base_url": "https://chatwoot.example",
+        "chatwoot_account_id": 7,
+        "cases": [],
+    }
+
+    with pytest.raises(ValueError, match="invalid chatwoot_account_id"):
+        MODULE.sanitize_snapshot(raw)
 
 
 def test_renderer_has_funnels_health_filters_and_chatwoot_links() -> None:
     raw = {
         "version": 1,
-        "cutoff": "2026-08-31T13:00:00Z",
+        "snapshot_at": "2026-08-31T13:00:00Z",
         "window_start": "2026-08-24T13:00:00Z",
         "source_status": {"supabase": "complete", "chatwoot": "partial"},
         "chatwoot_app_base_url": "https://chatwoot.example",
-        "chatwoot_account_id": 7,
+        "chatwoot_account_id": 1,
         "cases": [
             {
                 "case_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -274,7 +405,7 @@ def test_renderer_has_funnels_health_filters_and_chatwoot_links() -> None:
     assert 'id="filter-attention"' in html
     assert 'data-case-type="inbound"' in html
     assert (
-        'href="https://chatwoot.example/app/accounts/7/conversations/42"' in html
+        'href="https://chatwoot.example/app/accounts/1/conversations/42"' in html
     )
     assert "Contenido conversacional: no recopilado" in html
     assert "Último caso durable: 2026-08-30T12:00:00Z" in html
@@ -289,7 +420,7 @@ def test_cli_rejects_pii_inside_allowed_reason_fields_without_echo(
         json.dumps(
             {
                 "version": 1,
-                "cutoff": "2026-08-31T13:00:00Z",
+                "snapshot_at": "2026-08-31T13:00:00Z",
                 "window_start": "2026-08-24T13:00:00Z",
                 "source_status": {
                     "supabase": "complete",
@@ -357,7 +488,7 @@ def test_renderer_keeps_complete_counts_but_caps_case_detail_at_100() -> None:
         )
     raw = {
         "version": 1,
-        "cutoff": "2026-08-31T13:00:00Z",
+        "snapshot_at": "2026-08-31T13:00:00Z",
         "window_start": "2026-08-24T13:00:00Z",
         "source_status": {"supabase": "complete", "chatwoot": "unavailable"},
         "cases": cases,
@@ -397,7 +528,7 @@ def test_renderer_groups_non_terminal_cases_by_age_at_cutoff() -> None:
         )
     raw = {
         "version": 1,
-        "cutoff": "2026-08-31T13:00:00Z",
+        "snapshot_at": "2026-08-31T13:00:00Z",
         "window_start": "2026-08-24T13:00:00Z",
         "source_status": {"supabase": "complete", "chatwoot": "unavailable"},
         "cases": cases,

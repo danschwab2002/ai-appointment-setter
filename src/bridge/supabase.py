@@ -133,6 +133,14 @@ class PrecheckoutAdmissionResult:
 
 
 @dataclass(frozen=True)
+class JohannaFunnelEventAdmissionResult:
+    """Idempotent outcome for one sanitary browser funnel event."""
+
+    outcome: str
+    event_id: str
+
+
+@dataclass(frozen=True)
 class CommercialAllyDiscountPolicy:
     """Exact published discount policy resolved for one trigger."""
 
@@ -1087,6 +1095,59 @@ class SupabaseClient:
         return policy
 
     # ── Webhook event persistence ──────────────────────────────────
+
+    async def admit_johanna_funnel_event(
+        self,
+        *,
+        version: str,
+        event_id: str,
+        event_type: str,
+        occurred_at: str,
+        anonymous_session_id: str,
+        landing_ref: str,
+        offer_ref: str,
+        utm_source: str | None,
+        utm_medium: str | None,
+        utm_campaign: str | None,
+        utm_content: str | None,
+        utm_term: str | None,
+    ) -> JohannaFunnelEventAdmissionResult:
+        operation = "johanna_funnel_event_admission"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/admit_johanna_funnel_event_v1",
+            content=json.dumps({
+                "p_version": version,
+                "p_event_id": event_id,
+                "p_event_type": event_type,
+                "p_occurred_at": occurred_at,
+                "p_anonymous_session_id": anonymous_session_id,
+                "p_landing_ref": landing_ref,
+                "p_offer_ref": offer_ref,
+                "p_utm_source": utm_source,
+                "p_utm_medium": utm_medium,
+                "p_utm_campaign": utm_campaign,
+                "p_utm_content": utm_content,
+                "p_utm_term": utm_term,
+            }),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_row")
+        row = rows[0]
+        if (
+            set(row) != {"outcome", "event_id"}
+            or row.get("outcome")
+            not in {"inserted", "duplicate", "semantic_conflict"}
+            or row.get("event_id") != event_id
+        ):
+            raise SupabaseError(f"{operation}_invalid_row")
+        return JohannaFunnelEventAdmissionResult(
+            outcome=row["outcome"],
+            event_id=event_id,
+        )
 
     async def insert_webhook_event(
         self,
