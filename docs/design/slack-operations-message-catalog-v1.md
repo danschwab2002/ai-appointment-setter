@@ -1,14 +1,15 @@
 # Catálogo de mensajes operativos para Slack V1
 
-- **Estado:** Propuesta para revisión
+- **Estado:** Catálogo aceptado; proyección outbound implementada localmente
 - **Fecha:** 2026-09-07
 - **Alcance:** mensajes que el producto puede enviar al canal operativo compartido de Slack
-- **Implementación:** No iniciada
-- **Canal:** ya existe; conexión, app, credenciales, IDs y permisos todavía no configurados
+- **Implementación:** 49 códigos, severidad P1–P4 y render server-owned implementados en el conector; emisión desde cada flujo de origen se activa por separado
+- **Canal:** `C0C0YEACVT2`; app instalada, runtime y credenciales pendientes de despliegue
 - **Complementa:** [Resolución de correlaciones mediante Slack V1](slack-correlation-resolution-v1.md)
 
-Este documento mapea las familias de avisos y propone su copy. No crea un
-contrato técnico ni afirma que exista integración con Slack.
+Este documento conserva el catálogo editorial. El contrato técnico implementado
+es [`slack-operations-connector-v1`](../contracts/slack-operations-connector-v1.md);
+la existencia del código local no afirma despliegue ni activación productiva.
 
 ## 1. Objetivo del canal
 

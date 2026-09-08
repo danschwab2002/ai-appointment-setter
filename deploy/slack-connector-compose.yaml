@@ -1,0 +1,36 @@
+services:
+  slack-connector:
+    build:
+      context: ..
+      dockerfile: deploy/slack-connector.Dockerfile
+    restart: unless-stopped
+    environment:
+      SLACK_INGRESS_ENABLED: ${SLACK_INGRESS_ENABLED:-false}
+      SLACK_NOTIFICATIONS_ENABLED: ${SLACK_NOTIFICATIONS_ENABLED:-false}
+      SLACK_INTERACTIONS_ENABLED: "false"
+      SLACK_CONNECTIVITY_CHECK_ENABLED: ${SLACK_CONNECTIVITY_CHECK_ENABLED:-false}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      SLACK_TEAM_ID: ${SLACK_TEAM_ID:-}
+      SLACK_CHANNEL_ID: ${SLACK_CHANNEL_ID:-}
+      SLACK_TENANT_TOKENS_JSON: ${SLACK_TENANT_TOKENS_JSON:-}
+      SLACK_STORAGE_PATH: /app/data/slack-connector.sqlite3
+      SLACK_WORKER_ID: ${SLACK_WORKER_ID:-slack-worker-1}
+      SLACK_POLL_INTERVAL_SECONDS: ${SLACK_POLL_INTERVAL_SECONDS:-1}
+      SLACK_MAX_NONTERMINAL_NOTIFICATIONS: ${SLACK_MAX_NONTERMINAL_NOTIFICATIONS:-10000}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    volumes:
+      - slack-connector-data:/app/data
+
+volumes:
+  slack-connector-data:

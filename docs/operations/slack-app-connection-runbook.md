@@ -1,21 +1,22 @@
 # Conexión inicial de la app operativa de Slack
 
-- **Estado:** Runbook propuesto; fase de control plane lista para ejecución manual
+- **Estado:** Control plane ejecutado; conector runtime pendiente de despliegue
 - **Fecha:** 2026-09-07
 - **Alcance:** crear, instalar y vincular una app Slack con privilegio mínimo
-- **No implementa:** endpoints interactivos, outbox, persistencia, workers, deploy ni activación de avisos reales
+- **Implementado localmente:** conector outbound durable; no implica deploy ni activación
 - **Manifest:** [`deploy/slack-app-manifest-v1.json`](../../deploy/slack-app-manifest-v1.json)
 
 ## 1. Arquitectura elegida
 
 ```text
-Supabase Cloud / bridge
-→ outbox durable y worker default-off
+bridges Johanna y ATT1
+→ bearers internos distintos
+→ conector Slack central con ledger y worker durable default-off
 → Slack Web API (`chat.postMessage` / `chat.update`)
 → canal operativo compartido
 
 botón de Slack
-→ HTTPS público del bridge
+→ HTTPS público del conector
 → verificación HMAC sobre bytes crudos
 → autorización de workspace + canal + usuario
 → lectura fresca de Supabase Cloud
@@ -77,18 +78,19 @@ listo, cargarlos directamente en el secret store de EasyPanel.
 Nombres de configuración previstos:
 
 ```text
+SLACK_INGRESS_ENABLED=false
 SLACK_NOTIFICATIONS_ENABLED=false
 SLACK_INTERACTIONS_ENABLED=false
+SLACK_CONNECTIVITY_CHECK_ENABLED=false
 SLACK_BOT_TOKEN=<secret>
-SLACK_SIGNING_SECRET=<secret>
 SLACK_TEAM_ID=<server-owned>
 SLACK_CHANNEL_ID=<server-owned>
-SLACK_ALLOWED_USER_IDS=<server-owned allowlist>
-SLACK_ESCALATION_USERGROUP_ID=<optional server-owned>
+SLACK_TENANT_TOKENS_JSON=<secret mapping johanna/att1>
+SLACK_STORAGE_PATH=/app/data/slack-connector.sqlite3
 ```
 
-Tener credenciales presentes no activa efectos. Los dos flags permanecen
-`false` hasta sus pruebas controladas independientes.
+Tener credenciales presentes no activa efectos. Los flags permanecen `false`
+hasta sus pruebas controladas independientes.
 
 ## 4. Fase B — prueba física de publicación
 
@@ -96,7 +98,7 @@ Después de cargar los datos privados se hará una prueba de un solo mensaje:
 
 1. llamar `auth.test` y exigir que `team_id` coincida con `SLACK_TEAM_ID`;
 2. comprobar que el bot pertenece al canal configurado;
-3. mantener outbox y workers apagados;
+3. mantener ingreso y worker de publicación apagados;
 4. armar un presupuesto de exactamente un mensaje de prueba;
 5. publicar un aviso sanitizado sin caso real;
 6. validar en la respuesta `ok=true`, `channel=SLACK_CHANNEL_ID` y `ts` válido;
@@ -123,7 +125,7 @@ Sólo después de desplegar y verificar el endpoint HTTPS:
 3. configurar como Request URL:
 
 ```text
-https://<bridge-host>/integrations/slack/interactions
+https://<connector-host>/integrations/slack/interactions
 ```
 
 4. guardar la configuración;

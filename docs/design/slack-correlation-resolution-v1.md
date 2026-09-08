@@ -1,12 +1,12 @@
 # Resolución de correlaciones mediante Slack V1
 
-- **Estado:** Base de diseño aprobada; implementación parcial
+- **Estado:** Base aprobada; notificación outbound implementada, resolución interactiva pendiente
 - **Fecha:** 2026-09-06
 - **Alcance:** notificación, revisión humana y proyección de estado para correlaciones Hotmart no inequívocas
 - **Complementa:** ADR-0016 y los contratos `operator-correlation-review-v1` y `operator-correlation-resolution-v1`
 - **Catálogo de copy relacionado:** [Mensajes operativos para Slack V1](slack-operations-message-catalog-v1.md)
-- **Implementado localmente:** mensaje raíz, modal de revisión, verificación de firma/ventana anti-replay y cliente estricto de publicación
-- **Pendiente:** persistencia, endpoints, workers, confirmación, reconciliación, despliegue y activación
+- **Implementado localmente:** conector central, admisión autenticada, persistencia, deduplicación, worker de publicación, binding de hilo, cliente productor y superficies UI aisladas
+- **Pendiente:** wiring de todos los productores, endpoints interactivos, autorización de operador, replay durable de interacciones, despliegue y activación
 
 ## 1. Decisión de producto propuesta
 
