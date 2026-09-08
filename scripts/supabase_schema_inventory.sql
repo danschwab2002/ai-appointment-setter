@@ -2460,6 +2460,73 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         4,
         'commercial_ally_post_inbound_discount_default_off'
+    union all
+    select
+        '20260907000200',
+        '20260907000200_johanna_funnel_observability_v1.sql',
+        (to_regclass('public.johanna_funnel_events') is not null)::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.admit_johanna_funnel_event_v1(text,text,text,timestamptz,text,text,text,text,text,text,text,text)'
+            )
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.read_johanna_funnel_dashboard_v2(integer)'
+            )
+              and prosecdef
+              and provolatile = 's'
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+        )::int
+        + exists(
+            select 1 from triggers
+            where tgname = 'johanna_funnel_events_append_only'
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.admit_johanna_funnel_event_v1(text,text,text,timestamptz,text,text,text,text,text,text,text,text)'
+            )
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and has_function_privilege(
+                  'service_role',
+                  to_regprocedure(
+                      'public.read_johanna_funnel_dashboard_v2(integer)'
+                  ),
+                  'EXECUTE'
+              )
+              and not coalesce(has_table_privilege(
+                  'service_role', to_regclass('public.johanna_funnel_events'), 'SELECT'
+              ), false)
+              and not coalesce(has_table_privilege(
+                  'service_role', to_regclass('public.johanna_funnel_events'), 'INSERT'
+              ), false)
+              and not coalesce(has_table_privilege(
+                  'service_role', to_regclass('public.johanna_funnel_events'), 'UPDATE'
+              ), false)
+              and not coalesce(has_table_privilege(
+                  'service_role', to_regclass('public.johanna_funnel_events'), 'DELETE'
+              ), false)
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.read_johanna_funnel_dashboard_v2(integer)'
+            )
+              and not has_function_privilege(
+                  'service_role',
+                  'public.read_johanna_funnel_dashboard_v1(timestamptz,integer)',
+                  'EXECUTE'
+              )
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        6,
+        'sanitary_funnel_events_and_dashboard_v2'
 )
 select
     version,

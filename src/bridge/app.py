@@ -16,7 +16,7 @@ import unicodedata
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, fields as dataclass_fields
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import AsyncGenerator, Awaitable, Callable, Protocol
 from urllib.parse import urlparse
@@ -104,6 +104,9 @@ logger = logging.getLogger(__name__)
 CHATWOOT_WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024
 HOTMART_WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024
 PRECHECKOUT_WEBHOOK_BODY_LIMIT_BYTES = 64 * 1024
+JOHANNA_FUNNEL_EVENT_BODY_LIMIT_BYTES = 8 * 1024
+JOHANNA_FUNNEL_EVENT_MAX_AGE = timedelta(days=31)
+JOHANNA_FUNNEL_EVENT_FUTURE_TOLERANCE = timedelta(minutes=5)
 CHATWOOT_CONVERSATION_RESET_COMMAND = "/nuevo"
 CHATWOOT_CONVERSATION_RESET_CONFIRMATION = "Memoria eliminada."
 PRECHECKOUT_FIRST_TOUCH_TEMPLATE_NAME = "libre_ansiedad_test_first_touch_v1"
@@ -3284,6 +3287,127 @@ def create_app(
             "status": "captured",
             "delivery_id": x_chatwoot_delivery,
         }
+
+    @app.post(
+        "/webhooks/johanna-funnel-events",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def receive_johanna_funnel_event(
+        request: Request,
+        response: Response,
+        content_type: str = Header(default=""),
+        x_lancemos_signature: str = Header(default=""),
+    ) -> dict[str, object]:
+        if settings.lead_precheckout_secret is None:
+            raise HTTPException(status_code=503, detail="johanna_funnel_not_enabled")
+        secret = settings.lead_precheckout_secret
+        if secret is None or shared_supabase is None:
+            raise HTTPException(status_code=503, detail="johanna_funnel_not_configured")
+        normalized_content_type = ";".join(
+            part.strip().lower() for part in content_type.split(";")
+        )
+        if normalized_content_type != "application/json;charset=utf-8":
+            raise HTTPException(status_code=400, detail="invalid_johanna_funnel_transport")
+
+        body = bytearray()
+        async for chunk in request.stream():
+            if len(body) + len(chunk) > JOHANNA_FUNNEL_EVENT_BODY_LIMIT_BYTES:
+                raise HTTPException(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    detail="johanna_funnel_event_too_large",
+                )
+            body.extend(chunk)
+        raw_body = bytes(body)
+        expected_signature = "sha256=" + hmac.new(
+            secret.encode("utf-8"), raw_body, hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(x_lancemos_signature, expected_signature):
+            raise HTTPException(
+                status_code=401, detail="invalid_johanna_funnel_signature"
+            )
+        try:
+            payload = json.loads(raw_body)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise HTTPException(status_code=400, detail="invalid_json") from exc
+
+        top_fields = {
+            "version", "event_id", "event_type", "occurred_at",
+            "anonymous_session_id", "landing_ref", "offer_ref", "utm",
+        }
+        utm_fields = {"source", "medium", "campaign", "content", "term"}
+        pairs = {
+            ("ads-a", "bxjge6zq"), ("ads-b", "mgbgpp19"),
+            ("ads-c", "s1qfxm7m"), ("org-a", "jtt6fcsm"),
+            ("org-b", "ecyu87q0"), ("org-c", "ulhzpw9a"),
+        }
+        ulid_pattern = r"[0-9A-HJKMNP-TV-Z]{26}"
+        valid = isinstance(payload, dict) and set(payload) == top_fields
+        utm = payload.get("utm") if isinstance(payload, dict) else None
+        valid = valid and isinstance(utm, dict) and set(utm) == utm_fields
+        if valid:
+            assert isinstance(payload, dict) and isinstance(utm, dict)
+            valid = (
+                payload.get("version") == "1.0.0"
+                and payload.get("event_type") in {
+                    "page_view", "preform_opened", "preform_submitted",
+                    "checkout_redirected",
+                }
+                and isinstance(payload.get("event_id"), str)
+                and re.fullmatch(ulid_pattern, payload["event_id"]) is not None
+                and isinstance(payload.get("anonymous_session_id"), str)
+                and re.fullmatch(ulid_pattern, payload["anonymous_session_id"])
+                is not None
+                and (payload.get("landing_ref"), payload.get("offer_ref")) in pairs
+                and all(
+                    value is None
+                    or (isinstance(value, str) and len(value) <= 128)
+                    for value in utm.values()
+                )
+            )
+            try:
+                occurred_at = datetime.fromisoformat(
+                    str(payload.get("occurred_at", "")).replace("Z", "+00:00")
+                )
+                server_now = datetime.now(UTC)
+                valid = (
+                    valid
+                    and occurred_at.tzinfo is not None
+                    and server_now - JOHANNA_FUNNEL_EVENT_MAX_AGE
+                    <= occurred_at.astimezone(UTC)
+                    <= server_now + JOHANNA_FUNNEL_EVENT_FUTURE_TOLERANCE
+                )
+            except ValueError:
+                valid = False
+        if not valid:
+            raise HTTPException(status_code=400, detail="invalid_johanna_funnel_event")
+
+        assert isinstance(payload, dict) and isinstance(utm, dict)
+        try:
+            admission = await shared_supabase.admit_johanna_funnel_event(
+                version=payload["version"],
+                event_id=payload["event_id"],
+                event_type=payload["event_type"],
+                occurred_at=payload["occurred_at"],
+                anonymous_session_id=payload["anonymous_session_id"],
+                landing_ref=payload["landing_ref"],
+                offer_ref=payload["offer_ref"],
+                utm_source=utm["source"],
+                utm_medium=utm["medium"],
+                utm_campaign=utm["campaign"],
+                utm_content=utm["content"],
+                utm_term=utm["term"],
+            )
+        except SupabaseError as exc:
+            raise HTTPException(
+                status_code=503, detail="johanna_funnel_persist_unavailable"
+            ) from exc
+        if admission.outcome == "duplicate":
+            response.status_code = status.HTTP_200_OK
+            return {"status": "duplicate", "event_id": admission.event_id}
+        if admission.outcome == "semantic_conflict":
+            response.status_code = status.HTTP_409_CONFLICT
+            return {"status": "conflict", "event_id": admission.event_id}
+        return {"status": "received", "event_id": admission.event_id}
 
     @app.post("/webhooks/lead", status_code=status.HTTP_200_OK)
     async def receive_lead_precheckout_webhook(
