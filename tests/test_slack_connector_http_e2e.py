@@ -77,6 +77,8 @@ def test_notification_crosses_real_tcp_to_connector_and_fake_slack(
     settings = SlackConnectorSettings(
         ingress_enabled=True,
         notifications_enabled=True,
+        activation_mode="one_shot",
+        activation_generation=1,
         bot_token="xoxb-synthetic",
         team_id="T12345678",
         channel_id="C0C0YEACVT2",

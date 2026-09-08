@@ -1,162 +1,132 @@
 # Despliegue del conector central de Slack en EasyPanel
 
-- **Estado:** Procedimiento operativo listo; despliegue pendiente
-- **Fecha:** 2026-09-07
+- **Estado:** Procedimiento implementado; despliegue pendiente
 - **Servicio:** `supportmagician-slack-connector`
-- **Dockerfile:** `deploy/slack-connector.Dockerfile`
 - **Contrato:** [Slack Operations Connector V1](../contracts/slack-operations-connector-v1.md)
+- **Backup/restore:** [Backup y restore del ledger](slack-connector-backup-restore.md)
 
-## 1. Crear el servicio
+## Invariantes obligatorios
 
-Después de mergear la implementación a la rama que usa EasyPanel:
+- Desplegar sólo un **tag o revisión Git exacta** ya integrada y verificada; registrar el SHA completo y no usar una rama móvil.
+- Política de actualización **Recreate/stop-first**, nunca rolling. Esperar cero contenedores anteriores antes de arrancar el nuevo.
+- Exactamente **una réplica**, un worker Uvicorn y sin autoscaling.
+- Toda recreación monta el **mismo volumen** persistente en `/app/data`. No crear un volumen nuevo ni borrar el anterior durante rollback.
+- Dockerfile `deploy/slack-connector.Dockerfile`, puerto interno `8000`.
+- Los flags y la activación comienzan inactivos. La presencia de secretos no autoriza efectos.
 
-1. Crear una aplicación nueva llamada `supportmagician-slack-connector` desde el
-   mismo repositorio.
-2. Elegir build por Dockerfile y configurar la ruta exacta
-   `deploy/slack-connector.Dockerfile`.
-3. Exponer el puerto interno `8000`.
-4. Configurar exactamente **una réplica**. No usar autoscaling.
-5. Crear un volumen persistente y montarlo exactamente en `/app/data`.
-6. Asignar un dominio HTTPS accesible desde los bridges. No activar todavía
-   ingreso ni publicación.
+## 1. Arranque inerte y preflight de storage
 
-No reutilizar el servicio `johanna` ni `att1`; éste es un tercer runtime.
-
-## 2. Primer arranque inerte
-
-Configurar:
+Configurar placeholders sólo en el gestor privado:
 
 ```text
 SLACK_INGRESS_ENABLED=false
 SLACK_NOTIFICATIONS_ENABLED=false
 SLACK_INTERACTIONS_ENABLED=false
 SLACK_CONNECTIVITY_CHECK_ENABLED=false
+SLACK_STORAGE_PREFLIGHT_ENABLED=true
+SLACK_ACTIVATION_MODE=inactive
+SLACK_ACTIVATION_GENERATION=0
 SLACK_STORAGE_PATH=/app/data/slack-connector.sqlite3
-SLACK_WORKER_ID=slack-worker-1
-SLACK_POLL_INTERVAL_SECONDS=1
-SLACK_MAX_NONTERMINAL_NOTIFICATIONS=10000
-```
-
-Desplegar y verificar:
-
-```text
-GET https://<host>/health → 200 {"status":"ok"}
-GET https://<host>/ready  → 200, mode=inactive
-```
-
-Si el volumen falta o no es escribible, no continuar.
-
-## 3. Cargar configuración privada
-
-Crear en el gestor de secretos dos valores aleatorios distintos de al menos 32
-caracteres. No copiarlos en Git, documentación, comandos con valor literal ni
-chat.
-
-En el conector, cargar directamente por la UI de EasyPanel:
-
-```text
-SLACK_BOT_TOKEN=<bot token de SupportMagician Ops>
-SLACK_TEAM_ID=<workspace Team ID esperado>
+SLACK_OPERATOR_BEARER_TOKEN=<bearer operador distinto>
+SLACK_TENANT_TOKENS_JSON={"johanna":"<bearer propio>","att1":"<bearer propio distinto>"}
+SLACK_BOT_TOKEN=<secreto sólo del conector>
+SLACK_TEAM_ID=<Team ID exacto>
 SLACK_CHANNEL_ID=C0C0YEACVT2
-SLACK_TENANT_TOKENS_JSON={"johanna":"<token johanna>","att1":"<token att1>"}
 ```
 
-En cada bridge, conservar únicamente su propio token interno y la URL HTTPS del
-conector. Ningún bridge recibe `SLACK_BOT_TOKEN`.
-
-Mantener todos los flags en `false`, redeployar y confirmar que `/ready` no
-expone valores: sólo booleanos y conteos sanitizados.
-
-## 4. Verificar identidad Slack sin publicar
-
-Cambiar únicamente:
+Recrear stop-first y exigir:
 
 ```text
-SLACK_CONNECTIVITY_CHECK_ENABLED=true
+GET /health -> 200 status=ok
+GET /ready  -> 200 mode=inactive storage_ready=true
+ledger.pending=0
+ledger.claimed=0
+ledger.request_started=0
+ledger.delivery_unknown=0
 ```
 
-Redeployar. Exigir:
+Cualquier conteo no cero detiene la activación: no borrar backlog para superar la barrera. El body de readiness sólo puede contener flags, modos, generaciones y conteos sanitizados.
 
-```text
-GET /ready → 200, mode=connectivity_verified
-```
+## 2. Identidad Slack sin efectos
 
-Un `503 connectivity_failed` detiene el rollout. Corregir token o Team ID; no
-activar publicación.
+Mantener ingreso, notificaciones y activación inactivos. Cambiar sólo `SLACK_CONNECTIVITY_CHECK_ENABLED=true`, recrear stop-first con el mismo volumen y exigir `mode=connectivity_verified`. `connectivity_failed` bloquea el rollout.
 
-## 5. Probar admisión durable de ambos bridges
+## 3. Admisión durable, secuencial por tenant
 
-Cambiar:
+Activar ingreso con outbound aún apagado:
 
 ```text
 SLACK_INGRESS_ENABLED=true
 SLACK_NOTIFICATIONS_ENABLED=false
+SLACK_ACTIVATION_MODE=inactive
 ```
 
-Redeployar. `/ready` debe devolver `200 admission_only`.
+Para **Johanna primero**, emitir un único evento sintético sin PII y verificar secuencialmente: `202 pending`, replay exacto `200 duplicate`, conflicto `409`, aislamiento cross-tenant `404` y cero mensajes Slack. No admitir el caso ATT1 hasta cerrar esas comprobaciones.
 
-Desde el terminal de cada bridge, usar su token ya cargado como variable de
-entorno; no escribir su valor en la línea de comando. Enviar un evento sintético
-por bridge con un UUID y SHA-256 fijos distintos. El cuerpo no debe contener
-nombres, teléfonos, emails, JIDs ni texto real.
+Después repetir el mismo test de **un solo mensaje candidato para ATT1**, con UUID y dedupe distintos. Antes de armar outbound exigir exactamente `pending=2`, `claimed=0`, `request_started=0`, `delivery_unknown=0` y cero mensajes físicos.
 
-Resultados exigidos:
+## 4. Activación controlada: exactamente un mensaje
 
-- primera admisión: HTTP `202`, `delivery_state=pending`;
-- replay exacto: HTTP `200`, `status=duplicate`;
-- mismo identificador con otra semántica: HTTP `409`;
-- token del otro bridge: no permite leer el evento (`404`);
-- Slack todavía contiene cero mensajes nuevos.
-
-## 6. Primera publicación controlada
-
-Con las dos admisiones sintéticas pendientes, cambiar únicamente:
+La generación es durable y monotónica. Elegir una generación nueva `N` (mayor que la reportada por `/ready`) y configurar:
 
 ```text
 SLACK_NOTIFICATIONS_ENABLED=true
+SLACK_ACTIVATION_MODE=one_shot
+SLACK_ACTIVATION_GENERATION=N
 ```
 
-Redeployar. Exigir `/ready → 200, mode=operational`. El worker debe publicar
-exactamente dos avisos sanitizados —uno etiquetado Johanna y otro ATT1— y sus
-estados deben llegar a `accepted`.
+Recrear stop-first. El presupuesto durable de esa generación permite que `request_started` se confirme **una sola vez incluso tras reinicios**. Verificar exactamente un mensaje y su binding `channel_id=C0C0YEACVT2`/`message_ts`; el segundo evento debe seguir `pending`. Reiniciar una vez con la misma generación y demostrar que no aparece otro mensaje.
 
-Comprobar en Slack:
+Si el resultado queda `delivery_unknown`, no reintentar ni cambiar de generación: usar el procedimiento de reconciliación del apartado 6.
 
-- app `SupportMagician Ops`;
-- canal `C0C0YEACVT2`;
-- exactamente un mensaje por `event_id/dedupe_key`;
-- sin PII, texto de clientes ni payloads crudos;
-- el replay exacto no crea un tercer mensaje.
+Tras verificación humana del mensaje único, llamar con el bearer operador:
 
-Un estado `delivery_unknown` no se reintenta. Se reconcilia manualmente contra
-el canal antes de cualquier sucesor.
+```http
+POST /internal/v1/operator/verify-activation
+Authorization: Bearer <operador>
+Content-Type: application/json
 
-## 7. Activación de productores
+{"generation":N}
+```
 
-Cada bridge usa `SlackConnectorProducer` con:
+Sólo una generación one-shot consumida puede quedar verificada.
+
+## 5. Modo continuo sólo después de verificar
+
+Elegir otra generación `N+1` y cambiar explícitamente:
 
 ```text
-SLACK_CONNECTOR_BASE_URL=https://<host>
-SLACK_CONNECTOR_BEARER_TOKEN=<sólo su token>
+SLACK_ACTIVATION_MODE=continuous
+SLACK_ACTIVATION_GENERATION=N+1
 ```
 
-El productor debe construir `event_id`, `event_code` y `dedupe_key` desde el
-evento durable autoritativo. Reintentar una admisión de resultado incierto exige
-el comando exacto; cambiar semántica bajo el mismo identificador falla `409`.
+Recrear stop-first con una réplica y el mismo volumen. El arranque falla cerrado si la generación one-shot anterior no fue verificada. Confirmar `/ready.activation.mode=continuous` y luego procesar **secuencialmente**, primero el único pending restante y después un nuevo evento de un tenant; nunca abrir ambos productores simultáneamente durante la prueba inicial.
 
-No se admite llamar al conector con texto, bloques, canal o `tenant_ref`.
+## 6. Reconciliación ejecutable de `delivery_unknown`
 
-## 8. Rollback
+El bearer operador debe ser distinto de ambos bearers productores. Los productores reciben `401` en esta ruta y nunca pueden elegir tenant, canal, texto o mensaje.
 
-1. Poner `SLACK_INGRESS_ENABLED=false` para detener nuevas admisiones.
-2. Si debe detenerse publicación, poner `SLACK_NOTIFICATIONS_ENABLED=false`.
-3. No borrar ni desmontar `/app/data`; preserva pending y resultados inciertos.
-4. Mantener una réplica.
-5. Revertir la imagen sólo si conserva compatibilidad con el mismo schema del
-   ledger.
+Después de inspeccionar el canal fijo configurado, decidir una sola alternativa:
 
-## 9. Interactividad
+```json
+{"decision":"confirm_delivered","tenant_ref":"johanna","notification_id":"<uuid>","message_ts":"1788800000.000001","thread_ts":null}
+```
 
-Mantener apagados **Interactivity & Shortcuts**, **Event Subscriptions**,
-**Incoming Webhooks** y **Socket Mode**. V1 implementa avisos outbound; no finge
-resolución por botones o modales.
+Esto liga evidencia al canal configurado server-side y deja `accepted`; o:
+
+```json
+{"decision":"confirm_not_delivered","tenant_ref":"johanna","notification_id":"<uuid>"}
+```
+
+Esto audita la decisión y vuelve a `pending`. Si pertenecía a la generación one-shot vigente, repone ese único presupuesto. No se aceptan `channel`, `text`, `message`, bloques ni claves extra. Un conflicto o evidencia de hilo inconsistente no muta el ledger.
+
+## 7. Rollback y restore
+
+1. Cerrar ingreso.
+2. Mantener reconciliación disponible para requests ya iniciados; resolver o inventariar incertidumbre.
+3. Apagar outbound/activación.
+4. Detener el contenedor antes de recrear o restaurar.
+5. Mantener una réplica, el mismo volumen y una imagen de revisión Git exacta compatible con schema V2.
+6. Para restore seguir el runbook enlazado; nunca copiar el WAL activo.
+
+Interactivity, Events API, Incoming Webhooks y Socket Mode permanecen apagados.

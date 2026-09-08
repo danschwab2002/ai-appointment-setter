@@ -42,6 +42,19 @@ def test_inactive_connector_exposes_sanitized_health_and_readiness() -> None:
         "storage_ready": False,
         "tenant_count": 0,
         "worker_running": False,
+        "ledger": {
+            "pending": 0,
+            "claimed": 0,
+            "request_started": 0,
+            "delivery_unknown": 0,
+        },
+        "activation": {
+            "mode": "unavailable",
+            "generation": 0,
+            "budget": None,
+            "consumed": 0,
+            "verified": False,
+        },
     }
 
 
@@ -180,6 +193,19 @@ def test_ready_verifies_slack_auth_without_sending_a_message() -> None:
         "storage_ready": False,
         "tenant_count": 0,
         "worker_running": False,
+        "ledger": {
+            "pending": 0,
+            "claimed": 0,
+            "request_started": 0,
+            "delivery_unknown": 0,
+        },
+        "activation": {
+            "mode": "unavailable",
+            "generation": 0,
+            "budget": None,
+            "consumed": 0,
+            "verified": False,
+        },
     }
     assert requests == ["/api/auth.test"]
 
@@ -271,6 +297,8 @@ def test_operational_app_delivers_admitted_notification_and_exposes_status(
     settings = SlackConnectorSettings(
         ingress_enabled=True,
         notifications_enabled=True,
+        activation_mode="one_shot",
+        activation_generation=1,
         bot_token="xoxb-synthetic",
         team_id="T12345678",
         channel_id="C0C0YEACVT2",
@@ -312,6 +340,28 @@ def test_operational_app_delivers_admitted_notification_and_exposes_status(
     assert status.json()["message_ts"] == "1788800000.000001"
     assert len(slack.messages) == 1
     assert slack.messages[0][0] == "C0C0YEACVT2"
+
+
+def test_storage_preflight_runs_while_ingress_and_effects_are_inactive(tmp_path: Path) -> None:
+    settings = SlackConnectorSettings(
+        storage_path=str(tmp_path / "connector.sqlite3"),
+        storage_preflight_enabled=True,
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        response = client.get("/ready")
+
+    assert response.status_code == 200
+    assert response.json()["mode"] == "inactive"
+    assert response.json()["storage_ready"] is True
+    assert response.json()["ledger"] == {
+        "pending": 0,
+        "claimed": 0,
+        "request_started": 0,
+        "delivery_unknown": 0,
+    }
+    assert response.json()["activation"]["mode"] == "inactive"
 
 
 def test_second_connector_instance_cannot_share_the_same_sqlite_volume(tmp_path: Path) -> None:

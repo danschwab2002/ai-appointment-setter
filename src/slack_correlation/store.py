@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 import fcntl
@@ -10,7 +11,9 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import sqlite3
+import tempfile
 from typing import BinaryIO
 
 from slack_correlation.catalog import NotificationCommand
@@ -99,7 +102,7 @@ class NotificationStore:
         os.chmod(self._path.parent, 0o700)
         with self._connect() as connection:
             version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-            if version not in {0, 1}:
+            if version not in {0, 1, 2}:
                 raise RuntimeError("unsupported_store_version")
             connection.execute("PRAGMA journal_mode = WAL")
             connection.execute("PRAGMA synchronous = FULL")
@@ -142,8 +145,49 @@ class NotificationStore:
                     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
                     last_write_probe_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS reconciliation_audit (
+                    audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tenant_ref TEXT NOT NULL,
+                    notification_id TEXT NOT NULL,
+                    decision TEXT NOT NULL CHECK (
+                        decision IN ('confirm_delivered', 'confirm_not_delivered')
+                    ),
+                    operator_id TEXT NOT NULL,
+                    prior_state TEXT NOT NULL,
+                    resulting_state TEXT NOT NULL,
+                    channel_id TEXT,
+                    message_ts TEXT,
+                    thread_ts TEXT,
+                    decided_at TEXT NOT NULL,
+                    FOREIGN KEY (tenant_ref, notification_id)
+                        REFERENCES notifications (tenant_ref, notification_id)
+                );
                 """
             )
+            notification_columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(notifications)")
+            }
+            if "activation_generation_started" not in notification_columns:
+                connection.execute(
+                    "ALTER TABLE notifications ADD COLUMN activation_generation_started INTEGER"
+                )
+            meta_columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(connector_meta)")
+            }
+            for column, definition in (
+                ("activation_initialized", "INTEGER NOT NULL DEFAULT 0"),
+                ("activation_mode", "TEXT NOT NULL DEFAULT 'inactive'"),
+                ("activation_generation", "INTEGER NOT NULL DEFAULT 0"),
+                ("activation_budget", "INTEGER"),
+                ("activation_consumed", "INTEGER NOT NULL DEFAULT 0"),
+                ("activation_verified", "INTEGER NOT NULL DEFAULT 0"),
+            ):
+                if column not in meta_columns:
+                    connection.execute(
+                        f"ALTER TABLE connector_meta ADD COLUMN {column} {definition}"
+                    )
             connection.execute(
                 """
                 INSERT OR IGNORE INTO connector_meta (singleton, last_write_probe_at)
@@ -151,8 +195,8 @@ class NotificationStore:
                 """,
                 (datetime.now(UTC).isoformat(),),
             )
-            if version == 0:
-                connection.execute("PRAGMA user_version = 1")
+            if version < 2:
+                connection.execute("PRAGMA user_version = 2")
         os.chmod(self._path, 0o600)
 
     def probe(self) -> None:
@@ -169,6 +213,114 @@ class NotificationStore:
             if updated != 1:
                 connection.rollback()
                 raise RuntimeError("store_probe_failed")
+            connection.commit()
+
+    def state_inventory(self) -> dict[str, int]:
+        states = ("pending", "claimed", "request_started", "delivery_unknown")
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT state, count(*) AS count
+                FROM notifications
+                WHERE state IN ('pending', 'claimed', 'request_started', 'delivery_unknown')
+                GROUP BY state
+                """
+            ).fetchall()
+        found = {str(row["state"]): int(row["count"]) for row in rows}
+        return {state: found.get(state, 0) for state in states}
+
+    def activation_status(self) -> dict[str, object]:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT activation_mode, activation_generation, activation_budget,
+                       activation_consumed, activation_verified
+                FROM connector_meta WHERE singleton = 1
+                """
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("store_not_initialized")
+        return {
+            "mode": str(row["activation_mode"]),
+            "generation": int(row["activation_generation"]),
+            "budget": int(row["activation_budget"]) if row["activation_budget"] is not None else None,
+            "consumed": int(row["activation_consumed"]),
+            "verified": bool(row["activation_verified"]),
+        }
+
+    def configure_activation(self, *, mode: str, generation: int) -> None:
+        if mode not in {"inactive", "one_shot", "continuous"}:
+            raise ValueError("invalid_activation_mode")
+        if isinstance(generation, bool) or generation < 0 or (mode != "inactive" and generation < 1):
+            raise ValueError("invalid_activation_generation")
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT * FROM connector_meta WHERE singleton = 1").fetchone()
+            if row is None:
+                connection.rollback()
+                raise RuntimeError("store_not_initialized")
+            initialized = bool(row["activation_initialized"])
+            current_generation = int(row["activation_generation"])
+            current_mode = str(row["activation_mode"])
+            if initialized and generation < current_generation:
+                connection.rollback()
+                raise RuntimeError("activation_generation_regression")
+            if initialized and generation == current_generation:
+                if mode != current_mode:
+                    connection.rollback()
+                    raise RuntimeError("activation_generation_conflict")
+                connection.commit()
+                return
+            unresolved = connection.execute(
+                """
+                SELECT count(*) FROM notifications
+                WHERE state IN ('claimed', 'request_started', 'delivery_unknown')
+                """
+            ).fetchone()
+            assert unresolved is not None
+            if int(unresolved[0]) != 0:
+                connection.rollback()
+                raise RuntimeError("unresolved_delivery_blocks_activation")
+            if mode == "continuous" and (
+                not initialized
+                or current_mode != "one_shot"
+                or not bool(row["activation_verified"])
+            ):
+                connection.rollback()
+                raise RuntimeError("activation_verification_required")
+            connection.execute(
+                """
+                UPDATE connector_meta
+                SET activation_initialized = 1, activation_mode = ?,
+                    activation_generation = ?, activation_budget = ?,
+                    activation_consumed = 0, activation_verified = 0
+                WHERE singleton = 1
+                """,
+                (mode, generation, 1 if mode == "one_shot" else None),
+            )
+            connection.commit()
+
+    def mark_activation_verified(self, *, generation: int, operator_id: str) -> None:
+        if _TENANT_REF.fullmatch(operator_id) is None:
+            raise ValueError("invalid_operator_id")
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            updated = connection.execute(
+                """
+                UPDATE connector_meta SET activation_verified = 1
+                WHERE singleton = 1 AND activation_initialized = 1
+                  AND activation_mode = 'one_shot'
+                  AND activation_generation = ? AND activation_consumed = 1
+                  AND EXISTS (
+                    SELECT 1 FROM notifications
+                    WHERE activation_generation_started = ? AND state = 'accepted'
+                  )
+                """,
+                (generation, generation),
+            ).rowcount
+            if updated != 1:
+                connection.rollback()
+                raise RuntimeError("activation_not_verifiable")
             connection.commit()
 
     def admit(
@@ -266,6 +418,17 @@ class NotificationStore:
             raise ValueError("invalid_worker_id")
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            activation = connection.execute(
+                "SELECT * FROM connector_meta WHERE singleton = 1"
+            ).fetchone()
+            if activation is not None and bool(activation["activation_initialized"]):
+                budget = activation["activation_budget"]
+                if str(activation["activation_mode"]) == "inactive" or (
+                    budget is not None
+                    and int(activation["activation_consumed"]) >= int(budget)
+                ):
+                    connection.commit()
+                    return None
             row = connection.execute(
                 """
                 SELECT tenant_ref, notification_id, payload_json, claim_generation
@@ -309,16 +472,38 @@ class NotificationStore:
         now = datetime.now(UTC).isoformat()
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            activation = connection.execute(
+                "SELECT * FROM connector_meta WHERE singleton = 1"
+            ).fetchone()
+            activation_generation: int | None = None
+            if activation is not None and bool(activation["activation_initialized"]):
+                budget = activation["activation_budget"]
+                if str(activation["activation_mode"]) == "inactive" or (
+                    budget is not None
+                    and int(activation["activation_consumed"]) >= int(budget)
+                ):
+                    connection.rollback()
+                    raise RuntimeError("activation_budget_exhausted")
+                activation_generation = int(activation["activation_generation"])
+                connection.execute(
+                    """
+                    UPDATE connector_meta
+                    SET activation_consumed = activation_consumed + 1
+                    WHERE singleton = 1
+                    """
+                )
             updated = connection.execute(
                 """
                 UPDATE notifications
-                SET state = 'request_started', request_started_at = ?, updated_at = ?
+                SET state = 'request_started', request_started_at = ?, updated_at = ?,
+                    activation_generation_started = ?
                 WHERE tenant_ref = ? AND notification_id = ?
                   AND state = 'claimed' AND claim_owner = ? AND claim_generation = ?
                 """,
                 (
                     now,
                     now,
+                    activation_generation,
                     claim.tenant_ref,
                     claim.notification_id,
                     claim.worker_id,
@@ -564,6 +749,168 @@ class NotificationStore:
             thread_ts=(str(row["thread_ts"]) if row["thread_ts"] is not None else None),
         )
 
+    def reconcile_delivery_unknown(
+        self,
+        *,
+        tenant_ref: str,
+        notification_id: str,
+        decision: str,
+        operator_id: str,
+        channel_id: str,
+        message_ts: str | None = None,
+        thread_ts: str | None = None,
+    ) -> StoredNotification:
+        if tenant_ref not in {"johanna", "att1"}:
+            raise ValueError("invalid_tenant_ref")
+        if decision not in {"confirm_delivered", "confirm_not_delivered"}:
+            raise ValueError("invalid_reconciliation_decision")
+        if _TENANT_REF.fullmatch(operator_id) is None:
+            raise ValueError("invalid_operator_id")
+        if decision == "confirm_delivered" and not message_ts:
+            raise ValueError("message_ts_required")
+        if decision == "confirm_not_delivered" and (message_ts is not None or thread_ts is not None):
+            raise ValueError("delivery_evidence_not_allowed")
+        now = datetime.now(UTC).isoformat()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT payload_json, state, activation_generation_started
+                FROM notifications WHERE tenant_ref = ? AND notification_id = ?
+                """,
+                (tenant_ref, notification_id),
+            ).fetchone()
+            if row is None or row["state"] != "delivery_unknown":
+                connection.rollback()
+                raise RuntimeError("delivery_unknown_not_found")
+            command = _deserialize_command(str(row["payload_json"]))
+            resulting_state = "accepted" if decision == "confirm_delivered" else "pending"
+            if decision == "confirm_delivered":
+                if command.subject_ref is not None:
+                    root = connection.execute(
+                        "SELECT channel_id, message_ts FROM thread_roots WHERE tenant_ref = ? AND subject_ref = ?",
+                        (tenant_ref, command.subject_ref),
+                    ).fetchone()
+                    if root is None:
+                        if thread_ts is not None:
+                            connection.rollback()
+                            raise RuntimeError("missing_thread_root")
+                        connection.execute(
+                            """
+                            INSERT INTO thread_roots
+                                (tenant_ref, subject_ref, channel_id, message_ts, created_at)
+                            VALUES (?, ?, ?, ?, ?)
+                            """,
+                            (tenant_ref, command.subject_ref, channel_id, message_ts, now),
+                        )
+                    elif root["channel_id"] != channel_id or root["message_ts"] != thread_ts:
+                        connection.rollback()
+                        raise RuntimeError("thread_identity_mismatch")
+                connection.execute(
+                    """
+                    UPDATE notifications
+                    SET state = 'accepted', channel_id = ?, message_ts = ?, thread_ts = ?,
+                        failure_code = NULL, updated_at = ?
+                    WHERE tenant_ref = ? AND notification_id = ? AND state = 'delivery_unknown'
+                    """,
+                    (channel_id, message_ts, thread_ts, now, tenant_ref, notification_id),
+                )
+            else:
+                activation_generation = row["activation_generation_started"]
+                if activation_generation is not None:
+                    connection.execute(
+                        """
+                        UPDATE connector_meta
+                        SET activation_consumed = activation_consumed - 1,
+                            activation_verified = 0
+                        WHERE singleton = 1 AND activation_mode = 'one_shot'
+                          AND activation_generation = ? AND activation_consumed > 0
+                        """,
+                        (activation_generation,),
+                    )
+                connection.execute(
+                    """
+                    UPDATE notifications
+                    SET state = 'pending', failure_code = NULL, request_started_at = NULL,
+                        activation_generation_started = NULL, updated_at = ?
+                    WHERE tenant_ref = ? AND notification_id = ? AND state = 'delivery_unknown'
+                    """,
+                    (now, tenant_ref, notification_id),
+                )
+            connection.execute(
+                """
+                INSERT INTO reconciliation_audit (
+                    tenant_ref, notification_id, decision, operator_id, prior_state,
+                    resulting_state, channel_id, message_ts, thread_ts, decided_at
+                ) VALUES (?, ?, ?, ?, 'delivery_unknown', ?, ?, ?, ?, ?)
+                """,
+                (
+                    tenant_ref, notification_id, decision, operator_id,
+                    resulting_state,
+                    channel_id if decision == "confirm_delivered" else None,
+                    message_ts, thread_ts, now,
+                ),
+            )
+            connection.commit()
+        result = self.get(tenant_ref=tenant_ref, notification_id=notification_id)
+        assert result is not None
+        return result
+
+    def reconciliation_audit_count(self) -> int:
+        with self._connect() as connection:
+            row = connection.execute("SELECT count(*) FROM reconciliation_audit").fetchone()
+        assert row is not None
+        return int(row[0])
+
+    def backup_to(self, destination: str | Path) -> None:
+        target = Path(destination)
+        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(target.parent, 0o700)
+        descriptor, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+        os.close(descriptor)
+        temporary = Path(temporary_name)
+        try:
+            with self._connect() as source, sqlite3.connect(temporary) as backup:
+                source.backup(backup)
+                backup.execute("PRAGMA synchronous = FULL")
+            _validate_database(temporary)
+            os.chmod(temporary, 0o600)
+            _fsync_file(temporary)
+            os.replace(temporary, target)
+            _fsync_directory(target.parent)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    @classmethod
+    def restore_from(cls, source: str | Path, destination: str | Path) -> None:
+        source_path = Path(source)
+        target = Path(destination)
+        store = cls(target)
+        store.acquire_instance_lock()
+        try:
+            target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=f".{target.name}.restore.", dir=target.parent
+            )
+            os.close(descriptor)
+            temporary = Path(temporary_name)
+            try:
+                shutil.copyfile(source_path, temporary)
+                try:
+                    _validate_database(temporary)
+                except (OSError, sqlite3.DatabaseError, RuntimeError) as exc:
+                    raise RuntimeError("invalid_backup") from exc
+                os.chmod(temporary, 0o600)
+                _fsync_file(temporary)
+                os.replace(temporary, target)
+                target.with_name(target.name + "-wal").unlink(missing_ok=True)
+                target.with_name(target.name + "-shm").unlink(missing_ok=True)
+                _fsync_directory(target.parent)
+            finally:
+                temporary.unlink(missing_ok=True)
+        finally:
+            store.release_instance_lock()
+
 
 def _serialize_command(command: NotificationCommand) -> str:
     payload = asdict(command)
@@ -579,3 +926,45 @@ def _deserialize_command(payload_json: str) -> NotificationCommand:
     if payload["deadline_at"] is not None:
         payload["deadline_at"] = datetime.fromisoformat(payload["deadline_at"])
     return NotificationCommand(**payload)
+
+
+def _validate_database(path: Path) -> None:
+    with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as connection:
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()
+        version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+    if integrity is None or integrity[0] != "ok" or version != 2:
+        raise RuntimeError("invalid_backup")
+
+
+def _fsync_file(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _main() -> int:
+    parser = argparse.ArgumentParser(description="Validated Slack ledger backup/restore")
+    parser.add_argument("operation", choices=("backup", "restore"))
+    parser.add_argument("--source", required=True)
+    parser.add_argument("--destination", required=True)
+    arguments = parser.parse_args()
+    if arguments.operation == "backup":
+        NotificationStore(arguments.source).backup_to(arguments.destination)
+    else:
+        NotificationStore.restore_from(arguments.source, arguments.destination)
+    print("ok")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())

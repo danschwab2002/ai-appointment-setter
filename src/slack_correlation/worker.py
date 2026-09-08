@@ -46,21 +46,43 @@ class NotificationWorker:
         self._stop = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
         self._halted = False
+        self._halt_reason: str | None = None
 
     @property
     def healthy(self) -> bool:
         return not self._halted
 
     def resume_after_verified_connectivity(self) -> None:
+        if self._halt_reason not in {None, "connectivity", "delivery_unknown"}:
+            return
+        try:
+            unresolved = self._store.state_inventory()["delivery_unknown"]
+        except Exception:
+            self.halt("storage")
+            return
+        if unresolved:
+            self.halt("delivery_unknown")
+            return
         self._halted = False
+        self._halt_reason = None
 
-    def halt(self) -> None:
+    def halt(self, reason: str = "connectivity") -> None:
+        if (
+            reason == "connectivity"
+            and self._halted
+            and self._halt_reason not in {None, "connectivity"}
+        ):
+            return
         self._halted = True
+        self._halt_reason = reason
 
     async def start(self) -> None:
         if self._task is not None:
             raise RuntimeError("slack_worker_already_started")
         await asyncio.to_thread(self._store.recover_incomplete)
+        inventory = await asyncio.to_thread(self._store.state_inventory)
+        if inventory["delivery_unknown"]:
+            self.halt("delivery_unknown")
         self._stop.clear()
         self._task = asyncio.create_task(self._run(), name="slack-notification-worker")
 
@@ -87,6 +109,14 @@ class NotificationWorker:
     async def run_once(self) -> bool:
         if self._halted:
             return False
+        try:
+            inventory = await asyncio.to_thread(self._store.state_inventory)
+        except Exception:
+            self.halt("storage")
+            raise
+        if inventory["delivery_unknown"]:
+            self.halt("delivery_unknown")
+            return False
         claim = await asyncio.to_thread(
             self._store.claim_next, worker_id=self._worker_id
         )
@@ -101,14 +131,14 @@ class NotificationWorker:
                 thread_ts=thread_ts,
             )
         except Exception:
-            self._halted = True
+            self.halt("internal")
             await asyncio.to_thread(self._store.release_claim, claim)
             raise
 
         try:
             await asyncio.to_thread(self._store.mark_request_started, claim)
         except Exception:
-            self._halted = True
+            self.halt("storage")
             try:
                 await asyncio.to_thread(self._store.release_claim, claim)
             except Exception:
@@ -120,11 +150,11 @@ class NotificationWorker:
                 message=message,
             )
         except asyncio.CancelledError:
-            self._halted = True
+            self.halt("delivery_unknown")
             await self._finalize_unknown(claim)
             raise
         except SlackRejectedError:
-            self._halted = True
+            self.halt("slack_rejected")
             await asyncio.to_thread(
                 self._store.finalize_rejected,
                 claim,
@@ -132,7 +162,7 @@ class NotificationWorker:
             )
             return True
         except SlackProtocolError:
-            self._halted = True
+            self.halt("delivery_unknown")
             await self._finalize_unknown(claim)
             return True
 
@@ -145,7 +175,7 @@ class NotificationWorker:
                 thread_ts=thread_ts,
             )
         except Exception:
-            self._halted = True
+            self.halt("delivery_unknown")
             await self._finalize_unknown(claim)
             raise
         return True
