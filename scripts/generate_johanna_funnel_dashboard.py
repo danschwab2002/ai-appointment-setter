@@ -32,12 +32,22 @@ _ALLOWED_CASE_FIELDS = frozenset(
         "chatwoot_conversation_id",
         "chatwoot_status",
         "attention_reasons",
+        "page_view_count",
+        "preform_opened_count",
+        "preform_submitted_count",
+        "checkout_redirected_count",
+        "last_funnel_event_at",
+        "last_funnel_event_type",
     }
 )
 _ALLOWED_PROVENANCE = frozenset(
     {"customer_production", "controlled_test", "simulator", "unknown"}
 )
 _ALLOWED_SOURCE_STATUS = frozenset({"complete", "partial", "unavailable"})
+_CANONICAL_CHATWOOT_ACCOUNT_ID = 1
+_FUNNEL_EVENT_TYPES = frozenset(
+    {"page_view", "preform_opened", "preform_submitted", "checkout_redirected"}
+)
 _TOKEN_RE = re.compile(r"^[a-z0-9][a-z0-9_:-]{0,127}$")
 _TERMINAL_STAGES = frozenset(
     {"completed", "blocked", "failed", "delivery_unknown", "projected", "resolved"}
@@ -90,6 +100,12 @@ def _optional_uuid(value: object, field: str) -> uuid.UUID | None:
     return _uuid(value, field)
 
 
+def _nonnegative_integer(value: object, field: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        _die(f"invalid {field}")
+    return value
+
+
 def _timestamp(value: object, field: str) -> str:
     text = _text(value, field)
     try:
@@ -118,7 +134,6 @@ def collect_live_snapshot(
     client: httpx.Client,
     supabase_base_url: str,
     service_role_key: str,
-    cutoff: str,
     window_days: int,
     precheckout_outbound_enabled: bool | None = None,
     chatwoot_app_base_url: str | None = None,
@@ -133,11 +148,10 @@ def collect_live_snapshot(
         or not 1 <= window_days <= 31
     ):
         raise ValueError("invalid_window_days")
-    cutoff_at = _utc_datetime(cutoff, "cutoff")
     response = client.post(
         f"{supabase_base_url.rstrip('/')}/rest/v1/rpc/"
-        "read_johanna_funnel_dashboard_v1",
-        json={"p_cutoff": cutoff, "p_window_days": window_days},
+        "read_johanna_funnel_dashboard_v2",
+        json={"p_window_days": window_days},
         headers={
             "apikey": service_role_key,
             "authorization": f"Bearer {service_role_key}",
@@ -151,9 +165,33 @@ def collect_live_snapshot(
     if not isinstance(payload, list) or not all(isinstance(row, dict) for row in payload):
         raise ValueError("invalid_supabase_response")
 
+    metadata_rows = [row for row in payload if row.get("row_kind") == "meta"]
+    case_rows = [row for row in payload if row.get("row_kind") == "case"]
+    if len(metadata_rows) != 1 or len(metadata_rows) + len(case_rows) != len(payload):
+        raise ValueError("invalid_supabase_response")
+    metadata = metadata_rows[0]
+    snapshot_at = _utc_datetime(
+        _timestamp(metadata.get("snapshot_at"), "snapshot_at"), "snapshot_at"
+    )
+    window_start = _utc_datetime(
+        _timestamp(metadata.get("window_start"), "window_start"), "window_start"
+    )
+    if window_start != snapshot_at - timedelta(days=window_days):
+        raise ValueError("invalid_supabase_response")
+
     cases: list[dict[str, object]] = []
-    for raw_row in payload:
+    for raw_row in case_rows:
         row = dict(raw_row)
+        if (
+            _utc_datetime(_timestamp(row.pop("snapshot_at", None), "snapshot_at"), "snapshot_at")
+            != snapshot_at
+            or _utc_datetime(
+                _timestamp(row.pop("window_start", None), "window_start"), "window_start"
+            )
+            != window_start
+        ):
+            raise ValueError("invalid_supabase_response")
+        row.pop("row_kind", None)
         controls = row.get("control_outcomes")
         if not isinstance(controls, list):
             raise ValueError("invalid_supabase_response")
@@ -166,10 +204,9 @@ def collect_live_snapshot(
         row["control_outcomes"] = sorted(set(controls))
         cases.append(row)
 
-    window_start = cutoff_at - timedelta(days=window_days)
     snapshot: dict[str, object] = {
         "version": 1,
-        "cutoff": _iso_utc(cutoff_at),
+        "snapshot_at": _iso_utc(snapshot_at),
         "window_start": _iso_utc(window_start),
         "source_status": {
             "supabase": "complete",
@@ -217,7 +254,7 @@ def sanitize_snapshot(raw: object) -> dict[str, object]:
     if chatwoot_account is not None and (
         not isinstance(chatwoot_account, int)
         or isinstance(chatwoot_account, bool)
-        or chatwoot_account <= 0
+        or chatwoot_account != _CANONICAL_CHATWOOT_ACCOUNT_ID
     ):
         _die("invalid chatwoot_account_id")
     if (chatwoot_base is None) != (chatwoot_account is None):
@@ -243,6 +280,32 @@ def sanitize_snapshot(raw: object) -> dict[str, object]:
             or chatwoot_id <= 0
         ):
             _die("invalid chatwoot_conversation_id")
+        funnel_counts = {
+            field: (
+                0
+                if case.get(field) is None
+                else _nonnegative_integer(case[field], field)
+            )
+            for field in (
+                "page_view_count",
+                "preform_opened_count",
+                "preform_submitted_count",
+                "checkout_redirected_count",
+            )
+        }
+        last_funnel_event_at = case.get("last_funnel_event_at")
+        if last_funnel_event_at is not None:
+            last_funnel_event_at = _timestamp(
+                last_funnel_event_at, "last_funnel_event_at"
+            )
+        last_funnel_event_type = case.get("last_funnel_event_type")
+        if (
+            last_funnel_event_type is not None
+            and last_funnel_event_type not in _FUNNEL_EVENT_TYPES
+        ):
+            _die("invalid last_funnel_event_type")
+        if (last_funnel_event_at is None) != (last_funnel_event_type is None):
+            _die("incomplete last funnel activity")
         cases.append(
             {
                 "safe_id": case_id.hex[:8],
@@ -266,11 +329,14 @@ def sanitize_snapshot(raw: object) -> dict[str, object]:
                 "attention_reasons": _token_list(
                     case["attention_reasons"], "attention_reasons"
                 ),
+                **funnel_counts,
+                "last_funnel_event_at": last_funnel_event_at,
+                "last_funnel_event_type": last_funnel_event_type,
             }
         )
     return {
         "version": 1,
-        "cutoff": _timestamp(raw.get("cutoff"), "cutoff"),
+        "snapshot_at": _timestamp(raw.get("snapshot_at"), "snapshot_at"),
         "window_start": _timestamp(raw.get("window_start"), "window_start"),
         "source_status": statuses,
         "chatwoot_app_base_url": chatwoot_base,
@@ -308,9 +374,9 @@ def _select_options(values: set[str]) -> str:
 
 
 def _non_terminal_age_buckets(
-    cases: list[dict[str, object]], cutoff: str
+    cases: list[dict[str, object]], snapshot_at: str
 ) -> Counter[str]:
-    cutoff_at = _utc_datetime(cutoff, "cutoff")
+    snapshot_time = _utc_datetime(snapshot_at, "snapshot_at")
     buckets: Counter[str] = Counter()
     for case in cases:
         if (
@@ -319,7 +385,7 @@ def _non_terminal_age_buckets(
         ):
             continue
         age = max(
-            cutoff_at - _utc_datetime(str(case["updated_at"]), "updated_at"),
+            snapshot_time - _utc_datetime(str(case["updated_at"]), "updated_at"),
             timedelta(0),
         )
         if age < timedelta(hours=1):
@@ -351,6 +417,26 @@ def render_dashboard(snapshot: dict[str, object]) -> str:
     chatwoot_account = snapshot.get("chatwoot_account_id")
     latest_case = max(
         (str(case["created_at"]) for case in cases), default="sin casos"
+    )
+    funnel_totals = {
+        field: sum(int(case[field]) for case in cases)
+        for field in (
+            "page_view_count",
+            "preform_opened_count",
+            "preform_submitted_count",
+            "checkout_redirected_count",
+        )
+    }
+    latest_funnel_case = max(
+        (case for case in cases if case["last_funnel_event_at"] is not None),
+        key=lambda case: str(case["last_funnel_event_at"]),
+        default=None,
+    )
+    latest_funnel = (
+        f"{latest_funnel_case['last_funnel_event_type']} · "
+        f"{latest_funnel_case['last_funnel_event_at']}"
+        if latest_funnel_case is not None
+        else "sin actividad"
     )
 
     rows: list[str] = []
@@ -400,6 +486,10 @@ def render_dashboard(snapshot: dict[str, object]) -> str:
             _card("Conversaciones vinculadas únicas", len(linked_counts)),
             _card("Compartidas por varios casos", shared),
             _card("Requieren atención", attention),
+            _card("Vistas de landing", funnel_totals["page_view_count"]),
+            _card("Preformularios abiertos", funnel_totals["preform_opened_count"]),
+            _card("Preformularios enviados", funnel_totals["preform_submitted_count"]),
+            _card("Redirecciones a checkout", funnel_totals["checkout_redirected_count"]),
         )
     )
     inbound_cases = [case for case in cases if case["case_type"] == "inbound"]
@@ -425,7 +515,7 @@ def render_dashboard(snapshot: dict[str, object]) -> str:
     health_cards = "".join(
         _card(reason, count) for reason, count in sorted(health.items())
     ) or _card("Sin razones de atención", 0)
-    age_buckets = _non_terminal_age_buckets(cases, str(snapshot["cutoff"]))
+    age_buckets = _non_terminal_age_buckets(cases, str(snapshot["snapshot_at"]))
     health_cards += "".join(
         _card(label, age_buckets[label])
         for label in (
@@ -497,11 +587,12 @@ select {{ color: var(--text); background: var(--surface); border: 1px solid var(
 </head>
 <body><main>
 <h1>Funnel Johanna</h1>
-<p>Cohorte UTC: {escape(str(snapshot['window_start']))} → {escape(str(snapshot['cutoff']))}</p>
+<p>Snapshot actual: {escape(str(snapshot['snapshot_at']))}. Ventana UTC desde {escape(str(snapshot['window_start']))}.</p>
 <div class="status">
 <span class="badge">Supabase Cloud: {escape(str(source_status['supabase']))}</span>
 <span class="badge">Chatwoot: {escape(str(source_status['chatwoot']))}</span>
 <span class="badge">Último caso durable: {escape(latest_case)}</span>
+<span class="badge">Última actividad del funnel: {escape(latest_funnel)}</span>
 <span class="badge">Contenido conversacional: no recopilado</span>
 </div>
 <section><h2>Cobertura</h2><p class="note">Estas son conversaciones vinculadas a casos; el universo conversacional completo vive en Chatwoot.</p><div class="cards">{cards}</div></section>
@@ -535,7 +626,6 @@ def _parser() -> argparse.ArgumentParser:
     source.add_argument("--snapshot", type=Path)
     source.add_argument("--live", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--cutoff")
     parser.add_argument("--window-days", type=int, default=7)
     parser.add_argument(
         "--precheckout-outbound-enabled",
@@ -551,20 +641,21 @@ def main(argv: list[str] | None = None) -> int:
         if args.live:
             if args.precheckout_outbound_enabled is None:
                 raise ValueError("missing_precheckout_outbound_gate")
-            cutoff = args.cutoff or _iso_utc(datetime.now(timezone.utc))
             chatwoot_base = os.getenv("CHATWOOT_BASE_URL", "").strip() or None
             chatwoot_account_text = os.getenv("CHATWOOT_ACCOUNT_ID", "").strip()
             chatwoot_account = int(chatwoot_account_text) if chatwoot_account_text else None
             if (chatwoot_base is None) != (chatwoot_account is None):
                 raise ValueError("incomplete_chatwoot_link_configuration")
-            if chatwoot_account is not None and chatwoot_account <= 0:
+            if (
+                chatwoot_account is not None
+                and chatwoot_account != _CANONICAL_CHATWOOT_ACCOUNT_ID
+            ):
                 raise ValueError("invalid_chatwoot_account_id")
             with httpx.Client() as client:
                 raw = collect_live_snapshot(
                     client=client,
                     supabase_base_url=os.getenv("SUPABASE_BASE_URL", ""),
                     service_role_key=os.getenv("SUPABASE_SERVICE_ROLE_KEY", ""),
-                    cutoff=cutoff,
                     window_days=args.window_days,
                     precheckout_outbound_enabled=(
                         args.precheckout_outbound_enabled == "true"

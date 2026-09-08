@@ -16,6 +16,7 @@ expected_service_role(signature) as (
         ('public.begin_precheckout_test_first_touch(text, uuid, text, bigint, bigint)'),
         ('public.begin_johanna_abandonment_one_shot(text, uuid, text, bigint, bigint, text, integer, bigint)'),
         ('public.admit_johanna_payment_failure(text, jsonb, text, text)'),
+        ('public.admit_johanna_funnel_event_v1(text, text, text, timestamp with time zone, text, text, text, text, text, text, text, text)'),
         ('public.begin_johanna_payment_failure_hotmart_auto(text, uuid, bigint, bigint)'),
         ('public.prepare_johanna_payment_failure_invalid_contact_retry(text, uuid, bigint, bigint)'),
         ('public.admit_inbound_commercial_case(text, integer, bigint, text)'),
@@ -54,6 +55,7 @@ expected_service_role(signature) as (
         ('public.prepare_operator_correlation_resolution(text, text, text, uuid, text, uuid, text, uuid)'),
         ('public.reconcile_chatwoot_opt_out_stop(bigint, bigint, bigint, text)'),
         ('public.reconcile_followup_delivery_attempt(uuid, uuid, bigint, text, text, uuid, timestamp with time zone, text, timestamp with time zone)'),
+        ('public.read_johanna_funnel_dashboard_v2(integer)'),
         ('public.record_and_finalize_followup_acceptance(uuid, uuid, text, bigint, text, text, text, timestamp with time zone)'),
         ('public.get_precheckout_delayed_one_shot_command(uuid)'),
 

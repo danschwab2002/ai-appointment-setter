@@ -29,9 +29,7 @@ def test_bundle_covers_exact_pending_tail_and_is_deterministic(tmp_path: Path) -
     assert observed[0] == "20260808000400_hotmart_purchase_safety_fences.sql"
     assert "20260812000100_supabase_function_acl_hardening.sql" in observed
     assert "20260831000100_johanna_funnel_dashboard_read.sql" in observed
-    assert observed[-1] == (
-        "20260905000100_commercial_ally_post_inbound_discount.sql"
-    )
+    assert observed[-1] == "20260907000200_johanna_funnel_observability_v1.sql"
     assert first["bundle"]["sha256"] == second["bundle"]["sha256"]
     assert first["postflight"]["sha256"] == second["postflight"]["sha256"]
     assert first["production_authorized"] is False

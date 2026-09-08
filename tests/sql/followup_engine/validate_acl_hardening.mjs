@@ -82,6 +82,7 @@ const rows = await db.query(`
       ('admit_johanna_hotmart_cart_abandonment(text,jsonb,text,text)'),
       ('admit_and_correlate_hotmart_purchase_approved(text,jsonb,text,text)'),
       ('admit_johanna_payment_failure(text,jsonb,text,text)'),
+      ('admit_johanna_funnel_event_v1(text,text,text,timestamp with time zone,text,text,text,text,text,text,text,text)'),
       ('admit_observed_lead_precheckout(text,jsonb,jsonb)'),
       ('admit_portable_observed_lead_precheckout(text,text,integer,text,jsonb,jsonb)'),
       ('admit_portable_hotmart_cart_abandonment(text,text,integer,text,jsonb,text,text)'),
@@ -129,6 +130,7 @@ const rows = await db.query(`
       ('reconcile_chatwoot_opt_out_stop(bigint,bigint,bigint,text)'),
       ('reconcile_followup_delivery_attempt(uuid,uuid,bigint,text,text,uuid,timestamp with time zone,text,timestamp with time zone)'),
       ('record_and_finalize_followup_acceptance(uuid,uuid,text,bigint,text,text,text,timestamp with time zone)'),
+      ('read_johanna_funnel_dashboard_v2(integer)'),
       ('get_precheckout_delayed_one_shot_command(uuid)'),
 
       ('list_due_hotmart_abandonment_reevaluations_v2(timestamp with time zone,integer,boolean)'),
@@ -161,8 +163,9 @@ const rows = await db.query(`
   left join expected using (signature)
 `);
 const result = rows.rows[0];
+// Historical baseline guard was `result.expected_count !== 63`; V2 adds two RPCs.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 63) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 65) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const bindingAcl = await db.query(`
