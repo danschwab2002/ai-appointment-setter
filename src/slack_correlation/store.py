@@ -11,7 +11,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import sqlite3
 import tempfile
 from typing import BinaryIO
@@ -375,7 +374,9 @@ class NotificationStore:
                 """
                 SELECT count(*) AS count
                 FROM notifications
-                WHERE state IN ('pending', 'claimed', 'request_started')
+                WHERE state IN (
+                    'pending', 'claimed', 'request_started', 'delivery_unknown'
+                )
                 """
             ).fetchone()
             assert capacity is not None
@@ -895,10 +896,22 @@ class NotificationStore:
             os.close(descriptor)
             temporary = Path(temporary_name)
             try:
-                shutil.copyfile(source_path, temporary)
                 try:
+                    with (
+                        sqlite3.connect(
+                            f"file:{source_path}?mode=ro", uri=True
+                        ) as source_connection,
+                        sqlite3.connect(temporary) as snapshot,
+                    ):
+                        source_connection.backup(snapshot)
                     _validate_database(temporary)
-                except (OSError, sqlite3.DatabaseError, RuntimeError) as exc:
+                except (
+                    OSError,
+                    sqlite3.DatabaseError,
+                    RuntimeError,
+                    TypeError,
+                    ValueError,
+                ) as exc:
                     raise RuntimeError("invalid_backup") from exc
                 os.chmod(temporary, 0o600)
                 _fsync_file(temporary)
@@ -929,9 +942,373 @@ def _deserialize_command(payload_json: str) -> NotificationCommand:
 
 
 def _validate_database(path: Path) -> None:
+    def valid_datetime(value: object) -> bool:
+        if not isinstance(value, str):
+            return False
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return False
+        return parsed.tzinfo is not None
+
+    def valid_channel(value: object) -> bool:
+        return (
+            isinstance(value, str)
+            and re.fullmatch(r"[CGD][A-Z0-9]{8,}", value) is not None
+        )
+
+    def valid_slack_ts(value: object) -> bool:
+        return (
+            isinstance(value, str)
+            and re.fullmatch(r"[0-9]{10,16}\.[0-9]{6}", value) is not None
+        )
+
+    expected_columns = {
+        "notifications": (
+            ("tenant_ref", "TEXT", 1, None, 1),
+            ("notification_id", "TEXT", 1, None, 2),
+            ("event_code", "TEXT", 1, None, 0),
+            ("dedupe_key", "TEXT", 1, None, 0),
+            ("payload_json", "TEXT", 1, None, 0),
+            ("payload_sha256", "TEXT", 1, None, 0),
+            ("state", "TEXT", 1, None, 0),
+            ("claim_owner", "TEXT", 0, None, 0),
+            ("claim_generation", "INTEGER", 1, "0", 0),
+            ("created_at", "TEXT", 1, None, 0),
+            ("updated_at", "TEXT", 1, None, 0),
+            ("request_started_at", "TEXT", 0, None, 0),
+            ("channel_id", "TEXT", 0, None, 0),
+            ("message_ts", "TEXT", 0, None, 0),
+            ("thread_ts", "TEXT", 0, None, 0),
+            ("failure_code", "TEXT", 0, None, 0),
+            ("activation_generation_started", "INTEGER", 0, None, 0),
+        ),
+        "thread_roots": (
+            ("tenant_ref", "TEXT", 1, None, 1),
+            ("subject_ref", "TEXT", 1, None, 2),
+            ("channel_id", "TEXT", 1, None, 0),
+            ("message_ts", "TEXT", 1, None, 0),
+            ("created_at", "TEXT", 1, None, 0),
+        ),
+        "connector_meta": (
+            ("singleton", "INTEGER", 0, None, 1),
+            ("last_write_probe_at", "TEXT", 1, None, 0),
+            ("activation_initialized", "INTEGER", 1, "0", 0),
+            ("activation_mode", "TEXT", 1, "'inactive'", 0),
+            ("activation_generation", "INTEGER", 1, "0", 0),
+            ("activation_budget", "INTEGER", 0, None, 0),
+            ("activation_consumed", "INTEGER", 1, "0", 0),
+            ("activation_verified", "INTEGER", 1, "0", 0),
+        ),
+        "reconciliation_audit": (
+            ("audit_id", "INTEGER", 0, None, 1),
+            ("tenant_ref", "TEXT", 1, None, 0),
+            ("notification_id", "TEXT", 1, None, 0),
+            ("decision", "TEXT", 1, None, 0),
+            ("operator_id", "TEXT", 1, None, 0),
+            ("prior_state", "TEXT", 1, None, 0),
+            ("resulting_state", "TEXT", 1, None, 0),
+            ("channel_id", "TEXT", 0, None, 0),
+            ("message_ts", "TEXT", 0, None, 0),
+            ("thread_ts", "TEXT", 0, None, 0),
+            ("decided_at", "TEXT", 1, None, 0),
+        ),
+    }
     with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as connection:
+        connection.row_factory = sqlite3.Row
         integrity = connection.execute("PRAGMA integrity_check").fetchone()
         version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        table_rows = connection.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+        tables = {str(row["name"]): str(row["sql"]) for row in table_rows}
+        if set(tables) != set(expected_columns):
+            raise RuntimeError("invalid_backup")
+        objects = {
+            (str(row["type"]), str(row["name"]), str(row["tbl_name"]))
+            for row in connection.execute(
+                """
+                SELECT type, name, tbl_name FROM sqlite_master
+                WHERE type IN ('table', 'index', 'trigger', 'view')
+                """
+            )
+        }
+        if objects != {
+            ("table", "notifications", "notifications"),
+            ("table", "thread_roots", "thread_roots"),
+            ("table", "connector_meta", "connector_meta"),
+            ("table", "reconciliation_audit", "reconciliation_audit"),
+            ("table", "sqlite_sequence", "sqlite_sequence"),
+            ("index", "sqlite_autoindex_notifications_1", "notifications"),
+            ("index", "sqlite_autoindex_notifications_2", "notifications"),
+            ("index", "sqlite_autoindex_thread_roots_1", "thread_roots"),
+        }:
+            raise RuntimeError("invalid_backup")
+        for table, expected in expected_columns.items():
+            actual = tuple(
+                (str(row["name"]), str(row["type"]), int(row["notnull"]), row["dflt_value"], int(row["pk"]))
+                for row in connection.execute(f"PRAGMA table_info({table})")
+            )
+            if actual != expected:
+                raise RuntimeError("invalid_backup")
+        unique_indexes: dict[str, set[tuple[str, ...]]] = {}
+        for table in expected_columns:
+            unique_indexes[table] = {
+                tuple(
+                    str(column["name"])
+                    for column in connection.execute(
+                        f"PRAGMA index_info({row['name']})"
+                    )
+                )
+                for row in connection.execute(f"PRAGMA index_list({table})")
+                if bool(row["unique"])
+            }
+        if unique_indexes != {
+            "notifications": {
+                ("tenant_ref", "notification_id"),
+                ("tenant_ref", "event_code", "dedupe_key"),
+            },
+            "thread_roots": {("tenant_ref", "subject_ref")},
+            "connector_meta": set(),
+            "reconciliation_audit": set(),
+        }:
+            raise RuntimeError("invalid_backup")
+        foreign_keys = {
+            (
+                int(row["id"]),
+                int(row["seq"]),
+                str(row["table"]),
+                str(row["from"]),
+                str(row["to"]),
+                str(row["on_update"]),
+                str(row["on_delete"]),
+                str(row["match"]),
+            )
+            for row in connection.execute("PRAGMA foreign_key_list(reconciliation_audit)")
+        }
+        if foreign_keys != {
+            (0, 0, "notifications", "tenant_ref", "tenant_ref", "NO ACTION", "NO ACTION", "NONE"),
+            (0, 1, "notifications", "notification_id", "notification_id", "NO ACTION", "NO ACTION", "NONE"),
+        }:
+            raise RuntimeError("invalid_backup")
+        normalized_sql = {
+            table: "".join(sql.lower().split()) for table, sql in tables.items()
+        }
+        required_constraints = {
+            "notifications": "check(statein('pending','claimed','request_started','accepted','rejected','delivery_unknown'))",
+            "connector_meta": "check(singleton=1)",
+            "reconciliation_audit": "check(decisionin('confirm_delivered','confirm_not_delivered'))",
+        }
+        if any(
+            fragment not in normalized_sql[table]
+            for table, fragment in required_constraints.items()
+        ):
+            raise RuntimeError("invalid_backup")
+        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            raise RuntimeError("invalid_backup")
+        meta_rows = connection.execute("SELECT * FROM connector_meta").fetchall()
+        if len(meta_rows) != 1 or type(meta_rows[0]["singleton"]) is not int or meta_rows[0]["singleton"] != 1:
+            raise RuntimeError("invalid_backup")
+        meta = meta_rows[0]
+        if any(
+            type(meta[field]) is not int
+            for field in (
+                "activation_initialized",
+                "activation_generation",
+                "activation_consumed",
+                "activation_verified",
+            )
+        ) or (meta["activation_budget"] is not None and type(meta["activation_budget"]) is not int):
+            raise RuntimeError("invalid_backup")
+        initialized = meta["activation_initialized"]
+        mode = str(meta["activation_mode"])
+        generation = meta["activation_generation"]
+        budget = meta["activation_budget"]
+        consumed = meta["activation_consumed"]
+        verified = meta["activation_verified"]
+        if not valid_datetime(meta["last_write_probe_at"]):
+            raise RuntimeError("invalid_backup")
+        if initialized not in {0, 1} or verified not in {0, 1} or generation < 0:
+            raise RuntimeError("invalid_backup")
+        if mode not in {"inactive", "one_shot", "continuous"}:
+            raise RuntimeError("invalid_backup")
+        if not initialized and (mode != "inactive" or generation != 0 or budget is not None or consumed != 0 or verified):
+            raise RuntimeError("invalid_backup")
+        if initialized and mode == "one_shot" and (budget != 1 or consumed not in {0, 1}):
+            raise RuntimeError("invalid_backup")
+        if initialized and mode != "one_shot" and (budget is not None or consumed != 0 or verified):
+            raise RuntimeError("invalid_backup")
+        notification_rows: list[tuple[sqlite3.Row, NotificationCommand]] = []
+        for row in connection.execute("SELECT * FROM notifications"):
+            payload = str(row["payload_json"])
+            if hashlib.sha256(payload.encode("utf-8")).hexdigest() != row["payload_sha256"]:
+                raise RuntimeError("invalid_backup")
+            try:
+                command = _deserialize_command(payload)
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise RuntimeError("invalid_backup") from exc
+            if command.event_id != row["notification_id"] or command.event_code != row["event_code"] or command.dedupe_key != row["dedupe_key"]:
+                raise RuntimeError("invalid_backup")
+            notification_rows.append((row, command))
+            state = str(row["state"])
+            claim_owner = row["claim_owner"]
+            if (
+                row["tenant_ref"] not in {"johanna", "att1"}
+                or type(row["claim_generation"]) is not int
+                or row["claim_generation"] < 0
+            ):
+                raise RuntimeError("invalid_backup")
+            if state in {"claimed", "request_started"} and claim_owner is None:
+                raise RuntimeError("invalid_backup")
+            if state != "pending" and row["claim_generation"] == 0:
+                raise RuntimeError("invalid_backup")
+            started_generation = row["activation_generation_started"]
+            if started_generation is not None and (
+                type(started_generation) is not int
+                or started_generation < 1
+                or started_generation > generation
+            ):
+                raise RuntimeError("invalid_backup")
+            if state not in {"claimed", "request_started"} and claim_owner is not None:
+                raise RuntimeError("invalid_backup")
+            if claim_owner is not None and _TENANT_REF.fullmatch(str(claim_owner)) is None:
+                raise RuntimeError("invalid_backup")
+            if not valid_datetime(row["created_at"]) or not valid_datetime(row["updated_at"]):
+                raise RuntimeError("invalid_backup")
+            if row["request_started_at"] is not None and not valid_datetime(row["request_started_at"]):
+                raise RuntimeError("invalid_backup")
+            if state in {"pending", "claimed"} and any(
+                row[field] is not None
+                for field in (
+                    "request_started_at",
+                    "channel_id",
+                    "message_ts",
+                    "thread_ts",
+                    "failure_code",
+                    "activation_generation_started",
+                )
+            ):
+                raise RuntimeError("invalid_backup")
+            if state == "request_started" and (
+                row["request_started_at"] is None
+                or row["activation_generation_started"] is None
+                or any(row[field] is not None for field in ("channel_id", "message_ts", "thread_ts", "failure_code"))
+            ):
+                raise RuntimeError("invalid_backup")
+            if state == "accepted" and (
+                row["request_started_at"] is None
+                or not valid_channel(row["channel_id"])
+                or not valid_slack_ts(row["message_ts"])
+                or (row["thread_ts"] is not None and not valid_slack_ts(row["thread_ts"]))
+                or (command.subject_ref is None and row["thread_ts"] is not None)
+                or row["failure_code"] is not None
+            ):
+                raise RuntimeError("invalid_backup")
+            if state in {"rejected", "delivery_unknown"} and (
+                row["request_started_at"] is None
+                or row["failure_code"] is None
+                or any(row[field] is not None for field in ("channel_id", "message_ts", "thread_ts"))
+            ):
+                raise RuntimeError("invalid_backup")
+            if (
+                row["failure_code"] is not None
+                and _MACHINE_FAILURE.fullmatch(str(row["failure_code"])) is None
+            ):
+                raise RuntimeError("invalid_backup")
+        if initialized and mode == "one_shot":
+            generation_rows = [
+                row
+                for row, _command in notification_rows
+                if row["activation_generation_started"] == generation
+            ]
+            if consumed != len(generation_rows) or len(generation_rows) > 1:
+                raise RuntimeError("invalid_backup")
+            if verified and (
+                len(generation_rows) != 1 or generation_rows[0]["state"] != "accepted"
+            ):
+                raise RuntimeError("invalid_backup")
+
+        thread_roots = {
+            (str(row["tenant_ref"]), str(row["subject_ref"])): row
+            for row in connection.execute("SELECT * FROM thread_roots")
+        }
+        accepted_roots: set[tuple[str, str, str, str]] = set()
+        for row, command in notification_rows:
+            if row["state"] != "accepted" or command.subject_ref is None:
+                continue
+            root = thread_roots.get((str(row["tenant_ref"]), command.subject_ref))
+            if root is None or root["channel_id"] != row["channel_id"]:
+                raise RuntimeError("invalid_backup")
+            if row["message_ts"] == root["message_ts"]:
+                if row["thread_ts"] is not None:
+                    raise RuntimeError("invalid_backup")
+                accepted_roots.add(
+                    (
+                        str(row["tenant_ref"]),
+                        command.subject_ref,
+                        str(row["channel_id"]),
+                        str(row["message_ts"]),
+                    )
+                )
+            elif row["thread_ts"] != root["message_ts"]:
+                raise RuntimeError("invalid_backup")
+        for (tenant_ref, subject_ref), root in thread_roots.items():
+            if (
+                tenant_ref not in {"johanna", "att1"}
+                or not valid_channel(root["channel_id"])
+                or not valid_slack_ts(root["message_ts"])
+                or not valid_datetime(root["created_at"])
+                or (
+                    tenant_ref,
+                    subject_ref,
+                    str(root["channel_id"]),
+                    str(root["message_ts"]),
+                )
+                not in accepted_roots
+            ):
+                raise RuntimeError("invalid_backup")
+
+        notifications_by_id = {
+            (str(row["tenant_ref"]), str(row["notification_id"])): row
+            for row, _command in notification_rows
+        }
+        for audit in connection.execute("SELECT * FROM reconciliation_audit"):
+            notification = notifications_by_id.get(
+                (str(audit["tenant_ref"]), str(audit["notification_id"]))
+            )
+            if (
+                notification is None
+                or audit["prior_state"] != "delivery_unknown"
+                or re.fullmatch(
+                    r"[a-z0-9][a-z0-9_-]{0,39}", str(audit["operator_id"])
+                )
+                is None
+                or not valid_datetime(audit["decided_at"])
+            ):
+                raise RuntimeError("invalid_backup")
+            if audit["decision"] == "confirm_delivered":
+                if (
+                    audit["resulting_state"] != "accepted"
+                    or notification["state"] != "accepted"
+                    or not valid_channel(audit["channel_id"])
+                    or not valid_slack_ts(audit["message_ts"])
+                    or (
+                        audit["thread_ts"] is not None
+                        and not valid_slack_ts(audit["thread_ts"])
+                    )
+                    or notification["channel_id"] != audit["channel_id"]
+                    or notification["message_ts"] != audit["message_ts"]
+                    or notification["thread_ts"] != audit["thread_ts"]
+                ):
+                    raise RuntimeError("invalid_backup")
+            elif (
+                audit["resulting_state"] != "pending"
+                or any(
+                    audit[field] is not None
+                    for field in ("channel_id", "message_ts", "thread_ts")
+                )
+            ):
+                raise RuntimeError("invalid_backup")
     if integrity is None or integrity[0] != "ok" or version != 2:
         raise RuntimeError("invalid_backup")
 
