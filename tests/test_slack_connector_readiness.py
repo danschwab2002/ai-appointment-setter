@@ -49,11 +49,13 @@ class _SlackRecoversAfterStartup:
         raise AssertionError("no message should be sent")
 
 
-def test_readiness_fails_after_the_outbound_worker_halts(tmp_path) -> None:
+def test_readiness_stays_halted_until_delivery_unknown_is_reconciled(tmp_path) -> None:
     now = [0.0]
     settings = SlackConnectorSettings(
         ingress_enabled=True,
         notifications_enabled=True,
+        activation_mode="one_shot",
+        activation_generation=1,
         tenant_tokens={"johanna": "j" * 32, "att1": "a" * 32},
         bot_token="xoxb-test",
         team_id="T00000000",
@@ -100,9 +102,10 @@ def test_readiness_fails_after_the_outbound_worker_halts(tmp_path) -> None:
     assert ready.status_code == 503
     assert ready.json()["mode"] == "outbound_halted"
     assert ready.json()["worker_running"] is False
-    assert recovered.status_code == 200
-    assert recovered.json()["mode"] == "operational"
-    assert recovered.json()["worker_running"] is True
+    assert recovered.status_code == 503
+    assert recovered.json()["mode"] == "outbound_halted"
+    assert recovered.json()["worker_running"] is False
+    assert recovered.json()["ledger"]["delivery_unknown"] == 1
 
 
 def test_readiness_rechecks_slack_auth_after_the_cache_window() -> None:
@@ -135,6 +138,8 @@ def test_worker_starts_after_initial_slack_auth_recovers(tmp_path) -> None:
     slack = _SlackRecoversAfterStartup()
     settings = SlackConnectorSettings(
         notifications_enabled=True,
+        activation_mode="one_shot",
+        activation_generation=1,
         bot_token="xoxb-test",
         team_id="T00000000",
         channel_id="C0C0YEACVT2",

@@ -27,6 +27,7 @@ _TEAM_ID = re.compile(r"^T[A-Z0-9]{8,}$")
 _CHANNEL_ID = re.compile(r"^C[A-Z0-9]{8,}$")
 _INTERNAL_TOKEN = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 _WORKER_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
+_SLACK_TS = re.compile(r"^[0-9]{10,16}\.[0-9]{6}$")
 _ALLOWED_TENANTS = {"johanna", "att1"}
 _MAX_BODY_BYTES = 8192
 
@@ -56,6 +57,10 @@ class SlackConnectorSettings:
     worker_id: str = "slack-worker-1"
     poll_interval_seconds: float = 1.0
     max_nonterminal_notifications: int = 10_000
+    activation_mode: str = "inactive"
+    activation_generation: int = 0
+    operator_bearer_token: str | None = None
+    storage_preflight_enabled: bool = False
 
     @classmethod
     def from_env(cls) -> "SlackConnectorSettings":
@@ -84,6 +89,15 @@ class SlackConnectorSettings:
                 minimum=1,
                 maximum=100_000,
             ),
+            activation_mode=os.getenv("SLACK_ACTIVATION_MODE", "inactive").strip(),
+            activation_generation=_env_bounded_int(
+                "SLACK_ACTIVATION_GENERATION",
+                default=0,
+                minimum=0,
+                maximum=2_147_483_647,
+            ),
+            operator_bearer_token=_env_value("SLACK_OPERATOR_BEARER_TOKEN"),
+            storage_preflight_enabled=_env_flag("SLACK_STORAGE_PREFLIGHT_ENABLED"),
         )
 
 
@@ -159,6 +173,19 @@ def _validate_settings(settings: SlackConnectorSettings) -> None:
         raise ValueError("invalid_notification_capacity")
     if _WORKER_ID.fullmatch(settings.worker_id) is None:
         raise ValueError("invalid_worker_id")
+    if settings.activation_mode not in {"inactive", "one_shot", "continuous"}:
+        raise ValueError("invalid_activation_mode")
+    if settings.activation_generation < 0 or (
+        settings.activation_mode != "inactive" and settings.activation_generation < 1
+    ):
+        raise ValueError("invalid_activation_generation")
+    if settings.notifications_enabled and settings.activation_mode == "inactive":
+        raise ValueError("explicit_activation_required")
+    if settings.operator_bearer_token is not None and (
+        _INTERNAL_TOKEN.fullmatch(settings.operator_bearer_token) is None
+        or settings.operator_bearer_token in settings.tenant_tokens.values()
+    ):
+        raise ValueError("invalid_operator_token_configuration")
     if settings.ingress_enabled:
         if set(settings.tenant_tokens) != _ALLOWED_TENANTS:
             raise ValueError("tenant_token_configuration_incomplete")
@@ -188,6 +215,10 @@ def _validate_settings(settings: SlackConnectorSettings) -> None:
             raise ValueError("invalid_slack_configuration")
     if settings.notifications_enabled and not settings.storage_path:
         raise ValueError("storage_path_required")
+    if settings.operator_bearer_token is not None and (
+        settings.channel_id is None or _CHANNEL_ID.fullmatch(settings.channel_id) is None
+    ):
+        raise ValueError("operator_channel_required")
 
 
 def create_app(
@@ -238,12 +269,23 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         nonlocal runtime_client, worker
-        requires_storage = settings.ingress_enabled or settings.notifications_enabled
+        requires_storage = (
+            settings.storage_preflight_enabled
+            or settings.ingress_enabled
+            or settings.notifications_enabled
+            or settings.operator_bearer_token is not None
+        )
         if requires_storage:
             try:
                 persistence.acquire_instance_lock()
                 state["instance_locked"] = True
                 await _to_thread(persistence.initialize)
+                if settings.activation_mode != "inactive":
+                    await _to_thread(
+                        persistence.configure_activation,
+                        mode=settings.activation_mode,
+                        generation=settings.activation_generation,
+                    )
                 state["storage_ready"] = True
             except Exception:
                 state["storage_ready"] = False
@@ -286,7 +328,12 @@ def create_app(
 
     @app.get("/ready")
     async def ready() -> JSONResponse:
-        requires_storage = settings.ingress_enabled or settings.notifications_enabled
+        requires_storage = (
+            settings.storage_preflight_enabled
+            or settings.ingress_enabled
+            or settings.notifications_enabled
+            or settings.operator_bearer_token is not None
+        )
         needs_slack = settings.connectivity_check_enabled or settings.notifications_enabled
         if requires_storage and state["instance_locked"]:
             try:
@@ -334,6 +381,33 @@ def create_app(
             mode = "connectivity_verified"
         elif needs_slack:
             mode = "connectivity_failed"
+        inventory = {
+            "pending": 0,
+            "claimed": 0,
+            "request_started": 0,
+            "delivery_unknown": 0,
+        }
+        activation: dict[str, object] = {
+            "mode": "unavailable",
+            "generation": 0,
+            "budget": None,
+            "consumed": 0,
+            "verified": False,
+        }
+        if state["storage_ready"]:
+            try:
+                inventory = await _to_thread(persistence.state_inventory)
+                activation = await _to_thread(persistence.activation_status)
+            except Exception:
+                state["storage_ready"] = False
+                ready_now = False
+                mode = "storage_unavailable"
+        if settings.notifications_enabled and inventory["delivery_unknown"]:
+            if worker is not None:
+                worker.halt("delivery_unknown")
+            worker_healthy = False
+            ready_now = False
+            mode = "outbound_halted"
         payload = {
             "status": "ok" if ready_now else "not_ready",
             "mode": mode,
@@ -348,6 +422,8 @@ def create_app(
             "storage_ready": state["storage_ready"],
             "tenant_count": len(settings.tenant_tokens),
             "worker_running": state["worker_running"] and worker_healthy,
+            "ledger": inventory,
+            "activation": activation,
         }
         return JSONResponse(status_code=200 if ready_now else 503, content=payload)
 
@@ -453,6 +529,99 @@ def create_app(
             },
         )
 
+    @app.post("/internal/v1/operator/reconcile-delivery")
+    async def reconcile_delivery(request: Request) -> JSONResponse:
+        if settings.operator_bearer_token is None:
+            return JSONResponse(status_code=404, content={"detail": "not_found"})
+        if not _authenticate_operator(
+            request.headers.get("authorization"), settings.operator_bearer_token
+        ):
+            return JSONResponse(status_code=401, content={"detail": "unauthorized"})
+        if not state["storage_ready"]:
+            return JSONResponse(status_code=503, content={"detail": "storage_unavailable"})
+        if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
+            return JSONResponse(status_code=415, content={"detail": "unsupported_media_type"})
+        try:
+            body = await _read_bounded_body(request, limit=2048)
+            payload = json.loads(body)
+            if not isinstance(payload, dict):
+                raise ValueError
+            decision = payload.get("decision")
+            allowed = {"decision", "tenant_ref", "notification_id"}
+            if decision == "confirm_delivered":
+                allowed |= {"message_ts", "thread_ts"}
+            if set(payload) != allowed or decision not in {
+                "confirm_delivered",
+                "confirm_not_delivered",
+            }:
+                raise ValueError
+            tenant_ref = payload["tenant_ref"]
+            notification_id = payload["notification_id"]
+            if tenant_ref not in _ALLOWED_TENANTS or str(UUID(notification_id)) != notification_id:
+                raise ValueError
+            message_ts = payload.get("message_ts")
+            thread_ts = payload.get("thread_ts")
+            if decision == "confirm_delivered" and (
+                not isinstance(message_ts, str)
+                or _SLACK_TS.fullmatch(message_ts) is None
+                or (thread_ts is not None and (
+                    not isinstance(thread_ts, str) or _SLACK_TS.fullmatch(thread_ts) is None
+                ))
+            ):
+                raise ValueError
+        except (PayloadTooLarge, ValueError, KeyError, TypeError, AttributeError):
+            return JSONResponse(status_code=400, content={"detail": "invalid_reconciliation"})
+        assert settings.channel_id is not None
+        try:
+            result = await _to_thread(
+                persistence.reconcile_delivery_unknown,
+                tenant_ref=tenant_ref,
+                notification_id=notification_id,
+                decision=decision,
+                operator_id="operator",
+                channel_id=settings.channel_id,
+                message_ts=message_ts,
+                thread_ts=thread_ts,
+            )
+        except RuntimeError:
+            return JSONResponse(status_code=409, content={"detail": "reconciliation_conflict"})
+        if worker is not None and state["connectivity_verified"]:
+            worker.resume_after_verified_connectivity()
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "reconciled",
+                "notification_id": result.notification_id,
+                "delivery_state": result.state,
+            },
+        )
+
+    @app.post("/internal/v1/operator/verify-activation")
+    async def verify_activation(request: Request) -> JSONResponse:
+        if settings.operator_bearer_token is None:
+            return JSONResponse(status_code=404, content={"detail": "not_found"})
+        if not _authenticate_operator(
+            request.headers.get("authorization"), settings.operator_bearer_token
+        ):
+            return JSONResponse(status_code=401, content={"detail": "unauthorized"})
+        try:
+            payload = json.loads(await _read_bounded_body(request, limit=256))
+            if set(payload) != {"generation"} or isinstance(payload["generation"], bool):
+                raise ValueError
+            generation = int(payload["generation"])
+            if generation != payload["generation"]:
+                raise ValueError
+            await _to_thread(
+                persistence.mark_activation_verified,
+                generation=generation,
+                operator_id="operator",
+            )
+        except (PayloadTooLarge, ValueError, TypeError, KeyError):
+            return JSONResponse(status_code=400, content={"detail": "invalid_activation_verification"})
+        except RuntimeError:
+            return JSONResponse(status_code=409, content={"detail": "activation_not_verifiable"})
+        return JSONResponse(status_code=200, content={"status": "verified", "generation": generation})
+
     return app
 
 
@@ -474,6 +643,14 @@ def _authenticate_tenant(
         if compare_digest(supplied, expected):
             matched = tenant_ref
     return matched
+
+
+def _authenticate_operator(authorization: str | None, expected: str) -> bool:
+    return (
+        authorization is not None
+        and authorization.startswith("Bearer ")
+        and compare_digest(authorization[7:], expected)
+    )
 
 
 def _parse_command(body: bytes) -> NotificationCommand:

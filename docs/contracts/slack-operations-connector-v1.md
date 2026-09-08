@@ -34,6 +34,10 @@ mensaje desde el catálogo versionado.
 | `SLACK_WORKER_ID` | no | identidad opaca del único worker |
 | `SLACK_POLL_INTERVAL_SECONDS` | no | entre `1` y `60` segundos; también limita la tasa por canal |
 | `SLACK_MAX_NONTERMINAL_NOTIFICATIONS` | no | capacidad durable entre `1` y `100000`; default `10000` |
+| `SLACK_STORAGE_PREFLIGHT_ENABLED` | despliegue | `true` valida/abre el volumen aun con ingreso y efectos apagados |
+| `SLACK_ACTIVATION_MODE` | salida | `inactive`, `one_shot` o `continuous` |
+| `SLACK_ACTIVATION_GENERATION` | salida | entero durable monotónico; positivo fuera de `inactive` |
+| `SLACK_OPERATOR_BEARER_TOKEN` | reconciliación | secreto distinto de ambos bearers productores |
 
 Los booleanos sólo aceptan `true` o `false`. Una combinación incompleta impide
 arrancar. La presencia de credenciales no habilita efectos.
@@ -123,6 +127,9 @@ pending
 - Una caída, cancelación, timeout, error de transporte o respuesta no verificable
   después de `request_started` termina en `delivery_unknown` y nunca se reintenta
   automáticamente.
+- Cualquier `delivery_unknown` durable detiene globalmente el worker, incluso tras
+  restart o revalidación de `auth.test`; sólo una reconciliación explícita puede
+  desbloquear la salida.
 - Un rechazo explícito `ok=false` de Slack termina en `rejected`; tampoco se
   reintenta automáticamente.
 - `accepted` exige canal y `ts` exactamente válidos y se finaliza junto con el
@@ -146,6 +153,9 @@ bloques elegidos por el caller.
 - `GET /health` prueba vida del proceso.
 - `GET /ready` es `200` sólo si la combinación activa tiene almacenamiento,
   identidad Slack verificada y worker corriendo.
+- `ledger` expone exclusivamente los conteos `pending`, `claimed`,
+  `request_started` y `delivery_unknown`; no expone payloads ni identidades.
+- `activation` expone modo, generación, presupuesto, consumo y verificación.
 - `mode=inactive`: sin ingreso ni efectos.
 - `mode=admission_only`: persiste, pero no publica.
 - `mode=connectivity_verified`: `auth.test` coincidió; no implica publicación.
@@ -154,7 +164,33 @@ bloques elegidos por el caller.
 
 Los logs no contienen cuerpos, credenciales, firmas ni errores crudos de Slack.
 
-## 7. Fuera de V1
+## 7. Activación y reconciliación operator-only
+
+`one_shot` asigna presupuesto durable `1` a una generación. El consumo ocurre en
+la misma transacción que `request_started`, por lo que un restart no repone el
+presupuesto. Reutilizar una generación con otro modo o retrocederla falla
+cerrado. Una generación nueva también se rechaza mientras exista cualquier
+`claimed`, `request_started` o `delivery_unknown`. `continuous` sólo acepta una generación nueva después de que el operador
+haya verificado una generación `one_shot` consumida mediante
+`POST /internal/v1/operator/verify-activation`.
+
+`POST /internal/v1/operator/reconcile-delivery` exige el bearer operador y un
+schema cerrado. `confirm_delivered` requiere `tenant_ref`, UUID,
+`message_ts` y `thread_ts` opcional; el canal proviene exclusivamente de
+`SLACK_CHANNEL_ID`. `confirm_not_delivered` no acepta evidencia Slack, audita la
+decisión y reencola de forma segura; si corresponde a la generación one-shot
+vigente, repone su presupuesto. Ambas decisiones se registran en el audit ledger.
+Los bearers productores no autorizan ninguna ruta operador.
+
+## 8. Backup y restore
+
+`python -m slack_correlation.store backup` usa backup online consistente de
+SQLite, valida integridad/schema y publica atómicamente con permisos `0600`.
+`restore` exige destino offline mediante el mismo instance lock, valida antes de
+reemplazar y usa copia temporal, `fsync` y rename atómico. Véase el runbook
+operativo de backup/restore.
+
+## 9. Fuera de V1
 
 Interactivity, botones, modales, Events API, Incoming Webhooks y Socket Mode
 permanecen apagados. La resolución interactiva exige firma Slack, replay durable,
