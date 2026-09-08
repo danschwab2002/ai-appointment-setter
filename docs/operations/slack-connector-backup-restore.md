@@ -5,7 +5,7 @@
 
 ## Backup online consistente
 
-El backup usa la API online de SQLite, valida `integrity_check=ok` y `user_version=2`, publica mediante rename atómico, fuerza `fsync` del archivo y directorio y deja permisos `0600`.
+El backup usa la API online de SQLite, valida `integrity_check=ok`, `user_version=2`, el esquema exacto y los invariantes del ledger, publica mediante rename atómico, fuerza `fsync` del archivo y directorio y deja permisos `0600`.
 
 Dentro del contenedor, con el servicio activo:
 
@@ -30,7 +30,7 @@ python -m slack_correlation.store restore \
   --destination /app/data/slack-connector.sqlite3
 ```
 
-El restore rechaza un backup corrupto o de otra versión antes de reemplazar el destino y rechaza un destino cuyo instance lock esté tomado. La copia se valida, se fuerza a disco y reemplaza el destino mediante rename atómico. Un fallo previo al rename conserva el ledger anterior.
+El restore obtiene una instantánea consistente mediante la API de backup SQLite, incluyendo estado confirmado en WAL. Rechaza archivos corruptos, otras versiones, objetos o constraints inesperados y estados lógicos imposibles antes de reemplazar el destino; también rechaza un destino cuyo instance lock esté tomado. La instantánea se fuerza a disco y reemplaza el destino mediante rename atómico. Un fallo previo al rename conserva el ledger anterior.
 
 5. Arrancar exactamente una réplica con efectos inactivos.
 6. Exigir `/ready` con `storage_ready=true` y revisar sólo los conteos sanitizados.

@@ -92,3 +92,19 @@ def test_http_capacity_failure_is_retryable_and_does_not_mark_storage_down(
     assert full.json() == {"detail": "queue_capacity_exhausted"}
     assert full.headers["retry-after"] == "30"
     assert ready.status_code == 200
+
+
+def test_delivery_unknown_consumes_durable_capacity(tmp_path) -> None:
+    store = NotificationStore(tmp_path / "connector.sqlite3")
+    store.initialize()
+    store.configure_activation(mode="one_shot", generation=1)
+    first = _command("11111111-1111-4111-8111-111111111111", "1" * 64)
+    second = _command("22222222-2222-4222-8222-222222222222", "2" * 64)
+    store.admit(tenant_ref="johanna", command=first, max_nonterminal=1)
+    claim = store.claim_next(worker_id="worker-1")
+    assert claim is not None
+    store.mark_request_started(claim)
+    store.finalize_delivery_unknown(claim, failure_code="slack_delivery_unknown")
+
+    with pytest.raises(NotificationCapacityError):
+        store.admit(tenant_ref="att1", command=second, max_nonterminal=1)

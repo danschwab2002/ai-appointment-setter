@@ -33,7 +33,7 @@ mensaje desde el catálogo versionado.
 | `SLACK_STORAGE_PATH` | para ingreso o salida | dentro del volumen persistente; default `/app/data/slack-connector.sqlite3` |
 | `SLACK_WORKER_ID` | no | identidad opaca del único worker |
 | `SLACK_POLL_INTERVAL_SECONDS` | no | entre `1` y `60` segundos; también limita la tasa por canal |
-| `SLACK_MAX_NONTERMINAL_NOTIFICATIONS` | no | capacidad durable entre `1` y `100000`; default `10000` |
+| `SLACK_MAX_NONTERMINAL_NOTIFICATIONS` | no | capacidad durable entre `1` y `100000`; cuenta `pending`, `claimed`, `request_started` y `delivery_unknown`; default `10000` |
 | `SLACK_STORAGE_PREFLIGHT_ENABLED` | despliegue | `true` valida/abre el volumen aun con ingreso y efectos apagados |
 | `SLACK_ACTIVATION_MODE` | salida | `inactive`, `one_shot` o `continuous` |
 | `SLACK_ACTIVATION_GENERATION` | salida | entero durable monotónico; positivo fuera de `inactive` |
@@ -187,8 +187,10 @@ Los bearers productores no autorizan ninguna ruta operador.
 `python -m slack_correlation.store backup` usa backup online consistente de
 SQLite, valida integridad/schema y publica atómicamente con permisos `0600`.
 `restore` exige destino offline mediante el mismo instance lock, valida antes de
-reemplazar y usa copia temporal, `fsync` y rename atómico. Véase el runbook
-operativo de backup/restore.
+reemplazar y usa copia temporal, `fsync` y rename atómico. La validación exige las
+tablas, columnas, claves, índices únicos, checks, foreign keys, singleton de
+activación e invariantes lógicos exactos de V2; `user_version=2` por sí solo no es
+suficiente. Véase el runbook operativo de backup/restore.
 
 ## 9. Fuera de V1
 
