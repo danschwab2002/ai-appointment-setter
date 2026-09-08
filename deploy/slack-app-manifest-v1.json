@@ -1,0 +1,35 @@
+{
+  "_metadata": {
+    "major_version": 2,
+    "minor_version": 1
+  },
+  "display_information": {
+    "name": "SupportMagician Ops",
+    "description": "Avisos operativos y revisiones humanas de SupportMagician.",
+    "background_color": "#4A154B"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "SupportMagician Ops",
+      "always_online": false
+    }
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "chat:write"
+      ]
+    }
+  },
+  "settings": {
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false,
+    "incoming_webhooks": {
+      "incoming_webhooks_enabled": false
+    },
+    "interactivity": {
+      "is_enabled": false
+    }
+  }
+}
