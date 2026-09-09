@@ -49,11 +49,15 @@ arrancar. La presencia de credenciales no habilita efectos.
 Cabecera obligatoria:
 
 ```http
-Authorization: Bearer <credencial exclusiva del bridge>
+Authorization: Bearer <secreto exclusivo del bridge>
+X-Expected-Tenant-Ref: <tenant canónico esperado por el bridge>
 Content-Type: application/json
 ```
 
-El bearer se valida antes de leer el cuerpo. El cuerpo máximo es 8192 bytes y
+El bearer y `X-Expected-Tenant-Ref` se validan antes de leer o persistir el
+cuerpo. El tenant esperado debe coincidir exactamente con el tenant derivado del
+bearer; la cabecera no selecciona tenant ni sustituye la autenticación. El cuerpo
+máximo es 8192 bytes y
 sólo admite estas claves:
 
 ```json
@@ -91,11 +95,29 @@ Respuestas:
 | `200` | replay exacto; no crea ni publica otro aviso |
 | `400` | esquema o valor inválido |
 | `401` | bearer ausente o inválido |
+| `403` | attestation de tenant ausente o distinta del bearer |
 | `404` | ingreso deshabilitado |
 | `409` | `event_id` o dedupe reutilizado con semántica distinta |
 | `413` | cuerpo demasiado grande |
 
+Las respuestas `200/202` incluyen `tenant_ref`, `notification_id` y
+`delivery_state`; el productor exige que `tenant_ref` coincida con el esperado.
 La respuesta no incluye el payload ni secretos.
+
+### Productor durable desde los bridges
+
+Johanna y cada runtime portable proyectan correlaciones no resueltas desde
+`hotmart_purchase_intent_correlations` mediante
+`slack_correlation_notification_projection`. El claim está limitado a una fila,
+lease de 30–900 segundos y fencing por token/generación. Un runtime portable
+también presenta la versión exacta de su binding activo en cada claim.
+
+Los IDs y dedupe keys enviados al conector se derivan de forma determinista del
+evento durable. Un resultado de admisión incierto se reintenta; rechazo explícito,
+conflicto semántico o tenant mismatch detienen el worker y degradan `/ready`.
+Una finalización Supabase incierta no repite ciegamente Slack: deja vencer el
+lease y recupera mediante el mismo ID idempotente. La proyección es default-off y
+requiere URL, bearer y worker ID completos.
 
 ### `GET /internal/v1/notifications/{event_id}`
 

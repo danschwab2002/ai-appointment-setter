@@ -16,6 +16,7 @@ from typing import Any
 import httpx
 
 from bridge.commercial_ally import CommercialAllyConfig
+from bridge.slack_projection import SlackCorrelationNotificationClaim
 
 
 class SupabaseError(RuntimeError):
@@ -2021,6 +2022,152 @@ class SupabaseClient:
             candidate_count=candidate_count,
             manual_handoff_required=manual_handoff_required,
         )
+
+    async def claim_slack_correlation_notifications(
+        self,
+        *,
+        tenant_ref: str,
+        funnel_ref: str,
+        worker_id: str,
+        limit: int,
+        lease_seconds: int,
+        binding_version: int | None,
+    ) -> list[SlackCorrelationNotificationClaim]:
+        operation = "slack_correlation_projection_claim"
+        if isinstance(limit, bool) or limit != 1:
+            raise ValueError("limit must be exactly 1")
+        if (
+            isinstance(lease_seconds, bool)
+            or not isinstance(lease_seconds, int)
+            or lease_seconds < 30
+            or lease_seconds > 900
+        ):
+            raise ValueError("lease_seconds must be between 30 and 900")
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/claim_slack_correlation_notifications",
+            content=json.dumps(
+                {
+                    "p_tenant_ref": tenant_ref,
+                    "p_funnel_ref": funnel_ref,
+                    "p_worker_id": worker_id,
+                    "p_limit": limit,
+                    "p_lease_seconds": lease_seconds,
+                    "p_binding_version": binding_version,
+                }
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        expected_keys = {
+            "source_event_id",
+            "outcome",
+            "reason_code",
+            "candidate_count",
+            "occurred_at",
+            "claim_token",
+            "lease_generation",
+        }
+        claims: list[SlackCorrelationNotificationClaim] = []
+        for row in rows:
+            if set(row) != expected_keys:
+                raise SupabaseError(f"{operation}_invalid")
+            outcome = _required_enum(
+                row,
+                "outcome",
+                {"unmatched", "ambiguous", "conflict"},
+                operation=operation,
+            )
+            source_event_id = _required_uuid(
+                row, "source_event_id", operation=operation
+            )
+            claim_token = _required_uuid(row, "claim_token", operation=operation)
+            candidate_count = _required_nonnegative_int(
+                row, "candidate_count", operation=operation
+            )
+            lease_generation = _required_positive_int(
+                row, "lease_generation", operation=operation
+            )
+            occurred_text = _required_string(row, "occurred_at", operation=operation)
+            try:
+                occurred_at = datetime.fromisoformat(
+                    occurred_text.replace("Z", "+00:00")
+                )
+            except ValueError as exc:
+                raise SupabaseError(f"{operation}_invalid") from exc
+            if occurred_at.tzinfo is None:
+                raise SupabaseError(f"{operation}_invalid")
+            if (
+                (outcome == "unmatched" and candidate_count != 0)
+                or (outcome == "ambiguous" and candidate_count < 2)
+                or (outcome == "conflict" and candidate_count < 1)
+            ):
+                raise SupabaseError(f"{operation}_invalid")
+            claims.append(
+                SlackCorrelationNotificationClaim(
+                    source_event_id=source_event_id,
+                    outcome=outcome,
+                    reason_code=_required_string(
+                        row, "reason_code", operation=operation
+                    ),
+                    candidate_count=candidate_count,
+                    occurred_at=occurred_at,
+                    claim_token=claim_token,
+                    lease_generation=lease_generation,
+                )
+            )
+        return claims
+
+    async def complete_slack_correlation_notification(
+        self,
+        *,
+        source_event_id: str,
+        claim_token: str,
+        lease_generation: int,
+        notification_id: str,
+    ) -> None:
+        await self._finalize_slack_correlation_notification(
+            operation="complete_slack_correlation_notification",
+            payload={
+                "p_source_event_id": source_event_id,
+                "p_claim_token": claim_token,
+                "p_lease_generation": lease_generation,
+                "p_notification_id": notification_id,
+            },
+        )
+
+    async def release_slack_correlation_notification(
+        self,
+        *,
+        source_event_id: str,
+        claim_token: str,
+        lease_generation: int,
+        failure_code: str,
+    ) -> None:
+        await self._finalize_slack_correlation_notification(
+            operation="release_slack_correlation_notification",
+            payload={
+                "p_source_event_id": source_event_id,
+                "p_claim_token": claim_token,
+                "p_lease_generation": lease_generation,
+                "p_failure_code": failure_code,
+            },
+        )
+
+    async def _finalize_slack_correlation_notification(
+        self, *, operation: str, payload: dict[str, Any]
+    ) -> None:
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps(payload),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if rows != [{"applied": True}]:
+            raise SupabaseError(f"{operation}_invalid_row")
 
     async def list_unresolved_purchase_intent_correlations(
         self,

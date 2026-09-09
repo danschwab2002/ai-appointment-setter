@@ -436,6 +436,12 @@ def create_app(
         )
         if tenant_ref is None:
             return JSONResponse(status_code=401, content={"detail": "unauthorized"})
+        expected_tenant_ref = request.headers.get("x-expected-tenant-ref")
+        if expected_tenant_ref != tenant_ref:
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "tenant_attestation_failed"},
+            )
         if not state["storage_ready"]:
             return JSONResponse(
                 status_code=503,
@@ -479,6 +485,7 @@ def create_app(
             status_code=status_code,
             content={
                 "status": result.outcome,
+                "tenant_ref": tenant_ref,
                 "notification_id": result.notification_id,
                 "delivery_state": result.state,
             },

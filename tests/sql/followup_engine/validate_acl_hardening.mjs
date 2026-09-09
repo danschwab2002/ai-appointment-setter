@@ -99,6 +99,8 @@ const rows = await db.query(`
       ('claim_chatwoot_opt_out_projections(text,timestamp with time zone,interval,integer)'),
       ('claim_due_followup_actions(text,timestamp with time zone,interval,integer)'),
       ('claim_human_handoff_projection_effects(text,integer,integer,timestamp with time zone)'),
+      ('claim_slack_correlation_notifications(text,text,text,integer,integer,integer)'),
+      ('complete_slack_correlation_notification(uuid,uuid,bigint,uuid)'),
       ('confirm_operator_correlation_resolution(text,text,text,uuid,text,uuid)'),
       ('correlate_hotmart_purchase_intent(uuid)'),
       ('evaluate_lancemos_pilot_scope(text,integer,text,bigint,bigint,text,text,text,text,text,text,uuid)'),
@@ -130,6 +132,7 @@ const rows = await db.query(`
       ('reconcile_chatwoot_opt_out_stop(bigint,bigint,bigint,text)'),
       ('reconcile_followup_delivery_attempt(uuid,uuid,bigint,text,text,uuid,timestamp with time zone,text,timestamp with time zone)'),
       ('record_and_finalize_followup_acceptance(uuid,uuid,text,bigint,text,text,text,timestamp with time zone)'),
+      ('release_slack_correlation_notification(uuid,uuid,bigint,text)'),
       ('read_johanna_funnel_dashboard_v2(integer)'),
       ('get_precheckout_delayed_one_shot_command(uuid)'),
 
@@ -163,9 +166,9 @@ const rows = await db.query(`
   left join expected using (signature)
 `);
 const result = rows.rows[0];
-// Historical baseline guard was `result.expected_count !== 63`; V2 adds two RPCs.
+// Historical baseline guard was `result.expected_count !== 63`; V2 and Slack add five RPCs.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 65) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 68) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const bindingAcl = await db.query(`

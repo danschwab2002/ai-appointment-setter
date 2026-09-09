@@ -256,24 +256,65 @@ def test_authenticated_tenant_admission_is_durable_and_idempotent(tmp_path: Path
     with TestClient(app) as client:
         admitted = client.post(
             "/internal/v1/notifications",
-            headers={"Authorization": f"Bearer {'j' * 32}"},
+            headers={
+                "Authorization": f"Bearer {'j' * 32}",
+                "X-Expected-Tenant-Ref": "johanna",
+            },
             json=payload,
         )
         duplicate = client.post(
             "/internal/v1/notifications",
-            headers={"Authorization": f"Bearer {'j' * 32}"},
+            headers={
+                "Authorization": f"Bearer {'j' * 32}",
+                "X-Expected-Tenant-Ref": "johanna",
+            },
             json=payload,
         )
 
     assert admitted.status_code == 202
     assert admitted.json() == {
         "status": "admitted",
+        "tenant_ref": "johanna",
         "notification_id": payload["event_id"],
         "delivery_state": "pending",
     }
     assert duplicate.status_code == 200
     assert duplicate.json()["status"] == "duplicate"
     assert store.count() == 1
+
+
+def test_tenant_attestation_mismatch_is_rejected_before_admission(tmp_path: Path) -> None:
+    store = NotificationStore(tmp_path / "slack.sqlite3")
+    app = create_app(
+        SlackConnectorSettings(
+            ingress_enabled=True,
+            storage_path=str(tmp_path / "slack.sqlite3"),
+            tenant_tokens={"johanna": "j" * 32, "att1": "a" * 32},
+        ),
+        store=store,
+    )
+    payload = {
+        "event_id": "11111111-1111-4111-8111-111111111111",
+        "event_code": "HND-001",
+        "dedupe_key": "1" * 64,
+        "occurred_at": "2026-09-07T22:00:00Z",
+        "subject_ref": "C-11111111",
+        "reason_code": "explicit_human_request",
+    }
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/internal/v1/notifications",
+            headers={
+                "Authorization": f"Bearer {'a' * 32}",
+                "X-Expected-Tenant-Ref": "johanna",
+            },
+            json=payload,
+        )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "tenant_attestation_failed"}
+    assert store.count() == 0
 
 
 def test_operational_app_delivers_admitted_notification_and_exposes_status(
@@ -320,14 +361,20 @@ def test_operational_app_delivers_admitted_notification_and_exposes_status(
     with TestClient(app) as client:
         admitted = client.post(
             "/internal/v1/notifications",
-            headers={"Authorization": f"Bearer {token}"},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Expected-Tenant-Ref": "johanna",
+            },
             json=payload,
         )
         deadline = time.monotonic() + 2
         while True:
             status = client.get(
                 f"/internal/v1/notifications/{payload['event_id']}",
-                headers={"Authorization": f"Bearer {token}"},
+                headers={
+                "Authorization": f"Bearer {token}",
+                "X-Expected-Tenant-Ref": "johanna",
+            },
             )
             if status.json().get("delivery_state") == "accepted":
                 break
@@ -423,12 +470,18 @@ def test_admission_storage_failure_is_sanitized_and_fails_closed(tmp_path: Path)
     with TestClient(app) as client:
         response = client.post(
             "/internal/v1/notifications",
-            headers={"Authorization": "Bearer " + "j" * 32},
+            headers={
+                "Authorization": "Bearer " + "j" * 32,
+                "X-Expected-Tenant-Ref": "johanna",
+            },
             json=payload,
         )
         exact_retry = client.post(
             "/internal/v1/notifications",
-            headers={"Authorization": "Bearer " + "j" * 32},
+            headers={
+                "Authorization": "Bearer " + "j" * 32,
+                "X-Expected-Tenant-Ref": "johanna",
+            },
             json=payload,
         )
         unauthorized = client.post(

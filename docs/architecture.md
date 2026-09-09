@@ -790,6 +790,27 @@ La migración de contención fue desplegada y revocó el acceso de todos los rol
 API, incluido el rol de servicio. Esta superficie permanece no operativa hasta
 aceptar una proyección forward-only que pruebe ambos invariantes.
 
+## Proyección durable de correlaciones hacia Slack
+
+El bridge incorpora, default-off, un worker post-commit que reclama desde
+Supabase correlaciones Hotmart no resueltas y las transforma mediante
+`SlackOperationalNotifier` antes de admitirlas en el conector central con
+`SlackConnectorProducer`. La fuente de verdad continúa siendo
+`hotmart_purchase_intent_correlations`; la tabla
+`slack_correlation_notification_projection` sólo conserva estado de proyección,
+leases, fencing, reintentos y el ID admitido.
+
+Johanna y ATT1 usan scopes independientes. ATT1 verifica el binding portable
+antes de iniciar y presenta su versión exacta en cada claim SQL. El conector
+compara el tenant esperado enviado por el productor contra el tenant autenticado
+antes de leer o persistir el comando. Readiness falla si el worker no completó
+un poll exitoso, perdió liveness o se detuvo por rechazo terminal. La
+configuración, migración y wiring están implementados y verificados localmente;
+no acreditan despliegue, aplicación de DDL en Supabase Cloud ni mensajes Slack.
+
+Contrato: [Slack Operations Connector V1](contracts/slack-operations-connector-v1.md).
+Evidencia: [Wiring local de bridges hacia Slack](operations/2026-09-08-slack-bridge-wiring-verification.md).
+
 ## Decisiones arquitectónicas
 
 - [ADR-0001: Profile comercial como motor de razonamiento aislado](decisions/0001-commercial-profile-boundary.md)

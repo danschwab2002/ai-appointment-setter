@@ -100,7 +100,10 @@ def test_notification_crosses_real_tcp_to_connector_and_fake_slack(
             readiness = client.get("/ready")
             admitted = client.post(
                 "/internal/v1/notifications",
-                headers={"Authorization": f"Bearer {token}"},
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "X-Expected-Tenant-Ref": "johanna",
+                },
                 json={
                     "event_id": event_id,
                     "event_code": "HND-001",
@@ -115,7 +118,10 @@ def test_notification_crosses_real_tcp_to_connector_and_fake_slack(
             while True:
                 status = client.get(
                     f"/internal/v1/notifications/{event_id}",
-                    headers={"Authorization": f"Bearer {token}"},
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "X-Expected-Tenant-Ref": "johanna",
+                    },
                 )
                 if status.json().get("delivery_state") == "accepted":
                     break

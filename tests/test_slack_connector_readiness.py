@@ -81,7 +81,10 @@ def test_readiness_stays_halted_until_delivery_unknown_is_reconciled(tmp_path) -
     with TestClient(app) as client:
         admitted = client.post(
             "/internal/v1/notifications",
-            headers={"Authorization": f"Bearer {'j' * 32}"},
+            headers={
+                "Authorization": f"Bearer {'j' * 32}",
+                "X-Expected-Tenant-Ref": "johanna",
+            },
             json=payload,
         )
         assert admitted.status_code == 202
@@ -89,7 +92,10 @@ def test_readiness_stays_halted_until_delivery_unknown_is_reconciled(tmp_path) -
         while time.monotonic() < deadline:
             status = client.get(
                 "/internal/v1/notifications/99999999-9999-4999-8999-999999999999",
-                headers={"Authorization": f"Bearer {'j' * 32}"},
+                headers={
+                    "Authorization": f"Bearer {'j' * 32}",
+                    "X-Expected-Tenant-Ref": "johanna",
+                },
             )
             if status.json()["delivery_state"] == "delivery_unknown":
                 break

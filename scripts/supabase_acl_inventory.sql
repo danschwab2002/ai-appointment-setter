@@ -27,6 +27,8 @@ expected_service_role(signature) as (
         ('public.claim_chatwoot_opt_out_projections(text, timestamp with time zone, interval, integer)'),
         ('public.claim_due_followup_actions(text, timestamp with time zone, interval, integer)'),
         ('public.claim_human_handoff_projection_effects(text, integer, integer, timestamp with time zone)'),
+        ('public.claim_slack_correlation_notifications(text, text, text, integer, integer, integer)'),
+        ('public.complete_slack_correlation_notification(uuid, uuid, bigint, uuid)'),
         ('public.confirm_operator_correlation_resolution(text, text, text, uuid, text, uuid)'),
         ('public.correlate_hotmart_purchase_intent(uuid)'),
         ('public.evaluate_lancemos_pilot_scope(text, integer, text, bigint, bigint, text, text, text, text, text, text, uuid)'),
@@ -57,6 +59,7 @@ expected_service_role(signature) as (
         ('public.reconcile_followup_delivery_attempt(uuid, uuid, bigint, text, text, uuid, timestamp with time zone, text, timestamp with time zone)'),
         ('public.read_johanna_funnel_dashboard_v2(integer)'),
         ('public.record_and_finalize_followup_acceptance(uuid, uuid, text, bigint, text, text, text, timestamp with time zone)'),
+        ('public.release_slack_correlation_notification(uuid, uuid, bigint, text)'),
         ('public.get_precheckout_delayed_one_shot_command(uuid)'),
 
         ('public.list_due_hotmart_abandonment_reevaluations_v2(timestamp with time zone, integer, boolean)'),
