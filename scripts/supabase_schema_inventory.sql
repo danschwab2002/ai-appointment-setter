@@ -2527,6 +2527,77 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         6,
         'sanitary_funnel_events_and_dashboard_v2'
+    union all
+    select
+        '20260908000100',
+        '20260908000100_slack_correlation_notification_projection.sql',
+        (to_regclass('public.slack_correlation_notification_projection') is not null)::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.claim_slack_correlation_notifications(text,text,text,integer,integer,integer)'
+            )
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.complete_slack_correlation_notification(uuid,uuid,bigint,uuid)'
+            )
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.release_slack_correlation_notification(uuid,uuid,bigint,text)'
+            )
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+        )::int
+        + coalesce((
+            has_function_privilege(
+                'service_role',
+                to_regprocedure('public.claim_slack_correlation_notifications(text,text,text,integer,integer,integer)'),
+                'EXECUTE'
+            )
+            and has_function_privilege(
+                'service_role',
+                to_regprocedure('public.complete_slack_correlation_notification(uuid,uuid,bigint,uuid)'),
+                'EXECUTE'
+            )
+            and has_function_privilege(
+                'service_role',
+                to_regprocedure('public.release_slack_correlation_notification(uuid,uuid,bigint,text)'),
+                'EXECUTE'
+            )
+        ), false)::int
+        + (
+            to_regclass('public.slack_correlation_notification_projection') is not null
+            and not coalesce(has_table_privilege(
+                'service_role',
+                to_regclass('public.slack_correlation_notification_projection'),
+                'SELECT'
+            ), false)
+            and not coalesce(has_table_privilege(
+                'service_role',
+                to_regclass('public.slack_correlation_notification_projection'),
+                'INSERT'
+            ), false)
+            and not coalesce(has_table_privilege(
+                'service_role',
+                to_regclass('public.slack_correlation_notification_projection'),
+                'UPDATE'
+            ), false)
+            and not coalesce(has_table_privilege(
+                'service_role',
+                to_regclass('public.slack_correlation_notification_projection'),
+                'DELETE'
+            ), false)
+        )::int,
+        6,
+        'scoped_durable_slack_correlation_projection'
 )
 select
     version,

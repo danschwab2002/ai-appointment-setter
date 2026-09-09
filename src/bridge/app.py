@@ -86,6 +86,8 @@ from bridge.reply_splitter import (
     validate_reply_parts,
 )
 from bridge.security import verify_chatwoot_signature
+from bridge.slack_projection import SlackCorrelationProjectionWorker
+from bridge.slack_runtime import SlackBridgeRuntime, create_slack_bridge_runtime
 from bridge.supabase import (
     OperatorCorrelationResolutionError,
     PilotBoundaryConfig,
@@ -140,6 +142,7 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     "chatwoot_scoped_inbound_senders_enabled",
     "operator_correlation_read_enabled",
     "operator_correlation_write_enabled",
+    "slack_connector_projection_enabled",
 })
 
 _MEDICATION_GUIDANCE_SUBJECT_RE = re.compile(
@@ -363,6 +366,13 @@ class Settings:
     operator_correlation_write_enabled: bool = False
     operator_correlation_write_token: str | None = None
     operator_correlation_actor_ref: str | None = None
+    slack_connector_projection_enabled: bool = False
+    slack_connector_base_url: str | None = None
+    slack_connector_bearer_token: str | None = None
+    slack_connector_worker_id: str | None = None
+    slack_connector_poll_interval_seconds: float = 5.0
+    slack_connector_batch_size: int = 1
+    slack_connector_lease_seconds: int = 60
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -767,6 +777,10 @@ class Settings:
         commercial_ally_discount_policy_version_raw = os.getenv(
             "COMMERCIAL_ALLY_DISCOUNT_POLICY_VERSION", ""
         ).strip()
+        slack_connector_projection_enabled = (
+            os.getenv("SLACK_CONNECTOR_PROJECTION_ENABLED", "false").lower()
+            == "true"
+        )
 
         return cls(
             webhook_secret=os.environ["CHATWOOT_WEBHOOK_SECRET"],
@@ -955,6 +969,25 @@ class Settings:
                 if commercial_ally_discount_policy_version_raw
                 else None
             ),
+            slack_connector_projection_enabled=slack_connector_projection_enabled,
+            slack_connector_base_url=(
+                os.getenv("SLACK_CONNECTOR_BASE_URL", "").strip() or None
+            ),
+            slack_connector_bearer_token=(
+                os.getenv("SLACK_CONNECTOR_BEARER_TOKEN", "").strip() or None
+            ),
+            slack_connector_worker_id=(
+                os.getenv("SLACK_CONNECTOR_WORKER_ID", "").strip() or None
+            ),
+            slack_connector_poll_interval_seconds=float(
+                os.getenv("SLACK_CONNECTOR_POLL_INTERVAL_SECONDS", "5")
+            ),
+            slack_connector_batch_size=int(
+                os.getenv("SLACK_CONNECTOR_BATCH_SIZE", "1")
+            ),
+            slack_connector_lease_seconds=int(
+                os.getenv("SLACK_CONNECTOR_LEASE_SECONDS", "60")
+            ),
             chatwoot_scoped_inbound_senders_enabled=(
                 os.getenv(
                     "CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED", "false"
@@ -1139,6 +1172,7 @@ def create_app(
     supabase_client: SupabaseClient | None = None,
     recovery_agent_client: RecoveryAgentClient | None = None,
     message_sender: MessageSender | None = None,
+    slack_runtime: SlackBridgeRuntime | None = None,
 ) -> FastAPI:
     boolean_fields = [
         field
@@ -1530,6 +1564,45 @@ def create_app(
         or settings.operator_correlation_write_enabled
     ) and shared_supabase is None:
         raise ValueError("operator correlation access requires Supabase")
+    slack_runtime_owned = False
+    connector_url_configured = settings.slack_connector_base_url is not None
+    connector_token_configured = settings.slack_connector_bearer_token is not None
+    if connector_url_configured != connector_token_configured:
+        raise ValueError("slack_connector_configuration_incomplete")
+    if settings.slack_connector_projection_enabled:
+        if shared_supabase is None:
+            raise ValueError("Slack projection requires Supabase")
+        if settings.slack_connector_worker_id is None:
+            raise ValueError("SLACK_CONNECTOR_WORKER_ID is required")
+        if slack_runtime is None:
+            slack_runtime = create_slack_bridge_runtime(
+                base_url=settings.slack_connector_base_url,
+                bearer_token=settings.slack_connector_bearer_token,
+                expected_tenant_ref=settings.commercial_ally_config.ally_ref,
+            )
+            if slack_runtime is None:
+                raise ValueError("Slack projection requires connector configuration")
+            slack_runtime_owned = True
+    slack_projection_worker: SlackCorrelationProjectionWorker | None = None
+    if settings.slack_connector_projection_enabled:
+        assert shared_supabase is not None
+        assert slack_runtime is not None
+        assert settings.slack_connector_worker_id is not None
+        slack_projection_worker = SlackCorrelationProjectionWorker(
+            store=shared_supabase,
+            producer=slack_runtime.producer,
+            tenant_ref=settings.commercial_ally_config.tenant_ref,
+            funnel_ref=settings.commercial_ally_config.funnel_ref,
+            worker_id=settings.slack_connector_worker_id,
+            poll_interval_seconds=settings.slack_connector_poll_interval_seconds,
+            batch_size=settings.slack_connector_batch_size,
+            lease_seconds=settings.slack_connector_lease_seconds,
+            binding_version=(
+                settings.commercial_ally_config.binding_version
+                if portable_runtime
+                else None
+            ),
+        )
     first_touch_sender = message_sender
     if settings.precheckout_first_touch_enabled:
         canonical_phone = allowed_phone_from_jid(settings.allowed_jid)
@@ -2075,6 +2148,13 @@ def create_app(
                 await opt_out_projection_worker.start()
             if human_handoff_projection_worker is not None:
                 await human_handoff_projection_worker.start()
+            if slack_projection_worker is not None:
+                if portable_runtime:
+                    assert shared_supabase is not None
+                    await shared_supabase.resolve_commercial_ally_runtime_binding(
+                        settings.commercial_ally_config
+                    )
+                await slack_projection_worker.start()
             if chatwoot_worker is not None:
                 await chatwoot_worker.start()
             yield
@@ -2083,6 +2163,7 @@ def create_app(
                 ("chatwoot", chatwoot_worker),
                 ("opt_out_projection", opt_out_projection_worker),
                 ("human_handoff_projection", human_handoff_projection_worker),
+                ("slack_projection", slack_projection_worker),
                 ("dispatcher", durable_dispatcher),
                 ("hotmart_abandonment_timer", hotmart_abandonment_timer_worker),
                 ("resolution", resolution_worker),
@@ -2097,6 +2178,14 @@ def create_app(
                         worker_name,
                         type(exc).__name__,
                     )
+            if slack_runtime_owned and slack_runtime is not None:
+                try:
+                    await slack_runtime.aclose()
+                except Exception as exc:
+                    logger.warning(
+                        "slack_runtime_close_failed error_type=%s",
+                        type(exc).__name__,
+                    )
 
     app = FastAPI(title="AI Appointment Setter Bridge", lifespan=lifespan)
     app.state.resolution_worker = resolution_worker
@@ -2104,6 +2193,7 @@ def create_app(
     app.state.durable_dispatcher = durable_dispatcher
     app.state.opt_out_projection_worker = opt_out_projection_worker
     app.state.human_handoff_projection_worker = human_handoff_projection_worker
+    app.state.slack_projection_worker = slack_projection_worker
     app.state.chatwoot_inbox = chatwoot_inbox
     app.state.chatwoot_worker = chatwoot_worker
 
@@ -3004,6 +3094,16 @@ def create_app(
 
     @app.get("/ready")
     async def readiness() -> dict[str, str]:
+        if slack_projection_worker is not None and slack_projection_worker.halted:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="slack_projection_halted",
+            )
+        if slack_projection_worker is not None and not slack_projection_worker.healthy:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="slack_projection_unhealthy",
+            )
         commercial_ally_readiness: dict[str, str] = {}
         if portable_runtime:
             if shared_supabase is None:

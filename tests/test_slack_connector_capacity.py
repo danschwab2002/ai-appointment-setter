@@ -61,7 +61,10 @@ def test_http_capacity_failure_is_retryable_and_does_not_mark_storage_down(
     with TestClient(app) as client:
         first = client.post(
             "/internal/v1/notifications",
-            headers={"Authorization": "Bearer " + "j" * 32},
+            headers={
+                "Authorization": "Bearer " + "j" * 32,
+                "X-Expected-Tenant-Ref": "johanna",
+            },
             json={
                 "event_id": "11111111-1111-4111-8111-111111111111",
                 "event_code": "SYS-002",
@@ -74,7 +77,10 @@ def test_http_capacity_failure_is_retryable_and_does_not_mark_storage_down(
         )
         full = client.post(
             "/internal/v1/notifications",
-            headers={"Authorization": "Bearer " + "a" * 32},
+            headers={
+                "Authorization": "Bearer " + "a" * 32,
+                "X-Expected-Tenant-Ref": "att1",
+            },
             json={
                 "event_id": "22222222-2222-4222-8222-222222222222",
                 "event_code": "SYS-002",

@@ -13,7 +13,7 @@ import httpx
 from slack_correlation.catalog import NotificationCommand
 
 _INTERNAL_TOKEN = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
-_TERMINAL_REJECTIONS = {400, 401, 404, 409, 413}
+_TERMINAL_REJECTIONS = {400, 401, 403, 404, 409, 413}
 
 
 class ConnectorAdmissionUnknown(RuntimeError):
@@ -33,6 +33,7 @@ class AdmissionReceipt:
     status: str
     notification_id: str
     delivery_state: str
+    tenant_ref: str | None = None
 
 
 class SlackConnectorProducer:
@@ -43,13 +44,17 @@ class SlackConnectorProducer:
         *,
         base_url: str,
         bearer_token: str,
+        expected_tenant_ref: str,
         timeout_seconds: float = 5.0,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         normalized_url = _validate_base_url(base_url)
         if _INTERNAL_TOKEN.fullmatch(bearer_token) is None:
             raise ValueError("invalid_connector_bearer_token")
+        if not isinstance(expected_tenant_ref, str) or not expected_tenant_ref.strip():
+            raise ValueError("invalid_connector_expected_tenant")
         self._token = bearer_token
+        self._expected_tenant_ref = expected_tenant_ref
         self._client = httpx.AsyncClient(
             base_url=normalized_url,
             timeout=httpx.Timeout(timeout_seconds),
@@ -63,6 +68,7 @@ class SlackConnectorProducer:
                 headers={
                     "Authorization": f"Bearer {self._token}",
                     "Content-Type": "application/json",
+                    "X-Expected-Tenant-Ref": self._expected_tenant_ref,
                 },
                 json=_serialize_command(command),
             )
@@ -82,8 +88,14 @@ class SlackConnectorProducer:
         if not isinstance(payload, dict):
             raise ConnectorAdmissionUnknown("connector_admission_unknown")
         status = payload.get("status")
+        tenant_ref = payload.get("tenant_ref")
         notification_id = payload.get("notification_id")
         delivery_state = payload.get("delivery_state")
+        if (
+            self._expected_tenant_ref is not None
+            and tenant_ref != self._expected_tenant_ref
+        ):
+            raise ConnectorSemanticConflict("connector_tenant_mismatch")
         if (
             not isinstance(status, str)
             or status not in {"admitted", "duplicate"}
@@ -96,6 +108,7 @@ class SlackConnectorProducer:
             status=status,
             notification_id=notification_id,
             delivery_state=delivery_state,
+            tenant_ref=tenant_ref if isinstance(tenant_ref, str) else None,
         )
 
     async def aclose(self) -> None:

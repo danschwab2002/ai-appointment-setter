@@ -32,11 +32,13 @@ def test_producer_posts_closed_command_with_bearer_and_no_routing_fields() -> No
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["authorization"] = request.headers.get("authorization")
+        captured["expected_tenant"] = request.headers.get("x-expected-tenant-ref")
         captured["payload"] = json.loads(request.content)
         return httpx.Response(
             202,
             json={
                 "status": "admitted",
+                "tenant_ref": "johanna",
                 "notification_id": "11111111-1111-4111-8111-111111111111",
                 "delivery_state": "pending",
             },
@@ -45,6 +47,7 @@ def test_producer_posts_closed_command_with_bearer_and_no_routing_fields() -> No
     producer = SlackConnectorProducer(
         base_url="https://connector.example.invalid",
         bearer_token="j" * 32,
+        expected_tenant_ref="johanna",
         transport=httpx.MockTransport(handler),
     )
     result = asyncio.run(producer.admit(_command()))
@@ -52,6 +55,7 @@ def test_producer_posts_closed_command_with_bearer_and_no_routing_fields() -> No
 
     assert result.status == "admitted"
     assert captured["authorization"] == "Bearer " + "j" * 32
+    assert captured["expected_tenant"] == "johanna"
     payload = captured["payload"]
     assert isinstance(payload, dict)
     assert "tenant_ref" not in payload
@@ -64,6 +68,7 @@ def test_producer_reports_conflict_and_ambiguous_transport_separately() -> None:
     conflict = SlackConnectorProducer(
         base_url="https://connector.example.invalid",
         bearer_token="j" * 32,
+        expected_tenant_ref="johanna",
         transport=httpx.MockTransport(
             lambda request: httpx.Response(409, json={"detail": "semantic_conflict"})
         ),
@@ -78,6 +83,7 @@ def test_producer_reports_conflict_and_ambiguous_transport_separately() -> None:
     uncertain = SlackConnectorProducer(
         base_url="https://connector.example.invalid",
         bearer_token="j" * 32,
+        expected_tenant_ref="johanna",
         transport=httpx.MockTransport(timeout),
     )
     with pytest.raises(ConnectorAdmissionUnknown):
@@ -92,11 +98,16 @@ def test_producer_never_sends_bearer_to_plaintext_or_userinfo_url() -> None:
         "https://connector.example.invalid/path?redirect=evil",
     ):
         with pytest.raises(ValueError, match="invalid_connector_base_url"):
-            SlackConnectorProducer(base_url=value, bearer_token="j" * 32)
+            SlackConnectorProducer(
+                base_url=value,
+                bearer_token="j" * 32,
+                expected_tenant_ref="johanna",
+            )
 
     loopback = SlackConnectorProducer(
         base_url="http://127.0.0.1:8765",
         bearer_token="j" * 32,
+        expected_tenant_ref="johanna",
     )
     asyncio.run(loopback.aclose())
 
@@ -124,6 +135,7 @@ def test_producer_normalizes_aware_timestamps_to_utc_z() -> None:
             202,
             json={
                 "status": "admitted",
+                "tenant_ref": "johanna",
                 "notification_id": command.event_id,
                 "delivery_state": "pending",
             },
@@ -132,9 +144,33 @@ def test_producer_normalizes_aware_timestamps_to_utc_z() -> None:
     producer = SlackConnectorProducer(
         base_url="https://connector.example.invalid",
         bearer_token="j" * 32,
+        expected_tenant_ref="johanna",
         transport=httpx.MockTransport(handler),
     )
     asyncio.run(producer.admit(command))
     asyncio.run(producer.aclose())
 
     assert captured["occurred_at"] == "2026-09-07T22:00:00Z"
+
+
+def test_producer_rejects_a_receipt_attested_for_another_tenant() -> None:
+    producer = SlackConnectorProducer(
+        base_url="https://connector.example.invalid",
+        bearer_token="j" * 32,
+        expected_tenant_ref="johanna",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                202,
+                json={
+                    "status": "admitted",
+                    "tenant_ref": "att1",
+                    "notification_id": _command().event_id,
+                    "delivery_state": "pending",
+                },
+            )
+        ),
+    )
+
+    with pytest.raises(ConnectorSemanticConflict, match="tenant_mismatch"):
+        asyncio.run(producer.admit(_command()))
+    asyncio.run(producer.aclose())
