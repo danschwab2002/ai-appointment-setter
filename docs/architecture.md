@@ -800,11 +800,20 @@ Supabase correlaciones Hotmart no resueltas y las transforma mediante
 `slack_correlation_notification_projection` sólo conserva estado de proyección,
 leases, fencing, reintentos y el ID admitido.
 
-Johanna y ATT1 usan scopes independientes. ATT1 verifica el binding portable
-antes de iniciar y presenta su versión exacta en cada claim SQL. El conector
-compara el tenant esperado enviado por el productor contra el tenant autenticado
-antes de leer o persistir el comando. Readiness falla si el worker no completó
-un poll exitoso, perdió liveness o se detuvo por rechazo terminal. La
+Johanna y ATT1 usan scopes y canales Slack independientes. El Channel ID
+`C0C0YEACVT2` queda reservado exclusivamente para Johanna, aunque su nombre
+visible se cambie después; ATT1 no se proyecta hasta contar con otro canal. El
+conector deriva el canal desde el tenant autenticado, prohíbe reutilizar un
+Channel ID entre tenants y falla cerrado sin fallback. ATT1 verifica el binding
+portable antes de iniciar y presenta su versión exacta en cada claim SQL. El
+conector compara el tenant esperado enviado por el productor contra el tenant
+autenticado antes de leer o persistir el comando. La interactividad firmada ejecuta
+un precheck local y sin mutaciones antes de reservar replay; sólo después admite
+en una transacción el replay y la sesión/job durable. La apertura del modal queda
+fuera del request: el worker relee el caso y marca `views.open` como iniciado antes
+de la llamada, por lo que una caída ambigua obliga a un nuevo click en vez de
+reintentar el trigger efímero. Readiness falla si el worker
+no completó un poll exitoso, perdió liveness o se detuvo por rechazo terminal. La
 configuración, migración y wiring están implementados y verificados localmente;
 no acreditan despliegue, aplicación de DDL en Supabase Cloud ni mensajes Slack.
 

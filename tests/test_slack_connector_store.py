@@ -3,9 +3,12 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 import sqlite3
+import time
 
+from fastapi.testclient import TestClient
 import pytest
 
+from slack_correlation.app import SlackConnectorSettings, create_app
 from slack_correlation.catalog import EVENT_TEMPLATES, NotificationCommand, render_message
 from slack_correlation.store import NotificationStore
 from slack_correlation.client import (
@@ -67,6 +70,21 @@ def test_renderer_uses_only_server_owned_template_and_machine_fields() -> None:
     }
     assert "explicit_human_request" in repr(rendered)
     assert "paused" in repr(rendered)
+
+
+def test_only_pending_correlation_events_receive_native_review_control() -> None:
+    correlation = render_message(
+        _command(
+            event_code="COR-001",
+            subject_ref="C-11111111-1111-4111-8111-111111111111",
+        ),
+        tenant_label="Johanna",
+    )
+    ordinary = render_message(_command(), tenant_label="Johanna")
+
+    assert correlation["metadata"]["event_payload"]["case_id"] == "11111111-1111-4111-8111-111111111111"
+    assert correlation["blocks"][-1]["elements"][0]["action_id"] == "review_operator_correlation"
+    assert ordinary["blocks"][-1]["type"] == "section"
 
 
 @pytest.mark.parametrize(
@@ -211,7 +229,7 @@ def test_worker_never_retries_an_ambiguous_slack_request(tmp_path) -> None:
     worker = NotificationWorker(
         store=store,
         slack_client=slack,
-        channel_id="C0C0YEACVT2",
+        tenant_channels={"johanna": "C0C0YEACVT2"},
         tenant_labels={"johanna": "Johanna", "att1": "ATT1"},
         worker_id="slack-worker-1",
     )
@@ -250,7 +268,7 @@ def test_worker_posts_server_rendered_message_to_exact_configured_channel(
     worker = NotificationWorker(
         store=store,
         slack_client=slack,
-        channel_id="C0C0YEACVT2",
+        tenant_channels={"johanna": "C0C0YEACVT2"},
         tenant_labels={"johanna": "Johanna", "att1": "ATT1"},
         worker_id="slack-worker-1",
     )
@@ -289,7 +307,7 @@ def test_worker_records_explicit_slack_rejection_without_retry(tmp_path) -> None
     worker = NotificationWorker(
         store=store,
         slack_client=client,
-        channel_id="C0123456789",
+        tenant_channels={"att1": "C0123456789"},
         tenant_labels={"att1": "ATT1"},
         worker_id="worker-1",
     )
@@ -301,3 +319,98 @@ def test_worker_records_explicit_slack_rejection_without_retry(tmp_path) -> None
     assert stored is not None
     assert stored.state == "rejected"
     assert stored.failure_code == "slack_rejected"
+
+
+@pytest.mark.parametrize("legacy_version", [2, 3])
+def test_v2_v3_pending_notification_upgrades_and_sends_with_new_features_off(
+    tmp_path, legacy_version: int,
+) -> None:
+    path = tmp_path / f"legacy-v{legacy_version}.sqlite3"
+    store = NotificationStore(path)
+    store.initialize()
+    command = _command()
+    store.admit(
+        tenant_ref="johanna", channel_id="C0C0YEACVT2", command=command,
+    )
+    with sqlite3.connect(path) as connection:
+        connection.execute("ALTER TABLE notifications DROP COLUMN team_id")
+        connection.execute(f"PRAGMA user_version = {legacy_version}")
+
+    class AcceptedSlack:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def post_message(self, *, channel_id, message, thread_ts=None):
+            self.calls += 1
+            return SlackMessageReference(
+                channel_id=channel_id, message_ts="1788800000.000001"
+            )
+
+        async def verify_auth(self, *, expected_team_id: str) -> None:
+            assert expected_team_id == "T12345678"
+
+    slack = AcceptedSlack()
+    upgraded = NotificationStore(path)
+    app = create_app(
+        SlackConnectorSettings(
+            notifications_enabled=True,
+            bot_token="xoxb-synthetic",
+            team_id="T12345678",
+            tenant_channels={"johanna": "C0C0YEACVT2"},
+            storage_path=str(path),
+            worker_id="legacy-worker",
+            activation_mode="one_shot",
+            activation_generation=1,
+        ),
+        store=upgraded,
+        slack_client=slack,
+    )
+    with TestClient(app):
+        deadline = time.monotonic() + 2
+        while slack.calls == 0 and time.monotonic() < deadline:
+            time.sleep(0.02)
+    assert slack.calls == 1
+    stored = upgraded.get(tenant_ref="johanna", notification_id=command.event_id)
+    assert stored is not None and stored.state == "accepted"
+
+
+def test_legacy_team_bind_fails_closed_on_channel_mismatch(tmp_path) -> None:
+    path = tmp_path / "legacy-mismatch.sqlite3"
+    old = NotificationStore(path)
+    old.initialize()
+    old.admit(
+        tenant_ref="johanna", channel_id="C0ATT1TEST01", command=_command(),
+    )
+    with sqlite3.connect(path) as connection:
+        connection.execute("ALTER TABLE notifications DROP COLUMN team_id")
+        connection.execute("PRAGMA user_version = 3")
+
+    class NoSlack:
+        calls = 0
+
+        async def verify_auth(self, *, expected_team_id: str) -> None:
+            raise AssertionError("auth must not start after legacy binding failure")
+
+        async def post_message(self, **_kwargs):
+            self.calls += 1
+            raise AssertionError("Slack effect must not start")
+
+    slack = NoSlack()
+    app = create_app(
+        SlackConnectorSettings(
+            notifications_enabled=True,
+            bot_token="xoxb-synthetic",
+            team_id="T12345678",
+            tenant_channels={"johanna": "C0C0YEACVT2"},
+            storage_path=str(path),
+            activation_mode="one_shot",
+            activation_generation=1,
+        ),
+        store=NotificationStore(path),
+        slack_client=slack,
+    )
+    with TestClient(app) as client:
+        ready = client.get("/ready")
+    assert ready.status_code == 503
+    assert ready.json()["mode"] == "storage_unavailable"
+    assert slack.calls == 0

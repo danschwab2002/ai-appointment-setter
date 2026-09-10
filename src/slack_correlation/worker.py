@@ -32,16 +32,18 @@ class NotificationWorker:
         *,
         store: NotificationStore,
         slack_client: SlackMessageSender,
-        channel_id: str,
+        tenant_channels: dict[str, str] | None = None,
         tenant_labels: dict[str, str],
         worker_id: str,
+        team_id: str | None = None,
         poll_interval_seconds: float = 1.0,
     ) -> None:
         self._store = store
         self._slack = slack_client
-        self._channel_id = channel_id
+        self._tenant_channels = dict(tenant_channels or {})
         self._tenant_labels = dict(tenant_labels)
         self._worker_id = worker_id
+        self._team_id = team_id
         self._poll_interval = poll_interval_seconds
         self._stop = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
@@ -124,6 +126,14 @@ class NotificationWorker:
             return False
         try:
             tenant_label = self._tenant_labels[claim.tenant_ref]
+            configured_channel = self._tenant_channels.get(claim.tenant_ref)
+            if configured_channel is None:
+                raise RuntimeError("tenant_channel_unconfigured")
+            if claim.team_id != self._team_id:
+                raise RuntimeError("tenant_team_binding_mismatch")
+            if claim.channel_id is not None and claim.channel_id != configured_channel:
+                raise RuntimeError("tenant_channel_binding_mismatch")
+            channel_id = claim.channel_id or configured_channel
             thread_ts = await asyncio.to_thread(self._store.resolve_thread_ts, claim)
             message = render_message(
                 claim.command,
@@ -146,7 +156,7 @@ class NotificationWorker:
             raise
         try:
             reference = await self._slack.post_message(
-                channel_id=self._channel_id,
+                channel_id=channel_id,
                 message=message,
             )
         except asyncio.CancelledError:
@@ -173,6 +183,7 @@ class NotificationWorker:
                 channel_id=reference.channel_id,
                 message_ts=reference.message_ts,
                 thread_ts=thread_ts,
+                team_id=self._team_id,
             )
         except Exception:
             self.halt("delivery_unknown")

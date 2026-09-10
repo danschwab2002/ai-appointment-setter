@@ -48,7 +48,7 @@ def test_provider_uncertainty_halts_the_queue_before_the_next_notification(
     worker = NotificationWorker(
         store=store,
         slack_client=slack,
-        channel_id="C0C0YEACVT2",
+        tenant_channels={"johanna": "C0C0YEACVT2"},
         tenant_labels={"johanna": "Johanna", "att1": "ATT1"},
         worker_id="slack-worker-1",
     )
@@ -91,7 +91,7 @@ def test_pre_request_persistence_failure_releases_claim_and_halts(tmp_path) -> N
     worker = NotificationWorker(
         store=store,
         slack_client=slack,
-        channel_id="C0C0YEACVT2",
+        tenant_channels={"johanna": "C0C0YEACVT2"},
         tenant_labels={"johanna": "Johanna", "att1": "ATT1"},
         worker_id="slack-worker-1",
     )

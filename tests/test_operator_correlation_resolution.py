@@ -65,7 +65,33 @@ class _StaleResolutionStore(_FakeResolutionStore):
         )
 
 
-def _app(store: _FakeResolutionStore) -> TestClient:
+class _ActorBoundResolutionStore(_FakeResolutionStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.prepared_actor_ref: object = None
+
+    async def prepare_operator_correlation_resolution(
+        self, **kwargs: object
+    ) -> dict[str, object]:
+        self.prepared_actor_ref = kwargs.get("actor_ref")
+        return await super().prepare_operator_correlation_resolution(**kwargs)
+
+    async def confirm_operator_correlation_resolution(
+        self, **kwargs: object
+    ) -> dict[str, object]:
+        self.confirm_calls.append(kwargs)
+        if kwargs.get("actor_ref") != self.prepared_actor_ref:
+            raise OperatorCorrelationResolutionError(
+                "invalid_operator_correlation_resolution"
+            )
+        return await _FakeResolutionStore.confirm_operator_correlation_resolution(
+            self, **kwargs
+        )
+
+
+def _app(
+    store: _FakeResolutionStore, *, actor_prefix: str | None = None
+) -> TestClient:
     settings = Settings(
         webhook_secret="unused",
         allowed_jid="593999999999@s.whatsapp.net",
@@ -78,8 +104,108 @@ def _app(store: _FakeResolutionStore) -> TestClient:
         operator_correlation_write_enabled=True,
         operator_correlation_write_token="w" * 32,
         operator_correlation_actor_ref="juan-operator",
+        operator_correlation_actor_prefix=actor_prefix,
     )
     return TestClient(create_app(settings, supabase_client=store))  # type: ignore[arg-type]
+
+
+def test_prepare_resolution_accepts_prefixed_dynamic_actor() -> None:
+    store = _FakeResolutionStore()
+    with _app(store, actor_prefix="slack") as client:
+        response = client.post(
+            "/internal/operator/correlations/resolutions/prepare",
+            headers={"Authorization": f"Bearer {'w' * 32}"},
+            json={
+                "case_id": CASE_ID,
+                "idempotency_key": IDEMPOTENCY_KEY,
+                "action": "resolve_with_candidate",
+                "candidate_id": CANDIDATE_ID,
+                "verification_basis": "operator_source_record",
+                "actor_ref": "slack.u12345678",
+            },
+        )
+
+    assert response.status_code == 200
+    assert store.prepare_calls[0]["actor_ref"] == "slack.u12345678"
+
+
+@pytest.mark.parametrize(
+    ("actor_prefix", "actor_ref"),
+    [
+        (None, "slack.u12345678"),
+        ("slack", "teams.u12345678"),
+        ("slack", "slack.U12345678"),
+    ],
+)
+def test_prepare_resolution_rejects_untrusted_dynamic_actor_without_rpc(
+    actor_prefix: str | None, actor_ref: str
+) -> None:
+    store = _FakeResolutionStore()
+    with _app(store, actor_prefix=actor_prefix) as client:
+        response = client.post(
+            "/internal/operator/correlations/resolutions/prepare",
+            headers={"Authorization": f"Bearer {'w' * 32}"},
+            json={
+                "case_id": CASE_ID,
+                "idempotency_key": IDEMPOTENCY_KEY,
+                "action": "resolve_with_candidate",
+                "candidate_id": CANDIDATE_ID,
+                "verification_basis": "operator_source_record",
+                "actor_ref": actor_ref,
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "invalid_operator_correlation_resolution"}
+    assert store.prepare_calls == []
+
+
+def test_prepare_resolution_rejects_unknown_field_without_rpc() -> None:
+    store = _FakeResolutionStore()
+    with _app(store) as client:
+        response = client.post(
+            "/internal/operator/correlations/resolutions/prepare",
+            headers={"Authorization": f"Bearer {'w' * 32}"},
+            json={
+                "case_id": CASE_ID,
+                "idempotency_key": IDEMPOTENCY_KEY,
+                "action": "resolve_with_candidate",
+                "candidate_id": CANDIDATE_ID,
+                "verification_basis": "operator_source_record",
+                "unexpected": True,
+            },
+        )
+
+    assert response.status_code == 422
+    assert store.prepare_calls == []
+
+
+def test_prepare_resolution_uses_fixed_fallback_when_prefix_is_enabled() -> None:
+    store = _FakeResolutionStore()
+    with _app(store, actor_prefix="slack") as client:
+        response = client.post(
+            "/internal/operator/correlations/resolutions/prepare",
+            headers={"Authorization": f"Bearer {'w' * 32}"},
+            json={
+                "case_id": CASE_ID,
+                "idempotency_key": IDEMPOTENCY_KEY,
+                "action": "resolve_with_candidate",
+                "candidate_id": CANDIDATE_ID,
+                "verification_basis": "operator_source_record",
+            },
+        )
+
+    assert response.status_code == 200
+    assert store.prepare_calls[0]["actor_ref"] == "juan-operator"
+
+
+@pytest.mark.parametrize("actor_prefix", ["S", "a" * 65])
+def test_invalid_actor_prefix_is_rejected_at_startup(actor_prefix: str) -> None:
+    with pytest.raises(
+        ValueError,
+        match="OPERATOR_CORRELATION_ACTOR_PREFIX must be a valid actor ref",
+    ):
+        _app(_FakeResolutionStore(), actor_prefix=actor_prefix)
 
 
 def test_prepare_resolution_uses_server_owned_scope_and_actor() -> None:
@@ -217,6 +343,110 @@ def test_confirm_resolution_revalidates_server_owned_scope_and_actor() -> None:
             "expected_purchase_intent_id": CANDIDATE_ID,
         }
     ]
+
+
+def test_confirm_resolution_uses_same_dynamic_actor_as_prepare() -> None:
+    store = _FakeResolutionStore()
+    with _app(store, actor_prefix="slack") as client:
+        prepare_response = client.post(
+            "/internal/operator/correlations/resolutions/prepare",
+            headers={"Authorization": f"Bearer {'w' * 32}"},
+            json={
+                "case_id": CASE_ID,
+                "idempotency_key": IDEMPOTENCY_KEY,
+                "action": "resolve_with_candidate",
+                "candidate_id": CANDIDATE_ID,
+                "verification_basis": "operator_source_record",
+                "actor_ref": "slack.u12345678",
+            },
+        )
+        confirm_response = client.post(
+            "/internal/operator/correlations/resolutions/confirm",
+            headers={"Authorization": f"Bearer {'w' * 32}"},
+            json={
+                "command_id": COMMAND_ID,
+                "expected_action": "resolve_with_candidate",
+                "expected_candidate_id": CANDIDATE_ID,
+                "actor_ref": "slack.u12345678",
+            },
+        )
+
+    assert prepare_response.status_code == 200
+    assert confirm_response.status_code == 200
+    assert store.prepare_calls[0]["actor_ref"] == "slack.u12345678"
+    assert store.confirm_calls[0]["actor_ref"] == "slack.u12345678"
+
+
+def test_confirm_resolution_different_dynamic_actor_is_rejected_by_domain() -> None:
+    store = _ActorBoundResolutionStore()
+    with _app(store, actor_prefix="slack") as client:
+        prepare_response = client.post(
+            "/internal/operator/correlations/resolutions/prepare",
+            headers={"Authorization": f"Bearer {'w' * 32}"},
+            json={
+                "case_id": CASE_ID,
+                "idempotency_key": IDEMPOTENCY_KEY,
+                "action": "resolve_with_candidate",
+                "candidate_id": CANDIDATE_ID,
+                "verification_basis": "operator_source_record",
+                "actor_ref": "slack.u12345678",
+            },
+        )
+        confirm_response = client.post(
+            "/internal/operator/correlations/resolutions/confirm",
+            headers={"Authorization": f"Bearer {'w' * 32}"},
+            json={
+                "command_id": COMMAND_ID,
+                "expected_action": "resolve_with_candidate",
+                "expected_candidate_id": CANDIDATE_ID,
+                "actor_ref": "slack.u87654321",
+            },
+        )
+
+    assert prepare_response.status_code == 200
+    assert confirm_response.status_code == 422
+    assert confirm_response.json() == {
+        "detail": "invalid_operator_correlation_resolution"
+    }
+    assert store.confirm_calls == [
+        {
+            "tenant_ref": "lancemos",
+            "funnel_ref": "psicologajohanna",
+            "actor_ref": "slack.u87654321",
+            "command_id": COMMAND_ID,
+            "expected_action": "resolve_with_candidate",
+            "expected_purchase_intent_id": CANDIDATE_ID,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "extra_fields",
+    [
+        {"actor_ref": "teams.u12345678"},
+        {"actor_ref": None},
+        {"unexpected": True},
+    ],
+)
+def test_confirm_resolution_rejects_invalid_optional_fields_without_rpc(
+    extra_fields: dict[str, object],
+) -> None:
+    store = _FakeResolutionStore()
+    with _app(store, actor_prefix="slack") as client:
+        response = client.post(
+            "/internal/operator/correlations/resolutions/confirm",
+            headers={"Authorization": f"Bearer {'w' * 32}"},
+            json={
+                "command_id": COMMAND_ID,
+                "expected_action": "resolve_with_candidate",
+                "expected_candidate_id": CANDIDATE_ID,
+                **extra_fields,
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "invalid_operator_correlation_resolution"}
+    assert store.confirm_calls == []
 
 
 def test_supabase_confirms_resolution_through_narrow_rpc() -> None:

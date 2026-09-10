@@ -1,7 +1,7 @@
 # Contrato de resolución manual de correlaciones V1
 
 - **Estado:** Contrato aceptado
-- **Versión:** `1.0.0`
+- **Versión:** `1.1.0`
 - **Implementación:** implementada; activación runtime default-off
 - **Complementa:** `operator-correlation-review-v1.md`
 
@@ -21,7 +21,8 @@ Client Copilot
 
 bridge
 → autentica con bearer de escritura separado
-→ fija tenant, funnel y actor desde configuración
+→ fija tenant y funnel desde configuración
+→ resuelve el actor desde el fallback fijo o un namespace dinámico autorizado
 → valida formas y minimiza errores expuestos
 
 PostgreSQL
@@ -37,6 +38,7 @@ Bridge:
 OPERATOR_CORRELATION_WRITE_ENABLED=false
 OPERATOR_CORRELATION_WRITE_TOKEN=<bearer dedicado, mínimo 32 caracteres>
 OPERATOR_CORRELATION_ACTOR_REF=<slug estable del operador, 2..64 caracteres>
+OPERATOR_CORRELATION_ACTOR_PREFIX=<opcional; namespace dinámico, 2..64 caracteres>
 ```
 
 El modo write requiere además la lectura de correlaciones habilitada, Supabase configurado y un write token distinto del read token.
@@ -47,9 +49,19 @@ Profile:
 OPERATOR_CORRELATION_WRITE_TOKEN=<mismo bearer dedicado>
 ```
 
-El Profile no recibe tenant, funnel ni actor. El actor efectivo del request nunca
-proviene de argumentos ni configuración del modelo: lo fija el bridge mediante
-`OPERATOR_CORRELATION_ACTOR_REF`.
+El Profile no recibe tenant, funnel ni actor. Sin `actor_ref` en el body, el bridge
+mantiene compatibilidad exacta y usa `OPERATOR_CORRELATION_ACTOR_REF`. Un caller de
+servicio autenticado puede enviar `actor_ref` sólo cuando
+`OPERATOR_CORRELATION_ACTOR_PREFIX` está configurado; el valor completo debe seguir
+la gramática `[a-z0-9][a-z0-9._-]{1,63}` y comenzar exactamente con
+`${OPERATOR_CORRELATION_ACTOR_PREFIX}.`. El prefijo debe cumplir por sí mismo la
+misma gramática y límites. Un actor dinámico fuera del namespace, malformado o
+enviado con soporte dinámico deshabilitado se rechaza antes de cualquier RPC.
+
+El bearer de escritura del connector delimita la frontera de confianza: el
+connector deriva `actor_ref` server-side desde el Slack User ID verificado, en
+minúsculas, por ejemplo `slack.u12345678`. No se aceptan display names, nombres
+de perfil ni valores aportados por el modelo como identidad de auditoría.
 
 ## Acciones y motivos cerrados
 
@@ -107,9 +119,13 @@ Body:
   "idempotency_key": "uuid",
   "action": "resolve_with_candidate | close_without_match",
   "candidate_id": "uuid | null",
-  "verification_basis": "closed enum"
+  "verification_basis": "closed enum",
+  "actor_ref": "opcional; actor dinámico autorizado"
 }
 ```
+
+Las keys históricas siguen siendo exactas cuando se omite `actor_ref`. Ésta es la
+única key opcional nueva; cualquier otra key se rechaza.
 
 Respuesta `200`:
 
@@ -151,7 +167,8 @@ Body:
 {
   "command_id": "uuid",
   "expected_action": "resolve_with_candidate | close_without_match",
-  "expected_candidate_id": "uuid | null"
+  "expected_candidate_id": "uuid | null",
+  "actor_ref": "opcional; debe ser el mismo actor usado al preparar"
 }
 ```
 
@@ -176,6 +193,13 @@ Respuesta `200`:
 ```
 
 Un replay exacto devuelve el mismo resultado con `replayed = true`.
+
+El actor efectivo se resuelve antes de cada RPC y se envía tanto a preparación
+como a confirmación. PostgreSQL vincula el comando y la resolución al actor: una
+confirmación con otro actor, aunque comparta el namespace permitido, falla por
+estado de dominio y no aplica ninguna resolución. El actor efectivo queda así
+persistido en la auditoría de Supabase para atribuir la decisión al Slack User ID
+verificado; el fallback fijo conserva la semántica de callers anteriores.
 
 ## Validaciones de preparación
 

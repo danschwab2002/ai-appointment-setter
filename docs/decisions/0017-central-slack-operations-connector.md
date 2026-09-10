@@ -7,8 +7,11 @@
 
 ## Contexto
 
-Johanna y ATT1 necesitan publicar avisos operativos en una app y canal Slack
-compartidos. Copiar el bot token a cada bridge ampliaría innecesariamente la
+Johanna y ATT1 necesitan publicar avisos operativos mediante una misma app de
+Slack, pero en canales exclusivos por aliado. El canal `C0C0YEACVT2`, aunque
+temporalmente conserve otro nombre visible, pertenece exclusivamente a Johanna.
+ATT1 tendrá otro Channel ID y no puede usar el canal de Johanna como fallback.
+Copiar el bot token a cada bridge ampliaría innecesariamente la
 frontera de credenciales, acoplaría los bridges al API de Slack y permitiría que
 cada caller eligiera copy o routing.
 
@@ -21,12 +24,13 @@ recibir PII, cuerpos de conversación ni payloads de proveedores.
 Se crea un servicio independiente `supportmagician-slack-connector`:
 
 ```text
-bridge Johanna ── bearer johanna ─┐
-                                  ├─→ conector durable ─→ Slack API ─→ C0C0YEACVT2
-bridge ATT1 ───── bearer att1 ─────┘
+bridge Johanna ── bearer johanna ─┐                         ┌─→ canal Johanna
+                                  ├─→ conector durable ─→ Slack API
+bridge ATT1 ───── bearer att1 ─────┘                         └─→ canal ATT1
 ```
 
-1. Sólo el conector posee `SLACK_BOT_TOKEN` y el Channel/Team ID.
+1. Sólo el conector posee `SLACK_BOT_TOKEN`, el Team ID y el mapa durable de
+   Channel IDs por tenant.
 2. Cada bridge usa una credencial interna diferente; el tenant se deriva de esa
    credencial.
 3. El contrato acepta eventos tipados, nunca texto, bloques, canal o tenant.
@@ -39,12 +43,18 @@ bridge ATT1 ───── bearer att1 ─────┘
    `delivery_unknown` y no se reintenta automáticamente.
 8. `auth.test` debe confirmar el workspace antes de iniciar el worker.
 9. Ingreso, publicación e interacciones tienen controles separados y default-off.
-10. Interactivity, Events API, Incoming Webhooks y Socket Mode permanecen fuera
-    de V1.
+10. El canal se selecciona exclusivamente desde un mapa server-owned derivado del
+    tenant autenticado. Dos tenants no pueden compartir Channel ID y un tenant sin
+    canal configurado falla cerrado antes de admitir el evento.
+11. Interactivity V2 verifica firma, workspace, canal, mensaje y allowlist de
+    operador antes de leer o mutar un caso. Events API, Incoming Webhooks y Socket
+    Mode permanecen fuera de alcance.
 
 ## Consecuencias
 
 - Los bridges no pueden publicar arbitrariamente ni filtrar el bot token.
+- Un error o ausencia de configuración de ATT1 no puede enviar mensajes al canal
+  de Johanna; tampoco existe un canal global de respaldo.
 - Los replays exactos son seguros y los conflictos semánticos fallan cerrado.
 - La operación requiere un volumen persistente y prohíbe scaling horizontal.
 - Una publicación `delivery_unknown` requiere reconciliación humana; no hay retry

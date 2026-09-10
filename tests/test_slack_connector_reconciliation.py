@@ -33,7 +33,7 @@ def _settings(path: str) -> SlackConnectorSettings:
     return SlackConnectorSettings(
         storage_path=path,
         operator_bearer_token="o" * 32,
-        channel_id="C0C0YEACVT2",
+        tenant_channels={"johanna": "C0C0YEACVT2"},
     )
 
 
@@ -99,7 +99,7 @@ def test_producer_bearer_cannot_reconcile_and_payload_surface_is_closed(tmp_path
         storage_path=str(path),
         operator_bearer_token="o" * 32,
         tenant_tokens={"johanna": "j" * 32, "att1": "a" * 32},
-        channel_id="C0C0YEACVT2",
+        tenant_channels={"johanna": "C0C0YEACVT2"},
     )
     app = create_app(settings, store=store)
 

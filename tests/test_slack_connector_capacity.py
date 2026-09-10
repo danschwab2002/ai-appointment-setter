@@ -52,7 +52,12 @@ def test_http_capacity_failure_is_retryable_and_does_not_mark_storage_down(
     store = NotificationStore(tmp_path / "connector.sqlite3")
     settings = SlackConnectorSettings(
         ingress_enabled=True,
+        team_id="T12345678",
         tenant_tokens={"johanna": "j" * 32, "att1": "a" * 32},
+        tenant_channels={
+            "johanna": "C0C0YEACVT2",
+            "att1": "C0ATT1TEST01",
+        },
         storage_path=str(tmp_path / "connector.sqlite3"),
         max_nonterminal_notifications=1,
     )

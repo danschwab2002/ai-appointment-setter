@@ -12,7 +12,12 @@
 
 Slack será la superficie operativa universal para los casos `unmatched`, `ambiguous` y `conflict`. Chatwoot será una proyección opcional solamente cuando ya exista una conversación canónica segura.
 
-Johanna, ATT1 y los siguientes tenants compartirán un único canal operativo de Slack. Cada mensaje identificará visualmente el tenant, mientras que el bridge y PostgreSQL exigirán el `tenant_ref` server-owned del caso; la etiqueta visible nunca concede scope ni permite correlaciones cruzadas.
+Cada aliado tendrá un canal operativo exclusivo. `C0C0YEACVT2` queda asignado
+únicamente a Johanna, independientemente de su nombre visible actual. ATT1 tendrá
+otro Channel ID para toda su gama de productos. El conector selecciona el canal
+desde un mapa server-owned derivado del bearer del productor; el caller no envía
+ni puede sobreescribir el canal. No existe fallback entre aliados: si ATT1 todavía
+no tiene canal configurado, sus admisiones fallan cerrado y nunca llegan a Johanna.
 
 Mariana no abrirá un HTML externo en el MVP. Verá un mensaje publicado por una app de Slack y, al pulsar **Revisar caso**, un modal nativo de Slack.
 
@@ -123,7 +128,7 @@ Esto permite demostrar a qué caso pertenece cada mensaje o respuesta generada p
 Antes de abrir o enviar el modal, el bridge debe:
 
 1. verificar la firma de Slack sobre los bytes crudos y rechazar timestamps fuera de ventana;
-2. comprobar `team_id`, `channel_id`, `message_ts` y el usuario Slack contra configuración server-owned;
+2. comprobar `team_id`, el `channel_id` exclusivo del tenant, `message_ts` y el usuario Slack contra configuración server-owned;
 3. resolver el hilo por esos identificadores, no sólo por el valor del botón;
 4. exigir que el `case_id` opaco del action coincida con el hilo encontrado;
 5. releer el caso y los candidatos desde Supabase Cloud;
@@ -192,8 +197,10 @@ Así, un recordatorio tardío nunca vuelve a mostrar como pendiente un caso ya r
 
 ## 7. Fronteras de seguridad
 
-- App instalada sólo en el workspace y canal configurados.
-- Usuarios resolutores mediante allowlist de IDs Slack o grupo server-owned; el nombre visible no concede autoridad.
+- App instalada sólo en el workspace y canales exclusivos configurados.
+- Un Channel ID no puede estar asignado a más de un tenant y no existe fallback a
+  un canal global.
+- Usuarios resolutores mediante allowlist de IDs Slack por tenant; el nombre visible no concede autoridad.
 - Firma y anti-replay obligatorios para interactividad.
 - Token bot y signing secret sólo en el secret store del runtime.
 - Sin payloads, teléfonos, emails o nombres completos en logs.
@@ -215,7 +222,8 @@ Así, un recordatorio tardío nunca vuelve a mostrar como pendiente un caso ya r
 ## 9. Decisiones todavía abiertas
 
 - SLA inicial y cadencia de recordatorios; recomendación: vencimiento a 24 h, recordatorio al vencer y escalamiento a 48 h.
-- el canal compartido ya existe; siguen pendientes la conexión de la app, sus IDs privados, permisos y grupo de escalamiento;
+- el canal exclusivo de Johanna ya existe; siguen pendientes el canal de ATT1, la
+  conexión interactiva de la app, sus IDs privados, permisos y grupo de escalamiento;
 - lista inicial de usuarios autorizados;
 - si un mensaje raíz eliminado debe recrearse automáticamente o escalar primero; recomendación: recrear una vez y escalar ante una segunda pérdida.
 

@@ -56,10 +56,10 @@ def test_readiness_stays_halted_until_delivery_unknown_is_reconciled(tmp_path) -
         notifications_enabled=True,
         activation_mode="one_shot",
         activation_generation=1,
-        tenant_tokens={"johanna": "j" * 32, "att1": "a" * 32},
+        tenant_tokens={"johanna": "j" * 32},
         bot_token="xoxb-test",
         team_id="T00000000",
-        channel_id="C0C0YEACVT2",
+        tenant_channels={"johanna": "C0C0YEACVT2"},
         storage_path=str(tmp_path / "connector.sqlite3"),
         poll_interval_seconds=1.0,
     )
@@ -121,7 +121,7 @@ def test_readiness_rechecks_slack_auth_after_the_cache_window() -> None:
         connectivity_check_enabled=True,
         bot_token="xoxb-test",
         team_id="T00000000",
-        channel_id="C0C0YEACVT2",
+        tenant_channels={"johanna": "C0C0YEACVT2"},
     )
     app = create_app(
         settings,
@@ -148,7 +148,7 @@ def test_worker_starts_after_initial_slack_auth_recovers(tmp_path) -> None:
         activation_generation=1,
         bot_token="xoxb-test",
         team_id="T00000000",
-        channel_id="C0C0YEACVT2",
+        tenant_channels={"johanna": "C0C0YEACVT2"},
         storage_path=str(tmp_path / "connector.sqlite3"),
     )
     app = create_app(

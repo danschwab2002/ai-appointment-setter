@@ -74,6 +74,8 @@ from bridge.operator_correlation_resolutions import (
     InvalidCorrelationResolution,
     build_resolution_command,
     build_resolution_result,
+    resolve_actor_ref,
+    validate_actor_prefix,
     validate_confirm_resolution,
     validate_prepare_resolution,
 )
@@ -366,6 +368,7 @@ class Settings:
     operator_correlation_write_enabled: bool = False
     operator_correlation_write_token: str | None = None
     operator_correlation_actor_ref: str | None = None
+    operator_correlation_actor_prefix: str | None = None
     slack_connector_projection_enabled: bool = False
     slack_connector_base_url: str | None = None
     slack_connector_bearer_token: str | None = None
@@ -1017,6 +1020,9 @@ class Settings:
             operator_correlation_actor_ref=(
                 os.getenv("OPERATOR_CORRELATION_ACTOR_REF", "").strip() or None
             ),
+            operator_correlation_actor_prefix=(
+                os.getenv("OPERATOR_CORRELATION_ACTOR_PREFIX", "").strip() or None
+            ),
         )
 
 
@@ -1340,6 +1346,12 @@ def create_app(
         raise ValueError(
             "operator correlation writes require reads, a write token, and actor ref"
         )
+    try:
+        validate_actor_prefix(settings.operator_correlation_actor_prefix)
+    except InvalidCorrelationResolution as exc:
+        raise ValueError(
+            "OPERATOR_CORRELATION_ACTOR_PREFIX must be a valid actor ref"
+        ) from exc
     if settings.operator_correlation_write_enabled and hmac.compare_digest(
         settings.operator_correlation_write_token or "",
         settings.operator_correlation_read_token or "",
@@ -2979,6 +2991,7 @@ def create_app(
         operator_tenant = settings.operator_correlation_tenant_ref
         operator_funnel = settings.operator_correlation_funnel_ref
         operator_actor = settings.operator_correlation_actor_ref
+        operator_actor_prefix = settings.operator_correlation_actor_prefix
         assert operator_write_token is not None
         assert operator_tenant is not None
         assert operator_funnel is not None
@@ -3022,10 +3035,15 @@ def create_app(
             require_operator_write_token(authorization)
             try:
                 prepared = validate_prepare_resolution(payload)
+                effective_actor = resolve_actor_ref(
+                    prepared["actor_ref"],
+                    fallback_actor_ref=operator_actor,
+                    actor_prefix=operator_actor_prefix,
+                )
                 raw = await shared_supabase.prepare_operator_correlation_resolution(
                     tenant_ref=operator_tenant,
                     funnel_ref=operator_funnel,
-                    actor_ref=operator_actor,
+                    actor_ref=effective_actor,
                     idempotency_key=prepared["idempotency_key"],
                     webhook_event_id=prepared["case_id"],
                     action=prepared["action"],
@@ -3059,10 +3077,15 @@ def create_app(
             require_operator_write_token(authorization)
             try:
                 confirmation = validate_confirm_resolution(payload)
+                effective_actor = resolve_actor_ref(
+                    confirmation["actor_ref"],
+                    fallback_actor_ref=operator_actor,
+                    actor_prefix=operator_actor_prefix,
+                )
                 raw = await shared_supabase.confirm_operator_correlation_resolution(
                     tenant_ref=operator_tenant,
                     funnel_ref=operator_funnel,
-                    actor_ref=operator_actor,
+                    actor_ref=effective_actor,
                     command_id=confirmation["command_id"],
                     expected_action=confirmation["expected_action"],
                     expected_purchase_intent_id=confirmation[
