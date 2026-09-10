@@ -1,9 +1,9 @@
 # Ciclo diario de feedback del Client Copilot — MVP
 
-- **Estado:** Propuesta para revisión
+- **Estado:** Diseño aceptado; implementación parcial local con batch minimizado durable
 - **Alcance:** Revisión diaria, supervisada y auditable de conversaciones comerciales reales
-- **Implementación:** No implementado
-- **Relacionado con:** [ADR-0006](../decisions/0006-three-agent-product-surface.md), [Conversation Release MVP](conversation-release-mvp.md) y [preguntas para Juan](questions-for-juan.md)
+- **Implementación:** Núcleo A–D1, adquisición/minimización, HTML de cuarentena y materialización durable de transcripts minimizados; persistencia compartida, scheduler, aplicación HTTPS, Slack y feedback durable desde HTML pendientes
+- **Relacionado con:** [ADR-0006](../decisions/0006-three-agent-product-surface.md), [Conversation Release MVP](conversation-release-mvp.md), [paquete HTML privado V1](../contracts/daily-feedback-review-package-v1.md) y [preguntas para Juan](questions-for-juan.md)
 
 ## 1. Propósito
 
