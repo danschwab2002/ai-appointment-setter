@@ -22,6 +22,9 @@ from bridge.daily_feedback import (
     IdempotencyConflictError,
     InvalidBatchInputError,
     LogicalBatchConflictError,
+    MinimizedReviewConversation,
+    RealConversationBatchGrant,
+    ReviewTranscriptMessage,
     FixtureOperatorGrant,
     FixtureReviewerGrant,
     FixtureReconciliationGrant,
@@ -230,6 +233,63 @@ def _presented_review_item(
         now=now + timedelta(seconds=3),
     )
     return store, created, reviewer, claim.session_fence
+
+
+def test_direct_minimized_batch_api_rejects_unsanitized_content(
+    tmp_path: Path,
+) -> None:
+    store = DailyFeedbackBatchStore(tmp_path / "store")
+    authority = RealConversationBatchGrant(
+        tenant_id="tenant-1",
+        scope_id="scope-1",
+        reviewer_id="reviewer-1",
+        reviewer_binding_id="binding-1",
+        package_schema_version="daily-feedback-review-package-v1",
+        sanitizer_version="deterministic-redaction-v1",
+        selection_version="chatwoot-agentbot-window-v1",
+        retention_hours=72,
+        deletion_owner="privacy-operator",
+        storage_encryption_evidence_ref="encryption-evidence-1",
+        active=True,
+    )
+    conversation = MinimizedReviewConversation(
+        conversation_ref="conversation-ref-1",
+        release_id="release_lineage_unavailable",
+        release_version=0,
+        context_summary="Conversación 01",
+        apparent_objective="Contactar raw-person@example.com",
+        observed_outcome="Respuesta enviada; sin respuesta posterior en la ventana",
+        messages=(
+            ReviewTranscriptMessage(
+                message_ref="message-ref-1",
+                actor="prospect",
+                text="Mi correo es raw-person@example.com",
+                occurred_at=datetime(2026, 8, 12, 1, tzinfo=UTC),
+            ),
+            ReviewTranscriptMessage(
+                message_ref="message-ref-2",
+                actor="agent",
+                text="Gracias",
+                occurred_at=datetime(2026, 8, 12, 2, tzinfo=UTC),
+            ),
+        ),
+    )
+
+    with pytest.raises(
+        InvalidBatchInputError,
+        match="minimized_conversation_not_sanitized",
+    ):
+        store.create_minimized_review_batch(
+            command_id="unsafe-direct-batch",
+            tenant_id="tenant-1",
+            scope_id="scope-1",
+            window_start=datetime(2026, 8, 12, tzinfo=UTC),
+            window_end=datetime(2026, 8, 13, tzinfo=UTC),
+            sanitizer_version="deterministic-redaction-v1",
+            selection_version="chatwoot-agentbot-window-v1",
+            authority=authority,
+            conversations=(conversation,),
+        )
 
 
 def test_correct_decision_terminalizes_presented_item_and_advances(

@@ -1,4 +1,4 @@
-"""Durable fixture-backed batches for the daily owner feedback cycle."""
+"""Durable fixture and minimized-conversation daily feedback batches."""
 
 from __future__ import annotations
 
@@ -6,8 +6,10 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import stat
 import tempfile
+import unicodedata
 import fcntl
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -15,6 +17,55 @@ from pathlib import Path
 from typing import Mapping, cast, Optional
 
 from fastapi import FastAPI, Header, HTTPException, Response
+
+
+_REVIEW_EMAIL_RE = re.compile(
+    r"(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+", re.IGNORECASE
+)
+_REVIEW_URL_RE = re.compile(r"(?:https?://|www\.)[^\s<>'\"]+", re.IGNORECASE)
+_REVIEW_PHONE_RE = re.compile(r"(?<!\w)(?:\+?\d[\d\s().-]{5,}\d)(?!\w)")
+_REVIEW_SECRET_RE = re.compile(
+    r"(?i)\b(?:bearer\s+[a-z0-9._~+/=-]{12,}|(?:api[_ -]?key|token|secret)\s*[:=]\s*[^\s,;]{8,})"
+)
+_REVIEW_DANGEROUS_SCHEME_RE = re.compile(
+    r"(?i)\b(?:javascript|vbscript|data)\s*:"
+)
+
+
+def _redact_review_phone(match: re.Match[str]) -> str:
+    return (
+        "[TELÉFONO]"
+        if len(re.sub(r"\D", "", match.group(0))) >= 7
+        else match.group(0)
+    )
+
+
+def sanitize_review_text(text: str, *, names: tuple[str, ...] = ()) -> str:
+    value = _REVIEW_SECRET_RE.sub("[SECRETO REDACTADO]", text)
+    value = _REVIEW_EMAIL_RE.sub("[EMAIL]", value)
+    value = _REVIEW_URL_RE.sub("[ENLACE]", value)
+    value = _REVIEW_DANGEROUS_SCHEME_RE.sub("[ESQUEMA BLOQUEADO]", value)
+    value = _REVIEW_PHONE_RE.sub(_redact_review_phone, value)
+    value = "".join(
+        character
+        if character in {"\n", "\t"}
+        or unicodedata.category(character) not in {"Cc", "Cf"}
+        else "[CONTROL]"
+        for character in value
+    )
+    for name in sorted(
+        {name.strip() for name in names if name.strip()}, key=len, reverse=True
+    ):
+        value = re.sub(re.escape(name), "[NOMBRE]", value, flags=re.IGNORECASE)
+        first_name = name.split()[0]
+        if len(first_name) >= 3:
+            value = re.sub(
+                rf"(?<!\w){re.escape(first_name)}(?!\w)",
+                "[NOMBRE]",
+                value,
+                flags=re.IGNORECASE,
+            )
+    return " ".join(value.split())
 
 
 @dataclass(frozen=True)
@@ -117,6 +168,71 @@ class NextReviewItem:
     release_id: str
     release_version: int
     payload_hash: str
+    source_kind: str = "sanitized_fixture"
+    sanitizer_version: str = "fixture_attestation"
+    selection_version: str = "fixture_selection"
+    messages: tuple[ReviewTranscriptMessage, ...] = ()
+
+
+@dataclass(frozen=True)
+class ReviewTranscriptMessage:
+    message_ref: str
+    actor: str
+    text: str
+    occurred_at: datetime
+
+
+@dataclass(frozen=True)
+class MinimizedReviewConversation:
+    conversation_ref: str
+    context_summary: str
+    apparent_objective: str
+    observed_outcome: str
+    release_id: str
+    release_version: int
+    messages: tuple[ReviewTranscriptMessage, ...]
+
+
+@dataclass(frozen=True)
+class RealConversationBatchGrant:
+    tenant_id: str
+    scope_id: str
+    reviewer_id: str
+    reviewer_binding_id: str
+    package_schema_version: str
+    sanitizer_version: str
+    selection_version: str
+    retention_hours: int
+    deletion_owner: str
+    storage_encryption_evidence_ref: str
+    active: bool
+
+
+@dataclass(frozen=True)
+class ReviewBatchAuthority:
+    tenant_id: str
+    scope_id: str
+    reviewer_id: str
+    reviewer_binding_id: str
+    source_kind: str
+    window_start: datetime
+    window_end: datetime
+    retention_expires_at: datetime
+    deletion_owner: str
+    storage_encryption_verified: bool
+    storage_encryption_evidence_ref: str
+
+
+@dataclass(frozen=True)
+class _BatchSourceItem:
+    item_id: str
+    canonical_conversation_ref: str
+    context_summary: str
+    apparent_objective: str
+    observed_outcome: str
+    release_id: str
+    release_version: int
+    messages: tuple[ReviewTranscriptMessage, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -386,9 +502,222 @@ class DailyFeedbackBatchStore:
                 logical_path=logical_path,
                 logical_key=logical_key,
                 fingerprint=fingerprint,
-                fixture_set=fixture_set,
+                source_items=tuple(
+                    _BatchSourceItem(
+                        item_id=fixture.fixture_id,
+                        canonical_conversation_ref=fixture.canonical_conversation_ref,
+                        context_summary=fixture.context_summary,
+                        apparent_objective=fixture.apparent_objective,
+                        observed_outcome=fixture.observed_outcome,
+                        release_id=fixture.release_id,
+                        release_version=fixture.release_version,
+                    )
+                    for fixture in fixture_set.fixtures
+                ),
+                batch_metadata={
+                    "source_kind": "sanitized_fixture",
+                    "tenant_id": tenant_id,
+                    "scope_id": scope_id,
+                    "window_start": window_start.isoformat(),
+                    "window_end": window_end.isoformat(),
+                    "sanitizer_version": "fixture_attestation",
+                    "selection_version": selection_contract_version,
+                },
                 reviewer_id=reviewer_id,
                 reviewer_binding_id=reviewer_binding_id,
+            )
+        finally:
+            os.close(lock_fd)
+
+    def create_minimized_review_batch(
+        self,
+        *,
+        command_id: str,
+        tenant_id: str,
+        scope_id: str,
+        window_start: datetime,
+        window_end: datetime,
+        sanitizer_version: str,
+        selection_version: str,
+        authority: RealConversationBatchGrant,
+        conversations: tuple[MinimizedReviewConversation, ...],
+    ) -> CreateBatchResult:
+        if (
+            window_start.tzinfo is None
+            or window_end.tzinfo is None
+            or window_start.utcoffset() != UTC.utcoffset(window_start)
+            or window_end.utcoffset() != UTC.utcoffset(window_end)
+            or window_start >= window_end
+        ):
+            raise InvalidBatchInputError("invalid_review_window")
+        if (
+            not tenant_id
+            or not scope_id
+            or sanitizer_version != "deterministic-redaction-v1"
+            or not selection_version
+            or authority.active is not True
+            or authority.tenant_id != tenant_id
+            or authority.scope_id != scope_id
+            or not authority.reviewer_id
+            or not authority.reviewer_binding_id
+            or authority.package_schema_version != "daily-feedback-review-package-v1"
+            or authority.sanitizer_version != sanitizer_version
+            or authority.selection_version != selection_version
+            or type(authority.retention_hours) is not int
+            or not 1 <= authority.retention_hours <= 168
+            or not authority.deletion_owner.strip()
+            or not authority.storage_encryption_evidence_ref.strip()
+        ):
+            raise InvalidBatchInputError("invalid_minimized_batch_authority")
+        conversation_refs = [item.conversation_ref for item in conversations]
+        if (
+            any(not value for value in conversation_refs)
+            or len(conversation_refs) != len(set(conversation_refs))
+        ):
+            raise InvalidBatchInputError("duplicate_canonical_conversation")
+        seen_message_refs: set[str] = set()
+        for conversation in conversations:
+            release_valid = (
+                conversation.release_id == "release_lineage_unavailable"
+                and conversation.release_version == 0
+            ) or (
+                bool(conversation.release_id)
+                and conversation.release_id != "release_lineage_unavailable"
+                and conversation.release_version >= 1
+            )
+            if (
+                not conversation.context_summary
+                or not conversation.apparent_objective
+                or not conversation.observed_outcome
+                or not conversation.messages
+                or {message.actor for message in conversation.messages}
+                != {"prospect", "agent"}
+                or not release_valid
+            ):
+                raise InvalidBatchInputError("invalid_minimized_conversation")
+            if any(
+                sanitize_review_text(value) != value
+                for value in (
+                    conversation.context_summary,
+                    conversation.apparent_objective,
+                    conversation.observed_outcome,
+                )
+            ):
+                raise InvalidBatchInputError("minimized_conversation_not_sanitized")
+            prior_time: datetime | None = None
+            for message in conversation.messages:
+                if (
+                    not message.message_ref
+                    or message.message_ref in seen_message_refs
+                    or not message.text
+                    or message.occurred_at.tzinfo is None
+                    or message.occurred_at.utcoffset()
+                    != UTC.utcoffset(message.occurred_at)
+                    or not window_start <= message.occurred_at < window_end
+                    or (prior_time is not None and message.occurred_at < prior_time)
+                ):
+                    raise InvalidBatchInputError("invalid_minimized_message")
+                if sanitize_review_text(message.text) != message.text:
+                    raise InvalidBatchInputError(
+                        "minimized_conversation_not_sanitized"
+                    )
+                seen_message_refs.add(message.message_ref)
+                prior_time = message.occurred_at
+
+        logical_inputs = {
+            "tenant_id": tenant_id,
+            "scope_id": scope_id,
+            "window_start": window_start.isoformat(),
+            "window_end": window_end.isoformat(),
+            "selection_contract_version": selection_version,
+            "selection_config_fingerprint": _hash_json(
+                {
+                    "package_kind": "canonical_minimized_conversation",
+                    "sanitizer_version": sanitizer_version,
+                    "selection_version": selection_version,
+                }
+            ),
+        }
+        inputs = {
+            **logical_inputs,
+            "reviewer_id": authority.reviewer_id,
+            "reviewer_binding_id": authority.reviewer_binding_id,
+            "source_kind": "canonical_minimized_conversation",
+            "sanitizer_version": sanitizer_version,
+            "retention_hours": authority.retention_hours,
+            "deletion_owner": authority.deletion_owner,
+            "storage_encryption_evidence_ref": (
+                authority.storage_encryption_evidence_ref
+            ),
+            "conversations": [
+                {
+                    "conversation_ref": conversation.conversation_ref,
+                    "context_summary": conversation.context_summary,
+                    "apparent_objective": conversation.apparent_objective,
+                    "observed_outcome": conversation.observed_outcome,
+                    "release_id": conversation.release_id,
+                    "release_version": conversation.release_version,
+                    "messages": [
+                        {
+                            "message_ref": message.message_ref,
+                            "actor": message.actor,
+                            "text": message.text,
+                            "occurred_at": message.occurred_at.isoformat(),
+                        }
+                        for message in conversation.messages
+                    ],
+                }
+                for conversation in conversations
+            ],
+        }
+        fingerprint = _hash_json(inputs)
+        command_fingerprint = _hash_json(
+            {"command_type": "create_minimized_review_batch", "payload": inputs}
+        )
+        command_path = self._commands_dir / f"{_hash_text(command_id)}.json"
+        logical_key = _hash_json(logical_inputs)
+        logical_path = self._logical_dir / f"{logical_key}.json"
+        lock_fd = self._open_lock(self._root / ".command.lock")
+        try:
+            return self._create_review_batch_locked(
+                command_id=command_id,
+                command_path=command_path,
+                command_fingerprint=command_fingerprint,
+                logical_path=logical_path,
+                logical_key=logical_key,
+                fingerprint=fingerprint,
+                source_items=tuple(
+                    _BatchSourceItem(
+                        item_id=conversation.conversation_ref,
+                        canonical_conversation_ref=conversation.conversation_ref,
+                        context_summary=conversation.context_summary,
+                        apparent_objective=conversation.apparent_objective,
+                        observed_outcome=conversation.observed_outcome,
+                        release_id=conversation.release_id,
+                        release_version=conversation.release_version,
+                        messages=conversation.messages,
+                    )
+                    for conversation in conversations
+                ),
+                batch_metadata={
+                    "source_kind": "canonical_minimized_conversation",
+                    "tenant_id": tenant_id,
+                    "scope_id": scope_id,
+                    "window_start": window_start.isoformat(),
+                    "window_end": window_end.isoformat(),
+                    "sanitizer_version": sanitizer_version,
+                    "selection_version": selection_version,
+                    "retention_expires_at": (
+                        window_end + timedelta(hours=authority.retention_hours)
+                    ).isoformat(),
+                    "deletion_owner": authority.deletion_owner,
+                    "storage_encryption_verified": True,
+                    "storage_encryption_evidence_ref": (
+                        authority.storage_encryption_evidence_ref
+                    ),
+                },
+                reviewer_id=authority.reviewer_id,
+                reviewer_binding_id=authority.reviewer_binding_id,
             )
         finally:
             os.close(lock_fd)
@@ -402,7 +731,8 @@ class DailyFeedbackBatchStore:
         logical_path: Path,
         logical_key: str,
         fingerprint: str,
-        fixture_set: FeedbackFixtureSet,
+        source_items: tuple[_BatchSourceItem, ...],
+        batch_metadata: dict[str, object],
         reviewer_id: str,
         reviewer_binding_id: str,
     ) -> CreateBatchResult:
@@ -425,11 +755,11 @@ class DailyFeedbackBatchStore:
         batch_id = f"batch_{fingerprint}"
         items = tuple(
             ReviewItem(
-                fixture_id=fixture.fixture_id,
+                fixture_id=source_item.item_id,
                 position=position,
-                snapshot_id=f"snapshot_{_hash_json({'batch_id': batch_id, 'position': position, 'fixture': fixture.fixture_id})}",
+                snapshot_id=f"snapshot_{_hash_json({'batch_id': batch_id, 'position': position, 'item': source_item.item_id})}",
             )
-            for position, fixture in enumerate(fixture_set.fixtures, start=1)
+            for position, source_item in enumerate(source_items, start=1)
         )
         batch = ReviewBatch(
             batch_id=batch_id,
@@ -442,29 +772,43 @@ class DailyFeedbackBatchStore:
             {
                 "path": f"snapshots/{item.snapshot_id}.json",
                 "envelope": {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "snapshot_id": item.snapshot_id,
-                    "fixture_id": fixture.fixture_id,
-                    "canonical_conversation_ref": fixture.canonical_conversation_ref,
-                    "context_summary": fixture.context_summary,
-                    "apparent_objective": fixture.apparent_objective,
-                    "observed_outcome": fixture.observed_outcome,
+                    "fixture_id": source_item.item_id,
+                    "review_item_id": source_item.item_id,
+                    "canonical_conversation_ref": source_item.canonical_conversation_ref,
+                    "context_summary": source_item.context_summary,
+                    "apparent_objective": source_item.apparent_objective,
+                    "observed_outcome": source_item.observed_outcome,
                     "release": {
-                        "id": fixture.release_id,
-                        "version": fixture.release_version,
+                        "id": source_item.release_id,
+                        "version": source_item.release_version,
                     },
+                    "source_kind": batch_metadata["source_kind"],
+                    "sanitizer_version": batch_metadata["sanitizer_version"],
+                    "selection_version": batch_metadata["selection_version"],
+                    "messages": [
+                        {
+                            "message_ref": message.message_ref,
+                            "actor": message.actor,
+                            "text": message.text,
+                            "occurred_at": message.occurred_at.isoformat(),
+                        }
+                        for message in source_item.messages
+                    ],
                     "sanitized": True,
                 },
             }
-            for item, fixture in zip(items, fixture_set.fixtures, strict=True)
+            for item, source_item in zip(items, source_items, strict=True)
         ]
         batch_envelope = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "batch_id": batch.batch_id,
                 "status": batch.status,
                 "revision": batch.revision,
                 "reviewer_id": reviewer_id,
                 "reviewer_binding_id": reviewer_binding_id,
+                **batch_metadata,
                 "items": [
                     {
                         "fixture_id": item.fixture_id,
@@ -554,6 +898,50 @@ class DailyFeedbackBatchStore:
         return CreateBatchResult(
             status="replayed" if intent_existed else "applied", batch=loaded
         )
+
+    def get_review_batch_authority(self, batch_id: str) -> ReviewBatchAuthority:
+        self._load_committed_batch(self._find_committed_manifest(batch_id))
+        envelope = self._read_json(self._batches_dir / f"{batch_id}.json")
+        try:
+            authority = ReviewBatchAuthority(
+                tenant_id=str(envelope["tenant_id"]),
+                scope_id=str(envelope["scope_id"]),
+                reviewer_id=str(envelope["reviewer_id"]),
+                reviewer_binding_id=str(envelope["reviewer_binding_id"]),
+                source_kind=str(envelope["source_kind"]),
+                window_start=datetime.fromisoformat(str(envelope["window_start"])),
+                window_end=datetime.fromisoformat(str(envelope["window_end"])),
+                retention_expires_at=datetime.fromisoformat(
+                    str(envelope["retention_expires_at"])
+                ),
+                deletion_owner=str(envelope["deletion_owner"]),
+                storage_encryption_verified=envelope[
+                    "storage_encryption_verified"
+                ]
+                is True,
+                storage_encryption_evidence_ref=str(
+                    envelope["storage_encryption_evidence_ref"]
+                ),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise StorageConflictError("daily_feedback_integrity_error") from exc
+        if (
+            not authority.tenant_id
+            or not authority.scope_id
+            or not authority.reviewer_id
+            or not authority.reviewer_binding_id
+            or authority.source_kind != "canonical_minimized_conversation"
+            or authority.window_start.tzinfo is None
+            or authority.window_end.tzinfo is None
+            or authority.retention_expires_at.tzinfo is None
+            or authority.window_start >= authority.window_end
+            or authority.retention_expires_at <= authority.window_end
+            or not authority.deletion_owner
+            or authority.storage_encryption_verified is not True
+            or not authority.storage_encryption_evidence_ref
+        ):
+            raise StorageConflictError("daily_feedback_integrity_error")
+        return authority
 
     def claim_review_session(
         self,
@@ -683,6 +1071,22 @@ class DailyFeedbackBatchStore:
             raise ReviewAuthorizationError("reviewer_authority_mismatch")
         if now.tzinfo is None or now.utcoffset() != UTC.utcoffset(now):
             raise ReviewAuthorizationError("invalid_review_time")
+        retention_expires_at = batch_envelope.get("retention_expires_at")
+        if retention_expires_at is not None:
+            if not isinstance(retention_expires_at, str):
+                raise StorageConflictError("daily_feedback_integrity_error")
+            try:
+                parsed_retention_expiry = datetime.fromisoformat(retention_expires_at)
+            except ValueError as exc:
+                raise StorageConflictError("daily_feedback_integrity_error") from exc
+            if (
+                parsed_retention_expiry.tzinfo is None
+                or parsed_retention_expiry.utcoffset()
+                != UTC.utcoffset(parsed_retention_expiry)
+            ):
+                raise StorageConflictError("daily_feedback_integrity_error")
+            if now >= parsed_retention_expiry:
+                raise ReviewAuthorizationError("review_content_expired")
         state_path = self._runtime_dir / f"{batch_id}.json"
         if not state_path.exists():
             raise ReviewAuthorizationError("review_session_missing")
@@ -724,6 +1128,24 @@ class DailyFeedbackBatchStore:
         release = snapshot.get("release")
         if not isinstance(release, dict):
             raise StorageConflictError("daily_feedback_integrity_error")
+        messages_value = snapshot.get("messages", [])
+        if not isinstance(messages_value, list):
+            raise StorageConflictError("daily_feedback_integrity_error")
+        try:
+            messages = tuple(
+                ReviewTranscriptMessage(
+                    message_ref=str(message["message_ref"]),
+                    actor=str(message["actor"]),
+                    text=str(message["text"]),
+                    occurred_at=datetime.fromisoformat(str(message["occurred_at"])),
+                )
+                for message in messages_value
+                if isinstance(message, dict)
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise StorageConflictError("daily_feedback_integrity_error") from exc
+        if len(messages) != len(messages_value):
+            raise StorageConflictError("daily_feedback_integrity_error")
         return NextReviewItem(
             fixture_id=str(item["fixture_id"]),
             position=int(item["position"]),
@@ -737,6 +1159,14 @@ class DailyFeedbackBatchStore:
             release_id=str(release["id"]),
             release_version=int(release["version"]),
             payload_hash=f"sha256:{_hash_json(snapshot)}",
+            source_kind=str(snapshot.get("source_kind", "sanitized_fixture")),
+            sanitizer_version=str(
+                snapshot.get("sanitizer_version", "fixture_attestation")
+            ),
+            selection_version=str(
+                snapshot.get("selection_version", "fixture_selection")
+            ),
+            messages=messages,
         )
 
     def record_review_decision(
