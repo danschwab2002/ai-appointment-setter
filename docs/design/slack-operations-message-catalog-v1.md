@@ -2,9 +2,9 @@
 
 - **Estado:** Catálogo aceptado; proyección outbound implementada localmente
 - **Fecha:** 2026-09-07
-- **Alcance:** mensajes que el producto puede enviar al canal operativo compartido de Slack
+- **Alcance:** mensajes operativos enviados al canal exclusivo de cada aliado
 - **Implementación:** 49 códigos, severidad P1–P4 y render server-owned implementados en el conector; emisión desde cada flujo de origen se activa por separado
-- **Canal:** `C0C0YEACVT2`; app instalada, runtime y credenciales pendientes de despliegue
+- **Routing:** `C0C0YEACVT2` es exclusivamente Johanna; ATT1 tendrá otro Channel ID
 - **Complementa:** [Resolución de correlaciones mediante Slack V1](slack-correlation-resolution-v1.md)
 
 Este documento conserva el catálogo editorial. El contrato técnico implementado
@@ -13,7 +13,7 @@ la existencia del código local no afirma despliegue ni activación productiva.
 
 ## 1. Objetivo del canal
 
-El canal será la bandeja operativa común para:
+El canal exclusivo de cada aliado será su bandeja operativa para:
 
 1. derivaciones que requieren intervención humana;
 2. correlaciones que el sistema no pudo resolver de forma inequívoca;

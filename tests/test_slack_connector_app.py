@@ -71,15 +71,63 @@ def test_settings_from_env_are_default_off(monkeypatch) -> None:
     for name in (
         "SLACK_NOTIFICATIONS_ENABLED",
         "SLACK_INTERACTIONS_ENABLED",
+        "SLACK_CORRELATION_BACKFILL_ENABLED",
         "SLACK_CONNECTIVITY_CHECK_ENABLED",
         "SLACK_BOT_TOKEN",
         "SLACK_SIGNING_SECRET",
         "SLACK_TEAM_ID",
-        "SLACK_CHANNEL_ID",
+        "SLACK_TENANT_CHANNELS_JSON",
     ):
         monkeypatch.delenv(name, raising=False)
 
     assert SlackConnectorSettings.from_env() == SlackConnectorSettings()
+
+
+def test_compose_keeps_backfill_default_off_and_stop_first() -> None:
+    root = Path(__file__).parents[1]
+    compose = (root / "deploy/slack-connector-compose.yaml").read_text()
+    env_example = (root / "deploy/slack-connector.env.example").read_text()
+    assert "SLACK_CORRELATION_BACKFILL_ENABLED: ${SLACK_CORRELATION_BACKFILL_ENABLED:-false}" in compose
+    assert "SLACK_CORRELATION_BACKFILL_ENABLED=false" in env_example
+    assert 'SLACK_TENANT_TOKENS_JSON={"johanna":"replace-with-32-plus-random-characters"}' in env_example
+    assert "replicas: 1" in compose
+    assert "order: stop-first" in compose
+
+
+def test_manifest_and_runbooks_keep_interactivity_staged_and_complete() -> None:
+    root = Path(__file__).parents[1]
+    manifest = __import__("json").loads(
+        (root / "deploy/slack-app-manifest-v1.json").read_text()
+    )
+    app_runbook = (
+        root / "docs/operations/slack-app-connection-runbook.md"
+    ).read_text()
+    deployment_runbook = (
+        root / "docs/operations/slack-connector-deployment-runbook.md"
+    ).read_text()
+
+    assert manifest["settings"]["interactivity"] == {"is_enabled": False}
+    assert "/slack/interactions" in app_runbook
+    for required in (
+        "SLACK_SIGNING_SECRET",
+        "SLACK_TENANT_OPERATOR_USER_IDS_JSON",
+        "SLACK_TENANT_OPERATOR_BACKENDS_JSON",
+        "OPERATOR_CORRELATION_ACTOR_PREFIX=slack",
+        "13 mensajes",
+        "SLACK_CORRELATION_BACKFILL_ENABLED=true",
+        "SLACK_INTERACTIONS_ENABLED=true",
+        "Rollback interactivo",
+    ):
+        assert required in deployment_runbook
+    connector_enable = deployment_runbook.index(
+        "Configurar `SLACK_INTERACTIONS_ENABLED=true`"
+    )
+    slack_enable = deployment_runbook.index(
+        "Configurar en Slack la Request URL"
+    )
+    assert connector_enable < slack_enable
+    rollback = deployment_runbook.split("### Rollback interactivo", 1)[1]
+    assert "Deshabilitar Interactivity en Slack." in rollback
 
 
 def test_settings_reject_ambiguous_boolean_values(monkeypatch) -> None:
@@ -91,8 +139,8 @@ def test_settings_reject_ambiguous_boolean_values(monkeypatch) -> None:
         SlackConnectorSettings.from_env()
 
 
-def test_connector_refuses_to_enable_unimplemented_interactions() -> None:
-    with pytest.raises(ValueError, match="interactions_not_implemented"):
+def test_connector_refuses_to_enable_incompletely_configured_interactions() -> None:
+    with pytest.raises(ValueError, match="interactions_configuration_incomplete"):
         create_app(SlackConnectorSettings(interactions_enabled=True))
 
 
@@ -106,17 +154,16 @@ def test_connectivity_check_requires_complete_exact_configuration() -> None:
     [
         {"bot_token": "xoxp-user-token"},
         {"team_id": "C12345678"},
-        {"channel_id": "T12345678"},
     ],
 )
 def test_connectivity_check_rejects_wrong_slack_identity_types(
-    overrides: dict[str, str],
+    overrides: dict[str, object],
 ) -> None:
     values = {
         "connectivity_check_enabled": True,
         "bot_token": "xoxb-bot-token",
         "team_id": "T12345678",
-        "channel_id": "C0C0YEACVT2",
+        "tenant_channels": {"johanna": "C0C0YEACVT2"},
         **overrides,
     }
 
@@ -129,7 +176,9 @@ def test_connector_rejects_unsafe_internal_tokens_and_worker_poll_interval() -> 
         create_app(
             SlackConnectorSettings(
                 ingress_enabled=True,
-                tenant_tokens={"johanna": "contains spaces" * 3, "att1": "a" * 32},
+                team_id="T12345678",
+                tenant_tokens={"johanna": "contains spaces" * 3},
+                tenant_channels={"johanna": "C0C0YEACVT2"},
             )
         )
     with pytest.raises(ValueError, match="invalid_poll_interval"):
@@ -167,7 +216,7 @@ def test_ready_verifies_slack_auth_without_sending_a_message() -> None:
         connectivity_check_enabled=True,
         bot_token="xoxb-test-token",
         team_id="T12345678",
-        channel_id="C0C0YEACVT2",
+        tenant_channels={"johanna": "C0C0YEACVT2"},
     )
     slack_client = SlackClient(
         bot_token="xoxb-test-token",
@@ -219,7 +268,7 @@ def test_ready_fails_closed_when_slack_auth_cannot_be_verified() -> None:
         connectivity_check_enabled=True,
         bot_token="xoxb-test-token",
         team_id="T12345678",
-        channel_id="C0C0YEACVT2",
+        tenant_channels={"johanna": "C0C0YEACVT2"},
     )
     app = create_app(settings, slack_client=FailingSlackClient())
 
@@ -239,8 +288,10 @@ def test_authenticated_tenant_admission_is_durable_and_idempotent(tmp_path: Path
     store = NotificationStore(tmp_path / "slack.sqlite3")
     settings = SlackConnectorSettings(
         ingress_enabled=True,
+        team_id="T12345678",
         storage_path=str(tmp_path / "slack.sqlite3"),
-        tenant_tokens={"johanna": "j" * 32, "att1": "a" * 32},
+        tenant_tokens={"johanna": "j" * 32},
+        tenant_channels={"johanna": "C0C0YEACVT2"},
     )
     app = create_app(settings, store=store)
     payload = {
@@ -288,8 +339,10 @@ def test_tenant_attestation_mismatch_is_rejected_before_admission(tmp_path: Path
     app = create_app(
         SlackConnectorSettings(
             ingress_enabled=True,
+            team_id="T12345678",
             storage_path=str(tmp_path / "slack.sqlite3"),
-            tenant_tokens={"johanna": "j" * 32, "att1": "a" * 32},
+            tenant_tokens={"johanna": "j" * 32},
+            tenant_channels={"johanna": "C0C0YEACVT2"},
         ),
         store=store,
     )
@@ -306,8 +359,8 @@ def test_tenant_attestation_mismatch_is_rejected_before_admission(tmp_path: Path
         response = client.post(
             "/internal/v1/notifications",
             headers={
-                "Authorization": f"Bearer {'a' * 32}",
-                "X-Expected-Tenant-Ref": "johanna",
+                "Authorization": f"Bearer {'j' * 32}",
+                "X-Expected-Tenant-Ref": "att1",
             },
             json=payload,
         )
@@ -342,9 +395,9 @@ def test_operational_app_delivers_admitted_notification_and_exposes_status(
         activation_generation=1,
         bot_token="xoxb-synthetic",
         team_id="T12345678",
-        channel_id="C0C0YEACVT2",
+        tenant_channels={"johanna": "C0C0YEACVT2"},
         storage_path=str(tmp_path / "slack.sqlite3"),
-        tenant_tokens={"johanna": token, "att1": "a" * 32},
+        tenant_tokens={"johanna": token},
         poll_interval_seconds=1.0,
     )
     payload = {
@@ -414,8 +467,10 @@ def test_storage_preflight_runs_while_ingress_and_effects_are_inactive(tmp_path:
 def test_second_connector_instance_cannot_share_the_same_sqlite_volume(tmp_path: Path) -> None:
     settings = SlackConnectorSettings(
         ingress_enabled=True,
+        team_id="T12345678",
         storage_path=str(tmp_path / "connector.sqlite3"),
-        tenant_tokens={"johanna": "j" * 32, "att1": "a" * 32},
+        tenant_tokens={"johanna": "j" * 32},
+        tenant_channels={"johanna": "C0C0YEACVT2"},
     )
     first = create_app(settings)
     second = create_app(settings)
@@ -437,8 +492,10 @@ def test_readiness_fails_when_the_store_stops_being_writable(tmp_path: Path) -> 
 
     settings = SlackConnectorSettings(
         ingress_enabled=True,
+        team_id="T12345678",
         storage_path=str(tmp_path / "connector.sqlite3"),
-        tenant_tokens={"johanna": "j" * 32, "att1": "a" * 32},
+        tenant_tokens={"johanna": "j" * 32},
+        tenant_channels={"johanna": "C0C0YEACVT2"},
     )
     app = create_app(settings, store=FailingProbeStore(settings.storage_path))
 
@@ -456,8 +513,10 @@ def test_admission_storage_failure_is_sanitized_and_fails_closed(tmp_path: Path)
 
     settings = SlackConnectorSettings(
         ingress_enabled=True,
+        team_id="T12345678",
         storage_path=str(tmp_path / "connector.sqlite3"),
-        tenant_tokens={"johanna": "j" * 32, "att1": "a" * 32},
+        tenant_tokens={"johanna": "j" * 32},
+        tenant_channels={"johanna": "C0C0YEACVT2"},
     )
     app = create_app(settings, store=FailingAdmissionStore(settings.storage_path))
     payload = {

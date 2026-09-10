@@ -10,7 +10,7 @@ import tomllib
 import httpx
 import pytest
 
-from slack_correlation.client import SlackClient, SlackProtocolError
+from slack_correlation.client import SlackClient, SlackProtocolError, SlackRejectedError
 from slack_correlation.security import InvalidSlackSignature, verify_slack_signature
 from slack_correlation.ui import build_pending_message, build_review_modal
 
@@ -116,6 +116,36 @@ def test_review_modal_offers_only_projected_candidates_and_no_match() -> None:
     assert "593991234567" not in rendered
 
 
+def test_review_modal_rejects_unmasked_candidate_email_without_rendering_it() -> None:
+    case = _case()
+    case["candidate_count"] = 1
+    case["candidates"] = [{
+        "purchase_intent_id": "22222222-2222-4222-8222-222222222222",
+        "lifecycle_state": "waiting_for_purchase",
+        "masked_email": "buyer@example.com",
+        "masked_phone": "********4567",
+    }]
+    with pytest.raises(ValueError, match="invalid_candidate_identity") as error:
+        build_review_modal(case, review_token="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+    assert "buyer@example.com" not in str(error.value)
+
+
+def test_pending_message_rejects_raw_top_level_identity_without_rendering_it() -> None:
+    case = _case()
+    case["email"] = "buyer@example.com"
+    with pytest.raises(ValueError, match="raw_identity_forbidden") as error:
+        build_pending_message(case, review_due_at="2026-09-07T15:00:00Z")
+    assert "buyer@example.com" not in str(error.value)
+
+
+@pytest.mark.parametrize("value", ["b***r@example.com\n<!channel>", "b***r@exam`ple.com", "*******<1234"])
+def test_slack_surfaces_reject_control_or_mrkdwn_in_identity(value: str) -> None:
+    case = _case()
+    case["identity"] = {"masked_email": value, "masked_phone": None}
+    with pytest.raises(ValueError):
+        build_pending_message(case, review_due_at="2026-09-07T15:00:00Z")
+
+
 def test_slack_signature_uses_raw_body_and_rejects_stale_or_modified_requests() -> None:
     secret = "test-signing-secret"
     timestamp = "1788700000"
@@ -194,3 +224,59 @@ def test_slack_client_posts_to_exact_channel_and_validates_message_identity() ->
                 channel_id="C-OPERATIONS", message=payload
             )
         )
+
+
+def test_slack_client_opens_view_and_updates_exact_message_identity() -> None:
+    requests: list[tuple[str, dict]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        requests.append((request.url.path, body))
+        if request.url.path.endswith("views.open"):
+            return httpx.Response(200, json={
+                "ok": True,
+                "view": {"id": "V12345678", "team_id": "T12345678", "callback_id": "prepare_operator_correlation_resolution"},
+            })
+        if request.url.path.endswith("views.update"):
+            return httpx.Response(200, json={
+                "ok": True,
+                "view": {"id": "V12345678", "team_id": "T12345678", "callback_id": "confirm_operator_correlation_resolution"},
+            })
+        return httpx.Response(200, json={
+            "ok": True, "channel": "C0C0YEACVT2", "ts": "1788700000.123456"
+        })
+
+    client = SlackClient(bot_token="test-bot-token", transport=httpx.MockTransport(handler))
+    view = build_review_modal(
+        {**_case(), "candidate_count": 0},
+        review_token="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    )
+    asyncio.run(client.open_view(trigger_id="123.456.valid", view=view, expected_team_id="T12345678"))
+    confirmation = {**view, "callback_id": "confirm_operator_correlation_resolution"}
+    asyncio.run(client.update_view(
+        view_id="V12345678", view_hash="1788700000.abc", view=confirmation,
+        expected_team_id="T12345678",
+    ))
+    asyncio.run(client.update_message(
+        channel_id="C0C0YEACVT2",
+        message_ts="1788700000.123456",
+        message={"text": "terminal", "blocks": []},
+    ))
+    assert [path for path, _body in requests] == [
+        "/api/views.open", "/api/views.update", "/api/chat.update"
+    ]
+    assert requests[1][1]["view_id"] == "V12345678"
+    assert requests[1][1]["hash"] == "1788700000.abc"
+    assert requests[2][1]["channel"] == "C0C0YEACVT2"
+    assert requests[2][1]["ts"] == "1788700000.123456"
+
+
+def test_slack_client_classifies_explicit_update_rejection() -> None:
+    client = SlackClient(
+        bot_token="test-bot-token",
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"ok": False, "error": "message_not_found"})),
+    )
+    with pytest.raises(SlackRejectedError):
+        asyncio.run(client.update_message(
+            channel_id="C0C0YEACVT2", message_ts="1788700000.123456", message={"text": "terminal"}
+        ))

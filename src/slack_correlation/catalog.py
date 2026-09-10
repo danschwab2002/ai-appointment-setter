@@ -160,6 +160,28 @@ def render_message(
             },
         },
     }
+    if command.event_code in {"COR-001", "COR-002", "COR-003"}:
+        if command.subject_ref is None or not command.subject_ref.startswith("C-"):
+            raise ValueError("correlation_case_id_required")
+        try:
+            case_id = str(UUID(command.subject_ref[2:]))
+        except ValueError as exc:
+            raise ValueError("correlation_case_id_required") from exc
+        message["metadata"]["event_payload"]["case_id"] = case_id
+        message["blocks"].append(
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "action_id": "review_operator_correlation",
+                        "text": {"type": "plain_text", "text": "Revisar caso"},
+                        "style": "primary",
+                        "value": case_id,
+                    }
+                ],
+            }
+        )
     if thread_ts is not None:
         message["thread_ts"] = thread_ts
     return message

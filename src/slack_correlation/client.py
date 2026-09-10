@@ -124,6 +124,91 @@ class SlackClient:
             message_ts=message_ts,
         )
 
+    async def open_view(
+        self, *, trigger_id: str, view: dict[str, Any], expected_team_id: str
+    ) -> None:
+        if not isinstance(trigger_id, str) or not trigger_id or not isinstance(view, dict):
+            raise ValueError("invalid view request")
+        callback_id = view.get("callback_id")
+        if not isinstance(callback_id, str) or not callback_id:
+            raise ValueError("invalid view")
+        payload = await self._post_api("/views.open", {"trigger_id": trigger_id, "view": view})
+        returned = payload.get("view")
+        if (
+            not isinstance(returned, dict)
+            or returned.get("team_id") != expected_team_id
+            or returned.get("callback_id") != callback_id
+            or not isinstance(returned.get("id"), str)
+            or not returned["id"]
+        ):
+            raise SlackProtocolError("view_identity_mismatch")
+
+    async def update_message(
+        self, *, channel_id: str, message_ts: str, message: dict[str, Any]
+    ) -> SlackMessageReference:
+        if not isinstance(channel_id, str) or not channel_id or not isinstance(message_ts, str) or _MESSAGE_TS.fullmatch(message_ts) is None:
+            raise ValueError("invalid message identity")
+        if not isinstance(message, dict) or "channel" in message or "ts" in message:
+            raise ValueError("invalid message")
+        payload = await self._post_api(
+            "/chat.update", {"channel": channel_id, "ts": message_ts, **message}
+        )
+        if payload.get("channel") != channel_id or payload.get("ts") != message_ts:
+            raise SlackProtocolError("message_identity_mismatch")
+        return SlackMessageReference(channel_id=channel_id, message_ts=message_ts)
+
+    async def update_view(
+        self,
+        *,
+        view_id: str,
+        view_hash: str | None,
+        view: dict[str, Any],
+        expected_team_id: str,
+    ) -> None:
+        if not isinstance(view_id, str) or not view_id or not isinstance(view, dict):
+            raise ValueError("invalid view request")
+        callback_id = view.get("callback_id")
+        if not isinstance(callback_id, str) or not callback_id:
+            raise ValueError("invalid view")
+        body: dict[str, Any] = {"view_id": view_id, "view": view}
+        if view_hash is not None:
+            body["hash"] = view_hash
+        payload = await self._post_api("/views.update", body)
+        returned = payload.get("view")
+        if (
+            not isinstance(returned, dict)
+            or returned.get("id") != view_id
+            or returned.get("team_id") != expected_team_id
+            or returned.get("callback_id") != callback_id
+        ):
+            raise SlackProtocolError("view_identity_mismatch")
+
+    async def _post_api(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._base_url,
+                headers={
+                    "Authorization": f"Bearer {self._bot_token}",
+                    "Content-Type": "application/json; charset=utf-8",
+                },
+                transport=self._transport,
+                timeout=15,
+            ) as client:
+                response = await client.post(path, json=body)
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise SlackProtocolError("slack_request_unknown") from exc
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise SlackProtocolError("invalid_json") from exc
+        if not isinstance(payload, dict):
+            raise SlackProtocolError("invalid_response_shape")
+        if payload.get("ok") is not True:
+            raise SlackRejectedError("slack_api_rejected")
+        return payload
+
+
 def _validate_base_url(base_url: str) -> str:
     if not isinstance(base_url, str):
         raise ValueError("invalid_slack_base_url")

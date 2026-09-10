@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 from uuid import UUID
 
@@ -16,6 +17,20 @@ LINK_VERIFICATION_BASES = frozenset(
 CLOSE_VERIFICATION_BASES = frozenset({"no_valid_candidate_after_review"})
 UNRESOLVED_OUTCOMES = frozenset({"unmatched", "ambiguous", "conflict"})
 RESOLUTION_OUTCOMES = frozenset({"linked_candidate", "closed_without_match"})
+ACTOR_REF_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{1,63}")
+PREPARE_FIELDS = frozenset(
+    {
+        "case_id",
+        "idempotency_key",
+        "action",
+        "candidate_id",
+        "verification_basis",
+        "actor_ref",
+    }
+)
+CONFIRM_FIELDS = frozenset(
+    {"command_id", "expected_action", "expected_candidate_id", "actor_ref"}
+)
 
 
 class InvalidCorrelationResolution(ValueError):
@@ -39,10 +54,41 @@ def _string(value: object, field: str) -> str:
     return value
 
 
+def _request_actor_ref(payload: dict[str, object]) -> str | None:
+    if "actor_ref" not in payload:
+        return None
+    actor_ref = payload["actor_ref"]
+    if not isinstance(actor_ref, str) or ACTOR_REF_PATTERN.fullmatch(actor_ref) is None:
+        raise InvalidCorrelationResolution("invalid_actor_ref")
+    return actor_ref
+
+
+def validate_actor_prefix(actor_prefix: str | None) -> None:
+    """Validate the optional server-owned namespace for dynamic actors."""
+    if actor_prefix is not None and ACTOR_REF_PATTERN.fullmatch(actor_prefix) is None:
+        raise InvalidCorrelationResolution("invalid_actor_prefix")
+
+
+def resolve_actor_ref(
+    request_actor_ref: str | None,
+    *,
+    fallback_actor_ref: str,
+    actor_prefix: str | None,
+) -> str:
+    """Resolve a request actor without weakening fixed-actor callers."""
+    if request_actor_ref is None:
+        return fallback_actor_ref
+    if actor_prefix is None or not request_actor_ref.startswith(f"{actor_prefix}."):
+        raise InvalidCorrelationResolution("invalid_actor_ref")
+    return request_actor_ref
+
+
 def validate_prepare_resolution(
     payload: dict[str, object],
 ) -> dict[str, str | None]:
     """Validate the model-supplied portion of a prepare request."""
+    if not payload.keys() <= PREPARE_FIELDS:
+        raise InvalidCorrelationResolution("invalid_prepare_fields")
     case_id = _uuid(payload.get("case_id"), "case_id")
     idempotency_key = _uuid(payload.get("idempotency_key"), "idempotency_key")
     action = _string(payload.get("action"), "action")
@@ -63,6 +109,7 @@ def validate_prepare_resolution(
         "action": action,
         "candidate_id": candidate_id,
         "verification_basis": verification_basis,
+        "actor_ref": _request_actor_ref(payload),
     }
 
 
@@ -122,6 +169,8 @@ def validate_confirm_resolution(
     payload: dict[str, object],
 ) -> dict[str, str | None]:
     """Validate the immutable command identity echoed for confirmation."""
+    if not payload.keys() <= CONFIRM_FIELDS:
+        raise InvalidCorrelationResolution("invalid_confirm_fields")
     command_id = _uuid(payload.get("command_id"), "command_id")
     expected_action = _string(payload.get("expected_action"), "expected_action")
     expected_candidate_id = _uuid(
@@ -143,6 +192,7 @@ def validate_confirm_resolution(
         "command_id": command_id,
         "expected_action": expected_action,
         "expected_candidate_id": expected_candidate_id,
+        "actor_ref": _request_actor_ref(payload),
     }
 
 

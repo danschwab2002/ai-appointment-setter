@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import fcntl
 import hashlib
 import json
@@ -14,6 +15,7 @@ import re
 import sqlite3
 import tempfile
 from typing import BinaryIO
+from uuid import UUID, uuid4
 
 from slack_correlation.catalog import NotificationCommand
 
@@ -41,6 +43,8 @@ class NotificationClaim:
     tenant_ref: str
     notification_id: str
     command: NotificationCommand
+    channel_id: str | None
+    team_id: str | None
     worker_id: str
     generation: int
 
@@ -55,6 +59,44 @@ class StoredNotification:
     channel_id: str | None
     message_ts: str | None
     thread_ts: str | None
+
+
+@dataclass(frozen=True)
+class CorrelationBinding:
+    tenant_ref: str
+    notification_id: str
+    case_id: str
+    channel_id: str
+    message_ts: str
+    review_due_at: str
+
+
+@dataclass(frozen=True)
+class ReviewSession:
+    review_token: str
+    tenant_ref: str
+    case_id: str
+    team_id: str
+    channel_id: str
+    message_ts: str
+    slack_user_id: str
+    expires_at: int
+    state: str
+    action: str | None
+    candidate_id: str | None
+    verification_basis: str | None
+    idempotency_key: str | None
+    prepared_command: dict[str, object] | None
+    result: dict[str, object] | None
+    view_id: str | None
+    view_hash: str | None
+
+
+@dataclass(frozen=True)
+class OpeningJob:
+    review_token: str
+    trigger_id: str
+    state: str
 
 
 class NotificationStore:
@@ -99,13 +141,15 @@ class NotificationStore:
     def initialize(self) -> None:
         self._path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(self._path.parent, 0o700)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-            if version not in {0, 1, 2}:
+            if version not in {0, 1, 2, 3, 4, 5, 6}:
                 raise RuntimeError("unsupported_store_version")
             connection.execute("PRAGMA journal_mode = WAL")
             connection.execute("PRAGMA synchronous = FULL")
-            connection.executescript(
+            connection.execute("BEGIN IMMEDIATE")
+            _execute_statements(
+                connection,
                 """
                 CREATE TABLE IF NOT EXISTS notifications (
                     tenant_ref TEXT NOT NULL,
@@ -161,6 +205,61 @@ class NotificationStore:
                     FOREIGN KEY (tenant_ref, notification_id)
                         REFERENCES notifications (tenant_ref, notification_id)
                 );
+                CREATE TABLE IF NOT EXISTS interaction_replays (
+                    fingerprint TEXT PRIMARY KEY,
+                    state TEXT NOT NULL CHECK (state IN ('request_started', 'responded')),
+                    response_status INTEGER,
+                    response_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS correlation_review_sessions (
+                    review_token TEXT PRIMARY KEY,
+                    tenant_ref TEXT NOT NULL,
+                    case_id TEXT NOT NULL,
+                    team_id TEXT NOT NULL,
+                    channel_id TEXT NOT NULL,
+                    message_ts TEXT NOT NULL,
+                    slack_user_id TEXT NOT NULL,
+                    expires_at INTEGER NOT NULL,
+                    state TEXT NOT NULL CHECK (state IN ('opened','preparing','prepared','confirming','resolved','failed')),
+                    action TEXT,
+                    candidate_id TEXT,
+                    verification_basis TEXT,
+                    idempotency_key TEXT UNIQUE,
+                    prepared_command_json TEXT,
+                    result_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS correlation_opening_jobs (
+                    review_token TEXT PRIMARY KEY,
+                    trigger_id TEXT NOT NULL,
+                    state TEXT NOT NULL CHECK (
+                        state IN ('pending','request_started','completed','failed')
+                    ),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (review_token)
+                        REFERENCES correlation_review_sessions (review_token)
+                );
+                CREATE TABLE IF NOT EXISTS correlation_projections (
+                    tenant_ref TEXT NOT NULL,
+                    notification_id TEXT NOT NULL,
+                    case_id TEXT NOT NULL,
+                    team_id TEXT,
+                    channel_id TEXT NOT NULL,
+                    message_ts TEXT NOT NULL,
+                    review_due_at TEXT NOT NULL,
+                    state TEXT NOT NULL CHECK (state IN ('pending','claimed','request_started','accepted','rejected','delivery_unknown')),
+                    failure_code TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (tenant_ref, notification_id),
+                    UNIQUE (team_id, channel_id, message_ts),
+                    FOREIGN KEY (tenant_ref, notification_id)
+                        REFERENCES notifications (tenant_ref, notification_id)
+                );
                 """
             )
             notification_columns = {
@@ -171,6 +270,8 @@ class NotificationStore:
                 connection.execute(
                     "ALTER TABLE notifications ADD COLUMN activation_generation_started INTEGER"
                 )
+            if "team_id" not in notification_columns:
+                connection.execute("ALTER TABLE notifications ADD COLUMN team_id TEXT")
             meta_columns = {
                 str(row["name"])
                 for row in connection.execute("PRAGMA table_info(connector_meta)")
@@ -194,9 +295,131 @@ class NotificationStore:
                 """,
                 (datetime.now(UTC).isoformat(),),
             )
-            if version < 2:
-                connection.execute("PRAGMA user_version = 2")
+            now = datetime.now(UTC).isoformat()
+            for row in connection.execute(
+                """SELECT tenant_ref, notification_id, payload_json, channel_id, message_ts
+                   FROM notifications
+                   WHERE state='accepted' AND event_code IN ('COR-001','COR-002','COR-003')
+                     AND thread_ts IS NULL"""
+            ):
+                try:
+                    command = _deserialize_command(str(row["payload_json"]))
+                    if command.subject_ref is None:
+                        continue
+                    case_id = str(UUID(command.subject_ref[2:]))
+                    channel_id = str(row["channel_id"])
+                    message_ts = str(row["message_ts"])
+                    if re.fullmatch(r"C[A-Z0-9]{8,}", channel_id) is None or re.fullmatch(r"[0-9]{10,16}\.[0-9]{6}", message_ts) is None:
+                        continue
+                    review_due_at = (command.deadline_at or command.occurred_at).astimezone(UTC).isoformat().replace("+00:00", "Z")
+                except (ValueError, KeyError, TypeError):
+                    continue
+                connection.execute(
+                    """INSERT OR IGNORE INTO correlation_projections
+                       (tenant_ref, notification_id, case_id, team_id, channel_id, message_ts,
+                        review_due_at, state, created_at, updated_at)
+                       VALUES (?, ?, ?, NULL, ?, ?, ?, 'pending', ?, ?)""",
+                    (row["tenant_ref"], row["notification_id"], case_id, channel_id,
+                     message_ts, review_due_at, now, now),
+                )
+            session_columns = {
+                str(row["name"])
+                for row in connection.execute(
+                    "PRAGMA table_info(correlation_review_sessions)"
+                )
+            }
+            if "view_id" not in session_columns:
+                connection.execute(
+                    "ALTER TABLE correlation_review_sessions ADD COLUMN view_id TEXT"
+                )
+            if "view_hash" not in session_columns:
+                connection.execute(
+                    "ALTER TABLE correlation_review_sessions ADD COLUMN view_hash TEXT"
+                )
+            connection.execute(
+                """INSERT OR IGNORE INTO correlation_opening_jobs
+                   (review_token, trigger_id, state, created_at, updated_at)
+                   SELECT review_token, '',
+                          CASE WHEN state='opened' THEN 'failed' ELSE 'completed' END,
+                          created_at, updated_at
+                   FROM correlation_review_sessions"""
+            )
+            connection.execute(
+                """UPDATE correlation_review_sessions SET state='failed'
+                   WHERE state='opened' AND review_token IN (
+                       SELECT review_token FROM correlation_opening_jobs
+                       WHERE state='failed'
+                   )"""
+            )
+            projection_sql = str(connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='correlation_projections'"
+            ).fetchone()[0])
+            if "'claimed'" not in projection_sql:
+                _execute_statements(
+                    connection,
+                    """
+                    ALTER TABLE correlation_projections RENAME TO correlation_projections_v3;
+                    CREATE TABLE correlation_projections (
+                        tenant_ref TEXT NOT NULL,
+                        notification_id TEXT NOT NULL,
+                        case_id TEXT NOT NULL,
+                        team_id TEXT,
+                        channel_id TEXT NOT NULL,
+                        message_ts TEXT NOT NULL,
+                        review_due_at TEXT NOT NULL,
+                        state TEXT NOT NULL CHECK (state IN ('pending','claimed','request_started','accepted','rejected','delivery_unknown')),
+                        failure_code TEXT,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        PRIMARY KEY (tenant_ref, notification_id),
+                        UNIQUE (team_id, channel_id, message_ts),
+                        FOREIGN KEY (tenant_ref, notification_id)
+                            REFERENCES notifications (tenant_ref, notification_id)
+                    );
+                    INSERT INTO correlation_projections SELECT * FROM correlation_projections_v3;
+                    DROP TABLE correlation_projections_v3;
+                    """
+                )
+            if version < 6:
+                connection.execute("PRAGMA user_version = 6")
         os.chmod(self._path, 0o600)
+
+    def bind_legacy_team(
+        self, *, team_id: str, tenant_channels: dict[str, str]
+    ) -> None:
+        """Bind pre-team-schema rows only through exact trusted tenant routes."""
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            unbound = connection.execute(
+                """SELECT tenant_ref, channel_id FROM notifications
+                   WHERE team_id IS NULL"""
+            ).fetchall()
+            if any(
+                row["channel_id"] is None
+                or tenant_channels.get(str(row["tenant_ref"])) != str(row["channel_id"])
+                for row in unbound
+            ):
+                connection.rollback()
+                raise RuntimeError("legacy_team_binding_mismatch")
+            connection.execute(
+                "UPDATE notifications SET team_id = ? WHERE team_id IS NULL",
+                (team_id,),
+            )
+            projection_rows = connection.execute(
+                """SELECT tenant_ref, channel_id FROM correlation_projections
+                   WHERE team_id IS NULL"""
+            ).fetchall()
+            if any(
+                tenant_channels.get(str(row["tenant_ref"])) != str(row["channel_id"])
+                for row in projection_rows
+            ):
+                connection.rollback()
+                raise RuntimeError("legacy_team_binding_mismatch")
+            connection.execute(
+                "UPDATE correlation_projections SET team_id = ? WHERE team_id IS NULL",
+                (team_id,),
+            )
+            connection.commit()
 
     def probe(self) -> None:
         with self._connect() as connection:
@@ -327,6 +550,8 @@ class NotificationStore:
         *,
         tenant_ref: str,
         command: NotificationCommand,
+        team_id: str | None = None,
+        channel_id: str | None = None,
         max_nonterminal: int = 10_000,
     ) -> AdmissionResult:
         if _TENANT_REF.fullmatch(tenant_ref) is None:
@@ -340,7 +565,8 @@ class NotificationStore:
             connection.execute("BEGIN IMMEDIATE")
             rows = connection.execute(
                 """
-                SELECT notification_id, event_code, dedupe_key, payload_sha256, state
+                SELECT notification_id, event_code, dedupe_key, payload_sha256,
+                       team_id, channel_id, state
                 FROM notifications
                 WHERE tenant_ref = ?
                   AND (
@@ -363,6 +589,8 @@ class NotificationStore:
                     and row["event_code"] == command.event_code
                     and row["dedupe_key"] == command.dedupe_key
                     and row["payload_sha256"] == payload_sha256
+                    and row["team_id"] == team_id
+                    and row["channel_id"] == channel_id
                 )
                 connection.commit()
                 return AdmissionResult(
@@ -387,8 +615,9 @@ class NotificationStore:
                 """
                 INSERT INTO notifications (
                     tenant_ref, notification_id, event_code, dedupe_key,
-                    payload_json, payload_sha256, state, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                    payload_json, payload_sha256, state, team_id, channel_id,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
                 """,
                 (
                     tenant_ref,
@@ -397,6 +626,8 @@ class NotificationStore:
                     command.dedupe_key,
                     payload_json,
                     payload_sha256,
+                    team_id,
+                    channel_id,
                     now,
                     now,
                 ),
@@ -432,7 +663,8 @@ class NotificationStore:
                     return None
             row = connection.execute(
                 """
-                SELECT tenant_ref, notification_id, payload_json, claim_generation
+                SELECT tenant_ref, notification_id, payload_json, team_id, channel_id,
+                       claim_generation
                 FROM notifications
                 WHERE state = 'pending'
                 ORDER BY created_at, tenant_ref, notification_id
@@ -465,6 +697,10 @@ class NotificationStore:
             tenant_ref=str(row["tenant_ref"]),
             notification_id=str(row["notification_id"]),
             command=_deserialize_command(str(row["payload_json"])),
+            channel_id=(
+                str(row["channel_id"]) if row["channel_id"] is not None else None
+            ),
+            team_id=(str(row["team_id"]) if row["team_id"] is not None else None),
             worker_id=worker_id,
             generation=generation,
         )
@@ -538,6 +774,7 @@ class NotificationStore:
         channel_id: str,
         message_ts: str,
         thread_ts: str | None,
+        team_id: str | None = None,
     ) -> None:
         now = datetime.now(UTC).isoformat()
         subject_ref = claim.command.subject_ref
@@ -602,6 +839,34 @@ class NotificationStore:
             if updated != 1:
                 connection.rollback()
                 raise RuntimeError("notification_claim_lost")
+            if (
+                claim.command.event_code in {"COR-001", "COR-002", "COR-003"}
+                and thread_ts is None
+                and claim.command.subject_ref is not None
+            ):
+                if team_id is None or re.fullmatch(r"T[A-Z0-9]{8,}", team_id) is None:
+                    connection.rollback()
+                    raise RuntimeError("correlation_team_id_required")
+                try:
+                    case_id = str(UUID(claim.command.subject_ref[2:]))
+                except (ValueError, IndexError) as exc:
+                    connection.rollback()
+                    raise RuntimeError("invalid_correlation_subject") from exc
+                review_due_at = (
+                    claim.command.deadline_at or claim.command.occurred_at
+                ).astimezone(UTC).isoformat().replace("+00:00", "Z")
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO correlation_projections (
+                        tenant_ref, notification_id, case_id, team_id, channel_id, message_ts,
+                        review_due_at, state, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                    """,
+                    (
+                        claim.tenant_ref, claim.notification_id, case_id, team_id, channel_id,
+                        message_ts, review_due_at, now, now,
+                    ),
+                )
             connection.commit()
 
     def finalize_delivery_unknown(
@@ -636,6 +901,666 @@ class NotificationStore:
                 connection.rollback()
                 raise RuntimeError("notification_claim_lost")
             connection.commit()
+
+    def find_correlation_binding(
+        self, *, tenant_ref: str, team_id: str, channel_id: str, message_ts: str
+    ) -> CorrelationBinding | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT p.* FROM correlation_projections p
+                JOIN notifications n USING (tenant_ref, notification_id)
+                WHERE p.tenant_ref = ? AND p.team_id = ?
+                  AND p.channel_id = ? AND p.message_ts = ?
+                  AND n.state = 'accepted'
+                """,
+                (tenant_ref, team_id, channel_id, message_ts),
+            ).fetchone()
+        if row is None:
+            return None
+        return CorrelationBinding(
+            tenant_ref=str(row["tenant_ref"]), notification_id=str(row["notification_id"]),
+            case_id=str(row["case_id"]), channel_id=str(row["channel_id"]),
+            message_ts=str(row["message_ts"]), review_due_at=str(row["review_due_at"]),
+        )
+
+    @staticmethod
+    def _prior_interaction(
+        connection: sqlite3.Connection, fingerprint: str
+    ) -> tuple[bool, int | None, dict[str, object] | None]:
+        if re.fullmatch(r"[a-f0-9]{64}", fingerprint) is None:
+            raise ValueError("invalid_fingerprint")
+        row = connection.execute(
+            "SELECT response_status, response_json FROM interaction_replays WHERE fingerprint=?",
+            (fingerprint,),
+        ).fetchone()
+        if row is None:
+            return True, None, None
+        response = json.loads(row["response_json"]) if row["response_json"] is not None else None
+        return False, row["response_status"], response
+
+    @staticmethod
+    def _insert_completed_interaction(
+        connection: sqlite3.Connection,
+        *,
+        fingerprint: str,
+        status: int,
+        response: dict[str, object],
+        now: str,
+    ) -> None:
+        if int(connection.execute(
+            "SELECT count(*) FROM interaction_replays"
+        ).fetchone()[0]) >= 10_000:
+            raise RuntimeError("interaction_replay_capacity_exhausted")
+        serialized = json.dumps(
+            response, ensure_ascii=True, separators=(",", ":"), sort_keys=True
+        )
+        connection.execute(
+            "INSERT INTO interaction_replays VALUES (?, 'responded', ?, ?, ?, ?)",
+            (fingerprint, status, serialized, now, now),
+        )
+
+    def admit_open_interaction(
+        self,
+        *,
+        fingerprint: str,
+        binding: CorrelationBinding,
+        team_id: str,
+        slack_user_id: str,
+        trigger_id: str,
+        expires_at: int,
+    ) -> tuple[bool, int | None, dict[str, object] | None, str | None]:
+        now = datetime.now(UTC).isoformat()
+        token = str(uuid4())
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            is_new, status, response = self._prior_interaction(connection, fingerprint)
+            if not is_new:
+                connection.commit()
+                return False, status, response, None
+            row = connection.execute(
+                """SELECT 1 FROM correlation_projections p
+                   JOIN notifications n USING (tenant_ref, notification_id)
+                   WHERE p.tenant_ref=? AND p.notification_id=? AND p.case_id=?
+                     AND p.team_id=? AND p.channel_id=? AND p.message_ts=?
+                     AND n.state='accepted'""",
+                (
+                    binding.tenant_ref, binding.notification_id, binding.case_id,
+                    team_id, binding.channel_id, binding.message_ts,
+                ),
+            ).fetchone()
+            if row is None:
+                connection.rollback()
+                raise RuntimeError("correlation_binding_changed")
+            if int(connection.execute(
+                "SELECT count(*) FROM correlation_review_sessions"
+            ).fetchone()[0]) >= 10_000:
+                connection.rollback()
+                raise RuntimeError("review_session_capacity_exhausted")
+            connection.execute(
+                """INSERT INTO correlation_review_sessions
+                   (review_token, tenant_ref, case_id, team_id, channel_id, message_ts,
+                    slack_user_id, expires_at, state, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'opened', ?, ?)""",
+                (
+                    token, binding.tenant_ref, binding.case_id, team_id,
+                    binding.channel_id, binding.message_ts, slack_user_id,
+                    expires_at, now, now,
+                ),
+            )
+            connection.execute(
+                """INSERT INTO correlation_opening_jobs
+                   (review_token, trigger_id, state, created_at, updated_at)
+                   VALUES (?, ?, 'pending', ?, ?)""",
+                (token, trigger_id, now, now),
+            )
+            self._insert_completed_interaction(
+                connection, fingerprint=fingerprint, status=200, response={}, now=now
+            )
+            connection.commit()
+        return True, 200, {}, token
+
+    def admit_prepare_interaction(
+        self,
+        *,
+        fingerprint: str,
+        review_token: str,
+        team_id: str,
+        slack_user_id: str,
+        now_epoch: int,
+        action: str,
+        candidate_id: str | None,
+        verification_basis: str,
+        view_id: str,
+        view_hash: str | None,
+        response: dict[str, object],
+    ) -> tuple[bool, int | None, dict[str, object] | None]:
+        now = datetime.now(UTC).isoformat()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            is_new, status, prior = self._prior_interaction(connection, fingerprint)
+            if not is_new:
+                connection.commit()
+                return False, status, prior
+            row = connection.execute(
+                """SELECT s.*, j.state opening_state
+                   FROM correlation_review_sessions s
+                   JOIN correlation_opening_jobs j USING (review_token)
+                   WHERE s.review_token=?""",
+                (review_token,),
+            ).fetchone()
+            if (
+                row is None or row["team_id"] != team_id
+                or row["slack_user_id"] != slack_user_id
+                or int(row["expires_at"]) < now_epoch
+                or row["opening_state"] != "completed"
+            ):
+                connection.rollback()
+                raise RuntimeError("review_session_binding_changed")
+            if row["state"] == "opened":
+                connection.execute(
+                    """UPDATE correlation_review_sessions
+                       SET state='preparing', action=?, candidate_id=?,
+                           verification_basis=?, idempotency_key=?, view_id=?,
+                           view_hash=?, updated_at=? WHERE review_token=?""",
+                    (
+                        action, candidate_id, verification_basis, str(uuid4()),
+                        view_id, view_hash, now, review_token,
+                    ),
+                )
+            elif (
+                row["state"] not in {"preparing", "prepared"}
+                or row["action"] != action
+                or row["candidate_id"] != candidate_id
+                or row["verification_basis"] != verification_basis
+            ):
+                connection.rollback()
+                raise RuntimeError("review_session_semantic_conflict")
+            self._insert_completed_interaction(
+                connection, fingerprint=fingerprint, status=200,
+                response=response, now=now,
+            )
+            connection.commit()
+        return True, 200, response
+
+    def admit_confirm_interaction(
+        self,
+        *,
+        fingerprint: str,
+        review_token: str,
+        team_id: str,
+        slack_user_id: str,
+        now_epoch: int,
+        view_id: str,
+        view_hash: str | None,
+        response: dict[str, object],
+    ) -> tuple[bool, int | None, dict[str, object] | None]:
+        now = datetime.now(UTC).isoformat()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            is_new, status, prior = self._prior_interaction(connection, fingerprint)
+            if not is_new:
+                connection.commit()
+                return False, status, prior
+            row = connection.execute(
+                "SELECT * FROM correlation_review_sessions WHERE review_token=?",
+                (review_token,),
+            ).fetchone()
+            if (
+                row is None or row["team_id"] != team_id
+                or row["slack_user_id"] != slack_user_id
+                or int(row["expires_at"]) < now_epoch
+                or row["state"] not in {"prepared", "confirming"}
+            ):
+                connection.rollback()
+                raise RuntimeError("review_session_binding_changed")
+            connection.execute(
+                """UPDATE correlation_review_sessions
+                   SET state='confirming', view_id=?, view_hash=?, updated_at=?
+                   WHERE review_token=?""",
+                (view_id, view_hash, now, review_token),
+            )
+            self._insert_completed_interaction(
+                connection, fingerprint=fingerprint, status=200,
+                response=response, now=now,
+            )
+            connection.commit()
+        return True, 200, response
+
+    def pending_opening_jobs(self) -> list[OpeningJob]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT review_token, trigger_id, state
+                   FROM correlation_opening_jobs WHERE state='pending'
+                   ORDER BY created_at, review_token"""
+            ).fetchall()
+        return [OpeningJob(str(row[0]), str(row[1]), str(row[2])) for row in rows]
+
+    def mark_open_request_started(self, *, review_token: str) -> None:
+        with self._connect() as connection:
+            updated = connection.execute(
+                """UPDATE correlation_opening_jobs
+                   SET state='request_started', updated_at=?
+                   WHERE review_token=? AND state='pending'""",
+                (datetime.now(UTC).isoformat(), review_token),
+            ).rowcount
+            if updated != 1:
+                raise RuntimeError("opening_job_not_pending")
+
+    def finish_opening(self, *, review_token: str) -> None:
+        with self._connect() as connection:
+            updated = connection.execute(
+                """UPDATE correlation_opening_jobs
+                   SET state='completed', trigger_id='', updated_at=?
+                   WHERE review_token=? AND state='request_started'""",
+                (datetime.now(UTC).isoformat(), review_token),
+            ).rowcount
+            if updated != 1:
+                raise RuntimeError("opening_job_not_started")
+
+    def fail_opening(self, *, review_token: str) -> None:
+        now = datetime.now(UTC).isoformat()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            updated = connection.execute(
+                """UPDATE correlation_opening_jobs
+                   SET state='failed', trigger_id='', updated_at=?
+                   WHERE review_token=? AND state IN ('pending','request_started')""",
+                (now, review_token),
+            ).rowcount
+            if updated != 1:
+                connection.rollback()
+                raise RuntimeError("opening_job_not_active")
+            connection.execute(
+                """UPDATE correlation_review_sessions SET state='failed', updated_at=?
+                   WHERE review_token=? AND state='opened'""",
+                (now, review_token),
+            )
+            connection.commit()
+
+    def reserve_interaction(self, *, fingerprint: str) -> tuple[bool, int | None, dict[str, object] | None]:
+        if re.fullmatch(r"[a-f0-9]{64}", fingerprint) is None:
+            raise ValueError("invalid_fingerprint")
+        now = datetime.now(UTC).isoformat()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT response_status, response_json FROM interaction_replays WHERE fingerprint = ?",
+                (fingerprint,),
+            ).fetchone()
+            if row is not None:
+                connection.commit()
+                response = json.loads(row["response_json"]) if row["response_json"] is not None else None
+                return False, row["response_status"], response
+            connection.execute(
+                "INSERT INTO interaction_replays VALUES (?, 'request_started', NULL, NULL, ?, ?)",
+                (fingerprint, now, now),
+            )
+            connection.commit()
+        return True, None, None
+
+    def prune_interaction_history(
+        self,
+        *,
+        now_epoch: int,
+        max_replays: int = 10_000,
+        max_sessions: int = 10_000,
+        replay_retention_seconds: int = 86_400,
+        terminal_session_retention_seconds: int = 2_592_000,
+    ) -> None:
+        """Bound replay history while preserving every nonterminal workflow."""
+        if not 1 <= max_replays <= 100_000 or not 1 <= max_sessions <= 100_000:
+            raise ValueError("invalid_interaction_capacity")
+        if replay_retention_seconds < 300 or terminal_session_retention_seconds < 900:
+            raise ValueError("invalid_interaction_retention")
+        replay_cutoff = datetime.fromtimestamp(now_epoch, UTC) - timedelta(
+            seconds=replay_retention_seconds
+        )
+        session_cutoff = datetime.fromtimestamp(now_epoch, UTC) - timedelta(
+            seconds=terminal_session_retention_seconds
+        )
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "DELETE FROM interaction_replays WHERE state='responded' AND updated_at < ?",
+                (replay_cutoff.isoformat(),),
+            )
+            connection.execute(
+                """DELETE FROM interaction_replays WHERE fingerprint IN (
+                       SELECT fingerprint FROM interaction_replays WHERE state='responded'
+                       ORDER BY updated_at DESC, fingerprint DESC LIMIT -1 OFFSET ?
+                   )""",
+                (max_replays - 1,),
+            )
+            terminal_expired = """SELECT review_token FROM correlation_review_sessions
+                                  WHERE state IN ('resolved','failed') AND updated_at < ?"""
+            opened_expired = """SELECT review_token FROM correlation_review_sessions
+                                WHERE state='opened' AND expires_at < ?"""
+            connection.execute(
+                f"DELETE FROM correlation_opening_jobs WHERE review_token IN ({terminal_expired})",
+                (session_cutoff.isoformat(),),
+            )
+            connection.execute(
+                f"DELETE FROM correlation_review_sessions WHERE review_token IN ({terminal_expired})",
+                (session_cutoff.isoformat(),),
+            )
+            connection.execute(
+                f"DELETE FROM correlation_opening_jobs WHERE review_token IN ({opened_expired})",
+                (now_epoch,),
+            )
+            connection.execute(
+                f"DELETE FROM correlation_review_sessions WHERE review_token IN ({opened_expired})",
+                (now_epoch,),
+            )
+            active = int(connection.execute(
+                """SELECT count(*) FROM correlation_review_sessions
+                   WHERE state NOT IN ('resolved','failed')"""
+            ).fetchone()[0])
+            terminal_budget = max(0, max_sessions - active)
+            excess_terminal = """SELECT review_token FROM correlation_review_sessions
+                                  WHERE state IN ('resolved','failed')
+                                  ORDER BY updated_at DESC, review_token DESC
+                                  LIMIT -1 OFFSET ?"""
+            connection.execute(
+                f"DELETE FROM correlation_opening_jobs WHERE review_token IN ({excess_terminal})",
+                (terminal_budget,),
+            )
+            connection.execute(
+                f"DELETE FROM correlation_review_sessions WHERE review_token IN ({excess_terminal})",
+                (terminal_budget,),
+            )
+            connection.commit()
+
+    def complete_interaction(self, *, fingerprint: str, status: int, response: dict[str, object]) -> None:
+        serialized = json.dumps(response, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+        with self._connect() as connection:
+            updated = connection.execute(
+                """UPDATE interaction_replays SET state='responded', response_status=?, response_json=?, updated_at=?
+                   WHERE fingerprint=? AND state='request_started'""",
+                (status, serialized, datetime.now(UTC).isoformat(), fingerprint),
+            ).rowcount
+            if updated != 1:
+                raise RuntimeError("interaction_replay_conflict")
+
+    def interaction_replay_count(self) -> int:
+        with self._connect() as connection:
+            return int(connection.execute("SELECT count(*) FROM interaction_replays").fetchone()[0])
+
+    def create_review_session(
+        self, *, binding: CorrelationBinding, team_id: str, slack_user_id: str, expires_at: int
+    ) -> ReviewSession:
+        token = str(uuid4())
+        now = datetime.now(UTC).isoformat()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            count = int(connection.execute(
+                "SELECT count(*) FROM correlation_review_sessions"
+            ).fetchone()[0])
+            if count >= 10_000:
+                connection.rollback()
+                raise RuntimeError("review_session_capacity_exhausted")
+            connection.execute(
+                """INSERT INTO correlation_review_sessions
+                   (review_token, tenant_ref, case_id, team_id, channel_id, message_ts,
+                    slack_user_id, expires_at, state, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'opened', ?, ?)""",
+                (token, binding.tenant_ref, binding.case_id, team_id, binding.channel_id,
+                 binding.message_ts, slack_user_id, expires_at, now, now),
+            )
+            connection.execute(
+                """INSERT INTO correlation_opening_jobs
+                   (review_token, trigger_id, state, created_at, updated_at)
+                   VALUES (?, '', 'completed', ?, ?)""",
+                (token, now, now),
+            )
+        session = self.get_review_session(review_token=token)
+        assert session is not None
+        return session
+
+    def get_review_session(self, *, review_token: str) -> ReviewSession | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM correlation_review_sessions WHERE review_token = ?", (review_token,)
+            ).fetchone()
+        if row is None:
+            return None
+        return ReviewSession(
+            review_token=str(row["review_token"]), tenant_ref=str(row["tenant_ref"]),
+            case_id=str(row["case_id"]), team_id=str(row["team_id"]),
+            channel_id=str(row["channel_id"]), message_ts=str(row["message_ts"]),
+            slack_user_id=str(row["slack_user_id"]), expires_at=int(row["expires_at"]),
+            state=str(row["state"]), action=row["action"], candidate_id=row["candidate_id"],
+            verification_basis=row["verification_basis"], idempotency_key=row["idempotency_key"],
+            prepared_command=json.loads(row["prepared_command_json"]) if row["prepared_command_json"] else None,
+            result=json.loads(row["result_json"]) if row["result_json"] else None,
+            view_id=row["view_id"], view_hash=row["view_hash"],
+        )
+
+    def begin_prepare(
+        self, *, review_token: str, action: str, candidate_id: str | None,
+        verification_basis: str, view_id: str | None = None,
+        view_hash: str | None = None,
+    ) -> ReviewSession:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM correlation_review_sessions WHERE review_token=?", (review_token,)
+            ).fetchone()
+            if row is None:
+                connection.rollback()
+                raise RuntimeError("review_session_not_open")
+            if row["state"] == "opened":
+                connection.execute(
+                    """UPDATE correlation_review_sessions SET state='preparing', action=?, candidate_id=?,
+                       verification_basis=?, idempotency_key=?, view_id=?, view_hash=?, updated_at=?
+                       WHERE review_token=?""",
+                    (action, candidate_id, verification_basis, str(uuid4()), view_id, view_hash,
+                     datetime.now(UTC).isoformat(), review_token),
+                )
+            elif (
+                row["state"] not in {"preparing", "prepared"}
+                or row["action"] != action
+                or row["candidate_id"] != candidate_id
+                or row["verification_basis"] != verification_basis
+            ):
+                connection.rollback()
+                raise RuntimeError("review_session_semantic_conflict")
+            connection.commit()
+        session = self.get_review_session(review_token=review_token)
+        assert session is not None
+        return session
+
+    def active_review_sessions(self) -> list[ReviewSession]:
+        with self._connect() as connection:
+            tokens = [
+                str(row[0])
+                for row in connection.execute(
+                    """SELECT review_token FROM correlation_review_sessions
+                       WHERE state IN ('preparing','confirming')
+                       ORDER BY updated_at, review_token"""
+                )
+            ]
+        return [
+            session
+            for token in tokens
+            if (session := self.get_review_session(review_token=token)) is not None
+        ]
+
+    def finish_prepare(self, *, review_token: str, command: dict[str, object]) -> ReviewSession:
+        serialized = json.dumps(command, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+        with self._connect() as connection:
+            updated = connection.execute(
+                "UPDATE correlation_review_sessions SET state='prepared', prepared_command_json=?, updated_at=? WHERE review_token=? AND state='preparing'",
+                (serialized, datetime.now(UTC).isoformat(), review_token),
+            ).rowcount
+            if updated != 1:
+                raise RuntimeError("review_session_not_preparing")
+        session = self.get_review_session(review_token=review_token)
+        assert session is not None
+        return session
+
+    def begin_confirm(
+        self, *, review_token: str, view_id: str | None = None,
+        view_hash: str | None = None,
+    ) -> ReviewSession:
+        with self._connect() as connection:
+            updated = connection.execute(
+                """UPDATE correlation_review_sessions
+                   SET state='confirming', view_id=COALESCE(?, view_id),
+                       view_hash=?, updated_at=?
+                   WHERE review_token=? AND state IN ('prepared','confirming')""",
+                (view_id, view_hash, datetime.now(UTC).isoformat(), review_token),
+            ).rowcount
+            if updated != 1:
+                raise RuntimeError("review_session_not_prepared")
+        session = self.get_review_session(review_token=review_token)
+        assert session is not None
+        return session
+
+    def fail_session(self, *, review_token: str) -> None:
+        with self._connect() as connection:
+            updated = connection.execute(
+                "UPDATE correlation_review_sessions SET state='failed', updated_at=? WHERE review_token=? AND state IN ('preparing','confirming')",
+                (datetime.now(UTC).isoformat(), review_token),
+            ).rowcount
+            if updated != 1:
+                raise RuntimeError("review_session_not_active")
+
+    def finish_resolution_and_begin_projection(
+        self, *, review_token: str, result: dict[str, object]
+    ) -> CorrelationBinding:
+        serialized = json.dumps(result, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+        now = datetime.now(UTC).isoformat()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            session = connection.execute(
+                "SELECT * FROM correlation_review_sessions WHERE review_token=? AND state='confirming'",
+                (review_token,),
+            ).fetchone()
+            if session is None:
+                connection.rollback()
+                raise RuntimeError("review_session_not_confirming")
+            projection = connection.execute(
+                """SELECT * FROM correlation_projections WHERE tenant_ref=? AND case_id=?
+                   AND team_id=? AND channel_id=? AND message_ts=?
+                   AND state IN ('pending','accepted')""",
+                (
+                    session["tenant_ref"], session["case_id"], session["team_id"],
+                    session["channel_id"], session["message_ts"],
+                ),
+            ).fetchone()
+            if projection is None:
+                connection.rollback()
+                raise RuntimeError("projection_not_available")
+            connection.execute(
+                "UPDATE correlation_review_sessions SET state='resolved', result_json=?, updated_at=? WHERE review_token=?",
+                (serialized, now, review_token),
+            )
+            connection.execute(
+                "UPDATE correlation_projections SET state='request_started', failure_code=NULL, updated_at=? WHERE tenant_ref=? AND notification_id=?",
+                (now, projection["tenant_ref"], projection["notification_id"]),
+            )
+            connection.commit()
+        return CorrelationBinding(
+            tenant_ref=str(projection["tenant_ref"]),
+            notification_id=str(projection["notification_id"]),
+            case_id=str(projection["case_id"]),
+            channel_id=str(projection["channel_id"]),
+            message_ts=str(projection["message_ts"]),
+            review_due_at=str(projection["review_due_at"]),
+        )
+
+    def finish_resolution(self, *, review_token: str, result: dict[str, object]) -> None:
+        serialized = json.dumps(result, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+        with self._connect() as connection:
+            updated = connection.execute(
+                "UPDATE correlation_review_sessions SET state='resolved', result_json=?, updated_at=? WHERE review_token=? AND state='confirming'",
+                (serialized, datetime.now(UTC).isoformat(), review_token),
+            ).rowcount
+            if updated != 1:
+                raise RuntimeError("review_session_not_confirming")
+
+    def begin_bound_projection(self, *, tenant_ref: str, channel_id: str, message_ts: str, team_id: str) -> CorrelationBinding:
+        now = datetime.now(UTC).isoformat()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM correlation_projections WHERE tenant_ref=? AND team_id=? AND channel_id=? AND message_ts=?",
+                (tenant_ref, team_id, channel_id, message_ts),
+            ).fetchone()
+            if row is None or row["state"] not in {"pending", "accepted"}:
+                connection.rollback()
+                raise RuntimeError("projection_not_available")
+            connection.execute(
+                "UPDATE correlation_projections SET state='request_started', team_id=?, failure_code=NULL, updated_at=? WHERE tenant_ref=? AND notification_id=?",
+                (team_id, now, tenant_ref, row["notification_id"]),
+            )
+            connection.commit()
+        return CorrelationBinding(
+            tenant_ref=str(row["tenant_ref"]), notification_id=str(row["notification_id"]),
+            case_id=str(row["case_id"]), channel_id=str(row["channel_id"]),
+            message_ts=str(row["message_ts"]), review_due_at=str(row["review_due_at"]),
+        )
+
+    def claim_projection(self, *, tenant_ref: str, team_id: str, channel_id: str) -> CorrelationBinding | None:
+        now = datetime.now(UTC).isoformat()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """SELECT * FROM correlation_projections WHERE tenant_ref=?
+                   AND (team_id=? OR team_id IS NULL) AND channel_id=?
+                   AND state='pending' ORDER BY created_at, notification_id LIMIT 1""",
+                (tenant_ref, team_id, channel_id),
+            ).fetchone()
+            if row is None:
+                connection.commit()
+                return None
+            connection.execute(
+                "UPDATE correlation_projections SET state='claimed', team_id=?, updated_at=? WHERE tenant_ref=? AND notification_id=? AND state='pending'",
+                (team_id, now, tenant_ref, row["notification_id"]),
+            )
+            connection.commit()
+        return CorrelationBinding(
+            tenant_ref=str(row["tenant_ref"]), notification_id=str(row["notification_id"]),
+            case_id=str(row["case_id"]), channel_id=str(row["channel_id"]),
+            message_ts=str(row["message_ts"]), review_due_at=str(row["review_due_at"]),
+        )
+
+    def mark_projection_request_started(self, *, binding: CorrelationBinding) -> None:
+        with self._connect() as connection:
+            updated = connection.execute(
+                "UPDATE correlation_projections SET state='request_started', updated_at=? WHERE tenant_ref=? AND notification_id=? AND state='claimed'",
+                (datetime.now(UTC).isoformat(), binding.tenant_ref, binding.notification_id),
+            ).rowcount
+            if updated != 1:
+                raise RuntimeError("projection_not_claimed")
+
+    def release_projection_claim(self, *, binding: CorrelationBinding) -> None:
+        with self._connect() as connection:
+            updated = connection.execute(
+                "UPDATE correlation_projections SET state='pending', failure_code=NULL, updated_at=? WHERE tenant_ref=? AND notification_id=? AND state='claimed'",
+                (datetime.now(UTC).isoformat(), binding.tenant_ref, binding.notification_id),
+            ).rowcount
+            if updated != 1:
+                raise RuntimeError("projection_not_claimed")
+
+    def finish_projection(self, *, binding: CorrelationBinding, state: str, failure_code: str | None = None) -> None:
+        if state not in {"accepted", "rejected", "delivery_unknown"}:
+            raise ValueError("invalid_projection_state")
+        with self._connect() as connection:
+            updated = connection.execute(
+                "UPDATE correlation_projections SET state=?, failure_code=?, updated_at=? WHERE tenant_ref=? AND notification_id=? AND state='request_started'",
+                (state, failure_code, datetime.now(UTC).isoformat(), binding.tenant_ref, binding.notification_id),
+            ).rowcount
+            if updated != 1:
+                raise RuntimeError("projection_not_started")
+
+    def projection_inventory(self) -> dict[str, int]:
+        states = ("pending", "claimed", "request_started", "accepted", "rejected", "delivery_unknown")
+        with self._connect() as connection:
+            rows = connection.execute("SELECT state, count(*) count FROM correlation_projections GROUP BY state").fetchall()
+        found = {str(row["state"]): int(row["count"]) for row in rows}
+        return {state: found.get(state, 0) for state in states}
 
     def release_claim(self, claim: NotificationClaim) -> None:
         with self._connect() as connection:
@@ -716,6 +1641,49 @@ class NotificationStore:
                 WHERE state = 'claimed'
                 """,
                 (now,),
+            )
+            connection.execute(
+                """
+                UPDATE correlation_projections
+                SET state = 'pending', failure_code = NULL, updated_at = ?
+                WHERE state = 'claimed'
+                """,
+                (now,),
+            )
+            connection.execute(
+                """
+                UPDATE correlation_projections
+                SET state = 'delivery_unknown', failure_code = 'process_interrupted_after_request_start',
+                    updated_at = ?
+                WHERE state = 'request_started'
+                """,
+                (now,),
+            )
+            interrupted_openings = [
+                str(row[0])
+                for row in connection.execute(
+                    """SELECT review_token FROM correlation_opening_jobs
+                       WHERE state IN ('pending','request_started')"""
+                )
+            ]
+            connection.execute(
+                """UPDATE correlation_opening_jobs
+                   SET state='failed', trigger_id='', updated_at=?
+                   WHERE state IN ('pending','request_started')""",
+                (now,),
+            )
+            if interrupted_openings:
+                placeholders = ",".join("?" for _ in interrupted_openings)
+                connection.execute(
+                    f"""UPDATE correlation_review_sessions SET state='failed', updated_at=?
+                        WHERE state='opened' AND review_token IN ({placeholders})""",
+                    (now, *interrupted_openings),
+                )
+            connection.execute(
+                """
+                DELETE FROM interaction_replays
+                WHERE state = 'request_started'
+                """,
             )
             connection.commit()
 
@@ -898,12 +1866,22 @@ class NotificationStore:
             try:
                 try:
                     with (
-                        sqlite3.connect(
+                        closing(sqlite3.connect(
                             f"file:{source_path}?mode=ro", uri=True
-                        ) as source_connection,
-                        sqlite3.connect(temporary) as snapshot,
+                        )) as source_connection,
+                        closing(sqlite3.connect(temporary)) as snapshot,
                     ):
                         source_connection.backup(snapshot)
+                    version = _migration_source_version(temporary)
+                    if version < 6:
+                        cls(temporary).initialize()
+                        with sqlite3.connect(temporary) as migrated:
+                            checkpoint = migrated.execute(
+                                "PRAGMA wal_checkpoint(TRUNCATE)"
+                            ).fetchone()
+                            if checkpoint is None or int(checkpoint[0]) != 0:
+                                raise RuntimeError("migration_checkpoint_busy")
+                            migrated.execute("PRAGMA journal_mode = DELETE").fetchone()
                     _validate_database(temporary)
                 except (
                     OSError,
@@ -915,14 +1893,67 @@ class NotificationStore:
                     raise RuntimeError("invalid_backup") from exc
                 os.chmod(temporary, 0o600)
                 _fsync_file(temporary)
-                os.replace(temporary, target)
+                if target.exists():
+                    try:
+                        with closing(sqlite3.connect(target)) as existing:
+                            existing.execute("PRAGMA busy_timeout = 15000")
+                            checkpoint = existing.execute(
+                                "PRAGMA wal_checkpoint(TRUNCATE)"
+                            ).fetchone()
+                            if checkpoint is None or int(checkpoint[0]) != 0:
+                                raise RuntimeError("destination_checkpoint_busy")
+                    except sqlite3.DatabaseError as exc:
+                        raise RuntimeError("invalid_restore_destination") from exc
                 target.with_name(target.name + "-wal").unlink(missing_ok=True)
                 target.with_name(target.name + "-shm").unlink(missing_ok=True)
+                _fsync_directory(target.parent)
+                os.replace(temporary, target)
                 _fsync_directory(target.parent)
             finally:
                 temporary.unlink(missing_ok=True)
         finally:
             store.release_instance_lock()
+
+
+def _migration_source_version(path: Path) -> int:
+    """Reject executable/unrelated schema objects before an in-place upgrade."""
+    allowed_tables = {
+        "notifications", "thread_roots", "connector_meta", "reconciliation_audit",
+        "interaction_replays", "correlation_review_sessions", "correlation_opening_jobs",
+        "correlation_projections",
+        "sqlite_sequence",
+    }
+    with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as connection:
+        version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        if version not in {2, 3, 4, 5, 6}:
+            raise RuntimeError("invalid_backup")
+        objects = connection.execute(
+            """SELECT type, name FROM sqlite_master
+               WHERE type IN ('table','trigger','view')"""
+        ).fetchall()
+        table_names = {name for object_type, name in objects if object_type == "table"}
+        required_tables = {
+            "notifications", "thread_roots", "connector_meta", "reconciliation_audit"
+        }
+        if not required_tables <= table_names or any(
+            object_type != "table" or name not in allowed_tables
+            for object_type, name in objects
+        ):
+            raise RuntimeError("invalid_backup")
+    return version
+
+
+def _execute_statements(connection: sqlite3.Connection, script: str) -> None:
+    """Execute DDL without executescript's implicit pre-commit."""
+    statement = ""
+    for line in script.splitlines(keepends=True):
+        statement += line
+        if sqlite3.complete_statement(statement):
+            if statement.strip():
+                connection.execute(statement)
+            statement = ""
+    if statement.strip():
+        raise RuntimeError("incomplete_migration_statement")
 
 
 def _serialize_command(command: NotificationCommand) -> str:
@@ -982,6 +2013,7 @@ def _validate_database(path: Path) -> None:
             ("thread_ts", "TEXT", 0, None, 0),
             ("failure_code", "TEXT", 0, None, 0),
             ("activation_generation_started", "INTEGER", 0, None, 0),
+            ("team_id", "TEXT", 0, None, 0),
         ),
         "thread_roots": (
             ("tenant_ref", "TEXT", 1, None, 1),
@@ -1013,6 +2045,55 @@ def _validate_database(path: Path) -> None:
             ("thread_ts", "TEXT", 0, None, 0),
             ("decided_at", "TEXT", 1, None, 0),
         ),
+        "interaction_replays": (
+            ("fingerprint", "TEXT", 0, None, 1),
+            ("state", "TEXT", 1, None, 0),
+            ("response_status", "INTEGER", 0, None, 0),
+            ("response_json", "TEXT", 0, None, 0),
+            ("created_at", "TEXT", 1, None, 0),
+            ("updated_at", "TEXT", 1, None, 0),
+        ),
+        "correlation_review_sessions": (
+            ("review_token", "TEXT", 0, None, 1),
+            ("tenant_ref", "TEXT", 1, None, 0),
+            ("case_id", "TEXT", 1, None, 0),
+            ("team_id", "TEXT", 1, None, 0),
+            ("channel_id", "TEXT", 1, None, 0),
+            ("message_ts", "TEXT", 1, None, 0),
+            ("slack_user_id", "TEXT", 1, None, 0),
+            ("expires_at", "INTEGER", 1, None, 0),
+            ("state", "TEXT", 1, None, 0),
+            ("action", "TEXT", 0, None, 0),
+            ("candidate_id", "TEXT", 0, None, 0),
+            ("verification_basis", "TEXT", 0, None, 0),
+            ("idempotency_key", "TEXT", 0, None, 0),
+            ("prepared_command_json", "TEXT", 0, None, 0),
+            ("result_json", "TEXT", 0, None, 0),
+            ("created_at", "TEXT", 1, None, 0),
+            ("updated_at", "TEXT", 1, None, 0),
+            ("view_id", "TEXT", 0, None, 0),
+            ("view_hash", "TEXT", 0, None, 0),
+        ),
+        "correlation_opening_jobs": (
+            ("review_token", "TEXT", 0, None, 1),
+            ("trigger_id", "TEXT", 1, None, 0),
+            ("state", "TEXT", 1, None, 0),
+            ("created_at", "TEXT", 1, None, 0),
+            ("updated_at", "TEXT", 1, None, 0),
+        ),
+        "correlation_projections": (
+            ("tenant_ref", "TEXT", 1, None, 1),
+            ("notification_id", "TEXT", 1, None, 2),
+            ("case_id", "TEXT", 1, None, 0),
+            ("team_id", "TEXT", 0, None, 0),
+            ("channel_id", "TEXT", 1, None, 0),
+            ("message_ts", "TEXT", 1, None, 0),
+            ("review_due_at", "TEXT", 1, None, 0),
+            ("state", "TEXT", 1, None, 0),
+            ("failure_code", "TEXT", 0, None, 0),
+            ("created_at", "TEXT", 1, None, 0),
+            ("updated_at", "TEXT", 1, None, 0),
+        ),
     }
     with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as connection:
         connection.row_factory = sqlite3.Row
@@ -1038,10 +2119,20 @@ def _validate_database(path: Path) -> None:
             ("table", "thread_roots", "thread_roots"),
             ("table", "connector_meta", "connector_meta"),
             ("table", "reconciliation_audit", "reconciliation_audit"),
+            ("table", "interaction_replays", "interaction_replays"),
+            ("table", "correlation_review_sessions", "correlation_review_sessions"),
+            ("table", "correlation_opening_jobs", "correlation_opening_jobs"),
+            ("table", "correlation_projections", "correlation_projections"),
             ("table", "sqlite_sequence", "sqlite_sequence"),
             ("index", "sqlite_autoindex_notifications_1", "notifications"),
             ("index", "sqlite_autoindex_notifications_2", "notifications"),
             ("index", "sqlite_autoindex_thread_roots_1", "thread_roots"),
+            ("index", "sqlite_autoindex_interaction_replays_1", "interaction_replays"),
+            ("index", "sqlite_autoindex_correlation_review_sessions_1", "correlation_review_sessions"),
+            ("index", "sqlite_autoindex_correlation_review_sessions_2", "correlation_review_sessions"),
+            ("index", "sqlite_autoindex_correlation_opening_jobs_1", "correlation_opening_jobs"),
+            ("index", "sqlite_autoindex_correlation_projections_1", "correlation_projections"),
+            ("index", "sqlite_autoindex_correlation_projections_2", "correlation_projections"),
         }:
             raise RuntimeError("invalid_backup")
         for table, expected in expected_columns.items():
@@ -1071,6 +2162,16 @@ def _validate_database(path: Path) -> None:
             "thread_roots": {("tenant_ref", "subject_ref")},
             "connector_meta": set(),
             "reconciliation_audit": set(),
+            "interaction_replays": {("fingerprint",)},
+            "correlation_review_sessions": {
+                ("review_token",),
+                ("idempotency_key",),
+            },
+            "correlation_opening_jobs": {("review_token",)},
+            "correlation_projections": {
+                ("tenant_ref", "notification_id"),
+                ("team_id", "channel_id", "message_ts"),
+            },
         }:
             raise RuntimeError("invalid_backup")
         foreign_keys = {
@@ -1091,18 +2192,48 @@ def _validate_database(path: Path) -> None:
             (0, 1, "notifications", "notification_id", "notification_id", "NO ACTION", "NO ACTION", "NONE"),
         }:
             raise RuntimeError("invalid_backup")
+        projection_foreign_keys = {
+            (
+                int(row["id"]), int(row["seq"]), str(row["table"]),
+                str(row["from"]), str(row["to"]), str(row["on_update"]),
+                str(row["on_delete"]), str(row["match"]),
+            )
+            for row in connection.execute("PRAGMA foreign_key_list(correlation_projections)")
+        }
+        if projection_foreign_keys != {
+            (0, 0, "notifications", "tenant_ref", "tenant_ref", "NO ACTION", "NO ACTION", "NONE"),
+            (0, 1, "notifications", "notification_id", "notification_id", "NO ACTION", "NO ACTION", "NONE"),
+        }:
+            raise RuntimeError("invalid_backup")
+        opening_foreign_keys = {
+            (
+                int(row["id"]), int(row["seq"]), str(row["table"]),
+                str(row["from"]), str(row["to"]), str(row["on_update"]),
+                str(row["on_delete"]), str(row["match"]),
+            )
+            for row in connection.execute(
+                "PRAGMA foreign_key_list(correlation_opening_jobs)"
+            )
+        }
+        if opening_foreign_keys != {
+            (0, 0, "correlation_review_sessions", "review_token", "review_token",
+             "NO ACTION", "NO ACTION", "NONE")
+        }:
+            raise RuntimeError("invalid_backup")
         normalized_sql = {
             table: "".join(sql.lower().split()) for table, sql in tables.items()
         }
-        required_constraints = {
-            "notifications": "check(statein('pending','claimed','request_started','accepted','rejected','delivery_unknown'))",
-            "connector_meta": "check(singleton=1)",
-            "reconciliation_audit": "check(decisionin('confirm_delivered','confirm_not_delivered'))",
+        expected_normalized_sql = {
+            "notifications": "createtablenotifications(tenant_reftextnotnull,notification_idtextnotnull,event_codetextnotnull,dedupe_keytextnotnull,payload_jsontextnotnull,payload_sha256textnotnull,statetextnotnullcheck(statein('pending','claimed','request_started','accepted','rejected','delivery_unknown')),claim_ownertext,claim_generationintegernotnulldefault0,created_attextnotnull,updated_attextnotnull,request_started_attext,channel_idtext,message_tstext,thread_tstext,failure_codetext,activation_generation_startedinteger,team_idtext,primarykey(tenant_ref,notification_id),unique(tenant_ref,event_code,dedupe_key))",
+            "thread_roots": "createtablethread_roots(tenant_reftextnotnull,subject_reftextnotnull,channel_idtextnotnull,message_tstextnotnull,created_attextnotnull,primarykey(tenant_ref,subject_ref))",
+            "connector_meta": "createtableconnector_meta(singletonintegerprimarykeycheck(singleton=1),last_write_probe_attextnotnull,activation_initializedintegernotnulldefault0,activation_modetextnotnulldefault'inactive',activation_generationintegernotnulldefault0,activation_budgetinteger,activation_consumedintegernotnulldefault0,activation_verifiedintegernotnulldefault0)",
+            "reconciliation_audit": "createtablereconciliation_audit(audit_idintegerprimarykeyautoincrement,tenant_reftextnotnull,notification_idtextnotnull,decisiontextnotnullcheck(decisionin('confirm_delivered','confirm_not_delivered')),operator_idtextnotnull,prior_statetextnotnull,resulting_statetextnotnull,channel_idtext,message_tstext,thread_tstext,decided_attextnotnull,foreignkey(tenant_ref,notification_id)referencesnotifications(tenant_ref,notification_id))",
+            "interaction_replays": "createtableinteraction_replays(fingerprinttextprimarykey,statetextnotnullcheck(statein('request_started','responded')),response_statusinteger,response_jsontext,created_attextnotnull,updated_attextnotnull)",
+            "correlation_review_sessions": "createtablecorrelation_review_sessions(review_tokentextprimarykey,tenant_reftextnotnull,case_idtextnotnull,team_idtextnotnull,channel_idtextnotnull,message_tstextnotnull,slack_user_idtextnotnull,expires_atintegernotnull,statetextnotnullcheck(statein('opened','preparing','prepared','confirming','resolved','failed')),actiontext,candidate_idtext,verification_basistext,idempotency_keytextunique,prepared_command_jsontext,result_jsontext,created_attextnotnull,updated_attextnotnull,view_idtext,view_hashtext)",
+            "correlation_opening_jobs": "createtablecorrelation_opening_jobs(review_tokentextprimarykey,trigger_idtextnotnull,statetextnotnullcheck(statein('pending','request_started','completed','failed')),created_attextnotnull,updated_attextnotnull,foreignkey(review_token)referencescorrelation_review_sessions(review_token))",
+            "correlation_projections": "createtablecorrelation_projections(tenant_reftextnotnull,notification_idtextnotnull,case_idtextnotnull,team_idtext,channel_idtextnotnull,message_tstextnotnull,review_due_attextnotnull,statetextnotnullcheck(statein('pending','claimed','request_started','accepted','rejected','delivery_unknown')),failure_codetext,created_attextnotnull,updated_attextnotnull,primarykey(tenant_ref,notification_id),unique(team_id,channel_id,message_ts),foreignkey(tenant_ref,notification_id)referencesnotifications(tenant_ref,notification_id))",
         }
-        if any(
-            fragment not in normalized_sql[table]
-            for table, fragment in required_constraints.items()
-        ):
+        if normalized_sql != expected_normalized_sql:
             raise RuntimeError("invalid_backup")
         if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
             raise RuntimeError("invalid_backup")
@@ -1177,11 +2308,12 @@ def _validate_database(path: Path) -> None:
                 raise RuntimeError("invalid_backup")
             if row["request_started_at"] is not None and not valid_datetime(row["request_started_at"]):
                 raise RuntimeError("invalid_backup")
+            if row["channel_id"] is not None and not valid_channel(row["channel_id"]):
+                raise RuntimeError("invalid_backup")
             if state in {"pending", "claimed"} and any(
                 row[field] is not None
                 for field in (
                     "request_started_at",
-                    "channel_id",
                     "message_ts",
                     "thread_ts",
                     "failure_code",
@@ -1192,7 +2324,7 @@ def _validate_database(path: Path) -> None:
             if state == "request_started" and (
                 row["request_started_at"] is None
                 or (initialized and row["activation_generation_started"] is None)
-                or any(row[field] is not None for field in ("channel_id", "message_ts", "thread_ts", "failure_code"))
+                or any(row[field] is not None for field in ("message_ts", "thread_ts", "failure_code"))
             ):
                 raise RuntimeError("invalid_backup")
             if state == "accepted" and (
@@ -1207,7 +2339,7 @@ def _validate_database(path: Path) -> None:
             if state in {"rejected", "delivery_unknown"} and (
                 row["request_started_at"] is None
                 or row["failure_code"] is None
-                or any(row[field] is not None for field in ("channel_id", "message_ts", "thread_ts"))
+                or any(row[field] is not None for field in ("message_ts", "thread_ts"))
             ):
                 raise RuntimeError("invalid_backup")
             if (
@@ -1309,7 +2441,134 @@ def _validate_database(path: Path) -> None:
                 )
             ):
                 raise RuntimeError("invalid_backup")
-    if integrity is None or integrity[0] != "ok" or version != 2:
+
+        for replay in connection.execute("SELECT * FROM interaction_replays"):
+            responded = replay["state"] == "responded"
+            if (
+                re.fullmatch(r"[a-f0-9]{64}", str(replay["fingerprint"])) is None
+                or not valid_datetime(replay["created_at"])
+                or not valid_datetime(replay["updated_at"])
+                or responded != (replay["response_status"] is not None and replay["response_json"] is not None)
+            ):
+                raise RuntimeError("invalid_backup")
+            if responded:
+                try:
+                    response = json.loads(str(replay["response_json"]))
+                except (TypeError, ValueError) as exc:
+                    raise RuntimeError("invalid_backup") from exc
+                if not isinstance(response, dict) or type(replay["response_status"]) is not int:
+                    raise RuntimeError("invalid_backup")
+
+        opening_jobs = {
+            str(row["review_token"]): row
+            for row in connection.execute("SELECT * FROM correlation_opening_jobs")
+        }
+        for job in opening_jobs.values():
+            trigger = str(job["trigger_id"])
+            job_state = str(job["state"])
+            if (
+                not valid_datetime(job["created_at"])
+                or not valid_datetime(job["updated_at"])
+                or len(trigger) > 4096
+                or any(ord(character) < 32 or ord(character) == 127 for character in trigger)
+                or (job_state in {"pending", "request_started"} and not trigger)
+                or (job_state in {"completed", "failed"} and trigger != "")
+            ):
+                raise RuntimeError("invalid_backup")
+
+        session_tokens: set[str] = set()
+        for session in connection.execute("SELECT * FROM correlation_review_sessions"):
+            session_tokens.add(str(session["review_token"]))
+            try:
+                canonical_token = str(UUID(str(session["review_token"])))
+                canonical_case = str(UUID(str(session["case_id"])))
+                key = session["idempotency_key"]
+                if key is not None:
+                    key = str(UUID(str(key)))
+            except ValueError as exc:
+                raise RuntimeError("invalid_backup") from exc
+            state = str(session["state"])
+            opening = opening_jobs.get(str(session["review_token"]))
+            opening_state = str(opening["state"]) if opening is not None else ""
+            prepared = session["prepared_command_json"]
+            result = session["result_json"]
+            bound_projection = connection.execute(
+                """SELECT 1 FROM correlation_projections
+                   WHERE tenant_ref=? AND case_id=? AND team_id=? AND channel_id=? AND message_ts=?""",
+                (
+                    session["tenant_ref"], session["case_id"], session["team_id"],
+                    session["channel_id"], session["message_ts"],
+                ),
+            ).fetchone()
+            if (
+                canonical_token != session["review_token"] or canonical_case != session["case_id"]
+                or opening is None
+                or (opening_state in {"pending", "request_started"} and state != "opened")
+                or (opening_state == "failed" and state != "failed")
+                or session["tenant_ref"] not in {"johanna", "att1"}
+                or re.fullmatch(r"T[A-Z0-9]{8,}", str(session["team_id"])) is None
+                or not valid_channel(session["channel_id"])
+                or not valid_slack_ts(session["message_ts"])
+                or re.fullmatch(r"U[A-Z0-9]{8,}", str(session["slack_user_id"])) is None
+                or type(session["expires_at"]) is not int
+                or not valid_datetime(session["created_at"])
+                or not valid_datetime(session["updated_at"])
+                or (session["view_id"] is not None and (
+                    not isinstance(session["view_id"], str) or not session["view_id"]
+                ))
+                or (session["view_hash"] is not None and not isinstance(session["view_hash"], str))
+                or (state in {"preparing", "prepared", "confirming"} and session["view_id"] is None)
+                or bound_projection is None
+                or (state == "opened" and any(session[field] is not None for field in ("action", "candidate_id", "verification_basis", "idempotency_key", "prepared_command_json", "result_json")))
+                or (state in {"preparing", "prepared", "confirming", "resolved"} and (session["action"] not in {"resolve_with_candidate", "close_without_match"} or session["verification_basis"] is None or key is None))
+                or (state in {"prepared", "confirming", "resolved"} and prepared is None)
+                or (state in {"opened", "preparing"} and prepared is not None)
+                or (state == "resolved") != (result is not None)
+            ):
+                raise RuntimeError("invalid_backup")
+            for serialized in (prepared, result):
+                if serialized is not None:
+                    try:
+                        if not isinstance(json.loads(str(serialized)), dict):
+                            raise RuntimeError("invalid_backup")
+                    except ValueError as exc:
+                        raise RuntimeError("invalid_backup") from exc
+        if set(opening_jobs) != session_tokens:
+            raise RuntimeError("invalid_backup")
+
+        commands_by_id = {
+            (str(row["tenant_ref"]), str(row["notification_id"])): command
+            for row, command in notification_rows
+        }
+        for projection in connection.execute("SELECT * FROM correlation_projections"):
+            key = (str(projection["tenant_ref"]), str(projection["notification_id"]))
+            command = commands_by_id.get(key)
+            notification = notifications_by_id.get(key)
+            state = str(projection["state"])
+            try:
+                canonical_case = str(UUID(str(projection["case_id"])))
+            except ValueError as exc:
+                raise RuntimeError("invalid_backup") from exc
+            if (
+                command is None or notification is None or notification["state"] != "accepted"
+                or command.event_code not in {"COR-001", "COR-002", "COR-003"}
+                or command.subject_ref != f"C-{canonical_case}"
+                or not valid_channel(projection["channel_id"])
+                or not valid_slack_ts(projection["message_ts"])
+                or not valid_datetime(str(projection["review_due_at"]).replace("Z", "+00:00"))
+                or not valid_datetime(projection["created_at"])
+                or not valid_datetime(projection["updated_at"])
+                or (
+                    projection["team_id"] is None and state != "pending"
+                )
+                or (
+                    projection["team_id"] is not None
+                    and re.fullmatch(r"T[A-Z0-9]{8,}", str(projection["team_id"])) is None
+                )
+                or (state in {"rejected", "delivery_unknown"}) != (projection["failure_code"] is not None)
+            ):
+                raise RuntimeError("invalid_backup")
+    if integrity is None or integrity[0] != "ok" or version != 6:
         raise RuntimeError("invalid_backup")
 
 

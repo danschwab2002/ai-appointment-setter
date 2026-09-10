@@ -41,7 +41,7 @@ def _worker(store: NotificationStore, slack: AcceptedSlack) -> NotificationWorke
     return NotificationWorker(
         store=store,
         slack_client=slack,
-        channel_id="C0C0YEACVT2",
+        tenant_channels={"johanna": "C0C0YEACVT2"},
         tenant_labels={"johanna": "Johanna"},
         worker_id="worker-1",
     )
@@ -122,7 +122,7 @@ def test_operator_verification_endpoint_enables_next_continuous_generation(tmp_p
         SlackConnectorSettings(
             storage_path=str(path),
             operator_bearer_token="o" * 32,
-            channel_id="C0C0YEACVT2",
+            tenant_channels={"johanna": "C0C0YEACVT2"},
         ),
         store=store,
     )
@@ -161,7 +161,7 @@ def test_outbound_refuses_implicit_activation_defaults(tmp_path) -> None:
         notifications_enabled=True,
         bot_token="xoxb-test",
         team_id="T00000000",
-        channel_id="C0C0YEACVT2",
+        tenant_channels={"johanna": "C0C0YEACVT2"},
         storage_path=str(tmp_path / "connector.sqlite3"),
         activation_mode="inactive",
         activation_generation=0,

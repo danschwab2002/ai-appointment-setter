@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 from uuid import UUID
 
@@ -17,6 +18,26 @@ class InvalidSlackCorrelationCase(ValueError):
     """Raised when a case cannot be projected safely to Slack."""
 
 
+_MASKED_EMAIL = re.compile(
+    r"^[A-Za-z0-9._+\-]*\*{3,}[A-Za-z0-9._+\-]*@[A-Za-z0-9.-]+\.[A-Za-z]{2,63}$"
+)
+_MASKED_PHONE = re.compile(r"^\*{4,}[0-9]{4}$")
+
+
+def _safe_masked(value: object, *, kind: str) -> str | None:
+    if value is None:
+        return None
+    pattern = _MASKED_EMAIL if kind == "email" else _MASKED_PHONE
+    if (
+        not isinstance(value, str)
+        or pattern.fullmatch(value) is None
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+        or any(character in value for character in "`<>&")
+    ):
+        raise InvalidSlackCorrelationCase(f"invalid_masked_{kind}")
+    return value
+
+
 def _case_id(case: dict[str, object]) -> str:
     value = case.get("case_id")
     if not isinstance(value, str):
@@ -28,27 +49,22 @@ def _case_id(case: dict[str, object]) -> str:
 
 
 def _masked_identity(case: dict[str, object]) -> tuple[str | None, str | None]:
+    if any(
+        key in case
+        for key in ("email", "phone", "normalized_email", "normalized_phone")
+    ):
+        raise InvalidSlackCorrelationCase("raw_identity_forbidden")
+    if "masked_email" in case:
+        _safe_masked(case["masked_email"], kind="email")
+    if "masked_phone" in case:
+        _safe_masked(case["masked_phone"], kind="phone")
     identity = case.get("identity")
     if not isinstance(identity, dict):
         raise InvalidSlackCorrelationCase("invalid_identity")
     if "normalized_email" in identity or "normalized_phone" in identity:
         raise InvalidSlackCorrelationCase("raw_identity_forbidden")
-    email = identity.get("masked_email")
-    phone = identity.get("masked_phone")
-    if email is not None and (
-        not isinstance(email, str)
-        or "***" not in email.partition("@")[0]
-        or not email.partition("@")[1]
-        or not email.partition("@")[2]
-    ):
-        raise InvalidSlackCorrelationCase("invalid_masked_email")
-    if phone is not None and (
-        not isinstance(phone, str)
-        or len(phone) < 4
-        or not phone[-4:].isdigit()
-        or any(character != "*" for character in phone[:-4])
-    ):
-        raise InvalidSlackCorrelationCase("invalid_masked_phone")
+    email = _safe_masked(identity.get("masked_email"), kind="email")
+    phone = _safe_masked(identity.get("masked_phone"), kind="phone")
     return email, phone
 
 
@@ -163,17 +179,13 @@ def build_review_modal(
         lifecycle = candidate.get("lifecycle_state")
         if lifecycle != "waiting_for_purchase":
             raise InvalidSlackCorrelationCase("ineligible_candidate")
-        email = candidate.get("masked_email")
-        phone = candidate.get("masked_phone")
-        if email is not None and not isinstance(email, str):
+        if "normalized_email" in candidate or "normalized_phone" in candidate:
             raise InvalidSlackCorrelationCase("invalid_candidate_identity")
-        if phone is not None and (
-            not isinstance(phone, str)
-            or len(phone) < 4
-            or not phone[-4:].isdigit()
-            or any(character != "*" for character in phone[:-4])
-        ):
-            raise InvalidSlackCorrelationCase("invalid_candidate_identity")
+        try:
+            email = _safe_masked(candidate.get("masked_email"), kind="email")
+            phone = _safe_masked(candidate.get("masked_phone"), kind="phone")
+        except InvalidSlackCorrelationCase:
+            raise InvalidSlackCorrelationCase("invalid_candidate_identity") from None
         identity = " · ".join(
             value for value in (email, phone) if isinstance(value, str)
         ) or "sin identidad visible"
@@ -256,5 +268,99 @@ def build_review_modal(
                     ],
                 },
             },
+        ],
+    }
+
+
+def build_confirmation_modal(*, review_token: str, action: str) -> dict[str, Any]:
+    label = (
+        "vincular el candidato seleccionado"
+        if action == "resolve_with_candidate"
+        else "cerrar sin coincidencia válida"
+    )
+    return {
+        "type": "modal",
+        "callback_id": "confirm_operator_correlation_resolution",
+        "private_metadata": json.dumps(
+            {"review_token": str(UUID(review_token))}, separators=(",", ":")
+        ),
+        "title": {"type": "plain_text", "text": "Confirmar resolución"},
+        "submit": {"type": "plain_text", "text": "Confirmar resolución"},
+        "close": {"type": "plain_text", "text": "Cancelar"},
+        "blocks": [
+            _section(
+                f"Vas a *{label}*.\nLa automatización continuará bloqueada."
+            ),
+        ],
+    }
+
+
+def build_processing_modal(*, review_token: str, phase: str) -> dict[str, Any]:
+    if phase not in {"prepare", "confirm"}:
+        raise ValueError("invalid_processing_phase")
+    return {
+        "type": "modal",
+        "callback_id": "operator_correlation_resolution_processing",
+        "private_metadata": json.dumps(
+            {"review_token": str(UUID(review_token))}, separators=(",", ":")
+        ),
+        "title": {"type": "plain_text", "text": "Procesando resolución"},
+        "close": {"type": "plain_text", "text": "Cerrar"},
+        "blocks": [
+            _section(
+                "Procesando… La decisión quedó admitida de forma segura. "
+                "Este modal se actualizará al terminar."
+            )
+        ],
+    }
+
+
+def build_success_modal() -> dict[str, Any]:
+    return {
+        "type": "modal",
+        "callback_id": "operator_correlation_resolution_complete",
+        "title": {"type": "plain_text", "text": "Resolución aplicada"},
+        "close": {"type": "plain_text", "text": "Cerrar"},
+        "blocks": [_section("La resolución fue aplicada y el mensaje raíz se actualizó.")],
+    }
+
+
+def build_safe_error_modal() -> dict[str, Any]:
+    return {
+        "type": "modal",
+        "callback_id": "operator_correlation_resolution_failed",
+        "title": {"type": "plain_text", "text": "Resolución no aplicada"},
+        "close": {"type": "plain_text", "text": "Cerrar"},
+        "blocks": [
+            _section(
+                "No se pudo comprobar la resolución. El caso permanece bloqueado; "
+                "vuelve a abrirlo desde el mensaje antes de intentar otra acción."
+            )
+        ],
+    }
+
+
+def build_terminal_message(
+    *, case_id: str, outcome: str, actor_id: str, applied_at: str
+) -> dict[str, Any]:
+    UUID(case_id)
+    title = (
+        "Resuelto — candidato vinculado"
+        if outcome == "linked_candidate"
+        else "Cerrado — sin coincidencia válida"
+    )
+    short_id = f"C-{case_id.split('-', 1)[0]}"
+    return {
+        "text": f"{title} · Caso {short_id}",
+        "metadata": {
+            "event_type": "operator_correlation_case",
+            "event_payload": {"case_id": case_id, "state": outcome},
+        },
+        "blocks": [
+            {"type": "header", "text": {"type": "plain_text", "text": title}},
+            _section(
+                f"*Caso:* `{short_id}`\n*Actor Slack:* `{actor_id}`\n"
+                f"*Aplicado:* `{applied_at}`\nLa automatización permanece bloqueada."
+            ),
         ],
     }

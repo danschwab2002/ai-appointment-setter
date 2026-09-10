@@ -3,7 +3,7 @@
 - **Estado:** Aceptado, implementado y verificado; despliegue y activación pendientes
 - **Fecha:** 2026-09-07
 - **Servicio:** `supportmagician-slack-connector`
-- **Canal fijo:** `C0C0YEACVT2`
+- **Routing:** canal exclusivo por aliado; `C0C0YEACVT2` pertenece sólo a Johanna
 - **Productores autorizados:** `johanna` y `att1`
 - **Catálogo:** [Catálogo de mensajes operativos V1](../design/slack-operations-message-catalog-v1.md)
 
@@ -24,12 +24,13 @@ mensaje desde el catálogo versionado.
 |---|---:|---|
 | `SLACK_INGRESS_ENABLED` | sí | `true` habilita admisión autenticada |
 | `SLACK_NOTIFICATIONS_ENABLED` | sí | `true` habilita el worker y `chat.postMessage` |
-| `SLACK_INTERACTIONS_ENABLED` | sí | debe permanecer `false` en V1 |
+| `SLACK_INTERACTIONS_ENABLED` | sí | default `false`; habilita resolución interactiva firmada |
+| `SLACK_CORRELATION_BACKFILL_ENABLED` | sí | default `false`; habilita sólo el backfill operator-only, incluso con interacciones apagadas |
 | `SLACK_CONNECTIVITY_CHECK_ENABLED` | no | valida `auth.test` sin publicar |
 | `SLACK_BOT_TOKEN` | para Slack | secreto; sólo token de bot `xoxb-…` |
 | `SLACK_TEAM_ID` | para Slack | Team ID exacto esperado |
-| `SLACK_CHANNEL_ID` | para Slack | Channel ID exacto; producción usa `C0C0YEACVT2` |
-| `SLACK_TENANT_TOKENS_JSON` | para ingreso | objeto JSON con claves exactas `johanna` y `att1`; tokens distintos de al menos 32 caracteres |
+| `SLACK_TENANT_CHANNELS_JSON` | para Slack | mapa server-owned tenant→Channel ID; IDs únicos; puede contener sólo `johanna` hasta que exista el canal ATT1 |
+| `SLACK_TENANT_TOKENS_JSON` | para ingreso | tokens distintos de al menos 32 caracteres; sus claves deben ser exactamente iguales a las de `SLACK_TENANT_CHANNELS_JSON` |
 | `SLACK_STORAGE_PATH` | para ingreso o salida | dentro del volumen persistente; default `/app/data/slack-connector.sqlite3` |
 | `SLACK_WORKER_ID` | no | identidad opaca del único worker |
 | `SLACK_POLL_INTERVAL_SECONDS` | no | entre `1` y `60` segundos; también limita la tasa por canal |
@@ -38,9 +39,16 @@ mensaje desde el catálogo versionado.
 | `SLACK_ACTIVATION_MODE` | salida | `inactive`, `one_shot` o `continuous` |
 | `SLACK_ACTIVATION_GENERATION` | salida | entero durable monotónico; positivo fuera de `inactive` |
 | `SLACK_OPERATOR_BEARER_TOKEN` | reconciliación | secreto distinto de ambos bearers productores |
+| `SLACK_SIGNING_SECRET` | interacciones | secreto de firma Slack; nunca se registra |
+| `SLACK_TENANT_OPERATOR_USER_IDS_JSON` | interacciones | allowlist de Slack User IDs por tenant |
+| `SLACK_TENANT_OPERATOR_BACKENDS_JSON` | interacciones | base URL y tokens read/write distintos por tenant; secreto |
 
 Los booleanos sólo aceptan `true` o `false`. Una combinación incompleta impide
-arrancar. La presencia de credenciales no habilita efectos.
+arrancar. La presencia de credenciales no habilita efectos. Dos tenants no
+pueden compartir Channel ID. `C0C0YEACVT2` está reservado a Johanna y toda ruta
+Johanna debe usarlo. En el corte actual sólo Johanna está autenticada y
+enrutada; ATT1 no aparece en el mapa de tokens hasta tener canal propio. Nunca
+se usa el canal de otro aliado como fallback.
 
 ## 3. Admisión
 
@@ -99,6 +107,7 @@ Respuestas:
 | `404` | ingreso deshabilitado |
 | `409` | `event_id` o dedupe reutilizado con semántica distinta |
 | `413` | cuerpo demasiado grande |
+| `503` | storage no disponible o tenant todavía sin canal exclusivo |
 
 Las respuestas `200/202` incluyen `tenant_ref`, `notification_id` y
 `delivery_state`; el productor exige que `tenant_ref` coincida con el esperado.
@@ -198,8 +207,8 @@ haya verificado una generación `one_shot` consumida mediante
 
 `POST /internal/v1/operator/reconcile-delivery` exige el bearer operador y un
 schema cerrado. `confirm_delivered` requiere `tenant_ref`, UUID,
-`message_ts` y `thread_ts` opcional; el canal proviene exclusivamente de
-`SLACK_CHANNEL_ID`. `confirm_not_delivered` no acepta evidencia Slack, audita la
+`message_ts` y `thread_ts` opcional; el canal proviene exclusivamente del binding
+tenant→canal y del registro admitido. `confirm_not_delivered` no acepta evidencia Slack, audita la
 decisión y reencola de forma segura; si corresponde a la generación one-shot
 vigente, repone su presupuesto. Ambas decisiones se registran en el audit ledger.
 Los bearers productores no autorizan ninguna ruta operador.
@@ -211,12 +220,18 @@ SQLite, valida integridad/schema y publica atómicamente con permisos `0600`.
 `restore` exige destino offline mediante el mismo instance lock, valida antes de
 reemplazar y usa copia temporal, `fsync` y rename atómico. La validación exige las
 tablas, columnas, claves, índices únicos, checks, foreign keys, singleton de
-activación e invariantes lógicos exactos de V2; `user_version=2` por sí solo no es
-suficiente. Véase el runbook operativo de backup/restore.
+activación e invariantes lógicos exactos de V6; `user_version` por sí solo no es
+suficiente. Restore admite snapshots V2–V5 sólo tras rechazar objetos ejecutables
+o ajenos, migrarlos en una transacción única sobre la copia temporal y validar V6
+antes del rename. Antes de publicar, checkpoint/quiesce el destino anterior,
+elimina sus sidecars `-wal`/`-shm` y hace `fsync` del directorio; después usa rename
+atómico y otro `fsync` del directorio.
+Véase el runbook operativo de backup/restore.
 
-## 9. Fuera de V1
+## 9. Extensión interactiva
 
-Interactivity, botones, modales, Events API, Incoming Webhooks y Socket Mode
-permanecen apagados. La resolución interactiva exige firma Slack, replay durable,
-allowlist de workspace/canal/usuario y revalidación contra Supabase Cloud; no se
-simula dentro del contrato de avisos outbound.
+Botones, modales y actualización de mensajes se rigen por el contrato
+`slack-correlation-resolution-v1`. Permanecen default-off y exigen firma Slack,
+anti-replay durable, allowlist tenant/canal/usuario y revalidación contra
+Supabase Cloud. Events API, Incoming Webhooks y Socket Mode siguen fuera de
+alcance.

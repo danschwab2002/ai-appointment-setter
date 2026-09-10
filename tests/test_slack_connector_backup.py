@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 import sqlite3
 import subprocess
 import sys
+import textwrap
 
 import pytest
 
@@ -20,7 +21,7 @@ def test_online_backup_is_consistent_and_validated(tmp_path) -> None:
 
     with sqlite3.connect(f"file:{backup}?mode=ro", uri=True) as connection:
         assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
     assert backup.stat().st_mode & 0o777 == 0o600
 
 
@@ -119,7 +120,7 @@ def test_restore_refuses_live_destination_and_preserves_existing_bytes(tmp_path)
 
     with sqlite3.connect(destination) as connection:
         assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
 
 
 def test_restore_rejects_corrupt_backup_without_touching_destination(tmp_path) -> None:
@@ -211,6 +212,27 @@ def test_restore_rejects_unexpected_schema_objects(tmp_path) -> None:
 
     with pytest.raises(RuntimeError, match="invalid_backup"):
         NotificationStore.restore_from(backup, tmp_path / "destination.sqlite3")
+
+
+def test_backup_and_restore_reject_exact_ddl_with_extra_check(tmp_path) -> None:
+    source_path = tmp_path / "source.sqlite3"
+    store = NotificationStore(source_path)
+    store.initialize()
+    with sqlite3.connect(source_path) as connection:
+        connection.execute("PRAGMA writable_schema = ON")
+        connection.execute(
+            """UPDATE sqlite_master
+               SET sql = replace(sql, 'team_id TEXT',
+                   'team_id TEXT CHECK(team_id IS NULL OR length(team_id) > 0)')
+               WHERE type='table' AND name='notifications'"""
+        )
+        connection.execute("PRAGMA writable_schema = OFF")
+        connection.execute("PRAGMA schema_version = 999")
+
+    with pytest.raises(RuntimeError, match="invalid_backup"):
+        store.backup_to(tmp_path / "backup-extra-check.sqlite3")
+    with pytest.raises(RuntimeError, match="invalid_backup"):
+        NotificationStore.restore_from(source_path, tmp_path / "restored.sqlite3")
 
 
 def test_backup_rejects_consumed_one_shot_without_delivery_evidence(tmp_path) -> None:
@@ -336,3 +358,244 @@ def test_backup_restore_cli_executes_validated_workflow(tmp_path) -> None:
 
     with sqlite3.connect(restored) as connection:
         assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+
+
+def test_initialize_upgrades_v2_in_place_to_v3_ledgers(tmp_path) -> None:
+    path = tmp_path / "connector.sqlite3"
+    store = NotificationStore(path)
+    store.initialize()
+    with sqlite3.connect(path) as connection:
+        for table in (
+            "correlation_projections",
+            "correlation_review_sessions",
+            "interaction_replays",
+        ):
+            connection.execute(f"DROP TABLE {table}")
+        connection.execute("PRAGMA user_version = 2")
+
+    store.initialize()
+
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+    assert {
+        "interaction_replays",
+        "correlation_review_sessions",
+        "correlation_projections",
+    } <= tables
+
+
+def test_restore_migrates_v4_snapshot_before_atomic_publish(tmp_path) -> None:
+    source = tmp_path / "v4.sqlite3"
+    NotificationStore(source).initialize()
+    with sqlite3.connect(source) as connection:
+        connection.execute("ALTER TABLE correlation_review_sessions DROP COLUMN view_hash")
+        connection.execute("ALTER TABLE correlation_review_sessions DROP COLUMN view_id")
+        connection.execute("PRAGMA user_version = 4")
+
+    destination = tmp_path / "restored.sqlite3"
+    NotificationStore.restore_from(source, destination)
+
+    with sqlite3.connect(destination) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
+        columns = {row[1] for row in connection.execute(
+            "PRAGMA table_info(correlation_review_sessions)"
+        )}
+    assert {"view_id", "view_hash"} <= columns
+
+
+def _leave_stale_wal(path) -> None:
+    script = textwrap.dedent(
+        f"""
+        import os
+        from datetime import UTC, datetime
+        from slack_correlation.catalog import NotificationCommand
+        from slack_correlation.store import NotificationStore
+
+        path = {str(path)!r}
+        store = NotificationStore(path)
+        store.initialize()
+        connection = store._connect()
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA wal_autocheckpoint=0")
+        store.admit(
+            tenant_ref="johanna",
+            command=NotificationCommand(
+                event_id="99999999-9999-4999-8999-999999999999",
+                event_code="SYS-002",
+                dedupe_key="9" * 64,
+                occurred_at=datetime(2026, 9, 8, tzinfo=UTC),
+                subject_ref=None,
+                reason_code="stale_wal_probe",
+            ),
+        )
+        assert os.path.exists(path + "-wal")
+        os._exit(0)
+        """
+    )
+    completed = subprocess.run([sys.executable, "-c", script], check=False)
+    assert completed.returncode == 0
+    assert path.with_name(path.name + "-wal").exists()
+
+
+@pytest.mark.parametrize("boundary", ["before_publish", "after_publish"])
+def test_restore_crash_boundaries_never_expose_replacement_with_stale_wal(
+    tmp_path, boundary: str,
+) -> None:
+    source = NotificationStore(tmp_path / "source.sqlite3")
+    source.initialize()
+    backup = tmp_path / "backup.sqlite3"
+    source.backup_to(backup)
+    destination = tmp_path / "destination.sqlite3"
+    _leave_stale_wal(destination)
+
+    crash_patch = (
+        "store_module.os.replace = lambda source, target: os._exit(86)"
+        if boundary == "before_publish"
+        else textwrap.dedent(
+            """
+            original_replace = store_module.os.replace
+            def replace_then_crash(source, target):
+                original_replace(source, target)
+                os._exit(86)
+            store_module.os.replace = replace_then_crash
+            """
+        )
+    )
+    script = textwrap.dedent(
+        f"""
+        import os
+        import slack_correlation.store as store_module
+        from slack_correlation.store import NotificationStore
+        {textwrap.indent(crash_patch, '        ').lstrip()}
+        NotificationStore.restore_from({str(backup)!r}, {str(destination)!r})
+        """
+    )
+    completed = subprocess.run([sys.executable, "-c", script], check=False)
+    assert completed.returncode == 86
+    assert not destination.with_name(destination.name + "-wal").exists()
+    assert not destination.with_name(destination.name + "-shm").exists()
+
+    with sqlite3.connect(destination) as connection:
+        assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        count = connection.execute("SELECT count(*) FROM notifications").fetchone()[0]
+    assert count == (1 if boundary == "before_publish" else 0)
+
+
+@pytest.mark.parametrize("version", [2, 3, 4])
+def test_projection_migration_and_version_bump_roll_back_together_on_failpoint(
+    tmp_path, monkeypatch, version: int,
+) -> None:
+    import slack_correlation.store as store_module
+
+    path = tmp_path / f"v{version}.sqlite3"
+    store = NotificationStore(path)
+    store.initialize()
+    command = NotificationCommand(
+        event_id="77777777-7777-4777-8777-777777777777",
+        event_code="COR-001", dedupe_key="7" * 64,
+        occurred_at=datetime(2026, 9, 8, tzinfo=UTC),
+        subject_ref="C-11111111-1111-4111-8111-111111111111",
+    )
+    store.admit(tenant_ref="johanna", command=command, channel_id="C0C0YEACVT2")
+    claim = store.claim_next(worker_id="worker-1")
+    assert claim is not None
+    store.mark_request_started(claim)
+    store.finalize_accepted(
+        claim, channel_id="C0C0YEACVT2", message_ts="1788861600.000001",
+        thread_ts=None, team_id="T12345678",
+    )
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "UPDATE correlation_projections SET state='request_started'"
+        )
+        connection.execute("ALTER TABLE correlation_projections RENAME TO projections_current")
+        connection.execute(
+            """CREATE TABLE correlation_projections (
+                tenant_ref TEXT NOT NULL, notification_id TEXT NOT NULL,
+                case_id TEXT NOT NULL, team_id TEXT, channel_id TEXT NOT NULL,
+                message_ts TEXT NOT NULL, review_due_at TEXT NOT NULL,
+                state TEXT NOT NULL CHECK (state IN ('pending','request_started','accepted','rejected','delivery_unknown')),
+                failure_code TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                PRIMARY KEY (tenant_ref, notification_id),
+                UNIQUE (team_id, channel_id, message_ts),
+                FOREIGN KEY (tenant_ref, notification_id)
+                    REFERENCES notifications (tenant_ref, notification_id)
+            )"""
+        )
+        connection.execute(
+            "INSERT INTO correlation_projections SELECT * FROM projections_current"
+        )
+        connection.execute("DROP TABLE projections_current")
+        connection.execute(f"PRAGMA user_version = {version}")
+
+    original = store_module._execute_statements
+
+    def crash_after_projection_rename(connection, script: str) -> None:
+        if "correlation_projections_v3" in script:
+            connection.execute(
+                "ALTER TABLE correlation_projections RENAME TO correlation_projections_v3"
+            )
+            raise RuntimeError("migration_failpoint")
+        original(connection, script)
+
+    monkeypatch.setattr(store_module, "_execute_statements", crash_after_projection_rename)
+    with pytest.raises(RuntimeError, match="migration_failpoint"):
+        store.initialize()
+
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == version
+        assert connection.execute(
+            "SELECT name FROM sqlite_master WHERE name='correlation_projections_v3'"
+        ).fetchone() is None
+        sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name='correlation_projections'"
+        ).fetchone()[0]
+        projection_state = connection.execute(
+            "SELECT state FROM correlation_projections"
+        ).fetchone()[0]
+    assert "'claimed'" not in sql
+    assert projection_state == "request_started"
+
+
+def test_backup_rejects_unsafe_pending_opening_trigger(tmp_path) -> None:
+    source_path = tmp_path / "source.sqlite3"
+    store = NotificationStore(source_path)
+    store.initialize()
+    command = NotificationCommand(
+        event_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        event_code="COR-001", dedupe_key="a" * 64,
+        occurred_at=datetime(2026, 9, 8, tzinfo=UTC),
+        subject_ref="C-11111111-1111-4111-8111-111111111111",
+    )
+    store.admit(tenant_ref="johanna", command=command, channel_id="C0C0YEACVT2")
+    claim = store.claim_next(worker_id="worker-1")
+    assert claim is not None
+    store.mark_request_started(claim)
+    store.finalize_accepted(
+        claim, channel_id="C0C0YEACVT2", message_ts="1788861600.000001",
+        thread_ts=None, team_id="T12345678",
+    )
+    binding = store.find_correlation_binding(
+        tenant_ref="johanna", team_id="T12345678", channel_id="C0C0YEACVT2",
+        message_ts="1788861600.000001",
+    )
+    assert binding is not None
+    session = store.create_review_session(
+        binding=binding, team_id="T12345678", slack_user_id="U12345678",
+        expires_at=1789000900,
+    )
+    with sqlite3.connect(source_path) as connection:
+        connection.execute(
+            """UPDATE correlation_opening_jobs
+               SET trigger_id=?, state='pending' WHERE review_token=?""",
+            ("unsafe\ntrigger", session.review_token),
+        )
+
+    with pytest.raises(RuntimeError, match="invalid_backup"):
+        store.backup_to(tmp_path / "backup.sqlite3")
