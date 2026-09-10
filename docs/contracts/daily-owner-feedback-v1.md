@@ -1,11 +1,11 @@
-# Contrato implementado — lote, presentación, retry y decisiones fixture-only (A–D1)
+# Contrato implementado — lote, presentación, retry y decisiones (A–D1)
 
 - **Estado:** Implementado y verificado localmente
 - **Versión:** `daily-owner-feedback-decisions-d1-v1`
 - **Implementación:** `src/bridge/daily_feedback.py`
 - **Pruebas:** `tests/test_daily_feedback.py`
 - **Diseño rector:** [Contrato técnico propuesto del corte vertical](../design/client-copilot-feedback-vertical-slice-contract.md)
-- **Alcance:** lote durable, sesión fenced, entrega/retry simulados y decisiones reviewer append-only
+- **Alcance:** lote durable con entrada fixture o transcript minimizado, sesión fenced, entrega/retry simulados y decisiones reviewer append-only
 
 ## 1. Límite implementado
 
@@ -14,6 +14,8 @@ Los cortes implementados cubren:
 ```text
 fixture set sanitizado registrado en proceso
 → create_review_batch
+o paquete canónico minimizado
+→ create_minimized_review_batch
 → lote immutable ready o completed_empty
 → ítems en orden estable
 → snapshot sanitizado por ítem
@@ -38,7 +40,7 @@ fixture set sanitizado registrado en proceso
 → siguiente ítem o batch completed
 ```
 
-No implementa scheduler, conversaciones reales, canal productivo, POST externo,
+No implementa scheduler, lectura productiva montada, canal productivo, POST externo,
 interpretación, clasificación, candidatos, enmiendas ni Conversation Releases. El
 feedback literal de D1 no activa aprendizaje ni muta producción. El conector de C2
 es exclusivamente stateful y fixture-only dentro del store; no tiene endpoint HTTP
@@ -166,7 +168,7 @@ selection_contract_version
 selection_config_fingerprint
 ```
 
-El fingerprint durable agrega reviewer, binding, identidad y contenido completo del fixture set sanitizado. Por eso modificar texto, release observada, orden o identidad de fixtures produce conflicto aunque los IDs aparentes coincidan.
+El fingerprint durable agrega reviewer, binding, identidad, retención y contenido completo del fixture set o paquete minimizado. Por eso modificar texto, linaje, orden, autoridad o identidad produce conflicto aunque los IDs aparentes coincidan.
 
 Las operaciones de creación se serializan con un lock local. Esto garantiza la semántica sólo dentro de un filesystem compartido por el proceso/host. No es todavía una solución distribuida ni reemplaza la persistencia SQL prevista para producción.
 
@@ -198,7 +200,7 @@ El store crea:
 
 Cada operación publica primero un manifest de intención identificado por la clave lógica. El manifest fija el `command_id`, fingerprints, batch esperado y hash canónico de cada snapshot, batch e índice secundario. Después se materializan los artefactos y el commit record se publica al final con el hash del manifest. Bajo el lock, un retry sin commit reconcilia la intención original; inputs distintos fallan cerrado. Un replay con commit valida manifest, commit, presencia y hash de todos los artefactos, posiciones, snapshots y estado antes de devolver el batch. Evidencia faltante o alterada produce `daily_feedback_integrity_error`.
 
-Los snapshots contienen únicamente el fixture sanitizado registrado, incluyendo referencia canónica ficticia, contexto, objetivo, resultado observado y release fixture. Este corte no admite conversaciones reales.
+Los snapshots fixture conservan la evidencia sintética registrada. Los snapshots `canonical_minimized_conversation` conservan referencias opacas, transcript minimizado, autoría, timestamps, objetivo, resultado, versiones de sanitizer/selección y `release_lineage_unavailable / 0`. El batch real añade tenant, scope, ventana, reviewer/binding, expiración, deletion owner y atestación de cifrado. El acceso sigue siendo local: aún no existe una API HTTPS productiva ni una revalidación live del binding en cada GET.
 
 Cada batch con sesión posee un único registro runtime reemplazado atómicamente bajo un `flock` global compartido también con creación, con archivo temporal, `fsync`, `os.replace` y `fsync` del directorio. Conserva status/revision actuales, lease/fence, ítems, attempts y resultados de comandos. Antes de cualquier lectura o mutación, el store valida exactamente `(fixture_id, position, snapshot_id)` contra el batch comprometido y cada snapshot debe declarar el fixture correspondiente.
 
