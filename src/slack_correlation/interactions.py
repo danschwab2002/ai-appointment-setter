@@ -78,8 +78,10 @@ class ConfirmAdmission:
 InteractionAdmission = OpenAdmission | PrepareAdmission | ConfirmAdmission
 
 
-def _safe_slack_extra(value: object, *, depth: int = 0) -> bool:
-    if depth > 6:
+def _safe_slack_extra(
+    value: object, *, depth: int = 0, max_depth: int = 6
+) -> bool:
+    if depth > max_depth:
         return False
     if value is None or isinstance(value, (bool, int, float)):
         return True
@@ -90,14 +92,15 @@ def _safe_slack_extra(value: object, *, depth: int = 0) -> bool:
         )
     if isinstance(value, list):
         return len(value) <= 100 and all(
-            _safe_slack_extra(item, depth=depth + 1) for item in value
+            _safe_slack_extra(item, depth=depth + 1, max_depth=max_depth)
+            for item in value
         )
     if isinstance(value, dict):
         return len(value) <= 100 and all(
             isinstance(key, str)
             and 0 < len(key) <= 128
             and not any(ord(character) < 32 or ord(character) == 127 for character in key)
-            and _safe_slack_extra(item, depth=depth + 1)
+            and _safe_slack_extra(item, depth=depth + 1, max_depth=max_depth)
             for key, item in value.items()
         )
     return False
@@ -224,7 +227,7 @@ class CorrelationInteractionHandler:
 
     def _validate_view(self, view: dict[str, object]) -> None:
         required = {"private_metadata", "callback_id", "state"}
-        if not required <= set(view) or not _safe_slack_extra(view):
+        if not required <= set(view) or not _safe_slack_extra(view, max_depth=8):
             raise InvalidInteraction("invalid_view")
         if (
             not isinstance(view.get("private_metadata"), str)

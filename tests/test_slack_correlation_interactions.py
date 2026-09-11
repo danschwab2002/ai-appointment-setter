@@ -534,6 +534,55 @@ def test_bot_message_non_authoritative_shapes_fail_closed(tmp_path, unsafe: dict
     assert slack.views == []
 
 
+def test_exact_opened_modal_round_trips_through_realistic_view_submission(tmp_path) -> None:
+    app, _store, slack, _operator = _app(tmp_path)
+    open_payload = {
+        "type": "block_actions", "team": {"id": TEAM}, "user": {"id": USER},
+        "channel": {"id": CHANNEL}, "message": {"ts": TS},
+        "trigger_id": "123.456.realistic-view",
+        "actions": [{"action_id": "review_operator_correlation", "value": CASE}],
+    }
+    with TestClient(app) as client:
+        assert _signed(client, open_payload).status_code == 200
+        token = _wait_for_open_view(slack)
+        returned_view = json.loads(json.dumps(slack.views[0][1]))
+        returned_view.update({
+            "id": "V12345678",
+            "team_id": TEAM,
+            "app_id": "A12345678",
+            "bot_id": "B12345678",
+            "hash": "1789000000.abc",
+            "clear_on_close": False,
+            "notify_on_close": False,
+            "root_view_id": "V12345678",
+            "previous_view_id": None,
+            "external_id": "",
+            "state": {"values": {
+                "resolution": {"selected_resolution": {"type": "radio_buttons", "selected_option": {
+                    "text": {"type": "plain_text", "text": "Ningún candidato corresponde", "emoji": True},
+                    "value": "close_without_match",
+                }}},
+                "verification": {"verification_basis": {"type": "static_select", "selected_option": {
+                    "text": {"type": "plain_text", "text": "Ningún candidato válido tras revisar", "emoji": True},
+                    "value": "no_valid_candidate_after_review",
+                }}},
+            }},
+        })
+        response = _signed(client, {
+            "type": "view_submission",
+            "api_app_id": "A12345678",
+            "enterprise": None,
+            "team": {"id": TEAM, "domain": "example"},
+            "user": {"id": USER, "username": "operator", "team_id": TEAM},
+            "view": returned_view,
+        }, timestamp="1789000001")
+
+    assert json.loads(returned_view["private_metadata"])["review_token"] == token
+    assert response.status_code == 200
+    assert response.json()["response_action"] == "update"
+    assert response.json()["view"]["callback_id"] == "operator_correlation_resolution_processing"
+
+
 def test_prepare_then_confirm_uses_stored_command_and_updates_same_root(tmp_path) -> None:
     app, store, slack, operator = _app(tmp_path)
     open_payload = {
@@ -609,8 +658,8 @@ def test_prepare_then_confirm_uses_stored_command_and_updates_same_root(tmp_path
 
 
 @pytest.mark.parametrize(("payload_extra", "view_extra"), [
-    ({}, {"unsafe_unknown": {"raw": "buyer@example.com\n<!channel>"}}),
-    ({"response_urls": [{"response_url": "https://hooks.slack.invalid/opaque\n<!channel>"}]}, {}),
+    ({}, {"unsafe_unknown": {"raw": "buyer@example.com\u0000<!channel>"}}),
+    ({"response_urls": [{"response_url": "https://hooks.slack.invalid/opaque\r<!channel>"}]}, {}),
 ])
 def test_view_submission_rejects_unknown_unsafe_nested_view_data(
     tmp_path, payload_extra: dict, view_extra: dict,
@@ -629,6 +678,8 @@ def test_view_submission_rejects_unknown_unsafe_nested_view_data(
             "type": "view_submission", "team": {"id": TEAM}, "user": {"id": USER},
             **payload_extra,
             "view": {
+                "id": "V12345678",
+                "hash": "1789000000.abc",
                 "callback_id": "prepare_operator_correlation_resolution",
                 "private_metadata": json.dumps({"review_token": token}),
                 **view_extra,
