@@ -73,7 +73,7 @@ expected_service_role(signature) as (
         ('public.schedule_precheckout_first_touch_reevaluation(uuid, uuid)'),
         ('public.set_lancemos_pilot_cohort_member(text, integer, uuid, bigint, text, text, text)'),
         ('public.set_lancemos_pilot_runtime_state(text, integer, bigint, text, text, text)'),
-        ('public.configure_daily_feedback_scope_v1(uuid, text, text, text, text, text, text, text, text, bigint, bigint, bigint, text, time without time zone, integer, text, text, text, boolean)'),
+        ('public.configure_daily_feedback_scope_v2(uuid, text, text, text, text, text, jsonb, text, bigint, bigint, bigint, text, time without time zone, integer, text, text, text, boolean)'),
         ('public.claim_daily_feedback_collection_v1(uuid, text, text, text, text, timestamp with time zone, boolean, integer)'),
         ('public.commit_daily_feedback_batch_v1(uuid, text, text, uuid, bigint, text, text, jsonb)'),
         ('public.fail_daily_feedback_collection_v1(uuid, text, text, uuid, bigint, text, integer)'),
@@ -85,7 +85,8 @@ expected_service_role(signature) as (
         ('public.complete_daily_feedback_oidc_v1(text, text, text, text, text, text, timestamp with time zone)'),
         ('public.get_daily_feedback_review_page_v1(text, uuid)'),
         ('public.record_daily_feedback_decision_v1(uuid, text, text, uuid, uuid, text, text)'),
-        ('public.purge_expired_daily_feedback_v1(timestamp with time zone, text, text, text, integer)')
+        ('public.get_daily_feedback_readiness_v1(text, text, timestamp with time zone)'),
+        ('public.purge_expired_daily_feedback_v2(timestamp with time zone, text, text, text, integer)')
 ),
 functions as (
     select

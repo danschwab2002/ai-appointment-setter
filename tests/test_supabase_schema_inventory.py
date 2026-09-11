@@ -59,6 +59,49 @@ def test_supabase_schema_inventory_reports_non_authoritative_fingerprints() -> N
     assert "select\n    version" in sql.lower()
 
 
+def test_daily_feedback_fencing_fingerprint_covers_oidc_retention_boundary() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    fingerprint = sql.split("'20260911000100'", 1)[1].split(")\nselect", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", fingerprint)
+
+    assert (
+        "public.complete_daily_feedback_oidc_v1(text,text,text,text,text,text,timestamptz)"
+        in compact_fingerprint
+    )
+    assert "p_session_expires_at>v_batch.retention_expires_at" in compact_fingerprint
+    assert "invalid_notification_retry" in fingerprint
+    assert "p_retry_secondsisnull" in compact_fingerprint
+    assert "p_retry_secondsnotbetween1and900" in compact_fingerprint
+    assert "daily_feedback_notification_envelope_lease_and_oidc_retention_fencing" in fingerprint
+
+
+def test_daily_feedback_multi_reviewer_fingerprint_covers_batch_authority() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    fingerprint = sql.split("'20260911000200'", 1)[1].split(")\nselect", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", fingerprint)
+
+    assert "daily_feedback_batch_reviewer_bindings" in fingerprint
+    assert "configure_daily_feedback_scope_v2" in fingerprint
+    assert "purge_expired_daily_feedback_v2" in fingerprint
+    assert "accountable_reviewer_refs" in fingerprint
+    assert "joinpublic.daily_feedback_batch_reviewer_bindings" in compact_fingerprint
+    assert "reviewer_set_must_have_four" in fingerprint
+    assert "all_reviewers_must_be_deletion_accountable" in fingerprint
+    assert "(s.enabledorp_force)" in compact_fingerprint
+    assert "reviewer_set_incomplete" in fingerprint
+    assert "brb.oidc_subject=rb.oidc_subject" in fingerprint
+    assert "relrowsecurity" in fingerprint
+    assert "has_table_privilege" in fingerprint
+    assert "daily_feedback_purge_tombstones_immutable" in fingerprint
+    assert "daily_feedback_tombstone_immutable_guard" in fingerprint
+    assert "v_authoritative_now:=clock_timestamp()" in compact_fingerprint
+    assert "p_limitisnull" in compact_fingerprint
+    assert "configure_daily_feedback_scope_v1" in fingerprint
+    assert "brb.slack_user_id=p_slack_user_id" in fingerprint
+    assert "get_daily_feedback_readiness_v1" in fingerprint
+    assert "notification_state=''delivery_unknown''" in fingerprint
+
+
 def test_absolute_deadline_fingerprint_checks_semantics_and_rejects_chaining() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
 
@@ -119,10 +162,13 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
 
-    assert len(allowlisted) == 81
+    assert len(allowlisted) == 82
     assert len(allowlisted) == len(set(allowlisted))
     assert "admit_precheckout_form_submission(text, jsonb, jsonb)" in allowlisted
     assert "get_daily_feedback_review_page_v1(text, uuid)" in allowlisted
+    assert any(item.startswith("configure_daily_feedback_scope_v2(") for item in allowlisted)
+    assert "purge_expired_daily_feedback_v2(timestamp with time zone, text, text, text, integer)" in allowlisted
+    assert not any(item.startswith("configure_daily_feedback_scope_v1(") for item in allowlisted)
     assert "admit_observed_lead_precheckout(text, jsonb, jsonb)" in allowlisted
     assert (
         "admit_portable_observed_lead_precheckout"
