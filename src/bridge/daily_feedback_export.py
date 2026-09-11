@@ -256,7 +256,12 @@ class ChatwootDailyCollector:
                     f"{self._inbox_id}/agent_bot"
                 )
                 bot_response.raise_for_status()
-                bot = bot_response.json()
+                bot_payload = bot_response.json()
+                bot = (
+                    bot_payload.get("agent_bot")
+                    if isinstance(bot_payload, dict)
+                    else None
+                )
             except (httpx.HTTPError, ValueError) as exc:
                 raise ConversationCollectionError(
                     "chatwoot_scope_verification_failed"
