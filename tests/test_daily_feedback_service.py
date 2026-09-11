@@ -232,6 +232,31 @@ def test_supabase_repository_rejects_unlisted_daily_feedback_rpc_names() -> None
     assert calls == 0
 
 
+def test_supabase_repository_allows_durable_readiness_rpc() -> None:
+    from bridge.daily_feedback_service import SupabaseDailyFeedbackRepository
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/rest/v1/rpc/get_daily_feedback_readiness_v1"
+        return httpx.Response(200, json={"status": "ok", "delivery_unknown_count": 0})
+
+    repository = SupabaseDailyFeedbackRepository(
+        base_url="https://project.supabase.co",
+        service_role_key="secret",
+        transport=httpx.MockTransport(handler),
+    )
+    result = __import__("asyncio").run(
+        repository.rpc(
+            "get_daily_feedback_readiness_v1",
+            {
+                "p_tenant_ref": "lancemos",
+                "p_scope_ref": "psicologajohanna-agent-bot-19",
+                "p_now": "2026-09-11T18:00:00Z",
+            },
+        )
+    )
+    assert result == {"status": "ok", "delivery_unknown_count": 0}
+
+
 def test_review_renders_only_the_current_escaped_conversation() -> None:
     client, repository = _client()
     batch_ref = "22222222-2222-4222-8222-222222222222"
@@ -312,7 +337,7 @@ class WorkflowRepository:
     async def rpc(self, name: str, payload: dict[str, object]) -> dict[str, object]:
         self.calls.append((name, payload))
         responses = {
-            "purge_expired_daily_feedback_v1": {"status": "purged", "count": 0},
+            "purge_expired_daily_feedback_v2": {"status": "purged", "count": 0},
             "claim_daily_feedback_collection_v1": {
                 "status": "claimed",
                 "schedule_id": "44444444-4444-4444-8444-444444444444",
@@ -346,6 +371,7 @@ class WorkflowRepository:
                 "item_count": 1,
                 "local_date": "2026-09-10",
                 "notification_occurred_at": "2026-09-10T22:55:00Z",
+                "retention_expires_at": "2026-09-13T22:55:00Z",
                 "lease_generation": 4,
             },
             "mark_daily_feedback_notification_started_v1": {"status": "request_started"},
@@ -469,6 +495,7 @@ def test_scheduler_uses_one_durable_path_for_collection_commit_and_slack() -> No
     assert command.review_ref == "66666666-6666-4666-8666-666666666666"
     assert command.count == 1
     assert command.occurred_at == datetime(2026, 9, 10, 22, 55, tzinfo=UTC)
+    assert command.deadline_at == datetime(2026, 9, 13, 22, 55, tzinfo=UTC)
     committed_items = repository.calls[2][1]["p_items"]
     assert isinstance(committed_items, list)
     first_item = committed_items[0]
@@ -485,7 +512,7 @@ def test_scheduler_uses_one_durable_path_for_collection_commit_and_slack() -> No
         "release_version",
     ]
     assert [name for name, _ in repository.calls] == [
-        "purge_expired_daily_feedback_v1",
+        "purge_expired_daily_feedback_v2",
         "claim_daily_feedback_collection_v1",
         "commit_daily_feedback_batch_v1",
         "claim_daily_feedback_notification_v1",
@@ -494,12 +521,14 @@ def test_scheduler_uses_one_durable_path_for_collection_commit_and_slack() -> No
     ]
     for name, payload in repository.calls:
         if name in {
-            "purge_expired_daily_feedback_v1",
+            "purge_expired_daily_feedback_v2",
             "claim_daily_feedback_collection_v1",
             "claim_daily_feedback_notification_v1",
         }:
             assert payload["p_tenant_ref"] == "lancemos"
             assert payload["p_scope_ref"] == "psicologajohanna-agent-bot-19"
+    assert repository.calls[0][1]["p_purge_actor_ref"] == "daily-feedback-worker-1"
+    assert "p_deletion_owner" not in repository.calls[0][1]
 
 
 def test_scheduler_rejects_durable_chatwoot_authority_mismatch_before_collection() -> None:

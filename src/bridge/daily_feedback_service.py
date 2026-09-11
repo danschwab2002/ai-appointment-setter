@@ -222,10 +222,10 @@ class DailyFeedbackScheduler:
     async def run_once(self, *, force_collection: bool = False) -> dict[str, object]:
         now = self.now()
         purge = await self._repository.rpc(
-            "purge_expired_daily_feedback_v1",
+            "purge_expired_daily_feedback_v2",
             {
                 "p_now": _utc_text(now),
-                "p_deletion_owner": self.settings.deletion_owner,
+                "p_purge_actor_ref": self.settings.worker_id,
                 "p_tenant_ref": self.settings.tenant_ref,
                 "p_scope_ref": self.settings.scope_ref,
                 "p_limit": 20,
@@ -407,6 +407,7 @@ class DailyFeedbackScheduler:
             reason_code=None,
             state="ready",
             count=int(claim["item_count"]),
+            deadline_at=_parse_utc(str(claim["retention_expires_at"])),
             review_ref=str(claim["public_ref"]),
         )
         try:
@@ -749,7 +750,7 @@ class SlackOpenIdClient:
 class SupabaseDailyFeedbackRepository:
     _ALLOWED_RPCS = frozenset(
         {
-            "configure_daily_feedback_scope_v1",
+            "configure_daily_feedback_scope_v2",
             "claim_daily_feedback_collection_v1",
             "commit_daily_feedback_batch_v1",
             "fail_daily_feedback_collection_v1",
@@ -760,8 +761,9 @@ class SupabaseDailyFeedbackRepository:
             "begin_daily_feedback_oidc_v1",
             "complete_daily_feedback_oidc_v1",
             "get_daily_feedback_review_page_v1",
+            "get_daily_feedback_readiness_v1",
             "record_daily_feedback_decision_v1",
-            "purge_expired_daily_feedback_v1",
+            "purge_expired_daily_feedback_v2",
         }
     )
 

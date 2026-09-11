@@ -405,16 +405,17 @@ def test_collects_all_short_message_pages_until_observable_empty_page() -> None:
     ]
 
 
-def test_real_collection_verifies_canonical_inbox_and_agent_bot_without_reading_conversations() -> None:
+def test_real_collection_verifies_canonical_inbox_and_bound_agent_bot_without_reading_conversations() -> None:
     requests: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request.url.path)
         assert request.headers["api_access_token"] == "not-a-real-token"
-        return httpx.Response(
-            200,
-            json={"id": 77, "account_id": 44, "agent_bot": {"id": 19}},
-        )
+        if request.url.path == "/api/v1/accounts/44/inboxes/77":
+            return httpx.Response(200, json={"id": 77, "account_id": 44})
+        if request.url.path == "/api/v1/accounts/44/inboxes/77/agent_bot":
+            return httpx.Response(200, json={"id": 19})
+        raise AssertionError(f"unexpected request: {request.url.path}")
 
     collector = ChatwootDailyCollector(
         base_url="https://chatwoot.example.test",
@@ -429,7 +430,96 @@ def test_real_collection_verifies_canonical_inbox_and_agent_bot_without_reading_
 
     collector.verify_access()
 
-    assert requests == ["/api/v1/accounts/44/inboxes/77"]
+    assert requests == [
+        "/api/v1/accounts/44/inboxes/77",
+        "/api/v1/accounts/44/inboxes/77/agent_bot",
+    ]
+
+
+def test_real_collection_rejects_wrong_inbox_agent_bot_binding() -> None:
+    requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        if request.url.path == "/api/v1/accounts/44/inboxes/77":
+            return httpx.Response(200, json={"id": 77, "account_id": 44})
+        if request.url.path == "/api/v1/accounts/44/inboxes/77/agent_bot":
+            return httpx.Response(200, json={"id": 20})
+        raise AssertionError(f"unexpected request: {request.url.path}")
+
+    collector = ChatwootDailyCollector(
+        base_url="https://chatwoot.example.test",
+        account_id=44,
+        inbox_id=77,
+        agent_bot_id=19,
+        access_token="not-a-real-token",
+        pseudonymization_key=b"k" * 32,
+        security_policy=_security_policy(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(
+        ConversationCollectionError,
+        match="chatwoot_scope_verification_failed",
+    ):
+        collector.verify_access()
+
+    assert requests == [
+        "/api/v1/accounts/44/inboxes/77",
+        "/api/v1/accounts/44/inboxes/77/agent_bot",
+    ]
+
+
+def test_real_collection_rejects_boolean_provider_ids() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/accounts/1/inboxes/9":
+            return httpx.Response(200, json={"id": 9})
+        if request.url.path == "/api/v1/accounts/1/inboxes/9/agent_bot":
+            return httpx.Response(200, json={"id": True})
+        raise AssertionError(f"unexpected request: {request.url.path}")
+
+    collector = ChatwootDailyCollector(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        inbox_id=9,
+        agent_bot_id=1,
+        access_token="not-a-real-token",
+        pseudonymization_key=b"k" * 32,
+        security_policy=_security_policy(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(
+        ConversationCollectionError,
+        match="chatwoot_scope_verification_failed",
+    ):
+        collector.verify_access()
+
+
+def test_real_collection_rejects_conflicting_inbox_account_id() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/accounts/44/inboxes/77":
+            return httpx.Response(200, json={"id": 77, "account_id": 999})
+        if request.url.path == "/api/v1/accounts/44/inboxes/77/agent_bot":
+            return httpx.Response(200, json={"id": 19})
+        raise AssertionError(f"unexpected request: {request.url.path}")
+
+    collector = ChatwootDailyCollector(
+        base_url="https://chatwoot.example.test",
+        account_id=44,
+        inbox_id=77,
+        agent_bot_id=19,
+        access_token="not-a-real-token",
+        pseudonymization_key=b"k" * 32,
+        security_policy=_security_policy(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(
+        ConversationCollectionError,
+        match="chatwoot_scope_verification_failed",
+    ):
+        collector.verify_access()
 
 
 def test_real_collection_rejects_non_https_chatwoot_origin() -> None:

@@ -147,7 +147,7 @@ const rows = await db.query(`
       ('schedule_precheckout_first_touch_reevaluation(uuid,uuid)'),
       ('set_lancemos_pilot_cohort_member(text,integer,uuid,bigint,text,text,text)'),
       ('set_lancemos_pilot_runtime_state(text,integer,bigint,text,text,text)'),
-      ('configure_daily_feedback_scope_v1(uuid,text,text,text,text,text,text,text,text,bigint,bigint,bigint,text,time without time zone,integer,text,text,text,boolean)'),
+      ('configure_daily_feedback_scope_v2(uuid,text,text,text,text,text,jsonb,text,bigint,bigint,bigint,text,time without time zone,integer,text,text,text,boolean)'),
       ('claim_daily_feedback_collection_v1(uuid,text,text,text,text,timestamp with time zone,boolean,integer)'),
       ('commit_daily_feedback_batch_v1(uuid,text,text,uuid,bigint,text,text,jsonb)'),
       ('fail_daily_feedback_collection_v1(uuid,text,text,uuid,bigint,text,integer)'),
@@ -159,7 +159,8 @@ const rows = await db.query(`
       ('complete_daily_feedback_oidc_v1(text,text,text,text,text,text,timestamp with time zone)'),
       ('get_daily_feedback_review_page_v1(text,uuid)'),
       ('record_daily_feedback_decision_v1(uuid,text,text,uuid,uuid,text,text)'),
-      ('purge_expired_daily_feedback_v1(timestamp with time zone,text,text,text,integer)')
+      ('get_daily_feedback_readiness_v1(text,text,timestamp with time zone)'),
+      ('purge_expired_daily_feedback_v2(timestamp with time zone,text,text,text,integer)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -180,9 +181,9 @@ const rows = await db.query(`
 `);
 const result = rows.rows[0];
 // Historical baseline guard was `result.expected_count !== 63`; the current
-// baseline is 68 RPCs and daily feedback adds thirteen more.
+// baseline is 68 RPCs and daily feedback adds fourteen more.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 81) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 82) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const bindingAcl = await db.query(`

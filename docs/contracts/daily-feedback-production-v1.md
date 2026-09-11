@@ -2,8 +2,8 @@
 
 - **Estado:** aceptado para implementación
 - **Versión:** `daily-feedback-production-v1`
-- **Autoridad inicial:** tenant, scope, revisor, Slack team/user y ruta Slack son inputs explícitos de despliegue
-- **Política temporal:** timezone IANA, cutoff local, retención y responsable de eliminación son inputs explícitos; no tienen defaults productivos
+- **Autoridad inicial:** tenant, scope, conjunto cerrado de revisores, Slack team/users y ruta Slack son inputs explícitos de despliegue
+- **Política temporal:** timezone IANA, cutoff local, retención, política y responsables de eliminación son inputs explícitos; no tienen defaults productivos
 
 ## Objetivo
 
@@ -31,8 +31,8 @@ No se intercambian ni infieren estas identidades:
 
 - `tenant_ref`: autoridad canónica explícita del aliado;
 - `scope_ref`: scope canónico explícito del runtime;
-- `reviewer_id`: referencia explícita del revisor autorizado;
-- `reviewer_binding_id`: UUID durable;
+- `reviewer_ref`: referencia explícita de cada revisor autorizado;
+- `reviewer_binding_id`: UUID durable individual;
 - `oidc_issuer`, `oidc_subject`, `slack_team_id` y `slack_user_id`: identidad canónica devuelta y ligada por Slack OpenID Connect;
 - `batch_id`: UUID interno;
 - `public_ref`: UUID aleatorio opaco, identificador y no credencial;
@@ -41,7 +41,7 @@ No se intercambian ni infieren estas identidades:
 - `command_id`: UUID de idempotencia;
 - `worker_owner`, `lease_generation` y `lease_expires_at`: autoridad temporal del scheduler.
 
-Una fila activa en `daily_feedback_reviewer_bindings` es la única autoridad que vincula tenant, scope, reviewer y Slack. Desactivar o reemplazar esa fila revoca accesos posteriores, incluso para cookies no vencidas.
+`configure_daily_feedback_scope_v2` recibe el conjunto deseado completo de exactamente cuatro revisores, rechaza claves desconocidas y duplicados, exige que los cuatro sean responsables de eliminación y mantiene una fila por persona en `daily_feedback_reviewer_bindings`. Al confirmar un lote, `daily_feedback_batch_reviewer_bindings` captura de forma inmutable cada binding, su generación y su identidad Slack/OpenID exacta. Agregar o reemplazar una persona después no concede acceso retroactivo. Desactivar o reemplazar sólo su fila revoca únicamente sus sesiones, incluso si su cookie todavía no venció.
 
 ## Ventana diaria
 
@@ -62,12 +62,12 @@ El proceso debe verificar antes de leer contenido:
 - feature flag explícito;
 - HTTPS sin credenciales en URL;
 - account e inbox iguales al binding comercial;
-- agent-bot ID positivo;
+- agent-bot ID positivo y binding exacto al inbox, verificado con el endpoint inbox-scoped de Chatwoot (la existencia account-wide no basta);
 - llave HMAC de al menos 32 bytes;
 - evidencia de cifrado de Supabase Cloud;
 - retención entre 24 y 168 horas en la aplicación productiva;
-- responsable de eliminación no vacío;
-- reviewer binding activo.
+- política de eliminación no vacía y los cuatro reviewers marcados como responsables;
+- conjunto exacto de cuatro reviewer bindings activo y estable durante claim y commit.
 
 Sólo entran mensajes públicos de prospecto y del agent bot configurado, con salidas en estado `sent`, `delivered` o `read`. Notas privadas, adjuntos, mensajes humanos, fallos de entrega y otros autores quedan fuera. Chatwoot conserva contenido y orden canónicos; el batch guarda únicamente el snapshot minimizado.
 
@@ -76,15 +76,20 @@ Sólo entran mensajes públicos de prospecto y del agent bot configurado, con sa
 Supabase contiene, como mínimo:
 
 - `daily_feedback_reviewer_bindings`;
+- `daily_feedback_batch_reviewer_bindings`;
 - `daily_feedback_schedules`;
-- `daily_feedback_collection_attempts`;
 - `daily_feedback_batches`;
 - `daily_feedback_items`;
 - `daily_feedback_decisions`;
-- `daily_feedback_auth_states`;
+- `daily_feedback_oidc_states`;
 - `daily_feedback_sessions`;
-- `daily_feedback_notification_attempts`;
-- `daily_feedback_deletion_tombstones`.
+- `daily_feedback_workflow_commands`;
+- `daily_feedback_purge_tombstones`.
+
+Los intentos de recolección y sus leases/fencing se materializan en
+`daily_feedback_schedules`. El estado, los intentos y los leases de notificación
+se materializan en `daily_feedback_batches`; no existen ledgers de intentos
+paralelos que puedan divergir de esas filas autoritativas.
 
 Invariantes físicos:
 
@@ -95,22 +100,33 @@ Invariantes físicos:
 - mensajes almacenados sólo en JSON minimizado y con tamaño acotado;
 - una posición y una conversación por lote;
 - una decisión terminal por item;
+- múltiples revisores autorizados por lote, con decisión colaborativa: la primera decisión terminal válida gana;
 - feedback literal requerido sólo para `correct_with_feedback` y prohibido para las otras decisiones;
 - máximo de un candidato por decisión con feedback; V1 crea cero candidatos;
 - expiración bloquea lectura y escritura antes de la purga física;
-- purga borra contenido y sesiones y deja únicamente un tombstone sin transcript ni feedback.
+- purga decide vencimiento con el reloj autoritativo de PostgreSQL —nunca con la fecha aportada por el caller—, exige un límite explícito entre 1 y 100, borra contenido, sesiones y mappings batch-scoped y deja únicamente un tombstone append-only sin transcript ni feedback, con las identidades Slack/OpenID y generaciones snapshoteadas de los responsables humanos, y el worker que ejecutó la purga en un campo separado;
+- el retry de notificación sólo admite códigos cerrados en minúsculas y demoras explícitas entre 1 y 900 segundos; `delivery_unknown` requiere reconciliación y no entra en retry automático.
 
 ## Scheduler y recuperación
 
-Un worker dentro de Appointment Bridge ejecuta el mismo `run_once()` usado por el disparo operativo manual.
+Un worker dentro del servicio dedicado `daily-feedback` ejecuta el mismo
+`run_once()` usado por el disparo operativo manual.
+
+`DAILY_FEEDBACK_SCHEDULER_ENABLED=false` impide iniciar el polling background y
+persiste el schedule como `enabled=false`. Sólo el endpoint run-now autenticado usa
+`force=true`; el RPC permite ese claim manual sobre un schedule deshabilitado después
+de comprobar el conjunto exacto de cuatro revisores. Un worker normal usa `force=false`
+y no puede reclamarlo.
 
 1. Purga lotes vencidos.
 2. Reclama un schedule vencido mediante `FOR UPDATE SKIP LOCKED`.
 3. Recolecta fuera de la transacción.
 4. Confirma el lote con owner, generación y lease vigentes.
-5. Reclama notificaciones pendientes mediante un ledger separado.
+5. Reclama notificaciones pendientes desde el estado durable del batch, con su
+   lease, generación y contador de intentos.
 6. Envía un `REV-001` exacto al Slack connector.
-7. Finaliza la admisión o conserva `admission_unknown` para replay exacto.
+7. Finaliza la admisión o conserva `delivery_unknown` para reconciliación
+   explícita, sin un segundo post ciego.
 
 No se repite una recolección ya confirmada. Un crash después de confirmar el batch no pierde el envío porque la notificación se reclama desde el lote durable. Un timeout del conector no autoriza un comando diferente: se reintenta el mismo `event_id` y `dedupe_key`.
 
@@ -136,7 +152,7 @@ El `public_ref` no concede acceso. Sin sesión, la página ofrece “Continuar c
 3. El backend crea una sesión de máximo 8 horas y nunca posterior a la retención del batch.
 4. El navegador recibe cookies `__Host-*` con `Secure`, `HttpOnly`, `SameSite=Lax` y `Path=/`.
 
-Cada GET y POST consulta Supabase y vuelve a validar sesión, binding activo, tenant, scope, batch comprometido y no vencido. No hay bearer duradero en query ni en path. OAuth `code/state` son transitorios y se consumen una vez.
+Cada GET y POST consulta Supabase y vuelve a validar sesión, binding activo, generación snapshoteada en el lote, tenant, scope, batch comprometido y no vencido. No hay bearer duradero en query ni en path. OAuth `code/state` son transitorios y se consumen una vez.
 
 ## Interfaz y decisiones
 
@@ -180,8 +196,8 @@ No se incluyen PII, secrets, tokens, URLs originales, adjuntos, analytics, third
 - Slack OIDC client ID/secret/team;
 - origen público HTTPS exacto;
 - Slack connector producer;
-- binding activo comprobable;
-- scheduler sano y sin un `admission_unknown` vencido sin resolución.
+- conjunto de bindings activos comprobable y consistente con el snapshot del lote;
+- scheduler sano y sin un `delivery_unknown` vencido sin resolución.
 
 ## Fuera de alcance V1
 
@@ -192,5 +208,5 @@ No se incluyen PII, secrets, tokens, URLs originales, adjuntos, analytics, third
 - dashboards;
 - descarga del transcript o del HTML;
 - decisiones desde Slack;
-- múltiples revisores por lote;
+- revisión independiente por persona, quorum o múltiples votos por ítem;
 - recolección desde memoria de Hermes, Slack o `public.messages`.
