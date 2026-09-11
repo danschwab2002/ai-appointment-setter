@@ -1,7 +1,7 @@
 # Contrato de resolución de correlaciones en Slack V1
 
-- **Estado:** implementación local en curso; producción default-off
-- **Fecha:** 2026-09-09
+- **Estado:** UX comercial simplificada implementada localmente; pendiente de revisión y publicación
+- **Fecha:** 2026-09-11
 - **Autoridad:** Supabase Cloud mediante el bridge scoped del aliado
 - **Superficie:** modal nativo de Slack y actualización del mensaje raíz
 
@@ -24,9 +24,12 @@ conceden autoridad.
 
 ## 2. Mensaje accionable
 
-`COR-001`, `COR-002` y `COR-003` incluyen un botón `Revisar caso`. El mensaje
-conserva únicamente datos enmascarados, conteos, códigos cerrados y referencias
-opacas. El `case_id` del botón nunca es autoridad suficiente: el conector exige
+`COR-001`, `COR-002` y `COR-003` incluyen un botón `Revisar compra`. La superficie
+visible explica en lenguaje cotidiano si no se encontró una persona, si existen
+varias opciones o si email y teléfono conducen a resultados distintos. No muestra
+códigos internos, UUID ni estados técnicos; conserva únicamente identidad
+enmascarada y la cantidad de personas posibles. El `case_id` oculto del botón y
+del metadata nunca es autoridad suficiente: el conector exige
 que coincida con un registro durable aceptado cuyos Team ID, Channel ID,
 `message_ts`, tenant y `subject_ref` también coincidan.
 
@@ -64,7 +67,9 @@ vacía el trigger al terminar. Un open `request_started` interrumpido o ambiguo 
 marca `failed` al reiniciar y nunca se reintenta a ciegas; el operador debe pulsar
 de nuevo.
 
-Los submits persisten primero la transición `preparing` o `confirming` y responden
+Las transiciones locales de modal y la salida `No puedo determinarlo` se registran
+en el ledger de replay, pero no crean comandos ni llaman al bridge. Los submits que
+sí ejecutan una decisión persisten primero la transición `preparing` o `confirming` y responden
 de inmediato con `response_action=update` y un modal local `Procesando…`, de modo
 que Slack no cierre la vista. Un worker fuera del request ejecuta `prepare`/`confirm`
 con la identidad e idempotency key durables y reemplaza esa vista mediante
@@ -94,18 +99,35 @@ La acción `review_operator_correlation`:
 La sesión expira y no puede transferirse a otro usuario, workspace, canal,
 mensaje o tenant.
 
-## 5. Prepare y confirm
+## 5. Decisión guiada, prepare y confirm
 
-El primer submit `prepare_operator_correlation_resolution` acepta únicamente una
-opción proyectada y un fundamento cerrado. El conector genera una idempotency key
-durable y llama:
+El modal inicial formula una sola pregunta comercial: si la compra pertenece a
+una de las personas mostradas. Compara la identidad enmascarada de la compra con
+cada registro, marca qué señal coincide y ofrece exactamente tres resultados:
+
+1. elegir una persona;
+2. declarar `Revisé los datos: no corresponde a ninguna`;
+3. declarar `No puedo determinarlo`.
+
+Elegir una persona abre un segundo paso que pregunta cómo se comprobó: compra o
+transacción, registro del cliente o confirmación del cliente. `No puedo
+determinarlo` cierra el modal y mantiene la sesión y el caso pendientes, con cero
+llamadas operator. Cerrar sin asociación infiere únicamente el fundamento interno
+`no_valid_candidate_after_review`; el comercial no elige códigos técnicos.
+
+El submit `prepare_operator_correlation_resolution` acepta únicamente la persona
+ya elegida en el paso anterior y un fundamento cerrado. Para el cierre sin
+asociación, el submit de decisión entra directamente al mismo pipeline con el
+fundamento único. El conector genera una idempotency key durable y llama:
 
 ```text
 POST /internal/operator/correlations/resolutions/prepare
 ```
 
-La respuesta reemplaza el modal por una confirmación explícita. Todavía no existe
-resolución terminal.
+La respuesta reemplaza el modal por una confirmación explícita de la consecuencia:
+`Confirmar asociación` o `Confirmar cierre`. Todavía no existe resolución terminal.
+Se aceptan también, durante la transición de despliegue, submits del modal anterior;
+siguen sujetos a las mismas validaciones y al mismo backend autoritativo.
 
 El segundo submit `confirm_operator_correlation_resolution` usa exclusivamente el
 comando ya persistido; no toma acción ni candidato nuevos desde Slack. Llama:
@@ -123,8 +145,8 @@ comando vencido fallan cerrado.
 Supabase es autoritativo. Tras una confirmación aplicada, el conector actualiza el
 mismo mensaje raíz mediante `chat.update`, retira los botones y muestra:
 
-- `Resuelto — candidato vinculado`, o
-- `Cerrado — sin coincidencia válida`.
+- `Compra asociada`, o
+- `Compra cerrada sin asociación`.
 
 También muestra el Slack User ID del operador y el timestamp autoritativo, sin
 PII ni comentarios libres.
@@ -184,13 +206,13 @@ smoke firmado y verificación del operador.
 
 ## 9. Criterio E2E
 
-No se considera terminado hasta que un operador allowlisted resuelva un caso
-real desde Slack y se verifique físicamente:
+No se considera lista la nueva UX hasta que un operador allowlisted complete el
+flujo sobre el caso sintético expresamente autorizado y se verifique físicamente:
 
 1. modal abierto desde el mensaje de Johanna;
 2. prepare persistido sin resolver;
 3. confirm aplicado una sola vez en Supabase;
 4. auditoría de actor y fecha;
 5. mensaje original actualizado sin duplicados;
-6. cero cambios en otro tenant/canal;
+6. cero cambios en casos reales y en otro tenant/canal;
 7. `/ready` saludable y ledgers sin estados inciertos.

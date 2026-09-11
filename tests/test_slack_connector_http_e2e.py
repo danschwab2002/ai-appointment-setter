@@ -324,16 +324,32 @@ def test_interaction_crosses_connector_bridge_and_slack_simulator(tmp_path: Path
                 time.sleep(0.02)
             opened_body = next(body for path, body in _FakeSlackHandler.requests
                                if path == "/api/views.open")
-            token = json.loads(opened_body["view"]["private_metadata"])["review_token"]
-            prepared = _signed_interaction(client, secret, {
+            opened_view = opened_body["view"]
+            assert isinstance(opened_view, dict)
+            token = json.loads(opened_view["private_metadata"])["review_token"]
+            assert opened_view["callback_id"] == "select_operator_correlation_resolution"
+            assert "¿Esta compra pertenece a esta persona?" in repr(opened_view)
+            selected = _signed_interaction(client, secret, {
                 "type": "view_submission", "team": {"id": "T12345678"},
                 "user": {"id": "U12345678"},
                 "view": {"id": "V12345678", "hash": "1.abc",
-                         "callback_id": "prepare_operator_correlation_resolution",
+                         "callback_id": "select_operator_correlation_resolution",
                          "private_metadata": json.dumps({"review_token": token}),
                          "state": {"values": {
-                             "resolution": {"selected_resolution": {"selected_option": {
+                             "decision": {"selected_decision": {"selected_option": {
                                  "value": bridge_store.candidate_id}}},
+                         }}},
+            })
+            evidence_view = selected.json()["view"]
+            assert evidence_view["callback_id"] == "prepare_operator_correlation_resolution"
+            assert "¿Cómo lo confirmaste?" in repr(evidence_view)
+            prepared = _signed_interaction(client, secret, {
+                "type": "view_submission", "team": {"id": "T12345678"},
+                "user": {"id": "U12345678"},
+                "view": {"id": "V12345678", "hash": "1.def",
+                         "callback_id": evidence_view["callback_id"],
+                         "private_metadata": evidence_view["private_metadata"],
+                         "state": {"values": {
                              "verification": {"verification_basis": {"selected_option": {
                                  "value": "operator_source_record"}}},
                          }}},
