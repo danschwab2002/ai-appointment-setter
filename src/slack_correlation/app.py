@@ -64,6 +64,7 @@ class SlackConnectorSettings:
     signing_secret: str | None = None
     team_id: str | None = None
     tenant_channels: dict[str, str] = field(default_factory=dict)
+    tenant_review_base_urls: dict[str, str] = field(default_factory=dict)
     tenant_operator_user_ids: dict[str, frozenset[str]] = field(default_factory=dict)
     operator_backends: dict[str, dict[str, str]] = field(default_factory=dict)
     storage_path: str = "/app/data/slack-connector.sqlite3"
@@ -92,6 +93,7 @@ class SlackConnectorSettings:
             signing_secret=_env_value("SLACK_SIGNING_SECRET"),
             team_id=_env_value("SLACK_TEAM_ID"),
             tenant_channels=_env_tenant_channels(),
+            tenant_review_base_urls=_env_tenant_review_base_urls(),
             tenant_operator_user_ids=_env_tenant_user_ids(),
             operator_backends=_env_operator_backends(),
             storage_path=os.getenv(
@@ -199,6 +201,22 @@ def _env_tenant_channels() -> dict[str, str]:
     return dict(payload)
 
 
+def _env_tenant_review_base_urls() -> dict[str, str]:
+    raw = os.getenv("SLACK_TENANT_REVIEW_BASE_URLS_JSON")
+    if raw is None or not raw.strip():
+        return {}
+    try:
+        payload = json.loads(raw)
+    except ValueError as exc:
+        raise ValueError("invalid_json:SLACK_TENANT_REVIEW_BASE_URLS_JSON") from exc
+    if not isinstance(payload, dict) or any(
+        not isinstance(key, str) or not isinstance(value, str)
+        for key, value in payload.items()
+    ):
+        raise ValueError("invalid_json:SLACK_TENANT_REVIEW_BASE_URLS_JSON")
+    return dict(payload)
+
+
 def _env_tenant_user_ids() -> dict[str, frozenset[str]]:
     raw = os.getenv("SLACK_TENANT_OPERATOR_USER_IDS_JSON")
     if raw is None or not raw.strip():
@@ -300,6 +318,24 @@ def _validate_settings(settings: SlackConnectorSettings) -> None:
     ):
         raise ValueError("invalid_activation_generation")
     tenant_channels = _resolved_tenant_channels(settings)
+    review_origins_valid = True
+    for tenant, value in settings.tenant_review_base_urls.items():
+        parsed = urlsplit(value)
+        if (
+            tenant not in tenant_channels
+            or parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.port is not None
+            or parsed.path not in {"", "/"}
+            or parsed.query
+            or parsed.fragment
+        ):
+            review_origins_valid = False
+            break
+    if not review_origins_valid:
+        raise ValueError("invalid_tenant_review_base_urls")
     if set(tenant_channels) - _ALLOWED_TENANTS or any(
         _CHANNEL_ID.fullmatch(value) is None for value in tenant_channels.values()
     ):
@@ -413,6 +449,7 @@ def create_app(
                 slack_client=runtime_client,
                 tenant_channels=tenant_channels,
                 tenant_labels={"johanna": "Johanna", "att1": "ATT1"},
+                tenant_review_base_urls=settings.tenant_review_base_urls,
                 worker_id=settings.worker_id,
                 team_id=settings.team_id,
                 poll_interval_seconds=settings.poll_interval_seconds,
@@ -583,7 +620,13 @@ def create_app(
         return {"status": "ok"}
 
     @app.get("/ready")
-    async def ready() -> JSONResponse:
+    async def ready(request: Request) -> JSONResponse:
+        expected_tenant = request.headers.get("x-expected-tenant-ref")
+        tenant_review_route_ready = expected_tenant is None or (
+            expected_tenant in settings.tenant_tokens
+            and expected_tenant in tenant_channels
+            and expected_tenant in settings.tenant_review_base_urls
+        )
         requires_storage = (
             settings.storage_preflight_enabled
             or settings.ingress_enabled
@@ -634,10 +677,13 @@ def create_app(
         ready_now = (not requires_storage or state["storage_ready"]) and (
             not needs_slack or state["connectivity_verified"]
         )
+        ready_now = ready_now and tenant_review_route_ready
         if settings.notifications_enabled:
             ready_now = ready_now and state["worker_running"] and worker_healthy
         mode = "inactive"
-        if requires_storage and not state["storage_ready"]:
+        if not tenant_review_route_ready:
+            mode = "tenant_review_route_unavailable"
+        elif requires_storage and not state["storage_ready"]:
             mode = "storage_unavailable"
         elif settings.notifications_enabled and ready_now:
             mode = "operational"
@@ -1054,11 +1100,12 @@ def _parse_command(body: bytes) -> NotificationCommand:
         "state",
         "count",
         "deadline_at",
+        "review_ref",
     }
     required = {"event_id", "event_code", "dedupe_key", "occurred_at"}
     if not isinstance(payload, dict) or set(payload) - allowed or not required <= set(payload):
         raise ValueError("invalid_notification")
-    if any(key in payload and payload[key] is not None and not isinstance(payload[key], str) for key in ("event_id", "event_code", "dedupe_key", "occurred_at", "subject_ref", "reason_code", "component", "state", "deadline_at")):
+    if any(key in payload and payload[key] is not None and not isinstance(payload[key], str) for key in ("event_id", "event_code", "dedupe_key", "occurred_at", "subject_ref", "reason_code", "component", "state", "deadline_at", "review_ref")):
         raise ValueError("invalid_notification")
     count = payload.get("count")
     if count is not None and (isinstance(count, bool) or not isinstance(count, int)):
@@ -1080,6 +1127,7 @@ def _parse_command(body: bytes) -> NotificationCommand:
         state=payload.get("state"),
         count=count,
         deadline_at=deadline_at,
+        review_ref=payload.get("review_ref"),
     )
 
 

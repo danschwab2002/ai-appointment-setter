@@ -237,6 +237,33 @@ class ChatwootDailyCollector:
         self._max_conversation_pages = max_conversation_pages
         self._max_message_pages = max_message_pages
 
+    def verify_access(self) -> None:
+        """Verify the configured inbox and bot without reading conversations."""
+        with httpx.Client(
+            base_url=self._base_url,
+            headers={"api_access_token": self._access_token},
+            transport=self._transport,
+            timeout=20,
+        ) as client:
+            try:
+                response = client.get(
+                    f"/api/v1/accounts/{self._account_id}/inboxes/{self._inbox_id}"
+                )
+                response.raise_for_status()
+                payload = response.json()
+            except (httpx.HTTPError, ValueError) as exc:
+                raise ConversationCollectionError(
+                    "chatwoot_scope_verification_failed"
+                ) from exc
+        agent_bot = payload.get("agent_bot") if isinstance(payload, dict) else None
+        if (
+            not isinstance(payload, dict)
+            or payload.get("id") != self._inbox_id
+            or not isinstance(agent_bot, dict)
+            or agent_bot.get("id") != self._agent_bot_id
+        ):
+            raise ConversationCollectionError("chatwoot_scope_verification_failed")
+
     def collect(
         self,
         *,

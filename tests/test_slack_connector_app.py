@@ -58,6 +58,33 @@ def test_inactive_connector_exposes_sanitized_health_and_readiness() -> None:
     }
 
 
+def test_ready_rejects_an_expected_tenant_without_a_complete_review_route() -> None:
+    complete = SlackConnectorSettings(
+        tenant_tokens={"johanna": "x" * 32},
+        tenant_channels={"johanna": "C0C0YEACVT2"},
+        tenant_review_base_urls={"johanna": "https://reviews.example.com"},
+    )
+    missing_review_origin = SlackConnectorSettings(
+        tenant_tokens={"johanna": "x" * 32},
+        tenant_channels={"johanna": "C0C0YEACVT2"},
+    )
+
+    with TestClient(create_app(complete)) as client:
+        assert client.get(
+            "/ready", headers={"X-Expected-Tenant-Ref": "johanna"}
+        ).status_code == 200
+        assert client.get(
+            "/ready", headers={"X-Expected-Tenant-Ref": "unknown"}
+        ).status_code == 503
+
+    with TestClient(create_app(missing_review_origin)) as client:
+        response = client.get(
+            "/ready", headers={"X-Expected-Tenant-Ref": "johanna"}
+        )
+    assert response.status_code == 503
+    assert response.json()["mode"] == "tenant_review_route_unavailable"
+
+
 def test_public_api_documentation_surfaces_are_disabled() -> None:
     app = create_app(SlackConnectorSettings())
 
@@ -90,6 +117,8 @@ def test_compose_keeps_backfill_default_off_and_stop_first() -> None:
     assert "SLACK_CORRELATION_BACKFILL_ENABLED: ${SLACK_CORRELATION_BACKFILL_ENABLED:-false}" in compose
     assert "SLACK_CORRELATION_BACKFILL_ENABLED=false" in env_example
     assert 'SLACK_TENANT_TOKENS_JSON={"johanna":"replace-with-32-plus-random-characters"}' in env_example
+    assert "SLACK_TENANT_REVIEW_BASE_URLS_JSON:" in compose
+    assert 'SLACK_TENANT_REVIEW_BASE_URLS_JSON={"johanna":"https://reviews.example.com"}' in env_example
     assert "replicas: 1" in compose
     assert "order: stop-first" in compose
 

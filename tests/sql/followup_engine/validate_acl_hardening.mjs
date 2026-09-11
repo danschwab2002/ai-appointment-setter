@@ -146,7 +146,20 @@ const rows = await db.query(`
       ('resolve_commercial_ally_discount_policy(text,text,integer,text)'),
       ('schedule_precheckout_first_touch_reevaluation(uuid,uuid)'),
       ('set_lancemos_pilot_cohort_member(text,integer,uuid,bigint,text,text,text)'),
-      ('set_lancemos_pilot_runtime_state(text,integer,bigint,text,text,text)')
+      ('set_lancemos_pilot_runtime_state(text,integer,bigint,text,text,text)'),
+      ('configure_daily_feedback_scope_v1(uuid,text,text,text,text,text,text,text,text,bigint,bigint,bigint,text,time without time zone,integer,text,text,text,boolean)'),
+      ('claim_daily_feedback_collection_v1(uuid,text,text,text,text,timestamp with time zone,boolean,integer)'),
+      ('commit_daily_feedback_batch_v1(uuid,text,text,uuid,bigint,text,text,jsonb)'),
+      ('fail_daily_feedback_collection_v1(uuid,text,text,uuid,bigint,text,integer)'),
+      ('claim_daily_feedback_notification_v1(uuid,text,text,text,text,timestamp with time zone,integer)'),
+      ('mark_daily_feedback_notification_started_v1(uuid,text,text,uuid,bigint)'),
+      ('complete_daily_feedback_notification_v1(uuid,text,text,uuid,bigint)'),
+      ('retry_daily_feedback_notification_v1(uuid,text,text,uuid,bigint,text,integer)'),
+      ('begin_daily_feedback_oidc_v1(text,uuid,text,timestamp with time zone)'),
+      ('complete_daily_feedback_oidc_v1(text,text,text,text,text,text,timestamp with time zone)'),
+      ('get_daily_feedback_review_page_v1(text,uuid)'),
+      ('record_daily_feedback_decision_v1(uuid,text,text,uuid,uuid,text,text)'),
+      ('purge_expired_daily_feedback_v1(timestamp with time zone,text,text,text,integer)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -166,9 +179,10 @@ const rows = await db.query(`
   left join expected using (signature)
 `);
 const result = rows.rows[0];
-// Historical baseline guard was `result.expected_count !== 63`; V2 and Slack add five RPCs.
+// Historical baseline guard was `result.expected_count !== 63`; the current
+// baseline is 68 RPCs and daily feedback adds thirteen more.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 68) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 81) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const bindingAcl = await db.query(`

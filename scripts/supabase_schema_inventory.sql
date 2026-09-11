@@ -2598,6 +2598,67 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         6,
         'scoped_durable_slack_correlation_projection'
+    union all
+    select
+        '20260910000100',
+        '20260910000100_daily_feedback_production_v1.sql',
+        (to_regclass('public.daily_feedback_batches') is not null)::int
+        + (to_regclass('public.daily_feedback_items') is not null)::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.claim_daily_feedback_collection_v1(uuid,text,text,text,text,timestamptz,boolean,integer)'
+            )
+              and prosecdef
+              and proconfig @> array['search_path=""']
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.record_daily_feedback_decision_v1(uuid,text,text,uuid,uuid,text,text)'
+            )
+              and prosecdef
+              and proconfig @> array['search_path=""']
+        )::int
+        + (
+            select count(*) = 13
+            from functions
+            where oid in (
+                to_regprocedure('public.configure_daily_feedback_scope_v1(uuid,text,text,text,text,text,text,text,text,bigint,bigint,bigint,text,time,integer,text,text,text,boolean)'),
+                to_regprocedure('public.claim_daily_feedback_collection_v1(uuid,text,text,text,text,timestamptz,boolean,integer)'),
+                to_regprocedure('public.commit_daily_feedback_batch_v1(uuid,text,text,uuid,bigint,text,text,jsonb)'),
+                to_regprocedure('public.fail_daily_feedback_collection_v1(uuid,text,text,uuid,bigint,text,integer)'),
+                to_regprocedure('public.claim_daily_feedback_notification_v1(uuid,text,text,text,text,timestamptz,integer)'),
+                to_regprocedure('public.mark_daily_feedback_notification_started_v1(uuid,text,text,uuid,bigint)'),
+                to_regprocedure('public.complete_daily_feedback_notification_v1(uuid,text,text,uuid,bigint)'),
+                to_regprocedure('public.retry_daily_feedback_notification_v1(uuid,text,text,uuid,bigint,text,integer)'),
+                to_regprocedure('public.begin_daily_feedback_oidc_v1(text,uuid,text,timestamptz)'),
+                to_regprocedure('public.complete_daily_feedback_oidc_v1(text,text,text,text,text,text,timestamptz)'),
+                to_regprocedure('public.get_daily_feedback_review_page_v1(text,uuid)'),
+                to_regprocedure('public.record_daily_feedback_decision_v1(uuid,text,text,uuid,uuid,text,text)'),
+                to_regprocedure('public.purge_expired_daily_feedback_v1(timestamptz,text,text,text,integer)')
+            )
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        + (
+            to_regclass('public.daily_feedback_batches') is not null
+            and not coalesce(has_table_privilege(
+                'service_role', to_regclass('public.daily_feedback_batches'), 'SELECT'
+            ), false)
+            and not coalesce(has_table_privilege(
+                'service_role', to_regclass('public.daily_feedback_batches'), 'INSERT'
+            ), false)
+            and not coalesce(has_table_privilege(
+                'service_role', to_regclass('public.daily_feedback_batches'), 'UPDATE'
+            ), false)
+            and not coalesce(has_table_privilege(
+                'service_role', to_regclass('public.daily_feedback_batches'), 'DELETE'
+            ), false)
+        )::int,
+        6,
+        'daily_feedback_durable_rpc_only_authority'
 )
 select
     version,

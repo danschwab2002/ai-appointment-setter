@@ -34,6 +34,7 @@ class NotificationWorker:
         slack_client: SlackMessageSender,
         tenant_channels: dict[str, str] | None = None,
         tenant_labels: dict[str, str],
+        tenant_review_base_urls: dict[str, str] | None = None,
         worker_id: str,
         team_id: str | None = None,
         poll_interval_seconds: float = 1.0,
@@ -42,6 +43,7 @@ class NotificationWorker:
         self._slack = slack_client
         self._tenant_channels = dict(tenant_channels or {})
         self._tenant_labels = dict(tenant_labels)
+        self._tenant_review_base_urls = dict(tenant_review_base_urls or {})
         self._worker_id = worker_id
         self._team_id = team_id
         self._poll_interval = poll_interval_seconds
@@ -139,6 +141,7 @@ class NotificationWorker:
                 claim.command,
                 tenant_label=tenant_label,
                 thread_ts=thread_ts,
+                review_base_url=self._tenant_review_base_urls.get(claim.tenant_ref),
             )
         except Exception:
             self.halt("internal")

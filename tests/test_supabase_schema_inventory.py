@@ -119,9 +119,10 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
 
-    assert len(allowlisted) == 68
+    assert len(allowlisted) == 81
     assert len(allowlisted) == len(set(allowlisted))
     assert "admit_precheckout_form_submission(text, jsonb, jsonb)" in allowlisted
+    assert "get_daily_feedback_review_page_v1(text, uuid)" in allowlisted
     assert "admit_observed_lead_precheckout(text, jsonb, jsonb)" in allowlisted
     assert (
         "admit_portable_observed_lead_precheckout"
