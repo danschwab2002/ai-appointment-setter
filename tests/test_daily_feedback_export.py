@@ -414,7 +414,7 @@ def test_real_collection_verifies_canonical_inbox_and_bound_agent_bot_without_re
         if request.url.path == "/api/v1/accounts/44/inboxes/77":
             return httpx.Response(200, json={"id": 77, "account_id": 44})
         if request.url.path == "/api/v1/accounts/44/inboxes/77/agent_bot":
-            return httpx.Response(200, json={"id": 19})
+            return httpx.Response(200, json={"agent_bot": {"id": 19}})
         raise AssertionError(f"unexpected request: {request.url.path}")
 
     collector = ChatwootDailyCollector(
@@ -444,7 +444,7 @@ def test_real_collection_rejects_wrong_inbox_agent_bot_binding() -> None:
         if request.url.path == "/api/v1/accounts/44/inboxes/77":
             return httpx.Response(200, json={"id": 77, "account_id": 44})
         if request.url.path == "/api/v1/accounts/44/inboxes/77/agent_bot":
-            return httpx.Response(200, json={"id": 20})
+            return httpx.Response(200, json={"agent_bot": {"id": 20}})
         raise AssertionError(f"unexpected request: {request.url.path}")
 
     collector = ChatwootDailyCollector(
@@ -475,7 +475,7 @@ def test_real_collection_rejects_boolean_provider_ids() -> None:
         if request.url.path == "/api/v1/accounts/1/inboxes/9":
             return httpx.Response(200, json={"id": 9})
         if request.url.path == "/api/v1/accounts/1/inboxes/9/agent_bot":
-            return httpx.Response(200, json={"id": True})
+            return httpx.Response(200, json={"agent_bot": {"id": True}})
         raise AssertionError(f"unexpected request: {request.url.path}")
 
     collector = ChatwootDailyCollector(
@@ -501,7 +501,7 @@ def test_real_collection_rejects_conflicting_inbox_account_id() -> None:
         if request.url.path == "/api/v1/accounts/44/inboxes/77":
             return httpx.Response(200, json={"id": 77, "account_id": 999})
         if request.url.path == "/api/v1/accounts/44/inboxes/77/agent_bot":
-            return httpx.Response(200, json={"id": 19})
+            return httpx.Response(200, json={"agent_bot": {"id": 19}})
         raise AssertionError(f"unexpected request: {request.url.path}")
 
     collector = ChatwootDailyCollector(
