@@ -160,13 +160,20 @@ if (disabledBackgroundClaim.status !== 'idle') {
 }
 
 const claimed = (await db.query(`
+  with captured as (
+    select clock_timestamp() as now_at
+  )
   select public.claim_daily_feedback_collection_v1(
     '20000000-0000-4000-8000-000000000001', '${'2'.repeat(64)}',
-    'collector-1', 'lancemos', 'psicologajohanna-agent-bot-19', (
-      ((clock_timestamp() at time zone 'America/Bogota')::date::timestamp + time '18:00:00')
-      at time zone 'America/Bogota'
+    'collector-1', 'lancemos', 'psicologajohanna-agent-bot-19', greatest(
+      now_at,
+      (
+        ((now_at at time zone 'America/Bogota')::date::timestamp + time '18:00:00')
+        at time zone 'America/Bogota'
+      ) + interval '1 second'
     ), true, 120
   ) as result
+  from captured
 `)).rows[0].result;
 if (claimed.status !== 'claimed' || claimed.lease_generation !== 1) {
   throw new Error(`collection claim failed: ${JSON.stringify(claimed)}`);
