@@ -87,7 +87,12 @@ class SlackClient:
             raise ValueError("invalid channel_id")
         if not isinstance(message, dict) or "channel" in message:
             raise ValueError("invalid message")
-        body = {"channel": channel_id, **message}
+        body = {
+            "channel": channel_id,
+            **message,
+            "unfurl_links": False,
+            "unfurl_media": False,
+        }
         try:
             async with httpx.AsyncClient(
                 base_url=self._base_url,

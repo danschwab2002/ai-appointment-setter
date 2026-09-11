@@ -405,6 +405,33 @@ def test_collects_all_short_message_pages_until_observable_empty_page() -> None:
     ]
 
 
+def test_real_collection_verifies_canonical_inbox_and_agent_bot_without_reading_conversations() -> None:
+    requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        assert request.headers["api_access_token"] == "not-a-real-token"
+        return httpx.Response(
+            200,
+            json={"id": 77, "account_id": 44, "agent_bot": {"id": 19}},
+        )
+
+    collector = ChatwootDailyCollector(
+        base_url="https://chatwoot.example.test",
+        account_id=44,
+        inbox_id=77,
+        agent_bot_id=19,
+        access_token="not-a-real-token",
+        pseudonymization_key=b"k" * 32,
+        security_policy=_security_policy(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    collector.verify_access()
+
+    assert requests == ["/api/v1/accounts/44/inboxes/77"]
+
+
 def test_real_collection_rejects_non_https_chatwoot_origin() -> None:
     with pytest.raises(
         ConversationCollectionError,

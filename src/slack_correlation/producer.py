@@ -61,6 +61,25 @@ class SlackConnectorProducer:
             transport=transport,
         )
 
+    async def verify_access(self) -> None:
+        try:
+            response = await self._client.get(
+                "/ready",
+                headers={
+                    "Authorization": f"Bearer {self._token}",
+                    "X-Expected-Tenant-Ref": self._expected_tenant_ref,
+                },
+            )
+            payload = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise ConnectorAdmissionUnknown("connector_readiness_unknown") from exc
+        if (
+            response.status_code != 200
+            or not isinstance(payload, dict)
+            or payload.get("status") != "ready"
+        ):
+            raise ConnectorAdmissionUnknown("connector_readiness_unknown")
+
     async def admit(self, command: NotificationCommand) -> AdmissionReceipt:
         try:
             response = await self._client.post(
@@ -139,7 +158,14 @@ def _serialize_command(command: NotificationCommand) -> dict[str, Any]:
         "dedupe_key": command.dedupe_key,
         "occurred_at": _utc_text(command.occurred_at),
     }
-    for field_name in ("subject_ref", "reason_code", "component", "state", "count"):
+    for field_name in (
+        "subject_ref",
+        "reason_code",
+        "component",
+        "state",
+        "count",
+        "review_ref",
+    ):
         value = getattr(command, field_name)
         if value is not None:
             payload[field_name] = value

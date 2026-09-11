@@ -206,7 +206,12 @@ def test_slack_client_posts_to_exact_channel_and_validates_message_identity() ->
 
     assert reference.channel_id == "C-OPERATIONS"
     assert reference.message_ts == "1788700000.123456"
-    assert requests == [{"channel": "C-OPERATIONS", **payload}]
+    assert requests == [{
+        "channel": "C-OPERATIONS",
+        **payload,
+        "unfurl_links": False,
+        "unfurl_media": False,
+    }]
 
     def mismatch(request: httpx.Request) -> httpx.Response:
         return httpx.Response(

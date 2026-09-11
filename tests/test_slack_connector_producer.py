@@ -27,6 +27,64 @@ def _command() -> NotificationCommand:
     )
 
 
+def test_producer_serializes_the_opaque_daily_review_reference() -> None:
+    from dataclasses import replace
+
+    captured: dict[str, object] = {}
+    command = replace(
+        _command(),
+        event_code="REV-001",
+        subject_ref=None,
+        reason_code=None,
+        review_ref="22222222-2222-4222-8222-222222222222",
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(
+            202,
+            json={
+                "status": "admitted",
+                "tenant_ref": "johanna",
+                "notification_id": command.event_id,
+                "delivery_state": "pending",
+            },
+        )
+
+    producer = SlackConnectorProducer(
+        base_url="https://connector.example.invalid",
+        bearer_token="j" * 32,
+        expected_tenant_ref="johanna",
+        transport=httpx.MockTransport(handler),
+    )
+    asyncio.run(producer.admit(command))
+    asyncio.run(producer.aclose())
+
+    assert captured["review_ref"] == "22222222-2222-4222-8222-222222222222"
+
+
+def test_producer_verifies_connector_readiness_without_admitting_a_command() -> None:
+    requests: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, request.url.path))
+        assert request.headers["authorization"] == "Bearer " + "j" * 32
+        assert request.headers["x-expected-tenant-ref"] == "johanna"
+        return httpx.Response(200, json={"status": "ready"})
+
+    producer = SlackConnectorProducer(
+        base_url="https://connector.example.invalid",
+        bearer_token="j" * 32,
+        expected_tenant_ref="johanna",
+        transport=httpx.MockTransport(handler),
+    )
+
+    asyncio.run(producer.verify_access())
+    asyncio.run(producer.aclose())
+
+    assert requests == [("GET", "/ready")]
+
+
 def test_producer_posts_closed_command_with_bearer_and_no_routing_fields() -> None:
     captured: dict[str, object] = {}
 

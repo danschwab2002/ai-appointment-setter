@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 import re
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import UUID
 
 _DEDUPE_KEY = re.compile(r"^[a-f0-9]{64}$")
@@ -69,6 +70,7 @@ EVENT_TEMPLATES: dict[str, EventTemplate] = {
     "OPS-006": EventTemplate("p3", "Revisión de política, copy o release requerida"),
     "DIG-001": EventTemplate("p4", "Resumen operativo diario"),
     "DIG-002": EventTemplate("p4", "Resumen de pendientes por turno"),
+    "REV-001": EventTemplate("p4", "Reporte diario listo"),
 }
 
 
@@ -84,6 +86,7 @@ class NotificationCommand:
     state: str | None = None
     count: int | None = None
     deadline_at: datetime | None = None
+    review_ref: str | None = None
 
     def __post_init__(self) -> None:
         try:
@@ -110,6 +113,15 @@ class NotificationCommand:
             raise ValueError("invalid_count")
         if self.deadline_at is not None and self.deadline_at.tzinfo is None:
             raise ValueError("invalid_deadline_at")
+        if self.event_code == "REV-001":
+            try:
+                parsed_review_ref = UUID(self.review_ref or "")
+            except (ValueError, TypeError, AttributeError) as exc:
+                raise ValueError("invalid_review_ref") from exc
+            if str(parsed_review_ref) != self.review_ref:
+                raise ValueError("invalid_review_ref")
+        elif self.review_ref is not None:
+            raise ValueError("invalid_review_ref")
 
 
 def render_message(
@@ -117,6 +129,7 @@ def render_message(
     *,
     tenant_label: str,
     thread_ts: str | None = None,
+    review_base_url: str | None = None,
 ) -> dict[str, Any]:
     """Render one closed template; callers cannot supply Slack text or blocks."""
 
@@ -182,6 +195,41 @@ def render_message(
                 ],
             }
         )
+    if command.event_code == "REV-001":
+        base_url = _validate_review_base_url(review_base_url)
+        message["blocks"].append(
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        "<"
+                        f"{base_url}/daily-feedback/review/{command.review_ref}"
+                        "|Abrir reporte>"
+                    ),
+                },
+            }
+        )
+        message["unfurl_links"] = False
+        message["unfurl_media"] = False
     if thread_ts is not None:
         message["thread_ts"] = thread_ts
     return message
+
+
+def _validate_review_base_url(value: str | None) -> str:
+    if not isinstance(value, str):
+        raise ValueError("invalid_review_base_url")
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("invalid_review_base_url")
+    return value.rstrip("/")

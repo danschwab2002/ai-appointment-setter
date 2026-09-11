@@ -37,7 +37,28 @@ La frontera `create_daily_feedback_fixture_app(...)` es una aplicación FastAPI
 interna y separada, protegida por token de operador y usada para verificación HTTP
 real. No está montada en el bridge productivo, no corre por scheduler y no admite
 conversaciones reales. La persistencia de este tracer bullet es filesystem local;
-el workflow distribuido y su persistencia SQL continúan fuera de alcance.
+el workflow distribuido y su persistencia SQL quedan fuera del alcance de estos
+cortes históricos A–D1.
+
+### Camino productivo V1
+
+`src/bridge/daily_feedback_app.py` y `src/bridge/daily_feedback_service.py`
+implementan el camino productivo separado de los paquetes fixture-only. Chatwoot
+permanece como fuente canónica; Supabase coordina schedules, batches, autoridad
+revocable, sesiones, decisiones, leases, fencing, notificación, retención,
+tombstones y purga. La autoridad durable liga tenant/scope con account, inbox y
+agent-bot de Chatwoot, y el scheduler rechaza cualquier divergencia antes de leer
+conversaciones.
+
+La superficie HTTPS usa Slack OpenID Connect con `issuer + subject + team + user`,
+cookies opacas `__Host-*`, CSRF y reautorización durable en cada GET/POST. La
+ejecución manual y el scheduler recorren el mismo workflow; el scheduler queda
+default-off. El conector Slack acepta sólo `REV-001` con `review_ref` opaca,
+construye el enlace desde un origen server-owned y deshabilita unfurls.
+
+La migración `20260910000100_daily_feedback_production_v1.sql` define esta frontera
+durable. Esta sección describe el candidato de código: merge, migración Cloud,
+deployment y E2E real son estados operativos separados y no se presuponen.
 
 El Corte B agrega un registro runtime atómico por batch con lease/fence de sesión,
 lectura pura del próximo ítem y delivery attempts simulados. Un grant de revisor

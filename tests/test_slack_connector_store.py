@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+import json
 import sqlite3
 import time
 
 from fastapi.testclient import TestClient
 import pytest
 
-from slack_correlation.app import SlackConnectorSettings, create_app
+from slack_correlation.app import SlackConnectorSettings, _parse_command, create_app
 from slack_correlation.catalog import EVENT_TEMPLATES, NotificationCommand, render_message
 from slack_correlation.store import NotificationStore
 from slack_correlation.client import (
@@ -36,8 +37,8 @@ def _command(**overrides: object) -> NotificationCommand:
     return NotificationCommand(**values)  # type: ignore[arg-type]
 
 
-def test_catalog_has_exactly_the_49_approved_event_codes() -> None:
-    assert len(EVENT_TEMPLATES) == 49
+def test_catalog_has_exactly_the_50_approved_event_codes() -> None:
+    assert len(EVENT_TEMPLATES) == 50
     assert set(EVENT_TEMPLATES) == {
         *(f"HND-{number:03d}" for number in range(1, 12)),
         *(f"COR-{number:03d}" for number in range(1, 10)),
@@ -47,6 +48,7 @@ def test_catalog_has_exactly_the_49_approved_event_codes() -> None:
         *(f"OPS-{number:03d}" for number in range(1, 7)),
         "DIG-001",
         "DIG-002",
+        "REV-001",
     }
 
 
@@ -85,6 +87,93 @@ def test_only_pending_correlation_events_receive_native_review_control() -> None
     assert correlation["metadata"]["event_payload"]["case_id"] == "11111111-1111-4111-8111-111111111111"
     assert correlation["blocks"][-1]["elements"][0]["action_id"] == "review_operator_correlation"
     assert ordinary["blocks"][-1]["type"] == "section"
+
+
+def test_daily_review_renders_one_server_owned_https_link_without_unfurls() -> None:
+    rendered = render_message(
+        _command(
+            event_code="REV-001",
+            subject_ref=None,
+            reason_code=None,
+            state="ready",
+            count=7,
+            review_ref="22222222-2222-4222-8222-222222222222",
+        ),
+        tenant_label="Johanna",
+        review_base_url="https://reviews.example.test",
+    )
+
+    text = repr(rendered)
+    assert text.count("https://reviews.example.test/daily-feedback/review/22222222-2222-4222-8222-222222222222") == 1
+    assert "Abrir reporte" in text
+    assert rendered["unfurl_links"] is False
+    assert rendered["unfurl_media"] is False
+    assert "review_ref" not in rendered["metadata"]["event_payload"]
+
+
+@pytest.mark.parametrize(
+    "review_ref",
+    [None, "not-a-uuid", "22222222-2222-4222-8222-222222222222?token=secret"],
+)
+def test_daily_review_requires_one_opaque_uuid_ref(review_ref: str | None) -> None:
+    with pytest.raises(ValueError, match="invalid_review_ref"):
+        _command(
+            event_code="REV-001",
+            subject_ref=None,
+            review_ref=review_ref,
+        )
+
+
+def test_non_review_events_reject_review_refs() -> None:
+    with pytest.raises(ValueError, match="invalid_review_ref"):
+        _command(review_ref="22222222-2222-4222-8222-222222222222")
+
+
+def test_ingress_parses_the_daily_review_reference() -> None:
+    command = _command(
+        event_code="REV-001",
+        subject_ref=None,
+        reason_code=None,
+        review_ref="22222222-2222-4222-8222-222222222222",
+    )
+    payload = {
+        "event_id": command.event_id,
+        "event_code": command.event_code,
+        "dedupe_key": command.dedupe_key,
+        "occurred_at": "2026-09-07T22:00:00Z",
+        "state": command.state,
+        "review_ref": command.review_ref,
+    }
+
+    parsed = _parse_command(json.dumps(payload).encode())
+
+    assert parsed.review_ref == command.review_ref
+
+
+@pytest.mark.parametrize(
+    "review_base_url",
+    [
+        None,
+        "http://reviews.example.test",
+        "https://user:pass@reviews.example.test",
+        "https://reviews.example.test/path",
+        "https://reviews.example.test?token=secret",
+        "https://reviews.example.test#fragment",
+    ],
+)
+def test_daily_review_rejects_missing_or_unsafe_review_base_url(
+    review_base_url: str | None,
+) -> None:
+    with pytest.raises(ValueError, match="invalid_review_base_url"):
+        render_message(
+            _command(
+                event_code="REV-001",
+                subject_ref=None,
+                review_ref="22222222-2222-4222-8222-222222222222",
+            ),
+            tenant_label="Johanna",
+            review_base_url=review_base_url,
+        )
 
 
 @pytest.mark.parametrize(
@@ -284,6 +373,47 @@ def test_worker_posts_server_rendered_message_to_exact_configured_channel(
     assert stored is not None
     assert stored.state == "accepted"
     assert stored.message_ts == "1788800000.000001"
+
+
+def test_worker_renders_daily_review_with_tenant_bound_origin(tmp_path) -> None:
+    class AcceptedSlackClient:
+        def __init__(self) -> None:
+            self.message: dict | None = None
+
+        async def post_message(
+            self, *, channel_id: str, message: dict
+        ) -> SlackMessageReference:
+            self.message = message
+            return SlackMessageReference(
+                channel_id=channel_id,
+                message_ts="1788800000.000002",
+            )
+
+    store = NotificationStore(tmp_path / "slack.sqlite3")
+    store.initialize()
+    command = _command(
+        event_code="REV-001",
+        subject_ref=None,
+        reason_code=None,
+        state="ready",
+        review_ref="22222222-2222-4222-8222-222222222222",
+    )
+    store.admit(tenant_ref="johanna", command=command)
+    slack = AcceptedSlackClient()
+    worker = NotificationWorker(
+        store=store,
+        slack_client=slack,
+        tenant_channels={"johanna": "C0C0YEACVT2"},
+        tenant_labels={"johanna": "Johanna"},
+        tenant_review_base_urls={"johanna": "https://reviews.example.test"},
+        worker_id="slack-worker-1",
+    )
+
+    assert asyncio.run(worker.run_once()) is True
+    assert slack.message is not None
+    assert "https://reviews.example.test/daily-feedback/review/22222222-2222-4222-8222-222222222222" in str(
+        slack.message["blocks"]
+    )
 
 
 def test_worker_records_explicit_slack_rejection_without_retry(tmp_path) -> None:
