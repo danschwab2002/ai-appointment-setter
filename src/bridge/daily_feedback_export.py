@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import html
 import json
+import math
 import os
 import re
 import stat
@@ -315,7 +316,9 @@ class ChatwootDailyCollector:
                     or conversation_id <= 0
                     or type(inbox_id) is not int
                     or inbox_id != self._inbox_id
-                    or type(updated_at) is not int
+                    or isinstance(updated_at, bool)
+                    or not isinstance(updated_at, (int, float))
+                    or not math.isfinite(updated_at)
                     or updated_at <= 0
                 ):
                     raise ConversationCollectionError("chatwoot_conversation_scope_mismatch")
