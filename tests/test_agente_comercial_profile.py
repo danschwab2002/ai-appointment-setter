@@ -30,6 +30,27 @@ def test_agente_comercial_profile_has_minimum_libre_de_ansiedad_release() -> Non
     assert "No ejecutes herramientas ni acciones externas" in content
 
 
+def test_agente_comercial_profile_answers_basic_product_content_directly() -> None:
+    content = SOUL.read_text(encoding="utf-8")
+    normalized = " ".join(content.split())
+
+    for required in (
+        "Fase 1 — Entiende y calma",
+        "Fase 2 — Desarma y renueva",
+        "Fase 3 — Restaura y sostén",
+        "Botiquín para la crisis",
+        "Cuaderno de Restauración",
+        "Test de evaluación",
+        "Clase de fe y restauración",
+        "respondé directamente con esta lista",
+        "sin derivar el caso sólo por esa pregunta",
+    ):
+        assert required in normalized
+
+    assert "No están confirmados para esta release: contenido detallado" not in normalized
+    assert "El contenido detallado del programa no está confirmado" not in normalized
+
+
 def test_agente_comercial_profile_has_restrictive_human_review_policy() -> None:
     content = SOUL.read_text(encoding="utf-8")
     normalized = " ".join(content.split())
