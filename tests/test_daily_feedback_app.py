@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,14 +13,20 @@ class FakeService:
 
 
 class FakeRepository:
-    def __init__(self, *, fail: bool = False) -> None:
+    def __init__(self, *, fail: bool = False, delivery_unknown_count: int = 0) -> None:
         self.fail = fail
+        self.delivery_unknown_count = delivery_unknown_count
         self.calls: list[tuple[str, dict[str, object]]] = []
 
     async def rpc(self, name: str, payload: dict[str, object]) -> dict[str, object]:
         self.calls.append((name, payload))
         if self.fail:
             raise RuntimeError("database unavailable")
+        if name == "get_daily_feedback_readiness_v1":
+            return {
+                "status": "ok",
+                "delivery_unknown_count": self.delivery_unknown_count,
+            }
         return {"status": "configured", "schedule_id": "11111111-1111-4111-8111-111111111111"}
 
 
@@ -46,26 +53,47 @@ class FakeScheduler:
 
 
 def _settings():
-    from bridge.daily_feedback_app import DailyFeedbackApplicationSettings
+    from bridge.daily_feedback_app import (
+        DailyFeedbackApplicationSettings,
+        DailyFeedbackReviewer,
+    )
 
     return DailyFeedbackApplicationSettings(
         manual_run_token="manual-run-token-with-more-than-32-chars",
         tenant_ref="lancemos",
         scope_ref="psicologajohanna-agent-bot-19",
-        reviewer_ref="juan",
+        reviewers=(
+            DailyFeedbackReviewer("dan-schwab", "U12345678", True),
+            DailyFeedbackReviewer("mariana-marin", "U87654321", True),
+            DailyFeedbackReviewer("juan-martitegui", "U11111111", True),
+            DailyFeedbackReviewer("marcela-pineda", "U22222222", True),
+        ),
         slack_team_id="T12345678",
-        slack_user_id="U12345678",
         chatwoot_account_id=1,
         chatwoot_inbox_id=2,
         chatwoot_agent_bot_id=19,
-        timezone="UTC",
-        daily_at="23:55:00",
+        timezone="America/Bogota",
+        daily_at="18:00:00",
         retention_hours=72,
-        deletion_owner="juan",
+        deletion_policy_ref="johanna-joint-reviewer-accountability-v1",
         sanitizer_version="deterministic-redaction-v1",
         selection_version="chatwoot-daily-agent-dialogues-v1",
         renderer_version="daily-feedback-web-v1",
     )
+
+
+def test_application_settings_match_database_scope_grammar_and_exact_reviewer_count() -> None:
+    from bridge.daily_feedback_app import DailyFeedbackReviewer
+
+    settings = _settings()
+    with pytest.raises(ValueError, match="invalid_daily_feedback_tenant_ref"):
+        replace(settings, tenant_ref="tenant.with.dot")
+    with pytest.raises(ValueError, match="invalid_daily_feedback_scope_ref"):
+        replace(settings, scope_ref="scope.with.dot")
+    with pytest.raises(ValueError, match="daily_feedback_reviewer_set_must_have_four"):
+        replace(settings, reviewers=settings.reviewers[:3])
+    with pytest.raises(ValueError, match="invalid_daily_feedback_reviewer_ref"):
+        DailyFeedbackReviewer("reviewer.with.dot", "U33333333", True)
 
 
 def test_application_configures_authority_before_becoming_ready_and_runs_the_same_worker_path() -> None:
@@ -100,19 +128,40 @@ def test_application_configures_authority_before_becoming_ready_and_runs_the_sam
         assert scheduler.forced == [True]
 
     assert scheduler.stopped == 1
-    assert repository.calls[0][0] == "configure_daily_feedback_scope_v1"
+    assert repository.calls[0][0] == "configure_daily_feedback_scope_v2"
     configure = repository.calls[0][1]
     assert configure["p_tenant_ref"] == "lancemos"
     assert configure["p_scope_ref"] == "psicologajohanna-agent-bot-19"
-    assert configure["p_slack_user_id"] == "U12345678"
+    assert configure["p_reviewers"] == [
+        {
+            "deletion_accountable": True,
+            "reviewer_ref": "dan-schwab",
+            "slack_user_id": "U12345678",
+        },
+        {
+            "deletion_accountable": True,
+            "reviewer_ref": "juan-martitegui",
+            "slack_user_id": "U11111111",
+        },
+        {
+            "deletion_accountable": True,
+            "reviewer_ref": "marcela-pineda",
+            "slack_user_id": "U22222222",
+        },
+        {
+            "deletion_accountable": True,
+            "reviewer_ref": "mariana-marin",
+            "slack_user_id": "U87654321",
+        },
+    ]
     assert configure["p_chatwoot_account_id"] == 1
     assert configure["p_chatwoot_inbox_id"] == 2
     assert configure["p_chatwoot_agent_bot_id"] == 19
     assert configure["p_oidc_issuer"] == "https://slack.com"
-    assert configure["p_oidc_subject"] == "https://slack.com/user_id/U12345678"
+    assert configure["p_deletion_policy_ref"] == "johanna-joint-reviewer-accountability-v1"
     assert configure["p_retention_hours"] == 72
-    assert configure["p_timezone_name"] == "UTC"
-    assert configure["p_cutoff_local"] == "23:55:00"
+    assert configure["p_timezone_name"] == "America/Bogota"
+    assert configure["p_cutoff_local"] == "18:00:00"
     assert "p_timezone" not in configure
     assert "p_daily_at" not in configure
 
@@ -204,6 +253,26 @@ def test_ready_fails_closed_after_the_scheduler_reports_a_background_failure() -
     }
 
 
+def test_ready_fails_closed_when_notification_requires_reconciliation() -> None:
+    from bridge.daily_feedback_app import create_daily_feedback_application
+
+    app = create_daily_feedback_application(
+        settings=_settings(),
+        repository=FakeRepository(delivery_unknown_count=1),
+        scheduler=FakeScheduler(),
+        review_app=__import__("fastapi").FastAPI(),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/ready")
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "status": "not_ready",
+        "daily_feedback": "notification_reconciliation_required",
+    }
+
+
 def test_runtime_settings_require_every_real_data_security_gate() -> None:
     from bridge.daily_feedback_app import DailyFeedbackRuntimeSettings
 
@@ -214,7 +283,12 @@ def test_runtime_settings_require_every_real_data_security_gate() -> None:
         "SLACK_OIDC_CLIENT_ID": "client-id",
         "SLACK_OIDC_CLIENT_SECRET": "client-secret",
         "SLACK_OIDC_TEAM_ID": "T12345678",
-        "DAILY_FEEDBACK_REVIEWER_SLACK_USER_ID": "U12345678",
+        "DAILY_FEEDBACK_REVIEWERS_JSON": json.dumps([
+            {"reviewer_ref": "dan-schwab", "slack_user_id": "U12345678", "deletion_accountable": True},
+            {"reviewer_ref": "mariana-marin", "slack_user_id": "U87654321", "deletion_accountable": True},
+            {"reviewer_ref": "juan-martitegui", "slack_user_id": "U11111111", "deletion_accountable": True},
+            {"reviewer_ref": "marcela-pineda", "slack_user_id": "U22222222", "deletion_accountable": True},
+        ]),
         "DAILY_FEEDBACK_MANUAL_RUN_TOKEN": "manual-run-token-with-more-than-32-chars",
         "DAILY_FEEDBACK_WORKER_ID": "daily-feedback-worker-1",
         "SLACK_CONNECTOR_BASE_URL": "https://connector.example.test",
@@ -229,18 +303,19 @@ def test_runtime_settings_require_every_real_data_security_gate() -> None:
         "DAILY_FEEDBACK_STORAGE_ENCRYPTION_VERIFIED": "true",
         "DAILY_FEEDBACK_STORAGE_ENCRYPTION_EVIDENCE_REF": "https://supabase.com/docs/guides/platform/security",
         "DAILY_FEEDBACK_RETENTION_HOURS": "72",
-        "DAILY_FEEDBACK_DELETION_OWNER": "juan",
+        "DAILY_FEEDBACK_DELETION_POLICY_REF": "johanna-joint-reviewer-accountability-v1",
         "DAILY_FEEDBACK_TIMEZONE": "America/Bogota",
-        "DAILY_FEEDBACK_DAILY_AT": "23:55:00",
+        "DAILY_FEEDBACK_DAILY_AT": "18:00:00",
         "DAILY_FEEDBACK_TENANT_REF": "lancemos",
         "DAILY_FEEDBACK_SCOPE_REF": "psicologajohanna-agent-bot-19",
         "DAILY_FEEDBACK_SLACK_TENANT_REF": "johanna",
-        "DAILY_FEEDBACK_REVIEWER_REF": "juan",
     }
 
     settings = DailyFeedbackRuntimeSettings.from_env(environment)
 
     assert settings.application.tenant_ref == "lancemos"
+    assert len(settings.application.reviewers) == 4
+    assert settings.application.daily_at == "18:00:00"
     assert settings.slack_tenant_ref == "johanna"
     assert settings.chatwoot_agent_bot_id == 19
     rendered = repr(settings)
@@ -260,12 +335,44 @@ def test_runtime_settings_require_every_real_data_security_gate() -> None:
         "DAILY_FEEDBACK_TENANT_REF",
         "DAILY_FEEDBACK_SCOPE_REF",
         "DAILY_FEEDBACK_SLACK_TENANT_REF",
-        "DAILY_FEEDBACK_REVIEWER_REF",
+        "DAILY_FEEDBACK_REVIEWERS_JSON",
     ):
         value = environment.pop(variable)
         with pytest.raises(ValueError, match=f"{variable}_required"):
             DailyFeedbackRuntimeSettings.from_env(environment)
         environment[variable] = value
+
+    invalid_reviewers = (
+        (
+            [
+                {"reviewer_ref": "duplicate", "slack_user_id": "U12345678", "deletion_accountable": True},
+                {"reviewer_ref": "duplicate", "slack_user_id": "U87654321", "deletion_accountable": True},
+            ],
+            "duplicate_daily_feedback_reviewer_ref",
+        ),
+        (
+            [
+                {"reviewer_ref": "first", "slack_user_id": "U12345678", "deletion_accountable": True},
+                {"reviewer_ref": "second", "slack_user_id": "U12345678", "deletion_accountable": True},
+            ],
+            "duplicate_daily_feedback_slack_user_id",
+        ),
+        (
+            [
+                {"reviewer_ref": f"reviewer-{index}", "slack_user_id": f"U{index:08d}", "deletion_accountable": False}
+                for index in range(1, 5)
+            ],
+            "daily_feedback_all_reviewers_must_be_deletion_accountable",
+        ),
+        (
+            [{"reviewer_ref": "first", "slack_user_id": "U12345678", "deletion_accountable": True, "extra": True}],
+            "invalid_daily_feedback_reviewers_json",
+        ),
+    )
+    for payload, error in invalid_reviewers:
+        environment["DAILY_FEEDBACK_REVIEWERS_JSON"] = json.dumps(payload)
+        with pytest.raises(ValueError, match=error):
+            DailyFeedbackRuntimeSettings.from_env(environment)
 
 
 def test_factory_builds_the_real_collector_repository_and_scheduler_without_network_io() -> None:
@@ -278,7 +385,12 @@ def test_factory_builds_the_real_collector_repository_and_scheduler_without_netw
         "SLACK_OIDC_CLIENT_ID": "client-id",
         "SLACK_OIDC_CLIENT_SECRET": "client-secret",
         "SLACK_OIDC_TEAM_ID": "T12345678",
-        "DAILY_FEEDBACK_REVIEWER_SLACK_USER_ID": "U12345678",
+        "DAILY_FEEDBACK_REVIEWERS_JSON": json.dumps([
+            {"reviewer_ref": "dan-schwab", "slack_user_id": "U12345678", "deletion_accountable": True},
+            {"reviewer_ref": "mariana-marin", "slack_user_id": "U87654321", "deletion_accountable": True},
+            {"reviewer_ref": "juan-martitegui", "slack_user_id": "U11111111", "deletion_accountable": True},
+            {"reviewer_ref": "marcela-pineda", "slack_user_id": "U22222222", "deletion_accountable": True},
+        ]),
         "DAILY_FEEDBACK_MANUAL_RUN_TOKEN": "manual-run-token-with-more-than-32-chars",
         "DAILY_FEEDBACK_WORKER_ID": "daily-feedback-worker-1",
         "SLACK_CONNECTOR_BASE_URL": "https://connector.example.test",
@@ -293,13 +405,12 @@ def test_factory_builds_the_real_collector_repository_and_scheduler_without_netw
         "DAILY_FEEDBACK_STORAGE_ENCRYPTION_VERIFIED": "true",
         "DAILY_FEEDBACK_STORAGE_ENCRYPTION_EVIDENCE_REF": "https://supabase.com/docs/guides/platform/security",
         "DAILY_FEEDBACK_RETENTION_HOURS": "72",
-        "DAILY_FEEDBACK_DELETION_OWNER": "juan",
+        "DAILY_FEEDBACK_DELETION_POLICY_REF": "johanna-joint-reviewer-accountability-v1",
         "DAILY_FEEDBACK_TIMEZONE": "America/Bogota",
-        "DAILY_FEEDBACK_DAILY_AT": "23:55:00",
+        "DAILY_FEEDBACK_DAILY_AT": "18:00:00",
         "DAILY_FEEDBACK_TENANT_REF": "lancemos",
         "DAILY_FEEDBACK_SCOPE_REF": "psicologajohanna-agent-bot-19",
         "DAILY_FEEDBACK_SLACK_TENANT_REF": "johanna",
-        "DAILY_FEEDBACK_REVIEWER_REF": "juan",
     }
 
     app = create_application_from_env(environment)
@@ -331,8 +442,8 @@ def test_deployment_uses_the_dedicated_factory_and_declares_every_fail_closed_ga
         "DAILY_FEEDBACK_STORAGE_ENCRYPTION_VERIFIED",
         "DAILY_FEEDBACK_STORAGE_ENCRYPTION_EVIDENCE_REF",
         "DAILY_FEEDBACK_RETENTION_HOURS",
-        "DAILY_FEEDBACK_DELETION_OWNER",
-        "DAILY_FEEDBACK_REVIEWER_SLACK_USER_ID",
+        "DAILY_FEEDBACK_DELETION_POLICY_REF",
+        "DAILY_FEEDBACK_REVIEWERS_JSON",
         "SLACK_OIDC_CLIENT_ID",
         "SLACK_OIDC_CLIENT_SECRET",
     ):

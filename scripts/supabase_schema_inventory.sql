@@ -18,7 +18,7 @@ functions as (
     where n.nspname = 'public'
 ),
 triggers as (
-    select t.tgname
+    select t.tgname, pg_get_triggerdef(t.oid) as definition
     from pg_trigger t
     join pg_class c on c.oid = t.tgrelid
     join pg_namespace n on n.oid = c.relnamespace
@@ -2624,7 +2624,7 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
             select count(*) = 13
             from functions
             where oid in (
-                to_regprocedure('public.configure_daily_feedback_scope_v1(uuid,text,text,text,text,text,text,text,text,bigint,bigint,bigint,text,time,integer,text,text,text,boolean)'),
+                to_regprocedure('public.configure_daily_feedback_scope_v2(uuid,text,text,text,text,text,jsonb,text,bigint,bigint,bigint,text,time,integer,text,text,text,boolean)'),
                 to_regprocedure('public.claim_daily_feedback_collection_v1(uuid,text,text,text,text,timestamptz,boolean,integer)'),
                 to_regprocedure('public.commit_daily_feedback_batch_v1(uuid,text,text,uuid,bigint,text,text,jsonb)'),
                 to_regprocedure('public.fail_daily_feedback_collection_v1(uuid,text,text,uuid,bigint,text,integer)'),
@@ -2636,7 +2636,7 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
                 to_regprocedure('public.complete_daily_feedback_oidc_v1(text,text,text,text,text,text,timestamptz)'),
                 to_regprocedure('public.get_daily_feedback_review_page_v1(text,uuid)'),
                 to_regprocedure('public.record_daily_feedback_decision_v1(uuid,text,text,uuid,uuid,text,text)'),
-                to_regprocedure('public.purge_expired_daily_feedback_v1(timestamptz,text,text,text,integer)')
+                to_regprocedure('public.purge_expired_daily_feedback_v2(timestamptz,text,text,text,integer)')
             )
               and has_function_privilege('service_role', oid, 'EXECUTE')
               and not has_function_privilege('anon', oid, 'EXECUTE')
@@ -2659,6 +2659,154 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         6,
         'daily_feedback_durable_rpc_only_authority'
+    union all
+    select
+        '20260911000100',
+        '20260911000100_daily_feedback_notification_fencing_v1.sql',
+        exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.claim_daily_feedback_notification_v1(uuid,text,text,text,text,timestamptz,integer)'
+            )
+              and position(
+                  '''retention_expires_at'',v_batch.retention_expires_at'
+                  in definition
+              ) > 0
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.retry_daily_feedback_notification_v1(uuid,text,text,uuid,bigint,text,integer)'
+            )
+              and position(
+                  'notification_lease_expires_at>clock_timestamp()'
+                  in definition
+              ) > 0
+              and position('invalid_notification_retry' in definition) > 0
+              and position('p_retry_seconds is null' in definition) > 0
+              and position('p_retry_seconds not between 1 and 900' in definition) > 0
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.complete_daily_feedback_oidc_v1(text,text,text,text,text,text,timestamptz)'
+            )
+              and position(
+                  'p_session_expires_at>v_batch.retention_expires_at'
+                  in definition
+              ) > 0
+        )::int,
+        3,
+        'daily_feedback_notification_envelope_lease_and_oidc_retention_fencing'
+    union all
+    select
+        '20260911000200',
+        '20260911000200_daily_feedback_multi_reviewer_ownership_v1.sql',
+        coalesce((
+            select (
+                relation.relrowsecurity
+                and not has_table_privilege('anon',relation.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+                and not has_table_privilege('authenticated',relation.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+                and not has_table_privilege('service_role',relation.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+            )::int
+            from pg_class relation
+            join pg_namespace namespace on namespace.oid=relation.relnamespace
+            where namespace.nspname='public'
+              and relation.relname='daily_feedback_batch_reviewer_bindings'
+        ),0)
+        + exists(
+            select 1 from information_schema.columns
+            where table_schema='public' and table_name='daily_feedback_schedules'
+              and column_name='reviewer_set_hash' and is_nullable='NO'
+        )::int
+        + exists(
+            select 1 from functions
+            where oid=to_regprocedure(
+                'public.configure_daily_feedback_scope_v2(uuid,text,text,text,text,text,jsonb,text,bigint,bigint,bigint,text,time,integer,text,text,text,boolean)'
+            )
+              and prosecdef and proconfig @> array['search_path=""']
+              and has_function_privilege('service_role',oid,'EXECUTE')
+              and position('reviewer_set_must_have_four' in definition)>0
+              and position('all_reviewers_must_be_deletion_accountable' in definition)>0
+        )::int
+        + exists(
+            select 1 from functions
+            where oid=to_regprocedure(
+                'public.claim_daily_feedback_collection_v1(uuid,text,text,text,text,timestamptz,boolean,integer)'
+            )
+              and position('(s.enabled or p_force)' in definition)>0
+              and position('and 4 = (' in definition)>0
+        )::int
+        + exists(
+            select 1 from functions
+            where oid=to_regprocedure(
+                'public.commit_daily_feedback_batch_v1(uuid,text,text,uuid,bigint,text,text,jsonb)'
+            )
+              and position('insert into public.daily_feedback_batch_reviewer_bindings' in definition)>0
+              and position('oidc_issuer,oidc_subject,slack_team_id,slack_user_id' in definition)>0
+        )::int
+        + exists(
+            select 1 from functions
+            where oid=to_regprocedure(
+                'public.complete_daily_feedback_oidc_v1(text,text,text,text,text,text,timestamptz)'
+            )
+              and position('join public.daily_feedback_batch_reviewer_bindings' in definition)>0
+              and position('p_session_expires_at>v_batch.retention_expires_at' in definition)>0
+              and position('reviewer_set_incomplete' in definition)>0
+              and position('brb.oidc_subject=rb.oidc_subject' in definition)>0
+              and position('brb.slack_user_id=p_slack_user_id' in definition)>0
+        )::int
+        + exists(
+            select 1 from functions
+            where oid=to_regprocedure('public.get_daily_feedback_review_page_v1(text,uuid)')
+              and position('join public.daily_feedback_batch_reviewer_bindings' in definition)>0
+              and position('reviewer_set_incomplete' in definition)>0
+        )::int
+        + exists(
+            select 1 from functions
+            where oid=to_regprocedure(
+                'public.claim_daily_feedback_notification_v1(uuid,text,text,text,text,timestamptz,integer)'
+            )
+              and position('notification_state in (''pending'',''retry'',''claimed'')' in definition)>0
+              and position('daily_feedback_batch_reviewer_bindings' in definition)>0
+        )::int
+        + exists(
+            select 1 from functions
+            where oid=to_regprocedure('public.get_daily_feedback_readiness_v1(text,text,timestamptz)')
+              and position('notification_state=''delivery_unknown''' in definition)>0
+              and has_function_privilege('service_role',oid,'EXECUTE')
+        )::int
+        + exists(
+            select 1 from functions
+            where oid=to_regprocedure(
+                'public.purge_expired_daily_feedback_v2(timestamptz,text,text,text,integer)'
+            )
+              and position('accountable_reviewer_refs' in definition)>0
+              and position('accountable_reviewers' in definition)>0
+              and position('purge_actor_ref' in definition)>0
+              and position('p_limit is null' in definition)>0
+              and position('v_authoritative_now:=clock_timestamp()' in definition)>0
+              and position('retention_expires_at<=v_authoritative_now' in definition)>0
+              and has_function_privilege('service_role',oid,'EXECUTE')
+        )::int
+        + exists(
+            select 1 from triggers
+            where tgname='daily_feedback_purge_tombstones_immutable'
+              and position('daily_feedback_tombstone_immutable_guard' in definition)>0
+        )::int
+        + (
+            not has_function_privilege('anon',to_regprocedure(
+                'public.configure_daily_feedback_scope_v1(uuid,text,text,text,text,text,text,text,text,bigint,bigint,bigint,text,time,integer,text,text,text,boolean)'
+            ),'EXECUTE')
+            and not has_function_privilege('authenticated',to_regprocedure(
+                'public.configure_daily_feedback_scope_v1(uuid,text,text,text,text,text,text,text,text,bigint,bigint,bigint,text,time,integer,text,text,text,boolean)'
+            ),'EXECUTE')
+            and not has_function_privilege('service_role',to_regprocedure(
+                'public.configure_daily_feedback_scope_v1(uuid,text,text,text,text,text,text,text,text,bigint,bigint,bigint,text,time,integer,text,text,text,boolean)'
+            ),'EXECUTE')
+        )::int,
+        12,
+        'daily_feedback_batch_scoped_multi_reviewer_and_deletion_accountability'
 )
 select
     version,

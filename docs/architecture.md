@@ -48,7 +48,9 @@ permanece como fuente canónica; Supabase coordina schedules, batches, autoridad
 revocable, sesiones, decisiones, leases, fencing, notificación, retención,
 tombstones y purga. La autoridad durable liga tenant/scope con account, inbox y
 agent-bot de Chatwoot, y el scheduler rechaza cualquier divergencia antes de leer
-conversaciones.
+conversaciones. Cada batch captura un conjunto inmutable de reviewer bindings y
+generaciones: la autoridad live puede revocar una persona sin revocar las otras,
+y un alta posterior no concede acceso retroactivo.
 
 La superficie HTTPS usa Slack OpenID Connect con `issuer + subject + team + user`,
 cookies opacas `__Host-*`, CSRF y reautorización durable en cada GET/POST. La
@@ -57,7 +59,11 @@ default-off. El conector Slack acepta sólo `REV-001` con `review_ref` opaca,
 construye el enlace desde un origen server-owned y deshabilita unfurls.
 
 La migración `20260910000100_daily_feedback_production_v1.sql` define esta frontera
-durable. Esta sección describe el candidato de código: merge, migración Cloud,
+durable y `20260911000100_daily_feedback_notification_fencing_v1.sql` conserva
+el vencimiento del enlace en el sobre `REV-001` y refuerza el fencing temporal
+de retries. `20260911000200_daily_feedback_multi_reviewer_ownership_v1.sql`
+agrega el snapshot multi-reviewer y separa responsables humanos de eliminación
+del worker que ejecuta la purga. Esta sección describe el candidato de código: merge, migración Cloud,
 deployment y E2E real son estados operativos separados y no se presuponen.
 
 El Corte B agrega un registro runtime atómico por batch con lease/fence de sesión,

@@ -246,21 +246,35 @@ class ChatwootDailyCollector:
             timeout=20,
         ) as client:
             try:
-                response = client.get(
+                inbox_response = client.get(
                     f"/api/v1/accounts/{self._account_id}/inboxes/{self._inbox_id}"
                 )
-                response.raise_for_status()
-                payload = response.json()
+                inbox_response.raise_for_status()
+                inbox = inbox_response.json()
+                bot_response = client.get(
+                    f"/api/v1/accounts/{self._account_id}/inboxes/"
+                    f"{self._inbox_id}/agent_bot"
+                )
+                bot_response.raise_for_status()
+                bot = bot_response.json()
             except (httpx.HTTPError, ValueError) as exc:
                 raise ConversationCollectionError(
                     "chatwoot_scope_verification_failed"
                 ) from exc
-        agent_bot = payload.get("agent_bot") if isinstance(payload, dict) else None
         if (
-            not isinstance(payload, dict)
-            or payload.get("id") != self._inbox_id
-            or not isinstance(agent_bot, dict)
-            or agent_bot.get("id") != self._agent_bot_id
+            not isinstance(inbox, dict)
+            or type(inbox.get("id")) is not int
+            or inbox["id"] != self._inbox_id
+            or (
+                "account_id" in inbox
+                and (
+                    type(inbox.get("account_id")) is not int
+                    or inbox["account_id"] != self._account_id
+                )
+            )
+            or not isinstance(bot, dict)
+            or type(bot.get("id")) is not int
+            or bot["id"] != self._agent_bot_id
         ):
             raise ConversationCollectionError("chatwoot_scope_verification_failed")
 

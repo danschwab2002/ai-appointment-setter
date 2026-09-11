@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 import hashlib
 import hmac
 import json
@@ -48,20 +49,34 @@ class DailyFeedbackSchedulerRuntime(Protocol):
 
 
 @dataclass(frozen=True)
+class DailyFeedbackReviewer:
+    reviewer_ref: str
+    slack_user_id: str
+    deletion_accountable: bool
+
+    def __post_init__(self) -> None:
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", self.reviewer_ref):
+            raise ValueError("invalid_daily_feedback_reviewer_ref")
+        if not re.fullmatch(r"[UW][A-Z0-9]{8,}", self.slack_user_id):
+            raise ValueError("invalid_daily_feedback_slack_user_id")
+        if type(self.deletion_accountable) is not bool:
+            raise ValueError("invalid_daily_feedback_deletion_accountability")
+
+
+@dataclass(frozen=True)
 class DailyFeedbackApplicationSettings:
     manual_run_token: str = field(repr=False)
     tenant_ref: str
     scope_ref: str
-    reviewer_ref: str
+    reviewers: tuple[DailyFeedbackReviewer, ...]
     slack_team_id: str
-    slack_user_id: str
     chatwoot_account_id: int
     chatwoot_inbox_id: int
     chatwoot_agent_bot_id: int
     timezone: str
     daily_at: str
     retention_hours: int
-    deletion_owner: str
+    deletion_policy_ref: str
     sanitizer_version: str
     selection_version: str
     renderer_version: str
@@ -70,18 +85,26 @@ class DailyFeedbackApplicationSettings:
     def __post_init__(self) -> None:
         if len(self.manual_run_token) < 32:
             raise ValueError("daily_feedback_manual_run_token_too_short")
-        for value, error in (
-            (self.tenant_ref, "invalid_daily_feedback_tenant_ref"),
-            (self.scope_ref, "invalid_daily_feedback_scope_ref"),
-            (self.reviewer_ref, "invalid_daily_feedback_reviewer_ref"),
-            (self.deletion_owner, "invalid_daily_feedback_deletion_owner"),
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", self.tenant_ref):
+            raise ValueError("invalid_daily_feedback_tenant_ref")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,127}", self.scope_ref):
+            raise ValueError("invalid_daily_feedback_scope_ref")
+        if not re.fullmatch(
+            r"[a-z0-9][a-z0-9._-]{1,127}", self.deletion_policy_ref
         ):
-            if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{1,127}", value):
-                raise ValueError(error)
+            raise ValueError("invalid_daily_feedback_deletion_policy_ref")
+        reviewer_refs = [r.reviewer_ref for r in self.reviewers]
+        slack_user_ids = [r.slack_user_id for r in self.reviewers]
+        if len(set(reviewer_refs)) != len(reviewer_refs):
+            raise ValueError("duplicate_daily_feedback_reviewer_ref")
+        if len(set(slack_user_ids)) != len(slack_user_ids):
+            raise ValueError("duplicate_daily_feedback_slack_user_id")
+        if len(self.reviewers) != 4:
+            raise ValueError("daily_feedback_reviewer_set_must_have_four")
+        if not all(r.deletion_accountable for r in self.reviewers):
+            raise ValueError("daily_feedback_all_reviewers_must_be_deletion_accountable")
         if not re.fullmatch(r"T[A-Z0-9]{8,}", self.slack_team_id):
             raise ValueError("invalid_daily_feedback_slack_team_id")
-        if not re.fullmatch(r"[UW][A-Z0-9]{8,}", self.slack_user_id):
-            raise ValueError("invalid_daily_feedback_slack_user_id")
         if min(
             self.chatwoot_account_id,
             self.chatwoot_inbox_id,
@@ -108,11 +131,17 @@ class DailyFeedbackApplicationSettings:
         configuration: dict[str, object] = {
             "p_tenant_ref": self.tenant_ref,
             "p_scope_ref": self.scope_ref,
-            "p_reviewer_ref": self.reviewer_ref,
             "p_oidc_issuer": "https://slack.com",
-            "p_oidc_subject": f"https://slack.com/user_id/{self.slack_user_id}",
             "p_slack_team_id": self.slack_team_id,
-            "p_slack_user_id": self.slack_user_id,
+            "p_reviewers": [
+                {
+                    "deletion_accountable": reviewer.deletion_accountable,
+                    "reviewer_ref": reviewer.reviewer_ref,
+                    "slack_user_id": reviewer.slack_user_id,
+                }
+                for reviewer in sorted(self.reviewers, key=lambda item: item.reviewer_ref)
+            ],
+            "p_deletion_policy_ref": self.deletion_policy_ref,
             "p_chatwoot_account_id": self.chatwoot_account_id,
             "p_chatwoot_inbox_id": self.chatwoot_inbox_id,
             "p_chatwoot_agent_bot_id": self.chatwoot_agent_bot_id,
@@ -124,13 +153,9 @@ class DailyFeedbackApplicationSettings:
             "p_renderer_version": self.renderer_version,
             "p_enabled": self.scheduler_enabled,
         }
-        canonical = json.dumps(
-            configuration,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
+        canonical = json.dumps(configuration, sort_keys=True, separators=(",", ":"))
         fingerprint = hashlib.sha256(
-            ("configure_daily_feedback_scope_v1\0" + canonical).encode("utf-8")
+            ("configure_daily_feedback_scope_v2\0" + canonical).encode("utf-8")
         ).hexdigest()
         return {
             "p_command_id": str(uuid4()),
@@ -207,6 +232,31 @@ class DailyFeedbackRuntimeSettings:
             return value
 
         retention_hours = positive_int("DAILY_FEEDBACK_RETENTION_HOURS")
+        try:
+            reviewer_payload = json.loads(required("DAILY_FEEDBACK_REVIEWERS_JSON"))
+        except json.JSONDecodeError as exc:
+            raise ValueError("invalid_daily_feedback_reviewers_json") from exc
+        if not isinstance(reviewer_payload, list) or not reviewer_payload:
+            raise ValueError("invalid_daily_feedback_reviewers_json")
+        reviewers: list[DailyFeedbackReviewer] = []
+        expected_reviewer_keys = {
+            "reviewer_ref",
+            "slack_user_id",
+            "deletion_accountable",
+        }
+        for reviewer in reviewer_payload:
+            if not isinstance(reviewer, dict) or set(reviewer) != expected_reviewer_keys:
+                raise ValueError("invalid_daily_feedback_reviewers_json")
+            try:
+                reviewers.append(
+                    DailyFeedbackReviewer(
+                        reviewer_ref=reviewer["reviewer_ref"],
+                        slack_user_id=reviewer["slack_user_id"],
+                        deletion_accountable=reviewer["deletion_accountable"],
+                    )
+                )
+            except (TypeError, ValueError) as exc:
+                raise ValueError("invalid_daily_feedback_reviewers_json") from exc
         scheduler_enabled_text = environment.get(
             "DAILY_FEEDBACK_SCHEDULER_ENABLED", "false"
         ).strip().lower()
@@ -216,16 +266,15 @@ class DailyFeedbackRuntimeSettings:
             manual_run_token=required("DAILY_FEEDBACK_MANUAL_RUN_TOKEN"),
             tenant_ref=required("DAILY_FEEDBACK_TENANT_REF"),
             scope_ref=required("DAILY_FEEDBACK_SCOPE_REF"),
-            reviewer_ref=required("DAILY_FEEDBACK_REVIEWER_REF"),
+            reviewers=tuple(sorted(reviewers, key=lambda item: item.reviewer_ref)),
             slack_team_id=required("SLACK_OIDC_TEAM_ID"),
-            slack_user_id=required("DAILY_FEEDBACK_REVIEWER_SLACK_USER_ID"),
             chatwoot_account_id=positive_int("CHATWOOT_ACCOUNT_ID"),
             chatwoot_inbox_id=positive_int("CHATWOOT_INBOX_ID"),
             chatwoot_agent_bot_id=positive_int("CHATWOOT_AGENT_BOT_ID"),
             timezone=required("DAILY_FEEDBACK_TIMEZONE"),
             daily_at=required("DAILY_FEEDBACK_DAILY_AT"),
             retention_hours=retention_hours,
-            deletion_owner=required("DAILY_FEEDBACK_DELETION_OWNER"),
+            deletion_policy_ref=required("DAILY_FEEDBACK_DELETION_POLICY_REF"),
             sanitizer_version="deterministic-redaction-v1",
             selection_version="chatwoot-daily-agent-dialogues-v1",
             renderer_version="daily-feedback-web-v1",
@@ -286,7 +335,7 @@ def create_daily_feedback_application(
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.ready = False
         await repository.rpc(
-            "configure_daily_feedback_scope_v1",
+            "configure_daily_feedback_scope_v2",
             settings.configure_payload(),
         )
         await scheduler.preflight()
@@ -319,6 +368,31 @@ def create_daily_feedback_application(
         if settings.scheduler_enabled and not scheduler.healthy:
             return JSONResponse(
                 {"status": "not_ready", "daily_feedback": "scheduler_failed"},
+                status_code=503,
+            )
+        try:
+            durable_health = await repository.rpc(
+                "get_daily_feedback_readiness_v1",
+                {
+                    "p_tenant_ref": settings.tenant_ref,
+                    "p_scope_ref": settings.scope_ref,
+                    "p_now": datetime.now(UTC).isoformat(),
+                },
+            )
+            delivery_unknown_count = durable_health.get("delivery_unknown_count")
+            if type(delivery_unknown_count) is not int:
+                raise ValueError("invalid_daily_feedback_readiness_response")
+        except Exception:
+            return JSONResponse(
+                {"status": "not_ready", "daily_feedback": "authority_unavailable"},
+                status_code=503,
+            )
+        if delivery_unknown_count:
+            return JSONResponse(
+                {
+                    "status": "not_ready",
+                    "daily_feedback": "notification_reconciliation_required",
+                },
                 status_code=503,
             )
         mode = "operational" if settings.scheduler_enabled else "staged"
@@ -376,7 +450,7 @@ def create_application_from_env(
             real_collection_enabled=True,
             storage_encryption_verified=True,
             retention_hours=runtime.application.retention_hours,
-            deletion_owner=runtime.application.deletion_owner,
+            deletion_owner=runtime.application.deletion_policy_ref,
         ),
     )
     producer = SlackConnectorProducer(
@@ -395,7 +469,7 @@ def create_application_from_env(
             chatwoot_account_id=runtime.application.chatwoot_account_id,
             chatwoot_inbox_id=runtime.application.chatwoot_inbox_id,
             chatwoot_agent_bot_id=runtime.application.chatwoot_agent_bot_id,
-            deletion_owner=runtime.application.deletion_owner,
+            deletion_owner=runtime.application.deletion_policy_ref,
             poll_interval_seconds=runtime.poll_interval_seconds,
         ),
     )
