@@ -70,7 +70,7 @@ def test_producer_verifies_connector_readiness_without_admitting_a_command() -> 
         requests.append((request.method, request.url.path))
         assert request.headers["authorization"] == "Bearer " + "j" * 32
         assert request.headers["x-expected-tenant-ref"] == "johanna"
-        return httpx.Response(200, json={"status": "ready"})
+        return httpx.Response(200, json={"status": "ok"})
 
     producer = SlackConnectorProducer(
         base_url="https://connector.example.invalid",
@@ -83,6 +83,36 @@ def test_producer_verifies_connector_readiness_without_admitting_a_command() -> 
     asyncio.run(producer.aclose())
 
     assert requests == [("GET", "/ready")]
+
+
+@pytest.mark.parametrize(
+    ("status_code", "payload"),
+    [
+        (200, {"status": "ready"}),
+        (200, {"status": "not_ready"}),
+        (200, []),
+        (503, {"status": "ok"}),
+    ],
+)
+def test_producer_fails_closed_for_noncanonical_readiness(
+    status_code: int,
+    payload: object,
+) -> None:
+    producer = SlackConnectorProducer(
+        base_url="https://connector.example.invalid",
+        bearer_token="j" * 32,
+        expected_tenant_ref="johanna",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(status_code, json=payload)
+        ),
+    )
+
+    with pytest.raises(
+        ConnectorAdmissionUnknown,
+        match="connector_readiness_unknown",
+    ):
+        asyncio.run(producer.verify_access())
+    asyncio.run(producer.aclose())
 
 
 def test_producer_posts_closed_command_with_bearer_and_no_routing_fields() -> None:

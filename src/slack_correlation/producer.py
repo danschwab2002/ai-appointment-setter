@@ -76,7 +76,7 @@ class SlackConnectorProducer:
         if (
             response.status_code != 200
             or not isinstance(payload, dict)
-            or payload.get("status") != "ready"
+            or payload.get("status") != "ok"
         ):
             raise ConnectorAdmissionUnknown("connector_readiness_unknown")
 
