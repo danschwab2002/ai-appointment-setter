@@ -405,8 +405,10 @@ class ChatwootDailyCollector:
             current = meta.get("current_page")
             all_count = meta.get("all_count")
             if (
-                type(current) is not int
-                or current != page_number
+                (
+                    "current_page" in meta
+                    and (type(current) is not int or current != page_number)
+                )
                 or type(all_count) is not int
                 or all_count < 0
                 or len(result) > all_count
