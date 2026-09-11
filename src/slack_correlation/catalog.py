@@ -134,6 +134,11 @@ def render_message(
     """Render one closed template; callers cannot supply Slack text or blocks."""
 
     template = EVENT_TEMPLATES[command.event_code]
+    if command.event_code in {"COR-001", "COR-002", "COR-003"}:
+        message = _render_pending_correlation(command, tenant_label=tenant_label)
+        if thread_ts is not None:
+            message["thread_ts"] = thread_ts
+        return message
     headline_parts = [f"[{template.severity}] {template.title}", tenant_label]
     if command.subject_ref is not None:
         headline_parts.append(command.subject_ref)
@@ -173,28 +178,6 @@ def render_message(
             },
         },
     }
-    if command.event_code in {"COR-001", "COR-002", "COR-003"}:
-        if command.subject_ref is None or not command.subject_ref.startswith("C-"):
-            raise ValueError("correlation_case_id_required")
-        try:
-            case_id = str(UUID(command.subject_ref[2:]))
-        except ValueError as exc:
-            raise ValueError("correlation_case_id_required") from exc
-        message["metadata"]["event_payload"]["case_id"] = case_id
-        message["blocks"].append(
-            {
-                "type": "actions",
-                "elements": [
-                    {
-                        "type": "button",
-                        "action_id": "review_operator_correlation",
-                        "text": {"type": "plain_text", "text": "Revisar caso"},
-                        "style": "primary",
-                        "value": case_id,
-                    }
-                ],
-            }
-        )
     if command.event_code == "REV-001":
         base_url = _validate_review_base_url(review_base_url)
         message["blocks"].append(
@@ -215,6 +198,78 @@ def render_message(
     if thread_ts is not None:
         message["thread_ts"] = thread_ts
     return message
+
+
+def _render_pending_correlation(
+    command: NotificationCommand, *, tenant_label: str
+) -> dict[str, Any]:
+    if (
+        not isinstance(tenant_label, str)
+        or not tenant_label
+        or len(tenant_label) > 100
+        or any(ord(character) < 32 or ord(character) == 127 for character in tenant_label)
+        or any(character in tenant_label for character in "`<>&")
+    ):
+        raise ValueError("invalid_tenant_label")
+    if command.subject_ref is None or not command.subject_ref.startswith("C-"):
+        raise ValueError("correlation_case_id_required")
+    try:
+        case_id = str(UUID(command.subject_ref[2:]))
+    except ValueError as exc:
+        raise ValueError("correlation_case_id_required") from exc
+    explanation = {
+        "COR-001": "No encontramos una persona asociada a esta compra.",
+        "COR-002": "Encontramos varias personas posibles para esta compra.",
+        "COR-003": "El email y el teléfono no conducen a la misma persona.",
+    }[command.event_code]
+    count = command.count or 0
+    possible_people = (
+        "No encontramos personas posibles."
+        if count == 0
+        else f"Encontramos {count} persona posible."
+        if count == 1
+        else f"Encontramos {count} personas posibles."
+    )
+    headline = f"Necesitamos confirmar una compra · {tenant_label}"
+    return {
+        "text": headline,
+        "blocks": [
+            {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": "Necesitamos confirmar una compra",
+                },
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*{tenant_label}*\n{explanation}\n{possible_people}",
+                },
+            },
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "action_id": "review_operator_correlation",
+                        "text": {"type": "plain_text", "text": "Revisar compra"},
+                        "style": "primary",
+                        "value": case_id,
+                    }
+                ],
+            },
+        ],
+        "metadata": {
+            "event_type": "supportmagician_operational_event",
+            "event_payload": {
+                "event_id": command.event_id,
+                "event_code": command.event_code,
+                "case_id": case_id,
+            },
+        },
+    }
 
 
 def _validate_review_base_url(value: str | None) -> str:

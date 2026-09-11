@@ -960,6 +960,27 @@ class NotificationStore:
             (fingerprint, status, serialized, now, now),
         )
 
+    def admit_ui_interaction(
+        self, *, fingerprint: str, response: dict[str, object]
+    ) -> tuple[bool, int | None, dict[str, object] | None]:
+        """Persist a local-only modal transition or no-op for exact replay."""
+        now = datetime.now(UTC).isoformat()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            is_new, status, prior = self._prior_interaction(connection, fingerprint)
+            if not is_new:
+                connection.commit()
+                return False, status, prior
+            self._insert_completed_interaction(
+                connection,
+                fingerprint=fingerprint,
+                status=200,
+                response=response,
+                now=now,
+            )
+            connection.commit()
+        return True, 200, response
+
     def admit_open_interaction(
         self,
         *,

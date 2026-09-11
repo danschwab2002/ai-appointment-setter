@@ -74,19 +74,47 @@ def test_renderer_uses_only_server_owned_template_and_machine_fields() -> None:
     assert "paused" in repr(rendered)
 
 
-def test_only_pending_correlation_events_receive_native_review_control() -> None:
+def test_pending_correlation_card_uses_plain_commercial_language() -> None:
     correlation = render_message(
         _command(
-            event_code="COR-001",
+            event_code="COR-003",
             subject_ref="C-11111111-1111-4111-8111-111111111111",
+            reason_code="email_phone_conflict",
+            state="pending",
+            count=1,
         ),
         tenant_label="Johanna",
     )
     ordinary = render_message(_command(), tenant_label="Johanna")
 
-    assert correlation["metadata"]["event_payload"]["case_id"] == "11111111-1111-4111-8111-111111111111"
+    assert correlation["metadata"]["event_payload"] == {
+        "event_id": "11111111-1111-4111-8111-111111111111",
+        "event_code": "COR-003",
+        "case_id": "11111111-1111-4111-8111-111111111111",
+    }
+    assert correlation["text"] == "Necesitamos confirmar una compra · Johanna"
+    rendered = repr(correlation)
+    assert "El email y el teléfono no conducen a la misma persona." in rendered
+    assert "Encontramos 1 persona posible." in rendered
+    assert "Revisar compra" in rendered
+    assert "COR-003" not in repr(correlation["blocks"])
+    assert "email_phone_conflict" not in repr(correlation["blocks"])
+    assert "pending" not in repr(correlation["blocks"])
+    assert "C-11111111" not in repr(correlation["blocks"])
     assert correlation["blocks"][-1]["elements"][0]["action_id"] == "review_operator_correlation"
     assert ordinary["blocks"][-1]["type"] == "section"
+
+
+def test_pending_correlation_card_rejects_an_unsafe_tenant_label() -> None:
+    with pytest.raises(ValueError, match="invalid_tenant_label"):
+        render_message(
+            _command(
+                event_code="COR-001",
+                subject_ref="C-11111111-1111-4111-8111-111111111111",
+                count=0,
+            ),
+            tenant_label="J" * 3_100,
+        )
 
 
 def test_daily_review_renders_one_server_owned_https_link_without_unfurls() -> None:

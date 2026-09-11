@@ -16,6 +16,7 @@ from slack_correlation.ui import (
     build_safe_error_modal,
     build_success_modal,
     build_terminal_message,
+    build_verification_modal,
 )
 
 
@@ -67,6 +68,12 @@ class PrepareAdmission:
 
 
 @dataclass(frozen=True)
+class DecisionAdmission:
+    session: ReviewSession
+    candidate_id: str | None
+
+
+@dataclass(frozen=True)
 class ConfirmAdmission:
     session: ReviewSession
     team_id: str
@@ -75,7 +82,7 @@ class ConfirmAdmission:
     view_hash: str | None
 
 
-InteractionAdmission = OpenAdmission | PrepareAdmission | ConfirmAdmission
+InteractionAdmission = OpenAdmission | DecisionAdmission | PrepareAdmission | ConfirmAdmission
 
 
 def _safe_slack_extra(
@@ -167,6 +174,8 @@ class CorrelationInteractionHandler:
             if not any(user_id in users for users in self._users.values()):
                 raise UnauthorizedInteraction("unauthorized_user")
             callback = view.get("callback_id")
+            if callback == "select_operator_correlation_resolution":
+                return self._precheck_decision(payload, view, team_id, user_id)
             if callback == "prepare_operator_correlation_resolution":
                 return self._precheck_prepare(payload, view, team_id, user_id)
             if callback == "confirm_operator_correlation_resolution":
@@ -186,6 +195,20 @@ class CorrelationInteractionHandler:
                 trigger_id=admission.trigger_id,
                 expires_at=int(self._epoch()) + 900,
             )
+        elif isinstance(admission, DecisionAdmission):
+            ui_response: dict[str, object] = {}
+            if admission.candidate_id is not None:
+                ui_response = {
+                    "response_action": "update",
+                    "view": build_verification_modal(
+                        review_token=admission.session.review_token,
+                        candidate_id=admission.candidate_id,
+                    ),
+                }
+            _new, status, stored_response = self._store.admit_ui_interaction(
+                fingerprint=fingerprint, response=ui_response
+            )
+            response = stored_response or {}
         elif isinstance(admission, PrepareAdmission):
             response = {
                 "response_action": "update",
@@ -292,13 +315,25 @@ class CorrelationInteractionHandler:
             binding=binding, team_id=team_id, user_id=user_id, trigger_id=trigger_id
         )
 
-    def _bound_session(self, payload: dict[str, object], view: dict[str, object]) -> ReviewSession:
+    def _bound_session(
+        self,
+        payload: dict[str, object],
+        view: dict[str, object],
+        *,
+        metadata_keys: frozenset[str] = frozenset(),
+    ) -> tuple[ReviewSession, dict[str, object]]:
         team_id, user_id = self._team_user(payload)
         try:
             metadata = __import__("json").loads(view["private_metadata"])
-            if set(metadata) != {"review_token"}:
+            if not isinstance(metadata, dict) or set(metadata) != {
+                "review_token",
+                *metadata_keys,
+            }:
                 raise ValueError
-            token = str(UUID(metadata["review_token"]))
+            raw_token = metadata["review_token"]
+            if not isinstance(raw_token, str):
+                raise ValueError
+            token = str(UUID(raw_token))
         except (KeyError, TypeError, ValueError):
             raise InvalidInteraction("invalid_review_token") from None
         session = self._store.get_review_session(review_token=token)
@@ -312,44 +347,104 @@ class CorrelationInteractionHandler:
             or self._tenant_by_channel.get(session.channel_id) != session.tenant_ref
         ):
             raise InvalidInteraction("invalid_review_session")
-        return session
+        return session, metadata
+
+    @staticmethod
+    def _view_identity(view: dict[str, object]) -> tuple[str, str | None]:
+        view_id = view.get("id")
+        view_hash = view.get("hash")
+        if not isinstance(view_id, str) or not view_id:
+            raise InvalidInteraction("invalid_view_identity")
+        return view_id, view_hash if isinstance(view_hash, str) else None
+
+    def _precheck_decision(
+        self, payload: dict[str, object], view: dict[str, object],
+        team_id: str, user_id: str,
+    ) -> DecisionAdmission | PrepareAdmission:
+        session, _metadata = self._bound_session(payload, view)
+        try:
+            state_values = view["state"]["values"]  # type: ignore[index]
+            if set(state_values) != {"decision"}:
+                raise KeyError
+            selected = state_values["decision"]["selected_decision"]["selected_option"]["value"]
+        except (KeyError, TypeError):
+            raise InvalidInteraction("invalid_selection") from None
+        if selected == "leave_pending":
+            return DecisionAdmission(session=session, candidate_id=None)
+        if selected == "close_without_match":
+            view_id, view_hash = self._view_identity(view)
+            return PrepareAdmission(
+                session=session,
+                team_id=team_id,
+                user_id=user_id,
+                action="close_without_match",
+                candidate_id=None,
+                verification_basis="no_valid_candidate_after_review",
+                view_id=view_id,
+                view_hash=view_hash,
+            )
+        if not isinstance(selected, str):
+            raise InvalidInteraction("invalid_selection")
+        try:
+            candidate_id = str(UUID(selected))
+        except ValueError:
+            raise InvalidInteraction("invalid_selection") from None
+        return DecisionAdmission(session=session, candidate_id=candidate_id)
 
     def _precheck_prepare(
         self, payload: dict[str, object], view: dict[str, object],
         team_id: str, user_id: str,
     ) -> PrepareAdmission:
-        session = self._bound_session(payload, view)
         values = view.get("state")
         try:
             state_values = values["values"]  # type: ignore[index]
-            if set(state_values) != {"resolution", "verification"}:
-                raise KeyError
-            selected = state_values["resolution"]["selected_resolution"]["selected_option"]["value"]
-            verification = state_values["verification"]["verification_basis"]["selected_option"]["value"]
         except (KeyError, TypeError):
             raise InvalidInteraction("invalid_selection") from None
-        allowed_basis = {
-            "external_transaction_reference", "operator_source_record",
-            "customer_confirmation", "no_valid_candidate_after_review",
+        link_basis = {
+            "external_transaction_reference",
+            "operator_source_record",
+            "customer_confirmation",
         }
-        if not isinstance(selected, str) or verification not in allowed_basis:
-            raise InvalidInteraction("invalid_selection")
-        if selected == "close_without_match":
-            action, candidate_id = selected, None
-            if verification != "no_valid_candidate_after_review":
-                raise InvalidInteraction("invalid_selection")
-        else:
-            action, candidate_id = "resolve_with_candidate", selected
+        if set(state_values) == {"verification"}:
+            session, metadata = self._bound_session(
+                payload, view, metadata_keys=frozenset({"candidate_id"})
+            )
             try:
-                candidate_id = str(UUID(selected))
-            except ValueError:
+                raw_candidate_id = metadata["candidate_id"]
+                if not isinstance(raw_candidate_id, str):
+                    raise ValueError
+                candidate_id = str(UUID(raw_candidate_id))
+                verification = state_values["verification"]["verification_basis"]["selected_option"]["value"]
+            except (KeyError, TypeError, ValueError):
                 raise InvalidInteraction("invalid_selection") from None
-            if verification == "no_valid_candidate_after_review":
+            if not isinstance(verification, str) or verification not in link_basis:
                 raise InvalidInteraction("invalid_selection")
-        view_id = view.get("id")
-        view_hash = view.get("hash")
-        if not isinstance(view_id, str) or not view_id:
-            raise InvalidInteraction("invalid_view_identity")
+            action = "resolve_with_candidate"
+        elif set(state_values) == {"resolution", "verification"}:
+            # Compatibility for a modal opened immediately before this UX release.
+            session, _metadata = self._bound_session(payload, view)
+            try:
+                selected = state_values["resolution"]["selected_resolution"]["selected_option"]["value"]
+                verification = state_values["verification"]["verification_basis"]["selected_option"]["value"]
+            except (KeyError, TypeError):
+                raise InvalidInteraction("invalid_selection") from None
+            if not isinstance(selected, str):
+                raise InvalidInteraction("invalid_selection")
+            if selected == "close_without_match":
+                action, candidate_id = selected, None
+                if verification != "no_valid_candidate_after_review":
+                    raise InvalidInteraction("invalid_selection")
+            else:
+                action = "resolve_with_candidate"
+                try:
+                    candidate_id = str(UUID(selected))
+                except ValueError:
+                    raise InvalidInteraction("invalid_selection") from None
+                if not isinstance(verification, str) or verification not in link_basis:
+                    raise InvalidInteraction("invalid_selection")
+        else:
+            raise InvalidInteraction("invalid_selection")
+        view_id, view_hash = self._view_identity(view)
         return PrepareAdmission(
             session=session,
             team_id=team_id,
@@ -358,14 +453,14 @@ class CorrelationInteractionHandler:
             candidate_id=candidate_id,
             verification_basis=str(verification),
             view_id=view_id,
-            view_hash=view_hash if isinstance(view_hash, str) else None,
+            view_hash=view_hash,
         )
 
     def _precheck_confirm(
         self, payload: dict[str, object], view: dict[str, object],
         team_id: str, user_id: str,
     ) -> ConfirmAdmission:
-        session = self._bound_session(payload, view)
+        session, _metadata = self._bound_session(payload, view)
         view_id = view.get("id")
         view_hash = view.get("hash")
         if not isinstance(view_id, str) or not view_id:
@@ -498,7 +593,9 @@ class CorrelationInteractionWorker:
                 view_id=session.view_id,
                 view_hash=None,
                 view=build_confirmation_modal(
-                    review_token=session.review_token, action=session.action or ""
+                    review_token=session.review_token,
+                    action=session.action or "",
+                    verification_basis=session.verification_basis or "",
                 ),
                 expected_team_id=self._team_id,
             )
@@ -535,7 +632,7 @@ class CorrelationInteractionWorker:
         terminal = build_terminal_message(
             case_id=session.case_id,
             outcome=str(result["resolution_outcome"]),
-            actor_id=f"slack.{session.slack_user_id.lower()}",
+            actor_id=session.slack_user_id,
             applied_at=str(result["applied_at"]),
         )
         try:

@@ -64,6 +64,8 @@ class FakeOperator:
             "candidates": [{
                 "purchase_intent_id": "22222222-2222-4222-8222-222222222222",
                 "lifecycle_state": "waiting_for_purchase",
+                "matched_by": ["email"],
+                "submitted_at": "2026-09-09T11:55:00Z",
                 "masked_email": "a***z@example.com",
                 "masked_phone": "********4567",
             }],
@@ -290,7 +292,7 @@ def test_block_action_binds_accepted_root_and_opens_native_modal(tmp_path) -> No
     assert first.status_code == replay.status_code == 200
     assert len(slack.views) == 1
     assert operator.get_calls == 1
-    assert slack.views[0][1]["callback_id"] == "prepare_operator_correlation_resolution"
+    assert slack.views[0][1]["callback_id"] == "select_operator_correlation_resolution"
     assert store.interaction_replay_count() == 1
 
 
@@ -558,13 +560,9 @@ def test_exact_opened_modal_round_trips_through_realistic_view_submission(tmp_pa
             "previous_view_id": None,
             "external_id": "",
             "state": {"values": {
-                "resolution": {"selected_resolution": {"type": "radio_buttons", "selected_option": {
-                    "text": {"type": "plain_text", "text": "Ningún candidato corresponde", "emoji": True},
+                "decision": {"selected_decision": {"type": "radio_buttons", "selected_option": {
+                    "text": {"type": "plain_text", "text": "Revisé los datos: no corresponde a ninguna", "emoji": True},
                     "value": "close_without_match",
-                }}},
-                "verification": {"verification_basis": {"type": "static_select", "selected_option": {
-                    "text": {"type": "plain_text", "text": "Ningún candidato válido tras revisar", "emoji": True},
-                    "value": "no_valid_candidate_after_review",
                 }}},
             }},
         })
@@ -581,6 +579,217 @@ def test_exact_opened_modal_round_trips_through_realistic_view_submission(tmp_pa
     assert response.status_code == 200
     assert response.json()["response_action"] == "update"
     assert response.json()["view"]["callback_id"] == "operator_correlation_resolution_processing"
+
+
+def test_nested_review_token_is_rejected_without_internal_error(tmp_path) -> None:
+    app, _store, _slack, operator = _app(tmp_path)
+    payload = {
+        "type": "view_submission",
+        "team": {"id": TEAM},
+        "user": {"id": USER},
+        "view": {
+            "id": "V12345678",
+            "hash": "1.abc",
+            "callback_id": "select_operator_correlation_resolution",
+            "private_metadata": json.dumps({"review_token": {"nested": "value"}}),
+            "state": {"values": {
+                "decision": {"selected_decision": {"selected_option": {
+                    "value": "leave_pending"
+                }}}
+            }},
+        },
+    }
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = _signed(client, payload)
+
+    assert response.status_code == 400
+    assert operator.get_calls == 0
+    assert _interaction_row_counts(tmp_path / "connector.sqlite3") == (0, 0)
+
+
+def test_non_string_verification_is_rejected_without_preparing(tmp_path) -> None:
+    app, _store, slack, operator = _app(tmp_path)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        assert _signed(client, {
+            "type": "block_actions", "team": {"id": TEAM}, "user": {"id": USER},
+            "channel": {"id": CHANNEL}, "message": {"ts": TS},
+            "trigger_id": "123.456.invalid-verification",
+            "actions": [{"action_id": "review_operator_correlation", "value": CASE}],
+        }).status_code == 200
+        token = _wait_for_open_view(slack)
+        response = _signed(client, {
+            "type": "view_submission", "team": {"id": TEAM}, "user": {"id": USER},
+            "view": {
+                "id": "V12345678", "hash": "1.abc",
+                "callback_id": "prepare_operator_correlation_resolution",
+                "private_metadata": json.dumps({
+                    "review_token": token,
+                    "candidate_id": "22222222-2222-4222-8222-222222222222",
+                }),
+                "state": {"values": {
+                    "verification": {"verification_basis": {"selected_option": {
+                        "value": ["operator_source_record"]
+                    }}}
+                }},
+            },
+        }, timestamp="1789000001")
+
+    assert response.status_code == 400
+    assert operator.prepare_calls == operator.confirm_calls == []
+
+
+def test_selecting_a_person_moves_to_plain_evidence_step_without_preparing(tmp_path) -> None:
+    app, store, slack, operator = _app(tmp_path)
+    with TestClient(app) as client:
+        assert _signed(client, {
+            "type": "block_actions", "team": {"id": TEAM}, "user": {"id": USER},
+            "channel": {"id": CHANNEL}, "message": {"ts": TS},
+            "trigger_id": "123.456.select-person",
+            "actions": [{"action_id": "review_operator_correlation", "value": CASE}],
+        }).status_code == 200
+        token = _wait_for_open_view(slack)
+        selected = _signed(client, {
+            "type": "view_submission", "team": {"id": TEAM}, "user": {"id": USER},
+            "view": {
+                "id": "V12345678", "hash": "1.abc",
+                "callback_id": "select_operator_correlation_resolution",
+                "private_metadata": json.dumps({"review_token": token}),
+                "state": {"values": {
+                    "decision": {"selected_decision": {"selected_option": {
+                        "value": "22222222-2222-4222-8222-222222222222"
+                    }}}
+                }},
+            },
+        }, timestamp="1789000001")
+
+    assert selected.status_code == 200
+    assert selected.json()["response_action"] == "update"
+    next_view = selected.json()["view"]
+    assert next_view["callback_id"] == "prepare_operator_correlation_resolution"
+    assert json.loads(next_view["private_metadata"]) == {
+        "review_token": token,
+        "candidate_id": "22222222-2222-4222-8222-222222222222",
+    }
+    assert "¿Cómo lo confirmaste?" in repr(next_view)
+    assert operator.prepare_calls == operator.confirm_calls == []
+    session = store.get_review_session(review_token=token)
+    assert session is not None and session.state == "opened"
+
+
+def test_cannot_determine_closes_modal_and_leaves_case_pending_without_effects(tmp_path) -> None:
+    app, store, slack, operator = _app(tmp_path)
+    with TestClient(app) as client:
+        assert _signed(client, {
+            "type": "block_actions", "team": {"id": TEAM}, "user": {"id": USER},
+            "channel": {"id": CHANNEL}, "message": {"ts": TS},
+            "trigger_id": "123.456.leave-pending",
+            "actions": [{"action_id": "review_operator_correlation", "value": CASE}],
+        }).status_code == 200
+        token = _wait_for_open_view(slack)
+        left_pending = _signed(client, {
+            "type": "view_submission", "team": {"id": TEAM}, "user": {"id": USER},
+            "view": {
+                "id": "V12345678", "hash": "1.abc",
+                "callback_id": "select_operator_correlation_resolution",
+                "private_metadata": json.dumps({"review_token": token}),
+                "state": {"values": {
+                    "decision": {"selected_decision": {"selected_option": {
+                        "value": "leave_pending"
+                    }}}
+                }},
+            },
+        }, timestamp="1789000001")
+
+    assert left_pending.status_code == 200
+    assert left_pending.json() == {}
+    assert operator.prepare_calls == operator.confirm_calls == []
+    assert slack.view_updates == slack.updates == []
+    session = store.get_review_session(review_token=token)
+    assert session is not None and session.state == "opened"
+    assert store.interaction_replay_count() == 2
+
+
+def test_reviewed_no_match_infers_the_only_valid_evidence_and_prepares(tmp_path) -> None:
+    app, _store, slack, operator = _app(tmp_path)
+    with TestClient(app) as client:
+        assert _signed(client, {
+            "type": "block_actions", "team": {"id": TEAM}, "user": {"id": USER},
+            "channel": {"id": CHANNEL}, "message": {"ts": TS},
+            "trigger_id": "123.456.no-match",
+            "actions": [{"action_id": "review_operator_correlation", "value": CASE}],
+        }).status_code == 200
+        token = _wait_for_open_view(slack)
+        prepared = _signed(client, {
+            "type": "view_submission", "team": {"id": TEAM}, "user": {"id": USER},
+            "view": {
+                "id": "V12345678", "hash": "1.abc",
+                "callback_id": "select_operator_correlation_resolution",
+                "private_metadata": json.dumps({"review_token": token}),
+                "state": {"values": {
+                    "decision": {"selected_decision": {"selected_option": {
+                        "value": "close_without_match"
+                    }}}
+                }},
+            },
+        }, timestamp="1789000001")
+        deadline = time.monotonic() + 2
+        while not operator.prepare_calls and time.monotonic() < deadline:
+            time.sleep(0.02)
+
+    assert prepared.status_code == 200
+    assert prepared.json()["view"]["callback_id"] == "operator_correlation_resolution_processing"
+    assert len(operator.prepare_calls) == 1
+    assert operator.prepare_calls[0]["action"] == "close_without_match"
+    assert operator.prepare_calls[0]["candidate_id"] is None
+    assert operator.prepare_calls[0]["verification_basis"] == "no_valid_candidate_after_review"
+
+
+def test_selected_person_uses_only_the_evidence_from_the_second_step(tmp_path) -> None:
+    app, _store, slack, operator = _app(tmp_path)
+    with TestClient(app) as client:
+        assert _signed(client, {
+            "type": "block_actions", "team": {"id": TEAM}, "user": {"id": USER},
+            "channel": {"id": CHANNEL}, "message": {"ts": TS},
+            "trigger_id": "123.456.second-step",
+            "actions": [{"action_id": "review_operator_correlation", "value": CASE}],
+        }).status_code == 200
+        token = _wait_for_open_view(slack)
+        selected = _signed(client, {
+            "type": "view_submission", "team": {"id": TEAM}, "user": {"id": USER},
+            "view": {
+                "id": "V12345678", "hash": "1.abc",
+                "callback_id": "select_operator_correlation_resolution",
+                "private_metadata": json.dumps({"review_token": token}),
+                "state": {"values": {
+                    "decision": {"selected_decision": {"selected_option": {
+                        "value": "22222222-2222-4222-8222-222222222222"
+                    }}}
+                }},
+            },
+        }, timestamp="1789000001")
+        verification_view = selected.json()["view"]
+        prepared = _signed(client, {
+            "type": "view_submission", "team": {"id": TEAM}, "user": {"id": USER},
+            "view": {
+                **verification_view,
+                "id": "V12345678", "hash": "2.def",
+                "state": {"values": {
+                    "verification": {"verification_basis": {"selected_option": {
+                        "value": "operator_source_record"
+                    }}}
+                }},
+            },
+        }, timestamp="1789000002")
+        deadline = time.monotonic() + 2
+        while not operator.prepare_calls and time.monotonic() < deadline:
+            time.sleep(0.02)
+
+    assert prepared.status_code == 200
+    assert prepared.json()["view"]["callback_id"] == "operator_correlation_resolution_processing"
+    assert len(operator.prepare_calls) == 1
+    assert operator.prepare_calls[0]["action"] == "resolve_with_candidate"
+    assert operator.prepare_calls[0]["candidate_id"] == "22222222-2222-4222-8222-222222222222"
+    assert operator.prepare_calls[0]["verification_basis"] == "operator_source_record"
 
 
 def test_prepare_then_confirm_uses_stored_command_and_updates_same_root(tmp_path) -> None:
@@ -648,7 +857,7 @@ def test_prepare_then_confirm_uses_stored_command_and_updates_same_root(tmp_path
     assert slack.updates[0][0:2] == (CHANNEL, TS)
     assert slack.view_updates[-1][2]["callback_id"] == "operator_correlation_resolution_complete"
     assert "actions" not in [block["type"] for block in slack.updates[0][2]["blocks"]]
-    assert "slack.u12345678" in repr(slack.updates[0][2])
+    assert "Revisado por: <@U12345678>" in repr(slack.updates[0][2])
     assert store.projection_inventory()["delivery_unknown"] == 0
     backup = tmp_path / "interaction-backup.sqlite3"
     store.backup_to(backup)
