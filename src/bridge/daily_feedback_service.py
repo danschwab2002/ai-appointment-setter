@@ -801,17 +801,18 @@ class SlackOpenIdClient:
         user_id = (
             user.get("https://slack.com/user_id") if isinstance(user, dict) else None
         )
-        subject = user.get("sub") if isinstance(user, dict) else None
+        slack_subject = user.get("sub") if isinstance(user, dict) else None
         issuer = "https://slack.com"
         if (
             not isinstance(team_id, str)
             or not re.fullmatch(r"T[A-Z0-9]{8,}", team_id)
             or not isinstance(user_id, str)
             or not re.fullmatch(r"[UW][A-Z0-9]{8,}", user_id)
-            or not isinstance(subject, str)
-            or subject != f"https://slack.com/user_id/{user_id}"
+            or not isinstance(slack_subject, str)
+            or slack_subject != user_id
         ):
             raise SlackOpenIdError("OIDC-IDENTITY-PAYLOAD")
+        subject = f"https://slack.com/user_id/{user_id}"
         return SlackIdentity(
             issuer=issuer,
             subject=subject,
