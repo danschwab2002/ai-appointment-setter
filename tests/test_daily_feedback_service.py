@@ -739,7 +739,7 @@ def test_slack_oidc_uses_authorization_code_then_verifies_userinfo() -> None:
             200,
             json={
                 "ok": True,
-                "sub": "https://slack.com/user_id/U12345678",
+                "sub": "U12345678",
                 "https://slack.com/team_id": "T12345678",
                 "https://slack.com/user_id": "U12345678",
             },
@@ -773,6 +773,43 @@ def test_slack_oidc_uses_authorization_code_then_verifies_userinfo() -> None:
         "/api/openid.connect.token",
         "/api/openid.connect.userInfo",
     ]
+
+
+@pytest.mark.parametrize(
+    "slack_subject",
+    [None, "not-a-slack-user", "https://slack.com/user_id/U12345678", "U87654321"],
+)
+def test_slack_oidc_rejects_noncanonical_or_mismatched_subject(
+    slack_subject: object,
+) -> None:
+    from bridge.daily_feedback_service import SlackOpenIdClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("openid.connect.token"):
+            return httpx.Response(200, json={"ok": True, "access_token": "temporary-access"})
+        return httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "sub": slack_subject,
+                "https://slack.com/team_id": "T12345678",
+                "https://slack.com/user_id": "U12345678",
+            },
+        )
+
+    client = SlackOpenIdClient(
+        client_id="client-id",
+        client_secret="client-secret",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(SlackOpenIdError, match="^OIDC-IDENTITY-PAYLOAD$"):
+        __import__("asyncio").run(
+            client.authenticate(
+                code="one-time-code",
+                redirect_uri="https://reviews.example.test/daily-feedback/auth/slack/callback",
+            )
+        )
 
 
 def test_slack_oidc_classifies_a_bad_redirect_uri_without_exposing_the_payload() -> None:
