@@ -40,6 +40,7 @@ _BOOLEAN_CAPTURED_FIELDS = {
 
 _DECISION_STATUSES = {
     "ask_question": "in_progress",
+    "send_payment_link": "in_progress",
     "qualified": "qualified",
     "disqualified": "disqualified",
     "handoff": "needs_human",
@@ -104,6 +105,10 @@ def _is_valid_proposal(proposal: dict[str, object]) -> bool:
     if not isinstance(reply, str) or not reply or len(reply) > 1000:
         return False
     if reply.count("?") > 1:
+        return False
+    if decision == "send_payment_link" and any(
+        marker in reply.lower() for marker in ("http://", "https://", "www.")
+    ):
         return False
 
     captured = proposal["captured_fields"]

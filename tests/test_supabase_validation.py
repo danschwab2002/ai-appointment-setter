@@ -1085,3 +1085,119 @@ def test_request_inbound_human_handoff_rejects_invalid_committed_row(
             projection_policy_version=1,
             now="2026-08-23T22:30:00+00:00",
         ))
+
+
+def test_get_payment_link_candidate_calls_authoritative_rpc() -> None:
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=[{
+            "outcome": "available",
+            "source_reevaluation_id": "00000000-0000-0000-0000-000000000201",
+            "purchase_intent_id": "00000000-0000-0000-0000-000000000202",
+            "source_submission_id": "00000000-0000-0000-0000-000000000203",
+            "sequence_origin_event_ulid": "01K3F8QW7N2VYB4M6X9CDPTZRA",
+            "canonical_checkout_url": "https://pay.hotmart.com/F106691755G?off=abc",
+            "submitted_at": "2026-09-11T20:00:00+00:00",
+        }], request=request)
+
+    client = SupabaseClient(
+        base_url="https://fake.supabase.co",
+        service_role_key="fake-service-role-key",
+        transport=httpx.MockTransport(handler),
+    )
+    result = asyncio.run(client.get_chatwoot_payment_link_candidate(
+        commercial_case_id="00000000-0000-0000-0000-000000000200",
+        external_user_id="55",
+        chatwoot_account_id=1,
+        chatwoot_inbox_id=9,
+        chatwoot_conversation_id=42,
+        max_age_seconds=604800,
+        now="2026-09-11T21:00:00+00:00",
+    ))
+    assert result.outcome == "available"
+    assert result.sequence_origin_event_ulid == "01K3F8QW7N2VYB4M6X9CDPTZRA"
+    assert requests[0].url.path == "/rest/v1/rpc/get_chatwoot_payment_link_candidate"
+    assert "canonical_checkout_url" not in str(requests[0].headers)
+
+
+def test_prepare_payment_link_send_rejects_non_emit_outcome_fields() -> None:
+    body = [{
+        "outcome": "checkout_url_stale",
+        "send_command_id": None,
+        "binding_id": None,
+        "checkout_url_final": "https://should-not-leak.example",
+        "tracking_field": None,
+        "tracking_value": None,
+    }]
+    with pytest.raises(SupabaseCommittedResponseError):
+        asyncio.run(_client(body).prepare_chatwoot_payment_link_send(
+            commercial_case_id="00000000-0000-0000-0000-000000000200",
+            external_user_id="55",
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=9,
+            chatwoot_conversation_id=42,
+            trigger_external_message_id="77",
+            max_age_seconds=604800,
+            source_reevaluation_id="00000000-0000-0000-0000-000000000201",
+            source_submission_id="00000000-0000-0000-0000-000000000203",
+            checkout_url_original="https://pay.hotmart.com/F106691755G?off=abc",
+            checkout_url_final="https://pay.hotmart.com/F106691755G?off=abc&src=hermes-01K3F8QW7N2VYB4M6X9CDPTZRA",
+            tracking_field="src",
+            tracking_value="hermes-01K3F8QW7N2VYB4M6X9CDPTZRA",
+            tracking_prefix="hermes-",
+            now="2026-09-11T21:00:00+00:00",
+        ))
+
+
+def test_finalize_payment_link_send_calls_atomic_rpc() -> None:
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=[{
+            "outcome": "finalized",
+            "send_command_id": "00000000-0000-0000-0000-000000000204",
+            "status": "accepted_by_chatwoot",
+        }], request=request)
+
+    client = SupabaseClient(
+        base_url="https://fake.supabase.co",
+        service_role_key="fake-service-role-key",
+        transport=httpx.MockTransport(handler),
+    )
+    result = asyncio.run(client.finalize_chatwoot_payment_link_send(
+        send_command_id="00000000-0000-0000-0000-000000000204",
+        status="accepted_by_chatwoot",
+        chatwoot_message_id=88,
+        failure_code=None,
+        now="2026-09-11T21:00:01+00:00",
+    ))
+    assert result.status == "accepted_by_chatwoot"
+    assert requests[0].url.path == "/rest/v1/rpc/finalize_chatwoot_payment_link_send"
+
+
+def test_finalize_payment_link_send_accepts_unknown_to_accepted_reconciliation() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{
+            "outcome": "reconciled",
+            "send_command_id": "00000000-0000-0000-0000-000000000204",
+            "status": "accepted_by_chatwoot",
+        }], request=request)
+
+    client = SupabaseClient(
+        base_url="https://fake.supabase.co",
+        service_role_key="fake-service-role-key",
+        transport=httpx.MockTransport(handler),
+    )
+    result = asyncio.run(client.finalize_chatwoot_payment_link_send(
+        send_command_id="00000000-0000-0000-0000-000000000204",
+        status="accepted_by_chatwoot",
+        chatwoot_message_id=88,
+        failure_code=None,
+        now="2026-09-11T21:00:01+00:00",
+    ))
+
+    assert result.outcome == "reconciled"
+    assert result.status == "accepted_by_chatwoot"

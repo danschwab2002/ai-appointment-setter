@@ -194,20 +194,47 @@ const refreshedSchedule = await db.query(`
   )
 `, [inserted.rows[0].purchase_intent_id, refreshedSubmission.rows[0].id]);
 const refreshedTimer = await db.query(`
-  select source_submission_id, observed_at, due_at
+  select id, source_submission_id, observed_at, due_at, status, outcome
   from public.hotmart_abandonment_reevaluations
-  where purchase_intent_id = $1::uuid and status = 'scheduled'
+  where purchase_intent_id = $1::uuid
+  order by observed_at, id
 `, [inserted.rows[0].purchase_intent_id]);
-if (refreshedSchedule.rows[0]?.outcome !== 'coalesced_existing_timer'
-    || refreshedTimer.rows.length !== 1
-    || refreshedTimer.rows[0].source_submission_id !== refreshedSubmission.rows[0].id
-    || new Date(refreshedTimer.rows[0].observed_at).toISOString()
+if (refreshedSchedule.rows[0]?.outcome !== 'scheduled'
+    || refreshedSchedule.rows[0]?.created !== true
+    || refreshedTimer.rows.length !== 2
+    || refreshedTimer.rows[0].id !== timerRow.id
+    || refreshedTimer.rows[0].source_submission_id !== inserted.rows[0].submission_id
+    || refreshedTimer.rows[0].status !== 'completed'
+    || refreshedTimer.rows[0].outcome !== 'superseded_by_newer_precheckout'
+    || refreshedTimer.rows[1].id !== refreshedSchedule.rows[0].reevaluation_id
+    || refreshedTimer.rows[1].source_submission_id !== refreshedSubmission.rows[0].id
+    || refreshedTimer.rows[1].status !== 'scheduled'
+    || refreshedTimer.rows[1].outcome !== null
+    || new Date(refreshedTimer.rows[1].observed_at).toISOString()
       !== '2026-08-29T15:50:00.000Z'
-    || new Date(refreshedTimer.rows[0].due_at).toISOString()
+    || new Date(refreshedTimer.rows[1].due_at).toISOString()
       !== '2026-08-29T16:50:00.000Z') {
-  throw new Error(`latest authorized submission did not reset timer: ${JSON.stringify({
+  throw new Error(`latest authorized submission did not create a new sequence: ${JSON.stringify({
     schedule: refreshedSchedule.rows, timer: refreshedTimer.rows,
   })}`);
+}
+let sequenceIdentityMutationRejected = false;
+try {
+  await db.query(`
+    update public.hotmart_abandonment_reevaluations
+    set source_submission_id = $2::uuid,
+        observed_at = '2026-08-29T16:00:00Z'::timestamptz,
+        due_at = '2026-08-29T17:00:00Z'::timestamptz,
+        idempotency_key = 'precheckout-first-touch:' || $2::text
+    where id = $1::uuid
+  `, [refreshedTimer.rows[1].id, inserted.rows[0].submission_id]);
+} catch (error) {
+  sequenceIdentityMutationRejected = String(error).includes(
+    'hotmart_abandonment_reevaluation_identity_immutable',
+  );
+}
+if (!sequenceIdentityMutationRejected) {
+  throw new Error('precheckout sequence identity remained mutable');
 }
 const due = await db.query(`
   select * from public.list_due_hotmart_abandonment_reevaluations(
@@ -227,7 +254,7 @@ try {
   inactiveRejected = String(error).includes('hotmart_abandonment_reevaluation_not_found');
 }
 if (!inactiveRejected) throw new Error('arbitrary source ID was accepted as reevaluation ID');
-const timerId = timerRow.id;
+const timerId = refreshedTimer.rows[1].id;
 const publishedScope = await db.query(`
   select * from public.reevaluate_hotmart_abandonment_timer(
     $1::uuid, '2026-08-29T17:00:00Z'::timestamptz

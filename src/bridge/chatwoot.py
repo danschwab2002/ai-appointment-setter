@@ -9,6 +9,7 @@ import os
 import stat
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Awaitable, Callable
 
 import httpx
 
@@ -337,6 +338,7 @@ class ChatwootClient:
         part_count: int = 1,
         prior_parts: tuple[str, ...] = (),
         expected_jid: str | None = None,
+        pre_send_authorizer: Callable[[], Awaitable[bool]] | None = None,
     ) -> dict[str, object]:
         """Authorize and send one idempotent part of a public AgentBot reply."""
         if (
@@ -394,6 +396,7 @@ class ChatwootClient:
                 prior_parts=prior_parts,
                 reply_dir_fd=reply_dir_fd,
                 expected_jid=expected_jid,
+                pre_send_authorizer=pre_send_authorizer,
             )
         finally:
             if lock_fd >= 0:
@@ -517,6 +520,7 @@ class ChatwootClient:
         prior_parts: tuple[str, ...],
         reply_dir_fd: int,
         expected_jid: str | None,
+        pre_send_authorizer: Callable[[], Awaitable[bool]] | None,
     ) -> dict[str, object]:
         agent_bot_access_token = self._agent_bot_access_token
         if agent_bot_access_token is None:
@@ -571,6 +575,13 @@ class ChatwootClient:
             )
             if authorization_result is not None:
                 return authorization_result
+            if pre_send_authorizer is not None:
+                authorized = await pre_send_authorizer()
+                if authorized is not True:
+                    return {
+                        "status": "blocked",
+                        "reason": "pre_send_authorization_denied",
+                    }
             if not self._claim_reply_delivery(
                 reply_dir_fd=reply_dir_fd,
                 batch_hash=batch_hash,
@@ -661,6 +672,11 @@ class ChatwootClient:
             expected_jid=expected_jid,
         ):
             return {"status": "blocked", "reason": "jid_not_authorized"}
+        if self._conversation_has_assignee(
+            conversation_response,
+            conversation_id=conversation_id,
+        ):
+            return {"status": "blocked", "reason": "human_assignee_present"}
 
         labels_response = await control_client.get(labels_path)
         labels_response.raise_for_status()
@@ -775,6 +791,23 @@ class ChatwootClient:
         if prior_indices != list(range(1, part_index)):
             return {"status": "blocked", "reason": "reply_sequence_incomplete"}
         return None
+
+    @staticmethod
+    def _conversation_has_assignee(
+        response: httpx.Response,
+        *,
+        conversation_id: int,
+    ) -> bool:
+        try:
+            conversation = response.json()
+        except ValueError as exc:
+            raise ChatwootProtocolError("invalid_json") from exc
+        if not isinstance(conversation, dict) or conversation.get("id") != conversation_id:
+            raise ChatwootProtocolError("invalid_conversation_payload")
+        meta = conversation.get("meta")
+        if not isinstance(meta, dict) or "assignee" not in meta:
+            raise ChatwootProtocolError("invalid_conversation_payload")
+        return meta["assignee"] is not None
 
     def _is_authorized_conversation(
         self,
