@@ -350,6 +350,40 @@ class InboundCommercialCaseAdmissionResult:
 
 
 @dataclass(frozen=True)
+class PaymentLinkCandidate:
+    """Authoritative precheckout sequence eligible for a payment-link action."""
+
+    outcome: str
+    source_reevaluation_id: str | None
+    purchase_intent_id: str | None
+    source_submission_id: str | None
+    sequence_origin_event_ulid: str | None
+    canonical_checkout_url: str | None
+    submitted_at: str | None
+
+
+@dataclass(frozen=True)
+class PaymentLinkSendReservation:
+    """Durable request-start fence for one payment-link Chatwoot effect."""
+
+    outcome: str
+    send_command_id: str | None
+    binding_id: str | None
+    checkout_url_final: str | None
+    tracking_field: str | None
+    tracking_value: str | None
+
+
+@dataclass(frozen=True)
+class PaymentLinkSendFinalization:
+    """Terminal state of one payment-link send command."""
+
+    outcome: str
+    send_command_id: str
+    status: str
+
+
+@dataclass(frozen=True)
 class CartRecoveryPlan:
     """Durable case, sequence, and next action created by PostgreSQL."""
 
@@ -2612,6 +2646,211 @@ class SupabaseClient:
                 row, "conversation_id", operation=operation
             ),
             automation_status=automation_status,
+        )
+
+    async def get_chatwoot_payment_link_candidate(
+        self,
+        *,
+        commercial_case_id: str,
+        external_user_id: str,
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+        chatwoot_conversation_id: int,
+        max_age_seconds: int,
+        now: str,
+    ) -> PaymentLinkCandidate:
+        operation = "chatwoot_payment_link_candidate"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_chatwoot_payment_link_candidate",
+            content=json.dumps({
+                "p_commercial_case_id": commercial_case_id,
+                "p_external_user_id": external_user_id,
+                "p_chatwoot_account_id": chatwoot_account_id,
+                "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                "p_chatwoot_conversation_id": chatwoot_conversation_id,
+                "p_max_age_seconds": max_age_seconds,
+                "p_now": now,
+            }, ensure_ascii=False),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        expected = {
+            "outcome", "source_reevaluation_id", "purchase_intent_id",
+            "source_submission_id", "sequence_origin_event_ulid",
+            "canonical_checkout_url", "submitted_at",
+        }
+        if set(row) != expected:
+            raise SupabaseCommittedResponseError(operation)
+        outcome = row.get("outcome")
+        allowed = {
+            "available", "invalid_request", "blocked_case", "blocked_contact",
+            "blocked_conversation", "blocked_identity",
+            "missing_precheckout_sequence", "purchase_not_open",
+            "invalid_precheckout_sequence", "invalid_checkout_url",
+            "precheckout_from_future", "checkout_url_stale",
+        }
+        if outcome not in allowed:
+            raise SupabaseCommittedResponseError(operation)
+        values = {
+            key: _optional_string(row, key, operation=operation)
+            for key in expected - {"outcome"}
+        }
+        if outcome == "available":
+            for key in values:
+                if values[key] is None:
+                    raise SupabaseCommittedResponseError(operation)
+            for key in (
+                "source_reevaluation_id", "purchase_intent_id", "source_submission_id"
+            ):
+                try:
+                    uuid.UUID(values[key] or "")
+                except ValueError as exc:
+                    raise SupabaseCommittedResponseError(operation) from exc
+        elif outcome == "checkout_url_stale":
+            if values["submitted_at"] is None or any(
+                value is not None
+                for key, value in values.items()
+                if key != "submitted_at"
+            ):
+                raise SupabaseCommittedResponseError(operation)
+        elif any(value is not None for value in values.values()):
+            raise SupabaseCommittedResponseError(operation)
+        return PaymentLinkCandidate(outcome=outcome, **values)
+
+    async def prepare_chatwoot_payment_link_send(
+        self,
+        *,
+        commercial_case_id: str,
+        external_user_id: str,
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+        chatwoot_conversation_id: int,
+        trigger_external_message_id: str,
+        max_age_seconds: int,
+        source_reevaluation_id: str,
+        source_submission_id: str,
+        checkout_url_original: str,
+        checkout_url_final: str,
+        tracking_field: str,
+        tracking_value: str,
+        tracking_prefix: str,
+        now: str,
+    ) -> PaymentLinkSendReservation:
+        operation = "chatwoot_payment_link_send_prepare"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/prepare_chatwoot_payment_link_send",
+            content=json.dumps({
+                "p_commercial_case_id": commercial_case_id,
+                "p_external_user_id": external_user_id,
+                "p_chatwoot_account_id": chatwoot_account_id,
+                "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                "p_chatwoot_conversation_id": chatwoot_conversation_id,
+                "p_trigger_external_message_id": trigger_external_message_id,
+                "p_max_age_seconds": max_age_seconds,
+                "p_source_reevaluation_id": source_reevaluation_id,
+                "p_source_submission_id": source_submission_id,
+                "p_checkout_url_original": checkout_url_original,
+                "p_checkout_url_final": checkout_url_final,
+                "p_tracking_field": tracking_field,
+                "p_tracking_value": tracking_value,
+                "p_tracking_prefix": tracking_prefix,
+                "p_now": now,
+            }, ensure_ascii=False),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseCommittedResponseError(operation)
+        row = rows[0]
+        expected = {
+            "outcome", "send_command_id", "binding_id", "checkout_url_final",
+            "tracking_field", "tracking_value",
+        }
+        if set(row) != expected:
+            raise SupabaseCommittedResponseError(operation)
+        outcome = row.get("outcome")
+        allowed = {
+            "request_started", "already_accepted", "delivery_unknown",
+            "invalid_request", "blocked_case", "blocked_contact",
+            "blocked_conversation", "blocked_identity",
+            "missing_precheckout_sequence", "purchase_not_open",
+            "invalid_precheckout_sequence", "invalid_checkout_url",
+            "precheckout_from_future", "checkout_url_stale",
+            "candidate_changed", "binding_conflict",
+        }
+        if outcome not in allowed:
+            raise SupabaseCommittedResponseError(operation)
+        values = {
+            key: _optional_string(row, key, operation=operation)
+            for key in expected - {"outcome"}
+        }
+        if outcome == "request_started":
+            if any(values[key] is None for key in values):
+                raise SupabaseCommittedResponseError(operation)
+            for key in ("send_command_id", "binding_id"):
+                try:
+                    uuid.UUID(values[key] or "")
+                except ValueError as exc:
+                    raise SupabaseCommittedResponseError(operation) from exc
+        elif outcome in {"already_accepted", "delivery_unknown"}:
+            if values["send_command_id"] is None or values["binding_id"] is None:
+                raise SupabaseCommittedResponseError(operation)
+            if any(values[key] is not None for key in (
+                "checkout_url_final", "tracking_field", "tracking_value"
+            )):
+                raise SupabaseCommittedResponseError(operation)
+        elif any(value is not None for value in values.values()):
+            raise SupabaseCommittedResponseError(operation)
+        return PaymentLinkSendReservation(outcome=outcome, **values)
+
+    async def finalize_chatwoot_payment_link_send(
+        self,
+        *,
+        send_command_id: str,
+        status: str,
+        chatwoot_message_id: int | None,
+        failure_code: str | None,
+        now: str,
+    ) -> PaymentLinkSendFinalization:
+        operation = "chatwoot_payment_link_send_finalize"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/finalize_chatwoot_payment_link_send",
+            content=json.dumps({
+                "p_send_command_id": send_command_id,
+                "p_status": status,
+                "p_chatwoot_message_id": chatwoot_message_id,
+                "p_failure_code": failure_code,
+                "p_now": now,
+            }, ensure_ascii=False),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1 or set(rows[0]) != {"outcome", "send_command_id", "status"}:
+            raise SupabaseCommittedResponseError(operation)
+        row = rows[0]
+        outcome = _required_enum(
+            row,
+            "outcome",
+            {"finalized", "already_finalized", "reconciled"},
+            operation=operation,
+        )
+        final_status = _required_enum(
+            row, "status", {"accepted_by_chatwoot", "delivery_unknown"}, operation=operation
+        )
+        returned_id = _required_uuid(row, "send_command_id", operation=operation)
+        if returned_id != send_command_id:
+            raise SupabaseCommittedResponseError(operation)
+        return PaymentLinkSendFinalization(
+            outcome=outcome, send_command_id=returned_id, status=final_status
         )
 
     async def plan_commercial_ally_post_inbound_discount(

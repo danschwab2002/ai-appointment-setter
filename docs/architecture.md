@@ -434,6 +434,22 @@ fences durables antes del único intento. La coordenada SQL V1 continúa
 `inactive/generation=0`; el binding first-touch es el interruptor operativo de
 admisión para este scope versionado.
 
+El árbol local incorpora además el candidato V1 de enlace de pago atribuido.
+Hermes sólo puede solicitar `send_payment_link` y no conoce el checkout. Supabase
+resuelve la reevaluación y submission exactas; el bridge conserva
+`data.checkout_url` como string opaco y añade únicamente
+`src=hermes-<ULID completo>` o, si `src` ya existe, `xcod` con el mismo valor.
+Un binding inmutable conserva URL original/final y marcador. Una command durable
+separa `request_started`, `accepted_by_chatwoot` y `delivery_unknown`; un efecto
+ambiguo sólo puede reconciliarse al recuperar el mensaje exacto, nunca mediante
+retry ciego. Compra, opt-out, identidad o secuencia divergentes, takeover,
+assignee humano, pausa, checkout vencido y respuestas malformadas bloquean. La
+última autorización ocurre después de releer conversación, labels e historial y
+antes del POST. El candidato está implementado y verificado localmente, pero no
+está mergeado, migrado ni desplegado; `PAYMENT_LINK_ENABLED=false` permanece como
+default. Ver el [contrato](contracts/johanna-payment-link-v1.md) y el
+[runbook de release](operations/johanna-payment-link-release-v1.md).
+
 En producción están aplicadas y registradas `20260829000200`–`20260829000500`,
 `20260831000200` y `20260831000300`; los seis pares y bindings están publicados y
 el bridge correspondiente está desplegado. `/ready` acredita

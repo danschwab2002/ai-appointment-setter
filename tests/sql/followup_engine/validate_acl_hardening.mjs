@@ -135,6 +135,9 @@ const rows = await db.query(`
       ('release_slack_correlation_notification(uuid,uuid,bigint,text)'),
       ('read_johanna_funnel_dashboard_v2(integer)'),
       ('get_precheckout_delayed_one_shot_command(uuid)'),
+      ('get_chatwoot_payment_link_candidate(uuid,text,bigint,bigint,bigint,integer,timestamp with time zone)'),
+      ('prepare_chatwoot_payment_link_send(uuid,text,bigint,bigint,bigint,text,integer,uuid,uuid,text,text,text,text,text,timestamp with time zone)'),
+      ('finalize_chatwoot_payment_link_send(uuid,text,bigint,text,timestamp with time zone)'),
 
       ('list_due_hotmart_abandonment_reevaluations_v2(timestamp with time zone,integer,boolean)'),
       ('reevaluate_hotmart_abandonment_timer(uuid,timestamp with time zone)'),
@@ -181,9 +184,9 @@ const rows = await db.query(`
 `);
 const result = rows.rows[0];
 // Historical baseline guard was `result.expected_count !== 63`; the current
-// baseline is 68 RPCs and daily feedback adds fourteen more.
+// baseline is 68 RPCs, daily feedback adds fourteen, and payment links add three.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 82) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 85) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const bindingAcl = await db.query(`

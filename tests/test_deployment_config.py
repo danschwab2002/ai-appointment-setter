@@ -399,6 +399,21 @@ def test_deployment_declares_chatwoot_cut_b_agent_default_off() -> None:
     assert "${CHATWOOT_CUT_B_AGENT_ENABLED:-false}" in compose
 
 
+def test_deployment_declares_payment_link_configuration_default_off() -> None:
+    env_example = (PROJECT_ROOT / ".env.example").read_text()
+    compose = (PROJECT_ROOT / "compose.yaml").read_text()
+
+    expected = {
+        "PAYMENT_LINK_ENABLED": "false",
+        "PAYMENT_LINK_TRACKING_FIELDS": "src,xcod",
+        "PAYMENT_LINK_TRACKING_PREFIX": "hermes-",
+        "PAYMENT_LINK_MAX_AGE_SECONDS": "604800",
+    }
+    for variable, default in expected.items():
+        assert f"{variable}={default}" in env_example
+        assert f"{variable}: ${{{variable}:-{default}}}" in compose
+
+
 def test_deployment_declares_johanna_full_mvp_flags_default_off(
     tmp_path: Path,
 ) -> None:

@@ -74,6 +74,26 @@ def test_rejects_an_unknown_decision_with_a_null_status() -> None:
     assert _is_valid_proposal(proposal) is False
 
 
+def test_accepts_structured_payment_link_decision_without_url_in_agent_reply() -> None:
+    proposal = _valid_proposal()
+    proposal["decision"] = "send_payment_link"
+    proposal["qualification_status"] = "in_progress"
+    proposal["reason_code"] = "payment_link_requested"
+    proposal["reply"] = "Sí, claro. Podés completar tu compra acá:"
+
+    assert _is_valid_proposal(proposal) is True
+
+
+def test_rejects_agent_generated_url_for_payment_link_decision() -> None:
+    proposal = _valid_proposal()
+    proposal["decision"] = "send_payment_link"
+    proposal["qualification_status"] = "in_progress"
+    proposal["reason_code"] = "payment_link_requested"
+    proposal["reply"] = "Pagá acá: https://pay.hotmart.com/inventado"
+
+    assert _is_valid_proposal(proposal) is False
+
+
 def test_persists_a_valid_hermes_shadow_proposal_privately(tmp_path: Path) -> None:
     context: dict[str, object] = {
         "conversation_ref": "123",
