@@ -79,6 +79,12 @@ from bridge.operator_correlation_resolutions import (
     validate_confirm_resolution,
     validate_prepare_resolution,
 )
+from bridge.payment_link import (
+    PaymentLinkConfig,
+    PaymentLinkUnavailable,
+    build_payment_link,
+    render_payment_link_reply,
+)
 from bridge.precheckout import PrecheckoutScope, parse_emulated_precheckout_submission
 from bridge.recovery_agent import RecoveryAgentClient
 from bridge.reply_splitter import (
@@ -140,6 +146,7 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     "pilot_boundary_enabled",
     "chatwoot_cut_b_admission_enabled",
     "chatwoot_cut_b_agent_enabled",
+    "payment_link_enabled",
     "chatwoot_post_inbound_discount_planning_enabled",
     "chatwoot_scoped_inbound_senders_enabled",
     "operator_correlation_read_enabled",
@@ -225,6 +232,7 @@ class ChatwootControl(Protocol):
         part_count: int = 1,
         prior_parts: tuple[str, ...] = (),
         expected_jid: str | None = None,
+        pre_send_authorizer: Callable[[], Awaitable[bool]] | None = None,
     ) -> dict[str, object]: ...
 
 
@@ -357,6 +365,10 @@ class Settings:
     chatwoot_cut_b_scope_key: str | None = None
     chatwoot_cut_b_scope_version: int | None = None
     chatwoot_cut_b_agent_enabled: bool = False
+    payment_link_enabled: bool = False
+    payment_link_tracking_fields: tuple[str, ...] = ("src", "xcod")
+    payment_link_tracking_prefix: str = "hermes-"
+    payment_link_max_age_seconds: int = 604800
     chatwoot_post_inbound_discount_planning_enabled: bool = False
     commercial_ally_discount_policy_key: str | None = None
     commercial_ally_discount_policy_version: int | None = None
@@ -957,6 +969,22 @@ class Settings:
                 os.getenv("CHATWOOT_CUT_B_AGENT_ENABLED", "false").lower()
                 == "true"
             ),
+            payment_link_enabled=(
+                os.getenv("PAYMENT_LINK_ENABLED", "false").lower() == "true"
+            ),
+            payment_link_tracking_fields=tuple(
+                field.strip()
+                for field in os.getenv(
+                    "PAYMENT_LINK_TRACKING_FIELDS", "src,xcod"
+                ).split(",")
+                if field.strip()
+            ),
+            payment_link_tracking_prefix=os.getenv(
+                "PAYMENT_LINK_TRACKING_PREFIX", "hermes-"
+            ).strip(),
+            payment_link_max_age_seconds=int(
+                os.getenv("PAYMENT_LINK_MAX_AGE_SECONDS", "604800")
+            ),
             chatwoot_post_inbound_discount_planning_enabled=(
                 os.getenv(
                     "CHATWOOT_POST_INBOUND_DISCOUNT_PLANNING_ENABLED", "false"
@@ -1194,6 +1222,20 @@ def create_app(
         raise ValueError(
             "Settings boolean fields must be bool: "
             + ", ".join(invalid_boolean_fields)
+        )
+    payment_link_config = PaymentLinkConfig(
+        tracking_fields=settings.payment_link_tracking_fields,
+        tracking_prefix=settings.payment_link_tracking_prefix,
+        max_age_seconds=settings.payment_link_max_age_seconds,
+    )
+    if settings.payment_link_enabled and not all((
+        settings.chatwoot_cut_b_admission_enabled,
+        settings.chatwoot_cut_b_agent_enabled,
+        settings.automated_replies_enabled,
+        settings.chatwoot_scoped_inbound_senders_enabled,
+    )):
+        raise ValueError(
+            "PAYMENT_LINK_ENABLED requires scoped Cut B admission, agent and replies"
         )
     explicit_manifest_runtime = settings.commercial_ally_manifest_path is not None
     portable_dynamic_recipient = (
@@ -2462,6 +2504,7 @@ def create_app(
             else None
         )
         durable_reply_authorizer: Callable[[], Awaitable[bool]] | None = None
+        external_user_id = ""
 
         async def send_scoped_agent_bot_reply(
             *,
@@ -2691,6 +2734,13 @@ def create_app(
         context = _shadow_context(payload)
         if context is None:
             return
+        if settings.payment_link_enabled:
+            context["payment_link_action"] = {
+                "enabled": True,
+                "decision": "send_payment_link",
+                "bridge_injects_exact_url": True,
+                "agent_must_not_include_url": True,
+            }
         completed_proposal = (
             shadow_processor.get_completed_proposal(delivery_id=delivery_id)
             if shadow_processor is not None
@@ -2744,16 +2794,18 @@ def create_app(
             or not isinstance(reply, str)
         ):
             raise RuntimeError("chatwoot_reply_not_configured")
-        if settings.human_handoff_admission_enabled and (
-            completed_proposal.get("decision") == "handoff"
-        ):
+        async def request_current_inbound_handoff(
+            proposal: dict[str, object],
+        ) -> None:
+            if not settings.human_handoff_admission_enabled:
+                raise RuntimeError("chatwoot_inbound_handoff_not_configured")
             assert shared_supabase is not None
             assert admission is not None
             assert settings.handoff_projection_policy_key is not None
             assert settings.handoff_projection_policy_version is not None
             try:
                 handoff = await request_handoff_for_inbound_proposal(
-                    proposal=completed_proposal,
+                    proposal=proposal,
                     admission=admission,
                     external_conversation_id=conversation_id,
                     trigger_message_id=message_id,
@@ -2790,6 +2842,246 @@ def create_app(
                 raise RetryableChatwootWorkError(
                     "handoff_automation_pause_not_confirmed"
                 ) from exc
+
+        if settings.human_handoff_admission_enabled and (
+            completed_proposal.get("decision") == "handoff"
+        ):
+            await request_current_inbound_handoff(completed_proposal)
+            return
+        if completed_proposal.get("decision") == "send_payment_link":
+            if not settings.payment_link_enabled:
+                await request_current_inbound_handoff({
+                    **completed_proposal,
+                    "decision": "handoff",
+                    "qualification_status": "needs_human",
+                    "reason_code": "payment_link_disabled",
+                })
+                return
+            assert shared_supabase is not None
+            assert admission is not None
+            assert settings.chatwoot_account_id is not None
+            assert settings.chatwoot_inbox_id is not None
+            assert control_client is not None
+            now = datetime.now(UTC)
+            try:
+                candidate = await shared_supabase.get_chatwoot_payment_link_candidate(
+                    commercial_case_id=admission.commercial_case_id,
+                    external_user_id=external_user_id,
+                    chatwoot_account_id=settings.chatwoot_account_id,
+                    chatwoot_inbox_id=settings.chatwoot_inbox_id,
+                    chatwoot_conversation_id=conversation_id,
+                    max_age_seconds=payment_link_config.max_age_seconds,
+                    now=now.isoformat(),
+                )
+            except SupabaseError as exc:
+                raise RetryableChatwootWorkError(
+                    "payment_link_candidate_lookup_failed"
+                ) from exc
+            if candidate.outcome != "available":
+                logger.info("payment_link_handoff reason=%s", candidate.outcome)
+                await request_current_inbound_handoff({
+                    **completed_proposal,
+                    "decision": "handoff",
+                    "qualification_status": "needs_human",
+                    "reason_code": f"payment_link_{candidate.outcome}",
+                })
+                return
+            assert candidate.source_reevaluation_id is not None
+            assert candidate.source_submission_id is not None
+            assert candidate.sequence_origin_event_ulid is not None
+            assert candidate.canonical_checkout_url is not None
+            assert candidate.submitted_at is not None
+            try:
+                payment_link = build_payment_link(
+                    checkout_url=candidate.canonical_checkout_url,
+                    sequence_origin_event_id=candidate.sequence_origin_event_ulid,
+                    submitted_at=datetime.fromisoformat(candidate.submitted_at),
+                    now=now,
+                    config=payment_link_config,
+                )
+            except (PaymentLinkUnavailable, ValueError):
+                logger.info("payment_link_handoff reason=deterministic_builder_rejected")
+                await request_current_inbound_handoff({
+                    **completed_proposal,
+                    "decision": "handoff",
+                    "qualification_status": "needs_human",
+                    "reason_code": "payment_link_builder_rejected",
+                })
+                return
+            reservation = None
+
+            async def authorize_payment_link_send() -> bool:
+                nonlocal reservation
+                try:
+                    reservation = await shared_supabase.prepare_chatwoot_payment_link_send(
+                        commercial_case_id=admission.commercial_case_id,
+                        external_user_id=external_user_id,
+                        chatwoot_account_id=settings.chatwoot_account_id,
+                        chatwoot_inbox_id=settings.chatwoot_inbox_id,
+                        chatwoot_conversation_id=conversation_id,
+                        trigger_external_message_id=str(message_id),
+                        max_age_seconds=payment_link_config.max_age_seconds,
+                        source_reevaluation_id=candidate.source_reevaluation_id,
+                        source_submission_id=candidate.source_submission_id,
+                        checkout_url_original=candidate.canonical_checkout_url,
+                        checkout_url_final=payment_link.final_url,
+                        tracking_field=payment_link.tracking_field,
+                        tracking_value=payment_link.tracking_value,
+                        tracking_prefix=payment_link_config.tracking_prefix,
+                        now=datetime.now(UTC).isoformat(),
+                    )
+                except SupabaseError as exc:
+                    raise RetryableChatwootWorkError(
+                        "payment_link_send_prepare_failed"
+                    ) from exc
+                if reservation.outcome != "request_started":
+                    return False
+                if (
+                    reservation.checkout_url_final != payment_link.final_url
+                    or reservation.tracking_field != payment_link.tracking_field
+                    or reservation.tracking_value != payment_link.tracking_value
+                ):
+                    if reservation.send_command_id is None:
+                        raise RetryableChatwootWorkError(
+                            "payment_link_send_reservation_mismatch"
+                        )
+                    try:
+                        await shared_supabase.finalize_chatwoot_payment_link_send(
+                            send_command_id=reservation.send_command_id,
+                            status="delivery_unknown",
+                            chatwoot_message_id=None,
+                            failure_code="payment_link_reservation_mismatch",
+                            now=datetime.now(UTC).isoformat(),
+                        )
+                    except SupabaseError as finalize_exc:
+                        raise RetryableChatwootWorkError(
+                            "payment_link_delivery_unknown_finalize_failed"
+                        ) from finalize_exc
+                    raise RetryableChatwootWorkError(
+                        "payment_link_send_reservation_mismatch"
+                    )
+                return True
+
+            try:
+                payment_reply = render_payment_link_reply(
+                    preamble=reply,
+                    final_url=payment_link.final_url,
+                )
+            except PaymentLinkUnavailable:
+                logger.info("payment_link_handoff reason=agent_reply_rejected")
+                await request_current_inbound_handoff({
+                    **completed_proposal,
+                    "decision": "handoff",
+                    "qualification_status": "needs_human",
+                    "reason_code": "payment_link_reply_rejected",
+                })
+                return
+            send_args = {
+                "conversation_id": conversation_id,
+                "trigger_message_id": message_id,
+                "delivery_id": delivery_id,
+                "content": payment_reply,
+                "pre_send_authorizer": authorize_payment_link_send,
+            }
+            if scoped_expected_jid is not None:
+                send_args["expected_jid"] = scoped_expected_jid
+            try:
+                payment_result = await control_client.send_agent_bot_reply(**send_args)
+            except ChatwootReplyDeliveryUnknownError as exc:
+                if reservation is None or reservation.send_command_id is None:
+                    raise RetryableChatwootWorkError(
+                        "payment_link_delivery_unknown_before_reservation"
+                    ) from exc
+                try:
+                    await shared_supabase.finalize_chatwoot_payment_link_send(
+                        send_command_id=reservation.send_command_id,
+                        status="delivery_unknown",
+                        chatwoot_message_id=None,
+                        failure_code="chatwoot_delivery_unknown",
+                        now=datetime.now(UTC).isoformat(),
+                    )
+                except SupabaseError as finalize_exc:
+                    raise RetryableChatwootWorkError(
+                        "payment_link_delivery_unknown_finalize_failed"
+                    ) from finalize_exc
+                raise RetryableChatwootWorkError(
+                    "payment_link_delivery_unknown"
+                ) from exc
+            except (ChatwootProtocolError, httpx.HTTPError) as exc:
+                if reservation is not None and reservation.send_command_id is not None:
+                    try:
+                        await shared_supabase.finalize_chatwoot_payment_link_send(
+                            send_command_id=reservation.send_command_id,
+                            status="delivery_unknown",
+                            chatwoot_message_id=None,
+                            failure_code="chatwoot_send_unconfirmed",
+                            now=datetime.now(UTC).isoformat(),
+                        )
+                    except SupabaseError as finalize_exc:
+                        raise RetryableChatwootWorkError(
+                            "payment_link_delivery_unknown_finalize_failed"
+                        ) from finalize_exc
+                raise RetryableChatwootWorkError(
+                    "payment_link_send_unconfirmed"
+                ) from exc
+            payment_status = payment_result.get("status")
+            payment_message_id = payment_result.get("message_id")
+            payment_result_confirmed = (
+                payment_status in {"sent", "duplicate"}
+                and isinstance(payment_message_id, int)
+                and not isinstance(payment_message_id, bool)
+                and payment_message_id > 0
+            )
+            if (
+                reservation is None
+                and payment_status == "duplicate"
+                and payment_result_confirmed
+            ):
+                await authorize_payment_link_send()
+            if reservation is None:
+                logger.info(
+                    "payment_link_send_blocked_before_final_authorization status=%s",
+                    payment_status,
+                )
+                return
+            if reservation.outcome == "already_accepted":
+                logger.info("payment_link_send_replayed outcome=%s", reservation.outcome)
+                return
+            if (
+                reservation.outcome == "delivery_unknown"
+                and payment_status != "duplicate"
+            ):
+                logger.info("payment_link_send_replayed outcome=%s", reservation.outcome)
+                return
+            if reservation.outcome not in {"request_started", "delivery_unknown"}:
+                logger.info("payment_link_handoff reason=%s", reservation.outcome)
+                await request_current_inbound_handoff({
+                    **completed_proposal,
+                    "decision": "handoff",
+                    "qualification_status": "needs_human",
+                    "reason_code": f"payment_link_{reservation.outcome}",
+                })
+                return
+            assert reservation.send_command_id is not None
+            if not payment_result_confirmed:
+                raise RuntimeError("invalid_payment_link_reply_result")
+            try:
+                await shared_supabase.finalize_chatwoot_payment_link_send(
+                    send_command_id=reservation.send_command_id,
+                    status="accepted_by_chatwoot",
+                    chatwoot_message_id=payment_message_id,
+                    failure_code=None,
+                    now=datetime.now(UTC).isoformat(),
+                )
+            except SupabaseError as exc:
+                raise RetryableChatwootWorkError(
+                    "payment_link_acceptance_finalize_failed"
+                ) from exc
+            logger.info(
+                "payment_link_send_finalized command_id=%s status=%s",
+                reservation.send_command_id,
+                payment_status,
+            )
             return
         if (
             durable_reply_authorizer is not None

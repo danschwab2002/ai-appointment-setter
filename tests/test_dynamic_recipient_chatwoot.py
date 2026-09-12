@@ -20,7 +20,13 @@ def test_scoped_reply_uses_expected_jid_without_fixed_allowed_jid(
         if request.method == "GET" and request.url.path.endswith("/conversations/2"):
             return httpx.Response(
                 200,
-                json={"id": 2, "meta": {"sender": {"identifier": scoped_jid}}},
+                json={
+                    "id": 2,
+                    "meta": {
+                        "sender": {"identifier": scoped_jid},
+                        "assignee": None,
+                    },
+                },
             )
         if request.method == "GET" and request.url.path.endswith("/labels"):
             return httpx.Response(200, json={"payload": []})

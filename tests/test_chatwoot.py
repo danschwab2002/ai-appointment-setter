@@ -44,6 +44,28 @@ def test_authorizes_waba_e164_phone_number_for_the_configured_jid(
     assert client._is_authorized_conversation(response, conversation_id=39) is True
 
 
+def test_assignee_authority_fails_closed_when_meta_is_missing(tmp_path: Path) -> None:
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        agent_bot_access_token="agent-bot-token",
+        agent_bot_id=1,
+        reply_dir=tmp_path,
+    )
+    response = httpx.Response(
+        200,
+        json={
+            "id": 39,
+            "contact_inbox": {"source_id": "12025550123"},
+        },
+    )
+
+    with pytest.raises(ChatwootProtocolError, match="invalid_conversation_payload"):
+        client._conversation_has_assignee(response, conversation_id=39)
+
+
 def test_rejects_a_different_waba_digit_source_id(tmp_path: Path) -> None:
     client = ChatwootClient(
         base_url="https://chatwoot.example.test",
@@ -102,9 +124,11 @@ class AuthorizedConversationTransport(httpx.AsyncBaseTransport):
         inner: httpx.AsyncBaseTransport,
         *,
         authorized_jid: str = ALLOWED_JID,
+        assignee: dict[str, object] | None = None,
     ) -> None:
         self._inner = inner
         self._authorized_jid = authorized_jid
+        self._assignee = assignee
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         if request.method == "GET" and request.url.path.endswith("/conversations/2"):
@@ -112,7 +136,10 @@ class AuthorizedConversationTransport(httpx.AsyncBaseTransport):
                 200,
                 json={
                     "id": 2,
-                    "meta": {"sender": {"identifier": self._authorized_jid}},
+                    "meta": {
+                        "sender": {"identifier": self._authorized_jid},
+                        "assignee": self._assignee,
+                    },
                 },
             )
         return await self._inner.handle_async_request(request)
@@ -203,6 +230,179 @@ def test_sends_an_idempotent_agent_bot_reply_after_authorization(
         "GET",
         "POST",
     ]
+
+
+def test_runs_pre_send_authorizer_after_final_recheck_and_before_post(
+    tmp_path: Path,
+) -> None:
+    events: list[str] = []
+    reply_hash = hashlib.sha256(b"2:10").hexdigest()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        events.append(f"{request.method}:{request.url.path.rsplit('/', 1)[-1]}")
+        if request.method == "GET" and request.url.path.endswith("/labels"):
+            return httpx.Response(200, json={"payload": []})
+        if request.method == "GET" and request.url.path.endswith("/messages"):
+            return httpx.Response(200, json={"payload": [{
+                "id": 10,
+                "message_type": 0,
+                "private": False,
+                "content": "Hola",
+                "sender": {"type": "contact", "id": 20},
+            }]})
+        assert request.method == "POST"
+        return httpx.Response(200, json={
+            "id": 11,
+            "conversation_id": 2,
+            "message_type": 1,
+            "private": False,
+            "content": "Link seguro",
+            "content_attributes": {"appointment_setter_reply_hash": reply_hash},
+            "sender": {"type": "agent_bot", "id": 1},
+        })
+
+    async def authorize() -> bool:
+        events.append("authorize")
+        return True
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        agent_bot_access_token="agent-bot-token",
+        agent_bot_id=1,
+        reply_dir=tmp_path,
+        transport=AuthorizedConversationTransport(httpx.MockTransport(handler)),
+    )
+
+    result = asyncio.run(client.send_agent_bot_reply(
+        conversation_id=2,
+        trigger_message_id=10,
+        delivery_id="payment-link-final-authorization",
+        content="Link seguro",
+        pre_send_authorizer=authorize,
+    ))
+
+    assert result == {"status": "sent", "message_id": 11}
+    assert events == [
+        "GET:labels",
+        "GET:messages",
+        "GET:labels",
+        "GET:messages",
+        "authorize",
+        "POST:messages",
+    ]
+
+
+def test_pre_send_authorizer_denial_prevents_post(tmp_path: Path) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.method == "GET" and request.url.path.endswith("/labels"):
+            return httpx.Response(200, json={"payload": []})
+        if request.method == "GET" and request.url.path.endswith("/messages"):
+            return httpx.Response(200, json={"payload": [{
+                "id": 10,
+                "message_type": 0,
+                "private": False,
+                "content": "Hola",
+                "sender": {"type": "contact", "id": 20},
+            }]})
+        raise AssertionError("payment link POST must not run after denied authorization")
+
+    async def deny() -> bool:
+        return False
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        agent_bot_access_token="agent-bot-token",
+        agent_bot_id=1,
+        reply_dir=tmp_path,
+        transport=AuthorizedConversationTransport(httpx.MockTransport(handler)),
+    )
+
+    result = asyncio.run(client.send_agent_bot_reply(
+        conversation_id=2,
+        trigger_message_id=10,
+        delivery_id="payment-link-authorization-denied",
+        content="Link seguro",
+        pre_send_authorizer=deny,
+    ))
+
+    assert result == {
+        "status": "blocked",
+        "reason": "pre_send_authorization_denied",
+    }
+    assert not any(request.method == "POST" for request in requests)
+
+
+def test_pre_send_recheck_blocks_a_human_assignee_before_authorizer_or_post(
+    tmp_path: Path,
+) -> None:
+    events: list[str] = []
+
+    async def authorize() -> bool:
+        events.append("authorize")
+        return True
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/labels"):
+            events.append("GET:labels")
+            return httpx.Response(200, json={"payload": []})
+        if request.url.path.endswith("/messages") and request.method == "GET":
+            events.append("GET:messages")
+            return httpx.Response(200, json={"payload": [{
+                "id": 10,
+                "message_type": 0,
+                "private": False,
+                "content": "Hola",
+                "sender": {"type": "contact", "id": 20},
+            }]})
+        events.append(f"{request.method}:messages")
+        return httpx.Response(
+            200,
+            json={
+                "id": 900,
+                "conversation_id": 2,
+                "message_type": 1,
+                "private": False,
+                "content": "respuesta",
+                "content_attributes": {},
+                "sender": {"type": "agent_bot", "id": 42},
+            },
+        )
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        agent_bot_access_token="agent-bot-token",
+        agent_bot_id=1,
+        reply_dir=tmp_path,
+        transport=AuthorizedConversationTransport(
+            httpx.MockTransport(handler),
+            assignee={"id": 77, "type": "user"},
+        ),
+    )
+
+    result = asyncio.run(
+        client.send_agent_bot_reply(
+            conversation_id=2,
+            trigger_message_id=10,
+            delivery_id="payment-link-human-assignee",
+            content="respuesta",
+            pre_send_authorizer=authorize,
+        )
+    )
+
+    assert result == {"status": "blocked", "reason": "human_assignee_present"}
+    assert events == []
 
 
 def test_sends_the_next_part_after_prior_parts_from_the_same_reply_batch(
@@ -645,7 +845,8 @@ def test_does_not_send_when_the_canonical_trigger_is_not_an_incoming_contact_mes
                 json={
                     "id": 2,
                     "meta": {
-                        "sender": {"identifier": "12025550123@s.whatsapp.net"}
+                        "sender": {"identifier": "12025550123@s.whatsapp.net"},
+                        "assignee": None,
                     },
                 },
             )
@@ -872,7 +1073,8 @@ def test_reauthorizes_immediately_before_post_when_takeover_happens(
                 json={
                     "id": 2,
                     "meta": {
-                        "sender": {"identifier": "12025550123@s.whatsapp.net"}
+                        "sender": {"identifier": "12025550123@s.whatsapp.net"},
+                        "assignee": None,
                     },
                 },
             )
@@ -1292,7 +1494,8 @@ def test_rejects_a_created_message_that_does_not_match_the_requested_reply(
                 json={
                     "id": 2,
                     "meta": {
-                        "sender": {"identifier": "12025550123@s.whatsapp.net"}
+                        "sender": {"identifier": "12025550123@s.whatsapp.net"},
+                        "assignee": None,
                     },
                 },
             )

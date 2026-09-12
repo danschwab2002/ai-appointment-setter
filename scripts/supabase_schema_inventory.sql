@@ -2807,6 +2807,35 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         12,
         'daily_feedback_batch_scoped_multi_reviewer_and_deletion_accountability'
+    union all
+    select
+        '20260911000400',
+        '20260911000400_payment_link_attribution.sql',
+        (to_regclass('public.payment_link_bindings') is not null)::int
+        + (to_regclass('public.payment_link_send_commands') is not null)::int
+        + (
+            select count(*) = 3
+            from functions
+            where oid in (
+                to_regprocedure('public.get_chatwoot_payment_link_candidate(uuid,text,bigint,bigint,bigint,integer,timestamptz)'),
+                to_regprocedure('public.prepare_chatwoot_payment_link_send(uuid,text,bigint,bigint,bigint,text,integer,uuid,uuid,text,text,text,text,text,timestamptz)'),
+                to_regprocedure('public.finalize_chatwoot_payment_link_send(uuid,text,bigint,text,timestamptz)')
+            )
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        + exists(
+            select 1 from triggers
+            where tgname = 'payment_link_bindings_immutable'
+        )::int
+        + exists(
+            select 1 from triggers
+            where tgname = 'payment_link_send_commands_immutable'
+        )::int,
+        5,
+        'payment_link_exact_binding_rpc_only_authority'
 )
 select
     version,

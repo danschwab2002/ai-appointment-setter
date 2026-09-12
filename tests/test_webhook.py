@@ -5,7 +5,9 @@ import json
 import os
 import stat
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any, Awaitable, Callable
 
 import httpx
 import pytest
@@ -27,6 +29,9 @@ from bridge.reply_splitter import HermesReplySplitter
 from bridge.supabase import (
     InboundCommercialCaseAdmissionResult,
     InboundOptOutResult,
+    PaymentLinkCandidate,
+    PaymentLinkSendFinalization,
+    PaymentLinkSendReservation,
 )
 
 
@@ -40,6 +45,9 @@ class StubChatwootClient:
         history_error: Exception | None = None,
         authority_error: Exception | None = None,
         label_error: Exception | None = None,
+        reply_result: dict[str, object] | None = None,
+        reply_error: Exception | None = None,
+        invoke_pre_send_authorizer: bool = True,
     ) -> None:
         self.changed = changed
         self.fail = fail
@@ -48,9 +56,13 @@ class StubChatwootClient:
         self.history_error = history_error
         self.authority_error = authority_error
         self.label_error = label_error
+        self.reply_result = reply_result
+        self.reply_error = reply_error
+        self.invoke_pre_send_authorizer = invoke_pre_send_authorizer
         self.history_calls: list[tuple[int, int]] = []
         self.history_required_ids: list[tuple[int, ...]] = []
         self.reply_calls: list[dict[str, object]] = []
+        self.pre_send_authorization_calls = 0
         self.authority_calls: list[dict[str, object]] = []
         self.opt_out_macro_calls: list[int] = []
         self.events: list[str] = []
@@ -122,7 +134,17 @@ class StubChatwootClient:
         part_count: int = 1,
         prior_parts: tuple[str, ...] = (),
         expected_jid: str | None = None,
+        pre_send_authorizer: Callable[[], Awaitable[bool]] | None = None,
     ) -> dict[str, object]:
+        if pre_send_authorizer is not None and self.invoke_pre_send_authorizer:
+            self.pre_send_authorization_calls += 1
+            if await pre_send_authorizer() is not True:
+                return {
+                    "status": "blocked",
+                    "reason": "pre_send_authorization_denied",
+                }
+        if self.reply_error is not None:
+            raise self.reply_error
         self.events.append("reply")
         call: dict[str, object] = {
             "conversation_id": conversation_id,
@@ -141,7 +163,7 @@ class StubChatwootClient:
         if expected_jid is not None:
             call["expected_jid"] = expected_jid
         self.reply_calls.append(call)
-        return {"status": "sent", "message_id": 900}
+        return self.reply_result or {"status": "sent", "message_id": 900}
 
 
 class StubShadowProcessor:
@@ -208,6 +230,88 @@ class StubInboundCommercialSupabase:
             (),
             {"outcome": "requested", "handoff_request_id": "handoff-1"},
         )()
+
+
+class StubPaymentLinkSupabase(StubInboundCommercialSupabase):
+    def __init__(
+        self,
+        *,
+        candidate_outcome: str = "available",
+        prepare_outcome: str = "request_started",
+        reservation_url_override: str | None = None,
+    ) -> None:
+        super().__init__()
+        self.candidate_outcome = candidate_outcome
+        self.prepare_outcome = prepare_outcome
+        self.reservation_url_override = reservation_url_override
+        self.candidate_calls: list[dict[str, object]] = []
+        self.prepare_calls: list[dict[str, object]] = []
+        self.finalize_calls: list[dict[str, object]] = []
+
+    async def get_chatwoot_payment_link_candidate(
+        self, **kwargs: object
+    ) -> PaymentLinkCandidate:
+        self.candidate_calls.append(kwargs)
+        if self.candidate_outcome != "available":
+            return PaymentLinkCandidate(
+                outcome=self.candidate_outcome,
+                source_reevaluation_id=None,
+                purchase_intent_id=None,
+                source_submission_id=None,
+                sequence_origin_event_ulid=None,
+                canonical_checkout_url=None,
+                submitted_at=(
+                    "2026-09-01T00:00:00+00:00"
+                    if self.candidate_outcome == "checkout_url_stale"
+                    else None
+                ),
+            )
+        return PaymentLinkCandidate(
+            outcome="available",
+            source_reevaluation_id="00000000-0000-0000-0000-000000000201",
+            purchase_intent_id="00000000-0000-0000-0000-000000000202",
+            source_submission_id="00000000-0000-0000-0000-000000000203",
+            sequence_origin_event_ulid="01K3F8QW7N2VYB4M6X9CDPTZRA",
+            canonical_checkout_url=(
+                "https://pay.hotmart.com/F106691755G?off=bxjge6zq"
+                "&checkoutMode=10&utm_source=meta&sck=meta.cpc.c1&fbclid=CLICK"
+            ),
+            submitted_at=(datetime.now(UTC) - timedelta(seconds=1)).isoformat(),
+        )
+
+    async def prepare_chatwoot_payment_link_send(
+        self, **kwargs: object
+    ) -> PaymentLinkSendReservation:
+        self.prepare_calls.append(kwargs)
+        if self.prepare_outcome != "request_started":
+            return PaymentLinkSendReservation(
+                outcome=self.prepare_outcome,
+                send_command_id="00000000-0000-0000-0000-000000000204",
+                binding_id="00000000-0000-0000-0000-000000000205",
+                checkout_url_final=None,
+                tracking_field=None,
+                tracking_value=None,
+            )
+        return PaymentLinkSendReservation(
+            outcome="request_started",
+            send_command_id="00000000-0000-0000-0000-000000000204",
+            binding_id="00000000-0000-0000-0000-000000000205",
+            checkout_url_final=(
+                self.reservation_url_override or str(kwargs["checkout_url_final"])
+            ),
+            tracking_field=str(kwargs["tracking_field"]),
+            tracking_value=str(kwargs["tracking_value"]),
+        )
+
+    async def finalize_chatwoot_payment_link_send(
+        self, **kwargs: object
+    ) -> PaymentLinkSendFinalization:
+        self.finalize_calls.append(kwargs)
+        return PaymentLinkSendFinalization(
+            outcome="finalized",
+            send_command_id=str(kwargs["send_command_id"]),
+            status=str(kwargs["status"]),
+        )
 
 
 class StubOptOutSupabase:
@@ -4208,6 +4312,400 @@ def test_cut_b_agent_gate_admits_then_replies_through_canonical_chatwoot(
     else:
         assert shadow.calls == []
         assert chatwoot.reply_calls == []
+
+
+def test_payment_link_action_appends_exact_bridge_owned_url_and_finalizes(
+    tmp_path: Path,
+) -> None:
+    secret = "webhook-secret"
+    payload: dict[str, object] = {
+        "event": "message_created",
+        "id": 902,
+        "content": "Mandame el link de pago",
+        "message_type": "incoming",
+        "private": False,
+        "account": {"id": 1},
+        "inbox": {"id": 9},
+        "conversation": {
+            "id": 322,
+            "inbox_id": 9,
+            "contact_inbox": {
+                "source_id": "12025550124@s.whatsapp.net",
+            },
+        },
+    }
+    proposal: dict[str, object] = {
+        "decision": "send_payment_link",
+        "qualification_status": "in_progress",
+        "reason_code": "payment_link_requested",
+        "reply": "Sí, claro. Podés completar tu compra acá:",
+        "captured_fields": {},
+        "missing_fields": [],
+    }
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    supabase = StubPaymentLinkSupabase()
+    shadow = StubShadowProcessor(proposal)
+    chatwoot = StubChatwootClient(messages=[{
+        "id": 902,
+        "created_at": 1789164000,
+        "message_type": 0,
+        "private": False,
+        "content": "Mandame el link de pago",
+        "sender": {"type": "contact", "id": 20},
+    }])
+    app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=9,
+            chatwoot_cut_b_admission_enabled=True,
+            chatwoot_cut_b_scope_key="libre-de-ansiedad-inbound",
+            chatwoot_cut_b_scope_version=2,
+            chatwoot_cut_b_agent_enabled=True,
+            chatwoot_scoped_inbound_senders_enabled=True,
+            automated_replies_enabled=True,
+            chatwoot_durable_opt_out_enabled=True,
+            chatwoot_human_pause_enabled=True,
+            chatwoot_opt_out_macro_id=2,
+            opt_out_projection_worker_id="opt-out-test",
+            human_handoff_admission_enabled=True,
+            human_handoff_projection_enabled=True,
+            handoff_projection_policy_key="lancemos-inbound-handoff",
+            handoff_projection_policy_version=1,
+            human_handoff_projection_worker_id="handoff-projection-test",
+            payment_link_enabled=True,
+        ),
+        chatwoot_client=chatwoot,
+        shadow_processor=shadow,
+        supabase_client=supabase,  # type: ignore[arg-type]
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(raw_body, secret=secret, delivery="payment-link-reply"),
+    )
+    asyncio.run(app.state.chatwoot_worker.run_once())
+
+    assert response.status_code == 202
+    expected_url = (
+        "https://pay.hotmart.com/F106691755G?off=bxjge6zq"
+        "&checkoutMode=10&utm_source=meta&sck=meta.cpc.c1&fbclid=CLICK"
+        "&src=hermes-01K3F8QW7N2VYB4M6X9CDPTZRA"
+    )
+    assert chatwoot.reply_calls == [{
+        "conversation_id": 322,
+        "trigger_message_id": 902,
+        "delivery_id": "payment-link-reply",
+        "content": f"Sí, claro. Podés completar tu compra acá:\n{expected_url}",
+        "expected_jid": "12025550124@s.whatsapp.net",
+    }]
+    assert supabase.prepare_calls[0]["checkout_url_final"] == expected_url
+    assert supabase.prepare_calls[0]["tracking_field"] == "src"
+    assert supabase.prepare_calls[0]["tracking_value"] == (
+        "hermes-01K3F8QW7N2VYB4M6X9CDPTZRA"
+    )
+    assert chatwoot.pre_send_authorization_calls == 1
+    assert supabase.finalize_calls == [{
+        "send_command_id": "00000000-0000-0000-0000-000000000204",
+        "status": "accepted_by_chatwoot",
+        "chatwoot_message_id": 900,
+        "failure_code": None,
+        "now": supabase.finalize_calls[0]["now"],
+    }]
+    assert shadow.calls[0][1]["payment_link_action"] == {
+        "enabled": True,
+        "decision": "send_payment_link",
+        "bridge_injects_exact_url": True,
+        "agent_must_not_include_url": True,
+    }
+
+
+def test_payment_link_duplicate_reconciles_accepted_command_without_second_post(
+    tmp_path: Path,
+) -> None:
+    secret = "webhook-secret"
+    payload: dict[str, object] = {
+        "event": "message_created",
+        "id": 902,
+        "content": "Mandame el link de pago",
+        "message_type": "incoming",
+        "private": False,
+        "account": {"id": 1},
+        "inbox": {"id": 9},
+        "conversation": {
+            "id": 322,
+            "inbox_id": 9,
+            "contact_inbox": {"source_id": "12025550124@s.whatsapp.net"},
+        },
+    }
+    proposal: dict[str, object] = {
+        "decision": "send_payment_link",
+        "qualification_status": "in_progress",
+        "reason_code": "payment_link_requested",
+        "reply": "Sí, claro. Podés completar tu compra acá:",
+        "captured_fields": {},
+        "missing_fields": [],
+    }
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    supabase = StubPaymentLinkSupabase(prepare_outcome="delivery_unknown")
+    shadow = StubShadowProcessor(proposal)
+    chatwoot = StubChatwootClient(
+        messages=[{
+            "id": 902,
+            "created_at": 1789164000,
+            "message_type": 0,
+            "private": False,
+            "content": "Mandame el link de pago",
+            "sender": {"type": "contact", "id": 20},
+        }],
+        reply_result={"status": "duplicate", "message_id": 900},
+        invoke_pre_send_authorizer=False,
+    )
+    app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=9,
+            chatwoot_cut_b_admission_enabled=True,
+            chatwoot_cut_b_scope_key="libre-de-ansiedad-inbound",
+            chatwoot_cut_b_scope_version=2,
+            chatwoot_cut_b_agent_enabled=True,
+            chatwoot_scoped_inbound_senders_enabled=True,
+            automated_replies_enabled=True,
+            chatwoot_durable_opt_out_enabled=True,
+            chatwoot_human_pause_enabled=True,
+            chatwoot_opt_out_macro_id=2,
+            opt_out_projection_worker_id="opt-out-test",
+            human_handoff_admission_enabled=True,
+            human_handoff_projection_enabled=True,
+            handoff_projection_policy_key="lancemos-inbound-handoff",
+            handoff_projection_policy_version=1,
+            human_handoff_projection_worker_id="handoff-projection-test",
+            payment_link_enabled=True,
+        ),
+        chatwoot_client=chatwoot,
+        shadow_processor=shadow,
+        supabase_client=supabase,  # type: ignore[arg-type]
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(raw_body, secret=secret, delivery="payment-link-reply"),
+    )
+    asyncio.run(app.state.chatwoot_worker.run_once())
+
+    assert response.status_code == 202
+    assert len(supabase.prepare_calls) == 1
+    assert supabase.finalize_calls == [{
+        "send_command_id": "00000000-0000-0000-0000-000000000204",
+        "status": "accepted_by_chatwoot",
+        "chatwoot_message_id": 900,
+        "failure_code": None,
+        "now": supabase.finalize_calls[0]["now"],
+    }]
+    assert chatwoot.pre_send_authorization_calls == 0
+
+
+def _payment_link_test_app(
+    *,
+    tmp_path: Path,
+    supabase: StubPaymentLinkSupabase,
+    chatwoot: StubChatwootClient,
+    proposal_override: dict[str, object] | None = None,
+) -> tuple[Any, bytes]:
+    payload: dict[str, object] = {
+        "event": "message_created",
+        "id": 902,
+        "content": "Mandame el link de pago",
+        "message_type": "incoming",
+        "private": False,
+        "account": {"id": 1},
+        "inbox": {"id": 9},
+        "conversation": {
+            "id": 322,
+            "inbox_id": 9,
+            "contact_inbox": {"source_id": "12025550124@s.whatsapp.net"},
+        },
+    }
+    proposal: dict[str, object] = {
+        "decision": "send_payment_link",
+        "qualification_status": "in_progress",
+        "reason_code": "payment_link_requested",
+        "reply": "Sí, claro. Podés completar tu compra acá:",
+        "captured_fields": {},
+        "missing_fields": [],
+    }
+    if proposal_override is not None:
+        proposal = proposal_override
+    app = create_app(
+        Settings(
+            webhook_secret="webhook-secret",
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=9,
+            chatwoot_cut_b_admission_enabled=True,
+            chatwoot_cut_b_scope_key="libre-de-ansiedad-inbound",
+            chatwoot_cut_b_scope_version=2,
+            chatwoot_cut_b_agent_enabled=True,
+            chatwoot_scoped_inbound_senders_enabled=True,
+            automated_replies_enabled=True,
+            chatwoot_durable_opt_out_enabled=True,
+            chatwoot_human_pause_enabled=True,
+            chatwoot_opt_out_macro_id=2,
+            opt_out_projection_worker_id="opt-out-test",
+            human_handoff_admission_enabled=True,
+            human_handoff_projection_enabled=True,
+            handoff_projection_policy_key="lancemos-inbound-handoff",
+            handoff_projection_policy_version=1,
+            human_handoff_projection_worker_id="handoff-projection-test",
+            payment_link_enabled=True,
+        ),
+        chatwoot_client=chatwoot,  # type: ignore[arg-type]
+        shadow_processor=StubShadowProcessor(proposal),
+        supabase_client=supabase,  # type: ignore[arg-type]
+    )
+    return app, json.dumps(payload, separators=(",", ":")).encode("utf-8")
+
+
+def test_payment_link_model_generated_bare_url_hands_off_without_prepare_or_post(
+    tmp_path: Path,
+) -> None:
+    supabase = StubPaymentLinkSupabase()
+    chatwoot = StubChatwootClient(messages=[{
+        "id": 902,
+        "created_at": 1789164000,
+        "message_type": 0,
+        "private": False,
+        "content": "Mandame el link de pago",
+        "sender": {"type": "contact", "id": 20},
+    }])
+    app, raw_body = _payment_link_test_app(
+        tmp_path=tmp_path,
+        supabase=supabase,
+        chatwoot=chatwoot,
+        proposal_override={
+            "decision": "send_payment_link",
+            "qualification_status": "in_progress",
+            "reason_code": "payment_link_requested",
+            "reply": "Pagá en pay.hotmart.com/FAKE",
+            "captured_fields": {},
+            "missing_fields": [],
+        },
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(
+            raw_body,
+            secret="webhook-secret",
+            delivery="payment-link-model-url-rejected",
+        ),
+    )
+    asyncio.run(app.state.chatwoot_worker.run_once())
+
+    assert response.status_code == 202
+    assert supabase.prepare_calls == []
+    assert chatwoot.reply_calls == []
+    assert len(supabase.handoff_calls) == 1
+    assert supabase.handoff_calls[0]["reason_code"] == "commercial_exception"
+
+
+def test_payment_link_protocol_failure_after_reservation_finalizes_unknown(
+    tmp_path: Path,
+) -> None:
+    supabase = StubPaymentLinkSupabase()
+    chatwoot = StubChatwootClient(
+        messages=[{
+            "id": 902,
+            "created_at": 1789164000,
+            "message_type": 0,
+            "private": False,
+            "content": "Mandame el link de pago",
+            "sender": {"type": "contact", "id": 20},
+        }],
+        reply_error=ChatwootProtocolError("invalid_agent_bot_message"),
+    )
+    app, raw_body = _payment_link_test_app(
+        tmp_path=tmp_path,
+        supabase=supabase,
+        chatwoot=chatwoot,
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(
+            raw_body,
+            secret="webhook-secret",
+            delivery="payment-link-protocol-failure",
+        ),
+    )
+    asyncio.run(app.state.chatwoot_worker.run_once())
+
+    assert response.status_code == 202
+    assert supabase.finalize_calls == [{
+        "send_command_id": "00000000-0000-0000-0000-000000000204",
+        "status": "delivery_unknown",
+        "chatwoot_message_id": None,
+        "failure_code": "chatwoot_send_unconfirmed",
+        "now": supabase.finalize_calls[0]["now"],
+    }]
+
+
+def test_payment_link_reservation_mismatch_fails_closed_before_post(
+    tmp_path: Path,
+) -> None:
+    supabase = StubPaymentLinkSupabase(
+        reservation_url_override="https://pay.hotmart.com/WRONG?off=wrong&src=wrong",
+    )
+    chatwoot = StubChatwootClient(messages=[{
+        "id": 902,
+        "created_at": 1789164000,
+        "message_type": 0,
+        "private": False,
+        "content": "Mandame el link de pago",
+        "sender": {"type": "contact", "id": 20},
+    }])
+    app, raw_body = _payment_link_test_app(
+        tmp_path=tmp_path,
+        supabase=supabase,
+        chatwoot=chatwoot,
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(
+            raw_body,
+            secret="webhook-secret",
+            delivery="payment-link-reservation-mismatch",
+        ),
+    )
+    asyncio.run(app.state.chatwoot_worker.run_once())
+
+    assert response.status_code == 202
+    assert chatwoot.reply_calls == []
+    assert supabase.finalize_calls == [{
+        "send_command_id": "00000000-0000-0000-0000-000000000204",
+        "status": "delivery_unknown",
+        "chatwoot_message_id": None,
+        "failure_code": "payment_link_reservation_mismatch",
+        "now": supabase.finalize_calls[0]["now"],
+    }]
 
 
 def _cut_b_cached_reply_app(
