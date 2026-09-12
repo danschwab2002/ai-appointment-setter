@@ -181,7 +181,13 @@ const detail = await db.query(`
   )
 `);
 if (detail.rows.length !== 1
-    || detail.rows[0]?.case_data?.outcome !== 'ambiguous') {
+    || detail.rows[0]?.case_data?.outcome !== 'ambiguous'
+    || detail.rows[0]?.case_data?.identity?.normalized_email !== 'a@example.com'
+    || detail.rows[0]?.case_data?.identity?.normalized_phone !== '593999999999'
+    || detail.rows[0]?.case_data?.candidates?.[0]?.normalized_email !== 'a@example.com'
+    || detail.rows[0]?.case_data?.candidates?.[0]?.normalized_phone !== '593999999991'
+    || JSON.stringify(detail.rows[0]?.case_data).includes('victim@foreign.example')
+    || JSON.stringify(detail.rows[0]?.case_data).includes('12025554567')) {
   throw new Error(`exact detail diverged: ${JSON.stringify(detail.rows)}`);
 }
 const resolvedDetail = await db.query(`
@@ -258,5 +264,6 @@ if (!anonBlocked) throw new Error('anon executed operator read RPC');
 
 console.log('operator_correlation_review_read=OK');
 console.log('operator_correlation_review_pii_masking=OK');
+console.log('operator_correlation_private_identity=OK');
 console.log('operator_correlation_review_acl=OK');
 await db.close();

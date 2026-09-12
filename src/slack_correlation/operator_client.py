@@ -64,16 +64,39 @@ class OperatorBridgeClient:
         self._transport = transport
 
     async def get_case(self, case_id: str) -> dict[str, Any]:
-        """Fetch one unresolved case and prove its requested identity."""
+        """Fetch one private unresolved case and prove its requested identity."""
         case_id = _required_identifier(case_id, "case_id")
         response = await self._request(
             "GET",
-            f"/internal/operator/correlations/unresolved/{quote(case_id, safe='')}",
+            f"/internal/operator/correlations/unresolved/{quote(case_id, safe='')}/private-review",
             bearer=self._read_bearer,
         )
         payload = _json_object(response)
         case = payload.get("case")
         if not isinstance(case, dict) or case.get("case_id") != case_id:
+            raise OperatorBridgeProtocolError("operator_bridge_protocol_error")
+        return case
+
+    async def get_masked_case(self, case_id: str) -> dict[str, Any]:
+        """Fetch one exact case through the PII-masked list projection."""
+        case_id = _required_identifier(case_id, "case_id")
+        response = await self._request(
+            "GET",
+            "/internal/operator/correlations/unresolved",
+            bearer=self._read_bearer,
+            params={"limit": "1", "case_id": case_id},
+        )
+        payload = _json_object(response)
+        cases = payload.get("cases")
+        if payload.get("count") != 1 or not isinstance(cases, list) or len(cases) != 1:
+            raise OperatorBridgeProtocolError("operator_bridge_protocol_error")
+        case = cases[0]
+        if not isinstance(case, dict) or case.get("case_id") != case_id:
+            raise OperatorBridgeProtocolError("operator_bridge_protocol_error")
+        identity = case.get("identity")
+        if isinstance(identity, dict) and any(
+            key in identity for key in ("email", "phone", "normalized_email", "normalized_phone")
+        ):
             raise OperatorBridgeProtocolError("operator_bridge_protocol_error")
         return case
 
@@ -185,6 +208,7 @@ class OperatorBridgeClient:
         *,
         bearer: str,
         json: dict[str, object] | None = None,
+        params: dict[str, str] | None = None,
     ) -> httpx.Response:
         response: httpx.Response | None = None
         try:
@@ -195,7 +219,7 @@ class OperatorBridgeClient:
                 timeout=_TIMEOUT,
                 follow_redirects=False,
             ) as client:
-                response = await client.request(method, path, json=json)
+                response = await client.request(method, path, json=json, params=params)
         except httpx.HTTPError:
             pass
         if response is None:

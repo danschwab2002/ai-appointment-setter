@@ -33,7 +33,7 @@ class SlackUpdateOnly:
 
 
 class Operator:
-    async def get_case(self, case_id: str) -> dict:
+    async def get_masked_case(self, case_id: str) -> dict:
         assert case_id == CASE
         return {
             "case_id": CASE,
@@ -46,7 +46,7 @@ class Operator:
 
 
 class MultiCaseOperator:
-    async def get_case(self, case_id: str) -> dict:
+    async def get_masked_case(self, case_id: str) -> dict:
         return {
             "case_id": case_id,
             "outcome": "unmatched",

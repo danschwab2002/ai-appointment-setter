@@ -120,7 +120,31 @@ def _build_scope(value: object) -> dict[str, str] | None:
     }
 
 
-def _build_candidates(value: object) -> list[dict[str, object]]:
+def _private_identity(value: object) -> dict[str, str | None]:
+    if not isinstance(value, dict):
+        raise InvalidCorrelationEvidence("invalid_identity")
+    email = value.get("normalized_email")
+    phone = value.get("normalized_phone")
+    if email is not None and (
+        not isinstance(email, str)
+        or len(email) > 254
+        or email.count("@") != 1
+        or not all(email.partition("@")[::2])
+        or any(ord(character) < 32 or ord(character) == 127 for character in email)
+    ):
+        raise InvalidCorrelationEvidence("invalid_identity_email")
+    if phone is not None and (
+        not isinstance(phone, str)
+        or not 4 <= len(phone) <= 32
+        or not phone.isdigit()
+    ):
+        raise InvalidCorrelationEvidence("invalid_identity_phone")
+    return {"email": email, "phone": phone}
+
+
+def _build_candidates(
+    value: object, *, include_private_identity: bool
+) -> list[dict[str, object]]:
     if not isinstance(value, list):
         raise InvalidCorrelationEvidence("invalid_candidates")
     candidates: list[dict[str, object]] = []
@@ -138,7 +162,11 @@ def _build_candidates(value: object) -> list[dict[str, object]]:
             raise InvalidCorrelationEvidence("invalid_candidate_match")
         if not email_match and not phone_match:
             raise InvalidCorrelationEvidence("invalid_candidate_match")
-        masked = _masked_identity(raw_candidate)
+        identity = (
+            _private_identity(raw_candidate)
+            if include_private_identity
+            else _masked_identity(raw_candidate)
+        )
         candidates.append(
             {
                 "purchase_intent_id": candidate_id,
@@ -154,17 +182,20 @@ def _build_candidates(value: object) -> list[dict[str, object]]:
                 "lifecycle_state": _required_string(
                     raw_candidate, "lifecycle_state"
                 ),
-                "masked_email": masked["masked_email"],
-                "masked_phone": masked["masked_phone"],
+                **identity,
             }
         )
     return candidates
 
 
 def build_unresolved_correlation(
-    raw: dict[str, Any], *, include_candidates: bool
+    raw: dict[str, Any], *, include_candidates: bool,
+    include_private_identity: bool = False,
 ) -> dict[str, object]:
-    """Validate, explain and PII-minimize one durable unresolved correlation."""
+    """Validate and project one durable unresolved correlation."""
+    raw_identity = raw.get("identity")
+    if include_private_identity and not include_candidates:
+        raise InvalidCorrelationEvidence("private_identity_requires_exact_detail")
     outcome = raw.get("outcome")
     if outcome not in UNRESOLVED_OUTCOMES or raw.get("manual_handoff_required") is not True:
         raise InvalidCorrelationEvidence("not_unresolved")
@@ -179,7 +210,10 @@ def build_unresolved_correlation(
         or candidate_count < 0
     ):
         raise InvalidCorrelationEvidence("invalid_candidate_count")
-    candidates = _build_candidates(raw.get("candidates", []))
+    candidates = _build_candidates(
+        raw.get("candidates", []),
+        include_private_identity=include_private_identity,
+    )
     if len(candidates) > candidate_count:
         raise InvalidCorrelationEvidence("candidate_count_mismatch")
     if outcome == "unmatched" and candidate_count != 0:
@@ -199,7 +233,11 @@ def build_unresolved_correlation(
         "observed_at": _required_string(raw, "observed_at"),
         "automation_blocked": True,
         "scope": _build_scope(raw.get("scope")),
-        "identity": _masked_identity(raw.get("identity")),
+        "identity": (
+            _private_identity(raw_identity)
+            if include_private_identity
+            else _masked_identity(raw_identity)
+        ),
     }
     if include_candidates:
         result["candidates"] = candidates

@@ -93,7 +93,8 @@ La acción `review_operator_correlation`:
 2. ejecuta precheck local de Team ID, canal exclusivo, mensaje aceptado y usuario allowlisted;
 3. deriva el tenant y caso desde el binding durable, no desde el botón;
 4. admite atómicamente replay + sesión + job de apertura y responde `{}`;
-5. el worker relee el caso enmascarado y sus candidatos desde el bridge;
+5. el worker relee el detalle exacto del caso desde el bridge; la respuesta incluye
+   identidad completa sólo para construir el modal privado del operador;
 6. el worker marca request-start y abre el modal mediante `views.open`.
 
 La sesión expira y no puede transferirse a otro usuario, workspace, canal,
@@ -102,8 +103,10 @@ mensaje o tenant.
 ## 5. Decisión guiada, prepare y confirm
 
 El modal inicial formula una sola pregunta comercial: si la compra pertenece a
-una de las personas mostradas. Compara la identidad enmascarada de la compra con
-cada registro, marca qué señal coincide y ofrece exactamente tres resultados:
+una de las personas mostradas. Compara email y teléfono completos de la compra con
+cada registro, marca qué señal coincide y ofrece exactamente tres resultados. La
+tarjeta del canal continúa enmascarada; la identidad completa no se incluye en
+metadata, sesiones SQLite, logs ni mensajes persistentes de Slack:
 
 1. elegir una persona;
 2. declarar `Revisé los datos: no corresponde a ninguna`;

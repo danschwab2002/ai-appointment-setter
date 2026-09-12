@@ -42,7 +42,7 @@ def test_get_case_uses_read_bearer_and_validates_case_identity() -> None:
     assert len(requests) == 1
     assert requests[0].method == "GET"
     assert requests[0].url.path == (
-        f"/internal/operator/correlations/unresolved/{CASE_ID}"
+        f"/internal/operator/correlations/unresolved/{CASE_ID}/private-review"
     )
     assert requests[0].headers["Authorization"] == f"Bearer {READ_TOKEN}"
     assert requests[0].extensions["timeout"] == {
@@ -51,6 +51,40 @@ def test_get_case_uses_read_bearer_and_validates_case_identity() -> None:
         "write": 10.0,
         "pool": 5.0,
     }
+
+
+def test_get_masked_case_uses_filtered_list_endpoint() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "count": 1,
+                "cases": [
+                    {
+                        "case_id": CASE_ID,
+                        "identity": {"masked_email": "b***r@example.com"},
+                    }
+                ],
+            },
+            request=request,
+        )
+
+    client = OperatorBridgeClient(
+        base_url="https://bridge.example.test",
+        read_bearer=READ_TOKEN,
+        write_bearer=WRITE_TOKEN,
+        transport=httpx.MockTransport(handler),
+    )
+
+    case = asyncio.run(client.get_masked_case(CASE_ID))
+
+    assert case["identity"] == {"masked_email": "b***r@example.com"}
+    assert requests[0].url.path == "/internal/operator/correlations/unresolved"
+    assert dict(requests[0].url.params) == {"limit": "1", "case_id": CASE_ID}
+    assert requests[0].headers["Authorization"] == f"Bearer {READ_TOKEN}"
 
 
 def test_prepare_uses_write_bearer_and_returns_matching_command() -> None:

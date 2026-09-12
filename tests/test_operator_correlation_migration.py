@@ -12,6 +12,10 @@ CASEFOLD_MIGRATION = (
     Path(__file__).parents[1]
     / "supabase/migrations/20260828000100_operator_correlation_product_casefold.sql"
 )
+PRIVATE_IDENTITY_MIGRATION = (
+    Path(__file__).parents[1]
+    / "supabase/migrations/20260912000100_operator_correlation_private_identity.sql"
+)
 
 
 def _sql() -> str:
@@ -57,6 +61,26 @@ def test_operator_correlation_read_rpcs_are_service_role_only() -> None:
         for role in ("public", "anon", "authenticated"):
             assert f"revoke execute on function {signature} from {role}" in compact
         assert f"grant execute on function {signature} to service_role" in compact
+
+
+def test_exact_private_review_exposes_identity_without_widening_list_or_acl() -> None:
+    sql = PRIVATE_IDENTITY_MIGRATION.read_text(encoding="utf-8").lower()
+    compact = " ".join(sql.split())
+    signature = "public.get_operator_unresolved_correlation(text, text, uuid)"
+
+    assert "create or replace function public.get_operator_unresolved_correlation" in sql
+    assert "public.list_operator_unresolved_correlations" in sql
+    assert "'normalized_email', identity.normalized_email" in compact
+    assert "'normalized_phone', identity.normalized_phone" in compact
+    assert "intent.tenant_ref = scope.tenant_ref" in compact
+    assert "intent.funnel_ref = scope.funnel_ref" in compact
+    assert "lower(intent.product_ref) = lower(scope.purchase_intent_product_ref)" in compact
+    assert "intent.offer_ref = scope.offer_ref" in compact
+    for role in ("public", "anon", "authenticated"):
+        assert f"revoke execute on function {signature} from {role}" in compact
+    assert f"grant execute on function {signature} to service_role" in compact
+    for mutation in ("insert into", "update public.", "delete from"):
+        assert mutation not in compact
 
 
 def test_manual_resolution_is_separate_immutable_and_effect_free() -> None:

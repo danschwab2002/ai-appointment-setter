@@ -23,6 +23,8 @@ _MASKED_EMAIL = re.compile(
     r"^[A-Za-z0-9._+\-]*\*{3,}[A-Za-z0-9._+\-]*@[A-Za-z0-9.-]+\.[A-Za-z]{2,63}$"
 )
 _MASKED_PHONE = re.compile(r"^\*{4,}[0-9]{4}$")
+_PRIVATE_EMAIL = re.compile(r"^[^@\s]{1,64}@[A-Za-z0-9.-]+\.[A-Za-z]{2,63}$")
+_PRIVATE_PHONE = re.compile(r"^[0-9]{4,32}$")
 
 
 def _safe_masked(value: object, *, kind: str) -> str | None:
@@ -37,6 +39,37 @@ def _safe_masked(value: object, *, kind: str) -> str | None:
     ):
         raise InvalidSlackCorrelationCase(f"invalid_masked_{kind}")
     return value
+
+
+def _safe_private(value: object, *, kind: str) -> str | None:
+    if value is None:
+        return None
+    pattern = _PRIVATE_EMAIL if kind == "email" else _PRIVATE_PHONE
+    if (
+        not isinstance(value, str)
+        or pattern.fullmatch(value) is None
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+        or any(character in value for character in "`<>&")
+    ):
+        raise InvalidSlackCorrelationCase(f"invalid_private_{kind}")
+    return value
+
+
+def _private_identity(case: dict[str, object]) -> tuple[str | None, str | None]:
+    identity = case.get("identity")
+    if not isinstance(identity, dict) or set(identity) != {"email", "phone"}:
+        raise InvalidSlackCorrelationCase("invalid_private_identity")
+    return (
+        _safe_private(identity.get("email"), kind="email"),
+        _safe_private(identity.get("phone"), kind="phone"),
+    )
+
+
+def _review_identity(case: dict[str, object]) -> tuple[str | None, str | None]:
+    identity = case.get("identity")
+    if isinstance(identity, dict) and set(identity) == {"email", "phone"}:
+        return _private_identity(case)
+    return _masked_identity(case)
 
 
 def _case_id(case: dict[str, object]) -> str:
@@ -198,7 +231,7 @@ def build_review_modal(
     ):
         raise InvalidSlackCorrelationCase("incomplete_candidate_snapshot")
 
-    observed_email, observed_phone = _masked_identity(case)
+    observed_email, observed_phone = _review_identity(case)
     observed_lines = [
         "*Compra recibida*",
         f"Email: `{observed_email}`" if observed_email is not None else "Email: no disponible",
@@ -219,11 +252,17 @@ def build_review_modal(
             raise InvalidSlackCorrelationCase("invalid_candidate_id") from exc
         if candidate.get("lifecycle_state") != "waiting_for_purchase":
             raise InvalidSlackCorrelationCase("ineligible_candidate")
-        if "normalized_email" in candidate or "normalized_phone" in candidate:
+        if set(candidate).intersection({"normalized_email", "normalized_phone"}):
             raise InvalidSlackCorrelationCase("invalid_candidate_identity")
         try:
-            email = _safe_masked(candidate.get("masked_email"), kind="email")
-            phone = _safe_masked(candidate.get("masked_phone"), kind="phone")
+            if "email" in candidate or "phone" in candidate:
+                if "masked_email" in candidate or "masked_phone" in candidate:
+                    raise InvalidSlackCorrelationCase("invalid_candidate_identity")
+                email = _safe_private(candidate.get("email"), kind="email")
+                phone = _safe_private(candidate.get("phone"), kind="phone")
+            else:
+                email = _safe_masked(candidate.get("masked_email"), kind="email")
+                phone = _safe_masked(candidate.get("masked_phone"), kind="phone")
         except InvalidSlackCorrelationCase:
             raise InvalidSlackCorrelationCase("invalid_candidate_identity") from None
         matched_by = candidate.get("matched_by")
