@@ -2209,10 +2209,20 @@ class SupabaseClient:
         tenant_ref: str,
         funnel_ref: str,
         limit: int = 20,
+        webhook_event_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Read unresolved correlation evidence without creating any effect."""
+        """Read masked unresolved correlation evidence without creating an effect."""
         if isinstance(limit, bool) or limit < 1 or limit > 50:
             raise ValueError("limit must be between 1 and 50")
+        expected_event_id = (
+            _required_uuid(
+                {"webhook_event_id": webhook_event_id},
+                "webhook_event_id",
+                operation="operator_unresolved_correlation_list",
+            )
+            if webhook_event_id is not None
+            else None
+        )
         tenant = _required_string(
             {"tenant_ref": tenant_ref},
             "tenant_ref",
@@ -2230,7 +2240,7 @@ class SupabaseClient:
                 "p_tenant_ref": tenant,
                 "p_funnel_ref": funnel,
                 "p_limit": limit,
-                "p_webhook_event_id": None,
+                "p_webhook_event_id": expected_event_id,
             },
         )
 

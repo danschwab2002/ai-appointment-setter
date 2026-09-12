@@ -1,7 +1,7 @@
 # Consulta de correlaciones pendientes para operadores — V1
 
 - **Estado:** Implementado; activación runtime default-off
-- **Versión:** `1.0.0`
+- **Versión:** `1.1.0`
 - **Ámbito:** lectura bajo demanda de `unmatched`, `ambiguous` y `conflict`
 - **Efectos externos:** ninguno
 
@@ -14,7 +14,7 @@ operador pregunta
   -> tool Hermes read-only
   -> endpoint interno autenticado del bridge
   -> RPC SECURITY DEFINER acotada por tenant + funnel
-  -> proyección ya enmascarada
+  -> lista enmascarada o detalle exacto privado
   -> explicación al operador
 ```
 
@@ -77,7 +77,9 @@ El bridge registra los endpoints sólo cuando `OPERATOR_CORRELATION_READ_ENABLED
 
 ```text
 GET /internal/operator/correlations/unresolved?limit=20
+GET /internal/operator/correlations/unresolved?limit=1&case_id={case_id}
 GET /internal/operator/correlations/unresolved/{case_id}
+GET /internal/operator/correlations/unresolved/{case_id}/private-review
 Authorization: Bearer <OPERATOR_CORRELATION_READ_TOKEN>
 ```
 
@@ -125,7 +127,14 @@ Sin habilitación, las rutas no existen (`404`). Bearer ausente o distinto devue
 }
 ```
 
-La lista no incluye candidatos individuales. El detalle agrega `candidates` con `purchase_intent_id`, `matched_by`, `submitted_at`, `lifecycle_state` e identidad enmascarada.
+La lista no incluye candidatos individuales y conserva identidad enmascarada. El
+filtro opcional `case_id` usa esa misma proyección enmascarada para actualizar la
+tarjeta pública sin transportar identidad completa. Tanto el filtro como el detalle
+exacto normal mantienen la proyección enmascarada para backfill y Client Copilot. Sólo
+el path `/private-review` agrega `candidates` con `purchase_intent_id`, `matched_by`,
+`submitted_at`, `lifecycle_state`, email y teléfono completos. Esa respuesta está
+destinada exclusivamente al modal privado de revisión y mantiene el scope exacto
+por tenant, funnel, producto y oferta.
 
 ## 5. Razones explicadas
 
@@ -140,12 +149,17 @@ Un reason code desconocido hace fallar la lectura cerrada; el Copilot no improvi
 
 ## 6. Minimización de PII
 
-Email y teléfono se enmascaran dentro de PostgreSQL. El bridge recibe únicamente `masked_email`, `masked_phone` y flags de presencia. El validador Python rechaza cualquier respuesta que contenga `normalized_email` o `normalized_phone`.
+La RPC de lista enmascara email y teléfono dentro de PostgreSQL. La RPC de detalle
+exacto entrega `normalized_email` y `normalized_phone` al bridge autenticado; el
+bridge los valida y los renombra como `email` y `phone` para construir el modal
+privado. La identidad completa no se devuelve en la lista, no se registra en logs
+y no se incorpora a metadata, replay ni sesiones locales del conector.
 
 Los local-parts de email de uno o dos caracteres se reemplazan completamente por
 `***`; no se conserva el único carácter real ni ambos caracteres completos.
 
-No se incluyen nombre, payload Hotmart, JID, teléfono completo, email completo, dirección, tokens ni secretos.
+No se incluyen payload Hotmart, JID, dirección, tokens ni secretos. Email y
+teléfono completos sólo aparecen en el detalle exacto privado.
 
 ## 7. Superficie de lectura del Client Copilot
 

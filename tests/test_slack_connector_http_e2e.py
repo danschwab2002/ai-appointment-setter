@@ -80,14 +80,14 @@ class _BridgeCorrelationStore:
             "observed_at": "2026-09-10T00:00:00+00:00",
             "scope": {"tenant_ref": "lancemos", "funnel_ref": "psicologajohanna",
                       "product_ref": "f106691755g", "offer_ref": "bxjge6zq"},
-            "identity": {"email_present": True, "phone_present": True,
-                         "masked_email": "b***r@example.com", "masked_phone": "********4567"},
+            "identity": {"normalized_email": "buyer@example.com",
+                         "normalized_phone": "593991234567"},
             "candidates": [{"purchase_intent_id": self.candidate_id,
                             "email_match": True, "phone_match": True,
                             "submitted_at": "2026-09-10T00:00:00+00:00",
                             "lifecycle_state": "waiting_for_purchase",
-                            "masked_email": "b***r@example.com",
-                            "masked_phone": "********4567"}],
+                            "normalized_email": "buyer@example.com",
+                            "normalized_phone": "593991234567"}],
         }
 
     async def prepare_operator_correlation_resolution(self, **kwargs):
@@ -328,7 +328,11 @@ def test_interaction_crosses_connector_bridge_and_slack_simulator(tmp_path: Path
             assert isinstance(opened_view, dict)
             token = json.loads(opened_view["private_metadata"])["review_token"]
             assert opened_view["callback_id"] == "select_operator_correlation_resolution"
-            assert "¿Esta compra pertenece a esta persona?" in repr(opened_view)
+            rendered_opened_view = repr(opened_view)
+            assert "¿Esta compra pertenece a esta persona?" in rendered_opened_view
+            assert "buyer@example.com" in rendered_opened_view
+            assert "593991234567" in rendered_opened_view
+            assert "***" not in rendered_opened_view
             selected = _signed_interaction(client, secret, {
                 "type": "view_submission", "team": {"id": "T12345678"},
                 "user": {"id": "U12345678"},

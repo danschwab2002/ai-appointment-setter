@@ -148,6 +148,43 @@ def test_review_modal_asks_one_plain_language_question_with_three_safe_outcomes(
     assert "Evidencia utilizada" not in rendered
 
 
+def test_private_review_modal_shows_complete_purchase_and_candidate_identity() -> None:
+    case = _case()
+    case["candidate_count"] = 1
+    case["identity"] = {
+        "email": "buyer@example.com",
+        "phone": "593991234567",
+    }
+    case["candidates"] = [{
+        "purchase_intent_id": "22222222-2222-4222-8222-222222222222",
+        "matched_by": ["email"],
+        "submitted_at": "2026-09-06T14:00:00Z",
+        "lifecycle_state": "waiting_for_purchase",
+        "email": "buyer@example.com",
+        "phone": "593999999999",
+    }]
+
+    modal = build_review_modal(
+        case, review_token="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    )
+
+    rendered = repr(modal)
+    assert "buyer@example.com" in rendered
+    assert "593991234567" in rendered
+    assert "593999999999" in rendered
+    assert "***" not in rendered
+
+
+@pytest.mark.parametrize("value", ["buyer@example.com\n<!channel>", "buyer@exam`ple.com", "59399<1234"])
+def test_private_review_modal_rejects_unsafe_complete_identity(value: str) -> None:
+    case = _case()
+    case["outcome"] = "unmatched"
+    case["candidate_count"] = 0
+    case["identity"] = {"email": value, "phone": "593991234567"}
+    with pytest.raises(ValueError, match="invalid_private_email"):
+        build_review_modal(case, review_token="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+
+
 def test_single_candidate_modal_asks_if_purchase_belongs_to_this_person() -> None:
     case = _case()
     case["candidate_count"] = 1

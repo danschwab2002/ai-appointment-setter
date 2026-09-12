@@ -3209,6 +3209,7 @@ def create_app(
         @app.get("/internal/operator/correlations/unresolved")
         async def list_unresolved_correlations(
             limit: int = 20,
+            case_id: str | None = None,
             authorization: str | None = Header(default=None, alias="Authorization"),
         ) -> dict[str, object]:
             require_operator_token(authorization)
@@ -3217,12 +3218,22 @@ def create_app(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="limit_out_of_range",
                 )
+            normalized_case_id: str | None = None
+            if case_id is not None:
+                try:
+                    normalized_case_id = str(uuid.UUID(case_id))
+                except ValueError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="invalid_case_id",
+                    ) from exc
             try:
                 raw_rows = (
                     await shared_supabase.list_unresolved_purchase_intent_correlations(
                         tenant_ref=operator_tenant,
                         funnel_ref=operator_funnel,
-                        limit=limit
+                        limit=limit,
+                        webhook_event_id=normalized_case_id,
                     )
                 )
                 cases = [
@@ -3241,7 +3252,50 @@ def create_app(
             return {"count": len(cases), "cases": cases}
 
         @app.get("/internal/operator/correlations/unresolved/{case_id}")
-        async def get_unresolved_correlation(
+        async def get_masked_unresolved_correlation(
+            case_id: str,
+            authorization: str | None = Header(default=None, alias="Authorization"),
+        ) -> dict[str, object]:
+            require_operator_token(authorization)
+            try:
+                normalized_case_id = str(uuid.UUID(case_id))
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="invalid_case_id",
+                ) from exc
+            try:
+                raw_rows = await shared_supabase.list_unresolved_purchase_intent_correlations(
+                    tenant_ref=operator_tenant,
+                    funnel_ref=operator_funnel,
+                    limit=1,
+                    webhook_event_id=normalized_case_id,
+                )
+                if len(raw_rows) != 1:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="unresolved_correlation_not_found",
+                    )
+                case = build_unresolved_correlation(
+                    raw_rows[0], include_candidates=False
+                )
+            except HTTPException:
+                raise
+            except (SupabaseError, InvalidCorrelationEvidence) as exc:
+                logger.warning(
+                    "operator_correlation_masked_get_failed error_type=%s",
+                    type(exc).__name__,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="operator_correlation_read_unavailable",
+                ) from exc
+            return {"case": case}
+
+        @app.get(
+            "/internal/operator/correlations/unresolved/{case_id}/private-review"
+        )
+        async def get_private_unresolved_correlation(
             case_id: str,
             authorization: str | None = Header(default=None, alias="Authorization"),
         ) -> dict[str, object]:
@@ -3257,19 +3311,28 @@ def create_app(
                 raw = await shared_supabase.get_unresolved_purchase_intent_correlation(
                     tenant_ref=operator_tenant,
                     funnel_ref=operator_funnel,
-                    webhook_event_id=normalized_case_id
+                    webhook_event_id=normalized_case_id,
                 )
                 if raw is None:
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="unresolved_correlation_not_found",
                     )
-                case = build_unresolved_correlation(raw, include_candidates=True)
+                raw_identity = raw.get("identity")
+                has_private_identity = isinstance(raw_identity, dict) and (
+                    "normalized_email" in raw_identity
+                    or "normalized_phone" in raw_identity
+                )
+                case = build_unresolved_correlation(
+                    raw,
+                    include_candidates=True,
+                    include_private_identity=has_private_identity,
+                )
             except HTTPException:
                 raise
             except (SupabaseError, InvalidCorrelationEvidence) as exc:
                 logger.warning(
-                    "operator_correlation_get_failed error_type=%s",
+                    "operator_correlation_private_get_failed error_type=%s",
                     type(exc).__name__,
                 )
                 raise HTTPException(

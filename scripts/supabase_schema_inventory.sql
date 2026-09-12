@@ -2836,6 +2836,50 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         5,
         'payment_link_exact_binding_rpc_only_authority'
+    union all
+    select
+        '20260912000100',
+        '20260912000100_operator_correlation_private_identity.sql',
+        exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.get_operator_unresolved_correlation(text,text,uuid)'
+            )
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.get_operator_unresolved_correlation(text,text,uuid)'
+            )
+              and position('''normalized_email'', identity.normalized_email' in definition) > 0
+              and position('''normalized_phone'', identity.normalized_phone' in definition) > 0
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.get_operator_unresolved_correlation(text,text,uuid)'
+            )
+              and position('intent.tenant_ref = scope.tenant_ref' in definition) > 0
+              and position('intent.funnel_ref = scope.funnel_ref' in definition) > 0
+              and position(
+                  'lower(intent.product_ref) = lower(scope.purchase_intent_product_ref)'
+                  in definition
+              ) > 0
+              and position('intent.offer_ref = scope.offer_ref' in definition) > 0
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.get_operator_unresolved_correlation(text,text,uuid)'
+            )
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        4,
+        'operator_correlation_exact_private_identity_service_role_only'
 )
 select
     version,

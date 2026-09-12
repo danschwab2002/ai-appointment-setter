@@ -1010,7 +1010,7 @@ def create_app(
             return JSONResponse(status_code=200, content={"status": "idle"})
         request_started = False
         try:
-            case = await operator.get_case(binding.case_id)
+            case = await operator.get_masked_case(binding.case_id)
             if case.get("case_id") != binding.case_id:
                 raise ValueError("case_identity_mismatch")
             message = build_pending_message(case, review_due_at=binding.review_due_at)

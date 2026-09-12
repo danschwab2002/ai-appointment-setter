@@ -102,6 +102,24 @@ def test_daily_feedback_multi_reviewer_fingerprint_covers_batch_authority() -> N
     assert "notification_state=''delivery_unknown''" in fingerprint
 
 
+def test_operator_correlation_private_identity_fingerprint_covers_exact_rpc_acl() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    fingerprint = sql.split("'20260912000100'", 1)[1].split(")\nselect", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", fingerprint)
+
+    signature = "public.get_operator_unresolved_correlation(text,text,uuid)"
+    assert signature in compact_fingerprint
+    assert "'''normalized_email'',identity.normalized_email" in compact_fingerprint
+    assert "'''normalized_phone'',identity.normalized_phone" in compact_fingerprint
+    assert "intent.tenant_ref=scope.tenant_ref" in compact_fingerprint
+    assert "intent.funnel_ref=scope.funnel_ref" in compact_fingerprint
+    assert "lower(intent.product_ref)=lower(scope.purchase_intent_product_ref)" in compact_fingerprint
+    assert "intent.offer_ref=scope.offer_ref" in compact_fingerprint
+    assert "has_function_privilege('service_role',oid,'EXECUTE')" in compact_fingerprint
+    assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint
+    assert "nothas_function_privilege('authenticated',oid,'EXECUTE')" in compact_fingerprint
+
+
 def test_absolute_deadline_fingerprint_checks_semantics_and_rejects_chaining() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
 

@@ -122,7 +122,7 @@ def test_non_handoff_correlation_cannot_be_presented_as_unresolved() -> None:
         )
 
 
-def test_raw_identity_from_rpc_is_rejected_fail_closed() -> None:
+def test_raw_identity_is_rejected_outside_exact_private_review() -> None:
     raw = _raw_conflict()
     raw["identity"] = {
         "normalized_email": "buyer@example.com",
@@ -130,7 +130,34 @@ def test_raw_identity_from_rpc_is_rejected_fail_closed() -> None:
     }
 
     with pytest.raises(InvalidCorrelationEvidence, match="contains_raw_identity"):
+        build_unresolved_correlation(raw, include_candidates=False)
+    with pytest.raises(InvalidCorrelationEvidence, match="contains_raw_identity"):
         build_unresolved_correlation(raw, include_candidates=True)
+
+
+def test_exact_private_review_projects_complete_identity() -> None:
+    raw = _raw_conflict()
+    raw["identity"] = {
+        "normalized_email": "buyer@example.com",
+        "normalized_phone": "593991234567",
+    }
+    raw["candidates"][0].update({
+        "normalized_email": "buyer@example.com",
+        "normalized_phone": "593999999999",
+    })
+
+    result = build_unresolved_correlation(
+        raw, include_candidates=True, include_private_identity=True
+    )
+
+    assert result["identity"] == {
+        "email": "buyer@example.com",
+        "phone": "593991234567",
+    }
+    assert result["candidates"][0]["email"] == "buyer@example.com"
+    assert result["candidates"][0]["phone"] == "593999999999"
+    assert "masked_email" not in result["identity"]
+    assert "masked_phone" not in result["candidates"][0]
 
 
 def test_supabase_reader_lists_only_unresolved_rows_with_read_only_requests() -> None:
@@ -169,6 +196,36 @@ def test_supabase_reader_lists_only_unresolved_rows_with_read_only_requests() ->
             },
         )
     ]
+
+
+def test_supabase_reader_filters_masked_list_by_exact_case_id() -> None:
+    case_id = "11111111-1111-4111-8111-111111111111"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert json.loads(request.content) == {
+            "p_tenant_ref": "lancemos",
+            "p_funnel_ref": "psicologajohanna",
+            "p_limit": 1,
+            "p_webhook_event_id": case_id,
+        }
+        return httpx.Response(200, json=[{"case_data": _raw_conflict()}])
+
+    client = SupabaseClient(
+        base_url="https://example.supabase.co",
+        service_role_key="secret",
+        transport=httpx.MockTransport(handler),
+    )
+
+    rows = asyncio.run(
+        client.list_unresolved_purchase_intent_correlations(
+            tenant_ref="lancemos",
+            funnel_ref="psicologajohanna",
+            limit=1,
+            webhook_event_id=case_id,
+        )
+    )
+
+    assert rows == [_raw_conflict()]
 
 
 def test_supabase_reader_gets_one_unresolved_case_by_exact_id() -> None:
@@ -240,12 +297,23 @@ def _raw_conflict() -> dict[str, object]:
 
 
 class _FakeCorrelationReader:
+    def __init__(self, *, private_identity: bool = True) -> None:
+        self.private_identity = private_identity
+
     async def list_unresolved_purchase_intent_correlations(
-        self, *, tenant_ref: str, funnel_ref: str, limit: int = 20
+        self,
+        *,
+        tenant_ref: str,
+        funnel_ref: str,
+        limit: int = 20,
+        webhook_event_id: str | None = None,
     ) -> list[dict[str, object]]:
         assert tenant_ref == "lancemos"
         assert funnel_ref == "psicologajohanna"
-        assert limit == 20
+        assert (limit, webhook_event_id) in {
+            (20, None),
+            (1, _raw_conflict()["webhook_event_id"]),
+        }
         return [_raw_conflict()]
 
     async def get_unresolved_purchase_intent_correlation(
@@ -254,11 +322,24 @@ class _FakeCorrelationReader:
         assert tenant_ref == "lancemos"
         assert funnel_ref == "psicologajohanna"
         if webhook_event_id == _raw_conflict()["webhook_event_id"]:
-            return _raw_conflict()
+            raw = _raw_conflict()
+            if not self.private_identity:
+                return raw
+            raw["identity"] = {
+                "normalized_email": "buyer@example.com",
+                "normalized_phone": "593991234567",
+            }
+            raw["candidates"][0].update({
+                "normalized_email": "buyer@example.com",
+                "normalized_phone": "593999999999",
+            })
+            return raw
         return None
 
 
-def _operator_app(*, enabled: bool = True) -> TestClient:
+def _operator_app(
+    *, enabled: bool = True, reader: _FakeCorrelationReader | None = None
+) -> TestClient:
     settings = Settings(
         webhook_secret="unused",
         allowed_jid="593999999999@s.whatsapp.net",
@@ -274,7 +355,7 @@ def _operator_app(*, enabled: bool = True) -> TestClient:
     return TestClient(
         create_app(
             settings,
-            supabase_client=_FakeCorrelationReader(),  # type: ignore[arg-type]
+            supabase_client=reader or _FakeCorrelationReader(),  # type: ignore[arg-type]
         )
     )
 
@@ -295,6 +376,50 @@ def test_operator_endpoint_lists_masked_unresolved_cases() -> None:
     assert "593991234567" not in rendered
 
 
+def test_operator_endpoint_gets_exact_case_from_masked_list_projection() -> None:
+    case_id = "11111111-1111-4111-8111-111111111111"
+    with _operator_app() as client:
+        response = client.get(
+            "/internal/operator/correlations/unresolved",
+            params={"limit": 1, "case_id": case_id},
+            headers={"Authorization": f"Bearer {'t' * 32}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["count"] == 1
+    case = response.json()["cases"][0]
+    assert case["case_id"] == case_id
+    assert case["identity"] == {
+        "email_present": True,
+        "phone_present": True,
+        "masked_email": "b***r@example.com",
+        "masked_phone": "********4567",
+    }
+    assert "buyer@example.com" not in response.text
+    assert "593991234567" not in response.text
+
+
+def test_operator_exact_public_endpoint_stays_masked() -> None:
+    case_id = "11111111-1111-4111-8111-111111111111"
+    with _operator_app() as client:
+        response = client.get(
+            f"/internal/operator/correlations/unresolved/{case_id}",
+            headers={"Authorization": f"Bearer {'t' * 32}"},
+        )
+
+    assert response.status_code == 200
+    case = response.json()["case"]
+    assert case["identity"] == {
+        "email_present": True,
+        "phone_present": True,
+        "masked_email": "b***r@example.com",
+        "masked_phone": "********4567",
+    }
+    assert "candidates" not in case
+    assert "buyer@example.com" not in response.text
+    assert "593991234567" not in response.text
+
+
 def test_operator_endpoint_is_default_off_and_requires_its_own_bearer() -> None:
     with _operator_app(enabled=False) as disabled_client:
         disabled = disabled_client.get(
@@ -313,16 +438,16 @@ def test_operator_endpoint_is_default_off_and_requires_its_own_bearer() -> None:
     assert missing.headers["www-authenticate"] == "Bearer"
 
 
-def test_operator_endpoint_gets_exact_case_with_masked_candidates() -> None:
+def test_operator_endpoint_gets_exact_case_with_complete_private_identity() -> None:
     case_id = "11111111-1111-4111-8111-111111111111"
     with _operator_app() as client:
         response = client.get(
-            f"/internal/operator/correlations/unresolved/{case_id}",
+            f"/internal/operator/correlations/unresolved/{case_id}/private-review",
             headers={"Authorization": f"Bearer {'t' * 32}"},
         )
         missing = client.get(
             "/internal/operator/correlations/unresolved/"
-            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999/private-review",
             headers={"Authorization": f"Bearer {'t' * 32}"},
         )
 
@@ -335,8 +460,32 @@ def test_operator_endpoint_gets_exact_case_with_masked_candidates() -> None:
             "matched_by": ["email"],
             "submitted_at": "2026-08-24T09:00:00+00:00",
             "lifecycle_state": "waiting_for_purchase",
-            "masked_email": "b***r@example.com",
-            "masked_phone": "********9999",
+            "email": "buyer@example.com",
+            "phone": "593999999999",
         }
     ]
+    assert case["identity"] == {
+        "email": "buyer@example.com",
+        "phone": "593991234567",
+    }
     assert missing.status_code == 404
+
+
+def test_private_exact_endpoint_remains_compatible_before_expand_migration() -> None:
+    case_id = "11111111-1111-4111-8111-111111111111"
+    with _operator_app(reader=_FakeCorrelationReader(private_identity=False)) as client:
+        response = client.get(
+            f"/internal/operator/correlations/unresolved/{case_id}/private-review",
+            headers={"Authorization": f"Bearer {'t' * 32}"},
+        )
+
+    assert response.status_code == 200
+    case = response.json()["case"]
+    assert case["identity"] == {
+        "email_present": True,
+        "phone_present": True,
+        "masked_email": "b***r@example.com",
+        "masked_phone": "********4567",
+    }
+    assert "buyer@example.com" not in response.text
+    assert "593991234567" not in response.text
