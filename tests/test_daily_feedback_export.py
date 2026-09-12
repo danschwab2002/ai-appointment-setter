@@ -322,14 +322,15 @@ def test_collects_all_short_message_pages_until_observable_empty_page() -> None:
                 200,
                 json={
                     "data": {
-                        "meta": {"all_count": 1, "current_page": 1},
+                        "meta": {"all_count": 1},
                         "payload": [
                             {
                                 "id": 501,
                                 "inbox_id": 77,
                                 "status": "resolved",
-                                "updated_at": int(
+                                "updated_at": (
                                     datetime(2026, 9, 9, 22, tzinfo=UTC).timestamp()
+                                    + 0.125
                                 ),
                                 "meta": {
                                     "assignee": {
@@ -403,6 +404,54 @@ def test_collects_all_short_message_pages_until_observable_empty_page() -> None:
         "prospect",
         "agent",
     ]
+
+
+@pytest.mark.parametrize(
+    "updated_at",
+    [None, True, "1", 0, -1.0, float("nan"), float("inf")],
+)
+def test_rejects_invalid_chatwoot_conversation_updated_at(
+    updated_at: object,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if not request.url.path.endswith("/conversations"):
+            raise AssertionError("message collection must not start")
+        return httpx.Response(
+            200,
+            content=json.dumps(
+                {
+                    "data": {
+                        "meta": {"all_count": 1},
+                        "payload": [
+                            {"id": 501, "inbox_id": 77, "updated_at": updated_at}
+                        ],
+                    }
+                }
+            ).encode("utf-8"),
+            headers={"content-type": "application/json"},
+        )
+
+    collector = ChatwootDailyCollector(
+        base_url="https://chatwoot.example.test",
+        account_id=44,
+        inbox_id=77,
+        agent_bot_id=19,
+        access_token="not-a-real-token",
+        pseudonymization_key=b"k" * 32,
+        security_policy=_security_policy(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(
+        ConversationCollectionError,
+        match="chatwoot_conversation_scope_mismatch",
+    ):
+        collector.collect(
+            tenant_ref="tenant-johanna",
+            scope_ref="scope-libre-ansiedad",
+            window_start=datetime(2026, 9, 9, tzinfo=UTC),
+            window_end=datetime(2026, 9, 10, tzinfo=UTC),
+        )
 
 
 def test_real_collection_verifies_canonical_inbox_and_bound_agent_bot_without_reading_conversations() -> None:
@@ -705,6 +754,85 @@ def test_collects_sanitizes_and_writes_offline_review_bundle(tmp_path: Path) -> 
         "/api/v1/accounts/7/conversations/71/messages",
         "/api/v1/accounts/7/conversations/71/messages",
     ]
+
+
+def test_accepts_chatwoot_multipage_metadata_without_current_page() -> None:
+    requested_pages: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = int(request.url.params["page"])
+        requested_pages.append(page)
+        start = 1 if page == 1 else 26
+        stop = 26 if page == 1 else 48
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "payload": [
+                        {"id": conversation_id, "inbox_id": 11}
+                        for conversation_id in range(start, stop)
+                    ],
+                    "meta": {"all_count": 47},
+                }
+            },
+        )
+
+    collector = ChatwootDailyCollector(
+        base_url="https://chatwoot.invalid",
+        account_id=7,
+        inbox_id=11,
+        agent_bot_id=19,
+        access_token="token",
+        pseudonymization_key=b"k" * 32,
+        security_policy=_security_policy(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    with httpx.Client(
+        base_url="https://chatwoot.invalid",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        conversations = collector._list_conversations(client)
+
+    assert requested_pages == [1, 2]
+    assert len(conversations) == 47
+
+
+@pytest.mark.parametrize("current_page", [None, 0, "1", True])
+def test_rejects_invalid_current_page_when_chatwoot_returns_it(
+    current_page: object,
+) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "payload": [{"id": 71, "inbox_id": 11}],
+                    "meta": {"current_page": current_page, "all_count": 1},
+                }
+            },
+        )
+
+    collector = ChatwootDailyCollector(
+        base_url="https://chatwoot.invalid",
+        account_id=7,
+        inbox_id=11,
+        agent_bot_id=19,
+        access_token="token",
+        pseudonymization_key=b"k" * 32,
+        security_policy=_security_policy(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    with httpx.Client(
+        base_url="https://chatwoot.invalid",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        with pytest.raises(
+            ConversationCollectionError,
+            match="invalid_chatwoot_conversation_list",
+        ):
+            collector._list_conversations(client)
 
 
 def test_fails_closed_when_chatwoot_list_coverage_is_incomplete() -> None:

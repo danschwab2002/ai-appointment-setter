@@ -42,6 +42,43 @@ class SlackIdentity:
     user_id: str
 
 
+_SAFE_OIDC_ERROR_REFERENCES = frozenset(
+    {
+        "OIDC-IDENTITY-PAYLOAD",
+        "OIDC-PROVIDER-TRANSPORT",
+        "OIDC-TOKEN-BAD-CLIENT-SECRET",
+        "OIDC-TOKEN-BAD-REDIRECT-URI",
+        "OIDC-TOKEN-INVALID-CLIENT",
+        "OIDC-TOKEN-INVALID-CLIENT-ID",
+        "OIDC-TOKEN-INVALID-CODE",
+        "OIDC-TOKEN-INVALID-GRANT",
+        "OIDC-TOKEN-PAYLOAD",
+        "OIDC-TOKEN-REJECTED",
+        "OIDC-USERINFO-REJECTED",
+    }
+)
+
+
+def _canonical_oidc_error_reference(value: object) -> str | None:
+    if type(value) is not str:
+        return None
+    for canonical in _SAFE_OIDC_ERROR_REFERENCES:
+        if value == canonical:
+            return canonical
+    return None
+
+
+class SlackOpenIdError(ValueError):
+    """Sanitized Slack OpenID failure safe to expose as an operator reference."""
+
+    def __init__(self, reference: str) -> None:
+        canonical = _canonical_oidc_error_reference(reference)
+        if canonical is None:
+            raise ValueError("invalid_slack_oidc_error_reference")
+        super().__init__(canonical)
+        self.reference = canonical
+
+
 @dataclass(frozen=True)
 class DailyFeedbackWebSettings:
     public_origin: str
@@ -555,7 +592,10 @@ def create_daily_feedback_review_app(service: DailyFeedbackService) -> FastAPI:
             or not hmac.compare_digest(state, cookie_state)
             or not code
         ):
-            return HTMLResponse(_error_page("Autenticación inválida."), status_code=401)
+            return HTMLResponse(
+                _error_page("Autenticación inválida. Referencia: OIDC-STATE."),
+                status_code=401,
+            )
         redirect_uri = (
             service.settings.public_origin.rstrip("/")
             + "/daily-feedback/auth/slack/callback"
@@ -565,8 +605,17 @@ def create_daily_feedback_review_app(service: DailyFeedbackService) -> FastAPI:
                 code=code,
                 redirect_uri=redirect_uri,
             )
+        except SlackOpenIdError as exc:
+            reference = _canonical_oidc_error_reference(exc.reference) or "OIDC-UNEXPECTED"
+            return HTMLResponse(
+                _error_page(f"Autenticación inválida. Referencia: {reference}."),
+                status_code=401,
+            )
         except Exception:
-            return HTMLResponse(_error_page("Autenticación inválida."), status_code=401)
+            return HTMLResponse(
+                _error_page("Autenticación inválida. Referencia: OIDC-UNEXPECTED."),
+                status_code=401,
+            )
         if identity.team_id != service.settings.slack_team_id:
             return HTMLResponse(_error_page("Revisor no autorizado."), status_code=403)
         session_secret = secrets.token_urlsafe(32)
@@ -669,6 +718,15 @@ def create_daily_feedback_review_app(service: DailyFeedbackService) -> FastAPI:
 
 
 class SlackOpenIdClient:
+    _TOKEN_ERRORS = {
+        "bad_client_secret": "OIDC-TOKEN-BAD-CLIENT-SECRET",
+        "bad_redirect_uri": "OIDC-TOKEN-BAD-REDIRECT-URI",
+        "invalid_client": "OIDC-TOKEN-INVALID-CLIENT",
+        "invalid_client_id": "OIDC-TOKEN-INVALID-CLIENT-ID",
+        "invalid_code": "OIDC-TOKEN-INVALID-CODE",
+        "invalid_grant": "OIDC-TOKEN-INVALID-GRANT",
+    }
+
     def __init__(
         self,
         *,
@@ -694,34 +752,49 @@ class SlackOpenIdClient:
         )
 
     async def authenticate(self, *, code: str, redirect_uri: str) -> SlackIdentity:
-        async with httpx.AsyncClient(
-            base_url="https://slack.com",
-            transport=self._transport,
-            timeout=15,
-        ) as client:
-            token_response = await client.post(
-                "/api/openid.connect.token",
-                data={
-                    "code": code,
-                    "client_id": self._client_id,
-                    "client_secret": self._client_secret,
-                    "redirect_uri": redirect_uri,
-                    "grant_type": "authorization_code",
-                },
-            )
-            token_response.raise_for_status()
-            token_body = token_response.json()
-            access_token = (
-                token_body.get("access_token") if isinstance(token_body, dict) else None
-            )
-            if not isinstance(access_token, str) or not access_token:
-                raise ValueError("slack_oidc_token_invalid")
-            user_response = await client.get(
-                "/api/openid.connect.userInfo",
-                headers={"Authorization": f"Bearer {access_token}"},
-            )
-            user_response.raise_for_status()
-            user = user_response.json()
+        try:
+            async with httpx.AsyncClient(
+                base_url="https://slack.com",
+                transport=self._transport,
+                timeout=15,
+            ) as client:
+                token_response = await client.post(
+                    "/api/openid.connect.token",
+                    data={
+                        "code": code,
+                        "client_id": self._client_id,
+                        "client_secret": self._client_secret,
+                        "redirect_uri": redirect_uri,
+                        "grant_type": "authorization_code",
+                    },
+                )
+                token_response.raise_for_status()
+                token_body = token_response.json()
+                if not isinstance(token_body, dict) or token_body.get("ok") is not True:
+                    provider_error = token_body.get("error") if isinstance(token_body, dict) else None
+                    reference = (
+                        self._TOKEN_ERRORS.get(provider_error, "OIDC-TOKEN-REJECTED")
+                        if isinstance(provider_error, str)
+                        else "OIDC-TOKEN-REJECTED"
+                    )
+                    raise SlackOpenIdError(reference)
+                access_token = (
+                    token_body.get("access_token") if isinstance(token_body, dict) else None
+                )
+                if not isinstance(access_token, str) or not access_token:
+                    raise SlackOpenIdError("OIDC-TOKEN-PAYLOAD")
+                user_response = await client.get(
+                    "/api/openid.connect.userInfo",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                )
+                user_response.raise_for_status()
+                user = user_response.json()
+                if not isinstance(user, dict) or user.get("ok") is not True:
+                    raise SlackOpenIdError("OIDC-USERINFO-REJECTED")
+        except SlackOpenIdError:
+            raise
+        except (httpx.HTTPError, json.JSONDecodeError) as exc:
+            raise SlackOpenIdError("OIDC-PROVIDER-TRANSPORT") from exc
         team_id = (
             user.get("https://slack.com/team_id") if isinstance(user, dict) else None
         )
@@ -738,7 +811,7 @@ class SlackOpenIdClient:
             or not isinstance(subject, str)
             or subject != f"https://slack.com/user_id/{user_id}"
         ):
-            raise ValueError("slack_oidc_identity_invalid")
+            raise SlackOpenIdError("OIDC-IDENTITY-PAYLOAD")
         return SlackIdentity(
             issuer=issuer,
             subject=subject,

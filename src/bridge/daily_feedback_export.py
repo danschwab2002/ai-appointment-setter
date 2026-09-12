@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import html
 import json
+import math
 import os
 import re
 import stat
@@ -315,7 +316,9 @@ class ChatwootDailyCollector:
                     or conversation_id <= 0
                     or type(inbox_id) is not int
                     or inbox_id != self._inbox_id
-                    or type(updated_at) is not int
+                    or isinstance(updated_at, bool)
+                    or not isinstance(updated_at, (int, float))
+                    or not math.isfinite(updated_at)
                     or updated_at <= 0
                 ):
                     raise ConversationCollectionError("chatwoot_conversation_scope_mismatch")
@@ -405,8 +408,10 @@ class ChatwootDailyCollector:
             current = meta.get("current_page")
             all_count = meta.get("all_count")
             if (
-                type(current) is not int
-                or current != page_number
+                (
+                    "current_page" in meta
+                    and (type(current) is not int or current != page_number)
+                )
                 or type(all_count) is not int
                 or all_count < 0
                 or len(result) > all_count

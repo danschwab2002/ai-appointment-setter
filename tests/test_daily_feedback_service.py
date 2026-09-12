@@ -16,6 +16,8 @@ from bridge.daily_feedback_service import (
     DailyFeedbackService,
     DailyFeedbackWebSettings,
     SlackIdentity,
+    SlackOpenIdError,
+    SlackOidcProvider,
     create_daily_feedback_review_app,
 )
 from bridge.daily_feedback_export import (
@@ -102,11 +104,11 @@ class Clock:
         return self.now
 
 
-def _client() -> tuple[TestClient, FakeRepository]:
+def _client(*, oidc_client: SlackOidcProvider | None = None) -> tuple[TestClient, FakeRepository]:
     repository = FakeRepository()
     service = DailyFeedbackService(
         repository=repository,
-        oidc_client=FakeOidc(),
+        oidc_client=oidc_client or FakeOidc(),
         settings=DailyFeedbackWebSettings(
             public_origin="https://reviews.example.test",
             session_hmac_key=b"s" * 32,
@@ -177,6 +179,127 @@ def test_slack_oidc_creates_a_db_backed_session_and_returns_to_a_clean_url() -> 
     assert complete_payload["p_slack_team_id"] == "T12345678"
     assert complete_payload["p_slack_user_id"] == "U12345678"
     assert "session" not in completed.headers["location"]
+
+
+def test_slack_callback_reports_a_safe_provider_failure_reference() -> None:
+    class RejectedOidc(FakeOidc):
+        async def authenticate(self, *, code: str, redirect_uri: str) -> SlackIdentity:
+            raise SlackOpenIdError("OIDC-TOKEN-BAD-REDIRECT-URI")
+
+    client, _ = _client(oidc_client=RejectedOidc())
+    batch_ref = "22222222-2222-4222-8222-222222222222"
+    started = client.get(f"/auth/slack/start?batch_ref={batch_ref}", follow_redirects=False)
+    state = parse_qs(urlsplit(started.headers["location"]).query)["state"][0]
+
+    response = client.get(
+        f"/auth/slack/callback?code=authorization-code&state={state}",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 401
+    assert "OIDC-TOKEN-BAD-REDIRECT-URI" in response.text
+
+
+def test_slack_callback_does_not_expose_unexpected_exception_text() -> None:
+    class BrokenOidc(FakeOidc):
+        async def authenticate(self, *, code: str, redirect_uri: str) -> SlackIdentity:
+            raise RuntimeError("sensitive-provider-response")
+
+    client, _ = _client(oidc_client=BrokenOidc())
+    batch_ref = "22222222-2222-4222-8222-222222222222"
+    started = client.get(f"/auth/slack/start?batch_ref={batch_ref}", follow_redirects=False)
+    state = parse_qs(urlsplit(started.headers["location"]).query)["state"][0]
+
+    response = client.get(
+        f"/auth/slack/callback?code=authorization-code&state={state}",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 401
+    assert "OIDC-UNEXPECTED" in response.text
+    assert "sensitive-provider-response" not in response.text
+
+
+def test_slack_callback_does_not_reflect_a_well_shaped_unlisted_reference() -> None:
+    class UnlistedOidc(FakeOidc):
+        async def authenticate(self, *, code: str, redirect_uri: str) -> SlackIdentity:
+            raise SlackOpenIdError("OIDC-SENSITIVE-FIXED-SHAPE-VALUE")
+
+    client, _ = _client(oidc_client=UnlistedOidc())
+    batch_ref = "22222222-2222-4222-8222-222222222222"
+    started = client.get(f"/auth/slack/start?batch_ref={batch_ref}", follow_redirects=False)
+    state = parse_qs(urlsplit(started.headers["location"]).query)["state"][0]
+
+    response = client.get(
+        f"/auth/slack/callback?code=authorization-code&state={state}",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 401
+    assert "OIDC-UNEXPECTED" in response.text
+    assert "OIDC-SENSITIVE-FIXED-SHAPE-VALUE" not in response.text
+
+
+def test_slack_callback_revalidates_a_mutated_reference_at_the_render_boundary() -> None:
+    class MutatedOidc(FakeOidc):
+        async def authenticate(self, *, code: str, redirect_uri: str) -> SlackIdentity:
+            error = SlackOpenIdError("OIDC-TOKEN-REJECTED")
+            error.reference = "sensitive-provider-response"
+            raise error
+
+    client, _ = _client(oidc_client=MutatedOidc())
+    batch_ref = "22222222-2222-4222-8222-222222222222"
+    started = client.get(f"/auth/slack/start?batch_ref={batch_ref}", follow_redirects=False)
+    state = parse_qs(urlsplit(started.headers["location"]).query)["state"][0]
+
+    response = client.get(
+        f"/auth/slack/callback?code=authorization-code&state={state}",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 401
+    assert "OIDC-UNEXPECTED" in response.text
+    assert "sensitive-provider-response" not in response.text
+
+
+def test_slack_callback_rejects_allowlist_equal_str_subclasses() -> None:
+    class ReflectingStr(str):
+        def __str__(self) -> str:
+            return "sensitive-reflected-payload"
+
+    class MutatedOidc(FakeOidc):
+        async def authenticate(self, *, code: str, redirect_uri: str) -> SlackIdentity:
+            error = SlackOpenIdError("OIDC-TOKEN-REJECTED")
+            error.reference = ReflectingStr("OIDC-TOKEN-REJECTED")
+            raise error
+
+    client, _ = _client(oidc_client=MutatedOidc())
+    batch_ref = "22222222-2222-4222-8222-222222222222"
+    started = client.get(f"/auth/slack/start?batch_ref={batch_ref}", follow_redirects=False)
+    state = parse_qs(urlsplit(started.headers["location"]).query)["state"][0]
+
+    response = client.get(
+        f"/auth/slack/callback?code=authorization-code&state={state}",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 401
+    assert "OIDC-UNEXPECTED" in response.text
+    assert "sensitive-reflected-payload" not in response.text
+
+
+def test_slack_callback_reports_state_failure_without_echoing_state() -> None:
+    client, _ = _client()
+    state = "s" * 32
+
+    response = client.get(
+        f"/auth/slack/callback?code=authorization-code&state={state}",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 401
+    assert "OIDC-STATE" in response.text
+    assert state not in response.text
 
 
 def test_host_prefixed_auth_cookies_use_the_required_root_path_when_mounted() -> None:
@@ -650,6 +773,93 @@ def test_slack_oidc_uses_authorization_code_then_verifies_userinfo() -> None:
         "/api/openid.connect.token",
         "/api/openid.connect.userInfo",
     ]
+
+
+def test_slack_oidc_classifies_a_bad_redirect_uri_without_exposing_the_payload() -> None:
+    from bridge.daily_feedback_service import SlackOpenIdClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("openid.connect.token")
+        return httpx.Response(
+            200,
+            json={"ok": False, "error": "bad_redirect_uri", "detail": "do-not-expose"},
+        )
+
+    client = SlackOpenIdClient(
+        client_id="client-id",
+        client_secret="client-secret",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(SlackOpenIdError, match="^OIDC-TOKEN-BAD-REDIRECT-URI$"):
+        __import__("asyncio").run(
+            client.authenticate(
+                code="one-time-code",
+                redirect_uri="https://reviews.example.test/daily-feedback/auth/slack/callback",
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "token_body",
+    [{"ok": "false", "access_token": "token"}, {"access_token": "token"}],
+)
+def test_slack_oidc_rejects_token_payload_without_exact_true(
+    token_body: dict[str, object],
+) -> None:
+    from bridge.daily_feedback_service import SlackOpenIdClient
+
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=token_body)
+
+    client = SlackOpenIdClient(
+        client_id="client-id",
+        client_secret="client-secret",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(SlackOpenIdError, match="^OIDC-TOKEN-REJECTED$"):
+        __import__("asyncio").run(
+            client.authenticate(
+                code="one-time-code",
+                redirect_uri="https://reviews.example.test/callback",
+            )
+        )
+    assert [request.url.path for request in requests] == ["/api/openid.connect.token"]
+
+
+def test_slack_oidc_rejects_userinfo_without_exact_true() -> None:
+    from bridge.daily_feedback_service import SlackOpenIdClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("openid.connect.token"):
+            return httpx.Response(200, json={"ok": True, "access_token": "temporary-access"})
+        return httpx.Response(
+            200,
+            json={
+                "ok": False,
+                "sub": "https://slack.com/user_id/U12345678",
+                "https://slack.com/team_id": "T12345678",
+                "https://slack.com/user_id": "U12345678",
+            },
+        )
+
+    client = SlackOpenIdClient(
+        client_id="client-id",
+        client_secret="client-secret",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(SlackOpenIdError, match="^OIDC-USERINFO-REJECTED$"):
+        __import__("asyncio").run(
+            client.authenticate(
+                code="one-time-code",
+                redirect_uri="https://reviews.example.test/callback",
+            )
+        )
 
 
 def test_supabase_repository_retries_the_exact_rpc_after_transport_uncertainty() -> None:
