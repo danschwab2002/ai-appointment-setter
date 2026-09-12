@@ -8,6 +8,7 @@ from typing import Any, Protocol
 from uuid import UUID
 
 from slack_correlation.client import SlackProtocolError, SlackRejectedError
+from slack_correlation.operator_client import OperatorBridgeRejected
 from slack_correlation.store import CorrelationBinding, NotificationStore, OpeningJob, ReviewSession
 from slack_correlation.ui import (
     build_confirmation_modal,
@@ -547,29 +548,19 @@ class CorrelationInteractionWorker:
         self._store.finish_opening(review_token=session.review_token)
 
     async def _prepare(self, session: ReviewSession) -> None:
-        case = await self._operators[session.tenant_ref].get_case(session.case_id)
-        if case.get("case_id") != session.case_id:
+        try:
+            command = await self._operators[session.tenant_ref].prepare(
+                case_id=session.case_id,
+                idempotency_key=session.idempotency_key,
+                action=session.action,
+                candidate_id=session.candidate_id,
+                verification_basis=session.verification_basis,
+                actor_ref=f"slack.{session.slack_user_id.lower()}",
+            )
+        except OperatorBridgeRejected:
             self._store.fail_session(review_token=session.review_token)
             await self._show_error(session)
             return
-        candidates = {
-            item.get("purchase_intent_id")
-            for item in case.get("candidates", [])
-            if isinstance(item, dict)
-            and item.get("lifecycle_state") == "waiting_for_purchase"
-        }
-        if session.action == "resolve_with_candidate" and session.candidate_id not in candidates:
-            self._store.fail_session(review_token=session.review_token)
-            await self._show_error(session)
-            return
-        command = await self._operators[session.tenant_ref].prepare(
-            case_id=session.case_id,
-            idempotency_key=session.idempotency_key,
-            action=session.action,
-            candidate_id=session.candidate_id,
-            verification_basis=session.verification_basis,
-            actor_ref=f"slack.{session.slack_user_id.lower()}",
-        )
         try:
             command_id = str(UUID(str(command.get("command_id"))))
         except ValueError:

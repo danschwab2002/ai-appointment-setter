@@ -13,6 +13,8 @@ import pytest
 
 from slack_correlation.app import SlackConnectorSettings, create_app
 from slack_correlation.catalog import NotificationCommand, render_message
+from slack_correlation.interactions import CorrelationInteractionWorker
+from slack_correlation.operator_client import OperatorBridgeRejected
 from slack_correlation.store import NotificationStore
 from slack_correlation.ui import build_pending_message
 
@@ -92,6 +94,14 @@ class SlowPrepareOperator(FakeOperator):
         self.prepare_calls.append(kwargs)
         await asyncio.sleep(3)
         return {"command_id": "33333333-3333-4333-8333-333333333333", **kwargs}
+
+
+class RejectedPrepareOperator(FakeOperator):
+    async def prepare(self, **kwargs) -> dict:
+        self.prepare_calls.append(kwargs)
+        raise OperatorBridgeRejected(
+            status_code=409, detail="operator_correlation_stale_evidence"
+        )
 
 
 class AmbiguousConfirmOperator(FakeOperator):
@@ -271,6 +281,40 @@ def test_prepare_retry_reuses_persisted_idempotency_identity_and_conflicts_fail_
             candidate_id="22222222-2222-4222-8222-222222222222",
             verification_basis="customer_confirmation",
         )
+
+
+def test_prepare_domain_rejection_fails_session_without_refetching_private_case(tmp_path) -> None:
+    store = NotificationStore(tmp_path / "connector.sqlite3")
+    _accepted_correlation(store)
+    binding = store.find_correlation_binding(
+        tenant_ref="johanna", team_id=TEAM, channel_id=CHANNEL, message_ts=TS,
+    )
+    assert binding is not None
+    opened = store.create_review_session(
+        binding=binding, team_id=TEAM, slack_user_id=USER, expires_at=1789000900,
+    )
+    preparing = store.begin_prepare(
+        review_token=opened.review_token,
+        action="resolve_with_candidate",
+        candidate_id="22222222-2222-4222-8222-222222222222",
+        verification_basis="customer_confirmation",
+    )
+    slack = FakeSlack()
+    operator = RejectedPrepareOperator()
+    worker = CorrelationInteractionWorker(
+        store=store,
+        slack=slack,
+        operators={"johanna": operator},
+        team_id=TEAM,
+    )
+
+    asyncio.run(worker._prepare(preparing))
+
+    failed = store.get_review_session(review_token=opened.review_token)
+    assert failed is not None and failed.state == "failed"
+    assert operator.get_calls == 0
+    assert len(operator.prepare_calls) == 1
+    assert slack.view_updates == []
 
 
 def test_block_action_binds_accepted_root_and_opens_native_modal(tmp_path) -> None:
@@ -739,6 +783,7 @@ def test_reviewed_no_match_infers_the_only_valid_evidence_and_prepares(tmp_path)
     assert prepared.status_code == 200
     assert prepared.json()["view"]["callback_id"] == "operator_correlation_resolution_processing"
     assert len(operator.prepare_calls) == 1
+    assert operator.get_calls == 1
     assert operator.prepare_calls[0]["action"] == "close_without_match"
     assert operator.prepare_calls[0]["candidate_id"] is None
     assert operator.prepare_calls[0]["verification_basis"] == "no_valid_candidate_after_review"
@@ -787,6 +832,7 @@ def test_selected_person_uses_only_the_evidence_from_the_second_step(tmp_path) -
     assert prepared.status_code == 200
     assert prepared.json()["view"]["callback_id"] == "operator_correlation_resolution_processing"
     assert len(operator.prepare_calls) == 1
+    assert operator.get_calls == 1
     assert operator.prepare_calls[0]["action"] == "resolve_with_candidate"
     assert operator.prepare_calls[0]["candidate_id"] == "22222222-2222-4222-8222-222222222222"
     assert operator.prepare_calls[0]["verification_basis"] == "operator_source_record"
