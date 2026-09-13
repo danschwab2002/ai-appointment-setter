@@ -141,6 +141,7 @@ def test_review_requires_slack_auth_without_exposing_the_batch() -> None:
     assert response.status_code == 401
     assert "Iniciar sesión con Slack" in response.text
     assert "Conversación 01" not in response.text
+    assert '<body class="app-shell">' not in response.text
     assert response.headers["cache-control"] == "no-store, max-age=0"
     assert response.headers["content-security-policy"].startswith("default-src 'none'")
     assert response.headers["referrer-policy"] == "no-referrer"
@@ -402,6 +403,37 @@ def test_review_renders_only_the_current_escaped_conversation() -> None:
     assert rpc_name == "get_daily_feedback_review_page_v1"
     assert rpc_payload["p_public_ref"] == batch_ref
     assert isinstance(rpc_payload["p_session_hash"], str)
+
+
+def test_review_uses_chatwoot_inspired_operational_visual_system() -> None:
+    client, _ = _client()
+    batch_ref = "22222222-2222-4222-8222-222222222222"
+    started = client.get(f"/auth/slack/start?batch_ref={batch_ref}", follow_redirects=False)
+    state = parse_qs(urlsplit(started.headers["location"]).query)["state"][0]
+    client.get(f"/auth/slack/callback?code=authorization-code&state={state}", follow_redirects=False)
+
+    response = client.get(f"/review/{batch_ref}")
+
+    assert response.status_code == 200
+    assert '<body class="app-shell">' in response.text
+    assert '<div class="workspace-mark" aria-hidden="true">' in response.text
+    assert 'class="topbar"' in response.text
+    assert 'class="review-layout"' in response.text
+    assert 'class="chat-thread"' in response.text
+    assert 'class="message message--prospect"' in response.text
+    assert 'class="message message--agent"' in response.text
+    assert 'class="review-panel"' in response.text
+    assert "--cw-bg:#111214" in response.text
+    assert "--cw-accent:#1976d2" in response.text
+    assert "--cw-subtle:#898b95" in response.text
+    assert "textarea::placeholder{color:#898b95}" in response.text
+    assert "font-family:Inter,ui-sans-serif" in response.text
+    assert 'role="progressbar"' in response.text
+    assert 'aria-valuemin="1"' in response.text
+    assert 'aria-valuemax="2"' in response.text
+    assert 'aria-valuenow="1"' in response.text
+    assert "Georgia" not in response.text
+    assert "--accent:#176b4b" not in response.text
 
 
 def test_decision_requires_origin_and_session_bound_csrf_then_preserves_feedback() -> None:

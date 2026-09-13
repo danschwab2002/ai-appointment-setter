@@ -1056,6 +1056,26 @@ async def _bounded_form(request: Request) -> dict[str, str]:
     return {key: values[0] for key, values in parsed.items()}
 
 
+def _review_page_shell(title: str, body: str) -> str:
+    return f'''<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{html.escape(title)}</title><style>
+:root{{--cw-bg:#111214;--cw-sidebar:#18191d;--cw-surface:#17181c;--cw-surface-raised:#202127;--cw-hover:#26272e;--cw-border:#2a2b32;--cw-border-soft:#222329;--cw-text:#f1f1f3;--cw-muted:#a8a9b2;--cw-subtle:#898b95;--cw-accent:#1976d2;--cw-accent-hover:#1568ba;--cw-indigo:#34357f;--cw-radius:12px;--cw-radius-sm:8px}}
+*{{box-sizing:border-box}}html{{color-scheme:dark}}body.app-shell{{margin:0;min-height:100vh;background:var(--cw-bg);color:var(--cw-text);font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}}
+.topbar{{height:64px;border-bottom:1px solid var(--cw-border-soft);background:var(--cw-surface);display:flex;align-items:center;justify-content:space-between;padding:0 24px;position:sticky;top:0;z-index:10}}
+.brand{{display:flex;align-items:center;gap:12px;min-width:0}}.workspace-mark{{width:30px;height:30px;border-radius:50%;background:var(--cw-accent);position:relative;box-shadow:0 0 0 4px rgba(25,118,210,.1);flex:none}}.workspace-mark::after{{content:"";position:absolute;width:13px;height:10px;left:8px;top:8px;background:white;border-radius:7px 7px 7px 3px}}
+.brand-name{{font-weight:650;letter-spacing:-.01em;white-space:nowrap}}.brand-divider{{width:1px;height:24px;background:var(--cw-border);margin:0 2px}}.brand-section{{color:var(--cw-muted);font-weight:500;white-space:nowrap}}
+.secure-badge{{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--cw-border);background:var(--cw-surface-raised);border-radius:999px;padding:6px 10px;color:var(--cw-muted);font-size:12px;font-weight:600}}.secure-badge::before{{content:"";width:7px;height:7px;border-radius:50%;background:#5fd39a;box-shadow:0 0 0 3px rgba(95,211,154,.1)}}
+main.app-frame{{width:min(1240px,calc(100% - 40px));margin:0 auto;padding:28px 0 48px}}h1,h2,p{{margin-top:0}}h1{{font-size:24px;line-height:1.25;letter-spacing:-.025em;margin-bottom:5px}}h2{{font-size:16px;line-height:1.35;letter-spacing:-.01em}}.meta,.muted{{color:var(--cw-muted)}}.meta{{font-size:13px}}.review-header{{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:20px}}.review-title-group p{{margin-bottom:0}}.progress{{width:min(280px,36vw)}}.progress-copy{{display:flex;justify-content:space-between;color:var(--cw-muted);font-size:12px;margin-bottom:7px}}.progress-track{{height:4px;background:var(--cw-hover);border-radius:999px;overflow:hidden}}.progress-fill{{height:100%;background:var(--cw-accent);border-radius:inherit}}
+.review-layout{{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(300px,.78fr);gap:16px;align-items:start}}.conversation{{min-width:0;background:var(--cw-surface);border:1px solid var(--cw-border-soft);border-radius:var(--cw-radius);overflow:hidden}}.conversation-summary{{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--cw-border-soft);background:var(--cw-sidebar)}}.summary-item{{padding:15px 18px;min-width:0}}.summary-item+ .summary-item{{border-left:1px solid var(--cw-border-soft)}}.summary-label{{display:block;color:var(--cw-subtle);font-size:11px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;margin-bottom:5px}}.summary-value{{color:var(--cw-text);font-size:13px}}
+.chat-thread{{min-height:470px;padding:24px 20px;display:flex;flex-direction:column;gap:16px;background:var(--cw-bg)}}.message{{display:flex;gap:9px;align-items:flex-end;max-width:82%}}.message--agent{{align-self:flex-end;flex-direction:row-reverse}}.message--prospect{{align-self:flex-start}}.avatar{{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;flex:none;font-size:11px;font-weight:700;background:#2b2d34;color:#c9cad0}}.message--agent .avatar{{background:#5b174b;color:#f2aedc}}.bubble-wrap{{min-width:0}}.actor{{color:var(--cw-subtle);font-size:11px;font-weight:600;margin:0 0 4px 3px}}.message--agent .actor{{text-align:right;margin-right:3px}}.bubble{{padding:11px 14px;border-radius:var(--cw-radius);background:var(--cw-surface-raised);border:1px solid var(--cw-border-soft);color:#e5e5e8;white-space:pre-wrap;overflow-wrap:anywhere}}.message--prospect .bubble{{border-bottom-left-radius:4px}}.message--agent .bubble{{background:var(--cw-indigo);border-color:transparent;border-bottom-right-radius:4px;color:#f3f3ff}}
+.review-panel{{position:sticky;top:80px;background:var(--cw-surface);border:1px solid var(--cw-border-soft);border-radius:var(--cw-radius);overflow:hidden}}.panel-heading{{padding:18px;border-bottom:1px solid var(--cw-border-soft)}}.panel-heading h2{{margin-bottom:4px}}.panel-heading p{{margin-bottom:0;font-size:13px}}.actions{{display:grid;gap:14px;padding:18px}}label{{font-size:13px;font-weight:600}}.label-note{{display:block;margin-top:2px;color:var(--cw-subtle);font-size:12px;font-weight:400}}textarea{{width:100%;min-height:150px;resize:vertical;padding:12px 13px;border:1px solid #353740;border-radius:var(--cw-radius-sm);background:#121317;color:var(--cw-text);font:inherit;line-height:1.5;transition:border-color .15s,box-shadow .15s}}textarea::placeholder{{color:#898b95}}textarea:hover{{border-color:#464852}}textarea:focus{{border-color:var(--cw-accent);box-shadow:0 0 0 3px rgba(25,118,210,.2);outline:0}}
+.decision-grid{{display:grid;gap:9px}}button,.button{{min-height:42px;border:1px solid #373943;border-radius:var(--cw-radius-sm);background:var(--cw-surface-raised);color:var(--cw-text);padding:10px 14px;font:600 14px/1.2 Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;transition:background .15s,border-color .15s,transform .1s}}button:hover,.button:hover{{background:var(--cw-hover);border-color:#484a55}}button:active,.button:active{{transform:translateY(1px)}}button.primary,.button.primary{{background:var(--cw-accent);border-color:var(--cw-accent);color:white}}button.primary:hover,.button.primary:hover{{background:var(--cw-accent-hover);border-color:var(--cw-accent-hover)}}button.quiet{{background:transparent;color:var(--cw-muted);border-color:transparent}}button.quiet:hover{{background:var(--cw-hover);color:var(--cw-text)}}button:focus-visible,.button:focus-visible{{outline:2px solid #80bfff;outline-offset:2px}}
+
+@media(max-width:880px){{.review-layout{{grid-template-columns:1fr}}.review-panel{{position:static}}.chat-thread{{min-height:380px}}.progress{{width:min(250px,42vw)}}}}@media(max-width:620px){{.topbar{{height:58px;padding:0 16px}}.brand-name,.secure-badge{{display:none}}main.app-frame{{width:min(100% - 24px,1240px);padding-top:18px}}.review-header{{align-items:flex-start;flex-direction:column;gap:14px}}.progress{{width:100%}}.conversation-summary{{grid-template-columns:1fr}}.summary-item+ .summary-item{{border-left:0;border-top:1px solid var(--cw-border-soft)}}.chat-thread{{padding:18px 12px;min-height:320px}}.message{{max-width:94%}}}}
+</style></head><body class="app-shell"><div class="topbar"><div class="brand"><div class="workspace-mark" aria-hidden="true"></div><span class="brand-name">Johanna</span><span class="brand-divider" aria-hidden="true"></span><span class="brand-section">Revisión diaria</span></div><span class="secure-badge">Revisión supervisada</span></div><main class="app-frame">{body}</main></body></html>'''
+
+
 def _page_shell(title: str, body: str) -> str:
     return f'''<!doctype html>
 <html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -1094,30 +1114,32 @@ def _review_page(
     messages = item.get("messages")
     assert isinstance(messages, list)
     transcript = "".join(
-        f'''<div class="message"><div class="actor">{html.escape("Prospecto" if message.get("actor") == "prospect" else "Agente")}</div>
-<div>{html.escape(str(message.get("text", "")))}</div></div>'''
+        f'''<div class="message message--{"prospect" if message.get("actor") == "prospect" else "agent"}"><div class="avatar" aria-hidden="true">{"P" if message.get("actor") == "prospect" else "A"}</div><div class="bubble-wrap"><div class="actor">{html.escape("Prospecto" if message.get("actor") == "prospect" else "Agente")}</div>
+<div class="bubble">{html.escape(str(message.get("text", "")))}</div></div></div>'''
         for message in messages
         if isinstance(message, dict)
     )
     position = int(item.get("position", 0))
     total = int(page.get("item_count", 0))
-    body = f'''<header><p class="meta">{html.escape(str(page.get("local_date", "")))} · {position} de {total}</p><h1>Revisión diaria</h1>
-<p class="muted">{html.escape(str(item.get("display_label", "")))}</p></header>
-<section class="conversation" aria-label="Conversación actual">
-<p><strong>Objetivo aparente:</strong> {html.escape(str(item.get("apparent_objective", "")))}</p>
-<p><strong>Resultado observado:</strong> {html.escape(str(item.get("observed_outcome", "")))}</p>
-<div>{transcript}</div></section>
+    progress = round(position / total * 100) if total > 0 else 0
+    body = f'''<header class="review-header"><div class="review-title-group"><p class="meta">{html.escape(str(page.get("local_date", "")))}</p><h1>{html.escape(str(item.get("display_label", "")))}</h1><p class="muted">Revisión de conversación</p></div>
+<div class="progress" role="progressbar" aria-label="Progreso diario" aria-valuemin="1" aria-valuemax="{total}" aria-valuenow="{position}"><div class="progress-copy"><span>Progreso diario</span><span>{position} de {total}</span></div><div class="progress-track"><div class="progress-fill" style="width:{progress}%"></div></div></div></header>
+<div class="review-layout"><section class="conversation" aria-label="Conversación actual"><div class="conversation-summary">
+<div class="summary-item"><span class="summary-label">Objetivo aparente</span><span class="summary-value">{html.escape(str(item.get("apparent_objective", "")))}</span></div>
+<div class="summary-item"><span class="summary-label">Resultado observado</span><span class="summary-value">{html.escape(str(item.get("observed_outcome", "")))}</span></div></div>
+<div class="chat-thread">{transcript}</div></section>
+<aside class="review-panel"><div class="panel-heading"><h2>Evaluar conversación</h2><p class="muted">La decisión se guarda de forma durable.</p></div>
 <form class="actions" method="post" action="/daily-feedback/review/{html.escape(public_ref)}/decisions">
 <input type="hidden" name="csrf_token" value="{html.escape(csrf_token)}">
 <input type="hidden" name="command_id" value="{html.escape(command_id)}">
 <input type="hidden" name="item_id" value="{html.escape(str(item.get("item_id", "")))}">
-<label for="feedback"><strong>Feedback literal</strong> <span class="muted">(obligatorio sólo con feedback)</span></label>
-<textarea id="feedback" name="verbatim_feedback" maxlength="4000"></textarea>
-<button class="primary" type="submit" name="decision" value="correct">Correcta</button>
+<label for="feedback">Feedback literal<span class="label-note">Obligatorio sólo al elegir “Correcta con feedback”.</span></label>
+<textarea id="feedback" name="verbatim_feedback" maxlength="4000" placeholder="Escribe observaciones concretas sobre esta conversación…"></textarea>
+<div class="decision-grid"><button class="primary" type="submit" name="decision" value="correct">Correcta</button>
 <button type="submit" name="decision" value="correct_with_feedback">Correcta con feedback</button>
-<button type="submit" name="decision" value="skip">Omitir</button>
-</form>'''
-    return _page_shell("Revisión diaria", body)
+<button class="quiet" type="submit" name="decision" value="skip">Omitir por ahora</button></div>
+</form></aside></div>'''
+    return _review_page_shell("Revisión diaria", body)
 
 
 def _complete_page(page: dict[str, object]) -> str:
