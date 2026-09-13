@@ -516,6 +516,180 @@ def test_unrelated_branch_history_fails_closed(repo: Path) -> None:
         coordinator.preflight(worktree)
 
 
+def test_johanna_claim_requires_completion_resource_and_record(repo: Path) -> None:
+    coordinator = AgentWorkspace(repo)
+    claim = _start(
+        coordinator,
+        repo,
+        "johanna-feature",
+        paths=("src/app.py",),
+    )
+
+    with pytest.raises(CoordinationError, match="johanna-completion resource"):
+        coordinator._validate_johanna_learning_record(claim)
+
+
+def test_johanna_completion_record_requires_declared_path_and_sections(repo: Path) -> None:
+    coordinator = AgentWorkspace(repo)
+    claim = _start(
+        coordinator,
+        repo,
+        "johanna-feature",
+        paths=("src/app.py",),
+        resources=("johanna-completion:johanna-feature",),
+    )
+
+    with pytest.raises(CoordinationError, match="must declare learning record path"):
+        coordinator._validate_johanna_learning_record(claim)
+
+    record_path = (
+        "docs/operations/johanna-completion/records/johanna-feature.md"
+    )
+    coordinator.extend("johanna-feature", paths=(record_path,))
+    claim = next(item for item in coordinator.claims() if item.task_id == "johanna-feature")
+    record = Path(claim.worktree) / record_path
+    record.parent.mkdir(parents=True)
+    record.write_text("# incomplete\n")
+
+    with pytest.raises(CoordinationError, match="missing or empty required section"):
+        coordinator._validate_johanna_learning_record(claim)
+
+
+def test_complete_johanna_learning_record_passes_validation(repo: Path) -> None:
+    coordinator = AgentWorkspace(repo)
+    record_path = (
+        "docs/operations/johanna-completion/records/johanna-feature.md"
+    )
+    claim = _start(
+        coordinator,
+        repo,
+        "johanna-feature",
+        paths=("src/app.py", record_path),
+        resources=("johanna-completion:johanna-feature",),
+    )
+    record = Path(claim.worktree) / record_path
+    record.parent.mkdir(parents=True)
+    sections = agent_workspace.JOHANNA_RECORD_REQUIRED_SECTIONS
+    record.write_text(
+        "# Johanna completion record — johanna-feature\n\n"
+        + "\n\n".join(
+            f"## {section}\n\nVerified content for {section}." for section in sections
+        )
+        + "\n"
+    )
+
+    coordinator._validate_johanna_learning_record(claim)
+
+
+def test_johanna_learning_record_rejects_symlink(repo: Path) -> None:
+    coordinator = AgentWorkspace(repo)
+    record_path = (
+        "docs/operations/johanna-completion/records/johanna-feature.md"
+    )
+    claim = _start(
+        coordinator,
+        repo,
+        "johanna-feature",
+        paths=(record_path,),
+        resources=("johanna-completion:johanna-feature",),
+    )
+    record = Path(claim.worktree) / record_path
+    record.parent.mkdir(parents=True)
+    external = repo.parent / "external-record.md"
+    external.write_text("external\n")
+    record.symlink_to(external)
+
+    with pytest.raises(CoordinationError, match="regular file"):
+        coordinator._validate_johanna_learning_record(claim)
+
+
+def test_johanna_learning_record_rejects_symlinked_ancestor(repo: Path) -> None:
+    coordinator = AgentWorkspace(repo)
+    record_path = (
+        "docs/operations/johanna-completion/records/johanna-feature.md"
+    )
+    claim = _start(
+        coordinator,
+        repo,
+        "johanna-feature",
+        paths=(record_path,),
+        resources=("johanna-completion:johanna-feature",),
+    )
+    worktree = Path(claim.worktree)
+    external = repo.parent / "external-records"
+    external.mkdir()
+    sections = agent_workspace.JOHANNA_RECORD_REQUIRED_SECTIONS
+    (external / "johanna-feature.md").write_text(
+        "# external\n\n"
+        + "\n\n".join(
+            f"## {section}\n\nExternal content for {section}." for section in sections
+        )
+        + "\n"
+    )
+    records = worktree / "docs/operations/johanna-completion/records"
+    records.parent.mkdir(parents=True)
+    records.symlink_to(external, target_is_directory=True)
+
+    with pytest.raises(CoordinationError, match="regular file"):
+        coordinator._validate_johanna_learning_record(claim)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "N/A",
+        "<!-- REQUIRED: replace this marker -->",
+    ],
+)
+def test_johanna_learning_record_rejects_placeholder_content(
+    repo: Path,
+    body: str,
+) -> None:
+    coordinator = AgentWorkspace(repo)
+    record_path = (
+        "docs/operations/johanna-completion/records/johanna-feature.md"
+    )
+    claim = _start(
+        coordinator,
+        repo,
+        "johanna-feature",
+        paths=(record_path,),
+        resources=("johanna-completion:johanna-feature",),
+    )
+    record = Path(claim.worktree) / record_path
+    record.parent.mkdir(parents=True)
+    sections = agent_workspace.JOHANNA_RECORD_REQUIRED_SECTIONS
+    record.write_text(
+        "# Johanna completion record — johanna-feature\n\n"
+        + "\n\n".join(f"## {section}\n\n{body}" for section in sections)
+        + "\n"
+    )
+
+    with pytest.raises(CoordinationError, match="placeholder or unexplained N/A"):
+        coordinator._validate_johanna_learning_record(claim)
+
+
+def test_transition_to_review_enforces_johanna_learning_record(repo: Path) -> None:
+    coordinator = AgentWorkspace(repo)
+    _start(
+        coordinator,
+        repo,
+        "johanna-feature",
+        paths=("src/app.py",),
+    )
+    coordinator.transition("johanna-feature", "implementing")
+
+    with pytest.raises(CoordinationError, match="johanna-completion resource"):
+        coordinator.transition("johanna-feature", "review")
+
+
+def test_unrelated_claim_does_not_require_johanna_record(repo: Path) -> None:
+    coordinator = AgentWorkspace(repo)
+    claim = _start(coordinator, repo, "feature-a")
+
+    coordinator._validate_johanna_learning_record(claim)
+
+
 def test_full_claim_commit_push_review_and_protected_push_guard(
     tmp_path: Path,
 ) -> None:

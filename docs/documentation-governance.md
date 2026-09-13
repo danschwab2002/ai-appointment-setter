@@ -202,3 +202,17 @@ Antes de cerrar una tarea que cambie diseño, arquitectura, contratos u operaci�
 - [ ] La evidencia operativa relevante quedó registrada.
 - [ ] No se crearon diarios o duplicaciones innecesarias.
 - [ ] No se tocaron archivos de trabajo concurrente fuera del alcance.
+
+## 9. Captura operacional durante la finalización de Johanna
+
+Mientras Johanna no haya alcanzado su alcance de cierre aceptado, toda tarea que implemente, pruebe, despliegue, diagnostique o decida comportamiento necesario para completarla debe seguir `docs/operations/johanna-completion-learning-protocol.md`. Cada tarea conserva un registro exclusivo asociado a su claim; el integrador actualiza `docs/operations/johanna-completion-ledger.md` de forma serial.
+
+Esta obligación incorpora la documentación a la operativa diaria:
+
+1. **Al iniciar:** declarar el recurso único `johanna-completion:<task_id>`, reclamar `docs/operations/johanna-completion/records/<task_id>.md` y fijar resultado esperado, evidencia de cierre, incertidumbres, dependencias y artefactos afectados.
+2. **Durante el trabajo:** registrar hechos que cambien el diagnóstico; mantener separados síntoma, hipótesis y causa confirmada.
+3. **Al verificar:** preservar evidencia sanitizada, entorno, snapshot, resultado observado, límites no probados y delta de efectos externos.
+4. **Al cerrar:** clasificar cada aprendizaje y promoverlo al artefacto adecuado —prueba, contrato, arquitectura, ADR, runbook, gate manual o registro específico de Johanna— dentro del alcance seguro de la tarea.
+5. **Si hay concurrencia:** no tocar paths reservados ni el ledger central; dejar el pendiente con owner y destino en el registro exclusivo para que el integrador lo promueva.
+
+La herramienta de coordinación valida el registro al pasar a `review`. Una tarea cubierta no puede declararse cerrada si sólo resolvió el comportamiento funcional. Las secciones no aplicables deben decir `N/A` y explicar brevemente por qué; las sesiones y handoffs no sustituyen estos artefactos.
