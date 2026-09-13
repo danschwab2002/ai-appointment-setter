@@ -659,7 +659,7 @@ def create_daily_feedback_review_app(service: DailyFeedbackService) -> FastAPI:
     async def record_decision(public_ref: str, request: Request) -> Response:
         if not _canonical_uuid(public_ref):
             return _not_found()
-        if request.headers.get("origin") != service.settings.public_origin.rstrip("/"):
+        if not _authorized_decision_origin(request, service.settings.public_origin):
             return HTMLResponse(_error_page("Origen no autorizado."), status_code=403)
         session_secret = request.cookies.get(service.settings.session_cookie_name)
         if not _valid_browser_secret(session_secret):
@@ -1011,6 +1011,18 @@ def _canonical_uuid(value: str) -> bool:
 def _valid_browser_secret(value: str | None) -> bool:
     return isinstance(value, str) and 32 <= len(value) <= 128 and all(
         character.isalnum() or character in "-_" for character in value
+    )
+
+
+def _authorized_decision_origin(request: Request, public_origin: str) -> bool:
+    expected_origin = public_origin.rstrip("/")
+    origin = request.headers.get("origin")
+    if origin is not None:
+        return hmac.compare_digest(origin, expected_origin)
+    expected_host = urlsplit(expected_origin).netloc
+    return (
+        request.headers.get("sec-fetch-site") == "same-origin"
+        and request.headers.get("host") == expected_host
     )
 
 
