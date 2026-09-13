@@ -2919,6 +2919,52 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         5,
         'append_only_operator_disposition_preserves_ambiguous_delivery_truth'
+    union all
+    select
+        '20260913000200',
+        '20260913000200_slack_correlation_event_context.sql',
+        exists(
+            select 1
+            from pg_attribute
+            where attrelid = to_regclass('public.slack_correlation_notification_projection')
+              and attname = 'notification_contract_version'
+              and not attisdropped
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.claim_slack_correlation_notifications(text,text,text,integer,integer,integer)'
+            )
+              and position('notification_contract_version' in definition) > 0
+              and position('projection.notification_contract_version, 1' in definition) > 0
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.claim_slack_correlation_notifications_v2(text,text,text,integer,integer,integer)'
+            )
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.claim_slack_correlation_notifications_v2(text,text,text,integer,integer,integer)'
+            )
+              and position('event.event_type' in definition) > 0
+              and position('projection.source_event_id' in definition) > 0
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.claim_slack_correlation_notifications_v2(text,text,text,integer,integer,integer)'
+            )
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        5,
+        'slack_correlation_event_context_service_role_only'
 )
 select
     version,

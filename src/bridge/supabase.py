@@ -2079,7 +2079,7 @@ class SupabaseClient:
             raise ValueError("lease_seconds must be between 30 and 900")
         response = await self._request(
             "POST",
-            "/rest/v1/rpc/claim_slack_correlation_notifications",
+            "/rest/v1/rpc/claim_slack_correlation_notifications_v2",
             content=json.dumps(
                 {
                     "p_tenant_ref": tenant_ref,
@@ -2096,6 +2096,8 @@ class SupabaseClient:
         rows = _response_rows(response, operation=operation)
         expected_keys = {
             "source_event_id",
+            "source_event_type",
+            "notification_contract_version",
             "outcome",
             "reason_code",
             "candidate_count",
@@ -2123,6 +2125,11 @@ class SupabaseClient:
             lease_generation = _required_positive_int(
                 row, "lease_generation", operation=operation
             )
+            notification_contract_version = _required_positive_int(
+                row, "notification_contract_version", operation=operation
+            )
+            if notification_contract_version not in {1, 2}:
+                raise SupabaseError(f"{operation}_invalid")
             occurred_text = _required_string(row, "occurred_at", operation=operation)
             try:
                 occurred_at = datetime.fromisoformat(
@@ -2141,6 +2148,17 @@ class SupabaseClient:
             claims.append(
                 SlackCorrelationNotificationClaim(
                     source_event_id=source_event_id,
+                    source_event_type=_required_enum(
+                        row,
+                        "source_event_type",
+                        {
+                            "PURCHASE_APPROVED",
+                            "PURCHASE_OUT_OF_SHOPPING_CART",
+                            "PURCHASE_CANCELED",
+                        },
+                        operation=operation,
+                    ),
+                    notification_contract_version=notification_contract_version,
                     outcome=outcome,
                     reason_code=_required_string(
                         row, "reason_code", operation=operation

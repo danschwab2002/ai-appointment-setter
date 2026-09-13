@@ -55,6 +55,8 @@ class _Producer:
 def _claim() -> SlackCorrelationNotificationClaim:
     return SlackCorrelationNotificationClaim(
         source_event_id="11111111-1111-4111-8111-111111111111",
+        source_event_type="PURCHASE_OUT_OF_SHOPPING_CART",
+        notification_contract_version=2,
         outcome="ambiguous",
         reason_code="multiple_candidates",
         candidate_count=2,
@@ -83,7 +85,7 @@ def test_worker_admits_then_completes_the_exact_fenced_projection() -> None:
     assert processed == 1
     assert len(producer.commands) == 1
     command = producer.commands[0]
-    assert command.event_code == "COR-002"
+    assert command.event_code == "COR-011"
     assert store.complete_calls == [
         {
             "source_event_id": _claim().source_event_id,

@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class SlackCorrelationNotificationClaim:
     source_event_id: str
+    source_event_type: str
+    notification_contract_version: int
     outcome: str
     reason_code: str
     candidate_count: int
@@ -166,6 +168,8 @@ class SlackCorrelationProjectionWorker:
             try:
                 command = await self._notifier.notify_unresolved_correlation(
                     source_event_id=claim.source_event_id,
+                    source_event_type=claim.source_event_type,
+                    notification_contract_version=claim.notification_contract_version,
                     outcome=claim.outcome,
                     reason_code=claim.reason_code,
                     candidate_count=claim.candidate_count,
