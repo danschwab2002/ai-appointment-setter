@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import hashlib
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from fastapi import FastAPI
@@ -434,6 +436,48 @@ def test_review_uses_chatwoot_inspired_operational_visual_system() -> None:
     assert 'aria-valuenow="1"' in response.text
     assert "Georgia" not in response.text
     assert "--accent:#176b4b" not in response.text
+
+
+def test_review_makes_correction_feedback_an_explicit_progressive_choice() -> None:
+    client, _ = _client()
+    batch_ref = "22222222-2222-4222-8222-222222222222"
+    started = client.get(f"/auth/slack/start?batch_ref={batch_ref}", follow_redirects=False)
+    state = parse_qs(urlsplit(started.headers["location"]).query)["state"][0]
+    client.get(f"/auth/slack/callback?code=authorization-code&state={state}", follow_redirects=False)
+
+    response = client.get(f"/review/{batch_ref}")
+
+    assert response.status_code == 200
+    assert ">Está correcta</button>" in response.text
+    assert '<button type="button" class="decision-option" data-reveal-feedback' in response.text
+    assert ">Necesita corrección</button>" in response.text
+    assert "Correcta con feedback" not in response.text
+    assert response.text.index("Está correcta") < response.text.index("Necesita corrección")
+    assert response.text.index("Necesita corrección") < response.text.index("Omitir por ahora")
+    assert response.text.index("Omitir por ahora") < response.text.index("<textarea")
+    assert '<div class="feedback-panel" hidden' in response.text
+    assert '<textarea id="feedback" name="verbatim_feedback" maxlength="4000" required disabled' in response.text
+    assert 'placeholder="Describí el problema y la respuesta esperada…"' in response.text
+    assert 'data-reveal-feedback aria-expanded="false" aria-controls="feedback-panel"' in response.text
+    assert "aria-pressed" not in response.text
+    assert '<button class="primary save-correction" type="submit" name="decision" value="correct_with_feedback" disabled>Guardar corrección</button>' in response.text
+    assert '<input type="hidden" name="verbatim_feedback" value="" data-empty-feedback>' in response.text
+    assert 'type="submit" name="decision" value="correct" data-direct-decision>Está correcta</button>' in response.text
+    assert 'type="submit" name="decision" value="skip" data-direct-decision>Omitir por ahora</button>' in response.text
+    assert ">Omitir por ahora</button>" in response.text
+    assert "<script>" in response.text
+    assert "onclick=" not in response.text
+    rendered_script = response.text.split("<script>", 1)[1].split("</script>", 1)[0]
+    script_hash = base64.b64encode(
+        hashlib.sha256(rendered_script.encode("utf-8")).digest()
+    ).decode("ascii")
+    content_security_policy = response.headers["content-security-policy"]
+    assert f"script-src 'sha256-{script_hash}'" in content_security_policy
+    assert "script-src 'unsafe-inline'" not in content_security_policy
+    contract = Path("docs/contracts/daily-feedback-production-v1.md").read_text(
+        encoding="utf-8"
+    )
+    assert f"Content-Security-Policy: {content_security_policy}" in contract
 
 
 def test_decision_requires_origin_and_session_bound_csrf_then_preserves_feedback() -> None:

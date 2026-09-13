@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import hashlib
@@ -138,6 +139,12 @@ class DailyFeedbackService:
             ("daily-feedback-csrf-v1\0" + session_secret).encode("utf-8"),
             hashlib.sha256,
         ).hexdigest()
+
+
+_REVIEW_INTERACTION_SCRIPT = """(()=>{const form=document.querySelector('[data-decision-form]');if(!form)return;const choice=form.querySelector('[data-reveal-feedback]');const direct=[...form.querySelectorAll('[data-direct-decision]')];const panel=form.querySelector('.feedback-panel');const feedback=form.querySelector('#feedback');const emptyFeedback=form.querySelector('[data-empty-feedback]');const save=form.querySelector('.save-correction');const toggleSave=()=>{save.disabled=feedback.value.trim().length===0;};choice.addEventListener('click',()=>{panel.hidden=false;emptyFeedback.disabled=true;feedback.disabled=false;choice.setAttribute('aria-expanded','true');toggleSave();feedback.focus();});direct.forEach((button)=>button.addEventListener('click',()=>{emptyFeedback.disabled=false;feedback.disabled=true;}));feedback.addEventListener('input',toggleSave);})();"""
+_REVIEW_INTERACTION_SCRIPT_CSP = base64.b64encode(
+    hashlib.sha256(_REVIEW_INTERACTION_SCRIPT.encode("utf-8")).digest()
+).decode("ascii")
 
 
 class DailyFeedbackCollector(Protocol):
@@ -503,7 +510,8 @@ def create_daily_feedback_review_app(service: DailyFeedbackService) -> FastAPI:
         response.headers["Cache-Control"] = "no-store, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Content-Security-Policy"] = (
-            "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; "
+            "default-src 'none'; style-src 'unsafe-inline'; "
+            f"script-src 'sha256-{_REVIEW_INTERACTION_SCRIPT_CSP}'; form-action 'self'; "
             "base-uri 'none'; frame-ancestors 'none'"
         )
         response.headers["Referrer-Policy"] = "no-referrer"
@@ -1070,7 +1078,7 @@ main.app-frame{{width:min(1240px,calc(100% - 40px));margin:0 auto;padding:28px 0
 .review-layout{{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(300px,.78fr);gap:16px;align-items:start}}.conversation{{min-width:0;background:var(--cw-surface);border:1px solid var(--cw-border-soft);border-radius:var(--cw-radius);overflow:hidden}}.conversation-summary{{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--cw-border-soft);background:var(--cw-sidebar)}}.summary-item{{padding:15px 18px;min-width:0}}.summary-item+ .summary-item{{border-left:1px solid var(--cw-border-soft)}}.summary-label{{display:block;color:var(--cw-subtle);font-size:11px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;margin-bottom:5px}}.summary-value{{color:var(--cw-text);font-size:13px}}
 .chat-thread{{min-height:470px;padding:24px 20px;display:flex;flex-direction:column;gap:16px;background:var(--cw-bg)}}.message{{display:flex;gap:9px;align-items:flex-end;max-width:82%}}.message--agent{{align-self:flex-end;flex-direction:row-reverse}}.message--prospect{{align-self:flex-start}}.avatar{{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;flex:none;font-size:11px;font-weight:700;background:#2b2d34;color:#c9cad0}}.message--agent .avatar{{background:#5b174b;color:#f2aedc}}.bubble-wrap{{min-width:0}}.actor{{color:var(--cw-subtle);font-size:11px;font-weight:600;margin:0 0 4px 3px}}.message--agent .actor{{text-align:right;margin-right:3px}}.bubble{{padding:11px 14px;border-radius:var(--cw-radius);background:var(--cw-surface-raised);border:1px solid var(--cw-border-soft);color:#e5e5e8;white-space:pre-wrap;overflow-wrap:anywhere}}.message--prospect .bubble{{border-bottom-left-radius:4px}}.message--agent .bubble{{background:var(--cw-indigo);border-color:transparent;border-bottom-right-radius:4px;color:#f3f3ff}}
 .review-panel{{position:sticky;top:80px;background:var(--cw-surface);border:1px solid var(--cw-border-soft);border-radius:var(--cw-radius);overflow:hidden}}.panel-heading{{padding:18px;border-bottom:1px solid var(--cw-border-soft)}}.panel-heading h2{{margin-bottom:4px}}.panel-heading p{{margin-bottom:0;font-size:13px}}.actions{{display:grid;gap:14px;padding:18px}}label{{font-size:13px;font-weight:600}}.label-note{{display:block;margin-top:2px;color:var(--cw-subtle);font-size:12px;font-weight:400}}textarea{{width:100%;min-height:150px;resize:vertical;padding:12px 13px;border:1px solid #353740;border-radius:var(--cw-radius-sm);background:#121317;color:var(--cw-text);font:inherit;line-height:1.5;transition:border-color .15s,box-shadow .15s}}textarea::placeholder{{color:#898b95}}textarea:hover{{border-color:#464852}}textarea:focus{{border-color:var(--cw-accent);box-shadow:0 0 0 3px rgba(25,118,210,.2);outline:0}}
-.decision-grid{{display:grid;gap:9px}}button,.button{{min-height:42px;border:1px solid #373943;border-radius:var(--cw-radius-sm);background:var(--cw-surface-raised);color:var(--cw-text);padding:10px 14px;font:600 14px/1.2 Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;transition:background .15s,border-color .15s,transform .1s}}button:hover,.button:hover{{background:var(--cw-hover);border-color:#484a55}}button:active,.button:active{{transform:translateY(1px)}}button.primary,.button.primary{{background:var(--cw-accent);border-color:var(--cw-accent);color:white}}button.primary:hover,.button.primary:hover{{background:var(--cw-accent-hover);border-color:var(--cw-accent-hover)}}button.quiet{{background:transparent;color:var(--cw-muted);border-color:transparent}}button.quiet:hover{{background:var(--cw-hover);color:var(--cw-text)}}button:focus-visible,.button:focus-visible{{outline:2px solid #80bfff;outline-offset:2px}}
+.decision-grid{{display:grid;gap:9px}}.feedback-panel{{display:grid;gap:14px;border-top:1px solid var(--cw-border-soft);padding-top:16px}}[hidden]{{display:none!important}}button,.button{{min-height:42px;border:1px solid #373943;border-radius:var(--cw-radius-sm);background:var(--cw-surface-raised);color:var(--cw-text);padding:10px 14px;font:600 14px/1.2 Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;transition:background .15s,border-color .15s,transform .1s}}button:hover,.button:hover{{background:var(--cw-hover);border-color:#484a55}}button:active,.button:active{{transform:translateY(1px)}}button.primary,.button.primary{{background:var(--cw-accent);border-color:var(--cw-accent);color:white}}button.primary:hover,.button.primary:hover{{background:var(--cw-accent-hover);border-color:var(--cw-accent-hover)}}button.quiet{{background:transparent;color:var(--cw-muted);border-color:transparent}}button.quiet:hover{{background:var(--cw-hover);color:var(--cw-text)}}button[data-reveal-feedback][aria-expanded="true"]{{border-color:var(--cw-accent);box-shadow:0 0 0 2px rgba(25,118,210,.18)}}button:disabled{{cursor:not-allowed;opacity:.52;transform:none}}button:disabled:hover{{background:var(--cw-surface-raised);border-color:#373943}}button.primary:disabled:hover{{background:var(--cw-accent);border-color:var(--cw-accent)}}button:focus-visible,.button:focus-visible{{outline:2px solid #80bfff;outline-offset:2px}}
 
 @media(max-width:880px){{.review-layout{{grid-template-columns:1fr}}.review-panel{{position:static}}.chat-thread{{min-height:380px}}.progress{{width:min(250px,42vw)}}}}@media(max-width:620px){{.topbar{{height:58px;padding:0 16px}}.brand-name,.secure-badge{{display:none}}main.app-frame{{width:min(100% - 24px,1240px);padding-top:18px}}.review-header{{align-items:flex-start;flex-direction:column;gap:14px}}.progress{{width:100%}}.conversation-summary{{grid-template-columns:1fr}}.summary-item+ .summary-item{{border-left:0;border-top:1px solid var(--cw-border-soft)}}.chat-thread{{padding:18px 12px;min-height:320px}}.message{{max-width:94%}}}}
 </style></head><body class="app-shell"><div class="topbar"><div class="brand"><div class="workspace-mark" aria-hidden="true"></div><span class="brand-name">Johanna</span><span class="brand-divider" aria-hidden="true"></span><span class="brand-section">Revisión diaria</span></div><span class="secure-badge">Revisión supervisada</span></div><main class="app-frame">{body}</main></body></html>'''
@@ -1128,17 +1136,20 @@ def _review_page(
 <div class="summary-item"><span class="summary-label">Objetivo aparente</span><span class="summary-value">{html.escape(str(item.get("apparent_objective", "")))}</span></div>
 <div class="summary-item"><span class="summary-label">Resultado observado</span><span class="summary-value">{html.escape(str(item.get("observed_outcome", "")))}</span></div></div>
 <div class="chat-thread">{transcript}</div></section>
-<aside class="review-panel"><div class="panel-heading"><h2>Evaluar conversación</h2><p class="muted">La decisión se guarda de forma durable.</p></div>
-<form class="actions" method="post" action="/daily-feedback/review/{html.escape(public_ref)}/decisions">
+<aside class="review-panel"><div class="panel-heading"><h2>Evaluar conversación</h2><p class="muted">Elegí si está correcta o necesita una corrección.</p></div>
+<form class="actions" data-decision-form method="post" action="/daily-feedback/review/{html.escape(public_ref)}/decisions">
 <input type="hidden" name="csrf_token" value="{html.escape(csrf_token)}">
 <input type="hidden" name="command_id" value="{html.escape(command_id)}">
 <input type="hidden" name="item_id" value="{html.escape(str(item.get("item_id", "")))}">
-<label for="feedback">Feedback literal<span class="label-note">Obligatorio sólo al elegir “Correcta con feedback”.</span></label>
-<textarea id="feedback" name="verbatim_feedback" maxlength="4000" placeholder="Escribe observaciones concretas sobre esta conversación…"></textarea>
-<div class="decision-grid"><button class="primary" type="submit" name="decision" value="correct">Correcta</button>
-<button type="submit" name="decision" value="correct_with_feedback">Correcta con feedback</button>
-<button class="quiet" type="submit" name="decision" value="skip">Omitir por ahora</button></div>
-</form></aside></div>'''
+<input type="hidden" name="verbatim_feedback" value="" data-empty-feedback>
+<div class="decision-grid"><button class="primary decision-option" type="submit" name="decision" value="correct" data-direct-decision>Está correcta</button>
+<button type="button" class="decision-option" data-reveal-feedback aria-expanded="false" aria-controls="feedback-panel">Necesita corrección</button>
+<button class="quiet decision-option" type="submit" name="decision" value="skip" data-direct-decision>Omitir por ahora</button></div>
+<div class="feedback-panel" hidden id="feedback-panel"><label for="feedback">¿Qué debería corregirse?<span class="label-note">Indicá concretamente qué estuvo mal y cómo debería responder el agente.</span></label>
+<textarea id="feedback" name="verbatim_feedback" maxlength="4000" required disabled placeholder="Describí el problema y la respuesta esperada…"></textarea>
+<button class="primary save-correction" type="submit" name="decision" value="correct_with_feedback" disabled>Guardar corrección</button></div>
+<noscript><p class="label-note">Para registrar una corrección, habilitá JavaScript en este sitio.</p></noscript>
+</form></aside></div><script>{_REVIEW_INTERACTION_SCRIPT}</script>'''
     return _review_page_shell("Revisión diaria", body)
 
 
