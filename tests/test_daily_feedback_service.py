@@ -480,6 +480,62 @@ def test_decision_accepts_browser_verified_same_origin_when_origin_is_omitted() 
     assert repository.calls[-1][1]["p_verbatim_feedback"] == "  Feedback literal con ñ.  "
 
 
+def test_decision_accepts_chrome_null_origin_with_verified_same_origin_metadata() -> None:
+    client, repository = _client()
+    batch_ref = "22222222-2222-4222-8222-222222222222"
+    started = client.get(f"/auth/slack/start?batch_ref={batch_ref}", follow_redirects=False)
+    state = parse_qs(urlsplit(started.headers["location"]).query)["state"][0]
+    client.get(f"/auth/slack/callback?code=authorization-code&state={state}", follow_redirects=False)
+    page = client.get(f"/review/{batch_ref}")
+    csrf = page.text.split('name="csrf_token" value="', 1)[1].split('"', 1)[0]
+    command_id = page.text.split('name="command_id" value="', 1)[1].split('"', 1)[0]
+
+    accepted = client.post(
+        f"/review/{batch_ref}/decisions",
+        data={
+            "csrf_token": csrf,
+            "command_id": command_id,
+            "item_id": "33333333-3333-4333-8333-333333333333",
+            "decision": "correct_with_feedback",
+            "verbatim_feedback": "  Feedback literal con ñ.  ",
+        },
+        headers={"Origin": "null", "Sec-Fetch-Site": "same-origin"},
+        follow_redirects=False,
+    )
+
+    assert accepted.status_code == 303
+    assert repository.calls[-1][0] == "record_daily_feedback_decision_v1"
+    assert repository.calls[-1][1]["p_verbatim_feedback"] == "  Feedback literal con ñ.  "
+
+
+def test_decision_rejects_null_origin_without_same_origin_fetch_metadata() -> None:
+    client, repository = _client()
+    batch_ref = "22222222-2222-4222-8222-222222222222"
+    started = client.get(f"/auth/slack/start?batch_ref={batch_ref}", follow_redirects=False)
+    state = parse_qs(urlsplit(started.headers["location"]).query)["state"][0]
+    client.get(f"/auth/slack/callback?code=authorization-code&state={state}", follow_redirects=False)
+    page = client.get(f"/review/{batch_ref}")
+    csrf = page.text.split('name="csrf_token" value="', 1)[1].split('"', 1)[0]
+    command_id = page.text.split('name="command_id" value="', 1)[1].split('"', 1)[0]
+    calls_before = len(repository.calls)
+
+    rejected = client.post(
+        f"/review/{batch_ref}/decisions",
+        data={
+            "csrf_token": csrf,
+            "command_id": command_id,
+            "item_id": "33333333-3333-4333-8333-333333333333",
+            "decision": "correct_with_feedback",
+            "verbatim_feedback": "Feedback",
+        },
+        headers={"Origin": "null", "Sec-Fetch-Site": "cross-site"},
+        follow_redirects=False,
+    )
+
+    assert rejected.status_code == 403
+    assert len(repository.calls) == calls_before
+
+
 def test_decision_rejects_missing_origin_without_same_origin_fetch_metadata() -> None:
     client, _ = _client()
     batch_ref = "22222222-2222-4222-8222-222222222222"
