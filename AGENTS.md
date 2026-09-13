@@ -33,3 +33,10 @@ Construir un receptor seguro para webhooks de Chatwoot antes de integrar el prof
 - Registrar en `docs/operations/` la evidencia operativa relevante, no diarios narrativos del proyecto.
 - Mantener explícita la diferencia entre propuesta, decisión aceptada, implementación y evidencia.
 - Evaluar y aplicar proactivamente las actualizaciones documentales correspondientes dentro de la misma tarea, sin tocar trabajo concurrente fuera de alcance.
+
+## Cierre y aprendizaje obligatorio de Johanna
+
+- Toda tarea que implemente, pruebe, despliegue, diagnostique o decida comportamiento necesario para completar Johanna debe seguir `docs/operations/johanna-completion-learning-protocol.md`.
+- El claim debe declarar el recurso único `johanna-completion:<task_id>` y el registro exclusivo `docs/operations/johanna-completion/records/<task_id>.md`; no usar un recurso singleton que serialice tareas independientes.
+- La transición a `review` queda bloqueada si falta el registro o alguna de sus secciones obligatorias. Éxito funcional sin evidencia y disposición de aprendizajes no es cierre.
+- El ledger central lo mantiene el integrador; una tarea paralela no lo modifica sin claim exclusivo. Sesiones, handoffs y memoria no sustituyen los artefactos autoritativos.

@@ -30,6 +30,18 @@ ALLOWED_TRANSITIONS = {
 }
 TASK_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}$")
 MIGRATION_RE = re.compile(r"^supabase/migrations/(\d+)_.*\.sql$")
+JOHANNA_COMPLETION_RESOURCE_PREFIX = "johanna-completion:"
+JOHANNA_RECORD_ROOT = "docs/operations/johanna-completion/records"
+JOHANNA_RECORD_REQUIRED_SECTIONS = (
+    "Resultado esperado",
+    "Prerrequisitos y gates",
+    "Ejecución y evidencia",
+    "Diagnóstico",
+    "Cambio, contención y rollback",
+    "Disposición de aprendizajes",
+    "Documentos afectados",
+    "Criterio de cierre",
+)
 
 
 class CoordinationError(RuntimeError):
@@ -136,6 +148,59 @@ class AgentWorkspace:
                 "task_id must use 2-63 lowercase letters, digits, and hyphens"
             )
         return self.claims_dir / f"{task_id}.json"
+
+    def _validate_johanna_learning_record(self, claim: Claim) -> None:
+        signals = [claim.task_id, claim.title, claim.branch, *claim.paths]
+        expected_resource = f"{JOHANNA_COMPLETION_RESOURCE_PREFIX}{claim.task_id}"
+        targets_johanna = any(
+            str(resource).startswith(JOHANNA_COMPLETION_RESOURCE_PREFIX)
+            for resource in claim.resources
+        ) or any("johanna" in str(value).casefold() for value in signals)
+        if not targets_johanna:
+            return
+        if expected_resource not in claim.resources:
+            raise CoordinationError(
+                "Johanna work must declare the unique johanna-completion resource: "
+                f"{expected_resource}"
+            )
+
+        record_path = f"{JOHANNA_RECORD_ROOT}/{claim.task_id}.md"
+        if record_path not in claim.paths:
+            raise CoordinationError(
+                f"Johanna work must declare learning record path: {record_path}"
+            )
+        current = Path(claim.worktree).resolve()
+        for component in PurePosixPath(record_path).parts:
+            current /= component
+            if current.is_symlink():
+                raise CoordinationError(
+                    f"Johanna learning record must be a regular file: {record_path}"
+                )
+        record = current
+        if not record.is_file():
+            raise CoordinationError(
+                f"Johanna learning record must be a regular file: {record_path}"
+            )
+
+        content = record.read_text(encoding="utf-8")
+        for section in JOHANNA_RECORD_REQUIRED_SECTIONS:
+            match = re.search(
+                rf"(?ms)^## {re.escape(section)}\s*$\n(.*?)(?=^## |\Z)",
+                content,
+            )
+            body = match.group(1).strip() if match is not None else ""
+            if match is None or not body:
+                raise CoordinationError(
+                    "Johanna learning record has missing or empty required section: "
+                    f"{section}"
+                )
+            if "<!-- REQUIRED:" in body or re.fullmatch(
+                r"N/A\.?", body, flags=re.IGNORECASE
+            ):
+                raise CoordinationError(
+                    "Johanna learning record has placeholder or unexplained N/A: "
+                    f"{section}"
+                )
 
     def _load_claims(self) -> list[Claim]:
         claims: list[Claim] = []
@@ -660,6 +725,7 @@ class AgentWorkspace:
             if state == "review":
                 worktree = Path(claim.worktree)
                 self.preflight(worktree)
+                self._validate_johanna_learning_record(claim)
                 if _git(worktree, "status", "--porcelain"):
                     raise CoordinationError("worktree is dirty; commit before review")
                 upstream = _run_git(
