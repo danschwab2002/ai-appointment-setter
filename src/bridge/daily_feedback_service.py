@@ -1017,7 +1017,7 @@ def _valid_browser_secret(value: str | None) -> bool:
 def _authorized_decision_origin(request: Request, public_origin: str) -> bool:
     expected_origin = public_origin.rstrip("/")
     origin = request.headers.get("origin")
-    if origin is not None:
+    if origin is not None and origin != "null":
         return hmac.compare_digest(origin, expected_origin)
     expected_host = urlsplit(expected_origin).netloc
     return (
