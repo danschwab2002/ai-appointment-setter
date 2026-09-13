@@ -59,6 +59,7 @@ class FakeOperator:
         assert case_id == CASE
         return {
             "case_id": CASE,
+            "event_type": "PURCHASE_APPROVED",
             "outcome": "unmatched",
             "candidate_count": 1,
             "automation_blocked": True,
@@ -531,6 +532,7 @@ def test_exact_connector_rendered_message_round_trips_through_slack_click(
         message = build_pending_message(
             {
                 "case_id": CASE,
+                "event_type": "PURCHASE_APPROVED",
                 "outcome": "unmatched",
                 "candidate_count": 1,
                 "automation_blocked": True,

@@ -122,6 +122,14 @@ def test_non_handoff_correlation_cannot_be_presented_as_unresolved() -> None:
         )
 
 
+def test_unknown_business_event_cannot_enter_commercial_review() -> None:
+    raw = _raw_conflict()
+    raw["event_type"] = "UNKNOWN_EVENT"
+
+    with pytest.raises(InvalidCorrelationEvidence, match="invalid_event_type"):
+        build_unresolved_correlation(raw, include_candidates=True)
+
+
 def test_raw_identity_is_rejected_outside_exact_private_review() -> None:
     raw = _raw_conflict()
     raw["identity"] = {

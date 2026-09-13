@@ -1,7 +1,7 @@
 # Contrato de resolución de correlaciones en Slack V1
 
 - **Estado:** UX comercial simplificada implementada localmente; pendiente de revisión y publicación
-- **Fecha:** 2026-09-11
+- **Fecha:** 2026-09-13
 - **Autoridad:** Supabase Cloud mediante el bridge scoped del aliado
 - **Superficie:** modal nativo de Slack y actualización del mensaje raíz
 
@@ -24,16 +24,37 @@ conceden autoridad.
 
 ## 2. Mensaje accionable
 
-`COR-001`, `COR-002` y `COR-003` incluyen un botón `Revisar compra`. La superficie
-visible explica en lenguaje cotidiano si no se encontró una persona, si existen
-varias opciones o si email y teléfono conducen a resultados distintos. No muestra
+La notificación conserva primero la naturaleza comercial del evento y después el
+problema de identidad. Los códigos cerrados son:
+
+| Naturaleza comercial | Sin coincidencia | Varias coincidencias | Datos contradictorios | Acción visible |
+|---|---|---|---|---|
+| Compra confirmada | `COR-001` | `COR-002` | `COR-003` | `Identificar comprador` |
+| Checkout abandonado | `COR-010` | `COR-011` | `COR-012` | `Identificar abandono` |
+| Pago no completado | `COR-013` | `COR-014` | `COR-015` | `Identificar pago` |
+
+La tarjeta declara qué ocurrió, cuál es el problema, qué debe investigar el
+comercial y qué permanece bloqueado. Distingue en lenguaje cotidiano si no se
+encontró una persona, si existen varias opciones o si email y teléfono conducen
+a resultados distintos. No muestra
 códigos internos, UUID ni estados técnicos; conserva únicamente identidad
 enmascarada y la cantidad de personas posibles. El `case_id` oculto del botón y
 del metadata nunca es autoridad suficiente: el conector exige
 que coincida con un registro durable aceptado cuyos Team ID, Channel ID,
 `message_ts`, tenant y `subject_ref` también coincidan.
 
-Los demás códigos del catálogo permanecen sin acciones.
+Las variantes “sin coincidencia” son informativas y no muestran un botón de
+decisión: el backend todavía no permite buscar o agregar una persona fuera de la
+lista. Las variantes ambiguas o contradictorias sí abren la revisión privada.
+
+Los demás códigos del catálogo permanecen sin acciones. Un tipo de evento distinto
+de los tres anteriores falla cerrado y no puede entrar a la revisión comercial.
+
+Durante un despliegue gradual, cada fila de proyección queda ligada de forma durable
+al contrato de notificación que la reclamó primero. Las réplicas antiguas sólo
+reclaman contratos V1; las nuevas preservan V1 al recuperar un lease vencido y usan
+V2 únicamente para filas nuevas. Así, una respuesta perdida no cambia UUID, código,
+dedupe ni payload al reintentarse.
 
 ## 3. Endpoint Slack
 
@@ -102,8 +123,9 @@ mensaje o tenant.
 
 ## 5. Decisión guiada, prepare y confirm
 
-El modal inicial formula una sola pregunta comercial: si la compra pertenece a
-una de las personas mostradas. Compara email y teléfono completos de la compra con
+El modal inicial repite la naturaleza comercial y formula una sola pregunta:
+si la compra, el abandono o el pago no completado pertenece a una de las personas
+mostradas. Compara email y teléfono completos del evento con
 cada registro, marca qué señal coincide y ofrece exactamente tres resultados. La
 tarjeta del canal continúa enmascarada; la identidad completa no se incluye en
 metadata, sesiones SQLite, logs ni mensajes persistentes de Slack:
@@ -112,7 +134,7 @@ metadata, sesiones SQLite, logs ni mensajes persistentes de Slack:
 2. declarar `Revisé los datos: no corresponde a ninguna`;
 3. declarar `No puedo determinarlo`.
 
-Elegir una persona abre un segundo paso que pregunta cómo se comprobó: compra o
+Elegir una persona abre un segundo paso que pregunta cómo se comprobó: evento o
 transacción, registro del cliente o confirmación del cliente. `No puedo
 determinarlo` cierra el modal y mantiene la sesión y el caso pendientes, con cero
 llamadas operator. Cerrar sin asociación infiere únicamente el fundamento interno
@@ -145,11 +167,11 @@ comando vencido fallan cerrado.
 
 ## 6. Resultado y proyección
 
-Supabase es autoritativo. Tras una confirmación aplicada, el conector actualiza el
-mismo mensaje raíz mediante `chat.update`, retira los botones y muestra:
+Supabase es autoritativo. Tras una confirmación aplicada, el conector actualiza la
+misma tarjeta raíz mediante `chat.update`, retira los botones y muestra:
 
-- `Compra asociada`, o
-- `Compra cerrada sin asociación`.
+- `Caso asociado`, o
+- `Caso cerrado sin asociación`.
 
 También muestra el Slack User ID del operador y el timestamp autoritativo, sin
 PII ni comentarios libres.

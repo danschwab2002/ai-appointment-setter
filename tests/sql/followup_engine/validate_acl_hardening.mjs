@@ -100,6 +100,7 @@ const rows = await db.query(`
       ('claim_due_followup_actions(text,timestamp with time zone,interval,integer)'),
       ('claim_human_handoff_projection_effects(text,integer,integer,timestamp with time zone)'),
       ('claim_slack_correlation_notifications(text,text,text,integer,integer,integer)'),
+      ('claim_slack_correlation_notifications_v2(text,text,text,integer,integer,integer)'),
       ('complete_slack_correlation_notification(uuid,uuid,bigint,uuid)'),
       ('confirm_operator_correlation_resolution(text,text,text,uuid,text,uuid)'),
       ('correlate_hotmart_purchase_intent(uuid)'),
@@ -186,9 +187,10 @@ const rows = await db.query(`
 const result = rows.rows[0];
 // Historical baseline guard was `result.expected_count !== 63`; the current
 // baseline is 68 RPCs, daily feedback adds fourteen, payment links add three,
-// and the one-shot operator disposition adds one.
+// the one-shot operator disposition adds one, and correlation event context
+// adds one.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 86) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 87) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const bindingAcl = await db.query(`
