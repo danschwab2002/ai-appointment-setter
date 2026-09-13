@@ -423,7 +423,17 @@ bindings de timer, y el scope agregado
 `inactive/generation=0`. Cuando el proceso first-touch está encendido, `/ready`
 exige el ledger completo, cada dimensión de los scopes, la policy exacta de 60
 minutos y los seis bindings; cualquier ausencia o contradicción responde `503`
-antes de acreditar readiness.
+antes de acreditar readiness. El candidato local de disposición operativa agrega
+un ledger append-only para un `delivery_unknown/chatwoot_http_error` con contacto
+externo eliminado. Conserva el command ambiguo sin IDs ni transición de entrega,
+no autoriza retry y excluye de `delivery_unknown_count` únicamente commands con
+una disposición válida e inmutable. La RPC service-role-only exige más de 24 horas,
+el origen precheckout y todas las dimensiones del first-touch productivo; replay
+exacto es idempotente y otro operador produce conflicto. El trigger de commands
+bloquea las excepciones históricas de reconciliación y retry una vez registrada la
+disposición. Este candidato no está
+commiteado, migrado ni desplegado. Ver el
+[contrato de disposición V1](contracts/johanna-one-shot-operator-disposition-v1.md).
 
 La salida HTTP tiene un gate adicional, default-off y específico:
 `PRECHECKOUT_DELAYED_OUTBOUND_ENABLED=false`. Se evalúa después de
@@ -445,18 +455,20 @@ ambiguo sólo puede reconciliarse al recuperar el mensaje exacto, nunca mediante
 retry ciego. Compra, opt-out, identidad o secuencia divergentes, takeover,
 assignee humano, pausa, checkout vencido y respuestas malformadas bloquean. La
 última autorización ocurre después de releer conversación, labels e historial y
-antes del POST. El candidato está implementado y verificado localmente, pero no
-está mergeado, migrado ni desplegado; `PAYMENT_LINK_ENABLED=false` permanece como
-default. Ver el [contrato](contracts/johanna-payment-link-v1.md) y el
+antes del POST. El código, la migración y el bridge están mergeados, aplicados y
+desplegados con `PAYMENT_LINK_ENABLED=false`; no existe activación ni E2E de compra
+atribuida todavía. Ver el [contrato](contracts/johanna-payment-link-v1.md) y el
 [runbook de release](operations/johanna-payment-link-release-v1.md).
 
 En producción están aplicadas y registradas `20260829000200`–`20260829000500`,
-`20260831000200` y `20260831000300`; los seis pares y bindings están publicados y
-el bridge correspondiente está desplegado. `/ready` acredita
-`precheckout_first_touch_ready` con cero due/reserved/request-started/unknown. El
-worker, first-touch y gate outbound selectivo están activos tanto en la definición
-persistida del servicio como en el task efectivo. `pilot_boundary=disabled` y
-`automation_state=default_off` describen el camino general y no bloquean este
+`20260831000200`, `20260831000300` y la migración de payment-link. Los seis pares
+y bindings están publicados y el bridge correspondiente está desplegado. `/ready`
+acredita `precheckout_first_touch_ready`; due, reserved y request-started están en
+cero. Persiste un `delivery_unknown` histórico de un E2E cuyo contacto externo fue
+eliminado antes de poder reconciliarlo; no acredita aceptación, entrega ni ausencia
+de envío. El worker, first-touch y gate outbound selectivo están activos tanto en
+la definición persistida del servicio como en el task efectivo. El
+`automation_state=default_off` describe el camino general y no bloquea este
 sender dedicado; la plantilla ya alcanzó `delivered` en producción. Ver la
 [evidencia remota de baseline](operations/2026-08-30-precheckout-selective-activation.md),
 [activación y entrega productiva](operations/2026-08-31-precheckout-production-activation.md),

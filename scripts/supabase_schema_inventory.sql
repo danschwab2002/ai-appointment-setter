@@ -2880,6 +2880,45 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         4,
         'operator_correlation_exact_private_identity_service_role_only'
+    union all
+    select
+        '20260913000100',
+        '20260913000100_johanna_one_shot_operator_disposition.sql',
+        (to_regclass('public.johanna_one_shot_operator_dispositions') is not null)::int
+        + exists(
+            select 1 from triggers
+            where tgname = 'protect_johanna_one_shot_operator_disposition'
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.resolve_johanna_one_shot_unverifiable_contact_deleted(uuid,text)'
+            )
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+              and position('johanna_one_shot_operator_disposition_ineligible' in definition) > 0
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.protect_johanna_abandonment_one_shot_command()'
+            )
+              and position('johanna_abandonment_one_shot_disposed_immutable' in definition) > 0
+              and position('johanna_one_shot_operator_dispositions' in definition) > 0
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.get_precheckout_delayed_first_touch_readiness()'
+            )
+              and position('johanna_one_shot_operator_dispositions' in definition) > 0
+              and position('disposition.command_id = command.id' in definition) > 0
+        )::int,
+        5,
+        'append_only_operator_disposition_preserves_ambiguous_delivery_truth'
 )
 select
     version,

@@ -106,6 +106,7 @@ const rows = await db.query(`
       ('evaluate_lancemos_pilot_scope(text,integer,text,bigint,bigint,text,text,text,text,text,text,uuid)'),
       ('finish_johanna_abandonment_one_shot(uuid,text,bigint,bigint,text)'),
       ('reconcile_johanna_abandonment_one_shot(text,bigint,bigint)'),
+      ('resolve_johanna_one_shot_unverifiable_contact_deleted(uuid,text)'),
       ('begin_johanna_abandonment_hotmart_auto(text,uuid,uuid,text,bigint,bigint,text,integer,bigint)'),
       ('begin_johanna_abandonment_hotmart_auto_v2(text,uuid,uuid,bigint,bigint,text,integer,bigint)'),
       ('begin_johanna_payment_failure_hotmart_auto(text,uuid,bigint,bigint)'),
@@ -184,9 +185,10 @@ const rows = await db.query(`
 `);
 const result = rows.rows[0];
 // Historical baseline guard was `result.expected_count !== 63`; the current
-// baseline is 68 RPCs, daily feedback adds fourteen, and payment links add three.
+// baseline is 68 RPCs, daily feedback adds fourteen, payment links add three,
+// and the one-shot operator disposition adds one.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 85) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 86) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const bindingAcl = await db.query(`
