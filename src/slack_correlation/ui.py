@@ -8,6 +8,8 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
+from slack_correlation.case_copy import CommercialCaseCopy, commercial_case_copy, operator_task
+
 _OUTCOME_LABELS = {
     "unmatched": "Sin coincidencia",
     "ambiguous": "Coincidencia ambigua",
@@ -17,6 +19,13 @@ _OUTCOME_LABELS = {
 
 class InvalidSlackCorrelationCase(ValueError):
     """Raised when a case cannot be projected safely to Slack."""
+
+
+def _commercial_copy(case: dict[str, object]) -> CommercialCaseCopy:
+    try:
+        return commercial_case_copy(case.get("event_type"))
+    except ValueError as exc:
+        raise InvalidSlackCorrelationCase("invalid_event_type") from exc
 
 
 _MASKED_EMAIL = re.compile(
@@ -146,35 +155,21 @@ def build_pending_message(
     if not isinstance(review_due_at, str) or not review_due_at:
         raise InvalidSlackCorrelationCase("invalid_review_due_at")
     email, phone = _masked_identity(case)
-    raw_reason_code = case.get("reason_code")
-    reason_code = raw_reason_code if isinstance(raw_reason_code, str) else None
-    explanation = (
-        {
-            "identity_not_found": "No encontramos una persona asociada a esta compra.",
-            "identity_ambiguous": "Encontramos varias personas posibles para esta compra.",
-            "email_phone_conflict": "El email y el teléfono no conducen a la misma persona.",
-        }.get(reason_code)
-        if reason_code is not None
-        else None
-    )
-    if explanation is None:
-        explanation = {
-            "unmatched": "No encontramos una persona asociada a esta compra.",
-            "ambiguous": "Encontramos varias personas posibles para esta compra.",
-            "conflict": "Los datos de la compra no conducen a la misma persona.",
-        }[outcome]
+    copy = _commercial_copy(case)
+    title = copy.title(outcome)
+    explanation = copy.problem(outcome)
     identity_lines = [
         value
         for value in (
-            f"Email de la compra: `{email}`" if email is not None else None,
-            f"Teléfono de la compra: `{phone}`" if phone is not None else None,
+            f"{copy.identity_email_label}: `{email}`" if email is not None else None,
+            f"{copy.identity_phone_label}: `{phone}`" if phone is not None else None,
         )
         if value is not None
     ]
-    identity_text = "\n".join(identity_lines) or "La compra no incluye datos comparables."
+    identity_text = "\n".join(identity_lines) or "El evento no incluye datos de identidad comparables."
     possible_label = "Persona posible" if candidate_count == 1 else "Personas posibles"
     return {
-        "text": "Necesitamos confirmar una compra",
+        "text": title,
         "metadata": {
             "event_type": "operator_correlation_case",
             "event_payload": {"case_id": case_id},
@@ -184,26 +179,34 @@ def build_pending_message(
                 "type": "header",
                 "text": {
                     "type": "plain_text",
-                    "text": "Necesitamos confirmar una compra",
+                    "text": title,
                 },
             },
             _section(
-                f"{explanation}\n*{possible_label}: {candidate_count}*"
+                f"{copy.situation}\n\n*Cuál es el problema:* {explanation}\n"
+                f"*Qué tenés que hacer:* {operator_task(copy, outcome)}\n"
+                f"*{possible_label}: {candidate_count}*"
             ),
             _section(identity_text),
-            _section("La compra seguirá en espera hasta que alguien la revise."),
-            {
-                "type": "actions",
-                "elements": [
+            _section(f"*Mientras esté pendiente:* {copy.impact}"),
+            *(
+                [
                     {
-                        "type": "button",
-                        "action_id": "review_operator_correlation",
-                        "text": {"type": "plain_text", "text": "Revisar compra"},
-                        "style": "primary",
-                        "value": case_id,
+                        "type": "actions",
+                        "elements": [
+                            {
+                                "type": "button",
+                                "action_id": "review_operator_correlation",
+                                "text": {"type": "plain_text", "text": copy.button},
+                                "style": "primary",
+                                "value": case_id,
+                            }
+                        ],
                     }
-                ],
-            },
+                ]
+                if outcome != "unmatched"
+                else []
+            ),
         ],
     }
 
@@ -220,6 +223,7 @@ def build_review_modal(
     outcome = case.get("outcome")
     if not isinstance(outcome, str) or outcome not in _OUTCOME_LABELS:
         raise InvalidSlackCorrelationCase("invalid_outcome")
+    copy = _commercial_copy(case)
     candidate_count = case.get("candidate_count")
     candidates = case.get("candidates")
     if (
@@ -233,11 +237,19 @@ def build_review_modal(
 
     observed_email, observed_phone = _review_identity(case)
     observed_lines = [
-        "*Compra recibida*",
+        f"*{copy.observed_label}*",
+        copy.situation,
         f"Email: `{observed_email}`" if observed_email is not None else "Email: no disponible",
         f"Teléfono: `{observed_phone}`" if observed_phone is not None else "Teléfono: no disponible",
     ]
-    blocks: list[dict[str, object]] = [_section("\n".join(observed_lines))]
+    blocks: list[dict[str, object]] = [
+        _section("\n".join(observed_lines)),
+        _section(
+            f"*Qué tenés que resolver:* {copy.task}\n"
+            "Elegí una persona sólo si pudiste comprobarlo con información adicional. "
+            "No elijas por intuición ni porque parezca la opción más probable."
+        ),
+    ]
     options: list[dict[str, object]] = []
     multiple = candidate_count != 1
     for index, candidate in enumerate(candidates, start=1):
@@ -286,10 +298,12 @@ def build_review_modal(
         candidate_lines = [f"*{label}*"]
         if email is not None:
             marker = "✅" if "email" in matched_by else "⚠️"
-            candidate_lines.append(f"Email: `{email}` {marker}")
+            status = "Coincide" if "email" in matched_by else "No coincide"
+            candidate_lines.append(f"Email: `{email}` {marker} {status}")
         if phone is not None:
             marker = "✅" if "phone" in matched_by else "⚠️"
-            candidate_lines.append(f"Teléfono: `{phone}` {marker}")
+            status = "Coincide" if "phone" in matched_by else "No coincide"
+            candidate_lines.append(f"Teléfono: `{phone}` {marker} {status}")
         candidate_lines.extend(
             (
                 f"Coincide por: {', '.join(matched_labels)}",
@@ -322,11 +336,11 @@ def build_review_modal(
         )
     )
     if candidate_count == 0:
-        question = "No encontramos una persona. ¿Qué querés hacer?"
+        question = copy.no_candidate_question
     elif candidate_count == 1:
-        question = "¿Esta compra pertenece a esta persona?"
+        question = copy.singular_question
     else:
-        question = "¿A cuál persona pertenece esta compra?"
+        question = copy.multiple_question
     decision_element: dict[str, object] = {
         "type": "radio_buttons" if len(options) <= 10 else "static_select",
         "action_id": "selected_decision",
@@ -351,7 +365,7 @@ def build_review_modal(
         "private_metadata": json.dumps(
             {"review_token": canonical_review_token}, separators=(",", ":")
         ),
-        "title": {"type": "plain_text", "text": "Revisar compra"},
+        "title": {"type": "plain_text", "text": copy.modal_title},
         "submit": {"type": "plain_text", "text": "Continuar"},
         "close": {"type": "plain_text", "text": "Cancelar"},
         "blocks": blocks,
@@ -372,7 +386,7 @@ def build_verification_modal(*, review_token: str, candidate_id: str) -> dict[st
         "submit": {"type": "plain_text", "text": "Continuar"},
         "close": {"type": "plain_text", "text": "Volver"},
         "blocks": [
-            _section("Elegiste asociar esta compra. *¿Cómo lo confirmaste?*"),
+            _section("Elegiste asociar este caso. *¿Cómo lo confirmaste?*"),
             {
                 "type": "input",
                 "block_id": "verification",
@@ -392,7 +406,7 @@ def build_verification_modal(*, review_token: str, candidate_id: str) -> dict[st
                         for value, label in (
                             (
                                 "external_transaction_reference",
-                                "Revisé la compra o transacción",
+                                "Revisé el evento o la transacción",
                             ),
                             (
                                 "operator_source_record",
@@ -412,21 +426,21 @@ def build_confirmation_modal(
 ) -> dict[str, Any]:
     if action == "resolve_with_candidate":
         evidence_text = {
-            "external_transaction_reference": "La compra o transacción fue verificada.",
+            "external_transaction_reference": "El evento o la transacción fueron verificados.",
             "operator_source_record": "El registro del cliente fue verificado.",
-            "customer_confirmation": "El cliente confirmó que es su compra.",
+            "customer_confirmation": "El cliente confirmó que el caso le corresponde.",
         }.get(verification_basis)
         if evidence_text is None:
             raise ValueError("invalid_verification_basis")
         title = "Confirmar asociación"
-        consequence = "Vas a asociar esta compra con la persona seleccionada."
+        consequence = "Vas a asociar este caso con la persona seleccionada."
     elif (
         action == "close_without_match"
         and verification_basis == "no_valid_candidate_after_review"
     ):
         title = "Confirmar cierre"
         consequence = (
-            "Vas a cerrar esta compra sin asociarla a ninguna persona.\n"
+            "Vas a cerrar este caso sin asociarlo a ninguna persona.\n"
             "Confirmá únicamente si revisaste todas las opciones."
         )
         evidence_text = ""
@@ -473,7 +487,7 @@ def build_success_modal() -> dict[str, Any]:
         "callback_id": "operator_correlation_resolution_complete",
         "title": {"type": "plain_text", "text": "Decisión guardada"},
         "close": {"type": "plain_text", "text": "Cerrar"},
-        "blocks": [_section("La compra fue actualizada y ya podés cerrar esta ventana.")],
+        "blocks": [_section("El caso fue actualizado y ya podés cerrar esta ventana.")],
     }
 
 
@@ -485,7 +499,7 @@ def build_safe_error_modal() -> dict[str, Any]:
         "close": {"type": "plain_text", "text": "Cerrar"},
         "blocks": [
             _section(
-                "La compra sigue pendiente. Volvé a abrirla desde el mensaje "
+                "El caso sigue pendiente. Volvé a abrirlo desde el mensaje "
                 "antes de intentar otra acción."
             )
         ],
@@ -497,11 +511,11 @@ def build_terminal_message(
 ) -> dict[str, Any]:
     canonical_case_id = str(UUID(case_id))
     if outcome == "linked_candidate":
-        title = "Compra asociada"
-        detail = "La compra quedó asociada a la persona seleccionada."
+        title = "Caso asociado"
+        detail = "El caso quedó asociado a la persona seleccionada."
     elif outcome == "closed_without_match":
-        title = "Compra cerrada sin asociación"
-        detail = "La compra quedó cerrada sin asociarse a ninguna persona."
+        title = "Caso cerrado sin asociación"
+        detail = "El caso quedó cerrado sin asociarse a ninguna persona."
     else:
         raise InvalidSlackCorrelationCase("invalid_terminal_outcome")
     if re.fullmatch(r"[UW][A-Z0-9]{8,20}", actor_id) is None:

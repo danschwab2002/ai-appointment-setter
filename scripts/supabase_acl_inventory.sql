@@ -28,6 +28,7 @@ expected_service_role(signature) as (
         ('public.claim_due_followup_actions(text, timestamp with time zone, interval, integer)'),
         ('public.claim_human_handoff_projection_effects(text, integer, integer, timestamp with time zone)'),
         ('public.claim_slack_correlation_notifications(text, text, text, integer, integer, integer)'),
+        ('public.claim_slack_correlation_notifications_v2(text, text, text, integer, integer, integer)'),
         ('public.complete_slack_correlation_notification(uuid, uuid, bigint, uuid)'),
         ('public.confirm_operator_correlation_resolution(text, text, text, uuid, text, uuid)'),
         ('public.correlate_hotmart_purchase_intent(uuid)'),

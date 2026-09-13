@@ -24,6 +24,8 @@ def test_claims_scoped_slack_projection_rows_with_a_fenced_lease() -> None:
             json=[
                 {
                     "source_event_id": SOURCE_ID,
+                    "source_event_type": "PURCHASE_CANCELED",
+                    "notification_contract_version": 2,
                     "outcome": "unmatched",
                     "reason_code": "identity_not_found",
                     "candidate_count": 0,
@@ -54,6 +56,8 @@ def test_claims_scoped_slack_projection_rows_with_a_fenced_lease() -> None:
     assert claims == [
         SlackCorrelationNotificationClaim(
             source_event_id=SOURCE_ID,
+            source_event_type="PURCHASE_CANCELED",
+            notification_contract_version=2,
             outcome="unmatched",
             reason_code="identity_not_found",
             candidate_count=0,
@@ -63,7 +67,7 @@ def test_claims_scoped_slack_projection_rows_with_a_fenced_lease() -> None:
         )
     ]
     assert requests[0].url.path.endswith(
-        "/rpc/claim_slack_correlation_notifications"
+        "/rpc/claim_slack_correlation_notifications_v2"
     )
     assert json.loads(requests[0].content) == {
         "p_tenant_ref": "att1",
@@ -135,6 +139,8 @@ def test_claim_rejects_malformed_projection_evidence() -> None:
                 json=[
                     {
                         "source_event_id": SOURCE_ID,
+                        "source_event_type": "PURCHASE_APPROVED",
+                        "notification_contract_version": 2,
                         "outcome": "resolved",
                         "reason_code": "exact_email",
                         "candidate_count": 1,

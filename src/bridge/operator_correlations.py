@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
+from slack_correlation.case_copy import SUPPORTED_EVENT_TYPES
+
 UNRESOLVED_OUTCOMES = frozenset({"unmatched", "ambiguous", "conflict"})
 REASON_EXPLANATIONS = {
     "scope_not_configured": (
@@ -223,9 +225,13 @@ def build_unresolved_correlation(
     if outcome == "conflict" and candidate_count < 1:
         raise InvalidCorrelationEvidence("invalid_conflict_candidates")
 
+    event_type = _required_string(raw, "event_type")
+    if event_type not in SUPPORTED_EVENT_TYPES:
+        raise InvalidCorrelationEvidence("invalid_event_type")
+
     result: dict[str, object] = {
         "case_id": _required_uuid(raw, "webhook_event_id"),
-        "event_type": _required_string(raw, "event_type"),
+        "event_type": event_type,
         "outcome": outcome,
         "reason_code": reason_code,
         "reason": reason,

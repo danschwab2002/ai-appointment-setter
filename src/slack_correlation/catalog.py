@@ -9,6 +9,8 @@ from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID
 
+from slack_correlation.case_copy import CODE_TO_EVENT_OUTCOME, commercial_case_copy, operator_task
+
 _DEDUPE_KEY = re.compile(r"^[a-f0-9]{64}$")
 _SUBJECT_REF = re.compile(r"^C-[A-Fa-f0-9-]{8,36}$")
 _MACHINE_VALUE = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,79}$")
@@ -41,6 +43,12 @@ EVENT_TEMPLATES: dict[str, EventTemplate] = {
     "COR-007": EventTemplate("p4", "Candidato vinculado"),
     "COR-008": EventTemplate("p4", "Cerrada sin coincidencia"),
     "COR-009": EventTemplate("p2", "Proyección Slack incierta o dañada"),
+    "COR-010": EventTemplate("p2", "Checkout abandonado sin persona"),
+    "COR-011": EventTemplate("p2", "Checkout abandonado con varias personas"),
+    "COR-012": EventTemplate("p2", "Checkout abandonado con identidad contradictoria"),
+    "COR-013": EventTemplate("p2", "Pago no completado sin persona"),
+    "COR-014": EventTemplate("p2", "Pago no completado con varias personas"),
+    "COR-015": EventTemplate("p2", "Pago no completado con identidad contradictoria"),
     "MSG-001": EventTemplate("p2", "Resultado de envío incierto"),
     "MSG-002": EventTemplate("p2", "Envío falló definitivamente"),
     "MSG-003": EventTemplate("p2", "Retries agotados antes del request"),
@@ -134,7 +142,7 @@ def render_message(
     """Render one closed template; callers cannot supply Slack text or blocks."""
 
     template = EVENT_TEMPLATES[command.event_code]
-    if command.event_code in {"COR-001", "COR-002", "COR-003"}:
+    if command.event_code in CODE_TO_EVENT_OUTCOME:
         message = _render_pending_correlation(command, tenant_label=tenant_label)
         if thread_ts is not None:
             message["thread_ts"] = thread_ts
@@ -217,11 +225,10 @@ def _render_pending_correlation(
         case_id = str(UUID(command.subject_ref[2:]))
     except ValueError as exc:
         raise ValueError("correlation_case_id_required") from exc
-    explanation = {
-        "COR-001": "No encontramos una persona asociada a esta compra.",
-        "COR-002": "Encontramos varias personas posibles para esta compra.",
-        "COR-003": "El email y el teléfono no conducen a la misma persona.",
-    }[command.event_code]
+    event_type, outcome = CODE_TO_EVENT_OUTCOME[command.event_code]
+    copy = commercial_case_copy(event_type)
+    title = copy.title(outcome)
+    explanation = copy.problem(outcome)
     count = command.count or 0
     possible_people = (
         "No encontramos personas posibles."
@@ -230,7 +237,7 @@ def _render_pending_correlation(
         if count == 1
         else f"Encontramos {count} personas posibles."
     )
-    headline = f"Necesitamos confirmar una compra · {tenant_label}"
+    headline = f"{title} · {tenant_label}"
     return {
         "text": headline,
         "blocks": [
@@ -238,28 +245,40 @@ def _render_pending_correlation(
                 "type": "header",
                 "text": {
                     "type": "plain_text",
-                    "text": "Necesitamos confirmar una compra",
+                    "text": title,
                 },
             },
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*{tenant_label}*\n{explanation}\n{possible_people}",
+                    "text": (
+                        f"*{tenant_label}*\n{copy.situation}\n\n"
+                        f"*Cuál es el problema:* {explanation}\n"
+                        f"*Qué tenés que hacer:* {operator_task(copy, outcome)}\n"
+                        f"{possible_people}\n\n"
+                        f"*Mientras esté pendiente:* {copy.impact}"
+                    ),
                 },
             },
-            {
-                "type": "actions",
-                "elements": [
+            *(
+                [
                     {
-                        "type": "button",
-                        "action_id": "review_operator_correlation",
-                        "text": {"type": "plain_text", "text": "Revisar compra"},
-                        "style": "primary",
-                        "value": case_id,
+                        "type": "actions",
+                        "elements": [
+                            {
+                                "type": "button",
+                                "action_id": "review_operator_correlation",
+                                "text": {"type": "plain_text", "text": copy.button},
+                                "style": "primary",
+                                "value": case_id,
+                            }
+                        ],
                     }
-                ],
-            },
+                ]
+                if outcome != "unmatched"
+                else []
+            ),
         ],
         "metadata": {
             "event_type": "supportmagician_operational_event",

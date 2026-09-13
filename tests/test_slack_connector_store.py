@@ -37,11 +37,11 @@ def _command(**overrides: object) -> NotificationCommand:
     return NotificationCommand(**values)  # type: ignore[arg-type]
 
 
-def test_catalog_has_exactly_the_50_approved_event_codes() -> None:
-    assert len(EVENT_TEMPLATES) == 50
+def test_catalog_has_exactly_the_56_approved_event_codes() -> None:
+    assert len(EVENT_TEMPLATES) == 56
     assert set(EVENT_TEMPLATES) == {
         *(f"HND-{number:03d}" for number in range(1, 12)),
-        *(f"COR-{number:03d}" for number in range(1, 10)),
+        *(f"COR-{number:03d}" for number in range(1, 16)),
         *(f"MSG-{number:03d}" for number in range(1, 8)),
         *(f"SYS-{number:03d}" for number in range(1, 10)),
         *(f"SEC-{number:03d}" for number in range(1, 6)),
@@ -92,17 +92,61 @@ def test_pending_correlation_card_uses_plain_commercial_language() -> None:
         "event_code": "COR-003",
         "case_id": "11111111-1111-4111-8111-111111111111",
     }
-    assert correlation["text"] == "Necesitamos confirmar una compra · Johanna"
+    assert correlation["text"] == "Compra confirmada: datos de personas diferentes · Johanna"
     rendered = repr(correlation)
-    assert "El email y el teléfono no conducen a la misma persona." in rendered
+    assert "El email coincide con una persona y el teléfono con otra." in rendered
     assert "Encontramos 1 persona posible." in rendered
-    assert "Revisar compra" in rendered
+    assert "Identificar comprador" in rendered
     assert "COR-003" not in repr(correlation["blocks"])
     assert "email_phone_conflict" not in repr(correlation["blocks"])
     assert "pending" not in repr(correlation["blocks"])
     assert "C-11111111" not in repr(correlation["blocks"])
     assert correlation["blocks"][-1]["elements"][0]["action_id"] == "review_operator_correlation"
     assert ordinary["blocks"][-1]["type"] == "section"
+
+
+@pytest.mark.parametrize(
+    ("event_code", "title", "task", "button"),
+    [
+        ("COR-003", "Compra confirmada: datos de personas diferentes", "determinar quién realizó la compra", "Identificar comprador"),
+        ("COR-012", "Checkout abandonado: identidad contradictoria", "identificar quién inició este checkout", "Identificar intento abandonado"),
+        ("COR-015", "Pago no completado: identidad contradictoria", "identificar quién intentó realizar el pago", "Identificar intento de pago"),
+    ],
+)
+def test_initial_correlation_card_names_the_business_event_and_task(
+    event_code: str, title: str, task: str, button: str
+) -> None:
+    correlation = render_message(
+        _command(
+            event_code=event_code,
+            subject_ref="C-11111111-1111-4111-8111-111111111111",
+            reason_code="email_phone_conflict",
+            state="pending",
+            count=2,
+        ),
+        tenant_label="Johanna",
+    )
+
+    rendered = repr(correlation)
+    assert title in rendered
+    assert task in rendered
+    assert "Mientras esté pendiente" in rendered
+    assert correlation["blocks"][-1]["elements"][0]["text"]["text"] == button
+
+
+def test_zero_match_catalog_card_has_no_action_until_external_search_exists() -> None:
+    correlation = render_message(
+        _command(
+            event_code="COR-001",
+            subject_ref="C-11111111-1111-4111-8111-111111111111",
+            reason_code="identity_not_found",
+            state="pending",
+            count=0,
+        ),
+        tenant_label="Johanna",
+    )
+
+    assert not any(block.get("type") == "actions" for block in correlation["blocks"])
 
 
 def test_pending_correlation_card_rejects_an_unsafe_tenant_label() -> None:
