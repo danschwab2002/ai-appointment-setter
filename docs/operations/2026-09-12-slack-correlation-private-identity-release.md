@@ -70,3 +70,23 @@ dos índices duplicados son ajenos a esta migración, que no crea tablas ni índ
   mismo caso.
 - No se interactuó con casos reales ni se ejecutó el backfill de las 13 tarjetas.
 - No se expusieron ni registraron secretos o PII completa.
+
+## Follow-up: `prepare` sin lectura privada redundante
+
+- PR: `#133`.
+- Commit revisado sobre el `main` vigente: `e48c4d9e8e0367c475e5a1819a9f5668a483874c`.
+- Merge en `main`: `e5eef5988335047dd1ae4e40d7a638ba4d4b1727`.
+- `_prepare()` ya no invoca `get_case()` ni transporta identidad privada; llama
+  directamente al RPC transaccional `prepare`, que conserva la revalidación
+  autoritativa de caso, candidato, estado y evidencia.
+- Los rechazos de dominio fallan la sesión sin refetch privado ni actualización
+  adicional del modal; los fallos transitorios siguen siendo reintentables.
+- Suite Python completa previa: aprobada. Suite focalizada tras reconstruir sobre
+  el `main` vigente: aprobada (`58 passed`).
+- Revisión independiente: `APPROVE`, sin bloqueadores.
+- CI `verify` de la PR: `success`.
+- `infra/supportmagician-slack-connector`: redesplegado con rebuild forzado.
+- Postflight: `/health=200`; `/ready=200`; modo `operational`; interacciones y
+  worker activos.
+- Inspección estática de `origin/main`: `_prepare` llama `prepare`, no llama
+  `get_case` ni `confirm`.
