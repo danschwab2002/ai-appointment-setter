@@ -11,6 +11,7 @@ from typing import Any, Awaitable, Callable
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
 from bridge.app import (
     Settings,
@@ -19,8 +20,9 @@ from bridge.app import (
     build_app,
     create_app,
 )
-from bridge.chatwoot import ChatwootProtocolError
+from bridge.chatwoot import ChatwootProtocolError, StalledChatwootConversation
 from bridge.chatwoot_inbox import (
+    ChatwootStalledConversationMonitor,
     ChatwootWorker,
     DurableChatwootInbox,
     RetryableChatwootWorkError,
@@ -51,6 +53,7 @@ class StubChatwootClient:
         reply_result: dict[str, object] | None = None,
         reply_error: Exception | None = None,
         invoke_pre_send_authorizer: bool = True,
+        stalled_candidates: list[StalledChatwootConversation] | None = None,
     ) -> None:
         self.changed = changed
         self.fail = fail
@@ -65,10 +68,20 @@ class StubChatwootClient:
         self.history_calls: list[tuple[int, int]] = []
         self.history_required_ids: list[tuple[int, ...]] = []
         self.reply_calls: list[dict[str, object]] = []
+        self.reply_expected_inbox_ids: list[int | None] = []
         self.pre_send_authorization_calls = 0
         self.authority_calls: list[dict[str, object]] = []
         self.opt_out_macro_calls: list[int] = []
         self.events: list[str] = []
+        self.stalled_candidates = stalled_candidates or []
+        self.stalled_scan_calls: list[dict[str, object]] = []
+
+    async def list_stalled_conversations(
+        self,
+        **kwargs: object,
+    ) -> list[StalledChatwootConversation]:
+        self.stalled_scan_calls.append(kwargs)
+        return self.stalled_candidates
 
     async def validate_conversation_authority(
         self,
@@ -136,9 +149,11 @@ class StubChatwootClient:
         part_index: int = 1,
         part_count: int = 1,
         prior_parts: tuple[str, ...] = (),
+        expected_inbox_id: int | None = None,
         expected_jid: str | None = None,
         pre_send_authorizer: Callable[[], Awaitable[bool]] | None = None,
     ) -> dict[str, object]:
+        self.reply_expected_inbox_ids.append(expected_inbox_id)
         if pre_send_authorizer is not None and self.invoke_pre_send_authorizer:
             self.pre_send_authorization_calls += 1
             if await pre_send_authorizer() is not True:
@@ -597,6 +612,186 @@ def test_chatwoot_worker_loop_survives_an_unexpected_iteration_failure(
     assert handled == ["worker-delivery"]
     assert "chatwoot_worker_iteration_failed error_type=RuntimeError" in caplog.messages
     assert "private data" not in caplog.text
+
+
+def test_stalled_monitor_readmission_is_deterministic_across_restart(
+    tmp_path: Path,
+) -> None:
+    inbox = DurableChatwootInbox(tmp_path / ".work")
+    candidate = StalledChatwootConversation(
+        delivery_id="stalled-chatwoot:2:20",
+        payload={
+            "event": "message_created",
+            "id": 20,
+            "_stalled_monitor": {"version": 1},
+        },
+    )
+
+    async def scan() -> list[StalledChatwootConversation]:
+        return [candidate]
+
+    first = ChatwootStalledConversationMonitor(inbox=inbox, scanner=scan)
+    restarted = ChatwootStalledConversationMonitor(inbox=inbox, scanner=scan)
+
+    asyncio.run(first.run_once())
+    asyncio.run(restarted.run_once())
+
+    items = inbox.admitted_items()
+    assert [item.delivery_id for item in items] == ["stalled-chatwoot:2:20"]
+    assert items[0].payload["id"] == 20
+
+
+def test_stalled_recovery_rearms_after_cooldown_and_caps_model_attempts(
+    tmp_path: Path,
+) -> None:
+    current_time = 1_000.0
+    inbox = DurableChatwootInbox(tmp_path / ".work", clock=lambda: current_time)
+    payload = {
+        "event": "message_created",
+        "id": 20,
+        "_stalled_monitor": {"version": 1},
+    }
+    calls = 0
+
+    async def fail_handler(
+        delivery_id: str,
+        work_payload: dict[str, object],
+        batch_message_ids: tuple[int, ...],
+    ) -> None:
+        nonlocal calls
+        calls += 1
+        raise RetryableChatwootWorkError("persistent external failure")
+
+    worker = ChatwootWorker(inbox=inbox, handler=fail_handler)
+    for admission_number in range(1, 4):
+        assert inbox.admit_recovery(
+            delivery_id="stalled-chatwoot:2:20",
+            payload=payload,
+            cooldown_seconds=300,
+            max_admissions=3,
+        ) is True
+        asyncio.run(worker.run_once())
+        envelope = json.loads(next((tmp_path / ".work").glob("*.json")).read_text())
+        assert envelope["status"] == "failed"
+        assert envelope["recovery_count"] == admission_number
+        assert inbox.admit_recovery(
+            delivery_id="stalled-chatwoot:2:20",
+            payload=payload,
+            cooldown_seconds=300,
+            max_admissions=3,
+        ) is False
+        current_time += 300
+
+    assert inbox.admit_recovery(
+        delivery_id="stalled-chatwoot:2:20",
+        payload=payload,
+        cooldown_seconds=300,
+        max_admissions=3,
+    ) is False
+    assert calls == 3
+
+
+def test_stalled_monitor_loop_recovers_after_scan_error_without_logging_pii(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    inbox = DurableChatwootInbox(tmp_path / ".work")
+    scans = 0
+
+    async def scan() -> list[StalledChatwootConversation]:
+        nonlocal scans
+        scans += 1
+        if scans == 1:
+            raise RuntimeError("private conversation text")
+        return []
+
+    monitor = ChatwootStalledConversationMonitor(
+        inbox=inbox,
+        scanner=scan,
+        scan_interval_seconds=0.01,
+    )
+
+    async def exercise() -> None:
+        await monitor.start()
+        try:
+            async with asyncio.timeout(1):
+                while monitor.last_scan_state != "healthy":
+                    await asyncio.sleep(0.01)
+        finally:
+            await monitor.stop()
+
+    caplog.set_level("WARNING", logger="bridge.chatwoot_inbox")
+    asyncio.run(exercise())
+
+    assert scans >= 2
+    assert monitor.has_completed_scan is True
+    assert monitor.last_scan_state == "stopped"
+    assert "chatwoot_stalled_monitor_scan_failed error_type=RuntimeError" in caplog.messages
+    assert "private conversation text" not in caplog.text
+
+
+def test_app_wires_enabled_stalled_monitor_and_reports_readiness(
+    tmp_path: Path,
+) -> None:
+    chatwoot = StubChatwootClient()
+    app = create_app(
+        Settings(
+            webhook_secret="secret",
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=7,
+            automated_replies_enabled=True,
+            chatwoot_cut_b_admission_enabled=True,
+            chatwoot_cut_b_scope_key="libre-de-ansiedad-inbound",
+            chatwoot_cut_b_scope_version=1,
+            chatwoot_cut_b_agent_enabled=True,
+            chatwoot_stalled_monitor_enabled=True,
+            chatwoot_stalled_monitor_interval_seconds=0.01,
+        ),
+        chatwoot_client=chatwoot,  # type: ignore[arg-type]
+        shadow_processor=StubShadowProcessor(),
+        supabase_client=StubInboundCommercialSupabase(),  # type: ignore[arg-type]
+    )
+
+    with TestClient(app) as client:
+        deadline = time.monotonic() + 1
+        response = client.get("/ready")
+        while response.status_code == 503 and time.monotonic() < deadline:
+            time.sleep(0.01)
+            response = client.get("/ready")
+
+        assert response.status_code == 200
+        assert response.json()["chatwoot_stalled_monitor"] == "healthy"
+        assert chatwoot.stalled_scan_calls
+        assert chatwoot.stalled_scan_calls[0] == {
+            "expected_inbox_id": 7,
+            "stale_after_seconds": 120.0,
+            "max_age_seconds": 86_400.0,
+            "max_pages": 5,
+            "allow_any_scoped_sender": False,
+        }
+
+
+def test_stalled_monitor_is_default_off(tmp_path: Path) -> None:
+    app = create_app(
+        Settings(
+            webhook_secret="secret",
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+        ),
+        chatwoot_client=StubChatwootClient(),  # type: ignore[arg-type]
+    )
+
+    assert app.state.chatwoot_stalled_monitor is None
+    with TestClient(app) as client:
+        response = client.get("/ready")
+    assert response.status_code == 200
+    assert response.json()["chatwoot_stalled_monitor"] == "disabled"
 
 
 def test_chatwoot_worker_scans_the_inbox_once_per_run(
@@ -4358,6 +4553,7 @@ def test_cut_b_agent_gate_admits_then_replies_through_canonical_chatwoot(
     )
     if reply_expected:
         assert len(shadow.calls) == 1
+        assert chatwoot.reply_expected_inbox_ids == [9]
         assert chatwoot.reply_calls == [
             {
                 "conversation_id": 321,

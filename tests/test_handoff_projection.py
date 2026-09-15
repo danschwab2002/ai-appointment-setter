@@ -674,6 +674,7 @@ def test_handoff_readiness_reports_only_sanitized_projection_counts(
     response = asyncio.run(getattr(ready_route, "endpoint")())
     assert response == {
         "status": "ready",
+        "chatwoot_stalled_monitor": "disabled",
         "pilot_boundary": "disabled",
         "automation_state": "default_off",
         "reason_code": "pilot_boundary_disabled",
