@@ -30,10 +30,11 @@ for (const file of files) {
 
 const eventId = '01K4N9YQ2T7W3H5J8M6P0R1SVC';
 const sessionId = '01K4N9YQ2T7W3H5J8M6P0R1SVD';
+const occurredAt = new Date().toISOString();
 const rpc = (eventType) => `
   select * from public.admit_johanna_funnel_event_v1(
     '1.0.0', '${eventId}', '${eventType}',
-    '2026-09-08T08:00:00Z', '${sessionId}', 'ads-a', 'bxjge6zq',
+    '${occurredAt}', '${sessionId}', 'ads-a', 'bxjge6zq',
     'meta', 'paid_social', null, null, null
   )
 `;
