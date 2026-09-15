@@ -65,6 +65,7 @@ class HotmartPurchaseData:
     product_id: int
     product_ucode: str | None
     offer_code: str | None
+    origin_sck: str | None
 
 
 @dataclass(frozen=True)
@@ -127,6 +128,12 @@ def _str(value: Any) -> str | None:
         return None
     cleaned = value.strip()
     return cleaned or None
+
+
+def _opaque_sck(value: Any) -> str | None:
+    if not isinstance(value, str) or value == "":
+        return None
+    return value
 
 
 def _int(value: Any) -> int | None:
@@ -215,6 +222,7 @@ def parse_hotmart_purchase_payload(
     product = _json_object(data.get("product"))
     purchase = _json_object(data.get("purchase"))
     offer = _json_object(purchase.get("offer"))
+    origin = _json_object(purchase.get("origin"))
 
     event_id = _str(event.get("id"))
     creation_date = _int(event.get("creation_date"))
@@ -256,6 +264,7 @@ def parse_hotmart_purchase_payload(
         product_id=product_id,
         product_ucode=_str(product.get("ucode")),
         offer_code=_str(offer.get("code")),
+        origin_sck=_opaque_sck(origin.get("sck")),
     )
 
 def parse_hotmart_payment_failure_payload(

@@ -140,6 +140,10 @@ const rows = await db.query(`
       ('get_chatwoot_payment_link_candidate(uuid,text,bigint,bigint,bigint,integer,timestamp with time zone)'),
       ('prepare_chatwoot_payment_link_send(uuid,text,bigint,bigint,bigint,text,integer,uuid,uuid,text,text,text,text,text,timestamp with time zone)'),
       ('finalize_chatwoot_payment_link_send(uuid,text,bigint,text,timestamp with time zone)'),
+      ('reserve_chatwoot_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamp with time zone)'),
+      ('authorize_chatwoot_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,timestamp with time zone)'),
+      ('finalize_chatwoot_checkout_issuance_v2(uuid,text,bigint,text,timestamp with time zone)'),
+      ('admit_and_correlate_hotmart_checkout_issuance_v2(text,jsonb,text,timestamp with time zone)'),
 
       ('list_due_hotmart_abandonment_reevaluations_v2(timestamp with time zone,integer,boolean)'),
       ('reevaluate_hotmart_abandonment_timer(uuid,timestamp with time zone)'),
@@ -188,9 +192,9 @@ const result = rows.rows[0];
 // Historical baseline guard was `result.expected_count !== 63`; the current
 // baseline is 68 RPCs, daily feedback adds fourteen, payment links add three,
 // the one-shot operator disposition adds one, and correlation event context
-// adds one.
+// adds one, and Johanna checkout issuance V2 adds four.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 87) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 91) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const bindingAcl = await db.query(`
