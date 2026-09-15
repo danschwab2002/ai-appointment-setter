@@ -7,11 +7,13 @@ just httpx, matching the project's existing conventions.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from dataclasses import dataclass, field, fields
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 
@@ -381,6 +383,44 @@ class PaymentLinkSendFinalization:
     outcome: str
     send_command_id: str
     status: str
+
+
+@dataclass(frozen=True)
+class CheckoutIssuanceReservation:
+    """Durable V2 checkout issuance prepared before a Chatwoot effect."""
+
+    outcome: str
+    issuance_id: str | None
+    issuance_ulid: str | None
+    purchase_intent_id: str | None
+    source_kind: str | None
+    checkout_url_final: str | None
+    source_value: str | None
+    sck_value: str | None
+
+
+@dataclass(frozen=True)
+class CheckoutIssuanceAuthorization:
+    outcome: str
+    issuance_id: str | None
+    status: str | None
+
+
+@dataclass(frozen=True)
+class CheckoutIssuanceFinalization:
+    outcome: str
+    issuance_id: str
+    status: str
+
+
+@dataclass(frozen=True)
+class CheckoutIssuancePurchaseAdmission:
+    admission_outcome: str
+    webhook_event_id: str
+    correlation_outcome: str
+    issuance_id: str | None
+    purchase_intent_id: str | None
+    commercial_case_id: str | None
 
 
 @dataclass(frozen=True)
@@ -2674,6 +2714,281 @@ class SupabaseClient:
                 row, "conversation_id", operation=operation
             ),
             automation_status=automation_status,
+        )
+
+    async def reserve_chatwoot_checkout_issuance_v2(
+        self,
+        *,
+        commercial_case_id: str,
+        external_user_id: str,
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+        chatwoot_conversation_id: int,
+        trigger_external_message_id: str,
+        issuance_ulid: str,
+        now: str,
+    ) -> CheckoutIssuanceReservation:
+        """Atomically persist one V2 checkout issuance before Chatwoot."""
+
+        operation = "chatwoot_checkout_issuance_v2_reserve"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/reserve_chatwoot_checkout_issuance_v2",
+            content=json.dumps({
+                "p_commercial_case_id": commercial_case_id,
+                "p_external_user_id": external_user_id,
+                "p_chatwoot_account_id": chatwoot_account_id,
+                "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                "p_chatwoot_conversation_id": chatwoot_conversation_id,
+                "p_trigger_external_message_id": trigger_external_message_id,
+                "p_issuance_ulid": issuance_ulid,
+                "p_now": now,
+            }, ensure_ascii=False),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        expected = {
+            "outcome", "issuance_id", "issuance_ulid", "purchase_intent_id",
+            "source_kind", "checkout_url_final", "source_value", "sck_value",
+        }
+        if len(rows) != 1 or set(rows[0]) != expected:
+            raise SupabaseCommittedResponseError(operation)
+        row = rows[0]
+        outcome = row.get("outcome")
+        allowed = {
+            "reserved", "request_started", "request_started_replay", "already_accepted",
+            "delivery_unknown", "invalid_request", "blocked_case",
+            "blocked_scope", "missing_default_offer", "blocked_contact",
+            "blocked_opt_out", "blocked_conversation", "blocked_identity",
+            "purchase_already_approved", "replay_conflict",
+        }
+        if outcome not in allowed:
+            raise SupabaseCommittedResponseError(operation)
+        values = {
+            key: _optional_string(row, key, operation=operation)
+            for key in expected - {"outcome"}
+        }
+        populated = all(value is not None for value in values.values())
+        empty = all(value is None for value in values.values())
+        if outcome in {
+            "reserved", "request_started", "request_started_replay",
+            "already_accepted", "delivery_unknown",
+        } and not populated:
+            raise SupabaseCommittedResponseError(operation)
+        if outcome == "purchase_already_approved" and not (populated or empty):
+            raise SupabaseCommittedResponseError(operation)
+        if outcome not in {
+            "reserved", "request_started", "request_started_replay", "already_accepted",
+            "delivery_unknown", "purchase_already_approved",
+        } and not empty:
+            raise SupabaseCommittedResponseError(operation)
+        if populated:
+            for key in ("issuance_id", "purchase_intent_id"):
+                try:
+                    uuid.UUID(values[key] or "")
+                except ValueError as exc:
+                    raise SupabaseCommittedResponseError(operation) from exc
+            returned_ulid = values["issuance_ulid"] or ""
+            source_kind = values["source_kind"]
+            source_value = values["source_value"]
+            sck_value = values["sck_value"] or ""
+            final_url = values["checkout_url_final"] or ""
+            if (
+                re.fullmatch(r"[0-7][0-9A-HJKMNP-TV-Z]{25}", returned_ulid) is None
+                or source_kind not in {"inbound_request", "precheckout_request"}
+                or source_value != "hermes"
+                or sck_value != f"hermes|v1|{returned_ulid}"
+            ):
+                raise SupabaseCommittedResponseError(operation)
+            try:
+                parsed = urlsplit(final_url)
+                query = parse_qs(parsed.query, strict_parsing=True)
+            except (TypeError, ValueError) as exc:
+                raise SupabaseCommittedResponseError(operation) from exc
+            if (
+                parsed.scheme != "https"
+                or parsed.netloc != "pay.hotmart.com"
+                or parsed.fragment
+                or set(query) != {"off", "checkoutMode", "src", "sck"}
+                or query.get("src") != ["hermes"]
+                or query.get("sck") != [sck_value]
+                or len(query.get("off", [])) != 1
+                or len(query.get("checkoutMode", [])) != 1
+            ):
+                raise SupabaseCommittedResponseError(operation)
+        return CheckoutIssuanceReservation(outcome=outcome, **values)
+
+    async def authorize_chatwoot_checkout_issuance_v2(
+        self,
+        *,
+        issuance_id: str,
+        external_user_id: str,
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+        chatwoot_conversation_id: int,
+        trigger_external_message_id: str,
+        now: str,
+    ) -> CheckoutIssuanceAuthorization:
+        """Reauthorize immediately before the Chatwoot POST."""
+
+        operation = "chatwoot_checkout_issuance_v2_authorize"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/authorize_chatwoot_checkout_issuance_v2",
+            content=json.dumps({
+                "p_issuance_id": issuance_id,
+                "p_external_user_id": external_user_id,
+                "p_chatwoot_account_id": chatwoot_account_id,
+                "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                "p_chatwoot_conversation_id": chatwoot_conversation_id,
+                "p_trigger_external_message_id": trigger_external_message_id,
+                "p_now": now,
+            }, ensure_ascii=False),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        expected = {"outcome", "issuance_id", "status"}
+        if len(rows) != 1 or set(rows[0]) != expected:
+            raise SupabaseCommittedResponseError(operation)
+        row = rows[0]
+        outcome = row.get("outcome")
+        if outcome not in {
+            "request_started", "request_started_replay", "already_accepted",
+            "delivery_unknown", "purchase_already_approved", "invalid_request",
+            "blocked_case", "blocked_scope", "blocked_contact",
+            "blocked_opt_out", "blocked_conversation", "blocked_identity",
+            "blocked_intent",
+        }:
+            raise SupabaseCommittedResponseError(operation)
+        returned_id = _optional_string(row, "issuance_id", operation=operation)
+        returned_status = _optional_string(row, "status", operation=operation)
+        if outcome == "invalid_request":
+            if returned_id is not None or returned_status is not None:
+                raise SupabaseCommittedResponseError(operation)
+        else:
+            if returned_id is None or returned_status not in {
+                "reserved", "request_started", "accepted_by_chatwoot",
+                "delivery_unknown", "purchase_matched",
+            }:
+                raise SupabaseCommittedResponseError(operation)
+            try:
+                uuid.UUID(returned_id)
+            except ValueError as exc:
+                raise SupabaseCommittedResponseError(operation) from exc
+            if returned_id != issuance_id:
+                raise SupabaseCommittedResponseError(operation)
+        return CheckoutIssuanceAuthorization(outcome, returned_id, returned_status)
+
+    async def finalize_chatwoot_checkout_issuance_v2(
+        self,
+        *,
+        issuance_id: str,
+        status: str,
+        chatwoot_message_id: int | None,
+        failure_code: str | None,
+        now: str,
+    ) -> CheckoutIssuanceFinalization:
+        operation = "chatwoot_checkout_issuance_v2_finalize"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/finalize_chatwoot_checkout_issuance_v2",
+            content=json.dumps({
+                "p_issuance_id": issuance_id,
+                "p_status": status,
+                "p_chatwoot_message_id": chatwoot_message_id,
+                "p_failure_code": failure_code,
+                "p_now": now,
+            }, ensure_ascii=False),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1 or set(rows[0]) != {"outcome", "issuance_id", "status"}:
+            raise SupabaseCommittedResponseError(operation)
+        row = rows[0]
+        outcome = _required_enum(
+            row, "outcome", {"finalized", "already_finalized"}, operation=operation
+        )
+        returned_id = _required_uuid(row, "issuance_id", operation=operation)
+        final_status = _required_enum(
+            row,
+            "status",
+            {"accepted_by_chatwoot", "delivery_unknown", "purchase_matched"},
+            operation=operation,
+        )
+        if returned_id != issuance_id:
+            raise SupabaseCommittedResponseError(operation)
+        return CheckoutIssuanceFinalization(outcome, returned_id, final_status)
+
+    async def admit_and_correlate_hotmart_checkout_issuance_v2(
+        self,
+        *,
+        external_event_id: str,
+        payload: dict[str, Any],
+        sck_value: str,
+        now: str,
+    ) -> CheckoutIssuancePurchaseAdmission:
+        """Persist and correlate a Hermes-SCK purchase without identity fallback."""
+
+        operation = "hotmart_checkout_issuance_v2_admit"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/admit_and_correlate_hotmart_checkout_issuance_v2",
+            content=json.dumps({
+                "p_external_event_id": external_event_id,
+                "p_payload": payload,
+                "p_sck_value": sck_value,
+                "p_now": now,
+            }, ensure_ascii=False),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        expected = {
+            "admission_outcome", "webhook_event_id", "correlation_outcome",
+            "issuance_id", "purchase_intent_id", "commercial_case_id",
+        }
+        if len(rows) != 1 or set(rows[0]) != expected:
+            raise SupabaseCommittedResponseError(operation)
+        row = rows[0]
+        admission_outcome = _required_enum(
+            row, "admission_outcome",
+            {"inserted", "duplicate", "semantic_conflict"},
+            operation=operation,
+        )
+        webhook_event_id = _required_uuid(
+            row, "webhook_event_id", operation=operation
+        )
+        correlation_outcome = _required_enum(
+            row, "correlation_outcome",
+            {"matched", "replay", "conflict", "purchase_already_approved",
+             "invalid_hermes_sck", "not_found", "invalid_purchase_event",
+             "semantic_conflict"},
+            operation=operation,
+        )
+        values = {
+            key: _optional_string(row, key, operation=operation)
+            for key in ("issuance_id", "purchase_intent_id", "commercial_case_id")
+        }
+        populated = all(value is not None for value in values.values())
+        if correlation_outcome in {
+            "matched", "replay", "conflict", "purchase_already_approved"
+        }:
+            if not populated:
+                raise SupabaseCommittedResponseError(operation)
+            for value in values.values():
+                try:
+                    uuid.UUID(value or "")
+                except ValueError as exc:
+                    raise SupabaseCommittedResponseError(operation) from exc
+        elif any(value is not None for value in values.values()):
+            raise SupabaseCommittedResponseError(operation)
+        return CheckoutIssuancePurchaseAdmission(
+            admission_outcome, webhook_event_id, correlation_outcome,
+            values["issuance_id"], values["purchase_intent_id"],
+            values["commercial_case_id"],
         )
 
     async def get_chatwoot_payment_link_candidate(

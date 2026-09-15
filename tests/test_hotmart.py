@@ -126,7 +126,15 @@ def _settings(**overrides: object) -> Settings:
 
 
 def test_portable_purchase_parser_requires_exact_configured_product_and_offer() -> None:
-    assert parse_hotmart_purchase_payload(_purchase(), config=_config()) is not None
+    payload = _purchase()
+    purchase = payload["data"]["purchase"]
+    assert isinstance(purchase, dict)
+    purchase["origin"] = {
+        "sck": "hermes|v1|01K5ABCDEFX2VYB4M6X9CDPTZR"
+    }
+    parsed = parse_hotmart_purchase_payload(payload, config=_config())
+    assert parsed is not None
+    assert parsed.origin_sck == "hermes|v1|01K5ABCDEFX2VYB4M6X9CDPTZR"
 
     wrong_product = _purchase("wrong-product")
     wrong_product["data"]["product"]["id"] = 999999  # type: ignore[index]
@@ -135,6 +143,18 @@ def test_portable_purchase_parser_requires_exact_configured_product_and_offer() 
 
     assert parse_hotmart_purchase_payload(wrong_product, config=_config()) is None
     assert parse_hotmart_purchase_payload(wrong_offer, config=_config()) is None
+
+
+def test_purchase_parser_preserves_malformed_hermes_sck_for_fail_closed_routing() -> None:
+    payload = _purchase()
+    purchase = payload["data"]["purchase"]
+    assert isinstance(purchase, dict)
+    purchase["origin"] = {"sck": "hermes|v1|bad\nmarker"}
+
+    parsed = parse_hotmart_purchase_payload(payload, config=_config())
+
+    assert parsed is not None
+    assert parsed.origin_sck == "hermes|v1|bad\nmarker"
 
 
 def test_explicit_manifest_permits_hottok_only_with_portable_purchase_flag() -> None:

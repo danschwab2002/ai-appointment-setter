@@ -27,6 +27,9 @@ from bridge.chatwoot_inbox import (
 )
 from bridge.reply_splitter import HermesReplySplitter
 from bridge.supabase import (
+    CheckoutIssuanceAuthorization,
+    CheckoutIssuanceFinalization,
+    CheckoutIssuanceReservation,
     InboundCommercialCaseAdmissionResult,
     InboundOptOutResult,
     PaymentLinkCandidate,
@@ -247,6 +250,61 @@ class StubPaymentLinkSupabase(StubInboundCommercialSupabase):
         self.candidate_calls: list[dict[str, object]] = []
         self.prepare_calls: list[dict[str, object]] = []
         self.finalize_calls: list[dict[str, object]] = []
+
+    async def reserve_chatwoot_checkout_issuance_v2(
+        self, **kwargs: object
+    ) -> CheckoutIssuanceReservation:
+        self.candidate_calls.append(kwargs)
+        outcome = (
+            "reserved" if self.candidate_outcome == "available"
+            else self.candidate_outcome
+        )
+        populated = outcome in {
+            "reserved", "request_started_replay", "already_accepted",
+            "delivery_unknown", "purchase_already_approved",
+        }
+        return CheckoutIssuanceReservation(
+            outcome=outcome,
+            issuance_id=("00000000-0000-0000-0000-000000000204" if populated else None),
+            issuance_ulid=("01K3F8QW7N2VYB4M6X9CDPTZRA" if populated else None),
+            purchase_intent_id=("00000000-0000-0000-0000-000000000202" if populated else None),
+            source_kind=("inbound_request" if populated else None),
+            checkout_url_final=(
+                self.reservation_url_override
+                or "https://pay.hotmart.com/F106691755G?off=bxjge6zq"
+                "&checkoutMode=10&src=hermes"
+                "&sck=hermes%7Cv1%7C01K3F8QW7N2VYB4M6X9CDPTZRA"
+                if populated else None
+            ),
+            source_value=("hermes" if populated else None),
+            sck_value=(
+                "hermes|v1|01K3F8QW7N2VYB4M6X9CDPTZRA" if populated else None
+            ),
+        )
+
+    async def authorize_chatwoot_checkout_issuance_v2(
+        self, **kwargs: object
+    ) -> CheckoutIssuanceAuthorization:
+        self.prepare_calls.append(kwargs)
+        return CheckoutIssuanceAuthorization(
+            outcome=self.prepare_outcome,
+            issuance_id="00000000-0000-0000-0000-000000000204",
+            status=(
+                "request_started"
+                if self.prepare_outcome == "request_started"
+                else self.prepare_outcome
+            ),
+        )
+
+    async def finalize_chatwoot_checkout_issuance_v2(
+        self, **kwargs: object
+    ) -> CheckoutIssuanceFinalization:
+        self.finalize_calls.append(kwargs)
+        return CheckoutIssuanceFinalization(
+            outcome="finalized",
+            issuance_id=str(kwargs["issuance_id"]),
+            status=str(kwargs["status"]),
+        )
 
     async def get_chatwoot_payment_link_candidate(
         self, **kwargs: object
@@ -4394,8 +4452,8 @@ def test_payment_link_action_appends_exact_bridge_owned_url_and_finalizes(
     assert response.status_code == 202
     expected_url = (
         "https://pay.hotmart.com/F106691755G?off=bxjge6zq"
-        "&checkoutMode=10&utm_source=meta&sck=meta.cpc.c1&fbclid=CLICK"
-        "&src=hermes-01K3F8QW7N2VYB4M6X9CDPTZRA"
+        "&checkoutMode=10&src=hermes"
+        "&sck=hermes%7Cv1%7C01K3F8QW7N2VYB4M6X9CDPTZRA"
     )
     assert chatwoot.reply_calls == [{
         "conversation_id": 322,
@@ -4404,14 +4462,11 @@ def test_payment_link_action_appends_exact_bridge_owned_url_and_finalizes(
         "content": f"Sí, claro. Podés completar tu compra acá:\n{expected_url}",
         "expected_jid": "12025550124@s.whatsapp.net",
     }]
-    assert supabase.prepare_calls[0]["checkout_url_final"] == expected_url
-    assert supabase.prepare_calls[0]["tracking_field"] == "src"
-    assert supabase.prepare_calls[0]["tracking_value"] == (
-        "hermes-01K3F8QW7N2VYB4M6X9CDPTZRA"
-    )
+    assert len(supabase.candidate_calls) == 1
+    assert len(supabase.prepare_calls) == 1
     assert chatwoot.pre_send_authorization_calls == 1
     assert supabase.finalize_calls == [{
-        "send_command_id": "00000000-0000-0000-0000-000000000204",
+        "issuance_id": "00000000-0000-0000-0000-000000000204",
         "status": "accepted_by_chatwoot",
         "chatwoot_message_id": 900,
         "failure_code": None,
@@ -4507,7 +4562,7 @@ def test_payment_link_duplicate_reconciles_accepted_command_without_second_post(
     assert response.status_code == 202
     assert len(supabase.prepare_calls) == 1
     assert supabase.finalize_calls == [{
-        "send_command_id": "00000000-0000-0000-0000-000000000204",
+        "issuance_id": "00000000-0000-0000-0000-000000000204",
         "status": "accepted_by_chatwoot",
         "chatwoot_message_id": 900,
         "failure_code": None,
@@ -4658,7 +4713,7 @@ def test_payment_link_protocol_failure_after_reservation_finalizes_unknown(
 
     assert response.status_code == 202
     assert supabase.finalize_calls == [{
-        "send_command_id": "00000000-0000-0000-0000-000000000204",
+        "issuance_id": "00000000-0000-0000-0000-000000000204",
         "status": "delivery_unknown",
         "chatwoot_message_id": None,
         "failure_code": "chatwoot_send_unconfirmed",
@@ -4666,12 +4721,10 @@ def test_payment_link_protocol_failure_after_reservation_finalizes_unknown(
     }]
 
 
-def test_payment_link_reservation_mismatch_fails_closed_before_post(
+def test_payment_link_configuration_invalid_fails_closed_before_post(
     tmp_path: Path,
 ) -> None:
-    supabase = StubPaymentLinkSupabase(
-        reservation_url_override="https://pay.hotmart.com/WRONG?off=wrong&src=wrong",
-    )
+    supabase = StubPaymentLinkSupabase(candidate_outcome="configuration_invalid")
     chatwoot = StubChatwootClient(messages=[{
         "id": 902,
         "created_at": 1789164000,
@@ -4692,20 +4745,15 @@ def test_payment_link_reservation_mismatch_fails_closed_before_post(
         _signed_headers(
             raw_body,
             secret="webhook-secret",
-            delivery="payment-link-reservation-mismatch",
+            delivery="payment-link-configuration-invalid",
         ),
     )
     asyncio.run(app.state.chatwoot_worker.run_once())
 
     assert response.status_code == 202
     assert chatwoot.reply_calls == []
-    assert supabase.finalize_calls == [{
-        "send_command_id": "00000000-0000-0000-0000-000000000204",
-        "status": "delivery_unknown",
-        "chatwoot_message_id": None,
-        "failure_code": "payment_link_reservation_mismatch",
-        "now": supabase.finalize_calls[0]["now"],
-    }]
+    assert supabase.finalize_calls == []
+    assert len(supabase.handoff_calls) == 1
 
 
 def _cut_b_cached_reply_app(
