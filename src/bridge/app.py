@@ -36,8 +36,10 @@ from bridge.chatwoot import (
     ChatwootHistoryScanLimitError,
     ChatwootProtocolError,
     ChatwootReplyDeliveryUnknownError,
+    StalledChatwootConversation,
 )
 from bridge.chatwoot_inbox import (
+    ChatwootStalledConversationMonitor,
     ChatwootWorker,
     DurableChatwootInbox,
     RetryableChatwootWorkError,
@@ -149,6 +151,7 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     "payment_link_enabled",
     "chatwoot_post_inbound_discount_planning_enabled",
     "chatwoot_scoped_inbound_senders_enabled",
+    "chatwoot_stalled_monitor_enabled",
     "operator_correlation_read_enabled",
     "operator_correlation_write_enabled",
     "slack_connector_projection_enabled",
@@ -187,6 +190,17 @@ class CanonicalWorkResult:
 
 
 class ChatwootControl(Protocol):
+    async def list_stalled_conversations(
+        self,
+        *,
+        expected_inbox_id: int,
+        stale_after_seconds: float = 120,
+        max_age_seconds: float = 86_400,
+        max_pages: int = 5,
+        allow_any_scoped_sender: bool = False,
+        now_epoch: float | None = None,
+    ) -> list[StalledChatwootConversation]: ...
+
     async def validate_conversation_authority(
         self,
         *,
@@ -231,6 +245,7 @@ class ChatwootControl(Protocol):
         part_index: int = 1,
         part_count: int = 1,
         prior_parts: tuple[str, ...] = (),
+        expected_inbox_id: int | None = None,
         expected_jid: str | None = None,
         pre_send_authorizer: Callable[[], Awaitable[bool]] | None = None,
     ) -> dict[str, object]: ...
@@ -288,6 +303,13 @@ class Settings:
     reply_splitter_model_name: str | None = None
     reply_part_delay_seconds: float = 2.0
     chatwoot_inbound_debounce_seconds: float = 0.0
+    chatwoot_stalled_monitor_enabled: bool = False
+    chatwoot_stalled_monitor_interval_seconds: float = 60.0
+    chatwoot_stalled_after_seconds: float = 120.0
+    chatwoot_stalled_max_age_seconds: float = 86_400.0
+    chatwoot_stalled_max_pages: int = 5
+    chatwoot_stalled_recovery_cooldown_seconds: float = 300.0
+    chatwoot_stalled_max_recovery_admissions: int = 3
     hotmart_hottok: str | None = None
     hotmart_max_age_seconds: int = 300
     portable_hotmart_recovery_enabled: bool = False
@@ -431,6 +453,28 @@ class Settings:
             raise ValueError(
                 "CHATWOOT_INBOUND_DEBOUNCE_SECONDS must be finite and not negative"
             )
+        chatwoot_stalled_monitor_enabled = (
+            os.getenv("CHATWOOT_STALLED_MONITOR_ENABLED", "false").lower()
+            == "true"
+        )
+        chatwoot_stalled_monitor_interval_seconds = float(
+            os.getenv("CHATWOOT_STALLED_MONITOR_INTERVAL_SECONDS", "60")
+        )
+        chatwoot_stalled_after_seconds = float(
+            os.getenv("CHATWOOT_STALLED_AFTER_SECONDS", "120")
+        )
+        chatwoot_stalled_max_age_seconds = float(
+            os.getenv("CHATWOOT_STALLED_MAX_AGE_SECONDS", "86400")
+        )
+        chatwoot_stalled_max_pages = int(
+            os.getenv("CHATWOOT_STALLED_MAX_PAGES", "5")
+        )
+        chatwoot_stalled_recovery_cooldown_seconds = float(
+            os.getenv("CHATWOOT_STALLED_RECOVERY_COOLDOWN_SECONDS", "300")
+        )
+        chatwoot_stalled_max_recovery_admissions = int(
+            os.getenv("CHATWOOT_STALLED_MAX_RECOVERY_ADMISSIONS", "3")
+        )
         agent_bot_access_token = (
             os.getenv("CHATWOOT_AGENT_BOT_ACCESS_TOKEN", "").strip() or None
         )
@@ -831,6 +875,19 @@ class Settings:
             reply_part_delay_seconds=reply_part_delay_seconds,
             chatwoot_inbound_debounce_seconds=(
                 chatwoot_inbound_debounce_seconds
+            ),
+            chatwoot_stalled_monitor_enabled=chatwoot_stalled_monitor_enabled,
+            chatwoot_stalled_monitor_interval_seconds=(
+                chatwoot_stalled_monitor_interval_seconds
+            ),
+            chatwoot_stalled_after_seconds=chatwoot_stalled_after_seconds,
+            chatwoot_stalled_max_age_seconds=chatwoot_stalled_max_age_seconds,
+            chatwoot_stalled_max_pages=chatwoot_stalled_max_pages,
+            chatwoot_stalled_recovery_cooldown_seconds=(
+                chatwoot_stalled_recovery_cooldown_seconds
+            ),
+            chatwoot_stalled_max_recovery_admissions=(
+                chatwoot_stalled_max_recovery_admissions
             ),
             hotmart_hottok=hotmart_hottok,
             hotmart_max_age_seconds=hotmart_max_age_seconds,
@@ -1493,6 +1550,39 @@ def create_app(
     ):
         raise ValueError(
             "CHATWOOT_INBOUND_DEBOUNCE_SECONDS must be finite and not negative"
+        )
+    stalled_numeric_values = (
+        settings.chatwoot_stalled_monitor_interval_seconds,
+        settings.chatwoot_stalled_after_seconds,
+        settings.chatwoot_stalled_max_age_seconds,
+        settings.chatwoot_stalled_recovery_cooldown_seconds,
+    )
+    if (
+        not all(math.isfinite(value) for value in stalled_numeric_values)
+        or settings.chatwoot_stalled_monitor_interval_seconds <= 0
+        or settings.chatwoot_stalled_after_seconds < 0
+        or settings.chatwoot_stalled_max_age_seconds
+        < settings.chatwoot_stalled_after_seconds
+        or settings.chatwoot_stalled_recovery_cooldown_seconds <= 0
+        or not 1 <= settings.chatwoot_stalled_max_pages <= 20
+        or settings.chatwoot_stalled_max_recovery_admissions < 1
+    ):
+        raise ValueError("invalid stalled conversation monitor configuration")
+    if settings.chatwoot_stalled_monitor_enabled and (
+        not settings.chatwoot_cut_b_admission_enabled
+        or not settings.chatwoot_cut_b_agent_enabled
+        or not settings.automated_replies_enabled
+        or settings.chatwoot_account_id is None
+        or settings.chatwoot_account_id < 1
+        or settings.chatwoot_inbox_id is None
+        or settings.chatwoot_inbox_id < 1
+        or (
+            settings.allowed_jid is None
+            and not settings.chatwoot_scoped_inbound_senders_enabled
+        )
+    ):
+        raise ValueError(
+            "CHATWOOT_STALLED_MONITOR_ENABLED requires active scoped Chatwoot replies"
         )
     if (
         not math.isfinite(settings.reply_part_delay_seconds)
@@ -2188,6 +2278,7 @@ def create_app(
         )
 
     chatwoot_worker: ChatwootWorker | None = None
+    chatwoot_stalled_monitor: ChatwootStalledConversationMonitor | None = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
@@ -2211,9 +2302,12 @@ def create_app(
                 await slack_projection_worker.start()
             if chatwoot_worker is not None:
                 await chatwoot_worker.start()
+            if chatwoot_stalled_monitor is not None:
+                await chatwoot_stalled_monitor.start()
             yield
         finally:
             for worker_name, worker in (
+                ("chatwoot_stalled_monitor", chatwoot_stalled_monitor),
                 ("chatwoot", chatwoot_worker),
                 ("opt_out_projection", opt_out_projection_worker),
                 ("human_handoff_projection", human_handoff_projection_worker),
@@ -2250,6 +2344,7 @@ def create_app(
     app.state.slack_projection_worker = slack_projection_worker
     app.state.chatwoot_inbox = chatwoot_inbox
     app.state.chatwoot_worker = chatwoot_worker
+    app.state.chatwoot_stalled_monitor = chatwoot_stalled_monitor
 
     async def run_shadow_with_canonical_history(
         *,
@@ -2530,6 +2625,7 @@ def create_app(
                 "part_index": part_index,
                 "part_count": part_count,
                 "prior_parts": prior_parts,
+                "expected_inbox_id": settings.chatwoot_inbox_id,
             }
             if scoped_expected_jid is None:
                 return await control_client.send_agent_bot_reply(**send_args)
@@ -2982,6 +3078,7 @@ def create_app(
                 "delivery_id": delivery_id,
                 "content": payment_reply,
                 "pre_send_authorizer": authorize_payment_link_send,
+                "expected_inbox_id": settings.chatwoot_inbox_id,
             }
             if scoped_expected_jid is not None:
                 send_args["expected_jid"] = scoped_expected_jid
@@ -3185,6 +3282,38 @@ def create_app(
             debounce_seconds=settings.chatwoot_inbound_debounce_seconds,
         )
         app.state.chatwoot_worker = chatwoot_worker
+        if settings.chatwoot_stalled_monitor_enabled:
+            if control_client is None or settings.chatwoot_inbox_id is None:
+                raise ValueError("stalled monitor requires Chatwoot control client")
+            monitor_inbox_id = settings.chatwoot_inbox_id
+
+            async def scan_stalled() -> list[object]:
+                return list(
+                    await control_client.list_stalled_conversations(
+                        expected_inbox_id=monitor_inbox_id,
+                        stale_after_seconds=settings.chatwoot_stalled_after_seconds,
+                        max_age_seconds=settings.chatwoot_stalled_max_age_seconds,
+                        max_pages=settings.chatwoot_stalled_max_pages,
+                        allow_any_scoped_sender=(
+                            settings.chatwoot_scoped_inbound_senders_enabled
+                        ),
+                    )
+                )
+
+            chatwoot_stalled_monitor = ChatwootStalledConversationMonitor(
+                inbox=chatwoot_inbox,
+                scanner=scan_stalled,
+                scan_interval_seconds=(
+                    settings.chatwoot_stalled_monitor_interval_seconds
+                ),
+                recovery_cooldown_seconds=(
+                    settings.chatwoot_stalled_recovery_cooldown_seconds
+                ),
+                recovery_max_admissions=(
+                    settings.chatwoot_stalled_max_recovery_admissions
+                ),
+            )
+            app.state.chatwoot_stalled_monitor = chatwoot_stalled_monitor
 
     if settings.operator_correlation_read_enabled:
         operator_token = settings.operator_correlation_read_token
@@ -3472,6 +3601,21 @@ def create_app(
 
     @app.get("/ready")
     async def readiness() -> dict[str, str]:
+        stalled_monitor_readiness = {
+            "chatwoot_stalled_monitor": "disabled",
+        }
+        if chatwoot_stalled_monitor is not None:
+            if not chatwoot_stalled_monitor.ready:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=(
+                        "chatwoot_stalled_monitor_"
+                        f"{chatwoot_stalled_monitor.last_scan_state}"
+                    ),
+                )
+            stalled_monitor_readiness = {
+                "chatwoot_stalled_monitor": "healthy",
+            }
         if slack_projection_worker is not None and slack_projection_worker.halted:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -3599,6 +3743,7 @@ def create_app(
                 **commercial_ally_readiness,
                 **precheckout_readiness,
                 **handoff_readiness,
+                **stalled_monitor_readiness,
             }
         if shared_supabase is None:
             raise HTTPException(
@@ -3631,6 +3776,7 @@ def create_app(
             **commercial_ally_readiness,
             **precheckout_readiness,
             **handoff_readiness,
+            **stalled_monitor_readiness,
         }
 
     @app.post("/webhooks/chatwoot", status_code=status.HTTP_202_ACCEPTED)

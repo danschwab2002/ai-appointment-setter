@@ -1,5 +1,9 @@
 # Arquitectura inicial
 
+## Monitor recurrente de conversaciones estancadas
+
+El bridge dispone de un monitor Chatwoot default-off que consulta conversaciones abiertas dentro de la cuenta/inbox configurados, valida el historial remoto canónico y readmite el último inbound público sin respuesta en el mismo `DurableChatwootInbox` usado por webhooks. La identidad `stalled-chatwoot:<conversation_id>:<message_id>` hace idempotentes los reinicios y scans repetidos; las readmisiones terminales tienen cooldown y límite. El monitor falla cerrado ante paginación incompleta, conversación asignada/pausada, identidad fuera de scope o cualquier outbound posterior. `/ready` sólo lo declara sano después de un scan completo. Contrato: `docs/contracts/chatwoot-stalled-conversation-monitor-v1.md`.
+
 ## Paquete candidato de agente comercial ATT1
 
 El repositorio contiene una distribución versionada y create-only en
