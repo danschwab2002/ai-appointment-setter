@@ -125,10 +125,18 @@ class AuthorizedConversationTransport(httpx.AsyncBaseTransport):
         *,
         authorized_jid: str = ALLOWED_JID,
         assignee: dict[str, object] | None = None,
+        inbox_id: int = 7,
+        status: str = "open",
+        can_reply: bool = True,
+        blocked: bool = False,
     ) -> None:
         self._inner = inner
         self._authorized_jid = authorized_jid
         self._assignee = assignee
+        self._inbox_id = inbox_id
+        self._status = status
+        self._can_reply = can_reply
+        self._blocked = blocked
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         if request.method == "GET" and request.url.path.endswith("/conversations/2"):
@@ -136,8 +144,14 @@ class AuthorizedConversationTransport(httpx.AsyncBaseTransport):
                 200,
                 json={
                     "id": 2,
+                    "inbox_id": self._inbox_id,
+                    "status": self._status,
+                    "can_reply": self._can_reply,
                     "meta": {
-                        "sender": {"identifier": self._authorized_jid},
+                        "sender": {
+                            "identifier": self._authorized_jid,
+                            "blocked": self._blocked,
+                        },
                         "assignee": self._assignee,
                     },
                 },
@@ -232,7 +246,71 @@ def test_sends_an_idempotent_agent_bot_reply_after_authorization(
     ]
 
 
-def test_runs_pre_send_authorizer_after_final_recheck_and_before_post(
+@pytest.mark.parametrize(
+    ("transport_kwargs", "reason"),
+    [
+        ({"inbox_id": 8}, "conversation_scope_changed"),
+        ({"status": "resolved"}, "conversation_not_open"),
+        ({"can_reply": False}, "conversation_not_replyable"),
+        ({"blocked": True}, "contact_blocked"),
+    ],
+)
+def test_final_reply_boundary_revalidates_full_conversation_authority(
+    tmp_path: Path,
+    transport_kwargs: dict[str, object],
+    reason: str,
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/labels"):
+            return httpx.Response(200, json={"payload": []})
+        if request.url.path.endswith("/messages"):
+            return httpx.Response(
+                200,
+                json={
+                    "payload": [
+                        {
+                            "id": 10,
+                            "message_type": 0,
+                            "private": False,
+                            "sender": {"type": "contact", "id": 20},
+                        }
+                    ]
+                },
+            )
+        raise AssertionError("unexpected request")
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        agent_bot_access_token="agent-bot-token",
+        agent_bot_id=1,
+        reply_dir=tmp_path,
+        transport=AuthorizedConversationTransport(
+            httpx.MockTransport(handler),
+            **transport_kwargs,
+        ),
+    )
+
+    result = asyncio.run(
+        client.send_agent_bot_reply(
+            conversation_id=2,
+            trigger_message_id=10,
+            delivery_id=f"authority-{reason}",
+            content="No debe enviarse",
+            expected_inbox_id=7,
+        )
+    )
+
+    assert result == {"status": "blocked", "reason": reason}
+    assert not any(request.method == "POST" for request in requests)
+
+
+def test_rechecks_chatwoot_again_after_pre_send_authorizer_and_before_post(
     tmp_path: Path,
 ) -> None:
     events: list[str] = []
@@ -291,8 +369,61 @@ def test_runs_pre_send_authorizer_after_final_recheck_and_before_post(
         "GET:labels",
         "GET:messages",
         "authorize",
+        "GET:labels",
+        "GET:messages",
         "POST:messages",
     ]
+
+
+def test_blocks_when_authority_changes_during_pre_send_authorizer(
+    tmp_path: Path,
+) -> None:
+    posts: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/labels"):
+            return httpx.Response(200, json={"payload": []})
+        if request.url.path.endswith("/messages"):
+            if request.method == "POST":
+                posts.append(request)
+                raise AssertionError("POST must remain unreachable")
+            return httpx.Response(200, json={"payload": [{
+                "id": 10,
+                "message_type": 0,
+                "private": False,
+                "content": "Hola",
+                "sender": {"type": "contact", "id": 20},
+            }]})
+        raise AssertionError("unexpected request")
+
+    transport = AuthorizedConversationTransport(httpx.MockTransport(handler))
+
+    async def assign_human_during_reservation() -> bool:
+        transport._assignee = {"id": 9}
+        return True
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        agent_bot_access_token="agent-bot-token",
+        agent_bot_id=1,
+        reply_dir=tmp_path,
+        transport=transport,
+    )
+
+    result = asyncio.run(client.send_agent_bot_reply(
+        conversation_id=2,
+        trigger_message_id=10,
+        delivery_id="authority-changed-during-reservation",
+        content="No debe enviarse",
+        expected_inbox_id=7,
+        pre_send_authorizer=assign_human_during_reservation,
+    ))
+
+    assert result == {"status": "blocked", "reason": "human_assignee_present"}
+    assert posts == []
 
 
 def test_pre_send_authorizer_denial_prevents_post(tmp_path: Path) -> None:
@@ -1808,6 +1939,421 @@ def test_paginates_conversation_history_with_the_before_cursor() -> None:
 
     assert result == messages
     assert [request.url.params.get("before") for request in requests] == [None, "6"]
+
+
+def test_lists_stalled_conversations_with_bounded_pagination() -> None:
+    requests: list[httpx.Request] = []
+
+    def conversation(conversation_id: int, message_id: int) -> dict[str, object]:
+        return {
+            "id": conversation_id,
+            "inbox_id": 7,
+            "status": "open",
+            "can_reply": True,
+            "labels": [],
+            "meta": {
+                "sender": {"identifier": ALLOWED_JID, "blocked": False},
+                "assignee": None,
+            },
+            "contact_inbox": {"source_id": ALLOWED_JID},
+            "messages": [{
+                "id": message_id,
+                "conversation_id": conversation_id,
+                "created_at": 800,
+                "message_type": 0,
+                "private": False,
+                "content": "Hola",
+                "sender": {"type": "contact", "id": 20},
+            }],
+        }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/messages"):
+            conversation_id = int(request.url.path.split("/")[-2])
+            return httpx.Response(200, json={
+                "payload": [conversation(conversation_id, conversation_id * 10)["messages"][0]],
+            })
+        if request.url.path.rsplit("/", 1)[-1].isdigit():
+            conversation_id = int(request.url.path.rsplit("/", 1)[-1])
+            return httpx.Response(200, json=conversation(conversation_id, conversation_id * 10))
+        page = request.url.params.get("page")
+        payload = [conversation(2, 20)] if page == "1" else [conversation(3, 30)]
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "meta": {"all_count": 2, "current_page": int(page)},
+                    "payload": payload,
+                }
+            },
+        )
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        transport=httpx.MockTransport(handler),
+    )
+
+    candidates = asyncio.run(client.list_stalled_conversations(
+        expected_inbox_id=7,
+        stale_after_seconds=120,
+        max_age_seconds=86_400,
+        max_pages=5,
+        now_epoch=1_000,
+    ))
+
+    assert [candidate.delivery_id for candidate in candidates] == [
+        "stalled-chatwoot:2:20",
+        "stalled-chatwoot:3:30",
+    ]
+    assert [candidate.payload["id"] for candidate in candidates] == [20, 30]
+    list_requests = [
+        request for request in requests if request.url.path.endswith("/conversations")
+    ]
+    assert [request.url.params.get("page") for request in list_requests] == ["1", "2"]
+    assert all(request.url.params.get("status") == "open" for request in list_requests)
+    assert all(request.url.params.get("inbox_id") == "7" for request in list_requests)
+
+
+def test_stalled_conversation_scan_rejects_malformed_scope_payload() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "data": {
+                "meta": {"all_count": 1, "current_page": 1},
+                "payload": [{
+                    "id": 2,
+                    "inbox_id": 8,
+                    "status": "open",
+                    "can_reply": True,
+                    "labels": [],
+                    "meta": {"sender": {"identifier": ALLOWED_JID}, "assignee": None},
+                    "messages": [],
+                }],
+            },
+        })
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(ChatwootProtocolError, match="invalid_conversation_scope"):
+        asyncio.run(client.list_stalled_conversations(
+            expected_inbox_id=7,
+            now_epoch=1_000,
+        ))
+
+
+@pytest.mark.parametrize("mode", ["page_mismatch", "count_changed", "incomplete"])
+def test_stalled_scan_rejects_incomplete_or_unstable_pagination(mode: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/messages"):
+            return httpx.Response(200, json={"payload": []})
+        if request.url.path.rsplit("/", 1)[-1].isdigit():
+            conversation_id = int(request.url.path.rsplit("/", 1)[-1])
+            return httpx.Response(200, json={
+                "id": conversation_id,
+                "inbox_id": 7,
+                "status": "open",
+                "can_reply": True,
+                "labels": [],
+                "meta": {"sender": {"identifier": ALLOWED_JID}, "assignee": None},
+                "messages": [],
+            })
+        page = int(request.url.params["page"])
+        current_page = 9 if mode == "page_mismatch" else page
+        all_count = 3 if mode != "count_changed" or page == 1 else 4
+        return httpx.Response(200, json={
+            "data": {
+                "meta": {"all_count": all_count, "current_page": current_page},
+                "payload": [{
+                    "id": page,
+                    "inbox_id": 7,
+                    "status": "open",
+                    "can_reply": True,
+                    "labels": [],
+                    "meta": {"sender": {"identifier": ALLOWED_JID}, "assignee": None},
+                    "messages": [],
+                }],
+            },
+        })
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(ChatwootProtocolError):
+        asyncio.run(client.list_stalled_conversations(
+            expected_inbox_id=7,
+            max_pages=2,
+            now_epoch=1_000,
+        ))
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda item: item.update(status="pending"),
+        lambda item: item.update(can_reply=False),
+        lambda item: item["labels"].append("automation_paused"),
+        lambda item: item["meta"].update(assignee={"id": 4}),
+        lambda item: item["meta"].pop("assignee"),
+        lambda item: item["messages"][0].update(created_at=950),
+        lambda item: item["messages"][0].update(created_at=10),
+        lambda item: item["messages"][0].update(message_type=1),
+        lambda item: item["messages"][0].update(private=True),
+    ],
+)
+def test_stalled_scan_excludes_ineligible_conversations(mutate: object) -> None:
+    conversation: dict[str, object] = {
+        "id": 2,
+        "inbox_id": 7,
+        "status": "open",
+        "can_reply": True,
+        "labels": [],
+        "meta": {
+            "sender": {"identifier": ALLOWED_JID, "blocked": False},
+            "assignee": None,
+        },
+        "contact_inbox": {"source_id": ALLOWED_JID},
+        "messages": [{
+            "id": 20,
+            "conversation_id": 2,
+            "created_at": 800,
+            "message_type": 0,
+            "private": False,
+            "content": "Hola",
+            "sender": {"type": "contact", "id": 20},
+        }],
+    }
+    mutate(conversation)  # type: ignore[operator]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/messages"):
+            return httpx.Response(200, json={"payload": conversation["messages"]})
+        if request.url.path.endswith("/conversations/2"):
+            return httpx.Response(200, json=conversation)
+        return httpx.Response(200, json={
+            "data": {
+                "meta": {"all_count": 1, "current_page": 1},
+                "payload": [conversation],
+            },
+        })
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert asyncio.run(client.list_stalled_conversations(
+        expected_inbox_id=7,
+        stale_after_seconds=120,
+        max_age_seconds=500,
+        now_epoch=1_000,
+    )) == []
+
+
+def test_stalled_scan_uses_canonical_messages_for_latest_public_activity() -> None:
+    conversation: dict[str, object] = {
+        "id": 2,
+        "inbox_id": 7,
+        "status": "open",
+        "can_reply": True,
+        "labels": [],
+        "meta": {"sender": {"identifier": ALLOWED_JID}, "assignee": None},
+        "contact_inbox": {"source_id": ALLOWED_JID},
+        "messages": [{
+            "id": 20, "conversation_id": 2, "created_at": 800,
+            "message_type": 0, "private": False, "content": "Hola",
+            "sender": {"type": "contact", "id": 20},
+        }],
+    }
+
+    canonical_messages = [
+        conversation["messages"][0],  # type: ignore[index]
+        {
+            "id": 21, "conversation_id": 2, "created_at": 850,
+            "message_type": 1, "private": False, "content": "Atendido",
+            "sender": {"type": "user", "id": 9},
+        },
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/messages"):
+            return httpx.Response(200, json={"payload": canonical_messages})
+        if request.url.path.endswith("/conversations/2"):
+            return httpx.Response(200, json=conversation)
+        return httpx.Response(200, json={
+            "data": {
+                "meta": {"all_count": 1, "current_page": 1},
+                "payload": [conversation],
+            },
+        })
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert asyncio.run(client.list_stalled_conversations(
+        expected_inbox_id=7,
+        now_epoch=1_000,
+    )) == []
+
+
+@pytest.mark.parametrize("newest_created_at", [800, 700])
+def test_stalled_scan_uses_message_id_as_canonical_order_when_timestamps_tie_or_regress(
+    newest_created_at: int,
+) -> None:
+    conversation: dict[str, object] = {
+        "id": 2,
+        "inbox_id": 7,
+        "status": "open",
+        "can_reply": True,
+        "labels": [],
+        "meta": {
+            "sender": {"identifier": ALLOWED_JID, "blocked": False},
+            "assignee": None,
+        },
+        "contact_inbox": {"source_id": ALLOWED_JID},
+        "messages": [],
+    }
+    canonical_messages = [
+        {
+            "id": 20,
+            "conversation_id": 2,
+            "created_at": 800,
+            "message_type": 0,
+            "private": False,
+            "content": "Hola",
+            "sender": {"type": "contact", "id": 20},
+        },
+        {
+            "id": 21,
+            "conversation_id": 2,
+            "created_at": newest_created_at,
+            "message_type": 1,
+            "private": False,
+            "content": "Atendido",
+            "sender": {"type": "user", "id": 9},
+        },
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/messages"):
+            return httpx.Response(200, json={"payload": canonical_messages})
+        if request.url.path.endswith("/conversations/2"):
+            return httpx.Response(200, json=conversation)
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "meta": {"all_count": 1, "current_page": 1},
+                    "payload": [conversation],
+                }
+            },
+        )
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert asyncio.run(
+        client.list_stalled_conversations(
+            expected_inbox_id=7,
+            now_epoch=1_000,
+        )
+    ) == []
+
+
+def test_stalled_scan_requires_explicit_scoped_sender_gate() -> None:
+    jid = "12025550124@s.whatsapp.net"
+    conversation: dict[str, object] = {
+        "id": 2,
+        "inbox_id": 7,
+        "status": "open",
+        "can_reply": True,
+        "labels": [],
+        "meta": {"sender": {"identifier": jid, "blocked": False}, "assignee": None},
+        "contact_inbox": {"source_id": jid},
+        "messages": [{
+            "id": 20,
+            "conversation_id": 2,
+            "created_at": 800,
+            "message_type": 0,
+            "private": False,
+            "content": "Hola",
+            "sender": {"type": "contact", "id": 20},
+        }],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/messages"):
+            return httpx.Response(200, json={"payload": conversation["messages"]})
+        if request.url.path.endswith("/conversations/2"):
+            return httpx.Response(200, json=conversation)
+        return httpx.Response(200, json={
+            "data": {
+                "meta": {"all_count": 1, "current_page": 1},
+                "payload": [conversation],
+            },
+        })
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=None,
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert asyncio.run(client.list_stalled_conversations(
+        expected_inbox_id=7,
+        now_epoch=1_000,
+    )) == []
+    candidates = asyncio.run(client.list_stalled_conversations(
+        expected_inbox_id=7,
+        allow_any_scoped_sender=True,
+        now_epoch=1_000,
+    ))
+    assert [candidate.delivery_id for candidate in candidates] == [
+        "stalled-chatwoot:2:20"
+    ]
+
+
+@pytest.mark.parametrize("now_epoch", [float("nan"), float("inf")])
+def test_stalled_scan_rejects_non_finite_clock(now_epoch: float) -> None:
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+    )
+
+    with pytest.raises(ValueError, match="scan clock"):
+        asyncio.run(client.list_stalled_conversations(
+            expected_inbox_id=7,
+            now_epoch=now_epoch,
+        ))
 
 
 def test_paginates_past_the_recent_limit_until_required_ids_are_found() -> None:
