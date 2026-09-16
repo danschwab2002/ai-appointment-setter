@@ -17,8 +17,31 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from bridge.chatwoot import ChatwootProtocolError
+
 
 logger = logging.getLogger(__name__)
+
+_STALLED_MONITOR_PROTOCOL_REASON_CODES = frozenset(
+    {
+        "conversation_count_changed",
+        "conversation_scan_incomplete",
+        "invalid_conversation_scope",
+        "invalid_conversations_payload",
+        "invalid_json",
+        "invalid_message_id",
+        "invalid_messages_payload",
+        "messages_cursor_did_not_advance",
+    }
+)
+
+
+def _stalled_monitor_reason_code(exc: Exception) -> str | None:
+    if isinstance(exc, ChatwootProtocolError):
+        reason_code = str(exc)
+        if reason_code in _STALLED_MONITOR_PROTOCOL_REASON_CODES:
+            return reason_code
+    return None
 
 
 class RetryableChatwootWorkError(RuntimeError):
@@ -124,10 +147,19 @@ class ChatwootStalledConversationMonitor:
                 await self.run_once()
             except Exception as exc:
                 self._last_scan_state = "error"
-                logger.warning(
-                    "chatwoot_stalled_monitor_scan_failed error_type=%s",
-                    type(exc).__name__,
-                )
+                reason_code = _stalled_monitor_reason_code(exc)
+                if reason_code is None:
+                    logger.warning(
+                        "chatwoot_stalled_monitor_scan_failed error_type=%s",
+                        type(exc).__name__,
+                    )
+                else:
+                    logger.warning(
+                        "chatwoot_stalled_monitor_scan_failed "
+                        "error_type=%s reason_code=%s",
+                        type(exc).__name__,
+                        reason_code,
+                    )
             try:
                 await asyncio.wait_for(
                     self._stopping.wait(),
