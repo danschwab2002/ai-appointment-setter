@@ -229,13 +229,17 @@ class ChatwootClient:
         meta = data.get("meta") if isinstance(data, dict) else None
         all_count = meta.get("all_count") if isinstance(meta, dict) else None
         current_page = meta.get("current_page") if isinstance(meta, dict) else None
+        has_current_page = isinstance(meta, dict) and "current_page" in meta
         if (
             not isinstance(payload, list)
             or not all(isinstance(item, dict) for item in payload)
             or not isinstance(all_count, int)
             or isinstance(all_count, bool)
             or all_count < 0
-            or current_page != expected_page
+            or (
+                has_current_page
+                and (type(current_page) is not int or current_page != expected_page)
+            )
         ):
             raise ChatwootProtocolError("invalid_conversations_payload")
         return payload, all_count
