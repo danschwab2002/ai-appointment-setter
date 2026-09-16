@@ -1941,7 +1941,7 @@ def test_paginates_conversation_history_with_the_before_cursor() -> None:
     assert [request.url.params.get("before") for request in requests] == [None, "6"]
 
 
-def test_lists_stalled_conversations_with_bounded_pagination() -> None:
+def test_lists_stalled_conversations_with_bounded_pagination_without_page_echo() -> None:
     requests: list[httpx.Request] = []
 
     def conversation(conversation_id: int, message_id: int) -> dict[str, object]:
@@ -1983,7 +1983,7 @@ def test_lists_stalled_conversations_with_bounded_pagination() -> None:
             200,
             json={
                 "data": {
-                    "meta": {"all_count": 2, "current_page": int(page)},
+                    "meta": {"all_count": 2},
                     "payload": payload,
                 }
             },
@@ -2016,6 +2016,19 @@ def test_lists_stalled_conversations_with_bounded_pagination() -> None:
     assert [request.url.params.get("page") for request in list_requests] == ["1", "2"]
     assert all(request.url.params.get("status") == "open" for request in list_requests)
     assert all(request.url.params.get("inbox_id") == "7" for request in list_requests)
+
+
+@pytest.mark.parametrize("current_page", [None, True, 1.0, "1"])
+def test_stalled_scan_rejects_invalid_present_page_echo(current_page: object) -> None:
+    response = httpx.Response(200, json={
+        "data": {
+            "meta": {"all_count": 0, "current_page": current_page},
+            "payload": [],
+        },
+    })
+
+    with pytest.raises(ChatwootProtocolError, match="invalid_conversations_payload"):
+        ChatwootClient._parse_conversation_page(response, expected_page=1)
 
 
 def test_stalled_conversation_scan_rejects_malformed_scope_payload() -> None:
