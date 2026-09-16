@@ -2965,6 +2965,43 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         5,
         'slack_correlation_event_context_service_role_only'
+    union all
+    select
+        '20260914000100',
+        '20260914000100_johanna_checkout_issuance_v2.sql',
+        (to_regclass('public.checkout_offer_catalog') is not null)::int
+        + (to_regclass('public.checkout_link_issuances') is not null)::int
+        + (
+            select count(*) = 5
+            from functions
+            where oid in (
+                to_regprocedure('public.reserve_chatwoot_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamptz)'),
+                to_regprocedure('public.authorize_chatwoot_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,timestamptz)'),
+                to_regprocedure('public.finalize_chatwoot_checkout_issuance_v2(uuid,text,bigint,text,timestamptz)'),
+                to_regprocedure('public.correlate_hotmart_checkout_issuance_v2(uuid,text,timestamptz)'),
+                to_regprocedure('public.admit_and_correlate_hotmart_checkout_issuance_v2(text,jsonb,text,timestamptz)')
+            )
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+              and case
+                    when oid = to_regprocedure(
+                        'public.correlate_hotmart_checkout_issuance_v2(uuid,text,timestamptz)'
+                    ) then not has_function_privilege('service_role', oid, 'EXECUTE')
+                    else has_function_privilege('service_role', oid, 'EXECUTE')
+                  end
+        )::int
+        + exists(
+            select 1 from triggers
+            where tgname = 'checkout_offer_catalog_immutable'
+        )::int
+        + exists(
+            select 1 from triggers
+            where tgname = 'checkout_link_issuance_immutable'
+        )::int,
+        5,
+        'johanna_durable_checkout_issuance_opaque_sck_service_role_only'
 )
 select
     version,

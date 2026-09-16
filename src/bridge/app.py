@@ -45,6 +45,7 @@ from bridge.chatwoot_inbox import (
     RetryableChatwootWorkError,
 )
 from bridge.commercial_ally import CommercialAllyConfig, JOHANNA_COMMERCIAL_ALLY
+from bridge.checkout_delivery import CheckoutDeliveryError, deliver_checkout_issuance_v2
 from bridge.filtering import EventDecision, classify_chatwoot_event
 from bridge.hermes import HermesShadowProcessor
 from bridge.hotmart import (
@@ -2958,6 +2959,53 @@ def create_app(
             assert settings.chatwoot_account_id is not None
             assert settings.chatwoot_inbox_id is not None
             assert control_client is not None
+            try:
+                delivery = await deliver_checkout_issuance_v2(
+                    supabase=shared_supabase,
+                    control_client=control_client,
+                    commercial_case_id=admission.commercial_case_id,
+                    external_user_id=external_user_id,
+                    chatwoot_account_id=settings.chatwoot_account_id,
+                    chatwoot_inbox_id=settings.chatwoot_inbox_id,
+                    chatwoot_conversation_id=conversation_id,
+                    trigger_message_id=message_id,
+                    delivery_id=delivery_id,
+                    preamble=reply,
+                    expected_jid=scoped_expected_jid,
+                )
+            except CheckoutDeliveryError as exc:
+                raise RetryableChatwootWorkError(exc.code) from exc
+            if delivery.outcome == "blocked":
+                reason = delivery.reason or "blocked"
+                logger.info("payment_link_handoff reason=%s", reason)
+                await request_current_inbound_handoff({
+                    **completed_proposal,
+                    "decision": "handoff",
+                    "qualification_status": "needs_human",
+                    "reason_code": f"payment_link_{reason}",
+                })
+                return
+            logger.info(
+                "payment_link_delivery outcome=%s issuance_id=%s",
+                delivery.outcome,
+                delivery.issuance_id,
+            )
+            return
+        # V1 remains as rollback-only code during the V2 rolling transition.
+        if False and completed_proposal.get("decision") == "send_payment_link":
+            if not settings.payment_link_enabled:
+                await request_current_inbound_handoff({
+                    **completed_proposal,
+                    "decision": "handoff",
+                    "qualification_status": "needs_human",
+                    "reason_code": "payment_link_disabled",
+                })
+                return
+            assert shared_supabase is not None
+            assert admission is not None
+            assert settings.chatwoot_account_id is not None
+            assert settings.chatwoot_inbox_id is not None
+            assert control_client is not None
             now = datetime.now(UTC)
             try:
                 candidate = await shared_supabase.get_chatwoot_payment_link_candidate(
@@ -5050,6 +5098,48 @@ def create_app(
                     return {
                         "status": "ignored",
                         "reason": "invalid_purchase_payload",
+                    }
+                if (
+                    parsed_purchase.origin_sck is not None
+                    and parsed_purchase.origin_sck.startswith("hermes|")
+                ):
+                    checkout_admission = (
+                        await shared_supabase.admit_and_correlate_hotmart_checkout_issuance_v2(
+                            external_event_id=event_id,
+                            payload=payload,
+                            sck_value=parsed_purchase.origin_sck,
+                            now=datetime.now(UTC).isoformat(),
+                        )
+                    )
+                    if (
+                        checkout_admission.admission_outcome == "semantic_conflict"
+                        or checkout_admission.correlation_outcome
+                        in {
+                            "conflict",
+                            "invalid_hermes_sck",
+                            "not_found",
+                            "invalid_purchase_event",
+                            "purchase_already_approved",
+                        }
+                    ):
+                        response.status_code = status.HTTP_200_OK
+                        return {
+                            "status": "conflict",
+                            "event_id": event_id,
+                            "reason": (
+                                "checkout_issuance_"
+                                f"{checkout_admission.correlation_outcome}"
+                            ),
+                        }
+                    if checkout_admission.admission_outcome == "duplicate":
+                        response.status_code = status.HTTP_200_OK
+                        return {
+                            "status": "duplicate",
+                            "event_id": event_id,
+                        }
+                    return {
+                        "status": "received",
+                        "event_id": event_id,
                     }
                 purchase_admission = (
                     await shared_supabase.admit_portable_hotmart_purchase_approved(
