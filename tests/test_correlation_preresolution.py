@@ -273,7 +273,95 @@ def test_client_sends_bounded_structured_context_and_accepts_a_safe_recommendati
     system_prompt = body["messages"][0]["content"]
     assert "independent=true and discriminating=true" in system_prompt
     assert "exactly one candidate" in system_prompt
+    assert recommendation.prompt_version == "correlation-preresolution-v3"
+
+
+def test_default_prompt_v3_pins_the_exact_decision_tokens() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps(_proposal())}}]},
+        )
+
+    client = CorrelationPreresolutionClient(
+        base_url="https://hermes.internal.example",
+        api_key="secret-value",
+        model_name="resolver-model",
+        transport=httpx.MockTransport(handler),
+    )
+
+    recommendation = asyncio.run(client.recommend(_evidence()))
+
+    system_prompt = json.loads(requests[0].content)["messages"][0]["content"]
+    assert 'decision must be exactly "recommend_candidate" or "abstain"' in system_prompt
+    assert '"recommend" is invalid' in system_prompt
+    assert "lowercase machine tokens" in system_prompt
+    assert "supporting_evidence_ids and contradicting_evidence_ids must both be []" in system_prompt
+    assert recommendation.prompt_version == "correlation-preresolution-v3"
+
+
+def test_v2_prompt_remains_immutable_for_operational_rollback() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps(_proposal())}}]},
+        )
+
+    client = CorrelationPreresolutionClient(
+        base_url="https://hermes.internal.example",
+        api_key="secret-value",
+        model_name="resolver-model",
+        prompt_version="correlation-preresolution-v2",
+        transport=httpx.MockTransport(handler),
+    )
+
+    recommendation = asyncio.run(client.recommend(_evidence()))
+
+    system_prompt = json.loads(requests[0].content)["messages"][0]["content"]
+    assert system_prompt == """You review a bounded identity-correlation evidence packet.
+Return exactly one JSON object with these keys and no others:
+decision, recommended_candidate_id, confidence, supporting_evidence_ids,
+contradicting_evidence_ids, missing_information.
+You may only recommend one candidate_id present in the packet. Evidence fields
+must contain only evidence_id values present in the packet. Recommend only when
+independent evidence clearly distinguishes that candidate; otherwise abstain.
+A fact marked independent=true and discriminating=true is bridge-verified
+evidence that clearly distinguishes its candidate. When exactly one candidate
+has such evidence and there is no contradicting evidence, recommend that
+candidate with high confidence and cite the discriminating evidence_id.
+Never resolve the case, authorize contact, invent facts, or return personal data.
+"""
     assert recommendation.prompt_version == "correlation-preresolution-v2"
+
+
+def test_observed_recommend_alias_remains_fail_closed() -> None:
+    recommendation = PreresolutionRecommendation.from_proposal(
+        evidence=_evidence(),
+        proposal=_proposal(decision="recommend"),
+        model_name="resolver-model",
+        prompt_version="correlation-preresolution-v2",
+    )
+
+    assert recommendation.status == "abstained"
+    assert recommendation.decision_reason_code == "proposal_shape_invalid"
+
+
+def test_recommendation_with_missing_information_remains_fail_closed() -> None:
+    recommendation = PreresolutionRecommendation.from_proposal(
+        evidence=_evidence(),
+        proposal=_proposal(missing_information=["missing_discriminating_evidence"]),
+        model_name="resolver-model",
+        prompt_version="correlation-preresolution-v3",
+    )
+
+    assert recommendation.status == "abstained"
+    assert recommendation.decision_reason_code == "proposal_shape_invalid"
 
 
 def test_client_accepts_the_existing_trusted_hermes_internal_http_endpoint() -> None:
