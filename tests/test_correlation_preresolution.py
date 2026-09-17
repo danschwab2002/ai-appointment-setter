@@ -12,6 +12,7 @@ from bridge.correlation_preresolution import (
     CorrelationEvidenceFact,
     CorrelationPreresolutionClient,
     CorrelationPreresolutionClaim,
+    CorrelationPreresolutionProviderError,
     CorrelationPreresolutionWorker,
     PreresolutionRecommendation,
     parse_preresolution_proposal,
@@ -220,14 +221,16 @@ def test_client_accepts_the_existing_trusted_hermes_internal_http_endpoint() -> 
         transport=httpx.MockTransport(handler),
     )
 
-    recommendation = asyncio.run(client.recommend(_evidence()))
-
-    assert recommendation.status == "abstained"
+    with pytest.raises(
+        CorrelationPreresolutionProviderError,
+        match="correlation_preresolution_provider_http_error",
+    ):
+        asyncio.run(client.recommend(_evidence()))
     assert len(requests) == 1
     assert str(requests[0].url) == "http://hermes:8642/v1/chat/completions"
 
 
-def test_client_fails_closed_on_http_or_protocol_errors() -> None:
+def test_client_retries_http_or_protocol_errors() -> None:
     for response in (
         httpx.Response(503, json={"detail": "provider failed"}),
         httpx.Response(200, json={"choices": []}),
@@ -246,10 +249,8 @@ def test_client_fails_closed_on_http_or_protocol_errors() -> None:
             ),
         )
 
-        recommendation = asyncio.run(client.recommend(_evidence()))
-
-        assert recommendation.status == "abstained"
-        assert recommendation.candidate_id is None
+        with pytest.raises(CorrelationPreresolutionProviderError):
+            asyncio.run(client.recommend(_evidence()))
 
 
 def test_preresolution_worker_persists_only_a_validated_recommendation() -> None:

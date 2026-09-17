@@ -154,6 +154,18 @@ for (let index = 0; index < 2; index += 1) {
 }
 
 await db.exec('reset role');
+await db.exec('set role service_role');
+const legacyWorkerV3Bypass = (await db.query(`
+  select * from public.claim_slack_correlation_notifications_v2(
+    'ai-correlation-test', 'ai-correlation-main', 'legacy-v2-after-v3', 1, 60
+  )
+`)).rows;
+if (legacyWorkerV3Bypass.length !== 0) {
+  throw new Error(
+    `legacy V2 worker leased V3 work: ${JSON.stringify(legacyWorkerV3Bypass)}`,
+  );
+}
+await db.exec('reset role');
 await db.exec(`
   update public.operator_correlation_preresolutions
   set evidence_fingerprint = repeat('0', 64)

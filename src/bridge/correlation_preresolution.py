@@ -68,6 +68,10 @@ Never resolve the case, authorize contact, invent facts, or return personal data
 """
 
 
+class CorrelationPreresolutionProviderError(RuntimeError):
+    """Transient or malformed provider response that must use durable retry."""
+
+
 def _canonical_uuid(value: object, *, error: str) -> str:
     if not isinstance(value, str):
         raise ValueError(error)
@@ -323,10 +327,6 @@ class CorrelationPreresolutionClient:
         self._transport = transport
 
     async def recommend(self, evidence: CorrelationEvidence) -> PreresolutionRecommendation:
-        abstained = PreresolutionRecommendation.abstained(
-            model_name=self._model_name,
-            prompt_version=self._prompt_version,
-        )
         try:
             async with httpx.AsyncClient(
                 transport=self._transport,
@@ -357,14 +357,26 @@ class CorrelationPreresolutionClient:
                     },
                 )
                 if response.status_code != 200:
-                    return abstained
+                    raise CorrelationPreresolutionProviderError(
+                        "correlation_preresolution_provider_http_error"
+                    )
                 body: Any = response.json()
                 content = body["choices"][0]["message"]["content"]
-        except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError):
-            return abstained
+        except CorrelationPreresolutionProviderError:
+            raise
+        except httpx.HTTPError as exc:
+            raise CorrelationPreresolutionProviderError(
+                "correlation_preresolution_provider_transport_error"
+            ) from exc
+        except (ValueError, KeyError, IndexError, TypeError) as exc:
+            raise CorrelationPreresolutionProviderError(
+                "correlation_preresolution_provider_invalid_response"
+            ) from exc
         proposal = parse_preresolution_proposal(content)
         if proposal is None:
-            return abstained
+            raise CorrelationPreresolutionProviderError(
+                "correlation_preresolution_provider_invalid_response"
+            )
         return PreresolutionRecommendation.from_proposal(
             evidence=evidence,
             proposal=proposal,
