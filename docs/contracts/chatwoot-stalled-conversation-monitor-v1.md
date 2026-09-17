@@ -1,6 +1,6 @@
 # Contrato — monitor de conversaciones estancadas Chatwoot V1
 
-- **Estado:** implementado localmente; default-off; pendiente de despliegue y E2E controlado.
+- **Estado:** implementado y desplegado; default-off; pendiente de E2E controlado antes de la activación recurrente.
 - **Objetivo:** recuperar mensajes inbound que no recibieron una respuesta porque el webhook, worker o AgentBot se interrumpió.
 
 ## Activación
@@ -27,7 +27,7 @@ Un candidato sólo se admite cuando Chatwoot confirma en el momento del scan:
 
 1. cuenta e inbox exactos;
 2. conversación `open` y `can_reply=true`;
-3. sin asignado humano y sin etiqueta `automation_paused`;
+3. sin asignado humano y sin etiqueta `automation_paused`; Chatwoot puede representar la ausencia de asignado omitiendo `meta.assignee` o enviándolo como `null`, mientras cualquier valor no nulo excluye la conversación;
 4. contacto no bloqueado e identidad WhatsApp válida dentro del scope;
 5. historial canónico consultado desde el endpoint de mensajes;
 6. el orden canónico de actividad se determina por el ID entero de mensaje de Chatwoot, no por `created_at`; esto mantiene el mismo criterio en el scanner y en el batching durable incluso con timestamps iguales o regresivos;

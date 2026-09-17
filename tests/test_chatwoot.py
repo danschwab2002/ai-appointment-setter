@@ -66,6 +66,30 @@ def test_assignee_authority_fails_closed_when_meta_is_missing(tmp_path: Path) ->
         client._conversation_has_assignee(response, conversation_id=39)
 
 
+def test_assignee_authority_accepts_omitted_assignee_as_unassigned(
+    tmp_path: Path,
+) -> None:
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        agent_bot_access_token="agent-bot-token",
+        agent_bot_id=1,
+        reply_dir=tmp_path,
+    )
+    response = httpx.Response(
+        200,
+        json={
+            "id": 39,
+            "meta": {"sender": {"identifier": ALLOWED_JID, "blocked": False}},
+            "contact_inbox": {"source_id": "12025550123"},
+        },
+    )
+
+    assert client._conversation_has_assignee(response, conversation_id=39) is False
+
+
 def test_rejects_a_different_waba_digit_source_id(tmp_path: Path) -> None:
     client = ChatwootClient(
         base_url="https://chatwoot.example.test",
@@ -1941,7 +1965,7 @@ def test_paginates_conversation_history_with_the_before_cursor() -> None:
     assert [request.url.params.get("before") for request in requests] == [None, "6"]
 
 
-def test_lists_stalled_conversations_with_bounded_pagination_without_page_echo() -> None:
+def test_lists_stalled_unassigned_conversations_with_omitted_optional_fields() -> None:
     requests: list[httpx.Request] = []
 
     def conversation(conversation_id: int, message_id: int) -> dict[str, object]:
@@ -1953,7 +1977,6 @@ def test_lists_stalled_conversations_with_bounded_pagination_without_page_echo()
             "labels": [],
             "meta": {
                 "sender": {"identifier": ALLOWED_JID, "blocked": False},
-                "assignee": None,
             },
             "contact_inbox": {"source_id": ALLOWED_JID},
             "messages": [{
@@ -2120,7 +2143,6 @@ def test_stalled_scan_rejects_incomplete_or_unstable_pagination(mode: str) -> No
         lambda item: item.update(can_reply=False),
         lambda item: item["labels"].append("automation_paused"),
         lambda item: item["meta"].update(assignee={"id": 4}),
-        lambda item: item["meta"].pop("assignee"),
         lambda item: item["messages"][0].update(created_at=950),
         lambda item: item["messages"][0].update(created_at=10),
         lambda item: item["messages"][0].update(message_type=1),
