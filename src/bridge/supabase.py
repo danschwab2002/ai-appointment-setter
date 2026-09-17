@@ -2472,7 +2472,11 @@ class SupabaseClient:
             outcome = _required_enum(
                 row,
                 "outcome",
-                {"ambiguous", "conflict"},
+                (
+                    {"ambiguous", "conflict"}
+                    if is_v3
+                    else {"unmatched", "ambiguous", "conflict"}
+                ),
                 operation=operation,
             )
             source_event_id = _required_uuid(

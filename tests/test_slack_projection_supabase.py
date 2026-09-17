@@ -126,8 +126,18 @@ def test_claims_scoped_slack_projection_rows_with_a_fenced_lease() -> None:
 
 
 @pytest.mark.parametrize("contract_version", [1, 2])
+@pytest.mark.parametrize(
+    ("outcome", "reason_code", "candidate_count"),
+    [
+        ("conflict", "email_phone_conflict", 1),
+        ("unmatched", "no_candidate_match", 0),
+    ],
+)
 def test_claims_historical_projection_before_v3(
     contract_version: int,
+    outcome: str,
+    reason_code: str,
+    candidate_count: int,
 ) -> None:
     requests: list[httpx.Request] = []
 
@@ -144,9 +154,9 @@ def test_claims_historical_projection_before_v3(
                     "source_event_id": SOURCE_ID,
                     "source_event_type": "PURCHASE_APPROVED",
                     "notification_contract_version": contract_version,
-                    "outcome": "conflict",
-                    "reason_code": "email_phone_conflict",
-                    "candidate_count": 1,
+                    "outcome": outcome,
+                    "reason_code": reason_code,
+                    "candidate_count": candidate_count,
                     "occurred_at": "2026-09-08T12:00:00+00:00",
                     "claim_token": CLAIM_TOKEN,
                     "lease_generation": 4,
@@ -177,9 +187,9 @@ def test_claims_historical_projection_before_v3(
             source_event_id=SOURCE_ID,
             source_event_type="PURCHASE_APPROVED",
             notification_contract_version=contract_version,
-            outcome="conflict",
-            reason_code="email_phone_conflict",
-            candidate_count=1,
+            outcome=outcome,
+            reason_code=reason_code,
+            candidate_count=candidate_count,
             occurred_at=datetime(2026, 9, 8, 12, 0, tzinfo=UTC),
             claim_token=CLAIM_TOKEN,
             lease_generation=4,
