@@ -222,7 +222,10 @@ El modelo sólo puede devolver una candidata existente o abstenerse. La polític
 determinística exige confianza alta, ausencia de contradicciones y al menos una
 evidencia independiente que discrimine esa candidata. Salida inválida, timeout,
 evidencia desconocida o insuficiente producen abstención o retry; nunca una
-atribución. Una abstención es terminal y no genera Slack.
+atribución. Una abstención es terminal y no genera Slack. El ledger guarda un
+`decision_reason_code` cerrado y sin PII para distinguir abstención explícita,
+confianza insuficiente y rechazo determinístico de la propuesta. No guarda el
+texto libre ni la lista libre de información faltante emitida por el modelo.
 
 Una recomendación validada crea una proyección con
 `notification_contract_version=3`. Su payload incluye referencia de propuesta,
@@ -236,11 +239,12 @@ Activación del bridge:
 
 - `CORRELATION_PRERESOLUTION_ENABLED=true`;
 - `CORRELATION_PRERESOLUTION_MODEL_NAME`;
-- `CORRELATION_PRERESOLUTION_PROMPT_VERSION=correlation-preresolution-v1`;
+- `CORRELATION_PRERESOLUTION_PROMPT_VERSION=correlation-preresolution-v2`;
 - `CORRELATION_PRERESOLUTION_WORKER_ID`;
 - `CORRELATION_PRERESOLUTION_POLL_INTERVAL`;
 - `HERMES_API_BASE_URL` y `HERMES_API_KEY`;
-- migración `20260916000100_operator_correlation_ai_preresolution.sql` aplicada.
+- migraciones `20260916000100_operator_correlation_ai_preresolution.sql` y
+  `20260917000100_operator_correlation_abstention_reason.sql` aplicadas.
 
 `SLACK_CONNECTOR_PROJECTION_ENABLED=true` exige que la pre-resolución esté
 habilitada. `PURCHASE_CANCELED` permanece inactivo como fuente productiva hasta

@@ -54,8 +54,18 @@ A recommendation is publishable only when it:
 - has no referenced contradiction;
 - contains at least one server-derived independent and discriminating fact.
 
+Prompt `correlation-preresolution-v2` states the same executable meaning as the
+validator: a fact with
+`independent=true` and `discriminating=true` is bridge-verified evidence that
+clearly distinguishes its candidate. If exactly one candidate has such evidence
+and there is no contradiction, the model is instructed to recommend that
+candidate with high confidence and cite the fact.
+
 Everything else becomes abstention. `same_product_offer`, event email matches and
-event phone matches are never sufficient discriminators.
+event phone matches are never sufficient discriminators. Every terminal
+abstention persists one allowlisted, non-PII `decision_reason_code`; raw model
+text and `missing_information` values are not persisted. Existing abstentions
+are backfilled as `legacy_unclassified`.
 
 ## Replay compatibility
 
@@ -72,8 +82,14 @@ material conflicts instead of silently replacing an admitted message.
 2. Inventory nonterminal V1/V2 projection and connector rows. Reconcile
    `request_started` or `delivery_unknown`; do not retry them blindly.
 3. Apply `20260916000100_operator_correlation_ai_preresolution.sql`.
+   Apply `20260917000100_operator_correlation_abstention_reason.sql` before
+   deploying a bridge that sends `decision_reason_code`. The migration retains
+   the eight-argument completion RPC during the rolling deploy and records its
+   abstentions as `legacy_unclassified`.
 4. Deploy the bridge and connector with both pre-resolution and Slack projection
-   disabled.
+   disabled. Set `CORRELATION_PRERESOLUTION_PROMPT_VERSION` to
+   `correlation-preresolution-v2`; V1 remains accepted only for exact historical
+   behavior and rollback.
 5. Verify `/health`, `/ready`, ACLs, RPC signatures and zero invalid leases.
 6. Enable `CORRELATION_PRERESOLUTION_ENABLED` first.
 7. Confirm synthetic unmatched becomes `suppressed_unmatched` with zero model and

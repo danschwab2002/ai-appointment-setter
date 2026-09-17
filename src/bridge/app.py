@@ -418,7 +418,7 @@ class Settings:
     slack_connector_lease_seconds: int = 60
     correlation_preresolution_enabled: bool = False
     correlation_preresolution_model_name: str | None = None
-    correlation_preresolution_prompt_version: str = "correlation-preresolution-v1"
+    correlation_preresolution_prompt_version: str = "correlation-preresolution-v2"
     correlation_preresolution_worker_id: str | None = None
     correlation_preresolution_poll_interval_seconds: float = 5.0
 
@@ -861,7 +861,7 @@ class Settings:
         )
         correlation_preresolution_prompt_version = os.getenv(
             "CORRELATION_PRERESOLUTION_PROMPT_VERSION",
-            "correlation-preresolution-v1",
+            "correlation-preresolution-v2",
         ).strip()
         correlation_preresolution_worker_id = (
             os.getenv("CORRELATION_PRERESOLUTION_WORKER_ID", "").strip() or None

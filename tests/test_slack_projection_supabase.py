@@ -391,7 +391,44 @@ def test_claims_loads_and_completes_ai_preresolution_with_bounded_evidence() -> 
         ],
         "p_model_name": "resolver-model",
         "p_prompt_version": "correlation-preresolution-v1",
+        "p_decision_reason_code": None,
     }
+
+
+def test_completion_sends_only_the_bounded_abstention_reason_code() -> None:
+    requests: list[httpx.Request] = []
+    client = SupabaseClient(
+        base_url="https://example.supabase.co",
+        service_role_key="secret",
+        transport=httpx.MockTransport(
+            lambda request: (
+                requests.append(request)
+                or httpx.Response(
+                    200,
+                    json=[{"recommendation_ref": None, "status": "abstained"}],
+                )
+            )
+        ),
+    )
+    recommendation = PreresolutionRecommendation.abstained(
+        model_name="resolver-model",
+        prompt_version="correlation-preresolution-v1",
+        decision_reason_code="model_abstained_missing_information",
+    )
+
+    asyncio.run(
+        client.complete_correlation_preresolution(
+            case_id=SOURCE_ID,
+            claim_token=CLAIM_TOKEN,
+            lease_generation=4,
+            disposition="abstained",
+            recommendation=recommendation,
+        )
+    )
+
+    payload = json.loads(requests[0].content)
+    assert payload["p_decision_reason_code"] == "model_abstained_missing_information"
+    assert "missing_information" not in payload
 
 
 def test_releases_ai_preresolution_with_only_a_bounded_failure_code() -> None:

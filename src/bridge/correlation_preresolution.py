@@ -20,7 +20,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_PROMPT_VERSION = "correlation-preresolution-v1"
+_PROMPT_VERSION = "correlation-preresolution-v2"
 _PROPOSAL_KEYS = frozenset(
     {
         "decision",
@@ -55,9 +55,26 @@ _SUPPORTED_FACT_KINDS = frozenset(
 _MACHINE_TOKEN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,79}$")
 _EVIDENCE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$")
 _SAFE_LABEL = re.compile(r"^Persona [1-9][0-9]{0,2}$")
+_DECISION_REASON_CODES = frozenset(
+    {
+        "model_abstained",
+        "model_abstained_missing_information",
+        "proposal_keys_invalid",
+        "proposal_shape_invalid",
+        "abstention_payload_invalid",
+        "confidence_below_high",
+        "contradicting_evidence_present",
+        "candidate_not_allowed",
+        "supporting_evidence_missing",
+        "supporting_evidence_unknown",
+        "supporting_evidence_candidate_mismatch",
+        "independent_discriminating_evidence_missing",
+        "independent_discriminating_candidate_not_unique",
+    }
+)
 _TIMEOUT = httpx.Timeout(connect=5.0, read=45.0, write=10.0, pool=5.0)
 
-_SYSTEM_PROMPT = """You review a bounded identity-correlation evidence packet.
+_SYSTEM_PROMPT_V1 = """You review a bounded identity-correlation evidence packet.
 Return exactly one JSON object with these keys and no others:
 decision, recommended_candidate_id, confidence, supporting_evidence_ids,
 contradicting_evidence_ids, missing_information.
@@ -66,6 +83,23 @@ must contain only evidence_id values present in the packet. Recommend only when
 independent evidence clearly distinguishes that candidate; otherwise abstain.
 Never resolve the case, authorize contact, invent facts, or return personal data.
 """
+_SYSTEM_PROMPT_V2 = """You review a bounded identity-correlation evidence packet.
+Return exactly one JSON object with these keys and no others:
+decision, recommended_candidate_id, confidence, supporting_evidence_ids,
+contradicting_evidence_ids, missing_information.
+You may only recommend one candidate_id present in the packet. Evidence fields
+must contain only evidence_id values present in the packet. Recommend only when
+independent evidence clearly distinguishes that candidate; otherwise abstain.
+A fact marked independent=true and discriminating=true is bridge-verified
+evidence that clearly distinguishes its candidate. When exactly one candidate
+has such evidence and there is no contradicting evidence, recommend that
+candidate with high confidence and cite the discriminating evidence_id.
+Never resolve the case, authorize contact, invent facts, or return personal data.
+"""
+_SYSTEM_PROMPTS = {
+    "correlation-preresolution-v1": _SYSTEM_PROMPT_V1,
+    "correlation-preresolution-v2": _SYSTEM_PROMPT_V2,
+}
 
 
 class CorrelationPreresolutionProviderError(RuntimeError):
@@ -189,9 +223,26 @@ class PreresolutionRecommendation:
     supporting_facts: tuple[CorrelationEvidenceFact, ...]
     model_name: str
     prompt_version: str
+    decision_reason_code: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.status == "recommended":
+            if self.decision_reason_code is not None:
+                raise ValueError("recommended_preresolution_cannot_have_reason")
+            return
+        if self.status != "abstained":
+            raise ValueError("invalid_preresolution_status")
+        if self.decision_reason_code not in _DECISION_REASON_CODES:
+            raise ValueError("invalid_preresolution_decision_reason")
 
     @classmethod
-    def abstained(cls, *, model_name: str, prompt_version: str) -> PreresolutionRecommendation:
+    def abstained(
+        cls,
+        *,
+        model_name: str,
+        prompt_version: str,
+        decision_reason_code: str,
+    ) -> PreresolutionRecommendation:
         return cls(
             status="abstained",
             candidate_id=None,
@@ -199,6 +250,7 @@ class PreresolutionRecommendation:
             supporting_facts=(),
             model_name=model_name,
             prompt_version=prompt_version,
+            decision_reason_code=decision_reason_code,
         )
 
     @classmethod
@@ -210,9 +262,15 @@ class PreresolutionRecommendation:
         model_name: str,
         prompt_version: str,
     ) -> PreresolutionRecommendation:
-        abstained = cls.abstained(model_name=model_name, prompt_version=prompt_version)
+        def abstain(reason: str) -> PreresolutionRecommendation:
+            return cls.abstained(
+                model_name=model_name,
+                prompt_version=prompt_version,
+                decision_reason_code=reason,
+            )
+
         if set(proposal) != _PROPOSAL_KEYS:
-            return abstained
+            return abstain("proposal_keys_invalid")
         decision = proposal.get("decision")
         candidate_id = proposal.get("recommended_candidate_id")
         confidence = proposal.get("confidence")
@@ -226,37 +284,52 @@ class PreresolutionRecommendation:
             or not _valid_token_list(contradicting_ids, evidence_ids=True)
             or not _valid_token_list(missing, evidence_ids=False)
         ):
-            return abstained
+            return abstain("proposal_shape_invalid")
         if decision == "abstain":
             if candidate_id is not None or supporting_ids or contradicting_ids:
-                return abstained
-            return abstained
-        if (
-            not isinstance(candidate_id, str)
-            or confidence != "high"
-            or contradicting_ids
-            or not isinstance(supporting_ids, list)
-            or not isinstance(contradicting_ids, list)
+                return abstain("abstention_payload_invalid")
+            return abstain(
+                "model_abstained_missing_information"
+                if missing
+                else "model_abstained"
+            )
+        if not isinstance(candidate_id, str):
+            return abstain("proposal_shape_invalid")
+        if confidence != "high":
+            return abstain("confidence_below_high")
+        if contradicting_ids:
+            return abstain("contradicting_evidence_present")
+        if not isinstance(supporting_ids, list) or not isinstance(
+            contradicting_ids, list
         ):
-            return abstained
+            return abstain("proposal_shape_invalid")
         supporting_keys = [item for item in supporting_ids if isinstance(item, str)]
         contradicting_keys = [item for item in contradicting_ids if isinstance(item, str)]
         candidates = {candidate.candidate_id: candidate for candidate in evidence.candidates}
         selected = candidates.get(candidate_id)
         facts = {fact.evidence_id: fact for fact in evidence.facts}
-        if selected is None or not supporting_keys:
-            return abstained
+        if selected is None:
+            return abstain("candidate_not_allowed")
+        if not supporting_keys:
+            return abstain("supporting_evidence_missing")
         if any(evidence_id not in facts for evidence_id in supporting_keys):
-            return abstained
+            return abstain("supporting_evidence_unknown")
         if any(evidence_id not in facts for evidence_id in contradicting_keys):
-            return abstained
+            return abstain("contradicting_evidence_present")
         supporting = tuple(facts[evidence_id] for evidence_id in supporting_keys)
         if any(fact.candidate_id != candidate_id for fact in supporting):
-            return abstained
+            return abstain("supporting_evidence_candidate_mismatch")
         if not any(
             fact.independent and fact.discriminating for fact in supporting
         ):
-            return abstained
+            return abstain("independent_discriminating_evidence_missing")
+        discriminating_candidates = {
+            fact.candidate_id
+            for fact in evidence.facts
+            if fact.independent and fact.discriminating
+        }
+        if discriminating_candidates != {candidate_id}:
+            return abstain("independent_discriminating_candidate_not_unique")
         return cls(
             status="recommended",
             candidate_id=candidate_id,
@@ -319,11 +392,12 @@ class CorrelationPreresolutionClient:
             raise ValueError("correlation_preresolution_api_key_required")
         if not isinstance(model_name, str) or not model_name or len(model_name) > 200:
             raise ValueError("invalid_correlation_preresolution_model")
-        if prompt_version != _PROMPT_VERSION:
+        if prompt_version not in _SYSTEM_PROMPTS:
             raise ValueError("unsupported_correlation_preresolution_prompt")
         self._api_key = api_key
         self._model_name = model_name
         self._prompt_version = prompt_version
+        self._system_prompt = _SYSTEM_PROMPTS[prompt_version]
         self._transport = transport
 
     async def recommend(self, evidence: CorrelationEvidence) -> PreresolutionRecommendation:
@@ -343,7 +417,7 @@ class CorrelationPreresolutionClient:
                         "model": self._model_name,
                         "stream": False,
                         "messages": [
-                            {"role": "system", "content": _SYSTEM_PROMPT},
+                            {"role": "system", "content": self._system_prompt},
                             {
                                 "role": "user",
                                 "content": json.dumps(
