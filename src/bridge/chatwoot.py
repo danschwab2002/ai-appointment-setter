@@ -1104,9 +1104,9 @@ class ChatwootClient:
         if not isinstance(conversation, dict) or conversation.get("id") != conversation_id:
             raise ChatwootProtocolError("invalid_conversation_payload")
         meta = conversation.get("meta")
-        if not isinstance(meta, dict) or "assignee" not in meta:
+        if not isinstance(meta, dict):
             raise ChatwootProtocolError("invalid_conversation_payload")
-        return meta["assignee"] is not None
+        return meta.get("assignee") is not None
 
     def _is_authorized_conversation(
         self,

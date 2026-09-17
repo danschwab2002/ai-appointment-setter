@@ -66,6 +66,30 @@ def test_assignee_authority_fails_closed_when_meta_is_missing(tmp_path: Path) ->
         client._conversation_has_assignee(response, conversation_id=39)
 
 
+def test_assignee_authority_accepts_omitted_assignee_as_unassigned(
+    tmp_path: Path,
+) -> None:
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        agent_bot_access_token="agent-bot-token",
+        agent_bot_id=1,
+        reply_dir=tmp_path,
+    )
+    response = httpx.Response(
+        200,
+        json={
+            "id": 39,
+            "meta": {"sender": {"identifier": ALLOWED_JID, "blocked": False}},
+            "contact_inbox": {"source_id": "12025550123"},
+        },
+    )
+
+    assert client._conversation_has_assignee(response, conversation_id=39) is False
+
+
 def test_rejects_a_different_waba_digit_source_id(tmp_path: Path) -> None:
     client = ChatwootClient(
         base_url="https://chatwoot.example.test",
