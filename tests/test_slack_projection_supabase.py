@@ -30,6 +30,10 @@ def test_claims_scoped_slack_projection_rows_with_a_fenced_lease() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
+        if request.url.path.endswith(
+            "/rpc/claim_slack_correlation_notifications_v2"
+        ):
+            return httpx.Response(200, json=[])
         return httpx.Response(
             200,
             json=[
@@ -106,9 +110,12 @@ def test_claims_scoped_slack_projection_rows_with_a_fenced_lease() -> None:
         )
     ]
     assert requests[0].url.path.endswith(
+        "/rpc/claim_slack_correlation_notifications_v2"
+    )
+    assert requests[1].url.path.endswith(
         "/rpc/claim_slack_correlation_notifications_v3"
     )
-    assert json.loads(requests[0].content) == {
+    assert json.loads(requests[1].content) == {
         "p_tenant_ref": "att1",
         "p_funnel_ref": "att1-main",
         "p_worker_id": "att1-slack-1",
@@ -116,6 +123,69 @@ def test_claims_scoped_slack_projection_rows_with_a_fenced_lease() -> None:
         "p_lease_seconds": 60,
         "p_binding_version": 3,
     }
+
+
+@pytest.mark.parametrize("contract_version", [1, 2])
+def test_claims_historical_projection_before_v3(
+    contract_version: int,
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if not request.url.path.endswith(
+            "/rpc/claim_slack_correlation_notifications_v2"
+        ):
+            raise AssertionError("V3 must not be called while historical work exists")
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "source_event_id": SOURCE_ID,
+                    "source_event_type": "PURCHASE_APPROVED",
+                    "notification_contract_version": contract_version,
+                    "outcome": "conflict",
+                    "reason_code": "email_phone_conflict",
+                    "candidate_count": 1,
+                    "occurred_at": "2026-09-08T12:00:00+00:00",
+                    "claim_token": CLAIM_TOKEN,
+                    "lease_generation": 4,
+                }
+            ],
+        )
+
+    client = SupabaseClient(
+        base_url="https://example.supabase.co",
+        service_role_key="secret",
+        transport=httpx.MockTransport(handler),
+    )
+
+    claims = asyncio.run(
+        client.claim_slack_correlation_notifications(
+            tenant_ref="att1",
+            funnel_ref="att1-main",
+            worker_id="att1-slack-1",
+            limit=1,
+            lease_seconds=60,
+            binding_version=3,
+        )
+    )
+
+    assert len(requests) == 1
+    assert claims == [
+        SlackCorrelationNotificationClaim(
+            source_event_id=SOURCE_ID,
+            source_event_type="PURCHASE_APPROVED",
+            notification_contract_version=contract_version,
+            outcome="conflict",
+            reason_code="email_phone_conflict",
+            candidate_count=1,
+            occurred_at=datetime(2026, 9, 8, 12, 0, tzinfo=UTC),
+            claim_token=CLAIM_TOKEN,
+            lease_generation=4,
+            recommendation=None,
+        )
+    ]
 
 
 def test_completes_and_releases_only_the_exact_projection_lease() -> None:

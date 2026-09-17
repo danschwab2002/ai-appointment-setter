@@ -2421,23 +2421,37 @@ class SupabaseClient:
             or lease_seconds > 900
         ):
             raise ValueError("lease_seconds must be between 30 and 900")
+        claim_payload = json.dumps(
+            {
+                "p_tenant_ref": tenant_ref,
+                "p_funnel_ref": funnel_ref,
+                "p_worker_id": worker_id,
+                "p_limit": limit,
+                "p_lease_seconds": lease_seconds,
+                "p_binding_version": binding_version,
+            }
+        )
         response = await self._request(
             "POST",
-            "/rest/v1/rpc/claim_slack_correlation_notifications_v3",
-            content=json.dumps(
-                {
-                    "p_tenant_ref": tenant_ref,
-                    "p_funnel_ref": funnel_ref,
-                    "p_worker_id": worker_id,
-                    "p_limit": limit,
-                    "p_lease_seconds": lease_seconds,
-                    "p_binding_version": binding_version,
-                }
-            ),
+            "/rest/v1/rpc/claim_slack_correlation_notifications_v2",
+            content=claim_payload,
         )
         if response.status_code != 200:
             raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
         rows = _response_rows(response, operation=operation)
+        is_v3 = False
+        if not rows:
+            response = await self._request(
+                "POST",
+                "/rest/v1/rpc/claim_slack_correlation_notifications_v3",
+                content=claim_payload,
+            )
+            if response.status_code != 200:
+                raise SupabaseError(
+                    f"{operation}_failed: HTTP {response.status_code}"
+                )
+            rows = _response_rows(response, operation=operation)
+            is_v3 = True
         expected_keys = {
             "source_event_id",
             "source_event_type",
@@ -2448,8 +2462,9 @@ class SupabaseClient:
             "occurred_at",
             "claim_token",
             "lease_generation",
-            "recommendation_data",
         }
+        if is_v3:
+            expected_keys.add("recommendation_data")
         claims: list[SlackCorrelationNotificationClaim] = []
         for row in rows:
             if set(row) != expected_keys:
@@ -2473,10 +2488,18 @@ class SupabaseClient:
             notification_contract_version = _required_positive_int(
                 row, "notification_contract_version", operation=operation
             )
-            if notification_contract_version != 3:
+            if (
+                is_v3 and notification_contract_version != 3
+            ) or (
+                not is_v3 and notification_contract_version not in {1, 2}
+            ):
                 raise SupabaseError(f"{operation}_invalid")
-            recommendation = _parse_correlation_recommendation(
-                row.get("recommendation_data"), operation=operation
+            recommendation = (
+                _parse_correlation_recommendation(
+                    row.get("recommendation_data"), operation=operation
+                )
+                if is_v3
+                else None
             )
             occurred_text = _required_string(row, "occurred_at", operation=operation)
             try:
