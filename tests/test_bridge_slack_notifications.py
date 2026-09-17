@@ -8,7 +8,11 @@ from uuid import UUID, uuid5
 import pytest
 
 from bridge.slack_notifications import SlackOperationalNotifier
-from slack_correlation.catalog import NotificationCommand
+from slack_correlation.catalog import (
+    CorrelationRecommendation,
+    CorrelationRecommendationEvidence,
+    NotificationCommand,
+)
 from slack_correlation.store import NotificationStore
 
 
@@ -19,6 +23,22 @@ class _CapturingProducer:
     async def admit(self, command):
         self.commands.append(command)
         return object()
+
+
+def _recommendation() -> CorrelationRecommendation:
+    return CorrelationRecommendation(
+        recommendation_ref="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        candidate_id="22222222-2222-4222-8222-222222222222",
+        candidate_label="Persona 2",
+        evidence=(
+            CorrelationRecommendationEvidence(
+                kind="precheckout_time_proximity_minutes", value=4
+            ),
+        ),
+        evidence_fingerprint="f" * 64,
+        model_name="resolver-model",
+        prompt_version="correlation-preresolution-v1",
+    )
 
 
 @pytest.mark.parametrize(
@@ -120,6 +140,49 @@ def test_old_admission_replays_exactly_after_new_worker_reclaims_v1_contract(tmp
     assert first.outcome == "admitted"
     assert reclaimed.outcome == "duplicate"
     assert store.count() == 1
+
+
+def test_contract_v3_requires_a_persisted_recommendation_and_carries_it_exactly() -> None:
+    producer = _CapturingProducer()
+    notifier = SlackOperationalNotifier(producer=producer)
+
+    command = asyncio.run(
+        notifier.notify_unresolved_correlation(
+            source_event_id="93f3fc37-5f92-4966-af71-b37c9bbac45e",
+            source_event_type="PURCHASE_APPROVED",
+            notification_contract_version=3,
+            outcome="conflict",
+            reason_code="email_phone_conflict",
+            candidate_count=2,
+            occurred_at=datetime(2026, 9, 7, 22, 0, tzinfo=UTC),
+            recommendation=_recommendation(),
+        )
+    )
+
+    assert command.event_code == "COR-003"
+    assert command.recommendation == _recommendation()
+    assert producer.commands == [command]
+
+
+@pytest.mark.parametrize("outcome", ["unmatched", "ambiguous", "conflict"])
+def test_contract_v3_does_not_publish_without_a_safe_recommendation(outcome: str) -> None:
+    producer = _CapturingProducer()
+    notifier = SlackOperationalNotifier(producer=producer)
+
+    with pytest.raises(ValueError, match="correlation_not_notifiable"):
+        asyncio.run(
+            notifier.notify_unresolved_correlation(
+                source_event_id="93f3fc37-5f92-4966-af71-b37c9bbac45e",
+                source_event_type="PURCHASE_APPROVED",
+                notification_contract_version=3,
+                outcome=outcome,
+                reason_code="identity_not_found" if outcome == "unmatched" else "multiple_candidates",
+                candidate_count=0 if outcome == "unmatched" else 2,
+                occurred_at=datetime(2026, 9, 7, 22, 0, tzinfo=UTC),
+            )
+        )
+
+    assert producer.commands == []
 
 
 def test_notifier_rejects_resolved_or_malformed_correlation_without_calling_connector() -> None:

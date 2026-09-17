@@ -56,28 +56,24 @@ await db.exec(`
 `);
 
 await db.exec('set role service_role');
-for (let index = 0; index < events.length; index += 1) {
-  const [expectedId, expectedType] = events[index];
-  const rows = (await db.query(`
-    select * from public.claim_slack_correlation_notifications_v2(
-      'event-copy-test', 'event-copy-main', 'worker-copy', 1, 60
-    )
-  `)).rows;
-  if (rows.length !== 1
-      || rows[0]?.source_event_id !== expectedId
-      || rows[0]?.source_event_type !== expectedType
-      || rows[0]?.notification_contract_version !== 2) {
-    throw new Error(`event-specific claim invalid: ${JSON.stringify(rows)}`);
-  }
-  const applied = (await db.query(`
-    select * from public.complete_slack_correlation_notification(
-      '${expectedId}', '${rows[0].claim_token}', ${rows[0].lease_generation},
-      '30000000-0000-4000-8000-00000000009${index}'
-    )
-  `)).rows[0]?.applied;
-  if (applied !== true) {
-    throw new Error(`event-specific claim did not complete: ${expectedId}`);
-  }
+const newRows = (await db.query(`
+  select * from public.claim_slack_correlation_notifications_v2(
+    'event-copy-test', 'event-copy-main', 'worker-copy', 1, 60
+  )
+`)).rows;
+if (newRows.length !== 0) {
+  throw new Error(`v2 worker bypassed pre-resolution gate: ${JSON.stringify(newRows)}`);
+}
+await db.exec('reset role');
+const suppressed = (await db.query(`
+  select count(*)::integer as count
+  from public.slack_correlation_notification_projection
+  where source_event_id = any(array[${events.map(([id]) => `'${id}'::uuid`).join(',')}])
+    and projection_status = 'suppressed'
+    and notification_contract_version is null
+`)).rows[0]?.count;
+if (suppressed !== events.length) {
+  throw new Error(`new projections were not suppressed: ${suppressed}`);
 }
 
 const legacyId = '20000000-0000-4000-8000-000000000094';
@@ -94,20 +90,22 @@ await db.exec(`
     null, null, 1, 'email_phone_conflict', true, '2026-09-13T12:04:00Z'
   );
 `);
-await db.exec('set role service_role');
-const legacyClaim = (await db.query(`
-  select * from public.claim_slack_correlation_notifications(
-    'event-copy-test', 'event-copy-main', 'old-worker', 1, 30
-  )
-`)).rows[0];
-if (legacyClaim?.source_event_id !== legacyId) {
-  throw new Error(`old worker did not claim legacy row: ${JSON.stringify(legacyClaim)}`);
-}
-await db.exec('reset role');
 await db.exec(`
-  update public.slack_correlation_notification_projection
-  set lease_expires_at = clock_timestamp() - interval '1 second'
-  where source_event_id = '${legacyId}'
+  alter table public.slack_correlation_notification_projection disable trigger
+    slack_correlation_preresolution_gate;
+  insert into public.slack_correlation_notification_projection (
+    source_event_id, tenant_ref, funnel_ref, outcome, reason_code,
+    candidate_count, occurred_at, projection_status,
+    notification_contract_version, attempt_count, lease_generation,
+    lease_owner, claim_token, lease_expires_at
+  ) values (
+    '${legacyId}', 'event-copy-test', 'event-copy-main', 'conflict',
+    'email_phone_conflict', 1, '2026-09-13T12:04:00Z', 'leased',
+    1, 1, 1, 'old-worker', '40000000-0000-4000-8000-000000000094',
+    clock_timestamp() - interval '1 second'
+  );
+  alter table public.slack_correlation_notification_projection enable trigger
+    slack_correlation_preresolution_gate;
 `);
 await db.exec('set role service_role');
 const reclaimed = (await db.query(`

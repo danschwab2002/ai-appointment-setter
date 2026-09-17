@@ -36,6 +36,9 @@ class _ProjectionStore:
         self.binding_checks.append(expected)
         return expected
 
+    async def claim_correlation_preresolution(self, **kwargs: object) -> None:
+        return None
+
     async def claim_slack_correlation_notifications(
         self, **kwargs: object
     ) -> list[object]:
@@ -102,6 +105,11 @@ def test_app_closes_the_runtime_it_constructs(monkeypatch: pytest.MonkeyPatch) -
             capture_dir=Path("/tmp/slack-bridge-runtime-test"),
             max_age_seconds=300,
             slack_connector_projection_enabled=True,
+            correlation_preresolution_enabled=True,
+            correlation_preresolution_model_name="resolver-model",
+            correlation_preresolution_worker_id="correlation-ai-1",
+            hermes_api_base_url="https://hermes.example.com",
+            hermes_api_key="b" * 32,
             slack_connector_base_url="https://connector.example.com",
             slack_connector_bearer_token="a" * 32,
             slack_connector_worker_id="johanna-slack-1",
@@ -151,6 +159,11 @@ def test_app_lifecycle_wires_one_scoped_projection_worker_for_each_bridge(
         slack_connector_base_url="https://connector.example.com",
         slack_connector_bearer_token="a" * 32,
         slack_connector_projection_enabled=True,
+        correlation_preresolution_enabled=True,
+        correlation_preresolution_model_name="resolver-model",
+        correlation_preresolution_worker_id="correlation-ai-1",
+        hermes_api_base_url="https://hermes.example.com",
+        hermes_api_key="b" * 32,
         slack_connector_worker_id=f"{tenant_ref}-slack-1",
     )
     app = create_app(
@@ -201,6 +214,11 @@ def test_portable_binding_is_attested_before_projection_worker_starts() -> None:
             commercial_ally_config=config,
             commercial_ally_manifest_path=Path("/runtime/att1.json"),
             slack_connector_projection_enabled=True,
+            correlation_preresolution_enabled=True,
+            correlation_preresolution_model_name="resolver-model",
+            correlation_preresolution_worker_id="correlation-ai-1",
+            hermes_api_base_url="https://hermes.example.com",
+            hermes_api_key="b" * 32,
             slack_connector_base_url="https://connector.example.com",
             slack_connector_bearer_token="a" * 32,
             slack_connector_worker_id="att1-slack-1",
@@ -239,6 +257,11 @@ def test_halted_projection_worker_fails_readiness() -> None:
         capture_dir=Path("/tmp/slack-bridge-runtime-test"),
         max_age_seconds=300,
         slack_connector_projection_enabled=True,
+        correlation_preresolution_enabled=True,
+        correlation_preresolution_model_name="resolver-model",
+        correlation_preresolution_worker_id="correlation-ai-1",
+        hermes_api_base_url="https://hermes.example.com",
+        hermes_api_key="b" * 32,
         slack_connector_base_url="https://connector.example.com",
         slack_connector_bearer_token="a" * 32,
         slack_connector_worker_id="johanna-slack-1",
@@ -255,8 +278,15 @@ def test_halted_projection_worker_fails_readiness() -> None:
         app.state.slack_projection_worker._halted = False
         app.state.slack_projection_worker._healthy = False
         unhealthy_response = client.get("/ready")
+        app.state.slack_projection_worker._healthy = True
+        app.state.correlation_preresolution_worker._healthy = False
+        ai_unhealthy_response = client.get("/ready")
 
     assert response.status_code == 503
     assert response.json() == {"detail": "slack_projection_halted"}
     assert unhealthy_response.status_code == 503
     assert unhealthy_response.json() == {"detail": "slack_projection_unhealthy"}
+    assert ai_unhealthy_response.status_code == 503
+    assert ai_unhealthy_response.json() == {
+        "detail": "correlation_preresolution_unhealthy"
+    }

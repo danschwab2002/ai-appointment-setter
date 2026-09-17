@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime
 import math
 
@@ -8,7 +9,11 @@ from bridge.slack_projection import (
     SlackCorrelationNotificationClaim,
     SlackCorrelationProjectionWorker,
 )
-from slack_correlation.catalog import NotificationCommand
+from slack_correlation.catalog import (
+    CorrelationRecommendation,
+    CorrelationRecommendationEvidence,
+    NotificationCommand,
+)
 from slack_correlation.producer import (
     AdmissionReceipt,
     ConnectorAdmissionUnknown,
@@ -66,6 +71,22 @@ def _claim() -> SlackCorrelationNotificationClaim:
     )
 
 
+def _recommendation() -> CorrelationRecommendation:
+    return CorrelationRecommendation(
+        recommendation_ref="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        candidate_id="33333333-3333-4333-8333-333333333333",
+        candidate_label="Persona 2",
+        evidence=(
+            CorrelationRecommendationEvidence(
+                kind="precheckout_time_proximity_minutes", value=4
+            ),
+        ),
+        evidence_fingerprint="f" * 64,
+        model_name="resolver-model",
+        prompt_version="correlation-preresolution-v1",
+    )
+
+
 def test_worker_admits_then_completes_the_exact_fenced_projection() -> None:
     store = _Store([_claim()])
     producer = _Producer()
@@ -96,6 +117,52 @@ def test_worker_admits_then_completes_the_exact_fenced_projection() -> None:
     ]
     assert store.release_calls == []
     assert worker.halted is False
+
+
+def test_worker_delivers_contract_v3_only_with_the_persisted_recommendation() -> None:
+    claim = replace(
+        _claim(),
+        notification_contract_version=3,
+        recommendation=_recommendation(),
+    )
+    store = _Store([claim])
+    producer = _Producer()
+    worker = SlackCorrelationProjectionWorker(
+        store=store,
+        producer=producer,
+        tenant_ref="lancemos",
+        funnel_ref="psicologajohanna",
+        worker_id="johanna-slack-1",
+    )
+
+    assert asyncio.run(worker.run_once()) == 1
+    assert producer.commands[0].recommendation == _recommendation()
+    assert store.release_calls == []
+
+
+def test_worker_fails_closed_if_contract_v3_claim_lacks_a_recommendation() -> None:
+    claim = replace(_claim(), notification_contract_version=3)
+    store = _Store([claim])
+    producer = _Producer()
+    worker = SlackCorrelationProjectionWorker(
+        store=store,
+        producer=producer,
+        tenant_ref="lancemos",
+        funnel_ref="psicologajohanna",
+        worker_id="johanna-slack-1",
+    )
+
+    assert asyncio.run(worker.run_once()) == 0
+    assert producer.commands == []
+    assert store.release_calls == [
+        {
+            "source_event_id": claim.source_event_id,
+            "claim_token": claim.claim_token,
+            "lease_generation": claim.lease_generation,
+            "failure_code": "connector_unexpected_error",
+        }
+    ]
+    assert worker.halted is True
 
 
 def test_worker_releases_unknown_connector_admission_for_durable_retry() -> None:

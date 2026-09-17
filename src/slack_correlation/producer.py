@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC
 import re
 from typing import Any
@@ -171,6 +171,10 @@ def _serialize_command(command: NotificationCommand) -> dict[str, Any]:
             payload[field_name] = value
     if command.deadline_at is not None:
         payload["deadline_at"] = _utc_text(command.deadline_at)
+    if command.recommendation is not None:
+        recommendation = asdict(command.recommendation)
+        recommendation["evidence"] = list(recommendation["evidence"])
+        payload["recommendation"] = recommendation
     return payload
 
 

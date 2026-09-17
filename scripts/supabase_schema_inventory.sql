@@ -3002,6 +3002,33 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         5,
         'johanna_durable_checkout_issuance_opaque_sck_service_role_only'
+    union all
+    select
+        '20260916000100',
+        '20260916000100_operator_correlation_ai_preresolution.sql',
+        (to_regclass('public.operator_correlation_preresolutions') is not null)::int
+        + exists(
+            select 1 from triggers
+            where tgname = 'slack_correlation_preresolution_gate'
+        )::int
+        + (
+            select count(*) = 5
+            from functions
+            where oid in (
+                to_regprocedure('public.claim_operator_correlation_preresolutions(text,text,text,integer,integer)'),
+                to_regprocedure('public.get_operator_correlation_preresolution_evidence(text,text,uuid,uuid,bigint)'),
+                to_regprocedure('public.complete_operator_correlation_preresolution(uuid,uuid,bigint,text,uuid,jsonb,text,text)'),
+                to_regprocedure('public.release_operator_correlation_preresolution(uuid,uuid,bigint,text)'),
+                to_regprocedure('public.claim_slack_correlation_notifications_v3(text,text,text,integer,integer,integer)')
+            )
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        3,
+        'slack_correlation_ai_preresolution_service_role_only'
 )
 select
     version,
