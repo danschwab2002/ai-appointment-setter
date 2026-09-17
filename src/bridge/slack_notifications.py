@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime
+from dataclasses import asdict
 import hashlib
+import json
 from typing import Protocol
 from uuid import UUID, uuid5
 
-from slack_correlation.catalog import NotificationCommand
+from slack_correlation.catalog import CorrelationRecommendation, NotificationCommand
 from slack_correlation.case_copy import EVENT_OUTCOME_CODES
 from slack_correlation.producer import AdmissionReceipt
 
@@ -37,6 +39,7 @@ class SlackOperationalNotifier:
         reason_code: str,
         candidate_count: int,
         occurred_at: datetime,
+        recommendation: CorrelationRecommendation | None = None,
     ) -> NotificationCommand:
         specific_event_code = EVENT_OUTCOME_CODES.get((source_event_type, outcome))
         if specific_event_code is None:
@@ -44,8 +47,14 @@ class SlackOperationalNotifier:
         legacy_event_code = _LEGACY_CORRELATION_CODES[outcome]
         if (
             isinstance(notification_contract_version, bool)
-            or notification_contract_version not in {1, 2}
+            or notification_contract_version not in {1, 2, 3}
         ):
+            raise ValueError("invalid_notification_contract_version")
+        if notification_contract_version == 3 and (
+            outcome == "unmatched" or recommendation is None
+        ):
+            raise ValueError("correlation_not_notifiable")
+        if notification_contract_version != 3 and recommendation is not None:
             raise ValueError("invalid_notification_contract_version")
         event_code = (
             legacy_event_code
@@ -65,15 +74,23 @@ class SlackOperationalNotifier:
                 f"correlation:{canonical_source_id}:{legacy_event_code}",
             )
         )
-        semantic_material = "\x1f".join(
-            (
-                "correlation-v1",
-                canonical_source_id,
-                legacy_event_code,
-                reason_code,
-                str(candidate_count),
+        semantic_parts = [
+            "correlation-v1" if notification_contract_version in {1, 2} else "correlation-v3",
+            canonical_source_id,
+            legacy_event_code,
+            reason_code,
+            str(candidate_count),
+        ]
+        if recommendation is not None:
+            semantic_parts.append(
+                json.dumps(
+                    asdict(recommendation),
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
             )
-        )
+        semantic_material = "\x1f".join(semantic_parts)
         command = NotificationCommand(
             event_id=notification_id,
             event_code=event_code,
@@ -83,6 +100,7 @@ class SlackOperationalNotifier:
             reason_code=reason_code,
             state="pending",
             count=candidate_count,
+            recommendation=recommendation,
         )
         await self._producer.admit(command)
         return command

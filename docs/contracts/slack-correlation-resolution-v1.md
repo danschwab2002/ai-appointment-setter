@@ -206,7 +206,47 @@ La ruta operator-only requiere `SLACK_OPERATOR_BEARER_TOKEN` y el flag separado
 mensaje a otro canal. Una caída en `claimed` vuelve a `pending`; sólo una caída
 después de persistir `request_started` queda `delivery_unknown`.
 
-## 8. Configuración de activación
+## 8. Pre-resolución asistida antes de Slack
+
+Los casos `unmatched` permanecen en `hotmart_purchase_intent_correlations`, pero
+la proyección se suprime de forma durable antes de crear una entrega Slack. No se
+llama al modelo para estos casos.
+
+Los casos `ambiguous` y `conflict` pasan primero por
+`operator_correlation_preresolutions`. El bridge construye un snapshot cerrado y
+sin PII directa: IDs opacos de candidatas, etiquetas `Persona N`, coincidencias
+booleanas y proximidad temporal. El snapshot y su SHA-256 quedan ligados a la
+versión de política. En reintentos se reutiliza exactamente el mismo snapshot.
+
+El modelo sólo puede devolver una candidata existente o abstenerse. La política
+determinística exige confianza alta, ausencia de contradicciones y al menos una
+evidencia independiente que discrimine esa candidata. Salida inválida, timeout,
+evidencia desconocida o insuficiente producen abstención o retry; nunca una
+atribución. Una abstención es terminal y no genera Slack.
+
+Una recomendación validada crea una proyección con
+`notification_contract_version=3`. Su payload incluye referencia de propuesta,
+fingerprint, candidata, evidencia cerrada y versiones de modelo/prompt. Los
+contratos 1 y 2 conservan replay exacto, pero no admiten proyecciones nuevas. El
+conector V3 sólo renderiza el snapshot persistido y mantiene el flujo humano
+`prepare → confirm` como única autoridad de resolución. Confirmar continúa sin
+autorizar contacto, modificar consentimiento ni reactivar recovery.
+
+Activación del bridge:
+
+- `CORRELATION_PRERESOLUTION_ENABLED=true`;
+- `CORRELATION_PRERESOLUTION_MODEL_NAME`;
+- `CORRELATION_PRERESOLUTION_PROMPT_VERSION=correlation-preresolution-v1`;
+- `CORRELATION_PRERESOLUTION_WORKER_ID`;
+- `CORRELATION_PRERESOLUTION_POLL_INTERVAL`;
+- `HERMES_API_BASE_URL` y `HERMES_API_KEY`;
+- migración `20260916000100_operator_correlation_ai_preresolution.sql` aplicada.
+
+`SLACK_CONNECTOR_PROJECTION_ENABLED=true` exige que la pre-resolución esté
+habilitada. `PURCHASE_CANCELED` permanece inactivo como fuente productiva hasta
+que su contrato backend sea aprobado y validado por separado.
+
+## 9. Configuración de activación
 
 Interactividad requiere, como mínimo:
 
@@ -229,7 +269,7 @@ La presencia de secretos no habilita interactividad. El flag permanece en
 `false` durante el primer deploy y se activa sólo después de health/readiness,
 smoke firmado y verificación del operador.
 
-## 9. Criterio E2E
+## 10. Criterio E2E
 
 No se considera lista la nueva UX hasta que un operador allowlisted complete el
 flujo sobre el caso sintético expresamente autorizado y se verifique físicamente:

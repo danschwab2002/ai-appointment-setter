@@ -49,7 +49,34 @@ await db.exec(`
   ) values
     ('${johannaEvent}', '${johannaScope}', 'PURCHASE_OUT_OF_SHOPPING_CART', 'unmatched', null, null, 0, 'identity_not_found', true, '2026-09-08T12:00:00Z'),
     ('${att1Event}', '${att1Scope}', 'PURCHASE_OUT_OF_SHOPPING_CART', 'ambiguous', null, null, 2, 'multiple_candidates', true, '2026-09-08T12:01:00Z');
+  -- These rows model already-attempted contract-1 work from before the V3 gate.
+  -- Fresh rows remain suppressed and are covered by the AI pre-resolution validator.
+  alter table public.slack_correlation_notification_projection disable trigger
+    slack_correlation_preresolution_gate;
+  insert into public.slack_correlation_notification_projection (
+    source_event_id, tenant_ref, funnel_ref, outcome, reason_code,
+    candidate_count, occurred_at, projection_status,
+    notification_contract_version, attempt_count
+  )
+  select correlation.webhook_event_id, scope.tenant_ref, scope.funnel_ref,
+         correlation.outcome, correlation.reason_code, correlation.candidate_count,
+         correlation.observed_at, 'pending', 1, 1
+  from public.hotmart_purchase_intent_correlations correlation
+  join public.hotmart_purchase_intent_scopes scope on scope.id = correlation.scope_id
+  where correlation.webhook_event_id in ('${johannaEvent}', '${att1Event}');
+  alter table public.slack_correlation_notification_projection enable trigger
+    slack_correlation_preresolution_gate;
 `);
+const historicalRows = (await db.query(`
+  select source_event_id, projection_status, notification_contract_version,
+         attempt_count, notification_id
+  from public.slack_correlation_notification_projection
+  where source_event_id in ('${johannaEvent}', '${att1Event}')
+  order by source_event_id
+`)).rows;
+if (historicalRows.length !== 2) {
+  throw new Error(`historical projection setup invalid: ${JSON.stringify(historicalRows)}`);
+}
 
 await db.exec('set role service_role');
 let inactiveBindingRejected = false;

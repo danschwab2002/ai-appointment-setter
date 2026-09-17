@@ -14,12 +14,81 @@ from slack_correlation.case_copy import CODE_TO_EVENT_OUTCOME, commercial_case_c
 _DEDUPE_KEY = re.compile(r"^[a-f0-9]{64}$")
 _SUBJECT_REF = re.compile(r"^C-[A-Fa-f0-9-]{8,36}$")
 _MACHINE_VALUE = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,79}$")
+_SAFE_PERSON_LABEL = re.compile(r"^Persona [1-9][0-9]{0,2}$")
+_RECOMMENDATION_EVIDENCE_KINDS = frozenset(
+    {
+        "precheckout_time_proximity_minutes",
+        "nearest_precheckout_by_at_least_5m",
+        "same_product_offer",
+        "chatwoot_phone_exact_match",
+        "chatwoot_email_exact_match",
+        "customer_confirmed_identity",
+        "prior_verified_identity",
+        "event_email_exact_match",
+        "event_phone_exact_match",
+    }
+)
 
 
 @dataclass(frozen=True)
 class EventTemplate:
     severity: str
     title: str
+
+
+@dataclass(frozen=True)
+class CorrelationRecommendationEvidence:
+    kind: str
+    value: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind not in _RECOMMENDATION_EVIDENCE_KINDS:
+            raise ValueError("invalid_correlation_recommendation_evidence")
+        if self.kind in {
+            "precheckout_time_proximity_minutes",
+            "nearest_precheckout_by_at_least_5m",
+        }:
+            if (
+                isinstance(self.value, bool)
+                or not isinstance(self.value, int)
+                or not 0 <= self.value <= 1440
+            ):
+                raise ValueError("invalid_correlation_recommendation_evidence")
+        elif self.value is not None:
+            raise ValueError("invalid_correlation_recommendation_evidence")
+
+
+@dataclass(frozen=True)
+class CorrelationRecommendation:
+    recommendation_ref: str
+    candidate_id: str
+    candidate_label: str
+    evidence: tuple[CorrelationRecommendationEvidence, ...]
+    evidence_fingerprint: str
+    model_name: str
+    prompt_version: str
+
+    def __post_init__(self) -> None:
+        for field_name in ("recommendation_ref", "candidate_id"):
+            value = getattr(self, field_name)
+            try:
+                parsed = UUID(value)
+            except (ValueError, TypeError, AttributeError) as exc:
+                raise ValueError(f"invalid_{field_name}") from exc
+            if str(parsed) != value:
+                raise ValueError(f"invalid_{field_name}")
+        if _SAFE_PERSON_LABEL.fullmatch(self.candidate_label) is None:
+            raise ValueError("invalid_correlation_recommendation_label")
+        if not isinstance(self.evidence, tuple) or not 1 <= len(self.evidence) <= 5:
+            raise ValueError("invalid_correlation_recommendation_evidence")
+        if len(self.evidence) != len(set(self.evidence)):
+            raise ValueError("invalid_correlation_recommendation_evidence")
+        if _DEDUPE_KEY.fullmatch(self.evidence_fingerprint) is None:
+            raise ValueError("invalid_correlation_recommendation_evidence_fingerprint")
+        for field_name in ("model_name", "prompt_version"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or _MACHINE_VALUE.fullmatch(value) is None:
+                raise ValueError(f"invalid_correlation_recommendation_{field_name}")
 
 
 EVENT_TEMPLATES: dict[str, EventTemplate] = {
@@ -95,6 +164,7 @@ class NotificationCommand:
     count: int | None = None
     deadline_at: datetime | None = None
     review_ref: str | None = None
+    recommendation: CorrelationRecommendation | None = None
 
     def __post_init__(self) -> None:
         try:
@@ -130,6 +200,15 @@ class NotificationCommand:
                 raise ValueError("invalid_review_ref")
         elif self.review_ref is not None:
             raise ValueError("invalid_review_ref")
+        if self.recommendation is not None and self.event_code not in {
+            "COR-002",
+            "COR-003",
+            "COR-011",
+            "COR-012",
+            "COR-014",
+            "COR-015",
+        }:
+            raise ValueError("invalid_correlation_recommendation_event")
 
 
 def render_message(
@@ -237,6 +316,12 @@ def _render_pending_correlation(
         if count == 1
         else f"Encontramos {count} personas posibles."
     )
+    recommendation_text = _render_recommendation(command.recommendation)
+    operator_instruction = (
+        "revisá la evidencia y confirmá o corregí la sugerencia."
+        if command.recommendation is not None
+        else operator_task(copy, outcome)
+    )
     headline = f"{title} · {tenant_label}"
     return {
         "text": headline,
@@ -255,7 +340,8 @@ def _render_pending_correlation(
                     "text": (
                         f"*{tenant_label}*\n{copy.situation}\n\n"
                         f"*Cuál es el problema:* {explanation}\n"
-                        f"*Qué tenés que hacer:* {operator_task(copy, outcome)}\n"
+                        f"{recommendation_text}"
+                        f"*Qué tenés que hacer:* {operator_instruction}\n"
                         f"{possible_people}\n\n"
                         f"*Mientras esté pendiente:* {copy.impact}"
                     ),
@@ -289,6 +375,39 @@ def _render_pending_correlation(
             },
         },
     }
+
+
+def _render_recommendation(
+    recommendation: CorrelationRecommendation | None,
+) -> str:
+    if recommendation is None:
+        return ""
+    evidence_lines = "\n".join(
+        f"• {_recommendation_evidence_text(item)}" for item in recommendation.evidence
+    )
+    return (
+        "*Sugerencia de la IA:* este caso probablemente pertenece a "
+        f"*{recommendation.candidate_label}*.\n"
+        f"*Por qué:*\n{evidence_lines}\n\n"
+    )
+
+
+def _recommendation_evidence_text(
+    evidence: CorrelationRecommendationEvidence,
+) -> str:
+    if evidence.kind == "precheckout_time_proximity_minutes":
+        return f"El preformulario se completó {evidence.value} minutos antes del evento."
+    if evidence.kind == "nearest_precheckout_by_at_least_5m":
+        return f"Es el preformulario más cercano al evento ({evidence.value} min)."
+    return {
+        "same_product_offer": "El producto y la oferta coinciden.",
+        "chatwoot_phone_exact_match": "El teléfono coincide con una conversación previa verificada.",
+        "chatwoot_email_exact_match": "El email coincide con un registro previo verificado.",
+        "customer_confirmed_identity": "El cliente confirmó esta identidad.",
+        "prior_verified_identity": "Existe una asociación de identidad verificada previamente.",
+        "event_email_exact_match": "El email del evento coincide con esta persona.",
+        "event_phone_exact_match": "El teléfono del evento coincide con esta persona.",
+    }[evidence.kind]
 
 
 def _validate_review_base_url(value: str | None) -> str:

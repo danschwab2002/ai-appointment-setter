@@ -509,6 +509,16 @@ activaciones, mensajes, deliveries ni outbound. Ver
 [resolución V1](contracts/operator-correlation-resolution-v1.md) y
 [ADR-0016](decisions/0016-supervised-manual-correlation-resolution.md).
 
+El árbol incorpora, todavía sin deploy, una compuerta durable de pre-resolución
+asistida antes de Slack. `unmatched` se conserva pero se suprime; `ambiguous` y
+`conflict` congelan evidencia sin PII directa y sólo proyectan contrato V3 cuando
+la política determinística valida una recomendación con evidencia discriminante.
+El bridge llama al modelo y Supabase conserva snapshot, fingerprint, leases y
+fencing. El conector Slack permanece determinístico y la decisión humana sigue
+siendo obligatoria. Contratos 1/2 sólo recuperan intentos históricos; no admiten
+casos nuevos. Ver [diseño V1](design/slack-correlation-ai-preresolution-v1.md) y
+[contrato Slack](contracts/slack-correlation-resolution-v1.md).
+
 El runtime productivo implementa un timer durable de reevaluación para
 `resolved + confirmed_abandonment`. El plazo es un número variable tomado de
 `followup_policy_versions.grace_period` y se asigna por `tenant_ref + funnel_ref`,

@@ -17,7 +17,11 @@ import tempfile
 from typing import BinaryIO
 from uuid import UUID, uuid4
 
-from slack_correlation.catalog import NotificationCommand
+from slack_correlation.catalog import (
+    CorrelationRecommendation,
+    CorrelationRecommendationEvidence,
+    NotificationCommand,
+)
 
 _TENANT_REF = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
 _MACHINE_FAILURE = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,119}$")
@@ -1979,6 +1983,10 @@ def _execute_statements(connection: sqlite3.Connection, script: str) -> None:
 
 def _serialize_command(command: NotificationCommand) -> str:
     payload = asdict(command)
+    if command.recommendation is None:
+        # Preserve byte-exact payload hashes for V1/V2 rows admitted before the
+        # optional V3 recommendation field existed.
+        payload.pop("recommendation", None)
     payload["occurred_at"] = command.occurred_at.astimezone(UTC).isoformat()
     if command.deadline_at is not None:
         payload["deadline_at"] = command.deadline_at.astimezone(UTC).isoformat()
@@ -1990,6 +1998,13 @@ def _deserialize_command(payload_json: str) -> NotificationCommand:
     payload["occurred_at"] = datetime.fromisoformat(payload["occurred_at"])
     if payload["deadline_at"] is not None:
         payload["deadline_at"] = datetime.fromisoformat(payload["deadline_at"])
+    recommendation = payload.get("recommendation")
+    if recommendation is not None:
+        recommendation["evidence"] = tuple(
+            CorrelationRecommendationEvidence(**item)
+            for item in recommendation["evidence"]
+        )
+        payload["recommendation"] = CorrelationRecommendation(**recommendation)
     return NotificationCommand(**payload)
 
 

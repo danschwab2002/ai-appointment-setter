@@ -96,6 +96,10 @@ from bridge.reply_splitter import (
     ReplySplitManifestStorageError,
     validate_reply_parts,
 )
+from bridge.correlation_preresolution import (
+    CorrelationPreresolutionClient,
+    CorrelationPreresolutionWorker,
+)
 from bridge.security import verify_chatwoot_signature
 from bridge.slack_projection import SlackCorrelationProjectionWorker
 from bridge.slack_runtime import SlackBridgeRuntime, create_slack_bridge_runtime
@@ -156,6 +160,7 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     "operator_correlation_read_enabled",
     "operator_correlation_write_enabled",
     "slack_connector_projection_enabled",
+    "correlation_preresolution_enabled",
 })
 
 _MEDICATION_GUIDANCE_SUBJECT_RE = re.compile(
@@ -411,6 +416,11 @@ class Settings:
     slack_connector_poll_interval_seconds: float = 5.0
     slack_connector_batch_size: int = 1
     slack_connector_lease_seconds: int = 60
+    correlation_preresolution_enabled: bool = False
+    correlation_preresolution_model_name: str | None = None
+    correlation_preresolution_prompt_version: str = "correlation-preresolution-v1"
+    correlation_preresolution_worker_id: str | None = None
+    correlation_preresolution_poll_interval_seconds: float = 5.0
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -841,6 +851,44 @@ class Settings:
             os.getenv("SLACK_CONNECTOR_PROJECTION_ENABLED", "false").lower()
             == "true"
         )
+        correlation_preresolution_enabled = (
+            os.getenv("CORRELATION_PRERESOLUTION_ENABLED", "false").lower()
+            == "true"
+        )
+        correlation_preresolution_model_name = (
+            os.getenv("CORRELATION_PRERESOLUTION_MODEL_NAME", "").strip()
+            or hermes_model_name
+        )
+        correlation_preresolution_prompt_version = os.getenv(
+            "CORRELATION_PRERESOLUTION_PROMPT_VERSION",
+            "correlation-preresolution-v1",
+        ).strip()
+        correlation_preresolution_worker_id = (
+            os.getenv("CORRELATION_PRERESOLUTION_WORKER_ID", "").strip() or None
+        )
+        correlation_preresolution_poll_interval_seconds = float(
+            os.getenv("CORRELATION_PRERESOLUTION_POLL_INTERVAL", "5.0")
+        )
+        if correlation_preresolution_enabled and (
+            hermes_api_base_url is None
+            or hermes_api_key is None
+            or not correlation_preresolution_model_name
+            or not correlation_preresolution_prompt_version
+            or correlation_preresolution_worker_id is None
+            or supabase_base_url is None
+            or supabase_service_role_key is None
+        ):
+            raise ValueError("correlation_preresolution_configuration_incomplete")
+        if (
+            not math.isfinite(correlation_preresolution_poll_interval_seconds)
+            or correlation_preresolution_poll_interval_seconds <= 0
+        ):
+            raise ValueError("invalid_correlation_preresolution_poll_interval")
+        if slack_connector_projection_enabled and not correlation_preresolution_enabled:
+            raise ValueError(
+                "SLACK_CONNECTOR_PROJECTION_ENABLED requires "
+                "CORRELATION_PRERESOLUTION_ENABLED"
+            )
 
         return cls(
             webhook_secret=os.environ["CHATWOOT_WEBHOOK_SECRET"],
@@ -1076,6 +1124,17 @@ class Settings:
             ),
             slack_connector_lease_seconds=int(
                 os.getenv("SLACK_CONNECTOR_LEASE_SECONDS", "60")
+            ),
+            correlation_preresolution_enabled=correlation_preresolution_enabled,
+            correlation_preresolution_model_name=(
+                correlation_preresolution_model_name
+            ),
+            correlation_preresolution_prompt_version=(
+                correlation_preresolution_prompt_version
+            ),
+            correlation_preresolution_worker_id=correlation_preresolution_worker_id,
+            correlation_preresolution_poll_interval_seconds=(
+                correlation_preresolution_poll_interval_seconds
             ),
             chatwoot_scoped_inbound_senders_enabled=(
                 os.getenv(
@@ -1709,6 +1768,38 @@ def create_app(
         or settings.operator_correlation_write_enabled
     ) and shared_supabase is None:
         raise ValueError("operator correlation access requires Supabase")
+    correlation_preresolution_worker: CorrelationPreresolutionWorker | None = None
+    if settings.correlation_preresolution_enabled:
+        if (
+            shared_supabase is None
+            or settings.hermes_api_base_url is None
+            or settings.hermes_api_key is None
+            or settings.correlation_preresolution_model_name is None
+            or settings.correlation_preresolution_worker_id is None
+        ):
+            raise ValueError("correlation_preresolution_configuration_incomplete")
+        correlation_preresolution_worker = CorrelationPreresolutionWorker(
+            store=shared_supabase,
+            model=CorrelationPreresolutionClient(
+                base_url=settings.hermes_api_base_url,
+                api_key=settings.hermes_api_key,
+                model_name=settings.correlation_preresolution_model_name,
+                prompt_version=settings.correlation_preresolution_prompt_version,
+            ),
+            tenant_ref=settings.commercial_ally_config.tenant_ref,
+            funnel_ref=settings.commercial_ally_config.funnel_ref,
+            worker_id=settings.correlation_preresolution_worker_id,
+            poll_interval_seconds=(
+                settings.correlation_preresolution_poll_interval_seconds
+            ),
+        )
+    if (
+        settings.slack_connector_projection_enabled
+        and correlation_preresolution_worker is None
+    ):
+        raise ValueError(
+            "Slack projection requires correlation pre-resolution"
+        )
     slack_runtime_owned = False
     connector_url_configured = settings.slack_connector_base_url is not None
     connector_token_configured = settings.slack_connector_bearer_token is not None
@@ -2294,6 +2385,8 @@ def create_app(
                 await opt_out_projection_worker.start()
             if human_handoff_projection_worker is not None:
                 await human_handoff_projection_worker.start()
+            if correlation_preresolution_worker is not None:
+                await correlation_preresolution_worker.start()
             if slack_projection_worker is not None:
                 if portable_runtime:
                     assert shared_supabase is not None
@@ -2313,6 +2406,7 @@ def create_app(
                 ("opt_out_projection", opt_out_projection_worker),
                 ("human_handoff_projection", human_handoff_projection_worker),
                 ("slack_projection", slack_projection_worker),
+                ("correlation_preresolution", correlation_preresolution_worker),
                 ("dispatcher", durable_dispatcher),
                 ("hotmart_abandonment_timer", hotmart_abandonment_timer_worker),
                 ("resolution", resolution_worker),
@@ -2342,6 +2436,7 @@ def create_app(
     app.state.durable_dispatcher = durable_dispatcher
     app.state.opt_out_projection_worker = opt_out_projection_worker
     app.state.human_handoff_projection_worker = human_handoff_projection_worker
+    app.state.correlation_preresolution_worker = correlation_preresolution_worker
     app.state.slack_projection_worker = slack_projection_worker
     app.state.chatwoot_inbox = chatwoot_inbox
     app.state.chatwoot_worker = chatwoot_worker
@@ -3664,6 +3759,14 @@ def create_app(
             stalled_monitor_readiness = {
                 "chatwoot_stalled_monitor": "healthy",
             }
+        if (
+            correlation_preresolution_worker is not None
+            and not correlation_preresolution_worker.healthy
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="correlation_preresolution_unhealthy",
+            )
         if slack_projection_worker is not None and slack_projection_worker.halted:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

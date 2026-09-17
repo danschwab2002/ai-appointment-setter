@@ -10,8 +10,14 @@ from fastapi.testclient import TestClient
 import pytest
 
 from slack_correlation.app import SlackConnectorSettings, _parse_command, create_app
-from slack_correlation.catalog import EVENT_TEMPLATES, NotificationCommand, render_message
-from slack_correlation.store import NotificationStore
+from slack_correlation.catalog import (
+    CorrelationRecommendation,
+    CorrelationRecommendationEvidence,
+    EVENT_TEMPLATES,
+    NotificationCommand,
+    render_message,
+)
+from slack_correlation.store import NotificationStore, _serialize_command
 from slack_correlation.client import (
     SlackMessageReference,
     SlackProtocolError,
@@ -35,6 +41,31 @@ def _command(**overrides: object) -> NotificationCommand:
     }
     values.update(overrides)
     return NotificationCommand(**values)  # type: ignore[arg-type]
+
+
+def _recommendation() -> CorrelationRecommendation:
+    return CorrelationRecommendation(
+        recommendation_ref="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        candidate_id="22222222-2222-4222-8222-222222222222",
+        candidate_label="Persona 2",
+        evidence=(
+            CorrelationRecommendationEvidence(
+                kind="precheckout_time_proximity_minutes",
+                value=4,
+            ),
+            CorrelationRecommendationEvidence(
+                kind="same_product_offer",
+                value=None,
+            ),
+            CorrelationRecommendationEvidence(
+                kind="event_email_exact_match",
+                value=None,
+            ),
+        ),
+        evidence_fingerprint="f" * 64,
+        model_name="resolver-model",
+        prompt_version="correlation-preresolution-v1",
+    )
 
 
 def test_catalog_has_exactly_the_56_approved_event_codes() -> None:
@@ -132,6 +163,55 @@ def test_initial_correlation_card_names_the_business_event_and_task(
     assert task in rendered
     assert "Mientras esté pendiente" in rendered
     assert correlation["blocks"][-1]["elements"][0]["text"]["text"] == button
+
+
+def test_ai_recommendation_card_serves_a_bounded_hypothesis_and_evidence() -> None:
+    correlation = render_message(
+        _command(
+            event_code="COR-003",
+            subject_ref="C-11111111-1111-4111-8111-111111111111",
+            reason_code="email_phone_conflict",
+            state="pending",
+            count=2,
+            recommendation=_recommendation(),
+        ),
+        tenant_label="Johanna",
+    )
+
+    rendered = repr(correlation)
+    assert "Sugerencia de la IA" in rendered
+    assert "probablemente pertenece a *Persona 2*" in rendered
+    assert "El preformulario se completó 4 minutos antes del evento." in rendered
+    assert "El producto y la oferta coinciden." in rendered
+    assert "confirmá o corregí la sugerencia" in rendered
+    assert "resolver-model" not in rendered
+    assert "22222222-2222-4222-8222-222222222222" not in rendered
+    assert correlation["metadata"]["event_payload"] == {
+        "event_id": "11111111-1111-4111-8111-111111111111",
+        "event_code": "COR-003",
+        "case_id": "11111111-1111-4111-8111-111111111111",
+    }
+
+
+def test_recommendation_round_trips_through_the_durable_connector_ledger(tmp_path) -> None:
+    store = NotificationStore(tmp_path / "connector.sqlite3")
+    store.initialize()
+    command = _command(
+        event_code="COR-003",
+        subject_ref="C-11111111-1111-4111-8111-111111111111",
+        reason_code="email_phone_conflict",
+        state="pending",
+        count=2,
+        recommendation=_recommendation(),
+    )
+
+    admitted = store.admit(tenant_ref="johanna", command=command)
+    claimed = store.claim_next(worker_id="worker-a")
+
+    assert admitted.outcome == "admitted"
+    assert claimed is not None
+    assert claimed.command == command
+    assert claimed.command.recommendation == _recommendation()
 
 
 def test_zero_match_catalog_card_has_no_action_until_external_search_exists() -> None:
@@ -291,6 +371,26 @@ def test_store_admits_once_replays_exactly_and_rejects_semantic_conflict(
     assert duplicate.notification_id == admitted.notification_id
     assert conflicting.outcome == "semantic_conflict"
     assert store.count() == 1
+
+
+def test_legacy_command_serialization_omits_the_v3_recommendation_key() -> None:
+    legacy_payload = json.loads(_serialize_command(_command()))
+    v3_payload = json.loads(
+        _serialize_command(
+            _command(
+                event_code="COR-011",
+                reason_code="multiple_candidates",
+                state="pending",
+                count=2,
+                recommendation=_recommendation(),
+            )
+        )
+    )
+
+    assert "recommendation" not in legacy_payload
+    assert v3_payload["recommendation"]["recommendation_ref"] == (
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    )
 
 
 def test_store_rejects_an_unknown_on_disk_schema_version(tmp_path) -> None:

@@ -10,6 +10,7 @@ import math
 from typing import Protocol
 
 from bridge.slack_notifications import NotificationProducer, SlackOperationalNotifier
+from slack_correlation.catalog import CorrelationRecommendation
 from slack_correlation.producer import (
     ConnectorAdmissionUnknown,
     ConnectorRejected,
@@ -30,6 +31,7 @@ class SlackCorrelationNotificationClaim:
     occurred_at: datetime
     claim_token: str
     lease_generation: int
+    recommendation: CorrelationRecommendation | None = None
 
 
 class SlackCorrelationProjectionStore(Protocol):
@@ -174,6 +176,7 @@ class SlackCorrelationProjectionWorker:
                     reason_code=claim.reason_code,
                     candidate_count=claim.candidate_count,
                     occurred_at=claim.occurred_at,
+                    recommendation=claim.recommendation,
                 )
             except Exception as exc:
                 failure_code = _connector_failure_code(exc)
