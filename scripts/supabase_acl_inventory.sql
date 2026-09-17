@@ -32,6 +32,7 @@ expected_service_role(signature) as (
         ('public.claim_slack_correlation_notifications_v3(text, text, text, integer, integer, integer)'),
         ('public.claim_operator_correlation_preresolutions(text, text, text, integer, integer)'),
         ('public.get_operator_correlation_preresolution_evidence(text, text, uuid, uuid, bigint)'),
+        ('public.complete_operator_correlation_preresolution(uuid, uuid, bigint, text, uuid, jsonb, text, text, text)'),
         ('public.complete_operator_correlation_preresolution(uuid, uuid, bigint, text, uuid, jsonb, text, text)'),
         ('public.release_operator_correlation_preresolution(uuid, uuid, bigint, text)'),
         ('public.complete_slack_correlation_notification(uuid, uuid, bigint, uuid)'),

@@ -118,21 +118,83 @@ def test_high_confidence_recommendation_requires_independent_bounded_evidence() 
     )
     assert recommendation.model_name == "resolver-model"
     assert recommendation.prompt_version == "correlation-preresolution-v1"
+    assert recommendation.decision_reason_code is None
+
+
+def test_rejected_recommendation_exposes_a_bounded_reason_code() -> None:
+    recommendation = PreresolutionRecommendation.from_proposal(
+        evidence=_evidence(),
+        proposal=_proposal(confidence="medium"),
+        model_name="resolver-model",
+        prompt_version="correlation-preresolution-v1",
+    )
+
+    assert recommendation.status == "abstained"
+    assert recommendation.decision_reason_code == "confidence_below_high"
+
+
+def test_recommendation_requires_one_uniquely_discriminated_candidate() -> None:
+    base = _evidence()
+    evidence = CorrelationEvidence(
+        case_id=base.case_id,
+        event_type=base.event_type,
+        outcome=base.outcome,
+        candidates=base.candidates,
+        facts=base.facts
+        + (
+            CorrelationEvidenceFact(
+                evidence_id="fact-4",
+                candidate_id=_CANDIDATE_1,
+                kind="prior_verified_identity",
+                value=None,
+                independent=True,
+                discriminating=True,
+            ),
+        ),
+    )
+
+    recommendation = PreresolutionRecommendation.from_proposal(
+        evidence=evidence,
+        proposal=_proposal(),
+        model_name="resolver-model",
+        prompt_version="correlation-preresolution-v2",
+    )
+
+    assert recommendation.status == "abstained"
+    assert (
+        recommendation.decision_reason_code
+        == "independent_discriminating_candidate_not_unique"
+    )
 
 
 @pytest.mark.parametrize(
-    "proposal",
+    ("proposal", "expected_reason"),
     [
-        _proposal(confidence="medium"),
-        _proposal(supporting_evidence_ids=["fact-3"]),
-        _proposal(supporting_evidence_ids=["unknown"]),
-        _proposal(recommended_candidate_id="33333333-3333-4333-8333-333333333333"),
-        _proposal(contradicting_evidence_ids=["fact-3"]),
-        _proposal(extra="not-allowed"),
+        (_proposal(confidence="medium"), "confidence_below_high"),
+        (
+            _proposal(supporting_evidence_ids=["fact-3"]),
+            "supporting_evidence_candidate_mismatch",
+        ),
+        (
+            _proposal(supporting_evidence_ids=["unknown"]),
+            "supporting_evidence_unknown",
+        ),
+        (
+            _proposal(
+                recommended_candidate_id="33333333-3333-4333-8333-333333333333"
+            ),
+            "candidate_not_allowed",
+        ),
+        (
+            _proposal(contradicting_evidence_ids=["fact-3"]),
+            "contradicting_evidence_present",
+        ),
+        (_proposal(extra="not-allowed"), "proposal_keys_invalid"),
     ],
 )
 def test_unsafe_or_unverifiable_model_choices_become_abstentions(
     proposal: dict[str, object],
+    expected_reason: str,
 ) -> None:
     recommendation = PreresolutionRecommendation.from_proposal(
         evidence=_evidence(),
@@ -144,6 +206,7 @@ def test_unsafe_or_unverifiable_model_choices_become_abstentions(
     assert recommendation.status == "abstained"
     assert recommendation.candidate_id is None
     assert recommendation.supporting_facts == ()
+    assert recommendation.decision_reason_code == expected_reason
 
 
 def test_explicit_abstention_is_valid_and_never_selects_a_candidate() -> None:
@@ -162,6 +225,10 @@ def test_explicit_abstention_is_valid_and_never_selects_a_candidate() -> None:
 
     assert recommendation.status == "abstained"
     assert recommendation.candidate_id is None
+    assert (
+        recommendation.decision_reason_code
+        == "model_abstained_missing_information"
+    )
 
 
 def test_unmatched_cases_are_rejected_before_any_model_request() -> None:
@@ -189,7 +256,6 @@ def test_client_sends_bounded_structured_context_and_accepts_a_safe_recommendati
         base_url="https://hermes.internal.example",
         api_key="secret-value",
         model_name="resolver-model",
-        prompt_version="correlation-preresolution-v1",
         transport=httpx.MockTransport(handler),
     )
 
@@ -204,6 +270,10 @@ def test_client_sends_bounded_structured_context_and_accepts_a_safe_recommendati
     context = json.loads(body["messages"][1]["content"])
     assert set(context) == {"case", "candidates", "evidence_facts"}
     assert "secret-value" not in request.content.decode()
+    system_prompt = body["messages"][0]["content"]
+    assert "independent=true and discriminating=true" in system_prompt
+    assert "exactly one candidate" in system_prompt
+    assert recommendation.prompt_version == "correlation-preresolution-v2"
 
 
 def test_client_accepts_the_existing_trusted_hermes_internal_http_endpoint() -> None:
@@ -228,6 +298,8 @@ def test_client_accepts_the_existing_trusted_hermes_internal_http_endpoint() -> 
         asyncio.run(client.recommend(_evidence()))
     assert len(requests) == 1
     assert str(requests[0].url) == "http://hermes:8642/v1/chat/completions"
+    legacy_prompt = json.loads(requests[0].content)["messages"][0]["content"]
+    assert "independent=true and discriminating=true" not in legacy_prompt
 
 
 def test_client_retries_http_or_protocol_errors() -> None:
@@ -382,6 +454,7 @@ def test_preresolution_worker_persists_abstention_instead_of_notifying() -> None
             return PreresolutionRecommendation.abstained(
                 model_name="resolver-model",
                 prompt_version="correlation-preresolution-v1",
+                decision_reason_code="model_abstained",
             )
 
     store = Store()
@@ -395,6 +468,9 @@ def test_preresolution_worker_persists_abstention_instead_of_notifying() -> None
 
     assert asyncio.run(worker.run_once()) == 1
     assert store.completed[0]["disposition"] == "abstained"
+    recommendation = store.completed[0]["recommendation"]
+    assert isinstance(recommendation, PreresolutionRecommendation)
+    assert recommendation.decision_reason_code == "model_abstained"
 
 
 def test_preresolution_worker_releases_transient_failures_without_a_slack_effect() -> None:

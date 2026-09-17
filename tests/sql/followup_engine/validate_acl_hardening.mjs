@@ -104,6 +104,7 @@ const rows = await db.query(`
       ('claim_slack_correlation_notifications_v3(text,text,text,integer,integer,integer)'),
       ('claim_operator_correlation_preresolutions(text,text,text,integer,integer)'),
       ('get_operator_correlation_preresolution_evidence(text,text,uuid,uuid,bigint)'),
+      ('complete_operator_correlation_preresolution(uuid,uuid,bigint,text,uuid,jsonb,text,text,text)'),
       ('complete_operator_correlation_preresolution(uuid,uuid,bigint,text,uuid,jsonb,text,text)'),
       ('release_operator_correlation_preresolution(uuid,uuid,bigint,text)'),
       ('complete_slack_correlation_notification(uuid,uuid,bigint,uuid)'),
@@ -198,9 +199,10 @@ const result = rows.rows[0];
 // baseline is 68 RPCs, daily feedback adds fourteen, payment links add three,
 // the one-shot operator disposition adds one, and correlation event context
 // adds one, Johanna checkout issuance V2 adds four, and AI-assisted correlation
-// pre-resolution adds five.
+// pre-resolution adds five, and the rolling-safe reason-code contract retains
+// one legacy completion overload.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 96) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 97) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const bindingAcl = await db.query(`

@@ -2334,6 +2334,7 @@ class SupabaseClient:
             evidence: list[dict[str, object]] = []
             model_name = None
             prompt_version = None
+            decision_reason_code = None
         else:
             if recommendation is None or recommendation.status != disposition:
                 raise ValueError("correlation pre-resolution result mismatch")
@@ -2344,6 +2345,7 @@ class SupabaseClient:
             ]
             model_name = recommendation.model_name
             prompt_version = recommendation.prompt_version
+            decision_reason_code = recommendation.decision_reason_code
         response = await self._request(
             "POST",
             "/rest/v1/rpc/complete_operator_correlation_preresolution",
@@ -2357,6 +2359,7 @@ class SupabaseClient:
                     "p_supporting_evidence": evidence,
                     "p_model_name": model_name,
                     "p_prompt_version": prompt_version,
+                    "p_decision_reason_code": decision_reason_code,
                 }
             ),
         )

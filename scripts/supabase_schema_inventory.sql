@@ -3029,6 +3029,35 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'slack_correlation_ai_preresolution_service_role_only'
+    union all
+    select
+        '20260917000100',
+        '20260917000100_operator_correlation_abstention_reason.sql',
+        exists(
+            select 1
+            from pg_catalog.pg_attribute
+            where attrelid = to_regclass('public.operator_correlation_preresolutions')
+              and attname = 'decision_reason_code'
+              and not attisdropped
+        )::int
+        + (to_regprocedure('public.complete_operator_correlation_preresolution(uuid,uuid,bigint,text,uuid,jsonb,text,text,text)') is not null)::int
+        + (to_regprocedure('public.complete_operator_correlation_preresolution(uuid,uuid,bigint,text,uuid,jsonb,text,text)') is not null)::int
+        + exists(
+            select 1
+            from pg_catalog.pg_constraint
+            where conrelid = to_regclass('public.operator_correlation_preresolutions')
+              and conname = 'operator_correlation_preresolutions_decision_reason_check'
+              and position(
+                    'decision_reason_code is not null'
+                    in lower(pg_get_constraintdef(oid))
+                  ) > 0
+              and position(
+                    'legacy_unclassified'
+                    in lower(pg_get_constraintdef(oid))
+                  ) > 0
+        )::int,
+        4,
+        'slack_correlation_abstention_reason_service_role_only'
 )
 select
     version,
