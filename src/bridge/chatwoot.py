@@ -267,7 +267,6 @@ class ChatwootClient:
             or not all(isinstance(label, str) for label in labels)
             or "automation_paused" in labels
             or not isinstance(meta, dict)
-            or "assignee" not in meta
             or meta.get("assignee") is not None
             or not isinstance(messages, list)
             or not all(isinstance(message, dict) for message in messages)
