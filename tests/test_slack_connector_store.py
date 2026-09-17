@@ -473,6 +473,53 @@ def test_accepted_notification_creates_stable_tenant_scoped_thread_root(
     assert stored.thread_ts == "1788800000.000001"
 
 
+def test_v3_cart_recommendation_creates_and_rebuilds_review_binding(tmp_path) -> None:
+    path = tmp_path / "slack.sqlite3"
+    store = NotificationStore(path)
+    store.initialize()
+    command = _command(
+        event_code="COR-011",
+        subject_ref="C-11111111-1111-4111-8111-111111111111",
+        reason_code="multiple_candidates",
+        state="pending",
+        count=2,
+        recommendation=_recommendation(),
+    )
+    store.admit(tenant_ref="johanna", command=command)
+    claim = store.claim_next(worker_id="worker-a")
+    assert claim is not None
+    store.mark_request_started(claim)
+    store.finalize_accepted(
+        claim,
+        channel_id="C0C0YEACVT2",
+        message_ts="1788800000.000011",
+        thread_ts=None,
+        team_id="T12345678",
+    )
+
+    expected = store.find_correlation_binding(
+        tenant_ref="johanna",
+        team_id="T12345678",
+        channel_id="C0C0YEACVT2",
+        message_ts="1788800000.000011",
+    )
+    assert expected is not None
+    assert expected.case_id == "11111111-1111-4111-8111-111111111111"
+
+    with sqlite3.connect(path) as connection:
+        connection.execute("DELETE FROM correlation_projections")
+    store.initialize()
+
+    rebuilt = store.find_correlation_binding(
+        tenant_ref="johanna",
+        team_id="T12345678",
+        channel_id="C0C0YEACVT2",
+        message_ts="1788800000.000011",
+    )
+    assert rebuilt is not None
+    assert rebuilt.case_id == expected.case_id
+
+
 def test_worker_never_retries_an_ambiguous_slack_request(tmp_path) -> None:
     class AmbiguousSlackClient:
         def __init__(self) -> None:
