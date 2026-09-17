@@ -61,6 +61,16 @@ clearly distinguishes its candidate. If exactly one candidate has such evidence
 and there is no contradiction, the model is instructed to recommend that
 candidate with high confidence and cite the fact.
 
+Prompt `correlation-preresolution-v3` preserves that policy and makes the output
+contract explicit. In particular, `decision` is exactly `recommend_candidate`
+or `abstain`; the shorter alias `recommend` is invalid. It also pins confidence
+tokens and requires each evidence or missing-information field to be a JSON
+array of strings, using `[]` rather than `null`. On abstention, evidence arrays
+must be empty and missing-information entries must be bounded lowercase machine
+tokens rather than prose. A recommendation carrying any missing-information
+token is rejected. The deterministic parser remains strict and does not
+normalize aliases.
+
 Everything else becomes abstention. `same_product_offer`, event email matches and
 event phone matches are never sufficient discriminators. Every terminal
 abstention persists one allowlisted, non-PII `decision_reason_code`; raw model
@@ -88,8 +98,8 @@ material conflicts instead of silently replacing an admitted message.
    abstentions as `legacy_unclassified`.
 4. Deploy the bridge and connector with both pre-resolution and Slack projection
    disabled. Set `CORRELATION_PRERESOLUTION_PROMPT_VERSION` to
-   `correlation-preresolution-v2`; V1 remains accepted only for exact historical
-   behavior and rollback.
+   `correlation-preresolution-v3`; V1 and V2 remain accepted only for exact
+   historical behavior and rollback.
 5. Verify `/health`, `/ready`, ACLs, RPC signatures and zero invalid leases.
 6. Enable `CORRELATION_PRERESOLUTION_ENABLED` first.
 7. Confirm synthetic unmatched becomes `suppressed_unmatched` with zero model and

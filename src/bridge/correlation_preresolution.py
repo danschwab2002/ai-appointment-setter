@@ -20,7 +20,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_PROMPT_VERSION = "correlation-preresolution-v2"
+_PROMPT_VERSION = "correlation-preresolution-v3"
 _PROPOSAL_KEYS = frozenset(
     {
         "decision",
@@ -96,9 +96,18 @@ has such evidence and there is no contradicting evidence, recommend that
 candidate with high confidence and cite the discriminating evidence_id.
 Never resolve the case, authorize contact, invent facts, or return personal data.
 """
+_SYSTEM_PROMPT_V3 = _SYSTEM_PROMPT_V2 + """The output contract is strict: decision must be exactly "recommend_candidate" or "abstain"; "recommend" is invalid.
+recommended_candidate_id must be a candidate_id string from the packet when decision is "recommend_candidate", and null when decision is "abstain".
+confidence must be exactly "high", "medium", or "low".
+supporting_evidence_ids, contradicting_evidence_ids, and missing_information must each be JSON arrays of strings. Return [] when an array has no items; never return null or prose instead of an array.
+When decision is "recommend_candidate", missing_information must be [].
+When decision is "abstain", supporting_evidence_ids and contradicting_evidence_ids must both be []. missing_information may be [] or contain at most 20 unique lowercase machine tokens matching [a-z0-9][a-z0-9_-]{0,79}, for example "missing_discriminating_evidence"; never use prose or spaces.
+Before returning, verify that the object has exactly the six requested keys, uses only the enum tokens above, and contains no Markdown fences or surrounding text.
+"""
 _SYSTEM_PROMPTS = {
     "correlation-preresolution-v1": _SYSTEM_PROMPT_V1,
     "correlation-preresolution-v2": _SYSTEM_PROMPT_V2,
+    "correlation-preresolution-v3": _SYSTEM_PROMPT_V3,
 }
 
 
@@ -293,6 +302,8 @@ class PreresolutionRecommendation:
                 if missing
                 else "model_abstained"
             )
+        if missing:
+            return abstain("proposal_shape_invalid")
         if not isinstance(candidate_id, str):
             return abstain("proposal_shape_invalid")
         if confidence != "high":
