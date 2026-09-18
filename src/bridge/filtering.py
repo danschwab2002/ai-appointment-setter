@@ -15,6 +15,7 @@ EventAction = Literal[
 _SCOPE_UNSET = object()
 _WHATSAPP_JID_SUFFIX = "@s.whatsapp.net"
 _WHATSAPP_DIGITS = re.compile(r"[1-9][0-9]{6,14}")
+_WHATSAPP_E164 = re.compile(r"\+[1-9][0-9]{6,14}")
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,23 @@ def matches_allowed_whatsapp_identity(
     )
 
 
+def matches_allowed_whatsapp_phone(
+    observed_phone: object,
+    *,
+    allowed_jid: object,
+) -> bool:
+    """Match only a canonical E.164 phone fallback to the configured JID."""
+    return (
+        isinstance(observed_phone, str)
+        and _WHATSAPP_E164.fullmatch(observed_phone) is not None
+        and matches_allowed_whatsapp_identity(
+            observed_phone,
+            allowed_jid=allowed_jid,
+            allow_e164=True,
+        )
+    )
+
+
 def _canonical_whatsapp_jid(observed_identity: object) -> str | None:
     if not isinstance(observed_identity, str):
         return None
@@ -77,15 +95,33 @@ def classify_chatwoot_event(
     """Classify an event before any agent can be invoked."""
     event = _json_object(payload)
     conversation = _json_object(event.get("conversation"))
-    contact_inbox = _json_object(conversation.get("contact_inbox"))
-    metadata = _json_object(conversation.get("meta"))
-    sender = _json_object(metadata.get("sender"))
-    sender_jid = sender.get("identifier") or contact_inbox.get("source_id")
+    contact_inbox_value = conversation.get("contact_inbox")
+    metadata_value = conversation.get("meta")
+    contact_inbox = _json_object(contact_inbox_value)
+    metadata = _json_object(metadata_value)
+    sender_value = metadata.get("sender")
+    sender = _json_object(sender_value)
+    malformed_identity_container = (
+        contact_inbox_value is not None and not isinstance(contact_inbox_value, dict)
+    )
+    identifier_present = "identifier" in sender and sender.get("identifier") is not None
+    source_present = (
+        "source_id" in contact_inbox
+        and contact_inbox.get("source_id") is not None
+    )
+    sender_jid = (
+        sender.get("identifier")
+        if identifier_present
+        else contact_inbox.get("source_id") if source_present else None
+    )
     sender_phone = sender.get("phone_number")
     using_phone_fallback = (
-        "identifier" not in sender
-        and "source_id" not in contact_inbox
-        and isinstance(sender_phone, str)
+        not identifier_present
+        and not source_present
+        and matches_allowed_whatsapp_phone(
+            sender_phone,
+            allowed_jid=allowed_jid,
+        )
     )
     observed_identity = sender_phone if using_phone_fallback else sender_jid
 
@@ -93,6 +129,8 @@ def classify_chatwoot_event(
         return EventDecision(False, "unsupported_event", sender_jid, "ignore")
     if event.get("private") is not False:
         return EventDecision(False, "private_message", sender_jid, "ignore")
+    if malformed_identity_container:
+        return EventDecision(False, "sender_not_allowed", sender_jid, "ignore")
     if expected_account_id is not _SCOPE_UNSET:
         if (
             not isinstance(expected_account_id, int)

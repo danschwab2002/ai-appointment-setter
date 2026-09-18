@@ -15,7 +15,11 @@ from typing import Awaitable, Callable
 
 import httpx
 
-from bridge.filtering import classify_chatwoot_event, matches_allowed_whatsapp_identity
+from bridge.filtering import (
+    classify_chatwoot_event,
+    matches_allowed_whatsapp_identity,
+    matches_allowed_whatsapp_phone,
+)
 from bridge.reply_splitter import reply_batch_hash, reply_part_hash
 
 
@@ -1123,22 +1127,39 @@ class ChatwootClient:
             raise ChatwootProtocolError("invalid_conversation_payload")
         meta = conversation.get("meta")
         sender = meta.get("sender") if isinstance(meta, dict) else None
-        identifier = sender.get("identifier") if isinstance(sender, dict) else None
-        if not isinstance(identifier, str) or not identifier:
-            contact_inbox = conversation.get("contact_inbox")
-            identifier = (
-                contact_inbox.get("source_id")
-                if isinstance(contact_inbox, dict)
-                else None
+        contact_inbox_value = conversation.get("contact_inbox")
+        if not isinstance(sender, dict):
+            return False
+        if contact_inbox_value is None:
+            contact_inbox: dict[str, object] = {}
+        elif isinstance(contact_inbox_value, dict):
+            contact_inbox = contact_inbox_value
+        else:
+            return False
+        identifier_present = (
+            "identifier" in sender and sender.get("identifier") is not None
+        )
+        source_present = (
+            "source_id" in contact_inbox
+            and contact_inbox.get("source_id") is not None
+        )
+        using_phone_fallback = not identifier_present and not source_present
+        identifier = (
+            sender.get("identifier")
+            if identifier_present
+            else contact_inbox.get("source_id")
+            if source_present
+            else sender.get("phone_number")
+        )
+        allowed_jid = expected_jid or self._allowed_jid
+        if using_phone_fallback:
+            return matches_allowed_whatsapp_phone(
+                identifier,
+                allowed_jid=allowed_jid,
             )
-        if (not isinstance(identifier, str) or not identifier) and isinstance(
-            sender, dict
-        ):
-            identifier = sender.get("phone_number")
         return matches_allowed_whatsapp_identity(
             identifier,
-            allowed_jid=expected_jid or self._allowed_jid,
-            allow_e164=True,
+            allowed_jid=allowed_jid,
         )
 
     async def validate_conversation_authority(
