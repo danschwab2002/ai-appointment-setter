@@ -791,6 +791,59 @@ def test_reviewed_no_match_infers_the_only_valid_evidence_and_prepares(tmp_path)
     assert operator.prepare_calls[0]["verification_basis"] == "no_valid_candidate_after_review"
 
 
+def test_second_step_ignores_unconsumed_slack_view_fields(tmp_path) -> None:
+    app, _store, slack, operator = _app(tmp_path)
+    with TestClient(app) as client:
+        assert _signed(client, {
+            "type": "block_actions", "team": {"id": TEAM}, "user": {"id": USER},
+            "channel": {"id": CHANNEL}, "message": {"ts": TS},
+            "trigger_id": "123.456.second-step-extra",
+            "actions": [{"action_id": "review_operator_correlation", "value": CASE}],
+        }).status_code == 200
+        token = _wait_for_open_view(slack)
+        selected = _signed(client, {
+            "type": "view_submission", "team": {"id": TEAM}, "user": {"id": USER},
+            "view": {
+                "id": "V12345678", "hash": "1.abc",
+                "callback_id": "select_operator_correlation_resolution",
+                "private_metadata": json.dumps({"review_token": token}),
+                "state": {"values": {
+                    "decision": {"selected_decision": {"selected_option": {
+                        "value": "22222222-2222-4222-8222-222222222222"
+                    }}}
+                }},
+            },
+        }, timestamp="1789000001")
+        verification_view = selected.json()["view"]
+        prepared = _signed(client, {
+            "type": "view_submission",
+            "team": {"id": TEAM, "platform_extension": {"ignored": {"deep": {"value": True}}}},
+            "user": {"id": USER, "platform_extension": {"ignored": {"deep": {"value": True}}}},
+            "view": {
+                **verification_view,
+                "id": "V12345678", "hash": "2.def",
+                "platform_extension": {
+                    "ignored": {"a": {"b": {"c": {"d": {"e": {"f": "safe"}}}}}}
+                },
+                "state": {"values": {
+                    "verification": {"verification_basis": {"selected_option": {
+                        "text": {"type": "plain_text", "text": "Revisé el registro del cliente"},
+                        "value": "operator_source_record",
+                    }}}
+                }},
+            },
+            "platform_extension": {"ignored": {"deep": {"value": True}}},
+        }, timestamp="1789000002")
+        deadline = time.monotonic() + 2
+        while not operator.prepare_calls and time.monotonic() < deadline:
+            time.sleep(0.02)
+
+    assert prepared.status_code == 200
+    assert prepared.json()["view"]["callback_id"] == "operator_correlation_resolution_processing"
+    assert len(operator.prepare_calls) == 1
+    assert operator.prepare_calls[0]["verification_basis"] == "operator_source_record"
+
+
 def test_selected_person_uses_only_the_evidence_from_the_second_step(tmp_path) -> None:
     app, _store, slack, operator = _app(tmp_path)
     with TestClient(app) as client:
@@ -948,6 +1001,60 @@ def test_view_submission_rejects_unknown_unsafe_nested_view_data(
         }, timestamp="1789000001")
     assert response.status_code == 400
     assert operator.prepare_calls == []
+
+
+def test_prepare_admission_fails_fast_on_sqlite_writer_contention_and_can_retry(tmp_path) -> None:
+    app, _store, slack, operator = _app(tmp_path)
+    with TestClient(app) as client:
+        assert _signed(client, {
+            "type": "block_actions", "team": {"id": TEAM}, "user": {"id": USER},
+            "channel": {"id": CHANNEL}, "message": {"ts": TS},
+            "trigger_id": "123.456.lock-contention",
+            "actions": [{"action_id": "review_operator_correlation", "value": CASE}],
+        }).status_code == 200
+        token = _wait_for_open_view(slack)
+        selected = _signed(client, {
+            "type": "view_submission", "team": {"id": TEAM}, "user": {"id": USER},
+            "view": {
+                "id": "V12345678", "hash": "1.abc",
+                "callback_id": "select_operator_correlation_resolution",
+                "private_metadata": json.dumps({"review_token": token}),
+                "state": {"values": {
+                    "decision": {"selected_decision": {"selected_option": {
+                        "value": "22222222-2222-4222-8222-222222222222"
+                    }}}
+                }},
+            },
+        }, timestamp="1789000001")
+        verification_view = selected.json()["view"]
+        payload = {
+            "type": "view_submission", "team": {"id": TEAM}, "user": {"id": USER},
+            "view": {
+                **verification_view,
+                "id": "V12345678", "hash": "2.def",
+                "state": {"values": {
+                    "verification": {"verification_basis": {"selected_option": {
+                        "value": "operator_source_record"
+                    }}}
+                }},
+            },
+        }
+        with __import__("sqlite3").connect(tmp_path / "connector.sqlite3") as blocker:
+            blocker.execute("BEGIN IMMEDIATE")
+            started = time.monotonic()
+            blocked = _signed(client, payload, timestamp="1789000002")
+            elapsed = time.monotonic() - started
+
+        retried = _signed(client, payload, timestamp="1789000003")
+        deadline = time.monotonic() + 2
+        while not operator.prepare_calls and time.monotonic() < deadline:
+            time.sleep(0.02)
+
+    assert elapsed < 0.75
+    assert blocked.status_code == 503
+    assert blocked.json() == {"detail": "interaction_admission_unavailable"}
+    assert retried.status_code == 200
+    assert len(operator.prepare_calls) == 1
 
 
 def test_prepare_callback_has_hard_deadline_and_remains_retryable(tmp_path) -> None:

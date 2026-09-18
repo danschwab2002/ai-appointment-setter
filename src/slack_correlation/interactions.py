@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeGuard
 from uuid import UUID
 
 from slack_correlation.client import SlackProtocolError, SlackRejectedError
@@ -114,6 +115,14 @@ def _safe_slack_extra(
     return False
 
 
+def _safe_slack_string(value: object, *, max_length: int) -> TypeGuard[str]:
+    return (
+        isinstance(value, str)
+        and 0 < len(value) <= max_length
+        and not any(ord(character) < 32 or ord(character) == 127 for character in value)
+    )
+
+
 class CorrelationInteractionHandler:
     def __init__(
         self,
@@ -155,16 +164,13 @@ class CorrelationInteractionHandler:
                 raise InvalidInteraction("invalid_payload_shape")
             return self._precheck_open(payload)
         if payload["type"] == "view_submission":
-            allowed = {
-                "type", "team", "user", "view", "api_app_id", "trigger_id", "enterprise",
-                "token", "response_urls", "enterprise_id", "is_enterprise_install",
-                "bot_access_token", "function_data", "interactivity",
-            }
-            if not {"type", "team", "user", "view"} <= set(payload) or set(payload) - allowed:
-                raise InvalidInteraction("invalid_payload_shape")
-            if any(
-                key in payload and not _safe_slack_extra(payload[key])
-                for key in allowed - {"type", "team", "user", "view"}
+            # Slack owns this signed envelope and can add non-authoritative fields.
+            # Accept bounded safe extensions while validating the fields used for
+            # authorization and the state transition below.
+            if (
+                not {"type", "team", "user", "view"} <= set(payload)
+                or len(payload) > 50
+                or not _safe_slack_extra(payload, max_depth=16)
             ):
                 raise InvalidInteraction("invalid_payload_shape")
             view = payload.get("view")
@@ -251,18 +257,30 @@ class CorrelationInteractionHandler:
 
     def _validate_view(self, view: dict[str, object]) -> None:
         required = {"private_metadata", "callback_id", "state"}
-        if not required <= set(view) or not _safe_slack_extra(view, max_depth=8):
-            raise InvalidInteraction("invalid_view")
         if (
-            not isinstance(view.get("private_metadata"), str)
-            or not isinstance(view.get("callback_id"), str)
-            or not isinstance(view.get("state"), dict)
-            or set(view["state"]) != {"values"}  # type: ignore[arg-type]
-            or not isinstance(view["state"].get("values"), dict)  # type: ignore[union-attr]
+            not required <= set(view)
+            or len(view) > 100
+            or not _safe_slack_extra(view, max_depth=16)
+        ):
+            raise InvalidInteraction("invalid_view")
+        state = view.get("state")
+        if (
+            not _safe_slack_string(view.get("private_metadata"), max_length=4096)
+            or not _safe_slack_string(view.get("callback_id"), max_length=128)
+            or not isinstance(state, dict)
+            or set(state) != {"values"}
+            or not isinstance(state.get("values"), dict)
+            or len(state["values"]) > 100
             or (view.get("team_id") is not None and view.get("team_id") != self._team_id)
             or (view.get("type") is not None and view.get("type") != "modal")
-            or (view.get("id") is not None and not isinstance(view.get("id"), str))
-            or (view.get("hash") is not None and not isinstance(view.get("hash"), str))
+            or (
+                view.get("id") is not None
+                and not _safe_slack_string(view.get("id"), max_length=256)
+            )
+            or (
+                view.get("hash") is not None
+                and not _safe_slack_string(view.get("hash"), max_length=256)
+            )
         ):
             raise InvalidInteraction("invalid_view")
 
@@ -270,17 +288,20 @@ class CorrelationInteractionHandler:
         team = payload.get("team")
         user = payload.get("user")
         if (
-            not isinstance(team, dict) or "id" not in team or not _safe_slack_extra(team)
-            or not isinstance(user, dict) or "id" not in user or not _safe_slack_extra(user)
+            not isinstance(team, dict) or "id" not in team or len(team) > 100
+            or not _safe_slack_extra(team, max_depth=16)
+            or not isinstance(user, dict) or "id" not in user or len(user) > 100
+            or not _safe_slack_extra(user, max_depth=16)
         ):
             raise InvalidInteraction("invalid_identity")
         team_id, user_id = team.get("id"), user.get("id")
         if (
-            team_id != self._team_id or not isinstance(user_id, str)
+            team_id != self._team_id
+            or not _safe_slack_string(user_id, max_length=128)
             or (user.get("team_id") is not None and user.get("team_id") != team_id)
         ):
             raise InvalidInteraction("invalid_identity")
-        return team_id, user_id
+        return self._team_id, user_id
 
     def _precheck_open(self, payload: dict[str, object]) -> OpenAdmission:
         team_id, user_id = self._team_user(payload)
@@ -354,7 +375,9 @@ class CorrelationInteractionHandler:
     def _view_identity(view: dict[str, object]) -> tuple[str, str | None]:
         view_id = view.get("id")
         view_hash = view.get("hash")
-        if not isinstance(view_id, str) or not view_id:
+        if not _safe_slack_string(view_id, max_length=256):
+            raise InvalidInteraction("invalid_view_identity")
+        if view_hash is not None and not _safe_slack_string(view_hash, max_length=256):
             raise InvalidInteraction("invalid_view_identity")
         return view_id, view_hash if isinstance(view_hash, str) else None
 
@@ -462,16 +485,13 @@ class CorrelationInteractionHandler:
         team_id: str, user_id: str,
     ) -> ConfirmAdmission:
         session, _metadata = self._bound_session(payload, view)
-        view_id = view.get("id")
-        view_hash = view.get("hash")
-        if not isinstance(view_id, str) or not view_id:
-            raise InvalidInteraction("invalid_view_identity")
+        view_id, view_hash = self._view_identity(view)
         return ConfirmAdmission(
             session=session,
             team_id=team_id,
             user_id=user_id,
             view_id=view_id,
-            view_hash=view_hash if isinstance(view_hash, str) else None,
+            view_hash=view_hash,
         )
 
 
@@ -501,7 +521,20 @@ class CorrelationInteractionWorker:
             await task
 
     async def _run(self) -> None:
+        next_prune_at = time.monotonic() + 60
         while not self._stop.is_set():
+            if time.monotonic() >= next_prune_at:
+                try:
+                    await asyncio.to_thread(
+                        self._store.prune_interaction_history,
+                        now_epoch=int(time.time()),
+                        max_replays=9_000,
+                        max_sessions=9_000,
+                    )
+                except Exception:
+                    # Retention is best-effort and must not stop durable workflow work.
+                    pass
+                next_prune_at = time.monotonic() + 60
             opening_jobs = await asyncio.to_thread(self._store.pending_opening_jobs)
             for job in opening_jobs:
                 try:

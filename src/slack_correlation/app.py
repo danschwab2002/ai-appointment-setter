@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import sqlite3
 import time
 from typing import Any, Callable, Protocol
 from urllib.parse import parse_qs, urlsplit
@@ -603,17 +604,13 @@ def create_app(
                 return JSONResponse(
                     status_code=400, content={"detail": "invalid_interaction"}
                 )
-            await _to_thread(
-                persistence.prune_interaction_history,
-                now_epoch=int(epoch_clock()),
-            )
             try:
                 status_code, response_payload = await _to_thread(
                     interaction_handler.admit,
                     fingerprint=fingerprint,
                     admission=admission,
                 )
-            except RuntimeError:
+            except (RuntimeError, sqlite3.OperationalError):
                 return JSONResponse(
                     status_code=503, content={"detail": "interaction_admission_unavailable"}
                 )
