@@ -81,6 +81,13 @@ def classify_chatwoot_event(
     metadata = _json_object(conversation.get("meta"))
     sender = _json_object(metadata.get("sender"))
     sender_jid = sender.get("identifier") or contact_inbox.get("source_id")
+    sender_phone = sender.get("phone_number")
+    using_phone_fallback = (
+        "identifier" not in sender
+        and "source_id" not in contact_inbox
+        and isinstance(sender_phone, str)
+    )
+    observed_identity = sender_phone if using_phone_fallback else sender_jid
 
     if event.get("event") != "message_created":
         return EventDecision(False, "unsupported_event", sender_jid, "ignore")
@@ -127,7 +134,11 @@ def classify_chatwoot_event(
             return EventDecision(False, "sender_not_allowed", sender_jid, "ignore")
         sender_jid = canonical_sender_jid
     else:
-        if not matches_allowed_whatsapp_identity(sender_jid, allowed_jid=allowed_jid):
+        if not matches_allowed_whatsapp_identity(
+            observed_identity,
+            allowed_jid=allowed_jid,
+            allow_e164=using_phone_fallback,
+        ):
             return EventDecision(False, "sender_not_allowed", sender_jid, "ignore")
         sender_jid = allowed_jid
 

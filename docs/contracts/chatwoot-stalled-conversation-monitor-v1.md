@@ -28,7 +28,7 @@ Un candidato sólo se admite cuando Chatwoot confirma en el momento del scan:
 1. cuenta e inbox exactos;
 2. conversación `open` y `can_reply=true`;
 3. sin asignado humano y sin etiqueta `automation_paused`; Chatwoot puede representar la ausencia de asignado omitiendo `meta.assignee` o enviándolo como `null`, mientras cualquier valor no nulo excluye la conversación;
-4. contacto no bloqueado e identidad WhatsApp válida dentro del scope;
+4. contacto no bloqueado e identidad WhatsApp válida dentro del scope; para el remitente exacto configurado, la identidad WABA puede provenir de `meta.sender.identifier`, `contact_inbox.source_id` o, cuando ambas faltan, de `meta.sender.phone_number` en formato E.164 exacto;
 5. historial canónico consultado desde el endpoint de mensajes;
 6. el orden canónico de actividad se determina por el ID entero de mensaje de Chatwoot, no por `created_at`; esto mantiene el mismo criterio en el scanner y en el batching durable incluso con timestamps iguales o regresivos;
 7. último mensaje público no vacío, inbound y enviado por el contacto;

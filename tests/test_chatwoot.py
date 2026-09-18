@@ -1965,7 +1965,7 @@ def test_paginates_conversation_history_with_the_before_cursor() -> None:
     assert [request.url.params.get("before") for request in requests] == [None, "6"]
 
 
-def test_lists_stalled_unassigned_conversations_with_omitted_optional_fields() -> None:
+def test_lists_stalled_waba_conversations_with_omitted_optional_fields() -> None:
     requests: list[httpx.Request] = []
 
     def conversation(conversation_id: int, message_id: int) -> dict[str, object]:
@@ -1976,9 +1976,9 @@ def test_lists_stalled_unassigned_conversations_with_omitted_optional_fields() -
             "can_reply": True,
             "labels": [],
             "meta": {
-                "sender": {"identifier": ALLOWED_JID, "blocked": False},
+                "sender": {"phone_number": "+12025550123", "blocked": False},
             },
-            "contact_inbox": {"source_id": ALLOWED_JID},
+            "contact_inbox": {},
             "messages": [{
                 "id": message_id,
                 "conversation_id": conversation_id,
