@@ -44,6 +44,86 @@ def test_authorizes_waba_e164_phone_number_for_the_configured_jid(
     assert client._is_authorized_conversation(response, conversation_id=39) is True
 
 
+@pytest.mark.parametrize(
+    ("location", "value"),
+    [
+        ("identifier", ""),
+        ("identifier", False),
+        ("identifier", {}),
+        ("identifier", "+12025550123"),
+        ("source_id", False),
+        ("source_id", "+12025550123"),
+    ],
+)
+def test_final_authority_rejects_malformed_identity_before_phone_fallback(
+    tmp_path: Path,
+    location: str,
+    value: object,
+) -> None:
+    sender: dict[str, object] = {
+        "identifier": None,
+        "phone_number": "+12025550123",
+    }
+    contact_inbox: dict[str, object] = {}
+    if location == "identifier":
+        sender[location] = value
+        contact_inbox["source_id"] = "12025550123"
+    else:
+        contact_inbox[location] = value
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        agent_bot_access_token="agent-bot-token",
+        agent_bot_id=1,
+        reply_dir=tmp_path,
+    )
+    response = httpx.Response(
+        200,
+        json={
+            "id": 39,
+            "meta": {"sender": sender},
+            "contact_inbox": contact_inbox,
+        },
+    )
+
+    assert client._is_authorized_conversation(response, conversation_id=39) is False
+
+
+@pytest.mark.parametrize(
+    "phone_number",
+    ["12025550123", "12025550123@s.whatsapp.net", " +12025550123"],
+)
+def test_final_authority_phone_fallback_requires_canonical_e164(
+    tmp_path: Path,
+    phone_number: str,
+) -> None:
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        agent_bot_access_token="agent-bot-token",
+        agent_bot_id=1,
+        reply_dir=tmp_path,
+    )
+    response = httpx.Response(
+        200,
+        json={
+            "id": 39,
+            "meta": {
+                "sender": {
+                    "identifier": None,
+                    "phone_number": phone_number,
+                }
+            },
+        },
+    )
+
+    assert client._is_authorized_conversation(response, conversation_id=39) is False
+
+
 def test_assignee_authority_fails_closed_when_meta_is_missing(tmp_path: Path) -> None:
     client = ChatwootClient(
         base_url="https://chatwoot.example.test",
@@ -1976,7 +2056,11 @@ def test_lists_stalled_waba_conversations_with_omitted_optional_fields() -> None
             "can_reply": True,
             "labels": [],
             "meta": {
-                "sender": {"phone_number": "+12025550123", "blocked": False},
+                "sender": {
+                    "identifier": None,
+                    "phone_number": "+12025550123",
+                    "blocked": False,
+                },
             },
             "contact_inbox": {},
             "messages": [{
