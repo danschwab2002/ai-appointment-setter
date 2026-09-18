@@ -717,8 +717,17 @@ def test_non_string_verification_is_rejected_without_preparing(tmp_path) -> None
                 }},
             },
         }, timestamp="1789000001")
+        diagnostic = client.get("/ready").json()["last_interaction"]
 
     assert response.status_code == 400
+    elapsed_ms = diagnostic.pop("elapsed_ms")
+    assert isinstance(elapsed_ms, int) and elapsed_ms >= 0
+    assert diagnostic == {
+        "stage": "precheck",
+        "callback": "prepare",
+        "status": 400,
+        "reason": "invalid_selection",
+    }
     assert operator.prepare_calls == operator.confirm_calls == []
 
 
