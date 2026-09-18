@@ -30,9 +30,11 @@ Un candidato sólo se admite cuando Chatwoot confirma en el momento del scan:
 3. sin asignado humano y sin etiqueta `automation_paused`; Chatwoot puede representar la ausencia de asignado omitiendo `meta.assignee` o enviándolo como `null`, mientras cualquier valor no nulo excluye la conversación;
 4. contacto no bloqueado e identidad WhatsApp válida dentro del scope; para el remitente exacto configurado, la identidad WABA puede provenir de `meta.sender.identifier`, `contact_inbox.source_id` o, cuando ambos están ausentes o son `null`, de `meta.sender.phone_number` en formato E.164 exacto; valores explícitos vacíos, booleanos o malformados no habilitan el fallback;
 5. historial canónico consultado desde el endpoint de mensajes;
-6. el orden canónico de actividad se determina por el ID entero de mensaje de Chatwoot, no por `created_at`; esto mantiene el mismo criterio en el scanner y en el batching durable incluso con timestamps iguales o regresivos;
-7. último mensaje público no vacío, inbound y enviado por el contacto;
+6. el orden canónico de mensajes conversacionales se determina por el ID entero de Chatwoot, no por `created_at`; sólo mensajes públicos con un `message_type` entero conocido (0 inbound, 1 outbound o 2 actividad) son válidos, y los valores ausentes, booleanos, no enteros o desconocidos bloquean la candidatura; las actividades válidas (`message_type=2`) no participan en la selección, por lo que una actividad de sistema posterior no oculta el último mensaje conversacional; esto mantiene el mismo criterio en el scanner y en el batching durable incluso con timestamps iguales o regresivos;
+7. último mensaje conversacional público no vacío, inbound y enviado por el contacto; un outbound conversacional posterior sigue excluyendo la conversación;
 8. edad dentro de la ventana configurada.
+
+El worker conserva las mismas reglas de tipo al revalidar inmediatamente antes de cada POST: ignora únicamente actividades públicas válidas de tipo 2 posteriores al inbound, bloquea cualquier inbound/outbound conversacional posterior y falla cerrado ante tipos públicos malformados o desconocidos. La revalidación se ejecuta antes y después de `pre_send_authorizer`.
 
 Un outbound público posterior, una asignación humana, una pausa, un bloqueo, una identidad ambigua o un scan incompleto excluyen la conversación. La paginación falla cerrada si cambia `all_count`, no coincide `current_page` o el límite de páginas deja conversaciones sin revisar.
 
