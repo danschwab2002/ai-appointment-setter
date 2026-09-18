@@ -1092,7 +1092,7 @@ class NotificationStore:
                 row is None or row["team_id"] != team_id
                 or row["slack_user_id"] != slack_user_id
                 or int(row["expires_at"]) < now_epoch
-                or row["opening_state"] != "completed"
+                or row["opening_state"] not in {"request_started", "completed"}
             ):
                 connection.rollback()
                 raise RuntimeError("review_session_binding_changed")
