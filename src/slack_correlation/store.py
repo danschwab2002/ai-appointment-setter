@@ -140,11 +140,13 @@ class NotificationStore:
         finally:
             lock_file.close()
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self._path, timeout=15, isolation_level=None)
+    def _connect(self, *, busy_timeout_ms: int = 15_000) -> sqlite3.Connection:
+        connection = sqlite3.connect(
+            self._path, timeout=busy_timeout_ms / 1000, isolation_level=None
+        )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 15000")
+        connection.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
         connection.execute("PRAGMA synchronous = FULL")
         return connection
 
@@ -981,7 +983,7 @@ class NotificationStore:
     ) -> tuple[bool, int | None, dict[str, object] | None]:
         """Persist a local-only modal transition or no-op for exact replay."""
         now = datetime.now(UTC).isoformat()
-        with self._connect() as connection:
+        with self._connect(busy_timeout_ms=500) as connection:
             connection.execute("BEGIN IMMEDIATE")
             is_new, status, prior = self._prior_interaction(connection, fingerprint)
             if not is_new:
@@ -1009,7 +1011,7 @@ class NotificationStore:
     ) -> tuple[bool, int | None, dict[str, object] | None, str | None]:
         now = datetime.now(UTC).isoformat()
         token = str(uuid4())
-        with self._connect() as connection:
+        with self._connect(busy_timeout_ms=500) as connection:
             connection.execute("BEGIN IMMEDIATE")
             is_new, status, response = self._prior_interaction(connection, fingerprint)
             if not is_new:
@@ -1073,7 +1075,7 @@ class NotificationStore:
         response: dict[str, object],
     ) -> tuple[bool, int | None, dict[str, object] | None]:
         now = datetime.now(UTC).isoformat()
-        with self._connect() as connection:
+        with self._connect(busy_timeout_ms=500) as connection:
             connection.execute("BEGIN IMMEDIATE")
             is_new, status, prior = self._prior_interaction(connection, fingerprint)
             if not is_new:
@@ -1133,7 +1135,7 @@ class NotificationStore:
         response: dict[str, object],
     ) -> tuple[bool, int | None, dict[str, object] | None]:
         now = datetime.now(UTC).isoformat()
-        with self._connect() as connection:
+        with self._connect(busy_timeout_ms=500) as connection:
             connection.execute("BEGIN IMMEDIATE")
             is_new, status, prior = self._prior_interaction(connection, fingerprint)
             if not is_new:
