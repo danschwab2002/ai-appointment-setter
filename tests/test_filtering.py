@@ -216,6 +216,28 @@ def test_accepts_waba_digit_source_id_for_the_configured_whatsapp_jid() -> None:
     assert decision.reason == "accepted"
 
 
+def test_accepts_waba_e164_phone_number_when_other_identities_are_absent() -> None:
+    payload = {
+        "event": "message_created",
+        "id": 104,
+        "message_type": "incoming",
+        "private": False,
+        "conversation": {
+            "contact_inbox": {},
+            "meta": {"sender": {"phone_number": "+12025550123"}},
+        },
+    }
+
+    decision = classify_chatwoot_event(
+        payload,
+        allowed_jid="12025550123@s.whatsapp.net",
+    )
+
+    assert decision.accepted is True
+    assert decision.sender_jid == "12025550123@s.whatsapp.net"
+    assert decision.reason == "accepted"
+
+
 @pytest.mark.parametrize(
     "source_id",
     ["+12025550123", "12025550124", "12025550123@c.us"],
