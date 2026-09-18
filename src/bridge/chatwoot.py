@@ -281,8 +281,19 @@ class ChatwootClient:
             return None
         conversation_id = conversation["id"]
         assert isinstance(conversation_id, int)
-        public_messages = [
+        public_records = [
             message for message in messages if message.get("private") is False
+        ]
+        if any(
+            type(message.get("message_type")) is not int
+            or message.get("message_type") not in {0, 1, 2}
+            for message in public_records
+        ):
+            return None
+        public_messages = [
+            message
+            for message in public_records
+            if message.get("message_type") in {0, 1}
         ]
         if not public_messages:
             return None
@@ -1018,6 +1029,11 @@ class ChatwootClient:
         for message in messages[trigger_index + 1 :]:
             if message.get("private") is not False:
                 continue
+            message_type = message.get("message_type")
+            if type(message_type) is not int or message_type not in {0, 1, 2}:
+                return {"status": "blocked", "reason": "conversation_advanced"}
+            if message_type == 2:
+                continue
             attributes = message.get("content_attributes")
             sender = message.get("sender")
             prior_index = (
@@ -1052,7 +1068,7 @@ class ChatwootClient:
                 prior_indices.append(prior_index)
                 continue
             if (
-                message.get("message_type") == 1
+                message_type == 1
                 and isinstance(sender, dict)
                 and sender.get("type") != "agent_bot"
             ):

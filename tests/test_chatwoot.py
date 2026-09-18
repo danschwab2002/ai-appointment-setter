@@ -263,7 +263,7 @@ class AuthorizedConversationTransport(httpx.AsyncBaseTransport):
         return await self._inner.handle_async_request(request)
 
 
-def test_sends_an_idempotent_agent_bot_reply_after_authorization(
+def test_sends_an_idempotent_agent_bot_reply_after_later_chatwoot_activity(
     tmp_path: Path,
 ) -> None:
     requests: list[httpx.Request] = []
@@ -286,7 +286,14 @@ def test_sends_an_idempotent_agent_bot_reply_after_authorization(
                             "private": False,
                             "content": "Hola",
                             "sender": {"type": "contact", "id": 20},
-                        }
+                        },
+                        {
+                            "id": 11,
+                            "message_type": 2,
+                            "private": False,
+                            "content": "Conversation status changed",
+                            "sender": None,
+                        },
                     ]
                 },
             )
@@ -304,7 +311,7 @@ def test_sends_an_idempotent_agent_bot_reply_after_authorization(
         return httpx.Response(
             200,
             json={
-                "id": 11,
+                "id": 12,
                 "conversation_id": 2,
                 "message_type": 1,
                 "private": False,
@@ -340,7 +347,7 @@ def test_sends_an_idempotent_agent_bot_reply_after_authorization(
         )
     )
 
-    assert result == {"status": "sent", "message_id": 11}
+    assert result == {"status": "sent", "message_id": 12}
     assert [request.method for request in requests] == [
         "GET",
         "GET",
@@ -1188,8 +1195,10 @@ def test_does_not_duplicate_an_agent_bot_reply_already_in_chatwoot(
     assert [request.method for request in requests] == ["GET", "GET"]
 
 
+@pytest.mark.parametrize("later_message_type", [0, None, "2", 3, False, True, 1.0])
 def test_does_not_send_a_stale_reply_after_the_conversation_advanced(
     tmp_path: Path,
+    later_message_type: object,
 ) -> None:
     requests: list[httpx.Request] = []
 
@@ -1211,7 +1220,7 @@ def test_does_not_send_a_stale_reply_after_the_conversation_advanced(
                     },
                     {
                         "id": 11,
-                        "message_type": 0,
+                        "message_type": later_message_type,
                         "private": False,
                         "sender": {"type": "contact", "id": 20},
                     },
@@ -2334,6 +2343,125 @@ def test_stalled_scan_uses_canonical_messages_for_latest_public_activity() -> No
         expected_inbox_id=7,
         now_epoch=1_000,
     )) == []
+
+
+def test_stalled_scan_ignores_later_chatwoot_activity_message() -> None:
+    conversation: dict[str, object] = {
+        "id": 2,
+        "inbox_id": 7,
+        "status": "open",
+        "can_reply": True,
+        "labels": [],
+        "meta": {"sender": {"identifier": ALLOWED_JID}, "assignee": None},
+        "contact_inbox": {"source_id": ALLOWED_JID},
+        "messages": [],
+    }
+    canonical_messages = [
+        {
+            "id": 20,
+            "conversation_id": 2,
+            "created_at": 800,
+            "message_type": 0,
+            "private": False,
+            "content": "Hola",
+            "sender": {"type": "contact", "id": 20},
+        },
+        {
+            "id": 21,
+            "conversation_id": 2,
+            "created_at": 803,
+            "message_type": 2,
+            "private": False,
+            "content": "Conversation status changed",
+            "sender": None,
+        },
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/messages"):
+            return httpx.Response(200, json={"payload": canonical_messages})
+        if request.url.path.endswith("/conversations/2"):
+            return httpx.Response(200, json=conversation)
+        return httpx.Response(200, json={
+            "data": {
+                "meta": {"all_count": 1, "current_page": 1},
+                "payload": [conversation],
+            },
+        })
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        transport=httpx.MockTransport(handler),
+    )
+
+    candidates = asyncio.run(client.list_stalled_conversations(
+        expected_inbox_id=7,
+        stale_after_seconds=120,
+        max_age_seconds=500,
+        now_epoch=1_000,
+    ))
+
+    assert [candidate.delivery_id for candidate in candidates] == [
+        "stalled-chatwoot:2:20"
+    ]
+
+
+@pytest.mark.parametrize("message_type", [None, "2", 3, False, True, 1.0])
+def test_stalled_candidate_rejects_malformed_later_public_message_type(
+    message_type: object,
+) -> None:
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+    )
+    conversation = {
+        "id": 2,
+        "inbox_id": 7,
+        "status": "open",
+        "can_reply": True,
+        "labels": [],
+        "meta": {
+            "sender": {"identifier": ALLOWED_JID, "blocked": False},
+            "assignee": None,
+        },
+        "contact_inbox": {"source_id": ALLOWED_JID},
+        "messages": [
+            {
+                "id": 20,
+                "conversation_id": 2,
+                "created_at": 800,
+                "message_type": 0,
+                "private": False,
+                "content": "Hola",
+                "sender": {"type": "contact", "id": 20},
+            },
+            {
+                "id": 21,
+                "conversation_id": 2,
+                "created_at": 803,
+                "message_type": message_type,
+                "private": False,
+                "content": "Unexpected public record",
+                "sender": {"type": "contact", "id": 20},
+            },
+        ],
+    }
+
+    candidate = client._stalled_conversation_candidate(
+        conversation,
+        expected_inbox_id=7,
+        stale_after_seconds=120,
+        max_age_seconds=500,
+        allow_any_scoped_sender=False,
+        now_epoch=1_000,
+    )
+
+    assert candidate is None
 
 
 @pytest.mark.parametrize("newest_created_at", [800, 700])
