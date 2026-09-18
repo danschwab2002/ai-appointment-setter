@@ -417,6 +417,7 @@ def create_app(
         "storage_ready": False,
         "worker_running": False,
         "last_connectivity_check": 0.0,
+        "last_interaction": None,
     }
     worker: NotificationWorker | None = None
     runtime_client = slack_client
@@ -565,6 +566,31 @@ def create_app(
 
         @app.post("/slack/interactions")
         async def slack_interactions(request: Request) -> JSONResponse:
+            started_at = monotonic_clock()
+
+            def record_interaction(
+                *, stage: str, callback: str, status: int, reason: str
+            ) -> None:
+                state["last_interaction"] = {
+                    "stage": stage,
+                    "callback": callback,
+                    "status": status,
+                    "reason": reason,
+                    "elapsed_ms": max(
+                        0, int((monotonic_clock() - started_at) * 1000)
+                    ),
+                }
+
+            def safe_reason(error: Exception, fallback: str) -> str:
+                value = error.args[0] if len(error.args) == 1 else None
+                if (
+                    type(value) is str
+                    and 0 < len(value) <= 64
+                    and all(character in "abcdefghijklmnopqrstuvwxyz0123456789_" for character in value)
+                ):
+                    return value
+                return fallback
+
             content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
             if content_type != "application/x-www-form-urlencoded":
                 return JSONResponse(status_code=400, content={"detail": "invalid_interaction"})
@@ -591,6 +617,22 @@ def create_app(
                 interaction_payload = json.loads(fields["payload"][0])
             except (UnicodeDecodeError, ValueError, KeyError):
                 return JSONResponse(status_code=400, content={"detail": "invalid_interaction"})
+            callback = "unknown"
+            if isinstance(interaction_payload, dict):
+                if interaction_payload.get("type") == "block_actions":
+                    callback = "open"
+                elif interaction_payload.get("type") == "view_submission":
+                    view = interaction_payload.get("view")
+                    callback_id = view.get("callback_id") if isinstance(view, dict) else None
+                    callback = (
+                        {
+                            "select_operator_correlation_resolution": "decision",
+                            "prepare_operator_correlation_resolution": "prepare",
+                            "confirm_operator_correlation_resolution": "confirm",
+                        }.get(callback_id, "unknown")
+                        if isinstance(callback_id, str)
+                        else "unknown"
+                    )
             fingerprint = __import__("hashlib").sha256(
                 timestamp.encode("ascii") + b":" + raw_body
             ).hexdigest()
@@ -598,9 +640,17 @@ def create_app(
                 admission = await _to_thread(
                     interaction_handler.precheck, interaction_payload
                 )
-            except UnauthorizedInteraction:
+            except UnauthorizedInteraction as exc:
+                record_interaction(
+                    stage="precheck", callback=callback, status=200,
+                    reason=safe_reason(exc, "unauthorized_interaction"),
+                )
                 return JSONResponse(status_code=200, content={})
-            except InvalidInteraction:
+            except InvalidInteraction as exc:
+                record_interaction(
+                    stage="precheck", callback=callback, status=400,
+                    reason=safe_reason(exc, "invalid_interaction"),
+                )
                 return JSONResponse(
                     status_code=400, content={"detail": "invalid_interaction"}
                 )
@@ -610,10 +660,26 @@ def create_app(
                     fingerprint=fingerprint,
                     admission=admission,
                 )
-            except (RuntimeError, sqlite3.OperationalError):
+            except RuntimeError as exc:
+                record_interaction(
+                    stage="admission", callback=callback, status=503,
+                    reason=safe_reason(exc, "interaction_admission_unavailable"),
+                )
                 return JSONResponse(
                     status_code=503, content={"detail": "interaction_admission_unavailable"}
                 )
+            except sqlite3.OperationalError:
+                record_interaction(
+                    stage="admission", callback=callback, status=503,
+                    reason="sqlite_unavailable",
+                )
+                return JSONResponse(
+                    status_code=503, content={"detail": "interaction_admission_unavailable"}
+                )
+            record_interaction(
+                stage="admission", callback=callback, status=status_code,
+                reason="accepted",
+            )
             return JSONResponse(status_code=status_code, content=response_payload)
 
     @app.get("/health")
@@ -752,6 +818,8 @@ def create_app(
             "ledger": inventory,
             "activation": activation,
         }
+        if state["last_interaction"] is not None:
+            payload["last_interaction"] = state["last_interaction"]
         if (
             settings.interactions_enabled
             or settings.operator_bearer_token is not None
