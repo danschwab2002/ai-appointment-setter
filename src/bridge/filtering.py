@@ -82,7 +82,11 @@ def classify_chatwoot_event(
     sender = _json_object(metadata.get("sender"))
     sender_jid = sender.get("identifier") or contact_inbox.get("source_id")
     sender_phone = sender.get("phone_number")
-    using_phone_fallback = not sender_jid and isinstance(sender_phone, str)
+    using_phone_fallback = (
+        "identifier" not in sender
+        and "source_id" not in contact_inbox
+        and isinstance(sender_phone, str)
+    )
     observed_identity = sender_phone if using_phone_fallback else sender_jid
 
     if event.get("event") != "message_created":

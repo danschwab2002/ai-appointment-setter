@@ -239,6 +239,40 @@ def test_accepts_waba_e164_phone_number_when_other_identities_are_absent() -> No
 
 
 @pytest.mark.parametrize(
+    ("location", "value"),
+    [("identifier", ""), ("identifier", False), ("source_id", False)],
+)
+def test_rejects_waba_phone_fallback_when_an_explicit_identity_is_malformed(
+    location: str,
+    value: object,
+) -> None:
+    sender: dict[str, object] = {"phone_number": "+12025550123"}
+    contact_inbox: dict[str, object] = {}
+    if location == "identifier":
+        sender[location] = value
+    else:
+        contact_inbox[location] = value
+    payload = {
+        "event": "message_created",
+        "id": 105,
+        "message_type": "incoming",
+        "private": False,
+        "conversation": {
+            "contact_inbox": contact_inbox,
+            "meta": {"sender": sender},
+        },
+    }
+
+    decision = classify_chatwoot_event(
+        payload,
+        allowed_jid="12025550123@s.whatsapp.net",
+    )
+
+    assert decision.accepted is False
+    assert decision.reason == "sender_not_allowed"
+
+
+@pytest.mark.parametrize(
     "source_id",
     ["+12025550123", "12025550124", "12025550123@c.us"],
 )
