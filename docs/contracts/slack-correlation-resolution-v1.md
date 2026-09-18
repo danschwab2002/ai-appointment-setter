@@ -152,7 +152,15 @@ POST /internal/operator/correlations/resolutions/prepare
 La respuesta reemplaza el modal por una confirmación explícita de la consecuencia:
 `Confirmar asociación` o `Confirmar cierre`. Todavía no existe resolución terminal.
 Se aceptan también, durante la transición de despliegue, submits del modal anterior;
-siguen sujetos a las mismas validaciones y al mismo backend autoritativo.
+siguen sujetos a las mismas validaciones y al mismo backend autoritativo. Los campos
+no autoritativos añadidos por Slack se aceptan sólo si respetan los límites de tamaño,
+profundidad y caracteres seguros; nunca participan en identidad, autorización ni en
+la decisión.
+
+La admisión SQLite de cada submit tiene un `busy_timeout` de 500 ms y responde `503`
+si otro escritor mantiene el lock. La poda de historiales no corre en el callback:
+se ejecuta en segundo plano, fuera del plazo de acknowledgement de Slack. Un submit
+no admitido no crea comando ni resolución y puede repetirse con una huella nueva.
 
 El segundo submit `confirm_operator_correlation_resolution` usa exclusivamente el
 comando ya persistido; no toma acción ni candidato nuevos desde Slack. Llama:
