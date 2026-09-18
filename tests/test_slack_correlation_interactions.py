@@ -257,6 +257,44 @@ def test_restart_reclaims_interaction_left_request_started(tmp_path) -> None:
     assert store.reserve_interaction(fingerprint=fingerprint)[0] is True
 
 
+def test_prepare_admission_accepts_opening_request_started(tmp_path) -> None:
+    store = NotificationStore(tmp_path / "connector.sqlite3")
+    _accepted_correlation(store)
+    binding = store.find_correlation_binding(
+        tenant_ref="johanna", team_id=TEAM, channel_id=CHANNEL, message_ts=TS,
+    )
+    assert binding is not None
+    admitted, status, response, review_token = store.admit_open_interaction(
+        fingerprint="b" * 64,
+        binding=binding,
+        team_id=TEAM,
+        slack_user_id=USER,
+        trigger_id="123.456.request-started",
+        expires_at=1789000900,
+    )
+    assert admitted is True and status == 200 and response == {}
+    assert review_token is not None
+    store.mark_open_request_started(review_token=review_token)
+
+    result = store.admit_prepare_interaction(
+        fingerprint="c" * 64,
+        review_token=review_token,
+        team_id=TEAM,
+        slack_user_id=USER,
+        now_epoch=1789000000,
+        action="resolve_with_candidate",
+        candidate_id="22222222-2222-4222-8222-222222222222",
+        verification_basis="operator_source_record",
+        view_id="V12345678",
+        view_hash="1789000000.abc",
+        response={"response_action": "update"},
+    )
+
+    assert result == (True, 200, {"response_action": "update"})
+    session = store.get_review_session(review_token=review_token)
+    assert session is not None and session.state == "preparing"
+
+
 def test_prepare_retry_reuses_persisted_idempotency_identity_and_conflicts_fail_closed(tmp_path) -> None:
     store = NotificationStore(tmp_path / "connector.sqlite3")
     _accepted_correlation(store)
