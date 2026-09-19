@@ -72,7 +72,7 @@ Mergeados el 2026-09-18, en orden: #152, #151, #153, #154, #155, #156, #157, #15
 
 ### Checkout canónico
 
-- **Confirmado 2026-09-19 14:00 ART:** el checkout de integración del VPS estaba en `main` = `8d3fcf8`, **10 commits detrás** de `origin/main` (`5e9d1cb`), limpio. La actualización con `git pull --ff-only` es una operación pendiente del operador; hasta que ocurra, ningún claim nuevo debe crearse desde ese checkout sin `fetch` previo.
+- **Confirmado 2026-09-19:** a las 14:00 ART el checkout de integración del VPS estaba en `main` = `8d3fcf8`, **10 commits detrás** de `origin/main` (`5e9d1cb`), limpio. A las 16:16 ART se actualizó con `git fetch origin && git pull --ff-only` (fast-forward, 11 archivos) y quedó en `5e9d1cb`. Regla: ningún claim nuevo se crea sin `fetch` previo.
 
 ## 4. Claims y worktrees
 
@@ -115,7 +115,7 @@ Reglas vigentes sobre estos claims:
 | Daily feedback: contexto operacional V2 | en curso (worktree sucio r3) | no | no | no | no | Confirmado |
 | Personalización por primer nombre Johanna | en curso (worktree sucio) | no | no | no | no | Confirmado |
 | ATT1: runtime y Conversation Release | parcial (candidato inerte) | parcial | infra dark; `att1-agent-profile` sin réplica | **no** | no | Reportado + Confirmado (0/1) |
-| Canal administrativo de Codex | en curso (worktree sucio) | no | daemon `codex-preflight.service` instalado en el host | discontinuado | — | Confirmado |
+| Canal administrativo de Codex | en curso (worktree sucio) | no | daemon `codex-preflight.service` apagado y deshabilitado el 19/09 (archivos conservados) | discontinuado | — | Confirmado |
 
 ## 6. Diferencias entre Git y runtime
 
@@ -144,7 +144,7 @@ Reglas vigentes sobre estos claims:
 - Resolución del drift de `client-copilot` (§6).
 - Cuándo y bajo qué alcance se reabre el arreglo de la confirmación humana de Slack (hoy congelado).
 - Visibilidad del repositorio en GitHub: **es público** (confirmado 19/09). Antes de pasarlo a privado hay que verificar cómo lee EasyPanel el repositorio para construir bridge, conector y daily feedback, y cómo hace `fetch` el clon del VPS; si alguno usa HTTPS sin credenciales, el cambio los rompe en el próximo redeploy.
-- Cierre formal del canal de Codex: desactivar `codex-preflight.service`, cerrar las sesiones SSH de Codex Desktop, conservar `/var/lib/codex-development/` y `/home/codex/` como archivo. Al 19/09 el daemon seguía activo y habilitado y la bandeja tenía 18 pedidos sin respuesta de 102.
+- Cierre formal del canal de Codex: el daemon `codex-preflight.service` quedó desactivado y deshabilitado el 19/09 a las 16:15 ART. Faltan cerrar las sesiones SSH de Codex Desktop (las cierra Dan desde su app) y conservar `/var/lib/codex-development/` y `/home/codex/` como archivo. La bandeja quedó con 18 pedidos sin respuesta de 102, a propósito.
 - Causa del `att1-agent-profile` en 0/1 y si debe seguir definido.
 
 **Juan** (autoridad final de ATT1): producto y UX, aprobación comercial y de la Conversation Release, aceptación de facts, FAQs, Brand Voice, ejemplos y límites.
@@ -165,7 +165,7 @@ Reglas vigentes sobre estos claims:
 
 ## 10. Próxima tarea aprobada y trabajos congelados
 
-**Aprobado por Dan el 2026-09-19:** este documento como primer PR de Claude Code (claim `claude-current-state-v1`, rama `docs/claude-current-state-v1`, único path `docs/current-state.md`), precedido de la actualización del checkout canónico. Después, retomar los tres frentes donde los dejó Codex, en este orden y con autorización separada para cada efecto:
+**Aprobado por Dan el 2026-09-19:** este documento como primer PR de Claude Code (claim `claude-current-state-v1` registrado en el VPS con base `5e9d1cb`, rama `docs/claude-current-state-v1`, único path `docs/current-state.md`). El circuito completo (claim en el VPS, edición y tests en el clon local, PR, sincronización del worktree y transición a `review`) se verificó de punta a punta con este PR. Después, retomar los tres frentes donde los dejó Codex, en este orden y con autorización separada para cada efecto:
 
 1. Integrar el PR #158 (merge de Dan).
 2. Destrabar el PR #161 (frontera con daily-feedback).
