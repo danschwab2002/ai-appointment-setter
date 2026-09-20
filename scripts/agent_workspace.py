@@ -30,6 +30,92 @@ ALLOWED_TRANSITIONS = {
 }
 TASK_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}$")
 MIGRATION_RE = re.compile(r"^supabase/migrations/(\d+)_.*\.sql$")
+# Documentation evidence gate (policy of 2026-09-20).
+# A document that asserts system state must carry the evidence that proves it.
+# Detection is by content, never by file name: a new document cannot skip the
+# gate by not being on a list.
+STATE_EVIDENCE_SCOPE = "docs/"
+# Excluded by genre, not by name: per the 2026-09-20 policy a contract describes
+# an interface and a design document describes a proposal, so neither asserts
+# current system state. Everything else under docs/ is covered, including
+# documents that do not exist yet.
+STATE_EVIDENCE_EXEMPT_PREFIXES = (
+    "docs/contracts/",
+    "docs/design/",
+)
+# A conditional is not an assertion: "when the flag is active" says nothing about
+# whether it is active now.
+CONDITIONAL_MARKER_RE = re.compile(
+    r"(?i)\b(?:si|cuando|mientras|salvo|siempre\s+que|a\s+menos\s+que|solo\s+si|"
+    r"if|when|while|unless|once|whenever|provided)\b"
+)
+# Neither is a denial: "no deploy was run" asserts that something did NOT happen.
+# Known limit: a sentence that denies one thing and asserts another on the same
+# line is skipped. Preferred over the false positives measured on 2026-09-20,
+# where denials were most of the noise.
+DENIAL_MARKER_RE = re.compile(
+    r"(?i)\b(?:no|ni|nunca|ning[uú]n[ao]?|sin|tampoco|"
+    r"not|never|neither|nor|without|remains?)\b"
+)
+STATE_ASSERTION_PATTERNS = (
+    (
+        "es:estado-desplegado",
+        re.compile(
+            r"(?i)\b(?:est[aá]n?|qued[oó]|quedaron|fue|fueron|sigue|siguen)\s+"
+            r"(?:activad[oa]s?|activ[oa]s?|desplegad[oa]s?|habilitad[oa]s?|"
+            r"operativ[oa]s?|corriendo|funcionando)\b"
+        ),
+    ),
+    (
+        "es:en-produccion",
+        re.compile(r"(?i)\ben\s+producci[oó]n\b"),
+    ),
+    (
+        "es:accion-de-activacion",
+        re.compile(r"(?i)\bse\s+(?:activ[oó]|despleg[oó]|habilit[oó])\b"),
+    ),
+    (
+        "en:deployed-state",
+        re.compile(
+            r"(?i)\b(?:is|are|was|were|has\s+been|have\s+been|now)\s+"
+            r"(?:active|activated|deployed|enabled|live|running|operational)\b"
+        ),
+    ),
+    (
+        "en:in-production",
+        re.compile(r"(?i)\bin\s+production\b"),
+    ),
+)
+# An ISO date plus a verifiable pointer: a commit sha (hex with at least one
+# digit, so ordinary words are not mistaken for one), a #PR reference, or a
+# path under docs/operations/.
+EVIDENCE_DATE_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+EVIDENCE_POINTER_RE = re.compile(
+    r"\b(?=[0-9a-f]{7,40}\b)[0-9a-f]*[0-9][0-9a-f]*\b"
+    r"|#\d+"
+    r"|docs/operations/[\w./-]+"
+)
+
+
+def _first_state_assertion(content: str) -> tuple[int, str, str] | None:
+    """Return (line number, pattern label, excerpt) of the first state assertion.
+
+    A match preceded by a conditional or a denial on the same line is skipped:
+    "when the flag is active" describes a condition and "no deploy was run"
+    denies an event; neither asserts the state of the system today.
+    """
+    for number, line in enumerate(content.splitlines(), start=1):
+        for label, pattern in STATE_ASSERTION_PATTERNS:
+            match = pattern.search(line)
+            if match is None:
+                continue
+            prefix = line[: match.start()]
+            if CONDITIONAL_MARKER_RE.search(prefix):
+                continue
+            if DENIAL_MARKER_RE.search(prefix):
+                continue
+            return number, label, line.strip()[:160]
+    return None
 
 
 class CoordinationError(RuntimeError):
@@ -136,6 +222,50 @@ class AgentWorkspace:
                 "task_id must use 2-63 lowercase letters, digits, and hyphens"
             )
         return self.claims_dir / f"{task_id}.json"
+
+    def _validate_state_claims_have_evidence(self, claim: Claim) -> None:
+        """Block review when a changed document asserts state without dated evidence.
+
+        Policy of 2026-09-20: a document that says something is deployed, active
+        or in production must carry the evidence that proves it - an ISO date and
+        a verifiable pointer (commit sha, #PR, or a docs/operations/ path).
+        Otherwise it must be written as a proposal, in future tense.
+
+        This replaces the Johanna learning-record gate of PR #138: the mechanism
+        is the same, the subject is not. The old gate fired only on claims whose
+        name mentioned "johanna", so any other task skipped it silently.
+        """
+        worktree = Path(claim.worktree).resolve()
+        base_sha = claim.data.get("base_sha")
+        if not base_sha:
+            raise CoordinationError(
+                "claim has no base_sha; cannot verify documentation evidence"
+            )
+        changed = _git(worktree, "diff", "--name-only", f"{base_sha}...HEAD")
+        for entry in changed.splitlines():
+            relative = entry.strip()
+            if not relative.startswith(STATE_EVIDENCE_SCOPE):
+                continue
+            if not relative.endswith(".md"):
+                continue
+            if relative.startswith(STATE_EVIDENCE_EXEMPT_PREFIXES):
+                continue
+            document = worktree / relative
+            if document.is_symlink() or not document.is_file():
+                continue
+            content = document.read_text(encoding="utf-8", errors="replace")
+            assertion = _first_state_assertion(content)
+            if assertion is None:
+                continue
+            if EVIDENCE_DATE_RE.search(content) and EVIDENCE_POINTER_RE.search(content):
+                continue
+            line_number, label, excerpt = assertion
+            raise CoordinationError(
+                f"{relative}:{line_number} asserts system state ({label}) without "
+                f"dated evidence: {excerpt!r}. Add an ISO date and a verifiable "
+                "pointer (commit sha, #PR, or a docs/operations/ path), or write "
+                "it as a proposal instead of as current state."
+            )
 
     def _load_claims(self) -> list[Claim]:
         claims: list[Claim] = []
@@ -662,6 +792,7 @@ class AgentWorkspace:
                 self.preflight(worktree)
                 if _git(worktree, "status", "--porcelain"):
                     raise CoordinationError("worktree is dirty; commit before review")
+                self._validate_state_claims_have_evidence(claim)
                 upstream = _run_git(
                     worktree,
                     "rev-parse",
