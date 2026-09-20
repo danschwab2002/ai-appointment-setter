@@ -13,6 +13,7 @@ Agregar una migracion obliga a tocar dos archivos compartidos que ninguna tarea 
 |---|---|---|
 | `tests/test_supabase_schema_inventory.py::test_supabase_schema_inventory_covers_every_canonical_migration` | `scripts/supabase_schema_inventory.sql` | que la lista literal de nombres de migracion escrita dentro del SQL sea exactamente el contenido del directorio |
 | `tests/test_supabase_release_readiness.py::test_bundle_covers_exact_pending_tail_and_is_deterministic` | el propio archivo de prueba | que el nombre de la ultima migracion coincida con un literal escrito en la asercion |
+| `tests/sql/followup_engine/validate_acl_hardening.mjs` | `scripts/supabase_schema_inventory.sql` | que exista una huella para cada migracion; corta la cadena `npm test` en el validador 24 de 34 |
 
 El resultado es que **dos tareas que agregan migraciones en paralelo no pueden existir**: la segunda encuentra los dos archivos reservados por la primera y su suite en rojo. No es una hipotesis. Hoy conviven cuatro migraciones sin integrar en tres tareas (`20260908000200` en la de personalizacion por primer nombre, `20260915000100` y `20260917000200` en la de daily feedback, `20260918000100` en la de correlaciones), y las tres necesitan los mismos dos archivos.
 
@@ -24,7 +25,14 @@ test_supabase_schema_inventory ... Right contains one more item:
 test_supabase_release_readiness ... assert '20260918000100_...' == '20260917000100_...'
 ```
 
-Ninguna otra prueba falla por el contenido del PR. La regresion SQL propia de esa tarea pasa entera (5 casos) y `validate-tree` reporta 74 migraciones sin duplicados.
+La suite SQL se detiene por la misma causa, en el validador 24 de 34:
+
+```text
+validate_acl_hardening.mjs ... Error: schema fingerprint inventory incomplete:
+    {"missingFingerprints":["20260918000100_operator_correlation_prepared_at.sql"]}
+```
+
+Ninguna otra prueba falla por el contenido del PR. La regresion SQL propia de esa tarea pasa entera (5 casos) y `validate-tree` reporta 74 migraciones sin duplicados. Son tres chequeos y **dos archivos**, los dos reservados por la misma tarea ajena.
 
 ## 2. Que garantiza de verdad cada guarda
 
@@ -57,6 +65,7 @@ Una variante mas barata, si se prefiere no agregar un generador: que el SQL reci
 ```text
 scripts/supabase_schema_inventory.sql
   + agregar '20260918000100_operator_correlation_prepared_at.sql' al final de la lista
+    (con su huella, que es lo que pide validate_acl_hardening.mjs)
 
 tests/test_supabase_release_readiness.py
   - assert observed[-1] == "20260917000100_operator_correlation_abstention_reason.sql"
