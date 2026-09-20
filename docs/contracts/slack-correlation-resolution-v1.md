@@ -1,7 +1,7 @@
 # Contrato de resolución de correlaciones en Slack V1
 
 - **Estado:** UX comercial simplificada implementada localmente; pendiente de revisión y publicación
-- **Fecha:** 2026-09-11
+- **Fecha:** 2026-09-13
 - **Autoridad:** Supabase Cloud mediante el bridge scoped del aliado
 - **Superficie:** modal nativo de Slack y actualización del mensaje raíz
 
@@ -24,16 +24,37 @@ conceden autoridad.
 
 ## 2. Mensaje accionable
 
-`COR-001`, `COR-002` y `COR-003` incluyen un botón `Revisar compra`. La superficie
-visible explica en lenguaje cotidiano si no se encontró una persona, si existen
-varias opciones o si email y teléfono conducen a resultados distintos. No muestra
+La notificación conserva primero la naturaleza comercial del evento y después el
+problema de identidad. Los códigos cerrados son:
+
+| Naturaleza comercial | Sin coincidencia | Varias coincidencias | Datos contradictorios | Acción visible |
+|---|---|---|---|---|
+| Compra confirmada | `COR-001` | `COR-002` | `COR-003` | `Identificar comprador` |
+| Checkout abandonado | `COR-010` | `COR-011` | `COR-012` | `Identificar abandono` |
+| Pago no completado | `COR-013` | `COR-014` | `COR-015` | `Identificar pago` |
+
+La tarjeta declara qué ocurrió, cuál es el problema, qué debe investigar el
+comercial y qué permanece bloqueado. Distingue en lenguaje cotidiano si no se
+encontró una persona, si existen varias opciones o si email y teléfono conducen
+a resultados distintos. No muestra
 códigos internos, UUID ni estados técnicos; conserva únicamente identidad
 enmascarada y la cantidad de personas posibles. El `case_id` oculto del botón y
 del metadata nunca es autoridad suficiente: el conector exige
 que coincida con un registro durable aceptado cuyos Team ID, Channel ID,
 `message_ts`, tenant y `subject_ref` también coincidan.
 
-Los demás códigos del catálogo permanecen sin acciones.
+Las variantes “sin coincidencia” son informativas y no muestran un botón de
+decisión: el backend todavía no permite buscar o agregar una persona fuera de la
+lista. Las variantes ambiguas o contradictorias sí abren la revisión privada.
+
+Los demás códigos del catálogo permanecen sin acciones. Un tipo de evento distinto
+de los tres anteriores falla cerrado y no puede entrar a la revisión comercial.
+
+Durante un despliegue gradual, cada fila de proyección queda ligada de forma durable
+al contrato de notificación que la reclamó primero. Las réplicas antiguas sólo
+reclaman contratos V1; las nuevas preservan V1 al recuperar un lease vencido y usan
+V2 únicamente para filas nuevas. Así, una respuesta perdida no cambia UUID, código,
+dedupe ni payload al reintentarse.
 
 ## 3. Endpoint Slack
 
@@ -102,8 +123,9 @@ mensaje o tenant.
 
 ## 5. Decisión guiada, prepare y confirm
 
-El modal inicial formula una sola pregunta comercial: si la compra pertenece a
-una de las personas mostradas. Compara email y teléfono completos de la compra con
+El modal inicial repite la naturaleza comercial y formula una sola pregunta:
+si la compra, el abandono o el pago no completado pertenece a una de las personas
+mostradas. Compara email y teléfono completos del evento con
 cada registro, marca qué señal coincide y ofrece exactamente tres resultados. La
 tarjeta del canal continúa enmascarada; la identidad completa no se incluye en
 metadata, sesiones SQLite, logs ni mensajes persistentes de Slack:
@@ -112,7 +134,7 @@ metadata, sesiones SQLite, logs ni mensajes persistentes de Slack:
 2. declarar `Revisé los datos: no corresponde a ninguna`;
 3. declarar `No puedo determinarlo`.
 
-Elegir una persona abre un segundo paso que pregunta cómo se comprobó: compra o
+Elegir una persona abre un segundo paso que pregunta cómo se comprobó: evento o
 transacción, registro del cliente o confirmación del cliente. `No puedo
 determinarlo` cierra el modal y mantiene la sesión y el caso pendientes, con cero
 llamadas operator. Cerrar sin asociación infiere únicamente el fundamento interno
@@ -130,7 +152,15 @@ POST /internal/operator/correlations/resolutions/prepare
 La respuesta reemplaza el modal por una confirmación explícita de la consecuencia:
 `Confirmar asociación` o `Confirmar cierre`. Todavía no existe resolución terminal.
 Se aceptan también, durante la transición de despliegue, submits del modal anterior;
-siguen sujetos a las mismas validaciones y al mismo backend autoritativo.
+siguen sujetos a las mismas validaciones y al mismo backend autoritativo. Los campos
+no autoritativos añadidos por Slack se aceptan sólo si respetan los límites de tamaño,
+profundidad y caracteres seguros; nunca participan en identidad, autorización ni en
+la decisión.
+
+La admisión SQLite de cada submit tiene un `busy_timeout` de 500 ms y responde `503`
+si otro escritor mantiene el lock. La poda de historiales no corre en el callback:
+se ejecuta en segundo plano, fuera del plazo de acknowledgement de Slack. Un submit
+no admitido no crea comando ni resolución y puede repetirse con una huella nueva.
 
 El segundo submit `confirm_operator_correlation_resolution` usa exclusivamente el
 comando ya persistido; no toma acción ni candidato nuevos desde Slack. Llama:
@@ -145,11 +175,11 @@ comando vencido fallan cerrado.
 
 ## 6. Resultado y proyección
 
-Supabase es autoritativo. Tras una confirmación aplicada, el conector actualiza el
-mismo mensaje raíz mediante `chat.update`, retira los botones y muestra:
+Supabase es autoritativo. Tras una confirmación aplicada, el conector actualiza la
+misma tarjeta raíz mediante `chat.update`, retira los botones y muestra:
 
-- `Compra asociada`, o
-- `Compra cerrada sin asociación`.
+- `Caso asociado`, o
+- `Caso cerrado sin asociación`.
 
 También muestra el Slack User ID del operador y el timestamp autoritativo, sin
 PII ni comentarios libres.
@@ -184,7 +214,51 @@ La ruta operator-only requiere `SLACK_OPERATOR_BEARER_TOKEN` y el flag separado
 mensaje a otro canal. Una caída en `claimed` vuelve a `pending`; sólo una caída
 después de persistir `request_started` queda `delivery_unknown`.
 
-## 8. Configuración de activación
+## 8. Pre-resolución asistida antes de Slack
+
+Los casos `unmatched` permanecen en `hotmart_purchase_intent_correlations`, pero
+la proyección se suprime de forma durable antes de crear una entrega Slack. No se
+llama al modelo para estos casos.
+
+Los casos `ambiguous` y `conflict` pasan primero por
+`operator_correlation_preresolutions`. El bridge construye un snapshot cerrado y
+sin PII directa: IDs opacos de candidatas, etiquetas `Persona N`, coincidencias
+booleanas y proximidad temporal. El snapshot y su SHA-256 quedan ligados a la
+versión de política. En reintentos se reutiliza exactamente el mismo snapshot.
+
+El modelo sólo puede devolver una candidata existente o abstenerse. La política
+determinística exige confianza alta, ausencia de contradicciones y al menos una
+evidencia independiente que discrimine esa candidata. Salida inválida, timeout,
+evidencia desconocida o insuficiente producen abstención o retry; nunca una
+atribución. Una abstención es terminal y no genera Slack. El ledger guarda un
+`decision_reason_code` cerrado y sin PII para distinguir abstención explícita,
+confianza insuficiente y rechazo determinístico de la propuesta. No guarda el
+texto libre ni la lista libre de información faltante emitida por el modelo.
+
+Una recomendación validada crea una proyección con
+`notification_contract_version=3`. Su payload incluye referencia de propuesta,
+fingerprint, candidata, evidencia cerrada y versiones de modelo/prompt. Los
+contratos 1 y 2 conservan replay exacto, pero no admiten proyecciones nuevas. El
+conector V3 sólo renderiza el snapshot persistido y mantiene el flujo humano
+`prepare → confirm` como única autoridad de resolución. Confirmar continúa sin
+autorizar contacto, modificar consentimiento ni reactivar recovery.
+
+Activación del bridge:
+
+- `CORRELATION_PRERESOLUTION_ENABLED=true`;
+- `CORRELATION_PRERESOLUTION_MODEL_NAME`;
+- `CORRELATION_PRERESOLUTION_PROMPT_VERSION=correlation-preresolution-v3`;
+- `CORRELATION_PRERESOLUTION_WORKER_ID`;
+- `CORRELATION_PRERESOLUTION_POLL_INTERVAL`;
+- `HERMES_API_BASE_URL` y `HERMES_API_KEY`;
+- migraciones `20260916000100_operator_correlation_ai_preresolution.sql` y
+  `20260917000100_operator_correlation_abstention_reason.sql` aplicadas.
+
+`SLACK_CONNECTOR_PROJECTION_ENABLED=true` exige que la pre-resolución esté
+habilitada. `PURCHASE_CANCELED` permanece inactivo como fuente productiva hasta
+que su contrato backend sea aprobado y validado por separado.
+
+## 9. Configuración de activación
 
 Interactividad requiere, como mínimo:
 
@@ -207,7 +281,7 @@ La presencia de secretos no habilita interactividad. El flag permanece en
 `false` durante el primer deploy y se activa sólo después de health/readiness,
 smoke firmado y verificación del operador.
 
-## 9. Criterio E2E
+## 10. Criterio E2E
 
 No se considera lista la nueva UX hasta que un operador allowlisted complete el
 flujo sobre el caso sintético expresamente autorizado y se verifique físicamente:

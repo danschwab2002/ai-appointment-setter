@@ -100,12 +100,20 @@ const rows = await db.query(`
       ('claim_due_followup_actions(text,timestamp with time zone,interval,integer)'),
       ('claim_human_handoff_projection_effects(text,integer,integer,timestamp with time zone)'),
       ('claim_slack_correlation_notifications(text,text,text,integer,integer,integer)'),
+      ('claim_slack_correlation_notifications_v2(text,text,text,integer,integer,integer)'),
+      ('claim_slack_correlation_notifications_v3(text,text,text,integer,integer,integer)'),
+      ('claim_operator_correlation_preresolutions(text,text,text,integer,integer)'),
+      ('get_operator_correlation_preresolution_evidence(text,text,uuid,uuid,bigint)'),
+      ('complete_operator_correlation_preresolution(uuid,uuid,bigint,text,uuid,jsonb,text,text,text)'),
+      ('complete_operator_correlation_preresolution(uuid,uuid,bigint,text,uuid,jsonb,text,text)'),
+      ('release_operator_correlation_preresolution(uuid,uuid,bigint,text)'),
       ('complete_slack_correlation_notification(uuid,uuid,bigint,uuid)'),
       ('confirm_operator_correlation_resolution(text,text,text,uuid,text,uuid)'),
       ('correlate_hotmart_purchase_intent(uuid)'),
       ('evaluate_lancemos_pilot_scope(text,integer,text,bigint,bigint,text,text,text,text,text,text,uuid)'),
       ('finish_johanna_abandonment_one_shot(uuid,text,bigint,bigint,text)'),
       ('reconcile_johanna_abandonment_one_shot(text,bigint,bigint)'),
+      ('resolve_johanna_one_shot_unverifiable_contact_deleted(uuid,text)'),
       ('begin_johanna_abandonment_hotmart_auto(text,uuid,uuid,text,bigint,bigint,text,integer,bigint)'),
       ('begin_johanna_abandonment_hotmart_auto_v2(text,uuid,uuid,bigint,bigint,text,integer,bigint)'),
       ('begin_johanna_payment_failure_hotmart_auto(text,uuid,bigint,bigint)'),
@@ -138,6 +146,10 @@ const rows = await db.query(`
       ('get_chatwoot_payment_link_candidate(uuid,text,bigint,bigint,bigint,integer,timestamp with time zone)'),
       ('prepare_chatwoot_payment_link_send(uuid,text,bigint,bigint,bigint,text,integer,uuid,uuid,text,text,text,text,text,timestamp with time zone)'),
       ('finalize_chatwoot_payment_link_send(uuid,text,bigint,text,timestamp with time zone)'),
+      ('reserve_chatwoot_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamp with time zone)'),
+      ('authorize_chatwoot_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,timestamp with time zone)'),
+      ('finalize_chatwoot_checkout_issuance_v2(uuid,text,bigint,text,timestamp with time zone)'),
+      ('admit_and_correlate_hotmart_checkout_issuance_v2(text,jsonb,text,timestamp with time zone)'),
 
       ('list_due_hotmart_abandonment_reevaluations_v2(timestamp with time zone,integer,boolean)'),
       ('reevaluate_hotmart_abandonment_timer(uuid,timestamp with time zone)'),
@@ -184,9 +196,13 @@ const rows = await db.query(`
 `);
 const result = rows.rows[0];
 // Historical baseline guard was `result.expected_count !== 63`; the current
-// baseline is 68 RPCs, daily feedback adds fourteen, and payment links add three.
+// baseline is 68 RPCs, daily feedback adds fourteen, payment links add three,
+// the one-shot operator disposition adds one, and correlation event context
+// adds one, Johanna checkout issuance V2 adds four, and AI-assisted correlation
+// pre-resolution adds five, and the rolling-safe reason-code contract retains
+// one legacy completion overload.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 85) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 97) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const bindingAcl = await db.query(`

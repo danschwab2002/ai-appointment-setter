@@ -2880,6 +2880,184 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         4,
         'operator_correlation_exact_private_identity_service_role_only'
+    union all
+    select
+        '20260913000100',
+        '20260913000100_johanna_one_shot_operator_disposition.sql',
+        (to_regclass('public.johanna_one_shot_operator_dispositions') is not null)::int
+        + exists(
+            select 1 from triggers
+            where tgname = 'protect_johanna_one_shot_operator_disposition'
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.resolve_johanna_one_shot_unverifiable_contact_deleted(uuid,text)'
+            )
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+              and position('johanna_one_shot_operator_disposition_ineligible' in definition) > 0
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.protect_johanna_abandonment_one_shot_command()'
+            )
+              and position('johanna_abandonment_one_shot_disposed_immutable' in definition) > 0
+              and position('johanna_one_shot_operator_dispositions' in definition) > 0
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.get_precheckout_delayed_first_touch_readiness()'
+            )
+              and position('johanna_one_shot_operator_dispositions' in definition) > 0
+              and position('disposition.command_id = command.id' in definition) > 0
+        )::int,
+        5,
+        'append_only_operator_disposition_preserves_ambiguous_delivery_truth'
+    union all
+    select
+        '20260913000200',
+        '20260913000200_slack_correlation_event_context.sql',
+        exists(
+            select 1
+            from pg_attribute
+            where attrelid = to_regclass('public.slack_correlation_notification_projection')
+              and attname = 'notification_contract_version'
+              and not attisdropped
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.claim_slack_correlation_notifications(text,text,text,integer,integer,integer)'
+            )
+              and position('notification_contract_version' in definition) > 0
+              and position('projection.notification_contract_version, 1' in definition) > 0
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.claim_slack_correlation_notifications_v2(text,text,text,integer,integer,integer)'
+            )
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.claim_slack_correlation_notifications_v2(text,text,text,integer,integer,integer)'
+            )
+              and position('event.event_type' in definition) > 0
+              and position('projection.source_event_id' in definition) > 0
+        )::int
+        + exists(
+            select 1 from functions
+            where oid = to_regprocedure(
+                'public.claim_slack_correlation_notifications_v2(text,text,text,integer,integer,integer)'
+            )
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        5,
+        'slack_correlation_event_context_service_role_only'
+    union all
+    select
+        '20260914000100',
+        '20260914000100_johanna_checkout_issuance_v2.sql',
+        (to_regclass('public.checkout_offer_catalog') is not null)::int
+        + (to_regclass('public.checkout_link_issuances') is not null)::int
+        + (
+            select count(*) = 5
+            from functions
+            where oid in (
+                to_regprocedure('public.reserve_chatwoot_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamptz)'),
+                to_regprocedure('public.authorize_chatwoot_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,timestamptz)'),
+                to_regprocedure('public.finalize_chatwoot_checkout_issuance_v2(uuid,text,bigint,text,timestamptz)'),
+                to_regprocedure('public.correlate_hotmart_checkout_issuance_v2(uuid,text,timestamptz)'),
+                to_regprocedure('public.admit_and_correlate_hotmart_checkout_issuance_v2(text,jsonb,text,timestamptz)')
+            )
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+              and case
+                    when oid = to_regprocedure(
+                        'public.correlate_hotmart_checkout_issuance_v2(uuid,text,timestamptz)'
+                    ) then not has_function_privilege('service_role', oid, 'EXECUTE')
+                    else has_function_privilege('service_role', oid, 'EXECUTE')
+                  end
+        )::int
+        + exists(
+            select 1 from triggers
+            where tgname = 'checkout_offer_catalog_immutable'
+        )::int
+        + exists(
+            select 1 from triggers
+            where tgname = 'checkout_link_issuance_immutable'
+        )::int,
+        5,
+        'johanna_durable_checkout_issuance_opaque_sck_service_role_only'
+    union all
+    select
+        '20260916000100',
+        '20260916000100_operator_correlation_ai_preresolution.sql',
+        (to_regclass('public.operator_correlation_preresolutions') is not null)::int
+        + exists(
+            select 1 from triggers
+            where tgname = 'slack_correlation_preresolution_gate'
+        )::int
+        + (
+            select count(*) = 5
+            from functions
+            where oid in (
+                to_regprocedure('public.claim_operator_correlation_preresolutions(text,text,text,integer,integer)'),
+                to_regprocedure('public.get_operator_correlation_preresolution_evidence(text,text,uuid,uuid,bigint)'),
+                to_regprocedure('public.complete_operator_correlation_preresolution(uuid,uuid,bigint,text,uuid,jsonb,text,text)'),
+                to_regprocedure('public.release_operator_correlation_preresolution(uuid,uuid,bigint,text)'),
+                to_regprocedure('public.claim_slack_correlation_notifications_v3(text,text,text,integer,integer,integer)')
+            )
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        3,
+        'slack_correlation_ai_preresolution_service_role_only'
+    union all
+    select
+        '20260917000100',
+        '20260917000100_operator_correlation_abstention_reason.sql',
+        exists(
+            select 1
+            from pg_catalog.pg_attribute
+            where attrelid = to_regclass('public.operator_correlation_preresolutions')
+              and attname = 'decision_reason_code'
+              and not attisdropped
+        )::int
+        + (to_regprocedure('public.complete_operator_correlation_preresolution(uuid,uuid,bigint,text,uuid,jsonb,text,text,text)') is not null)::int
+        + (to_regprocedure('public.complete_operator_correlation_preresolution(uuid,uuid,bigint,text,uuid,jsonb,text,text)') is not null)::int
+        + exists(
+            select 1
+            from pg_catalog.pg_constraint
+            where conrelid = to_regclass('public.operator_correlation_preresolutions')
+              and conname = 'operator_correlation_preresolutions_decision_reason_check'
+              and position(
+                    'decision_reason_code is not null'
+                    in lower(pg_get_constraintdef(oid))
+                  ) > 0
+              and position(
+                    'legacy_unclassified'
+                    in lower(pg_get_constraintdef(oid))
+                  ) > 0
+        )::int,
+        4,
+        'slack_correlation_abstention_reason_service_role_only'
 )
 select
     version,

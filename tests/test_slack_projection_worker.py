@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime
 import math
 
@@ -8,7 +9,11 @@ from bridge.slack_projection import (
     SlackCorrelationNotificationClaim,
     SlackCorrelationProjectionWorker,
 )
-from slack_correlation.catalog import NotificationCommand
+from slack_correlation.catalog import (
+    CorrelationRecommendation,
+    CorrelationRecommendationEvidence,
+    NotificationCommand,
+)
 from slack_correlation.producer import (
     AdmissionReceipt,
     ConnectorAdmissionUnknown,
@@ -55,12 +60,30 @@ class _Producer:
 def _claim() -> SlackCorrelationNotificationClaim:
     return SlackCorrelationNotificationClaim(
         source_event_id="11111111-1111-4111-8111-111111111111",
+        source_event_type="PURCHASE_OUT_OF_SHOPPING_CART",
+        notification_contract_version=2,
         outcome="ambiguous",
         reason_code="multiple_candidates",
         candidate_count=2,
         occurred_at=datetime(2026, 9, 8, 12, 0, tzinfo=UTC),
         claim_token="22222222-2222-4222-8222-222222222222",
         lease_generation=3,
+    )
+
+
+def _recommendation() -> CorrelationRecommendation:
+    return CorrelationRecommendation(
+        recommendation_ref="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        candidate_id="33333333-3333-4333-8333-333333333333",
+        candidate_label="Persona 2",
+        evidence=(
+            CorrelationRecommendationEvidence(
+                kind="precheckout_time_proximity_minutes", value=4
+            ),
+        ),
+        evidence_fingerprint="f" * 64,
+        model_name="resolver-model",
+        prompt_version="correlation-preresolution-v1",
     )
 
 
@@ -83,7 +106,7 @@ def test_worker_admits_then_completes_the_exact_fenced_projection() -> None:
     assert processed == 1
     assert len(producer.commands) == 1
     command = producer.commands[0]
-    assert command.event_code == "COR-002"
+    assert command.event_code == "COR-011"
     assert store.complete_calls == [
         {
             "source_event_id": _claim().source_event_id,
@@ -94,6 +117,52 @@ def test_worker_admits_then_completes_the_exact_fenced_projection() -> None:
     ]
     assert store.release_calls == []
     assert worker.halted is False
+
+
+def test_worker_delivers_contract_v3_only_with_the_persisted_recommendation() -> None:
+    claim = replace(
+        _claim(),
+        notification_contract_version=3,
+        recommendation=_recommendation(),
+    )
+    store = _Store([claim])
+    producer = _Producer()
+    worker = SlackCorrelationProjectionWorker(
+        store=store,
+        producer=producer,
+        tenant_ref="lancemos",
+        funnel_ref="psicologajohanna",
+        worker_id="johanna-slack-1",
+    )
+
+    assert asyncio.run(worker.run_once()) == 1
+    assert producer.commands[0].recommendation == _recommendation()
+    assert store.release_calls == []
+
+
+def test_worker_fails_closed_if_contract_v3_claim_lacks_a_recommendation() -> None:
+    claim = replace(_claim(), notification_contract_version=3)
+    store = _Store([claim])
+    producer = _Producer()
+    worker = SlackCorrelationProjectionWorker(
+        store=store,
+        producer=producer,
+        tenant_ref="lancemos",
+        funnel_ref="psicologajohanna",
+        worker_id="johanna-slack-1",
+    )
+
+    assert asyncio.run(worker.run_once()) == 0
+    assert producer.commands == []
+    assert store.release_calls == [
+        {
+            "source_event_id": claim.source_event_id,
+            "claim_token": claim.claim_token,
+            "lease_generation": claim.lease_generation,
+            "failure_code": "connector_unexpected_error",
+        }
+    ]
+    assert worker.halted is True
 
 
 def test_worker_releases_unknown_connector_admission_for_durable_retry() -> None:

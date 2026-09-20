@@ -10,6 +10,7 @@ import math
 from typing import Protocol
 
 from bridge.slack_notifications import NotificationProducer, SlackOperationalNotifier
+from slack_correlation.catalog import CorrelationRecommendation
 from slack_correlation.producer import (
     ConnectorAdmissionUnknown,
     ConnectorRejected,
@@ -22,12 +23,15 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class SlackCorrelationNotificationClaim:
     source_event_id: str
+    source_event_type: str
+    notification_contract_version: int
     outcome: str
     reason_code: str
     candidate_count: int
     occurred_at: datetime
     claim_token: str
     lease_generation: int
+    recommendation: CorrelationRecommendation | None = None
 
 
 class SlackCorrelationProjectionStore(Protocol):
@@ -166,10 +170,13 @@ class SlackCorrelationProjectionWorker:
             try:
                 command = await self._notifier.notify_unresolved_correlation(
                     source_event_id=claim.source_event_id,
+                    source_event_type=claim.source_event_type,
+                    notification_contract_version=claim.notification_contract_version,
                     outcome=claim.outcome,
                     reason_code=claim.reason_code,
                     candidate_count=claim.candidate_count,
                     occurred_at=claim.occurred_at,
+                    recommendation=claim.recommendation,
                 )
             except Exception as exc:
                 failure_code = _connector_failure_code(exc)

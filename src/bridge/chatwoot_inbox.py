@@ -17,12 +17,156 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from bridge.chatwoot import ChatwootProtocolError
+
 
 logger = logging.getLogger(__name__)
+
+_STALLED_MONITOR_PROTOCOL_REASON_CODES = frozenset(
+    {
+        "conversation_count_changed",
+        "conversation_scan_incomplete",
+        "invalid_conversation_scope",
+        "invalid_conversations_payload",
+        "invalid_json",
+        "invalid_message_id",
+        "invalid_messages_payload",
+        "messages_cursor_did_not_advance",
+    }
+)
+
+
+def _stalled_monitor_reason_code(exc: Exception) -> str | None:
+    if isinstance(exc, ChatwootProtocolError):
+        reason_code = str(exc)
+        if reason_code in _STALLED_MONITOR_PROTOCOL_REASON_CODES:
+            return reason_code
+    return None
 
 
 class RetryableChatwootWorkError(RuntimeError):
     """A transient dependency failure that must remain admitted."""
+
+
+class ChatwootStalledConversationMonitor:
+    """Recurrently admit scanner candidates into the existing durable inbox."""
+
+    def __init__(
+        self,
+        *,
+        inbox: DurableChatwootInbox,
+        scanner: Callable[[], Awaitable[list[object]]],
+        scan_interval_seconds: float = 60.0,
+        recovery_cooldown_seconds: float = 300.0,
+        recovery_max_admissions: int = 3,
+    ) -> None:
+        if not math.isfinite(scan_interval_seconds) or scan_interval_seconds <= 0:
+            raise ValueError("scan_interval_seconds must be finite and positive")
+        if (
+            not math.isfinite(recovery_cooldown_seconds)
+            or recovery_cooldown_seconds <= 0
+            or not isinstance(recovery_max_admissions, int)
+            or isinstance(recovery_max_admissions, bool)
+            or recovery_max_admissions < 1
+        ):
+            raise ValueError("invalid stalled recovery policy")
+        self._inbox = inbox
+        self._scanner = scanner
+        self._scan_interval_seconds = scan_interval_seconds
+        self._recovery_cooldown_seconds = recovery_cooldown_seconds
+        self._recovery_max_admissions = recovery_max_admissions
+        self._task: asyncio.Task[None] | None = None
+        self._stopping = asyncio.Event()
+        self._last_scan_state = "never"
+        self._has_completed_scan = False
+
+    @property
+    def last_scan_state(self) -> str:
+        return self._last_scan_state
+
+    @property
+    def has_completed_scan(self) -> bool:
+        return self._has_completed_scan
+
+    @property
+    def ready(self) -> bool:
+        return (
+            self._task is not None
+            and not self._task.done()
+            and self._has_completed_scan
+            and self._last_scan_state == "healthy"
+        )
+
+    async def start(self) -> None:
+        if self._task is None or self._task.done():
+            self._stopping.clear()
+            self._last_scan_state = "never"
+            self._has_completed_scan = False
+            self._task = asyncio.create_task(self._run())
+
+    async def stop(self) -> None:
+        if self._task is None:
+            self._last_scan_state = "stopped"
+            return
+        self._stopping.set()
+        self._task.cancel()
+        try:
+            await self._task
+        except asyncio.CancelledError:
+            pass
+        self._task = None
+        self._last_scan_state = "stopped"
+
+    async def run_once(self) -> None:
+        candidates = await self._scanner()
+        candidate_failed = False
+        for candidate in candidates:
+            try:
+                delivery_id = getattr(candidate, "delivery_id")
+                payload = getattr(candidate, "payload")
+                if not isinstance(delivery_id, str) or not isinstance(payload, dict):
+                    raise TypeError("invalid stalled monitor candidate")
+                self._inbox.admit_recovery(
+                    delivery_id=delivery_id,
+                    payload=payload,
+                    cooldown_seconds=self._recovery_cooldown_seconds,
+                    max_admissions=self._recovery_max_admissions,
+                )
+            except Exception as exc:
+                candidate_failed = True
+                logger.warning(
+                    "chatwoot_stalled_monitor_candidate_failed error_type=%s",
+                    type(exc).__name__,
+                )
+        self._has_completed_scan = True
+        self._last_scan_state = "error" if candidate_failed else "healthy"
+
+    async def _run(self) -> None:
+        while not self._stopping.is_set():
+            try:
+                await self.run_once()
+            except Exception as exc:
+                self._last_scan_state = "error"
+                reason_code = _stalled_monitor_reason_code(exc)
+                if reason_code is None:
+                    logger.warning(
+                        "chatwoot_stalled_monitor_scan_failed error_type=%s",
+                        type(exc).__name__,
+                    )
+                else:
+                    logger.warning(
+                        "chatwoot_stalled_monitor_scan_failed "
+                        "error_type=%s reason_code=%s",
+                        type(exc).__name__,
+                        reason_code,
+                    )
+            try:
+                await asyncio.wait_for(
+                    self._stopping.wait(),
+                    timeout=self._scan_interval_seconds,
+                )
+            except TimeoutError:
+                pass
 
 
 @dataclass(frozen=True)
@@ -33,6 +177,7 @@ class ChatwootWorkItem:
     attempts: int = 0
     next_attempt_at: float = 0.0
     admitted_at: float = 0.0
+    recovery_count: int = 0
 
 
 def _canonical_message_id(item: ChatwootWorkItem) -> int:
@@ -104,14 +249,19 @@ class DurableChatwootInbox:
         self._ensure_private_work_dir()
         digest = hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
         work_path = self._work_dir / f"{digest}.json"
+        marker = payload.get("_stalled_monitor")
+        recovery_count = 1 if marker == {"version": 1} else 0
+        envelope: dict[str, object] = {
+            "status": "admitted",
+            "delivery_id": delivery_id,
+            "payload": payload,
+            "admitted_at": self._clock(),
+        }
+        if recovery_count:
+            envelope["recovery_count"] = recovery_count
         serialized = (
             json.dumps(
-                {
-                    "status": "admitted",
-                    "delivery_id": delivery_id,
-                    "payload": payload,
-                    "admitted_at": self._clock(),
-                },
+                envelope,
                 ensure_ascii=False,
                 indent=2,
             )
@@ -146,6 +296,57 @@ class DurableChatwootInbox:
             if temporary_fd >= 0:
                 os.close(temporary_fd)
             os.unlink(temporary_name)
+
+    def admit_recovery(
+        self,
+        *,
+        delivery_id: str,
+        payload: dict[str, object],
+        cooldown_seconds: float,
+        max_admissions: int,
+    ) -> bool:
+        """Admit or boundedly re-arm one deterministic stalled-message identity."""
+        if (
+            payload.get("_stalled_monitor") != {"version": 1}
+            or not math.isfinite(cooldown_seconds)
+            or cooldown_seconds <= 0
+            or not isinstance(max_admissions, int)
+            or isinstance(max_admissions, bool)
+            or max_admissions < 1
+        ):
+            raise ValueError("invalid stalled recovery admission")
+        digest = hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
+        work_path = self._work_dir / f"{digest}.json"
+        envelope = self._read_private_envelope(work_path)
+        if envelope is None:
+            return self.admit(delivery_id=delivery_id, payload=payload)
+        if envelope.get("delivery_id") != delivery_id or envelope.get("payload") != payload:
+            raise RuntimeError("stalled_recovery_identity_conflict")
+        recovery_count = envelope.get("recovery_count", 0)
+        terminal_at = envelope.get("terminal_at")
+        if (
+            envelope.get("status") not in {"completed", "failed"}
+            or not isinstance(recovery_count, int)
+            or isinstance(recovery_count, bool)
+            or recovery_count >= max_admissions
+            or not isinstance(terminal_at, (int, float))
+            or isinstance(terminal_at, bool)
+            or self._clock() - float(terminal_at) < cooldown_seconds
+        ):
+            return False
+        self._replace_envelope(
+            work_path,
+            {
+                "status": "admitted",
+                "delivery_id": delivery_id,
+                "payload": payload,
+                "admitted_at": self._clock(),
+                "attempts": 0,
+                "next_attempt_at": 0.0,
+                "recovery_count": recovery_count + 1,
+            },
+        )
+        return True
 
     def admitted_items(
         self,
@@ -201,6 +402,7 @@ class DurableChatwootInbox:
         attempts = envelope.get("attempts", 0)
         next_attempt_at = envelope.get("next_attempt_at", 0.0)
         admitted_at = envelope.get("admitted_at", file_stat.st_mtime)
+        recovery_count = envelope.get("recovery_count", 0)
         if (
             not isinstance(delivery_id, str)
             or not delivery_id
@@ -214,6 +416,9 @@ class DurableChatwootInbox:
             or not isinstance(admitted_at, (int, float))
             or isinstance(admitted_at, bool)
             or not math.isfinite(float(admitted_at))
+            or not isinstance(recovery_count, int)
+            or isinstance(recovery_count, bool)
+            or recovery_count < 0
             or path.stem
             != hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
         ):
@@ -227,6 +432,7 @@ class DurableChatwootInbox:
             attempts=attempts,
             next_attempt_at=float(next_attempt_at),
             admitted_at=float(admitted_at),
+            recovery_count=recovery_count,
         )
 
     def complete(self, item: ChatwootWorkItem) -> None:
@@ -235,8 +441,10 @@ class DurableChatwootInbox:
             {
                 "status": "completed",
                 "delivery_id": item.delivery_id,
-                "payload": {},
+                "payload": item.payload if item.recovery_count > 0 else {},
                 "attempts": item.attempts,
+                "recovery_count": item.recovery_count,
+                "terminal_at": self._clock(),
             },
         )
 
@@ -268,6 +476,8 @@ class DurableChatwootInbox:
                 "next_attempt_at": next_attempt_at,
                 "admitted_at": item.admitted_at,
                 "last_error_type": error_type,
+                "recovery_count": item.recovery_count,
+                **({"terminal_at": self._clock()} if status == "failed" else {}),
             },
         )
         return status
@@ -343,6 +553,8 @@ class DurableChatwootInbox:
                     "last_error_type": (
                         leader_error_type if is_leader else "GroupedLeaderFailed"
                     ),
+                    "recovery_count": item.recovery_count,
+                    "terminal_at": self._clock(),
                 },
             )
         try:
@@ -554,7 +766,11 @@ class ChatwootWorker:
                         )
                 except Exception as exc:
                     max_attempts = (
-                        None if isinstance(exc, RetryableChatwootWorkError) else 8
+                        1
+                        if current.recovery_count > 0
+                        else None
+                        if isinstance(exc, RetryableChatwootWorkError)
+                        else 8
                     )
                     terminal_group_failure = (
                         len(items) > 1

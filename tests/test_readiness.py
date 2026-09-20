@@ -74,6 +74,7 @@ def test_readiness_is_healthy_but_default_off_without_pilot_config() -> None:
     assert response.status_code == 200
     assert response.json() == {
         "status": "ready",
+        "chatwoot_stalled_monitor": "disabled",
         "pilot_boundary": "disabled",
         "automation_state": "default_off",
         "reason_code": "pilot_boundary_disabled",
@@ -96,6 +97,7 @@ def test_readiness_reports_inactive_pilot_as_deployable_default_off() -> None:
     assert response.status_code == 200
     assert response.json() == {
         "status": "ready",
+        "chatwoot_stalled_monitor": "disabled",
         "pilot_boundary": "configured",
         "automation_state": "inactive",
         "reason_code": "pilot_runtime_inactive",
@@ -170,6 +172,7 @@ def test_readiness_reports_exact_precheckout_activation_state() -> None:
     assert response.status_code == 200
     assert response.json() == {
         "status": "ready",
+        "chatwoot_stalled_monitor": "disabled",
         "pilot_boundary": "disabled",
         "automation_state": "default_off",
         "reason_code": "pilot_boundary_disabled",

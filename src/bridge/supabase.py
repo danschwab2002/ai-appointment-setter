@@ -7,16 +7,29 @@ just httpx, matching the project's existing conventions.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from dataclasses import dataclass, field, fields
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 
 from bridge.commercial_ally import CommercialAllyConfig
+from bridge.correlation_preresolution import (
+    CorrelationCandidate,
+    CorrelationEvidence,
+    CorrelationEvidenceFact,
+    CorrelationPreresolutionClaim,
+    PreresolutionRecommendation,
+)
 from bridge.slack_projection import SlackCorrelationNotificationClaim
+from slack_correlation.catalog import (
+    CorrelationRecommendation,
+    CorrelationRecommendationEvidence,
+)
 
 
 class SupabaseError(RuntimeError):
@@ -381,6 +394,44 @@ class PaymentLinkSendFinalization:
     outcome: str
     send_command_id: str
     status: str
+
+
+@dataclass(frozen=True)
+class CheckoutIssuanceReservation:
+    """Durable V2 checkout issuance prepared before a Chatwoot effect."""
+
+    outcome: str
+    issuance_id: str | None
+    issuance_ulid: str | None
+    purchase_intent_id: str | None
+    source_kind: str | None
+    checkout_url_final: str | None
+    source_value: str | None
+    sck_value: str | None
+
+
+@dataclass(frozen=True)
+class CheckoutIssuanceAuthorization:
+    outcome: str
+    issuance_id: str | None
+    status: str | None
+
+
+@dataclass(frozen=True)
+class CheckoutIssuanceFinalization:
+    outcome: str
+    issuance_id: str
+    status: str
+
+
+@dataclass(frozen=True)
+class CheckoutIssuancePurchaseAdmission:
+    admission_outcome: str
+    webhook_event_id: str
+    correlation_outcome: str
+    issuance_id: str | None
+    purchase_intent_id: str | None
+    commercial_case_id: str | None
 
 
 @dataclass(frozen=True)
@@ -806,6 +857,51 @@ _LEAD_STAGES = {
 }
 _CHANNELS = {"instagram", "whatsapp", "email", "sms", "other"}
 _IDENTITY_STATUSES = {"active", "unreachable", "blocked", "unknown"}
+
+
+def _parse_correlation_recommendation(
+    value: object, *, operation: str
+) -> CorrelationRecommendation:
+    if not isinstance(value, dict) or set(value) != {
+        "recommendation_ref",
+        "candidate_id",
+        "candidate_label",
+        "evidence",
+        "evidence_fingerprint",
+        "model_name",
+        "prompt_version",
+    }:
+        raise SupabaseError(f"{operation}_invalid")
+    evidence_value = value.get("evidence")
+    if not isinstance(evidence_value, list):
+        raise SupabaseError(f"{operation}_invalid")
+    try:
+        evidence = tuple(
+            CorrelationRecommendationEvidence(**item)
+            for item in evidence_value
+            if isinstance(item, dict) and set(item) == {"kind", "value"}
+        )
+        if len(evidence) != len(evidence_value):
+            raise ValueError("invalid_recommendation_evidence")
+        return CorrelationRecommendation(
+            recommendation_ref=_required_uuid(
+                value, "recommendation_ref", operation=operation
+            ),
+            candidate_id=_required_uuid(value, "candidate_id", operation=operation),
+            candidate_label=_required_string(
+                value, "candidate_label", operation=operation
+            ),
+            evidence=evidence,
+            evidence_fingerprint=_required_string(
+                value, "evidence_fingerprint", operation=operation
+            ),
+            model_name=_required_string(value, "model_name", operation=operation),
+            prompt_version=_required_string(
+                value, "prompt_version", operation=operation
+            ),
+        )
+    except (TypeError, ValueError) as exc:
+        raise SupabaseError(f"{operation}_invalid") from exc
 
 
 def _response_rows(
@@ -2057,6 +2153,257 @@ class SupabaseClient:
             manual_handoff_required=manual_handoff_required,
         )
 
+    async def claim_correlation_preresolution(
+        self,
+        *,
+        tenant_ref: str,
+        funnel_ref: str,
+        worker_id: str,
+    ) -> CorrelationPreresolutionClaim | None:
+        operation = "operator_correlation_preresolution_claim"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/claim_operator_correlation_preresolutions",
+            content=json.dumps(
+                {
+                    "p_tenant_ref": tenant_ref,
+                    "p_funnel_ref": funnel_ref,
+                    "p_worker_id": worker_id,
+                    "p_lease_seconds": 120,
+                    "p_binding_version": None,
+                }
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) > 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        if not rows:
+            return None
+        row = rows[0]
+        if set(row) != {
+            "webhook_event_id",
+            "source_event_type",
+            "outcome",
+            "claim_token",
+            "lease_generation",
+        }:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        try:
+            return CorrelationPreresolutionClaim(
+                case_id=_required_uuid(
+                    row, "webhook_event_id", operation=operation
+                ),
+                event_type=_required_enum(
+                    row,
+                    "source_event_type",
+                    {
+                        "PURCHASE_APPROVED",
+                        "PURCHASE_OUT_OF_SHOPPING_CART",
+                        "PURCHASE_CANCELED",
+                    },
+                    operation=operation,
+                ),
+                outcome=_required_enum(
+                    row,
+                    "outcome",
+                    {"unmatched", "ambiguous", "conflict"},
+                    operation=operation,
+                ),
+                claim_token=_required_uuid(
+                    row, "claim_token", operation=operation
+                ),
+                lease_generation=_required_positive_int(
+                    row, "lease_generation", operation=operation
+                ),
+            )
+        except ValueError as exc:
+            raise SupabaseError(f"{operation}_invalid_shape") from exc
+
+    async def load_correlation_evidence(
+        self,
+        *,
+        tenant_ref: str,
+        funnel_ref: str,
+        case_id: str,
+        claim_token: str,
+        lease_generation: int,
+    ) -> CorrelationEvidence:
+        operation = "operator_correlation_preresolution_evidence"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_operator_correlation_preresolution_evidence",
+            content=json.dumps(
+                {
+                    "p_tenant_ref": tenant_ref,
+                    "p_funnel_ref": funnel_ref,
+                    "p_webhook_event_id": case_id,
+                    "p_claim_token": claim_token,
+                    "p_lease_generation": lease_generation,
+                }
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1 or set(rows[0]) != {"evidence_data"}:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        payload = rows[0].get("evidence_data")
+        if not isinstance(payload, dict) or set(payload) != {
+            "case_id",
+            "event_type",
+            "outcome",
+            "candidates",
+            "facts",
+        }:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        candidates_value = payload.get("candidates")
+        facts_value = payload.get("facts")
+        if not isinstance(candidates_value, list) or not isinstance(facts_value, list):
+            raise SupabaseError(f"{operation}_invalid_shape")
+        try:
+            candidates = tuple(
+                CorrelationCandidate(**candidate)
+                for candidate in candidates_value
+                if isinstance(candidate, dict)
+                and set(candidate) == {"candidate_id", "label"}
+            )
+            facts = tuple(
+                CorrelationEvidenceFact(**fact)
+                for fact in facts_value
+                if isinstance(fact, dict)
+                and set(fact)
+                == {
+                    "evidence_id",
+                    "candidate_id",
+                    "kind",
+                    "value",
+                    "independent",
+                    "discriminating",
+                }
+            )
+            if len(candidates) != len(candidates_value) or len(facts) != len(
+                facts_value
+            ):
+                raise ValueError("invalid_evidence_shape")
+            return CorrelationEvidence(
+                case_id=_required_uuid(payload, "case_id", operation=operation),
+                event_type=_required_enum(
+                    payload,
+                    "event_type",
+                    {
+                        "PURCHASE_APPROVED",
+                        "PURCHASE_OUT_OF_SHOPPING_CART",
+                        "PURCHASE_CANCELED",
+                    },
+                    operation=operation,
+                ),
+                outcome=_required_enum(
+                    payload,
+                    "outcome",
+                    {"ambiguous", "conflict"},
+                    operation=operation,
+                ),
+                candidates=candidates,
+                facts=facts,
+            )
+        except (TypeError, ValueError) as exc:
+            raise SupabaseError(f"{operation}_invalid_shape") from exc
+
+    async def complete_correlation_preresolution(
+        self,
+        *,
+        case_id: str,
+        claim_token: str,
+        lease_generation: int,
+        disposition: str,
+        recommendation: PreresolutionRecommendation | None,
+    ) -> None:
+        operation = "operator_correlation_preresolution_complete"
+        if disposition not in {
+            "recommended",
+            "abstained",
+            "suppressed_unmatched",
+        }:
+            raise ValueError("invalid correlation pre-resolution disposition")
+        if disposition == "suppressed_unmatched":
+            if recommendation is not None:
+                raise ValueError("unmatched suppression cannot carry a recommendation")
+            candidate_id = None
+            evidence: list[dict[str, object]] = []
+            model_name = None
+            prompt_version = None
+            decision_reason_code = None
+        else:
+            if recommendation is None or recommendation.status != disposition:
+                raise ValueError("correlation pre-resolution result mismatch")
+            candidate_id = recommendation.candidate_id
+            evidence = [
+                {"kind": fact.kind, "value": fact.value}
+                for fact in recommendation.supporting_facts
+            ]
+            model_name = recommendation.model_name
+            prompt_version = recommendation.prompt_version
+            decision_reason_code = recommendation.decision_reason_code
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/complete_operator_correlation_preresolution",
+            content=json.dumps(
+                {
+                    "p_webhook_event_id": case_id,
+                    "p_claim_token": claim_token,
+                    "p_lease_generation": lease_generation,
+                    "p_disposition": disposition,
+                    "p_recommended_purchase_intent_id": candidate_id,
+                    "p_supporting_evidence": evidence,
+                    "p_model_name": model_name,
+                    "p_prompt_version": prompt_version,
+                    "p_decision_reason_code": decision_reason_code,
+                }
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1 or set(rows[0]) != {"recommendation_ref", "status"}:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        if rows[0].get("status") != disposition:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        recommendation_ref = rows[0].get("recommendation_ref")
+        if disposition == "recommended":
+            _required_uuid(
+                {"recommendation_ref": recommendation_ref},
+                "recommendation_ref",
+                operation=operation,
+            )
+        elif recommendation_ref is not None:
+            raise SupabaseError(f"{operation}_invalid_shape")
+
+    async def release_correlation_preresolution(
+        self,
+        *,
+        case_id: str,
+        claim_token: str,
+        lease_generation: int,
+        failure_code: str,
+    ) -> None:
+        operation = "operator_correlation_preresolution_release"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/release_operator_correlation_preresolution",
+            content=json.dumps(
+                {
+                    "p_webhook_event_id": case_id,
+                    "p_claim_token": claim_token,
+                    "p_lease_generation": lease_generation,
+                    "p_failure_code": failure_code,
+                }
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+
     async def claim_slack_correlation_notifications(
         self,
         *,
@@ -2077,25 +2424,41 @@ class SupabaseClient:
             or lease_seconds > 900
         ):
             raise ValueError("lease_seconds must be between 30 and 900")
+        claim_payload = json.dumps(
+            {
+                "p_tenant_ref": tenant_ref,
+                "p_funnel_ref": funnel_ref,
+                "p_worker_id": worker_id,
+                "p_limit": limit,
+                "p_lease_seconds": lease_seconds,
+                "p_binding_version": binding_version,
+            }
+        )
         response = await self._request(
             "POST",
-            "/rest/v1/rpc/claim_slack_correlation_notifications",
-            content=json.dumps(
-                {
-                    "p_tenant_ref": tenant_ref,
-                    "p_funnel_ref": funnel_ref,
-                    "p_worker_id": worker_id,
-                    "p_limit": limit,
-                    "p_lease_seconds": lease_seconds,
-                    "p_binding_version": binding_version,
-                }
-            ),
+            "/rest/v1/rpc/claim_slack_correlation_notifications_v2",
+            content=claim_payload,
         )
         if response.status_code != 200:
             raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
         rows = _response_rows(response, operation=operation)
+        is_v3 = False
+        if not rows:
+            response = await self._request(
+                "POST",
+                "/rest/v1/rpc/claim_slack_correlation_notifications_v3",
+                content=claim_payload,
+            )
+            if response.status_code != 200:
+                raise SupabaseError(
+                    f"{operation}_failed: HTTP {response.status_code}"
+                )
+            rows = _response_rows(response, operation=operation)
+            is_v3 = True
         expected_keys = {
             "source_event_id",
+            "source_event_type",
+            "notification_contract_version",
             "outcome",
             "reason_code",
             "candidate_count",
@@ -2103,6 +2466,8 @@ class SupabaseClient:
             "claim_token",
             "lease_generation",
         }
+        if is_v3:
+            expected_keys.add("recommendation_data")
         claims: list[SlackCorrelationNotificationClaim] = []
         for row in rows:
             if set(row) != expected_keys:
@@ -2110,7 +2475,11 @@ class SupabaseClient:
             outcome = _required_enum(
                 row,
                 "outcome",
-                {"unmatched", "ambiguous", "conflict"},
+                (
+                    {"ambiguous", "conflict"}
+                    if is_v3
+                    else {"unmatched", "ambiguous", "conflict"}
+                ),
                 operation=operation,
             )
             source_event_id = _required_uuid(
@@ -2122,6 +2491,22 @@ class SupabaseClient:
             )
             lease_generation = _required_positive_int(
                 row, "lease_generation", operation=operation
+            )
+            notification_contract_version = _required_positive_int(
+                row, "notification_contract_version", operation=operation
+            )
+            if (
+                is_v3 and notification_contract_version != 3
+            ) or (
+                not is_v3 and notification_contract_version not in {1, 2}
+            ):
+                raise SupabaseError(f"{operation}_invalid")
+            recommendation = (
+                _parse_correlation_recommendation(
+                    row.get("recommendation_data"), operation=operation
+                )
+                if is_v3
+                else None
             )
             occurred_text = _required_string(row, "occurred_at", operation=operation)
             try:
@@ -2141,6 +2526,17 @@ class SupabaseClient:
             claims.append(
                 SlackCorrelationNotificationClaim(
                     source_event_id=source_event_id,
+                    source_event_type=_required_enum(
+                        row,
+                        "source_event_type",
+                        {
+                            "PURCHASE_APPROVED",
+                            "PURCHASE_OUT_OF_SHOPPING_CART",
+                            "PURCHASE_CANCELED",
+                        },
+                        operation=operation,
+                    ),
+                    notification_contract_version=notification_contract_version,
                     outcome=outcome,
                     reason_code=_required_string(
                         row, "reason_code", operation=operation
@@ -2149,6 +2545,7 @@ class SupabaseClient:
                     occurred_at=occurred_at,
                     claim_token=claim_token,
                     lease_generation=lease_generation,
+                    recommendation=recommendation,
                 )
             )
         return claims
@@ -2656,6 +3053,281 @@ class SupabaseClient:
                 row, "conversation_id", operation=operation
             ),
             automation_status=automation_status,
+        )
+
+    async def reserve_chatwoot_checkout_issuance_v2(
+        self,
+        *,
+        commercial_case_id: str,
+        external_user_id: str,
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+        chatwoot_conversation_id: int,
+        trigger_external_message_id: str,
+        issuance_ulid: str,
+        now: str,
+    ) -> CheckoutIssuanceReservation:
+        """Atomically persist one V2 checkout issuance before Chatwoot."""
+
+        operation = "chatwoot_checkout_issuance_v2_reserve"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/reserve_chatwoot_checkout_issuance_v2",
+            content=json.dumps({
+                "p_commercial_case_id": commercial_case_id,
+                "p_external_user_id": external_user_id,
+                "p_chatwoot_account_id": chatwoot_account_id,
+                "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                "p_chatwoot_conversation_id": chatwoot_conversation_id,
+                "p_trigger_external_message_id": trigger_external_message_id,
+                "p_issuance_ulid": issuance_ulid,
+                "p_now": now,
+            }, ensure_ascii=False),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        expected = {
+            "outcome", "issuance_id", "issuance_ulid", "purchase_intent_id",
+            "source_kind", "checkout_url_final", "source_value", "sck_value",
+        }
+        if len(rows) != 1 or set(rows[0]) != expected:
+            raise SupabaseCommittedResponseError(operation)
+        row = rows[0]
+        outcome = row.get("outcome")
+        allowed = {
+            "reserved", "request_started", "request_started_replay", "already_accepted",
+            "delivery_unknown", "invalid_request", "blocked_case",
+            "blocked_scope", "missing_default_offer", "blocked_contact",
+            "blocked_opt_out", "blocked_conversation", "blocked_identity",
+            "purchase_already_approved", "replay_conflict",
+        }
+        if outcome not in allowed:
+            raise SupabaseCommittedResponseError(operation)
+        values = {
+            key: _optional_string(row, key, operation=operation)
+            for key in expected - {"outcome"}
+        }
+        populated = all(value is not None for value in values.values())
+        empty = all(value is None for value in values.values())
+        if outcome in {
+            "reserved", "request_started", "request_started_replay",
+            "already_accepted", "delivery_unknown",
+        } and not populated:
+            raise SupabaseCommittedResponseError(operation)
+        if outcome == "purchase_already_approved" and not (populated or empty):
+            raise SupabaseCommittedResponseError(operation)
+        if outcome not in {
+            "reserved", "request_started", "request_started_replay", "already_accepted",
+            "delivery_unknown", "purchase_already_approved",
+        } and not empty:
+            raise SupabaseCommittedResponseError(operation)
+        if populated:
+            for key in ("issuance_id", "purchase_intent_id"):
+                try:
+                    uuid.UUID(values[key] or "")
+                except ValueError as exc:
+                    raise SupabaseCommittedResponseError(operation) from exc
+            returned_ulid = values["issuance_ulid"] or ""
+            source_kind = values["source_kind"]
+            source_value = values["source_value"]
+            sck_value = values["sck_value"] or ""
+            final_url = values["checkout_url_final"] or ""
+            if (
+                re.fullmatch(r"[0-7][0-9A-HJKMNP-TV-Z]{25}", returned_ulid) is None
+                or source_kind not in {"inbound_request", "precheckout_request"}
+                or source_value != "hermes"
+                or sck_value != f"hermes|v1|{returned_ulid}"
+            ):
+                raise SupabaseCommittedResponseError(operation)
+            try:
+                parsed = urlsplit(final_url)
+                query = parse_qs(parsed.query, strict_parsing=True)
+            except (TypeError, ValueError) as exc:
+                raise SupabaseCommittedResponseError(operation) from exc
+            if (
+                parsed.scheme != "https"
+                or parsed.netloc != "pay.hotmart.com"
+                or parsed.fragment
+                or set(query) != {"off", "checkoutMode", "src", "sck"}
+                or query.get("src") != ["hermes"]
+                or query.get("sck") != [sck_value]
+                or len(query.get("off", [])) != 1
+                or len(query.get("checkoutMode", [])) != 1
+            ):
+                raise SupabaseCommittedResponseError(operation)
+        return CheckoutIssuanceReservation(outcome=outcome, **values)
+
+    async def authorize_chatwoot_checkout_issuance_v2(
+        self,
+        *,
+        issuance_id: str,
+        external_user_id: str,
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+        chatwoot_conversation_id: int,
+        trigger_external_message_id: str,
+        now: str,
+    ) -> CheckoutIssuanceAuthorization:
+        """Reauthorize immediately before the Chatwoot POST."""
+
+        operation = "chatwoot_checkout_issuance_v2_authorize"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/authorize_chatwoot_checkout_issuance_v2",
+            content=json.dumps({
+                "p_issuance_id": issuance_id,
+                "p_external_user_id": external_user_id,
+                "p_chatwoot_account_id": chatwoot_account_id,
+                "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                "p_chatwoot_conversation_id": chatwoot_conversation_id,
+                "p_trigger_external_message_id": trigger_external_message_id,
+                "p_now": now,
+            }, ensure_ascii=False),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        expected = {"outcome", "issuance_id", "status"}
+        if len(rows) != 1 or set(rows[0]) != expected:
+            raise SupabaseCommittedResponseError(operation)
+        row = rows[0]
+        outcome = row.get("outcome")
+        if outcome not in {
+            "request_started", "request_started_replay", "already_accepted",
+            "delivery_unknown", "purchase_already_approved", "invalid_request",
+            "blocked_case", "blocked_scope", "blocked_contact",
+            "blocked_opt_out", "blocked_conversation", "blocked_identity",
+            "blocked_intent",
+        }:
+            raise SupabaseCommittedResponseError(operation)
+        returned_id = _optional_string(row, "issuance_id", operation=operation)
+        returned_status = _optional_string(row, "status", operation=operation)
+        if outcome == "invalid_request":
+            if returned_id is not None or returned_status is not None:
+                raise SupabaseCommittedResponseError(operation)
+        else:
+            if returned_id is None or returned_status not in {
+                "reserved", "request_started", "accepted_by_chatwoot",
+                "delivery_unknown", "purchase_matched",
+            }:
+                raise SupabaseCommittedResponseError(operation)
+            try:
+                uuid.UUID(returned_id)
+            except ValueError as exc:
+                raise SupabaseCommittedResponseError(operation) from exc
+            if returned_id != issuance_id:
+                raise SupabaseCommittedResponseError(operation)
+        return CheckoutIssuanceAuthorization(outcome, returned_id, returned_status)
+
+    async def finalize_chatwoot_checkout_issuance_v2(
+        self,
+        *,
+        issuance_id: str,
+        status: str,
+        chatwoot_message_id: int | None,
+        failure_code: str | None,
+        now: str,
+    ) -> CheckoutIssuanceFinalization:
+        operation = "chatwoot_checkout_issuance_v2_finalize"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/finalize_chatwoot_checkout_issuance_v2",
+            content=json.dumps({
+                "p_issuance_id": issuance_id,
+                "p_status": status,
+                "p_chatwoot_message_id": chatwoot_message_id,
+                "p_failure_code": failure_code,
+                "p_now": now,
+            }, ensure_ascii=False),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1 or set(rows[0]) != {"outcome", "issuance_id", "status"}:
+            raise SupabaseCommittedResponseError(operation)
+        row = rows[0]
+        outcome = _required_enum(
+            row, "outcome", {"finalized", "already_finalized"}, operation=operation
+        )
+        returned_id = _required_uuid(row, "issuance_id", operation=operation)
+        final_status = _required_enum(
+            row,
+            "status",
+            {"accepted_by_chatwoot", "delivery_unknown", "purchase_matched"},
+            operation=operation,
+        )
+        if returned_id != issuance_id:
+            raise SupabaseCommittedResponseError(operation)
+        return CheckoutIssuanceFinalization(outcome, returned_id, final_status)
+
+    async def admit_and_correlate_hotmart_checkout_issuance_v2(
+        self,
+        *,
+        external_event_id: str,
+        payload: dict[str, Any],
+        sck_value: str,
+        now: str,
+    ) -> CheckoutIssuancePurchaseAdmission:
+        """Persist and correlate a Hermes-SCK purchase without identity fallback."""
+
+        operation = "hotmart_checkout_issuance_v2_admit"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/admit_and_correlate_hotmart_checkout_issuance_v2",
+            content=json.dumps({
+                "p_external_event_id": external_event_id,
+                "p_payload": payload,
+                "p_sck_value": sck_value,
+                "p_now": now,
+            }, ensure_ascii=False),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        expected = {
+            "admission_outcome", "webhook_event_id", "correlation_outcome",
+            "issuance_id", "purchase_intent_id", "commercial_case_id",
+        }
+        if len(rows) != 1 or set(rows[0]) != expected:
+            raise SupabaseCommittedResponseError(operation)
+        row = rows[0]
+        admission_outcome = _required_enum(
+            row, "admission_outcome",
+            {"inserted", "duplicate", "semantic_conflict"},
+            operation=operation,
+        )
+        webhook_event_id = _required_uuid(
+            row, "webhook_event_id", operation=operation
+        )
+        correlation_outcome = _required_enum(
+            row, "correlation_outcome",
+            {"matched", "replay", "conflict", "purchase_already_approved",
+             "invalid_hermes_sck", "not_found", "invalid_purchase_event",
+             "semantic_conflict"},
+            operation=operation,
+        )
+        values = {
+            key: _optional_string(row, key, operation=operation)
+            for key in ("issuance_id", "purchase_intent_id", "commercial_case_id")
+        }
+        populated = all(value is not None for value in values.values())
+        if correlation_outcome in {
+            "matched", "replay", "conflict", "purchase_already_approved"
+        }:
+            if not populated:
+                raise SupabaseCommittedResponseError(operation)
+            for value in values.values():
+                try:
+                    uuid.UUID(value or "")
+                except ValueError as exc:
+                    raise SupabaseCommittedResponseError(operation) from exc
+        elif any(value is not None for value in values.values()):
+            raise SupabaseCommittedResponseError(operation)
+        return CheckoutIssuancePurchaseAdmission(
+            admission_outcome, webhook_event_id, correlation_outcome,
+            values["issuance_id"], values["purchase_intent_id"],
+            values["commercial_case_id"],
         )
 
     async def get_chatwoot_payment_link_candidate(

@@ -17,10 +17,20 @@ import tempfile
 from typing import BinaryIO
 from uuid import UUID, uuid4
 
-from slack_correlation.catalog import NotificationCommand
+from slack_correlation.catalog import (
+    CorrelationRecommendation,
+    CorrelationRecommendationEvidence,
+    NotificationCommand,
+)
+from slack_correlation.case_copy import CODE_TO_EVENT_OUTCOME
 
 _TENANT_REF = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
 _MACHINE_FAILURE = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,119}$")
+_ACTIONABLE_CORRELATION_CODES = frozenset(
+    event_code
+    for event_code, (_, outcome) in CODE_TO_EVENT_OUTCOME.items()
+    if outcome in {"ambiguous", "conflict"} or event_code == "COR-001"
+)
 
 
 class InstanceLockError(RuntimeError):
@@ -130,11 +140,13 @@ class NotificationStore:
         finally:
             lock_file.close()
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self._path, timeout=15, isolation_level=None)
+    def _connect(self, *, busy_timeout_ms: int = 15_000) -> sqlite3.Connection:
+        connection = sqlite3.connect(
+            self._path, timeout=busy_timeout_ms / 1000, isolation_level=None
+        )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 15000")
+        connection.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
         connection.execute("PRAGMA synchronous = FULL")
         return connection
 
@@ -297,14 +309,18 @@ class NotificationStore:
             )
             now = datetime.now(UTC).isoformat()
             for row in connection.execute(
-                """SELECT tenant_ref, notification_id, payload_json, channel_id, message_ts
+                """SELECT tenant_ref, notification_id, payload_json, team_id,
+                          channel_id, message_ts
                    FROM notifications
-                   WHERE state='accepted' AND event_code IN ('COR-001','COR-002','COR-003')
+                   WHERE state='accepted' AND event_code LIKE 'COR-%'
                      AND thread_ts IS NULL"""
             ):
                 try:
                     command = _deserialize_command(str(row["payload_json"]))
-                    if command.subject_ref is None:
+                    if (
+                        command.event_code not in _ACTIONABLE_CORRELATION_CODES
+                        or command.subject_ref is None
+                    ):
                         continue
                     case_id = str(UUID(command.subject_ref[2:]))
                     channel_id = str(row["channel_id"])
@@ -318,9 +334,9 @@ class NotificationStore:
                     """INSERT OR IGNORE INTO correlation_projections
                        (tenant_ref, notification_id, case_id, team_id, channel_id, message_ts,
                         review_due_at, state, created_at, updated_at)
-                       VALUES (?, ?, ?, NULL, ?, ?, ?, 'pending', ?, ?)""",
-                    (row["tenant_ref"], row["notification_id"], case_id, channel_id,
-                     message_ts, review_due_at, now, now),
+                       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+                    (row["tenant_ref"], row["notification_id"], case_id, row["team_id"],
+                     channel_id, message_ts, review_due_at, now, now),
                 )
             session_columns = {
                 str(row["name"])
@@ -819,13 +835,15 @@ class NotificationStore:
             updated = connection.execute(
                 """
                 UPDATE notifications
-                SET state = 'accepted', channel_id = ?, message_ts = ?, thread_ts = ?,
+                SET state = 'accepted', team_id = COALESCE(?, team_id),
+                    channel_id = ?, message_ts = ?, thread_ts = ?,
                     failure_code = NULL, claim_owner = NULL, updated_at = ?
                 WHERE tenant_ref = ? AND notification_id = ?
                   AND state = 'request_started'
                   AND claim_owner = ? AND claim_generation = ?
                 """,
                 (
+                    team_id,
                     channel_id,
                     message_ts,
                     thread_ts,
@@ -840,7 +858,7 @@ class NotificationStore:
                 connection.rollback()
                 raise RuntimeError("notification_claim_lost")
             if (
-                claim.command.event_code in {"COR-001", "COR-002", "COR-003"}
+                claim.command.event_code in _ACTIONABLE_CORRELATION_CODES
                 and thread_ts is None
                 and claim.command.subject_ref is not None
             ):
@@ -965,7 +983,7 @@ class NotificationStore:
     ) -> tuple[bool, int | None, dict[str, object] | None]:
         """Persist a local-only modal transition or no-op for exact replay."""
         now = datetime.now(UTC).isoformat()
-        with self._connect() as connection:
+        with self._connect(busy_timeout_ms=500) as connection:
             connection.execute("BEGIN IMMEDIATE")
             is_new, status, prior = self._prior_interaction(connection, fingerprint)
             if not is_new:
@@ -993,7 +1011,7 @@ class NotificationStore:
     ) -> tuple[bool, int | None, dict[str, object] | None, str | None]:
         now = datetime.now(UTC).isoformat()
         token = str(uuid4())
-        with self._connect() as connection:
+        with self._connect(busy_timeout_ms=500) as connection:
             connection.execute("BEGIN IMMEDIATE")
             is_new, status, response = self._prior_interaction(connection, fingerprint)
             if not is_new:
@@ -1057,7 +1075,7 @@ class NotificationStore:
         response: dict[str, object],
     ) -> tuple[bool, int | None, dict[str, object] | None]:
         now = datetime.now(UTC).isoformat()
-        with self._connect() as connection:
+        with self._connect(busy_timeout_ms=500) as connection:
             connection.execute("BEGIN IMMEDIATE")
             is_new, status, prior = self._prior_interaction(connection, fingerprint)
             if not is_new:
@@ -1074,7 +1092,7 @@ class NotificationStore:
                 row is None or row["team_id"] != team_id
                 or row["slack_user_id"] != slack_user_id
                 or int(row["expires_at"]) < now_epoch
-                or row["opening_state"] != "completed"
+                or row["opening_state"] not in {"request_started", "completed"}
             ):
                 connection.rollback()
                 raise RuntimeError("review_session_binding_changed")
@@ -1117,7 +1135,7 @@ class NotificationStore:
         response: dict[str, object],
     ) -> tuple[bool, int | None, dict[str, object] | None]:
         now = datetime.now(UTC).isoformat()
-        with self._connect() as connection:
+        with self._connect(busy_timeout_ms=500) as connection:
             connection.execute("BEGIN IMMEDIATE")
             is_new, status, prior = self._prior_interaction(connection, fingerprint)
             if not is_new:
@@ -1979,6 +1997,10 @@ def _execute_statements(connection: sqlite3.Connection, script: str) -> None:
 
 def _serialize_command(command: NotificationCommand) -> str:
     payload = asdict(command)
+    if command.recommendation is None:
+        # Preserve byte-exact payload hashes for V1/V2 rows admitted before the
+        # optional V3 recommendation field existed.
+        payload.pop("recommendation", None)
     payload["occurred_at"] = command.occurred_at.astimezone(UTC).isoformat()
     if command.deadline_at is not None:
         payload["deadline_at"] = command.deadline_at.astimezone(UTC).isoformat()
@@ -1990,6 +2012,13 @@ def _deserialize_command(payload_json: str) -> NotificationCommand:
     payload["occurred_at"] = datetime.fromisoformat(payload["occurred_at"])
     if payload["deadline_at"] is not None:
         payload["deadline_at"] = datetime.fromisoformat(payload["deadline_at"])
+    recommendation = payload.get("recommendation")
+    if recommendation is not None:
+        recommendation["evidence"] = tuple(
+            CorrelationRecommendationEvidence(**item)
+            for item in recommendation["evidence"]
+        )
+        payload["recommendation"] = CorrelationRecommendation(**recommendation)
     return NotificationCommand(**payload)
 
 

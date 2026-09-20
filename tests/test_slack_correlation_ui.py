@@ -37,6 +37,7 @@ def test_slack_correlation_is_included_in_the_installable_package() -> None:
 def _case() -> dict[str, object]:
     return {
         "case_id": "11111111-1111-4111-8111-111111111111",
+        "event_type": "PURCHASE_APPROVED",
         "outcome": "conflict",
         "reason_code": "email_phone_conflict",
         "reason": "El email y el teléfono apuntan a intenciones diferentes.",
@@ -58,7 +59,7 @@ def test_pending_message_is_native_correlated_and_pii_minimized() -> None:
         review_due_at="2026-09-07T15:00:00Z",
     )
 
-    assert payload["text"] == "Necesitamos confirmar una compra"
+    assert payload["text"] == "Compra confirmada: datos de personas diferentes"
     assert payload["metadata"] == {
         "event_type": "operator_correlation_case",
         "event_payload": {
@@ -69,22 +70,102 @@ def test_pending_message_is_native_correlated_and_pii_minimized() -> None:
     assert action == {
         "type": "button",
         "action_id": "review_operator_correlation",
-        "text": {"type": "plain_text", "text": "Revisar compra"},
+        "text": {"type": "plain_text", "text": "Identificar comprador"},
         "style": "primary",
         "value": "11111111-1111-4111-8111-111111111111",
     }
     rendered = repr(payload["blocks"])
-    assert "Necesitamos confirmar una compra" in rendered
-    assert "El email y el teléfono no conducen a la misma persona." in rendered
+    assert "Compra confirmada: datos de personas diferentes" in rendered
+    assert "El email coincide con una persona y el teléfono con otra." in rendered
     assert "Personas posibles: 2" in rendered
     assert "b***r@example.com" in rendered
     assert "********4567" in rendered
     assert "buyer@example.com" not in rendered
     assert "593991234567" not in rendered
-    assert "La compra seguirá en espera hasta que alguien la revise." in rendered
+    assert "Mientras esté pendiente" in rendered
     assert "Correlación" not in rendered
     assert "email_phone_conflict" not in rendered
     assert "C-11111111" not in rendered
+
+
+def test_zero_match_pending_message_has_no_decision_button() -> None:
+    case = _case()
+    case["outcome"] = "unmatched"
+    case["candidate_count"] = 0
+
+    payload = build_pending_message(case, review_due_at="2026-09-07T15:00:00Z")
+
+    assert not any(block.get("type") == "actions" for block in payload["blocks"])
+
+
+def test_conflict_pending_message_keeps_decision_button() -> None:
+    payload = build_pending_message(_case(), review_due_at="2026-09-07T15:00:00Z")
+
+    assert any(block.get("type") == "actions" for block in payload["blocks"])
+
+
+@pytest.mark.parametrize(
+    ("event_type", "expected_title", "expected_task", "expected_button"),
+    [
+        ("PURCHASE_APPROVED", "Compra confirmada: datos de personas diferentes", "determinar quién realizó la compra", "Identificar comprador"),
+        ("PURCHASE_OUT_OF_SHOPPING_CART", "Checkout abandonado: identidad contradictoria", "identificar quién inició este checkout", "Identificar intento abandonado"),
+        ("PURCHASE_CANCELED", "Pago no completado: identidad contradictoria", "identificar quién intentó realizar el pago", "Identificar intento de pago"),
+    ],
+)
+def test_pending_message_names_the_business_event_and_operator_task(
+    event_type: str, expected_title: str, expected_task: str, expected_button: str
+) -> None:
+    case = _case()
+    case["event_type"] = event_type
+
+    payload = build_pending_message(case, review_due_at="2026-09-07T15:00:00Z")
+
+    rendered = repr(payload)
+    assert expected_title in rendered
+    assert expected_task in rendered
+    assert "Mientras esté pendiente" in rendered
+    assert payload["blocks"][-1]["elements"][0]["text"]["text"] == expected_button
+
+
+@pytest.mark.parametrize(
+    ("event_type", "expected_situation", "expected_question", "expected_title"),
+    [
+        ("PURCHASE_APPROVED", "Hotmart confirmó una compra", "¿A cuál persona pertenece esta compra?", "Identificar comprador"),
+        ("PURCHASE_OUT_OF_SHOPPING_CART", "Hotmart informó una salida del checkout sin compra confirmada", "¿Cuál persona inició este checkout?", "Identificar abandono"),
+        ("PURCHASE_CANCELED", "Hotmart informó un intento de pago no completado", "¿Cuál persona intentó realizar el pago?", "Identificar pago"),
+    ],
+)
+def test_review_modal_explains_what_happened_and_what_must_be_decided(
+    event_type: str, expected_situation: str, expected_question: str, expected_title: str
+) -> None:
+    case = _case()
+    case["event_type"] = event_type
+    case["candidates"] = [
+        {
+            "purchase_intent_id": "22222222-2222-4222-8222-222222222222",
+            "matched_by": ["email"],
+            "submitted_at": "2026-09-06T14:00:00Z",
+            "lifecycle_state": "waiting_for_purchase",
+            "masked_email": "b***r@example.com",
+            "masked_phone": "********9999",
+        },
+        {
+            "purchase_intent_id": "33333333-3333-4333-8333-333333333333",
+            "matched_by": ["phone"],
+            "submitted_at": "2026-09-06T14:05:00Z",
+            "lifecycle_state": "waiting_for_purchase",
+            "masked_email": "o***r@example.com",
+            "masked_phone": "********4567",
+        },
+    ]
+
+    modal = build_review_modal(case, review_token="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+
+    rendered = repr(modal)
+    assert expected_situation in rendered
+    assert expected_question in rendered
+    assert "Elegí una persona sólo si pudiste comprobarlo" in rendered
+    assert modal["title"]["text"] == expected_title
 
 
 def test_review_modal_asks_one_plain_language_question_with_three_safe_outcomes() -> None:
@@ -114,7 +195,7 @@ def test_review_modal_asks_one_plain_language_question_with_three_safe_outcomes(
     assert modal["type"] == "modal"
     assert modal["callback_id"] == "select_operator_correlation_resolution"
     assert json.loads(modal["private_metadata"]) == {"review_token": review_token}
-    assert modal["title"] == {"type": "plain_text", "text": "Revisar compra"}
+    assert modal["title"] == {"type": "plain_text", "text": "Identificar comprador"}
     assert modal["submit"] == {"type": "plain_text", "text": "Continuar"}
     choice_block = next(
         block for block in modal["blocks"] if block.get("block_id") == "decision"
@@ -134,7 +215,7 @@ def test_review_modal_asks_one_plain_language_question_with_three_safe_outcomes(
     ]
     rendered = repr(modal)
     assert "¿A cuál persona pertenece esta compra?" in rendered
-    assert "Compra recibida" in rendered
+    assert "Compra confirmada por Hotmart" in rendered
     assert "Persona 1" in rendered
     assert "Coincide por: email" in rendered
     assert "Coincide por: teléfono" in rendered
@@ -219,7 +300,7 @@ def test_no_candidate_modal_asks_whether_to_close_or_leave_pending() -> None:
     )
 
     rendered = repr(modal)
-    assert "No encontramos una persona. ¿Qué querés hacer?" in rendered
+    assert "No encontramos al comprador. ¿Qué querés hacer?" in rendered
     decision = next(block for block in modal["blocks"] if block.get("block_id") == "decision")
     assert [option["value"] for option in decision["element"]["options"]] == [
         "close_without_match",
@@ -275,7 +356,7 @@ def test_verification_is_requested_only_after_selecting_a_person() -> None:
     assert [block.get("block_id") for block in modal["blocks"]] == [None, "verification"]
     rendered = repr(modal)
     assert "¿Cómo lo confirmaste?" in rendered
-    assert "Revisé la compra o transacción" in rendered
+    assert "Revisé el evento o la transacción" in rendered
     assert "Revisé el registro del cliente" in rendered
     assert "El cliente lo confirmó" in rendered
 
@@ -290,8 +371,8 @@ def test_confirmation_explains_the_business_consequence_without_internal_codes()
     rendered = repr(modal)
     assert modal["title"]["text"] == "Confirmar asociación"
     assert modal["submit"]["text"] == "Confirmar asociación"
-    assert "Vas a asociar esta compra con la persona seleccionada." in rendered
-    assert "El cliente confirmó que es su compra." in rendered
+    assert "Vas a asociar este caso con la persona seleccionada." in rendered
+    assert "El cliente confirmó que el caso le corresponde." in rendered
     assert "resolve_with_candidate" not in rendered
 
 
@@ -306,15 +387,15 @@ def test_no_match_confirmation_requires_an_explicit_irreversible_choice() -> Non
     rendered = repr(modal)
     assert modal["title"]["text"] == "Confirmar cierre"
     assert modal["submit"]["text"] == "Confirmar cierre"
-    assert "Vas a cerrar esta compra sin asociarla a ninguna persona." in rendered
+    assert "Vas a cerrar este caso sin asociarlo a ninguna persona." in rendered
     assert "Confirmá únicamente si revisaste todas las opciones." in rendered
 
 
 @pytest.mark.parametrize(
     ("outcome", "headline"),
     [
-        ("linked_candidate", "Compra asociada"),
-        ("closed_without_match", "Compra cerrada sin asociación"),
+        ("linked_candidate", "Caso asociado"),
+        ("closed_without_match", "Caso cerrado sin asociación"),
     ],
 )
 def test_terminal_card_is_plain_language_but_keeps_audit_metadata(
@@ -350,9 +431,9 @@ def test_progress_success_and_error_surfaces_use_plain_decision_language() -> No
     assert processing["title"]["text"] == "Guardando decisión"
     assert "Estamos comprobando tu decisión" in repr(processing)
     assert success["title"]["text"] == "Decisión guardada"
-    assert "La compra fue actualizada" in repr(success)
+    assert "El caso fue actualizado" in repr(success)
     assert error["title"]["text"] == "No pudimos guardar"
-    assert "La compra sigue pendiente" in repr(error)
+    assert "El caso sigue pendiente" in repr(error)
     visible = repr([
         {"title": item["title"], "blocks": item["blocks"]}
         for item in (processing, success, error)

@@ -37,6 +37,7 @@ class Operator:
         assert case_id == CASE
         return {
             "case_id": CASE,
+            "event_type": "PURCHASE_APPROVED",
             "outcome": "unmatched",
             "candidate_count": 0,
             "automation_blocked": True,
@@ -49,6 +50,7 @@ class MultiCaseOperator:
     async def get_masked_case(self, case_id: str) -> dict:
         return {
             "case_id": case_id,
+            "event_type": "PURCHASE_APPROVED",
             "outcome": "unmatched",
             "candidate_count": 0,
             "automation_blocked": True,
@@ -138,7 +140,7 @@ def test_backfill_updates_one_existing_root_in_place_and_never_posts(tmp_path) -
     assert slack.posts == 0
     assert len(slack.updates) == 1
     assert slack.updates[0][0:2] == (CHANNEL, TS)
-    assert "review_operator_correlation" in repr(slack.updates[0][2])
+    assert "review_operator_correlation" not in repr(slack.updates[0][2])
     assert store.projection_inventory()["accepted"] == 1
 
 

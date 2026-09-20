@@ -5,15 +5,21 @@ from __future__ import annotations
 import asyncio
 import fcntl
 import hashlib
+import math
 import os
 import stat
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
 
 import httpx
 
-from bridge.filtering import matches_allowed_whatsapp_identity
+from bridge.filtering import (
+    classify_chatwoot_event,
+    matches_allowed_whatsapp_identity,
+    matches_allowed_whatsapp_phone,
+)
 from bridge.reply_splitter import reply_batch_hash, reply_part_hash
 
 
@@ -62,6 +68,14 @@ class CanonicalConversationSnapshot:
         return "automation_paused" in self.labels or self.human_assignee_present
 
 
+@dataclass(frozen=True)
+class StalledChatwootConversation:
+    """A deterministic synthetic webhook admission for one canonical inbound."""
+
+    delivery_id: str
+    payload: dict[str, object]
+
+
 class ChatwootClient:
     """Perform deterministic control-plane operations in Chatwoot."""
 
@@ -97,6 +111,261 @@ class ChatwootClient:
     @property
     def account_id(self) -> int:
         return self._account_id
+
+    async def list_stalled_conversations(
+        self,
+        *,
+        expected_inbox_id: int,
+        stale_after_seconds: float = 120,
+        max_age_seconds: float = 86_400,
+        max_pages: int = 5,
+        allow_any_scoped_sender: bool = False,
+        now_epoch: float | None = None,
+    ) -> list[StalledChatwootConversation]:
+        """List bounded, replyable conversations whose latest public message stalled."""
+        if (
+            not isinstance(expected_inbox_id, int)
+            or isinstance(expected_inbox_id, bool)
+            or expected_inbox_id <= 0
+            or not math.isfinite(stale_after_seconds)
+            or stale_after_seconds < 0
+            or not math.isfinite(max_age_seconds)
+            or max_age_seconds < stale_after_seconds
+            or not 1 <= max_pages <= 20
+            or not isinstance(allow_any_scoped_sender, bool)
+        ):
+            raise ValueError("invalid stalled conversation scan configuration")
+        observed_at = time.time() if now_epoch is None else now_epoch
+        if not math.isfinite(observed_at):
+            raise ValueError("invalid stalled conversation scan clock")
+        path = f"/api/v1/accounts/{self._account_id}/conversations"
+        candidates: list[StalledChatwootConversation] = []
+        seen_conversations: set[int] = set()
+        expected_all_count: int | None = None
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers={"api_access_token": self._access_token},
+            transport=self._transport,
+            timeout=15,
+        ) as client:
+            for page_number in range(1, max_pages + 1):
+                response = await client.get(
+                    path,
+                    params={
+                        "status": "open",
+                        "inbox_id": str(expected_inbox_id),
+                        "page": str(page_number),
+                    },
+                )
+                response.raise_for_status()
+                conversations, all_count = self._parse_conversation_page(
+                    response,
+                    expected_page=page_number,
+                )
+                if expected_all_count is None:
+                    expected_all_count = all_count
+                elif all_count != expected_all_count:
+                    raise ChatwootProtocolError("conversation_count_changed")
+                if not conversations:
+                    break
+                for conversation in conversations:
+                    conversation_id = conversation.get("id")
+                    inbox_id = conversation.get("inbox_id")
+                    if (
+                        not isinstance(conversation_id, int)
+                        or isinstance(conversation_id, bool)
+                        or conversation_id <= 0
+                        or inbox_id != expected_inbox_id
+                    ):
+                        raise ChatwootProtocolError("invalid_conversation_scope")
+                    if conversation_id in seen_conversations:
+                        continue
+                    seen_conversations.add(conversation_id)
+                    details_path = (
+                        f"/api/v1/accounts/{self._account_id}"
+                        f"/conversations/{conversation_id}"
+                    )
+                    details_response = await client.get(details_path)
+                    details_response.raise_for_status()
+                    try:
+                        details = details_response.json()
+                    except ValueError as exc:
+                        raise ChatwootProtocolError("invalid_json") from exc
+                    if (
+                        not isinstance(details, dict)
+                        or details.get("id") != conversation_id
+                        or details.get("inbox_id") != expected_inbox_id
+                    ):
+                        raise ChatwootProtocolError("invalid_conversation_scope")
+                    details = dict(details)
+                    details["messages"] = await self.get_conversation_messages(
+                        conversation_id=conversation_id,
+                        limit=20,
+                    )
+                    candidate = self._stalled_conversation_candidate(
+                        details,
+                        expected_inbox_id=expected_inbox_id,
+                        stale_after_seconds=stale_after_seconds,
+                        max_age_seconds=max_age_seconds,
+                        allow_any_scoped_sender=allow_any_scoped_sender,
+                        now_epoch=observed_at,
+                    )
+                    if candidate is not None:
+                        candidates.append(candidate)
+                if all_count is not None and len(seen_conversations) >= all_count:
+                    break
+        if expected_all_count is not None and len(seen_conversations) < expected_all_count:
+            raise ChatwootProtocolError("conversation_scan_incomplete")
+        return candidates
+
+    @staticmethod
+    def _parse_conversation_page(
+        response: httpx.Response,
+        *,
+        expected_page: int,
+    ) -> tuple[list[dict[str, object]], int]:
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise ChatwootProtocolError("invalid_json") from exc
+        data = body.get("data") if isinstance(body, dict) else None
+        payload = data.get("payload") if isinstance(data, dict) else None
+        meta = data.get("meta") if isinstance(data, dict) else None
+        all_count = meta.get("all_count") if isinstance(meta, dict) else None
+        current_page = meta.get("current_page") if isinstance(meta, dict) else None
+        has_current_page = isinstance(meta, dict) and "current_page" in meta
+        if (
+            not isinstance(payload, list)
+            or not all(isinstance(item, dict) for item in payload)
+            or not isinstance(all_count, int)
+            or isinstance(all_count, bool)
+            or all_count < 0
+            or (
+                has_current_page
+                and (type(current_page) is not int or current_page != expected_page)
+            )
+        ):
+            raise ChatwootProtocolError("invalid_conversations_payload")
+        return payload, all_count
+
+    def _stalled_conversation_candidate(
+        self,
+        conversation: dict[str, object],
+        *,
+        expected_inbox_id: int,
+        stale_after_seconds: float,
+        max_age_seconds: float,
+        allow_any_scoped_sender: bool,
+        now_epoch: float,
+    ) -> StalledChatwootConversation | None:
+        if (
+            conversation.get("status") != "open"
+            or conversation.get("can_reply") is not True
+        ):
+            return None
+        labels = conversation.get("labels")
+        meta = conversation.get("meta")
+        messages = conversation.get("messages")
+        if (
+            not isinstance(labels, list)
+            or not all(isinstance(label, str) for label in labels)
+            or "automation_paused" in labels
+            or not isinstance(meta, dict)
+            or meta.get("assignee") is not None
+            or not isinstance(messages, list)
+            or not all(isinstance(message, dict) for message in messages)
+        ):
+            return None
+        contact = meta.get("sender")
+        if not isinstance(contact, dict) or contact.get("blocked") is True:
+            return None
+        conversation_id = conversation["id"]
+        assert isinstance(conversation_id, int)
+        public_records = [
+            message for message in messages if message.get("private") is False
+        ]
+        if any(
+            type(message.get("message_type")) is not int
+            or message.get("message_type") not in {0, 1, 2}
+            for message in public_records
+        ):
+            return None
+        public_messages = [
+            message
+            for message in public_records
+            if message.get("message_type") in {0, 1}
+        ]
+        if not public_messages:
+            return None
+        latest = max(
+            public_messages,
+            key=lambda message: (
+                message.get("id")
+                if isinstance(message.get("id"), int)
+                and not isinstance(message.get("id"), bool)
+                else -1
+            ),
+        )
+        message_id = latest.get("id")
+        created_at = latest.get("created_at")
+        content = latest.get("content")
+        sender = latest.get("sender")
+        if (
+            not isinstance(message_id, int)
+            or isinstance(message_id, bool)
+            or message_id <= 0
+            or latest.get("conversation_id") != conversation_id
+            or not isinstance(created_at, int)
+            or isinstance(created_at, bool)
+            or latest.get("message_type") != 0
+            or not isinstance(content, str)
+            or not content.strip()
+            or not isinstance(sender, dict)
+            or sender.get("type") != "contact"
+        ):
+            return None
+        age = now_epoch - created_at
+        if age < stale_after_seconds or age > max_age_seconds:
+            return None
+        minimal_conversation = {
+            "id": conversation_id,
+            "inbox_id": expected_inbox_id,
+            "status": "open",
+            "can_reply": True,
+            "labels": list(labels),
+            "meta": {
+                "sender": contact,
+                "assignee": None,
+            },
+            "contact_inbox": conversation.get("contact_inbox"),
+        }
+        payload = {
+            "event": "message_created",
+            "id": message_id,
+            "content": content,
+            "created_at": created_at,
+            "message_type": "incoming",
+            "private": False,
+            "sender": sender,
+            "account": {"id": self._account_id},
+            "inbox": {"id": expected_inbox_id},
+            "conversation": minimal_conversation,
+            "_stalled_monitor": {"version": 1},
+        }
+        decision = classify_chatwoot_event(
+            payload,
+            allowed_jid=self._allowed_jid,
+            agent_bot_id=self._agent_bot_id,
+            expected_account_id=self._account_id,
+            expected_inbox_id=expected_inbox_id,
+            allow_any_scoped_sender=allow_any_scoped_sender,
+        )
+        if not decision.accepted:
+            return None
+        return StalledChatwootConversation(
+            delivery_id=f"stalled-chatwoot:{conversation_id}:{message_id}",
+            payload=payload,
+        )
 
     async def get_canonical_conversation_snapshot(
         self,
@@ -314,16 +583,9 @@ class ChatwootClient:
                     raise ChatwootProtocolError("canonical_history_did_not_advance")
                 before = min(page_ids)
 
-        def sort_key(item: tuple[int, dict[str, object]]) -> tuple[int, int]:
-            message_id, message = item
-            created_at = message.get("created_at")
-            if not isinstance(created_at, int) or isinstance(created_at, bool):
-                raise ChatwootProtocolError("invalid_canonical_message")
-            return created_at, message_id
-
         ordered = [
             message
-            for _, message in sorted(messages_by_id.items(), key=sort_key)
+            for _, message in sorted(messages_by_id.items(), key=lambda item: item[0])
         ]
         return ordered[-limit:], boundary_reached
 
@@ -337,6 +599,7 @@ class ChatwootClient:
         part_index: int = 1,
         part_count: int = 1,
         prior_parts: tuple[str, ...] = (),
+        expected_inbox_id: int | None = None,
         expected_jid: str | None = None,
         pre_send_authorizer: Callable[[], Awaitable[bool]] | None = None,
     ) -> dict[str, object]:
@@ -395,6 +658,7 @@ class ChatwootClient:
                 part_count=part_count,
                 prior_parts=prior_parts,
                 reply_dir_fd=reply_dir_fd,
+                expected_inbox_id=expected_inbox_id,
                 expected_jid=expected_jid,
                 pre_send_authorizer=pre_send_authorizer,
             )
@@ -519,6 +783,7 @@ class ChatwootClient:
         part_count: int,
         prior_parts: tuple[str, ...],
         reply_dir_fd: int,
+        expected_inbox_id: int | None,
         expected_jid: str | None,
         pre_send_authorizer: Callable[[], Awaitable[bool]] | None,
     ) -> dict[str, object]:
@@ -548,6 +813,7 @@ class ChatwootClient:
             "part_index": part_index,
             "part_count": part_count,
             "prior_parts": prior_parts,
+            "expected_inbox_id": expected_inbox_id,
             "expected_jid": expected_jid,
         }
         async with httpx.AsyncClient(
@@ -582,6 +848,12 @@ class ChatwootClient:
                         "status": "blocked",
                         "reason": "pre_send_authorization_denied",
                     }
+                authorization_result = await self._current_authorization_result(
+                    control_client=final_client,
+                    **authorization_kwargs,
+                )
+                if authorization_result is not None:
+                    return authorization_result
             if not self._claim_reply_delivery(
                 reply_dir_fd=reply_dir_fd,
                 batch_hash=batch_hash,
@@ -662,10 +934,19 @@ class ChatwootClient:
         part_index: int,
         part_count: int,
         prior_parts: tuple[str, ...],
+        expected_inbox_id: int | None,
         expected_jid: str | None,
     ) -> dict[str, object] | None:
         conversation_response = await control_client.get(conversation_path)
         conversation_response.raise_for_status()
+        if expected_inbox_id is not None:
+            block_reason = self._conversation_reply_block_reason(
+                conversation_response,
+                conversation_id=conversation_id,
+                expected_inbox_id=expected_inbox_id,
+            )
+            if block_reason is not None:
+                return {"status": "blocked", "reason": block_reason}
         if not self._is_authorized_conversation(
             conversation_response,
             conversation_id=conversation_id,
@@ -748,6 +1029,11 @@ class ChatwootClient:
         for message in messages[trigger_index + 1 :]:
             if message.get("private") is not False:
                 continue
+            message_type = message.get("message_type")
+            if type(message_type) is not int or message_type not in {0, 1, 2}:
+                return {"status": "blocked", "reason": "conversation_advanced"}
+            if message_type == 2:
+                continue
             attributes = message.get("content_attributes")
             sender = message.get("sender")
             prior_index = (
@@ -782,7 +1068,7 @@ class ChatwootClient:
                 prior_indices.append(prior_index)
                 continue
             if (
-                message.get("message_type") == 1
+                message_type == 1
                 and isinstance(sender, dict)
                 and sender.get("type") != "agent_bot"
             ):
@@ -790,6 +1076,39 @@ class ChatwootClient:
             return {"status": "blocked", "reason": "conversation_advanced"}
         if prior_indices != list(range(1, part_index)):
             return {"status": "blocked", "reason": "reply_sequence_incomplete"}
+        return None
+
+    @staticmethod
+    def _conversation_reply_block_reason(
+        response: httpx.Response,
+        *,
+        conversation_id: int,
+        expected_inbox_id: int,
+    ) -> str | None:
+        if (
+            not isinstance(expected_inbox_id, int)
+            or isinstance(expected_inbox_id, bool)
+            or expected_inbox_id <= 0
+        ):
+            raise ChatwootProtocolError("invalid_expected_inbox_id")
+        try:
+            conversation = response.json()
+        except ValueError as exc:
+            raise ChatwootProtocolError("invalid_json") from exc
+        if not isinstance(conversation, dict) or conversation.get("id") != conversation_id:
+            raise ChatwootProtocolError("invalid_conversation_payload")
+        if conversation.get("inbox_id") != expected_inbox_id:
+            return "conversation_scope_changed"
+        if conversation.get("status") != "open":
+            return "conversation_not_open"
+        if conversation.get("can_reply") is not True:
+            return "conversation_not_replyable"
+        meta = conversation.get("meta")
+        sender = meta.get("sender") if isinstance(meta, dict) else None
+        if not isinstance(sender, dict):
+            raise ChatwootProtocolError("invalid_conversation_payload")
+        if sender.get("blocked") is not False:
+            return "contact_blocked"
         return None
 
     @staticmethod
@@ -805,9 +1124,9 @@ class ChatwootClient:
         if not isinstance(conversation, dict) or conversation.get("id") != conversation_id:
             raise ChatwootProtocolError("invalid_conversation_payload")
         meta = conversation.get("meta")
-        if not isinstance(meta, dict) or "assignee" not in meta:
+        if not isinstance(meta, dict):
             raise ChatwootProtocolError("invalid_conversation_payload")
-        return meta["assignee"] is not None
+        return meta.get("assignee") is not None
 
     def _is_authorized_conversation(
         self,
@@ -824,22 +1143,39 @@ class ChatwootClient:
             raise ChatwootProtocolError("invalid_conversation_payload")
         meta = conversation.get("meta")
         sender = meta.get("sender") if isinstance(meta, dict) else None
-        identifier = sender.get("identifier") if isinstance(sender, dict) else None
-        if not isinstance(identifier, str) or not identifier:
-            contact_inbox = conversation.get("contact_inbox")
-            identifier = (
-                contact_inbox.get("source_id")
-                if isinstance(contact_inbox, dict)
-                else None
+        contact_inbox_value = conversation.get("contact_inbox")
+        if not isinstance(sender, dict):
+            return False
+        if contact_inbox_value is None:
+            contact_inbox: dict[str, object] = {}
+        elif isinstance(contact_inbox_value, dict):
+            contact_inbox = contact_inbox_value
+        else:
+            return False
+        identifier_present = (
+            "identifier" in sender and sender.get("identifier") is not None
+        )
+        source_present = (
+            "source_id" in contact_inbox
+            and contact_inbox.get("source_id") is not None
+        )
+        using_phone_fallback = not identifier_present and not source_present
+        identifier = (
+            sender.get("identifier")
+            if identifier_present
+            else contact_inbox.get("source_id")
+            if source_present
+            else sender.get("phone_number")
+        )
+        allowed_jid = expected_jid or self._allowed_jid
+        if using_phone_fallback:
+            return matches_allowed_whatsapp_phone(
+                identifier,
+                allowed_jid=allowed_jid,
             )
-        if (not isinstance(identifier, str) or not identifier) and isinstance(
-            sender, dict
-        ):
-            identifier = sender.get("phone_number")
         return matches_allowed_whatsapp_identity(
             identifier,
-            allowed_jid=expected_jid or self._allowed_jid,
-            allow_e164=True,
+            allowed_jid=allowed_jid,
         )
 
     async def validate_conversation_authority(

@@ -179,9 +179,11 @@ Pragma: no-cache
 X-Content-Type-Options: nosniff
 X-Frame-Options: DENY
 Referrer-Policy: no-referrer
-Permissions-Policy: camera=(), microphone=(), geolocation=()
-Content-Security-Policy: default-src 'none'; style-src 'self' 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'
+Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-l52J2m7VmY7I0tZrQuy2hdhUrxn4divLexGOLQfktZM='; form-action 'self'; base-uri 'none'; frame-ancestors 'none'
 ```
+
+El hash de `script-src` autoriza únicamente el script inline determinista que habilita progresivamente el campo de corrección. No autoriza scripts arbitrarios ni recursos de terceros.
 
 No se incluyen PII, secrets, tokens, URLs originales, adjuntos, analytics, third-party JS, imágenes ni logs de contenido.
 
