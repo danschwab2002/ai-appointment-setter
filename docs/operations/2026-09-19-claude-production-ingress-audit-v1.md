@@ -12,7 +12,7 @@ Este documento no contiene secretos, identificadores de personas, numeros de tel
 
 Tres hallazgos, dos de ellos activos en el momento de la medicion.
 
-1. **Hotmart entrega y el bridge rechaza nueve de cada diez eventos.** En 3,05 dias de log de proxy: 103 entregas, **10 aceptadas**. La cadena observada es `503 webhook_persist_unavailable` en el primer intento y `401` en todos los reintentos posteriores, porque el reintento llega mas viejo que la ventana de frescura de 300 segundos. **Activo.**
+1. **Hotmart entrega y el bridge rechaza nueve de cada diez eventos.** En 3,05 dias de log de proxy: 103 entregas, **10 aceptadas**. La cadena es `503 webhook_persist_unavailable` en el primer intento y `401` en todos los reintentos posteriores. Reproducido localmente: el 503 es un **rechazo de contrato determinista**, no una indisponibilidad, asi que ningun reintento puede entrar; y los reintentos ademas chocan contra la ventana de frescura de 300 segundos. **Activo.**
 2. **El AgentBot de Chatwoot entrega a una ruta que el bridge no expone**: 145 POST con `404` en el mismo periodo, de forma continua. El ingreso canonico (`/webhooks/chatwoot`, webhook de cuenta suscrito a `message_created`) funciona, asi que no hay perdida demostrada del camino principal, pero la configuracion del bot es incorrecta. **Activo.**
 3. **`att1-agent-profile` lleva 13 dias sin replica por un error de unidades en las reservas del servicio**: pide 256 TiB de memoria en un nodo de 23 GB. **Activo, causa raiz identificada.**
 
@@ -121,12 +121,35 @@ Dos evidencias acotan bastante la causa.
 
 **Los tiempos de respuesta muestran donde corta cada codigo.** Los 503 tardaron entre 239 y 2034 ms, el mismo orden que los 202 (388 a 2694 ms): llegaron hasta las llamadas a Supabase. Los 401, en cambio, se concentran entre 7 y 50 ms, sin ninguna entrada/salida externa de por medio.
 
-**Y el nombre del error no describe lo que pasa.** El bloque `except SupabaseError` que devuelve `webhook_persist_unavailable` envuelve dos llamadas, no una: primero `admit_and_correlate_hotmart_cart_abandonment`, que persiste el evento y devuelve su `webhook_event_id`, y despues, porque `JOHANNA_ABANDONMENT_HOTMART_AUTO_ENABLED` esta en `true`, `correlate_hotmart_purchase_intent`. Si falla la segunda, el evento **ya quedo persistido** y el emisor igual recibe 503. De ahi salen dos consecuencias que hay que verificar contra la base: puede haber eventos de abandono guardados y sin correlacionar, y el reintento de Hotmart no aporta nada porque la guarda de frescura lo frena antes.
+### La causa: el 503 es determinista por contenido, no transitorio
+
+Reproducido localmente con PGlite, aplicando el esquema base y las 74 migraciones del repositorio y llamando a `admit_and_correlate_hotmart_cart_abandonment`, que es exactamente lo que hace el bridge:
+
+| Payload de abandono | Resultado | Filas persistidas |
+|---|---|---|
+| completo y valido | `outcome=inserted` | 1 |
+| `version` distinta de `2.0.0` | **excepcion** `invalid_cart_abandonment_admission_input` | 0 |
+| sin `data.offer.code` | **excepcion** | 0 |
+| `data.product.id` como texto en vez de numero | **excepcion** | 0 |
+| sin email y sin telefono | **excepcion** | 0 |
+| `creation_date` como texto en vez de numero | **excepcion** | 0 |
+| con email y sin telefono | `outcome=inserted` | 1 |
+| replay exacto del mismo evento | `outcome=duplicate` | 0 |
+
+La funcion valida el contrato v2.0.0 con `hotmart_cart_abandonment_payload_is_processable` y, si no lo cumple, **lanza**. La llamada es atomica: admision, identidad y correlacion viven en la misma transaccion, asi que la excepcion revierte todo y no queda rastro del evento. En el bridge esa excepcion es un `SupabaseError`, y el `except` lo traduce a `503 webhook_persist_unavailable`.
+
+De ahi se siguen tres cosas:
+
+1. **El 503 no es indisponibilidad: es un rechazo de contrato.** El mismo evento va a fallar en cada reintento, siempre, sin importar cuando llegue.
+2. **El codigo de respuesta es el equivocado.** Un rechazo determinista pide un descarte explicito (200 con motivo, que es lo que el handler ya hace cuando el clasificador no acepta el evento), no un 503 que le dice al emisor que el servicio esta caido y que reintente. Hotmart cuenta esas fallas para desactivar la configuracion del webhook.
+3. **La cadena 503 y despues 401 queda explicada entera:** el primer intento choca contra el contrato, los reintentos chocan contra la ventana de frescura, y el evento se pierde sin dejar registro en ninguna tabla.
+
+Para reproducirlo hace falta Node 22 y el paquete `@electric-sql/pglite` que ya usa la suite SQL: se cargan `supabase/baseline/20260803_public_schema.sql` y todas las migraciones en orden, y se llama a la funcion con el payload de prueba. El script no se agrego al repositorio para no tocar `tests/sql/followup_engine/package.json`, que esta reservado.
 
 ### Lo que falta para cerrar el diagnostico
 
-1. Cual de las dos llamadas falla y por que. El analisis de arriba deja como hipotesis principal la correlacion de intencion de compra, no la persistencia. Distinguirlas requiere mirar Supabase o registrar el motivo, que hoy el bridge no hace.
-2. Confirmar en el panel de Hotmart si la configuracion del webhook sigue activa, cuantos reintentos consumio y con que `creation_date` se envian los eventos de abandono. Lo hace una persona con acceso a esa cuenta.
+1. **Que campo concreto viene mal en los eventos reales.** La causa general esta demostrada; cual de las condiciones se incumple en produccion solo se ve en un payload real. El panel de Hotmart guarda 60 dias de historial de envios y permite reenviarlos: ahi se lee el cuerpo de un evento fallido y se compara contra las cinco condiciones de la tabla. Es el paso mas barato y el que decide el arreglo.
+2. Confirmar en el mismo panel si la configuracion del webhook sigue activa y cuantos reintentos consumio.
 3. La propuesta de cambio de comportamiento esta en `docs/design/hotmart-delivery-durability-v1.md`. Toca `src/bridge/app.py`, hoy reservado por el claim `codex-appointment-operations-v1` (PR #160), asi que no se implemento en esta tarea.
 
 ## 5. Chatwoot: el AgentBot entrega a una ruta inexistente

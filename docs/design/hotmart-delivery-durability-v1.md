@@ -36,15 +36,17 @@ La idempotencia real la da la base: `webhook_events` tiene `unique (source, exte
 
 Eso importa porque significa que la ventana se puede ampliar sin perder la garantia de procesamiento unico. Y hace falta ampliarla: la verificacion de abandono de carrito de Hotmart es por lotes, con demoras tipicas de decenas de minutos entre el abandono y la entrega, y el reintento de un evento legitimo llega, por definicion, tarde. Una ventana de cinco minutos medida contra `creation_date` esta calibrada para un emisor en tiempo real que Hotmart no es, al menos no para este evento.
 
-### 3.3 Dos fallos distintos comparten un solo codigo y un solo nombre
+### 3.3 Un rechazo de contrato se reporta como indisponibilidad
 
-El bloque `except SupabaseError` que devuelve `webhook_persist_unavailable` envuelve dos llamadas: la admision del evento, que lo persiste, y la correlacion de intencion de compra, que corre despues porque `JOHANNA_ABANDONMENT_HOTMART_AUTO_ENABLED` esta encendido. Si falla la segunda, el evento ya esta guardado y el emisor igual recibe un 503 que dice que no se pudo persistir.
+Esto es lo central, y esta demostrado, no inferido. `admit_and_correlate_hotmart_cart_abandonment` valida el contrato v2.0.0 del payload y **lanza** si no lo cumple: version distinta de `2.0.0`, `offer.code` ausente, `product.id` como texto, `creation_date` como texto, o ningun dato de contacto. La llamada es atomica, asi que la excepcion revierte la admision entera. En el bridge esa excepcion es un `SupabaseError` y sale como `503 webhook_persist_unavailable`.
 
-Eso tiene dos costos. El diagnostico es imposible desde afuera: `webhook_persist_unavailable` no distingue "no pude guardar" de "guarde y no pude correlacionar", que son problemas distintos con arreglos distintos. Y el reintento del emisor deja de ser la recuperacion correcta, porque lo que falta hacer no es guardar de nuevo.
+O sea: **el 503 no dice lo que pasa y ademas invita a lo peor**. Lo que pasa es que el evento no cumple el contrato y nunca lo va a cumplir; lo que el codigo 503 le dice al emisor es que el servicio esta caido y que vuelva a intentar. Hotmart reintenta, falla, y cuenta cada falla para desactivar la configuracion del webhook.
 
-Ademas hay evidencia de que la base no es el problema: el endpoint del funnel de Johanna persiste en la misma base y acumulo 1753 admisiones sin un solo 503 en el mismo periodo.
+Que la base no es el problema tambien esta medido: el endpoint del funnel de Johanna persiste en la misma Supabase y acumulo 1753 admisiones sin un solo 503 en el mismo periodo.
 
-### 3.4 Un fallo de persistencia se delega entero al emisor
+La reproduccion completa, con la tabla de que condicion rompe cual, esta en la seccion 4 de `../operations/2026-09-19-claude-production-ingress-audit-v1.md`.
+
+### 3.4 Un fallo de persistencia, si alguna vez ocurre, se delega entero al emisor
 
 Ante `SupabaseError` el bridge devuelve 503 y se olvida del evento. La recuperacion queda a cargo del reintento de Hotmart, que son como maximo cinco y que ademas van a chocar contra la guarda de frescura. El bridge ya resuelve este problema para Chatwoot con admision durable en disco (`CAPTURE_DIR`, escritura privada y atomica, retomada al reiniciar): responde despues de persistir una admision recuperable, no despues de completar el trabajo. Hotmart no tiene ese tratamiento.
 
@@ -52,11 +54,16 @@ Ante `SupabaseError` el bridge devuelve 503 y se olvida del evento. La recuperac
 
 En orden de valor sobre riesgo.
 
-**A. Cambiar el codigo de respuesta del descarte por antiguedad.** `stale_webhook` pasa de `401` a `200 {"status": "ignored", "reason": "stale_webhook"}`. No cambia que el evento se descarte; cambia que el emisor deje de contarlo como caida. Es el cambio mas chico y el que quita el riesgo mayor.
+**A. Que los rechazos deterministas dejen de parecer caidas.** Dos cambios de codigo de respuesta, ninguno cambia que evento se procesa:
+
+- el payload que no cumple el contrato pasa de `503` a `200 {"status": "ignored", "reason": "payload_contract_rejected"}`, con el detalle de que condicion fallo;
+- `stale_webhook` pasa de `401` a `200 {"status": "ignored", "reason": "stale_webhook"}`.
+
+El handler ya tiene ese patron para los eventos que el clasificador no acepta. Es el cambio mas chico y el que quita el riesgo mayor, que es que Hotmart apague el canal.
 
 **B. Calibrar la ventana contra el emisor real.** Subir `HOTMART_MAX_AGE_SECONDS` a un valor coherente con la entrega por lotes de Hotmart y con su politica de reintentos, y medirlo en vez de estimarlo: hace falta el `creation_date` real de los eventos entregados, que se lee en el panel de Hotmart. Mientras no se mida, el valor por defecto de 300 segundos es una decision sin dato.
 
-**C. Admision durable para Hotmart.** Escribir la admision en disco antes de responder, con el mismo patron que el ingreso de Chatwoot, y reconciliar contra Supabase en un worker. Convierte un fallo de la base en un retraso en vez de una perdida. Es el cambio mas grande de los tres y el unico que toca el modelo de procesamiento; entra despues de A y B, y solo si el 503 resulta recurrente y no un sintoma de otra cosa.
+**C. Admision durable para Hotmart.** Escribir la admision en disco antes de responder, con el mismo patron que el ingreso de Chatwoot, y reconciliar contra Supabase en un worker. Convierte un fallo de la base en un retraso en vez de una perdida. Es el cambio mas grande de los tres y el unico que toca el modelo de procesamiento. **Con lo que ahora se sabe, no es prioritario:** el 503 medido no viene de la base sino del contrato, y para eso A alcanza. Queda anotado para cuando aparezca un fallo real de disponibilidad.
 
 **C-bis. Separar los dos errores.** Un `SupabaseError` en la admision y uno en la correlacion son problemas distintos: el primero pide reintento del emisor, el segundo pide reproceso interno de un evento que ya esta guardado. Deben tener codigos y nombres distintos antes de decidir nada mas, porque hoy el diagnostico no se puede hacer.
 
@@ -64,7 +71,7 @@ En orden de valor sobre riesgo.
 
 ## 5. Lo que hay que averiguar antes de implementar
 
-1. **Cual de las dos llamadas falla.** La evidencia disponible apunta a la correlacion y no a la persistencia, y descarta la indisponibilidad de la base. Si se confirma, la propuesta C no corresponde y lo que hay que arreglar es la correlacion. Sin esto, A y B tapan el sintoma mas visible pero no el origen. Tambien hay que contar cuantos eventos de abandono quedaron persistidos sin correlacionar.
+1. **Que campo concreto viene mal en los eventos reales de Hotmart.** La causa general esta demostrada; cual de las cinco condiciones se incumple en produccion se lee de un payload real, en el historial de envios del panel de Hotmart, que guarda 60 dias. De eso depende si ademas del cambio de respuesta hace falta relajar o corregir alguna validacion: si Hotmart empezo a mandar `version` `2.1.0`, por ejemplo, el arreglo no es de codigos de respuesta sino de contrato.
 2. **Si la configuracion del webhook en Hotmart sigue activa** y cuantos reintentos consumio. Lo mira una persona con acceso a esa cuenta.
 3. **Con que `creation_date` llegan los eventos de abandono**, que es el dato que calibra B.
 
