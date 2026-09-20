@@ -1,6 +1,11 @@
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
+import pytest
+
+from bridge.chatwoot import ChatwootClient
 from bridge.checkout_delivery import deliver_checkout_issuance_v2
 
 
@@ -107,3 +112,40 @@ def test_durable_reservation_block_never_calls_chatwoot() -> None:
     assert result.outcome == "blocked"
     assert result.reason == "blocked_opt_out"
     assert control.called is False
+
+
+def test_live_inbox_mismatch_blocks_before_post_authorization(tmp_path: Path) -> None:
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.method == "GET" and request.url.path.endswith("/conversations/9101"):
+            return httpx.Response(200, json={
+                "id": 9101,
+                "inbox_id": 10,
+                "status": "open",
+                "meta": {
+                    "assignee": None,
+                    "sender": {"identifier": "12025550123@s.whatsapp.net"},
+                },
+            })
+        pytest.fail("An inbox mismatch must stop before any further Chatwoot request")
+
+    db = FakeSupabase()
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid="12025550123@s.whatsapp.net",
+        agent_bot_access_token="agent-bot-token",
+        agent_bot_id=1,
+        reply_dir=tmp_path,
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = _deliver(db, client)
+
+    assert result.outcome == "blocked"
+    assert result.reason == "conversation_scope_changed"
+    assert [name for name, _ in db.calls] == ["reserve"]
+    assert len(requests) == 1
