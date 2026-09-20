@@ -5,7 +5,7 @@
 
 ## 1. Principio general
 
-La documentación se crea desde el inicio del diseño, sin esperar a que toda la infraestructura esté implementada. Cada documento debe distinguir claramente entre:
+La documentación se crea en el momento en que puede ser verdadera, no antes. Un contrato y un ADR se escriben cuando hay una interfaz o una decisión que registrar, porque son insumo del trabajo. El estado del sistema y la evidencia se escriben después de verificar el efecto: un documento que declara estado antes de medirlo obliga a un segundo documento que lo corrija. Cada documento debe distinguir claramente entre:
 
 - una propuesta;
 - una decisión aceptada;
@@ -203,16 +203,39 @@ Antes de cerrar una tarea que cambie diseño, arquitectura, contratos u operaci�
 - [ ] No se crearon diarios o duplicaciones innecesarias.
 - [ ] No se tocaron archivos de trabajo concurrente fuera del alcance.
 
-## 9. Captura operacional durante la finalización de Johanna
+## 9. Evidencia obligatoria para afirmar estado
 
-Mientras Johanna no haya alcanzado su alcance de cierre aceptado, toda tarea que implemente, pruebe, despliegue, diagnostique o decida comportamiento necesario para completarla debe seguir `docs/operations/johanna-completion-learning-protocol.md`. Cada tarea conserva un registro exclusivo asociado a su claim; el integrador actualiza `docs/operations/johanna-completion-ledger.md` de forma serial.
+Vigente desde el 2026-09-20, introducida por el PR #138. Reemplaza a la captura de aprendizaje
+de Johanna, que pedía un documento narrativo por tarea y sólo se aplicaba a los claims cuyo
+nombre mencionaba "johanna".
 
-Esta obligación incorpora la documentación a la operativa diaria:
+Un documento que afirma que algo está desplegado, activo, habilitado o en producción lleva,
+en el mismo documento, la prueba de esa afirmación:
 
-1. **Al iniciar:** declarar el recurso único `johanna-completion:<task_id>`, reclamar `docs/operations/johanna-completion/records/<task_id>.md` y fijar resultado esperado, evidencia de cierre, incertidumbres, dependencias y artefactos afectados.
-2. **Durante el trabajo:** registrar hechos que cambien el diagnóstico; mantener separados síntoma, hipótesis y causa confirmada.
-3. **Al verificar:** preservar evidencia sanitizada, entorno, snapshot, resultado observado, límites no probados y delta de efectos externos.
-4. **Al cerrar:** clasificar cada aprendizaje y promoverlo al artefacto adecuado —prueba, contrato, arquitectura, ADR, runbook, gate manual o registro específico de Johanna— dentro del alcance seguro de la tarea.
-5. **Si hay concurrencia:** no tocar paths reservados ni el ledger central; dejar el pendiente con owner y destino en el registro exclusivo para que el integrador lo promueva.
+1. una **fecha ISO** (`YYYY-MM-DD`) de cuándo se verificó, y
+2. un **puntero verificable**: un sha de commit, una referencia `#<número>` de PR, o una ruta en `docs/operations/`.
 
-La herramienta de coordinación valida el registro al pasar a `review`. Una tarea cubierta no puede declararse cerrada si sólo resolvió el comportamiento funcional. Las secciones no aplicables deben decir `N/A` y explicar brevemente por qué; las sesiones y handoffs no sustituyen estos artefactos.
+Sin las dos cosas, la afirmación se escribe como propuesta, en futuro. La diferencia no es de
+estilo: un documento que declara estado sin haberlo medido obliga a otro documento que lo
+corrija, y esa cadena de correcciones es lo que esta sección existe para cortar.
+
+`scripts/agent_workspace.py` valida la regla al pasar un claim a `review`, sobre los documentos
+que la rama modificó. Dos criterios de diseño:
+
+- **La detección es por contenido, nunca por nombre de archivo.** Un documento nuevo no evade la
+  puerta por no figurar en ninguna lista.
+- **Quedan exentos por género** `docs/contracts/` y `docs/design/`: el primero describe una
+  interfaz y el segundo una propuesta; ninguno afirma el estado vigente del sistema.
+
+Una oración condicional ("cuando el flag está activo") y una negación ("no se desplegó ningún
+servicio") no son afirmaciones de estado, y la validación las descarta.
+
+Dos límites conocidos, medidos el 2026-09-20 sobre los 100 documentos en alcance del repositorio:
+
+- **La puerta verifica la forma de la evidencia, no su veracidad.** Una fecha y un puntero
+  cualesquiera la satisfacen. Lo que obliga es a dejar un rastro que otra persona pueda seguir;
+  que ese rastro sea verdadero lo sostiene quien escribe y lo comprueba quien revisa.
+- **Una oración que niega una cosa y afirma otra en la misma línea no se detecta.** Es el precio
+  de descartar las negaciones, que eran la mayor fuente de falsos positivos: sobre esos mismos
+  100 documentos, la detección cruda marcaba 27 y la afinada marca 5, de los cuales 3 son
+  afirmaciones reales sin evidencia.

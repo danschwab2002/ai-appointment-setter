@@ -28,15 +28,19 @@ Construir un receptor seguro para webhooks de Chatwoot antes de integrar el prof
 ## Documentación obligatoria
 
 - Seguir `docs/documentation-governance.md` en toda tarea de diseño, arquitectura, contratos u operación.
-- Documentar propuestas en `docs/design/`; crear ADR sólo para decisiones arquitectónicas aceptadas.
-- Actualizar `docs/architecture.md` cuando cambie el sistema implementado y `docs/contracts/` cuando cambie una interfaz.
-- Registrar en `docs/operations/` la evidencia operativa relevante, no diarios narrativos del proyecto.
+- Los **contratos** (`docs/contracts/`) se escriben antes: son insumo de la construcción. Los **ADR** (`docs/decisions/`) se escriben cuando la decisión ya está aceptada.
+- Una **propuesta** en `docs/design/` se escribe sólo cuando alguien tiene que revisarla antes de decidir. El commit y el PR ya llevan el razonamiento, con fecha y diff adjunto.
+- El **estado del sistema** (`docs/current-state.md`, `docs/architecture.md`) y la **evidencia** (`docs/operations/`) se escriben después de verificar el efecto, con el número medido adentro.
 - Mantener explícita la diferencia entre propuesta, decisión aceptada, implementación y evidencia.
-- Evaluar y aplicar proactivamente las actualizaciones documentales correspondientes dentro de la misma tarea, sin tocar trabajo concurrente fuera de alcance.
+- No tocar documentación de trabajo concurrente fuera de alcance.
 
-## Cierre y aprendizaje obligatorio de Johanna
+## Verificación antes que ceremonia
 
-- Toda tarea que implemente, pruebe, despliegue, diagnostique o decida comportamiento necesario para completar Johanna debe seguir `docs/operations/johanna-completion-learning-protocol.md`.
-- El claim debe declarar el recurso único `johanna-completion:<task_id>` y el registro exclusivo `docs/operations/johanna-completion/records/<task_id>.md`; no usar un recurso singleton que serialice tareas independientes.
-- La transición a `review` queda bloqueada si falta el registro o alguna de sus secciones obligatorias. Éxito funcional sin evidencia y disposición de aprendizajes no es cierre.
-- El ledger central lo mantiene el integrador; una tarea paralela no lo modifica sin claim exclusivo. Sesiones, handoffs y memoria no sustituyen los artefactos autoritativos.
+Vigente desde el 2026-09-20. Reemplaza al protocolo de captura de aprendizaje de Johanna, que
+exigía un documento narrativo por tarea y sólo se activaba cuando el claim mencionaba "johanna".
+
+- **El dato real antes que el código.** Toda tarea empieza trayendo el payload o la respuesta real del borde que toca. Si el dato no se puede obtener, eso es la tarea: se reporta qué falta y dónde vive, y se detiene ahí. No se escribe código contra una suposición del payload.
+- **Los bordes externos se prueban con fixtures capturados.** Todo test que simule Hotmart, Chatwoot, Evolution o Slack usa un payload capturado en `tests/fixtures/`, con su fecha y su origen anotados. Un payload inventado por quien escribe el test no prueba el borde.
+- **Un cambio, un efecto observable.** Una suite en verde no es evidencia de efecto. Si medir el efecto exige un despliegue, la tarea queda explícitamente abierta y se reporta así.
+- **Ningún documento afirma estado sin evidencia fechada.** Un documento que dice que algo está desplegado, activo o en producción lleva una fecha ISO y un puntero verificable (sha de commit, `#PR`, o una ruta en `docs/operations/`). Si todavía no hay evidencia, se escribe como propuesta, en futuro.
+- La transición a `review` valida la regla anterior sobre los documentos que la rama cambió, por contenido y no por nombre de archivo. Quedan exentos por género `docs/contracts/` y `docs/design/`: describen una interfaz y una propuesta, no el estado vigente.

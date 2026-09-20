@@ -516,178 +516,128 @@ def test_unrelated_branch_history_fails_closed(repo: Path) -> None:
         coordinator.preflight(worktree)
 
 
-def test_johanna_claim_requires_completion_resource_and_record(repo: Path) -> None:
-    coordinator = AgentWorkspace(repo)
-    claim = _start(
-        coordinator,
-        repo,
-        "johanna-feature",
-        paths=("src/app.py",),
-    )
-
-    with pytest.raises(CoordinationError, match="johanna-completion resource"):
-        coordinator._validate_johanna_learning_record(claim)
-
-
-def test_johanna_completion_record_requires_declared_path_and_sections(repo: Path) -> None:
-    coordinator = AgentWorkspace(repo)
-    claim = _start(
-        coordinator,
-        repo,
-        "johanna-feature",
-        paths=("src/app.py",),
-        resources=("johanna-completion:johanna-feature",),
-    )
-
-    with pytest.raises(CoordinationError, match="must declare learning record path"):
-        coordinator._validate_johanna_learning_record(claim)
-
-    record_path = (
-        "docs/operations/johanna-completion/records/johanna-feature.md"
-    )
-    coordinator.extend("johanna-feature", paths=(record_path,))
-    claim = next(item for item in coordinator.claims() if item.task_id == "johanna-feature")
-    record = Path(claim.worktree) / record_path
-    record.parent.mkdir(parents=True)
-    record.write_text("# incomplete\n")
-
-    with pytest.raises(CoordinationError, match="missing or empty required section"):
-        coordinator._validate_johanna_learning_record(claim)
-
-
-def test_complete_johanna_learning_record_passes_validation(repo: Path) -> None:
-    coordinator = AgentWorkspace(repo)
-    record_path = (
-        "docs/operations/johanna-completion/records/johanna-feature.md"
-    )
-    claim = _start(
-        coordinator,
-        repo,
-        "johanna-feature",
-        paths=("src/app.py", record_path),
-        resources=("johanna-completion:johanna-feature",),
-    )
-    record = Path(claim.worktree) / record_path
-    record.parent.mkdir(parents=True)
-    sections = agent_workspace.JOHANNA_RECORD_REQUIRED_SECTIONS
-    record.write_text(
-        "# Johanna completion record — johanna-feature\n\n"
-        + "\n\n".join(
-            f"## {section}\n\nVerified content for {section}." for section in sections
-        )
-        + "\n"
-    )
-
-    coordinator._validate_johanna_learning_record(claim)
-
-
-def test_johanna_learning_record_rejects_symlink(repo: Path) -> None:
-    coordinator = AgentWorkspace(repo)
-    record_path = (
-        "docs/operations/johanna-completion/records/johanna-feature.md"
-    )
-    claim = _start(
-        coordinator,
-        repo,
-        "johanna-feature",
-        paths=(record_path,),
-        resources=("johanna-completion:johanna-feature",),
-    )
-    record = Path(claim.worktree) / record_path
-    record.parent.mkdir(parents=True)
-    external = repo.parent / "external-record.md"
-    external.write_text("external\n")
-    record.symlink_to(external)
-
-    with pytest.raises(CoordinationError, match="regular file"):
-        coordinator._validate_johanna_learning_record(claim)
-
-
-def test_johanna_learning_record_rejects_symlinked_ancestor(repo: Path) -> None:
-    coordinator = AgentWorkspace(repo)
-    record_path = (
-        "docs/operations/johanna-completion/records/johanna-feature.md"
-    )
-    claim = _start(
-        coordinator,
-        repo,
-        "johanna-feature",
-        paths=(record_path,),
-        resources=("johanna-completion:johanna-feature",),
-    )
+def _commit_doc(claim, relative: str, text: str) -> None:
+    """Write and commit a document inside the claim worktree."""
     worktree = Path(claim.worktree)
-    external = repo.parent / "external-records"
-    external.mkdir()
-    sections = agent_workspace.JOHANNA_RECORD_REQUIRED_SECTIONS
-    (external / "johanna-feature.md").write_text(
-        "# external\n\n"
-        + "\n\n".join(
-            f"## {section}\n\nExternal content for {section}." for section in sections
-        )
-        + "\n"
-    )
-    records = worktree / "docs/operations/johanna-completion/records"
-    records.parent.mkdir(parents=True)
-    records.symlink_to(external, target_is_directory=True)
-
-    with pytest.raises(CoordinationError, match="regular file"):
-        coordinator._validate_johanna_learning_record(claim)
+    document = worktree / relative
+    document.parent.mkdir(parents=True, exist_ok=True)
+    document.write_text(text, encoding="utf-8")
+    _git(worktree, "add", relative)
+    _git(worktree, "commit", "-m", f"docs: {relative}")
 
 
-@pytest.mark.parametrize(
-    "body",
-    [
-        "N/A",
-        "<!-- REQUIRED: replace this marker -->",
-    ],
+ASSERTION = "El receptor de webhooks esta desplegado y responde en produccion.\n"
+EVIDENCE = (
+    "El receptor de webhooks esta desplegado y responde en produccion.\n\n"
+    "Verificado el 2026-09-20 sobre el commit e496d54; evidencia en\n"
+    "docs/operations/2026-09-20-webhook-receiver-e2e.md\n"
 )
-def test_johanna_learning_record_rejects_placeholder_content(
-    repo: Path,
-    body: str,
-) -> None:
+
+
+def test_state_assertion_without_evidence_blocks_review(repo: Path) -> None:
+    """The gate must be able to fail. Without this, it is not a guardrail."""
     coordinator = AgentWorkspace(repo)
-    record_path = (
-        "docs/operations/johanna-completion/records/johanna-feature.md"
+    claim = _start(coordinator, repo, "state-no-evidence", paths=("docs/current-state.md",))
+    _commit_doc(claim, "docs/current-state.md", ASSERTION)
+
+    with pytest.raises(CoordinationError, match="without dated evidence"):
+        coordinator._validate_state_claims_have_evidence(claim)
+
+
+def test_state_assertion_with_dated_evidence_passes(repo: Path) -> None:
+    coordinator = AgentWorkspace(repo)
+    claim = _start(coordinator, repo, "state-with-evidence", paths=("docs/current-state.md",))
+    _commit_doc(claim, "docs/current-state.md", EVIDENCE)
+
+    coordinator._validate_state_claims_have_evidence(claim)
+
+
+def test_conditional_sentence_is_not_a_state_assertion(repo: Path) -> None:
+    coordinator = AgentWorkspace(repo)
+    claim = _start(coordinator, repo, "state-conditional", paths=("docs/architecture.md",))
+    _commit_doc(
+        claim,
+        "docs/architecture.md",
+        "Cuando el flag automatico esta activo, el receiver responde el webhook.\n",
     )
+
+    coordinator._validate_state_claims_have_evidence(claim)
+
+
+def test_denial_is_not_a_state_assertion(repo: Path) -> None:
+    coordinator = AgentWorkspace(repo)
+    claim = _start(coordinator, repo, "state-denial", paths=("docs/operations/run.md",))
+    _commit_doc(
+        claim,
+        "docs/operations/run.md",
+        "No se desplego ningun servicio y no se activo la cohorte.\n",
+    )
+
+    coordinator._validate_state_claims_have_evidence(claim)
+
+
+def test_contracts_and_design_are_exempt_by_genre(repo: Path) -> None:
+    """A contract describes an interface and a design document a proposal."""
+    coordinator = AgentWorkspace(repo)
     claim = _start(
         coordinator,
         repo,
-        "johanna-feature",
-        paths=(record_path,),
-        resources=("johanna-completion:johanna-feature",),
+        "state-exempt-genre",
+        paths=("docs/contracts/c-v1.md", "docs/design/d-v1.md"),
     )
-    record = Path(claim.worktree) / record_path
-    record.parent.mkdir(parents=True)
-    sections = agent_workspace.JOHANNA_RECORD_REQUIRED_SECTIONS
-    record.write_text(
-        "# Johanna completion record — johanna-feature\n\n"
-        + "\n\n".join(f"## {section}\n\n{body}" for section in sections)
-        + "\n"
-    )
+    _commit_doc(claim, "docs/contracts/c-v1.md", ASSERTION)
+    _commit_doc(claim, "docs/design/d-v1.md", ASSERTION)
 
-    with pytest.raises(CoordinationError, match="placeholder or unexplained N/A"):
-        coordinator._validate_johanna_learning_record(claim)
+    coordinator._validate_state_claims_have_evidence(claim)
 
 
-def test_transition_to_review_enforces_johanna_learning_record(repo: Path) -> None:
+def test_gate_covers_a_document_no_list_mentions(repo: Path) -> None:
+    """Detection is by content: a brand new file name cannot skip the gate."""
     coordinator = AgentWorkspace(repo)
-    _start(
+    claim = _start(
         coordinator,
         repo,
-        "johanna-feature",
-        paths=("src/app.py",),
+        "state-unlisted-doc",
+        paths=("docs/operations/nombre-que-nadie-enumero.md",),
     )
-    coordinator.transition("johanna-feature", "implementing")
+    _commit_doc(claim, "docs/operations/nombre-que-nadie-enumero.md", ASSERTION)
 
-    with pytest.raises(CoordinationError, match="johanna-completion resource"):
-        coordinator.transition("johanna-feature", "review")
+    with pytest.raises(CoordinationError, match="without dated evidence"):
+        coordinator._validate_state_claims_have_evidence(claim)
 
 
-def test_unrelated_claim_does_not_require_johanna_record(repo: Path) -> None:
+def test_documents_untouched_by_the_branch_are_not_inspected(repo: Path) -> None:
+    (repo / "docs").mkdir(exist_ok=True)
+    (repo / "docs" / "legacy.md").write_text(ASSERTION, encoding="utf-8")
+    _git(repo, "add", "docs/legacy.md")
+    _git(repo, "commit", "-m", "docs: legacy")
+    _git(repo, "push", "origin", "main")
+
     coordinator = AgentWorkspace(repo)
-    claim = _start(coordinator, repo, "feature-a")
+    claim = _start(coordinator, repo, "state-untouched", paths=("src/app.py",))
 
-    coordinator._validate_johanna_learning_record(claim)
+    coordinator._validate_state_claims_have_evidence(claim)
+
+
+def test_claim_without_base_sha_fails_closed(repo: Path) -> None:
+    coordinator = AgentWorkspace(repo)
+    claim = _start(coordinator, repo, "state-no-base", paths=("docs/current-state.md",))
+    claim.data.pop("base_sha", None)
+
+    with pytest.raises(CoordinationError, match="no base_sha"):
+        coordinator._validate_state_claims_have_evidence(claim)
+
+
+def test_review_transition_runs_the_evidence_gate(repo: Path) -> None:
+    coordinator = AgentWorkspace(repo)
+    claim = _start(coordinator, repo, "state-gate-review", paths=("docs/current-state.md",))
+    coordinator.transition("state-gate-review", "implementing")
+    _commit_doc(claim, "docs/current-state.md", ASSERTION)
+    worktree = Path(claim.worktree)
+    _git(worktree, "push", "-u", "origin", "feat/state-gate-review")
+
+    with pytest.raises(CoordinationError, match="without dated evidence"):
+        coordinator.transition("state-gate-review", "review")
 
 
 def test_full_claim_commit_push_review_and_protected_push_guard(
