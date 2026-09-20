@@ -44,7 +44,8 @@ Modelo de trabajo:
 
 - **Confirmado 2026-09-19 contra el artefacto:** el bridge corre el árbol `src/` del commit `108d2ee8` (merge del PR #154). Se comparó el hash de objeto Git de los 44 archivos de `/app/src` del contenedor contra los últimos 40 commits de `main`: coinciden 44 de 44 con `108d2ee8` y 43 de 44 con `origin/main`. La variable `GIT_SHA` del servicio declara ese mismo commit, de modo que declaración y artefacto concuerdan. **La única diferencia con `origin/main` es `src/bridge/chatwoot.py`**, por el commit `2c80d82` del PR #156: esa es toda la superficie de riesgo de un release desde `main`. El método está en `operations/appointment-bridge-release-runbook-v1.md` §4.
 - **Reportado (PR #160):** el conector de Slack declara `6287c14` (merge del PR #155) y su `app.py` coincide con `main` en esa fecha.
-- **No comprobado:** SHA desplegado de `infra_daily-feedback` y de los servicios `att1-production_*`.
+- **Confirmado 2026-09-19 con el mismo método:** `infra_supportmagician-slack-connector` corre el árbol de `6287c14f` (merge del PR #155), 44 de 44 objetos, 2 archivos de diferencia con `main`; `infra_daily-feedback` corre el de `943e8cf0` (merge del PR #141, 2026-09-13), 41 de 41 objetos y **13 archivos de diferencia con `main`**, seis días de atraso. Las dos declaraciones de `GIT_SHA` coinciden con su artefacto.
+- **No comprobado:** SHA desplegado de los servicios `att1-production_*`.
 - **Confirmado 2026-09-19:** `/health` y `/ready` del bridge se consultaron desde dentro del contenedor y respondieron `200` (detalle en §2, bloque de flags). Para los demás servicios, el health de Docker sigue siendo el único dato directo.
 
 ### Flags de efectos (nombres, sin valores sensibles)

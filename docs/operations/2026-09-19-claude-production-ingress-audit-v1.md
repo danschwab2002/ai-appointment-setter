@@ -32,7 +32,16 @@ Esa declaracion se verifico de forma independiente, sin confiar en la variable: 
 
 La declaracion y el artefacto coinciden. **La unica diferencia entre produccion y `origin/main` es `src/bridge/chatwoot.py`**, por el commit `2c80d82` del PR #156, que hace que los mensajes de actividad (`message_type` 2) no cuenten como actividad del usuario en el escaneo de conversaciones estancadas y rechaza los tipos desconocidos. Son 18 lineas agregadas y 2 borradas en un solo archivo: esa, y ninguna otra, es la superficie de riesgo de un release desde `main`.
 
-El metodo de la tabla es reproducible y esta descrito en el runbook de release, seccion 4.
+El mismo metodo se aplico a los otros dos servicios construidos desde este repositorio, y en los dos la declaracion coincide con el artefacto:
+
+| Servicio | `GIT_SHA` declarado | Arbol `src/` que corresponde | Archivos distintos de `origin/main` |
+|---|---|---|---|
+| `infra_supportmagician-slack-connector` | `6287c14f` (merge del PR #155) | 44 de 44 | 2 (`chatwoot.py`, `filtering.py`) |
+| `infra_daily-feedback` | `943e8cf0` (merge del PR #141, 2026-09-13) | 41 de 41 | **13** |
+
+`infra_daily-feedback` es el mas atrasado: seis dias y trece archivos de diferencia con `main`.
+
+**Limite del metodo:** compara arboles, no commits. Cuando varios commits consecutivos no tocan `src/`, todos empatan y el metodo acota el commit a ese rango en vez de senalar uno. Paso con `infra_daily-feedback`, que empata con `943e8cf0`, `40f645ff` y `19cf850b`. Para desempatar hace falta otra senal, como la variable `GIT_SHA` o la hora del despliegue. El metodo esta descrito en el runbook de release, seccion 4.
 
 ## 3. Estado de automatizacion, medido en vivo
 
@@ -104,9 +113,19 @@ Que los 401 sean `stale_webhook` y no `invalid_token` no se puede demostrar desd
 - La verificacion de abandono de carrito de Hotmart es por lotes, con una demora tipica de decenas de minutos entre el abandono y la entrega. Una ventana de frescura de 300 segundos medida contra `creation_date` es incompatible con ese emisor incluso en el primer intento, salvo que Hotmart fije `creation_date` en el momento del envio.
 - La via de abandono es la unica entrada de negocio encendida hoy.
 
+### El 503 no es Supabase caido, y el nombre del error enganna
+
+Dos evidencias acotan bastante la causa.
+
+**Supabase responde bien en el mismo periodo.** `POST /webhooks/johanna-funnel-events` tambien persiste en Supabase (`admit_johanna_funnel_event`) y tiene su propio 503 (`johanna_funnel_persist_unavailable`). En los mismos 3,05 dias acumulo **1753 respuestas 202 y ningun 503**. Si la base estuviera intermitente, ese endpoint seria el primero en mostrarlo por volumen. El fallo es especifico del camino de abandono de Hotmart, no de la base.
+
+**Los tiempos de respuesta muestran donde corta cada codigo.** Los 503 tardaron entre 239 y 2034 ms, el mismo orden que los 202 (388 a 2694 ms): llegaron hasta las llamadas a Supabase. Los 401, en cambio, se concentran entre 7 y 50 ms, sin ninguna entrada/salida externa de por medio.
+
+**Y el nombre del error no describe lo que pasa.** El bloque `except SupabaseError` que devuelve `webhook_persist_unavailable` envuelve dos llamadas, no una: primero `admit_and_correlate_hotmart_cart_abandonment`, que persiste el evento y devuelve su `webhook_event_id`, y despues, porque `JOHANNA_ABANDONMENT_HOTMART_AUTO_ENABLED` esta en `true`, `correlate_hotmart_purchase_intent`. Si falla la segunda, el evento **ya quedo persistido** y el emisor igual recibe 503. De ahi salen dos consecuencias que hay que verificar contra la base: puede haber eventos de abandono guardados y sin correlacionar, y el reintento de Hotmart no aporta nada porque la guarda de frescura lo frena antes.
+
 ### Lo que falta para cerrar el diagnostico
 
-1. La causa del `SupabaseError` que produce el 503. No es `supabase_not_configured` (ese cuerpo mide 36 bytes y no aparece): es un fallo en la llamada de persistencia. Requiere mirar Supabase, que esta fuera del alcance de esta auditoria.
+1. Cual de las dos llamadas falla y por que. El analisis de arriba deja como hipotesis principal la correlacion de intencion de compra, no la persistencia. Distinguirlas requiere mirar Supabase o registrar el motivo, que hoy el bridge no hace.
 2. Confirmar en el panel de Hotmart si la configuracion del webhook sigue activa, cuantos reintentos consumio y con que `creation_date` se envian los eventos de abandono. Lo hace una persona con acceso a esa cuenta.
 3. La propuesta de cambio de comportamiento esta en `docs/design/hotmart-delivery-durability-v1.md`. Toca `src/bridge/app.py`, hoy reservado por el claim `codex-appointment-operations-v1` (PR #160), asi que no se implemento en esta tarea.
 

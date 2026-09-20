@@ -85,6 +85,8 @@ sort /tmp/deployed-blobs.txt | diff - /tmp/expected-blobs.txt && echo "correspon
 
 Cualquier diferencia detiene el release: lo desplegado no es lo revisado.
 
+**Limite:** la comparacion identifica el **arbol** de `src/`, no el commit. Si varios commits seguidos no tocan `src/`, todos empatan y lo que se prueba es que el codigo corresponde a ese rango. Para el proposito del release alcanza, porque lo que importa es que corra el codigo revisado; para fechar un despliegue hace falta otra senal.
+
 Si el panel permite editar variables, actualizar `GIT_SHA` al commit desplegado en el mismo movimiento. Una variable que dice un commit viejo es peor que no tenerla, porque la proxima auditoria la va a creer.
 
 ## 5. Verificacion funcional

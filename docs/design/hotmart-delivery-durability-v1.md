@@ -36,7 +36,15 @@ La idempotencia real la da la base: `webhook_events` tiene `unique (source, exte
 
 Eso importa porque significa que la ventana se puede ampliar sin perder la garantia de procesamiento unico. Y hace falta ampliarla: la verificacion de abandono de carrito de Hotmart es por lotes, con demoras tipicas de decenas de minutos entre el abandono y la entrega, y el reintento de un evento legitimo llega, por definicion, tarde. Una ventana de cinco minutos medida contra `creation_date` esta calibrada para un emisor en tiempo real que Hotmart no es, al menos no para este evento.
 
-### 3.3 Un fallo de persistencia se delega entero al emisor
+### 3.3 Dos fallos distintos comparten un solo codigo y un solo nombre
+
+El bloque `except SupabaseError` que devuelve `webhook_persist_unavailable` envuelve dos llamadas: la admision del evento, que lo persiste, y la correlacion de intencion de compra, que corre despues porque `JOHANNA_ABANDONMENT_HOTMART_AUTO_ENABLED` esta encendido. Si falla la segunda, el evento ya esta guardado y el emisor igual recibe un 503 que dice que no se pudo persistir.
+
+Eso tiene dos costos. El diagnostico es imposible desde afuera: `webhook_persist_unavailable` no distingue "no pude guardar" de "guarde y no pude correlacionar", que son problemas distintos con arreglos distintos. Y el reintento del emisor deja de ser la recuperacion correcta, porque lo que falta hacer no es guardar de nuevo.
+
+Ademas hay evidencia de que la base no es el problema: el endpoint del funnel de Johanna persiste en la misma base y acumulo 1753 admisiones sin un solo 503 en el mismo periodo.
+
+### 3.4 Un fallo de persistencia se delega entero al emisor
 
 Ante `SupabaseError` el bridge devuelve 503 y se olvida del evento. La recuperacion queda a cargo del reintento de Hotmart, que son como maximo cinco y que ademas van a chocar contra la guarda de frescura. El bridge ya resuelve este problema para Chatwoot con admision durable en disco (`CAPTURE_DIR`, escritura privada y atomica, retomada al reiniciar): responde despues de persistir una admision recuperable, no despues de completar el trabajo. Hotmart no tiene ese tratamiento.
 
@@ -50,11 +58,13 @@ En orden de valor sobre riesgo.
 
 **C. Admision durable para Hotmart.** Escribir la admision en disco antes de responder, con el mismo patron que el ingreso de Chatwoot, y reconciliar contra Supabase en un worker. Convierte un fallo de la base en un retraso en vez de una perdida. Es el cambio mas grande de los tres y el unico que toca el modelo de procesamiento; entra despues de A y B, y solo si el 503 resulta recurrente y no un sintoma de otra cosa.
 
+**C-bis. Separar los dos errores.** Un `SupabaseError` en la admision y uno en la correlacion son problemas distintos: el primero pide reintento del emisor, el segundo pide reproceso interno de un evento que ya esta guardado. Deben tener codigos y nombres distintos antes de decidir nada mas, porque hoy el diagnostico no se puede hacer.
+
 **D. Exponer el motivo del rechazo en `/ready`.** Hoy la unica forma de saber que se esta perdiendo el noventa por ciento del ingreso es leer el log del proxy y medir el tamano de los cuerpos de error para adivinar el motivo. Contadores por causa (`rejected_stale`, `rejected_token`, `persist_unavailable`) hacen visible el problema sin auditoria forense.
 
 ## 5. Lo que hay que averiguar antes de implementar
 
-1. **La causa del `SupabaseError`.** Si el 503 se debe a un error sistematico (una restriccion, un permiso, un esquema desincronizado) y no a indisponibilidad, la propuesta C no corresponde y lo que hay que arreglar es otra cosa. Sin esto, A y B tapan el sintoma mas visible pero no el origen.
+1. **Cual de las dos llamadas falla.** La evidencia disponible apunta a la correlacion y no a la persistencia, y descarta la indisponibilidad de la base. Si se confirma, la propuesta C no corresponde y lo que hay que arreglar es la correlacion. Sin esto, A y B tapan el sintoma mas visible pero no el origen. Tambien hay que contar cuantos eventos de abandono quedaron persistidos sin correlacionar.
 2. **Si la configuracion del webhook en Hotmart sigue activa** y cuantos reintentos consumio. Lo mira una persona con acceso a esa cuenta.
 3. **Con que `creation_date` llegan los eventos de abandono**, que es el dato que calibra B.
 
