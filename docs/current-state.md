@@ -1,7 +1,7 @@
 # Estado actual del sistema
 
 - **Tipo:** snapshot de estado operativo versionado. No es arquitectura ni contrato: describe lo observado en una fecha, con su grado de verificación.
-- **Fecha de corte:** 2026-09-19, actualizado al cierre del dia con la auditoria de ingreso.
+- **Fecha de corte:** 2026-09-20, actualizado con la activacion de la respuesta inbound y su E2E. El bloque anterior es del 2026-09-19 (auditoria de ingreso).
 - **Commit de referencia:** `origin/main` = `b04ad14` (merge del PR #162).
 - **Mantenimiento:** lo actualiza quien programa, en el mismo PR que cambie cualquier fila de la matriz. Se reemplaza el snapshot entero; la historia queda en Git.
 - **Convención:** `Confirmado` = inspección directa en la fecha de corte · `Reportado` = tomado de la auditoría del profile `default` de Hermes del 2026-09-18 o de un documento operativo versionado, sin re-verificar · `No comprobado` = falta evidencia.
@@ -50,7 +50,11 @@ Modelo de trabajo:
 
 ### Flags de efectos (nombres, sin valores sensibles)
 
-**Confirmado 2026-09-19** consultando `/health` y `/ready` desde dentro del contenedor y leyendo la definición del servicio: `CHATWOOT_STALLED_MONITOR_ENABLED`, `CHATWOOT_CUT_B_ADMISSION_ENABLED`, `CHATWOOT_CUT_B_AGENT_ENABLED`, `CHATWOOT_AUTOMATED_REPLIES_ENABLED`, `PAYMENT_LINK_ENABLED`, `LANCEMOS_PILOT_BOUNDARY_ENABLED` y `HOTMART_PURCHASE_WORKER_ENABLED` en `false`; `/health` devuelve `200 status=ok` y `/ready` devuelve `200` con `automation_state=default_off`, `pilot_boundary=disabled` y `chatwoot_stalled_monitor=disabled`. Los workers de pre-resolución y de proyección a Slack siguen habilitados.
+**Confirmado 2026-09-20, tras la activación de la respuesta inbound.** Los cinco gates del camino inbound quedaron en `true` y se leyeron **dentro del proceso** del contenedor nuevo (`env` del contenedor, no la definición del servicio): `CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED`, `CHATWOOT_CUT_B_ADMISSION_ENABLED`, `CHATWOOT_CUT_B_AGENT_ENABLED`, `CHATWOOT_AUTOMATED_REPLIES_ENABLED` y `HUMAN_HANDOFF_ADMISSION_ENABLED`. Siguen en `false`: `CHATWOOT_STALLED_MONITOR_ENABLED`, `PAYMENT_LINK_ENABLED`, `LANCEMOS_PILOT_BOUNDARY_ENABLED`, `HOTMART_PURCHASE_WORKER_ENABLED`, `DURABLE_DISPATCHER_ENABLED`, `DURABLE_OUTBOUND_ENABLED` y `CHATWOOT_REPLY_SPLITTER_ENABLED`. `/health` devuelve `200 status=ok` y `/ready` devuelve `200 status=ready`. Los workers de pre-resolución y de proyección a Slack siguen habilitados.
+
+El `automation_state=default_off` / `pilot_boundary=disabled` que `/ready` sigue informando **no describe el camino inbound**: cuelga de `LANCEMOS_PILOT_BOUNDARY_ENABLED=false`, que gobierna el outbound del dispatcher durable (`app.py:3888-3897`). Leer ese campo como "el sistema está apagado" fue parte de por qué el inbound cerrado pasó semanas sin detectarse.
+
+⚠ **La definición del servicio en EasyPanel quedó desalineada a propósito:** las cinco se aplicaron con `docker service update --env-add` sobre la imagen en curso, para no arrastrar el deploy de `origin/main` en el mismo movimiento. En el panel, `CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED` sigue en `false`. **Un deploy desde el panel apagaría la respuesta inbound y el contenedor levantaría igual, sin error** — el apagón sería silencioso. Cerrar esa deuda guardando la variable en el panel es requisito previo a cualquier release (ver `operations/appointment-bridge-release-runbook-v1.md`).
 
 ⚠ **La vía de abandono de carrito de Hotmart sí está encendida:** `JOHANNA_ABANDONMENT_HOTMART_AUTO_ENABLED=true` y `HOTMART_ABANDONMENT_TIMER_WORKER_ENABLED=true`. Es la única entrada de negocio activa, y es la que está fallando (§9, incidente 8).
 
@@ -123,6 +127,11 @@ Reglas vigentes sobre estos claims:
 | Checkout V2: guarda de inbox antes de enviar (PR #158) | sí | no | no | no | tests focales | Confirmado (PR) |
 | **Ingreso de Hotmart (abandono de carrito)** | sí | sí | sí | **sí, es la única vía de negocio activa** | **no: 10 de 103 entregas aceptadas en 3 días** | **Confirmado** (log del proxy) |
 | Ingreso de Chatwoot (webhook de cuenta) | sí | sí | sí | sí | 27 entregas 2xx en 3 días, sin fallas | **Confirmado** (log del proxy) |
+| **Admisión inbound por scope (Cut B)** | sí | sí | sí | **sí, desde 2026-09-20 11:41 ART** | **sí**: un remitente distinto del `ALLOWED_WHATSAPP_JID` fue admitido y respondido | **Confirmado** (E2E de Dan) |
+| **Respuesta automática del agente** | sí | sí | sí | **sí, desde 2026-09-20 11:41 ART** | **sí**, mismo caso | **Confirmado** (E2E de Dan) |
+| Derivación a humano (`HUMAN_HANDOFF_ADMISSION`) | sí | sí | sí | **sí, desde 2026-09-20 11:41 ART** | **no**: activada, nadie la ejerció | Confirmado (flag) |
+| Opt-out durable y pausa humana | sí | sí | sí | sí | **no**: activados, sin ejercer | Confirmado (flag) |
+| Respuesta al backlog de conversaciones sin contestar | no aplica | — | — | **no**: nada barre el backlog | — | **Confirmado**: el único disparador inbound es el webhook `message_created` y el monitor de estancadas está en `false` |
 | Payment Link V2 Johanna | sí | sí | probable, sin SHA fijado | **no** (`PAYMENT_LINK_ENABLED=false`) | no | Reportado |
 | Daily feedback: contexto operacional V2 | en curso (worktree sucio r3) | no | no | no | no | Confirmado |
 | Personalización por primer nombre Johanna | en curso (worktree sucio) | no | no | no | no | Confirmado |
@@ -181,11 +190,14 @@ Reglas vigentes sobre estos claims:
 9. 🔴 **El AgentBot de Chatwoot entrega a una ruta inexistente.** El bot id 1 del inbox 9 tiene `outgoing_url` terminada en `/webhooks/chatwoot/agent-bot`, que el bridge no expone: 145 respuestas 404 en 3 días, de forma continua. El ingreso canónico (`/webhooks/chatwoot`, webhook de cuenta) funciona, así que no hay pérdida demostrada del camino principal. Corrección: vaciar esa URL, no redirigirla al webhook de cuenta (exige encabezados de firma que la entrega de AgentBot no envía). **Confirmado** (log del proxy y tablas de configuración de Chatwoot, 2026-09-19).
 10. **Quince horas de caída no registradas, del 2026-09-16 23h al 2026-09-17 14h UTC:** 339 respuestas 502 repartidas en los tres webhooks, entre ellas 10 de `/webhooks/lead`, cada una un lead potencial. Incidente cerrado, causa no investigada (es anterior al contenedor actual). Lo relevante es que nadie se enteró: no hay alerta sobre el ingreso.
 11. **No había destino de rollback.** Las tres imágenes construidas desde el repositorio usan tag móvil y el demonio no conservaba ninguna versión anterior, así que un despliegue malo no tenía a dónde volver. Mitigado el 2026-09-19 con un alias local `preserved-20260919` para las tres imágenes en producción, sin tocar ningún servicio. El arreglo de fondo (pin por digest) lo decide Dan.
+12. ✅ **RESUELTO 2026-09-20 — el agente no respondía ninguna conversación porque el inbound estaba cerrado por configuración.** Encontrado el 2026-09-20 de madrugada: con `CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED=false`, la admisión comparaba al remitente contra un `ALLOWED_WHATSAPP_JID` con **un solo número de prueba** y descartaba a todos los demás en milisegundos, sin razonar ni registrar (`{"status":"ignored","reason":"sender_not_allowed"}`); y aun admitido, `CHATWOOT_AUTOMATED_REPLIES_ENABLED=false` impedía el envío. **El outbound, en cambio, estaba encendido para cualquier lead real**: el sistema abría conversaciones que no podía sostener. Estado del inbox al encontrarlo: 69 conversaciones abiertas y 12 con el último mensaje del contacto sin respuesta, entre el 2026-09-10 y el 2026-09-20; ningún agente humano había respondido desde el 2026-09-12. **Corregido** activando los cinco gates (§2), verificado antes con una simulación local del arranque y después con un E2E desde un número distinto del permitido. **Lo que queda de este incidente:** las 12 conversaciones siguen sin respuesta y nada las va a despertar salvo que esa persona vuelva a escribir; y la deuda de la variable en el panel (§2).
+13. ⚠ **Ningún contador ni endpoint reporta las admisiones rechazadas.** El rechazo por remitente se resuelve dentro del handler y devuelve `200` con un cuerpo de 50 bytes: para el proxy y para cualquier monitor de disponibilidad, es una entrega exitosa. Por eso el incidente 12 pudo durar semanas con todos los health en verde. **No corregido.** Un contador de `ignored` por motivo en `/ready`, o una alerta sobre la relación entrantes/respondidos del inbox, es lo que lo habría hecho visible.
 
 ## 10. Próxima tarea aprobada y trabajos congelados
 
 El primer PR de Claude Code (`docs/current-state.md`, #162) quedó mergeado el 2026-09-19 y el circuito completo (claim en el VPS, edición y pruebas en el clon local, PR, sincronización del worktree y transición a `review`) está verificado de punta a punta. El orden que sigue, con autorización separada para cada efecto:
 
+0. **Guardar `CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED=true` en el panel de EasyPanel** (§2). Alcanza con guardar, sin deployar. Va primero porque hasta que no esté, cualquier deploy apaga la respuesta inbound **sin error visible**, y eso incluye a los deploys que piden los puntos 5 y 6 de esta misma lista.
 1. **Decidir qué hacer con el ingreso de Hotmart** (§9, incidente 8). Es lo único que hoy está perdiendo eventos de negocio en producción. La causa está demostrada y la propuesta escrita; el primer paso, que no depende de código, es abrir el historial de envíos del panel de Hotmart y leer un payload fallido para saber qué condición del contrato se incumple.
 2. Integrar la cola de PRs (#158, #160, #163), que además libera los paths reservados que bloquean trabajo nuevo.
 3. Corregir la `outgoing_url` del AgentBot de Chatwoot (§9, incidente 9).

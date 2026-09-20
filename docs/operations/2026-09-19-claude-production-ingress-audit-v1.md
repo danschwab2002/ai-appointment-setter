@@ -224,3 +224,22 @@ Es la unica escritura de toda la auditoria. No altera servicios en ejecucion, no
 - No cubre el trafico anterior al 2026-09-16 23:02 UTC, que es donde empieza el log del proxy retenido.
 - No inspecciono el estado de los servicios `att1-production_*` mas alla de la definicion del que esta caido, ni el SHA desplegado de `infra_daily-feedback`.
 - No consulto el panel de Hotmart ni el de EasyPanel: todo lo de EasyPanel se leyo desde el host.
+
+## 10. Cierre del hallazgo del inbound (2026-09-20)
+
+Esta auditoria midio el ingreso y encontro que el trafico entraba. Lo que no midio, y aparecio despues de cerrarla, es si a alguien se le contestaba: el inbound estaba cerrado por configuracion a un unico numero de prueba, y todos los demas remitentes se descartaban con `200` y un cuerpo de 50 bytes. La seccion 3 de este documento reporto `automation_state=default_off` como un hecho, sin preguntar que quedaba prendido del otro lado.
+
+El 2026-09-20 se activaron los cinco gates del camino inbound. Lo que se hizo, en orden:
+
+1. **Se simulo el arranque antes de tocar nada**, en la maquina de desarrollo, con las 98 variables del servicio replicadas (valores reales en las no sensibles, marcadores con la longitud exacta en los secretos) y llamando a `build_app()`, que es el entrypoint real de uvicorn. Cuatro casos: la configuracion vigente arranca (control, es lo que prueba que la replica es fiel), la combinacion completa arranca, y tres combinaciones parciales se rechazan con `requires all stop and handoff gates`. Sin el control, el verde de la combinacion no habria significado nada.
+2. **Se aplicaron las cinco con `docker service update --env-add`** sobre la imagen en curso, no desde el panel: el boton de Deploy reconstruye bajando el archive de GitHub y habria desplegado `origin/main` en el mismo movimiento, tres PRs por delante. Un cambio por vez en lo que se esta midiendo.
+3. **Se verifico el resultado en el proceso, no en la definicion:** `update completed` en 21 segundos con `start-first`, los cinco flags leidos con `env` dentro del contenedor nuevo, `/health` y `/ready` en `200`.
+4. **E2E:** un remitente distinto del `ALLOWED_WHATSAPP_JID` escribio al inbox 9 y fue respondido. Una primera prueba desde el numero permitido tambien respondio, pero **no probaba nada**: ese era el unico camino que ya funcionaba antes del cambio.
+
+**Lo que este cierre no resuelve:**
+
+- La configuracion del panel quedo con `CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED=false`. Un deploy desde el panel apaga la respuesta inbound y el contenedor levanta igual, sin error.
+- Las 12 conversaciones con el ultimo mensaje del contacto sin responder siguen sin responder. El unico disparador inbound es el webhook `message_created` y el monitor de estancadas esta apagado, asi que nada barre el backlog.
+- `HUMAN_HANDOFF_ADMISSION`, el opt-out durable y la pausa humana quedaron activados y sin ejercer.
+- **Nada reporta las admisiones rechazadas.** El rechazo por remitente devuelve `200`, de modo que para el proxy y para cualquier monitor de disponibilidad es una entrega exitosa. Esa es la razon de fondo por la que el incidente pudo durar semanas con todo en verde, y sigue sin corregirse.
+
