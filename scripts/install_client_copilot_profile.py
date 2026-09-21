@@ -16,7 +16,8 @@ PACKAGE = ROOT / "profiles" / "client-copilot"
 MANIFEST = PACKAGE / "manifest.json"
 RECEIPT_NAME = "profile-package-installation.json"
 AT_FDCWD = -100
-RENAME_EXCHANGE = 2
+RENAME_EXCHANGE = 2  # Linux renameat2 flag
+RENAME_SWAP = 0x2  # macOS renamex_np flag
 
 
 def _load_manifest() -> dict[str, Any]:
@@ -44,24 +45,43 @@ def _sha256(path: Path) -> str:
 
 
 def _exchange_directories(left: Path, right: Path) -> None:
-    """Atomically exchange two existing directories on Linux."""
+    """Atomically exchange two existing directories.
+
+    Linux exposes the swap as renameat2(RENAME_EXCHANGE); macOS exposes the same
+    guarantee as renamex_np(RENAME_SWAP). Both are single atomic operations, so an
+    interrupted update can never leave the published profile half written. Runtime
+    deployments are Linux; the macOS path keeps the installer testable on the
+    development machine instead of failing with a missing symbol.
+    """
     libc = ctypes.CDLL(None, use_errno=True)
-    renameat2 = libc.renameat2
-    renameat2.argtypes = [
-        ctypes.c_int,
-        ctypes.c_char_p,
-        ctypes.c_int,
-        ctypes.c_char_p,
-        ctypes.c_uint,
-    ]
-    renameat2.restype = ctypes.c_int
-    result = renameat2(
-        AT_FDCWD,
-        os.fsencode(left),
-        AT_FDCWD,
-        os.fsencode(right),
-        RENAME_EXCHANGE,
-    )
+    renameat2 = getattr(libc, "renameat2", None)
+    if renameat2 is not None:
+        renameat2.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+        renameat2.restype = ctypes.c_int
+        result = renameat2(
+            AT_FDCWD,
+            os.fsencode(left),
+            AT_FDCWD,
+            os.fsencode(right),
+            RENAME_EXCHANGE,
+        )
+    else:
+        renamex_np = getattr(libc, "renamex_np", None)
+        if renamex_np is None:
+            raise RuntimeError("atomic directory exchange is unavailable")
+        renamex_np.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+        renamex_np.restype = ctypes.c_int
+        result = renamex_np(
+            os.fsencode(left),
+            os.fsencode(right),
+            RENAME_SWAP,
+        )
     if result != 0:
         error = ctypes.get_errno()
         raise OSError(error, os.strerror(error), str(right))
