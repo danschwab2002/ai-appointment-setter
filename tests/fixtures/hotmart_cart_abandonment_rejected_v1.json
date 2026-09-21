@@ -1,0 +1,33 @@
+{
+  "_capture": {
+    "origin": "Panel de Hotmart, historial de envios del webhook de Johanna",
+    "captured_at": "2026-09-21",
+    "event_created_at": "2026-09-20T12:47:54-03:00",
+    "delivered_at": "2026-09-20T12:47:56-03:00",
+    "observed_response": "503 webhook_persist_unavailable",
+    "root_cause": "johanna_hotmart_cart_scope_mismatch: offer.code mgbqpp19 no es el literal bxjge6zq que exige admit_johanna_hotmart_cart_abandonment",
+    "anonymised": "buyer.name, buyer.email, buyer.phone y buyer_ip reemplazados. El resto es textual: es lo que decide el contrato."
+  },
+  "payload": {
+    "id": "3ae68c1e-f1e5-42c7-a4a6-8186fea70d98",
+    "creation_date": 1789919274140,
+    "event": "PURCHASE_OUT_OF_SHOPPING_CART",
+    "version": "2.0.0",
+    "data": {
+      "affiliate": true,
+      "product": {
+        "id": 8104005,
+        "name": "Libérate De La Ansiedad"
+      },
+      "buyer_ip": "203.0.113.10",
+      "buyer": {
+        "name": "Compradora Anonimizada",
+        "email": "compradora@example.invalid",
+        "phone": "525555555555"
+      },
+      "offer": {
+        "code": "mgbqpp19"
+      }
+    }
+  }
+}

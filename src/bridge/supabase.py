@@ -39,6 +39,10 @@ class SupabaseError(RuntimeError):
 class SupabasePermanentError(SupabaseError):
     """Raised when retrying an unchanged request cannot succeed."""
 
+    def __init__(self, message: str, *, reason: str | None = None) -> None:
+        super().__init__(message)
+        self.reason = reason
+
 
 class SupabaseCommittedResponseError(SupabaseError):
     """Raised when a successful mutating RPC returns an invalid committed row."""
@@ -904,6 +908,37 @@ def _parse_correlation_recommendation(
         raise SupabaseError(f"{operation}_invalid") from exc
 
 
+_DETERMINISTIC_SQLSTATE_CLASS = "22"
+
+
+def _deterministic_rejection(response: httpx.Response) -> str | None:
+    """Return the rejection reason when PostgREST reports a data exception.
+
+    SQLSTATE class 22 (data exception) means the request is invalid for the
+    contract it was sent to, so replaying it unchanged can never succeed. It is
+    classified by CLASS and not by an enumerated list of messages: a rejection
+    added to the schema later is covered without editing this file. A guard
+    that enumerates names is blind to whatever is added after it was written.
+    """
+    if not 400 <= response.status_code < 500:
+        return None
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    if not isinstance(body, dict):
+        return None
+    sqlstate = body.get("code")
+    if not isinstance(sqlstate, str):
+        return None
+    if not sqlstate.startswith(_DETERMINISTIC_SQLSTATE_CLASS):
+        return None
+    message = body.get("message")
+    if isinstance(message, str) and message.strip():
+        return message.strip()
+    return sqlstate
+
+
 def _response_rows(
     response: httpx.Response,
     *,
@@ -1348,6 +1383,11 @@ class SupabaseClient:
                 ensure_ascii=False,
             ),
         )
+        rejection = _deterministic_rejection(response)
+        if rejection is not None:
+            raise SupabasePermanentError(
+                f"{operation}_rejected: {rejection}", reason=rejection
+            )
         rows = _response_rows(response, operation=operation)
         if response.status_code != 200 or len(rows) != 1:
             raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
@@ -1386,6 +1426,11 @@ class SupabaseClient:
                 ensure_ascii=False,
             ),
         )
+        rejection = _deterministic_rejection(response)
+        if rejection is not None:
+            raise SupabasePermanentError(
+                f"{operation}_rejected: {rejection}", reason=rejection
+            )
         rows = _response_rows(response, operation=operation)
         if response.status_code != 200 or len(rows) != 1:
             raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
@@ -1424,6 +1469,11 @@ class SupabaseClient:
                 ensure_ascii=False,
             ),
         )
+        rejection = _deterministic_rejection(response)
+        if rejection is not None:
+            raise SupabasePermanentError(
+                f"{operation}_rejected: {rejection}", reason=rejection
+            )
         rows = _response_rows(response, operation=operation)
         if response.status_code != 200 or len(rows) != 1:
             raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
@@ -1465,6 +1515,11 @@ class SupabaseClient:
                 ensure_ascii=False,
             ),
         )
+        rejection = _deterministic_rejection(response)
+        if rejection is not None:
+            raise SupabasePermanentError(
+                f"{operation}_rejected: {rejection}", reason=rejection
+            )
         rows = _response_rows(response, operation=operation)
         if response.status_code != 200 or len(rows) != 1:
             raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
@@ -2022,6 +2077,11 @@ class SupabaseClient:
                 ensure_ascii=False,
             ),
         )
+        rejection = _deterministic_rejection(response)
+        if rejection is not None:
+            raise SupabasePermanentError(
+                f"{operation}_rejected: {rejection}", reason=rejection
+            )
         rows = _response_rows(response, operation=operation)
         if response.status_code != 200 or len(rows) != 1:
             raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
@@ -2078,6 +2138,11 @@ class SupabaseClient:
                 ensure_ascii=False,
             ),
         )
+        rejection = _deterministic_rejection(response)
+        if rejection is not None:
+            raise SupabasePermanentError(
+                f"{operation}_rejected: {rejection}", reason=rejection
+            )
         rows = _response_rows(response, operation=operation)
         if response.status_code != 200 or len(rows) != 1:
             raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
