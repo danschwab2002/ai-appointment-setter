@@ -108,6 +108,7 @@ from bridge.supabase import (
     PilotBoundaryConfig,
     SupabaseClient,
     SupabaseError,
+    SupabasePermanentError,
 )
 from bridge.worker import (
     DurableDispatcher,
@@ -5343,6 +5344,24 @@ def create_app(
                     "status": "duplicate",
                     "event_id": event_id,
                 }
+        except SupabasePermanentError as exc:
+            # El evento no es procesable para este sistema y reenviarlo sin
+            # cambios nunca puede entrar. Un 503 le dice al emisor que el
+            # servicio esta caido y que reintente, y Hotmart cuenta esas fallas
+            # para desactivar la configuracion del webhook. Un descarte
+            # explicito deja el motivo registrado sin consumir ese contador.
+            reason = exc.reason or "rejected_by_contract"
+            logger.info(
+                "hotmart_event_rejected event_id=%s reason=%s",
+                event_id,
+                reason,
+            )
+            response.status_code = status.HTTP_200_OK
+            return {
+                "status": "ignored",
+                "event_id": event_id,
+                "reason": reason,
+            }
         except SupabaseError as exc:
             raise HTTPException(
                 status_code=503, detail="webhook_persist_unavailable"
