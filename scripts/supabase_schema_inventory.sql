@@ -3058,6 +3058,62 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         4,
         'slack_correlation_abstention_reason_service_role_only'
+    union all
+    select
+        '20260922000100',
+        '20260922000100_johanna_checkout_offer_by_lead_intent_v1.sql',
+        exists(
+            select 1
+            from pg_catalog.pg_attribute
+            where attrelid = to_regclass('public.checkout_link_issuances')
+              and attname = 'offer_resolution'
+              and not attisdropped
+        )::int
+        + exists(
+            select 1
+            from pg_catalog.pg_attribute
+            where attrelid = to_regclass('public.checkout_link_issuances')
+              and attname = 'lead_offer_code'
+              and not attisdropped
+        )::int
+        + exists(
+            select 1
+            from pg_catalog.pg_constraint
+            where conrelid = to_regclass('public.checkout_link_issuances')
+              and conname = 'checkout_link_issuances_offer_resolution_check'
+              and position('lead_intent' in lower(pg_get_constraintdef(oid))) > 0
+              and position(
+                    'default_offer_not_in_catalog'
+                    in lower(pg_get_constraintdef(oid))
+                  ) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.reserve_chatwoot_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamptz)')
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+              and position('v_lead_intent' in definition) > 0
+              and position('default_offer_not_in_catalog' in definition) > 0
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.protect_checkout_link_issuance()')
+              and position(
+                    'old.offer_resolution is distinct from new.offer_resolution'
+                    in definition
+                  ) > 0
+              and position(
+                    'old.lead_offer_code is distinct from new.lead_offer_code'
+                    in definition
+                  ) > 0
+        )::int,
+        5,
+        'johanna_checkout_offer_by_lead_intent_service_role_only'
 )
 select
     version,
