@@ -35,22 +35,28 @@ A known purchase of the product by the same phone, through any offer, blocks the
 The exact V2 URL is:
 
 ```text
-https://pay.hotmart.com/F106691755G?off=<offer>&checkoutMode=10&src=hermes&sck=hermes%7Cv1%7C<issuance_ulid>
+https://pay.hotmart.com/F106691755G?off=<offer>&checkoutMode=10&src=hermes&sck=<sck>[&fbclid=<lead fbclid>]
 ```
 
-`<offer>` is the resolved catalog offer. The decoded SCK is `hermes|v1|<issuance_ulid>`. It contains no `conversation_id`, contact identifier, phone, email, advertising SCK, UTM, or `fbclid`. V2 uses no PII prefill.
+`<offer>` is the resolved catalog offer.
+
+The decoded SCK is `<ad sck>|hermes|v1|<issuance_ulid>` when the lead arrived with an advertising SCK, and `hermes|v1|<issuance_ulid>` otherwise. The ad's value is kept first and whole, so a parser that splits on `|` finds it in the leading field and the marker always closes the value. `fbclid` carries the lead's own click id and is present only when the lead arrived with one.
+
+Both are propagated verbatim and only when they are safe to put in a query string: the ad SCK must match `[A-Za-z0-9._|-]` and be at most 200 characters, the `fbclid` must match `[A-Za-z0-9._-]` and be at most 512. Anything else is dropped rather than escaped, and the issuance records which field was dropped. Nothing else travels: no `conversation_id`, contact identifier, phone, email, name, or UTM. V2 uses no PII prefill.
+
+`attribution_resolution` on the issuance states what could be composed: `full`, `sck_only`, `fbclid_only`, or `marker_only`. The ad SCK and the `fbclid` are read from the lead's own precheckout submission, including when the resolved offer came from the catalog default because the lead's pair was uncatalogued.
 
 ## Durable issuance
 
 Before any Chatwoot POST, a reserve RPC creates one `checkout_link_issuances` row that binds the opaque ULID to tenant, case, purchase intent, conversation, contact, identity, product, offer, source kind, optional precheckout submission, optional original SCK, trigger message, exact URL, offer resolution, and delivery state. Failure to persist means no send.
 
-Inbound requests create a purchase intent without fabricating a precheckout submission. A real matching precheckout intent is reused and its original SCK is read from the retained raw payload and stored only in the issuance row.
+Inbound requests create a purchase intent without fabricating a precheckout submission. A real matching precheckout intent is reused and its original SCK is read from the retained raw payload and stored in the issuance row, both on its own column and as the leading field of the emitted SCK.
 
 The unique conversation/message key makes retries reuse the same row, ULID, and URL. A replay never creates a second issuance or authorizes a blind second POST. Delivery states are `reserved`, `request_started`, `accepted_by_chatwoot`, `delivery_unknown`, and `purchase_matched`. After Chatwoot's live assignee/takeover checks, a second RPC reauthorizes durable state and transitions `reserved` to `request_started` immediately before the POST.
 
 ## Purchase correlation
 
-For `PURCHASE_APPROVED`, Hotmart supplies SCK at `data.purchase.origin.sck`. The parser preserves it exactly. Only `hermes|v1|<valid-ulid>` values are eligible. Exact lookup marks the issuance and linked intent purchased. Missing, malformed, unknown, or conflicting values do not guess by conversation or buyer identity.
+For `PURCHASE_APPROVED`, Hotmart supplies SCK at `data.purchase.origin.sck`. The parser preserves it exactly. A value is eligible when the hermes marker closes it: either `hermes|v1|<valid-ulid>` or `<ad sck>|hermes|v1|<valid-ulid>`. The marker must be the suffix, so a lead supplied value cannot impersonate the tail the reporting reads. Exact lookup on the stored SCK marks the issuance and linked intent purchased. Missing, malformed, unknown, or conflicting values do not guess by conversation or buyer identity.
 
 Correlation proves which issuance produced the sale, not that the original contact was the final buyer of a shared link.
 

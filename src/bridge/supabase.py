@@ -44,6 +44,53 @@ class SupabasePermanentError(SupabaseError):
         self.reason = reason
 
 
+_ALLOWED_CHECKOUT_QUERY_KEYS = (
+    {"off", "checkoutMode", "src", "sck"},
+    {"off", "checkoutMode", "src", "sck", "fbclid"},
+)
+
+# Lo unico que viaja crudo en la query string del checkout. Un valor con
+# espacios, acentos o & partiria la URL en silencio, asi que la RPC lo descarta
+# antes de componerla y esta validacion lo vuelve a exigir del lado del bridge.
+_CHECKOUT_SAFE_VALUE = re.compile(r"[A-Za-z0-9._-]{1,512}")
+
+# El sck del anuncio admite ademas "|", que es el separador del estandar de
+# Lancemos (utm_term|utm_content|utm_medium|utm_campaign). Se encodea entero al
+# componer la URL, asi que no la parte.
+_CHECKOUT_SAFE_SCK = re.compile(r"[A-Za-z0-9._|-]{1,200}")
+
+
+# El sck que Hotmart devuelve en la compra: el marcador cierra el valor, con el
+# del anuncio delante o sin nada. Reemplaza al viejo startswith("hermes|"), que
+# dejaba de reconocer la venta apenas el sck del anuncio viajaba adelante.
+_HERMES_SCK_TAIL = re.compile(
+    r"(?:^|\|)hermes\|v1\|[0-7][0-9A-HJKMNP-TV-Z]{25}\Z"
+)
+
+
+def sck_carries_hermes_issuance(sck_value: str | None) -> bool:
+    """True si el sck termina en un marcador de emision del recuperador."""
+    if not sck_value:
+        return False
+    return _HERMES_SCK_TAIL.search(sck_value) is not None
+
+
+def _sck_carries_hermes_marker(sck_value: str, issuance_ulid: str) -> bool:
+    """El sck es el marcador solo, o el del anuncio seguido del marcador.
+
+    El del anuncio se preserva entero y primero para que un parser que corte por
+    "|" lo encuentre en el primer campo. Ver la migracion 20260922000200.
+    """
+    marker = f"hermes|v1|{issuance_ulid}"
+    if sck_value == marker:
+        return True
+    suffix = f"|{marker}"
+    if not sck_value.endswith(suffix):
+        return False
+    original = sck_value[: -len(suffix)]
+    return bool(original) and _CHECKOUT_SAFE_SCK.fullmatch(original) is not None
+
+
 class SupabaseCommittedResponseError(SupabaseError):
     """Raised when a successful mutating RPC returns an invalid committed row."""
 
@@ -3202,7 +3249,7 @@ class SupabaseClient:
                 re.fullmatch(r"[0-7][0-9A-HJKMNP-TV-Z]{25}", returned_ulid) is None
                 or source_kind not in {"inbound_request", "precheckout_request"}
                 or source_value != "hermes"
-                or sck_value != f"hermes|v1|{returned_ulid}"
+                or not _sck_carries_hermes_marker(sck_value, returned_ulid)
             ):
                 raise SupabaseCommittedResponseError(operation)
             try:
@@ -3214,11 +3261,13 @@ class SupabaseClient:
                 parsed.scheme != "https"
                 or parsed.netloc != "pay.hotmart.com"
                 or parsed.fragment
-                or set(query) != {"off", "checkoutMode", "src", "sck"}
+                or set(query) not in _ALLOWED_CHECKOUT_QUERY_KEYS
                 or query.get("src") != ["hermes"]
                 or query.get("sck") != [sck_value]
                 or len(query.get("off", [])) != 1
                 or len(query.get("checkoutMode", [])) != 1
+                or len(query.get("fbclid", ["x"])) != 1
+                or not _CHECKOUT_SAFE_VALUE.fullmatch(query.get("fbclid", ["x"])[0])
             ):
                 raise SupabaseCommittedResponseError(operation)
         return CheckoutIssuanceReservation(outcome=outcome, **values)
