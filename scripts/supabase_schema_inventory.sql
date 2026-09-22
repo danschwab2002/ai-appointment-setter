@@ -3114,6 +3114,64 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         5,
         'johanna_checkout_offer_by_lead_intent_service_role_only'
+    union all
+    select
+        '20260922000200',
+        '20260922000200_johanna_checkout_link_full_attribution_v1.sql',
+        exists(
+            select 1
+            from pg_catalog.pg_attribute
+            where attrelid = to_regclass('public.checkout_link_issuances')
+              and attname = 'attribution_resolution'
+              and not attisdropped
+        )::int
+        + exists(
+            select 1
+            from pg_catalog.pg_attribute
+            where attrelid = to_regclass('public.checkout_link_issuances')
+              and attname = 'dropped_unsafe_fields'
+              and not attisdropped
+        )::int
+        + exists(
+            select 1
+            from pg_catalog.pg_constraint
+            where conrelid = to_regclass('public.checkout_link_issuances')
+              and conname = 'checkout_link_issuances_url_shape'
+              and position('fbclid' in lower(pg_get_constraintdef(oid))) > 0
+        )::int
+        + exists(
+            select 1
+            from pg_catalog.pg_constraint
+            where conrelid = to_regclass('public.checkout_link_issuances')
+              and conname = 'checkout_link_issuances_sck_value_shape'
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.reserve_chatwoot_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamptz)')
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+              and position('v_lead_fbclid' in definition) > 0
+              and position('v_attribution_resolution' in definition) > 0
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.protect_checkout_link_issuance()')
+              and position(
+                    'old.attribution_resolution is distinct from new.attribution_resolution'
+                    in definition
+                  ) > 0
+              and position(
+                    'old.dropped_unsafe_fields is distinct from new.dropped_unsafe_fields'
+                    in definition
+                  ) > 0
+        )::int,
+        6,
+        'johanna_checkout_link_full_attribution_service_role_only'
 )
 select
     version,

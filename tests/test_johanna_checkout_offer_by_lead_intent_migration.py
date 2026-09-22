@@ -25,9 +25,11 @@ def _sql() -> str:
     return MIGRATION.read_text(encoding="utf-8")
 
 
-def test_migration_is_the_newest_and_replaces_the_v2_reserve_rpc() -> None:
-    versions = sorted(path.name.split("_", 1)[0] for path in MIGRATIONS.glob("*.sql"))
-    assert versions[-1] == "20260922000100"
+def test_migration_exists_once_and_replaces_the_v2_reserve_rpc() -> None:
+    versions = [path.name.split("_", 1)[0] for path in MIGRATIONS.glob("*.sql")]
+    # Which file is the newest is pinned by test_supabase_release_readiness.py;
+    # here what matters is that this migration is present exactly once.
+    assert versions.count("20260922000100") == 1
     sql = _sql()
     assert "create or replace function public.reserve_chatwoot_checkout_issuance_v2(" in sql
     # Same signature as V2: the bridge client is untouched.

@@ -1201,3 +1201,90 @@ def test_finalize_payment_link_send_accepts_unknown_to_accepted_reconciliation()
 
     assert result.outcome == "reconciled"
     assert result.status == "accepted_by_chatwoot"
+
+
+# 2026-09-22 (migration 20260922000200): the link carries the lead's fbclid and
+# keeps the ad's sck in front of the hermes marker.
+
+_ULID = "01K5ABCDEFX2VYB4M6X9CDPTZR"
+
+
+def _reserve(client: SupabaseClient) -> object:
+    return asyncio.run(client.reserve_chatwoot_checkout_issuance_v2(
+        commercial_case_id="00000000-0000-0000-0000-000000000200",
+        external_user_id="12025550123",
+        chatwoot_account_id=1,
+        chatwoot_inbox_id=9,
+        chatwoot_conversation_id=42,
+        trigger_external_message_id="77",
+        issuance_ulid=_ULID,
+        now="2026-09-22T21:00:00+00:00",
+    ))
+
+
+def _reserved_row(sck: str, url: str) -> list[dict[str, Any]]:
+    return [{
+        "outcome": "reserved",
+        "issuance_id": "00000000-0000-0000-0000-000000000300",
+        "issuance_ulid": _ULID,
+        "purchase_intent_id": "00000000-0000-0000-0000-000000000301",
+        "source_kind": "precheckout_request",
+        "checkout_url_final": url,
+        "source_value": "hermes",
+        "sck_value": sck,
+    }]
+
+
+def test_reserve_accepts_the_ad_sck_and_the_lead_fbclid() -> None:
+    sck = f"fb.paid.120210000000000000|hermes|v1|{_ULID}"
+    url = (
+        "https://pay.hotmart.com/F106691755G?off=mgbgpp19&checkoutMode=10"
+        f"&src=hermes&sck=fb.paid.120210000000000000%7Chermes%7Cv1%7C{_ULID}"
+        "&fbclid=IwAR0abcDEF_ghi-JKL.mno"
+    )
+    result = _reserve(_client(_reserved_row(sck, url)))
+    assert result.outcome == "reserved"
+    assert result.checkout_url_final == url
+    assert result.sck_value == sck
+
+
+def test_reserve_still_accepts_the_marker_only_link() -> None:
+    sck = f"hermes|v1|{_ULID}"
+    url = (
+        "https://pay.hotmart.com/F106691755G?off=bxjge6zq&checkoutMode=10"
+        f"&src=hermes&sck=hermes%7Cv1%7C{_ULID}"
+    )
+    result = _reserve(_client(_reserved_row(sck, url)))
+    assert result.sck_value == sck
+
+
+def test_reserve_rejects_a_sck_whose_marker_is_not_the_suffix() -> None:
+    # The hermes marker must close the sck; anything after it would let a lead
+    # supplied value impersonate the tail the reporting reads.
+    sck = f"hermes|v1|{_ULID}|tampered"
+    url = (
+        "https://pay.hotmart.com/F106691755G?off=bxjge6zq&checkoutMode=10"
+        f"&src=hermes&sck=hermes%7Cv1%7C{_ULID}%7Ctampered"
+    )
+    with pytest.raises(SupabaseCommittedResponseError):
+        _reserve(_client(_reserved_row(sck, url)))
+
+
+def test_reserve_rejects_an_unknown_query_parameter() -> None:
+    sck = f"hermes|v1|{_ULID}"
+    url = (
+        "https://pay.hotmart.com/F106691755G?off=bxjge6zq&checkoutMode=10"
+        f"&src=hermes&sck=hermes%7Cv1%7C{_ULID}&email=lead%40example.com"
+    )
+    with pytest.raises(SupabaseCommittedResponseError):
+        _reserve(_client(_reserved_row(sck, url)))
+
+
+def test_reserve_rejects_a_fbclid_that_would_break_the_query_string() -> None:
+    sck = f"hermes|v1|{_ULID}"
+    url = (
+        "https://pay.hotmart.com/F106691755G?off=bxjge6zq&checkoutMode=10"
+        f"&src=hermes&sck=hermes%7Cv1%7C{_ULID}&fbclid=has space"
+    )
+    with pytest.raises(SupabaseCommittedResponseError):
+        _reserve(_client(_reserved_row(sck, url)))

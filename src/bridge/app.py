@@ -109,6 +109,7 @@ from bridge.supabase import (
     SupabaseClient,
     SupabaseError,
     SupabasePermanentError,
+    sck_carries_hermes_issuance,
 )
 from bridge.worker import (
     DurableDispatcher,
@@ -5203,10 +5204,7 @@ def create_app(
                         "status": "ignored",
                         "reason": "invalid_purchase_payload",
                     }
-                if (
-                    parsed_purchase.origin_sck is not None
-                    and parsed_purchase.origin_sck.startswith("hermes|")
-                ):
+                if sck_carries_hermes_issuance(parsed_purchase.origin_sck):
                     checkout_admission = (
                         await shared_supabase.admit_and_correlate_hotmart_checkout_issuance_v2(
                             external_event_id=event_id,
