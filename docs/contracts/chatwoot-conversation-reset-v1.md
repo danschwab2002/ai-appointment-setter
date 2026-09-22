@@ -1,8 +1,9 @@
 # Contrato de reset conversacional Chatwoot V1
 
-- **Estado:** Implementado localmente; pendiente de publicación, despliegue y E2E real
+- **Estado:** Implementado, publicado y desplegado; E2E real controlado aprobado
 - **Versión:** 1
 - **Ámbito:** conversación inbound del único JID autorizado del piloto
+- **Evidencia:** [`../operations/2026-08-23-johanna-conversation-reset-e2e.md`](../operations/2026-08-23-johanna-conversation-reset-e2e.md)
 
 ## Propósito
 
