@@ -3781,7 +3781,18 @@ def create_app(
                     settings.conversation_reactivation_max_sends_per_scan
                 ),
                 max_pages=settings.conversation_reactivation_max_pages,
-                allowed_phone=allowed_phone_from_jid(settings.allowed_jid),
+                # Mismo criterio que el monitor de conversaciones estancadas
+                # (`allow_any_scoped_sender`): con los remitentes acotados por
+                # scope, el limite no es un JID unico sino las barreras de
+                # opt-out, pausa y handoff. Restringir igual al JID deja afuera
+                # a todo el inbox, porque ALLOWED_WHATSAPP_JID es un numero de
+                # prueba. Medido el 2026-09-23 22:40 UTC: las 25 conversaciones
+                # abiertas del inbox 9 se saltearon con `target_not_allowed`.
+                allowed_phone=(
+                    None
+                    if settings.chatwoot_scoped_inbound_senders_enabled
+                    else allowed_phone_from_jid(settings.allowed_jid)
+                ),
             )
             app.state.conversation_reactivation_sweeper = (
                 conversation_reactivation_sweeper
@@ -4099,6 +4110,13 @@ def create_app(
                 **stalled_monitor_readiness,
                 "conversation_reactivation": (
                     conversation_reactivation_sweeper.last_scan_state
+                ),
+                # El estado solo dice si el barrido fallo. Saltear a las 25
+                # conversaciones del inbox no es una falla, asi que sin este
+                # resumen un barredor mal configurado y uno sin trabajo
+                # publican lo mismo.
+                "conversation_reactivation_last_scan": (
+                    conversation_reactivation_sweeper.last_scan_summary
                 ),
             }
         if (
