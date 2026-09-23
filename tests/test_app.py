@@ -650,3 +650,67 @@ def test_the_resume_trigger_is_not_gated_on_a_blocked_admission() -> None:
             # entero; lo prohibido es condicionar el disparador al RESULTADO de
             # la admision de esta conversacion.
             assert "admission.outcome" not in gate, gate
+
+
+def test_scoped_senders_do_not_narrow_reactivation_to_one_jid() -> None:
+    """Con remitentes acotados por scope, el limite no es un JID unico.
+
+    `ALLOWED_WHATSAPP_JID` es un numero de prueba. Cuando
+    `CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED` esta activo, el limite real son
+    las barreras de opt-out, pausa y handoff, y el monitor de conversaciones
+    estancadas ya lo respeta con `allow_any_scoped_sender`. Restringir igual al
+    JID deja afuera al inbox entero: medido el 2026-09-23 a las 22:40 UTC, el
+    barredor salteo las 25 conversaciones abiertas del inbox 9 con
+    `target_not_allowed`, y `/ready` publico `healthy` porque saltear a todos
+    no es un error.
+
+    Se verifica sobre el AST: lo que importa es que la decision dependa del
+    flag, no como este escrita.
+    """
+    import ast
+    import inspect
+
+    import bridge.app as app_module
+
+    tree = ast.parse(inspect.getsource(app_module))
+    valores: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        nombre = getattr(func, "id", None) or getattr(func, "attr", None)
+        if nombre != "ConversationReactivationSweeper":
+            continue
+        for keyword in node.keywords:
+            if keyword.arg == "allowed_phone":
+                valores.append(ast.unparse(keyword.value))
+    assert valores, "el barredor no se construye con allowed_phone"
+    for valor in valores:
+        assert "chatwoot_scoped_inbound_senders_enabled" in valor, valor
+
+
+def test_readiness_publishes_why_the_reactivation_scan_skipped() -> None:
+    """Un barrido sin envios tiene que decir por que.
+
+    Sin esto, un barredor que saltea el inbox entero y uno que no tiene a nadie
+    a quien escribir publican exactamente lo mismo.
+    """
+    import ast
+    import inspect
+
+    import bridge.app as app_module
+
+    fuente = inspect.getsource(app_module)
+    assert "conversation_reactivation_last_scan" in fuente
+    tree = ast.parse(fuente)
+    encontrado = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Dict):
+            for clave, valor in zip(node.keys, node.values):
+                if (
+                    isinstance(clave, ast.Constant)
+                    and clave.value == "conversation_reactivation_last_scan"
+                ):
+                    assert "last_scan_summary" in ast.unparse(valor)
+                    encontrado = True
+    assert encontrado, "la clave no se publica desde el resumen del barredor"

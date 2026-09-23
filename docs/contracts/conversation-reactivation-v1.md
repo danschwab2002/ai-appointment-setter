@@ -57,8 +57,11 @@ Un candidato solo se admite cuando Chatwoot confirma, en el momento del barrido:
 4. sin la etiqueta `automation_opted_out`;
 5. contacto con `blocked` explicitamente `false` (ausente o nulo excluye);
 6. telefono E.164 legible desde `meta.sender.phone_number` o
-   `meta.sender.identifier`, y dentro del scope configurado
-   (`ALLOWED_WHATSAPP_JID` o `CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED`);
+   `meta.sender.identifier`, y dentro del scope configurado. ⚠ El scope tiene
+   **dos modos**, igual que el monitor de conversaciones estancadas: con
+   `CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED=true` el limite son las barreras de
+   opt-out, pausa y handoff, y **no** se compara contra ningun JID; solo cuando
+   ese flag esta apagado se exige coincidir con `ALLOWED_WHATSAPP_JID`;
 7. nombre de contacto del que se pueda extraer un primer nombre usable;
 8. el ultimo mensaje publico conversacional, ordenado por **ID entero de
    Chatwoot y no por `created_at`**, es un inbound (`message_type` 0) del
@@ -233,6 +236,29 @@ nuestro), asi que la barrera del nombre **no perdio ninguna candidata real**.
 Pero el caso existe: un contacto cuyo push name es solo un emoji queda afuera. Es
 deliberado — `Hola, ✨.` es peor que no escribir — y se prefiere fail-closed
 antes que inventar un saludo.
+
+## Lo que salio mal la primera vez (2026-09-23 22:34 UTC)
+
+El primer despliegue activado **no mando nada**, y `/ready` publicaba
+`conversation_reactivation: healthy`. El codigo desplegado era el correcto
+(hash de objeto identico a `origin/main` en los cinco archivos) y la migracion
+estaba aplicada.
+
+La causa: el cableado pasaba `allowed_phone=allowed_phone_from_jid(...)`
+**siempre**, ignorando `CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED`. Como
+`ALLOWED_WHATSAPP_JID` es un numero de prueba argentino y los leads son
+ecuatorianos, las **25** conversaciones abiertas del inbox 9 se saltearon con
+`target_not_allowed`.
+
+Dos cosas cambiaron a partir de eso:
+
+1. El scope respeta el flag, igual que el monitor de estancadas.
+2. `/ready` publica **`conversation_reactivation_last_scan`** con una linea del
+   ultimo barrido (`scanned=N sent=N <motivo>=N ...`). Sin eso, un barredor que
+   saltea el inbox entero y uno que no tiene a nadie a quien escribir publican
+   exactamente lo mismo: `healthy`, sin envios. El resumen lleva solo conteos y
+   nombres de motivo, que son constantes del codigo, nunca contenido ni
+   identidad de nadie.
 
 ## Verificacion pendiente
 

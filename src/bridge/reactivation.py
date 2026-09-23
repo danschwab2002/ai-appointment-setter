@@ -29,6 +29,7 @@ import math
 import re
 import time
 import unicodedata
+from collections import Counter
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
@@ -418,6 +419,22 @@ def evaluate_reactivation_candidate(
     )
 
 
+def _scan_summary(
+    *, scanned: int, sent: int, motivos: "Counter[str]", top: int = 4
+) -> str:
+    """Resumir un barrido sin filtrar contenido ni identidad de nadie.
+
+    Solo lleva conteos y nombres de motivo, que son constantes del codigo.
+    """
+    partes = [f"scanned={scanned}", f"sent={sent}"]
+    for motivo, cuenta in motivos.most_common(top):
+        partes.append(f"{motivo}={cuenta}")
+    restantes = len(motivos) - min(len(motivos), top)
+    if restantes > 0:
+        partes.append(f"other_reasons={restantes}")
+    return " ".join(partes)
+
+
 class ConversationReactivationSweeper:
     """Barrer el inbox y mandar la plantilla a quien quedo fuera de ventana."""
 
@@ -478,10 +495,23 @@ class ConversationReactivationSweeper:
         self._last_scan_state = "never"
         self._has_completed_scan = False
         self._last_sent_count = 0
+        self._last_scan_summary = "never"
 
     @property
     def last_scan_state(self) -> str:
         return self._last_scan_state
+
+    @property
+    def last_scan_summary(self) -> str:
+        """Una linea con lo que hizo el ultimo barrido y por que salteo.
+
+        Un barrido que saltea a las 25 conversaciones del inbox y uno que no
+        tiene a nadie a quien escribir terminan igual: sin envios y sin error.
+        Sin este resumen, los dos publican `healthy` y son indistinguibles
+        desde afuera. Paso el 2026-09-23: el barredor salteaba todo con
+        `target_not_allowed` y `/ready` decia `healthy`.
+        """
+        return self._last_scan_summary
 
     @property
     def has_completed_scan(self) -> bool:
@@ -535,6 +565,7 @@ class ConversationReactivationSweeper:
         now_epoch = int(self._clock())
         sent = 0
         failed = False
+        motivos: Counter[str] = Counter()
         for entry in conversations:
             if sent >= self._max_sends_per_scan:
                 break
@@ -554,12 +585,14 @@ class ConversationReactivationSweeper:
                     allowed_phone=self._allowed_phone,
                 )
             except TeamMessageTimestampError:
+                motivos["team_message_timestamp_invalid"] += 1
                 logger.warning(
                     "conversation_reactivation_skipped reason=%s",
                     "team_message_timestamp_invalid",
                 )
                 continue
             if decision.candidate is None:
+                motivos[decision.skip_reason or "unknown"] += 1
                 logger.debug(
                     "conversation_reactivation_skipped reason=%s",
                     decision.skip_reason,
@@ -568,10 +601,17 @@ class ConversationReactivationSweeper:
             if await self._reactivate(decision.candidate, template):
                 sent += 1
             else:
+                motivos["not_reactivated"] += 1
                 failed = failed or self._last_attempt_failed
         self._last_sent_count = sent
         self._has_completed_scan = True
         self._last_scan_state = "error" if failed else "healthy"
+        self._last_scan_summary = _scan_summary(
+            scanned=len(conversations), sent=sent, motivos=motivos
+        )
+        logger.info(
+            "conversation_reactivation_scan %s", self._last_scan_summary
+        )
         return sent
 
     async def _reactivate(

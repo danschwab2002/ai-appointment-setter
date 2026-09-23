@@ -720,3 +720,55 @@ def test_invalid_sweeper_configuration_is_rejected(kwargs) -> None:
     base.update(kwargs)
     with pytest.raises(ValueError):
         ConversationReactivationSweeper(**base)
+
+
+# --------------------------------------------------------------------------
+# El resumen del barrido
+
+
+def test_a_scan_that_sends_nothing_says_why() -> None:
+    """Un barrido mudo no se distingue de uno sin trabajo.
+
+    El 2026-09-23 el barredor salteo las 25 conversaciones del inbox con
+    `target_not_allowed` y publico `healthy`, porque saltear a todos no es una
+    falla. El resumen es lo que hace visible la diferencia.
+    """
+    details = _conversation()
+    details["can_reply"] = True
+    chatwoot = _ChatwootFalso(
+        conversations=[
+            {"conversation": _conversation(), "messages": _messages()},
+            {"conversation": details, "messages": _messages()},
+        ]
+    )
+    supabase = _SupabaseFalso()
+    sweeper = _sweeper(chatwoot, supabase, allowed_phone="12025550123")
+    assert asyncio.run(sweeper.run_once()) == 0
+    resumen = sweeper.last_scan_summary
+    assert "scanned=2" in resumen
+    assert "sent=0" in resumen
+    assert "target_not_allowed=1" in resumen
+    assert "inside_service_window=1" in resumen
+
+
+def test_the_summary_of_a_successful_scan_counts_the_sends() -> None:
+    chatwoot = _ChatwootFalso()
+    sweeper = _sweeper(chatwoot, _SupabaseFalso())
+    assert asyncio.run(sweeper.run_once()) == 1
+    assert "scanned=1" in sweeper.last_scan_summary
+    assert "sent=1" in sweeper.last_scan_summary
+
+
+def test_the_summary_never_leaks_contact_data() -> None:
+    # Solo conteos y nombres de motivo, que son constantes del codigo.
+    chatwoot = _ChatwootFalso()
+    sweeper = _sweeper(chatwoot, _SupabaseFalso())
+    asyncio.run(sweeper.run_once())
+    resumen = sweeper.last_scan_summary
+    for filtrado in ("Mau", "593999000126", "+593", "asistente virtual"):
+        assert filtrado not in resumen
+
+
+def test_the_summary_before_the_first_scan_is_never() -> None:
+    sweeper = _sweeper(_ChatwootFalso(), _SupabaseFalso())
+    assert sweeper.last_scan_summary == "never"
