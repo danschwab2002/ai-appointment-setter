@@ -37,6 +37,8 @@ from bridge.chatwoot import (
     ChatwootProtocolError,
     ChatwootReplyDeliveryUnknownError,
     StalledChatwootConversation,
+    TeamMessageTimestampError,
+    seconds_since_last_team_message,
 )
 from bridge.chatwoot_inbox import (
     ChatwootStalledConversationMonitor,
@@ -137,6 +139,9 @@ JOHANNA_PAYMENT_FAILURE_COPY_VERSION = "johanna-payment-failure-one-shot-v1"
 JOHANNA_ABANDONMENT_BODY_LIMIT_BYTES = 8 * 1024
 PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     "chatwoot_human_pause_enabled",
+    # Levantar la pausa no depende del aliado: lo unico especifico es el id del
+    # macro de Chatwoot, que ya es configuracion por runtime.
+    "conversation_resume_enabled",
     "hermes_shadow_enabled",
     "automated_replies_enabled",
     "reply_splitter_enabled",
@@ -299,6 +304,10 @@ class Settings:
     chatwoot_pause_macro_id: int | None = None
     chatwoot_human_pause_enabled: bool = False
     chatwoot_opt_out_macro_id: int | None = None
+    chatwoot_resume_macro_id: int | None = None
+    conversation_resume_enabled: bool = False
+    conversation_resume_quiet_seconds: int = 28800
+    conversation_resume_max: int = 3
     hermes_shadow_enabled: bool = False
     hermes_api_base_url: str | None = None
     hermes_api_key: str | None = None
@@ -813,6 +822,22 @@ class Settings:
         chatwoot_opt_out_macro_id = (
             int(opt_out_macro_id_raw) if opt_out_macro_id_raw else None
         )
+        resume_macro_id_raw = os.environ.get(
+            "CHATWOOT_RESUME_MACRO_ID", ""
+        ).strip()
+        chatwoot_resume_macro_id = (
+            int(resume_macro_id_raw) if resume_macro_id_raw else None
+        )
+        conversation_resume_enabled = (
+            os.environ.get("CONVERSATION_RESUME_ENABLED", "false").lower()
+            == "true"
+        )
+        conversation_resume_quiet_seconds = int(
+            os.environ.get("CONVERSATION_RESUME_QUIET_SECONDS", "28800")
+        )
+        conversation_resume_max = int(
+            os.environ.get("CONVERSATION_RESUME_MAX", "3")
+        )
         opt_out_projection_worker_id = (
             os.getenv("CHATWOOT_OPT_OUT_PROJECTION_WORKER_ID", "").strip() or None
         )
@@ -913,6 +938,10 @@ class Settings:
             chatwoot_pause_macro_id=int(os.environ["CHATWOOT_PAUSE_MACRO_ID"]),
             chatwoot_human_pause_enabled=chatwoot_human_pause_enabled,
             chatwoot_opt_out_macro_id=chatwoot_opt_out_macro_id,
+            chatwoot_resume_macro_id=chatwoot_resume_macro_id,
+            conversation_resume_enabled=conversation_resume_enabled,
+            conversation_resume_quiet_seconds=conversation_resume_quiet_seconds,
+            conversation_resume_max=conversation_resume_max,
             hermes_shadow_enabled=shadow_enabled,
             hermes_api_base_url=hermes_api_base_url,
             hermes_api_key=hermes_api_key,
@@ -1246,7 +1275,10 @@ def _shadow_context(payload: dict[str, object]) -> dict[str, object] | None:
 
 
 def _normalize_chatwoot_history(
-    messages: list[dict[str, object]], *, agent_bot_id: int
+    messages: list[dict[str, object]],
+    *,
+    agent_bot_id: int,
+    include_team_messages: bool = False,
 ) -> list[dict[str, str]]:
     normalized: list[dict[str, str]] = []
     for message in messages:
@@ -1268,6 +1300,15 @@ def _normalize_chatwoot_history(
             and sender.get("id") == agent_bot_id
         ):
             actor = "assistant"
+        elif (
+            include_team_messages
+            and message.get("message_type") in (1, 3)
+            and sender.get("type") == "user"
+        ):
+            # Lo que escribio una persona del equipo. Va con actor propio: si
+            # entrara como "assistant", el agente sostendria como propias las
+            # promesas de un humano.
+            actor = "human_agent"
         if actor is not None:
             normalized_message = {"actor": actor, "text": content.strip()}
             if actor == "prospect" and content == CHATWOOT_CONVERSATION_RESET_COMMAND:
@@ -1284,6 +1325,93 @@ def _normalize_chatwoot_history(
                 normalized_message["_created_at"] = str(created_at)
             normalized.append(normalized_message)
     return normalized
+
+
+async def _resume_paused_conversation(
+    *,
+    control_client: ChatwootClient,
+    supabase: object,
+    settings: "Settings",
+    conversation_id: int,
+    message_id: int,
+) -> bool:
+    """Levanta la pausa de una conversacion que el equipo dejo de atender.
+
+    Devuelve True solo cuando la conversacion quedo efectivamente admisible en
+    las dos capas: la durable de Supabase (``human_takeover``) y la etiqueta de
+    Chatwoot, que es la que gobierna el envio. Cualquier duda devuelve False y
+    la conversacion se queda con las personas.
+    """
+    if settings.chatwoot_inbox_id is None:
+        return False
+    try:
+        snapshot = await control_client.get_canonical_conversation_snapshot(
+            conversation_id=conversation_id,
+            expected_inbox_id=settings.chatwoot_inbox_id,
+            anchor_message_id=None,
+        )
+    except (ChatwootProtocolError, httpx.HTTPError):
+        return False
+    if snapshot.status != "open" or not snapshot.can_reply:
+        return False
+    if snapshot.human_assignee_present:
+        return False
+    if "automation_opted_out" in snapshot.labels:
+        return False
+    if "automation_paused" not in snapshot.labels:
+        return False
+    try:
+        messages = await control_client.get_conversation_messages(
+            conversation_id=conversation_id,
+            limit=100,
+        )
+        quiet_seconds = seconds_since_last_team_message(
+            messages, now_epoch=int(time.time())
+        )
+    except (TeamMessageTimestampError, ChatwootProtocolError, httpx.HTTPError):
+        return False
+    if (
+        quiet_seconds is not None
+        and quiet_seconds < settings.conversation_resume_quiet_seconds
+    ):
+        logger.info(
+            "conversation_resume_skipped reason=team_recently_active quiet=%s",
+            quiet_seconds,
+        )
+        return False
+    try:
+        result = await supabase.resume_paused_conversation(
+            external_conversation_id=conversation_id,
+            command_key=f"resume:{conversation_id}:{message_id}",
+            reason_code="inbound_after_quiet_period",
+            quiet_seconds=quiet_seconds,
+            max_resumes=settings.conversation_resume_max,
+        )
+    except SupabaseError:
+        return False
+    if not result.resumed:
+        logger.info("conversation_resume_skipped outcome=%s", result.outcome)
+        return False
+    try:
+        await control_client.clear_conversation_label(
+            conversation_id=conversation_id,
+            label="automation_paused",
+        )
+    except (ChatwootProtocolError, httpx.HTTPError):
+        # La capa durable ya quedo admisible, pero sin sacar la etiqueta el
+        # envio se bloquea igual: no se reintenta la admision.
+        logger.warning(
+            "conversation_resume_label_not_cleared conversation=%s",
+            conversation_id,
+        )
+        return False
+    logger.info(
+        "conversation_resumed conversation=%s outcome=%s quiet_seconds=%s",
+        conversation_id,
+        result.outcome,
+        quiet_seconds,
+    )
+    return True
 
 
 def _is_conversation_reset_message(payload: dict[str, object]) -> bool:
@@ -1719,6 +1847,7 @@ def create_app(
             agent_bot_id=settings.agent_bot_id,
             reply_dir=settings.reply_dir,
             pause_macro_id=settings.chatwoot_pause_macro_id,
+            resume_macro_id=settings.chatwoot_resume_macro_id,
             opt_out_macro_id=settings.chatwoot_opt_out_macro_id,
         )
     configured_reply_splitter = reply_splitter
@@ -2486,6 +2615,7 @@ def create_app(
         normalized = _normalize_chatwoot_history(
             history,
             agent_bot_id=settings.agent_bot_id,
+            include_team_messages=settings.conversation_resume_enabled,
         )
         current_index = next(
             (
@@ -2916,6 +3046,35 @@ def create_app(
                 return authorization.outcome in {"created", "already_exists"}
 
             durable_reply_authorizer = reauthorize_durable_reply
+            if (
+                settings.conversation_resume_enabled
+                and admission.outcome == "blocked"
+                and isinstance(control_client, ChatwootClient)
+            ):
+                # La pausa no es terminal: si el equipo dejo de atender esta
+                # conversacion, se levanta y se vuelve a pedir la admision.
+                if await _resume_paused_conversation(
+                    control_client=control_client,
+                    supabase=shared_supabase,
+                    settings=settings,
+                    conversation_id=conversation_id,
+                    message_id=message_id,
+                ):
+                    try:
+                        admission = (
+                            await shared_supabase.admit_inbound_commercial_case(
+                                scope_key=settings.chatwoot_cut_b_scope_key,
+                                scope_version=(
+                                    settings.chatwoot_cut_b_scope_version
+                                ),
+                                external_conversation_id=conversation_id,
+                                external_user_id=external_user_id,
+                            )
+                        )
+                    except SupabaseError as exc:
+                        raise RetryableChatwootWorkError(
+                            "chatwoot_cut_b_admission_failed"
+                        ) from exc
             logger.info(
                 "chatwoot_cut_b_admitted outcome=%s",
                 admission.outcome,
