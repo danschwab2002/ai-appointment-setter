@@ -212,6 +212,28 @@ re-admision queda condicionada a que efectivamente hubiera estado bloqueada.
    Chatwoot conserve el texto sin normalizar cuando el mensaje lleva
    `template_params`. Se agrega cuando el E2E lo muestre.
 
+## Corrida en seco contra produccion (2026-09-23 20:30 UTC)
+
+`evaluate_reactivation_candidate` corrido con los payloads reales de las **25
+conversaciones abiertas** del inbox 9, sin reservar ni enviar nada:
+
+| resultado | conversaciones |
+|---|---|
+| **candidatas** | **4**: 143 (25,3 h), 136 (26,6 h), 63 (27,9 h), 126 (28,9 h) |
+| `inside_service_window` | 4: 124, 110, 153, 152 |
+| `last_message_not_inbound` | 15 |
+| `contact_name_unusable` | 2: 123 y 133 |
+
+Los nombres renderizados fueron `Chayin`, `Ángel`, `Marcia` y `Mau`, y los cuatro
+mensajes empiezan `Hola, <nombre>. Soy el asistente virtual...`.
+
+**Sobre los dos `contact_name_unusable`:** los push names son `✨` y `VM🌷`. Las
+dos se habrian descartado igual por el criterio 8 (su ultimo mensaje es
+nuestro), asi que la barrera del nombre **no perdio ninguna candidata real**.
+Pero el caso existe: un contacto cuyo push name es solo un emoji queda afuera. Es
+deliberado — `Hola, ✨.` es peor que no escribir — y se prefiere fail-closed
+antes que inventar un saludo.
+
 ## Verificacion pendiente
 
 Antes de dar el feature por terminado: aplicar la migracion, desplegar con el
