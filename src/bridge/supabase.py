@@ -414,6 +414,20 @@ class InboundCommercialCaseAdmissionResult:
 
 
 @dataclass(frozen=True)
+class ConversationResumeResult:
+    """Outcome of lifting a durable human pause on one conversation."""
+
+    outcome: str
+    conversation_id: str | None
+    commercial_case_id: str | None
+    resume_event_id: str | None
+
+    @property
+    def resumed(self) -> bool:
+        return self.outcome in {"resumed", "replayed", "already_active"}
+
+
+@dataclass(frozen=True)
 class PaymentLinkCandidate:
     """Authoritative precheckout sequence eligible for a payment-link action."""
 
@@ -3105,6 +3119,56 @@ class SupabaseClient:
             authorization_reason=authorization_reason,
         )
 
+
+    async def resume_paused_conversation(
+        self,
+        *,
+        external_conversation_id: int,
+        command_key: str,
+        reason_code: str,
+        quiet_seconds: int | None,
+        max_resumes: int = 3,
+    ) -> ConversationResumeResult:
+        """Lift the durable human pause so the agent can be admitted again."""
+        operation = "conversation_resume"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/resume_paused_conversation",
+            content=json.dumps(
+                {
+                    "p_external_conversation_id": external_conversation_id,
+                    "p_command_key": command_key,
+                    "p_reason_code": reason_code,
+                    "p_quiet_seconds": quiet_seconds,
+                    "p_max_resumes": max_resumes,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(
+                f"conversation_resume_failed: HTTP {response.status_code}"
+            )
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError("conversation_resume_invalid_shape")
+        row = rows[0]
+        outcome = row.get("outcome")
+        if outcome not in {
+            "resumed",
+            "replayed",
+            "already_active",
+            "blocked_contact",
+            "blocked_pending_handoff",
+            "not_found",
+        }:
+            raise SupabaseError("conversation_resume_invalid_outcome")
+        return ConversationResumeResult(
+            outcome=outcome,
+            conversation_id=row.get("resumed_conversation_id"),
+            commercial_case_id=row.get("resumed_commercial_case_id"),
+            resume_event_id=row.get("resume_event_id"),
+        )
 
     async def admit_inbound_commercial_case(
         self,

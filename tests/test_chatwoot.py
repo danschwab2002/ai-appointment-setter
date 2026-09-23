@@ -10,6 +10,8 @@ from bridge.chatwoot import (
     ChatwootClient,
     ChatwootHistoryScanLimitError,
     ChatwootProtocolError,
+    TeamMessageTimestampError,
+    seconds_since_last_team_message,
 )
 
 
@@ -2948,3 +2950,87 @@ def test_apply_opt_out_macro_skips_post_when_labels_already_projected() -> None:
         expected_jid=ALLOWED_JID,
     ))
     assert [request.method for request in requests] == ["GET", "GET"]
+
+
+# ── Silencio del equipo: la señal que habilita reactivar ────────────────
+
+NOW = 1_700_000_000
+
+
+def _team_message(created_at: int, message_type: int = 1) -> dict[str, object]:
+    return {
+        "message_type": message_type,
+        "private": False,
+        "content": "te ayudo yo",
+        "sender": {"type": "user", "id": 4},
+        "created_at": created_at,
+    }
+
+
+def test_team_silence_is_none_when_only_the_bot_and_the_lead_wrote() -> None:
+    mensajes: list[dict[str, object]] = [
+        {
+            "message_type": 0,
+            "private": False,
+            "content": "Envíame el enlace",
+            "sender": {"type": "contact", "id": 1},
+            "created_at": NOW - 60,
+        },
+        {
+            "message_type": 1,
+            "private": False,
+            "content": "hola",
+            "sender": {"type": "agent_bot", "id": 1},
+            "created_at": NOW - 30,
+        },
+    ]
+    assert seconds_since_last_team_message(mensajes, now_epoch=NOW) is None
+
+
+def test_team_silence_uses_the_most_recent_human_message() -> None:
+    mensajes = [
+        _team_message(NOW - 90_000),
+        _team_message(NOW - 3_600),
+        _team_message(NOW - 50_000),
+    ]
+    assert seconds_since_last_team_message(mensajes, now_epoch=NOW) == 3_600
+
+
+def test_team_silence_ignores_activities_and_private_notes() -> None:
+    # Asignar una conversacion genera una actividad (tipo 2) del usuario que
+    # asigna: no es atender a nadie. La nota privada de derivacion tampoco.
+    mensajes = [
+        _team_message(NOW - 40_000),
+        _team_message(NOW - 10, message_type=2),
+        {
+            "message_type": 1,
+            "private": True,
+            "content": "nota interna",
+            "sender": {"type": "user", "id": 2},
+            "created_at": NOW - 5,
+        },
+    ]
+    assert seconds_since_last_team_message(mensajes, now_epoch=NOW) == 40_000
+
+
+def test_team_silence_counts_template_messages_sent_by_a_person() -> None:
+    assert seconds_since_last_team_message(
+        [_team_message(NOW - 7_200, message_type=3)], now_epoch=NOW
+    ) == 7_200
+
+
+def test_team_silence_fails_closed_on_an_unreadable_timestamp() -> None:
+    # Tratar una fecha ilegible como silencio reactivaria una conversacion que
+    # alguien podria estar atendiendo ahora mismo.
+    for invalido in (None, "ayer", True, 0, -5):
+        with pytest.raises(TeamMessageTimestampError):
+            seconds_since_last_team_message(
+                [_team_message(NOW - 100) | {"created_at": invalido}],
+                now_epoch=NOW,
+            )
+
+
+def test_team_silence_never_returns_a_negative_age() -> None:
+    assert seconds_since_last_team_message(
+        [_team_message(NOW + 500)], now_epoch=NOW
+    ) == 0

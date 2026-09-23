@@ -3172,6 +3172,38 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         6,
         'johanna_checkout_link_full_attribution_service_role_only'
+    union all
+    select
+        '20260923000100',
+        '20260923000100_resume_paused_conversation_v1.sql',
+        (to_regclass('public.conversation_resume_events') is not null)::int
+        + exists(
+            select 1 from indexes
+            where indexname = 'conversation_resume_events_command_key_idx'
+              and position('unique' in lower(indexdef)) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.resume_paused_conversation(bigint,text,text,integer,integer,timestamptz)')
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+              and position('blocked_contact' in definition) > 0
+              and position('blocked_pending_handoff' in definition) > 0
+              and position('blocked_resume_limit' in definition) > 0
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.protect_inbound_commercial_case()')
+              and position('old.status = ''paused''' in definition) > 0
+              and position('new.status = ''active''' in definition) > 0
+        )::int,
+        4,
+        'resume_paused_conversation_service_role_only'
 )
 select
     version,

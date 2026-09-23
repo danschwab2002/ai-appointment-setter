@@ -274,3 +274,203 @@ def test_event_more_than_five_minutes_in_the_future_is_rejected() -> None:
     assert response.status_code == 400
     assert response.json()["detail"] == "invalid_johanna_funnel_event"
     assert supabase.calls == []
+
+
+# ── Levantar la pausa: a quien si y a quien no ─────────────────────────
+
+from bridge.app import _normalize_chatwoot_history, _resume_paused_conversation
+from bridge.chatwoot import ChatwootProtocolError
+from bridge.supabase import ConversationResumeResult, SupabaseError
+
+
+AHORA = 1_700_000_000
+
+
+def _mensajes_con_humano(hace_segundos: int) -> list[dict[str, object]]:
+    return [
+        {
+            "message_type": 1,
+            "private": False,
+            "content": "yo sigo",
+            "sender": {"type": "user", "id": 4},
+            "created_at": AHORA - hace_segundos,
+        }
+    ]
+
+
+class _ClienteFalso:
+    def __init__(self, *, labels=("automation_paused",), status="open",
+                 can_reply=True, assignee=False, mensajes=None):
+        self._snapshot = SimpleNamespace(
+            status=status,
+            can_reply=can_reply,
+            labels=tuple(labels),
+            human_assignee_present=assignee,
+        )
+        self._mensajes = mensajes if mensajes is not None else []
+        self.etiqueta_sacada = False
+
+    async def get_canonical_conversation_snapshot(self, **_: object):
+        return self._snapshot
+
+    async def get_conversation_messages(self, **_: object):
+        return self._mensajes
+
+    async def clear_conversation_label(self, **_: object) -> bool:
+        self.etiqueta_sacada = True
+        return True
+
+
+class _SupabaseFalso:
+    def __init__(self, outcome: str = "resumed"):
+        self.outcome = outcome
+        self.llamadas: list[dict[str, object]] = []
+
+    async def resume_paused_conversation(self, **kwargs: object):
+        self.llamadas.append(kwargs)
+        return ConversationResumeResult(
+            outcome=self.outcome,
+            conversation_id="uuid-conv",
+            commercial_case_id="uuid-case",
+            resume_event_id="uuid-event",
+        )
+
+
+def _settings_resume(quiet: int = 28_800) -> SimpleNamespace:
+    return SimpleNamespace(
+        chatwoot_inbox_id=9,
+        conversation_resume_quiet_seconds=quiet,
+        conversation_resume_max=3,
+    )
+
+
+def _correr(cliente, supabase, settings=None) -> bool:
+    return asyncio.run(
+        _resume_paused_conversation(
+            control_client=cliente,
+            supabase=supabase,
+            settings=settings or _settings_resume(),
+            conversation_id=124,
+            message_id=8899,
+        )
+    )
+
+
+def test_resume_lifts_both_layers_when_the_team_went_quiet(monkeypatch) -> None:
+    monkeypatch.setattr("bridge.app.time.time", lambda: AHORA)
+    cliente = _ClienteFalso(mensajes=_mensajes_con_humano(40_000))
+    supabase = _SupabaseFalso()
+
+    assert _correr(cliente, supabase) is True
+    assert cliente.etiqueta_sacada is True
+    assert supabase.llamadas[0]["quiet_seconds"] == 40_000
+    assert supabase.llamadas[0]["command_key"] == "resume:124:8899"
+    assert supabase.llamadas[0]["reason_code"] == "inbound_after_quiet_period"
+
+
+def test_resume_waits_while_the_team_is_still_answering(monkeypatch) -> None:
+    # Mariana escribio hace dos horas: el agente no se mete en el medio.
+    monkeypatch.setattr("bridge.app.time.time", lambda: AHORA)
+    cliente = _ClienteFalso(mensajes=_mensajes_con_humano(7_200))
+    supabase = _SupabaseFalso()
+
+    assert _correr(cliente, supabase) is False
+    assert supabase.llamadas == []
+    assert cliente.etiqueta_sacada is False
+
+
+def test_resume_proceeds_when_no_person_ever_wrote(monkeypatch) -> None:
+    # Derivada y nunca atendida: no hay silencio que medir, y el agente es
+    # mejor que el vacio.
+    monkeypatch.setattr("bridge.app.time.time", lambda: AHORA)
+    supabase = _SupabaseFalso()
+    assert _correr(_ClienteFalso(mensajes=[]), supabase) is True
+    assert supabase.llamadas[0]["quiet_seconds"] is None
+
+
+def test_resume_respects_the_opt_out_label(monkeypatch) -> None:
+    monkeypatch.setattr("bridge.app.time.time", lambda: AHORA)
+    cliente = _ClienteFalso(
+        labels=("automation_paused", "automation_opted_out"),
+        mensajes=_mensajes_con_humano(90_000),
+    )
+    supabase = _SupabaseFalso()
+    assert _correr(cliente, supabase) is False
+    assert supabase.llamadas == []
+
+
+def test_resume_skips_an_assigned_or_closed_conversation(monkeypatch) -> None:
+    monkeypatch.setattr("bridge.app.time.time", lambda: AHORA)
+    for cliente in (
+        _ClienteFalso(assignee=True, mensajes=_mensajes_con_humano(90_000)),
+        _ClienteFalso(status="resolved", mensajes=_mensajes_con_humano(90_000)),
+        _ClienteFalso(can_reply=False, mensajes=_mensajes_con_humano(90_000)),
+        _ClienteFalso(labels=(), mensajes=_mensajes_con_humano(90_000)),
+    ):
+        supabase = _SupabaseFalso()
+        assert _correr(cliente, supabase) is False
+        assert supabase.llamadas == []
+
+
+def test_resume_reports_false_when_the_durable_layer_refuses(monkeypatch) -> None:
+    monkeypatch.setattr("bridge.app.time.time", lambda: AHORA)
+    for outcome in ("blocked_contact", "blocked_pending_handoff",
+                    "blocked_resume_limit", "not_found"):
+        cliente = _ClienteFalso(mensajes=_mensajes_con_humano(90_000))
+        assert _correr(cliente, _SupabaseFalso(outcome)) is False
+        assert cliente.etiqueta_sacada is False
+
+
+def test_resume_does_not_claim_success_if_the_label_survives(monkeypatch) -> None:
+    # Sin sacar la etiqueta, la guarda pre-envio bloquea igual: no se reintenta
+    # la admision para no fabricar una respuesta que nunca sale.
+    monkeypatch.setattr("bridge.app.time.time", lambda: AHORA)
+
+    class _ClienteQueFalla(_ClienteFalso):
+        async def clear_conversation_label(self, **_: object) -> bool:
+            raise ChatwootProtocolError("macro_label_not_cleared")
+
+    cliente = _ClienteQueFalla(mensajes=_mensajes_con_humano(90_000))
+    assert _correr(cliente, _SupabaseFalso()) is False
+
+
+def test_resume_fails_closed_when_supabase_errors(monkeypatch) -> None:
+    monkeypatch.setattr("bridge.app.time.time", lambda: AHORA)
+
+    class _SupabaseQueFalla(_SupabaseFalso):
+        async def resume_paused_conversation(self, **_: object):
+            raise SupabaseError("conversation_resume_failed: HTTP 500")
+
+    cliente = _ClienteFalso(mensajes=_mensajes_con_humano(90_000))
+    assert _correr(cliente, _SupabaseQueFalla()) is False
+    assert cliente.etiqueta_sacada is False
+
+
+def test_history_hides_team_messages_unless_resume_is_enabled() -> None:
+    historia: list[dict[str, object]] = [
+        {
+            "message_type": 0,
+            "private": False,
+            "content": "Envíame el enlace",
+            "sender": {"type": "contact", "id": 1},
+            "created_at": 10,
+            "id": 1,
+        },
+        {
+            "message_type": 1,
+            "private": False,
+            "content": "aquí tienes el enlace https://pay.hotmart.com/X",
+            "sender": {"type": "user", "id": 4},
+            "created_at": 20,
+            "id": 2,
+        },
+    ]
+
+    sin_flag = _normalize_chatwoot_history(historia, agent_bot_id=1)
+    assert [m["actor"] for m in sin_flag] == ["prospect"]
+
+    con_flag = _normalize_chatwoot_history(
+        historia, agent_bot_id=1, include_team_messages=True
+    )
+    assert [m["actor"] for m in con_flag] == ["prospect", "human_agent"]
+    assert "pay.hotmart.com" in con_flag[1]["text"]

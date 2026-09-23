@@ -76,6 +76,46 @@ class StalledChatwootConversation:
     payload: dict[str, object]
 
 
+class TeamMessageTimestampError(ChatwootProtocolError):
+    """Raised when a team message exists but its timestamp is unreadable."""
+
+
+def seconds_since_last_team_message(
+    messages: list[dict[str, object]], *, now_epoch: int
+) -> int | None:
+    """Segundos desde el ultimo mensaje publico escrito por una persona.
+
+    Un mensaje del equipo es un saliente publico cuyo ``sender`` es un ``user``
+    de Chatwoot; los del agente salen como ``agent_bot`` y no cuentan, y las
+    actividades de sistema (``message_type`` 2) tampoco, porque asignar una
+    conversacion no es atender a nadie.
+
+    Devuelve ``None`` cuando no hay ningun mensaje del equipo. Si encuentra uno
+    pero no puede leer su fecha, falla cerrado con
+    ``TeamMessageTimestampError``: tratar ese caso como silencio reactivaria una
+    conversacion que alguien podria estar atendiendo ahora mismo.
+    """
+    latest: int | None = None
+    for message in messages:
+        if message.get("private") is not False:
+            continue
+        if message.get("message_type") not in (1, 3):
+            continue
+        sender = message.get("sender")
+        if not isinstance(sender, dict) or sender.get("type") != "user":
+            continue
+        created_at = message.get("created_at")
+        if not isinstance(created_at, int) or isinstance(created_at, bool):
+            raise TeamMessageTimestampError("team_message_timestamp_invalid")
+        if created_at <= 0:
+            raise TeamMessageTimestampError("team_message_timestamp_invalid")
+        if latest is None or created_at > latest:
+            latest = created_at
+    if latest is None:
+        return None
+    return max(0, now_epoch - latest)
+
+
 class ChatwootClient:
     """Perform deterministic control-plane operations in Chatwoot."""
 
@@ -90,6 +130,7 @@ class ChatwootClient:
         agent_bot_id: int | None = None,
         reply_dir: Path | None = None,
         pause_macro_id: int | None = None,
+        resume_macro_id: int | None = None,
         opt_out_macro_id: int | None = None,
         confirmation_attempts: int = 10,
         confirmation_delay_seconds: float = 0.5,
@@ -103,6 +144,7 @@ class ChatwootClient:
         self._agent_bot_id = agent_bot_id
         self._reply_dir = reply_dir
         self._pause_macro_id = pause_macro_id
+        self._resume_macro_id = resume_macro_id
         self._opt_out_macro_id = opt_out_macro_id
         self._confirmation_attempts = confirmation_attempts
         self._confirmation_delay_seconds = confirmation_delay_seconds
@@ -1563,6 +1605,66 @@ class ChatwootClient:
                     return True
 
             raise ChatwootProtocolError("macro_label_not_confirmed")
+
+    async def clear_conversation_label(
+        self,
+        *,
+        conversation_id: int,
+        label: str,
+        expected_inbox_id: int | None = None,
+        expected_jid: str | None = None,
+    ) -> bool:
+        """Remove a label, returning whether Chatwoot was changed.
+
+        Simetrica de ``ensure_conversation_label``: la etiqueta se saca
+        ejecutando el macro de reanudacion y despues se confirma leyendo, porque
+        Chatwoot aplica los macros de forma asincrona.
+        """
+        if expected_jid is not None:
+            if expected_inbox_id is None:
+                raise ValueError("expected inbox is required with expected JID")
+            await self.validate_conversation_authority(
+                conversation_id=conversation_id,
+                expected_inbox_id=expected_inbox_id,
+                expected_jid=expected_jid,
+            )
+        path = (
+            f"/api/v1/accounts/{self._account_id}"
+            f"/conversations/{conversation_id}/labels"
+        )
+        headers = {"api_access_token": self._access_token}
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers=headers,
+            transport=self._transport,
+            timeout=15,
+        ) as client:
+            response = await client.get(path)
+            response.raise_for_status()
+            if label not in self._parse_labels(response):
+                return False
+
+            if self._resume_macro_id is None:
+                raise ChatwootProtocolError("resume_macro_not_configured")
+            macro_path = (
+                f"/api/v1/accounts/{self._account_id}"
+                f"/macros/{self._resume_macro_id}/execute"
+            )
+            response = await client.post(
+                macro_path,
+                json={"conversation_ids": [conversation_id]},
+            )
+            response.raise_for_status()
+
+            for _ in range(self._confirmation_attempts):
+                if self._confirmation_delay_seconds > 0:
+                    await asyncio.sleep(self._confirmation_delay_seconds)
+                response = await client.get(path)
+                response.raise_for_status()
+                if label not in self._parse_labels(response):
+                    return True
+
+            raise ChatwootProtocolError("macro_label_not_cleared")
 
     async def apply_opt_out_macro(
         self,

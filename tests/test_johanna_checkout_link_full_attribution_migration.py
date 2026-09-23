@@ -26,7 +26,11 @@ def _sql() -> str:
 
 def test_migration_is_the_newest_and_keeps_the_rpc_signature() -> None:
     versions = sorted(path.name.split("_", 1)[0] for path in MIGRATIONS.glob("*.sql"))
-    assert versions[-1] == "20260922000200"
+    # Esta migracion ya no es la ultima: 20260923000100 agrega la transicion
+    # inversa de la pausa. Lo que este test sigue protegiendo es que ninguna
+    # migracion posterior se meta entre esta y la RPC de reserva.
+    assert "20260922000200" in versions
+    assert versions[versions.index("20260922000200") + 1] == "20260923000100"
 
     sql = _sql()
     # Same name and same signature: the bridge does not change and no redeploy
