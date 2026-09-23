@@ -475,7 +475,10 @@ def verify_effective_acls(harness: PostgresHarness) -> None:
                      'claim_human_handoff_projection_effects',
                      'finalize_human_handoff_projection_effect',
                      'get_human_handoff_projection_status',
-                     'read_johanna_funnel_dashboard_v2'
+                     'read_johanna_funnel_dashboard_v2',
+                     -- Lee human_handoff_requests para negarse a reactivar una
+                     -- conversacion cuya derivacion sigue sin proyectarse.
+                     'resume_paused_conversation'
                      ) then has_function_privilege(role_name, oid, 'EXECUTE')
                   else not has_function_privilege(role_name, oid, 'EXECUTE')
                 end
