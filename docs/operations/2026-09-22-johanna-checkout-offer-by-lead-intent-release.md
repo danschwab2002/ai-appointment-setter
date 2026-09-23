@@ -47,7 +47,7 @@ commit `db8dc6d`). Contrato: `docs/contracts/johanna-payment-link-v2.md`.
 
 ## Dato real que fija las ofertas
 
-Sonda con navegador real sobre `pay.hotmart.com/F106691755G` (2026-09-22 ~13:40Z, pixel y GTM bloqueados, vista desde Argentina): las seis ofertas del catálogo rinden el mismo checkout del producto a ARS 85.624 con cuenta regresiva. `mgbqpp19`, el código que traen los eventos reales de abandono desde el 03/09, rinde ARS 139.794 sin cuenta regresiva, igual que un código inválido (`zzzzzzzz`): es la oferta default del producto (links de afiliado), no un error de tipeo de `mgbgpp19`. Sin `off`, Hotmart responde `error?errorMessage=008`. Un `curl` devuelve `200` para cualquier `off` y no sirve para validar ofertas.
+Sonda con navegador real sobre `pay.hotmart.com/F106691755G` (2026-09-22 12:50:58Z segun el `bid` de Hotmart; una version anterior de este documento decia ~13:40Z, pixel y GTM bloqueados, vista desde Argentina): las seis ofertas del catálogo rinden el mismo checkout del producto a ARS 85.624 con cuenta regresiva. `mgbqpp19`, el código que traen los eventos reales de abandono desde el 03/09, rinde ARS 139.794 sin cuenta regresiva, igual que un código inválido (`zzzzzzzz`): es la oferta default del producto (links de afiliado), no un error de tipeo de `mgbgpp19`. Sin `off`, Hotmart responde `error?errorMessage=008`. Un `curl` devuelve `200` para cualquier `off` y no sirve para validar ofertas.
 
 ## Escalón
 
