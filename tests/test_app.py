@@ -474,3 +474,179 @@ def test_history_hides_team_messages_unless_resume_is_enabled() -> None:
     )
     assert [m["actor"] for m in con_flag] == ["prospect", "human_agent"]
     assert "pay.hotmart.com" in con_flag[1]["text"]
+
+
+# ---------------------------------------------------------------------------
+# Barredor de reactivacion fuera de la ventana de 24 h
+
+
+def test_reactivation_settings_default_to_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings_from_env(monkeypatch)
+    assert settings.conversation_reactivation_enabled is False
+    assert settings.conversation_reactivation_template_name is None
+    assert settings.conversation_reactivation_interval_seconds == 900.0
+    assert settings.conversation_reactivation_min_age_seconds == 86_400
+    assert settings.conversation_reactivation_max_age_seconds == 2_592_000
+    # El limite por default es uno: a quien recibio la plantilla y no contesto
+    # no se le insiste.
+    assert settings.conversation_reactivation_max == 1
+
+
+def test_reactivation_settings_are_read_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CONVERSATION_REACTIVATION_ENABLED", "true")
+    monkeypatch.setenv(
+        "WABA_REACTIVATION_TEMPLATE_NAME", "johanna_reactivacion_01"
+    )
+    monkeypatch.setenv("WABA_REACTIVATION_TEMPLATE_LANGUAGE", "es_EC")
+    monkeypatch.setenv("CONVERSATION_REACTIVATION_INTERVAL_SECONDS", "600")
+    monkeypatch.setenv("CONVERSATION_REACTIVATION_MAX", "2")
+    settings = _settings_from_env(monkeypatch)
+    assert settings.conversation_reactivation_enabled is True
+    assert (
+        settings.conversation_reactivation_template_name
+        == "johanna_reactivacion_01"
+    )
+    assert settings.conversation_reactivation_template_language == "es_EC"
+    assert settings.conversation_reactivation_interval_seconds == 600.0
+    assert settings.conversation_reactivation_max == 2
+
+
+def _reactivation_settings(**overrides: object) -> Settings:
+    values: dict[str, object] = {
+        "conversation_reactivation_enabled": True,
+        "conversation_reactivation_template_name": "johanna_reactivacion_01",
+        "chatwoot_account_id": 1,
+        "chatwoot_inbox_id": 9,
+        "chatwoot_agent_bot_access_token": "agent-bot-token",
+        "agent_bot_id": 1,
+        "allowed_jid": "12025550123@s.whatsapp.net",
+    }
+    values.update(overrides)
+    return _settings(**values)
+
+
+def test_enabling_reactivation_without_a_template_refuses_to_start() -> None:
+    # Mandar una plantilla es un efecto externo irreversible: sin plantilla
+    # declarada el bridge no arranca, en vez de arrancar a medias.
+    with pytest.raises(ValueError) as error:
+        create_app(
+            _reactivation_settings(
+                conversation_reactivation_template_name=None
+            ),
+            supabase_client=_FakeSupabase(),  # type: ignore[arg-type]
+        )
+    assert "WABA_REACTIVATION_" in str(error.value)
+
+
+def test_enabling_reactivation_without_the_agent_bot_refuses_to_start() -> None:
+    with pytest.raises(ValueError) as error:
+        create_app(
+            _reactivation_settings(chatwoot_agent_bot_access_token=None),
+            supabase_client=_FakeSupabase(),  # type: ignore[arg-type]
+        )
+    assert "WABA_REACTIVATION_" in str(error.value)
+
+
+def test_enabling_reactivation_without_a_bounded_sender_refuses_to_start() -> None:
+    with pytest.raises(ValueError) as error:
+        create_app(
+            _reactivation_settings(
+                allowed_jid=None,
+                chatwoot_scoped_inbound_senders_enabled=False,
+            ),
+            supabase_client=_FakeSupabase(),  # type: ignore[arg-type]
+        )
+    assert "WABA_REACTIVATION_" in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"conversation_reactivation_interval_seconds": 0.0},
+        {"conversation_reactivation_max": 0},
+        {"conversation_reactivation_max_sends_per_scan": 0},
+        {"conversation_reactivation_max_pages": 0},
+        {"conversation_reactivation_max_pages": 21},
+        {
+            "conversation_reactivation_min_age_seconds": 100,
+            "conversation_reactivation_max_age_seconds": 10,
+        },
+    ],
+)
+def test_invalid_reactivation_configuration_refuses_to_start(
+    overrides: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError) as error:
+        create_app(
+            _reactivation_settings(**overrides),
+            supabase_client=_FakeSupabase(),  # type: ignore[arg-type]
+        )
+    assert "conversation reactivation configuration" in str(error.value)
+
+
+def test_the_reactivation_configuration_is_validated_even_when_disabled() -> None:
+    # Un valor invalido no se descubre recien el dia que alguien prende el flag.
+    with pytest.raises(ValueError):
+        create_app(
+            _settings(
+                conversation_reactivation_enabled=False,
+                conversation_reactivation_max_pages=99,
+            ),
+            supabase_client=_FakeSupabase(),  # type: ignore[arg-type]
+        )
+
+
+def test_the_resume_trigger_is_not_gated_on_a_blocked_admission() -> None:
+    """La etiqueta de Chatwoot pausa aunque la admision durable pase.
+
+    Las dos capas de la pausa se escriben por caminos distintos: la etiqueta
+    `automation_paused` la pone cualquier saliente de un `user` de Chatwoot,
+    y `human_takeover` solo lo pone una derivacion durable. Medido el
+    2026-09-23 sobre el inbox 9: de 27 conversaciones etiquetadas, 8 no tenian
+    `human_takeover` (114, 126 y 133 entre las abiertas). Si el disparador de
+    reanudacion se condiciona a que la admision haya dado 'blocked', esas ocho
+    nunca se despausan: la admision pasa, el agente razona, y recien la guarda
+    de pre-envio lo frena por la etiqueta que nadie saco.
+
+    Se verifica sobre el AST y no sobre el texto porque lo que importa es la
+    forma de la condicion, no como este escrita.
+    """
+    import ast
+    import inspect
+
+    import bridge.app as app_module
+
+    tree = ast.parse(inspect.getsource(app_module))
+    parents: dict[ast.AST, ast.AST] = {}
+    calls: list[ast.AST] = []
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_resume_paused_conversation"
+        ):
+            calls.append(node)
+    assert calls, "no se encontro el disparador de reanudacion"
+
+    for call in calls:
+        gates: list[str] = []
+        current: ast.AST | None = call
+        while current is not None:
+            parent = parents.get(current)
+            if isinstance(parent, ast.If) and (
+                current is parent.test or current in parent.body
+            ):
+                gates.append(ast.unparse(parent.test))
+            current = parent
+        assert any("conversation_resume_enabled" in gate for gate in gates), gates
+        for gate in gates:
+            # `chatwoot_cut_b_admission_enabled` es un gate legitimo del feature
+            # entero; lo prohibido es condicionar el disparador al RESULTADO de
+            # la admision de esta conversacion.
+            assert "admission.outcome" not in gate, gate

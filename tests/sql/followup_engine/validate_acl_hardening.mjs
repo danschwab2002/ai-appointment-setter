@@ -94,6 +94,8 @@ const rows = await db.query(`
       ('admit_inbound_commercial_case(text,integer,bigint,text)'),
       ('admit_inbound_commercial_case_v2(text,integer,bigint,text)'),
       ('resume_paused_conversation(bigint,text,text,integer,integer,timestamp with time zone)'),
+      ('claim_conversation_reactivation(bigint,text,text,text,text,bigint,integer,integer,integer,timestamp with time zone)'),
+      ('settle_conversation_reactivation(text,text,bigint,text,timestamp with time zone)'),
       ('apply_chatwoot_inbound_opt_out(bigint,bigint,bigint,bigint,text,timestamp with time zone,text)'),
       ('apply_hotmart_purchase_approved(uuid,text,text,text,text,text,timestamp with time zone)'),
       ('bootstrap_proactive_lead_identity(text,uuid,text,integer,bigint,text,text)'),
@@ -203,7 +205,7 @@ const result = rows.rows[0];
 // pre-resolution adds five, and the rolling-safe reason-code contract retains
 // one legacy completion overload, and resuming a paused conversation adds one.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 98) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 100) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const bindingAcl = await db.query(`

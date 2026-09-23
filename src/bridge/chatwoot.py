@@ -2131,3 +2131,219 @@ class ChatwootClient:
         ):
             raise ChatwootProtocolError("invalid_sent_message")
         return {"status": "sent", "message_id": message_id}
+
+    async def get_inbox(self, *, inbox_id: int) -> dict[str, object]:
+        """Leer un inbox canonico, con su catalogo de plantillas aprobadas.
+
+        El barredor de reactivacion lo consulta en cada barrido a proposito: si
+        Meta da de baja o pausa la plantilla, el catalogo lo refleja y el envio
+        se corta, en vez de seguir produciendo mensajes rechazados contra una
+        plantilla que el bridge cree vigente porque esta en una variable de
+        entorno.
+        """
+        if (
+            not isinstance(inbox_id, int)
+            or isinstance(inbox_id, bool)
+            or inbox_id <= 0
+        ):
+            raise ValueError("invalid inbox id")
+        path = f"/api/v1/accounts/{self._account_id}/inboxes/{inbox_id}"
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers={"api_access_token": self._access_token},
+            transport=self._transport,
+            timeout=15,
+        ) as client:
+            response = await client.get(path)
+            response.raise_for_status()
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise ChatwootProtocolError("invalid_json") from exc
+        if not isinstance(payload, dict) or payload.get("id") != inbox_id:
+            raise ChatwootProtocolError("invalid_inbox_payload")
+        return payload
+
+    async def list_open_conversations_with_messages(
+        self,
+        *,
+        expected_inbox_id: int,
+        max_pages: int = 5,
+        messages_limit: int = 30,
+    ) -> list[dict[str, object]]:
+        """Listar las conversaciones abiertas del inbox con su historial.
+
+        Trae los hechos y no aplica ningun criterio: quien decide que hacer con
+        cada conversacion es ``bridge.reactivation``. Falla cerrado si la
+        paginacion no cierra, con el mismo contrato que
+        ``list_stalled_conversations``: un barrido incompleto que devuelve una
+        lista corta se leeria como 'no hay a quien reactivar'.
+        """
+        if (
+            not isinstance(expected_inbox_id, int)
+            or isinstance(expected_inbox_id, bool)
+            or expected_inbox_id <= 0
+            or not 1 <= max_pages <= 20
+            or not isinstance(messages_limit, int)
+            or isinstance(messages_limit, bool)
+            or messages_limit <= 0
+        ):
+            raise ValueError("invalid open conversation scan configuration")
+        path = f"/api/v1/accounts/{self._account_id}/conversations"
+        collected: list[dict[str, object]] = []
+        seen_conversations: set[int] = set()
+        expected_all_count: int | None = None
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers={"api_access_token": self._access_token},
+            transport=self._transport,
+            timeout=15,
+        ) as client:
+            for page_number in range(1, max_pages + 1):
+                response = await client.get(
+                    path,
+                    params={
+                        "status": "open",
+                        "inbox_id": str(expected_inbox_id),
+                        "page": str(page_number),
+                    },
+                )
+                response.raise_for_status()
+                conversations, all_count = self._parse_conversation_page(
+                    response,
+                    expected_page=page_number,
+                )
+                if expected_all_count is None:
+                    expected_all_count = all_count
+                elif all_count != expected_all_count:
+                    raise ChatwootProtocolError("conversation_count_changed")
+                if not conversations:
+                    break
+                for conversation in conversations:
+                    conversation_id = conversation.get("id")
+                    inbox_id = conversation.get("inbox_id")
+                    if (
+                        not isinstance(conversation_id, int)
+                        or isinstance(conversation_id, bool)
+                        or conversation_id <= 0
+                        or inbox_id != expected_inbox_id
+                    ):
+                        raise ChatwootProtocolError("invalid_conversation_scope")
+                    if conversation_id in seen_conversations:
+                        continue
+                    seen_conversations.add(conversation_id)
+                    details_path = (
+                        f"/api/v1/accounts/{self._account_id}"
+                        f"/conversations/{conversation_id}"
+                    )
+                    details_response = await client.get(details_path)
+                    details_response.raise_for_status()
+                    try:
+                        details = details_response.json()
+                    except ValueError as exc:
+                        raise ChatwootProtocolError("invalid_json") from exc
+                    if (
+                        not isinstance(details, dict)
+                        or details.get("id") != conversation_id
+                        or details.get("inbox_id") != expected_inbox_id
+                    ):
+                        raise ChatwootProtocolError("invalid_conversation_scope")
+                    messages = await self.get_conversation_messages(
+                        conversation_id=conversation_id,
+                        limit=messages_limit,
+                    )
+                    collected.append(
+                        {"conversation": dict(details), "messages": messages}
+                    )
+                if all_count is not None and len(seen_conversations) >= all_count:
+                    break
+        if (
+            expected_all_count is not None
+            and len(seen_conversations) < expected_all_count
+        ):
+            raise ChatwootProtocolError("conversation_scan_incomplete")
+        return collected
+
+    async def send_reactivation_template(
+        self,
+        *,
+        conversation_id: int,
+        content: str,
+        command_key: str,
+        template_params: dict[str, object],
+    ) -> dict[str, object]:
+        """Mandar la plantilla de reactivacion a una conversacion existente.
+
+        Sale como el AgentBot, no como un usuario de Chatwoot: un saliente de un
+        ``user`` es justamente lo que pausa la automatizacion, y reactivar
+        pausando seria contraproducente. La marca ``reactivation_command_key``
+        queda en el mensaje para poder cruzar, desde Chatwoot, que envio
+        corresponde a que fila de auditoria.
+        """
+        if self._agent_bot_access_token is None or self._agent_bot_id is None:
+            raise ChatwootProtocolError("agent_bot_not_configured")
+        if (
+            not isinstance(conversation_id, int)
+            or isinstance(conversation_id, bool)
+            or conversation_id <= 0
+        ):
+            raise ChatwootProtocolError("invalid_conversation_id")
+        if not isinstance(content, str) or not content.strip():
+            raise ChatwootProtocolError("invalid_reactivation_content")
+        if not isinstance(command_key, str) or not command_key.strip():
+            raise ChatwootProtocolError("invalid_reactivation_command_key")
+        if not isinstance(template_params, dict) or not template_params:
+            raise ChatwootProtocolError("invalid_reactivation_template_params")
+
+        messages_path = (
+            f"/api/v1/accounts/{self._account_id}"
+            f"/conversations/{conversation_id}/messages"
+        )
+        body: dict[str, object] = {
+            "content": content,
+            "message_type": "outgoing",
+            "private": False,
+            "content_type": "text",
+            "content_attributes": {
+                "reactivation_command_key": command_key,
+            },
+            "template_params": template_params,
+        }
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            transport=self._transport,
+            timeout=15,
+        ) as client:
+            response = await client.post(
+                messages_path,
+                headers={"api_access_token": self._agent_bot_access_token},
+                json=body,
+            )
+            response.raise_for_status()
+        try:
+            message = response.json()
+        except ValueError as exc:
+            raise ChatwootProtocolError("invalid_json") from exc
+        if not isinstance(message, dict):
+            raise ChatwootProtocolError("invalid_message_payload")
+        message_id = message.get("id")
+        attributes = message.get("content_attributes")
+        sender = message.get("sender")
+        sender_id = sender.get("id") if isinstance(sender, dict) else None
+        if (
+            not isinstance(message_id, int)
+            or isinstance(message_id, bool)
+            or message_id <= 0
+            or message.get("conversation_id") != conversation_id
+            or message.get("message_type") != 1
+            or message.get("private") is not False
+            or not isinstance(attributes, dict)
+            or attributes.get("reactivation_command_key") != command_key
+            or not isinstance(sender, dict)
+            or sender.get("type") != "agent_bot"
+            or not isinstance(sender_id, int)
+            or isinstance(sender_id, bool)
+            or sender_id != self._agent_bot_id
+        ):
+            raise ChatwootProtocolError("invalid_sent_message")
+        return {"status": "sent", "message_id": message_id}

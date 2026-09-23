@@ -428,6 +428,28 @@ class ConversationResumeResult:
 
 
 @dataclass(frozen=True)
+class ConversationReactivationClaim:
+    """Reserva de un envio de plantilla de reactivacion."""
+
+    outcome: str
+    reactivation_event_id: str | None
+    conversation_id: str | None
+    commercial_case_id: str | None
+
+    @property
+    def claimed(self) -> bool:
+        return self.outcome == "claimed"
+
+
+@dataclass(frozen=True)
+class ConversationReactivationSettlement:
+    """Cierre de una reserva con lo que el proveedor respondio."""
+
+    outcome: str
+    reactivation_event_id: str | None
+
+
+@dataclass(frozen=True)
 class PaymentLinkCandidate:
     """Authoritative precheckout sequence eligible for a payment-link action."""
 
@@ -3168,6 +3190,107 @@ class SupabaseClient:
             conversation_id=row.get("resumed_conversation_id"),
             commercial_case_id=row.get("resumed_commercial_case_id"),
             resume_event_id=row.get("resume_event_id"),
+        )
+
+    async def claim_conversation_reactivation(
+        self,
+        *,
+        external_conversation_id: int,
+        command_key: str,
+        reason_code: str,
+        template_name: str,
+        template_language: str,
+        last_inbound_message_id: int,
+        inbound_age_seconds: int,
+        quiet_seconds: int | None = None,
+        max_reactivations: int = 1,
+    ) -> ConversationReactivationClaim:
+        """Reservar el envio de una plantilla de reactivacion."""
+        operation = "conversation_reactivation_claim"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/claim_conversation_reactivation",
+            content=json.dumps(
+                {
+                    "p_external_conversation_id": external_conversation_id,
+                    "p_command_key": command_key,
+                    "p_reason_code": reason_code,
+                    "p_template_name": template_name,
+                    "p_template_language": template_language,
+                    "p_last_inbound_message_id": last_inbound_message_id,
+                    "p_inbound_age_seconds": inbound_age_seconds,
+                    "p_quiet_seconds": quiet_seconds,
+                    "p_max_reactivations": max_reactivations,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(
+                f"conversation_reactivation_claim_failed: HTTP {response.status_code}"
+            )
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError("conversation_reactivation_claim_invalid_shape")
+        row = rows[0]
+        outcome = row.get("outcome")
+        if outcome not in {
+            "claimed",
+            "replayed",
+            "blocked_contact",
+            "blocked_reactivation_limit",
+            "not_found",
+        }:
+            raise SupabaseError("conversation_reactivation_claim_invalid_outcome")
+        return ConversationReactivationClaim(
+            outcome=outcome,
+            reactivation_event_id=row.get("reactivation_event_id"),
+            conversation_id=row.get("reactivated_conversation_id"),
+            commercial_case_id=row.get("reactivated_commercial_case_id"),
+        )
+
+    async def settle_conversation_reactivation(
+        self,
+        *,
+        command_key: str,
+        status: str,
+        provider_message_id: int | None = None,
+        failure_reason: str | None = None,
+    ) -> ConversationReactivationSettlement:
+        """Cerrar una reserva de reactivacion como entregada o fallida."""
+        operation = "conversation_reactivation_settlement"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/settle_conversation_reactivation",
+            content=json.dumps(
+                {
+                    "p_command_key": command_key,
+                    "p_status": status,
+                    "p_provider_message_id": provider_message_id,
+                    "p_failure_reason": failure_reason,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(
+                "conversation_reactivation_settlement_failed: "
+                f"HTTP {response.status_code}"
+            )
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(
+                "conversation_reactivation_settlement_invalid_shape"
+            )
+        row = rows[0]
+        outcome = row.get("outcome")
+        if outcome not in {"settled", "not_found"}:
+            raise SupabaseError(
+                "conversation_reactivation_settlement_invalid_outcome"
+            )
+        return ConversationReactivationSettlement(
+            outcome=outcome,
+            reactivation_event_id=row.get("reactivation_event_id"),
         )
 
     async def admit_inbound_commercial_case(

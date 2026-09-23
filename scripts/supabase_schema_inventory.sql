@@ -3204,6 +3204,42 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         4,
         'resume_paused_conversation_service_role_only'
+    union all
+    select
+        '20260923000200',
+        '20260923000200_conversation_reactivation_v1.sql',
+        (to_regclass('public.conversation_reactivation_events') is not null)::int
+        + exists(
+            select 1 from indexes
+            where indexname = 'conversation_reactivation_events_command_key_idx'
+              and position('unique' in lower(indexdef)) > 0
+              and position('failed' in lower(indexdef)) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.claim_conversation_reactivation(bigint,text,text,text,text,bigint,integer,integer,integer,timestamptz)')
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+              and position('blocked_contact' in definition) > 0
+              and position('blocked_reactivation_limit' in definition) > 0
+              and position('outside_service_window' in definition) > 0
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.settle_conversation_reactivation(text,text,bigint,text,timestamptz)')
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        4,
+        'conversation_reactivation_service_role_only'
 )
 select
     version,
