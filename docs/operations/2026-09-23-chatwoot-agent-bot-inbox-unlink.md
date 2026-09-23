@@ -115,11 +115,28 @@ cualquier AgentBot. Verificado sobre los datos reales de produccion, no por una
 request HTTP con el token: el token del bot vive en el entorno del bridge y no se
 leyo.
 
-**Lo que falta, y por que:** no hubo trafico entrante entre el cambio y el cierre
-de la jornada (el ultimo mensaje del inbox es de 2026-09-23T00:25:24Z). La
-verificacion empirica se cumple con el proximo mensaje real: la conversacion
-tiene que nacer en `open` y no debe aparecer ningun mensaje de actividad nuevo.
-Se chequea con `recuperador_estado.py` en el vault del OS, que desde hoy alerta
+### E2E en produccion, 2026-09-23T02:36Z
+
+Con trafico real, nueve minutos despues del cambio:
+
+| Hora (UTC) | Que paso |
+|---|---|
+| 02:36:07.786 | **Conversacion 153 creada, `status = open`.** Con el vinculo activo habria nacido en `pending` |
+| 02:36:07.928 | Mensaje entrante del contacto |
+| 02:36:48 / 02:36:52 / 02:36:55 | **Tres mensajes salientes con `sender_type = AgentBot`**: el agente respondio, o sea que el bot conserva el acceso de escritura estando desvinculado |
+| — | **Ningun mensaje de actividad de error** |
+
+Historico de la falla: 61 ocurrencias. **Desde el cambio: 0.**
+
+En la conversacion 111, del mismo lapso, el unico mensaje de actividad nuevo fue
+`Assigned to johanna - revision humana by Bridge Service`, que es la derivacion
+normal del bridge y no tiene relacion con esto.
+
+Las tres cosas que se queria probar quedaron probadas en una sola conversacion:
+nace `open` (visible para el recuperador), el agente escribe, y el mensaje de
+error no vuelve.
+
+El chequeo permanente vive en `recuperador_estado.py`, en el vault del OS: alerta
 si alguna conversacion vuelve a quedar en `pending`, si el vinculo se reactiva o
 si el `outgoing_url` vuelve a tener valor.
 
