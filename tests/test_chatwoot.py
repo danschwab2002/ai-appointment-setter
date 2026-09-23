@@ -3034,3 +3034,268 @@ def test_team_silence_never_returns_a_negative_age() -> None:
     assert seconds_since_last_team_message(
         [_team_message(NOW + 500)], now_epoch=NOW
     ) == 0
+
+
+def _reactivation_client(handler, tmp_path: Path) -> ChatwootClient:
+    return ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        agent_bot_access_token="agent-bot-token",
+        agent_bot_id=1,
+        reply_dir=tmp_path,
+        transport=httpx.MockTransport(handler),
+    )
+
+
+def test_get_inbox_returns_the_template_catalog(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/accounts/1/inboxes/9"
+        assert request.headers["api_access_token"] == "control-token"
+        return httpx.Response(
+            200,
+            json={
+                "id": 9,
+                "message_templates": [
+                    {"name": "johanna_reactivacion_01", "status": "APPROVED"}
+                ],
+            },
+        )
+
+    payload = asyncio.run(
+        _reactivation_client(handler, tmp_path).get_inbox(inbox_id=9)
+    )
+    assert payload["message_templates"][0]["name"] == "johanna_reactivacion_01"
+
+
+def test_get_inbox_rejects_another_inbox(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"id": 11, "message_templates": []})
+
+    with pytest.raises(ChatwootProtocolError) as error:
+        asyncio.run(_reactivation_client(handler, tmp_path).get_inbox(inbox_id=9))
+    assert str(error.value) == "invalid_inbox_payload"
+
+
+def _open_conversation_handler(
+    *, all_count: int = 1, conversation_ids: tuple[int, ...] = (126,)
+):
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/api/v1/accounts/1/conversations":
+            page = int(request.url.params["page"])
+            assert request.url.params["status"] == "open"
+            assert request.url.params["inbox_id"] == "9"
+            payload = (
+                [
+                    {"id": conversation_id, "inbox_id": 9}
+                    for conversation_id in conversation_ids
+                ]
+                if page == 1
+                else []
+            )
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "payload": payload,
+                        "meta": {"all_count": all_count, "current_page": page},
+                    }
+                },
+            )
+        for conversation_id in conversation_ids:
+            if path == f"/api/v1/accounts/1/conversations/{conversation_id}":
+                return httpx.Response(
+                    200,
+                    json={
+                        "id": conversation_id,
+                        "inbox_id": 9,
+                        "status": "open",
+                        "can_reply": False,
+                    },
+                )
+            if path == (
+                f"/api/v1/accounts/1/conversations/{conversation_id}/messages"
+            ):
+                return httpx.Response(
+                    200,
+                    json={
+                        "payload": [
+                            {
+                                "id": 2079,
+                                "message_type": 0,
+                                "private": False,
+                                "content": "hola",
+                                "created_at": 1790090674,
+                                "sender": {"id": 144, "type": "contact"},
+                            }
+                        ]
+                    },
+                )
+        raise AssertionError(f"unexpected path {path}")
+
+    return handler
+
+
+def test_lists_open_conversations_with_their_messages(tmp_path: Path) -> None:
+    client = _reactivation_client(_open_conversation_handler(), tmp_path)
+    entries = asyncio.run(
+        client.list_open_conversations_with_messages(expected_inbox_id=9)
+    )
+    assert len(entries) == 1
+    assert entries[0]["conversation"]["id"] == 126
+    assert entries[0]["messages"][0]["id"] == 2079
+
+
+def test_an_incomplete_conversation_scan_fails_closed(tmp_path: Path) -> None:
+    # Un barrido corto que no falla se leeria como "no hay a quien reactivar".
+    client = _reactivation_client(
+        _open_conversation_handler(all_count=5), tmp_path
+    )
+    with pytest.raises(ChatwootProtocolError) as error:
+        asyncio.run(
+            client.list_open_conversations_with_messages(expected_inbox_id=9)
+        )
+    assert str(error.value) == "conversation_scan_incomplete"
+
+
+def test_a_conversation_from_another_inbox_aborts_the_scan(
+    tmp_path: Path,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/accounts/1/conversations":
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "payload": [{"id": 126, "inbox_id": 11}],
+                        "meta": {"all_count": 1, "current_page": 1},
+                    }
+                },
+            )
+        raise AssertionError("should not reach the detail endpoint")
+
+    with pytest.raises(ChatwootProtocolError) as error:
+        asyncio.run(
+            _reactivation_client(
+                handler, tmp_path
+            ).list_open_conversations_with_messages(expected_inbox_id=9)
+        )
+    assert str(error.value) == "invalid_conversation_scope"
+
+
+def test_sends_the_reactivation_template_as_the_agent_bot(
+    tmp_path: Path,
+) -> None:
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/accounts/1/conversations/126/messages"
+        # Sale con el token del AgentBot: un saliente de un `user` de Chatwoot
+        # es justamente lo que pausa la automatizacion.
+        assert request.headers["api_access_token"] == "agent-bot-token"
+        captured.update(json.loads(request.content.decode()))
+        return httpx.Response(
+            200,
+            json={
+                "id": 3100,
+                "conversation_id": 126,
+                "message_type": 1,
+                "private": False,
+                "content": captured["content"],
+                "content_attributes": captured["content_attributes"],
+                "sender": {"id": 1, "type": "agent_bot"},
+            },
+        )
+
+    result = asyncio.run(
+        _reactivation_client(handler, tmp_path).send_reactivation_template(
+            conversation_id=126,
+            content="Hola, Mau. Quedo una conversacion pendiente.",
+            command_key="reactivate:126:2079",
+            template_params={
+                "name": "johanna_reactivacion_01",
+                "category": "MARKETING",
+                "language": "es_EC",
+                "processed_params": {"body": {"1": "Mau"}},
+            },
+        )
+    )
+    assert result == {"status": "sent", "message_id": 3100}
+    assert captured["message_type"] == "outgoing"
+    assert captured["private"] is False
+    assert captured["template_params"]["processed_params"] == {"body": {"1": "Mau"}}
+    assert (
+        captured["content_attributes"]["reactivation_command_key"]
+        == "reactivate:126:2079"
+    )
+
+
+def test_a_reactivation_echoed_by_a_human_user_is_rejected(
+    tmp_path: Path,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "id": 3101,
+                "conversation_id": 126,
+                "message_type": 1,
+                "private": False,
+                "content": body["content"],
+                "content_attributes": body["content_attributes"],
+                "sender": {"id": 4, "type": "user"},
+            },
+        )
+
+    with pytest.raises(ChatwootProtocolError) as error:
+        asyncio.run(
+            _reactivation_client(handler, tmp_path).send_reactivation_template(
+                conversation_id=126,
+                content="Hola, Mau.",
+                command_key="reactivate:126:2079",
+                template_params={"name": "t"},
+            )
+        )
+    assert str(error.value) == "invalid_sent_message"
+
+
+def test_a_reactivation_without_template_params_is_rejected(
+    tmp_path: Path,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("should not reach the network")
+
+    with pytest.raises(ChatwootProtocolError) as error:
+        asyncio.run(
+            _reactivation_client(handler, tmp_path).send_reactivation_template(
+                conversation_id=126,
+                content="Hola, Mau.",
+                command_key="reactivate:126:2079",
+                template_params={},
+            )
+        )
+    assert str(error.value) == "invalid_reactivation_template_params"
+
+
+def test_a_reactivation_without_the_agent_bot_is_rejected(
+    tmp_path: Path,
+) -> None:
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        reply_dir=tmp_path,
+    )
+    with pytest.raises(ChatwootProtocolError) as error:
+        asyncio.run(
+            client.send_reactivation_template(
+                conversation_id=126,
+                content="Hola",
+                command_key="reactivate:126:2079",
+                template_params={"name": "t"},
+            )
+        )
+    assert str(error.value) == "agent_bot_not_configured"

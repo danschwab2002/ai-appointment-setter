@@ -1,0 +1,73 @@
+{
+  "_fixture": {
+    "captured_at": "2026-09-23T19:35:00Z",
+    "source": "GET /api/v1/accounts/1/inboxes/9 en produccion (Chatwoot infra-chatwoot, canal WABA whatsapp_cloud id 8)",
+    "note": "Respuesta real recortada a los campos que consume el barredor de reactivacion. No se sanitizo nada: el catalogo de plantillas no contiene datos personales."
+  },
+  "id": 9,
+  "name": "WABA",
+  "channel_type": "Channel::Whatsapp",
+  "provider": "whatsapp_cloud",
+  "message_templates": [
+    {
+      "id": "1394831152808854",
+      "name": "johanna_reactivacion_01",
+      "status": "APPROVED",
+      "category": "MARKETING",
+      "language": "es_EC",
+      "components": [
+        {
+          "text": "Hola, {{1}}. Soy el asistente virtual del equipo de la Psic. Johanna. \n\nQuedó una conversación pendiente entre nosotros y quiero retomarla. Si todavía necesitas ayuda, escríbeme por aquí y dime qué necesitas para continuar.",
+          "type": "BODY",
+          "example": {
+            "body_text": [
+              [
+                "María"
+              ]
+            ]
+          }
+        }
+      ],
+      "sub_category": "CUSTOM",
+      "parameter_format": "POSITIONAL",
+      "disable_ios_autofill": false,
+      "is_primary_device_delivery_only": false
+    },
+    {
+      "id": "1201984551627430",
+      "name": "johanna_interes_precheckout_01",
+      "status": "APPROVED",
+      "category": "MARKETING",
+      "language": "es_EC",
+      "components": [
+        {
+          "text": "Hola, {{1}}. Vi que te intereso {{2}} y quedo pendiente tu compra.",
+          "type": "BODY",
+          "example": {
+            "body_text": [
+              [
+                "María",
+                "el taller"
+              ]
+            ]
+          }
+        }
+      ],
+      "parameter_format": "POSITIONAL"
+    },
+    {
+      "id": "1055534129843017",
+      "name": "hello_world",
+      "status": "APPROVED",
+      "category": "UTILITY",
+      "language": "en_US",
+      "components": [
+        {
+          "text": "Hello World",
+          "type": "BODY"
+        }
+      ],
+      "parameter_format": "POSITIONAL"
+    }
+  ]
+}
