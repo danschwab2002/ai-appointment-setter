@@ -104,6 +104,17 @@ Estructural, el 2026-09-23T02:28Z:
 Ninguna conversacion quedo atascada: no habia ninguna en `pending` al momento
 del cambio.
 
+**El bot sigue autorizado a escribir**, que es la unica forma en que este cambio
+podria haber apagado el agente. `app/controllers/concerns/ensure_current_account_helper.rb:27-32`
+autoriza a un AgentBot sobre una cuenta por dos caminos, y **los dos se cumplen**:
+el bot 1 tiene `account_id = 1`, que es la cuenta de Johanna (linea 28, la que
+decide), y la fila de `agent_bot_inboxes` **sigue existiendo** aunque este
+`inactive`, asi que el fallback de la linea 29 tambien pasa. Por eso se opto por
+`inactive` y no por borrar la fila. `InboxPolicy:24` ademas devuelve `true` para
+cualquier AgentBot. Verificado sobre los datos reales de produccion, no por una
+request HTTP con el token: el token del bot vive en el entorno del bridge y no se
+leyo.
+
 **Lo que falta, y por que:** no hubo trafico entrante entre el cambio y el cierre
 de la jornada (el ultimo mensaje del inbox es de 2026-09-23T00:25:24Z). La
 verificacion empirica se cumple con el proximo mensaje real: la conversacion
