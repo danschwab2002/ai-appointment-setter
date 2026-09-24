@@ -714,3 +714,144 @@ def test_readiness_publishes_why_the_reactivation_scan_skipped() -> None:
                     assert "last_scan_summary" in ast.unparse(valor)
                     encontrado = True
     assert encontrado, "la clave no se publica desde el resumen del barredor"
+
+
+def test_the_resume_trigger_survives_a_real_inbound_with_production_flags(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """El disparador de reanudacion corre sobre un mensaje real sin romperse.
+
+    El 2026-09-23 entre las 23:11 y las 23:48 UTC entraron cinco mensajes al
+    inbox 9 (conversaciones 126, 143, 158 y 63) y el bridge fallo los cinco
+    con `chatwoot_work_failed error_type=UnboundLocalError` (28 intentos).
+    El disparador pasaba `message_id=message_id` a
+    `_resume_paused_conversation`, pero en el camino normal (sin reset y sin
+    planificacion de descuento) ninguna rama anterior asignaba `message_id`;
+    como la funcion lo asigna mas abajo, Python lo trata como local y explota
+    al leerlo. Ocho tests probaban `_resume_paused_conversation` aislada y
+    uno mas verificaba la forma del disparador sobre el AST: ninguno
+    ejecutaba `process_chatwoot_work` con `CONVERSATION_RESUME_ENABLED=true`,
+    por eso la suite estaba verde mientras ningun lead recibia respuesta.
+
+    Este test usa el webhook del mensaje 2233 (conversacion 158: un lead
+    nuevo, sin pausa, que pidio el enlace) con los flags que definian el
+    camino en produccion (admision Cut B activa, planificacion de descuento
+    apagada, reanudacion activa) y exige dos cosas: que el worker no registre
+    ningun fallo, y que el disparador haya llegado a consultar la
+    conversacion en Chatwoot.
+    """
+    import logging
+    import time
+
+    from bridge.chatwoot import ChatwootClient
+
+    fixture = json.loads(
+        (
+            Path(__file__).parent
+            / "fixtures"
+            / "chatwoot_message_created_inbox_9_conv_158_20260923.json"
+        ).read_text(encoding="utf-8")
+    )
+    webhook = fixture["webhook"]
+    conversation = fixture["conversation"]
+    messages = fixture["messages"]
+
+    chatwoot_requests: list[httpx.Request] = []
+
+    def chatwoot_handler(request: httpx.Request) -> httpx.Response:
+        chatwoot_requests.append(request)
+        path = request.url.path
+        if path == "/api/v1/accounts/1/conversations/158":
+            return httpx.Response(200, json=conversation)
+        if path == "/api/v1/accounts/1/conversations/158/messages":
+            if request.url.params.get("before") is not None:
+                return httpx.Response(200, json={"meta": {}, "payload": []})
+            return httpx.Response(200, json={"meta": {}, "payload": messages})
+        return httpx.Response(404, json={"error": "unexpected"})
+
+    control_client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        agent_bot_access_token="agent-bot-token",
+        agent_bot_id=1,
+        reply_dir=tmp_path,
+        resume_macro_id=3,
+        transport=httpx.MockTransport(chatwoot_handler),
+    )
+
+    class _AdmittingSupabase:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        async def admit_inbound_commercial_case(
+            self, **kwargs: object
+        ) -> object:
+            self.calls.append(kwargs)
+            return SimpleNamespace(
+                outcome="created",
+                commercial_case_id="case-158",
+                contact_id="contact-158",
+                channel_identity_id="identity-158",
+                conversation_id="conversation-158",
+                automation_status="draft_only",
+            )
+
+    supabase = _AdmittingSupabase()
+    app = create_app(
+        Settings(
+            webhook_secret="webhook-secret",
+            allowed_jid="573000000158@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=9,
+            chatwoot_cut_b_admission_enabled=True,
+            chatwoot_cut_b_scope_key="libre-de-ansiedad-inbound",
+            chatwoot_cut_b_scope_version=1,
+            conversation_resume_enabled=True,
+            chatwoot_resume_macro_id=3,
+        ),
+        chatwoot_client=control_client,
+        supabase_client=supabase,  # type: ignore[arg-type]
+    )
+    raw_body = json.dumps(
+        webhook, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    timestamp = str(int(time.time()))
+    signature = "sha256=" + hmac.new(
+        b"webhook-secret",
+        timestamp.encode("ascii") + b"." + raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+
+    async def exercise() -> httpx.Response:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
+            response = await client.post(
+                "/webhooks/chatwoot",
+                content=raw_body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Chatwoot-Signature": signature,
+                    "X-Chatwoot-Timestamp": timestamp,
+                    "X-Chatwoot-Delivery": "conv-158-msg-2233",
+                },
+            )
+        await app.state.chatwoot_worker.run_once()
+        return response
+
+    caplog.set_level(logging.WARNING, logger="bridge.chatwoot_inbox")
+    response = asyncio.run(exercise())
+
+    assert response.status_code == 202
+    fallos = [m for m in caplog.messages if "chatwoot_work_failed" in m]
+    assert fallos == [], fallos
+    assert [c["external_conversation_id"] for c in supabase.calls] == [158]
+    assert any(
+        r.url.path == "/api/v1/accounts/1/conversations/158"
+        for r in chatwoot_requests
+    ), "el disparador de reanudacion no llego a consultar la conversacion"

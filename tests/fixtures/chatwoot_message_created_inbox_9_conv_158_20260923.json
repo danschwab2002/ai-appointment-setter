@@ -1,0 +1,110 @@
+{
+  "_fixture": {
+    "captured_at": "2026-09-24T00:05:00Z",
+    "source": "Mensaje 2233 de la conversacion 158 del inbox 9 (WABA, cuenta 1), leido de la base de Chatwoot en produccion el 2026-09-24 00:05 UTC. Es uno de los cinco mensajes entrantes del 23/09 entre las 23:11 y las 23:48 UTC que el bridge no pudo procesar: los cinco fallaron con UnboundLocalError en process_chatwoot_work (28 intentos en total) y ningun lead recibio respuesta.",
+    "shape": "El webhook sigue el contrato observado en docs/research/chatwoot-observed-contract.md (event, message_type textual en el nivel superior, private, account.id, inbox.id, conversation.{id, inbox_id, status, can_reply, labels, contact_inbox.source_id, meta.{sender, assignee, team}}). La conversacion y los mensajes siguen el shape que el bridge ya valida en tests/fixtures/chatwoot_conversation_outside_window_20260923.json.",
+    "sanitized": "name, phone_number, source_id y thumbnail se reemplazaron por valores de prueba del mismo formato (source_id son digitos sin sufijo, como llega de WhatsApp Cloud). Los ids (mensaje 2233, conversacion 158, contacto 174, contact_inbox 212), los timestamps, message_type, sender.type, status, can_reply y labels son los reales.",
+    "why": "La conversacion 158 no tenia la etiqueta automation_paused ni fila de pausa en Supabase: era un lead nuevo pidiendo el enlace de pago. Que fallara igual prueba que el error estaba en el camino comun de todo mensaje admitido, no en el camino de la pausa."
+  },
+  "webhook": {
+    "event": "message_created",
+    "id": 2233,
+    "content": "Envíame el enlace",
+    "content_type": "text",
+    "message_type": "incoming",
+    "private": false,
+    "created_at": 1790205926,
+    "source_id": "wamid.TEST0000000000000000000000000000000000000000000000000000000000",
+    "account": {"id": 1, "name": "Psic. Johanna"},
+    "inbox": {"id": 9, "name": "WhatsApp Johanna"},
+    "sender": {
+      "id": 174,
+      "type": "contact",
+      "name": "Jose Prueba",
+      "phone_number": "+573000000158",
+      "identifier": null,
+      "thumbnail": ""
+    },
+    "conversation": {
+      "id": 158,
+      "account_id": 1,
+      "inbox_id": 9,
+      "status": "open",
+      "can_reply": true,
+      "labels": [],
+      "custom_attributes": {},
+      "snoozed_until": null,
+      "unread_count": 1,
+      "contact_inbox": {
+        "id": 212,
+        "contact_id": 174,
+        "inbox_id": 9,
+        "source_id": "573000000158",
+        "hmac_verified": false
+      },
+      "meta": {
+        "sender": {
+          "id": 174,
+          "name": "Jose Prueba",
+          "phone_number": "+573000000158",
+          "identifier": null,
+          "blocked": false,
+          "thumbnail": ""
+        },
+        "assignee": null,
+        "team": null
+      }
+    }
+  },
+  "conversation": {
+    "id": 158,
+    "account_id": 1,
+    "inbox_id": 9,
+    "status": "open",
+    "can_reply": true,
+    "labels": [],
+    "custom_attributes": {},
+    "muted": false,
+    "snoozed_until": null,
+    "contact_inbox": {
+      "id": 212,
+      "contact_id": 174,
+      "inbox_id": 9,
+      "source_id": "573000000158"
+    },
+    "meta": {
+      "sender": {
+        "id": 174,
+        "name": "Jose Prueba",
+        "phone_number": "+573000000158",
+        "identifier": null,
+        "blocked": false,
+        "thumbnail": ""
+      },
+      "assignee": null,
+      "team": null
+    }
+  },
+  "messages": [
+    {
+      "id": 2224,
+      "conversation_id": 158,
+      "inbox_id": 9,
+      "message_type": 1,
+      "private": false,
+      "content": "Hola, Jose. Te escribe el equipo de la Psic. Johanna.",
+      "created_at": 1790204032,
+      "sender": {"id": 1, "type": "agent_bot", "name": "Bridge"}
+    },
+    {
+      "id": 2233,
+      "conversation_id": 158,
+      "inbox_id": 9,
+      "message_type": 0,
+      "private": false,
+      "content": "Envíame el enlace",
+      "created_at": 1790205926,
+      "sender": {"id": 174, "type": "contact", "name": "Jose Prueba"}
+    }
+  ]
+}
