@@ -83,6 +83,20 @@ def _canonical_whatsapp_jid(observed_identity: object) -> str | None:
     return f"{digits}{_WHATSAPP_JID_SUFFIX}"
 
 
+def _canonical_whatsapp_jid_from_e164(observed_phone: object) -> str | None:
+    """El JID de digitos que corresponde a un telefono E.164 canonico, o None.
+
+    Es el mismo valor que el webhook trae en ``contact_inbox.source_id`` para
+    WhatsApp Cloud (los digitos sin ``+``). Solo acepta E.164 estricto: sin
+    espacios, sin cero inicial, sin sufijo; cualquier otra cosa falla cerrado.
+    """
+    if not isinstance(observed_phone, str):
+        return None
+    if _WHATSAPP_E164.fullmatch(observed_phone) is None:
+        return None
+    return f"{observed_phone[1:]}{_WHATSAPP_JID_SUFFIX}"
+
+
 def classify_chatwoot_event(
     payload: object,
     *,
@@ -168,6 +182,16 @@ def classify_chatwoot_event(
                 False, "scope_configuration_incomplete", sender_jid, "ignore"
             )
         canonical_sender_jid = _canonical_whatsapp_jid(sender_jid)
+        if canonical_sender_jid is None and sender_jid is None:
+            # El show de la API (GET /conversations/{id}) no trae contact_inbox
+            # en la raiz y meta.sender.identifier llega null en WhatsApp Cloud:
+            # la unica identidad es el telefono E.164. El monitor de estancadas
+            # arma su payload desde ese show, y con los remitentes acotados por
+            # scope esto descartaba a todos con sender_not_allowed (24/09/2026,
+            # fixture chatwoot_conversation_api_show_conv_158_20260924.json).
+            # Solo aplica cuando no hay identifier ni source_id: un identifier
+            # o source_id presente pero malformado sigue fallando cerrado.
+            canonical_sender_jid = _canonical_whatsapp_jid_from_e164(sender_phone)
         if canonical_sender_jid is None:
             return EventDecision(False, "sender_not_allowed", sender_jid, "ignore")
         sender_jid = canonical_sender_jid

@@ -1,0 +1,228 @@
+{
+  "_fixture": {
+    "captured_at": "2026-09-24T12:38:00Z",
+    "source": "GET /api/v1/accounts/1/conversations/158 y GET .../conversations/158/messages en produccion (inbox 9, WhatsApp Cloud), desde el contenedor del bridge con el token de control. Es la conversacion que el monitor de estancadas tenia que readmitir el 24/09 12:33 UTC (abierta, can_reply, sin etiqueta, sin asignado, ultimo mensaje del lead 13 h antes) y descarto.",
+    "shape": "El show de la API NO trae conversation.contact_inbox a nivel raiz y meta.sender.identifier es null para WhatsApp Cloud: la unica identidad disponible es meta.sender.phone_number en E.164. El webhook message_created si trae contact_inbox.source_id.",
+    "sanitized": "name, email, phone_number, source_id, wamid, avatar_url_hash, uuid y el hash del first touch; ids, timestamps, tipos y estados son reales.",
+    "why": "Reproducir el descarte del monitor en modo scoped (sender_not_allowed) y fijar la aceptacion por telefono E.164."
+  },
+  "conversation": {
+    "meta": {
+      "sender": {
+        "additional_attributes": {
+          "avatar_url_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+          "last_avatar_sync_at": "2026-09-23T22:54:22Z"
+        },
+        "availability_status": "offline",
+        "email": "jose.prueba@example.test",
+        "id": 174,
+        "name": "Jose Prueba",
+        "phone_number": "+573000000158",
+        "blocked": false,
+        "identifier": null,
+        "thumbnail": "",
+        "custom_attributes": {},
+        "last_activity_at": 1790205926,
+        "created_at": 1790204029
+      },
+      "channel": "Channel::Whatsapp",
+      "hmac_verified": false
+    },
+    "id": 158,
+    "messages": [
+      {
+        "id": 2233,
+        "content": "Envíame el enlace",
+        "account_id": 1,
+        "inbox_id": 9,
+        "conversation_id": 158,
+        "message_type": 0,
+        "created_at": 1790205925,
+        "updated_at": "2026-09-23T23:25:25.842Z",
+        "private": false,
+        "status": "sent",
+        "source_id": "wamid.TEST.2233",
+        "content_type": "text",
+        "content_attributes": {
+          "in_reply_to_external_id": "wamid.TEST.2224",
+          "in_reply_to": 2224
+        },
+        "sender_type": "Contact",
+        "sender_id": 174,
+        "external_source_ids": {},
+        "additional_attributes": {},
+        "processed_message_content": "Envíame el enlace",
+        "sentiment": {},
+        "conversation": {
+          "assignee_id": null,
+          "unread_count": 0,
+          "last_activity_at": 1790205925,
+          "contact_inbox": {
+            "source_id": "573000000158"
+          }
+        },
+        "sender": {
+          "additional_attributes": {
+            "avatar_url_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "last_avatar_sync_at": "2026-09-23T22:54:22Z"
+          },
+          "custom_attributes": {},
+          "email": "jose.prueba@example.test",
+          "id": 174,
+          "identifier": null,
+          "name": "Jose Prueba",
+          "phone_number": "+573000000158",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
+      }
+    ],
+    "account_id": 1,
+    "uuid": "00000000-0000-4000-8000-000000000158",
+    "additional_attributes": {},
+    "agent_last_seen_at": 1790253185,
+    "assignee_last_seen_at": 0,
+    "can_reply": true,
+    "contact_last_seen_at": 0,
+    "custom_attributes": {},
+    "inbox_id": 9,
+    "labels": [],
+    "muted": false,
+    "snoozed_until": null,
+    "status": "open",
+    "created_at": 1790204030,
+    "updated_at": 1790205925.950971,
+    "timestamp": 1790205925,
+    "first_reply_created_at": 0,
+    "unread_count": 0,
+    "last_non_activity_message": {
+      "id": 2233,
+      "content": "Envíame el enlace",
+      "account_id": 1,
+      "inbox_id": 9,
+      "conversation_id": 158,
+      "message_type": 0,
+      "created_at": 1790205925,
+      "updated_at": "2026-09-23T23:25:25.842Z",
+      "private": false,
+      "status": "sent",
+      "source_id": "wamid.TEST.2233",
+      "content_type": "text",
+      "content_attributes": {
+        "in_reply_to_external_id": "wamid.TEST.2224",
+        "in_reply_to": 2224
+      },
+      "sender_type": "Contact",
+      "sender_id": 174,
+      "external_source_ids": {},
+      "additional_attributes": {},
+      "processed_message_content": "Envíame el enlace",
+      "sentiment": {},
+      "conversation": {
+        "assignee_id": null,
+        "unread_count": 0,
+        "last_activity_at": 1790205925,
+        "contact_inbox": {
+          "source_id": "573000000158"
+        }
+      },
+      "sender": {
+        "additional_attributes": {
+          "avatar_url_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+          "last_avatar_sync_at": "2026-09-23T22:54:22Z"
+        },
+        "custom_attributes": {},
+        "email": "jose.prueba@example.test",
+        "id": 174,
+        "identifier": null,
+        "name": "Jose Prueba",
+        "phone_number": "+573000000158",
+        "thumbnail": "",
+        "blocked": false,
+        "type": "contact"
+      }
+    },
+    "last_activity_at": 1790205925,
+    "priority": null,
+    "waiting_since": 1790205925,
+    "sla_policy_id": null
+  },
+  "messages": {
+    "meta": {
+      "labels": [],
+      "additional_attributes": {},
+      "contact": {
+        "additional_attributes": {
+          "avatar_url_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+          "last_avatar_sync_at": "2026-09-23T22:54:22Z"
+        },
+        "custom_attributes": {},
+        "email": "jose.prueba@example.test",
+        "id": 174,
+        "identifier": null,
+        "name": "Jose Prueba",
+        "phone_number": "+573000000158",
+        "thumbnail": "",
+        "blocked": false,
+        "type": "contact"
+      },
+      "agent_last_seen_at": "2026-09-24T12:33:05.233Z",
+      "assignee_last_seen_at": null
+    },
+    "payload": [
+      {
+        "id": 2224,
+        "content": "Hola, Jose Prueba. Te escribe el equipo de la Psic. Johanna. Vimos que completaste el formulario de Libre de Ansiedad. ¿Quieres que te ayudemos a continuar? Si no deseas recibir más mensajes, responde “No más mensajes”.",
+        "inbox_id": 9,
+        "conversation_id": 158,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "read",
+        "content_attributes": {
+          "recovery_first_touch_hash": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "created_at": 1790204032,
+        "private": false,
+        "source_id": "wamid.TEST.2224",
+        "sender": {
+          "id": 1,
+          "name": "Appointment Setter",
+          "avatar_url": "",
+          "type": "agent_bot"
+        }
+      },
+      {
+        "id": 2233,
+        "content": "Envíame el enlace",
+        "inbox_id": 9,
+        "conversation_id": 158,
+        "message_type": 0,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {
+          "in_reply_to_external_id": "wamid.TEST.2224",
+          "in_reply_to": 2224
+        },
+        "created_at": 1790205925,
+        "private": false,
+        "source_id": "wamid.TEST.2233",
+        "sender": {
+          "additional_attributes": {
+            "avatar_url_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            "last_avatar_sync_at": "2026-09-23T22:54:22Z"
+          },
+          "custom_attributes": {},
+          "email": "jose.prueba@example.test",
+          "id": 174,
+          "identifier": null,
+          "name": "Jose Prueba",
+          "phone_number": "+573000000158",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
+      }
+    ]
+  }
+}
