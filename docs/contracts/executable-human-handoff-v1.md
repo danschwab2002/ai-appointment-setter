@@ -155,7 +155,20 @@ Motivo: el contacto ya compró este producto, así que no se le envió un enlace
 `inbound_handoff_reason_sentence` traduce el código a esa frase. Un código que
 todavía no esté en el mapa se muestra crudo en lugar de omitirse: un código feo
 en la nota es mejor que una derivación sin motivo. Sin detalle, la nota queda
-exactamente como antes. Tras un POST incierto, el estado `delivery_unknown` sólo permite escanear: nunca vuelve a crear la nota automáticamente y termina en `dead_letter` al alcanzar el límite de intentos.
+exactamente como antes.
+
+El mapa cubre dos familias, y las dos importan:
+
+- **Los que elige el agente** al pedir la derivación, que son los más
+  frecuentes y los únicos válidos para `decision="handoff"` según su perfil:
+  `explicit_human_request`, `commercial_exception` y `policy_requires_human`.
+- **Los que compone el worker** cuando una regla convierte la propuesta en
+  handoff: `direct_medication_guidance` y la familia `payment_link_*`, que lleva
+  el `outcome` con el que la emisión del enlace devolvió `blocked`.
+
+Cuando una regla del worker fuerza `handoff`, reescribe también el
+`reason_code`: si sólo cambiara la decisión, la fila y la nota se quedarían con
+el motivo que el agente había elegido para otra cosa. Tras un POST incierto, el estado `delivery_unknown` sólo permite escanear: nunca vuelve a crear la nota automáticamente y termina en `dead_letter` al alcanzar el límite de intentos.
 
 La proyección durable no muta labels, macros ni mensajes públicos. En el flujo
 inbound con respuesta automática, el work que originó el handoff aplica una

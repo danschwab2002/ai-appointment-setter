@@ -3274,7 +3274,14 @@ def create_app(
             and completed_proposal.get("decision") != "handoff"
             and _requires_medication_guidance_handoff(payload.get("content"))
         ):
-            completed_proposal = {**completed_proposal, "decision": "handoff"}
+            # El motivo tambien se reescribe: si solo cambiara la decision, la
+            # fila y la nota se quedarian con el reason_code que el agente habia
+            # elegido para otra cosa (por ejemplo payment_link_requested).
+            completed_proposal = {
+                **completed_proposal,
+                "decision": "handoff",
+                "reason_code": "direct_medication_guidance",
+            }
             logger.info(
                 "chatwoot_inbound_handoff_forced "
                 "reason=direct_medication_guidance"

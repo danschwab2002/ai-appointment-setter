@@ -145,8 +145,35 @@ if (sentence.phrase !== null) {
   throw new Error('unknown codes must not resolve to a sentence');
 }
 
+// 7. Los motivos que realmente emite el agente tienen frase. Estos tres salen
+//    del SOUL que corre en produccion, no de una lista inventada: son los
+//    unicos validos para decision="handoff", y son los que mas aparecen.
+for (const code of [
+  'explicit_human_request',
+  'commercial_exception',
+  'policy_requires_human',
+  'payment_link_requested',
+  'direct_medication_guidance',
+]) {
+  const row = (await db.query(
+    'select public.inbound_handoff_reason_sentence($1) as phrase',
+    [code],
+  )).rows[0];
+  if (typeof row.phrase !== 'string' || row.phrase.length < 20) {
+    throw new Error(`agent reason without a sentence: ${code}`);
+  }
+}
+
+// 8. Y llegan enteros hasta la nota, igual que los del worker.
+const agentReason = await derive('commercial_exception');
+if (agentReason.detail_reason_code !== 'commercial_exception'
+    || !agentReason.private_note_body.includes('\n\nMotivo: la persona pidio una condicion comercial')
+    || !agentReason.private_note_body.endsWith('(commercial_exception).')) {
+  throw new Error(`agent reason not readable in the note: ${JSON.stringify(agentReason.private_note_body)}`);
+}
+
 console.log(
   'inbound_handoff_detail_reason=OK',
   'mapped_reason=OK unmapped_reason=OK null_reason=OK',
-  'malformed_rejected=4 immutable=OK',
+  'malformed_rejected=4 immutable=OK agent_reasons=5',
 );
