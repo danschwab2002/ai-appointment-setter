@@ -59,3 +59,18 @@ Mientras `CONVERSATION_RESUME_ENABLED` esté activo, el historial canónico incl
 - **No despausa sola una conversación en la que nadie escribe.** El disparador es un mensaje entrante del lead; una conversación pausada que el lead abandonó se queda como está.
 - **No quita el `team_id`**: la conversación sigue visible en la cola del equipo.
 - **No reabre conversaciones resueltas.** Chatwoot las reabre solo al llegar un inbound, que es cuando corre esto.
+
+## Lo que salió mal la primera vez (2026-09-23 23:11 UTC)
+
+El sistema se activó el 2026-09-23 a las 19:16 UTC (`CONVERSATION_RESUME_ENABLED=true`, bridge en `fe1f5f3`, PR #174). No entró ningún mensaje del inbox 9 hasta las 23:11 UTC, cuando tres de los cuatro leads que habían recibido la plantilla de reactivación contestaron (PR #175, `a54b387`). **El bridge falló los cinco mensajes entrantes de esa hora** (conversaciones 126, 143, 158 y 63) con `chatwoot_work_failed error_type=UnboundLocalError`: 28 intentos, ninguna respuesta a ningún lead. Dan apagó el flag a las 23:52:45 UTC.
+
+La causa: el disparador dentro de `process_chatwoot_work` pasaba `message_id=message_id` a `_resume_paused_conversation`, pero en el camino normal (sin mensaje de reset y sin planificación de descuento) ninguna rama anterior asignaba `message_id`. Como la misma función lo asigna más abajo, Python lo trata como local de toda la función y leerlo antes de asignarlo explota. En el PR #174 el call vivía dentro de la rama `blocked` de la admisión y el error quedó latente; el PR #175 lo sacó de esa rama para cubrir las ocho conversaciones etiquetadas sin `human_takeover`, y con eso pasó a correr en **cada** mensaje admitido. La conversación 158, un lead nuevo sin pausa, falló igual: el error estaba en el camino común, no en el de la pausa.
+
+Por qué la suite estaba verde: ocho tests probaban `_resume_paused_conversation` aislada y uno más verificaba la **forma** del disparador sobre el AST. Ninguno ejecutaba `process_chatwoot_work` con `CONVERSATION_RESUME_ENABLED=true`. Un test sobre el AST comprueba que el código tenga la forma acordada; no comprueba que corra.
+
+Dos cosas cambiaron a partir de eso:
+
+1. El disparador toma `message_id` del payload y lo valida antes de llamar (entero positivo, como el resto de las identidades canónicas del bloque de admisión), y falla cerrado si no lo es.
+2. Existe un test que ejecuta el handler completo con el webhook real del mensaje 2233 (`tests/fixtures/chatwoot_message_created_inbox_9_conv_158_20260923.json`) y los flags que definían el camino en producción, y exige que el worker no registre fallos **y** que el disparador haya llegado a consultar la conversación. Verificado que falla sobre el código anterior.
+
+Además, `chatwoot_work_failed` ahora adjunta el traceback cuando el error no es un `RetryableChatwootWorkError`: 28 líneas idénticas sin la línea del error costaron horas de diagnóstico a ciegas.

@@ -3174,12 +3174,29 @@ def create_app(
                 # 114, 126 y 133). Para esas ocho la admision pasa, el agente
                 # corre, y recien despues la guarda de pre-envio lo frena por
                 # la etiqueta. Mirar solo la admision las dejaba afuera.
+                #
+                # `message_id` se toma del payload ACA, no se hereda: en este
+                # camino ninguna rama anterior lo asigna (las que lo hacen,
+                # el reset y la planificacion de descuento, terminan en
+                # return), y como la funcion lo asigna mas abajo Python lo
+                # trata como local. Leerlo sin asignar fue el
+                # UnboundLocalError que el 2026-09-23 dejo sin respuesta a
+                # los cinco mensajes entrantes de la noche (conv 126, 143,
+                # 158 y 63). Es la clave de idempotencia de la reanudacion
+                # (`resume:<conversation_id>:<message_id>`).
+                resume_message_id = payload.get("id")
+                if (
+                    not isinstance(resume_message_id, int)
+                    or isinstance(resume_message_id, bool)
+                    or resume_message_id < 1
+                ):
+                    raise RuntimeError("chatwoot_resume_trigger_message_id_invalid")
                 resumed = await _resume_paused_conversation(
                     control_client=control_client,
                     supabase=shared_supabase,
                     settings=settings,
                     conversation_id=conversation_id,
-                    message_id=message_id,
+                    message_id=resume_message_id,
                 )
                 # Re-pedir la admision solo tiene sentido si estaba bloqueada.
                 # Cuando ya pasaba, lo que faltaba era sacar la etiqueta, y eso

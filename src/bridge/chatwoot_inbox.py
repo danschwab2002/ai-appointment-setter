@@ -790,10 +790,17 @@ class ChatwootWorker:
                             error_type=type(exc).__name__,
                             max_attempts=max_attempts,
                         )
+                    # Un error operativo (Supabase caido, Chatwoot sin
+                    # responder) se reintenta sin limite y ya dice todo en su
+                    # nombre; el traceback solo hace ruido. Un error de
+                    # programacion no se arregla sin la linea: el 2026-09-23
+                    # un UnboundLocalError dejo 28 lineas identicas de
+                    # `error_type=UnboundLocalError` y ninguna decia donde.
                     logger.warning(
                         "chatwoot_work_failed error_type=%s status=%s",
                         type(exc).__name__,
                         failure_status,
+                        exc_info=not isinstance(exc, RetryableChatwootWorkError),
                     )
                     continue
                 for superseded in items:
