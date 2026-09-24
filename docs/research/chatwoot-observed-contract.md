@@ -65,6 +65,23 @@ La respuesta observada permitió reconstruir estado canónico actual de Chatwoot
 
 `unread_count` y `agent_last_seen_at` cambiaron entre el webhook y la consulta posterior. Son estado de interfaz/lectura y no deben usarse como estado comercial, control de concurrencia ni evidencia suficiente de intervención humana.
 
+## Show de una conversación por la API (observado 2026-09-24)
+
+Capturado el 2026-09-24 12:38 UTC desde el contenedor del bridge con el token de control, inbox 9 (WhatsApp Cloud), conversación 158; fixture saneado en `tests/fixtures/chatwoot_conversation_api_show_conv_158_20260924.json`. Es la forma que consumen el monitor de conversaciones estancadas y `get_canonical_conversation_snapshot`, y **difiere del webhook `message_created`** en la identidad del contacto:
+
+| Campo | Webhook `message_created` | `GET /api/v1/accounts/{account}/conversations/{id}` |
+|---|---|---|
+| `conversation.contact_inbox.source_id` | presente (dígitos WABA) | **ausente en la raíz**; sólo aparece anidado en `messages[].conversation.contact_inbox` y en `last_non_activity_message.conversation.contact_inbox` |
+| `meta.sender.identifier` | `null` en WhatsApp Cloud | `null` |
+| `meta.sender.phone_number` | E.164 | E.164 (única identidad disponible en la raíz) |
+| `meta.sender.type` | `contact` | **ausente** (el `type` sí viene en `messages[].sender`) |
+| `meta.assignee` / `meta.team` | presentes | **ausentes cuando no hay asignado** (`meta` trae `channel`, `hmac_verified`, `sender`) |
+| `labels` | lista de strings | lista de strings |
+| `can_reply` | booleano | booleano |
+| `messages` | — | embebido en el show (los últimos), además del endpoint `/messages` que devuelve `{meta, payload}` |
+
+Consecuencia: un clasificador que exige `identifier` o `contact_inbox.source_id` acepta el webhook y rechaza el show. Con los remitentes acotados por scope, el teléfono E.164 canónico se canoniza a `<dígitos>@s.whatsapp.net`, que es exactamente el valor que el webhook trae en `source_id`.
+
 ## Consulta del historial
 
 El endpoint verificado fue:

@@ -3299,3 +3299,139 @@ def test_a_reactivation_without_the_agent_bot_is_rejected(
             )
         )
     assert str(error.value) == "agent_bot_not_configured"
+
+
+def _captured_api_show_fixture_158() -> dict[str, object]:
+    fixture = json.loads(
+        (
+            Path(__file__).parent
+            / "fixtures"
+            / "chatwoot_conversation_api_show_conv_158_20260924.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert isinstance(fixture, dict)
+    return fixture
+
+
+def test_stalled_scan_admits_a_captured_waba_conversation_in_scoped_mode() -> None:
+    """Fixture capturado el 24/09/2026 12:38 UTC: show + messages de la conv 158.
+
+    Es la conversacion que el monitor de estancadas tenia que readmitir a las
+    12:33 UTC (abierta, can_reply, sin etiqueta, sin asignado, ultimo mensaje
+    del lead 13 h antes) y descarto: el show de la API no trae contact_inbox
+    y meta.sender.identifier es null, asi que en modo scoped el clasificador
+    devolvia sender_not_allowed. El barrido termino healthy con cero
+    candidatos.
+    """
+    fixture = _captured_api_show_fixture_158()
+    conversation = fixture["conversation"]
+    messages = fixture["messages"]
+    assert isinstance(conversation, dict)
+    assert isinstance(messages, dict)
+    assert "contact_inbox" not in conversation
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/conversations/158/messages"):
+            return httpx.Response(200, json=messages)
+        if request.url.path.endswith("/conversations/158"):
+            return httpx.Response(200, json=conversation)
+        if request.url.path.endswith("/conversations"):
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "meta": {"all_count": 1, "current_page": 1},
+                        "payload": [conversation],
+                    }
+                },
+            )
+        return httpx.Response(404, json={})
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid="542916424279@s.whatsapp.net",  # el numero de prueba, no el lead
+        agent_bot_id=1,
+        transport=httpx.MockTransport(handler),
+    )
+    last_inbound = conversation["last_non_activity_message"]
+    assert isinstance(last_inbound, dict)
+    latest_inbound_at = last_inbound["created_at"]
+    assert isinstance(latest_inbound_at, int)
+
+    candidates = asyncio.run(
+        client.list_stalled_conversations(
+            expected_inbox_id=9,
+            stale_after_seconds=120,
+            max_age_seconds=86_400,
+            max_pages=5,
+            allow_any_scoped_sender=True,
+            now_epoch=latest_inbound_at + 13 * 3600,
+        )
+    )
+
+    assert [candidate.delivery_id for candidate in candidates] == [
+        "stalled-chatwoot:158:2233"
+    ]
+    payload = candidates[0].payload
+    assert payload["id"] == 2233
+    assert payload["message_type"] == "incoming"
+    payload_conversation = payload["conversation"]
+    assert isinstance(payload_conversation, dict)
+    assert payload_conversation["contact_inbox"] is None
+    assert [request.url.path.rsplit("/", 1)[-1] for request in requests] == [
+        "conversations",
+        "158",
+        "messages",
+    ]
+
+
+def test_stalled_scan_still_rejects_the_captured_conversation_under_an_exact_scope() -> None:
+    """Sin scope acotado, un telefono que no es el JID configurado no entra."""
+    fixture = _captured_api_show_fixture_158()
+    conversation = fixture["conversation"]
+    messages = fixture["messages"]
+    assert isinstance(conversation, dict)
+    assert isinstance(messages, dict)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/conversations/158/messages"):
+            return httpx.Response(200, json=messages)
+        if request.url.path.endswith("/conversations/158"):
+            return httpx.Response(200, json=conversation)
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "meta": {"all_count": 1, "current_page": 1},
+                    "payload": [conversation],
+                }
+            },
+        )
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid="542916424279@s.whatsapp.net",
+        agent_bot_id=1,
+        transport=httpx.MockTransport(handler),
+    )
+    last_inbound = conversation["last_non_activity_message"]
+    assert isinstance(last_inbound, dict)
+
+    candidates = asyncio.run(
+        client.list_stalled_conversations(
+            expected_inbox_id=9,
+            stale_after_seconds=120,
+            max_age_seconds=86_400,
+            max_pages=5,
+            allow_any_scoped_sender=False,
+            now_epoch=last_inbound["created_at"] + 13 * 3600,
+        )
+    )
+
+    assert candidates == []
