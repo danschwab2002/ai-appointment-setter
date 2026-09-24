@@ -30,10 +30,10 @@ def test_bundle_covers_exact_pending_tail_and_is_deterministic(tmp_path: Path) -
     assert "20260812000100_supabase_function_acl_hardening.sql" in observed
     assert "20260831000100_johanna_funnel_dashboard_read.sql" in observed
     assert (
-        observed[-1] == "20260923000200_conversation_reactivation_v1.sql"
+        observed[-1] == "20260924000100_inbound_handoff_detail_reason_v1.sql"
     )
     assert (
-        observed[-2] == "20260923000100_resume_paused_conversation_v1.sql"
+        observed[-2] == "20260923000200_conversation_reactivation_v1.sql"
     )
     assert first["bundle"]["sha256"] == second["bundle"]["sha256"]
     assert first["postflight"]["sha256"] == second["postflight"]["sha256"]

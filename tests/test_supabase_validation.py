@@ -1046,6 +1046,7 @@ def test_request_inbound_human_handoff_calls_strict_atomic_rpc() -> None:
         "p_commercial_case_id": commercial_case_id,
         "p_command_key": "inbound:conversation:42:handoff:v1",
         "p_reason_code": "explicit_human_request",
+        "p_detail_reason_code": None,
         "p_projection_policy_key": "inbound-support-v1",
         "p_projection_policy_version": 1,
         "p_now": "2026-08-23T22:30:00+00:00",

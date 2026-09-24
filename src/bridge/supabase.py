@@ -4663,6 +4663,7 @@ class SupabaseClient:
         projection_policy_key: str,
         projection_policy_version: int,
         now: str,
+        detail_reason_code: str | None = None,
     ) -> HumanHandoffRequestResult:
         """Atomically stop one inbound case and enqueue its handoff effects."""
         operation = "request_inbound_human_handoff"
@@ -4673,6 +4674,7 @@ class SupabaseClient:
                 "p_commercial_case_id": commercial_case_id,
                 "p_command_key": command_key,
                 "p_reason_code": reason_code,
+                "p_detail_reason_code": detail_reason_code,
                 "p_projection_policy_key": projection_policy_key,
                 "p_projection_policy_version": projection_policy_version,
                 "p_now": now,

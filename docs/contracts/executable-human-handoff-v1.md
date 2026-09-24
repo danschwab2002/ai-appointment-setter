@@ -35,6 +35,15 @@ Los únicos `reason_code` válidos para handoff son:
 - `commercial_exception`;
 - `policy_requires_human`.
 
+Esa taxonomía cerrada vive en `primary_reason_code` y no describe *por qué*
+ocurrió esta derivación concreta. El motivo fino que compone el worker -- por
+ejemplo `payment_link_purchase_already_approved`, cuando la emisión del enlace
+devuelve `blocked` porque el contacto ya compró -- viaja aparte, en
+`detail_reason_code` (`^[a-z][a-z0-9_]{0,99}$`, nullable). Un detalle mal
+formado es un error de programación y la RPC lo rechaza; el bridge, en cambio,
+prefiere pedir la derivación sin detalle antes que no pedirla: perder el motivo
+es malo, perder la derivación deja a alguien esperando a nadie.
+
 La sugerencia no inicia requests ni llama Chatwoot. El bridge invoca la RPC durable con action, attempt, worker y generación de lease.
 
 ## 3. Admisión durable
@@ -129,7 +138,24 @@ La nota usa un marcador estable:
 [supportmagician-handoff:<request_id>:<template_key>:v<version>]
 ```
 
-El worker escanea hasta un límite explícito que falla cerrado si no alcanza el borde del historial. Cero marcadores permite un POST; uno confirma idempotencia; más de uno es conflicto. Tras un POST incierto, el estado `delivery_unknown` sólo permite escanear: nunca vuelve a crear la nota automáticamente y termina en `dead_letter` al alcanzar el límite de intentos.
+El worker escanea hasta un límite explícito que falla cerrado si no alcanza el borde del historial. Cero marcadores permite un POST; uno confirma idempotencia; más de uno es conflicto. El marcador es la clave de idempotencia de la nota, no decoración: sin él, cada reintento del efecto postearía una nota nueva.
+
+Cuando el request trae `detail_reason_code`, el cuerpo de la nota lleva una
+línea más, compuesta al crear el request y por lo tanto inmutable como el resto
+del snapshot:
+
+```text
+Derivación inbound registrada por el bridge. La automatización quedó pausada y el caso requiere revisión humana.
+
+Motivo: el contacto ya compró este producto, así que no se le envió un enlace de pago nuevo (payment_link_purchase_already_approved).
+
+[supportmagician-handoff:<request_id>:<template_key>:v<version>]
+```
+
+`inbound_handoff_reason_sentence` traduce el código a esa frase. Un código que
+todavía no esté en el mapa se muestra crudo en lugar de omitirse: un código feo
+en la nota es mejor que una derivación sin motivo. Sin detalle, la nota queda
+exactamente como antes. Tras un POST incierto, el estado `delivery_unknown` sólo permite escanear: nunca vuelve a crear la nota automáticamente y termina en `dead_letter` al alcanzar el límite de intentos.
 
 La proyección durable no muta labels, macros ni mensajes públicos. En el flujo
 inbound con respuesta automática, el work que originó el handoff aplica una
