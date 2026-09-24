@@ -3282,6 +3282,36 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         4,
         'inbound_handoff_detail_reason_no_execute'
+    union all
+    select
+        '20260924000200',
+        '20260924000200_inbound_handoff_agent_reason_sentences_v1.sql',
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.inbound_handoff_reason_sentence(text)')
+              and provolatile = 'i'
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.inbound_handoff_reason_sentence(text)')
+              and position('explicit_human_request' in definition) > 0
+              and position('commercial_exception' in definition) > 0
+              and position('policy_requires_human' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.inbound_handoff_reason_sentence(text)')
+              and position('direct_medication_guidance' in definition) > 0
+              and position('payment_link_purchase_already_approved' in definition) > 0
+        )::int,
+        3,
+        'inbound_handoff_agent_reason_sentences'
 )
 select
     version,

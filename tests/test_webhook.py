@@ -5420,6 +5420,11 @@ def test_cut_b_direct_medication_guidance_forces_durable_handoff(
     assert response.status_code == 202
     assert len(supabase.handoff_calls) == 1
     assert supabase.handoff_calls[0]["commercial_case_id"] == "case-1"
+    # La regla reescribe el motivo, no solo la decision: sin esto la fila y la
+    # nota se quedarian con el reason_code que el agente habia elegido.
+    assert supabase.handoff_calls[0]["detail_reason_code"] == (
+        "direct_medication_guidance"
+    )
     assert chatwoot.reply_calls == []
     assert chatwoot.calls == [(323, "automation_paused")]
     assert chatwoot.events == ["label:automation_paused"]
