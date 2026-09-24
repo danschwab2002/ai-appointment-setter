@@ -831,8 +831,11 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         '20260823000100_inbound_durable_handoff.sql',
         exists(
             select 1 from functions
+            -- La firma vigente la fija 20260924000100, que agrego el motivo
+            -- fino: el inventario describe el esquema resultante del stack
+            -- completo, no el de cada migracion aislada.
             where oid = to_regprocedure(
-                'public.request_inbound_human_handoff(uuid,text,text,text,integer,timestamp with time zone)'
+                'public.request_inbound_human_handoff(uuid,text,text,text,integer,timestamp with time zone,text)'
             )
               and prosecdef
               and array_to_string(proconfig, ',') =
@@ -3240,6 +3243,45 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         4,
         'conversation_reactivation_service_role_only'
+    union all
+    select
+        '20260924000100',
+        '20260924000100_inbound_handoff_detail_reason_v1.sql',
+        (
+            select count(*) = 1 from pg_attribute
+            where attrelid = to_regclass('public.human_handoff_requests')
+              and attname = 'detail_reason_code'
+              and not attisdropped
+        )::int
+        + exists(
+            select 1 from pg_constraint
+            where conname = 'human_handoff_requests_detail_reason_code_check'
+              and conrelid = to_regclass('public.human_handoff_requests')
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.request_inbound_human_handoff(uuid,text,text,text,integer,timestamptz,text)')
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+              and position('detail_reason_code' in definition) > 0
+              and position('inbound_handoff_reason_sentence' in definition) > 0
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.inbound_handoff_reason_sentence(text)')
+              and provolatile = 'i'
+              and position('payment_link_purchase_already_approved' in definition) > 0
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        4,
+        'inbound_handoff_detail_reason_no_execute'
 )
 select
     version,

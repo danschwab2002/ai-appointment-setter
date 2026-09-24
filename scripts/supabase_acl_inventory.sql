@@ -84,7 +84,7 @@ expected_service_role(signature) as (
         ('public.reevaluate_hotmart_abandonment_timer(uuid, timestamp with time zone)'),
         ('public.reevaluate_followup_action(uuid, text, bigint, timestamp with time zone, boolean, text, text, timestamp with time zone, text, boolean, boolean, boolean, boolean, boolean)'),
         ('public.reserve_followup_delivery_attempt(uuid, text, bigint, bigint, bigint, text, text, timestamp with time zone)'),
-        ('public.request_inbound_human_handoff(uuid, text, text, text, integer, timestamp with time zone)'),
+        ('public.request_inbound_human_handoff(uuid, text, text, text, integer, timestamp with time zone, text)'),
         ('public.request_human_handoff(uuid, text, text, text, text, integer, uuid, uuid, text, bigint, timestamp with time zone)'),
         ('public.resolve_commercial_ally_runtime_binding(text, text, integer)'),
         ('public.resolve_commercial_ally_discount_policy(text, text, integer, text)'),

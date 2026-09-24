@@ -157,7 +157,7 @@ const rows = await db.query(`
       ('list_due_hotmart_abandonment_reevaluations_v2(timestamp with time zone,integer,boolean)'),
       ('reevaluate_hotmart_abandonment_timer(uuid,timestamp with time zone)'),
       ('reevaluate_followup_action(uuid,text,bigint,timestamp with time zone,boolean,text,text,timestamp with time zone,text,boolean,boolean,boolean,boolean,boolean)'),
-      ('request_inbound_human_handoff(uuid,text,text,text,integer,timestamp with time zone)'),
+      ('request_inbound_human_handoff(uuid,text,text,text,integer,timestamp with time zone,text)'),
       ('request_human_handoff(uuid,text,text,text,text,integer,uuid,uuid,text,bigint,timestamp with time zone)'),
       ('reserve_followup_delivery_attempt(uuid,text,bigint,bigint,bigint,text,text,timestamp with time zone)'),
       ('resolve_commercial_ally_runtime_binding(text,text,integer)'),
