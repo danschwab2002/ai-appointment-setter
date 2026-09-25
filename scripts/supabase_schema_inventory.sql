@@ -3063,6 +3063,42 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         'slack_correlation_abstention_reason_service_role_only'
     union all
     select
+        '20260918000100',
+        '20260918000100_operator_correlation_prepared_at.sql',
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure(
+                    'public.prepare_operator_correlation_resolution(text,text,text,uuid,text,uuid,text,uuid)'
+                  )
+              and position('v_prepared_at := clock_timestamp()' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure(
+                    'public.prepare_operator_correlation_resolution(text,text,text,uuid,text,uuid,text,uuid)'
+                  )
+              and position(
+                    'v_prepared_at + interval ''10 minutes'''
+                    in definition
+                  ) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure(
+                    'public.prepare_operator_correlation_resolution(text,text,text,uuid,text,uuid,text,uuid)'
+                  )
+              and position(
+                    'clock_timestamp() + interval ''10 minutes'''
+                    in definition
+                  ) = 0
+        )::int,
+        3,
+        'operator_correlation_prepared_at_single_clock'
+    union all
+    select
         '20260922000100',
         '20260922000100_johanna_checkout_offer_by_lead_intent_v1.sql',
         exists(
