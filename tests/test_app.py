@@ -855,3 +855,299 @@ def test_the_resume_trigger_survives_a_real_inbound_with_production_flags(
         r.url.path == "/api/v1/accounts/1/conversations/158"
         for r in chatwoot_requests
     ), "el disparador de reanudacion no llego a consultar la conversacion"
+
+
+# --- La reanudacion verifica la identidad con el JID del remitente ---------
+#
+# Fixture capturado el 25/09/2026: la conversacion 177 respondio a la plantilla
+# de reactivacion mientras seguia pausada, con todas las condiciones del
+# contrato cumplidas, y la reanudacion no corrio (cero filas en
+# conversation_resume_events desde el 23/09). El show de la API no trae
+# contact_inbox ni meta.sender.identifier, asi que el cliente verifica la
+# identidad por telefono; sin un expected_jid la compara contra
+# ALLOWED_WHATSAPP_JID, que en produccion es el numero de prueba.
+
+NUMERO_DE_PRUEBA = "542916424279@s.whatsapp.net"
+JID_DEL_LEAD_177 = "5210000000177@s.whatsapp.net"
+AHORA_177 = 1_790_368_889  # created_at del mensaje 2376 (2026-09-25 20:41:29 UTC)
+
+
+def _fixture_177() -> dict[str, object]:
+    fixture = json.loads(
+        (
+            Path(__file__).parent
+            / "fixtures"
+            / "chatwoot_paused_lead_reply_inbox_9_conv_177_20260925.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert isinstance(fixture, dict)
+    conversation = fixture["conversation"]
+    assert isinstance(conversation, dict)
+    # Lo que hace al caso: el show no trae identidad mas alla del telefono.
+    assert "contact_inbox" not in conversation
+    assert conversation["meta"]["sender"]["identifier"] is None
+    assert conversation["labels"] == ["automation_paused"]
+    return fixture
+
+
+class _Chatwoot177:
+    """Transporte falso que sirve el show, los mensajes y las etiquetas de 177."""
+
+    def __init__(self, fixture: dict[str, object]) -> None:
+        self.conversation = fixture["conversation"]
+        self.messages = fixture["messages"]
+        self.labels: list[str] = ["automation_paused"]
+        self.requests: list[httpx.Request] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        path = request.url.path
+        if path == "/api/v1/accounts/1/conversations/177":
+            return httpx.Response(200, json=self.conversation)
+        if path == "/api/v1/accounts/1/conversations/177/messages":
+            if request.url.params.get("before") is not None:
+                return httpx.Response(200, json={"meta": {}, "payload": []})
+            return httpx.Response(200, json=self.messages)
+        if path == "/api/v1/accounts/1/conversations/177/labels":
+            return httpx.Response(200, json={"payload": list(self.labels)})
+        if path == "/api/v1/accounts/1/macros/3/execute":
+            self.labels = []
+            return httpx.Response(200, json={})
+        return httpx.Response(404, json={"error": f"unexpected {path}"})
+
+    @property
+    def macro_executed(self) -> bool:
+        return any(
+            r.url.path == "/api/v1/accounts/1/macros/3/execute"
+            for r in self.requests
+        )
+
+
+def _cliente_177(transport: _Chatwoot177) -> object:
+    from bridge.chatwoot import ChatwootClient
+
+    return ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=NUMERO_DE_PRUEBA,  # como en produccion: NO es el lead
+        agent_bot_id=1,
+        resume_macro_id=3,
+        confirmation_delay_seconds=0,
+        transport=httpx.MockTransport(transport),
+    )
+
+
+def test_resume_verifies_the_lead_with_the_webhook_jid_not_the_test_number(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("bridge.app.time.time", lambda: AHORA_177)
+    fixture = _fixture_177()
+
+    # Sin el JID del webhook, el cliente cae a ALLOWED_WHATSAPP_JID y la
+    # verificacion por telefono falla para el lead: la reanudacion no ocurre
+    # y no deja rastro. Es el comportamiento que tuvo produccion del 23/09 al
+    # 25/09.
+    transport = _Chatwoot177(fixture)
+    supabase = _SupabaseFalso()
+    resumed = asyncio.run(
+        _resume_paused_conversation(
+            control_client=_cliente_177(transport),
+            supabase=supabase,
+            settings=_settings_resume(),
+            conversation_id=177,
+            message_id=2376,
+        )
+    )
+    assert resumed is False
+    assert supabase.llamadas == []
+    assert transport.macro_executed is False
+    assert any(
+        r.url.path == "/api/v1/accounts/1/conversations/177"
+        for r in transport.requests
+    ), "la verificacion tiene que haber leido la conversacion"
+
+    # Con el JID que trajo el webhook (contact_inbox.source_id canonizado), el
+    # telefono E.164 del show lo confirma y la reanudacion completa las dos
+    # capas: la RPC con la clave del mensaje 2376 y el macro que saca la
+    # etiqueta.
+    transport = _Chatwoot177(fixture)
+    supabase = _SupabaseFalso()
+    resumed = asyncio.run(
+        _resume_paused_conversation(
+            control_client=_cliente_177(transport),
+            supabase=supabase,
+            settings=_settings_resume(),
+            conversation_id=177,
+            message_id=2376,
+            expected_jid=JID_DEL_LEAD_177,
+        )
+    )
+    assert resumed is True
+    assert supabase.llamadas[0]["command_key"] == "resume:177:2376"
+    assert supabase.llamadas[0]["reason_code"] == "inbound_after_quiet_period"
+    # Ultimo mensaje publico de una persona: 2345, el 24/09 20:32 UTC.
+    assert supabase.llamadas[0]["quiet_seconds"] == AHORA_177 - 1_790_281_926
+    assert transport.macro_executed is True
+    assert transport.labels == []
+
+
+def test_resume_still_rejects_a_conversation_that_belongs_to_another_lead(
+    monkeypatch,
+) -> None:
+    # El JID del webhook es la identidad esperada, no una llave maestra: si
+    # la conversacion leida es de otro telefono, falla cerrado igual que antes.
+    monkeypatch.setattr("bridge.app.time.time", lambda: AHORA_177)
+    transport = _Chatwoot177(_fixture_177())
+    supabase = _SupabaseFalso()
+    resumed = asyncio.run(
+        _resume_paused_conversation(
+            control_client=_cliente_177(transport),
+            supabase=supabase,
+            settings=_settings_resume(),
+            conversation_id=177,
+            message_id=2376,
+            expected_jid="5210000000999@s.whatsapp.net",
+        )
+    )
+    assert resumed is False
+    assert supabase.llamadas == []
+    assert transport.macro_executed is False
+
+
+def test_the_resume_trigger_resumes_a_paused_lead_whose_number_is_not_the_test_number(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch
+) -> None:
+    """El handler completo, con los flags de produccion, reanuda a la 177.
+
+    Produccion el 2026-09-25 20:41 UTC: remitentes acotados por scope,
+    admision Cut B activa (que devuelve `blocked` para una conversacion con
+    human_takeover), reanudacion activa, ALLOWED_WHATSAPP_JID = numero de
+    prueba. El lead 177 contesto la plantilla de reactivacion y el worker
+    marco la entrega como completada sin llamar a la RPC de reanudacion ni
+    ejecutar el macro. Este test exige las dos cosas y que la admision se
+    vuelva a pedir despues de levantar la pausa.
+    """
+    import logging
+
+    monkeypatch.setattr("bridge.app.time.time", lambda: AHORA_177)
+    fixture = _fixture_177()
+    webhook = fixture["webhook"]
+    transport = _Chatwoot177(fixture)
+
+    class _SupabaseConPausa:
+        def __init__(self) -> None:
+            self.admisiones: list[dict[str, object]] = []
+            self.reanudaciones: list[dict[str, object]] = []
+
+        async def admit_inbound_commercial_case(self, **kwargs: object) -> object:
+            self.admisiones.append(kwargs)
+            outcome = "blocked" if not self.reanudaciones else "created"
+            return SimpleNamespace(
+                outcome=outcome,
+                commercial_case_id="case-177",
+                contact_id="contact-177",
+                channel_identity_id="identity-177",
+                conversation_id="conversation-177",
+                automation_status="disabled" if outcome == "blocked" else "draft_only",
+            )
+
+        async def resume_paused_conversation(self, **kwargs: object):
+            self.reanudaciones.append(kwargs)
+            return ConversationResumeResult(
+                outcome="resumed",
+                conversation_id="conversation-177",
+                commercial_case_id="case-177",
+                resume_event_id="event-177",
+            )
+
+        async def has_chatwoot_opt_out_stop(self, **_: object) -> bool:
+            return False
+
+    class _SombraNula:
+        """El agente no propone nada: el test termina en la admision."""
+
+        async def run(self, *, delivery_id: str, context: object) -> None:
+            return None
+
+        def record_failure(self, *, delivery_id: str, reason: str) -> None:
+            return None
+
+        def has_result(self, *, delivery_id: str) -> bool:
+            return True
+
+        def get_completed_proposal(self, *, delivery_id: str) -> None:
+            return None
+
+    supabase = _SupabaseConPausa()
+    app = create_app(
+        Settings(
+            webhook_secret="webhook-secret",
+            allowed_jid=NUMERO_DE_PRUEBA,
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=9,
+            # El modo scoped exige todas las compuertas de parada y derivacion
+            # (las mismas que produccion tiene prendidas).
+            chatwoot_scoped_inbound_senders_enabled=True,
+            chatwoot_cut_b_admission_enabled=True,
+            chatwoot_cut_b_scope_key="libre-de-ansiedad-inbound",
+            chatwoot_cut_b_scope_version=2,
+            chatwoot_cut_b_agent_enabled=True,
+            automated_replies_enabled=True,
+            chatwoot_durable_opt_out_enabled=True,
+            chatwoot_human_pause_enabled=True,
+            chatwoot_opt_out_macro_id=2,
+            opt_out_projection_worker_id="opt-out-test",
+            human_handoff_admission_enabled=True,
+            human_handoff_projection_enabled=True,
+            handoff_projection_policy_key="lancemos-inbound-handoff",
+            handoff_projection_policy_version=1,
+            human_handoff_projection_worker_id="handoff-projection-test",
+            conversation_resume_enabled=True,
+            chatwoot_resume_macro_id=3,
+        ),
+        chatwoot_client=_cliente_177(transport),
+        shadow_processor=_SombraNula(),  # type: ignore[arg-type]
+        supabase_client=supabase,  # type: ignore[arg-type]
+    )
+    raw_body = json.dumps(
+        webhook, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    timestamp = str(AHORA_177)
+    signature = "sha256=" + hmac.new(
+        b"webhook-secret",
+        timestamp.encode("ascii") + b"." + raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+
+    async def exercise() -> httpx.Response:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        ) as client:
+            response = await client.post(
+                "/webhooks/chatwoot",
+                content=raw_body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Chatwoot-Signature": signature,
+                    "X-Chatwoot-Timestamp": timestamp,
+                    "X-Chatwoot-Delivery": "6cb03c58-e507-49cc-a0db-963b8402e064",
+                },
+            )
+        await app.state.chatwoot_worker.run_once()
+        return response
+
+    caplog.set_level(logging.WARNING, logger="bridge.chatwoot_inbox")
+    response = asyncio.run(exercise())
+
+    assert response.status_code == 202
+    fallos = [m for m in caplog.messages if "chatwoot_work_failed" in m]
+    assert fallos == [], fallos
+    assert [r["command_key"] for r in supabase.reanudaciones] == ["resume:177:2376"]
+    assert supabase.reanudaciones[0]["external_conversation_id"] == 177
+    assert transport.macro_executed is True, "la etiqueta automation_paused no se saco"
+    # Bloqueada, reanudada, y admitida de nuevo: dos admisiones.
+    assert [a["external_conversation_id"] for a in supabase.admisiones] == [177, 177]
