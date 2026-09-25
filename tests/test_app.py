@@ -1151,3 +1151,405 @@ def test_the_resume_trigger_resumes_a_paused_lead_whose_number_is_not_the_test_n
     assert transport.macro_executed is True, "la etiqueta automation_paused no se saco"
     # Bloqueada, reanudada, y admitida de nuevo: dos admisiones.
     assert [a["external_conversation_id"] for a in supabase.admisiones] == [177, 177]
+
+
+# ---------------------------------------------------------------------------
+# La etiqueta que toca una persona gobierna la reanudacion (conv 173, 25/09/2026)
+# ---------------------------------------------------------------------------
+
+JID_DEL_LEAD_173 = "5210000000173@s.whatsapp.net"
+AHORA_173 = 1_790_360_310  # created_at del mensaje 2373 (2026-09-25 18:18:30 UTC)
+
+
+def _fixture_173() -> dict[str, object]:
+    fixture = json.loads(
+        (
+            Path(__file__).parent
+            / "fixtures"
+            / "chatwoot_paused_lead_label_removed_by_human_inbox_9_conv_173_20260925.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert isinstance(fixture, dict)
+    webhook = fixture["webhook"]
+    conversation = fixture["conversation"]
+    assert isinstance(webhook, dict) and isinstance(conversation, dict)
+    # Lo que hace al caso: el webhook llego con la etiqueta puesta, y cuando el
+    # bridge leyo la conversacion una persona ya la habia sacado a mano.
+    assert webhook["conversation"]["labels"] == ["automation_paused"]
+    assert conversation["labels"] == []
+    assert "contact_inbox" not in conversation
+    assert conversation["meta"]["sender"]["identifier"] is None
+    actividades = [
+        m["content"] for m in fixture["messages"]["payload"] if m["message_type"] == 2
+    ]
+    assert "Persona del equipo removed automation_paused" in actividades
+    return fixture
+
+
+class _Chatwoot173:
+    """Transporte falso que sirve el show, los mensajes y las etiquetas de 173."""
+
+    def __init__(self, fixture: dict[str, object]) -> None:
+        self.conversation = fixture["conversation"]
+        self.messages = fixture["messages"]
+        self.labels: list[str] = []
+        self.requests: list[httpx.Request] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        path = request.url.path
+        if path == "/api/v1/accounts/1/conversations/173":
+            return httpx.Response(200, json=self.conversation)
+        if path == "/api/v1/accounts/1/conversations/173/messages":
+            if request.url.params.get("before") is not None:
+                return httpx.Response(200, json={"meta": {}, "payload": []})
+            return httpx.Response(200, json=self.messages)
+        if path == "/api/v1/accounts/1/conversations/173/labels":
+            return httpx.Response(200, json={"payload": list(self.labels)})
+        if path == "/api/v1/accounts/1/macros/3/execute":
+            self.labels = []
+            return httpx.Response(200, json={})
+        return httpx.Response(404, json={"error": f"unexpected {path}"})
+
+    @property
+    def macro_executed(self) -> bool:
+        return any(
+            r.url.path == "/api/v1/accounts/1/macros/3/execute"
+            for r in self.requests
+        )
+
+
+def _cliente_173(transport: _Chatwoot173) -> object:
+    from bridge.chatwoot import ChatwootClient
+
+    return ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=NUMERO_DE_PRUEBA,  # como en produccion: NO es el lead
+        agent_bot_id=1,
+        resume_macro_id=3,
+        confirmation_delay_seconds=0,
+        transport=httpx.MockTransport(transport),
+    )
+
+
+def test_resume_respects_a_person_who_removed_the_label_while_the_durable_pause_remains(
+    monkeypatch,
+) -> None:
+    """Sin etiqueta y con la pausa durable vigente, la pausa se levanta igual.
+
+    Produccion, 2026-09-25 18:18 UTC: la 173 estaba derivada (etiqueta +
+    paused_human en Supabase). El lead escribio y una persona del equipo le
+    saco la etiqueta a mano desde Chatwoot. El bridge leyo la conversacion sin
+    etiqueta y devolvia False: la conversacion quedaba pausada en Supabase para
+    siempre, porque el cambio de etiqueta nunca le llega por webhook.
+    """
+    monkeypatch.setattr("bridge.app.time.time", lambda: AHORA_173)
+    fixture = _fixture_173()
+
+    # Sin pausa durable registrada, la ausencia de la etiqueta sigue sin
+    # levantar nada (es una conversacion activa cualquiera).
+    transport = _Chatwoot173(fixture)
+    supabase = _SupabaseFalso()
+    resumed = asyncio.run(
+        _resume_paused_conversation(
+            control_client=_cliente_173(transport),
+            supabase=supabase,
+            settings=_settings_resume(),
+            conversation_id=173,
+            message_id=2373,
+            expected_jid=JID_DEL_LEAD_173,
+        )
+    )
+    assert resumed is False
+    assert supabase.llamadas == []
+    assert transport.macro_executed is False
+
+    # Con la admision bloqueada (human_takeover en Supabase) y sin etiqueta,
+    # la decision de la persona se respeta: RPC con `operator_request`, sin
+    # medir el silencio del equipo y sin macro (no hay etiqueta que sacar).
+    transport = _Chatwoot173(fixture)
+    supabase = _SupabaseFalso()
+    resumed = asyncio.run(
+        _resume_paused_conversation(
+            control_client=_cliente_173(transport),
+            supabase=supabase,
+            settings=_settings_resume(),
+            conversation_id=173,
+            message_id=2373,
+            expected_jid=JID_DEL_LEAD_173,
+            durable_pause_recorded=True,
+        )
+    )
+    assert resumed is True
+    assert supabase.llamadas[0]["command_key"] == "resume:173:2373"
+    assert supabase.llamadas[0]["reason_code"] == "operator_request"
+    assert supabase.llamadas[0]["quiet_seconds"] is None
+    assert transport.macro_executed is False
+    # El snapshot canonico lee los mensajes igual (es parte de la lectura de la
+    # conversacion); lo que no pasa es la medicion del silencio: quiet_seconds
+    # llega nulo a la RPC y el motivo es la decision de la persona.
+
+    # La RPC sigue mandando: si dice que no, la conversacion se queda con las
+    # personas (derivacion a medio proyectar, limite, contacto bloqueado).
+    transport = _Chatwoot173(fixture)
+    supabase = _SupabaseFalso(outcome="blocked_pending_handoff")
+    resumed = asyncio.run(
+        _resume_paused_conversation(
+            control_client=_cliente_173(transport),
+            supabase=supabase,
+            settings=_settings_resume(),
+            conversation_id=173,
+            message_id=2373,
+            expected_jid=JID_DEL_LEAD_173,
+            durable_pause_recorded=True,
+        )
+    )
+    assert resumed is False
+    assert len(supabase.llamadas) == 1
+
+
+def test_the_resume_trigger_answers_a_lead_whose_label_a_person_removed(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch
+) -> None:
+    """El handler completo, con los flags de produccion, reanuda a la 173.
+
+    El webhook del mensaje 2373 llego con la etiqueta puesta; cuando el worker
+    leyo la conversacion, una persona ya la habia sacado. La admision devuelve
+    `blocked` (paused_human en Supabase): la pausa se levanta con
+    `operator_request`, sin macro, y la admision se vuelve a pedir.
+    """
+    import logging
+
+    monkeypatch.setattr("bridge.app.time.time", lambda: AHORA_173)
+    fixture = _fixture_173()
+    webhook = fixture["webhook"]
+    transport = _Chatwoot173(fixture)
+
+    class _SupabaseConPausa:
+        def __init__(self) -> None:
+            self.admisiones: list[dict[str, object]] = []
+            self.reanudaciones: list[dict[str, object]] = []
+
+        async def admit_inbound_commercial_case(self, **kwargs: object) -> object:
+            self.admisiones.append(kwargs)
+            outcome = "blocked" if not self.reanudaciones else "created"
+            return SimpleNamespace(
+                outcome=outcome,
+                commercial_case_id="case-173",
+                contact_id="contact-173",
+                channel_identity_id="identity-173",
+                conversation_id="conversation-173",
+                automation_status="disabled" if outcome == "blocked" else "draft_only",
+            )
+
+        async def resume_paused_conversation(self, **kwargs: object):
+            self.reanudaciones.append(kwargs)
+            return ConversationResumeResult(
+                outcome="resumed",
+                conversation_id="conversation-173",
+                commercial_case_id="case-173",
+                resume_event_id="event-173",
+            )
+
+        async def has_chatwoot_opt_out_stop(self, **_: object) -> bool:
+            return False
+
+    class _SombraNula:
+        """El agente no propone nada: el test termina en la admision."""
+
+        async def run(self, *, delivery_id: str, context: object) -> None:
+            return None
+
+        def record_failure(self, *, delivery_id: str, reason: str) -> None:
+            return None
+
+        def has_result(self, *, delivery_id: str) -> bool:
+            return True
+
+        def get_completed_proposal(self, *, delivery_id: str) -> None:
+            return None
+
+    supabase = _SupabaseConPausa()
+    app = create_app(
+        Settings(
+            webhook_secret="webhook-secret",
+            allowed_jid=NUMERO_DE_PRUEBA,
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=9,
+            chatwoot_scoped_inbound_senders_enabled=True,
+            chatwoot_cut_b_admission_enabled=True,
+            chatwoot_cut_b_scope_key="libre-de-ansiedad-inbound",
+            chatwoot_cut_b_scope_version=2,
+            chatwoot_cut_b_agent_enabled=True,
+            automated_replies_enabled=True,
+            chatwoot_durable_opt_out_enabled=True,
+            chatwoot_human_pause_enabled=True,
+            chatwoot_opt_out_macro_id=2,
+            opt_out_projection_worker_id="opt-out-test",
+            human_handoff_admission_enabled=True,
+            human_handoff_projection_enabled=True,
+            handoff_projection_policy_key="lancemos-inbound-handoff",
+            handoff_projection_policy_version=1,
+            human_handoff_projection_worker_id="handoff-projection-test",
+            conversation_resume_enabled=True,
+            chatwoot_resume_macro_id=3,
+        ),
+        chatwoot_client=_cliente_173(transport),
+        shadow_processor=_SombraNula(),  # type: ignore[arg-type]
+        supabase_client=supabase,  # type: ignore[arg-type]
+    )
+    raw_body = json.dumps(
+        webhook, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    timestamp = str(AHORA_173)
+    signature = "sha256=" + hmac.new(
+        b"webhook-secret",
+        timestamp.encode("ascii") + b"." + raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+
+    async def exercise() -> httpx.Response:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        ) as client:
+            response = await client.post(
+                "/webhooks/chatwoot",
+                content=raw_body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Chatwoot-Signature": signature,
+                    "X-Chatwoot-Timestamp": timestamp,
+                    "X-Chatwoot-Delivery": "1f3a9c2e-7d54-4b8e-9c01-173173173173",
+                },
+            )
+        await app.state.chatwoot_worker.run_once()
+        return response
+
+    caplog.set_level(logging.WARNING, logger="bridge.chatwoot_inbox")
+    response = asyncio.run(exercise())
+
+    assert response.status_code == 202
+    fallos = [m for m in caplog.messages if "chatwoot_work_failed" in m]
+    assert fallos == [], fallos
+    assert [r["command_key"] for r in supabase.reanudaciones] == ["resume:173:2373"]
+    assert supabase.reanudaciones[0]["reason_code"] == "operator_request"
+    assert supabase.reanudaciones[0]["external_conversation_id"] == 173
+    assert transport.macro_executed is False, "no hay etiqueta que sacar"
+    # Bloqueada, reanudada por decision de una persona, y admitida de nuevo.
+    assert [a["external_conversation_id"] for a in supabase.admisiones] == [173, 173]
+
+
+def _webhook_firmado(
+    payload: dict[str, object], *, timestamp: int, delivery_id: str
+) -> tuple[bytes, dict[str, str]]:
+    raw_body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode(
+        "utf-8"
+    )
+    signature = "sha256=" + hmac.new(
+        b"webhook-secret",
+        str(timestamp).encode("ascii") + b"." + raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+    return raw_body, {
+        "Content-Type": "application/json",
+        "X-Chatwoot-Signature": signature,
+        "X-Chatwoot-Timestamp": str(timestamp),
+        "X-Chatwoot-Delivery": delivery_id,
+    }
+
+
+def test_a_conversation_updated_with_a_label_change_is_captured_and_nothing_else(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Un `conversation_updated` que cambia etiquetas queda capturado, sin trabajo.
+
+    La forma del payload sale del emisor, Chatwoot v4.13.0:
+    `WebhookListener#conversation_updated` manda `conversation.webhook_data`
+    (el mismo objeto que viaja como `conversation` en los `message_created`
+    capturados, `Conversations::EventDataPresenter#push_data`) mas
+    `changed_attributes` = `[{atributo: {previous_value, current_value}}]`
+    (`BaseListener#extract_changed_attributes`), y `label_list` esta entre
+    los atributos que disparan el evento (`Conversation#allowed_keys?`). El
+    bridge no lo procesa todavia: lo captura para construir la sincronizacion
+    sobre el primer payload real, que llega cuando la cuenta suscriba el evento.
+    """
+    monkeypatch.setattr("bridge.app.time.time", lambda: AHORA_173)
+    fixture = _fixture_173()
+    conversation = dict(fixture["webhook"]["conversation"])
+    conversation["labels"] = []
+    app = create_app(
+        Settings(
+            webhook_secret="webhook-secret",
+            allowed_jid=NUMERO_DE_PRUEBA,
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=9,
+        )
+    )
+    cambio_de_etiqueta = {
+        **conversation,
+        "event": "conversation_updated",
+        "changed_attributes": [
+            {
+                "label_list": {
+                    "previous_value": ["automation_paused"],
+                    "current_value": [],
+                }
+            }
+        ],
+    }
+    otro_cambio = {
+        **conversation,
+        "event": "conversation_updated",
+        "changed_attributes": [
+            {"assignee_id": {"previous_value": None, "current_value": 7}}
+        ],
+    }
+    otro_inbox = {**cambio_de_etiqueta, "inbox_id": 8}
+
+    async def post(payload: dict[str, object], delivery_id: str) -> httpx.Response:
+        raw_body, headers = _webhook_firmado(
+            payload, timestamp=AHORA_173, delivery_id=delivery_id
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        ) as client:
+            return await client.post(
+                "/webhooks/chatwoot", content=raw_body, headers=headers
+            )
+
+    capturado = asyncio.run(post(cambio_de_etiqueta, "label-change-1"))
+    assert capturado.status_code == 202
+    assert capturado.json() == {
+        "status": "captured",
+        "reason": "conversation_label_change",
+        "delivery_id": "label-change-1",
+    }
+    digest = hashlib.sha256(b"label-change-1").hexdigest()
+    guardado = json.loads((tmp_path / f"{digest}.json").read_text(encoding="utf-8"))
+    assert guardado["event"] == "conversation_updated"
+    assert guardado["changed_attributes"][0]["label_list"]["current_value"] == []
+    # No hay trabajo durable: el inbox de trabajo no existe o esta vacio.
+    work = tmp_path / ".work"
+    assert not work.exists() or list(work.glob("*.json")) == []
+
+    duplicado = asyncio.run(post(cambio_de_etiqueta, "label-change-1"))
+    assert duplicado.status_code == 200
+    assert duplicado.json()["status"] == "duplicate"
+
+    ignorado = asyncio.run(post(otro_cambio, "assignee-change-1"))
+    assert ignorado.status_code == 200
+    assert ignorado.json() == {"status": "ignored", "reason": "unsupported_event"}
+    assert not (tmp_path / f"{hashlib.sha256(b'assignee-change-1').hexdigest()}.json").exists()
+
+    ajeno = asyncio.run(post(otro_inbox, "label-change-inbox-8"))
+    assert ajeno.status_code == 200
+    assert ajeno.json()["status"] == "ignored"
+    assert not (tmp_path / f"{hashlib.sha256(b'label-change-inbox-8').hexdigest()}.json").exists()

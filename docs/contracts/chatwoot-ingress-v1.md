@@ -31,6 +31,16 @@ flag apagado, tanto eventos nuevos como trabajo admitido antes de un reinicio se
 completan sin llamar a Chatwoot; el webhook nuevo devuelve
 `reason=human_pause_disabled` y no se persiste.
 
+Un `conversation_updated` del inbox configurado cuyo `changed_attributes` incluya
+`label_list` se **captura** en `CAPTURE_DIR` y responde `202 captured` con
+`reason=conversation_label_change`, sin crear trabajo durable ni llamar a nadie:
+es la observación previa a sincronizar con la capa durable la etiqueta que pone o
+saca una persona (ver `resume-paused-conversation-v1.md`). Hoy la cuenta suscribe
+solo `message_created`; al suscribir `conversation_updated`, el primer cambio de
+etiqueta queda guardado para construir sobre él. Un `conversation_updated` de otro
+inbox o sin cambio de etiquetas, y cualquier otro evento que no sea
+`message_created`, siguen respondiendo `200 ignored` con `reason=unsupported_event`.
+
 Si sólo uno de los dos IDs esperados está configurado, el ingreso falla cerrado
 con `reason=scope_configuration_incomplete`. Los reason codes de rechazo de
 alcance son `account_not_allowed` e `inbox_not_allowed`; no contienen IDs ni PII.
@@ -47,7 +57,7 @@ negativo; si falta o es inválido, responde `200 ignored` con
 | HTTP | `status` o `detail` | Significado |
 |---|---|---|
 | `202` | `accepted` | El trabajo fue admitido durablemente; Hermes y los efectos externos todavía pueden estar pendientes. |
-| `202` | `captured` | Hermes está deshabilitado y el payload quedó capturado; no existe trabajo conversacional posterior. |
+| `202` | `captured` | Hermes está deshabilitado y el payload quedó capturado, o el evento es un `conversation_updated` con cambio de etiquetas (`reason=conversation_label_change`); no existe trabajo conversacional posterior. |
 | `200` | `duplicate` | El mismo delivery ya había sido capturado o admitido. |
 | `200` | `ignored` | El evento no es procesable; `reason` contiene un código estable sin PII. |
 | `400` | `invalid_json` | El cuerpo no es JSON válido. |

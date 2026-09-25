@@ -23,14 +23,14 @@ Umbral por defecto: **28.800 s (8 h)**, configurable. Calibrado contra el caso r
 
 ## Cuándo se reactiva
 
-Al entrar un mensaje del lead cuya admisión devolvió `blocked`, y sólo si **todo** esto se cumple:
+Al entrar un mensaje del lead (haya devuelto `blocked` la admisión o no: la etiqueta sola también frena el envío), y sólo si **todo** esto se cumple:
 
 - la conversación leída de Chatwoot es la del remitente del webhook: la identidad esperada es el JID que trajo `contact_inbox.source_id` (en modo scoped), **no** `ALLOWED_WHATSAPP_JID`. El show de la API no trae `contact_inbox` ni `meta.sender.identifier`, así que el cliente la confirma por `meta.sender.phone_number` en E.164 (ver "Lo que salió mal la segunda vez");
 - la conversación está `open` y `can_reply`;
 - no tiene assignee humano;
-- tiene la etiqueta `automation_paused` (si no la tiene, no hay nada que levantar);
+- tiene la etiqueta `automation_paused`; **o no la tiene pero la admisión devolvió `blocked`**. La etiqueta la saca el sistema al reanudar, nunca sola: su ausencia con la pausa durable vigente significa que una persona la sacó a mano desde Chatwoot para que el agente vuelva a contestar. Esa decisión se respeta: la pausa se levanta con `operator_request`, **sin medir el silencio del equipo** y sin ejecutar el macro (no hay etiqueta que sacar). Sin etiqueta y sin pausa durable no hay nada que levantar (ver "Lo que salió mal la tercera vez");
 - no tiene `automation_opted_out`;
-- el silencio del equipo alcanza el umbral, **o** ninguna persona escribió nunca en esa conversación;
+- el silencio del equipo alcanza el umbral, **o** ninguna persona escribió nunca en esa conversación (no aplica cuando una persona sacó la etiqueta);
 - el contacto no está `opted_out`, `blocked` ni `restricted`;
 - no hay una derivación a medio proyectar (`requested` / `projection_failed`);
 - no se alcanzó el límite de reactivaciones de esa conversación.
@@ -41,7 +41,7 @@ Primero la capa durable (Supabase), después la etiqueta de Chatwoot. Si la etiq
 
 ## Idempotencia y límite
 
-`command_key` es `resume:<conversation_id>:<message_id>` y tiene índice único: el mismo mensaje disparador no reactiva dos veces (`replayed`). Cada reactivación deja una fila en `conversation_resume_events` con el estado previo de las dos entidades, el motivo y el silencio medido.
+`command_key` es `resume:<conversation_id>:<message_id>` y tiene índice único: el mismo mensaje disparador no reactiva dos veces (`replayed`). Cada reactivación deja una fila en `conversation_resume_events` con el estado previo de las dos entidades, el motivo (`inbound_after_quiet_period` cuando el sistema midió el silencio, `operator_request` cuando una persona sacó la etiqueta) y el silencio medido (nulo en el segundo caso).
 
 El **límite anti-loop** (por defecto 3 por conversación) existe porque el ciclo natural es reactivar → el agente vuelve a derivar → pausa → reactivar. Pasado el límite, la conversación se queda con las personas y el sistema no insiste.
 
@@ -60,6 +60,7 @@ Mientras `CONVERSATION_RESUME_ENABLED` esté activo, el historial canónico incl
 - **No despausa sola una conversación en la que nadie escribe.** El disparador es un mensaje entrante del lead; una conversación pausada que el lead abandonó se queda como está.
 - **No quita el `team_id`**: la conversación sigue visible en la cola del equipo.
 - **No reabre conversaciones resueltas.** Chatwoot las reabre solo al llegar un inbound, que es cuando corre esto.
+- **No se entera cuando una persona pone o saca la etiqueta.** Chatwoot le manda al bridge solo `message_created` (la cuenta no suscribe `conversation_updated`, y las actividades como «X removed automation_paused» no son `webhook_sendable`). La decisión de la persona se aplica recién con el siguiente mensaje del lead: sacar la etiqueta habilita al agente desde ese mensaje; ponerla frena el envío desde el primer mensaje (la guarda pre-envío la lee), pero la reanudación por silencio del equipo la puede levantar igual pasadas las 8 h, porque hoy el sistema no distingue una etiqueta puesta por una persona de una puesta por él. Para cerrar ese hueco el ingreso ya **captura** los `conversation_updated` con cambio de `label_list` (ver `chatwoot-ingress-v1.md`); la sincronización se construye sobre ese payload real, cuando la cuenta suscriba el evento.
 
 ## Lo que salió mal la primera vez (2026-09-23 23:11 UTC)
 
@@ -91,3 +92,16 @@ Lo que cambió:
 3. Tres tests sobre ese fixture con el cliente real y `allowed_jid` = número de prueba: la función sin JID devuelve `False` sin llamar a la RPC (el comportamiento que tuvo producción), con el JID del webhook completa las dos capas (`resume:177:2376`, macro ejecutado, etiqueta fuera), y con el JID de otro lead falla cerrado; y el handler completo con los flags de producción reanuda a la 177 y vuelve a pedir la admisión. El del handler se corrió sobre el código anterior: rojo con el resultado exacto de producción (ninguna llamada a la RPC).
 
 Lo que no cambia: el retiro de la etiqueta con `expected_jid` vuelve a leer la conversación para validar la autoridad antes de ejecutar el macro (una lectura más por reanudación). Y sigue pendiente configurar el nivel de logging del bridge, que hoy deja fuera todo `info`.
+
+## Lo que salió mal la tercera vez (2026-09-25 18:18 UTC): la etiqueta quitada a mano
+
+La conversación 173 estaba derivada desde el 24/09 18:21 UTC (`commercial_exception`: etiqueta `automation_paused`, equipo `johanna - revisión humana`, `paused_human` / `human_takeover=true` en Supabase). El 25/09 a las 18:18:30 el lead escribió (mensaje 2373; el webhook todavía traía la etiqueta) y a las 18:18:44 una persona del equipo **le sacó la etiqueta a mano** desde Chatwoot (actividad 2374) esperando que el agente volviera a contestar. El bridge cerró la entrega `completed` sin reanudar y Supabase siguió en `paused_human`: con el fix de la segunda vez desplegado, la conversación tampoco se habría reanudado, porque la función devolvía `False` si la etiqueta no estaba. Y no hay otro camino: el bridge solo recibe `message_created`, así que el cambio de etiqueta nunca le llega. Una conversación así quedaba pausada en Supabase para siempre, hasta que alguien le repusiera la etiqueta o le contestara. Ese día había 24 conversaciones con `human_takeover=true`.
+
+Lo que cambió:
+
+1. `_resume_paused_conversation` recibe `durable_pause_recorded` (la admisión devolvió `blocked`). Sin etiqueta y con la pausa durable vigente, la ausencia se lee como decisión de una persona: RPC con `operator_request`, `quiet_seconds` nulo, sin leer los mensajes ni ejecutar el macro. Sin etiqueta y sin pausa durable, sigue devolviendo `False`. La RPC sigue mandando: `blocked_pending_handoff`, `blocked_resume_limit` y `blocked_contact` dejan la conversación con las personas.
+2. Fixture capturado `tests/fixtures/chatwoot_paused_lead_label_removed_by_human_inbox_9_conv_173_20260925.json`: el webhook del mensaje 2373 (con la etiqueta) y el show + messages leídos después (sin la etiqueta, con la actividad de la persona que la sacó), PII saneada.
+3. Tests con el cliente real y `allowed_jid` = número de prueba: la función sin pausa durable no llama a la RPC; con pausa durable llama con `operator_request` sin medir el silencio y sin macro; y el handler completo con los flags de producción reanuda a la 173 y vuelve a pedir la admisión. El del handler se corrió sobre el código anterior: rojo (ninguna llamada a la RPC).
+4. El ingreso captura los `conversation_updated` con cambio de `label_list` del inbox configurado (`202 captured`, sin trabajo durable), para construir la sincronización inmediata sobre un payload real.
+
+Lo que no cambia: la conversación sigue esperando el siguiente mensaje del lead para reanudarse; el mensaje que ya llegó antes de que la persona sacara la etiqueta no se reprocesa.
