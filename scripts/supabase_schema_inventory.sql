@@ -3348,6 +3348,35 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'inbound_handoff_agent_reason_sentences'
+    union all
+    select
+        '20260925000100',
+        '20260925000100_sck_alphabet_accepts_tilde_v1.sql',
+        exists(
+            select 1
+            from pg_catalog.pg_constraint
+            where conrelid = to_regclass('public.checkout_link_issuances')
+              and conname = 'checkout_link_issuances_url_shape'
+              and position('[A-Za-z0-9._%~-]+%7C' in pg_get_constraintdef(oid)) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.reserve_chatwoot_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamptz)')
+              and prosecdef
+              and position('v_original_sck ~ ''^[A-Za-z0-9._|~-]+$''' in definition) > 0
+              and position('v_original_sck ~ ''^[A-Za-z0-9._|-]+$''' in definition) = 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.correlate_hotmart_checkout_issuance_v2(uuid,text,timestamptz)')
+              and prosecdef
+              and position('([A-Za-z0-9._|~-]+[|])?hermes[|]v1[|]' in definition) > 0
+              and position('([A-Za-z0-9._|-]+[|])?hermes[|]v1[|]' in definition) = 0
+        )::int,
+        3,
+        'sck_alphabet_accepts_tilde_reader'
 )
 select
     version,

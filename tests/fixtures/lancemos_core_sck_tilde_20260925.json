@@ -1,0 +1,54 @@
+{
+  "_capture": {
+    "origen": "lancemos/core, PR #51 (merge b035eebec31aa7e85037c61b1405ff8e6ab3d181, 2026-09-25T18:49:25Z), archivo verificar-superpowers.mjs, bloque casosSck; el compositor es src/superpowers/client.js (SCK_SEPARADOR, SCK_ALFABETO, sanearCampoSck)",
+    "captured_at": "2026-09-25T19:15:00Z",
+    "que_es": "Los sck que el core de Lancemos v1.10.0 compone y manda a Hotmart, tal como su propio verificador los afirma. Son la salida real del emisor, no un payload inventado para el test.",
+    "formato": "utm_source~utm_term~utm_content~utm_medium~utm_campaign (E10 v0.7): cinco campos posicionales separados por ~, las posiciones vacias se mantienen, cada campo saneado a [A-Za-z0-9._~-] antes de unirse (E13)",
+    "estado_en_produccion_al_capturar": "core main = v1.10.0; los tres sitios del regimen (draninagarza, amorsabio, psicologajohanna) siguen pinneados en core.json v1.9.0, asi que ningun sck con ~ habia llegado a Supabase (sonda del 2026-09-25 19:14Z: 273 sck en precheckout_submissions, 0 con ~, 0 con |). El bump de los sitios espera a que este repo acepte ~ en produccion.",
+    "por_que_tilde": "Santi usa | dentro de los nombres de campana (LNC | DraNina | ATT + ATT2 | LIVE); ~ no aparece en ningun nombre y es unreserved en RFC 3986, asi que viaja literal en la query string mientras | se encodea a %7C."
+  },
+  "casos": [
+    {
+      "nombre": "el nombre REAL de la campana de ATT2 entra entero al alfabeto",
+      "search": "?utm_source=meta-ads&utm_campaign=%5BATT%202.0%5D%2028-SR-VSL-Best%20Ads-CBO-47-MX-Ciudades-23%2F09",
+      "sck": "meta-ads~~~~ATT-2.0-28-SR-VSL-Best-Ads-CBO-47-MX-Ciudades-2309"
+    },
+    {
+      "nombre": "los cinco campos van en orden y las posiciones vacias se mantienen",
+      "search": "?utm_source=meta-ads&utm_term=Ubicacion&utm_content=Anuncio07&utm_medium=AdSet&utm_campaign=Campana",
+      "sck": "meta-ads~Ubicacion~Anuncio07~AdSet~Campana"
+    },
+    {
+      "nombre": "una UTM sola alcanza para componer, y conserva su posicion (empieza con ~)",
+      "search": "?utm_campaign=solo-campana&sck=DEL-ANUNCIO",
+      "sck": "~~~~solo-campana"
+    },
+    {
+      "nombre": "la BARRA que Santi usa en los nombres se elimina (termina con ~)",
+      "search": "?utm_source=meta-ads&utm_medium=LNC%20%7C%20DraNina%20%7C%20ATT%20%2B%20ATT2%20%7C%20LIVE",
+      "sck": "meta-ads~~~LNC-DraNina-ATT-ATT2-LIVE~"
+    },
+    {
+      "nombre": "con UTMs, el sck del anuncio NO gana",
+      "search": "?utm_source=facebook&utm_medium=cpc&utm_campaign=att2&sck=DEL-ANUNCIO",
+      "sck": "facebook~~~cpc~att2"
+    },
+    {
+      "nombre": "los espacios pasan a guion, sin guiones repetidos ni en los bordes",
+      "search": "?utm_source=%20facebook%20&utm_medium=cpc&utm_campaign=dos%20%20espacios",
+      "sck": "facebook~~~cpc~dos-espacios"
+    },
+    {
+      "nombre": "acentos a su letra base y los signos fuera del alfabeto se eliminan",
+      "search": "?utm_source=meta-ads&utm_campaign=Ni%C3%B1os%20%C2%BFqu%C3%A9%3F%20Jos%C3%A9",
+      "sck": "meta-ads~~~~Ninos-que-Jose"
+    }
+  ],
+  "casos_sin_tilde_que_siguen_vigentes": [
+    {
+      "nombre": "sin UTMs, el sck del anuncio se usa de descarte (linaje viejo, sin separador)",
+      "search": "?sck=Instagram_Reels_AdsKit1_ATT2-Campana",
+      "sck": "Instagram_Reels_AdsKit1_ATT2-Campana"
+    }
+  ]
+}

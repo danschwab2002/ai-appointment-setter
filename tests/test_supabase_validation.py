@@ -1259,6 +1259,50 @@ def test_reserve_still_accepts_the_marker_only_link() -> None:
     assert result.sck_value == sck
 
 
+def _lancemos_core_tilde_cases() -> list[str]:
+    # 2026-09-25 (migration 20260925000100): the Lancemos core v1.10.0 composes
+    # the ad sck as utm_source~utm_term~utm_content~utm_medium~utm_campaign. The
+    # cases are the core's own expected outputs, captured from its verifier.
+    import json
+    from pathlib import Path
+
+    fixture = Path(__file__).resolve().parent / "fixtures" / (
+        "lancemos_core_sck_tilde_20260925.json"
+    )
+    casos = json.loads(fixture.read_text(encoding="utf-8"))["casos"]
+    assert casos and all("~" in caso["sck"] for caso in casos)
+    return [caso["sck"] for caso in casos]
+
+
+@pytest.mark.parametrize("ad_sck", _lancemos_core_tilde_cases())
+def test_reserve_accepts_the_ad_sck_composed_with_tilde(ad_sck: str) -> None:
+    # "~" is unreserved (RFC 3986): the RPC puts it in the URL literally and only
+    # the "|" of the hermes marker is encoded. The row and the URL must agree.
+    sck = f"{ad_sck}|hermes|v1|{_ULID}"
+    url = (
+        "https://pay.hotmart.com/F106691755G?off=mgbgpp19&checkoutMode=10"
+        f"&src=hermes&sck={ad_sck}%7Chermes%7Cv1%7C{_ULID}"
+        "&fbclid=IwAR0abcDEF_ghi-JKL.mno"
+    )
+    result = _reserve(_client(_reserved_row(sck, url)))
+    assert result.outcome == "reserved"
+    assert result.checkout_url_final == url
+    assert result.sck_value == sck
+
+
+def test_reserve_still_rejects_an_ad_sck_outside_the_alphabet() -> None:
+    # Widening the alphabet to "~" must not let anything else through: a space
+    # or an accent would still break the query string in silence.
+    for ad_sck in ("meta-ads~~~~Ni\u00f1os", "meta-ads ~ cpc", "meta-ads~~~~a&b"):
+        sck = f"{ad_sck}|hermes|v1|{_ULID}"
+        url = (
+            "https://pay.hotmart.com/F106691755G?off=mgbgpp19&checkoutMode=10"
+            f"&src=hermes&sck={ad_sck}%7Chermes%7Cv1%7C{_ULID}"
+        )
+        with pytest.raises(SupabaseCommittedResponseError):
+            _reserve(_client(_reserved_row(sck, url)))
+
+
 def test_reserve_rejects_a_sck_whose_marker_is_not_the_suffix() -> None:
     # The hermes marker must close the sck; anything after it would let a lead
     # supplied value impersonate the tail the reporting reads.

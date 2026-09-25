@@ -637,6 +637,78 @@ for (const stray of [`hermes|v1|${fullUlid}|tail`, 'fb.paid.120210000000000000',
   }
 }
 
+// 2026-09-25 (migration 20260925000100): the Lancemos core v1.10.0 composes the
+// ad's sck as utm_source~utm_term~utm_content~utm_medium~utm_campaign (E10/E13).
+// "~" is unreserved, so it travels literally in the URL while the marker's "|"
+// is still encoded. The cases are the core's own expected outputs, captured
+// from its verifier into the fixture; the linages with "|" and "." above keep
+// passing because the reader accepts every separator ever emitted.
+const tildeFixture = JSON.parse(readFileSync(
+  join(root, 'tests/fixtures/lancemos_core_sck_tilde_20260925.json'), 'utf8',
+));
+if (!tildeFixture.casos.length || tildeFixture.casos.some((caso) => !caso.sck.includes('~'))) {
+  throw new Error('tilde fixture has no tilde cases');
+}
+let tildeSeq = 0;
+for (const caso of tildeFixture.casos) {
+  tildeSeq += 1;
+  const tildePhone = `120255501${String(50 + tildeSeq).padStart(2, '0')}`;
+  const tildeUlid = `01K5ABCDEFX2VYB4M6X9CDPTC${tildeSeq}`;
+  const tildeIntent = await insertIntent(
+    'ads-b', 'mgbgpp19', tildePhone, 'waiting_for_purchase', true, '2026-09-25T10:00:00Z',
+  );
+  await attachSubmission(tildeIntent.id, `attribution-tilde-${tildeSeq}`, 'ads-b', {
+    sck: caso.sck, fbclid: 'IwAR2tildeclickid',
+  });
+  const tildePrepared = await issueFor(tildePhone, 9130 + tildeSeq, String(530 + tildeSeq), tildeUlid);
+  const tildeDurable = await attributionOf(tildePrepared.issuance_id);
+  if (tildePrepared?.outcome !== 'reserved'
+      || tildeDurable?.attribution_resolution !== 'full'
+      || tildeDurable?.dropped_unsafe_fields !== null
+      || tildeDurable?.sck_value !== `${caso.sck}|hermes|v1|${tildeUlid}`
+      || tildeDurable?.checkout_url_final
+         !== offerUrl('mgbgpp19', tildeUlid, caso.sck, 'IwAR2tildeclickid')
+      || !tildeDurable?.checkout_url_final.includes(`&sck=${caso.sck}%7Chermes`)) {
+    throw new Error(`tilde sck was not preserved (${caso.nombre}): ${JSON.stringify({
+      prepared: tildePrepared, durable: tildeDurable,
+    })}`);
+  }
+  // And the purchase webhook still finds the issuance behind the "~" prefix.
+  const tildeEvent = (await db.query(`
+    insert into public.webhook_events (
+      source, external_event_id, event_type, payload, processing_status
+    ) values (
+      'hotmart', $1, 'PURCHASE_APPROVED', '{}'::jsonb, 'received'
+    ) returning id
+  `, [`checkout-attribution-tilde-${tildeSeq}`])).rows[0];
+  const tildeMatch = (await db.query(`
+    select * from public.correlate_hotmart_checkout_issuance_v2(
+      $1::uuid, $2, clock_timestamp()
+    )
+  `, [tildeEvent.id, `${caso.sck}|hermes|v1|${tildeUlid}`])).rows[0];
+  if (tildeMatch?.outcome !== 'matched' || tildeMatch?.issuance_id !== tildePrepared.issuance_id) {
+    throw new Error(`tilde sck correlation diverged (${caso.nombre}): ${JSON.stringify(tildeMatch)}`);
+  }
+}
+
+// Widening the alphabet to "~" lets nothing else through: the unsafe case above
+// still drops, and an accent inside a "~" sck drops too.
+const tildeUnsafePhone = '12025550159';
+const tildeUnsafeUlid = '01K5ABCDEFX2VYB4M6X9CDPTC9';
+const tildeUnsafeIntent = await insertIntent(
+  'ads-b', 'mgbgpp19', tildeUnsafePhone, 'waiting_for_purchase', true, '2026-09-25T10:00:00Z',
+);
+await attachSubmission(tildeUnsafeIntent.id, 'attribution-tilde-unsafe', 'ads-b', {
+  sck: 'meta-ads~~~~Niños 23/09',
+});
+const tildeUnsafePrepared = await issueFor(tildeUnsafePhone, 9139, '539', tildeUnsafeUlid);
+const tildeUnsafeDurable = await attributionOf(tildeUnsafePrepared.issuance_id);
+if (tildeUnsafeDurable?.attribution_resolution !== 'marker_only'
+    || tildeUnsafeDurable?.dropped_unsafe_fields !== 'sck'
+    || tildeUnsafeDurable?.sck_value !== `hermes|v1|${tildeUnsafeUlid}`) {
+  throw new Error(`unsafe tilde sck was not dropped: ${JSON.stringify(tildeUnsafeDurable)}`);
+}
+
 // The attribution columns are immutable too.
 await db.exec('begin');
 let attributionLocked = false;
