@@ -54,10 +54,14 @@ _ALLOWED_CHECKOUT_QUERY_KEYS = (
 # antes de componerla y esta validacion lo vuelve a exigir del lado del bridge.
 _CHECKOUT_SAFE_VALUE = re.compile(r"[A-Za-z0-9._-]{1,512}")
 
-# El sck del anuncio admite ademas "|", que es el separador del estandar de
-# Lancemos (utm_term|utm_content|utm_medium|utm_campaign). Se encodea entero al
-# componer la URL, asi que no la parte.
-_CHECKOUT_SAFE_SCK = re.compile(r"[A-Za-z0-9._|-]{1,200}")
+# El sck del anuncio admite ademas los separadores de todos los linajes que
+# llegan: "~", el del estandar de Lancemos desde el core v1.10.0 (2026-09-25,
+# E10/E13: utm_source~utm_term~utm_content~utm_medium~utm_campaign), y "|", el
+# que siguen mandando los linajes viejos (drceo). Este lado es un lector y
+# acepta los dos; lo que se escribe usa solo "~". La RPC encodea la "|" a %7C
+# al componer la URL y deja la "~" literal (es unreserved), asi que ninguno la
+# parte. Misma forma que el guard de la migracion 20260925000100.
+_CHECKOUT_SAFE_SCK = re.compile(r"[A-Za-z0-9._|~-]{1,200}")
 
 
 # El sck que Hotmart devuelve en la compra: el marcador cierra el valor, con el
