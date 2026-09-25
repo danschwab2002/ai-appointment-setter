@@ -280,8 +280,10 @@ def test_records_an_unavailable_hermes_service_without_raising(tmp_path: Path) -
 def test_rejects_an_incomplete_agent_proposal(tmp_path: Path) -> None:
     delivery_id = "invalid-shadow-delivery"
     digest = hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
+    keys: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
+        keys.append(request.headers["Idempotency-Key"])
         return httpx.Response(
             200,
             json={
@@ -316,7 +318,9 @@ def test_rejects_an_incomplete_agent_proposal(tmp_path: Path) -> None:
         "status": "failed",
         "delivery_id_hash": digest,
         "reason": "invalid_agent_output",
+        "attempts": 2,
     }
+    assert keys == [digest, f"{digest}-retry-2"]
 
 
 def test_records_non_json_agent_content_as_invalid(tmp_path: Path) -> None:
@@ -352,6 +356,7 @@ def test_records_non_json_agent_content_as_invalid(tmp_path: Path) -> None:
         "status": "failed",
         "delivery_id_hash": digest,
         "reason": "invalid_agent_output",
+        "attempts": 2,
     }
 
 
@@ -500,4 +505,187 @@ def test_records_non_utf8_json_response_as_invalid_agent_output(
         "status": "failed",
         "delivery_id_hash": digest,
         "reason": "invalid_agent_output",
+        "attempts": 2,
+    }
+
+
+def test_retries_once_when_the_agent_returns_a_malformed_proposal(
+    tmp_path: Path,
+) -> None:
+    """El caso real: GLM 5.2 corto el JSON y el lead se quedaba sin respuesta.
+
+    El contenido del primer intento es el que devolvio z-ai/glm-5.2 el
+    2026-09-25 a las 15:44 UTC para la conversacion 174 (fixture
+    hermes_glm_truncated_proposal_20260925.json): fence de markdown, coma
+    final y sin captured_fields ni missing_fields. Antes de este cambio el
+    bridge lo persistia como invalid_agent_output, que es terminal.
+    """
+    fixture = json.loads(
+        (
+            Path(__file__).parent
+            / "fixtures"
+            / "hermes_glm_truncated_proposal_20260925.json"
+        ).read_text(encoding="utf-8")
+    )
+    malformed = fixture["content"]
+    assert _parse_agent_proposal(malformed) is None
+
+    proposal = _valid_proposal()
+    delivery_id = "glm-truncated-then-valid"
+    digest = hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
+    keys: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        keys.append(request.headers["Idempotency-Key"])
+        content = (
+            malformed
+            if len(keys) == 1
+            else json.dumps(proposal, ensure_ascii=False)
+        )
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": content}}]}
+        )
+
+    processor = HermesShadowProcessor(
+        base_url="https://hermes.example.test/v1",
+        api_key="test-hermes-key",
+        model_name="agente-comercial",
+        shadow_dir=tmp_path,
+        transport=httpx.MockTransport(handler),
+    )
+
+    asyncio.run(
+        processor.run(
+            delivery_id=delivery_id,
+            context={"conversation_ref": "174", "messages": []},
+        )
+    )
+
+    assert json.loads((tmp_path / f"{digest}.json").read_text()) == {
+        "status": "completed",
+        "delivery_id_hash": digest,
+        "proposal": proposal,
+        "attempts": 2,
+    }
+    assert processor.get_completed_proposal(delivery_id=delivery_id) == proposal
+    assert keys == [digest, f"{digest}-retry-2"]
+
+
+def test_retry_does_not_reuse_the_first_idempotency_key(tmp_path: Path) -> None:
+    """El api_server replica la respuesta de una Idempotency-Key ya vista.
+
+    Medido el 2026-09-25 contra el gateway real: dos requests con la misma
+    clave devolvieron contenido y conteo de tokens identicos, y con clave
+    distinta (o sin clave) devolvieron contenido nuevo. Si el reintento
+    reusara la clave del primer intento, repetiria la propuesta rota.
+    """
+    delivery_id = "retry-key-must-differ"
+    digest = hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
+    keys: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        keys.append(request.headers["Idempotency-Key"])
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "no es json"}}]}
+        )
+
+    processor = HermesShadowProcessor(
+        base_url="https://hermes.example.test/v1",
+        api_key="test-hermes-key",
+        model_name="agente-comercial",
+        shadow_dir=tmp_path,
+        transport=httpx.MockTransport(handler),
+    )
+
+    asyncio.run(
+        processor.run(
+            delivery_id=delivery_id,
+            context={"conversation_ref": "123", "messages": []},
+        )
+    )
+
+    assert len(keys) == len(set(keys)) > 1
+    assert keys[0] == digest
+
+
+def test_does_not_retry_when_hermes_is_unreachable(tmp_path: Path) -> None:
+    """Un borde caido no se castiga con una segunda llamada.
+
+    El reintento existe para una respuesta llegada y mal formada, que es
+    aleatoriedad del modelo. Un 503 o un timeout es otro problema y se
+    sigue registrando en el primer intento, sin campo attempts.
+    """
+    delivery_id = "unreachable-no-retry"
+    digest = hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(503, json={"detail": "unavailable"})
+
+    processor = HermesShadowProcessor(
+        base_url="https://hermes.example.test/v1",
+        api_key="test-hermes-key",
+        model_name="agente-comercial",
+        shadow_dir=tmp_path,
+        transport=httpx.MockTransport(handler),
+    )
+
+    asyncio.run(
+        processor.run(
+            delivery_id=delivery_id,
+            context={"conversation_ref": "123", "messages": []},
+        )
+    )
+
+    assert calls == 1
+    assert json.loads((tmp_path / f"{digest}.json").read_text()) == {
+        "status": "failed",
+        "delivery_id_hash": digest,
+        "reason": "hermes_unavailable",
+    }
+
+
+def test_a_first_attempt_that_succeeds_keeps_the_historical_shape(
+    tmp_path: Path,
+) -> None:
+    """Sin reintento no hay campo attempts: asi se puede contar el ruido real."""
+    proposal = _valid_proposal()
+    delivery_id = "first-attempt-clean"
+    digest = hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(proposal, ensure_ascii=False)
+                        }
+                    }
+                ]
+            },
+        )
+
+    processor = HermesShadowProcessor(
+        base_url="https://hermes.example.test/v1",
+        api_key="test-hermes-key",
+        model_name="agente-comercial",
+        shadow_dir=tmp_path,
+        transport=httpx.MockTransport(handler),
+    )
+
+    asyncio.run(
+        processor.run(
+            delivery_id=delivery_id,
+            context={"conversation_ref": "123", "messages": []},
+        )
+    )
+
+    assert json.loads((tmp_path / f"{digest}.json").read_text()) == {
+        "status": "completed",
+        "delivery_id_hash": digest,
+        "proposal": proposal,
     }

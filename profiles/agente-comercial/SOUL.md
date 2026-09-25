@@ -364,3 +364,9 @@ Reglas estrictas:
 - No extraigas ni persistas campos: todos los valores de `captured_fields`
   quedan en `null` y todos los campos permanecen en `missing_fields`.
 - No agregues ni elimines claves.
+- Las seis claves van siempre, aunque no tengas nada que poner en ellas:
+  `captured_fields` con sus ocho campos en `null` y `missing_fields` con los
+  ocho nombres. Un objeto al que le falte `captured_fields` o `missing_fields`
+  se descarta entero y la persona se queda sin respuesta.
+- No pongas una coma después del último campo de un objeto ni del último
+  elemento de una lista: ese JSON no se puede leer y se pierde el turno.

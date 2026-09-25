@@ -46,6 +46,25 @@ _DECISION_STATUSES = {
     "handoff": "needs_human",
 }
 
+_MAX_PROPOSAL_ATTEMPTS = 2
+
+
+def _idempotency_key(digest: str, attempt: int) -> str:
+    """Return one Idempotency-Key per attempt.
+
+    The Hermes api_server replays the same content for an Idempotency-Key it
+    has already seen: measured on 2026-09-25, two requests carrying the same
+    key returned byte-identical content and token counts, while requests with
+    a different key (or none) returned fresh content. Retrying under the first
+    attempt's key would therefore replay the malformed proposal verbatim.
+
+    The first attempt keeps the bare digest so that reprocessing the same
+    delivery stays idempotent, which is what the header was added for.
+    """
+    if attempt <= 1:
+        return digest
+    return f"{digest}-retry-{attempt}"
+
 
 def _parse_agent_proposal(content: object) -> dict[str, object] | None:
     if not isinstance(content, str):
@@ -253,72 +272,100 @@ class HermesShadowProcessor:
     async def _request_and_persist(
         self, *, digest: str, context: dict[str, object]
     ) -> None:
-        try:
-            async with httpx.AsyncClient(
-                transport=self._transport,
-                timeout=self._timeout_seconds,
-            ) as client:
-                response = await client.post(
-                    f"{self._base_url}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self._api_key}",
-                        "Idempotency-Key": digest,
-                    },
-                    json={
-                        "model": self._model_name,
-                        "stream": False,
-                        "messages": [
-                            {
-                                "role": "user",
-                                "content": json.dumps(context, ensure_ascii=False),
-                            }
-                        ],
-                    },
+        for attempt in range(1, _MAX_PROPOSAL_ATTEMPTS + 1):
+            try:
+                async with httpx.AsyncClient(
+                    transport=self._transport,
+                    timeout=self._timeout_seconds,
+                ) as client:
+                    response = await client.post(
+                        f"{self._base_url}/chat/completions",
+                        headers={
+                            "Authorization": f"Bearer {self._api_key}",
+                            "Idempotency-Key": _idempotency_key(digest, attempt),
+                        },
+                        json={
+                            "model": self._model_name,
+                            "stream": False,
+                            "messages": [
+                                {
+                                    "role": "user",
+                                    "content": json.dumps(
+                                        context, ensure_ascii=False
+                                    ),
+                                }
+                            ],
+                        },
+                    )
+                    response.raise_for_status()
+            except httpx.HTTPError:
+                self._persist_result(
+                    digest=digest,
+                    result=self._attempted(
+                        {
+                            "status": "failed",
+                            "delivery_id_hash": digest,
+                            "reason": "hermes_unavailable",
+                        },
+                        attempt=attempt,
+                    ),
                 )
-                response.raise_for_status()
-        except httpx.HTTPError:
-            self._persist_result(
-                digest=digest,
-                result={
-                    "status": "failed",
-                    "delivery_id_hash": digest,
-                    "reason": "hermes_unavailable",
-                },
-            )
-            return
+                return
 
-        try:
-            body = response.json()
-            proposal_text = body["choices"][0]["message"]["content"]
-        except (
-            KeyError,
-            IndexError,
-            TypeError,
-            UnicodeError,
-            json.JSONDecodeError,
-        ):
-            proposal = None
-        else:
-            proposal = _parse_agent_proposal(proposal_text)
-        if not isinstance(proposal, dict) or not _is_valid_proposal(proposal):
-            self._persist_result(
-                digest=digest,
-                result={
+            try:
+                body = response.json()
+                proposal_text = body["choices"][0]["message"]["content"]
+            except (
+                KeyError,
+                IndexError,
+                TypeError,
+                UnicodeError,
+                json.JSONDecodeError,
+            ):
+                proposal = None
+            else:
+                proposal = _parse_agent_proposal(proposal_text)
+
+            if isinstance(proposal, dict) and _is_valid_proposal(proposal):
+                self._persist_result(
+                    digest=digest,
+                    result=self._attempted(
+                        {
+                            "status": "completed",
+                            "delivery_id_hash": digest,
+                            "proposal": proposal,
+                        },
+                        attempt=attempt,
+                    ),
+                )
+                return
+
+        self._persist_result(
+            digest=digest,
+            result=self._attempted(
+                {
                     "status": "failed",
                     "delivery_id_hash": digest,
                     "reason": "invalid_agent_output",
                 },
-            )
-            return
-
-        self._persist_result(
-            digest=digest,
-            result={
-                "status": "completed",
-                "delivery_id_hash": digest,
-                "proposal": proposal,
-            },
+                attempt=_MAX_PROPOSAL_ATTEMPTS,
+            ),
         )
+
+    @staticmethod
+    def _attempted(
+        result: dict[str, object], *, attempt: int
+    ) -> dict[str, object]:
+        """Record how many attempts it took, but only when it took more than one.
+
+        A single-attempt result keeps the historical shape, so the field is a
+        positive signal: every shadow carrying `attempts` is a turn where the
+        agent's first proposal was unusable, which is the rate this change
+        exists to watch.
+        """
+        if attempt > 1:
+            result["attempts"] = attempt
+        return result
 
     def _persist_result(
         self, *, digest: str, result: dict[str, object]
