@@ -165,3 +165,23 @@ def test_profile_no_habla_de_piloto_ni_de_prueba_privada() -> None:
     preferidos = compacto.split("Patrones preferidos:", 1)[1].split("Patrones prohibidos:", 1)[0]
     assert "/nuevo" not in preferidos
     assert "envía exactamente `/nuevo`" in compacto
+
+
+def test_profile_exige_las_seis_claves_y_prohibe_la_coma_final() -> None:
+    """El modo de fallo medido de GLM 5.2, dicho con todas las letras.
+
+    El 2026-09-25 el agente devolvio un objeto sin `captured_fields` ni
+    `missing_fields` y con una coma despues del ultimo campo (1 de 37
+    llamadas). El bridge no pudo leerlo y ese turno se perdia entero. El
+    SOUL ya pedia "un objeto JSON valido" y "no agregues ni elimines
+    claves" y no alcanzo: hay que nombrar el defecto.
+    """
+    content = SOUL.read_text(encoding="utf-8")
+
+    for required in (
+        "Las seis claves van siempre",
+        "`captured_fields`",
+        "`missing_fields`",
+        "coma después del último",
+    ):
+        assert required in content, required

@@ -1,0 +1,12 @@
+{
+  "_capture": {
+    "origin": "Respuesta de z-ai/glm-5.2 por OpenRouter al profile agente-comercial (gateway de infra_hermes), pedida desde el contenedor del bridge con el contexto de produccion campo por campo.",
+    "captured_at": "2026-09-25T15:44:00Z",
+    "case": "Conversacion 174 del inbox 9, primer mensaje del lead: 'Hola, quiero mas info'. Mismo contexto que el bridge arma en produccion, payment_link_action incluido.",
+    "observed_effect": "El bridge lo persistio como {\"status\": \"failed\", \"reason\": \"invalid_agent_output\"}, que _is_terminal_result trata como terminal: no se vuelve a pedir y ese lead se queda sin respuesta.",
+    "rate": "1 de 37 llamadas a GLM 5.2 con este SOUL el 25/09 (7 corridas del harness). Claude Sonnet 4.6 en produccion: 0 invalidas en 91 shadows.",
+    "defect": "Coma final despues del ultimo campo y faltan captured_fields y missing_fields. json.loads falla por la coma, asi que _is_valid_proposal ni siquiera llega a evaluar las claves ausentes.",
+    "verbatim": "La estructura es textual. El texto libre de reply quedo abreviado con una elipsis en la transcripcion que lo conservo (el original vivia en un scratchpad efimero); el defecto no depende de esa parte del texto."
+  },
+  "content": "```json\n{\n  \"decision\": \"ask_question\",\n  \"qualification_status\": \"in_progress\",\n  \"reason_code\": \"johanna_e2e_response\",\n  \"reply\": \"Hola, soy el asistente virtual de la marca de Johanna Ortega. Libre de Ansiedad es un programa que incluye: Fase 1 (Entiende y calma), … El precio es USD 49. ¿Qué te gustaría saber en concreto?\",\n}\n```"
+}
