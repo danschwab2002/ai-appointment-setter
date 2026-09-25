@@ -24,6 +24,41 @@ for (const file of [
   ));
 }
 
+async function prepareWithClockSentinel(query) {
+  // A different table default makes omitted prepared_at fail deterministically.
+  await db.exec(`
+    reset role;
+    alter table public.operator_correlation_resolution_commands
+      alter column prepared_at set default timestamptz '2000-01-01T00:00:00Z';
+    set role service_role;
+  `);
+  try {
+    const result = await db.query(query);
+    const commandId = result.rows[0]?.command_data?.command_id;
+    await db.exec('reset role');
+    const timestamps = await db.query(`
+      select count(*) = 1 and bool_and(
+        prepared_at between statement_timestamp() - interval '1 minute'
+                        and statement_timestamp()
+        and expires_at = prepared_at + interval '10 minutes'
+      ) as valid
+      from public.operator_correlation_resolution_commands
+      where id = '${commandId}'::uuid
+    `);
+    if (timestamps.rows[0]?.valid !== true) {
+      throw new Error('prepare did not persist one current timestamp and an exact ten-minute expiry');
+    }
+    return result;
+  } finally {
+    await db.exec(`
+      reset role;
+      alter table public.operator_correlation_resolution_commands
+        alter column prepared_at set default clock_timestamp();
+      set role service_role;
+    `);
+  }
+}
+
 await db.exec(`
 insert into public.purchase_intents (
   id, tenant_ref, funnel_ref, landing_ref, product_ref, offer_ref,
@@ -115,7 +150,7 @@ const before = await db.query(`
 `);
 
 await db.exec('set role service_role');
-const preparedLink = await db.query(`
+const preparedLink = await prepareWithClockSentinel(`
   select command_data from public.prepare_operator_correlation_resolution(
     'lancemos', 'psicologajohanna', 'juan-operator',
     'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1'::uuid,
@@ -125,7 +160,7 @@ const preparedLink = await db.query(`
     '77777777-7777-4777-8777-777777777771'::uuid
   )
 `);
-const preparedLinkReplay = await db.query(`
+const preparedLinkReplay = await prepareWithClockSentinel(`
   select command_data from public.prepare_operator_correlation_resolution(
     'lancemos', 'psicologajohanna', 'juan-operator',
     'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1'::uuid,
@@ -235,6 +270,10 @@ const replayedLink = await db.query(`
 await db.exec('reset role');
 const applied = appliedLink.rows[0]?.resolution_data;
 const replayed = replayedLink.rows[0]?.resolution_data;
+if (preparedLink.rows[0]?.command_data?.expires_at
+    !== preparedLinkReplay.rows[0]?.command_data?.expires_at) {
+  throw new Error('prepare replay changed the command expiration');
+}
 if (applied?.resolution_outcome !== 'linked_candidate'
     || applied?.effective_purchase_intent_id !== 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2'
     || applied?.replayed !== false
@@ -244,7 +283,7 @@ if (applied?.resolution_outcome !== 'linked_candidate'
 }
 
 await db.exec('set role service_role');
-const preparedClose = await db.query(`
+const preparedClose = await prepareWithClockSentinel(`
   select command_data from public.prepare_operator_correlation_resolution(
     'lancemos', 'psicologajohanna', 'juan-operator',
     'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'::uuid,
@@ -266,7 +305,7 @@ if (appliedClose.rows[0]?.resolution_data?.resolution_outcome !== 'closed_withou
 }
 
 await db.exec('set role service_role');
-const preparedStale = await db.query(`
+const preparedStale = await prepareWithClockSentinel(`
   select command_data from public.prepare_operator_correlation_resolution(
     'lancemos', 'psicologajohanna', 'juan-operator',
     'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3'::uuid,

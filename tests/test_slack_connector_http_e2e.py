@@ -11,6 +11,7 @@ import time
 from urllib.parse import urlencode
 
 import httpx
+import pytest
 import uvicorn
 
 from slack_correlation.app import SlackConnectorSettings, create_app
@@ -232,7 +233,10 @@ def test_notification_crosses_real_tcp_to_connector_and_fake_slack(
     assert posted["text"] == "[p2] Nueva derivación · Johanna · C-11111111"
 
 
-def test_interaction_crosses_connector_bridge_and_slack_simulator(tmp_path: Path) -> None:
+@pytest.mark.parametrize("contract_version", [1, 3], ids=["legacy", "v3"])
+def test_interaction_crosses_connector_bridge_and_slack_simulator(
+    tmp_path: Path, contract_version: int,
+) -> None:
     _FakeSlackHandler.requests = []
     fake_slack = ThreadingHTTPServer(("127.0.0.1", 0), _FakeSlackHandler)
     fake_thread = threading.Thread(target=fake_slack.serve_forever, daemon=True)
@@ -283,17 +287,37 @@ def test_interaction_crosses_connector_bridge_and_slack_simulator(tmp_path: Path
     )
     connector, connector_thread, connector_port = _start_uvicorn(connector_app)
     event_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    notification = {
+        "event_id": event_id, "event_code": "COR-001", "dedupe_key": "a" * 64,
+        "occurred_at": "2026-09-10T00:00:00Z",
+        "subject_ref": f"C-{bridge_store.case_id}",
+    }
+    if contract_version == 3:
+        notification.update({
+            "event_code": "COR-003", "reason_code": "email_phone_conflict",
+            "state": "pending", "count": 1,
+            "recommendation": {
+                "recommendation_ref": "66666666-6666-4666-8666-666666666666",
+                "candidate_id": bridge_store.candidate_id,
+                "candidate_label": "Persona 1",
+                "evidence": [{"kind": "prior_verified_identity", "value": None}],
+                "evidence_fingerprint": "f" * 64,
+                "model_name": "synthetic-resolver",
+                "prompt_version": "correlation-preresolution-v3",
+            },
+        })
     try:
         with httpx.Client(base_url=f"http://127.0.0.1:{connector_port}", timeout=3) as client:
             admitted = client.post("/internal/v1/notifications", headers={
                 "Authorization": f"Bearer {producer_token}",
                 "X-Expected-Tenant-Ref": "johanna",
-            }, json={
-                "event_id": event_id, "event_code": "COR-001", "dedupe_key": "a" * 64,
-                "occurred_at": "2026-09-10T00:00:00Z",
-                "subject_ref": f"C-{bridge_store.case_id}",
-            })
+            }, json=notification)
             assert admitted.status_code == 202
+            replay = client.post("/internal/v1/notifications", headers={
+                "Authorization": f"Bearer {producer_token}",
+                "X-Expected-Tenant-Ref": "johanna",
+            }, json=notification)
+            assert replay.status_code == 200
             deadline = time.monotonic() + 10
             while not any(path == "/api/chat.postMessage" for path, _ in _FakeSlackHandler.requests):
                 assert time.monotonic() < deadline
@@ -310,6 +334,19 @@ def test_interaction_crosses_connector_bridge_and_slack_simulator(tmp_path: Path
                     break
                 assert time.monotonic() < deadline
                 time.sleep(0.02)
+            posted = next(body for path, body in _FakeSlackHandler.requests
+                          if path == "/api/chat.postMessage")
+            assert "buyer@example.com" not in repr(posted)
+            assert "593991234567" not in repr(posted)
+            if contract_version == 3:
+                assert "Persona 1" in repr(posted)
+                assert any(
+                    element.get("action_id") == "review_operator_correlation"
+                    and element.get("value") == bridge_store.case_id
+                    for block in posted["blocks"]
+                    for element in block.get("elements", [])
+                )
+            assert bridge_store.prepare_calls == bridge_store.confirm_calls == []
             opened = _signed_interaction(client, secret, {
                 "type": "block_actions", "team": {"id": "T12345678"},
                 "user": {"id": "U12345678"}, "channel": {"id": "C0C0YEACVT2"},
@@ -333,6 +370,7 @@ def test_interaction_crosses_connector_bridge_and_slack_simulator(tmp_path: Path
             assert "buyer@example.com" in rendered_opened_view
             assert "593991234567" in rendered_opened_view
             assert "***" not in rendered_opened_view
+            assert bridge_store.prepare_calls == bridge_store.confirm_calls == []
             selected = _signed_interaction(client, secret, {
                 "type": "view_submission", "team": {"id": "T12345678"},
                 "user": {"id": "U12345678"},
