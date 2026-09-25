@@ -1,0 +1,500 @@
+{
+  "_fixture": {
+    "captured_at": "2026-09-25T21:54:37Z",
+    "source": "Conversacion 177 del inbox 9 (WhatsApp Cloud, cuenta 1), en produccion: el webhook message_created del mensaje 2376 (capturado por el bridge el 2026-09-25 20:41:31 UTC en su inbox durable) y el GET /api/v1/accounts/1/conversations/177 + GET .../177/messages leidos desde el contenedor del bridge con el token de control el 2026-09-25 21:54 UTC.",
+    "why": "Es el lead que respondio a la plantilla de reactivacion (mensaje 2375, 20:36:59 UTC) mientras la conversacion seguia pausada (etiqueta automation_paused, paused_human/human_takeover=true en Supabase, sin assignee, ultimo mensaje de una persona del equipo 24 h antes). La reanudacion tenia que correr y no corrio: conversation_resume_events sigue en cero filas desde el 23/09. La causa es que _resume_paused_conversation lee la conversacion sin expected_jid, y el show de la API no trae contact_inbox ni meta.sender.identifier, asi que el cliente cae al telefono y lo compara contra ALLOWED_WHATSAPP_JID, que es el numero de prueba: conversation_identity_mismatch para todo lead real.",
+    "shape": "El webhook trae conversation.contact_inbox.source_id (digitos sin sufijo) y sender.identifier null. El show NO trae contact_inbox en la raiz y meta.sender.identifier es null: la unica identidad es meta.sender.phone_number en E.164. Los messages vienen como {meta, payload}.",
+    "sanitized": "name, phone_number, source_id del contacto, wamid (source_id e in_reply_to_external_id de cada mensaje), uuid, pubsub_token, avatar/thumbnail/data_url y el texto de cada mensaje (content y processed_message_content) se reemplazaron por valores de prueba del mismo formato. Los ids (mensaje 2376, conversacion 177, plantilla 2375), timestamps, message_type, private, sender.type, status, can_reply, labels, assignee y team son los reales."
+  },
+  "webhook": {
+    "account": {
+      "id": 1,
+      "name": "Johanna Psicóloga"
+    },
+    "additional_attributes": {},
+    "content_attributes": {
+      "in_reply_to_external_id": "wamid.SANEADO02",
+      "in_reply_to": 2348
+    },
+    "content_type": "text",
+    "content": "[contenido saneado, 28 caracteres]",
+    "conversation": {
+      "additional_attributes": {},
+      "can_reply": true,
+      "channel": "Channel::Whatsapp",
+      "contact_inbox": {
+        "id": 230,
+        "contact_id": 192,
+        "inbox_id": 9,
+        "source_id": "5210000000177",
+        "created_at": "2026-09-24T19:50:50.409Z",
+        "updated_at": "2026-09-24T19:50:50.409Z",
+        "hmac_verified": false,
+        "pubsub_token": "saneado-0000000000000000"
+      },
+      "id": 177,
+      "inbox_id": 9,
+      "messages": [
+        {
+          "id": 2376,
+          "content": "[contenido saneado, 28 caracteres]",
+          "account_id": 1,
+          "inbox_id": 9,
+          "conversation_id": 177,
+          "message_type": 0,
+          "created_at": 1790368889,
+          "updated_at": "2026-09-25T20:41:29.549Z",
+          "private": false,
+          "status": "sent",
+          "source_id": "wamid.SANEADO01",
+          "content_type": "text",
+          "content_attributes": {
+            "in_reply_to_external_id": "wamid.SANEADO02",
+            "in_reply_to": 2348
+          },
+          "sender_type": "Contact",
+          "sender_id": 192,
+          "external_source_ids": {},
+          "additional_attributes": {},
+          "processed_message_content": "[contenido saneado, 28 caracteres]",
+          "sentiment": {},
+          "conversation": {
+            "assignee_id": null,
+            "unread_count": 1,
+            "last_activity_at": 1790368889,
+            "contact_inbox": {
+              "source_id": "5210000000177"
+            }
+          },
+          "sender": {
+            "additional_attributes": {},
+            "custom_attributes": {},
+            "email": null,
+            "id": 192,
+            "identifier": null,
+            "name": "Lead 177",
+            "phone_number": "+5210000000177",
+            "thumbnail": "",
+            "blocked": false,
+            "type": "contact"
+          }
+        }
+      ],
+      "labels": [
+        "automation_paused"
+      ],
+      "meta": {
+        "sender": {
+          "additional_attributes": {},
+          "custom_attributes": {},
+          "email": null,
+          "id": 192,
+          "identifier": null,
+          "name": "Lead 177",
+          "phone_number": "+5210000000177",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        },
+        "assignee": null,
+        "assignee_type": null,
+        "team": {
+          "id": 1,
+          "name": "johanna - revisión humana"
+        },
+        "hmac_verified": false
+      },
+      "status": "open",
+      "custom_attributes": {},
+      "snoozed_until": null,
+      "unread_count": 1,
+      "first_reply_created_at": "2026-09-24T20:32:06.386Z",
+      "priority": null,
+      "waiting_since": 1790368889,
+      "agent_last_seen_at": 1790368638,
+      "contact_last_seen_at": 0,
+      "last_activity_at": 1790368889,
+      "timestamp": 1790368889,
+      "created_at": 1790279450,
+      "updated_at": 1790368889.912946
+    },
+    "created_at": "2026-09-25T20:41:29.549Z",
+    "id": 2376,
+    "inbox": {
+      "id": 9,
+      "name": "WABA"
+    },
+    "message_type": "incoming",
+    "private": false,
+    "sender": {
+      "account": {
+        "id": 1,
+        "name": "Johanna Psicóloga"
+      },
+      "additional_attributes": {},
+      "avatar": "",
+      "custom_attributes": {},
+      "email": null,
+      "id": 192,
+      "identifier": null,
+      "name": "Lead 177",
+      "phone_number": "+5210000000177",
+      "thumbnail": "",
+      "blocked": false
+    },
+    "source_id": "wamid.SANEADO01",
+    "event": "message_created"
+  },
+  "conversation": {
+    "meta": {
+      "sender": {
+        "additional_attributes": {},
+        "availability_status": "offline",
+        "email": null,
+        "id": 192,
+        "name": "Lead 177",
+        "phone_number": "+5210000000177",
+        "blocked": false,
+        "identifier": null,
+        "thumbnail": "",
+        "custom_attributes": {},
+        "last_activity_at": 1790368890,
+        "created_at": 1790279450
+      },
+      "channel": "Channel::Whatsapp",
+      "team": {
+        "id": 1,
+        "name": "johanna - revisión humana",
+        "description": "",
+        "allow_auto_assign": false,
+        "account_id": 1,
+        "is_member": true
+      },
+      "hmac_verified": false
+    },
+    "id": 177,
+    "messages": [
+      {
+        "id": 2376,
+        "content": "[contenido saneado, 28 caracteres]",
+        "account_id": 1,
+        "inbox_id": 9,
+        "conversation_id": 177,
+        "message_type": 0,
+        "created_at": 1790368889,
+        "updated_at": "2026-09-25T20:41:29.549Z",
+        "private": false,
+        "status": "sent",
+        "source_id": "wamid.SANEADO01",
+        "content_type": "text",
+        "content_attributes": {
+          "in_reply_to_external_id": "wamid.SANEADO02",
+          "in_reply_to": 2348
+        },
+        "sender_type": "Contact",
+        "sender_id": 192,
+        "external_source_ids": {},
+        "additional_attributes": {},
+        "processed_message_content": "[contenido saneado, 28 caracteres]",
+        "sentiment": {},
+        "conversation": {
+          "assignee_id": null,
+          "unread_count": 0,
+          "last_activity_at": 1790368889,
+          "contact_inbox": {
+            "source_id": "5210000000177"
+          }
+        },
+        "sender": {
+          "additional_attributes": {},
+          "custom_attributes": {},
+          "email": null,
+          "id": 192,
+          "identifier": null,
+          "name": "Lead 177",
+          "phone_number": "+5210000000177",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
+      }
+    ],
+    "account_id": 1,
+    "uuid": "saneado-0000000000000000000000000000",
+    "additional_attributes": {},
+    "agent_last_seen_at": 1790368891,
+    "assignee_last_seen_at": 0,
+    "can_reply": true,
+    "contact_last_seen_at": 0,
+    "custom_attributes": {},
+    "inbox_id": 9,
+    "labels": [
+      "automation_paused"
+    ],
+    "muted": false,
+    "snoozed_until": null,
+    "status": "open",
+    "created_at": 1790279450,
+    "updated_at": 1790368889.912946,
+    "timestamp": 1790368889,
+    "first_reply_created_at": 1790281926,
+    "unread_count": 0,
+    "last_non_activity_message": {
+      "id": 2376,
+      "content": "[contenido saneado, 28 caracteres]",
+      "account_id": 1,
+      "inbox_id": 9,
+      "conversation_id": 177,
+      "message_type": 0,
+      "created_at": 1790368889,
+      "updated_at": "2026-09-25T20:41:29.549Z",
+      "private": false,
+      "status": "sent",
+      "source_id": "wamid.SANEADO01",
+      "content_type": "text",
+      "content_attributes": {
+        "in_reply_to_external_id": "wamid.SANEADO02",
+        "in_reply_to": 2348
+      },
+      "sender_type": "Contact",
+      "sender_id": 192,
+      "external_source_ids": {},
+      "additional_attributes": {},
+      "processed_message_content": "[contenido saneado, 28 caracteres]",
+      "sentiment": {},
+      "conversation": {
+        "assignee_id": null,
+        "unread_count": 0,
+        "last_activity_at": 1790368889,
+        "contact_inbox": {
+          "source_id": "5210000000177"
+        }
+      },
+      "sender": {
+        "additional_attributes": {},
+        "custom_attributes": {},
+        "email": null,
+        "id": 192,
+        "identifier": null,
+        "name": "Lead 177",
+        "phone_number": "+5210000000177",
+        "thumbnail": "",
+        "blocked": false,
+        "type": "contact"
+      }
+    },
+    "last_activity_at": 1790368889,
+    "priority": null,
+    "waiting_since": 1790368889,
+    "sla_policy_id": null
+  },
+  "messages": {
+    "meta": {
+      "labels": [
+        "automation_paused"
+      ],
+      "additional_attributes": {},
+      "contact": {
+        "additional_attributes": {},
+        "custom_attributes": {},
+        "email": null,
+        "id": 192,
+        "identifier": null,
+        "name": "Lead 177",
+        "phone_number": "+5210000000177",
+        "thumbnail": "",
+        "blocked": false,
+        "type": "contact"
+      },
+      "agent_last_seen_at": "2026-09-25T20:41:31.179Z",
+      "assignee_last_seen_at": null
+    },
+    "payload": [
+      {
+        "id": 2339,
+        "content": null,
+        "inbox_id": 9,
+        "conversation_id": 177,
+        "message_type": 0,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1790279451,
+        "private": false,
+        "source_id": "wamid.SANEADO03",
+        "sender": {
+          "additional_attributes": {},
+          "custom_attributes": {},
+          "email": null,
+          "id": 192,
+          "identifier": null,
+          "name": "Lead 177",
+          "phone_number": "+5210000000177",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        },
+        "attachments": [
+          {
+            "id": 257,
+            "message_id": 2339,
+            "file_type": "audio",
+            "account_id": 1,
+            "extension": "ogg",
+            "content_type": "audio/opus",
+            "data_url": "",
+            "thumb_url": "",
+            "file_size": 31570,
+            "width": null,
+            "height": null,
+            "transcribed_text": ""
+          }
+        ]
+      },
+      {
+        "id": 2345,
+        "content": "[contenido saneado, 1192 caracteres]",
+        "inbox_id": 9,
+        "conversation_id": 177,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "read",
+        "content_attributes": {},
+        "created_at": 1790281926,
+        "private": false,
+        "source_id": "wamid.SANEADO04",
+        "sender": {
+          "id": 4,
+          "name": "Mariana Marín",
+          "available_name": "Mariana Marín",
+          "avatar_url": "",
+          "type": "user",
+          "availability_status": "offline",
+          "thumbnail": ""
+        }
+      },
+      {
+        "id": 2346,
+        "content": "[contenido saneado, 38 caracteres]",
+        "inbox_id": 9,
+        "conversation_id": 177,
+        "message_type": 2,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1790281928,
+        "private": false,
+        "source_id": null
+      },
+      {
+        "id": 2348,
+        "content": "[contenido saneado, 126 caracteres]",
+        "inbox_id": 9,
+        "conversation_id": 177,
+        "message_type": 0,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1790282154,
+        "private": false,
+        "source_id": "wamid.SANEADO02",
+        "sender": {
+          "additional_attributes": {},
+          "custom_attributes": {},
+          "email": null,
+          "id": 192,
+          "identifier": null,
+          "name": "Lead 177",
+          "phone_number": "+5210000000177",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
+      },
+      {
+        "id": 2349,
+        "content": "[contenido saneado, 348 caracteres]",
+        "inbox_id": 9,
+        "conversation_id": 177,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1790282196,
+        "private": true,
+        "source_id": null,
+        "sender": {
+          "id": 2,
+          "name": "Bridge Service",
+          "available_name": "Bridge Service",
+          "avatar_url": "",
+          "type": "user",
+          "availability_status": "offline",
+          "thumbnail": ""
+        }
+      },
+      {
+        "id": 2350,
+        "content": "[contenido saneado, 55 caracteres]",
+        "inbox_id": 9,
+        "conversation_id": 177,
+        "message_type": 2,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1790282197,
+        "private": false,
+        "source_id": null
+      },
+      {
+        "id": 2375,
+        "content": "[contenido saneado, 223 caracteres]",
+        "inbox_id": 9,
+        "conversation_id": 177,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "read",
+        "content_attributes": {
+          "reactivation_command_key": "reactivate:177:2348"
+        },
+        "created_at": 1790368619,
+        "private": false,
+        "source_id": "wamid.SANEADO05",
+        "sender": {
+          "id": 1,
+          "name": "Appointment Setter",
+          "avatar_url": "",
+          "type": "agent_bot"
+        }
+      },
+      {
+        "id": 2376,
+        "content": "[contenido saneado, 28 caracteres]",
+        "inbox_id": 9,
+        "conversation_id": 177,
+        "message_type": 0,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {
+          "in_reply_to_external_id": "wamid.SANEADO02",
+          "in_reply_to": 2348
+        },
+        "created_at": 1790368889,
+        "private": false,
+        "source_id": "wamid.SANEADO01",
+        "sender": {
+          "additional_attributes": {},
+          "custom_attributes": {},
+          "email": null,
+          "id": 192,
+          "identifier": null,
+          "name": "Lead 177",
+          "phone_number": "+5210000000177",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
+      }
+    ]
+  }
+}

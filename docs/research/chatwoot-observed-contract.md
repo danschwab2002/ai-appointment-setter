@@ -78,6 +78,8 @@ Capturado el 2026-09-24 12:38 UTC desde el contenedor del bridge con el token de
 | `meta.assignee` / `meta.team` | presentes | **ausentes cuando no hay asignado** (`meta` trae `channel`, `hmac_verified`, `sender`) |
 | `labels` | lista de strings | lista de strings |
 | `can_reply` | booleano | booleano |
+
+Confirmado de nuevo el 2026-09-25 21:54 UTC sobre la conversación 177 (fixture saneado en `tests/fixtures/chatwoot_paused_lead_reply_inbox_9_conv_177_20260925.json`, que además trae el webhook del mensaje 2376 de la misma conversación). Consecuencia para todo lector del show: la identidad **hay que pasársela** (`expected_jid`) al cliente; si no, `_is_authorized_conversation` compara el teléfono contra `ALLOWED_WHATSAPP_JID` (el número de prueba) y falla con `conversation_identity_mismatch` para cualquier lead real. Así se cayó en silencio la reanudación de conversaciones pausadas entre el 23/09 y el 25/09 (ver `docs/contracts/resume-paused-conversation-v1.md`).
 | `messages` | — | embebido en el show (los últimos), además del endpoint `/messages` que devuelve `{meta, payload}` |
 
 Consecuencia: un clasificador que exige `identifier` o `contact_inbox.source_id` acepta el webhook y rechaza el show. Con los remitentes acotados por scope, el teléfono E.164 canónico se canoniza a `<dígitos>@s.whatsapp.net`, que es exactamente el valor que el webhook trae en `source_id`.

@@ -1403,6 +1403,7 @@ async def _resume_paused_conversation(
     settings: "Settings",
     conversation_id: int,
     message_id: int,
+    expected_jid: str | None = None,
 ) -> bool:
     """Levanta la pausa de una conversacion que el equipo dejo de atender.
 
@@ -1410,6 +1411,18 @@ async def _resume_paused_conversation(
     las dos capas: la durable de Supabase (``human_takeover``) y la etiqueta de
     Chatwoot, que es la que gobierna el envio. Cualquier duda devuelve False y
     la conversacion se queda con las personas.
+
+    ``expected_jid`` es el JID del remitente que trajo el webhook (el
+    ``contact_inbox.source_id`` canonizado), y es la identidad contra la que el
+    cliente verifica la conversacion. Sin el, el cliente compara contra
+    ``ALLOWED_WHATSAPP_JID``, que en produccion es el numero de prueba: como el
+    show de la API no trae ``contact_inbox`` ni ``meta.sender.identifier``, la
+    verificacion cae al telefono y falla para todo lead real con
+    ``conversation_identity_mismatch``. Asi estuvo desde el 23/09 hasta el
+    25/09/2026: cero filas en ``conversation_resume_events`` mientras la
+    conversacion 177 respondia a la plantilla de reactivacion y nadie la
+    atendia (fixture
+    ``chatwoot_paused_lead_reply_inbox_9_conv_177_20260925.json``).
     """
     if settings.chatwoot_inbox_id is None:
         return False
@@ -1418,6 +1431,7 @@ async def _resume_paused_conversation(
             conversation_id=conversation_id,
             expected_inbox_id=settings.chatwoot_inbox_id,
             anchor_message_id=None,
+            expected_jid=expected_jid,
         )
     except (ChatwootProtocolError, httpx.HTTPError):
         return False
@@ -1465,6 +1479,10 @@ async def _resume_paused_conversation(
         await control_client.clear_conversation_label(
             conversation_id=conversation_id,
             label="automation_paused",
+            expected_inbox_id=(
+                settings.chatwoot_inbox_id if expected_jid is not None else None
+            ),
+            expected_jid=expected_jid,
         )
     except (ChatwootProtocolError, httpx.HTTPError):
         # La capa durable ya quedo admisible, pero sin sacar la etiqueta el
@@ -3191,12 +3209,17 @@ def create_app(
                     or resume_message_id < 1
                 ):
                     raise RuntimeError("chatwoot_resume_trigger_message_id_invalid")
+                # La identidad contra la que se verifica la conversacion es la
+                # del remitente de ESTE webhook, no ALLOWED_WHATSAPP_JID: en
+                # modo scoped ese valor es el numero de prueba y ningun lead
+                # real lo tiene (25/09/2026, conv 177).
                 resumed = await _resume_paused_conversation(
                     control_client=control_client,
                     supabase=shared_supabase,
                     settings=settings,
                     conversation_id=conversation_id,
                     message_id=resume_message_id,
+                    expected_jid=scoped_expected_jid,
                 )
                 # Re-pedir la admision solo tiene sentido si estaba bloqueada.
                 # Cuando ya pasaba, lo que faltaba era sacar la etiqueta, y eso

@@ -1,6 +1,6 @@
 # Contrato — reanudar una conversación pausada V1
 
-- **Estado:** implementado; `CONVERSATION_RESUME_ENABLED=false` por defecto; pendiente de activación y E2E.
+- **Estado:** implementado; `CONVERSATION_RESUME_ENABLED=false` por defecto. Activado en producción el 2026-09-23 (PR #174, `fe1f5f3`); la primera reanudación real sigue pendiente (ver "Lo que salió mal la segunda vez").
 - **Fecha:** 2026-09-23
 - **Objetivo:** que la pausa de una conversación deje de ser terminal, sin que el agente se meta donde una persona está atendiendo.
 
@@ -25,6 +25,7 @@ Umbral por defecto: **28.800 s (8 h)**, configurable. Calibrado contra el caso r
 
 Al entrar un mensaje del lead cuya admisión devolvió `blocked`, y sólo si **todo** esto se cumple:
 
+- la conversación leída de Chatwoot es la del remitente del webhook: la identidad esperada es el JID que trajo `contact_inbox.source_id` (en modo scoped), **no** `ALLOWED_WHATSAPP_JID`. El show de la API no trae `contact_inbox` ni `meta.sender.identifier`, así que el cliente la confirma por `meta.sender.phone_number` en E.164 (ver "Lo que salió mal la segunda vez");
 - la conversación está `open` y `can_reply`;
 - no tiene assignee humano;
 - tiene la etiqueta `automation_paused` (si no la tiene, no hay nada que levantar);
@@ -74,3 +75,19 @@ Dos cosas cambiaron a partir de eso:
 2. Existe un test que ejecuta el handler completo con el webhook real del mensaje 2233 (`tests/fixtures/chatwoot_message_created_inbox_9_conv_158_20260923.json`) y los flags que definían el camino en producción, y exige que el worker no registre fallos **y** que el disparador haya llegado a consultar la conversación. Verificado que falla sobre el código anterior.
 
 Además, `chatwoot_work_failed` ahora adjunta el traceback cuando el error no es un `RetryableChatwootWorkError`: 28 líneas idénticas sin la línea del error costaron horas de diagnóstico a ciegas.
+
+## Lo que salió mal la segunda vez (2026-09-25 20:41 UTC)
+
+Con el `UnboundLocalError` corregido y el flag prendido de nuevo, el disparador corría en cada mensaje admitido y **nunca reactivó a nadie**: `conversation_resume_events` siguió en cero filas del 23/09 al 25/09. El caso que lo hizo visible fue la conversación 177: la plantilla de reactivación salió el 25/09 a las 20:36:59 UTC, el lead contestó a las 20:41:29, el worker marcó la entrega como `completed` a las 20:42:05 sin llamar a la RPC ni ejecutar el macro, y la conversación quedó `open`, `can_reply`, sin assignee, con la etiqueta `automation_paused` y sin que nadie la atendiera. Todas las condiciones de arriba se cumplían (silencio del equipo: 24 h).
+
+La causa: `_resume_paused_conversation` leía la conversación con `get_canonical_conversation_snapshot` **sin `expected_jid`**. El cliente verifica la identidad de toda conversación que lee, y sin un JID esperado compara contra `ALLOWED_WHATSAPP_JID`, que en producción es el número de prueba. Como el show de la API no trae `contact_inbox` en la raíz y `meta.sender.identifier` llega `null` en WhatsApp Cloud, la verificación cae a `meta.sender.phone_number` y falla para todo lead real con `conversation_identity_mismatch`. La función atrapa ese error y devuelve `False` en silencio, y como el bridge no configura el nivel de logging, ni el `conversation_resume_skipped` ni ningún otro `info` llegan a la salida del contenedor: el fallo no dejó rastro en ningún lado. Es la misma clase de defecto que tuvo el monitor de estancadas el 24/09 (PR #178) y el barredor de reactivación en su primer despliegue: un criterio que descarta a todos termina igual que uno que no tiene a quién atender.
+
+Por qué la suite estaba verde: los ocho tests de `_resume_paused_conversation` usaban un cliente falso que devolvía el snapshot armado a mano, y el test del handler completo (`test_the_resume_trigger_survives_a_real_inbound_with_production_flags`) construía el cliente real con `allowed_jid` igual al número del lead del fixture. Ninguno reproducía la condición de producción: remitentes acotados por scope y `ALLOWED_WHATSAPP_JID` distinto del lead.
+
+Lo que cambió:
+
+1. `_resume_paused_conversation` recibe `expected_jid` y se lo pasa a la lectura de la conversación y al retiro de la etiqueta; el disparador le pasa el JID del remitente del webhook (`scoped_expected_jid`, el mismo que usa el resto de la admisión). Con el JID del webhook, el teléfono E.164 del show lo confirma; con el JID de otro lead sigue fallando cerrado.
+2. Fixture capturado `tests/fixtures/chatwoot_paused_lead_reply_inbox_9_conv_177_20260925.json`: el webhook del mensaje 2376 y el show + messages de la conversación 177, con la PII saneada.
+3. Tres tests sobre ese fixture con el cliente real y `allowed_jid` = número de prueba: la función sin JID devuelve `False` sin llamar a la RPC (el comportamiento que tuvo producción), con el JID del webhook completa las dos capas (`resume:177:2376`, macro ejecutado, etiqueta fuera), y con el JID de otro lead falla cerrado; y el handler completo con los flags de producción reanuda a la 177 y vuelve a pedir la admisión. El del handler se corrió sobre el código anterior: rojo con el resultado exacto de producción (ninguna llamada a la RPC).
+
+Lo que no cambia: el retiro de la etiqueta con `expected_jid` vuelve a leer la conversación para validar la autoridad antes de ejecutar el macro (una lectura más por reanudación). Y sigue pendiente configurar el nivel de logging del bridge, que hoy deja fuera todo `info`.
