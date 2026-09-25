@@ -1271,6 +1271,38 @@ class Settings:
         )
 
 
+def _is_conversation_label_change(
+    payload: dict[str, object], *, inbox_id: int | None
+) -> bool:
+    """True para un ``conversation_updated`` del inbox configurado que cambia etiquetas.
+
+    Chatwoot (v4.13.0, ``WebhookListener#conversation_updated``) manda el
+    ``webhook_data`` de la conversacion (``id``, ``inbox_id``, ``labels``,
+    ``meta``...) mas ``changed_attributes``: una lista de
+    ``{atributo: {previous_value, current_value}}``, y ``label_list`` es uno de
+    los atributos que disparan el evento. El bridge todavia no lo procesa: lo
+    captura para construir la sincronizacion de la etiqueta que toca una
+    persona sobre un payload real, no sobre uno supuesto. Hoy la cuenta solo
+    suscribe ``message_created``; al suscribir ``conversation_updated`` el
+    primer cambio de etiqueta queda en ``CAPTURE_DIR``.
+    """
+    if inbox_id is None or payload.get("event") != "conversation_updated":
+        return False
+    observed_inbox = payload.get("inbox_id")
+    if (
+        not isinstance(observed_inbox, int)
+        or isinstance(observed_inbox, bool)
+        or observed_inbox != inbox_id
+    ):
+        return False
+    changes = payload.get("changed_attributes")
+    if not isinstance(changes, list):
+        return False
+    return any(
+        isinstance(change, dict) and "label_list" in change for change in changes
+    )
+
+
 def _capture_payload(
     *, capture_dir: Path, delivery_id: str, payload: dict[str, object]
 ) -> bool:
@@ -1404,6 +1436,7 @@ async def _resume_paused_conversation(
     conversation_id: int,
     message_id: int,
     expected_jid: str | None = None,
+    durable_pause_recorded: bool = False,
 ) -> bool:
     """Levanta la pausa de una conversacion que el equipo dejo de atender.
 
@@ -1423,6 +1456,16 @@ async def _resume_paused_conversation(
     conversacion 177 respondia a la plantilla de reactivacion y nadie la
     atendia (fixture
     ``chatwoot_paused_lead_reply_inbox_9_conv_177_20260925.json``).
+
+    ``durable_pause_recorded`` dice si la capa durable sigue pausada (la
+    admision devolvio ``blocked``). La etiqueta la saca el sistema al reanudar
+    y nunca sola: si no esta pero la pausa durable sigue, una persona la saco
+    a mano desde Chatwoot para que el agente vuelva a contestar, y esa
+    decision se respeta sin medir el silencio del equipo y sin ejecutar el
+    macro. Sin esto, la conversacion quedaba pausada en Supabase para siempre:
+    el bridge solo recibe ``message_created``, asi que el cambio de etiqueta
+    no le llega (2026-09-25 18:18 UTC, conversacion 173, fixture
+    ``chatwoot_paused_lead_label_removed_by_human_inbox_9_conv_173_20260925.json``).
     """
     if settings.chatwoot_inbox_id is None:
         return False
@@ -1441,32 +1484,48 @@ async def _resume_paused_conversation(
         return False
     if "automation_opted_out" in snapshot.labels:
         return False
-    if "automation_paused" not in snapshot.labels:
+    label_removed_by_person = "automation_paused" not in snapshot.labels
+    if label_removed_by_person and not durable_pause_recorded:
+        # Sin etiqueta y sin pausa durable no hay nada que levantar.
         return False
-    try:
-        messages = await control_client.get_conversation_messages(
-            conversation_id=conversation_id,
-            limit=100,
-        )
-        quiet_seconds = seconds_since_last_team_message(
-            messages, now_epoch=int(time.time())
-        )
-    except (TeamMessageTimestampError, ChatwootProtocolError, httpx.HTTPError):
-        return False
-    if (
-        quiet_seconds is not None
-        and quiet_seconds < settings.conversation_resume_quiet_seconds
-    ):
-        logger.info(
-            "conversation_resume_skipped reason=team_recently_active quiet=%s",
-            quiet_seconds,
-        )
-        return False
+    quiet_seconds: int | None = None
+    if label_removed_by_person:
+        # La etiqueta la saca el sistema al reanudar, nunca sola. Si no esta y
+        # la capa durable sigue pausada, una persona la saco a mano desde
+        # Chatwoot para que el agente vuelva a contestar: se respeta sin
+        # medir el silencio del equipo. `operator_request` es el motivo que
+        # la RPC admite para una decision humana.
+        reason_code = "operator_request"
+    else:
+        try:
+            messages = await control_client.get_conversation_messages(
+                conversation_id=conversation_id,
+                limit=100,
+            )
+            quiet_seconds = seconds_since_last_team_message(
+                messages, now_epoch=int(time.time())
+            )
+        except (
+            TeamMessageTimestampError,
+            ChatwootProtocolError,
+            httpx.HTTPError,
+        ):
+            return False
+        if (
+            quiet_seconds is not None
+            and quiet_seconds < settings.conversation_resume_quiet_seconds
+        ):
+            logger.info(
+                "conversation_resume_skipped reason=team_recently_active quiet=%s",
+                quiet_seconds,
+            )
+            return False
+        reason_code = "inbound_after_quiet_period"
     try:
         result = await supabase.resume_paused_conversation(
             external_conversation_id=conversation_id,
             command_key=f"resume:{conversation_id}:{message_id}",
-            reason_code="inbound_after_quiet_period",
+            reason_code=reason_code,
             quiet_seconds=quiet_seconds,
             max_resumes=settings.conversation_resume_max,
         )
@@ -1475,27 +1534,31 @@ async def _resume_paused_conversation(
     if not result.resumed:
         logger.info("conversation_resume_skipped outcome=%s", result.outcome)
         return False
-    try:
-        await control_client.clear_conversation_label(
-            conversation_id=conversation_id,
-            label="automation_paused",
-            expected_inbox_id=(
-                settings.chatwoot_inbox_id if expected_jid is not None else None
-            ),
-            expected_jid=expected_jid,
-        )
-    except (ChatwootProtocolError, httpx.HTTPError):
-        # La capa durable ya quedo admisible, pero sin sacar la etiqueta el
-        # envio se bloquea igual: no se reintenta la admision.
-        logger.warning(
-            "conversation_resume_label_not_cleared conversation=%s",
-            conversation_id,
-        )
-        return False
+    if not label_removed_by_person:
+        try:
+            await control_client.clear_conversation_label(
+                conversation_id=conversation_id,
+                label="automation_paused",
+                expected_inbox_id=(
+                    settings.chatwoot_inbox_id
+                    if expected_jid is not None
+                    else None
+                ),
+                expected_jid=expected_jid,
+            )
+        except (ChatwootProtocolError, httpx.HTTPError):
+            # La capa durable ya quedo admisible, pero sin sacar la etiqueta
+            # el envio se bloquea igual: no se reintenta la admision.
+            logger.warning(
+                "conversation_resume_label_not_cleared conversation=%s",
+                conversation_id,
+            )
+            return False
     logger.info(
-        "conversation_resumed conversation=%s outcome=%s quiet_seconds=%s",
+        "conversation_resumed conversation=%s outcome=%s reason=%s quiet_seconds=%s",
         conversation_id,
         result.outcome,
+        reason_code,
         quiet_seconds,
     )
     return True
@@ -3220,6 +3283,10 @@ def create_app(
                     conversation_id=conversation_id,
                     message_id=resume_message_id,
                     expected_jid=scoped_expected_jid,
+                    # Con la admision bloqueada y sin etiqueta, la etiqueta la
+                    # saco una persona: la pausa se levanta igual (conv 173,
+                    # 25/09/2026).
+                    durable_pause_recorded=admission.outcome == "blocked",
                 )
                 # Re-pedir la admision solo tiene sentido si estaba bloqueada.
                 # Cuando ya pasaba, lo que faltaba era sacar la etiqueta, y eso
@@ -4416,6 +4483,30 @@ def create_app(
             response.status_code = status.HTTP_200_OK
             return {
                 "status": "duplicate",
+                "delivery_id": x_chatwoot_delivery,
+            }
+        if not decision.accepted and _is_conversation_label_change(
+            payload, inbox_id=settings.chatwoot_inbox_id
+        ):
+            # Sin trabajo durable: solo la captura, para tener el payload real
+            # antes de sincronizar la etiqueta con la capa durable.
+            if not _capture_payload(
+                capture_dir=settings.capture_dir,
+                delivery_id=x_chatwoot_delivery,
+                payload=payload,
+            ):
+                response.status_code = status.HTTP_200_OK
+                return {
+                    "status": "duplicate",
+                    "delivery_id": x_chatwoot_delivery,
+                }
+            logger.warning(
+                "chatwoot_conversation_label_change_captured delivery=%s",
+                x_chatwoot_delivery,
+            )
+            return {
+                "status": "captured",
+                "reason": "conversation_label_change",
                 "delivery_id": x_chatwoot_delivery,
             }
         if not decision.accepted:

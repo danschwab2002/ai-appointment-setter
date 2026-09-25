@@ -1,0 +1,422 @@
+{
+  "_fixture": {
+    "captured_at": "2026-09-25T23:05:00Z",
+    "source": "Conversacion 173 del inbox 9 (WhatsApp Cloud, cuenta 1), en produccion: el webhook message_created del mensaje 2373 (capturado por el bridge el 2026-09-25 18:18:30 UTC en su inbox durable) y el GET /api/v1/accounts/1/conversations/173 + GET .../173/messages leidos desde el contenedor del bridge con el token de control el 2026-09-25 23:05 UTC.",
+    "why": "El 24/09 18:21 UTC el bridge derivo la conversacion (commercial_exception): etiqueta automation_paused, equipo 'johanna - revision humana', paused_human/human_takeover=true en Supabase. El 25/09 18:18 UTC el lead escribio (mensaje 2373; el webhook todavia traia la etiqueta) y a las 18:18:44 una persona del equipo LE SACO LA ETIQUETA A MANO desde Chatwoot (actividad 2374) esperando que el agente volviera a contestar. El bridge cerro la entrega sin reanudar, y Supabase siguio en paused_human: el bridge solo recibe message_created (la cuenta no suscribe conversation_updated y las actividades no son webhook_sendable), y _resume_paused_conversation devolvia False si la etiqueta no estaba. Con este fixture, la ausencia de la etiqueta con la pausa durable vigente se lee como decision de una persona y levanta la pausa.",
+    "shape": "El webhook trae conversation.labels=['automation_paused'] y contact_inbox.source_id (digitos sin sufijo). El show, leido despues, trae labels=[] (la persona ya la saco), sin contact_inbox en la raiz, meta.sender.identifier null, sin assignee y con team. Los messages vienen como {meta, payload} e incluyen las actividades 2318 (Bridge Service added automation_paused), 2320 (asignacion al equipo), 2374 (<persona> removed automation_paused) y la nota privada 2319 de una persona del equipo.",
+    "sanitized": "name, phone_number, email, source_id del contacto, wamid, uuid, pubsub_token, avatares y el texto de los mensajes que no son actividad se reemplazaron por valores de prueba del mismo formato; en las actividades se reemplazo solo el nombre de la persona. Los ids (mensaje 2373, conversacion 173, actividad 2374), timestamps, message_type, private, sender_type, status, can_reply, labels y team son los reales."
+  },
+  "webhook": {
+    "account": {
+      "id": 1,
+      "name": "Johanna Psicóloga"
+    },
+    "additional_attributes": {},
+    "content_attributes": {},
+    "content_type": "text",
+    "content": "[contenido saneado, 4 caracteres]",
+    "conversation": {
+      "additional_attributes": {},
+      "can_reply": true,
+      "channel": "Channel::Whatsapp",
+      "contact_inbox": {
+        "id": 97,
+        "contact_id": 59,
+        "inbox_id": 9,
+        "source_id": "5210000000173",
+        "created_at": "2026-08-25T17:11:28.291Z",
+        "updated_at": "2026-08-25T17:11:28.291Z",
+        "hmac_verified": false,
+        "pubsub_token": "saneado-0000000000000000"
+      },
+      "id": 173,
+      "inbox_id": 9,
+      "messages": [
+        {
+          "id": 2373,
+          "content": "[contenido saneado, 4 caracteres]",
+          "account_id": 1,
+          "inbox_id": 9,
+          "conversation_id": 173,
+          "message_type": 0,
+          "created_at": 1790360310,
+          "updated_at": "2026-09-25T18:18:30.199Z",
+          "private": false,
+          "status": "sent",
+          "source_id": "wamid.SANEADO01",
+          "content_type": "text",
+          "content_attributes": {},
+          "sender_type": "Contact",
+          "sender_id": 59,
+          "external_source_ids": {},
+          "additional_attributes": {},
+          "processed_message_content": "[contenido saneado, 4 caracteres]",
+          "sentiment": {},
+          "conversation": {
+            "assignee_id": null,
+            "unread_count": 1,
+            "last_activity_at": 1790360310,
+            "contact_inbox": {
+              "source_id": "5210000000173"
+            }
+          },
+          "sender": {
+            "additional_attributes": {
+              "avatar_url_hash": "",
+              "last_avatar_sync_at": "2026-08-25T17:12:02Z"
+            },
+            "custom_attributes": {},
+            "email": "lead173@example.test",
+            "id": 59,
+            "identifier": null,
+            "name": "Lead 173",
+            "phone_number": "+5210000000173",
+            "thumbnail": "",
+            "blocked": false,
+            "type": "contact"
+          }
+        }
+      ],
+      "labels": [
+        "automation_paused"
+      ],
+      "meta": {
+        "sender": {
+          "additional_attributes": {
+            "avatar_url_hash": "",
+            "last_avatar_sync_at": "2026-08-25T17:12:02Z"
+          },
+          "custom_attributes": {},
+          "email": "lead173@example.test",
+          "id": 59,
+          "identifier": null,
+          "name": "Lead 173",
+          "phone_number": "+5210000000173",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        },
+        "assignee": null,
+        "assignee_type": null,
+        "team": {
+          "id": 1,
+          "name": "johanna - revisión humana"
+        },
+        "hmac_verified": false
+      },
+      "status": "open",
+      "custom_attributes": {},
+      "snoozed_until": null,
+      "unread_count": 1,
+      "first_reply_created_at": null,
+      "priority": null,
+      "waiting_since": 1790274080,
+      "agent_last_seen_at": 1790346892,
+      "contact_last_seen_at": 0,
+      "last_activity_at": 1790360310,
+      "timestamp": 1790360310,
+      "created_at": 1790274080,
+      "updated_at": 1790360310.700272
+    },
+    "created_at": "2026-09-25T18:18:30.199Z",
+    "id": 2373,
+    "inbox": {
+      "id": 9,
+      "name": "WABA"
+    },
+    "message_type": "incoming",
+    "private": false,
+    "sender": {
+      "account": {
+        "id": 1,
+        "name": "Johanna Psicóloga"
+      },
+      "additional_attributes": {
+        "avatar_url_hash": "",
+        "last_avatar_sync_at": "2026-08-25T17:12:02Z"
+      },
+      "avatar": "",
+      "custom_attributes": {},
+      "email": "lead173@example.test",
+      "id": 59,
+      "identifier": null,
+      "name": "Lead 173",
+      "phone_number": "+5210000000173",
+      "thumbnail": "",
+      "blocked": false
+    },
+    "source_id": "wamid.SANEADO01",
+    "event": "message_created"
+  },
+  "conversation": {
+    "meta": {
+      "sender": {
+        "additional_attributes": {
+          "avatar_url_hash": "",
+          "last_avatar_sync_at": "2026-08-25T17:12:02Z"
+        },
+        "availability_status": "offline",
+        "email": "lead173@example.test",
+        "id": 59,
+        "name": "Lead 173",
+        "phone_number": "+5210000000173",
+        "blocked": false,
+        "identifier": null,
+        "thumbnail": "",
+        "custom_attributes": {},
+        "last_activity_at": 1790360311,
+        "created_at": 1787677887
+      },
+      "channel": "Channel::Whatsapp",
+      "team": {
+        "id": 1,
+        "name": "johanna - revisión humana",
+        "description": "",
+        "allow_auto_assign": false,
+        "account_id": 1,
+        "is_member": true
+      },
+      "hmac_verified": false
+    },
+    "id": 173,
+    "messages": [
+      {
+        "id": 2374,
+        "content": "Persona del equipo removed automation_paused",
+        "account_id": 1,
+        "inbox_id": 9,
+        "conversation_id": 173,
+        "message_type": 2,
+        "created_at": 1790360324,
+        "updated_at": "2026-09-25T18:18:44.783Z",
+        "private": false,
+        "status": "sent",
+        "source_id": null,
+        "content_type": "text",
+        "content_attributes": {},
+        "sender_type": null,
+        "sender_id": null,
+        "external_source_ids": {},
+        "additional_attributes": {},
+        "processed_message_content": "Persona del equipo removed automation_paused",
+        "sentiment": {},
+        "conversation": {
+          "assignee_id": null,
+          "unread_count": 0,
+          "last_activity_at": 1790360324,
+          "contact_inbox": {
+            "source_id": "5210000000173"
+          }
+        }
+      }
+    ],
+    "account_id": 1,
+    "uuid": "saneado-0000000000000000000000000000",
+    "additional_attributes": {},
+    "agent_last_seen_at": 1790375927,
+    "assignee_last_seen_at": 0,
+    "can_reply": true,
+    "contact_last_seen_at": 0,
+    "custom_attributes": {},
+    "inbox_id": 9,
+    "labels": [],
+    "muted": false,
+    "snoozed_until": null,
+    "status": "open",
+    "created_at": 1790274080,
+    "updated_at": 1790360324.803336,
+    "timestamp": 1790360324,
+    "first_reply_created_at": 0,
+    "unread_count": 0,
+    "last_non_activity_message": {
+      "id": 2373,
+      "content": "[contenido saneado, 4 caracteres]",
+      "account_id": 1,
+      "inbox_id": 9,
+      "conversation_id": 173,
+      "message_type": 0,
+      "created_at": 1790360310,
+      "updated_at": "2026-09-25T18:18:30.199Z",
+      "private": false,
+      "status": "sent",
+      "source_id": "wamid.SANEADO01",
+      "content_type": "text",
+      "content_attributes": {},
+      "sender_type": "Contact",
+      "sender_id": 59,
+      "external_source_ids": {},
+      "additional_attributes": {},
+      "processed_message_content": "[contenido saneado, 4 caracteres]",
+      "sentiment": {},
+      "conversation": {
+        "assignee_id": null,
+        "unread_count": 0,
+        "last_activity_at": 1790360324,
+        "contact_inbox": {
+          "source_id": "5210000000173"
+        }
+      },
+      "sender": {
+        "additional_attributes": {
+          "avatar_url_hash": "",
+          "last_avatar_sync_at": "2026-08-25T17:12:02Z"
+        },
+        "custom_attributes": {},
+        "email": "lead173@example.test",
+        "id": 59,
+        "identifier": null,
+        "name": "Lead 173",
+        "phone_number": "+5210000000173",
+        "thumbnail": "",
+        "blocked": false,
+        "type": "contact"
+      }
+    },
+    "last_activity_at": 1790360324,
+    "priority": null,
+    "waiting_since": 1790274080,
+    "sla_policy_id": null
+  },
+  "messages": {
+    "meta": {
+      "labels": [],
+      "additional_attributes": {},
+      "contact": {
+        "additional_attributes": {
+          "avatar_url_hash": "",
+          "last_avatar_sync_at": "2026-08-25T17:12:02Z"
+        },
+        "custom_attributes": {},
+        "email": "lead173@example.test",
+        "id": 59,
+        "identifier": null,
+        "name": "Lead 173",
+        "phone_number": "+5210000000173",
+        "thumbnail": "",
+        "blocked": false,
+        "type": "contact"
+      },
+      "agent_last_seen_at": "2026-09-25T22:38:47.287Z",
+      "assignee_last_seen_at": null
+    },
+    "payload": [
+      {
+        "id": 2317,
+        "content": "[contenido saneado, 94 caracteres]",
+        "inbox_id": 9,
+        "conversation_id": 173,
+        "message_type": 0,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1790274080,
+        "private": false,
+        "source_id": "wamid.SANEADO02",
+        "sender": {
+          "additional_attributes": {
+            "avatar_url_hash": "",
+            "last_avatar_sync_at": "2026-08-25T17:12:02Z"
+          },
+          "custom_attributes": {},
+          "email": "lead173@example.test",
+          "id": 59,
+          "identifier": null,
+          "name": "Lead 173",
+          "phone_number": "+5210000000173",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
+      },
+      {
+        "id": 2318,
+        "content": "Bridge Service added automation_paused",
+        "inbox_id": 9,
+        "conversation_id": 173,
+        "message_type": 2,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1790274118,
+        "private": false,
+        "source_id": null
+      },
+      {
+        "id": 2319,
+        "content": "[contenido saneado, 358 caracteres]",
+        "inbox_id": 9,
+        "conversation_id": 173,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1790274123,
+        "private": true,
+        "source_id": null,
+        "sender": {
+          "id": 2,
+          "name": "Bridge Service",
+          "available_name": "Bridge Service",
+          "avatar_url": "",
+          "type": "user",
+          "availability_status": "offline",
+          "thumbnail": ""
+        }
+      },
+      {
+        "id": 2320,
+        "content": "Assigned to johanna - revisión humana by Bridge Service",
+        "inbox_id": 9,
+        "conversation_id": 173,
+        "message_type": 2,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1790274126,
+        "private": false,
+        "source_id": null
+      },
+      {
+        "id": 2373,
+        "content": "[contenido saneado, 4 caracteres]",
+        "inbox_id": 9,
+        "conversation_id": 173,
+        "message_type": 0,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1790360310,
+        "private": false,
+        "source_id": "wamid.SANEADO01",
+        "sender": {
+          "additional_attributes": {
+            "avatar_url_hash": "",
+            "last_avatar_sync_at": "2026-08-25T17:12:02Z"
+          },
+          "custom_attributes": {},
+          "email": "lead173@example.test",
+          "id": 59,
+          "identifier": null,
+          "name": "Lead 173",
+          "phone_number": "+5210000000173",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
+      },
+      {
+        "id": 2374,
+        "content": "Persona del equipo removed automation_paused",
+        "inbox_id": 9,
+        "conversation_id": 173,
+        "message_type": 2,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1790360324,
+        "private": false,
+        "source_id": null
+      }
+    ]
+  }
+}
