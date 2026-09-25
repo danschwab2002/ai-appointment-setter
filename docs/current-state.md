@@ -1,8 +1,8 @@
 # Estado actual del sistema
 
 - **Tipo:** snapshot de estado operativo versionado. No es arquitectura ni contrato: describe lo observado en una fecha, con su grado de verificación.
-- **Fecha de corte:** 2026-09-20, actualizado con la activacion de la respuesta inbound y su E2E. El bloque anterior es del 2026-09-19 (auditoria de ingreso).
-- **Commit de referencia:** `origin/main` = `b04ad14` (merge del PR #162).
+- **Fecha de corte:** 2026-09-25, actualizado con el cambio de modelo del agente comercial, el SOUL desplegado y el pin de la imagen de Hermes. El bloque anterior es del 2026-09-20 (activacion de la respuesta inbound y su E2E); el anterior a ese, del 2026-09-19 (auditoria de ingreso). **Las filas que no llevan fecha del 2026-09-25 no se re-verificaron en esta pasada.**
+- **Commit de referencia:** `origin/main` = `98fd848` (merge del PR #181).
 - **Mantenimiento:** lo actualiza quien programa, en el mismo PR que cambie cualquier fila de la matriz. Se reemplaza el snapshot entero; la historia queda en Git.
 - **Convención:** `Confirmado` = inspección directa en la fecha de corte · `Reportado` = tomado de la auditoría del profile `default` de Hermes del 2026-09-18 o de un documento operativo versionado, sin re-verificar · `No comprobado` = falta evidencia.
 
@@ -30,7 +30,7 @@ Modelo de trabajo:
 | `infra_appointment-bridge` | 2026-09-18 15:15:09 | `e6598d47375d` | healthy |
 | `infra_supportmagician-slack-connector` | 2026-09-18 14:20:54 | `4392a90dc51f` | healthy |
 | `infra_daily-feedback` | 2026-09-14 01:46:57 | `b8e60a55e28a` | sin healthcheck |
-| `infra_hermes` | 2026-09-07 13:48:44 | `7f74fd03c790` | sin healthcheck |
+| `infra_hermes` | **2026-09-25 14:59:45** | **`nousresearch/hermes-agent:v2026.8.31`** | sin healthcheck |
 | `infra_chatwoot` | 2026-09-07 12:49:44 | `4c96ec530e5f` | sin healthcheck |
 | `att1-production_att1-bridge-dark` | 2026-09-06 17:14:31 | `4db34117da0f` | healthy |
 | `att1-production_att1-product-hermes` | 2026-09-07 14:37:44 | `92b9613a9dcb` | sin healthcheck |
@@ -38,7 +38,8 @@ Modelo de trabajo:
 
 - `att1-production_att1-agent-profile` lleva 13 días en `Pending` con el error de Swarm `no suitable node (insufficient resources on 1 node)`. **Causa raíz confirmada el 2026-09-19:** el servicio declara una reserva de memoria de 281474976710656 bytes (256 TiB) y un límite de 844424930131968 (768 TiB) en un nodo de 23 GB. Los dos números son 256 y 768 multiplicados por 1024⁴: es un error de unidades introducido en la edición del 2026-09-07 12:40 UTC, la única del Swarm que declara reservas. Corrección en EasyPanel: 256 MB de reserva y 768 MB de límite, o vaciar ambos campos. **No se aplicó:** corregirla levanta el profile comercial de ATT1, que no tiene Conversation Release aprobada. Detalle en `operations/2026-09-19-claude-production-ingress-audit-v1.md` §7.
 - También corren en el mismo Swarm: `infra_chatwoot-db`, `infra_chatwoot-redis`, `infra_chatwoot-sidekiq`, `infra_evolution-api` (+ `-db`, `-redis`), `infra_ig-auth`, `infra_ig-db`, `infra_terms`, `att1-production_att1-postgres`, `easypanel`, `easypanel-traefik`, y el stack `cascara_*` de otro proyecto. **Confirmado** por `docker service ls`.
-- Tags mutables: `infra_appointment-bridge` usa `easypanel/infra/appointment-bridge:latest` e `infra_hermes` usa `nousresearch/hermes-agent:latest`. `infra_chatwoot` está fijado a `v4.13.0`. **Confirmado.**
+- Tags mutables: `infra_appointment-bridge` usa `easypanel/infra/appointment-bridge:latest`. `infra_chatwoot` está fijado a `v4.13.0`. **Confirmado.**
+- **`infra_hermes` dejó de usar un tag móvil el 2026-09-25**, después de que un redespliegue trajera la 0.21.5 y dejara al agente comercial 21 minutos sin atender (§9, incidente 14). Está fijado a `nousresearch/hermes-agent:v2026.8.31` (0.21.0, upstream `29112bef`). **Confirmado 2026-09-25 16:12 UTC.** No volver a `:latest` sin migrar antes a gateway único.
 
 ### Correspondencia código desplegado ↔ Git
 
@@ -141,9 +142,10 @@ Reglas vigentes sobre estos claims:
 ## 6. Diferencias entre Git y runtime
 
 - **`profiles/client-copilot/SOUL.md` (Git) ≠ `SOUL.md` runtime del profile `client-copilot`.** Reportado 18/09: el runtime es el role de onboarding/copiloto (2026-08-14) y Git tiene el role de operador de correlación; existe además un profile runtime separado `client-copilot-correlation-review`, detenido. **No copiar el archivo de Git sobre el runtime.** Resolución pendiente de Dan: versionar cada role con su nombre real.
-- **Profiles efectivos se copian por fuera de Git** y pueden quedar detrás; `profiles/agente-comercial/SOUL.md` coincidía con Git el 18/09. Reportado.
+- **Profiles efectivos se copian por fuera de Git** y pueden quedar detrás. **`profiles/agente-comercial/SOUL.md` coincide con `origin/main` (`98fd848`) desde el 2026-09-25 15:39 UTC**, md5 `ba54b79cd2dd8a294c01fad5d6b37ec9`, copiado desde Git y no editado en el servidor; backup del anterior en `private-backups/SOUL.md.2026-09-25-153953`. Confirmado por md5 el 2026-09-25 16:12 UTC.
+- **El modelo del agente comercial no está en Git:** vive en `config.yaml` del profile. Desde el 2026-09-25 15:42 UTC corre `openrouter / z-ai/glm-5.2` con fallback `openrouter / anthropic/claude-sonnet-4.6`; antes era `anthropic / claude-sonnet-4-6` por OAuth. **El fallback no se probó.** Evidencia y riesgo abierto (1 propuesta inválida en 37) en `operations/2026-09-25-agente-comercial-glm-5-2-release.md`. Confirmado.
 - **Secretos, flags y configuración efectiva viven en EasyPanel y en el bind de Hermes**, no en Git. Reportado; por diseño.
-- **Imágenes con tag `latest`** en bridge y Hermes: sin pin por digest, no hay trazabilidad automática commit → imagen → contenedor. Confirmado. Se puede reconstruir a mano comparando objetos Git (§2), y desde el 2026-09-19 existe además un alias `preserved-20260919` de las tres imágenes en producción como destino de rollback.
+- **Imágenes con tag `latest`** en el bridge: sin pin por digest, no hay trazabilidad automática commit → imagen → contenedor. Confirmado. Se puede reconstruir a mano comparando objetos Git (§2), y desde el 2026-09-19 existe además un alias `preserved-20260919` de las tres imágenes en producción como destino de rollback. **Hermes salió de esta lista el 2026-09-25** (§2).
 - **La configuración de entrega de Chatwoot no coincide con las rutas del bridge:** el AgentBot apunta a una ruta inexistente (§9, incidente 9). Confirmado 2026-09-19.
 - El **checkout canónico** quedó al día en `b04ad14` el 2026-09-19. Confirmado.
 
@@ -180,7 +182,7 @@ Reglas vigentes sobre estos claims:
 ## 9. Incidentes y bloqueos abiertos
 
 1. **Confirmación humana de correlación V3 falla** (error genérico, sin resolución). PR #155 agregó diagnóstico; causa raíz no demostrada. **Congelado por instrucción de Dan:** no reabrir sin autorización explícita. Reportado.
-2. **PR #161 bloqueado** por dos archivos reservados por `daily-feedback-operational-context-v2-r3`. Se resuelve negociando la frontera, no ignorando el preflight. Confirmado.
+2. ✅ **RESUELTO 2026-09-25 — PR #161 desbloqueado.** Estaba trabado por `scripts/supabase_schema_inventory.sql` y `tests/test_supabase_release_readiness.py`, reservados por otra tarea. Los dos quedaron libres y se movieron al claim `codex-correlation-operations-v1`, que se reabrió a `implementing` para completarlo. **La frontera se negoció, no se ignoró el preflight.** El bug que el PR arregla sigue vivo en producción, medido el 2026-09-25: `prepare_operator_correlation_resolution` lee `clock_timestamp()` dos veces mientras la columna `prepared_at` toma su propio default y el trigger exige `expires_at = prepared_at + 10 minutes` exacto.
 3. **Bridge desplegado sin el PR #156.** Cualquier verificación del monitor contra producción debe partir de un release nuevo desde un SHA verificado de `origin/main`. Reportado + Confirmado.
 4. **`att1-agent-profile` en 0/1**, 13 días, por una reserva de memoria de 256 TiB cargada por error el 2026-09-07 (§2). Causa raíz confirmada 2026-09-19; corrección pendiente de decisión.
 5. **Una consulta de inventario de EasyPanel devolvió campos sensibles al contexto de auditoría** (18/09). Las credenciales afectadas deben considerarse para rotación; no se reproducen. Reportado.
@@ -192,6 +194,8 @@ Reglas vigentes sobre estos claims:
 11. **No había destino de rollback.** Las tres imágenes construidas desde el repositorio usan tag móvil y el demonio no conservaba ninguna versión anterior, así que un despliegue malo no tenía a dónde volver. Mitigado el 2026-09-19 con un alias local `preserved-20260919` para las tres imágenes en producción, sin tocar ningún servicio. El arreglo de fondo (pin por digest) lo decide Dan.
 12. ✅ **RESUELTO 2026-09-20 — el agente no respondía ninguna conversación porque el inbound estaba cerrado por configuración.** Encontrado el 2026-09-20 de madrugada: con `CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED=false`, la admisión comparaba al remitente contra un `ALLOWED_WHATSAPP_JID` con **un solo número de prueba** y descartaba a todos los demás en milisegundos, sin razonar ni registrar (`{"status":"ignored","reason":"sender_not_allowed"}`); y aun admitido, `CHATWOOT_AUTOMATED_REPLIES_ENABLED=false` impedía el envío. **El outbound, en cambio, estaba encendido para cualquier lead real**: el sistema abría conversaciones que no podía sostener. Estado del inbox al encontrarlo: 69 conversaciones abiertas y 12 con el último mensaje del contacto sin respuesta, entre el 2026-09-10 y el 2026-09-20; ningún agente humano había respondido desde el 2026-09-12. **Corregido** activando los cinco gates (§2), verificado antes con una simulación local del arranque y después con un E2E desde un número distinto del permitido. **Lo que queda de este incidente:** las 12 conversaciones siguen sin respuesta y nada las va a despertar salvo que esa persona vuelva a escribir; y la deuda de la variable en el panel (§2).
 13. ⚠ **Ningún contador ni endpoint reporta las admisiones rechazadas.** El rechazo por remitente se resuelve dentro del handler y devuelve `200` con un cuerpo de 50 bytes: para el proxy y para cualquier monitor de disponibilidad, es una entrega exitosa. Por eso el incidente 12 pudo durar semanas con todos los health en verde. **No corregido.** Un contador de `ignored` por motivo en `/ready`, o una alerta sobre la relación entrantes/respondidos del inbox, es lo que lo habría hecho visible.
+14. ✅ **RESUELTO 2026-09-25 — un redespliegue con `:latest` dejó al agente comercial 21 minutos muerto.** A las 14:39 UTC, al cargar una variable nueva, `infra_hermes` bajó `nousresearch/hermes-agent:latest`, que ese día era la 0.21.5. Desde la 0.21.4 Hermes exige **un gateway por host** y el contenedor levanta cuatro servicios s6, uno por profile: ganó el del profile `default`, se declaró STANDALONE y los otros tres murieron al arrancar sin que s6 los reintentara. Ningún lead entró en la ventana (cero mensajes en el inbox 9 entre 14:30 y 15:00, verificado en la base de Chatwoot). **Corregido** fijando la imagen a `v2026.8.31` (§2); el agente volvió a `connected` a las 15:00. Evidencia en `operations/2026-09-25-agente-comercial-glm-5-2-release.md` §3. **Lo que queda:** migrar a 0.21.5 con `hermes gateway migrate --multiplex`, probándolo antes con un profile de prueba. ⚠ Durante veinte minutos `gateway_state.json` informó `running` con el pid de un proceso muerto: para saber si un gateway vive se mira `ps` y el log de s6 del profile, no ese archivo.
+15. 🔴 **Una propuesta mal formada del agente deja a esa persona sin respuesta, y nada lo señala.** `invalid_agent_output` se persiste como resultado terminal: el bridge no vuelve a pedir la propuesta. Con el modelo nuevo el riesgo es medible: **1 de 37** llamadas a GLM 5.2 con este SOUL devolvió JSON roto, contra **0 de 91** de Sonnet 4.6 en producción. **No corregido en producción:** el PR #182 agrega un reintento con Idempotency-Key propia (el api_server replica el contenido de una key ya vista) y un campo `attempts` para poder medir la tasa real; está mergeable y sin desplegar.
 
 ## 10. Próxima tarea aprobada y trabajos congelados
 
