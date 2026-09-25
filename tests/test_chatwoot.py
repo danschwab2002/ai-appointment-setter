@@ -10,6 +10,8 @@ from bridge.chatwoot import (
     ChatwootClient,
     ChatwootHistoryScanLimitError,
     ChatwootProtocolError,
+    TeamMessageTimestampError,
+    seconds_since_last_team_message,
 )
 
 
@@ -2948,3 +2950,488 @@ def test_apply_opt_out_macro_skips_post_when_labels_already_projected() -> None:
         expected_jid=ALLOWED_JID,
     ))
     assert [request.method for request in requests] == ["GET", "GET"]
+
+
+# ── Silencio del equipo: la señal que habilita reactivar ────────────────
+
+NOW = 1_700_000_000
+
+
+def _team_message(created_at: int, message_type: int = 1) -> dict[str, object]:
+    return {
+        "message_type": message_type,
+        "private": False,
+        "content": "te ayudo yo",
+        "sender": {"type": "user", "id": 4},
+        "created_at": created_at,
+    }
+
+
+def test_team_silence_is_none_when_only_the_bot_and_the_lead_wrote() -> None:
+    mensajes: list[dict[str, object]] = [
+        {
+            "message_type": 0,
+            "private": False,
+            "content": "Envíame el enlace",
+            "sender": {"type": "contact", "id": 1},
+            "created_at": NOW - 60,
+        },
+        {
+            "message_type": 1,
+            "private": False,
+            "content": "hola",
+            "sender": {"type": "agent_bot", "id": 1},
+            "created_at": NOW - 30,
+        },
+    ]
+    assert seconds_since_last_team_message(mensajes, now_epoch=NOW) is None
+
+
+def test_team_silence_uses_the_most_recent_human_message() -> None:
+    mensajes = [
+        _team_message(NOW - 90_000),
+        _team_message(NOW - 3_600),
+        _team_message(NOW - 50_000),
+    ]
+    assert seconds_since_last_team_message(mensajes, now_epoch=NOW) == 3_600
+
+
+def test_team_silence_ignores_activities_and_private_notes() -> None:
+    # Asignar una conversacion genera una actividad (tipo 2) del usuario que
+    # asigna: no es atender a nadie. La nota privada de derivacion tampoco.
+    mensajes = [
+        _team_message(NOW - 40_000),
+        _team_message(NOW - 10, message_type=2),
+        {
+            "message_type": 1,
+            "private": True,
+            "content": "nota interna",
+            "sender": {"type": "user", "id": 2},
+            "created_at": NOW - 5,
+        },
+    ]
+    assert seconds_since_last_team_message(mensajes, now_epoch=NOW) == 40_000
+
+
+def test_team_silence_counts_template_messages_sent_by_a_person() -> None:
+    assert seconds_since_last_team_message(
+        [_team_message(NOW - 7_200, message_type=3)], now_epoch=NOW
+    ) == 7_200
+
+
+def test_team_silence_fails_closed_on_an_unreadable_timestamp() -> None:
+    # Tratar una fecha ilegible como silencio reactivaria una conversacion que
+    # alguien podria estar atendiendo ahora mismo.
+    for invalido in (None, "ayer", True, 0, -5):
+        with pytest.raises(TeamMessageTimestampError):
+            seconds_since_last_team_message(
+                [_team_message(NOW - 100) | {"created_at": invalido}],
+                now_epoch=NOW,
+            )
+
+
+def test_team_silence_never_returns_a_negative_age() -> None:
+    assert seconds_since_last_team_message(
+        [_team_message(NOW + 500)], now_epoch=NOW
+    ) == 0
+
+
+def _reactivation_client(handler, tmp_path: Path) -> ChatwootClient:
+    return ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        agent_bot_access_token="agent-bot-token",
+        agent_bot_id=1,
+        reply_dir=tmp_path,
+        transport=httpx.MockTransport(handler),
+    )
+
+
+def test_get_inbox_returns_the_template_catalog(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/accounts/1/inboxes/9"
+        assert request.headers["api_access_token"] == "control-token"
+        return httpx.Response(
+            200,
+            json={
+                "id": 9,
+                "message_templates": [
+                    {"name": "johanna_reactivacion_01", "status": "APPROVED"}
+                ],
+            },
+        )
+
+    payload = asyncio.run(
+        _reactivation_client(handler, tmp_path).get_inbox(inbox_id=9)
+    )
+    assert payload["message_templates"][0]["name"] == "johanna_reactivacion_01"
+
+
+def test_get_inbox_rejects_another_inbox(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"id": 11, "message_templates": []})
+
+    with pytest.raises(ChatwootProtocolError) as error:
+        asyncio.run(_reactivation_client(handler, tmp_path).get_inbox(inbox_id=9))
+    assert str(error.value) == "invalid_inbox_payload"
+
+
+def _open_conversation_handler(
+    *, all_count: int = 1, conversation_ids: tuple[int, ...] = (126,)
+):
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/api/v1/accounts/1/conversations":
+            page = int(request.url.params["page"])
+            assert request.url.params["status"] == "open"
+            assert request.url.params["inbox_id"] == "9"
+            payload = (
+                [
+                    {"id": conversation_id, "inbox_id": 9}
+                    for conversation_id in conversation_ids
+                ]
+                if page == 1
+                else []
+            )
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "payload": payload,
+                        "meta": {"all_count": all_count, "current_page": page},
+                    }
+                },
+            )
+        for conversation_id in conversation_ids:
+            if path == f"/api/v1/accounts/1/conversations/{conversation_id}":
+                return httpx.Response(
+                    200,
+                    json={
+                        "id": conversation_id,
+                        "inbox_id": 9,
+                        "status": "open",
+                        "can_reply": False,
+                    },
+                )
+            if path == (
+                f"/api/v1/accounts/1/conversations/{conversation_id}/messages"
+            ):
+                return httpx.Response(
+                    200,
+                    json={
+                        "payload": [
+                            {
+                                "id": 2079,
+                                "message_type": 0,
+                                "private": False,
+                                "content": "hola",
+                                "created_at": 1790090674,
+                                "sender": {"id": 144, "type": "contact"},
+                            }
+                        ]
+                    },
+                )
+        raise AssertionError(f"unexpected path {path}")
+
+    return handler
+
+
+def test_lists_open_conversations_with_their_messages(tmp_path: Path) -> None:
+    client = _reactivation_client(_open_conversation_handler(), tmp_path)
+    entries = asyncio.run(
+        client.list_open_conversations_with_messages(expected_inbox_id=9)
+    )
+    assert len(entries) == 1
+    assert entries[0]["conversation"]["id"] == 126
+    assert entries[0]["messages"][0]["id"] == 2079
+
+
+def test_an_incomplete_conversation_scan_fails_closed(tmp_path: Path) -> None:
+    # Un barrido corto que no falla se leeria como "no hay a quien reactivar".
+    client = _reactivation_client(
+        _open_conversation_handler(all_count=5), tmp_path
+    )
+    with pytest.raises(ChatwootProtocolError) as error:
+        asyncio.run(
+            client.list_open_conversations_with_messages(expected_inbox_id=9)
+        )
+    assert str(error.value) == "conversation_scan_incomplete"
+
+
+def test_a_conversation_from_another_inbox_aborts_the_scan(
+    tmp_path: Path,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/accounts/1/conversations":
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "payload": [{"id": 126, "inbox_id": 11}],
+                        "meta": {"all_count": 1, "current_page": 1},
+                    }
+                },
+            )
+        raise AssertionError("should not reach the detail endpoint")
+
+    with pytest.raises(ChatwootProtocolError) as error:
+        asyncio.run(
+            _reactivation_client(
+                handler, tmp_path
+            ).list_open_conversations_with_messages(expected_inbox_id=9)
+        )
+    assert str(error.value) == "invalid_conversation_scope"
+
+
+def test_sends_the_reactivation_template_as_the_agent_bot(
+    tmp_path: Path,
+) -> None:
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/accounts/1/conversations/126/messages"
+        # Sale con el token del AgentBot: un saliente de un `user` de Chatwoot
+        # es justamente lo que pausa la automatizacion.
+        assert request.headers["api_access_token"] == "agent-bot-token"
+        captured.update(json.loads(request.content.decode()))
+        return httpx.Response(
+            200,
+            json={
+                "id": 3100,
+                "conversation_id": 126,
+                "message_type": 1,
+                "private": False,
+                "content": captured["content"],
+                "content_attributes": captured["content_attributes"],
+                "sender": {"id": 1, "type": "agent_bot"},
+            },
+        )
+
+    result = asyncio.run(
+        _reactivation_client(handler, tmp_path).send_reactivation_template(
+            conversation_id=126,
+            content="Hola, Mau. Quedo una conversacion pendiente.",
+            command_key="reactivate:126:2079",
+            template_params={
+                "name": "johanna_reactivacion_01",
+                "category": "MARKETING",
+                "language": "es_EC",
+                "processed_params": {"body": {"1": "Mau"}},
+            },
+        )
+    )
+    assert result == {"status": "sent", "message_id": 3100}
+    assert captured["message_type"] == "outgoing"
+    assert captured["private"] is False
+    assert captured["template_params"]["processed_params"] == {"body": {"1": "Mau"}}
+    assert (
+        captured["content_attributes"]["reactivation_command_key"]
+        == "reactivate:126:2079"
+    )
+
+
+def test_a_reactivation_echoed_by_a_human_user_is_rejected(
+    tmp_path: Path,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "id": 3101,
+                "conversation_id": 126,
+                "message_type": 1,
+                "private": False,
+                "content": body["content"],
+                "content_attributes": body["content_attributes"],
+                "sender": {"id": 4, "type": "user"},
+            },
+        )
+
+    with pytest.raises(ChatwootProtocolError) as error:
+        asyncio.run(
+            _reactivation_client(handler, tmp_path).send_reactivation_template(
+                conversation_id=126,
+                content="Hola, Mau.",
+                command_key="reactivate:126:2079",
+                template_params={"name": "t"},
+            )
+        )
+    assert str(error.value) == "invalid_sent_message"
+
+
+def test_a_reactivation_without_template_params_is_rejected(
+    tmp_path: Path,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("should not reach the network")
+
+    with pytest.raises(ChatwootProtocolError) as error:
+        asyncio.run(
+            _reactivation_client(handler, tmp_path).send_reactivation_template(
+                conversation_id=126,
+                content="Hola, Mau.",
+                command_key="reactivate:126:2079",
+                template_params={},
+            )
+        )
+    assert str(error.value) == "invalid_reactivation_template_params"
+
+
+def test_a_reactivation_without_the_agent_bot_is_rejected(
+    tmp_path: Path,
+) -> None:
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        reply_dir=tmp_path,
+    )
+    with pytest.raises(ChatwootProtocolError) as error:
+        asyncio.run(
+            client.send_reactivation_template(
+                conversation_id=126,
+                content="Hola",
+                command_key="reactivate:126:2079",
+                template_params={"name": "t"},
+            )
+        )
+    assert str(error.value) == "agent_bot_not_configured"
+
+
+def _captured_api_show_fixture_158() -> dict[str, object]:
+    fixture = json.loads(
+        (
+            Path(__file__).parent
+            / "fixtures"
+            / "chatwoot_conversation_api_show_conv_158_20260924.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert isinstance(fixture, dict)
+    return fixture
+
+
+def test_stalled_scan_admits_a_captured_waba_conversation_in_scoped_mode() -> None:
+    """Fixture capturado el 24/09/2026 12:38 UTC: show + messages de la conv 158.
+
+    Es la conversacion que el monitor de estancadas tenia que readmitir a las
+    12:33 UTC (abierta, can_reply, sin etiqueta, sin asignado, ultimo mensaje
+    del lead 13 h antes) y descarto: el show de la API no trae contact_inbox
+    y meta.sender.identifier es null, asi que en modo scoped el clasificador
+    devolvia sender_not_allowed. El barrido termino healthy con cero
+    candidatos.
+    """
+    fixture = _captured_api_show_fixture_158()
+    conversation = fixture["conversation"]
+    messages = fixture["messages"]
+    assert isinstance(conversation, dict)
+    assert isinstance(messages, dict)
+    assert "contact_inbox" not in conversation
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/conversations/158/messages"):
+            return httpx.Response(200, json=messages)
+        if request.url.path.endswith("/conversations/158"):
+            return httpx.Response(200, json=conversation)
+        if request.url.path.endswith("/conversations"):
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "meta": {"all_count": 1, "current_page": 1},
+                        "payload": [conversation],
+                    }
+                },
+            )
+        return httpx.Response(404, json={})
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid="542916424279@s.whatsapp.net",  # el numero de prueba, no el lead
+        agent_bot_id=1,
+        transport=httpx.MockTransport(handler),
+    )
+    last_inbound = conversation["last_non_activity_message"]
+    assert isinstance(last_inbound, dict)
+    latest_inbound_at = last_inbound["created_at"]
+    assert isinstance(latest_inbound_at, int)
+
+    candidates = asyncio.run(
+        client.list_stalled_conversations(
+            expected_inbox_id=9,
+            stale_after_seconds=120,
+            max_age_seconds=86_400,
+            max_pages=5,
+            allow_any_scoped_sender=True,
+            now_epoch=latest_inbound_at + 13 * 3600,
+        )
+    )
+
+    assert [candidate.delivery_id for candidate in candidates] == [
+        "stalled-chatwoot:158:2233"
+    ]
+    payload = candidates[0].payload
+    assert payload["id"] == 2233
+    assert payload["message_type"] == "incoming"
+    payload_conversation = payload["conversation"]
+    assert isinstance(payload_conversation, dict)
+    assert payload_conversation["contact_inbox"] is None
+    assert [request.url.path.rsplit("/", 1)[-1] for request in requests] == [
+        "conversations",
+        "158",
+        "messages",
+    ]
+
+
+def test_stalled_scan_still_rejects_the_captured_conversation_under_an_exact_scope() -> None:
+    """Sin scope acotado, un telefono que no es el JID configurado no entra."""
+    fixture = _captured_api_show_fixture_158()
+    conversation = fixture["conversation"]
+    messages = fixture["messages"]
+    assert isinstance(conversation, dict)
+    assert isinstance(messages, dict)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/conversations/158/messages"):
+            return httpx.Response(200, json=messages)
+        if request.url.path.endswith("/conversations/158"):
+            return httpx.Response(200, json=conversation)
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "meta": {"all_count": 1, "current_page": 1},
+                    "payload": [conversation],
+                }
+            },
+        )
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid="542916424279@s.whatsapp.net",
+        agent_bot_id=1,
+        transport=httpx.MockTransport(handler),
+    )
+    last_inbound = conversation["last_non_activity_message"]
+    assert isinstance(last_inbound, dict)
+
+    candidates = asyncio.run(
+        client.list_stalled_conversations(
+            expected_inbox_id=9,
+            stale_after_seconds=120,
+            max_age_seconds=86_400,
+            max_pages=5,
+            allow_any_scoped_sender=False,
+            now_epoch=last_inbound["created_at"] + 13 * 3600,
+        )
+    )
+
+    assert candidates == []

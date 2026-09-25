@@ -20,7 +20,11 @@ from bridge.app import (
     build_app,
     create_app,
 )
-from bridge.chatwoot import ChatwootProtocolError, StalledChatwootConversation
+from bridge.chatwoot import (
+    ChatwootClient,
+    ChatwootProtocolError,
+    StalledChatwootConversation,
+)
 from bridge.chatwoot_inbox import (
     ChatwootStalledConversationMonitor,
     ChatwootWorker,
@@ -773,6 +777,157 @@ def test_app_wires_enabled_stalled_monitor_and_reports_readiness(
             "max_pages": 5,
             "allow_any_scoped_sender": False,
         }
+
+
+@pytest.mark.parametrize("pause_before_send", [False, True])
+def test_stalled_monitor_recovers_through_real_worker_and_sender(
+    tmp_path: Path,
+    pause_before_send: bool,
+) -> None:
+    allowed_jid = "12025550123@s.whatsapp.net"
+    now = int(time.time())
+    conversations = {
+        conversation_id: {
+            "id": conversation_id,
+            "inbox_id": 7,
+            "status": "open",
+            "can_reply": True,
+            "labels": [] if conversation_id == 2 else ["automation_paused"],
+            "meta": {
+                "sender": {"id": 20, "identifier": allowed_jid, "blocked": False},
+                "assignee": None,
+            },
+            "contact_inbox": {"source_id": allowed_jid},
+        }
+        for conversation_id in (2, 3)
+    }
+    messages = {
+        conversation_id: [
+            {
+                "id": conversation_id * 10,
+                "conversation_id": conversation_id,
+                "created_at": now - 200,
+                "message_type": 0,
+                "private": False,
+                "content": "Quiero informacion",
+                "sender": {"type": "contact", "id": 20},
+            },
+            {
+                "id": conversation_id * 10 + 1,
+                "conversation_id": conversation_id,
+                "created_at": now - 190,
+                "message_type": 2,
+                "private": False,
+                "content": "Conversation status changed",
+                "sender": None,
+            },
+        ]
+        for conversation_id in conversations
+    }
+    sent: list[dict[str, object]] = []
+    scans = 0
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        nonlocal scans
+        path = request.url.path
+        if path == "/api/v1/accounts/1/conversations" and request.method == "GET":
+            scans += 1
+            return httpx.Response(200, json={"data": {
+                "meta": {"all_count": 2, "current_page": 1},
+                "payload": list(conversations.values()),
+            }})
+        for conversation_id, conversation in conversations.items():
+            prefix = f"/api/v1/accounts/1/conversations/{conversation_id}"
+            if path == prefix and request.method == "GET":
+                return httpx.Response(200, json=conversation)
+            if path == f"{prefix}/labels" and request.method == "GET":
+                return httpx.Response(200, json={"payload": conversation["labels"]})
+            if path == f"{prefix}/messages":
+                if request.method == "GET":
+                    # Replay the pre-send snapshot to exercise durable deduplication.
+                    return httpx.Response(200, json={"payload": messages[conversation_id]})
+                if request.method == "POST":
+                    assert request.headers["api_access_token"] == "agent-bot-token"
+                    message = {
+                        **json.loads(request.content),
+                        "id": 100,
+                        "conversation_id": conversation_id,
+                        "message_type": 1,
+                        "sender": {"type": "agent_bot", "id": 1},
+                    }
+                    sent.append(message)
+                    return httpx.Response(200, json=message)
+        raise AssertionError(f"unexpected request: {request.method} {path}")
+
+    class PausingShadowProcessor(StubShadowProcessor):
+        async def run(self, *, delivery_id: str, context: dict[str, object]) -> None:
+            await super().run(delivery_id=delivery_id, context=context)
+            if pause_before_send:
+                conversations[2]["labels"] = ["automation_paused"]
+
+    shadow = PausingShadowProcessor({"reply": "Esta es la informacion solicitada."})
+    supabase = StubInboundCommercialSupabase()
+    chatwoot = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=allowed_jid,
+        agent_bot_access_token="agent-bot-token",
+        agent_bot_id=1,
+        reply_dir=tmp_path / ".replies",
+        transport=httpx.MockTransport(transport),
+    )
+    app = create_app(
+        Settings(
+            webhook_secret="secret",
+            allowed_jid=allowed_jid,
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=7,
+            automated_replies_enabled=True,
+            chatwoot_cut_b_admission_enabled=True,
+            chatwoot_cut_b_scope_key="libre-de-ansiedad-inbound",
+            chatwoot_cut_b_scope_version=1,
+            chatwoot_cut_b_agent_enabled=True,
+            chatwoot_stalled_monitor_enabled=True,
+            chatwoot_stalled_monitor_interval_seconds=3600,
+        ),
+        chatwoot_client=chatwoot,
+        shadow_processor=shadow,
+        supabase_client=supabase,  # type: ignore[arg-type]
+    )
+
+    with TestClient(app) as client:
+        deadline = time.monotonic() + 3
+        envelopes: list[dict[str, object]] = []
+        while time.monotonic() < deadline:
+            envelopes = [
+                json.loads(path.read_text()) for path in (tmp_path / ".work").glob("*.json")
+            ]
+            if len(envelopes) == 1 and envelopes[0]["status"] == "completed":
+                break
+            time.sleep(0.01)
+        assert len(envelopes) == 1
+        assert envelopes[0]["status"] == "completed", envelopes
+        assert envelopes[0]["delivery_id"] == "stalled-chatwoot:2:20"
+        assert envelopes[0]["recovery_count"] == 1
+
+        response = client.get("/ready")
+        assert response.status_code == 200
+        assert response.json()["chatwoot_stalled_monitor"] == "healthy"
+        assert client.portal is not None
+        for _ in range(2):
+            client.portal.call(app.state.chatwoot_stalled_monitor.run_once)
+            client.portal.call(app.state.chatwoot_worker.run_once)
+
+    assert scans == 3
+    assert [delivery_id for delivery_id, _ in shadow.calls] == ["stalled-chatwoot:2:20"]
+    assert {call["external_conversation_id"] for call in supabase.admission_calls} == {2}
+    assert len(sent) == (0 if pause_before_send else 1)
+    assert all(message["conversation_id"] == 2 for message in sent)
+    assert shadow.failures == []
 
 
 def test_stalled_monitor_is_default_off(tmp_path: Path) -> None:
@@ -5265,6 +5420,11 @@ def test_cut_b_direct_medication_guidance_forces_durable_handoff(
     assert response.status_code == 202
     assert len(supabase.handoff_calls) == 1
     assert supabase.handoff_calls[0]["commercial_case_id"] == "case-1"
+    # La regla reescribe el motivo, no solo la decision: sin esto la fila y la
+    # nota se quedarian con el reason_code que el agente habia elegido.
+    assert supabase.handoff_calls[0]["detail_reason_code"] == (
+        "direct_medication_guidance"
+    )
     assert chatwoot.reply_calls == []
     assert chatwoot.calls == [(323, "automation_paused")]
     assert chatwoot.events == ["label:automation_paused"]

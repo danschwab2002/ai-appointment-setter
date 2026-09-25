@@ -119,3 +119,49 @@ def test_provisional_brand_voice_examples_preserve_fail_closed_policy() -> None:
     assert "La derivación al equipo quedó confirmada." in content
     assert "Puedo ayudarte con los pasos generales para intentarlo nuevamente." not in content
     assert "podrán continuar por este mismo medio" not in content
+
+
+def test_profile_explains_what_to_do_with_a_human_agent_message() -> None:
+    # El bridge empezo a mostrarle al agente lo que escribio una persona del
+    # equipo (actor `human_agent`). Sin esta seccion, el modelo lo leeria como
+    # propio y sostendria promesas que no hizo.
+    soul = SOUL.read_text(encoding="utf-8")
+    compacto = " ".join(soul.split())
+
+    assert "`human_agent`" in compacto
+    assert "una persona del equipo" in compacto
+    for regla in ("no lo repitas", "no lo contradigas"):
+        assert regla in compacto
+    assert 'reason_code="commercial_exception"' in compacto
+    # Y el tope de contexto de Hermes son 20.000 caracteres.
+    assert len(soul) < 20_000
+
+
+def test_profile_no_habla_de_piloto_ni_de_prueba_privada() -> None:
+    # El SOUL atiende leads reales desde el 20/09, pero seguia redactado como
+    # piloto cerrado. Claude filtraba esas frases; GLM 5.2 se las decia al lead
+    # ("el precio confirmado para esta prueba es USD 49", medido el 25/09 con
+    # el harness sobre casos reales). El documento no puede hablar de si mismo
+    # como prueba, release o piloto: el modelo lo repite.
+    soul = SOUL.read_text(encoding="utf-8")
+    compacto = " ".join(soul.split())
+
+    for prohibido in (
+        "piloto controlado",
+        "prueba privada",
+        "único usuario autorizado",
+        "para esta prueba",
+        "para la prueba",
+        "para esta release",
+        "de esta release",
+        "por esta release",
+        "Esta release",
+        "volver funcional la prueba",
+    ):
+        assert prohibido not in compacto, prohibido
+
+    # `/nuevo` se explica solo si la persona lo menciona (Transparencia
+    # operacional). Como "patron preferido" el modelo lo agregaba sin motivo.
+    preferidos = compacto.split("Patrones preferidos:", 1)[1].split("Patrones prohibidos:", 1)[0]
+    assert "/nuevo" not in preferidos
+    assert "envía exactamente `/nuevo`" in compacto

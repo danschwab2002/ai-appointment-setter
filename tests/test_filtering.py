@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 from bridge.filtering import classify_chatwoot_event
 import pytest
 
@@ -559,3 +562,150 @@ def test_rejects_incoming_messages_without_a_canonical_message_id(
     assert decision.accepted is False
     assert decision.action == "ignore"
     assert decision.reason == "invalid_message_id"
+
+# ---------------------------------------------------------------------------
+# Identidad en modo scoped cuando el payload sale del show de la API y no del
+# webhook. Fixture capturado el 24/09/2026 12:38 UTC (conv 158, inbox 9, WABA).
+# ---------------------------------------------------------------------------
+
+
+def _captured_api_show_conversation_158() -> dict[str, object]:
+    fixture = json.loads(
+        (
+            Path(__file__).parent
+            / "fixtures"
+            / "chatwoot_conversation_api_show_conv_158_20260924.json"
+        ).read_text(encoding="utf-8")
+    )
+    conversation = fixture["conversation"]
+    assert isinstance(conversation, dict)
+    return conversation
+
+
+def _stalled_monitor_payload_from_api_show(
+    conversation: dict[str, object],
+) -> dict[str, object]:
+    """El mismo payload minimo que arma ``_stalled_conversation_candidate``."""
+    messages = conversation["messages"]
+    assert isinstance(messages, list)
+    latest = max(
+        (message for message in messages if message["message_type"] == 0),
+        key=lambda message: message["id"],
+    )
+    metadata = conversation["meta"]
+    assert isinstance(metadata, dict)
+    return {
+        "event": "message_created",
+        "id": latest["id"],
+        "content": latest["content"],
+        "created_at": latest["created_at"],
+        "message_type": "incoming",
+        "private": False,
+        "sender": latest["sender"],
+        "account": {"id": 1},
+        "inbox": {"id": 9},
+        "conversation": {
+            "id": conversation["id"],
+            "inbox_id": 9,
+            "status": "open",
+            "can_reply": True,
+            "labels": list(conversation["labels"]),
+            "meta": {"sender": metadata["sender"], "assignee": None},
+            "contact_inbox": conversation.get("contact_inbox"),
+        },
+        "_stalled_monitor": {"version": 1},
+    }
+
+
+def test_scoped_mode_accepts_the_e164_phone_when_the_api_show_carries_no_other_identity() -> None:
+    """El show de la API no trae contact_inbox y meta.sender.identifier es null.
+
+    Con los remitentes acotados por scope, el monitor de estancadas arma este
+    payload y el clasificador lo descartaba con sender_not_allowed: el
+    24/09/2026 12:33 UTC el monitor recien prendido barrio sano, publico
+    healthy y dejo sin readmitir a un lead que llevaba 13 h esperando. La
+    unica identidad disponible en el show es phone_number en E.164, la misma
+    que el worker ya acepta antes de enviar y que usa el barredor de
+    reactivacion.
+    """
+    conversation = _captured_api_show_conversation_158()
+    assert "contact_inbox" not in conversation
+    metadata = conversation["meta"]
+    assert isinstance(metadata, dict)
+    assert metadata["sender"]["identifier"] is None
+
+    decision = classify_chatwoot_event(
+        _stalled_monitor_payload_from_api_show(conversation),
+        allowed_jid="542916424279@s.whatsapp.net",  # el numero de prueba, no el lead
+        agent_bot_id=1,
+        expected_account_id=1,
+        expected_inbox_id=9,
+        allow_any_scoped_sender=True,
+    )
+
+    assert decision.accepted is True
+    assert decision.reason == "accepted"
+    assert decision.sender_jid == "573000000158@s.whatsapp.net"
+
+
+@pytest.mark.parametrize(
+    "phone_number",
+    ["573000000158", " +573000000158", "+0573000000158", "+57", "", None, 573000000158],
+)
+def test_scoped_mode_phone_fallback_requires_canonical_e164(
+    phone_number: object,
+) -> None:
+    conversation = _captured_api_show_conversation_158()
+    metadata = conversation["meta"]
+    assert isinstance(metadata, dict)
+    metadata["sender"]["phone_number"] = phone_number
+
+    decision = classify_chatwoot_event(
+        _stalled_monitor_payload_from_api_show(conversation),
+        allowed_jid="542916424279@s.whatsapp.net",
+        agent_bot_id=1,
+        expected_account_id=1,
+        expected_inbox_id=9,
+        allow_any_scoped_sender=True,
+    )
+
+    assert decision.accepted is False
+    assert decision.reason == "sender_not_allowed"
+
+
+def test_exact_scope_still_rejects_a_foreign_e164_phone() -> None:
+    """Sin scope acotado el telefono solo vale si es el JID configurado."""
+    conversation = _captured_api_show_conversation_158()
+
+    decision = classify_chatwoot_event(
+        _stalled_monitor_payload_from_api_show(conversation),
+        allowed_jid="542916424279@s.whatsapp.net",
+        agent_bot_id=1,
+        expected_account_id=1,
+        expected_inbox_id=9,
+        allow_any_scoped_sender=False,
+    )
+
+    assert decision.accepted is False
+    assert decision.reason == "sender_not_allowed"
+
+
+def test_scoped_mode_keeps_the_source_id_over_the_phone_when_both_are_present() -> None:
+    """El webhook trae contact_inbox.source_id; el telefono no lo pisa."""
+    conversation = _captured_api_show_conversation_158()
+    payload = _stalled_monitor_payload_from_api_show(conversation)
+    payload_conversation = payload["conversation"]
+    assert isinstance(payload_conversation, dict)
+    payload_conversation["contact_inbox"] = {"source_id": "573000000999"}
+
+    decision = classify_chatwoot_event(
+        payload,
+        allowed_jid="542916424279@s.whatsapp.net",
+        agent_bot_id=1,
+        expected_account_id=1,
+        expected_inbox_id=9,
+        allow_any_scoped_sender=True,
+    )
+
+    assert decision.accepted is True
+    assert decision.sender_jid == "573000000999@s.whatsapp.net"

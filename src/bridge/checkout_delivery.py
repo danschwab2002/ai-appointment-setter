@@ -96,6 +96,7 @@ async def deliver_checkout_issuance_v2(
 
     send_args: dict[str, Any] = {
         "conversation_id": chatwoot_conversation_id,
+        "expected_inbox_id": chatwoot_inbox_id,
         "trigger_message_id": trigger_message_id,
         "delivery_id": delivery_id,
         "content": content,

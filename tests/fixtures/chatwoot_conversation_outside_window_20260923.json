@@ -1,0 +1,175 @@
+{
+  "_fixture": {
+    "captured_at": "2026-09-23T19:36:00Z",
+    "source": "GET /api/v1/accounts/1/conversations/126 y .../messages en produccion (inbox 9, WABA). Es una de las 6 conversaciones que al 23/09 esperaban respuesta con el lead como ultimo en escribir.",
+    "sanitized": "name, phone_number, thumbnail y el texto de los mensajes se reemplazaron por valores de prueba del mismo formato. Los ids, timestamps, message_type, sender.type, can_reply y labels son los reales: es justamente el shape lo que el fixture prueba.",
+    "why": "can_reply=false con status=open es la ventana de 24h de Meta ya cerrada; el ultimo mensaje publico es un inbound del contacto y el ultimo del equipo (message_type=1, sender.type=user) quedo 28 h atras."
+  },
+  "conversation": {
+    "id": 126,
+    "account_id": 1,
+    "inbox_id": 9,
+    "status": "open",
+    "can_reply": false,
+    "labels": [
+      "automation_paused"
+    ],
+    "muted": false,
+    "snoozed_until": null,
+    "waiting_since": 1790090658,
+    "last_activity_at": 1790090674,
+    "meta": {
+      "sender": {
+        "id": 144,
+        "name": "Mau",
+        "email": null,
+        "identifier": null,
+        "phone_number": "+593999000126",
+        "blocked": false,
+        "availability_status": "offline",
+        "additional_attributes": {},
+        "custom_attributes": {}
+      },
+      "assignee": null,
+      "team": null,
+      "channel": "Channel::Whatsapp"
+    }
+  },
+  "messages": {
+    "meta": {},
+    "payload": [
+      {
+        "id": 2074,
+        "conversation_id": 126,
+        "inbox_id": 9,
+        "message_type": 1,
+        "private": false,
+        "content": "Texto de prueba del equipo, 257 caracteres en el original.",
+        "content_type": "text",
+        "content_attributes": {},
+        "created_at": 1790090566,
+        "source_id": null,
+        "status": "sent",
+        "sender": {
+          "id": 4,
+          "name": "Agente humano",
+          "available_name": "Agente humano",
+          "availability_status": "online",
+          "avatar_url": "",
+          "thumbnail": "",
+          "type": "user"
+        }
+      },
+      {
+        "id": 2075,
+        "conversation_id": 126,
+        "inbox_id": 9,
+        "message_type": 2,
+        "private": false,
+        "content": "Conversation was marked as pending",
+        "content_type": "text",
+        "content_attributes": {},
+        "created_at": 1790090569,
+        "source_id": null,
+        "status": "sent"
+      },
+      {
+        "id": 2076,
+        "conversation_id": 126,
+        "inbox_id": 9,
+        "message_type": 0,
+        "private": false,
+        "content": "Texto del lead",
+        "content_type": "text",
+        "content_attributes": {},
+        "created_at": 1790090596,
+        "source_id": "wamid.PRUEBA1",
+        "status": "sent",
+        "sender": {
+          "id": 144,
+          "name": "Mau",
+          "email": null,
+          "identifier": null,
+          "phone_number": "+593999000126",
+          "blocked": false,
+          "thumbnail": "",
+          "additional_attributes": {},
+          "custom_attributes": {},
+          "type": "contact"
+        }
+      },
+      {
+        "id": 2077,
+        "conversation_id": 126,
+        "inbox_id": 9,
+        "message_type": 1,
+        "private": false,
+        "content": "Respuesta de prueba del equipo",
+        "content_type": "text",
+        "content_attributes": {},
+        "created_at": 1790090638,
+        "source_id": null,
+        "status": "sent",
+        "sender": {
+          "id": 4,
+          "name": "Agente humano",
+          "available_name": "Agente humano",
+          "availability_status": "online",
+          "avatar_url": "",
+          "thumbnail": "",
+          "type": "user"
+        }
+      },
+      {
+        "id": 2078,
+        "conversation_id": 126,
+        "inbox_id": 9,
+        "message_type": 0,
+        "private": false,
+        "content": "Otro texto del lead",
+        "content_type": "text",
+        "content_attributes": {},
+        "created_at": 1790090658,
+        "source_id": "wamid.PRUEBA2",
+        "status": "sent",
+        "sender": {
+          "id": 144,
+          "name": "Mau",
+          "email": null,
+          "identifier": null,
+          "phone_number": "+593999000126",
+          "blocked": false,
+          "thumbnail": "",
+          "additional_attributes": {},
+          "custom_attributes": {},
+          "type": "contact"
+        }
+      },
+      {
+        "id": 2079,
+        "conversation_id": 126,
+        "inbox_id": 9,
+        "message_type": 0,
+        "private": false,
+        "content": "Pueden ayudarme con eso?",
+        "content_type": "text",
+        "content_attributes": {},
+        "created_at": 1790090674,
+        "source_id": "wamid.PRUEBA3",
+        "status": "sent",
+        "sender": {
+          "id": 144,
+          "name": "Mau",
+          "email": null,
+          "identifier": null,
+          "phone_number": "+593999000126",
+          "blocked": false,
+          "thumbnail": "",
+          "additional_attributes": {},
+          "custom_attributes": {},
+          "type": "contact"
+        }
+      }
+    ]
+  }
+}

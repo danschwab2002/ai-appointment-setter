@@ -93,6 +93,9 @@ const rows = await db.query(`
       ('begin_precheckout_test_first_touch(text,uuid,text,bigint,bigint)'),
       ('admit_inbound_commercial_case(text,integer,bigint,text)'),
       ('admit_inbound_commercial_case_v2(text,integer,bigint,text)'),
+      ('resume_paused_conversation(bigint,text,text,integer,integer,timestamp with time zone)'),
+      ('claim_conversation_reactivation(bigint,text,text,text,text,bigint,integer,integer,integer,timestamp with time zone)'),
+      ('settle_conversation_reactivation(text,text,bigint,text,timestamp with time zone)'),
       ('apply_chatwoot_inbound_opt_out(bigint,bigint,bigint,bigint,text,timestamp with time zone,text)'),
       ('apply_hotmart_purchase_approved(uuid,text,text,text,text,text,timestamp with time zone)'),
       ('bootstrap_proactive_lead_identity(text,uuid,text,integer,bigint,text,text)'),
@@ -154,7 +157,7 @@ const rows = await db.query(`
       ('list_due_hotmart_abandonment_reevaluations_v2(timestamp with time zone,integer,boolean)'),
       ('reevaluate_hotmart_abandonment_timer(uuid,timestamp with time zone)'),
       ('reevaluate_followup_action(uuid,text,bigint,timestamp with time zone,boolean,text,text,timestamp with time zone,text,boolean,boolean,boolean,boolean,boolean)'),
-      ('request_inbound_human_handoff(uuid,text,text,text,integer,timestamp with time zone)'),
+      ('request_inbound_human_handoff(uuid,text,text,text,integer,timestamp with time zone,text)'),
       ('request_human_handoff(uuid,text,text,text,text,integer,uuid,uuid,text,bigint,timestamp with time zone)'),
       ('reserve_followup_delivery_attempt(uuid,text,bigint,bigint,bigint,text,text,timestamp with time zone)'),
       ('resolve_commercial_ally_runtime_binding(text,text,integer)'),
@@ -200,9 +203,9 @@ const result = rows.rows[0];
 // the one-shot operator disposition adds one, and correlation event context
 // adds one, Johanna checkout issuance V2 adds four, and AI-assisted correlation
 // pre-resolution adds five, and the rolling-safe reason-code contract retains
-// one legacy completion overload.
+// one legacy completion overload, and resuming a paused conversation adds one.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 97) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 100) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const bindingAcl = await db.query(`

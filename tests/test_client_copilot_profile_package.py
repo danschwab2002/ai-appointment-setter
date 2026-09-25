@@ -332,3 +332,43 @@ def test_profile_update_keeps_active_target_when_atomic_exchange_fails(
     assert target.exists()
     for relative, expected_hash in original["sha256"].items():
         assert installer._sha256(target / relative) == expected_hash
+
+
+def test_directory_exchange_is_atomic_on_the_running_platform(tmp_path: Path) -> None:
+    installer = _load_installer()
+    left = tmp_path / "left"
+    right = tmp_path / "right"
+    left.mkdir()
+    right.mkdir()
+    (left / "from-left").write_text("left", encoding="utf-8")
+    (right / "from-right").write_text("right", encoding="utf-8")
+
+    installer._exchange_directories(left, right)
+
+    assert sorted(path.name for path in left.iterdir()) == ["from-right"]
+    assert sorted(path.name for path in right.iterdir()) == ["from-left"]
+
+
+def test_directory_exchange_fails_closed_without_an_atomic_syscall(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    installer = _load_installer()
+    left = tmp_path / "left"
+    right = tmp_path / "right"
+    left.mkdir()
+    right.mkdir()
+    (left / "from-left").write_text("left", encoding="utf-8")
+
+    class _LibcWithoutAtomicRename:
+        def __getattr__(self, name: str) -> Any:
+            raise AttributeError(name)
+
+    monkeypatch.setattr(
+        installer.ctypes, "CDLL", lambda *args, **kwargs: _LibcWithoutAtomicRename()
+    )
+    with pytest.raises(RuntimeError, match="atomic directory exchange is unavailable"):
+        installer._exchange_directories(left, right)
+
+    assert sorted(path.name for path in left.iterdir()) == ["from-left"]
+    assert list(right.iterdir()) == []

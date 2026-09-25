@@ -31,17 +31,31 @@ const catalog = await db.query(`
   select id, tenant_ref, funnel_ref, product_ref, landing_ref, offer_code,
          checkout_base_url, checkout_mode, default_for_inbound, status
   from public.checkout_offer_catalog
+  order by landing_ref
 `);
-if (catalog.rows.length !== 1
-    || catalog.rows[0]?.product_ref !== 'F106691755G'
-    || catalog.rows[0]?.landing_ref !== 'ads-a'
-    || catalog.rows[0]?.offer_code !== 'bxjge6zq'
-    || catalog.rows[0]?.default_for_inbound !== true
-    || catalog.rows[0]?.status !== 'active') {
+// 2026-09-22 (migration 20260922000100): the catalog mirrors the six published
+// landing/offer pairs; ads-a keeps the only default.
+const publishedPairs = await db.query(`
+  select landing_ref, offer_ref
+  from public.johanna_precheckout_landing_offers
+  order by landing_ref
+`);
+const defaults = catalog.rows.filter((row) => row.default_for_inbound);
+if (catalog.rows.length !== 6
+    || publishedPairs.rows.length !== 6
+    || defaults.length !== 1
+    || defaults[0]?.landing_ref !== 'ads-a'
+    || defaults[0]?.offer_code !== 'bxjge6zq'
+    || catalog.rows.some((row) => row.product_ref !== 'F106691755G'
+        || row.status !== 'active'
+        || row.checkout_mode !== 10
+        || row.checkout_base_url !== 'https://pay.hotmart.com/F106691755G')
+    || catalog.rows.some((row, index) => row.landing_ref !== publishedPairs.rows[index]?.landing_ref
+        || row.offer_code !== publishedPairs.rows[index]?.offer_ref)) {
   throw new Error(`catalog authority diverged: ${JSON.stringify(catalog.rows)}`);
 }
 
-const catalogId = catalog.rows[0].id;
+const catalogId = defaults[0].id;
 
 await db.exec(`
   insert into public.inbound_commercial_scope_versions (
@@ -319,12 +333,339 @@ if (precheckoutPrepared?.outcome !== 'reserved'
     || precheckoutDurable?.source_kind !== 'precheckout_request'
     || precheckoutDurable?.source_submission_id !== precheckoutSubmission.id
     || precheckoutDurable?.original_sck !== 'meta|legacy|value'
-    || precheckoutDurable?.checkout_url_final.includes('meta%7Clegacy')
-    || precheckoutDurable?.sck_value !== 'hermes|v1|01K5ABCDEFX2VYB4M6X9CDPTS1') {
+    || !precheckoutDurable?.checkout_url_final.includes(
+         'sck=meta%7Clegacy%7Cvalue%7Chermes%7Cv1%7C01K5ABCDEFX2VYB4M6X9CDPTS1')
+    || precheckoutDurable?.sck_value
+       !== 'meta|legacy|value|hermes|v1|01K5ABCDEFX2VYB4M6X9CDPTS1') {
   throw new Error(`precheckout issuance diverged: ${JSON.stringify({
     prepared: precheckoutPrepared, durable: precheckoutDurable,
   })}`);
 }
+
+// 2026-09-22 (migration 20260922000100): the link carries the offer the lead saw.
+const catalogByOffer = new Map(catalog.rows.map((row) => [row.offer_code, row.id]));
+const resolutionOf = async (issuanceId) => (await db.query(`
+  select offer_resolution, lead_offer_code, offer_catalog_id, purchase_intent_id,
+         source_kind, checkout_url_final
+  from public.checkout_link_issuances
+  where id = $1::uuid
+`, [issuanceId])).rows[0];
+const offerUrl = (offer, ulid, originalSck = null, fbclid = null) => {
+  const sck = originalSck ? `${originalSck}|hermes|v1|${ulid}` : `hermes|v1|${ulid}`;
+  const base = 'https://pay.hotmart.com/F106691755G'
+    + `?off=${offer}&checkoutMode=10&src=hermes&sck=${sck.split('|').join('%7C')}`;
+  return fbclid ? `${base}&fbclid=${fbclid}` : base;
+};
+const insertIntent = async (landing, offer, phone, state, observed, submittedAt) => (await db.query(`
+  insert into public.purchase_intents (
+    tenant_ref, funnel_ref, landing_ref, product_ref, offer_ref,
+    normalized_phone, submitted_at, lifecycle_state,
+    whatsapp_contact_authorized, provisional, provider_observed,
+    activation_authorized
+  ) values (
+    'lancemos', 'psicologajohanna', $1, 'F106691755G', $2,
+    $3, $6::timestamptz, $4, true, false, $5, true
+  ) returning id
+`, [landing, offer, phone, state, observed, submittedAt])).rows[0];
+const attachSubmission = async (intentId, externalId, landing, attribution = null) => {
+  const submission = (await db.query(`
+    insert into public.precheckout_submissions (
+      external_submission_id, contract_version, raw_payload, canonical_payload,
+      provisional, provider_observed, activation_authorized
+    ) values (
+      $1, '1.1.0', $2::jsonb, '{}'::jsonb, false, true, true
+    ) returning id
+  `, [externalId, JSON.stringify({
+    data: { attribution: attribution ?? { sck: `meta|${landing}|value` } },
+  })])).rows[0];
+  await db.query(`
+    insert into public.purchase_intent_submissions (
+      purchase_intent_id, submission_id, ordinal
+    ) values ($1::uuid, $2::uuid, 1)
+  `, [intentId, submission.id]);
+  return submission;
+};
+
+// No intent at all (the inbound case above): the default, and the row says so.
+const inboundResolution = await resolutionOf(prepared.issuance_id);
+if (inboundResolution?.offer_resolution !== 'default_no_intent'
+    || inboundResolution?.lead_offer_code !== null
+    || inboundResolution?.offer_catalog_id !== catalogId) {
+  throw new Error(`inbound resolution diverged: ${JSON.stringify(inboundResolution)}`);
+}
+
+// A lead that came through ads-b gets the ads-b offer, never ads-a.
+const adsBCase = (await db.query(
+  'select * from public.admit_inbound_commercial_case_v2($1,$2,$3,$4)',
+  ['libre-de-ansiedad-inbound', 2, 9111, '12025550131'],
+)).rows[0];
+const adsBIntent = await insertIntent(
+  'ads-b', 'mgbgpp19', '12025550131', 'waiting_for_purchase', true, '2026-09-20T10:00:00Z',
+);
+const adsBSubmission = await attachSubmission(adsBIntent.id, 'checkout-offer-ads-b-1', 'ads-b');
+const adsBUlid = '01K5ABCDEFX2VYB4M6X9CDPTA1';
+const adsBPrepared = (await db.query(`
+  select * from public.reserve_chatwoot_checkout_issuance_v2(
+    $1::uuid, '12025550131', 1, 9, 9111, '511', $2, clock_timestamp()
+  )
+`, [adsBCase.commercial_case_id, adsBUlid])).rows[0];
+const adsBDurable = await resolutionOf(adsBPrepared?.issuance_id);
+if (adsBPrepared?.outcome !== 'reserved'
+    || adsBPrepared?.purchase_intent_id !== adsBIntent.id
+    || adsBPrepared?.source_kind !== 'precheckout_request'
+    || adsBPrepared?.checkout_url_final !== offerUrl('mgbgpp19', adsBUlid, 'meta|ads-b|value')
+    || adsBDurable?.offer_resolution !== 'lead_intent'
+    || adsBDurable?.lead_offer_code !== 'mgbgpp19'
+    || adsBDurable?.offer_catalog_id !== catalogByOffer.get('mgbgpp19')
+    || adsBDurable?.source_kind !== 'precheckout_request') {
+  throw new Error(`ads-b issuance diverged: ${JSON.stringify({
+    prepared: adsBPrepared, durable: adsBDurable, submission: adsBSubmission,
+  })}`);
+}
+// The replay of the same trigger keeps the ads-b URL.
+const adsBReplay = (await db.query(`
+  select * from public.reserve_chatwoot_checkout_issuance_v2(
+    $1::uuid, '12025550131', 1, 9, 9111, '511', '01K5ABCDEFX2VYB4M6X9CDPTA9', clock_timestamp()
+  )
+`, [adsBCase.commercial_case_id])).rows[0];
+if (adsBReplay?.issuance_id !== adsBPrepared.issuance_id
+    || adsBReplay?.checkout_url_final !== offerUrl('mgbgpp19', adsBUlid, 'meta|ads-b|value')) {
+  throw new Error(`ads-b replay diverged: ${JSON.stringify(adsBReplay)}`);
+}
+
+// A real precheckout intent wins over a newer intent fabricated for an inbound link.
+const orgBCase = (await db.query(
+  'select * from public.admit_inbound_commercial_case_v2($1,$2,$3,$4)',
+  ['libre-de-ansiedad-inbound', 2, 9112, '12025550132'],
+)).rows[0];
+await insertIntent(
+  'ads-a', 'bxjge6zq', '12025550132', 'waiting_for_purchase', false, '2026-09-21T10:00:00Z',
+);
+const orgBIntent = await insertIntent(
+  'org-b', 'ecyu87q0', '12025550132', 'waiting_for_purchase', true, '2026-09-19T10:00:00Z',
+);
+await attachSubmission(orgBIntent.id, 'checkout-offer-org-b-1', 'org-b');
+const orgBUlid = '01K5ABCDEFX2VYB4M6X9CDPTA2';
+const orgBPrepared = (await db.query(`
+  select * from public.reserve_chatwoot_checkout_issuance_v2(
+    $1::uuid, '12025550132', 1, 9, 9112, '512', $2, clock_timestamp()
+  )
+`, [orgBCase.commercial_case_id, orgBUlid])).rows[0];
+const orgBDurable = await resolutionOf(orgBPrepared?.issuance_id);
+if (orgBPrepared?.outcome !== 'reserved'
+    || orgBPrepared?.purchase_intent_id !== orgBIntent.id
+    || orgBPrepared?.checkout_url_final !== offerUrl('ecyu87q0', orgBUlid, 'meta|org-b|value')
+    || orgBDurable?.offer_resolution !== 'lead_intent'
+    || orgBDurable?.offer_catalog_id !== catalogByOffer.get('ecyu87q0')) {
+  throw new Error(`org-b precedence diverged: ${JSON.stringify({
+    prepared: orgBPrepared, durable: orgBDurable,
+  })}`);
+}
+
+// An intent whose offer is not in the catalog falls back to the default and says so.
+const unknownCase = (await db.query(
+  'select * from public.admit_inbound_commercial_case_v2($1,$2,$3,$4)',
+  ['libre-de-ansiedad-inbound', 2, 9113, '12025550133'],
+)).rows[0];
+const unknownIntent = await insertIntent(
+  'ads-z', 'zzzzzzzz', '12025550133', 'waiting_for_purchase', true, '2026-09-20T10:00:00Z',
+);
+await attachSubmission(unknownIntent.id, 'checkout-offer-ads-z-1', 'ads-z');
+const unknownUlid = '01K5ABCDEFX2VYB4M6X9CDPTA3';
+const unknownPrepared = (await db.query(`
+  select * from public.reserve_chatwoot_checkout_issuance_v2(
+    $1::uuid, '12025550133', 1, 9, 9113, '513', $2, clock_timestamp()
+  )
+`, [unknownCase.commercial_case_id, unknownUlid])).rows[0];
+const unknownDurable = await resolutionOf(unknownPrepared?.issuance_id);
+const unknownIntentBehind = (await db.query(`
+  select landing_ref, offer_ref from public.purchase_intents where id = $1::uuid
+`, [unknownPrepared?.purchase_intent_id])).rows[0];
+if (unknownPrepared?.outcome !== 'reserved'
+    || unknownPrepared?.purchase_intent_id === unknownIntent.id
+    || unknownPrepared?.checkout_url_final !== offerUrl('bxjge6zq', unknownUlid, 'meta|ads-z|value')
+    || unknownDurable?.offer_resolution !== 'default_offer_not_in_catalog'
+    || unknownDurable?.lead_offer_code !== 'zzzzzzzz'
+    || unknownDurable?.offer_catalog_id !== catalogId
+    || unknownIntentBehind?.landing_ref !== 'ads-a'
+    || unknownIntentBehind?.offer_ref !== 'bxjge6zq') {
+  throw new Error(`unknown-offer fallback diverged: ${JSON.stringify({
+    prepared: unknownPrepared, durable: unknownDurable, intent: unknownIntentBehind,
+  })}`);
+}
+
+// A purchase through any offer of the product blocks a new link.
+const boughtCase = (await db.query(
+  'select * from public.admit_inbound_commercial_case_v2($1,$2,$3,$4)',
+  ['libre-de-ansiedad-inbound', 2, 9114, '12025550134'],
+)).rows[0];
+await insertIntent(
+  'ads-c', 's1qfxm7m', '12025550134', 'purchased', true, '2026-09-18T10:00:00Z',
+);
+await insertIntent(
+  'ads-a', 'bxjge6zq', '12025550134', 'waiting_for_purchase', true, '2026-09-21T10:00:00Z',
+);
+const boughtPrepared = (await db.query(`
+  select * from public.reserve_chatwoot_checkout_issuance_v2(
+    $1::uuid, '12025550134', 1, 9, 9114, '514', '01K5ABCDEFX2VYB4M6X9CDPTA4', clock_timestamp()
+  )
+`, [boughtCase.commercial_case_id])).rows[0];
+if (boughtPrepared?.outcome !== 'purchase_already_approved'
+    || boughtPrepared?.issuance_id !== null
+    || boughtPrepared?.checkout_url_final !== null) {
+  throw new Error(`known purchase through another offer was not blocked: ${JSON.stringify(boughtPrepared)}`);
+}
+
+// 2026-09-22 (migration 20260922000200): the link carries the lead's fbclid and
+// keeps the ad's sck in front of the hermes marker.
+const attributionOf = async (issuanceId) => (await db.query(`
+  select attribution_resolution, dropped_unsafe_fields, sck_value, checkout_url_final
+  from public.checkout_link_issuances
+  where id = $1::uuid
+`, [issuanceId])).rows[0];
+
+const issueFor = async (phone, conv, trigger, ulid) => {
+  const admitted = (await db.query(
+    'select * from public.admit_inbound_commercial_case_v2($1,$2,$3,$4)',
+    ['libre-de-ansiedad-inbound', 2, conv, phone],
+  )).rows[0];
+  return (await db.query(`
+    select * from public.reserve_chatwoot_checkout_issuance_v2(
+      $1::uuid, $2, 1, 9, $3, $4, $5, clock_timestamp()
+    )
+  `, [admitted.commercial_case_id, phone, conv, trigger, ulid])).rows[0];
+};
+
+// Real Johanna shape, measured 2026-09-22: fb.paid.<18 digits> plus a fbclid.
+const fullPhone = '12025550140';
+const fullUlid = '01K5ABCDEFX2VYB4M6X9CDPTB1';
+const fullSck = 'fb.paid.120210000000000000';
+const fullFbclid = 'IwAR0abcDEF_ghi-JKL.mno123';
+const fullIntent = await insertIntent(
+  'ads-b', 'mgbgpp19', fullPhone, 'waiting_for_purchase', true, '2026-09-22T10:00:00Z',
+);
+await attachSubmission(fullIntent.id, 'attribution-full-1', 'ads-b', {
+  sck: fullSck, fbclid: fullFbclid,
+});
+const fullPrepared = await issueFor(fullPhone, 9120, '520', fullUlid);
+const fullDurable = await attributionOf(fullPrepared.issuance_id);
+if (fullPrepared?.outcome !== 'reserved'
+    || fullDurable?.attribution_resolution !== 'full'
+    || fullDurable?.dropped_unsafe_fields !== null
+    || fullDurable?.sck_value !== `${fullSck}|hermes|v1|${fullUlid}`
+    || fullDurable?.checkout_url_final !== offerUrl('mgbgpp19', fullUlid, fullSck, fullFbclid)) {
+  throw new Error(`full attribution diverged: ${JSON.stringify({
+    prepared: fullPrepared, durable: fullDurable,
+  })}`);
+}
+
+// A lead with a fbclid but no ad sck: only the marker travels in the sck.
+const fbOnlyPhone = '12025550141';
+const fbOnlyUlid = '01K5ABCDEFX2VYB4M6X9CDPTB2';
+const fbOnlyIntent = await insertIntent(
+  'ads-b', 'mgbgpp19', fbOnlyPhone, 'waiting_for_purchase', true, '2026-09-22T10:00:00Z',
+);
+await attachSubmission(fbOnlyIntent.id, 'attribution-fbclid-1', 'ads-b', {
+  fbclid: 'IwAR1onlyclickid',
+});
+const fbOnlyPrepared = await issueFor(fbOnlyPhone, 9121, '521', fbOnlyUlid);
+const fbOnlyDurable = await attributionOf(fbOnlyPrepared.issuance_id);
+if (fbOnlyDurable?.attribution_resolution !== 'fbclid_only'
+    || fbOnlyDurable?.sck_value !== `hermes|v1|${fbOnlyUlid}`
+    || fbOnlyDurable?.checkout_url_final
+       !== offerUrl('mgbgpp19', fbOnlyUlid, null, 'IwAR1onlyclickid')) {
+  throw new Error(`fbclid-only attribution diverged: ${JSON.stringify(fbOnlyDurable)}`);
+}
+
+// An ad sck that would break the query string is dropped, and the row says so.
+const unsafePhone = '12025550142';
+const unsafeUlid = '01K5ABCDEFX2VYB4M6X9CDPTB3';
+const unsafeIntent = await insertIntent(
+  'ads-b', 'mgbgpp19', unsafePhone, 'waiting_for_purchase', true, '2026-09-22T10:00:00Z',
+);
+await attachSubmission(unsafeIntent.id, 'attribution-unsafe-1', 'ads-b', {
+  sck: 'Instagram_Reels_Publico Guardado_L2.26 | Inmersion',
+  fbclid: 'has spaces & ampersand',
+});
+const unsafePrepared = await issueFor(unsafePhone, 9122, '522', unsafeUlid);
+const unsafeDurable = await attributionOf(unsafePrepared.issuance_id);
+if (unsafeDurable?.attribution_resolution !== 'marker_only'
+    || unsafeDurable?.dropped_unsafe_fields !== 'sck,fbclid'
+    || unsafeDurable?.sck_value !== `hermes|v1|${unsafeUlid}`
+    || unsafeDurable?.checkout_url_final !== offerUrl('mgbgpp19', unsafeUlid)
+    || unsafeDurable?.checkout_url_final.includes(' ')) {
+  throw new Error(`unsafe attribution was not dropped: ${JSON.stringify(unsafeDurable)}`);
+}
+
+// The purchase webhook still finds the issuance when the ad's sck travels in
+// front of the marker: this is what lets the sale be counted as recovered.
+const compositeEvent = (await db.query(`
+  insert into public.webhook_events (
+    source, external_event_id, event_type, payload, processing_status
+  ) values (
+    'hotmart', 'checkout-attribution-purchase-1', 'PURCHASE_APPROVED',
+    '{}'::jsonb, 'received'
+  ) returning id
+`)).rows[0];
+const compositeMatch = (await db.query(`
+  select * from public.correlate_hotmart_checkout_issuance_v2(
+    $1::uuid, $2, clock_timestamp()
+  )
+`, [compositeEvent.id, `${fullSck}|hermes|v1|${fullUlid}`])).rows[0];
+if (compositeMatch?.outcome !== 'matched'
+    || compositeMatch?.issuance_id !== fullPrepared.issuance_id) {
+  throw new Error(`composite sck correlation diverged: ${JSON.stringify(compositeMatch)}`);
+}
+
+// A sck that does not end in a hermes marker is still rejected up front.
+const strayEvent = (await db.query(`
+  insert into public.webhook_events (
+    source, external_event_id, event_type, payload, processing_status
+  ) values (
+    'hotmart', 'checkout-attribution-purchase-2', 'PURCHASE_APPROVED',
+    '{}'::jsonb, 'received'
+  ) returning id
+`)).rows[0];
+for (const stray of [`hermes|v1|${fullUlid}|tail`, 'fb.paid.120210000000000000', 'hermes|v1|nope']) {
+  const rejected = (await db.query(`
+    select * from public.correlate_hotmart_checkout_issuance_v2(
+      $1::uuid, $2, clock_timestamp()
+    )
+  `, [strayEvent.id, stray])).rows[0];
+  if (rejected?.outcome !== 'invalid_hermes_sck') {
+    throw new Error(`stray sck was not rejected: ${JSON.stringify({ stray, rejected })}`);
+  }
+}
+
+// The attribution columns are immutable too.
+await db.exec('begin');
+let attributionLocked = false;
+try {
+  await db.query(`
+    update public.checkout_link_issuances
+    set attribution_resolution = 'marker_only'
+    where id = $1::uuid
+  `, [fullPrepared.issuance_id]);
+} catch {
+  attributionLocked = true;
+}
+await db.exec('rollback');
+if (!attributionLocked) throw new Error('attribution_resolution is mutable');
+
+// The resolution columns are immutable like the rest of the row.
+await db.exec('begin');
+let resolutionLocked = false;
+try {
+  await db.query(`
+    update public.checkout_link_issuances
+    set offer_resolution = 'default_no_intent'
+    where id = $1::uuid
+  `, [adsBPrepared.issuance_id]);
+} catch {
+  resolutionLocked = true;
+}
+await db.exec('rollback');
+if (!resolutionLocked) throw new Error('offer_resolution is mutable');
 
 await db.exec('begin');
 await db.query(`

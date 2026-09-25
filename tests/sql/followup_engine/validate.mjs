@@ -1644,7 +1644,10 @@ await db.exec(`
     date_trunc('day', now()) - interval '1 day'
   );
 `);
-const deferAt = await db.query(`select date_trunc('day', now()) + interval '8 hours' as value`);
+// La politica 'cart-recovery-late-window' declara timezone 'UTC', y el motor calcula la
+// proxima ventana en la timezone de la politica. Las expectativas de este bloque se calculan
+// en esa misma timezone y no en la de la sesion, para que el resultado no dependa de TZ.
+const deferAt = await db.query(`select (date_trunc('day', now() at time zone 'UTC') + interval '8 hours') at time zone 'UTC' as value`);
 const deferredPlan = await db.query(`
   select * from public.plan_cart_recovery(
     '00000000-0000-0000-0000-000000000082',
@@ -1682,7 +1685,7 @@ const deferredState = await db.query(`
 `, [deferredAction.id]);
 if (deferredState.rows[0].action_status !== 'deferred' || deferredState.rows[0].lease_owner !== null) throw new Error('deferred action retained terminal state or lease');
 if (deferredState.rows[0].sequence_status !== 'active' || deferredState.rows[0].case_status !== 'grace_period') throw new Error('defer changed aggregate business state');
-const expectedDeferredDue = await db.query(`select date_trunc('day', $1::timestamptz) + interval '23 hours' as value`, [deferAt.rows[0].value]);
+const expectedDeferredDue = await db.query(`select (date_trunc('day', $1::timestamptz at time zone 'UTC') + interval '23 hours') at time zone 'UTC' as value`, [deferAt.rows[0].value]);
 if (new Date(deferredState.rows[0].due_at).getTime() !== new Date(expectedDeferredDue.rows[0].value).getTime()) throw new Error('defer did not select next business window');
 console.log('business_window_defer=OK');
 
@@ -1707,7 +1710,7 @@ await db.query(`
   join public.followup_sequences fs on fs.recovery_case_id=rc.id
   where rc.id=$2
 `, [deferAt.rows[0].value, deferredPlan.rows[0].recovery_case_id]);
-const noReplyAt = await db.query(`select date_trunc('day', $1::timestamptz) + interval '23 hours 30 minutes' as value`, [deferAt.rows[0].value]);
+const noReplyAt = await db.query(`select (date_trunc('day', $1::timestamptz at time zone 'UTC') + interval '23 hours 30 minutes') at time zone 'UTC' as value`, [deferAt.rows[0].value]);
 const noReplyClaims = await db.query(`
   select * from public.claim_due_followup_actions(
     'no-reply-worker', $1, interval '5 minutes', 100

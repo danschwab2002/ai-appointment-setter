@@ -948,6 +948,78 @@ def test_hermes_sck_purchase_uses_issuance_admission_without_identity_fallback(
     assert "normalized_phone" not in json.dumps(request_body)
 
 
+def test_purchase_with_the_ad_sck_in_front_still_correlates(
+    tmp_path,
+) -> None:
+    issuance_id = "00000000-0000-0000-0000-000000000301"
+    intent_id = "00000000-0000-0000-0000-000000000302"
+    case_id = "00000000-0000-0000-0000-000000000303"
+    event_row_id = "00000000-0000-0000-0000-000000000304"
+    transport = _MockSupabaseTransport(
+        status_code=200,
+        response_body=[{
+            "admission_outcome": "inserted",
+            "webhook_event_id": event_row_id,
+            "correlation_outcome": "matched",
+            "issuance_id": issuance_id,
+            "purchase_intent_id": intent_id,
+            "commercial_case_id": case_id,
+        }],
+    )
+    import bridge.supabase as supabase_mod
+
+    original_init = supabase_mod.SupabaseClient.__init__
+
+    def _patched_init(self, **kwargs):
+        kwargs["transport"] = transport
+        original_init(self, **kwargs)
+
+    payload = copy.deepcopy(PURCHASE_APPROVED_PAYLOAD)
+    data = payload["data"]
+    assert isinstance(data, dict)
+    product = data["product"]
+    purchase = data["purchase"]
+    assert isinstance(product, dict)
+    assert isinstance(purchase, dict)
+    product["id"] = 8104005
+    product["ucode"] = "F106691755G"
+    purchase["offer"] = {"code": "bxjge6zq"}
+    # 2026-09-22 (migration 20260922000200): the ad's sck now travels in front
+    # of the marker. Before the fix app.py only looked at startswith("hermes|"),
+    # so this sale was silently ignored instead of being counted as recovered.
+    purchase["origin"] = {
+        "sck": "fb.paid.120210000000000000|hermes|v1|01K5ABCDEFX2VYB4M6X9CDPTZR"
+    }
+
+    supabase_mod.SupabaseClient.__init__ = _patched_init
+    try:
+        app = create_app(_hotmart_settings(
+            capture_dir=tmp_path,
+            supabase_base_url="https://fake-supabase.supabase.co",
+            supabase_service_role_key="fake-service-role-key",
+        ))
+        response = _post_hotmart(app, json.dumps(payload).encode())
+    finally:
+        supabase_mod.SupabaseClient.__init__ = original_init
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "status": "received",
+        "event_id": "purchase-event-001",
+    }
+    assert len(transport.requests) == 1
+    request = transport.requests[0]
+    assert request.url.path == (
+        "/rest/v1/rpc/admit_and_correlate_hotmart_checkout_issuance_v2"
+    )
+    request_body = json.loads(request.content)
+    assert request_body["p_sck_value"] == (
+        "fb.paid.120210000000000000|hermes|v1|01K5ABCDEFX2VYB4M6X9CDPTZR"
+    )
+    assert "normalized_email" not in json.dumps(request_body)
+    assert "normalized_phone" not in json.dumps(request_body)
+
+
 def test_hermes_sck_purchase_already_approved_is_durable_conflict(tmp_path) -> None:
     transport = _MockSupabaseTransport(
         status_code=200,

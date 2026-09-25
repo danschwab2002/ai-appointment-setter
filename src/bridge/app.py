@@ -37,6 +37,8 @@ from bridge.chatwoot import (
     ChatwootProtocolError,
     ChatwootReplyDeliveryUnknownError,
     StalledChatwootConversation,
+    TeamMessageTimestampError,
+    seconds_since_last_team_message,
 )
 from bridge.chatwoot_inbox import (
     ChatwootStalledConversationMonitor,
@@ -44,6 +46,7 @@ from bridge.chatwoot_inbox import (
     DurableChatwootInbox,
     RetryableChatwootWorkError,
 )
+from bridge.reactivation import ConversationReactivationSweeper
 from bridge.commercial_ally import CommercialAllyConfig, JOHANNA_COMMERCIAL_ALLY
 from bridge.checkout_delivery import CheckoutDeliveryError, deliver_checkout_issuance_v2
 from bridge.filtering import EventDecision, classify_chatwoot_event
@@ -108,6 +111,8 @@ from bridge.supabase import (
     PilotBoundaryConfig,
     SupabaseClient,
     SupabaseError,
+    SupabasePermanentError,
+    sck_carries_hermes_issuance,
 )
 from bridge.worker import (
     DurableDispatcher,
@@ -135,6 +140,12 @@ JOHANNA_PAYMENT_FAILURE_COPY_VERSION = "johanna-payment-failure-one-shot-v1"
 JOHANNA_ABANDONMENT_BODY_LIMIT_BYTES = 8 * 1024
 PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     "chatwoot_human_pause_enabled",
+    # Levantar la pausa no depende del aliado: lo unico especifico es el id del
+    # macro de Chatwoot, que ya es configuracion por runtime.
+    "conversation_resume_enabled",
+    # Reactivar tampoco depende del aliado: lo especifico es el nombre de la
+    # plantilla aprobada, que ya es configuracion por runtime.
+    "conversation_reactivation_enabled",
     "hermes_shadow_enabled",
     "automated_replies_enabled",
     "reply_splitter_enabled",
@@ -297,6 +308,19 @@ class Settings:
     chatwoot_pause_macro_id: int | None = None
     chatwoot_human_pause_enabled: bool = False
     chatwoot_opt_out_macro_id: int | None = None
+    chatwoot_resume_macro_id: int | None = None
+    conversation_resume_enabled: bool = False
+    conversation_resume_quiet_seconds: int = 28800
+    conversation_resume_max: int = 3
+    conversation_reactivation_enabled: bool = False
+    conversation_reactivation_template_name: str | None = None
+    conversation_reactivation_template_language: str | None = None
+    conversation_reactivation_interval_seconds: float = 900.0
+    conversation_reactivation_min_age_seconds: int = 86_400
+    conversation_reactivation_max_age_seconds: int = 2_592_000
+    conversation_reactivation_max: int = 1
+    conversation_reactivation_max_sends_per_scan: int = 10
+    conversation_reactivation_max_pages: int = 5
     hermes_shadow_enabled: bool = False
     hermes_api_base_url: str | None = None
     hermes_api_key: str | None = None
@@ -811,6 +835,55 @@ class Settings:
         chatwoot_opt_out_macro_id = (
             int(opt_out_macro_id_raw) if opt_out_macro_id_raw else None
         )
+        resume_macro_id_raw = os.environ.get(
+            "CHATWOOT_RESUME_MACRO_ID", ""
+        ).strip()
+        chatwoot_resume_macro_id = (
+            int(resume_macro_id_raw) if resume_macro_id_raw else None
+        )
+        conversation_resume_enabled = (
+            os.environ.get("CONVERSATION_RESUME_ENABLED", "false").lower()
+            == "true"
+        )
+        conversation_resume_quiet_seconds = int(
+            os.environ.get("CONVERSATION_RESUME_QUIET_SECONDS", "28800")
+        )
+        conversation_resume_max = int(
+            os.environ.get("CONVERSATION_RESUME_MAX", "3")
+        )
+        conversation_reactivation_enabled = (
+            os.environ.get("CONVERSATION_REACTIVATION_ENABLED", "false").lower()
+            == "true"
+        )
+        conversation_reactivation_template_name = (
+            os.environ.get("WABA_REACTIVATION_TEMPLATE_NAME", "").strip() or None
+        )
+        conversation_reactivation_template_language = (
+            os.environ.get("WABA_REACTIVATION_TEMPLATE_LANGUAGE", "").strip()
+            or None
+        )
+        conversation_reactivation_interval_seconds = float(
+            os.environ.get("CONVERSATION_REACTIVATION_INTERVAL_SECONDS", "900")
+        )
+        conversation_reactivation_min_age_seconds = int(
+            os.environ.get("CONVERSATION_REACTIVATION_MIN_AGE_SECONDS", "86400")
+        )
+        conversation_reactivation_max_age_seconds = int(
+            os.environ.get(
+                "CONVERSATION_REACTIVATION_MAX_AGE_SECONDS", "2592000"
+            )
+        )
+        conversation_reactivation_max = int(
+            os.environ.get("CONVERSATION_REACTIVATION_MAX", "1")
+        )
+        conversation_reactivation_max_sends_per_scan = int(
+            os.environ.get(
+                "CONVERSATION_REACTIVATION_MAX_SENDS_PER_SCAN", "10"
+            )
+        )
+        conversation_reactivation_max_pages = int(
+            os.environ.get("CONVERSATION_REACTIVATION_MAX_PAGES", "5")
+        )
         opt_out_projection_worker_id = (
             os.getenv("CHATWOOT_OPT_OUT_PROJECTION_WORKER_ID", "").strip() or None
         )
@@ -911,6 +984,33 @@ class Settings:
             chatwoot_pause_macro_id=int(os.environ["CHATWOOT_PAUSE_MACRO_ID"]),
             chatwoot_human_pause_enabled=chatwoot_human_pause_enabled,
             chatwoot_opt_out_macro_id=chatwoot_opt_out_macro_id,
+            chatwoot_resume_macro_id=chatwoot_resume_macro_id,
+            conversation_resume_enabled=conversation_resume_enabled,
+            conversation_resume_quiet_seconds=conversation_resume_quiet_seconds,
+            conversation_resume_max=conversation_resume_max,
+            conversation_reactivation_enabled=conversation_reactivation_enabled,
+            conversation_reactivation_template_name=(
+                conversation_reactivation_template_name
+            ),
+            conversation_reactivation_template_language=(
+                conversation_reactivation_template_language
+            ),
+            conversation_reactivation_interval_seconds=(
+                conversation_reactivation_interval_seconds
+            ),
+            conversation_reactivation_min_age_seconds=(
+                conversation_reactivation_min_age_seconds
+            ),
+            conversation_reactivation_max_age_seconds=(
+                conversation_reactivation_max_age_seconds
+            ),
+            conversation_reactivation_max=conversation_reactivation_max,
+            conversation_reactivation_max_sends_per_scan=(
+                conversation_reactivation_max_sends_per_scan
+            ),
+            conversation_reactivation_max_pages=(
+                conversation_reactivation_max_pages
+            ),
             hermes_shadow_enabled=shadow_enabled,
             hermes_api_base_url=hermes_api_base_url,
             hermes_api_key=hermes_api_key,
@@ -1244,7 +1344,10 @@ def _shadow_context(payload: dict[str, object]) -> dict[str, object] | None:
 
 
 def _normalize_chatwoot_history(
-    messages: list[dict[str, object]], *, agent_bot_id: int
+    messages: list[dict[str, object]],
+    *,
+    agent_bot_id: int,
+    include_team_messages: bool = False,
 ) -> list[dict[str, str]]:
     normalized: list[dict[str, str]] = []
     for message in messages:
@@ -1266,6 +1369,15 @@ def _normalize_chatwoot_history(
             and sender.get("id") == agent_bot_id
         ):
             actor = "assistant"
+        elif (
+            include_team_messages
+            and message.get("message_type") in (1, 3)
+            and sender.get("type") == "user"
+        ):
+            # Lo que escribio una persona del equipo. Va con actor propio: si
+            # entrara como "assistant", el agente sostendria como propias las
+            # promesas de un humano.
+            actor = "human_agent"
         if actor is not None:
             normalized_message = {"actor": actor, "text": content.strip()}
             if actor == "prospect" and content == CHATWOOT_CONVERSATION_RESET_COMMAND:
@@ -1282,6 +1394,93 @@ def _normalize_chatwoot_history(
                 normalized_message["_created_at"] = str(created_at)
             normalized.append(normalized_message)
     return normalized
+
+
+async def _resume_paused_conversation(
+    *,
+    control_client: ChatwootClient,
+    supabase: object,
+    settings: "Settings",
+    conversation_id: int,
+    message_id: int,
+) -> bool:
+    """Levanta la pausa de una conversacion que el equipo dejo de atender.
+
+    Devuelve True solo cuando la conversacion quedo efectivamente admisible en
+    las dos capas: la durable de Supabase (``human_takeover``) y la etiqueta de
+    Chatwoot, que es la que gobierna el envio. Cualquier duda devuelve False y
+    la conversacion se queda con las personas.
+    """
+    if settings.chatwoot_inbox_id is None:
+        return False
+    try:
+        snapshot = await control_client.get_canonical_conversation_snapshot(
+            conversation_id=conversation_id,
+            expected_inbox_id=settings.chatwoot_inbox_id,
+            anchor_message_id=None,
+        )
+    except (ChatwootProtocolError, httpx.HTTPError):
+        return False
+    if snapshot.status != "open" or not snapshot.can_reply:
+        return False
+    if snapshot.human_assignee_present:
+        return False
+    if "automation_opted_out" in snapshot.labels:
+        return False
+    if "automation_paused" not in snapshot.labels:
+        return False
+    try:
+        messages = await control_client.get_conversation_messages(
+            conversation_id=conversation_id,
+            limit=100,
+        )
+        quiet_seconds = seconds_since_last_team_message(
+            messages, now_epoch=int(time.time())
+        )
+    except (TeamMessageTimestampError, ChatwootProtocolError, httpx.HTTPError):
+        return False
+    if (
+        quiet_seconds is not None
+        and quiet_seconds < settings.conversation_resume_quiet_seconds
+    ):
+        logger.info(
+            "conversation_resume_skipped reason=team_recently_active quiet=%s",
+            quiet_seconds,
+        )
+        return False
+    try:
+        result = await supabase.resume_paused_conversation(
+            external_conversation_id=conversation_id,
+            command_key=f"resume:{conversation_id}:{message_id}",
+            reason_code="inbound_after_quiet_period",
+            quiet_seconds=quiet_seconds,
+            max_resumes=settings.conversation_resume_max,
+        )
+    except SupabaseError:
+        return False
+    if not result.resumed:
+        logger.info("conversation_resume_skipped outcome=%s", result.outcome)
+        return False
+    try:
+        await control_client.clear_conversation_label(
+            conversation_id=conversation_id,
+            label="automation_paused",
+        )
+    except (ChatwootProtocolError, httpx.HTTPError):
+        # La capa durable ya quedo admisible, pero sin sacar la etiqueta el
+        # envio se bloquea igual: no se reintenta la admision.
+        logger.warning(
+            "conversation_resume_label_not_cleared conversation=%s",
+            conversation_id,
+        )
+        return False
+    logger.info(
+        "conversation_resumed conversation=%s outcome=%s quiet_seconds=%s",
+        conversation_id,
+        result.outcome,
+        quiet_seconds,
+    )
+    return True
 
 
 def _is_conversation_reset_message(payload: dict[str, object]) -> bool:
@@ -1628,6 +1827,38 @@ def create_app(
         or settings.chatwoot_stalled_max_recovery_admissions < 1
     ):
         raise ValueError("invalid stalled conversation monitor configuration")
+    if (
+        not math.isfinite(settings.conversation_reactivation_interval_seconds)
+        or settings.conversation_reactivation_interval_seconds <= 0
+        or settings.conversation_reactivation_min_age_seconds < 0
+        or settings.conversation_reactivation_max_age_seconds
+        < settings.conversation_reactivation_min_age_seconds
+        or settings.conversation_reactivation_max < 1
+        or settings.conversation_reactivation_max_sends_per_scan < 1
+        or not 1 <= settings.conversation_reactivation_max_pages <= 20
+    ):
+        raise ValueError("invalid conversation reactivation configuration")
+    # Mandar una plantilla de marketing es un efecto externo irreversible:
+    # sin plantilla declarada, sin inbox canonico y sin el AgentBot que la
+    # emite, el barredor no arranca en vez de arrancar a medias.
+    if settings.conversation_reactivation_enabled and (
+        settings.conversation_reactivation_template_name is None
+        or settings.chatwoot_account_id is None
+        or settings.chatwoot_account_id < 1
+        or settings.chatwoot_inbox_id is None
+        or settings.chatwoot_inbox_id < 1
+        or settings.chatwoot_agent_bot_access_token is None
+        or settings.agent_bot_id is None
+        or (
+            settings.allowed_jid is None
+            and not settings.chatwoot_scoped_inbound_senders_enabled
+        )
+    ):
+        raise ValueError(
+            "CONVERSATION_REACTIVATION_ENABLED requires WABA_REACTIVATION_"
+            "TEMPLATE_NAME, canonical Chatwoot ids, the agent bot and a "
+            "bounded sender scope"
+        )
     if settings.chatwoot_stalled_monitor_enabled and (
         not settings.chatwoot_cut_b_admission_enabled
         or not settings.chatwoot_cut_b_agent_enabled
@@ -1717,6 +1948,7 @@ def create_app(
             agent_bot_id=settings.agent_bot_id,
             reply_dir=settings.reply_dir,
             pause_macro_id=settings.chatwoot_pause_macro_id,
+            resume_macro_id=settings.chatwoot_resume_macro_id,
             opt_out_macro_id=settings.chatwoot_opt_out_macro_id,
         )
     configured_reply_splitter = reply_splitter
@@ -2371,6 +2603,9 @@ def create_app(
 
     chatwoot_worker: ChatwootWorker | None = None
     chatwoot_stalled_monitor: ChatwootStalledConversationMonitor | None = None
+    conversation_reactivation_sweeper: ConversationReactivationSweeper | None = (
+        None
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
@@ -2398,9 +2633,15 @@ def create_app(
                 await chatwoot_worker.start()
             if chatwoot_stalled_monitor is not None:
                 await chatwoot_stalled_monitor.start()
+            if conversation_reactivation_sweeper is not None:
+                await conversation_reactivation_sweeper.start()
             yield
         finally:
             for worker_name, worker in (
+                (
+                    "conversation_reactivation_sweeper",
+                    conversation_reactivation_sweeper,
+                ),
                 ("chatwoot_stalled_monitor", chatwoot_stalled_monitor),
                 ("chatwoot", chatwoot_worker),
                 ("opt_out_projection", opt_out_projection_worker),
@@ -2441,6 +2682,9 @@ def create_app(
     app.state.chatwoot_inbox = chatwoot_inbox
     app.state.chatwoot_worker = chatwoot_worker
     app.state.chatwoot_stalled_monitor = chatwoot_stalled_monitor
+    app.state.conversation_reactivation_sweeper = (
+        conversation_reactivation_sweeper
+    )
 
     async def run_shadow_with_canonical_history(
         *,
@@ -2484,6 +2728,7 @@ def create_app(
         normalized = _normalize_chatwoot_history(
             history,
             agent_bot_id=settings.agent_bot_id,
+            include_team_messages=settings.conversation_resume_enabled,
         )
         current_index = next(
             (
@@ -2914,6 +3159,64 @@ def create_app(
                 return authorization.outcome in {"created", "already_exists"}
 
             durable_reply_authorizer = reauthorize_durable_reply
+            if settings.conversation_resume_enabled and isinstance(
+                control_client, ChatwootClient
+            ):
+                # La pausa no es terminal: si el equipo dejo de atender esta
+                # conversacion, se levanta.
+                #
+                # No se condiciona a que la admision haya dado 'blocked'. La
+                # pausa tiene dos capas que se escriben por caminos distintos:
+                # la etiqueta de Chatwoot la pone cualquier saliente de un
+                # `user`, y human_takeover solo lo pone una derivacion. Medido
+                # el 2026-09-23 sobre el inbox 9: de 27 conversaciones con la
+                # etiqueta, 8 no tenian human_takeover (3 de ellas abiertas:
+                # 114, 126 y 133). Para esas ocho la admision pasa, el agente
+                # corre, y recien despues la guarda de pre-envio lo frena por
+                # la etiqueta. Mirar solo la admision las dejaba afuera.
+                #
+                # `message_id` se toma del payload ACA, no se hereda: en este
+                # camino ninguna rama anterior lo asigna (las que lo hacen,
+                # el reset y la planificacion de descuento, terminan en
+                # return), y como la funcion lo asigna mas abajo Python lo
+                # trata como local. Leerlo sin asignar fue el
+                # UnboundLocalError que el 2026-09-23 dejo sin respuesta a
+                # los cinco mensajes entrantes de la noche (conv 126, 143,
+                # 158 y 63). Es la clave de idempotencia de la reanudacion
+                # (`resume:<conversation_id>:<message_id>`).
+                resume_message_id = payload.get("id")
+                if (
+                    not isinstance(resume_message_id, int)
+                    or isinstance(resume_message_id, bool)
+                    or resume_message_id < 1
+                ):
+                    raise RuntimeError("chatwoot_resume_trigger_message_id_invalid")
+                resumed = await _resume_paused_conversation(
+                    control_client=control_client,
+                    supabase=shared_supabase,
+                    settings=settings,
+                    conversation_id=conversation_id,
+                    message_id=resume_message_id,
+                )
+                # Re-pedir la admision solo tiene sentido si estaba bloqueada.
+                # Cuando ya pasaba, lo que faltaba era sacar la etiqueta, y eso
+                # ya ocurrio adentro de _resume_paused_conversation.
+                if resumed and admission.outcome == "blocked":
+                    try:
+                        admission = (
+                            await shared_supabase.admit_inbound_commercial_case(
+                                scope_key=settings.chatwoot_cut_b_scope_key,
+                                scope_version=(
+                                    settings.chatwoot_cut_b_scope_version
+                                ),
+                                external_conversation_id=conversation_id,
+                                external_user_id=external_user_id,
+                            )
+                        )
+                    except SupabaseError as exc:
+                        raise RetryableChatwootWorkError(
+                            "chatwoot_cut_b_admission_failed"
+                        ) from exc
             logger.info(
                 "chatwoot_cut_b_admitted outcome=%s",
                 admission.outcome,
@@ -2971,7 +3274,14 @@ def create_app(
             and completed_proposal.get("decision") != "handoff"
             and _requires_medication_guidance_handoff(payload.get("content"))
         ):
-            completed_proposal = {**completed_proposal, "decision": "handoff"}
+            # El motivo tambien se reescribe: si solo cambiara la decision, la
+            # fila y la nota se quedarian con el reason_code que el agente habia
+            # elegido para otra cosa (por ejemplo payment_link_requested).
+            completed_proposal = {
+                **completed_proposal,
+                "decision": "handoff",
+                "reason_code": "direct_medication_guidance",
+            }
             logger.info(
                 "chatwoot_inbound_handoff_forced "
                 "reason=direct_medication_guidance"
@@ -3457,6 +3767,60 @@ def create_app(
                 ),
             )
             app.state.chatwoot_stalled_monitor = chatwoot_stalled_monitor
+        if settings.conversation_reactivation_enabled:
+            if (
+                not isinstance(control_client, ChatwootClient)
+                or settings.chatwoot_inbox_id is None
+                or shared_supabase is None
+                or settings.conversation_reactivation_template_name is None
+            ):
+                raise ValueError(
+                    "conversation reactivation requires the Chatwoot control "
+                    "client, a canonical inbox and Supabase"
+                )
+            conversation_reactivation_sweeper = ConversationReactivationSweeper(
+                chatwoot=control_client,
+                supabase=shared_supabase,
+                inbox_id=settings.chatwoot_inbox_id,
+                template_name=(
+                    settings.conversation_reactivation_template_name
+                ),
+                expected_template_language=(
+                    settings.conversation_reactivation_template_language
+                ),
+                scan_interval_seconds=(
+                    settings.conversation_reactivation_interval_seconds
+                ),
+                min_inbound_age_seconds=(
+                    settings.conversation_reactivation_min_age_seconds
+                ),
+                max_inbound_age_seconds=(
+                    settings.conversation_reactivation_max_age_seconds
+                ),
+                quiet_seconds_threshold=(
+                    settings.conversation_resume_quiet_seconds
+                ),
+                max_reactivations=settings.conversation_reactivation_max,
+                max_sends_per_scan=(
+                    settings.conversation_reactivation_max_sends_per_scan
+                ),
+                max_pages=settings.conversation_reactivation_max_pages,
+                # Mismo criterio que el monitor de conversaciones estancadas
+                # (`allow_any_scoped_sender`): con los remitentes acotados por
+                # scope, el limite no es un JID unico sino las barreras de
+                # opt-out, pausa y handoff. Restringir igual al JID deja afuera
+                # a todo el inbox, porque ALLOWED_WHATSAPP_JID es un numero de
+                # prueba. Medido el 2026-09-23 22:40 UTC: las 25 conversaciones
+                # abiertas del inbox 9 se saltearon con `target_not_allowed`.
+                allowed_phone=(
+                    None
+                    if settings.chatwoot_scoped_inbound_senders_enabled
+                    else allowed_phone_from_jid(settings.allowed_jid)
+                ),
+            )
+            app.state.conversation_reactivation_sweeper = (
+                conversation_reactivation_sweeper
+            )
 
     if settings.operator_correlation_read_enabled:
         operator_token = settings.operator_correlation_read_token
@@ -3757,7 +4121,27 @@ def create_app(
                     ),
                 )
             stalled_monitor_readiness = {
+                **stalled_monitor_readiness,
                 "chatwoot_stalled_monitor": "healthy",
+            }
+        if conversation_reactivation_sweeper is not None:
+            # Un barredor caido no responde 503: no atiende a nadie en vivo, y
+            # tumbar el bridge entero por eso dejaria de contestarle a los leads
+            # que si estan escribiendo. Se publica el estado y se ve. La clave
+            # solo aparece cuando el barredor existe, para no cambiarle el
+            # payload de readiness a los despliegues que no lo usan.
+            stalled_monitor_readiness = {
+                **stalled_monitor_readiness,
+                "conversation_reactivation": (
+                    conversation_reactivation_sweeper.last_scan_state
+                ),
+                # El estado solo dice si el barrido fallo. Saltear a las 25
+                # conversaciones del inbox no es una falla, asi que sin este
+                # resumen un barredor mal configurado y uno sin trabajo
+                # publican lo mismo.
+                "conversation_reactivation_last_scan": (
+                    conversation_reactivation_sweeper.last_scan_summary
+                ),
             }
         if (
             correlation_preresolution_worker is not None
@@ -5202,10 +5586,7 @@ def create_app(
                         "status": "ignored",
                         "reason": "invalid_purchase_payload",
                     }
-                if (
-                    parsed_purchase.origin_sck is not None
-                    and parsed_purchase.origin_sck.startswith("hermes|")
-                ):
+                if sck_carries_hermes_issuance(parsed_purchase.origin_sck):
                     checkout_admission = (
                         await shared_supabase.admit_and_correlate_hotmart_checkout_issuance_v2(
                             external_event_id=event_id,
@@ -5343,6 +5724,24 @@ def create_app(
                     "status": "duplicate",
                     "event_id": event_id,
                 }
+        except SupabasePermanentError as exc:
+            # El evento no es procesable para este sistema y reenviarlo sin
+            # cambios nunca puede entrar. Un 503 le dice al emisor que el
+            # servicio esta caido y que reintente, y Hotmart cuenta esas fallas
+            # para desactivar la configuracion del webhook. Un descarte
+            # explicito deja el motivo registrado sin consumir ese contador.
+            reason = exc.reason or "rejected_by_contract"
+            logger.info(
+                "hotmart_event_rejected event_id=%s reason=%s",
+                event_id,
+                reason,
+            )
+            response.status_code = status.HTTP_200_OK
+            return {
+                "status": "ignored",
+                "event_id": event_id,
+                "reason": reason,
+            }
         except SupabaseError as exc:
             raise HTTPException(
                 status_code=503, detail="webhook_persist_unavailable"

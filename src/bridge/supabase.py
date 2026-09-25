@@ -39,6 +39,57 @@ class SupabaseError(RuntimeError):
 class SupabasePermanentError(SupabaseError):
     """Raised when retrying an unchanged request cannot succeed."""
 
+    def __init__(self, message: str, *, reason: str | None = None) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+_ALLOWED_CHECKOUT_QUERY_KEYS = (
+    {"off", "checkoutMode", "src", "sck"},
+    {"off", "checkoutMode", "src", "sck", "fbclid"},
+)
+
+# Lo unico que viaja crudo en la query string del checkout. Un valor con
+# espacios, acentos o & partiria la URL en silencio, asi que la RPC lo descarta
+# antes de componerla y esta validacion lo vuelve a exigir del lado del bridge.
+_CHECKOUT_SAFE_VALUE = re.compile(r"[A-Za-z0-9._-]{1,512}")
+
+# El sck del anuncio admite ademas "|", que es el separador del estandar de
+# Lancemos (utm_term|utm_content|utm_medium|utm_campaign). Se encodea entero al
+# componer la URL, asi que no la parte.
+_CHECKOUT_SAFE_SCK = re.compile(r"[A-Za-z0-9._|-]{1,200}")
+
+
+# El sck que Hotmart devuelve en la compra: el marcador cierra el valor, con el
+# del anuncio delante o sin nada. Reemplaza al viejo startswith("hermes|"), que
+# dejaba de reconocer la venta apenas el sck del anuncio viajaba adelante.
+_HERMES_SCK_TAIL = re.compile(
+    r"(?:^|\|)hermes\|v1\|[0-7][0-9A-HJKMNP-TV-Z]{25}\Z"
+)
+
+
+def sck_carries_hermes_issuance(sck_value: str | None) -> bool:
+    """True si el sck termina en un marcador de emision del recuperador."""
+    if not sck_value:
+        return False
+    return _HERMES_SCK_TAIL.search(sck_value) is not None
+
+
+def _sck_carries_hermes_marker(sck_value: str, issuance_ulid: str) -> bool:
+    """El sck es el marcador solo, o el del anuncio seguido del marcador.
+
+    El del anuncio se preserva entero y primero para que un parser que corte por
+    "|" lo encuentre en el primer campo. Ver la migracion 20260922000200.
+    """
+    marker = f"hermes|v1|{issuance_ulid}"
+    if sck_value == marker:
+        return True
+    suffix = f"|{marker}"
+    if not sck_value.endswith(suffix):
+        return False
+    original = sck_value[: -len(suffix)]
+    return bool(original) and _CHECKOUT_SAFE_SCK.fullmatch(original) is not None
+
 
 class SupabaseCommittedResponseError(SupabaseError):
     """Raised when a successful mutating RPC returns an invalid committed row."""
@@ -360,6 +411,42 @@ class InboundCommercialCaseAdmissionResult:
     channel_identity_id: str
     conversation_id: str
     automation_status: str
+
+
+@dataclass(frozen=True)
+class ConversationResumeResult:
+    """Outcome of lifting a durable human pause on one conversation."""
+
+    outcome: str
+    conversation_id: str | None
+    commercial_case_id: str | None
+    resume_event_id: str | None
+
+    @property
+    def resumed(self) -> bool:
+        return self.outcome in {"resumed", "replayed", "already_active"}
+
+
+@dataclass(frozen=True)
+class ConversationReactivationClaim:
+    """Reserva de un envio de plantilla de reactivacion."""
+
+    outcome: str
+    reactivation_event_id: str | None
+    conversation_id: str | None
+    commercial_case_id: str | None
+
+    @property
+    def claimed(self) -> bool:
+        return self.outcome == "claimed"
+
+
+@dataclass(frozen=True)
+class ConversationReactivationSettlement:
+    """Cierre de una reserva con lo que el proveedor respondio."""
+
+    outcome: str
+    reactivation_event_id: str | None
 
 
 @dataclass(frozen=True)
@@ -904,6 +991,37 @@ def _parse_correlation_recommendation(
         raise SupabaseError(f"{operation}_invalid") from exc
 
 
+_DETERMINISTIC_SQLSTATE_CLASS = "22"
+
+
+def _deterministic_rejection(response: httpx.Response) -> str | None:
+    """Return the rejection reason when PostgREST reports a data exception.
+
+    SQLSTATE class 22 (data exception) means the request is invalid for the
+    contract it was sent to, so replaying it unchanged can never succeed. It is
+    classified by CLASS and not by an enumerated list of messages: a rejection
+    added to the schema later is covered without editing this file. A guard
+    that enumerates names is blind to whatever is added after it was written.
+    """
+    if not 400 <= response.status_code < 500:
+        return None
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    if not isinstance(body, dict):
+        return None
+    sqlstate = body.get("code")
+    if not isinstance(sqlstate, str):
+        return None
+    if not sqlstate.startswith(_DETERMINISTIC_SQLSTATE_CLASS):
+        return None
+    message = body.get("message")
+    if isinstance(message, str) and message.strip():
+        return message.strip()
+    return sqlstate
+
+
 def _response_rows(
     response: httpx.Response,
     *,
@@ -1348,6 +1466,11 @@ class SupabaseClient:
                 ensure_ascii=False,
             ),
         )
+        rejection = _deterministic_rejection(response)
+        if rejection is not None:
+            raise SupabasePermanentError(
+                f"{operation}_rejected: {rejection}", reason=rejection
+            )
         rows = _response_rows(response, operation=operation)
         if response.status_code != 200 or len(rows) != 1:
             raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
@@ -1386,6 +1509,11 @@ class SupabaseClient:
                 ensure_ascii=False,
             ),
         )
+        rejection = _deterministic_rejection(response)
+        if rejection is not None:
+            raise SupabasePermanentError(
+                f"{operation}_rejected: {rejection}", reason=rejection
+            )
         rows = _response_rows(response, operation=operation)
         if response.status_code != 200 or len(rows) != 1:
             raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
@@ -1424,6 +1552,11 @@ class SupabaseClient:
                 ensure_ascii=False,
             ),
         )
+        rejection = _deterministic_rejection(response)
+        if rejection is not None:
+            raise SupabasePermanentError(
+                f"{operation}_rejected: {rejection}", reason=rejection
+            )
         rows = _response_rows(response, operation=operation)
         if response.status_code != 200 or len(rows) != 1:
             raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
@@ -1465,6 +1598,11 @@ class SupabaseClient:
                 ensure_ascii=False,
             ),
         )
+        rejection = _deterministic_rejection(response)
+        if rejection is not None:
+            raise SupabasePermanentError(
+                f"{operation}_rejected: {rejection}", reason=rejection
+            )
         rows = _response_rows(response, operation=operation)
         if response.status_code != 200 or len(rows) != 1:
             raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
@@ -2022,6 +2160,11 @@ class SupabaseClient:
                 ensure_ascii=False,
             ),
         )
+        rejection = _deterministic_rejection(response)
+        if rejection is not None:
+            raise SupabasePermanentError(
+                f"{operation}_rejected: {rejection}", reason=rejection
+            )
         rows = _response_rows(response, operation=operation)
         if response.status_code != 200 or len(rows) != 1:
             raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
@@ -2078,6 +2221,11 @@ class SupabaseClient:
                 ensure_ascii=False,
             ),
         )
+        rejection = _deterministic_rejection(response)
+        if rejection is not None:
+            raise SupabasePermanentError(
+                f"{operation}_rejected: {rejection}", reason=rejection
+            )
         rows = _response_rows(response, operation=operation)
         if response.status_code != 200 or len(rows) != 1:
             raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
@@ -2994,6 +3142,157 @@ class SupabaseClient:
         )
 
 
+    async def resume_paused_conversation(
+        self,
+        *,
+        external_conversation_id: int,
+        command_key: str,
+        reason_code: str,
+        quiet_seconds: int | None,
+        max_resumes: int = 3,
+    ) -> ConversationResumeResult:
+        """Lift the durable human pause so the agent can be admitted again."""
+        operation = "conversation_resume"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/resume_paused_conversation",
+            content=json.dumps(
+                {
+                    "p_external_conversation_id": external_conversation_id,
+                    "p_command_key": command_key,
+                    "p_reason_code": reason_code,
+                    "p_quiet_seconds": quiet_seconds,
+                    "p_max_resumes": max_resumes,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(
+                f"conversation_resume_failed: HTTP {response.status_code}"
+            )
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError("conversation_resume_invalid_shape")
+        row = rows[0]
+        outcome = row.get("outcome")
+        if outcome not in {
+            "resumed",
+            "replayed",
+            "already_active",
+            "blocked_contact",
+            "blocked_pending_handoff",
+            "not_found",
+        }:
+            raise SupabaseError("conversation_resume_invalid_outcome")
+        return ConversationResumeResult(
+            outcome=outcome,
+            conversation_id=row.get("resumed_conversation_id"),
+            commercial_case_id=row.get("resumed_commercial_case_id"),
+            resume_event_id=row.get("resume_event_id"),
+        )
+
+    async def claim_conversation_reactivation(
+        self,
+        *,
+        external_conversation_id: int,
+        command_key: str,
+        reason_code: str,
+        template_name: str,
+        template_language: str,
+        last_inbound_message_id: int,
+        inbound_age_seconds: int,
+        quiet_seconds: int | None = None,
+        max_reactivations: int = 1,
+    ) -> ConversationReactivationClaim:
+        """Reservar el envio de una plantilla de reactivacion."""
+        operation = "conversation_reactivation_claim"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/claim_conversation_reactivation",
+            content=json.dumps(
+                {
+                    "p_external_conversation_id": external_conversation_id,
+                    "p_command_key": command_key,
+                    "p_reason_code": reason_code,
+                    "p_template_name": template_name,
+                    "p_template_language": template_language,
+                    "p_last_inbound_message_id": last_inbound_message_id,
+                    "p_inbound_age_seconds": inbound_age_seconds,
+                    "p_quiet_seconds": quiet_seconds,
+                    "p_max_reactivations": max_reactivations,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(
+                f"conversation_reactivation_claim_failed: HTTP {response.status_code}"
+            )
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError("conversation_reactivation_claim_invalid_shape")
+        row = rows[0]
+        outcome = row.get("outcome")
+        if outcome not in {
+            "claimed",
+            "replayed",
+            "blocked_contact",
+            "blocked_reactivation_limit",
+            "not_found",
+        }:
+            raise SupabaseError("conversation_reactivation_claim_invalid_outcome")
+        return ConversationReactivationClaim(
+            outcome=outcome,
+            reactivation_event_id=row.get("reactivation_event_id"),
+            conversation_id=row.get("reactivated_conversation_id"),
+            commercial_case_id=row.get("reactivated_commercial_case_id"),
+        )
+
+    async def settle_conversation_reactivation(
+        self,
+        *,
+        command_key: str,
+        status: str,
+        provider_message_id: int | None = None,
+        failure_reason: str | None = None,
+    ) -> ConversationReactivationSettlement:
+        """Cerrar una reserva de reactivacion como entregada o fallida."""
+        operation = "conversation_reactivation_settlement"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/settle_conversation_reactivation",
+            content=json.dumps(
+                {
+                    "p_command_key": command_key,
+                    "p_status": status,
+                    "p_provider_message_id": provider_message_id,
+                    "p_failure_reason": failure_reason,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(
+                "conversation_reactivation_settlement_failed: "
+                f"HTTP {response.status_code}"
+            )
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(
+                "conversation_reactivation_settlement_invalid_shape"
+            )
+        row = rows[0]
+        outcome = row.get("outcome")
+        if outcome not in {"settled", "not_found"}:
+            raise SupabaseError(
+                "conversation_reactivation_settlement_invalid_outcome"
+            )
+        return ConversationReactivationSettlement(
+            outcome=outcome,
+            reactivation_event_id=row.get("reactivation_event_id"),
+        )
+
     async def admit_inbound_commercial_case(
         self,
         *,
@@ -3137,7 +3436,7 @@ class SupabaseClient:
                 re.fullmatch(r"[0-7][0-9A-HJKMNP-TV-Z]{25}", returned_ulid) is None
                 or source_kind not in {"inbound_request", "precheckout_request"}
                 or source_value != "hermes"
-                or sck_value != f"hermes|v1|{returned_ulid}"
+                or not _sck_carries_hermes_marker(sck_value, returned_ulid)
             ):
                 raise SupabaseCommittedResponseError(operation)
             try:
@@ -3149,11 +3448,13 @@ class SupabaseClient:
                 parsed.scheme != "https"
                 or parsed.netloc != "pay.hotmart.com"
                 or parsed.fragment
-                or set(query) != {"off", "checkoutMode", "src", "sck"}
+                or set(query) not in _ALLOWED_CHECKOUT_QUERY_KEYS
                 or query.get("src") != ["hermes"]
                 or query.get("sck") != [sck_value]
                 or len(query.get("off", [])) != 1
                 or len(query.get("checkoutMode", [])) != 1
+                or len(query.get("fbclid", ["x"])) != 1
+                or not _CHECKOUT_SAFE_VALUE.fullmatch(query.get("fbclid", ["x"])[0])
             ):
                 raise SupabaseCommittedResponseError(operation)
         return CheckoutIssuanceReservation(outcome=outcome, **values)
@@ -4362,6 +4663,7 @@ class SupabaseClient:
         projection_policy_key: str,
         projection_policy_version: int,
         now: str,
+        detail_reason_code: str | None = None,
     ) -> HumanHandoffRequestResult:
         """Atomically stop one inbound case and enqueue its handoff effects."""
         operation = "request_inbound_human_handoff"
@@ -4372,6 +4674,7 @@ class SupabaseClient:
                 "p_commercial_case_id": commercial_case_id,
                 "p_command_key": command_key,
                 "p_reason_code": reason_code,
+                "p_detail_reason_code": detail_reason_code,
                 "p_projection_policy_key": projection_policy_key,
                 "p_projection_policy_version": projection_policy_version,
                 "p_now": now,
