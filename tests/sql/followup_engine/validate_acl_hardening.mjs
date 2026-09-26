@@ -111,6 +111,9 @@ const rows = await db.query(`
       ('complete_operator_correlation_preresolution(uuid,uuid,bigint,text,uuid,jsonb,text,text)'),
       ('release_operator_correlation_preresolution(uuid,uuid,bigint,text)'),
       ('complete_slack_correlation_notification(uuid,uuid,bigint,uuid)'),
+      ('claim_slack_handoff_notifications(text,integer,integer)'),
+      ('complete_slack_handoff_notification(uuid,uuid,bigint,uuid)'),
+      ('release_slack_handoff_notification(uuid,uuid,bigint,text)'),
       ('confirm_operator_correlation_resolution(text,text,text,uuid,text,uuid)'),
       ('correlate_hotmart_purchase_intent(uuid)'),
       ('evaluate_lancemos_pilot_scope(text,integer,text,bigint,bigint,text,text,text,text,text,text,uuid)'),
@@ -203,9 +206,10 @@ const result = rows.rows[0];
 // the one-shot operator disposition adds one, and correlation event context
 // adds one, Johanna checkout issuance V2 adds four, and AI-assisted correlation
 // pre-resolution adds five, and the rolling-safe reason-code contract retains
-// one legacy completion overload, and resuming a paused conversation adds one.
+// one legacy completion overload, and resuming a paused conversation adds one,
+// and the Slack alert for every human handoff (HND-001) adds three.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 100) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 103) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const bindingAcl = await db.query(`

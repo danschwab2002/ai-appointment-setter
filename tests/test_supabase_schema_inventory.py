@@ -180,8 +180,11 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
 
-    assert len(allowlisted) == 100
+    assert len(allowlisted) == 103
     assert len(allowlisted) == len(set(allowlisted))
+    assert "claim_slack_handoff_notifications(text, integer, integer)" in allowlisted
+    assert "complete_slack_handoff_notification(uuid, uuid, bigint, uuid)" in allowlisted
+    assert "release_slack_handoff_notification(uuid, uuid, bigint, text)" in allowlisted
     assert "admit_precheckout_form_submission(text, jsonb, jsonb)" in allowlisted
     assert "get_daily_feedback_review_page_v1(text, uuid)" in allowlisted
     assert any(item.startswith("configure_daily_feedback_scope_v2(") for item in allowlisted)
