@@ -104,6 +104,7 @@ from bridge.correlation_preresolution import (
     CorrelationPreresolutionWorker,
 )
 from bridge.security import verify_chatwoot_signature
+from bridge.slack_handoff_projection import SlackHandoffProjectionWorker
 from bridge.slack_projection import SlackCorrelationProjectionWorker
 from bridge.slack_runtime import SlackBridgeRuntime, create_slack_bridge_runtime
 from bridge.supabase import (
@@ -2152,6 +2153,27 @@ def create_app(
                 else None
             ),
         )
+    # El aviso de cada derivacion a humano (HND-001) comparte el productor del
+    # conector con las correlaciones y vive detras de dos flags que ya estan en
+    # true en produccion: el del conector (crea el productor) y el de la
+    # proyeccion del handoff (sin el no hay derivaciones que avisar). A
+    # proposito no entra en /ready: ver la nota en SlackHandoffProjectionWorker.
+    slack_handoff_projection_worker: SlackHandoffProjectionWorker | None = None
+    if (
+        settings.slack_connector_projection_enabled
+        and settings.human_handoff_projection_enabled
+    ):
+        assert shared_supabase is not None
+        assert slack_runtime is not None
+        assert settings.slack_connector_worker_id is not None
+        slack_handoff_projection_worker = SlackHandoffProjectionWorker(
+            store=shared_supabase,
+            producer=slack_runtime.producer,
+            worker_id=f"{settings.slack_connector_worker_id}:handoff",
+            poll_interval_seconds=settings.slack_connector_poll_interval_seconds,
+            batch_size=settings.slack_connector_batch_size,
+            lease_seconds=settings.slack_connector_lease_seconds,
+        )
     first_touch_sender = message_sender
     if settings.precheckout_first_touch_enabled:
         canonical_phone = allowed_phone_from_jid(settings.allowed_jid)
@@ -2710,6 +2732,8 @@ def create_app(
                         settings.commercial_ally_config
                     )
                 await slack_projection_worker.start()
+            if slack_handoff_projection_worker is not None:
+                await slack_handoff_projection_worker.start()
             if chatwoot_worker is not None:
                 await chatwoot_worker.start()
             if chatwoot_stalled_monitor is not None:
@@ -2728,6 +2752,7 @@ def create_app(
                 ("opt_out_projection", opt_out_projection_worker),
                 ("human_handoff_projection", human_handoff_projection_worker),
                 ("slack_projection", slack_projection_worker),
+                ("slack_handoff_projection", slack_handoff_projection_worker),
                 ("correlation_preresolution", correlation_preresolution_worker),
                 ("dispatcher", durable_dispatcher),
                 ("hotmart_abandonment_timer", hotmart_abandonment_timer_worker),
@@ -2760,6 +2785,7 @@ def create_app(
     app.state.human_handoff_projection_worker = human_handoff_projection_worker
     app.state.correlation_preresolution_worker = correlation_preresolution_worker
     app.state.slack_projection_worker = slack_projection_worker
+    app.state.slack_handoff_projection_worker = slack_handoff_projection_worker
     app.state.chatwoot_inbox = chatwoot_inbox
     app.state.chatwoot_worker = chatwoot_worker
     app.state.chatwoot_stalled_monitor = chatwoot_stalled_monitor

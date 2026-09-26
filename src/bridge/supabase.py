@@ -25,6 +25,7 @@ from bridge.correlation_preresolution import (
     CorrelationPreresolutionClaim,
     PreresolutionRecommendation,
 )
+from bridge.slack_handoff_projection import SlackHandoffNotificationClaim
 from bridge.slack_projection import SlackCorrelationNotificationClaim
 from slack_correlation.catalog import (
     CorrelationRecommendation,
@@ -2732,6 +2733,129 @@ class SupabaseClient:
             operation="release_slack_correlation_notification",
             payload={
                 "p_source_event_id": source_event_id,
+                "p_claim_token": claim_token,
+                "p_lease_generation": lease_generation,
+                "p_failure_code": failure_code,
+            },
+        )
+
+    async def claim_slack_handoff_notifications(
+        self,
+        *,
+        worker_id: str,
+        limit: int,
+        lease_seconds: int,
+    ) -> list[SlackHandoffNotificationClaim]:
+        """Lease the next human handoff that still owes its Slack card (HND-001)."""
+        operation = "slack_handoff_projection_claim"
+        if isinstance(limit, bool) or limit != 1:
+            raise ValueError("limit must be exactly 1")
+        if (
+            isinstance(lease_seconds, bool)
+            or not isinstance(lease_seconds, int)
+            or lease_seconds < 30
+            or lease_seconds > 900
+        ):
+            raise ValueError("lease_seconds must be between 30 and 900")
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/claim_slack_handoff_notifications",
+            content=json.dumps(
+                {
+                    "p_worker_id": worker_id,
+                    "p_limit": limit,
+                    "p_lease_seconds": lease_seconds,
+                }
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        expected_keys = {
+            "handoff_request_id",
+            "external_conversation_id",
+            "primary_reason_code",
+            "detail_reason_code",
+            "occurred_at",
+            "claim_token",
+            "lease_generation",
+        }
+        claims: list[SlackHandoffNotificationClaim] = []
+        for row in rows:
+            if set(row) != expected_keys:
+                raise SupabaseError(f"{operation}_invalid")
+            occurred_text = _required_string(row, "occurred_at", operation=operation)
+            try:
+                occurred_at = datetime.fromisoformat(
+                    occurred_text.replace("Z", "+00:00")
+                )
+            except ValueError as exc:
+                raise SupabaseError(f"{operation}_invalid") from exc
+            if occurred_at.tzinfo is None:
+                raise SupabaseError(f"{operation}_invalid")
+            claims.append(
+                SlackHandoffNotificationClaim(
+                    handoff_request_id=_required_uuid(
+                        row, "handoff_request_id", operation=operation
+                    ),
+                    external_conversation_id=_required_positive_int(
+                        row, "external_conversation_id", operation=operation
+                    ),
+                    primary_reason_code=_required_enum(
+                        row,
+                        "primary_reason_code",
+                        {
+                            "explicit_human_request",
+                            "commercial_exception",
+                            "policy_requires_human",
+                        },
+                        operation=operation,
+                    ),
+                    detail_reason_code=_optional_string(
+                        row, "detail_reason_code", operation=operation
+                    ),
+                    occurred_at=occurred_at,
+                    claim_token=_required_uuid(
+                        row, "claim_token", operation=operation
+                    ),
+                    lease_generation=_required_positive_int(
+                        row, "lease_generation", operation=operation
+                    ),
+                )
+            )
+        return claims
+
+    async def complete_slack_handoff_notification(
+        self,
+        *,
+        handoff_request_id: str,
+        claim_token: str,
+        lease_generation: int,
+        notification_id: str,
+    ) -> None:
+        # Mismo contrato de respuesta ({"applied": true}) que las correlaciones.
+        await self._finalize_slack_correlation_notification(
+            operation="complete_slack_handoff_notification",
+            payload={
+                "p_handoff_request_id": handoff_request_id,
+                "p_claim_token": claim_token,
+                "p_lease_generation": lease_generation,
+                "p_notification_id": notification_id,
+            },
+        )
+
+    async def release_slack_handoff_notification(
+        self,
+        *,
+        handoff_request_id: str,
+        claim_token: str,
+        lease_generation: int,
+        failure_code: str,
+    ) -> None:
+        await self._finalize_slack_correlation_notification(
+            operation="release_slack_handoff_notification",
+            payload={
+                "p_handoff_request_id": handoff_request_id,
                 "p_claim_token": claim_token,
                 "p_lease_generation": lease_generation,
                 "p_failure_code": failure_code,

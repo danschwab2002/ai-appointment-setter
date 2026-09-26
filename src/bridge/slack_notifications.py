@@ -6,6 +6,7 @@ from datetime import datetime
 from dataclasses import asdict
 import hashlib
 import json
+import re
 from typing import Protocol
 from uuid import UUID, uuid5
 
@@ -19,6 +20,10 @@ _LEGACY_CORRELATION_CODES = {
     "conflict": "COR-003",
 }
 _NOTIFICATION_NAMESPACE = UUID("31f8cf87-488b-4e26-a395-d13270200459")
+_HANDOFF_EVENT_CODE = "HND-001"
+# Mismo alfabeto que reason_code en el catalogo: si el motivo fino no entra,
+# la tarjeta sale con el motivo primario en vez de perderse.
+_MACHINE_REASON = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,79}$")
 
 
 class NotificationProducer(Protocol):
@@ -101,6 +106,71 @@ class SlackOperationalNotifier:
             state="pending",
             count=candidate_count,
             recommendation=recommendation,
+        )
+        await self._producer.admit(command)
+        return command
+
+    async def notify_new_handoff(
+        self,
+        *,
+        handoff_request_id: str,
+        external_conversation_id: int,
+        primary_reason_code: str,
+        detail_reason_code: str | None,
+        occurred_at: datetime,
+    ) -> NotificationCommand:
+        """HND-001: una derivacion nueva, con la conversacion de Chatwoot a abrir.
+
+        La tarjeta no lleva nada de la persona. El caso es el id del pedido de
+        derivacion y el puntero operativo es el numero de conversacion de
+        Chatwoot, que es lo unico que el equipo necesita para abrirla. Dos
+        derivaciones de la misma conversacion son dos tarjetas: si alguien la
+        atendio y volvio a caer, hay que volver a mirarla.
+        """
+        try:
+            source_id = UUID(handoff_request_id)
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise ValueError("invalid_handoff_request_id") from exc
+        canonical_request_id = str(source_id)
+        if canonical_request_id != handoff_request_id:
+            raise ValueError("invalid_handoff_request_id")
+        if (
+            isinstance(external_conversation_id, bool)
+            or not isinstance(external_conversation_id, int)
+            or external_conversation_id <= 0
+        ):
+            raise ValueError("invalid_external_conversation_id")
+        if (
+            not isinstance(primary_reason_code, str)
+            or _MACHINE_REASON.fullmatch(primary_reason_code) is None
+        ):
+            raise ValueError("invalid_primary_reason_code")
+        reason_code = primary_reason_code
+        if (
+            isinstance(detail_reason_code, str)
+            and _MACHINE_REASON.fullmatch(detail_reason_code) is not None
+        ):
+            reason_code = detail_reason_code
+        notification_id = str(
+            uuid5(_NOTIFICATION_NAMESPACE, f"handoff:{canonical_request_id}")
+        )
+        semantic_material = "\x1f".join(
+            [
+                "handoff-v1",
+                canonical_request_id,
+                str(external_conversation_id),
+                reason_code,
+            ]
+        )
+        command = NotificationCommand(
+            event_id=notification_id,
+            event_code=_HANDOFF_EVENT_CODE,
+            dedupe_key=hashlib.sha256(semantic_material.encode("utf-8")).hexdigest(),
+            occurred_at=occurred_at,
+            subject_ref=f"C-{canonical_request_id.upper()}",
+            reason_code=reason_code,
+            component=f"chatwoot.conversation.{external_conversation_id}",
+            state="pending",
         )
         await self._producer.admit(command)
         return command
