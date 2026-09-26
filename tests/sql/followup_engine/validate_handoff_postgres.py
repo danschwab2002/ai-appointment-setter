@@ -478,7 +478,10 @@ def verify_effective_acls(harness: PostgresHarness) -> None:
                      'read_johanna_funnel_dashboard_v2',
                      -- Lee human_handoff_requests para negarse a reactivar una
                      -- conversacion cuya derivacion sigue sin proyectarse.
-                     'resume_paused_conversation'
+                     'resume_paused_conversation',
+                     -- Encola desde human_handoff_requests el aviso a Slack de
+                     -- cada derivacion (HND-001); solo lee esa tabla.
+                     'claim_slack_handoff_notifications'
                      ) then has_function_privilege(role_name, oid, 'EXECUTE')
                   else not has_function_privilege(role_name, oid, 'EXECUTE')
                 end
