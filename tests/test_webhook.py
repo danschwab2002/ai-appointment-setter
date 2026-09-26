@@ -17,6 +17,7 @@ from bridge.app import (
     Settings,
     _capture_payload,
     _requires_medication_guidance_handoff,
+    _sent_at,
     build_app,
     create_app,
 )
@@ -5442,3 +5443,85 @@ def test_medication_handoff_guard_ignores_general_or_non_text_content(
     content: object,
 ) -> None:
     assert _requires_medication_guidance_handoff(content) is False
+
+
+def test_shadow_context_keeps_the_sent_at_of_every_message(tmp_path):
+    """El agente recibe la fecha de cada mensaje del historial.
+
+    Fixture capturado el 2026-09-26 de la API real de Chatwoot (inbox 9,
+    conversacion 173): un pedido de cuotas del 24/09 seguido de tres "Hola"
+    del 25/09. Sin la fecha, el agente derivo las tres veces por el mensaje
+    viejo. `created_at` viene en epoch desde Chatwoot y sale como ISO 8601 UTC.
+    """
+    secret = "webhook-secret"
+    fixture = json.loads(
+        (
+            Path(__file__).parent
+            / "fixtures"
+            / "chatwoot_conversation_messages_inbox_9_conv_173_20260926.json"
+        ).read_text(encoding="utf-8")
+    )
+    history = fixture["payload"]
+    chatwoot = StubChatwootClient(messages=history)
+    shadow = StubShadowProcessor()
+    payload = {
+        "event": "message_created",
+        "id": 2382,
+        "content": "Holaaa",
+        "message_type": "incoming",
+        "private": False,
+        "conversation": {
+            "id": 173,
+            "contact_inbox": {
+                "source_id": "12025550123@s.whatsapp.net",
+            },
+        },
+    }
+    raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    app = create_app(
+        Settings(
+            webhook_secret=secret,
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=tmp_path,
+            max_age_seconds=300,
+            agent_bot_id=1,
+        ),
+        chatwoot_client=chatwoot,
+        shadow_processor=shadow,
+    )
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(raw_body, secret=secret, delivery="history-sent-at"),
+    )
+
+    assert response.status_code == 202
+    asyncio.run(app.state.chatwoot_worker.run_once())
+    assert chatwoot.history_calls == [(173, 200)]
+    messages = shadow.calls[0][1]["messages"]
+
+    # El historial llega hasta el mensaje del turno (2382); lo posterior del
+    # fixture (dos pedidos de cuotas y un "Hola?" del 26/09) queda afuera.
+    assert messages == [
+        {
+            "actor": "prospect",
+            "text": (
+                "Hola, me interesa el taller Libre de Ansiedad. "
+                "¿Hay algún descuento o puedo pagarlo en cuotas?"
+            ),
+            "sent_at": "2026-09-24T18:21:20Z",
+        },
+        {"actor": "prospect", "text": "Hola", "sent_at": "2026-09-25T18:18:30Z"},
+        {"actor": "prospect", "text": "HOla", "sent_at": "2026-09-25T23:26:17Z"},
+        {"actor": "prospect", "text": "Holaaa", "sent_at": "2026-09-25T23:28:11Z"},
+    ]
+    assert all(set(message) == {"actor", "text", "sent_at"} for message in messages)
+
+
+def test_shadow_context_omits_sent_at_when_chatwoot_sends_no_created_at():
+    """Un historial sin `created_at` (los stubs viejos) sigue saliendo igual."""
+    assert _sent_at({"actor": "prospect", "text": "Hola"}) == {}
+    assert _sent_at(
+        {"actor": "prospect", "text": "Hola", "_created_at": "1790274080"}
+    ) == {"sent_at": "2026-09-24T18:21:20Z"}
