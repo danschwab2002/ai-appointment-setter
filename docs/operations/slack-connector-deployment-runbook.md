@@ -36,6 +36,7 @@ SLACK_TEAM_ID=<Team ID exacto>
 SLACK_TENANT_CHANNELS_JSON={"johanna":"C0C0YEACVT2"}
 SLACK_TENANT_OPERATOR_USER_IDS_JSON={"johanna":["<Slack User ID autorizado>"]}
 SLACK_TENANT_OPERATOR_BACKENDS_JSON={"johanna":{"base_url":"https://<bridge-host>","read_token":"<secreto distinto>","write_token":"<secreto distinto>"}}
+SLACK_TENANT_CONVERSATION_BASE_URLS_JSON={"johanna":"https://<chatwoot-host>/app/accounts/<cuenta>/conversations"}
 ```
 
 Recrear stop-first y exigir:

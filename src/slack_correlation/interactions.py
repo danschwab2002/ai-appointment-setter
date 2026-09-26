@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol, TypeGuard
 from uuid import UUID
 
+from slack_correlation.catalog import HANDOFF_CONVERSATION_LINK_ACTION_ID
 from slack_correlation.client import SlackProtocolError, SlackRejectedError
 from slack_correlation.operator_client import OperatorBridgeRejected
 from slack_correlation.store import CorrelationBinding, NotificationStore, OpeningJob, ReviewSession
@@ -84,7 +85,16 @@ class ConfirmAdmission:
     view_hash: str | None
 
 
-InteractionAdmission = OpenAdmission | DecisionAdmission | PrepareAdmission | ConfirmAdmission
+@dataclass(frozen=True)
+class LinkAdmission:
+    """A signed click on a server-owned url button: nothing to do but acknowledge."""
+
+    action_id: str
+
+
+InteractionAdmission = (
+    OpenAdmission | DecisionAdmission | PrepareAdmission | ConfirmAdmission | LinkAdmission
+)
 
 
 def _safe_slack_extra(
@@ -162,6 +172,9 @@ class CorrelationInteractionHandler:
                 for key in allowed - required
             ):
                 raise InvalidInteraction("invalid_payload_shape")
+            link = self._precheck_link(payload)
+            if link is not None:
+                return link
             return self._precheck_open(payload)
         if payload["type"] == "view_submission":
             # Slack owns this signed envelope and can add non-authoritative fields.
@@ -193,6 +206,10 @@ class CorrelationInteractionHandler:
         self, *, fingerprint: str, admission: InteractionAdmission
     ) -> tuple[int, dict[str, object]]:
         """Atomically reserve replay identity and durably admit local work."""
+        if isinstance(admission, LinkAdmission):
+            # Slack posts block_actions even for url buttons; the browser already
+            # opened the link. Acknowledge and touch nothing.
+            return 200, {}
         if isinstance(admission, OpenAdmission):
             _new, status, response, _token = self._store.admit_open_interaction(
                 fingerprint=fingerprint,
@@ -302,6 +319,18 @@ class CorrelationInteractionHandler:
         ):
             raise InvalidInteraction("invalid_identity")
         return self._team_id, user_id
+
+    def _precheck_link(self, payload: dict[str, object]) -> LinkAdmission | None:
+        actions = payload.get("actions")
+        if (
+            not isinstance(actions, list)
+            or len(actions) != 1
+            or not isinstance(actions[0], dict)
+            or actions[0].get("action_id") != HANDOFF_CONVERSATION_LINK_ACTION_ID
+        ):
+            return None
+        self._team_user(payload)
+        return LinkAdmission(action_id=HANDOFF_CONVERSATION_LINK_ACTION_ID)
 
     def _precheck_open(self, payload: dict[str, object]) -> OpenAdmission:
         team_id, user_id = self._team_user(payload)
