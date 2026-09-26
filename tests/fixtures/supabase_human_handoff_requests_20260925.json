@@ -1,0 +1,102 @@
+{
+  "captured_at": "2026-09-26T00:05:00+00:00",
+  "origin": "public.human_handoff_requests del Supabase productivo de Johanna, leido por la Management API desde infra_hermes con una sonda de solo lectura (12 filas mas recientes, created_at desc). Son las derivaciones a humano que existieron sin avisar a nadie. Sin datos personales: id del pedido, numero de conversacion de Chatwoot, motivos, fecha y estado de la proyeccion a Chatwoot. occurred_at es created_at en UTC, tal como lo devuelve la RPC claim_slack_handoff_notifications.",
+  "rows": [
+    {
+      "handoff_request_id": "19ec5e48-b5d8-45b7-adf5-e9b07d0ba851",
+      "external_conversation_id": 177,
+      "primary_reason_code": "commercial_exception",
+      "detail_reason_code": "policy_requires_human",
+      "occurred_at": "2026-09-25T23:30:24.065031+00:00",
+      "chatwoot_projection_status": "projected"
+    },
+    {
+      "handoff_request_id": "645a2a34-325f-4cf9-b107-558ae1f23481",
+      "external_conversation_id": 173,
+      "primary_reason_code": "commercial_exception",
+      "detail_reason_code": "commercial_exception",
+      "occurred_at": "2026-09-25T23:28:48.014188+00:00",
+      "chatwoot_projection_status": "projected"
+    },
+    {
+      "handoff_request_id": "12835ee5-0e3e-4e6a-ae24-daae2ec7398b",
+      "external_conversation_id": 173,
+      "primary_reason_code": "commercial_exception",
+      "detail_reason_code": "commercial_exception",
+      "occurred_at": "2026-09-25T23:26:54.592547+00:00",
+      "chatwoot_projection_status": "projected"
+    },
+    {
+      "handoff_request_id": "2e931e71-5ef1-42af-a50d-52aa0b883e5a",
+      "external_conversation_id": 177,
+      "primary_reason_code": "commercial_exception",
+      "detail_reason_code": "policy_requires_human",
+      "occurred_at": "2026-09-24T20:36:31.386217+00:00",
+      "chatwoot_projection_status": "projected"
+    },
+    {
+      "handoff_request_id": "f0119116-fd48-4b60-bd16-b6bf0bbca333",
+      "external_conversation_id": 174,
+      "primary_reason_code": "commercial_exception",
+      "detail_reason_code": "policy_requires_human",
+      "occurred_at": "2026-09-24T18:26:13.961354+00:00",
+      "chatwoot_projection_status": "projected"
+    },
+    {
+      "handoff_request_id": "cade9d9d-bf1c-4c79-828c-f2a89b03f23f",
+      "external_conversation_id": 173,
+      "primary_reason_code": "commercial_exception",
+      "detail_reason_code": "commercial_exception",
+      "occurred_at": "2026-09-24T18:21:57.291110+00:00",
+      "chatwoot_projection_status": "projected"
+    },
+    {
+      "handoff_request_id": "b5652570-a7ab-408b-ab53-258281f80883",
+      "external_conversation_id": 168,
+      "primary_reason_code": "commercial_exception",
+      "detail_reason_code": "policy_requires_human",
+      "occurred_at": "2026-09-24T16:23:28.145160+00:00",
+      "chatwoot_projection_status": "projected"
+    },
+    {
+      "handoff_request_id": "ecd47704-f8b8-4f8c-bf73-272551874819",
+      "external_conversation_id": 158,
+      "primary_reason_code": "commercial_exception",
+      "detail_reason_code": null,
+      "occurred_at": "2026-09-24T13:03:34.703202+00:00",
+      "chatwoot_projection_status": "projected"
+    },
+    {
+      "handoff_request_id": "6ae8b489-6207-4df8-9438-ed54b582888b",
+      "external_conversation_id": 124,
+      "primary_reason_code": "commercial_exception",
+      "detail_reason_code": null,
+      "occurred_at": "2026-09-23T10:03:54.043996+00:00",
+      "chatwoot_projection_status": "projected"
+    },
+    {
+      "handoff_request_id": "7844216b-aee3-4dc1-ac29-649c38754c9f",
+      "external_conversation_id": 110,
+      "primary_reason_code": "commercial_exception",
+      "detail_reason_code": null,
+      "occurred_at": "2026-09-23T02:39:12.207680+00:00",
+      "chatwoot_projection_status": "projected"
+    },
+    {
+      "handoff_request_id": "a7c027dc-f233-47c3-b6ae-99732176e6d6",
+      "external_conversation_id": 143,
+      "primary_reason_code": "commercial_exception",
+      "detail_reason_code": null,
+      "occurred_at": "2026-09-22T19:05:13.404182+00:00",
+      "chatwoot_projection_status": "projected"
+    },
+    {
+      "handoff_request_id": "58647595-f48f-42e8-b6e3-259892335f9a",
+      "external_conversation_id": 136,
+      "primary_reason_code": "commercial_exception",
+      "detail_reason_code": null,
+      "occurred_at": "2026-09-22T17:45:45.476868+00:00",
+      "chatwoot_projection_status": "projected"
+    }
+  ]
+}

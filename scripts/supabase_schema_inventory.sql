@@ -3377,6 +3377,32 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'sck_alphabet_accepts_tilde_reader'
+    union all
+    select
+        '20260925000200',
+        '20260925000200_slack_handoff_notification_projection_v1.sql',
+        exists(
+            select 1
+            from pg_catalog.pg_constraint
+            where conrelid = to_regclass('public.slack_handoff_notification_projection')
+              and conname = 'slack_handoff_notification_projection_pkey'
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.claim_slack_handoff_notifications(text,integer,integer)')
+              and prosecdef
+              and position('slack_handoff_notification_projection_pkey' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.release_slack_handoff_notification(uuid,uuid,bigint,text)')
+              and prosecdef
+              and position('connector_admission_unknown' in definition) > 0
+        )::int,
+        3,
+        'slack_handoff_notification_projection'
 )
 select
     version,

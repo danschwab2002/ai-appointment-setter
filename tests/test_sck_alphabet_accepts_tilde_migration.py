@@ -41,10 +41,13 @@ def _sql() -> str:
     return MIGRATION.read_text(encoding="utf-8")
 
 
-def test_migration_is_the_newest_and_keeps_both_rpc_signatures() -> None:
+def test_migration_follows_the_reason_sentences_and_keeps_both_rpc_signatures() -> None:
     versions = sorted(path.name.split("_", 1)[0] for path in MIGRATIONS.glob("*.sql"))
-    assert versions[-1] == "20260925000100"
-    assert versions[-2] == "20260924000200"
+    # Fue la cola de la cadena hasta el 2026-09-25; desde la 20260925000200
+    # (aviso a Slack de cada derivacion) ya no lo es, pero sigue viniendo justo
+    # despues de la 20260924000200.
+    assert "20260925000100" in versions
+    assert versions[versions.index("20260925000100") - 1] == "20260924000200"
 
     sql = _sql()
     # Same names and same signatures: the bridge keeps calling what it calls.
