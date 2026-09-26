@@ -1594,6 +1594,21 @@ def _history_after_latest_reset(
     return reset_history
 
 
+def _sent_at(message: dict[str, str]) -> dict[str, str]:
+    """Fecha de envio del mensaje, para que el agente sepa cuando paso cada cosa.
+
+    Sin esto el historial le llega como un bloque sin tiempo y un pedido de
+    hace tres dias pesa igual que el "Hola" de recien (conversacion 173,
+    2026-09-24 al 26: tres derivaciones seguidas por un mensaje viejo). El
+    `created_at` ya viene de Chatwoot en `_created_at`; solo se deja pasar.
+    """
+    raw = message.get("_created_at")
+    if raw is None:
+        return {}
+    stamp = datetime.fromtimestamp(int(raw), tz=UTC)
+    return {"sent_at": stamp.strftime("%Y-%m-%dT%H:%M:%SZ")}
+
+
 def create_app(
     settings: Settings,
     *,
@@ -2960,6 +2975,7 @@ def create_app(
             {
                 "actor": message["actor"],
                 "text": message["text"],
+                **_sent_at(message),
             }
             for message in normalized
         ]
