@@ -93,7 +93,8 @@ def test_catalog_uses_the_four_approved_severity_classes() -> None:
 def test_renderer_uses_only_server_owned_template_and_machine_fields() -> None:
     rendered = render_message(_command(), tenant_label="Johanna")
 
-    assert rendered["text"] == "[p2] Nueva derivación · Johanna · C-11111111"
+    assert rendered["text"] == "[p2] Nueva derivación · Johanna"
+    assert "C-11111111" not in repr(rendered)
     assert rendered["metadata"] == {
         "event_type": "supportmagician_operational_event",
         "event_payload": {
@@ -586,7 +587,7 @@ def test_worker_posts_server_rendered_message_to_exact_configured_channel(
     assert len(slack.calls) == 1
     channel_id, message = slack.calls[0]
     assert channel_id == "C0C0YEACVT2"
-    assert message["text"] == "[p2] Nueva derivación · Johanna · C-11111111"
+    assert message["text"] == "[p2] Nueva derivación · Johanna"
     assert "channel" not in message
     stored = store.get(tenant_ref="johanna", notification_id=command.event_id)
     assert stored is not None

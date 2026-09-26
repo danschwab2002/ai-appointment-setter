@@ -24,6 +24,7 @@ from slack_correlation.catalog import (
     CorrelationRecommendation,
     CorrelationRecommendationEvidence,
     NotificationCommand,
+    validate_conversation_base_url,
 )
 from slack_correlation.client import SlackClient, SlackProtocolError, SlackRejectedError
 from slack_correlation.store import NotificationCapacityError, NotificationStore
@@ -70,6 +71,7 @@ class SlackConnectorSettings:
     team_id: str | None = None
     tenant_channels: dict[str, str] = field(default_factory=dict)
     tenant_review_base_urls: dict[str, str] = field(default_factory=dict)
+    tenant_conversation_base_urls: dict[str, str] = field(default_factory=dict)
     tenant_operator_user_ids: dict[str, frozenset[str]] = field(default_factory=dict)
     operator_backends: dict[str, dict[str, str]] = field(default_factory=dict)
     storage_path: str = "/app/data/slack-connector.sqlite3"
@@ -99,6 +101,7 @@ class SlackConnectorSettings:
             team_id=_env_value("SLACK_TEAM_ID"),
             tenant_channels=_env_tenant_channels(),
             tenant_review_base_urls=_env_tenant_review_base_urls(),
+            tenant_conversation_base_urls=_env_tenant_conversation_base_urls(),
             tenant_operator_user_ids=_env_tenant_user_ids(),
             operator_backends=_env_operator_backends(),
             storage_path=os.getenv(
@@ -222,6 +225,24 @@ def _env_tenant_review_base_urls() -> dict[str, str]:
     return dict(payload)
 
 
+def _env_tenant_conversation_base_urls() -> dict[str, str]:
+    raw = os.getenv("SLACK_TENANT_CONVERSATION_BASE_URLS_JSON")
+    if raw is None or not raw.strip():
+        return {}
+    try:
+        payload = json.loads(raw)
+    except ValueError as exc:
+        raise ValueError(
+            "invalid_json:SLACK_TENANT_CONVERSATION_BASE_URLS_JSON"
+        ) from exc
+    if not isinstance(payload, dict) or any(
+        not isinstance(key, str) or not isinstance(value, str)
+        for key, value in payload.items()
+    ):
+        raise ValueError("invalid_json:SLACK_TENANT_CONVERSATION_BASE_URLS_JSON")
+    return dict(payload)
+
+
 def _env_tenant_user_ids() -> dict[str, frozenset[str]]:
     raw = os.getenv("SLACK_TENANT_OPERATOR_USER_IDS_JSON")
     if raw is None or not raw.strip():
@@ -341,6 +362,13 @@ def _validate_settings(settings: SlackConnectorSettings) -> None:
             break
     if not review_origins_valid:
         raise ValueError("invalid_tenant_review_base_urls")
+    for tenant, value in settings.tenant_conversation_base_urls.items():
+        if tenant not in tenant_channels:
+            raise ValueError("invalid_tenant_conversation_base_urls")
+        try:
+            validate_conversation_base_url(value)
+        except ValueError as exc:
+            raise ValueError("invalid_tenant_conversation_base_urls") from exc
     if set(tenant_channels) - _ALLOWED_TENANTS or any(
         _CHANNEL_ID.fullmatch(value) is None for value in tenant_channels.values()
     ):
@@ -456,6 +484,7 @@ def create_app(
                 tenant_channels=tenant_channels,
                 tenant_labels={"johanna": "Johanna", "att1": "ATT1"},
                 tenant_review_base_urls=settings.tenant_review_base_urls,
+                tenant_conversation_base_urls=settings.tenant_conversation_base_urls,
                 worker_id=settings.worker_id,
                 team_id=settings.team_id,
                 poll_interval_seconds=settings.poll_interval_seconds,

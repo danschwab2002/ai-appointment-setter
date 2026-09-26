@@ -15,6 +15,11 @@ _DEDUPE_KEY = re.compile(r"^[a-f0-9]{64}$")
 _SUBJECT_REF = re.compile(r"^C-[A-Fa-f0-9-]{8,36}$")
 _MACHINE_VALUE = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,79}$")
 _SAFE_PERSON_LABEL = re.compile(r"^Persona [1-9][0-9]{0,2}$")
+_CHATWOOT_CONVERSATION_COMPONENT = re.compile(
+    r"^chatwoot\.conversation\.([1-9][0-9]{0,11})$"
+)
+HANDOFF_CONVERSATION_LINK_ACTION_ID = "open_handoff_conversation"
+HANDOFF_CONVERSATION_LINK_LABEL = "Ir a la conversación"
 _RECOMMENDATION_EVIDENCE_KINDS = frozenset(
     {
         "precheckout_time_proximity_minutes",
@@ -217,6 +222,7 @@ def render_message(
     tenant_label: str,
     thread_ts: str | None = None,
     review_base_url: str | None = None,
+    conversation_base_url: str | None = None,
 ) -> dict[str, Any]:
     """Render one closed template; callers cannot supply Slack text or blocks."""
 
@@ -226,31 +232,20 @@ def render_message(
         if thread_ts is not None:
             message["thread_ts"] = thread_ts
         return message
+    if command.event_code == "HND-001":
+        message = _render_new_handoff(
+            command,
+            tenant_label=tenant_label,
+            conversation_base_url=conversation_base_url,
+        )
+        if thread_ts is not None:
+            message["thread_ts"] = thread_ts
+        return message
     headline_parts = [f"[{template.severity}] {template.title}", tenant_label]
     if command.subject_ref is not None:
         headline_parts.append(command.subject_ref)
     headline = " · ".join(headline_parts)
-    fields = [
-        {"type": "mrkdwn", "text": f"*Código*\n`{command.event_code}`"},
-        {
-            "type": "mrkdwn",
-            "text": f"*Ocurrió*\n{command.occurred_at.astimezone(UTC).isoformat().replace('+00:00', 'Z')}",
-        },
-    ]
-    for label, value in (
-        ("Motivo", command.reason_code),
-        ("Componente", command.component),
-        ("Estado", command.state),
-        ("Cantidad", command.count),
-        (
-            "Plazo",
-            command.deadline_at.astimezone(UTC).isoformat().replace("+00:00", "Z")
-            if command.deadline_at is not None
-            else None,
-        ),
-    ):
-        if value is not None:
-            fields.append({"type": "mrkdwn", "text": f"*{label}*\n`{value}`"})
+    fields = _machine_fields(command)
     message: dict[str, Any] = {
         "text": headline,
         "blocks": [
@@ -285,6 +280,120 @@ def render_message(
     if thread_ts is not None:
         message["thread_ts"] = thread_ts
     return message
+
+
+def _machine_fields(command: NotificationCommand) -> list[dict[str, str]]:
+    fields = [
+        {"type": "mrkdwn", "text": f"*Código*\n`{command.event_code}`"},
+        {
+            "type": "mrkdwn",
+            "text": f"*Ocurrió*\n{command.occurred_at.astimezone(UTC).isoformat().replace('+00:00', 'Z')}",
+        },
+    ]
+    for label, value in (
+        ("Motivo", command.reason_code),
+        ("Componente", command.component),
+        ("Estado", command.state),
+        ("Cantidad", command.count),
+        (
+            "Plazo",
+            command.deadline_at.astimezone(UTC).isoformat().replace("+00:00", "Z")
+            if command.deadline_at is not None
+            else None,
+        ),
+    ):
+        if value is not None:
+            fields.append({"type": "mrkdwn", "text": f"*{label}*\n`{value}`"})
+    return fields
+
+
+def _render_new_handoff(
+    command: NotificationCommand,
+    *,
+    tenant_label: str,
+    conversation_base_url: str | None,
+) -> dict[str, Any]:
+    """HND-001: the team needs the conversation, not the opaque case code.
+
+    The headline drops ``subject_ref`` (it still drives threading in the store)
+    and, when the tenant has a server-owned Chatwoot base URL, the card carries
+    one link button built from ``component=chatwoot.conversation.<n>``. Without
+    that configuration it is the same card without the button.
+    """
+    template = EVENT_TEMPLATES[command.event_code]
+    headline = f"[{template.severity}] {template.title} · {tenant_label}"
+    blocks: list[dict[str, Any]] = [
+        {"type": "header", "text": {"type": "plain_text", "text": headline}},
+        {"type": "section", "fields": _machine_fields(command)},
+    ]
+    conversation_url = _conversation_url(command, conversation_base_url)
+    if conversation_url is not None:
+        blocks.append(
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "action_id": HANDOFF_CONVERSATION_LINK_ACTION_ID,
+                        "text": {
+                            "type": "plain_text",
+                            "text": HANDOFF_CONVERSATION_LINK_LABEL,
+                        },
+                        "url": conversation_url,
+                    }
+                ],
+            }
+        )
+    return {
+        "text": headline,
+        "blocks": blocks,
+        "metadata": {
+            "event_type": "supportmagician_operational_event",
+            "event_payload": {
+                "event_id": command.event_id,
+                "event_code": command.event_code,
+            },
+        },
+    }
+
+
+def _conversation_url(
+    command: NotificationCommand, conversation_base_url: str | None
+) -> str | None:
+    if conversation_base_url is None:
+        return None
+    base_url = validate_conversation_base_url(conversation_base_url)
+    if command.component is None:
+        return None
+    match = _CHATWOOT_CONVERSATION_COMPONENT.fullmatch(command.component)
+    if match is None:
+        return None
+    return f"{base_url}/{match.group(1)}"
+
+
+def validate_conversation_base_url(value: object) -> str:
+    """Accept only an https origin plus path, e.g. ``https://host/app/accounts/1/conversations``."""
+    if not isinstance(value, str) or not value:
+        raise ValueError("invalid_conversation_base_url")
+    parsed = urlsplit(value)
+    try:
+        port = parsed.port
+    except ValueError:
+        port = -1
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or port is not None
+        or not parsed.path.strip("/")
+        or parsed.query
+        or parsed.fragment
+        or any(ord(character) < 33 or ord(character) == 127 for character in value)
+        or any(character in value for character in "<>|`\"'")
+    ):
+        raise ValueError("invalid_conversation_base_url")
+    return value.rstrip("/")
 
 
 def _render_pending_correlation(

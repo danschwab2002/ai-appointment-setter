@@ -230,7 +230,8 @@ def test_notification_crosses_real_tcp_to_connector_and_fake_slack(
     ]
     posted = _FakeSlackHandler.requests[1][1]
     assert posted["channel"] == "C0C0YEACVT2"
-    assert posted["text"] == "[p2] Nueva derivación · Johanna · C-11111111"
+    assert posted["text"] == "[p2] Nueva derivación · Johanna"
+    assert "C-11111111" not in repr(posted)
 
 
 @pytest.mark.parametrize("contract_version", [1, 3], ids=["legacy", "v3"])

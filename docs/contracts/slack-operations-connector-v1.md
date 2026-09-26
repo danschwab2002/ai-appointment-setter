@@ -42,6 +42,7 @@ mensaje desde el catálogo versionado.
 | `SLACK_SIGNING_SECRET` | interacciones | secreto de firma Slack; nunca se registra |
 | `SLACK_TENANT_OPERATOR_USER_IDS_JSON` | interacciones | allowlist de Slack User IDs por tenant |
 | `SLACK_TENANT_OPERATOR_BACKENDS_JSON` | interacciones | base URL y tokens read/write distintos por tenant; secreto |
+| `SLACK_TENANT_CONVERSATION_BASE_URLS_JSON` | no | mapa server-owned tenant→URL base `https` de las conversaciones de Chatwoot (`https://<host>/app/accounts/<cuenta>/conversations`); con ella la tarjeta `HND-001` lleva el botón «Ir a la conversación» construido del lado del servidor desde `component=chatwoot.conversation.<n>`; sin ella la misma tarjeta sale sin botón |
 
 Los booleanos sólo aceptan `true` o `false`. Una combinación incompleta impide
 arrancar. La presencia de credenciales no habilita efectos. Dos tenants no
@@ -92,6 +93,11 @@ URLs, payloads del proveedor, canal, tenant ni bloques Slack.
   productor sin incorporar PII en claro.
 - `subject_ref`, cuando existe, usa el formato opaco `C-…`; define el hilo dentro
   del tenant.
+- en `HND-001` el `subject_ref` sigue definiendo el hilo pero no se muestra: el
+  equipo ve el motivo y `component=chatwoot.conversation.<n>`, y el botón «Ir a la
+  conversación» cuando el tenant tiene `SLACK_TENANT_CONVERSATION_BASE_URLS_JSON`.
+  El clic en ese botón llega como `block_actions` con `action_id`
+  `open_handoff_conversation` y el conector lo reconoce con `200 {}` sin efectos.
 - códigos de motivo, componente y estado son identificadores machine-readable,
   no copy libre.
 
