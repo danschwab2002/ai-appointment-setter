@@ -15,13 +15,18 @@ import secrets
 from typing import Any, Awaitable, Callable, Protocol
 from urllib.parse import parse_qs, urlencode, urlsplit
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
-from bridge.daily_feedback import sanitize_review_text
-from bridge.daily_feedback_export import DailyReviewPackage
+from bridge.daily_feedback import minimize_review_text_v2, sanitize_review_text
+from bridge.daily_feedback_export import (
+    PACKAGE_SCHEMA_V2,
+    DailyReviewPackage,
+    apply_conversation_context,
+)
 from slack_correlation.catalog import NotificationCommand
 
 
@@ -88,8 +93,15 @@ class DailyFeedbackWebSettings:
     session_cookie_name: str = "__Host-daily_feedback_session"
     oidc_state_cookie_name: str = "__Host-daily_feedback_oidc"
     session_hours: int = 8
+    # Zona horaria en la que se muestran las horas de los mensajes (la de los
+    # revisores, no UTC). Los datos se guardan siempre en UTC.
+    display_timezone: str = "UTC"
 
     def __post_init__(self) -> None:
+        try:
+            ZoneInfo(self.display_timezone)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError("invalid_daily_feedback_display_timezone") from exc
         parsed = urlsplit(self.public_origin)
         if (
             parsed.scheme != "https"
@@ -329,6 +341,8 @@ class DailyFeedbackScheduler:
                 window_start=window_start,
                 window_end=window_end,
             )
+            if package.schema_version == PACKAGE_SCHEMA_V2:
+                package = await self._enrich_package(package)
             items, release_lineage = _package_items(package, claim)
             envelope = {
                 "tenant_ref": package.tenant_ref,
@@ -393,6 +407,32 @@ class DailyFeedbackScheduler:
             except Exception:
                 pass
             raise
+
+    async def _enrich_package(self, package: DailyReviewPackage) -> DailyReviewPackage:
+        """Suma lo que Supabase sabe de cada conversacion (derivaciones,
+        reactivaciones, reanudaciones, opt-outs, links de pago, revisiones
+        previas). Falla cerrado: sin contexto no se publica un informe a medias.
+        """
+        conversation_ids = sorted(
+            {
+                int(conversation.context["chatwoot_conversation_id"])
+                for conversation in package.conversations
+                if type(conversation.context.get("chatwoot_conversation_id")) is int
+            }
+        )
+        contexts: dict[str, object] = {}
+        if conversation_ids:
+            contexts = await self._repository.rpc(
+                "get_daily_feedback_conversation_context_v1",
+                {
+                    "p_tenant_ref": self.settings.tenant_ref,
+                    "p_scope_ref": self.settings.scope_ref,
+                    "p_chatwoot_account_id": self.settings.chatwoot_account_id,
+                    "p_chatwoot_inbox_id": self.settings.chatwoot_inbox_id,
+                    "p_conversation_ids": conversation_ids,
+                },
+            )
+        return apply_conversation_context(package, contexts)
 
     async def _notify_one(self, *, now: datetime) -> bool:
         claim_command = str(uuid4())
@@ -549,6 +589,7 @@ def create_daily_feedback_review_app(service: DailyFeedbackService) -> FastAPI:
                 public_ref=public_ref,
                 csrf_token=service.csrf_token(session_secret),
                 command_id=str(uuid4()),
+                display_timezone=service.settings.display_timezone,
             )
         )
 
@@ -844,6 +885,7 @@ class SupabaseDailyFeedbackRepository:
             "complete_daily_feedback_oidc_v1",
             "get_daily_feedback_review_page_v1",
             "get_daily_feedback_readiness_v1",
+            "get_daily_feedback_conversation_context_v1",
             "record_daily_feedback_decision_v1",
             "purge_expired_daily_feedback_v2",
         }
@@ -948,6 +990,9 @@ def _package_items(
     ):
         raise RuntimeError("daily_feedback_package_claim_mismatch")
 
+    identified = package.schema_version == PACKAGE_SCHEMA_V2
+    minimize = minimize_review_text_v2 if identified else sanitize_review_text
+
     seen_conversations: set[str] = set()
     seen_messages: set[str] = set()
     lineages: set[str] = set()
@@ -956,14 +1001,14 @@ def _package_items(
         if conversation.conversation_ref in seen_conversations:
             raise RuntimeError("duplicate_daily_feedback_conversation")
         seen_conversations.add(conversation.conversation_ref)
-        for text in (
-            conversation.display_label,
-            conversation.apparent_objective,
-            conversation.observed_outcome,
+        for text, limit in (
+            (conversation.display_label, 80),
+            (conversation.apparent_objective, 300),
+            (conversation.observed_outcome, 300),
         ):
-            if sanitize_review_text(text) != text:
+            if minimize(text) != text or not 1 <= len(text) <= limit:
                 raise RuntimeError("daily_feedback_package_not_minimized")
-        messages: list[dict[str, str]] = []
+        messages: list[dict[str, object]] = []
         previous_at: datetime | None = None
         for message in conversation.messages:
             if message.message_ref in seen_messages:
@@ -975,38 +1020,109 @@ def _package_items(
             if previous_at is not None and occurred_at < previous_at:
                 raise RuntimeError("daily_feedback_messages_not_ordered")
             previous_at = occurred_at
-            if sanitize_review_text(message.text) != message.text:
+            if minimize(message.text) != message.text or not 1 <= len(message.text) <= 4000:
                 raise RuntimeError("daily_feedback_package_not_minimized")
-            messages.append(
-                {
-                    "actor": message.actor,
-                    "occurred_at": _utc_text(occurred_at),
-                    "text": message.text,
-                }
-            )
+            if identified:
+                messages.append(_identified_message_row(message, occurred_at))
+            else:
+                messages.append(
+                    {
+                        "actor": message.actor,
+                        "occurred_at": _utc_text(occurred_at),
+                        "text": message.text,
+                    }
+                )
         lineage = (
             "release_lineage_unavailable"
             if conversation.release_id == "release_lineage_unavailable"
             else f"{conversation.release_id}@{conversation.release_version}"
         )
         lineages.add(lineage)
-        items.append(
-            {
-                "conversation_ref": conversation.conversation_ref,
-                "display_label": conversation.display_label,
-                "apparent_objective": conversation.apparent_objective,
-                "observed_outcome": conversation.observed_outcome,
-                "release_id": conversation.release_id,
-                "release_version": conversation.release_version,
-                "messages": messages,
-            }
-        )
+        item: dict[str, object] = {
+            "conversation_ref": conversation.conversation_ref,
+            "display_label": conversation.display_label,
+            "apparent_objective": conversation.apparent_objective,
+            "observed_outcome": conversation.observed_outcome,
+            "release_id": conversation.release_id,
+            "release_version": conversation.release_version,
+            "messages": messages,
+        }
+        if identified:
+            item["context"] = _identified_context(conversation.context)
+        items.append(item)
     release_lineage = (
         next(iter(lineages))
         if len(lineages) == 1
         else "release_lineage_unavailable"
     )
     return items, release_lineage
+
+
+_IDENTIFIED_ACTORS = frozenset({"prospect", "agent", "team", "system"})
+_IDENTIFIED_KIND_RE = re.compile(r"[a-z][a-z0-9_]{0,63}")
+_IDENTIFIED_STATUS_RE = re.compile(r"[a-z][a-z0-9_]{0,31}")
+_IDENTIFIED_CONTEXT_KEYS = frozenset(
+    {
+        "chatwoot_conversation_id",
+        "conversation_url",
+        "contact",
+        "conversation",
+        "origin",
+        "events",
+        "payment_links",
+        "prior_reviews",
+        "summary",
+    }
+)
+
+
+def _json_roundtrip(value: object, *, limit: int, error: str) -> object:
+    """Serializable, acotado y sin tipos raros: lo mismo que va a aceptar Postgres."""
+    try:
+        encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(error) from exc
+    if len(encoded.encode("utf-8")) > limit:
+        raise RuntimeError(error)
+    return json.loads(encoded)
+
+
+def _identified_message_row(message: Any, occurred_at: datetime) -> dict[str, object]:
+    if (
+        message.actor not in _IDENTIFIED_ACTORS
+        or not _IDENTIFIED_KIND_RE.fullmatch(message.kind)
+        or not _IDENTIFIED_STATUS_RE.fullmatch(message.status)
+    ):
+        raise RuntimeError("daily_feedback_message_shape_invalid")
+    meta = _json_roundtrip(
+        dict(message.meta), limit=4000, error="daily_feedback_message_meta_invalid"
+    )
+    if not isinstance(meta, dict):
+        raise RuntimeError("daily_feedback_message_meta_invalid")
+    return {
+        "actor": message.actor,
+        "kind": message.kind,
+        "occurred_at": _utc_text(occurred_at),
+        "status": message.status,
+        "text": message.text,
+        "meta": meta,
+    }
+
+
+def _identified_context(context: Any) -> dict[str, object]:
+    if not isinstance(context, dict) or not set(context) <= _IDENTIFIED_CONTEXT_KEYS:
+        raise RuntimeError("daily_feedback_context_shape_invalid")
+    conversation_id = context.get("chatwoot_conversation_id")
+    if type(conversation_id) is not int or conversation_id <= 0:
+        raise RuntimeError("daily_feedback_context_shape_invalid")
+    url = context.get("conversation_url")
+    if not isinstance(url, str) or not url.startswith("https://") or len(url) > 400:
+        raise RuntimeError("daily_feedback_context_shape_invalid")
+    normalized = _json_roundtrip(
+        context, limit=32768, error="daily_feedback_context_too_large"
+    )
+    assert isinstance(normalized, dict)
+    return normalized
 
 
 def _canonical_uuid(value: str) -> bool:
@@ -1080,6 +1196,10 @@ main.app-frame{{width:min(1240px,calc(100% - 40px));margin:0 auto;padding:28px 0
 .review-panel{{position:sticky;top:80px;background:var(--cw-surface);border:1px solid var(--cw-border-soft);border-radius:var(--cw-radius);overflow:hidden}}.panel-heading{{padding:18px;border-bottom:1px solid var(--cw-border-soft)}}.panel-heading h2{{margin-bottom:4px}}.panel-heading p{{margin-bottom:0;font-size:13px}}.actions{{display:grid;gap:14px;padding:18px}}label{{font-size:13px;font-weight:600}}.label-note{{display:block;margin-top:2px;color:var(--cw-subtle);font-size:12px;font-weight:400}}textarea{{width:100%;min-height:150px;resize:vertical;padding:12px 13px;border:1px solid #353740;border-radius:var(--cw-radius-sm);background:#121317;color:var(--cw-text);font:inherit;line-height:1.5;transition:border-color .15s,box-shadow .15s}}textarea::placeholder{{color:#898b95}}textarea:hover{{border-color:#464852}}textarea:focus{{border-color:var(--cw-accent);box-shadow:0 0 0 3px rgba(25,118,210,.2);outline:0}}
 .decision-grid{{display:grid;gap:9px}}.feedback-panel{{display:grid;gap:14px;border-top:1px solid var(--cw-border-soft);padding-top:16px}}[hidden]{{display:none!important}}button,.button{{min-height:42px;border:1px solid #373943;border-radius:var(--cw-radius-sm);background:var(--cw-surface-raised);color:var(--cw-text);padding:10px 14px;font:600 14px/1.2 Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;transition:background .15s,border-color .15s,transform .1s}}button:hover,.button:hover{{background:var(--cw-hover);border-color:#484a55}}button:active,.button:active{{transform:translateY(1px)}}button.primary,.button.primary{{background:var(--cw-accent);border-color:var(--cw-accent);color:white}}button.primary:hover,.button.primary:hover{{background:var(--cw-accent-hover);border-color:var(--cw-accent-hover)}}button.quiet{{background:transparent;color:var(--cw-muted);border-color:transparent}}button.quiet:hover{{background:var(--cw-hover);color:var(--cw-text)}}button[data-reveal-feedback][aria-expanded="true"]{{border-color:var(--cw-accent);box-shadow:0 0 0 2px rgba(25,118,210,.18)}}button:disabled{{cursor:not-allowed;opacity:.52;transform:none}}button:disabled:hover{{background:var(--cw-surface-raised);border-color:#373943}}button.primary:disabled:hover{{background:var(--cw-accent);border-color:var(--cw-accent)}}button:focus-visible,.button:focus-visible{{outline:2px solid #80bfff;outline-offset:2px}}
 
+.lead-card{{display:flex;flex-wrap:wrap;gap:18px;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--cw-border-soft);background:var(--cw-surface)}}.lead-main{{display:flex;gap:12px;align-items:center;min-width:0}}.lead-avatar{{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;background:#2b2d34;color:#e5e5e8;font-weight:700;flex:none}}.lead-name{{font-weight:650;font-size:16px}}.lead-contact{{color:var(--cw-muted);font-size:13px;overflow-wrap:anywhere}}.lead-facts{{display:flex;flex-wrap:wrap;gap:14px 22px;margin:0}}.lead-facts div{{min-width:120px}}.lead-facts dt{{color:var(--cw-subtle);font-size:11px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;margin-bottom:3px}}.lead-facts dd{{margin:0;font-size:13px}}.lead-facts .button{{min-height:34px;padding:6px 12px;font-size:13px}}.chip{{display:inline-block;border:1px solid var(--cw-border);border-radius:999px;padding:1px 8px;font-size:11px;color:var(--cw-muted);margin-left:6px;vertical-align:middle}}.chip--warn{{border-color:#8a5a1f;color:#f0c27b}}.chip--ok{{border-color:#2f7a55;color:#9fe3c0}}
+.message--team{{align-self:flex-start}}.message--team .avatar{{background:#1f4d3a;color:#9fe3c0}}.message--team .bubble{{background:#1c2a22;border-color:#264a38}}.kind-tag{{display:inline-block;padding:0 6px;border-radius:6px;background:#2e3040;color:#c9cad0;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}}.kind-tag--template{{background:#4a3a12;color:#f0c27b}}.kind-tag--link{{background:#123f2c;color:#9fe3c0}}.message-foot{{color:var(--cw-subtle);font-size:11px;margin:4px 3px 0}}.message--agent .message-foot{{text-align:right}}
+.note{{align-self:stretch;border:1px dashed #4a4c58;border-radius:var(--cw-radius-sm);padding:10px 12px;color:#c9cad0;font-size:13px;background:#1a1b20;white-space:pre-wrap;overflow-wrap:anywhere}}.note-head{{color:var(--cw-subtle);font-size:11px;font-weight:650;margin-bottom:4px;white-space:normal}}.event{{align-self:center;color:var(--cw-muted);font-size:12px;text-align:center;padding:2px 10px;border-radius:999px;background:#1a1b20;border:1px solid var(--cw-border-soft)}}.gap{{align-self:center;color:var(--cw-subtle);font-size:11px}}
+.context-lists{{display:grid;gap:12px;padding:16px 18px;border-top:1px solid var(--cw-border-soft);background:var(--cw-sidebar)}}.context-lists h3{{margin:0 0 6px;font-size:12px;color:var(--cw-subtle);letter-spacing:.06em;text-transform:uppercase}}.context-lists ul{{margin:0;padding-left:18px;font-size:13px;color:var(--cw-muted)}}.context-lists li{{margin:2px 0;overflow-wrap:anywhere}}
 @media(max-width:880px){{.review-layout{{grid-template-columns:1fr}}.review-panel{{position:static}}.chat-thread{{min-height:380px}}.progress{{width:min(250px,42vw)}}}}@media(max-width:620px){{.topbar{{height:58px;padding:0 16px}}.brand-name,.secure-badge{{display:none}}main.app-frame{{width:min(100% - 24px,1240px);padding-top:18px}}.review-header{{align-items:flex-start;flex-direction:column;gap:14px}}.progress{{width:100%}}.conversation-summary{{grid-template-columns:1fr}}.summary-item+ .summary-item{{border-left:0;border-top:1px solid var(--cw-border-soft)}}.chat-thread{{padding:18px 12px;min-height:320px}}.message{{max-width:94%}}}}
 </style></head><body class="app-shell"><div class="topbar"><div class="brand"><div class="workspace-mark" aria-hidden="true"></div><span class="brand-name">Johanna</span><span class="brand-divider" aria-hidden="true"></span><span class="brand-section">Revisión diaria</span></div><span class="secure-badge">Revisión supervisada</span></div><main class="app-frame">{body}</main></body></html>'''
 
@@ -1110,32 +1230,327 @@ def _login_page(public_ref: str) -> str:
     )
 
 
+_ACTOR_LABELS = {"prospect": "Lead", "agent": "Agente", "team": "Equipo", "system": "Sistema"}
+_KIND_LABELS = {
+    "prospect_message": "Lead",
+    "agent_reply": "Respuesta del agente",
+    "agent_message": "Mensaje del agente",
+    "payment_link": "Link de pago",
+    "reactivation_template": "Plantilla · reactivación",
+    "first_touch_template": "Plantilla · primer toque",
+    "followup_template": "Plantilla · seguimiento",
+    "template_message": "Plantilla",
+    "team_message": "Equipo",
+    "handoff_note": "Nota de derivación",
+    "private_note": "Nota interna",
+    "automation_paused": "Automatización pausada",
+    "automation_resumed": "Automatización reanudada",
+    "assigned": "Asignada",
+    "unassigned": "Sin asignar",
+    "conversation_resolved": "Conversación resuelta",
+    "conversation_reopened": "Conversación reabierta",
+    "conversation_open": "Conversación abierta",
+    "conversation_pending": "Conversación pendiente",
+    "conversation_snoozed": "Conversación pospuesta",
+    "label_added": "Etiqueta agregada",
+    "label_removed": "Etiqueta quitada",
+    "activity": "Actividad",
+    "message": "Agente",
+}
+_TEMPLATE_KINDS = frozenset(
+    {"reactivation_template", "first_touch_template", "followup_template", "template_message"}
+)
+_STATUS_LABELS = {
+    "sent": "enviado",
+    "delivered": "entregado",
+    "read": "leído",
+    "failed": "falló",
+    "progress": "en curso",
+    "unknown": "sin estado",
+}
+_DECISION_LABELS = {
+    "send_payment_link": "enviar el link de pago",
+    "handoff": "derivar a humano",
+    "ask_question": "preguntar",
+    "answer": "responder",
+    "reply": "responder",
+    "wait": "esperar",
+    "close": "cerrar",
+}
+_EVENT_LABELS = {
+    "handoff": "Derivación a humano",
+    "reactivation": "Reactivación",
+    "resume": "Reanudación",
+    "opt_out": "Opt-out",
+}
+_STATUS_ES = {"open": "abierta", "pending": "pendiente", "resolved": "resuelta", "snoozed": "pospuesta"}
+
+
+def _esc(value: object) -> str:
+    return html.escape("" if value is None else str(value), quote=True)
+
+
+def _parse_iso_utc(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.astimezone(UTC) if parsed.tzinfo is not None else None
+
+
+def _local_clock(value: object, timezone: ZoneInfo, *, with_date: bool = False) -> str:
+    parsed = _parse_iso_utc(value)
+    if parsed is None:
+        return ""
+    local = parsed.astimezone(timezone)
+    return local.strftime("%d/%m %H:%M") if with_date else local.strftime("%H:%M")
+
+
+def _gap_label(previous: datetime | None, current: datetime | None) -> str | None:
+    if previous is None or current is None:
+        return None
+    seconds = int((current - previous).total_seconds())
+    if seconds < 30 * 60:
+        return None
+    if seconds < 3600:
+        return f"+{seconds // 60} min después"
+    if seconds < 86400:
+        hours, minutes = divmod(seconds // 60, 60)
+        return f"+{hours} h {minutes:02d} min después" if minutes else f"+{hours} h después"
+    days, remainder = divmod(seconds, 86400)
+    hours = remainder // 3600
+    return f"+{days} d {hours} h después" if hours else f"+{days} d después"
+
+
+def _initials(name: object) -> str:
+    if not isinstance(name, str) or not name.strip():
+        return "?"
+    parts = [part for part in name.split() if part]
+    letters = "".join(part[0] for part in parts[:2]).upper()
+    return letters or "?"
+
+
+def _render_lead_card(context: dict[str, object], timezone: ZoneInfo) -> str:
+    contact_raw = context.get("contact")
+    contact = contact_raw if isinstance(contact_raw, dict) else {}
+    conversation_raw = context.get("conversation")
+    conversation = conversation_raw if isinstance(conversation_raw, dict) else {}
+    summary_raw = context.get("summary")
+    summary = summary_raw if isinstance(summary_raw, dict) else {}
+    name = contact.get("name") or "Sin nombre en Chatwoot"
+    contact_bits = [str(value) for value in (contact.get("phone"), contact.get("email")) if value]
+    labels_raw = conversation.get("labels")
+    labels = [label for label in labels_raw if isinstance(label, str)] if isinstance(labels_raw, list) else []
+    status = conversation.get("status")
+    status_text = _STATUS_ES.get(str(status), str(status)) if status else "sin estado"
+    chips = "".join(
+        f'<span class="chip{" chip--warn" if label == "automation_paused" else ""}">{_esc(label)}</span>'
+        for label in labels
+    )
+    assignee = conversation.get("assignee")
+    origin = {"inbound": "escribió el lead", "precheckout": "formulario precheckout"}.get(
+        str(context.get("origin")), str(context.get("origin") or "")
+    )
+    conversation_id = context.get("chatwoot_conversation_id")
+    url = context.get("conversation_url")
+    link = (
+        f'<a class="button" href="{_esc(url)}" target="_blank" rel="noopener noreferrer">Abrir en Chatwoot #{_esc(conversation_id)} ↗</a>'
+        if isinstance(url, str) and url.startswith("https://")
+        else f'<span class="muted">#{_esc(conversation_id)}</span>'
+    )
+    prior_raw = context.get("prior_reviews")
+    prior = [row for row in prior_raw if isinstance(row, dict)] if isinstance(prior_raw, list) else []
+    prior_chip = (
+        f'<span class="chip chip--warn">ya revisada ×{len(prior)}</span>' if prior else ""
+    )
+    purchase_chip = '<span class="chip chip--ok">compró</span>' if summary.get("purchase_recorded") else ""
+    return f'''<section class="lead-card" aria-label="Datos del lead"><div class="lead-main"><div class="lead-avatar" aria-hidden="true">{_esc(_initials(contact.get("name")))}</div><div><div class="lead-name">{_esc(name)}{purchase_chip}{prior_chip}</div><div class="lead-contact">{_esc(" · ".join(contact_bits) or "sin teléfono ni mail")}</div></div></div>
+<dl class="lead-facts"><div><dt>Primer contacto</dt><dd>{_esc(_local_clock(conversation.get("created_at"), timezone, with_date=True) or "sin dato")}</dd></div>
+<div><dt>Estado</dt><dd>{_esc(status_text)}{" · " + _esc(assignee) if assignee else ""}{chips}</dd></div>
+<div><dt>Origen</dt><dd>{_esc(origin or "sin dato")}</dd></div>
+<div><dt>Conversación</dt><dd>{link}</dd></div></dl></section>'''
+
+
+def _render_message(
+    message: dict[str, object], timezone: ZoneInfo, previous_at: datetime | None
+) -> tuple[str, datetime | None]:
+    actor = str(message.get("actor", "agent"))
+    kind = str(message.get("kind", "message"))
+    status = str(message.get("status", "sent"))
+    meta_raw = message.get("meta")
+    meta = meta_raw if isinstance(meta_raw, dict) else {}
+    occurred_at = _parse_iso_utc(message.get("occurred_at"))
+    clock = _local_clock(message.get("occurred_at"), timezone)
+    text = _esc(message.get("text", ""))
+    gap = _gap_label(previous_at, occurred_at)
+    prefix = f'<div class="gap">{_esc(gap)}</div>' if gap else ""
+
+    if actor == "system":
+        who = meta.get("actor_name")
+        detail = f" · por {_esc(who)}" if who else ""
+        if kind in {"label_added", "label_removed"} and meta.get("label"):
+            detail = f" · {_esc(meta.get('label'))}{detail}"
+        if kind == "assigned" and meta.get("assignee"):
+            detail = f" · a {_esc(meta.get('assignee'))}{detail}"
+        label = _KIND_LABELS.get(kind, text)
+        return (
+            f'{prefix}<div class="event" role="note">{_esc(label)}{detail} · {_esc(clock)}</div>',
+            occurred_at,
+        )
+    if actor == "team" and kind in {"handoff_note", "private_note"}:
+        author = meta.get("author")
+        head = f'{_esc(_KIND_LABELS.get(kind, "Nota interna"))}{" · " + _esc(author) if author else ""} · {_esc(clock)}'
+        return (
+            f'{prefix}<div class="note" role="note"><div class="note-head">{head}</div><div class="note-body">{text}</div></div>',
+            occurred_at,
+        )
+
+    if actor == "prospect":
+        css, avatar, head = "prospect", "L", f"Lead · {_esc(clock)}"
+        foot = ""
+    elif actor == "team":
+        author = meta.get("author")
+        css, avatar = "team", _initials(author)
+        head = f'Equipo{" · " + _esc(author) if author else ""} · {_esc(clock)}'
+        foot = f'<div class="message-foot">{_esc(_STATUS_LABELS.get(status, status))}</div>'
+    else:
+        css, avatar = "agent", "A"
+        tag_class = "kind-tag--template" if kind in _TEMPLATE_KINDS else (
+            "kind-tag--link" if kind == "payment_link" else ""
+        )
+        head = f'{_esc(_KIND_LABELS.get(kind, "Agente"))} · {_esc(clock)}'
+        if meta.get("part"):
+            head += f' <span class="kind-tag">parte {_esc(meta.get("part"))}</span>'
+        if tag_class:
+            head = f'<span class="kind-tag {tag_class}">{_esc(_KIND_LABELS.get(kind, kind))}</span> · {_esc(clock)}'
+        bits: list[str] = []
+        decision = meta.get("decision")
+        if decision:
+            reason = meta.get("reason_code")
+            decision_text = _DECISION_LABELS.get(str(decision), str(decision))
+            bits.append(
+                f"decisión: {_esc(decision_text)}" + (f" ({_esc(reason)})" if reason and reason != decision else "")
+            )
+        if kind == "payment_link":
+            attribution = meta.get("attribution")
+            if attribution:
+                bits.append(f"atribución: {_esc(attribution)}")
+            if "purchased" in meta:
+                bits.append("compra: sí" if meta.get("purchased") else "compra: no")
+        if kind == "reactivation_template":
+            bits.append("enviada por el monitor de conversaciones sin respuesta")
+        bits.append(_esc(_STATUS_LABELS.get(status, status)))
+        foot = f'<div class="message-foot">{" · ".join(bits)}</div>'
+    return (
+        f'''{prefix}<div class="message message--{css}"><div class="avatar" aria-hidden="true">{_esc(avatar)}</div><div class="bubble-wrap"><div class="actor">{head}</div>
+<div class="bubble">{text}</div>{foot}</div></div>''',
+        occurred_at,
+    )
+
+
+def _render_context_lists(context: dict[str, object], timezone: ZoneInfo) -> str:
+    sections: list[str] = []
+    events_raw = context.get("events")
+    events = [event for event in events_raw if isinstance(event, dict)] if isinstance(events_raw, list) else []
+    if events:
+        rows = []
+        for event in events:
+            kind = str(event.get("kind", ""))
+            when = _local_clock(event.get("occurred_at"), timezone, with_date=True)
+            detail_parts: list[str] = []
+            if kind == "handoff":
+                reason = event.get("detail_reason_code") or event.get("primary_reason_code")
+                if reason:
+                    detail_parts.append(str(reason))
+                if event.get("requested_by"):
+                    detail_parts.append(f"pedida por {event.get('requested_by')}")
+            elif kind == "reactivation":
+                if event.get("template_name"):
+                    detail_parts.append(str(event.get("template_name")))
+                if event.get("status"):
+                    detail_parts.append(_STATUS_LABELS.get(str(event.get("status")), str(event.get("status"))))
+                if event.get("failure_reason"):
+                    detail_parts.append(f"error: {event.get('failure_reason')}")
+            elif kind == "resume":
+                if event.get("reason_code"):
+                    detail_parts.append(str(event.get("reason_code")))
+            rows.append(
+                f"<li>{_esc(when)} · {_esc(_EVENT_LABELS.get(kind, kind))}"
+                + (f" · {_esc(' · '.join(detail_parts))}" if detail_parts else "")
+                + "</li>"
+            )
+        sections.append(f"<div><h3>Eventos internos</h3><ul>{''.join(rows)}</ul></div>")
+    links_raw = context.get("payment_links")
+    links = [link for link in links_raw if isinstance(link, dict)] if isinstance(links_raw, list) else []
+    if links:
+        rows = []
+        for link in links:
+            when = _local_clock(link.get("occurred_at"), timezone, with_date=True)
+            bits = [
+                f"estado: {link.get('status')}" if link.get("status") else "",
+                f"atribución: {link.get('attribution')}" if link.get("attribution") else "",
+                f"oferta: {link.get('offer_code')}" if link.get("offer_code") else "",
+                (
+                    f"compra: {_local_clock(link.get('purchased_at'), timezone, with_date=True)}"
+                    if link.get("purchased_at")
+                    else "compra: no registrada"
+                ),
+            ]
+            rows.append(f"<li>{_esc(when)} · link de pago · {_esc(' · '.join(bit for bit in bits if bit))}</li>")
+        sections.append(f"<div><h3>Links de pago</h3><ul>{''.join(rows)}</ul></div>")
+    prior_raw = context.get("prior_reviews")
+    prior = [row for row in prior_raw if isinstance(row, dict)] if isinstance(prior_raw, list) else []
+    if prior:
+        rows = []
+        for row in prior:
+            feedback = row.get("verbatim_feedback")
+            rows.append(
+                f"<li>{_esc(row.get('local_date'))} · {_esc(row.get('decision'))}"
+                + (f": {_esc(feedback)}" if feedback else "")
+                + "</li>"
+            )
+        sections.append(f"<div><h3>Revisiones previas de esta conversación</h3><ul>{''.join(rows)}</ul></div>")
+    if not sections:
+        return ""
+    return f'<div class="context-lists">{"".join(sections)}</div>'
+
+
 def _review_page(
     page: dict[str, object],
     *,
     public_ref: str,
     csrf_token: str,
     command_id: str,
+    display_timezone: str = "UTC",
 ) -> str:
     item = page["item"]
     assert isinstance(item, dict)
     messages = item.get("messages")
     assert isinstance(messages, list)
-    transcript = "".join(
-        f'''<div class="message message--{"prospect" if message.get("actor") == "prospect" else "agent"}"><div class="avatar" aria-hidden="true">{"P" if message.get("actor") == "prospect" else "A"}</div><div class="bubble-wrap"><div class="actor">{html.escape("Prospecto" if message.get("actor") == "prospect" else "Agente")}</div>
-<div class="bubble">{html.escape(str(message.get("text", "")))}</div></div></div>'''
-        for message in messages
-        if isinstance(message, dict)
-    )
+    timezone = ZoneInfo(display_timezone)
+    context_raw = item.get("context")
+    context = context_raw if isinstance(context_raw, dict) else {}
+    parts: list[str] = []
+    previous_at: datetime | None = None
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        rendered, previous_at = _render_message(message, timezone, previous_at)
+        parts.append(rendered)
+    transcript = "".join(parts)
+    lead_card = _render_lead_card(context, timezone) if context else ""
+    context_lists = _render_context_lists(context, timezone) if context else ""
     position = int(item.get("position", 0))
     total = int(page.get("item_count", 0))
     progress = round(position / total * 100) if total > 0 else 0
-    body = f'''<header class="review-header"><div class="review-title-group"><p class="meta">{html.escape(str(page.get("local_date", "")))}</p><h1>{html.escape(str(item.get("display_label", "")))}</h1><p class="muted">Revisión de conversación</p></div>
+    body = f'''<header class="review-header"><div class="review-title-group"><p class="meta">{html.escape(str(page.get("local_date", "")))}</p><h1>{html.escape(str(item.get("display_label", "")))}</h1><p class="muted">Revisión de conversación · horas en {html.escape(display_timezone)}</p></div>
 <div class="progress" role="progressbar" aria-label="Progreso diario" aria-valuemin="1" aria-valuemax="{total}" aria-valuenow="{position}"><div class="progress-copy"><span>Progreso diario</span><span>{position} de {total}</span></div><div class="progress-track"><div class="progress-fill" style="width:{progress}%"></div></div></div></header>
-<div class="review-layout"><section class="conversation" aria-label="Conversación actual"><div class="conversation-summary">
+<div class="review-layout"><section class="conversation" aria-label="Conversación actual">{lead_card}<div class="conversation-summary">
 <div class="summary-item"><span class="summary-label">Objetivo aparente</span><span class="summary-value">{html.escape(str(item.get("apparent_objective", "")))}</span></div>
 <div class="summary-item"><span class="summary-label">Resultado observado</span><span class="summary-value">{html.escape(str(item.get("observed_outcome", "")))}</span></div></div>
-<div class="chat-thread">{transcript}</div></section>
+<div class="chat-thread">{transcript}</div>{context_lists}</section>
 <aside class="review-panel"><div class="panel-heading"><h2>Evaluar conversación</h2><p class="muted">Elegí si está correcta o necesita una corrección.</p></div>
 <form class="actions" data-decision-form method="post" action="/daily-feedback/review/{html.escape(public_ref)}/decisions">
 <input type="hidden" name="csrf_token" value="{html.escape(csrf_token)}">

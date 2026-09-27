@@ -7,6 +7,7 @@ import fcntl
 import hashlib
 import math
 import os
+import re
 import stat
 import time
 from dataclasses import dataclass
@@ -21,6 +22,11 @@ from bridge.filtering import (
     matches_allowed_whatsapp_phone,
 )
 from bridge.reply_splitter import reply_batch_hash, reply_part_hash
+
+# Decision y reason code del agente que viajan como content_attributes del
+# mensaje publicado (los lee la revision diaria). Mismo alfabeto que los
+# reason codes del contrato de salida del agente.
+_AGENT_DECISION_MARKER_RE = re.compile(r"[a-z][a-z0-9_]{0,63}")
 
 
 class ChatwootProtocolError(RuntimeError):
@@ -644,8 +650,17 @@ class ChatwootClient:
         expected_inbox_id: int | None = None,
         expected_jid: str | None = None,
         pre_send_authorizer: Callable[[], Awaitable[bool]] | None = None,
+        agent_decision: str | None = None,
+        agent_reason_code: str | None = None,
     ) -> dict[str, object]:
-        """Authorize and send one idempotent part of a public AgentBot reply."""
+        """Authorize and send one idempotent part of a public AgentBot reply.
+
+        ``agent_decision`` y ``agent_reason_code`` son la decision del agente
+        que produjo este mensaje (``ask_question``, ``send_payment_link``,
+        ``handoff``...). Van como ``content_attributes`` del mensaje en
+        Chatwoot para que la revision diaria pueda mostrar por que el agente
+        contesto lo que contesto; no cambian la idempotencia ni el contenido.
+        """
         if (
             self._agent_bot_access_token is None
             or self._agent_bot_id is None
@@ -653,6 +668,12 @@ class ChatwootClient:
             or (expected_jid is None and self._allowed_jid is None)
         ):
             raise ChatwootProtocolError("agent_bot_reply_not_configured")
+        for marker in (agent_decision, agent_reason_code):
+            if marker is not None and (
+                not isinstance(marker, str)
+                or _AGENT_DECISION_MARKER_RE.fullmatch(marker) is None
+            ):
+                raise ChatwootProtocolError("invalid_agent_decision_marker")
         if (
             not isinstance(part_index, int)
             or isinstance(part_index, bool)
@@ -703,6 +724,8 @@ class ChatwootClient:
                 expected_inbox_id=expected_inbox_id,
                 expected_jid=expected_jid,
                 pre_send_authorizer=pre_send_authorizer,
+                agent_decision=agent_decision,
+                agent_reason_code=agent_reason_code,
             )
         finally:
             if lock_fd >= 0:
@@ -828,6 +851,8 @@ class ChatwootClient:
         expected_inbox_id: int | None,
         expected_jid: str | None,
         pre_send_authorizer: Callable[[], Awaitable[bool]] | None,
+        agent_decision: str | None = None,
+        agent_reason_code: str | None = None,
     ) -> dict[str, object]:
         agent_bot_access_token = self._agent_bot_access_token
         if agent_bot_access_token is None:
@@ -913,6 +938,12 @@ class ChatwootClient:
                         "appointment_setter_reply_part_index": part_index,
                         "appointment_setter_reply_part_count": part_count,
                     }
+                )
+            if agent_decision is not None:
+                marker_attributes["appointment_setter_decision"] = agent_decision
+            if agent_reason_code is not None:
+                marker_attributes["appointment_setter_reason_code"] = (
+                    agent_reason_code
                 )
             response = await final_client.post(
                 messages_path,

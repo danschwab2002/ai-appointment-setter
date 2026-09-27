@@ -1,0 +1,110 @@
+{
+  "_origin": "GET /api/v1/accounts/{account}/conversations?inbox_id=9&status=all&page=1 del Chatwoot de Johanna, capturado el 2026-09-26 23:40 UTC desde el contenedor infra_daily-feedback (conversaciones 177, 184 y 186). Nombres, telefonos, mails e ids de contacto reemplazados por valores ficticios; estructura, timestamps, etiquetas, estados y demas campos son los reales.",
+  "data": {
+    "meta": {"mine_count": 0, "assigned_count": 0, "unassigned_count": 3, "all_count": 3},
+    "payload": [
+      {
+        "id": 186,
+        "inbox_id": 9,
+        "account_id": 1,
+        "status": "open",
+        "labels": ["automation_paused"],
+        "created_at": 1790438176,
+        "updated_at": 1790442491.5,
+        "last_activity_at": 1790442491,
+        "first_reply_created_at": 0,
+        "can_reply": true,
+        "waiting_since": 1790442448,
+        "unread_count": 0,
+        "muted": false,
+        "priority": null,
+        "additional_attributes": {},
+        "custom_attributes": {},
+        "meta": {
+          "channel": "Channel::Whatsapp",
+          "hmac_verified": false,
+          "team": null,
+          "sender": {
+            "id": 9186,
+            "name": "Gustavo Ejemplo",
+            "phone_number": "+5730000000186",
+            "email": "gustavo.ejemplo@example.test",
+            "identifier": null,
+            "availability_status": "offline",
+            "blocked": false,
+            "additional_attributes": {},
+            "custom_attributes": {}
+          }
+        }
+      },
+      {
+        "id": 184,
+        "inbox_id": 9,
+        "account_id": 1,
+        "status": "open",
+        "labels": [],
+        "created_at": 1790390605,
+        "updated_at": 1790390644.2,
+        "last_activity_at": 1790390644,
+        "first_reply_created_at": 0,
+        "can_reply": true,
+        "waiting_since": 0,
+        "unread_count": 0,
+        "muted": false,
+        "priority": null,
+        "additional_attributes": {},
+        "custom_attributes": {},
+        "meta": {
+          "channel": "Channel::Whatsapp",
+          "hmac_verified": false,
+          "team": null,
+          "sender": {
+            "id": 9184,
+            "name": "Arturo Demo",
+            "phone_number": "+5210000000184",
+            "email": null,
+            "identifier": null,
+            "availability_status": "offline",
+            "blocked": false,
+            "additional_attributes": {},
+            "custom_attributes": {}
+          }
+        }
+      },
+      {
+        "id": 177,
+        "inbox_id": 9,
+        "account_id": 1,
+        "status": "open",
+        "labels": ["automation_paused"],
+        "created_at": 1790279450,
+        "updated_at": 1790379030.4596548,
+        "last_activity_at": 1790379030,
+        "first_reply_created_at": 1790281926,
+        "can_reply": false,
+        "waiting_since": 1790368889,
+        "unread_count": 0,
+        "muted": false,
+        "priority": null,
+        "additional_attributes": {},
+        "custom_attributes": {},
+        "meta": {
+          "channel": "Channel::Whatsapp",
+          "hmac_verified": false,
+          "team": null,
+          "sender": {
+            "id": 9177,
+            "name": "Pablo Prueba",
+            "phone_number": "+5210000000177",
+            "email": null,
+            "identifier": null,
+            "availability_status": "offline",
+            "blocked": false,
+            "additional_attributes": {},
+            "custom_attributes": {}
+          }
+        }
+      }
+    ]
+  }
+}

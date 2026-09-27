@@ -1,6 +1,7 @@
 # Contrato — paquete HTML privado de feedback diario V1
 
 - **Estado:** adquisición, minimización y materialización durable local implementadas; no autorizada para distribución
+- **Superseded en la ruta productiva (2026-09-26):** `daily-feedback-review-package-v2` (`daily-feedback-review-package-v2.md`, ADR-0018) reemplaza la minimización de la sección 4 para el servicio `daily-feedback`; este contrato sigue vigente para el HTML local de cuarentena
 - **Versión:** `daily-feedback-review-package-v1`
 - **Superficie:** recolección manual de Chatwoot → minimización → batch durable local → HTML privado de cuarentena
 - **No incluye:** aplicación HTTPS autenticada, scheduler, Slack, persistencia remota, interpretación de feedback ni cambios de Conversation Release

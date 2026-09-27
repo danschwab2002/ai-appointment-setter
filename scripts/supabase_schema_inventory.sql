@@ -3403,6 +3403,46 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'slack_handoff_notification_projection'
+    union all
+    select
+        '20260927000100',
+        '20260927000100_daily_feedback_review_context_v2.sql',
+        (
+            select count(*) = 1 from pg_attribute
+            where attrelid = to_regclass('public.daily_feedback_items')
+              and attname = 'context'
+              and not attisdropped
+        )::int
+        + exists(
+            select 1 from pg_constraint
+            where conname = 'daily_feedback_items_context_valid'
+              and conrelid = to_regclass('public.daily_feedback_items')
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.daily_feedback_messages_valid(jsonb)')
+              and position('''team''' in definition) > 0
+              and position('''system''' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_daily_feedback_conversation_context_v1(text,text,bigint,bigint,bigint[])')
+              and prosecdef
+              and proconfig @> array['search_path=""']
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_daily_feedback_review_page_v1(text,uuid)')
+              and position('''context'',v_item.context' in definition) > 0
+        )::int,
+        5,
+        'daily_feedback_identified_review_context'
 )
 select
     version,

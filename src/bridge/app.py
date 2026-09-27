@@ -266,7 +266,23 @@ class ChatwootControl(Protocol):
         expected_inbox_id: int | None = None,
         expected_jid: str | None = None,
         pre_send_authorizer: Callable[[], Awaitable[bool]] | None = None,
+        agent_decision: str | None = None,
+        agent_reason_code: str | None = None,
     ) -> dict[str, object]: ...
+
+
+_AGENT_MARKER_RE = re.compile(r"[a-z][a-z0-9_]{0,63}")
+
+
+def _agent_marker(value: object) -> str | None:
+    """Decision o reason code de la propuesta, solo si tiene la forma cerrada.
+
+    Se estampa en el mensaje de Chatwoot para la revision diaria; un valor con
+    otra forma se omite en vez de romper el envio.
+    """
+    if isinstance(value, str) and _AGENT_MARKER_RE.fullmatch(value):
+        return value
+    return None
 
 
 class ShadowProcessor(Protocol):
@@ -3073,6 +3089,8 @@ def create_app(
             part_index: int = 1,
             part_count: int = 1,
             prior_parts: tuple[str, ...] = (),
+            agent_decision: str | None = None,
+            agent_reason_code: str | None = None,
         ) -> dict[str, object]:
             if control_client is None:
                 raise RuntimeError("chatwoot_reply_not_configured")
@@ -3081,7 +3099,7 @@ def create_app(
                 and not await durable_reply_authorizer()
             ):
                 return {"status": "blocked", "reason": "durable_automation_stop"}
-            send_args = {
+            send_args: dict[str, object] = {
                 "conversation_id": conversation_id,
                 "trigger_message_id": trigger_message_id,
                 "delivery_id": delivery_id,
@@ -3091,6 +3109,10 @@ def create_app(
                 "prior_parts": prior_parts,
                 "expected_inbox_id": settings.chatwoot_inbox_id,
             }
+            if agent_decision is not None:
+                send_args["agent_decision"] = agent_decision
+            if agent_reason_code is not None:
+                send_args["agent_reason_code"] = agent_reason_code
             if scoped_expected_jid is None:
                 return await control_client.send_agent_bot_reply(**send_args)
             return await control_client.send_agent_bot_reply(
@@ -3664,7 +3686,13 @@ def create_app(
                 "content": payment_reply,
                 "pre_send_authorizer": authorize_payment_link_send,
                 "expected_inbox_id": settings.chatwoot_inbox_id,
+                "agent_decision": "send_payment_link",
             }
+            payment_reason_marker = _agent_marker(
+                completed_proposal.get("reason_code")
+            )
+            if payment_reason_marker is not None:
+                send_args["agent_reason_code"] = payment_reason_marker
             if scoped_expected_jid is not None:
                 send_args["expected_jid"] = scoped_expected_jid
             try:
@@ -3817,6 +3845,8 @@ def create_app(
             except ReplySplitManifestStorageError as exc:
                 raise RuntimeError("reply_split_manifest_storage_error") from exc
 
+        reply_decision_marker = _agent_marker(completed_proposal.get("decision"))
+        reply_reason_marker = _agent_marker(completed_proposal.get("reason_code"))
         try:
             for offset, part in enumerate(parts):
                 if offset > 0:
@@ -3826,6 +3856,8 @@ def create_app(
                         conversation_id=conversation_id,
                         trigger_message_id=message_id,
                         content=part,
+                        agent_decision=reply_decision_marker,
+                        agent_reason_code=reply_reason_marker,
                     )
                 else:
                     reply_result = await send_scoped_agent_bot_reply(
@@ -3835,6 +3867,8 @@ def create_app(
                         part_index=offset + 1,
                         part_count=len(parts),
                         prior_parts=parts[:offset],
+                        agent_decision=reply_decision_marker,
+                        agent_reason_code=reply_reason_marker,
                     )
                 reply_status = reply_result.get("status")
                 if reply_status == "blocked":

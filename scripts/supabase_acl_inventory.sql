@@ -107,7 +107,8 @@ expected_service_role(signature) as (
         ('public.get_daily_feedback_review_page_v1(text, uuid)'),
         ('public.record_daily_feedback_decision_v1(uuid, text, text, uuid, uuid, text, text)'),
         ('public.get_daily_feedback_readiness_v1(text, text, timestamp with time zone)'),
-        ('public.purge_expired_daily_feedback_v2(timestamp with time zone, text, text, text, integer)')
+        ('public.purge_expired_daily_feedback_v2(timestamp with time zone, text, text, text, integer)'),
+        ('public.get_daily_feedback_conversation_context_v1(text, text, bigint, bigint, bigint[])')
 ),
 functions as (
     select
