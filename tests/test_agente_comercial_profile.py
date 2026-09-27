@@ -185,3 +185,28 @@ def test_profile_exige_las_seis_claves_y_prohibe_la_coma_final() -> None:
         "coma después del último",
     ):
         assert required in content, required
+
+
+def test_profile_prohibe_avisar_que_falta_un_dato() -> None:
+    # Conversacion 186 (2026-09-26, inbox 9): "No tengo informacion sobre un
+    # precio de USD 170", "No tengo detalles sobre el contenido especifico del
+    # video", "Ese detalle ... todavia no lo tengo confirmado". Las tres salian
+    # de la instruccion del Objetivo que pedia decir exactamente eso. La falta
+    # de un dato se resuelve con una decision (responder con lo confirmado o
+    # derivar), nunca con una aclaracion a la persona.
+    soul = SOUL.read_text(encoding="utf-8")
+    compacto = " ".join(soul.split())
+
+    for instruccion_vieja in (
+        "Si falta un dato, decí",
+        "comunicá la incertidumbre",
+        "limitate a decir que no tenés ese dato",
+        "No tenemos una causa confirmada",
+    ):
+        assert instruccion_vieja not in compacto, instruccion_vieja
+
+    assert "tampoco avises que no lo tenés" in compacto
+    assert "nunca con una aclaración a la persona" in compacto
+    prohibidos = compacto.split("Patrones prohibidos:", 1)[1]
+    assert "`No tengo información sobre…`" in prohibidos
+    assert "`No tengo detalles sobre…`" in prohibidos
