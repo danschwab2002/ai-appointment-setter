@@ -31,9 +31,9 @@ def test_bundle_covers_exact_pending_tail_and_is_deterministic(tmp_path: Path) -
     assert "20260831000100_johanna_funnel_dashboard_read.sql" in observed
     assert (
         observed[-1]
-        == "20260925000200_slack_handoff_notification_projection_v1.sql"
+        == "20260927000100_daily_feedback_review_context_v2.sql"
     )
-    assert observed[-2] == "20260925000100_sck_alphabet_accepts_tilde_v1.sql"
+    assert observed[-2] == "20260925000200_slack_handoff_notification_projection_v1.sql"
     assert first["bundle"]["sha256"] == second["bundle"]["sha256"]
     assert first["postflight"]["sha256"] == second["postflight"]["sha256"]
     assert first["production_authorized"] is False

@@ -181,7 +181,8 @@ const rows = await db.query(`
       ('get_daily_feedback_review_page_v1(text,uuid)'),
       ('record_daily_feedback_decision_v1(uuid,text,text,uuid,uuid,text,text)'),
       ('get_daily_feedback_readiness_v1(text,text,timestamp with time zone)'),
-      ('purge_expired_daily_feedback_v2(timestamp with time zone,text,text,text,integer)')
+      ('purge_expired_daily_feedback_v2(timestamp with time zone,text,text,text,integer)'),
+      ('get_daily_feedback_conversation_context_v1(text,text,bigint,bigint,bigint[])')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -209,7 +210,7 @@ const result = rows.rows[0];
 // one legacy completion overload, and resuming a paused conversation adds one,
 // and the Slack alert for every human handoff (HND-001) adds three.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 103) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 104) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const bindingAcl = await db.query(`

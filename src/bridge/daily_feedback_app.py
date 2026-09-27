@@ -19,9 +19,14 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from bridge.daily_feedback_export import (
+    SANITIZER_VERSION_V2,
+    SELECTION_VERSION_V2,
     ChatwootDailyCollector,
     RealConversationSecurityPolicy,
 )
+
+# Version del render de la pagina de revision (la app HTTPS, no el HTML local).
+RENDERER_VERSION_V2 = "daily-feedback-web-v2"
 from bridge.daily_feedback_service import (
     DailyFeedbackRepository,
     DailyFeedbackScheduler,
@@ -275,9 +280,9 @@ class DailyFeedbackRuntimeSettings:
             daily_at=required("DAILY_FEEDBACK_DAILY_AT"),
             retention_hours=retention_hours,
             deletion_policy_ref=required("DAILY_FEEDBACK_DELETION_POLICY_REF"),
-            sanitizer_version="deterministic-redaction-v1",
-            selection_version="chatwoot-daily-agent-dialogues-v1",
-            renderer_version="daily-feedback-web-v1",
+            sanitizer_version=SANITIZER_VERSION_V2,
+            selection_version=SELECTION_VERSION_V2,
+            renderer_version=RENDERER_VERSION_V2,
             scheduler_enabled=scheduler_enabled_text == "true",
         )
         pseudonymization_key = required("DAILY_FEEDBACK_PSEUDONYMIZATION_KEY")
@@ -437,6 +442,7 @@ def create_application_from_env(
             public_origin=runtime.public_origin,
             session_hmac_key=session_hmac_key,
             slack_team_id=runtime.application.slack_team_id,
+            display_timezone=runtime.application.timezone,
         ),
     )
     collector = ChatwootDailyCollector(
@@ -452,6 +458,7 @@ def create_application_from_env(
             retention_hours=runtime.application.retention_hours,
             deletion_owner=runtime.application.deletion_policy_ref,
         ),
+        package_version=2,
     )
     producer = SlackConnectorProducer(
         base_url=runtime.slack_connector_base_url,

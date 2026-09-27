@@ -57,6 +57,8 @@ Una ejecución exacta reutiliza el lote. El mismo lote lógico con fingerprint d
 
 Se reutiliza `ChatwootDailyCollector` y su sanitizer cerrado `deterministic-redaction-v1`.
 
+> **Enmienda 2026-09-26 (ADR-0018, pendiente de despliegue):** la ruta productiva pasa a `daily-feedback-review-package-v2` (`daily-feedback-review-package-v2.md`): sanitizer `identity-preserving-redaction-v2`, selección `chatwoot-daily-conversation-context-v2`, render `daily-feedback-web-v2`. Entran el nombre, teléfono y mail del lead, el link a Chatwoot, los mensajes del equipo, las notas privadas, las actividades y los envíos fallidos; se agrega el contexto durable de `get_daily_feedback_conversation_context_v1`. El párrafo siguiente describe V1.
+
 El proceso debe verificar antes de leer contenido:
 
 - feature flag explícito;
@@ -186,6 +188,8 @@ Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; script-s
 El hash de `script-src` autoriza únicamente el script inline determinista que habilita progresivamente el campo de corrección. No autoriza scripts arbitrarios ni recursos de terceros.
 
 No se incluyen PII, secrets, tokens, URLs originales, adjuntos, analytics, third-party JS, imágenes ni logs de contenido.
+
+> **Enmienda 2026-09-26 (ADR-0018):** con el paquete V2 la página sí muestra PII del lead y las URLs originales a los cuatro revisores autenticados. Siguen fuera: secrets, tokens, adjuntos, analytics, third-party JS, imágenes y logs de contenido.
 
 ## Readiness
 

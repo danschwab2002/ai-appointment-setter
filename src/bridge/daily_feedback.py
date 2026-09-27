@@ -68,6 +68,36 @@ def sanitize_review_text(text: str, *, names: tuple[str, ...] = ()) -> str:
     return " ".join(value.split())
 
 
+def minimize_review_text_v2(text: str) -> str:
+    """Texto tal cual salio, menos secretos, esquemas peligrosos y caracteres de control.
+
+    Es el sanitizador de `identity-preserving-redaction-v2`: la revision diaria
+    muestra nombres, telefonos, mails y enlaces porque la ven cuatro revisores
+    autenticados por Slack (ADR-0018). Lo unico que se sigue tapando es lo que
+    nunca deberia viajar en un chat (tokens, `javascript:`) y lo que rompe el
+    render. Es idempotente: aplicarlo dos veces devuelve lo mismo, y el
+    empaquetador lo usa como prueba de que el texto paso por aca.
+    """
+    value = _REVIEW_SECRET_RE.sub("[SECRETO REDACTADO]", text)
+    value = _REVIEW_DANGEROUS_SCHEME_RE.sub("[ESQUEMA BLOQUEADO]", value)
+    value = value.replace("\r\n", "\n").replace("\r", "\n")
+    value = "".join(
+        character
+        if character == "\n"
+        or (
+            character != "\t"
+            and unicodedata.category(character) not in {"Cc", "Cf"}
+        )
+        else ("[CONTROL]" if character != "\t" else " ")
+        for character in value
+    )
+    lines = [" ".join(line.split()) for line in value.split("\n")]
+    collapsed = "\n".join(lines).strip()
+    while "\n\n\n" in collapsed:
+        collapsed = collapsed.replace("\n\n\n", "\n\n")
+    return collapsed
+
+
 @dataclass(frozen=True)
 class FeedbackFixture:
     fixture_id: str

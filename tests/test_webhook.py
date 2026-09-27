@@ -74,6 +74,7 @@ class StubChatwootClient:
         self.history_required_ids: list[tuple[int, ...]] = []
         self.reply_calls: list[dict[str, object]] = []
         self.reply_expected_inbox_ids: list[int | None] = []
+        self.reply_markers: list[tuple[str | None, str | None]] = []
         self.pre_send_authorization_calls = 0
         self.authority_calls: list[dict[str, object]] = []
         self.opt_out_macro_calls: list[int] = []
@@ -157,8 +158,11 @@ class StubChatwootClient:
         expected_inbox_id: int | None = None,
         expected_jid: str | None = None,
         pre_send_authorizer: Callable[[], Awaitable[bool]] | None = None,
+        agent_decision: str | None = None,
+        agent_reason_code: str | None = None,
     ) -> dict[str, object]:
         self.reply_expected_inbox_ids.append(expected_inbox_id)
+        self.reply_markers.append((agent_decision, agent_reason_code))
         if pre_send_authorizer is not None and self.invoke_pre_send_authorizer:
             self.pre_send_authorization_calls += 1
             if await pre_send_authorizer() is not True:
