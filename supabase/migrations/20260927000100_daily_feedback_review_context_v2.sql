@@ -68,7 +68,22 @@ as $$
      );
 $$;
 
-revoke all on function public.daily_feedback_messages_valid(jsonb) from public, anon, authenticated, service_role;
+revoke all on function public.daily_feedback_messages_valid(jsonb) from public;
+-- Los roles de la API existen en Supabase pero no en PGlite ni en un Postgres
+-- vacio: se tocan solo si estan (misma forma que 20260925000200).
+do $roles$
+begin
+  if to_regrole('anon') is not null then
+    revoke all on function public.daily_feedback_messages_valid(jsonb) from anon;
+  end if;
+  if to_regrole('authenticated') is not null then
+    revoke all on function public.daily_feedback_messages_valid(jsonb) from authenticated;
+  end if;
+  if to_regrole('service_role') is not null then
+    revoke all on function public.daily_feedback_messages_valid(jsonb) from service_role;
+  end if;
+end;
+$roles$;
 
 alter table public.daily_feedback_items
   drop constraint if exists daily_feedback_items_messages_check;
@@ -115,7 +130,22 @@ as $$
      and p_context::text !~* '(javascript|vbscript):'
 $$;
 
-revoke all on function public.daily_feedback_item_context_valid(jsonb) from public, anon, authenticated, service_role;
+revoke all on function public.daily_feedback_item_context_valid(jsonb) from public;
+-- Los roles de la API existen en Supabase pero no en PGlite ni en un Postgres
+-- vacio: se tocan solo si estan (misma forma que 20260925000200).
+do $roles$
+begin
+  if to_regrole('anon') is not null then
+    revoke all on function public.daily_feedback_item_context_valid(jsonb) from anon;
+  end if;
+  if to_regrole('authenticated') is not null then
+    revoke all on function public.daily_feedback_item_context_valid(jsonb) from authenticated;
+  end if;
+  if to_regrole('service_role') is not null then
+    revoke all on function public.daily_feedback_item_context_valid(jsonb) from service_role;
+  end if;
+end;
+$roles$;
 
 alter table public.daily_feedback_items
   add column if not exists context jsonb not null default '{}'::jsonb;
@@ -482,7 +512,19 @@ begin
 end;
 $$;
 
-revoke all on function public.get_daily_feedback_conversation_context_v1(text,text,bigint,bigint,bigint[]) from public, anon, authenticated;
-grant execute on function public.get_daily_feedback_conversation_context_v1(text,text,bigint,bigint,bigint[]) to service_role;
+revoke all on function public.get_daily_feedback_conversation_context_v1(text,text,bigint,bigint,bigint[]) from public;
+do $roles$
+begin
+  if to_regrole('anon') is not null then
+    revoke all on function public.get_daily_feedback_conversation_context_v1(text,text,bigint,bigint,bigint[]) from anon;
+  end if;
+  if to_regrole('authenticated') is not null then
+    revoke all on function public.get_daily_feedback_conversation_context_v1(text,text,bigint,bigint,bigint[]) from authenticated;
+  end if;
+  if to_regrole('service_role') is not null then
+    grant execute on function public.get_daily_feedback_conversation_context_v1(text,text,bigint,bigint,bigint[]) to service_role;
+  end if;
+end;
+$roles$;
 
 commit;

@@ -93,8 +93,13 @@ def test_context_rpc_is_scoped_service_role_only_and_fail_closed() -> None:
     assert "(i.context->>'chatwoot_conversation_id') = v_id::text" in body
     assert "and b.state <> 'purged'" in body
     signature = f"public.{CONTEXT_RPC}(text,text,bigint,bigint,bigint[])"
-    assert f"revoke all on function {signature} from public, anon, authenticated;" in sql
+    # Los grants van guardados con to_regrole: validate_opt_out.mjs aplica todas las
+    # migraciones en un PGlite sin los roles de Supabase (CI del PR #192, 27/09).
+    assert f"revoke all on function {signature} from public;" in sql
+    assert f"revoke all on function {signature} from anon;" in sql
+    assert f"revoke all on function {signature} from authenticated;" in sql
     assert f"grant execute on function {signature} to service_role;" in sql
+    assert "if to_regrole('service_role') is not null then" in sql
 
 
 def test_helper_validators_are_not_executable_by_any_api_role() -> None:
@@ -103,10 +108,8 @@ def test_helper_validators_are_not_executable_by_any_api_role() -> None:
         "public.daily_feedback_messages_valid(jsonb)",
         "public.daily_feedback_item_context_valid(jsonb)",
     ):
-        assert (
-            f"revoke all on function {helper} from public, anon, authenticated, service_role;"
-            in sql
-        )
+        for role in ("public", "anon", "authenticated", "service_role"):
+            assert f"revoke all on function {helper} from {role};" in sql
 
 
 def test_inventories_and_acl_validator_know_the_new_rpc() -> None:
