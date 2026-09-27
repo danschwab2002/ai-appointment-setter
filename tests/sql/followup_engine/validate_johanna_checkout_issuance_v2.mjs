@@ -709,6 +709,78 @@ if (tildeUnsafeDurable?.attribution_resolution !== 'marker_only'
   throw new Error(`unsafe tilde sck was not dropped: ${JSON.stringify(tildeUnsafeDurable)}`);
 }
 
+// 2026-09-27 (migration 20260927000200): the Lancemos core v1.13.0 appends
+// utm_id (Meta's 18-digit campaign id) as a sixth field, so an ad's sck can
+// reach ~196 characters (longest measured on Hotmart sales 177, plus "~" and
+// the id). The reserve guard's cap rises from 200 to 255. The first two cases
+// are the core's output observed in production on draninagarza; the 196 one is
+// the measured maximum brought to six fields; 255 and 256 pin the new edge.
+const utmIdFixture = JSON.parse(readFileSync(
+  join(root, 'tests/fixtures/lancemos_core_sck_utm_id_20260927.json'), 'utf8',
+));
+if (utmIdFixture.casos.length !== 2
+    || utmIdFixture.casos[0].sck.split('~').length !== 6
+    || !/^[0-9]{18}$/.test(utmIdFixture.casos[0].sck.split('~')[5])
+    || utmIdFixture.sintetico_196.sck.length !== 196) {
+  throw new Error('utm_id fixture does not have the expected shape');
+}
+const lengthCases = [
+  ...utmIdFixture.casos.map((caso) => ({ nombre: caso.nombre, sck: caso.sck, preserved: true })),
+  { nombre: 'el maximo medido (177) mas ~ y el id: 196', sck: utmIdFixture.sintetico_196.sck, preserved: true },
+  { nombre: 'exactamente 255 se preserva', sck: `${'a'.repeat(236)}~120210000000000001`, preserved: true },
+  { nombre: '256 se descarta (como 201 antes)', sck: `${'a'.repeat(237)}~120210000000000001`, preserved: false },
+];
+if (lengthCases[3].sck.length !== 255 || lengthCases[4].sck.length !== 256) {
+  throw new Error('length edge cases are not 255/256');
+}
+let lengthSeq = 0;
+for (const caso of lengthCases) {
+  lengthSeq += 1;
+  const lengthPhone = `1202555031${lengthSeq}`;
+  const lengthUlid = `01K5ABCDEFX2VYB4M6X9CDPTD${lengthSeq}`;
+  const lengthIntent = await insertIntent(
+    'ads-b', 'mgbgpp19', lengthPhone, 'waiting_for_purchase', true, '2026-09-27T10:00:00Z',
+  );
+  await attachSubmission(lengthIntent.id, `attribution-length-${lengthSeq}`, 'ads-b', {
+    sck: caso.sck, fbclid: 'IwAR2lengthclickid',
+  });
+  const lengthPrepared = await issueFor(lengthPhone, 9180 + lengthSeq, String(580 + lengthSeq), lengthUlid);
+  const lengthDurable = await attributionOf(lengthPrepared.issuance_id);
+  if (caso.preserved) {
+    if (lengthPrepared?.outcome !== 'reserved'
+        || lengthDurable?.attribution_resolution !== 'full'
+        || lengthDurable?.dropped_unsafe_fields !== null
+        || lengthDurable?.sck_value !== `${caso.sck}|hermes|v1|${lengthUlid}`
+        || lengthDurable?.checkout_url_final
+           !== offerUrl('mgbgpp19', lengthUlid, caso.sck, 'IwAR2lengthclickid')) {
+      throw new Error(`long sck was not preserved (${caso.nombre}): ${JSON.stringify({
+        prepared: lengthPrepared, durable: lengthDurable,
+      })}`);
+    }
+    // And the purchase webhook still finds the issuance behind the long prefix.
+    const lengthEvent = (await db.query(`
+      insert into public.webhook_events (
+        source, external_event_id, event_type, payload, processing_status
+      ) values (
+        'hotmart', $1, 'PURCHASE_APPROVED', '{}'::jsonb, 'received'
+      ) returning id
+    `, [`checkout-attribution-length-${lengthSeq}`])).rows[0];
+    const lengthMatch = (await db.query(`
+      select * from public.correlate_hotmart_checkout_issuance_v2(
+        $1::uuid, $2, clock_timestamp()
+      )
+    `, [lengthEvent.id, `${caso.sck}|hermes|v1|${lengthUlid}`])).rows[0];
+    if (lengthMatch?.outcome !== 'matched' || lengthMatch?.issuance_id !== lengthPrepared.issuance_id) {
+      throw new Error(`long sck correlation diverged (${caso.nombre}): ${JSON.stringify(lengthMatch)}`);
+    }
+  } else if (lengthPrepared?.outcome !== 'reserved'
+      || lengthDurable?.attribution_resolution !== 'fbclid_only'
+      || lengthDurable?.dropped_unsafe_fields !== 'sck'
+      || lengthDurable?.sck_value !== `hermes|v1|${lengthUlid}`) {
+    throw new Error(`over-long sck was not dropped (${caso.nombre}): ${JSON.stringify(lengthDurable)}`);
+  }
+}
+
 // The attribution columns are immutable too.
 await db.exec('begin');
 let attributionLocked = false;

@@ -3443,6 +3443,20 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         5,
         'daily_feedback_identified_review_context'
+    union all
+    select
+        '20260927000200',
+        '20260927000200_sck_length_accepts_255_v1.sql',
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.reserve_chatwoot_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamptz)')
+              and prosecdef
+              and position('length(v_original_sck) <= 255' in definition) > 0
+              and position('length(v_original_sck) <= 200' in definition) = 0
+        )::int,
+        1,
+        'sck_length_accepts_255_reader'
 )
 select
     version,

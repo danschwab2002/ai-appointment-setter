@@ -1,0 +1,30 @@
+{
+  "_capture": {
+    "origen": "lancemos/core v1.13.0 (PR #54, commit dcdc9aa, mergeado 2026-09-27 14:04Z) y su porte a draninagarza (PR #35, 0ad4e8e); verificado en produccion en draninagarza ~14:20Z con Chrome real: buildCheckoutUrl() con utm_id compone seis campos y sin utm_id cinco. Registro: OS/service-delivery/clientes/lancemos/bitacora/2026-09-27-e02-desplegado-en-att2-y-verificado-en-produccion.md",
+    "captured_at": "2026-09-27T14:20:00Z",
+    "que_es": "El sck que el core v1.13.0 emite cuando el anuncio trae utm_id (E02 del estandar de tracking v0.14): utm_source~utm_term~utm_content~utm_medium~utm_campaign~utm_id, con utm_id (el campaign.id de Meta, 18 digitos) como sexto campo posicional al final. Sin utm_id sigue de cinco campos, sin ~ colgando.",
+    "largos_medidos": {
+      "hotmart_ventas_sck_maximo": 177,
+      "hotmart_ventas_sck_mediana": 143,
+      "hotmart_ventas_medicion": "2026-09-24, 707 sck con etiqueta (estandares-de-tracking.md, E02 punto 3)",
+      "maximo_con_utm_id": 196,
+      "supabase_2026_09_27_0140Z": "352 sck en precheckout_submissions: maximo 27, mediana 26 (fb.paid.<id> / ig.paid.<id>), 0 con ~, 0 mayores a 200, 0 de seis campos; 9 emisiones en checkout_link_issuances, original_sck maximo 26, el marcador |hermes|v1|<ulid> mide 37"
+    }
+  },
+  "casos": [
+    {
+      "nombre": "con utm_id: seis campos, el id al final (observado en produccion en draninagarza)",
+      "search": "?utm_source=fb&utm_term=tiroides&utm_content=ad3&utm_medium=cpc&utm_campaign=E02-prueba&utm_id=120210000000000001",
+      "sck": "fb~tiroides~ad3~cpc~E02-prueba~120210000000000001"
+    },
+    {
+      "nombre": "sin utm_id: cinco campos, sin ~ colgando (mismo contacto)",
+      "search": "?utm_source=fb&utm_term=tiroides&utm_content=ad3&utm_medium=cpc&utm_campaign=E02-prueba",
+      "sck": "fb~tiroides~ad3~cpc~E02-prueba"
+    }
+  ],
+  "sintetico_196": {
+    "que_es": "No es un sck capturado: es el largo maximo medido en Hotmart (177, cinco campos) llevado a la forma de seis campos con un id de 18 digitos. Pinnea que 196 entra entero; con el tope viejo de 200 entraba tambien, pero al borde.",
+    "sck": "meta-ads~MX-Ciudades-Instagram-Reels~Video-Tiroides-Testimonio-Version-Larga-Aviso-Aviso-Aviso-Avis~CBO-Amplio-Intereses-Salud~ATT-2.0-28-SR-VSL-Best-Ads-CBO-47-MX-Ciudades-2309~120210000000000001"
+  }
+}
