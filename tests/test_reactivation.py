@@ -772,3 +772,42 @@ def test_the_summary_never_leaks_contact_data() -> None:
 def test_the_summary_before_the_first_scan_is_never() -> None:
     sweeper = _sweeper(_ChatwootFalso(), _SupabaseFalso())
     assert sweeper.last_scan_summary == "never"
+
+
+def test_a_handoff_that_nobody_attended_stops_the_send() -> None:
+    """El caso medido en produccion el 2026-09-27.
+
+    De los diez envios de reactivacion, nueve salieron sobre una conversacion
+    con una derivacion en 'projected' que ninguna persona habia contestado, y
+    en dos de ellas el lead habia pedido explicitamente hablar con alguien del
+    equipo. Desde la migracion 20260927000300 la capa durable se niega, y el
+    barrido tiene que respetar esa negativa sin romperse: el outcome nuevo no
+    es un error de protocolo.
+    """
+    chatwoot = _ChatwootFalso()
+    supabase = _SupabaseFalso(claim_outcome="blocked_pending_handoff")
+    sweeper = _sweeper(chatwoot, supabase)
+
+    assert asyncio.run(sweeper.run_once()) == 0
+    # Reservar y no mandar dejaria la conversacion quemada para siempre: el
+    # limite por conversacion cuenta las reservas vivas.
+    assert supabase.settlements == []
+    assert chatwoot.sent == []
+    assert sweeper.last_scan_state == "healthy"
+
+
+def test_the_summary_names_why_the_durable_layer_refused() -> None:
+    """Un rechazo por derivacion y un fallo de red no se leen igual.
+
+    Sin esto el resumen del barrido dice 'not_reactivated' para los dos, y el
+    operador no tiene como saber que la conversacion esta esperando a una
+    persona.
+    """
+    chatwoot = _ChatwootFalso()
+    supabase = _SupabaseFalso(claim_outcome="blocked_pending_handoff")
+    sweeper = _sweeper(chatwoot, supabase)
+
+    asyncio.run(sweeper.run_once())
+
+    assert "blocked_pending_handoff=1" in sweeper.last_scan_summary
+    assert "not_reactivated" not in sweeper.last_scan_summary

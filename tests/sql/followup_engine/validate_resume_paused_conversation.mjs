@@ -93,6 +93,29 @@ await db.query(`
   where commercial_case_id = $1::uuid
 `, [created.commercial_case_id]);
 
+// Desde el 2026-09-27 proyectar la nota ya no alcanza: mientras ninguna
+// persona del equipo haya escrito, la respuesta del lead no levanta la pausa.
+// Antes de ese cambio la llamada de abajo devolvia 'resumed' aca mismo, que es
+// como la conversacion 186 se despauso dos veces sobre una derivacion por
+// pedido explicito de humano que nadie habia contestado.
+const unattended = (await db.query(`
+  select * from public.resume_paused_conversation(
+    $1::bigint, 'resume:resume-probe:0b', 'inbound_after_quiet_period', 28800, 3, now()
+  )
+`, [CONV])).rows[0];
+if (unattended?.outcome !== 'blocked_pending_handoff') {
+  throw new Error('resume levanto la pausa de una derivacion que nadie atendio');
+}
+
+// Una persona del equipo contesta y el bridge marca la atencion.
+const attendance = (await db.query(
+  'select * from public.mark_human_handoff_attended($1::bigint, now(), now())',
+  [CONV],
+)).rows[0];
+if (attendance?.outcome !== 'attended' || attendance.attended_count !== 1) {
+  throw new Error('la atencion del equipo no quedo registrada');
+}
+
 const resumed = (await db.query(`
   select * from public.resume_paused_conversation(
     $1::bigint, 'resume:resume-probe:1', 'inbound_after_quiet_period', 28800, 3, now()

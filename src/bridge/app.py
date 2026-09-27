@@ -3068,6 +3068,33 @@ def create_app(
                     else None
                 ),
             )
+            # Una persona del equipo acaba de escribir: eso es exactamente
+            # atender la derivacion que estaba esperando. Mientras ninguna
+            # quede atendida, la reactivacion no manda plantillas y la
+            # respuesta del lead no devuelve la conversacion al agente.
+            #
+            # El momento se toma del reloj del bridge, no del payload: el
+            # unico fixture capturado de message_created es de un entrante
+            # (chatwoot_paused_lead_reply_inbox_9_conv_177_20260925.json), y
+            # un payload saliente de una persona todavia no se capturo. La
+            # diferencia es de segundos y la RPC recorta cualquier fecha
+            # futura.
+            #
+            # Falla blanda a proposito: la pausa ya quedo puesta, que es lo
+            # que protege al lead. Si la marca no sale, la derivacion sigue
+            # contando como pendiente y lo unico que pasa es que nadie
+            # reactiva esa conversacion.
+            if shared_supabase is not None:
+                try:
+                    await shared_supabase.mark_human_handoff_attended(
+                        external_conversation_id=conversation_id,
+                        attended_at=datetime.now(UTC).isoformat(),
+                    )
+                except Exception:
+                    logger.warning(
+                        "human_handoff_attendance_failed conversation=%s",
+                        conversation_id,
+                    )
             return
         if decision.reason == "invalid_message_id":
             raise RuntimeError("chatwoot_invalid_message_id")

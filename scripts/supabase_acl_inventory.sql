@@ -23,6 +23,7 @@ expected_service_role(signature) as (
         ('public.admit_inbound_commercial_case_v2(text, integer, bigint, text)'),
         ('public.resume_paused_conversation(bigint, text, text, integer, integer, timestamp with time zone)'),
         ('public.claim_conversation_reactivation(bigint, text, text, text, text, bigint, integer, integer, integer, timestamp with time zone)'),
+        ('public.mark_human_handoff_attended(bigint, timestamp with time zone, timestamp with time zone)'),
         ('public.settle_conversation_reactivation(text, text, bigint, text, timestamp with time zone)'),
         ('public.apply_chatwoot_inbound_opt_out(bigint, bigint, bigint, bigint, text, timestamp with time zone, text)'),
         ('public.apply_hotmart_purchase_approved(uuid, text, text, text, text, text, timestamp with time zone)'),

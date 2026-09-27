@@ -436,6 +436,24 @@ class ConversationResumeResult:
 
 
 @dataclass(frozen=True)
+class HumanHandoffAttendance:
+    """Resultado de marcar que una persona del equipo atendio la derivacion."""
+
+    outcome: str
+    attended_count: int
+    commercial_case_id: str | None
+
+    @property
+    def settled(self) -> bool:
+        """True cuando el caso existe, se haya marcado algo o no.
+
+        'noop' no es un fallo: significa que no quedaba ninguna derivacion
+        esperando, que es lo normal a partir del segundo mensaje del equipo.
+        """
+        return self.outcome in {"attended", "noop"}
+
+
+@dataclass(frozen=True)
 class ConversationReactivationClaim:
     """Reserva de un envio de plantilla de reactivacion."""
 
@@ -3370,6 +3388,7 @@ class SupabaseClient:
             "replayed",
             "blocked_contact",
             "blocked_reactivation_limit",
+            "blocked_pending_handoff",
             "not_found",
         }:
             raise SupabaseError("conversation_reactivation_claim_invalid_outcome")
@@ -3378,6 +3397,51 @@ class SupabaseClient:
             reactivation_event_id=row.get("reactivation_event_id"),
             conversation_id=row.get("reactivated_conversation_id"),
             commercial_case_id=row.get("reactivated_commercial_case_id"),
+        )
+
+    async def mark_human_handoff_attended(
+        self,
+        *,
+        external_conversation_id: int,
+        attended_at: str,
+    ) -> HumanHandoffAttendance:
+        """Registrar que una persona del equipo atendio la derivacion.
+
+        La llama el bridge cuando una persona escribe en la conversacion, que
+        es el mismo evento por el que ya pausa la automatizacion. Mientras
+        ninguna derivacion quede atendida, la reactivacion y la reanudacion se
+        niegan a tocar la conversacion.
+        """
+        operation = "human_handoff_attendance"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/mark_human_handoff_attended",
+            content=json.dumps(
+                {
+                    "p_external_conversation_id": external_conversation_id,
+                    "p_attended_at": attended_at,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(
+                f"human_handoff_attendance_failed: HTTP {response.status_code}"
+            )
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError("human_handoff_attendance_invalid_shape")
+        row = rows[0]
+        outcome = row.get("outcome")
+        if outcome not in {"attended", "noop", "not_found"}:
+            raise SupabaseError("human_handoff_attendance_invalid_outcome")
+        attended_count = row.get("attended_count")
+        if not isinstance(attended_count, int) or isinstance(attended_count, bool):
+            raise SupabaseError("human_handoff_attendance_invalid_count")
+        return HumanHandoffAttendance(
+            outcome=outcome,
+            attended_count=attended_count,
+            commercial_case_id=row.get("attended_commercial_case_id"),
         )
 
     async def settle_conversation_reactivation(

@@ -601,7 +601,11 @@ class ConversationReactivationSweeper:
             if await self._reactivate(decision.candidate, template):
                 sent += 1
             else:
-                motivos["not_reactivated"] += 1
+                # El motivo del rechazo sale del veredicto de la capa durable.
+                # Sin esto, una conversacion frenada por una derivacion sin
+                # atender y una frenada por un fallo de red se leen igual en el
+                # resumen del barrido.
+                motivos[self._last_claim_outcome or "not_reactivated"] += 1
                 failed = failed or self._last_attempt_failed
         self._last_sent_count = sent
         self._has_completed_scan = True
@@ -621,6 +625,7 @@ class ConversationReactivationSweeper:
     ) -> bool:
         """Reservar, mandar y cerrar. Devuelve True solo si la plantilla salio."""
         self._last_attempt_failed = False
+        self._last_claim_outcome = None
         command_key = candidate.command_key
         try:
             claim = await self._supabase.claim_conversation_reactivation(
@@ -642,6 +647,7 @@ class ConversationReactivationSweeper:
             )
             return False
         if claim.outcome != "claimed":
+            self._last_claim_outcome = claim.outcome
             logger.info(
                 "conversation_reactivation_not_claimed conversation=%s outcome=%s",
                 candidate.conversation_id,
@@ -720,6 +726,7 @@ class ConversationReactivationSweeper:
             )
 
     _last_attempt_failed = False
+    _last_claim_outcome: str | None = None
 
     async def _run(self) -> None:
         while not self._stopping.is_set():

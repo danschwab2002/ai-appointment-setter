@@ -47,6 +47,25 @@ entra una plantilla aprobada.
 `can_reply` ausente o no-`false` cuenta como dentro de la ventana. Un booleano
 que no se pudo leer no autoriza mandar una plantilla de marketing.
 
+## La barrera que no se evalua contra Chatwoot
+
+Desde la migracion `20260927000300` (2026-09-27), una conversacion con una
+**derivacion sin atender** queda fuera del alcance de este sistema:
+`claim_conversation_reactivation` devuelve `blocked_pending_handoff` y no
+reserva nada. Ver
+[el contrato de la atencion](handoff-attendance-v1.md) y el
+[ADR-0019](../decisions/0019-handoff-attendance-gates-automation.md).
+
+Esa barrera vive en la capa durable y no en el criterio de abajo porque
+Chatwoot no sabe de derivaciones: la etiqueta `automation_paused` es la misma
+para un lead que pidio hablar con una persona y para cualquier otra pausa. El
+bridge respeta el rechazo, lo cuenta como `blocked_pending_handoff=N` en el
+resumen del barrido y no manda.
+
+**Es la barrera que mas descarta.** De los diez envios hechos hasta el
+2026-09-27, nueve no habrian salido: todos sobre conversaciones derivadas que
+ninguna persona habia contestado, dos de ellas por pedido explicito de humano.
+
 ## Criterio canonico
 
 Un candidato solo se admite cuando Chatwoot confirma, en el momento del barrido:
@@ -121,7 +140,7 @@ y va `claimed -> sent | failed`:
 
 1. **`claim_conversation_reactivation`** reserva **antes** de llamar a Chatwoot.
    Devuelve `claimed`, `replayed`, `blocked_contact`,
-   `blocked_reactivation_limit` o `not_found`.
+   `blocked_reactivation_limit`, `blocked_pending_handoff` o `not_found`.
 2. El bridge manda la plantilla.
 3. **`settle_conversation_reactivation`** cierra la fila como `sent` (con el id
    del mensaje) o `failed` (con el tipo de error).

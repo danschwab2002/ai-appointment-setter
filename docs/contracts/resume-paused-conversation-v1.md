@@ -49,6 +49,10 @@ El **límite anti-loop** (por defecto 3 por conversación) existe porque el cicl
 
 `resumed` · `replayed` · `already_active` · `blocked_contact` · `blocked_pending_handoff` · `blocked_resume_limit` · `not_found`.
 
+⚠ **`blocked_pending_handoff` cambio de alcance el 2026-09-27** (migracion `20260927000300`). Antes cubria solo las derivaciones en `requested` y `projection_failed`, o sea los segundos en que el proyector de notas esta trabajando. Ahora incluye tambien las `projected` cuyo `attended_at` sigue nulo: la nota llego a Chatwoot y ninguna persona contesto todavia.
+
+El efecto es que **la respuesta del lead ya no levanta la pausa** mientras el equipo no lo haya atendido. Antes si: la conversacion 186 se despauso dos veces (26/09 17:08 y 27/09 18:11) sobre una derivacion por pedido explicito de humano que nadie habia contestado, y el agente retomaba a quien habia pedido no hablar con el agente. Ver el [contrato de la atencion](handoff-attendance-v1.md) y el [ADR-0019](../decisions/0019-handoff-attendance-gates-automation.md).
+
 Sólo los tres primeros habilitan reintentar la admisión.
 
 ## Qué ve el agente al retomar

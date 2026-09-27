@@ -485,7 +485,18 @@ def verify_effective_acls(harness: PostgresHarness) -> None:
                      -- Lee human_handoff_requests para mostrar en la revision
                      -- diaria las derivaciones de cada conversacion (ADR-0018,
                      -- migracion 20260927000100); solo lee esa tabla.
-                     'get_daily_feedback_conversation_context_v1'
+                     'get_daily_feedback_conversation_context_v1',
+                     -- Lee human_handoff_requests para negarse a reservar
+                     -- un envio de reactivacion sobre una derivacion que
+                     -- ninguna persona atendio (migracion 20260927000300);
+                     -- solo lee esa tabla.
+                     'claim_conversation_reactivation',
+                     -- Marca human_handoff_requests.attended_at cuando
+                     -- una persona del equipo escribe (migracion
+                     -- 20260927000300). Es la unica funcion de esta
+                     -- lista que escribe en la tabla, y solo esa
+                     -- columna.
+                     'mark_human_handoff_attended'
                      ) then has_function_privilege(role_name, oid, 'EXECUTE')
                   else not has_function_privilege(role_name, oid, 'EXECUTE')
                 end
