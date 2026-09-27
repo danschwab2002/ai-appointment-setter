@@ -1553,3 +1553,71 @@ def test_a_conversation_updated_with_a_label_change_is_captured_and_nothing_else
     assert ajeno.status_code == 200
     assert ajeno.json()["status"] == "ignored"
     assert not (tmp_path / f"{hashlib.sha256(b'label-change-inbox-8').hexdigest()}.json").exists()
+
+
+def test_the_team_reply_marks_the_handoff_as_attended() -> None:
+    """La atencion se marca donde el bridge ya detecta a la persona.
+
+    `pause_automation` es el unico evento que significa "alguien del equipo
+    escribio en esta conversacion": es el mismo por el que ya se pone la
+    etiqueta. Si el marcado se moviera fuera de esa rama --- por ejemplo al
+    scanner de reactivacion, que puede estar apagado --- `attended_at` nunca
+    se poblaria, y desde la migracion 20260927000300 eso deja toda conversacion
+    derivada fuera del alcance de la automatizacion para siempre.
+
+    Se verifica sobre el AST, igual que
+    `test_the_resume_trigger_is_not_gated_on_a_blocked_admission`, porque lo
+    que importa es en que rama vive la llamada. Que el marcado llegue a
+    Supabase se comprueba en el E2E; el comportamiento de la RPC, en
+    `tests/sql/followup_engine/validate_handoff_attendance.mjs`.
+    """
+    import ast
+    import inspect
+
+    import bridge.app as app_module
+
+    arbol = ast.parse(inspect.getsource(app_module))
+
+    handlers = [
+        nodo
+        for nodo in ast.walk(arbol)
+        if isinstance(nodo, ast.AsyncFunctionDef)
+        and nodo.name == "process_chatwoot_work"
+    ]
+    assert len(handlers) == 1, "se esperaba un solo handler de trabajo diferido"
+
+    ramas_de_pausa = [
+        nodo
+        for nodo in ast.walk(handlers[0])
+        if isinstance(nodo, ast.If)
+        and "pause_automation" in ast.dump(nodo.test)
+    ]
+    assert ramas_de_pausa, "no se encontro la rama de pause_automation"
+
+    llamadas = [
+        nodo
+        for rama in ramas_de_pausa
+        for nodo in ast.walk(rama)
+        if isinstance(nodo, ast.Call)
+        and isinstance(nodo.func, ast.Attribute)
+        and nodo.func.attr == "mark_human_handoff_attended"
+    ]
+    assert llamadas, (
+        "la atencion del equipo no se marca dentro de la rama de pausa"
+    )
+
+    # La pausa es lo que protege al lead y ya quedo puesta: si el marcado
+    # falla, el webhook no puede romperse.
+    intentos = [
+        nodo
+        for rama in ramas_de_pausa
+        for nodo in ast.walk(rama)
+        if isinstance(nodo, ast.Try)
+        and any(
+            isinstance(hijo, ast.Call)
+            and isinstance(hijo.func, ast.Attribute)
+            and hijo.func.attr == "mark_human_handoff_attended"
+            for hijo in ast.walk(nodo)
+        )
+    ]
+    assert intentos, "el marcado tiene que fallar blando, no tumbar el webhook"

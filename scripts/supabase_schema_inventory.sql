@@ -3457,6 +3457,36 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         1,
         'sck_length_accepts_255_reader'
+    union all
+    select
+        '20260927000300',
+        '20260927000300_handoff_attendance_v1.sql',
+        (
+            select count(*) = 1
+            from pg_attribute
+            where attrelid = to_regclass('public.human_handoff_requests')
+              and attname = 'attended_at' and attnum > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.mark_human_handoff_attended(bigint,timestamptz,timestamptz)')
+              and prosecdef
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.claim_conversation_reactivation(bigint,text,text,text,text,bigint,integer,integer,integer,timestamptz)')
+              and position('blocked_pending_handoff' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.resume_paused_conversation(bigint,text,text,integer,integer,timestamptz)')
+              and position('request.attended_at is null' in definition) > 0
+        )::int,
+        4,
+        'handoff_attendance_gates_automation'
 )
 select
     version,
