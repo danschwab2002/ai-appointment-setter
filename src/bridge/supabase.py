@@ -61,8 +61,11 @@ _CHECKOUT_SAFE_VALUE = re.compile(r"[A-Za-z0-9._-]{1,512}")
 # que siguen mandando los linajes viejos (drceo). Este lado es un lector y
 # acepta los dos; lo que se escribe usa solo "~". La RPC encodea la "|" a %7C
 # al componer la URL y deja la "~" literal (es unreserved), asi que ninguno la
-# parte. Misma forma que el guard de la migracion 20260925000100.
-_CHECKOUT_SAFE_SCK = re.compile(r"[A-Za-z0-9._|~-]{1,200}")
+# parte. El tope sube de 200 a 255 el 2026-09-27 (E02 del estandar: utm_id,
+# el campaign.id de Meta de 18 digitos, como sexto campo al final; el sck mas
+# largo medido en Hotmart tiene 177 y con el id pasa a 196). Misma forma que
+# el guard de la migracion 20260927000200.
+_CHECKOUT_SAFE_SCK = re.compile(r"[A-Za-z0-9._|~-]{1,255}")
 
 
 # El sck que Hotmart devuelve en la compra: el marcador cierra el valor, con el
