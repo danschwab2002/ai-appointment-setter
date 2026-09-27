@@ -960,7 +960,9 @@ def normalize_conversation_events(extra: object) -> tuple[
                     if type(row.get("chatwoot_message_id")) is int
                     else None
                 ),
-                "sck_value": _clean_text(row.get("sck_value"), limit=200),
+                # Hasta 255 del anuncio (limite del recuperador desde el 27/09)
+                # mas los 37 del marcador |hermes|v1|<ulid>: 200 cortaba la cola.
+                "sck_value": _clean_text(row.get("sck_value"), limit=320),
                 "attribution": _attribution(row.get("sck_value")),
                 "checkout_url_final": _clean_text(row.get("checkout_url_final"), limit=400),
                 "purchased_at": _iso_or_none(row.get("purchased_at")),
