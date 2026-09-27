@@ -58,7 +58,8 @@ seguimiento), que hizo el equipo humano y por que el agente decidio derivar.
   columna `context`, RPC `get_daily_feedback_conversation_context_v1`.
 - El scheduler del servicio `daily-feedback` consulta esa RPC antes de confirmar
   el lote; si falla, la recoleccion falla y se reintenta (sin informe a medias).
-- Orden de despliegue: migracion primero, despues el servicio `daily-feedback`,
-  despues el bridge (para el estampado de decision). El commit RPC acepta items
-  v1 y v2, asi que un servicio viejo contra la migracion nueva sigue funcionando.
+- Orden de despliegue propuesto: migracion primero, despues el servicio
+  `daily-feedback`, despues el bridge (para el estampado de decision). El commit
+  RPC se escribio para aceptar items v1 y v2, de modo que el orden no importe;
+  la evidencia del primer lote real queda para `docs/operations/` tras el E2E.
 - Contrato: `docs/contracts/daily-feedback-review-package-v2.md`.
