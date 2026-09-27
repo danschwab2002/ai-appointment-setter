@@ -481,7 +481,11 @@ def verify_effective_acls(harness: PostgresHarness) -> None:
                      'resume_paused_conversation',
                      -- Encola desde human_handoff_requests el aviso a Slack de
                      -- cada derivacion (HND-001); solo lee esa tabla.
-                     'claim_slack_handoff_notifications'
+                     'claim_slack_handoff_notifications',
+                     -- Lee human_handoff_requests para mostrar en la revision
+                     -- diaria las derivaciones de cada conversacion (ADR-0018,
+                     -- migracion 20260927000100); solo lee esa tabla.
+                     'get_daily_feedback_conversation_context_v1'
                      ) then has_function_privilege(role_name, oid, 'EXECUTE')
                   else not has_function_privilege(role_name, oid, 'EXECUTE')
                 end
