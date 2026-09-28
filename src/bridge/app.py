@@ -5714,10 +5714,15 @@ def create_app(
                     config=settings.commercial_ally_config,
                 )
                 if parsed_failure is None:
-                    raise HTTPException(
-                        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                        detail="invalid_payment_failure_payload",
-                    )
+                    # Igual que el carrito y la compra: un evento que este runtime no
+                    # procesa (otro producto, una oferta fuera del binding) no entra
+                    # reenviandolo. Un 4xx lo cuenta Hotmart como falla del webhook y,
+                    # sumadas, lo desactiva; el descarte explicito deja el motivo.
+                    response.status_code = status.HTTP_200_OK
+                    return {
+                        "status": "ignored",
+                        "reason": "invalid_payment_failure_payload",
+                    }
                 if settings.portable_hotmart_payment_failure_enabled:
                     portable_failure_admission = (
                         await shared_supabase.admit_portable_hotmart_payment_failure(

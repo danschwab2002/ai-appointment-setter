@@ -14,6 +14,7 @@ _HOST = re.compile(
     r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
 )
 _CURRENCY = re.compile(r"[A-Z]{3}")
+_OFFER_CODE = re.compile(r"[A-Za-z0-9]{4,32}")
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,9 @@ class CommercialAllyConfig:
     chatwoot_inbox_id: int
     inbound_scope_key: str
     inbound_scope_version: int
+    # Otras ofertas del mismo producto, una por landing. `offer_code` sigue
+    # siendo la oferta por defecto. Opcional en el manifiesto JSON.
+    additional_offer_codes: tuple[str, ...] = ()
 
     @classmethod
     def from_json_file(cls, path: Path) -> CommercialAllyConfig:
@@ -56,8 +60,15 @@ class CommercialAllyConfig:
         if not isinstance(payload, dict):
             raise ValueError("commercial ally manifest must be a JSON object")
         expected = {field.name for field in fields(cls)}
-        if set(payload) != expected:
+        optional = {"additional_offer_codes"}
+        if not expected - optional <= set(payload) <= expected:
             raise ValueError("commercial ally manifest must contain exactly the supported keys")
+        additional = payload.get("additional_offer_codes", [])
+        if not isinstance(additional, list) or not all(
+            isinstance(code, str) for code in additional
+        ):
+            raise ValueError("additional_offer_codes must be a JSON list of strings")
+        payload["additional_offer_codes"] = tuple(additional)
         price = payload.get("product_price")
         if isinstance(price, bool) or not isinstance(price, (str, int, float)):
             raise ValueError("product_price must be a JSON string or number")
@@ -111,6 +122,25 @@ class CommercialAllyConfig:
                 raise ValueError(f"{field_name} must be a positive integer")
         if _REF.fullmatch(self.inbound_scope_key) is None:
             raise ValueError("inbound_scope_key must be a canonical slug")
+        if not isinstance(self.additional_offer_codes, tuple) or any(
+            not isinstance(code, str) or _OFFER_CODE.fullmatch(code) is None
+            for code in self.additional_offer_codes
+        ):
+            raise ValueError("additional_offer_codes must be alphanumeric offer codes")
+        if (
+            len(self.additional_offer_codes) > 16
+            or len(set(self.accepted_offer_codes)) != len(self.accepted_offer_codes)
+        ):
+            raise ValueError(
+                "additional_offer_codes must be at most 16 distinct codes "
+                "different from offer_code"
+            )
+
+    @property
+    def accepted_offer_codes(self) -> tuple[str, ...]:
+        """La oferta por defecto primero, despues las demas del binding."""
+
+        return (self.offer_code, *self.additional_offer_codes)
 
     @property
     def lead_page_url(self) -> str:

@@ -1320,6 +1320,9 @@ class SupabaseClient:
             raise SupabaseError(f"{operation}_invalid_row")
         values = {name: row[name] for name in supported}
         try:
+            if not isinstance(values["additional_offer_codes"], list):
+                raise ValueError
+            values["additional_offer_codes"] = tuple(values["additional_offer_codes"])
             price = values["product_price"]
             if isinstance(price, bool) or not isinstance(price, (str, int, float)):
                 raise ValueError
