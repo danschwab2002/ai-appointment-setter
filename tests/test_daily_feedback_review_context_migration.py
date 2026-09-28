@@ -117,7 +117,7 @@ def test_inventories_and_acl_validator_know_the_new_rpc() -> None:
     assert f"('public.{CONTEXT_RPC}(text, text, bigint, bigint, bigint[])')" in acl
     validator = ACL_VALIDATOR.read_text(encoding="utf-8")
     assert f"('{CONTEXT_RPC}(text,text,bigint,bigint,bigint[])')" in validator
-    assert "result.expected_count !== 110" in validator
+    assert "result.expected_count !== 112" in validator
     schema = SCHEMA_INVENTORY.read_text(encoding="utf-8")
     assert "'20260927000100_daily_feedback_review_context_v2.sql'" in schema
     assert "daily_feedback_identified_review_context" in schema

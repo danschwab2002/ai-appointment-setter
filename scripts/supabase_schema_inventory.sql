@@ -3587,6 +3587,31 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'lead_first_name_inferences'
+    union all
+    select
+        '20260928000400',
+        '20260928000400_conversation_followup_discount_v1.sql',
+        (
+            select count(*) = 1
+            from pg_class
+            where oid = to_regclass('public.conversation_followup_events')
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.claim_conversation_followup_v1(bigint,bigint,bigint,text,text,text,text,text,text,text,bigint,bigint,integer,text,timestamptz)')
+              and prosecdef
+              and position('reserve_chatwoot_checkout_issuance_v2' in definition) > 0
+              and position('attended_at is null' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.settle_conversation_followup_v1(text,text,bigint,text,timestamptz)')
+              and prosecdef
+        )::int,
+        3,
+        'conversation_followup_discount'
 )
 select
     version,

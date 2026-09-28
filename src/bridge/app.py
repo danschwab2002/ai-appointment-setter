@@ -47,6 +47,10 @@ from bridge.chatwoot_inbox import (
     DurableChatwootInbox,
     RetryableChatwootWorkError,
 )
+from bridge.followup_discount import (
+    COUPON_CODE_RE,
+    ConversationFollowupSweeper,
+)
 from bridge.reactivation import ConversationReactivationSweeper
 from bridge.commercial_ally import CommercialAllyConfig, JOHANNA_COMMERCIAL_ALLY
 from bridge.checkout_delivery import CheckoutDeliveryError, deliver_checkout_issuance_v2
@@ -345,6 +349,16 @@ class Settings:
     conversation_reactivation_max: int = 1
     conversation_reactivation_max_sends_per_scan: int = 10
     conversation_reactivation_max_pages: int = 5
+    conversation_followup_enabled: bool = False
+    conversation_followup_template_name: str | None = None
+    conversation_followup_template_language: str | None = None
+    conversation_followup_coupon_code: str | None = None
+    conversation_followup_product_name: str | None = None
+    conversation_followup_interval_seconds: float = 300.0
+    conversation_followup_min_age_seconds: int = 86_400
+    conversation_followup_max_age_seconds: int = 259_200
+    conversation_followup_max_sends_per_scan: int = 10
+    conversation_followup_max_pages: int = 5
     hermes_shadow_enabled: bool = False
     hermes_api_base_url: str | None = None
     hermes_api_key: str | None = None
@@ -933,6 +947,40 @@ class Settings:
         conversation_reactivation_max_pages = int(
             os.environ.get("CONVERSATION_REACTIVATION_MAX_PAGES", "5")
         )
+        conversation_followup_enabled = (
+            os.environ.get("CONVERSATION_FOLLOWUP_ENABLED", "false").lower()
+            == "true"
+        )
+        conversation_followup_template_name = (
+            os.environ.get("CONVERSATION_FOLLOWUP_TEMPLATE_NAME", "").strip()
+            or None
+        )
+        conversation_followup_template_language = (
+            os.environ.get("CONVERSATION_FOLLOWUP_TEMPLATE_LANGUAGE", "").strip()
+            or None
+        )
+        conversation_followup_coupon_code = (
+            os.environ.get("CONVERSATION_FOLLOWUP_COUPON_CODE", "").strip() or None
+        )
+        conversation_followup_product_name = (
+            os.environ.get("CONVERSATION_FOLLOWUP_PRODUCT_NAME", "").strip()
+            or None
+        )
+        conversation_followup_interval_seconds = float(
+            os.environ.get("CONVERSATION_FOLLOWUP_INTERVAL_SECONDS", "300")
+        )
+        conversation_followup_min_age_seconds = int(
+            os.environ.get("CONVERSATION_FOLLOWUP_MIN_AGE_SECONDS", "86400")
+        )
+        conversation_followup_max_age_seconds = int(
+            os.environ.get("CONVERSATION_FOLLOWUP_MAX_AGE_SECONDS", "259200")
+        )
+        conversation_followup_max_sends_per_scan = int(
+            os.environ.get("CONVERSATION_FOLLOWUP_MAX_SENDS_PER_SCAN", "10")
+        )
+        conversation_followup_max_pages = int(
+            os.environ.get("CONVERSATION_FOLLOWUP_MAX_PAGES", "5")
+        )
         opt_out_projection_worker_id = (
             os.getenv("CHATWOOT_OPT_OUT_PROJECTION_WORKER_ID", "").strip() or None
         )
@@ -1081,6 +1129,30 @@ class Settings:
             conversation_reactivation_max_pages=(
                 conversation_reactivation_max_pages
             ),
+            conversation_followup_enabled=conversation_followup_enabled,
+            conversation_followup_template_name=(
+                conversation_followup_template_name
+            ),
+            conversation_followup_template_language=(
+                conversation_followup_template_language
+            ),
+            conversation_followup_coupon_code=conversation_followup_coupon_code,
+            conversation_followup_product_name=(
+                conversation_followup_product_name
+            ),
+            conversation_followup_interval_seconds=(
+                conversation_followup_interval_seconds
+            ),
+            conversation_followup_min_age_seconds=(
+                conversation_followup_min_age_seconds
+            ),
+            conversation_followup_max_age_seconds=(
+                conversation_followup_max_age_seconds
+            ),
+            conversation_followup_max_sends_per_scan=(
+                conversation_followup_max_sends_per_scan
+            ),
+            conversation_followup_max_pages=conversation_followup_max_pages,
             hermes_shadow_enabled=shadow_enabled,
             hermes_api_base_url=hermes_api_base_url,
             hermes_api_key=hermes_api_key,
@@ -2032,6 +2104,45 @@ def create_app(
             "TEMPLATE_NAME, canonical Chatwoot ids, the agent bot and a "
             "bounded sender scope"
         )
+    if (
+        not math.isfinite(settings.conversation_followup_interval_seconds)
+        or settings.conversation_followup_interval_seconds <= 0
+        or settings.conversation_followup_min_age_seconds < 0
+        or settings.conversation_followup_max_age_seconds
+        < settings.conversation_followup_min_age_seconds
+        or settings.conversation_followup_max_sends_per_scan < 1
+        or not 1 <= settings.conversation_followup_max_pages <= 20
+    ):
+        raise ValueError("invalid conversation followup configuration")
+    # Mandar un cupon es un efecto externo irreversible: sin plantilla, sin
+    # cupon, sin producto, sin el AgentBot que la emite y sin la admision de
+    # Corte B (el link sale del caso comercial que abre esa admision), el
+    # barredor no arranca en vez de arrancar a medias.
+    if settings.conversation_followup_enabled and (
+        settings.conversation_followup_template_name is None
+        or settings.conversation_followup_coupon_code is None
+        or not COUPON_CODE_RE.fullmatch(settings.conversation_followup_coupon_code)
+        or settings.conversation_followup_product_name is None
+        or settings.chatwoot_account_id is None
+        or settings.chatwoot_account_id < 1
+        or settings.chatwoot_inbox_id is None
+        or settings.chatwoot_inbox_id < 1
+        or settings.chatwoot_agent_bot_access_token is None
+        or settings.agent_bot_id is None
+        or not settings.chatwoot_cut_b_admission_enabled
+        or settings.supabase_base_url is None
+        or settings.supabase_service_role_key is None
+        or (
+            settings.allowed_jid is None
+            and not settings.chatwoot_scoped_inbound_senders_enabled
+        )
+    ):
+        raise ValueError(
+            "CONVERSATION_FOLLOWUP_ENABLED requires CONVERSATION_FOLLOWUP_"
+            "TEMPLATE_NAME, a valid CONVERSATION_FOLLOWUP_COUPON_CODE, "
+            "CONVERSATION_FOLLOWUP_PRODUCT_NAME, canonical Chatwoot ids, the "
+            "agent bot, Cut B admission, Supabase and a bounded sender scope"
+        )
     if settings.chatwoot_stalled_monitor_enabled and (
         not settings.chatwoot_cut_b_admission_enabled
         or not settings.chatwoot_cut_b_agent_enabled
@@ -2832,6 +2943,7 @@ def create_app(
     conversation_reactivation_sweeper: ConversationReactivationSweeper | None = (
         None
     )
+    conversation_followup_sweeper: ConversationFollowupSweeper | None = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
@@ -2863,9 +2975,15 @@ def create_app(
                 await chatwoot_stalled_monitor.start()
             if conversation_reactivation_sweeper is not None:
                 await conversation_reactivation_sweeper.start()
+            if conversation_followup_sweeper is not None:
+                await conversation_followup_sweeper.start()
             yield
         finally:
             for worker_name, worker in (
+                (
+                    "conversation_followup_sweeper",
+                    conversation_followup_sweeper,
+                ),
                 (
                     "conversation_reactivation_sweeper",
                     conversation_reactivation_sweeper,
@@ -2915,6 +3033,7 @@ def create_app(
     app.state.conversation_reactivation_sweeper = (
         conversation_reactivation_sweeper
     )
+    app.state.conversation_followup_sweeper = conversation_followup_sweeper
 
     async def run_shadow_with_canonical_history(
         *,
@@ -4106,6 +4225,56 @@ def create_app(
             app.state.conversation_reactivation_sweeper = (
                 conversation_reactivation_sweeper
             )
+        if settings.conversation_followup_enabled:
+            if (
+                not isinstance(control_client, ChatwootClient)
+                or settings.chatwoot_account_id is None
+                or settings.chatwoot_inbox_id is None
+                or shared_supabase is None
+                or settings.conversation_followup_template_name is None
+                or settings.conversation_followup_coupon_code is None
+                or settings.conversation_followup_product_name is None
+            ):
+                raise ValueError(
+                    "conversation followup requires the Chatwoot control "
+                    "client, canonical ids and Supabase"
+                )
+            conversation_followup_sweeper = ConversationFollowupSweeper(
+                chatwoot=control_client,
+                supabase=shared_supabase,
+                account_id=settings.chatwoot_account_id,
+                inbox_id=settings.chatwoot_inbox_id,
+                template_name=settings.conversation_followup_template_name,
+                coupon_code=settings.conversation_followup_coupon_code,
+                product_name=settings.conversation_followup_product_name,
+                expected_template_language=(
+                    settings.conversation_followup_template_language
+                ),
+                scan_interval_seconds=(
+                    settings.conversation_followup_interval_seconds
+                ),
+                min_inbound_age_seconds=(
+                    settings.conversation_followup_min_age_seconds
+                ),
+                max_inbound_age_seconds=(
+                    settings.conversation_followup_max_age_seconds
+                ),
+                max_sends_per_scan=(
+                    settings.conversation_followup_max_sends_per_scan
+                ),
+                max_pages=settings.conversation_followup_max_pages,
+                # Mismo criterio que la reactivacion: con los remitentes
+                # acotados por scope, ALLOWED_WHATSAPP_JID es un numero de
+                # prueba y restringir a el dejaria afuera a todo el inbox.
+                allowed_phone=(
+                    None
+                    if settings.chatwoot_scoped_inbound_senders_enabled
+                    else allowed_phone_from_jid(settings.allowed_jid)
+                ),
+            )
+            app.state.conversation_followup_sweeper = (
+                conversation_followup_sweeper
+            )
 
     if settings.operator_correlation_read_enabled:
         operator_token = settings.operator_correlation_read_token
@@ -4426,6 +4595,19 @@ def create_app(
                 # publican lo mismo.
                 "conversation_reactivation_last_scan": (
                     conversation_reactivation_sweeper.last_scan_summary
+                ),
+            }
+        if conversation_followup_sweeper is not None:
+            # Igual que la reactivacion: un barredor caido no tumba el bridge,
+            # se publica. El resumen distingue 'sin candidatos' de 'salteo a
+            # todos por un motivo'.
+            stalled_monitor_readiness = {
+                **stalled_monitor_readiness,
+                "conversation_followup": (
+                    conversation_followup_sweeper.last_scan_state
+                ),
+                "conversation_followup_last_scan": (
+                    conversation_followup_sweeper.last_scan_summary
                 ),
             }
         if (

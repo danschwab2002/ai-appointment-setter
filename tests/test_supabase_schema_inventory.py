@@ -180,7 +180,16 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
 
-    assert len(allowlisted) == 110
+    assert len(allowlisted) == 112
+    assert (
+        "claim_conversation_followup_v1(bigint, bigint, bigint, text, text, text, text, text, "
+        "text, text, bigint, bigint, integer, text, timestamp with time zone)"
+        in allowlisted
+    )
+    assert (
+        "settle_conversation_followup_v1(text, text, bigint, text, timestamp with time zone)"
+        in allowlisted
+    )
     assert "record_lead_first_name_inference_v1(text, text, text, text, text)" in allowlisted
     assert "get_lead_first_name_inference_v1(text)" in allowlisted
     assert len(allowlisted) == len(set(allowlisted))
