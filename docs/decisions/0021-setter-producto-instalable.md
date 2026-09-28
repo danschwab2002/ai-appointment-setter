@@ -19,13 +19,14 @@ Con la segunda aliada (ATT1) había dos caminos: adaptar el código de la primer
 3. **Las releases llevan tag semántico y changelog, y publican imágenes en GitHub Container Registry.** EasyPanel usa la imagen por tag; volver atrás es volver al tag anterior. Una versión nueva llega a cada instancia por un PR en su repo, primero a la de menor facturación.
 4. **Una instalación nueva arranca de una línea de base de solo estructura.** Ninguna migración nueva inserta datos de un cliente; esos datos entran por el aprovisionamiento, leídos del manifiesto. Las migraciones históricas no se editan.
 5. **Los nombres con «johanna» en funciones, tablas y RPCs quedan.** El código nuevo usa nombres genéricos. La regla alcanza a los valores que cambian el comportamiento, no a los nombres.
-6. **El SOUL se parte en un SOUL común del producto y un archivo de conocimiento por instancia**, que el bridge valida al arrancar y manda como mensaje `system` en cada pedido. Se implementa en la fase F2 del diseño.
+6. **El SOUL se parte en un SOUL común del producto y un archivo de conocimiento por instancia**, que el bridge valida al arrancar y manda como mensaje `system` en cada pedido. Nace con ATT1 y la primera aliada pasa después (§8.2 del diseño).
 7. **La unidad de instancia es la aliada.** Las instancias de una misma empresa pueden compartir Chatwoot (un inbox por aliada), el workspace de Slack (un canal por aliada) y el VPS. Cada instancia tiene propios el bridge, el profile de Hermes, la base y los secretos. Esto afina el ADR-0005, que dibuja un Chatwoot por cliente.
 8. **El centro solo entiende eventos canónicos, y cada fuente entra por un adaptador.** Una instancia puede tener código solo en esa ranura, con contrato fijo, y nunca en el centro. Un adaptador se acepta si pasa la suite de conformidad del producto sobre envíos reales capturados de esa fuente. La IA puede escribir el adaptador al construir la instancia; en tiempo de ejecución corre código fijo, como pide el [ADR-0003](0003-deterministic-reasoning-boundary.md).
 
 ## Consecuencias
 
-- La primera aliada tiene que pasar a ser la instancia 1 sin cambiar su comportamiento. Es la fase de más riesgo del plan y se valida con una semana de números iguales antes de seguir.
+- La instancia sin tráfico va antes que la que factura: ATT1 estrena el camino nuevo y la primera aliada se muda después, sin cambiar su comportamiento. Es la fase de más riesgo del plan y se valida con una semana de números iguales.
+- Lo artesanal se permite en el proceso de instalación y nunca en el código: cada valor va al manifiesto y cada paso manual se escribe en la guía en el momento. La guía se prueba con la instalación siguiente a la que la escribió.
 - `lead-precheckout-v1` tiene que evolucionar a evento canónico, y la landing de Lancemos pasa a ser el primer adaptador.
 - Cada release que cambie el formato del manifiesto es mayor y trae el cambio de manifiesto para cada instancia.
 - El agente instalador y los adaptadores de catálogo se construyen después de la primera instalación hecha a mano desde la guía, no antes.
