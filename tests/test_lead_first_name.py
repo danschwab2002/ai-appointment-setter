@@ -281,3 +281,22 @@ def test_an_empty_name_is_never_sent_to_the_model() -> None:
 
     assert outcome == "lead_first_name_empty"
     assert requests == []
+
+
+def test_prompt_examples_are_not_names_of_the_measured_sample() -> None:
+    """Los ejemplos del prompt no pueden ser nombres de la muestra medida.
+
+    El prompt v2 se midio contra los nombres reales del inbox 9; si sus ejemplos
+    fueran esos nombres, la medicion probaria memoria y no criterio.
+    """
+    from bridge import lead_first_name
+
+    prompt = lead_first_name._SYSTEM_PROMPT.casefold()
+    for case in CASES:
+        for name in (case.get("model_first_name"), case["full_name"]):
+            if name and len(name.split()) > 1:
+                assert f'"{name.casefold()}' not in prompt, name
+
+
+def test_the_prompt_version_changes_the_idempotency_key() -> None:
+    assert PROMPT_VERSION == "lead-first-name-v2"
