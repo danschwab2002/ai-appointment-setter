@@ -1,7 +1,7 @@
 # Diseño: el setter como producto instalable (producto e instancia) v1
 
-- **Estado:** propuesta para revisión de Dan. No hay nada implementado de lo que describe.
-- **Fecha:** 2026-09-27
+- **Estado:** propuesta con sus decisiones aceptadas el 2026-09-28 en [ADR-0021](../decisions/0021-setter-producto-instalable.md). No hay nada implementado de lo que describe.
+- **Fecha:** 2026-09-27 (v1). 2026-09-28: se suma §6, los bordes y los adaptadores.
 - **Mide contra:** `origin/main` en `246de1b` (2026-09-27)
 - **Parte de:** [ADR-0005](../decisions/0005-reproducible-client-deployments.md) (single-tenant, monorepo, imágenes fijadas, cuatro capas), [runtime portable single-tenant v1](portable-single-tenant-runtime-v1.md), [contrato del runtime por aliada](../contracts/commercial-ally-runtime-v1.md), [ADR-0017](../decisions/0017-central-slack-operations-connector.md).
 - **Absorbe:** el diseño del SOUL genérico con conocimiento por infoproductor (26/09, vault de Dan: `productos/soporte-infoproductores/diseno/soul-generico-y-conocimiento-por-infoproductor.md`), que queda como la pieza del agente de este documento.
@@ -10,7 +10,7 @@
 
 El setter corre para una sola aliada (Johanna) y el segundo caso (ATT1, de la Dra. Nina Garza) está por empezar. Hacerlo como una adaptación del código de Johanna funciona una vez, y deja un sistema que solo sabe instalar quien lo construyó.
 
-El objetivo es el contrario: **que una persona que no participó del desarrollo pueda instalar el setter para un negocio nuevo leyendo solamente la guía de instalación, sin tocar código y sin preguntarle nada a nadie.** Esa es la prueba de aceptación de todo lo que sigue, y ATT1 es la primera vez que se corre.
+El objetivo es el contrario: **que una persona que no participó del desarrollo pueda instalar el setter para un negocio nuevo leyendo solamente la guía de instalación, sin tocar código y sin preguntarle nada a nadie.** Esa es la prueba de aceptación de todo lo que sigue. ATT1 es la primera instancia que se instala por este camino y la que escribe la guía; la prueba se corre con la instalación siguiente (§8.1).
 
 La regla que ordena el diseño es una sola:
 
@@ -57,7 +57,7 @@ Nada de esto fue un error: cada pieza se construyó para que Johanna funcionara,
 ### 4.2 La base
 
 - **Ninguna migración nueva inserta datos de un cliente.** Crean estructura y funciones. Los datos de un cliente entran por el aprovisionamiento (4.5), leídos de su manifiesto.
-- Las migraciones viejas con datos de Johanna no se editan: son historia aplicada. Pero una instalación nueva no puede correrlas, porque dejaría las ofertas de Johanna en la base de ATT1. Hay dos caminos (decisión 3, §8): **(a)** una línea de base de solo estructura para instalaciones nuevas, generada del esquema vigente y verificada contra la cadena completa, o **(b)** envolver cada migración con datos en una guarda que la saltee si la instancia no es Johanna.
+- Las migraciones viejas con datos de Johanna no se editan: son historia aplicada. Pero una instalación nueva no puede correrlas, porque dejaría las ofertas de Johanna en la base de ATT1. Hay dos caminos (decisión 3, §9): **(a)** una línea de base de solo estructura para instalaciones nuevas, generada del esquema vigente y verificada contra la cadena completa, o **(b)** envolver cada migración con datos en una guarda que la saltee si la instancia no es Johanna.
 
 ### 4.3 El código
 
@@ -65,7 +65,7 @@ Nada de esto fue un error: cada pieza se construyó para que Johanna funcionara,
 - El catálogo de ofertas admite varias ofertas por aliada con una por defecto, como ya hace Johanna, pero cargado desde el manifiesto.
 - La guarda de términos sensibles (`app.py:178-183`, hoy de ansiedad: `antidepresiv`, `ansiolitic`) pasa al manifiesto, así ATT1 declara los suyos (levotiroxina, suplementos).
 - La revisión diaria y el conector de Slack leen la marca y los tenants de la configuración.
-- **Los nombres con «johanna» en funciones, tablas y RPCs pueden quedar** (decisión 4): renombrarlos toca los inventarios de ACL, los tests de cola y las migraciones, y no cambia nada de lo que hace el sistema. El código nuevo usa nombres genéricos. La prueba de que la separación terminó: ningún **valor** que cambie el comportamiento menciona a Johanna en `src/`.
+- **Los nombres con «johanna» en funciones, tablas y RPCs pueden quedar** (decisión 4, §9): renombrarlos toca los inventarios de ACL, los tests de cola y las migraciones, y no cambia nada de lo que hace el sistema. El código nuevo usa nombres genéricos. La prueba de que la separación terminó: ningún **valor** que cambie el comportamiento menciona a Johanna en `src/`.
 
 ### 4.4 El agente
 
@@ -90,6 +90,24 @@ Una CLI en el producto (`uv run setter <comando>`), idempotente y con modo de pr
 | `setter status <instancia>` | Lo que hoy hace `recuperador_estado.py` desde el OS: links, ventas correlacionadas, conversaciones esperando, salud | Solo lectura |
 
 Cada corrida deja evidencia sanitizada en la carpeta `evidencia/` de la instancia.
+
+### 4.6 Cómo llega una versión nueva a las instancias
+
+Una actualización del producto no puede pisar lo de una instancia porque viven en lugares distintos: la imagen se reemplaza entera y no contiene nada de ningún cliente; el manifiesto, el conocimiento y los secretos están fuera de ella; la base de la instancia solo recibe migraciones de estructura.
+
+1. Se publica la versión (`v1.5.0`): imágenes y changelog. Ninguna instancia cambia todavía.
+2. Un workflow del producto abre un PR en el repo de cada instancia que sube `producto:` a la versión nueva y copia el changelog. La actualización son N PRs chicos, uno por instancia, cada uno revisable y reversible.
+3. Primero se actualiza la instancia que menos factura y se mira `setter status` durante 24 a 48 horas. Después, el resto.
+4. Al desplegar, `setter upgrade` valida el manifiesto contra la versión nueva y aplica las migraciones pendientes. Si algo no cierra, se detiene antes de tocar nada y dice qué falta.
+5. Volver atrás es volver al tag anterior.
+
+Las tres cosas que sí pueden romper y cómo se cuidan:
+
+- **La base:** las migraciones cambian estructura y nunca reescriben filas de un cliente. Un cambio incompatible se hace en dos versiones: una agrega lo nuevo y una posterior saca lo viejo, de modo que el código anterior siga funcionando sobre la base nueva y el rollback sea seguro.
+- **El manifiesto:** un campo nuevo obligatorio es una versión mayor. El PR de actualización de esa instancia incluye el cambio de manifiesto para que alguien lo complete. El código nunca inventa el valor.
+- **El SOUL común:** cambia el comportamiento de todas las instancias, a propósito. Antes de publicar se corren las conversaciones de prueba de cada instancia, y se sube de a una.
+
+Un chequeo del CI falla si aparece en `src/` un valor de un cliente. Es lo que impide que el producto vuelva a quedar atado a una instancia.
 
 ## 5. La instancia
 
@@ -151,6 +169,8 @@ plantillas:                          # nombre e idioma, verificados por `setter 
   reactivacion: null                 # no existe todavía: hay que crearla en Meta
   descuento: att1_descuento_10_post_respuesta_01   # registrada en revisión y en inglés el 12/09
 
+eventos: [intencion, carrito, pago_fallido, compra, entrante]   # qué fuentes tiene esta instancia (§6.4)
+
 flujos:                              # todos apagados hasta el E2E de cada uno
   inbound: false
   carrito: false
@@ -172,7 +192,60 @@ Johanna se escribe con el mismo esquema y los valores que hoy están en el códi
 
 Ningún campo del manifiesto es secreto. Si un dato es sensible, va al `.env` y el manifiesto lo nombra.
 
-## 6. La documentación
+## 6. Los bordes: de dónde llegan los eventos
+
+### 6.1 El problema
+
+Un infoproductor nuevo puede tener landings que no se parecen en nada a las de Lancemos: un Elementor, un Typeform, ClickFunnels, un formulario de GHL, o ninguna landing propia. Si la entrada del setter supone la landing de Lancemos, ese cliente no se puede instalar sin tocar el centro.
+
+### 6.2 El evento canónico y los adaptadores
+
+El centro (casos, agente, link de pago, derivación, revisión diaria) necesita enterarse de un hecho que es igual en cualquier negocio: **esta persona mostró intención de comprar esta oferta, con este contacto, este origen y este consentimiento.** Cómo llega el hecho cambia en cada cliente.
+
+- **El centro solo entiende eventos canónicos** con contrato versionado: intención de compra, abandono de carrito, pago fallido, compra aprobada y mensaje entrante.
+- **Un adaptador por fuente** traduce lo que manda esa fuente al evento canónico. Es la única pieza que cambia por cliente.
+
+`lead-precheckout-v1` es casi ese contrato, pero tiene forma de landing de Lancemos (`site`, `landing_id` y un `checkout_url` armado por la landing). En F2 pasa a evento canónico, y la landing de Lancemos pasa a ser **un adaptador más**: el primero, sin privilegios.
+
+Esto afina la regla de §1. **Una instancia puede tener código solo en los bordes, en una ranura con contrato fijo, y nunca en el centro.** Es el modelo de los plugins.
+
+### 6.3 La prueba de conformidad es el producto
+
+Un adaptador se acepta por una prueba, no por quién lo escribió:
+
+- Para cada fuente se capturan de 3 a 5 envíos reales de ese cliente y se guardan como fixtures, con fecha y origen (regla del 20/09).
+- Una suite fija del producto verifica que el adaptador convierta cada fixture en un evento canónico válido, y que rechace lo que no corresponde (otro producto, otra oferta, sin consentimiento).
+- El adaptador lo puede escribir Claude, el desarrollador del cliente o alguien que no programa pidiéndoselo a una IA. Entra si pasa la suite.
+
+**La IA escribe el adaptador al construir la instancia; en producción corre código fijo.** Un modelo que interpretara cada webhook en vivo haría no reproducible la entrada de un sistema que manda WhatsApps y links de pago. Es la frontera del [ADR-0003](../decisions/0003-deterministic-reasoning-boundary.md): el modelo propone y lo determinista decide.
+
+**Un cambio de contrato deja de ser caro.** Si el evento canónico pasa a v2, un agente regenera cada adaptador contra el contrato nuevo usando los mismos fixtures reales de ese cliente, y la suite decide. Mantener N integraciones era el costo que hacía inviables estos modelos, y con IA baja a minutos por cliente.
+
+### 6.4 Tres tipos de fuente
+
+| Lo que tiene el cliente | Adaptador |
+|---|---|
+| Una landing HTML cualquiera | Un script que se pega en la página, como un pixel. Captura el envío del formulario y la atribución y los manda a un endpoint del servidor, que firma el evento, porque el secreto no puede vivir en el navegador. Es lo que ya hace el paquete `superpowers` del core de Lancemos, empaquetado para cualquiera |
+| Una plataforma con webhook (Typeform, ClickFunnels, GHL) | Un adaptador de servidor que traduce su payload, con la suite de §6.3 |
+| Solo Hotmart | Ninguno. Carrito abandonado, pago fallido y mensajes entrantes funcionan desde el primer día |
+
+El manifiesto declara qué eventos tiene la instancia (`eventos: [carrito, pago_fallido, entrante]`), y **los flujos que dependen de un evento ausente quedan apagados solos**. La landing se suma después, sin frenar la instalación.
+
+Cuando dos instancias usan la misma herramienta, su adaptador sube al producto como **adaptador de catálogo**, disponible para todas. Es el mismo criterio de todo el diseño: se abstrae con el segundo caso.
+
+### 6.5 El agente instalador
+
+Con el contrato y la suite en su lugar, el discovery de un cliente nuevo lo puede hacer un agente. Recibe la URL de la landing y el acceso a Hotmart, y:
+
+1. abre la landing en un navegador real y detecta qué formulario usa;
+2. hace un envío de prueba y captura el payload;
+3. lee los productos y las ofertas de la API de Hotmart y arma el borrador del manifiesto;
+4. escribe el adaptador y corre la suite de conformidad;
+5. abre el PR en el repo de la instancia para que lo revise una persona.
+
+Achica la investigación por cliente. **No reemplaza la verificación en producción**: el E2E de cada instancia sigue siendo humano y medido. Se construye después de la prueba del extraño (F7, §8).
+
+## 7. La documentación
 
 Para instalar alcanzan tres documentos, escritos para alguien que no estuvo:
 
@@ -182,33 +255,46 @@ Para instalar alcanzan tres documentos, escritos para alguien que no estuvo:
 
 Los ADR, el `current-state`, las bitácoras y `docs/operations/` siguen siendo del desarrollo del producto. Quien instala no necesita leerlos, y es la señal de que la guía está completa.
 
-## 7. Plan por fases
+## 8. Cómo se instala una instancia nueva, y la transición de hoy
 
-Cada fase termina en un efecto medido (política del 20/09) y se reporta con la escala abierto → mergeado → desplegado → activado → E2E.
+### 8.1 Reglas para cualquier instalación o transición
+
+1. **La instancia sin tráfico va antes que la que factura.** Si un camino nuevo tiene un error, que lo encuentre una instancia que todavía no le escribe a nadie. Una instancia que vende se muda cuando el camino ya está probado.
+2. **Lo artesanal se permite en el proceso, nunca en el código.** Cargar filas a mano, configurar el panel a mano o crear un inbox a mano está bien mientras cada valor viva en el manifiesto de la instancia y cada paso se escriba en `docs/instalar.md` en el momento en que se hace. Esa guía es después la especificación de lo que el instalador automatiza.
+3. **Se automatiza lo que ya se hizo a mano.** El instalador (§4.5) automatiza los pasos de la guía; el agente instalador (§6.5) y los adaptadores de catálogo vienen después de que la guía pasó la prueba del extraño. Automatizar una instalación que nunca se hizo sería automatizar supuestos.
+4. **La prueba del extraño se hace con la instalación siguiente a la que escribió la guía.** Quien escribe la guía mientras instala no la puede probar: ya sabe lo que falta. La corre una sesión nueva, sin el vault ni el historial, con la guía como única fuente.
+5. **Cada fase termina en un efecto medido** (política del 20/09) y se reporta con la escala abierto → mergeado → desplegado → activado → E2E.
+
+### 8.2 La transición de hoy: Johanna y ATT1
+
+Esta secuencia se hace una sola vez: lleva al sistema actual, con Johanna en producción y ATT1 esperando, al modelo de este documento. Aplica las reglas de §8.1 y no es el procedimiento de instalación, que es la guía.
 
 | Fase | Qué | Cambia el comportamiento de Johanna | Termina cuando |
 |---|---|---|---|
 | **F1** Releases | Tags, `CHANGELOG.md`, workflow que publica imágenes en GHCR. Johanna pasa a correr desde `v1.0.0` fijada | No | Johanna corre desde la imagen de GHCR y un rollback de prueba vuelve al tag anterior |
-| **F2** Johanna es la instancia 1 | Su manifiesto sale del código a `setter-instancia-johanna`. El scope y la política cargados a mano pasan a `provision`. SOUL común + `knowledge-v1` con el test dorado | No: es la fase delicada | Una semana con los mismos números en `status` (links, correlaciones, derivaciones) y las respuestas del agente comparadas contra conversaciones reales |
-| **F3** Separar los caminos | Los tres caminos con envío, varias ofertas, guardas, marca de la revisión diaria y tenants de Slack desde la configuración | No | Una matriz de tests Johanna/ATT1 sin cruces, con fixtures capturados |
-| **F4** Instalador y base | `validate`, `provision`, `doctor`, `status` y la base nueva sin datos de clientes | No | Una instalación desde cero en un entorno de prueba pasa `doctor` en verde |
-| **F5** La prueba del extraño | Se instala ATT1 siguiendo solo `docs/instalar.md`. Quien la corre no tiene el historial: una sesión nueva sin el vault ni este repo más allá de la guía. Cada fricción se arregla en el producto, no en ATT1 | No | ATT1 instalada con `doctor` en verde, con los flujos apagados |
-| **F6** Activar ATT1 | La landing manda `lead.precheckout` (en el core de Lancemos, apagado por defecto), el webhook de Hotmart apunta al bridge de ATT1, se prenden los flujos de a uno y se apaga la recuperación de GHL | Johanna no | Primera venta de ATT1 correlacionada al setter |
+| **F2** Los caminos leen del manifiesto | Los tres caminos con envío, varias ofertas, guardas, marca de la revisión diaria y tenants de Slack desde la configuración. `lead.precheckout` pasa a evento canónico y la landing de Lancemos queda detrás de la frontera de adaptador, con su suite de conformidad (§6). SOUL común + conocimiento en archivo (§4.4). Johanna sigue por su camino de hoy | No | Una matriz de tests Johanna/ATT1 sin cruces, con fixtures capturados, y el adaptador de Lancemos pasando la suite con envíos reales de las dos landings |
+| **F3** ATT1, primera instancia del camino nuevo | Repo `setter-instancia-att1`, manifiesto, `knowledge-v1`, stack propio. Aprovisionamiento a mano, con `docs/instalar.md` escrita paso a paso mientras se hace (regla 2) | No | ATT1 instalada, `/ready` en 200 con su binding, todos los flujos apagados, y la guía cubriendo cada paso que se dio |
+| **F4** Activar ATT1 | La landing manda el evento canónico (en el core de Lancemos, apagado por defecto), el webhook de Hotmart apunta al bridge de ATT1, se prenden los flujos de a uno y se apaga la recuperación de GHL | No | Primera venta de ATT1 correlacionada al setter |
+| **F5** Johanna se muda | Su manifiesto sale del código a `setter-instancia-johanna`, el scope y la política cargados a mano pasan al manifiesto, su SOUL pasa a SOUL común + `knowledge-v1` con el test dorado. Es la fase delicada, y llega con el camino ya probado por ATT1 | No, y se demuestra | Una semana con los mismos números en `status` (links, correlaciones, derivaciones) y las respuestas del agente comparadas contra conversaciones reales |
+| **F6** Instalador y base | `validate`, `provision`, `doctor`, `status` automatizan los pasos de la guía; línea de base de solo estructura | No | Una instalación desde cero en un entorno de prueba pasa `doctor` en verde |
+| **F7** La prueba del extraño | Con la tercera aliada, o reinstalando ATT1 en un entorno de prueba, siguiendo solo `docs/instalar.md` (regla 4). Cada fricción se arregla en el producto | No | Instancia con `doctor` en verde sin que nadie haya tenido que preguntar nada |
 
-**Calendario con Lancemos:** F1 a F5 no tocan nada de lo que Lancemos mide. F6 cambia el formulario de la landing de ATT1, que ese mismo equipo muda el 29/09 con lectura el 06/10; F6 va después de esa lectura, para no medir dos cambios juntos.
+Después de F7: el agente instalador (§6.5) y los adaptadores de catálogo.
 
-## 8. Decisiones que pide este documento
+**Calendario con Lancemos:** F1 a F3 no tocan nada de lo que Lancemos mide. F4 cambia el formulario de la landing de ATT1, que ese mismo equipo muda el 29/09 con lectura el 06/10; F4 va después de esa lectura, para no medir dos cambios juntos.
 
-Cada una lleva la recomendación primero.
+## 9. Decisiones
 
-1. **Dónde vive una instancia.** Recomendado: un repo privado por instancia, creado desde un repo plantilla. Se le puede entregar a quien opera ese negocio sin mostrarle las demás. Alternativa: un solo repo privado con una carpeta por instancia, más simple mientras sean dos.
-2. **Registro de imágenes.** Recomendado: GitHub Container Registry, que ya está en la cuenta y no tiene costo para imágenes privadas en este volumen. EasyPanel las baja con un token de lectura.
-3. **La base de una instalación nueva.** Recomendado: línea de base de solo estructura (4.2 a). Deja las migraciones viejas intactas y una instalación nueva limpia por construcción. La alternativa (guardas) ensucia migraciones ya aplicadas.
-4. **Los nombres con «johanna».** Recomendado: quedan; el código nuevo usa nombres genéricos. Renombrar cuesta y no cambia comportamiento.
-5. **El SOUL genérico.** Recomendado: se implementa en F2 con el diseño del 26/09 tal como está.
-6. **La unidad de instancia.** Recomendado: la aliada, compartiendo Chatwoot, Slack y VPS dentro de la misma empresa (§3). Alternativa: una instancia por empresa con varias aliadas adentro, que ahorra servicios pero obliga a rutear por inbox en todo el código y agranda el radio de un error.
+Aceptadas por Dan el 2026-09-28 tal como estaban recomendadas; quedan en el [ADR-0021](../decisions/0021-setter-producto-instalable.md). Cada una lleva primero lo elegido.
 
-## 9. Lo que falta saber de ATT1
+1. **Dónde vive una instancia.** Elegido: un repo privado por instancia, creado desde un repo plantilla. Se le puede entregar a quien opera ese negocio sin mostrarle las demás. Alternativa: un solo repo privado con una carpeta por instancia, más simple mientras sean dos.
+2. **Registro de imágenes.** Elegido: GitHub Container Registry, que ya está en la cuenta y no tiene costo para imágenes privadas en este volumen. EasyPanel las baja con un token de lectura.
+3. **La base de una instalación nueva.** Elegido: línea de base de solo estructura (4.2 a). Deja las migraciones viejas intactas y una instalación nueva limpia por construcción. La alternativa (guardas) ensucia migraciones ya aplicadas.
+4. **Los nombres con «johanna».** Elegido: quedan; el código nuevo usa nombres genéricos. Renombrar cuesta y no cambia comportamiento.
+5. **El SOUL genérico.** Elegido: se implementa con el diseño del 26/09 tal como está. Nace con ATT1 (F2 y F3) y Johanna pasa en F5.
+6. **La unidad de instancia.** Elegido: la aliada, compartiendo Chatwoot, Slack y VPS dentro de la misma empresa (§3). Alternativa: una instancia por empresa con varias aliadas adentro, que ahorra servicios pero obliga a rutear por inbox en todo el código y agranda el radio de un error.
+
+## 10. Lo que falta saber de ATT1
 
 - El número de WhatsApp de ATT1, su WABA y si ya tiene inbox en Chatwoot.
 - El estado real en Meta de las cuatro plantillas `att1_*`; la de reactivación no existe.
@@ -216,4 +302,4 @@ Cada una lleva la recomendación primero.
 - La marca con la que firma el equipo, la zona horaria y los términos sensibles.
 - Quién revisa las conversaciones de ATT1 en la revisión diaria.
 
-Ninguno bloquea F1 a F4.
+Ninguno bloquea F1 ni F2.
