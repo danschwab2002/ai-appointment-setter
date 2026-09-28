@@ -19,6 +19,7 @@ import httpx
 
 from bridge.agent_provenance import AgentTurn
 from bridge.commercial_ally import CommercialAllyConfig
+from bridge.lead_first_name import FirstNameInference
 from bridge.correlation_preresolution import (
     CorrelationCandidate,
     CorrelationEvidence,
@@ -1802,6 +1803,63 @@ class SupabaseClient:
             submission_id=submission_id,
             purchase_intent_id=purchase_intent_id,
         )
+
+    async def get_lead_first_name_inference(
+        self, name_key: str
+    ) -> FirstNameInference | None:
+        """The stored first-name inference for one name key, if any."""
+        operation = "lead_first_name_inference_get"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_lead_first_name_inference_v1",
+            content=json.dumps({"p_name_key": name_key}),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed")
+        rows = _response_rows(response, operation=operation)
+        if not rows:
+            return None
+        row = rows[0]
+        result = row.get("result")
+        first_name = row.get("first_name")
+        if len(rows) != 1 or result not in {"confident", "uncertain"} or (
+            first_name is not None and not isinstance(first_name, str)
+        ):
+            raise SupabaseError(f"{operation}_invalid_row")
+        return FirstNameInference(result=result, first_name=first_name)
+
+    async def record_lead_first_name_inference(
+        self,
+        *,
+        name_key: str,
+        inference: FirstNameInference,
+        model_name: str,
+        prompt_version: str,
+    ) -> str:
+        """Store the first answer for one name key; a later one never overwrites it."""
+        operation = "lead_first_name_inference_record"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/record_lead_first_name_inference_v1",
+            content=json.dumps(
+                {
+                    "p_name_key": name_key,
+                    "p_result": inference.result,
+                    "p_first_name": inference.first_name,
+                    "p_model_name": model_name,
+                    "p_prompt_version": prompt_version,
+                }
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed")
+        try:
+            outcome = response.json()
+        except ValueError as exc:
+            raise SupabaseError(f"{operation}_invalid_json") from exc
+        if outcome not in {"inserted", "existing"}:
+            raise SupabaseError(f"{operation}_invalid_outcome")
+        return outcome
 
     async def begin_precheckout_test_first_touch(
         self,

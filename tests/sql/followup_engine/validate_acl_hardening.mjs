@@ -99,6 +99,8 @@ const rows = await db.query(`
       ('get_agent_turn_provenance_v1(text,text,bigint[],timestamp with time zone,timestamp with time zone)'),
       ('record_agent_turn_provenance_v1(text,text,bigint,text,timestamp with time zone,text,text,text,text,text,text,jsonb)'),
       ('register_agent_prompt_release_v1(text,text,text,text,jsonb,timestamp with time zone,text,timestamp with time zone,text)'),
+      ('record_lead_first_name_inference_v1(text,text,text,text,text)'),
+      ('get_lead_first_name_inference_v1(text)'),
       ('settle_conversation_reactivation(text,text,bigint,text,timestamp with time zone)'),
       ('apply_chatwoot_inbound_opt_out(bigint,bigint,bigint,bigint,text,timestamp with time zone,text)'),
       ('apply_hotmart_purchase_approved(uuid,text,text,text,text,text,timestamp with time zone)'),
@@ -212,9 +214,10 @@ const result = rows.rows[0];
 // adds one, Johanna checkout issuance V2 adds four, and AI-assisted correlation
 // pre-resolution adds five, and the rolling-safe reason-code contract retains
 // one legacy completion overload, and resuming a paused conversation adds one,
-// and the Slack alert for every human handoff (HND-001) adds three.
+// and the Slack alert for every human handoff (HND-001) adds three, and the
+// lead first-name inference adds two.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 108) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 110) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const bindingAcl = await db.query(`

@@ -16,6 +16,7 @@ import httpx
 import pytest
 
 from bridge.chatwoot import CanonicalConversationSnapshot, ChatwootProtocolError
+from bridge.lead_first_name import FirstNameInference
 from bridge.messaging import (
     FinalMetaEffectGate,
     FirstTouchResult,
@@ -2481,6 +2482,69 @@ def test_precheckout_timer_worker_sends_once_and_replay_is_silent() -> None:
             "failure_code": None,
         }
     ]
+
+
+class StubPrecheckoutTimerSupabaseWithFullName(StubPrecheckoutTimerSupabase):
+    """The same projection, with a real-shaped full name and a stored inference."""
+
+    def __init__(self, full_name: str, inference: object | None) -> None:
+        super().__init__()
+        self.full_name = full_name
+        self.inference = inference
+        self.inference_lookups: list[str] = []
+
+    async def get_precheckout_delayed_one_shot_command(
+        self, **kwargs: object
+    ) -> object:
+        command = await super().get_precheckout_delayed_one_shot_command(**kwargs)
+        return SimpleNamespace(**{**vars(command), "buyer_name": self.full_name})
+
+    async def get_lead_first_name_inference(self, name_key: str) -> object | None:
+        self.inference_lookups.append(name_key)
+        return self.inference
+
+
+@pytest.mark.parametrize(
+    ("greeting_enabled", "inference", "expected_greeting"),
+    [
+        (False, None, None),
+        (True, None, "Andres"),
+        (True, FirstNameInference("confident", "Andres Felipe"), "Andres Felipe"),
+        (True, FirstNameInference("uncertain", None), "Andres"),
+    ],
+)
+def test_precheckout_timer_worker_greets_through_the_three_level_chain(
+    greeting_enabled: bool,
+    inference: object | None,
+    expected_greeting: str | None,
+) -> None:
+    supabase = StubPrecheckoutTimerSupabaseWithFullName(
+        "andres felipe Pérez García", inference
+    )
+    sender = StubPrecheckoutSender(FirstTouchResult("sent", 701, 801))
+    worker = HotmartAbandonmentTimerWorker(
+        supabase=supabase,  # type: ignore[arg-type]
+        message_sender=sender,  # type: ignore[arg-type]
+        precheckout_first_touch_enabled=True,
+        precheckout_outbound_enabled=True,
+        isolate_precheckout_sender_process=False,
+        clock=lambda: "2026-08-29T18:00:00+00:00",
+        lead_first_name_greeting_enabled=greeting_enabled,
+    )
+
+    assert asyncio.run(worker.run_once()) == 1
+
+    [call] = sender.calls
+    # El contacto de Chatwoot conserva el nombre completo en los dos casos.
+    assert call["buyer_name"] == "andres felipe Pérez García"
+    if expected_greeting is None:
+        assert "greeting_name" not in call
+        assert supabase.inference_lookups == []
+        assert str(call["content"]).startswith("Hola, andres felipe Pérez García. ")
+    else:
+        assert call["greeting_name"] == expected_greeting
+        assert len(supabase.inference_lookups) == 1
+        assert str(call["content"]).startswith(f"Hola, {expected_greeting}. ")
 
 
 def test_precheckout_timer_worker_reserves_without_request_start_when_outbound_off() -> None:

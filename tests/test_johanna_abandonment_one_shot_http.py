@@ -245,3 +245,48 @@ def test_johanna_one_shot_factory_fails_closed_on_scope_or_template_drift(
             supabase_client=_FakeSupabase(),  # type: ignore[arg-type]
             message_sender=_FakeSender(),  # type: ignore[arg-type]
         )
+
+
+class _FakeSupabaseWithInference(_FakeSupabase):
+    def __init__(self, inference: object | None) -> None:
+        super().__init__()
+        self.inference = inference
+        self.inference_lookups: list[str] = []
+
+    async def get_lead_first_name_inference(self, name_key: str) -> object | None:
+        self.inference_lookups.append(name_key)
+        return self.inference
+
+
+@pytest.mark.parametrize(
+    ("inference", "expected_greeting"),
+    [
+        (None, "Lead"),
+        ("confident", "Lead de Prueba"),
+    ],
+)
+def test_johanna_one_shot_greets_through_the_three_level_chain(
+    inference: str | None, expected_greeting: str
+) -> None:
+    from bridge.lead_first_name import FirstNameInference, lead_name_key
+
+    stored = (
+        FirstNameInference("confident", expected_greeting)
+        if inference == "confident"
+        else None
+    )
+    supabase = _FakeSupabaseWithInference(stored)
+    sender = _FakeSender()
+    app = create_app(
+        _settings(lead_first_name_greeting_enabled=True),
+        supabase_client=supabase,  # type: ignore[arg-type]
+        message_sender=sender,  # type: ignore[arg-type]
+    )
+
+    response = _post(app)
+
+    assert response.status_code == 202
+    [call] = sender.calls
+    assert call["buyer_name"] == "Lead de Prueba"
+    assert call["greeting_name"] == expected_greeting
+    assert supabase.inference_lookups == [lead_name_key("Lead de Prueba")]

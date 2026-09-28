@@ -735,7 +735,7 @@ def test_evolution_sender_rejects_noncanonical_allowed_jid(
     assert transport.requests == []
 
 
-def test_chatwoot_sender_sends_waba_first_touch_template() -> None:
+def _waba_first_touch_transport() -> MockTransport:
     transport = MockTransport()
     # search_contact → no existing contact
     transport.set(
@@ -803,6 +803,11 @@ def test_chatwoot_sender_sends_waba_first_touch_template() -> None:
             request=httpx.Request("POST", "https://chatwoot.test"),
         ),
     )
+    return transport
+
+
+def test_chatwoot_sender_sends_waba_first_touch_template() -> None:
+    transport = _waba_first_touch_transport()
     client = _chatwoot(transport)
     sender = ChatwootMessageSender(
         chatwoot=client,
@@ -837,6 +842,45 @@ def test_chatwoot_sender_sends_waba_first_touch_template() -> None:
         "processed_params": {
             "body": {"1": "Test Buyer", "2": "Libre de Ansiedad"}
         },
+    }
+
+
+def test_chatwoot_sender_greets_by_greeting_name_and_keeps_the_full_contact_name() -> None:
+    transport = _waba_first_touch_transport()
+    sender = ChatwootMessageSender(
+        chatwoot=_chatwoot(transport),
+        inbox_id=1,
+        allowed_jid="5531999999999@s.whatsapp.net",
+        template=WhatsAppTemplateConfig(
+            first_touch_name="johanna_interes_precheckout_01",
+            followup_name=None,
+            language="es_EC",
+            category="MARKETING",
+            first_touch_parameter="buyer_name_and_product",
+        ),
+    )
+
+    result = _run(sender.send_first_touch(
+        phone="5531999999999",
+        buyer_name="Andres Felipe Pérez García",
+        buyer_email="buyer@test.com",
+        product_name="Libre de Ansiedad",
+        content="¡Hola! Soy el asistente virtual de Dan.",
+        delivery_id="evt-001",
+        greeting_name="Andres Felipe",
+    ))
+
+    assert result.status == "sent"
+    [contact_body] = [
+        json.loads(body)
+        for method, path, body in transport.requests
+        if method == "POST" and path == "/api/v1/accounts/1/contacts"
+    ]
+    assert contact_body["name"] == "Andres Felipe Pérez García"
+    template = json.loads(transport.requests[-1][2])["template_params"]
+    assert template["processed_params"]["body"] == {
+        "1": "Andres Felipe",
+        "2": "Libre de Ansiedad",
     }
 
 

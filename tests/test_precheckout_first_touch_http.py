@@ -283,3 +283,24 @@ def test_first_touch_pre_request_block_is_definite_failure() -> None:
             "failure_code": "target_not_allowed",
         }
     ]
+
+
+def test_first_touch_greets_by_first_name_when_the_greeting_is_on() -> None:
+    class SupabaseWithoutInference(_FakeSupabase):
+        async def get_lead_first_name_inference(self, name_key: str) -> object | None:
+            return None
+
+    sender = _FakeSender()
+    app = create_app(
+        _settings(lead_first_name_greeting_enabled=True),
+        supabase_client=SupabaseWithoutInference(),  # type: ignore[arg-type]
+        message_sender=sender,  # type: ignore[arg-type]
+    )
+
+    response = _post(app, _body())
+
+    assert response.status_code == 202
+    [call] = sender.calls
+    assert call["buyer_name"] == "Lead de Prueba"
+    assert call["greeting_name"] == "Lead"
+    assert str(call["content"]).startswith("¡Hola, Lead! Te habla el equipo")
