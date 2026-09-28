@@ -428,16 +428,46 @@ def test_package_items_v2_rejects_context_with_unknown_keys_or_insecure_url() ->
         _package_items(insecure, _claim_v2())
 
 
+
+def _supabase_provenance() -> dict[str, object]:
+    """Lo que devuelve `get_agent_turn_provenance_v1` para la ventana.
+
+    Solo la 186 trae release: las otras dos quedan con el marcador de "no se
+    sabe", que es el estado real de toda conversacion anterior a la primera
+    corrida del registrador del perfil.
+    """
+    return {
+        "186": {
+            "occurred_at": "2026-09-26T14:07:00Z",
+            "release_digest": "c" * 64,
+            "release_ordinal": 3,
+            "model_requested": "agente-comercial",
+            "model_answered": "glm-5.2",
+            "bridge_release": "246de1ba",
+            "context_builder_version": "shadow-context-v1",
+            "context_digest": "d" * 64,
+            "context_added": {"message_count": 4, "human_handoff_confirmed": False},
+            "outcome": "completed",
+            "confidence": "verified",
+        }
+    }
+
+
 class V2Repository(WorkflowRepository):
     def __init__(self) -> None:
         super().__init__()
         self.context_request: dict[str, object] | None = None
+        self.provenance_request: dict[str, object] | None = None
 
     async def rpc(self, name: str, payload: dict[str, object]) -> dict[str, object]:
         if name == "get_daily_feedback_conversation_context_v1":
             self.calls.append((name, payload))
             self.context_request = payload
             return _supabase_contexts()
+        if name == "get_agent_turn_provenance_v1":
+            self.calls.append((name, payload))
+            self.provenance_request = payload
+            return _supabase_provenance()
         result = await super().rpc(name, payload)
         if name == "claim_daily_feedback_collection_v1":
             result = {
@@ -479,6 +509,9 @@ def test_scheduler_reads_conversation_context_between_collection_and_commit() ->
         "purge_expired_daily_feedback_v2",
         "claim_daily_feedback_collection_v1",
         "get_daily_feedback_conversation_context_v1",
+        # Desde 20260928000100 la procedencia del prompt se pide en el mismo
+        # enriquecido, entre el contexto y el commit.
+        "get_agent_turn_provenance_v1",
         "commit_daily_feedback_batch_v1",
         "claim_daily_feedback_notification_v1",
         "mark_daily_feedback_notification_started_v1",
@@ -491,10 +524,29 @@ def test_scheduler_reads_conversation_context_between_collection_and_commit() ->
         "p_chatwoot_inbox_id": 9,
         "p_conversation_ids": [177, 184, 186],
     }
-    committed = repository.calls[3][1]["p_items"]
+    committed = repository.calls[4][1]["p_items"]
     assert committed[2]["context"]["chatwoot_conversation_id"] == 186
     assert committed[2]["context"]["events"][0]["kind"] == "handoff"
     assert committed[1]["messages"][1]["kind"] == "payment_link"
+
+    # La procedencia del prompt llega al lote: hasta el 2026-09-28 estos dos
+    # campos salian siempre como 'release_lineage_unavailable' y 0.
+    assert repository.provenance_request == {
+        "p_tenant_ref": "lancemos",
+        "p_scope_ref": "psicologajohanna-agent-bot-19",
+        "p_conversation_ids": [177, 184, 186],
+        "p_window_start": "2026-09-24T00:00:00Z",
+        "p_window_end": "2026-09-27T00:00:00Z",
+    }
+    assert committed[2]["release_id"] == "c" * 64
+    assert committed[2]["release_version"] == 3
+    assert committed[2]["context"]["agent_release"]["model_answered"] == "glm-5.2"
+    assert committed[2]["context"]["agent_release"]["confidence"] == "verified"
+    # Las que no tienen turno registrado se quedan con el marcador, no con el
+    # release de otra conversacion.
+    assert committed[0]["release_id"] == "release_lineage_unavailable"
+    assert committed[0]["release_version"] == 0
+    assert "agent_release" not in committed[0]["context"]
     assert committed[1]["messages"][1]["meta"]["purchased"] is True
     assert producer.commands[0].count == 1
 

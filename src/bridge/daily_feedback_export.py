@@ -158,14 +158,17 @@ def materialize_daily_review_package(
         )
     ):
         raise ConversationCollectionError("review_package_sanitization_mismatch")
+    # Antes esto EXIGIA el literal 'release_lineage_unavailable' con version 0,
+    # o sea que el campo del linaje no podia llevar nada real. Desde
+    # 20260928000100 la procedencia se registra por turno, asi que ahora se
+    # admiten las dos formas y nada mas: el marcador de "no se sabe", o un digest
+    # de release de verdad con su version. Cualquier otra cosa es un linaje
+    # inventado, y eso es peor que no tenerlo.
     if any(
-        conversation.release_id != "release_lineage_unavailable"
-        or conversation.release_version != 0
+        not _release_lineage_valid(conversation)
         for conversation in package.conversations
     ):
-        raise ConversationCollectionError(
-            "review_package_release_lineage_unavailable_required"
-        )
+        raise ConversationCollectionError("review_package_release_lineage_invalid")
     return store.create_minimized_review_batch(
         command_id=command_id,
         tenant_id=package.tenant_ref,
@@ -1643,3 +1646,91 @@ def _atomic_private_write(path: Path, content: bytes) -> None:
     finally:
         if temporary_path.exists():
             temporary_path.unlink()
+
+
+_RELEASE_DIGEST_RE = re.compile(r"^[a-f0-9]{64}$")
+
+_AGENT_RELEASE_CONFIDENCES = frozenset(
+    {"verified", "open", "misattributed", "no_release"}
+)
+
+
+def _release_lineage_valid(conversation: ReviewConversation) -> bool:
+    """El marcador de 'no se sabe', o un digest real con su version."""
+    if (
+        conversation.release_id == "release_lineage_unavailable"
+        and conversation.release_version == 0
+    ):
+        return True
+    return bool(
+        _RELEASE_DIGEST_RE.match(conversation.release_id or "")
+    ) and conversation.release_version >= 1
+
+
+def normalize_agent_release(registro: object) -> dict[str, object] | None:
+    """Acota lo que devuelve `get_agent_turn_provenance_v1` a lo publicable.
+
+    Devuelve None cuando no hay un release atribuido: ahi la conversacion se
+    queda con el marcador de 'no se sabe', que es la verdad. El texto del SOUL no
+    entra --- vive en `agent_prompt_releases` y son 19 KB por release --- y
+    tampoco el contexto en crudo.
+    """
+    if not isinstance(registro, dict):
+        return None
+    digest = registro.get("release_digest")
+    ordinal = registro.get("release_ordinal")
+    if not isinstance(digest, str) or not _RELEASE_DIGEST_RE.match(digest):
+        return None
+    if type(ordinal) is not int or ordinal < 1:
+        return None
+    confidence = registro.get("confidence")
+    if confidence not in _AGENT_RELEASE_CONFIDENCES:
+        confidence = "open"
+    return {
+        "release_digest": digest,
+        "release_ordinal": ordinal,
+        "confidence": confidence,
+        "model_requested": _clean_text(registro.get("model_requested"), limit=128),
+        "model_answered": _clean_text(registro.get("model_answered"), limit=128),
+        "bridge_release": _clean_text(registro.get("bridge_release"), limit=128),
+        "context_builder_version": _clean_text(
+            registro.get("context_builder_version"), limit=64
+        ),
+        "context_digest": _clean_text(registro.get("context_digest"), limit=64),
+        "turn_occurred_at": _iso_or_none(registro.get("occurred_at")),
+    }
+
+
+def apply_agent_provenance(
+    package: DailyReviewPackage, provenance: Mapping[str, object]
+) -> DailyReviewPackage:
+    """Pone en cada conversacion con que prompt contesto el agente.
+
+    Llena `release_id` y `release_version` --- que existian en el esquema desde
+    20260910000100 y nunca se llenaron --- y deja el detalle en
+    `context['agent_release']`, incluida la CONFIANZA de la atribucion: si dice
+    'misattributed', quien lee el feedback tiene que saber en el momento que esa
+    version no es de fiar.
+    """
+    if package.schema_version != PACKAGE_SCHEMA_V2:
+        return package
+    conversations: list[ReviewConversation] = []
+    for conversation in package.conversations:
+        conversation_id = conversation.context.get("chatwoot_conversation_id")
+        acotado = normalize_agent_release(
+            provenance.get(str(conversation_id)) if conversation_id is not None else None
+        )
+        if acotado is None:
+            conversations.append(conversation)
+            continue
+        context: dict[str, object] = dict(conversation.context)
+        context["agent_release"] = acotado
+        conversations.append(
+            replace(
+                conversation,
+                context=context,
+                release_id=acotado["release_digest"],
+                release_version=acotado["release_ordinal"],
+            )
+        )
+    return replace(package, conversations=tuple(conversations))
