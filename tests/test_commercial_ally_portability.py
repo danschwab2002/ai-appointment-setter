@@ -240,6 +240,9 @@ LEGACY_ONLY_CAPABILITIES = {
     "johanna_abandonment_hotmart_auto_enabled",
     "johanna_payment_failure_hotmart_enabled",
     "johanna_payment_failure_outbound_enabled",
+    # El saludo por primer nombre solo esta cableado en los caminos de Johanna.
+    "lead_first_name_greeting_enabled",
+    "lead_first_name_inference_enabled",
 }
 
 

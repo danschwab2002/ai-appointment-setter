@@ -3563,6 +3563,30 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         5,
         'commercial_ally_additional_offers'
+    union all
+    select
+        '20260928000300',
+        '20260928000300_lead_first_name_inferences.sql',
+        (
+            select count(*) = 1
+            from pg_class
+            where oid = to_regclass('public.lead_first_name_inferences')
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.record_lead_first_name_inference_v1(text,text,text,text,text)')
+              and prosecdef
+              and position('lead_first_name_inferences_pkey' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_lead_first_name_inference_v1(text)')
+              and prosecdef
+        )::int,
+        3,
+        'lead_first_name_inferences'
 )
 select
     version,

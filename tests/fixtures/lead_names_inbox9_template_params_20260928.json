@@ -1,0 +1,33 @@
+{
+  "origin": "Chatwoot inbox 9, messages.additional_attributes.template_params.processed_params.body.1 of the outgoing templates, read-only query on 2026-09-28 11:48Z",
+  "measured": {
+    "templates_sent": 162,
+    "johanna_interes_precheckout_01": 147,
+    "johanna_reactivacion_01": 10,
+    "johanna_compra_fallida_01": 3,
+    "johanna_carrito_abandonado_01": 2,
+    "note": "johanna_interes_precheckout_01 carried the full form name in {{1}}; the 2026-09-22 batch sent 'Hola' as {{1}} for two contacts whose name was only emoji"
+  },
+  "privacy": "Given names, casing, spacing and emoji are the captured ones. Surnames were replaced by common surnames so that no real lead is identifiable in git. The pattern each case exercises is the captured one.",
+  "cases": [
+    {"full_name": "Edith García Pérez", "deterministic": "Edith", "pattern": "given name + two surnames"},
+    {"full_name": "juan lópez", "deterministic": "Juan", "pattern": "all lowercase"},
+    {"full_name": "soraya López Díaz", "deterministic": "Soraya", "pattern": "lowercase given name"},
+    {"full_name": "MARY HAYDEE", "deterministic": "Mary", "pattern": "all uppercase, two given names"},
+    {"full_name": "VIGO ARAUJO", "deterministic": "Vigo", "pattern": "all uppercase, unclear which word is the name"},
+    {"full_name": "Daniel ESTEBAN García", "deterministic": "Daniel", "pattern": "mixed casing"},
+    {"full_name": "Juan Carlos", "deterministic": "Juan", "model_first_name": "Juan Carlos", "pattern": "compound given name only"},
+    {"full_name": "Andres Felipe Pérez García", "deterministic": "Andres", "model_first_name": "Andres Felipe", "pattern": "compound given name"},
+    {"full_name": "Luis fernando Pérez", "deterministic": "Luis", "model_first_name": "Luis Fernando", "pattern": "compound given name, lowercase second word"},
+    {"full_name": "María Isabel Torres", "deterministic": "María", "model_first_name": "María Isabel", "pattern": "compound given name with accent"},
+    {"full_name": "José Ángel Ruiz García", "deterministic": "José", "model_first_name": "José Ángel", "pattern": "compound given name with accents"},
+    {"full_name": "San Juana González", "deterministic": "San", "model_first_name": "San Juana", "pattern": "first word is not a name by itself"},
+    {"full_name": "Sandra Berenice  Meza Torres", "deterministic": "Sandra", "pattern": "double space"},
+    {"full_name": "Patricia ", "deterministic": "Patricia", "pattern": "trailing space"},
+    {"full_name": "mau", "deterministic": "Mau", "pattern": "nickname, lowercase"},
+    {"full_name": "Kat Ort", "deterministic": "Kat", "pattern": "abbreviations"},
+    {"full_name": "R", "deterministic": null, "pattern": "single letter"},
+    {"full_name": "VM🌷", "deterministic": null, "pattern": "initials with emoji"},
+    {"full_name": "✨", "deterministic": null, "pattern": "emoji only"}
+  ]
+}

@@ -386,3 +386,90 @@ def test_duplicate_and_conflict_are_terminal_200_responses() -> None:
         assert response.json()["status"] == expected_status
         assert response.json()["activation_authorized"] is False
         assert response.json()["contact_authorized"] is False
+
+
+class _InferenceFakeSupabase(_FakeSupabase):
+    def __init__(self, outcome: str = "inserted") -> None:
+        super().__init__(outcome)
+        self.stored: dict[str, object] = {}
+
+    async def get_lead_first_name_inference(self, name_key: str) -> object | None:
+        return self.stored.get(name_key)
+
+    async def record_lead_first_name_inference(self, **kwargs: object) -> str:
+        self.stored[str(kwargs["name_key"])] = kwargs["inference"]
+        return "inserted"
+
+
+def _inference_client(requests: list[httpx.Request]) -> object:
+    from bridge.lead_first_name import FirstNameInferenceClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"content": '{"result":"confident","first_name":"Test"}'}}
+                ]
+            },
+        )
+
+    return FirstNameInferenceClient(
+        base_url="http://hermes:8642/v1",
+        api_key="test-key",
+        model_name="agente-comercial",
+        transport=httpx.MockTransport(handler),
+    )
+
+
+def test_admitted_form_infers_the_first_name_after_answering() -> None:
+    from bridge.lead_first_name import FirstNameInference, lead_name_key
+
+    supabase = _InferenceFakeSupabase()
+    requests: list[httpx.Request] = []
+    app = create_app(
+        _settings(
+            lead_first_name_greeting_enabled=True,
+            lead_first_name_inference_enabled=True,
+        ),
+        supabase_client=supabase,  # type: ignore[arg-type]
+        lead_first_name_client=_inference_client(requests),  # type: ignore[arg-type]
+    )
+
+    response = _post(app, _payload())
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "received"
+    assert len(requests) == 1
+    assert json.loads(requests[0].content)["messages"][1]["content"] == (
+        '{"full_name": "Test Person"}'
+    )
+    assert supabase.stored == {
+        lead_name_key("Test Person"): FirstNameInference("confident", "Test")
+    }
+
+
+@pytest.mark.parametrize(
+    ("inference_enabled", "outcome"),
+    [(False, "inserted"), (True, "duplicate"), (True, "semantic_conflict")],
+)
+def test_the_model_is_not_called_when_off_or_when_the_form_was_not_new(
+    inference_enabled: bool, outcome: str
+) -> None:
+    supabase = _InferenceFakeSupabase(outcome)
+    requests: list[httpx.Request] = []
+    app = create_app(
+        _settings(
+            lead_first_name_greeting_enabled=True,
+            lead_first_name_inference_enabled=inference_enabled,
+        ),
+        supabase_client=supabase,  # type: ignore[arg-type]
+        lead_first_name_client=_inference_client(requests),  # type: ignore[arg-type]
+    )
+
+    response = _post(app, _payload())
+
+    assert response.status_code == 200
+    assert requests == []
+    assert supabase.stored == {}

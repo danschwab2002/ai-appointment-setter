@@ -187,6 +187,7 @@ class MessageSender(Protocol):
         delivery_id: str,
         require_existing_contact: bool = False,
         trigger_kind: str | None = None,
+        greeting_name: str | None = None,
     ) -> FirstTouchResult: ...
 
     async def send_first_touch_to_conversation(
@@ -197,6 +198,7 @@ class MessageSender(Protocol):
         buyer_name: str,
         content: str,
         delivery_id: str,
+        greeting_name: str | None = None,
     ) -> FirstTouchResult: ...
 
     async def send_followup(
@@ -231,6 +233,13 @@ def is_allowed_whatsapp_target(
     normalized = normalize_phone(phone)
     allowed_phone = allowed_phone_from_jid(allowed_jid)
     return normalized is not None and normalized == allowed_phone
+
+
+def _template_name(greeting_name: str | None, buyer_name: str | None) -> str | None:
+    """The template variable: the greeting name when present, else the full name."""
+    if isinstance(greeting_name, str) and greeting_name.strip():
+        return greeting_name.strip()
+    return buyer_name
 
 
 def _to_e164(digits: str) -> str:
@@ -290,7 +299,13 @@ class ChatwootMessageSender:
         delivery_id: str,
         require_existing_contact: bool = False,
         trigger_kind: str | None = None,
+        greeting_name: str | None = None,
     ) -> FirstTouchResult:
+        """Send the first template; ``greeting_name`` fills ``{{1}}`` when given.
+
+        ``buyer_name`` stays the full name: it names the Chatwoot contact that
+        this call may create. ``greeting_name`` is only the template variable.
+        """
         normalized = normalize_phone(phone)
         if normalized is None:
             return FirstTouchResult(
@@ -362,7 +377,7 @@ class ChatwootMessageSender:
                     self._template.params(
                         content=content,
                         followup=False,
-                        buyer_name=buyer_name,
+                        buyer_name=_template_name(greeting_name, buyer_name),
                         product_name=product_name,
                         trigger_kind=trigger_kind,
                     )
@@ -406,6 +421,7 @@ class ChatwootMessageSender:
         buyer_name: str,
         content: str,
         delivery_id: str,
+        greeting_name: str | None = None,
     ) -> FirstTouchResult:
         """Send a first-touch template in an existing canonical conversation."""
         if not self._is_target_allowed(phone):
@@ -428,7 +444,7 @@ class ChatwootMessageSender:
                 template_params=self._template.params(
                     content=content,
                     followup=False,
-                    buyer_name=buyer_name,
+                    buyer_name=_template_name(greeting_name, buyer_name),
                 ),
             )
         except ChatwootProtocolError:

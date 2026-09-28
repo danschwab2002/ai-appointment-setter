@@ -27,6 +27,8 @@ expected_service_role(signature) as (
         ('public.get_agent_turn_provenance_v1(text, text, bigint[], timestamp with time zone, timestamp with time zone)'),
         ('public.record_agent_turn_provenance_v1(text, text, bigint, text, timestamp with time zone, text, text, text, text, text, text, jsonb)'),
         ('public.register_agent_prompt_release_v1(text, text, text, text, jsonb, timestamp with time zone, text, timestamp with time zone, text)'),
+        ('public.record_lead_first_name_inference_v1(text, text, text, text, text)'),
+        ('public.get_lead_first_name_inference_v1(text)'),
         ('public.settle_conversation_reactivation(text, text, bigint, text, timestamp with time zone)'),
         ('public.apply_chatwoot_inbound_opt_out(bigint, bigint, bigint, bigint, text, timestamp with time zone, text)'),
         ('public.apply_hotmart_purchase_approved(uuid, text, text, text, text, text, timestamp with time zone)'),

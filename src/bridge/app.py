@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 
 import httpx
 from fastapi import (
+    BackgroundTasks,
     FastAPI,
     Header,
     HTTPException,
@@ -99,6 +100,11 @@ from bridge.reply_splitter import (
     ReplySplitManifestConflictError,
     ReplySplitManifestStorageError,
     validate_reply_parts,
+)
+from bridge.lead_first_name import (
+    FirstNameInferenceClient,
+    infer_and_record_first_name,
+    resolve_greeting_name,
 )
 from bridge.correlation_preresolution import (
     CorrelationPreresolutionClient,
@@ -472,6 +478,12 @@ class Settings:
     correlation_preresolution_prompt_version: str = "correlation-preresolution-v3"
     correlation_preresolution_worker_id: str | None = None
     correlation_preresolution_poll_interval_seconds: float = 5.0
+    # La cadena de tres niveles del saludo (ver bridge.lead_first_name). Sola,
+    # ya saluda por el primer nombre deterministico; con la inferencia prendida,
+    # usa ademas lo que el modelo guardo al llegar el formulario.
+    lead_first_name_greeting_enabled: bool = False
+    lead_first_name_inference_enabled: bool = False
+    lead_first_name_model_name: str | None = None
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -989,6 +1001,27 @@ class Settings:
             or supabase_service_role_key is None
         ):
             raise ValueError("correlation_preresolution_configuration_incomplete")
+        lead_first_name_greeting_enabled = (
+            os.getenv("LEAD_FIRST_NAME_GREETING_ENABLED", "false").lower()
+            == "true"
+        )
+        lead_first_name_inference_enabled = (
+            os.getenv("LEAD_FIRST_NAME_INFERENCE_ENABLED", "false").lower()
+            == "true"
+        )
+        lead_first_name_model_name = (
+            os.getenv("LEAD_FIRST_NAME_MODEL_NAME", "").strip()
+            or hermes_model_name
+        )
+        if lead_first_name_inference_enabled and (
+            not lead_first_name_greeting_enabled
+            or hermes_api_base_url is None
+            or hermes_api_key is None
+            or not lead_first_name_model_name
+            or supabase_base_url is None
+            or supabase_service_role_key is None
+        ):
+            raise ValueError("lead_first_name_configuration_incomplete")
         if (
             not math.isfinite(correlation_preresolution_poll_interval_seconds)
             or correlation_preresolution_poll_interval_seconds <= 0
@@ -1276,6 +1309,9 @@ class Settings:
             correlation_preresolution_poll_interval_seconds=(
                 correlation_preresolution_poll_interval_seconds
             ),
+            lead_first_name_greeting_enabled=lead_first_name_greeting_enabled,
+            lead_first_name_inference_enabled=lead_first_name_inference_enabled,
+            lead_first_name_model_name=lead_first_name_model_name,
             chatwoot_scoped_inbound_senders_enabled=(
                 os.getenv(
                     "CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED", "false"
@@ -1659,6 +1695,7 @@ def create_app(
     recovery_agent_client: RecoveryAgentClient | None = None,
     message_sender: MessageSender | None = None,
     slack_runtime: SlackBridgeRuntime | None = None,
+    lead_first_name_client: FirstNameInferenceClient | None = None,
 ) -> FastAPI:
     boolean_fields = [
         field
@@ -2150,6 +2187,21 @@ def create_app(
         or settings.operator_correlation_write_enabled
     ) and shared_supabase is None:
         raise ValueError("operator correlation access requires Supabase")
+    if not settings.lead_first_name_inference_enabled:
+        lead_first_name_client = None
+    elif lead_first_name_client is None:
+        if (
+            shared_supabase is None
+            or settings.hermes_api_base_url is None
+            or settings.hermes_api_key is None
+            or settings.lead_first_name_model_name is None
+        ):
+            raise ValueError("lead_first_name_configuration_incomplete")
+        lead_first_name_client = FirstNameInferenceClient(
+            base_url=settings.hermes_api_base_url,
+            api_key=settings.hermes_api_key,
+            model_name=settings.lead_first_name_model_name,
+        )
     correlation_preresolution_worker: CorrelationPreresolutionWorker | None = None
     if settings.correlation_preresolution_enabled:
         if (
@@ -2524,6 +2576,9 @@ def create_app(
             ),
             precheckout_outbound_enabled=(
                 settings.precheckout_delayed_outbound_enabled
+            ),
+            lead_first_name_greeting_enabled=(
+                settings.lead_first_name_greeting_enabled
             ),
         )
     if settings.worker_enabled and shared_supabase is None:
@@ -4825,6 +4880,7 @@ def create_app(
     @app.post("/webhooks/lead", status_code=status.HTTP_200_OK)
     async def receive_lead_precheckout_webhook(
         request: Request,
+        background_tasks: BackgroundTasks,
         content_type: str = Header(default=""),
         user_agent: str = Header(default=""),
         x_lancemos_event: str = Header(default=""),
@@ -4923,6 +4979,19 @@ def create_app(
             "duplicate": "duplicate",
             "semantic_conflict": "conflict",
         }[admission.outcome]
+        if (
+            admission.outcome == "inserted"
+            and lead_first_name_client is not None
+            and shared_supabase is not None
+        ):
+            # Despues de responder: el formulario ya quedo admitido y el modelo
+            # nunca demora ni rompe esa respuesta.
+            background_tasks.add_task(
+                infer_and_record_first_name,
+                full_name=submission.buyer_name,
+                client=lead_first_name_client,
+                store=shared_supabase,
+            )
         return {
             "status": response_status,
             "delivery_id": submission.external_submission_id,
@@ -5039,6 +5108,22 @@ def create_app(
             "test_only": True,
             "generalizable": False,
         }
+
+    async def _greeting_kwargs(full_name: object) -> dict[str, str]:
+        """The ``greeting_name`` for a first template, only with the flag on.
+
+        With the flag off it returns nothing, so the sender keeps sending the
+        full name exactly as before.
+        """
+        if (
+            not settings.lead_first_name_greeting_enabled
+            or not isinstance(full_name, str)
+            or not full_name.strip()
+        ):
+            return {}
+        greeting = await resolve_greeting_name(full_name, store=shared_supabase)
+        logger.info("first_touch_greeting source=%s", greeting.source)
+        return {"greeting_name": greeting.name}
 
     async def _execute_johanna_abandonment_delivery(
         *,
@@ -5175,6 +5260,7 @@ def create_app(
             product_name=started.product_name,
             content="Recuperación supervisada de carrito de Libre de Ansiedad.",
             delivery_id=started.command_id,
+            **await _greeting_kwargs(started.buyer_name),
         )
         if (
             result.status == "sent"
@@ -5412,8 +5498,10 @@ def create_app(
                 status_code=503, detail="precheckout_first_touch_not_configured"
             )
         buyer_name = started.buyer_name.strip()
+        greeting_kwargs = await _greeting_kwargs(buyer_name)
+        greeting_name = greeting_kwargs.get("greeting_name", buyer_name)
         content = (
-            f"¡Hola, {buyer_name}! Te habla el equipo de Johanna. "
+            f"¡Hola, {greeting_name}! Te habla el equipo de Johanna. "
             "Vimos que completaste el formulario de Libre de Ansiedad. "
             "¿Te parece si avanzamos por acá?"
         )
@@ -5423,6 +5511,7 @@ def create_app(
             buyer_name=buyer_name,
             content=content,
             delivery_id=started.command_id,
+            **greeting_kwargs,
         )
         if (
             result.status == "sent"
@@ -5577,6 +5666,7 @@ def create_app(
             buyer_name=started.buyer_name,
             buyer_email=started.buyer_email,
             product_name=started.product_name,
+            **await _greeting_kwargs(started.buyer_name),
             content="Recuperación de compra rechazada por falta de fondos.",
             delivery_id=started.command_id,
             require_existing_contact=retry_invalid_contact,

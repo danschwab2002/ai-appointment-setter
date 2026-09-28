@@ -31,6 +31,7 @@ from bridge.hotmart import (
     EVENT_PURCHASE_CANCELED,
     parse_hotmart_purchase_payload,
 )
+from bridge.lead_first_name import resolve_greeting_name
 from bridge.messaging import (
     FinalMetaEffect,
     FinalMetaEffectGate,
@@ -1407,6 +1408,7 @@ class HotmartAbandonmentTimerWorker:
         precheckout_first_touch_enabled: bool = False,
         precheckout_outbound_enabled: bool = False,
         isolate_precheckout_sender_process: bool = True,
+        lead_first_name_greeting_enabled: bool = False,
     ) -> None:
         if (
             precheckout_first_touch_enabled
@@ -1423,6 +1425,7 @@ class HotmartAbandonmentTimerWorker:
         self._precheckout_first_touch_enabled = precheckout_first_touch_enabled
         self._precheckout_outbound_enabled = precheckout_outbound_enabled
         self._isolate_precheckout_sender_process = isolate_precheckout_sender_process
+        self._lead_first_name_greeting_enabled = lead_first_name_greeting_enabled
         self._stopped = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
 
@@ -1584,8 +1587,15 @@ class HotmartAbandonmentTimerWorker:
         assert command.buyer_email is not None
         assert command.product_name is not None
         buyer_name = command.buyer_name.strip()
+        greeting_name = buyer_name
+        if self._lead_first_name_greeting_enabled:
+            greeting = await resolve_greeting_name(buyer_name, store=self._supabase)
+            greeting_name = greeting.name
+            logger.info(
+                "precheckout_first_touch_greeting source=%s", greeting.source
+            )
         content = (
-            f"Hola, {buyer_name}. Te escribe el equipo de la Psic. Johanna. "
+            f"Hola, {greeting_name}. Te escribe el equipo de la Psic. Johanna. "
             "Vimos que completaste el formulario de Libre de Ansiedad. "
             "¿Quieres que te ayudemos a continuar? Si no deseas recibir "
             "más mensajes, responde “No más mensajes”."
@@ -1598,6 +1608,8 @@ class HotmartAbandonmentTimerWorker:
             "content": content,
             "delivery_id": command.command_id,
         }
+        if self._lead_first_name_greeting_enabled:
+            sender_kwargs["greeting_name"] = greeting_name
         try:
             if self._isolate_precheckout_sender_process:
                 result = await _send_precheckout_in_terminable_process(

@@ -2003,3 +2003,46 @@ def test_returns_503_when_supabase_not_configured(tmp_path) -> None:
     response = _post_hotmart(app, raw)
     assert response.status_code == 503
     assert response.json()["detail"] == "supabase_not_configured"
+
+
+def test_payment_failure_greets_by_first_name_when_the_greeting_is_on(tmp_path) -> None:
+    class PaymentFailureWithInference(_PaymentFailureAutoSupabase):
+        async def get_lead_first_name_inference(self, name_key: str) -> object | None:
+            return None
+
+    supabase = PaymentFailureWithInference()
+    sender = _JohannaAutoSender()
+    app = create_app(
+        _hotmart_settings(
+            capture_dir=tmp_path,
+            johanna_payment_failure_hotmart_enabled=True,
+            johanna_payment_failure_outbound_enabled=True,
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=9,
+            pilot_channel_provider="waba",
+            pilot_channel_account_ref="chatwoot-inbox:9",
+            lead_first_name_greeting_enabled=True,
+        ),
+        supabase_client=supabase,  # type: ignore[arg-type]
+        message_sender=sender,  # type: ignore[arg-type]
+    )
+    payload = copy.deepcopy(EXAMPLE_PAYLOAD)
+    payload["event"] = "PURCHASE_CANCELED"
+    data = payload["data"]
+    assert isinstance(data, dict)
+    product = data["product"]
+    assert isinstance(product, dict)
+    product["id"] = 8104005
+    data["purchase"] = {
+        "transaction": "HP12345678",
+        "status": "CANCELED",
+        "offer": {"code": "bxjge6zq"},
+        "payment": {"refusal_reason": "NO_FUNDS"},
+    }
+
+    response = _post_hotmart(app, json.dumps(payload).encode())
+
+    assert response.status_code == 202
+    [call] = sender.calls
+    assert call["buyer_name"] == "Lead de Pago"
+    assert call["greeting_name"] == "Lead"
