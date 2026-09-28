@@ -832,7 +832,7 @@ def test_payment_failure_nonretryable_unknown_returns_200_without_send(
     ("product_id", "offer_code"),
     [(9999999, "bxjge6zq"), (8104005, "wrong-offer")],
 )
-def test_payment_failure_rejects_scope_mismatch_before_rpc(
+def test_payment_failure_outside_scope_is_ignored_before_rpc(
     tmp_path,
     product_id,
     offer_code,
@@ -874,8 +874,14 @@ def test_payment_failure_rejects_scope_mismatch_before_rpc(
     finally:
         supabase_mod.SupabaseClient.__init__ = original_init
 
-    assert response.status_code == 422
-    assert response.json() == {"detail": "invalid_payment_failure_payload"}
+    # Un pago fallido de otro producto o de una oferta fuera del binding no entra
+    # reenviandolo: se descarta con 200, sin tocar la base y sin sumarle a Hotmart
+    # una falla del webhook (antes era 422).
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ignored",
+        "reason": "invalid_payment_failure_payload",
+    }
     assert transport.requests == []
 
 

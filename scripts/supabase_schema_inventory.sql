@@ -3527,6 +3527,42 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         6,
         'agent_prompt_provenance_per_turn'
+    union all
+    select
+        '20260928000200',
+        '20260928000200_commercial_ally_additional_offers.sql',
+        (
+            select count(*) = 1
+            from pg_attribute
+            where attrelid = to_regclass('public.commercial_ally_runtime_bindings')
+              and attname = 'additional_offer_codes'
+              and not attisdropped
+        )::int
+        + (
+            select count(*) = 1
+            from pg_constraint
+            where conname = 'commercial_ally_runtime_bindings_additional_offer_codes_shape'
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_portable_hotmart_cart_abandonment(text,text,integer,text,jsonb,text,text)')
+              and position('additional_offer_codes' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_portable_hotmart_payment_failure(text,text,integer,text,jsonb,text,text)')
+              and position('additional_offer_codes' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_portable_hotmart_purchase_approved(text,text,integer,text,jsonb,text,text)')
+              and position('v_binding.offer_code' in definition) = 0
+        )::int,
+        5,
+        'commercial_ally_additional_offers'
 )
 select
     version,

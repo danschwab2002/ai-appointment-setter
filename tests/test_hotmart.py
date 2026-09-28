@@ -125,7 +125,7 @@ def _settings(**overrides: object) -> Settings:
     return Settings(**values)  # type: ignore[arg-type]
 
 
-def test_portable_purchase_parser_requires_exact_configured_product_and_offer() -> None:
+def test_portable_purchase_parser_requires_the_product_and_accepts_any_offer() -> None:
     payload = _purchase()
     purchase = payload["data"]["purchase"]
     assert isinstance(purchase, dict)
@@ -142,7 +142,10 @@ def test_portable_purchase_parser_requires_exact_configured_product_and_offer() 
     wrong_offer["data"]["purchase"]["offer"]["code"] = "other"  # type: ignore[index]
 
     assert parse_hotmart_purchase_payload(wrong_product, config=_config()) is None
-    assert parse_hotmart_purchase_payload(wrong_offer, config=_config()) is None
+    # Una compra frena la recuperacion aunque entre por una oferta que el setter
+    # no ofrece (en ATT1, la de la recuperacion de GHL).
+    other_offer = parse_hotmart_purchase_payload(wrong_offer, config=_config())
+    assert other_offer is not None and other_offer.offer_code == "other"
 
 
 def test_purchase_parser_preserves_malformed_hermes_sck_for_fail_closed_routing() -> None:

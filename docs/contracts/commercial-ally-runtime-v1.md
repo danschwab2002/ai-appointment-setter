@@ -267,3 +267,16 @@ Account, inbox, scope key y scope version del manifiesto se validan localmente. 
   `PORTABLE_HOTMART_PURCHASE_STOP_ENABLED=true`. Cada otro flag booleano debe
   ser exactamente `False`.
 - Las rutas outbound heredadas siguen fuera de este contrato.
+
+## Varias ofertas por binding (2026-09-28, migración `20260928000200`)
+
+Una aliada vende el mismo producto con una oferta por landing. El binding suma `additional_offer_codes`: una lista de hasta 16 códigos alfanuméricos distintos, sin repetir `offer_code`. `offer_code` sigue siendo la oferta por defecto: la del checkout cuando no se sabe qué landing vio la persona. En el manifiesto JSON la clave es opcional y por defecto está vacía. Con eso, un binding de una sola oferta se comporta como antes.
+
+- **Carrito abandonado y pago fallido:** se aceptan con cualquier oferta del binding, en el bridge (`accepted_offer_codes`) y en las RPC. Cada evento resuelve el scope de intención de **su** oferta (`hotmart_purchase_intent_scopes`), que tiene que existir y estar activo. Una oferta fuera del binding se rechaza sin crear eventos.
+- **Compra aprobada:** se acepta con **cualquier oferta del producto** y frena las intenciones de ese producto, sin importar la oferta. Una compra es una compra aunque entre por una oferta que el setter no ofrece.
+- **Pago fallido que este runtime no procesa** (otro producto, una oferta fuera del binding): responde `200 {"status":"ignored","reason":"invalid_payment_failure_payload"}`, igual que el carrito y la compra. Antes era `422`, y Hotmart cuenta los 4xx como fallas del webhook hasta desactivarlo.
+- **Lo que todavía no es multi-oferta:**
+  - el precheckout portable (una sola landing por binding);
+  - la frontera del piloto que autoriza el envío (`pilot_scope_versions.offer_code`, comparada en `authorize_lancemos_pilot_request_start`).
+
+  Hasta que eso cambie, un evento de una oferta adicional queda admitido y correlacionado, pero su envío no está autorizado.

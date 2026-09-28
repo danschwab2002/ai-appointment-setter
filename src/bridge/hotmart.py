@@ -188,7 +188,7 @@ def parse_hotmart_payload(
             config is not None
             and (
                 product_id != config.hotmart_product_id
-                or offer_code != config.offer_code
+                or offer_code not in config.accepted_offer_codes
             )
         )
     ):
@@ -244,13 +244,9 @@ def parse_hotmart_purchase_payload(
         or _TRANSACTION_REFERENCE.fullmatch(transaction) is None
         or product_id is None
         or (buyer_email is None and buyer_phone is None)
-        or (
-            config is not None
-            and (
-                product_id != config.hotmart_product_id
-                or _str(offer.get("code")) != config.offer_code
-            )
-        )
+        # Una compra frena la recuperacion con cualquier oferta del producto:
+        # tambien la que entra por una oferta que el setter no ofrece.
+        or (config is not None and product_id != config.hotmart_product_id)
     ):
         return None
 
@@ -302,7 +298,7 @@ def parse_hotmart_payment_failure_payload(
         or purchase.get("status") != "CANCELED"
         or (buyer_email is None and buyer_phone is None)
         or product_id != config.hotmart_product_id
-        or offer_code != config.offer_code
+        or offer_code not in config.accepted_offer_codes
     ):
         return None
 
