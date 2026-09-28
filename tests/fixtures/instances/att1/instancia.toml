@@ -1,0 +1,108 @@
+# Fixture: copia de setter-instancia-att1/instancia.toml del 2026-09-28 (datos medidos, ver fuentes abajo).
+# Manifiesto de la instancia ATT1 del setter.
+# Referencia de cada campo: docs/referencia-manifiesto.md del repo del producto
+# (danschwab2002/ai-appointment-setter). Ningun campo de este archivo es secreto.
+#
+# Fuentes, medidas el 2026-09-28 (UTC):
+#   - Hotmart y ofertas: landing publicada (repo draninagarza, src/pages/att1/evg/vsl/ads-a.astro y
+#     org-a.astro, origin/main 32efb9a), reporting (lancemos-ia, alimenta-tu-tiroides-att1.yaml) y
+#     el script servido en site.metodoraizana.com.mx/alimenta-tu-tiroides-d (off=2uafw5bg, 200).
+#   - Chatwoot: base de Chatwoot del VPS, solo lectura: cuenta 2 "ATT1", inbox 11 (WhatsApp Cloud,
+#     +5217296521530), team 2 "att1 - revision humana".
+#   - Plantillas: message_templates del canal 10, sincronizadas por Chatwoot el 2026-09-27 23:25Z.
+
+schema = "setter-instancia/v2"
+producto = "v1.0.0"
+
+eventos = ["carrito", "pago_fallido", "compra", "entrante"]
+# "intencion" (el formulario de la landing) se suma cuando la landing mande el evento canonico:
+# hoy el formulario de ATT1 es de GHL (EgDqRl2xWc59YjVW1q8W) y la landing se muda el 29/09.
+
+[instancia]
+tenant_ref = "lancemos"
+ally_ref = "att1"
+funnel_ref = "att1"
+binding_version = 1
+marca = "Dra. Nina Garza"
+zona_horaria = "America/Mexico_City"   # 60 % del publico es de Mexico (intake-v1.json)
+
+[hotmart]
+product_id = 5071808
+hotlink = "D98014973Y"
+product_name = "Alimenta Tu Tiroides"
+moneda = "USD"
+precio = "47"
+
+[[hotmart.ofertas]]
+codigo = "gopi6lh7"
+site = "metodoraizana"
+landing_id = "ads-a"
+url = "https://www.metodoraizana.com/att1/evg/vsl/ads-a"
+origen = "pauta"
+por_defecto = true
+
+[[hotmart.ofertas]]
+codigo = "bmaztyhg"
+site = "metodoraizana"
+landing_id = "org-a"
+url = "https://www.metodoraizana.com/att1/evg/vsl/org-a"
+origen = "organico"
+
+[[hotmart.ofertas]]
+codigo = "2uafw5bg"
+site = "metodoraizana-mx"
+landing_id = "alimenta-tu-tiroides-d"
+url = "https://site.metodoraizana.com.mx/alimenta-tu-tiroides-d"
+origen = "pauta"
+
+# 83utgyow queda afuera a proposito: es la oferta de la recuperacion de GHL que este setter
+# reemplaza. El lead vuelve a la oferta que vio (decision del 2026-09-27).
+
+[chatwoot]
+account_id = 2
+inbox_id = 11
+equipo_derivacion = 2
+
+[inbound]
+scope_key = "att1-inbound"
+scope_version = 1
+
+[consentimiento]
+copy_version = "att1-whatsapp-contact-v1"
+
+[plantillas]
+precheckout = { nombre = "att1_interes_precheckout_01", idioma = "es_MX" }
+carrito = { nombre = "att1_carrito_abandonado_01", idioma = "es_MX" }
+pago_fallido = { nombre = "att1_compra_fallida_01", idioma = "es_MX" }
+# descuento: att1_descuento_10_post_respuesta_01 esta APPROVED pero en idioma "en", no es_MX.
+#   Se suma cuando se reenvie en espanol.
+# reactivacion: no existe todavia. Hay que crearla en Meta (borrador en README).
+
+[agente]
+modelo = "att1-agente-comercial"
+conocimiento = "conocimiento/knowledge-v1.toml"
+
+[flujos]
+# Todo apagado hasta el E2E de cada uno (fase F4, despues de la lectura del 06/10).
+inbound = false
+precheckout = false
+carrito = false
+pago_fallido = false
+reactivacion = false
+descuento = false
+
+[guardas]
+# Si un mensaje nombra uno de estos terminos junto con una accion, el bridge deriva a una persona
+# sin pasar por el agente. Son raices: "levotiroxin" cubre levotiroxina.
+terminos_sensibles = [
+  "medicacion", "medicamento", "farmaco", "pastilla",
+  "levotiroxin", "eutirox", "synthroid", "tiroxin", "liotironin",
+  "suplement", "selenio", "yodo",
+]
+acciones_sensibles = [
+  "dejar", "suspender", "interrumpir", "cambiar", "reducir", "aumentar",
+  "tomar", "dosis", "dosificacion",
+]
+
+[revision_diaria]
+revisores = []

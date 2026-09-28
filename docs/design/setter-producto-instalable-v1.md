@@ -1,7 +1,7 @@
 # Diseño: el setter como producto instalable (producto e instancia) v1
 
 - **Estado:** propuesta con sus decisiones aceptadas el 2026-09-28 en [ADR-0021](../decisions/0021-setter-producto-instalable.md). No hay nada implementado de lo que describe.
-- **Fecha:** 2026-09-27 (v1). 2026-09-28: se suma §6, los bordes y los adaptadores.
+- **Fecha:** 2026-09-27 (v1). 2026-09-28: se suma §6, los bordes y los adaptadores. 2026-09-28 (F2a): el manifiesto y el conocimiento pasan a TOML y se completan los datos de ATT1 medidos en Chatwoot (§5.2, §10).
 - **Mide contra:** `origin/main` en `246de1b` (2026-09-27)
 - **Parte de:** [ADR-0005](../decisions/0005-reproducible-client-deployments.md) (single-tenant, monorepo, imágenes fijadas, cuatro capas), [runtime portable single-tenant v1](portable-single-tenant-runtime-v1.md), [contrato del runtime por aliada](../contracts/commercial-ally-runtime-v1.md), [ADR-0017](../decisions/0017-central-slack-operations-connector.md).
 - **Absorbe:** el diseño del SOUL genérico con conocimiento por infoproductor (26/09, vault de Dan: `productos/soporte-infoproductores/diseno/soul-generico-y-conocimiento-por-infoproductor.md`), que queda como la pieza del agente de este documento.
@@ -72,9 +72,9 @@ Nada de esto fue un error: cada pieza se construyó para que Johanna funcionara,
 Se implementa el diseño del 26/09 sin cambios:
 
 - **Un SOUL común** en el producto: contrato de entrada y salida, link de pago, política de resolución y derivación, transparencia y barandas.
-- **Un archivo de conocimiento por instancia** (`knowledge-v<N>.yaml`): identidad y voz, oferta, contenido del programa, lo no confirmado, promesas prohibidas, límites sensibles de la vertical, preguntas frecuentes aprobadas y una cabecera con versión y estado.
+- **Un archivo de conocimiento por instancia** (`knowledge-v<N>.toml`): identidad y voz, oferta, contenido del programa, lo no confirmado, promesas prohibidas, límites sensibles de la vertical, preguntas frecuentes aprobadas y una cabecera con versión y estado.
 - **El bridge lo valida al arrancar y lo manda como mensaje `system` en cada pedido.** Hermes lo apila sobre el SOUL (verificado en `api_server.py` de la imagen fijada). `/ready` muestra la versión y el hash del conocimiento.
-- El primer `knowledge-v1.yaml` de Johanna es el texto de hoy copiado tal cual, con un test dorado que compara el bloque renderizado contra las secciones del SOUL actual, byte a byte.
+- El primer `knowledge-v1.toml` de Johanna es el texto de hoy copiado tal cual, con un test dorado que compara el bloque renderizado contra las secciones del SOUL actual, byte a byte.
 
 Los hechos que falten no bloquean una instalación: el agente deriva lo que el conocimiento no confirma, y la revisión diaria es el lugar donde aparecen y se suman.
 
@@ -118,9 +118,9 @@ Cada instancia es un repo privado creado desde un repo plantilla (`setter-instan
 ```text
 setter-instancia-att1/
 ├── README.md              qué es esta instancia, quién la opera, qué versión usa
-├── instancia.yaml         el manifiesto
+├── instancia.toml         el manifiesto
 ├── conocimiento/
-│   └── knowledge-v1.yaml  lo que sabe el agente de este negocio
+│   └── knowledge-v1.toml  lo que sabe el agente de este negocio
 ├── despliegue/
 │   └── compose.yaml       los servicios, con la imagen fijada a la versión del producto
 ├── .env.example           cada secreto que hace falta, qué es y de dónde se saca
@@ -128,6 +128,8 @@ setter-instancia-att1/
 ```
 
 ### 5.2 El manifiesto
+
+**Formato (2026-09-28, F2a):** TOML en vez de YAML. Lo lee la biblioteca estándar (`tomllib`), así que el producto no suma una dependencia para leer su configuración, y TOML no convierte en booleano un código de oferta como `no` u `off`, que YAML 1.1 sí convierte. El esquema implementado y cada campo están en [docs/referencia-manifiesto.md](../referencia-manifiesto.md); el ejemplo de abajo conserva la forma del diseño. El manifiesto real de ATT1 está en `tests/fixtures/instances/att1/instancia.toml`, con cuenta 2, inbox 11 y team 2 medidos en Chatwoot el 28/09.
 
 Evoluciona el `CommercialAllyConfig` actual (20 claves, un solo par landing/oferta) a una versión 2. Ejemplo con los datos de ATT1 medidos el 27/09 en la landing publicada (`draninagarza`, `src/pages/att1/evg/vsl/`), el reporte de ventas (`alimenta-tu-tiroides-att1.yaml`) y el inventario de productos; los marcados `# a confirmar` no se pudieron medir:
 
@@ -296,9 +298,9 @@ Aceptadas por Dan el 2026-09-28 tal como estaban recomendadas; quedan en el [ADR
 
 ## 10. Lo que falta saber de ATT1
 
-- El número de WhatsApp de ATT1, su WABA y si ya tiene inbox en Chatwoot.
-- El estado real en Meta de las cuatro plantillas `att1_*`; la de reactivación no existe.
-- La landing de la oferta `2uafw5bg` y si sigue viva.
+- ~~El número de WhatsApp de ATT1, su WABA y si ya tiene inbox en Chatwoot.~~ Medido el 28/09: cuenta 2, inbox 11 (WhatsApp Cloud), team 2 «att1 - revisión humana». El inbox no tiene AgentBot.
+- ~~El estado real en Meta de las cuatro plantillas `att1_*`.~~ Sincronizado por Chatwoot el 27/09: las cuatro aprobadas; `precheckout`, `carrito` y `pago_fallido` en `es_MX`, `descuento` en `en`. La de reactivación no existe.
+- ~~La landing de la oferta `2uafw5bg`.~~ `https://site.metodoraizana.com.mx/alimenta-tu-tiroides-d`, viva el 28/09.
 - La marca con la que firma el equipo, la zona horaria y los términos sensibles.
 - Quién revisa las conversaciones de ATT1 en la revisión diaria.
 
