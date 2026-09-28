@@ -50,6 +50,7 @@ from bridge.reactivation import ConversationReactivationSweeper
 from bridge.commercial_ally import CommercialAllyConfig, JOHANNA_COMMERCIAL_ALLY
 from bridge.checkout_delivery import CheckoutDeliveryError, deliver_checkout_issuance_v2
 from bridge.filtering import EventDecision, classify_chatwoot_event
+from bridge.agent_provenance import AgentTurn, CONTEXT_BUILDER_VERSION
 from bridge.hermes import HermesShadowProcessor
 from bridge.hotmart import (
     EVENT_CART_ABANDONMENT,
@@ -342,6 +343,15 @@ class Settings:
     hermes_api_base_url: str | None = None
     hermes_api_key: str | None = None
     hermes_model_name: str = "agente-comercial"
+    # De que despliegue del bridge salio cada turno. Viene del entorno del
+    # contenedor, que ya lo tiene cargado; sin el, "unknown" es honesto.
+    bridge_release: str = "unknown"
+    # Con que tenant y scope se anota la procedencia. Los defaults son los
+    # reales del inbox de Johanna --- los mismos con los que la revision
+    # diaria indexa sus lotes --- para que el registro arranque con el
+    # redeploy y no dependa de que alguien cargue una variable.
+    agent_provenance_tenant_ref: str = "lancemos"
+    agent_provenance_scope_ref: str = "psicologajohanna-agent-bot-19"
     shadow_dir: Path = Path("./data/shadow")
     automated_replies_enabled: bool = False
     reply_dir: Path = Path("./data/replies")
@@ -553,6 +563,16 @@ class Settings:
             raise ValueError("HERMES_REPLY_SPLITTER_PROVIDER is required")
         if reply_splitter_enabled and reply_splitter_model_name is None:
             raise ValueError("HERMES_REPLY_SPLITTER_MODEL_NAME is required")
+        bridge_release = (
+            os.getenv("GIT_SHA") or os.getenv("BRIDGE_RELEASE") or "unknown"
+        ).strip()[:128] or "unknown"
+        agent_provenance_tenant_ref = (
+            os.getenv("AGENT_PROVENANCE_TENANT_REF") or "lancemos"
+        )
+        agent_provenance_scope_ref = (
+            os.getenv("AGENT_PROVENANCE_SCOPE_REF")
+            or "psicologajohanna-agent-bot-19"
+        )
         hermes_model_name = os.getenv(
             "HERMES_MODEL_NAME", "agente-comercial"
         ).strip()
@@ -1032,6 +1052,9 @@ class Settings:
             hermes_api_base_url=hermes_api_base_url,
             hermes_api_key=hermes_api_key,
             hermes_model_name=hermes_model_name,
+            bridge_release=bridge_release,
+            agent_provenance_tenant_ref=agent_provenance_tenant_ref,
+            agent_provenance_scope_ref=agent_provenance_scope_ref,
             shadow_dir=Path(os.getenv("SHADOW_DIR", "./data/shadow")),
             automated_replies_enabled=automated_replies_enabled,
             reply_dir=Path(os.getenv("REPLY_DIR", "./data/replies")),
@@ -2107,6 +2130,20 @@ def create_app(
         shared_supabase = SupabaseClient(
             base_url=settings.supabase_base_url,
             service_role_key=settings.supabase_service_role_key,
+        )
+    # La procedencia del prompt se anota si hay con que: el turno del agente
+    # no depende de esto, pero sin esto el feedback no se puede atribuir a
+    # una version del agente.
+    if shared_supabase is not None and hasattr(
+        shadow_processor, "bind_provenance_recorder"
+    ):
+        shadow_processor.bind_provenance_recorder(
+            SupabaseTurnProvenanceRecorder(
+                client=shared_supabase,
+                tenant_ref=settings.agent_provenance_tenant_ref,
+                scope_ref=settings.agent_provenance_scope_ref,
+                bridge_release=settings.bridge_release,
+            )
         )
     if (
         settings.operator_correlation_read_enabled
@@ -5970,6 +6007,46 @@ def create_app(
         }
 
     return app
+
+
+class SupabaseTurnProvenanceRecorder:
+    """Anota en la capa durable con que prompt contesto el agente.
+
+    Vive aca y no en `bridge.agent_provenance` porque ese modulo es puro y
+    `bridge.supabase` ya lo importa: ponerlo alla cerraria el circulo.
+    """
+
+    def __init__(
+        self,
+        *,
+        client: SupabaseClient,
+        tenant_ref: str,
+        scope_ref: str,
+        bridge_release: str,
+    ) -> None:
+        self._client = client
+        self._tenant_ref = tenant_ref
+        self._scope_ref = scope_ref
+        self._bridge_release = bridge_release
+
+    async def record_agent_turn(self, *, turn: AgentTurn) -> None:
+        result = await self._client.record_agent_turn_provenance(
+            tenant_ref=self._tenant_ref,
+            scope_ref=self._scope_ref,
+            turn=turn,
+            occurred_at=datetime.now(UTC).isoformat(),
+            bridge_release=self._bridge_release,
+            context_builder_version=CONTEXT_BUILDER_VERSION,
+        )
+        if not result.attributed:
+            # No es una falla, pero tampoco puede pasar inadvertido: si el
+            # registrador del perfil no corre, TODOS los turnos salen asi y
+            # el feedback vuelve a quedar sin version del prompt.
+            logger.warning(
+                "agent_turn_provenance_without_release conversation=%s outcome=%s",
+                turn.external_conversation_id,
+                result.outcome,
+            )
 
 
 def build_app() -> FastAPI:
