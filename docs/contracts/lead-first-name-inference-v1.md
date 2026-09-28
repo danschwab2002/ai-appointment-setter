@@ -35,6 +35,16 @@ Entrada única al modelo, como mensaje `user`:
 {"full_name": "Andres Felipe Pérez García"}
 ```
 
+Criterio del prompt (`PROMPT_VERSION = lead-first-name-v2`):
+
+- Por defecto, **un solo nombre de pila**, el primero: la mayoría tiene dos y usa uno.
+- Dos palabras solo si forman un compuesto que se usa siempre junto (*Juan Pablo*, *María José*); ante la duda, uno.
+- Si la primera palabra no es un nombre por sí sola (*Santa Lucía*) va el compuesto; si es un apellido y el nombre viene después, va el nombre.
+- Nunca un apellido.
+- Los ejemplos del prompt no son nombres de la muestra con la que se mide (lo verifica `tests/test_lead_first_name.py`).
+
+Cambiar el criterio es cambiar `PROMPT_VERSION`: eso cambia la `Idempotency-Key` y Hermes no replica respuestas de la versión anterior. Las filas ya guardadas no se recalculan.
+
 Salida aceptada, sin texto alrededor (se toleran cercos de código):
 
 ```json
