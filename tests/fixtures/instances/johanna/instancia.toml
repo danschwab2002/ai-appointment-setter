@@ -1,0 +1,103 @@
+# Fixture: Johanna escrita con el esquema v2, con los valores que hoy estan en el codigo
+# (src/bridge/commercial_ally.py JOHANNA_COMMERCIAL_ALLY, lead_precheckout.py _JOHANNA_LANDING_OFFERS,
+# app.py plantillas y guarda de medicacion) al 2026-09-28, origin/main a50bfa1.
+# El test dorado exige que este manifiesto produzca exactamente JOHANNA_COMMERCIAL_ALLY.
+# Es la base del manifiesto real de Johanna en la fase F5; hasta entonces no lo lee ningun runtime.
+
+schema = "setter-instancia/v2"
+producto = "v1.0.0"
+eventos = ["intencion", "carrito", "pago_fallido", "compra", "entrante"]
+
+[instancia]
+tenant_ref = "lancemos"
+ally_ref = "johanna"
+funnel_ref = "psicologajohanna"
+binding_version = 1
+marca = "Psicologa Johanna"
+zona_horaria = "America/Bogota"
+
+[hotmart]
+product_id = 8104005
+hotlink = "F106691755G"
+product_name = "Liberate De La Ansiedad"
+moneda = "USD"
+precio = "49"
+
+[[hotmart.ofertas]]
+codigo = "bxjge6zq"
+site = "psicologajohanna"
+landing_id = "ads-a"
+url = "https://psicologajohanna.com/ldla/evg/vsl/ads-a"
+origen = "pauta"
+por_defecto = true
+
+[[hotmart.ofertas]]
+codigo = "mgbgpp19"
+site = "psicologajohanna"
+landing_id = "ads-b"
+url = "https://psicologajohanna.com/ldla/evg/vsl/ads-b"
+origen = "pauta"
+
+[[hotmart.ofertas]]
+codigo = "s1qfxm7m"
+site = "psicologajohanna"
+landing_id = "ads-c"
+url = "https://psicologajohanna.com/ldla/evg/vsl/ads-c"
+origen = "pauta"
+
+[[hotmart.ofertas]]
+codigo = "jtt6fcsm"
+site = "psicologajohanna"
+landing_id = "org-a"
+url = "https://psicologajohanna.com/ldla/evg/vsl/org-a"
+origen = "organico"
+
+[[hotmart.ofertas]]
+codigo = "ecyu87q0"
+site = "psicologajohanna"
+landing_id = "org-b"
+url = "https://psicologajohanna.com/ldla/evg/vsl/org-b"
+origen = "organico"
+
+[[hotmart.ofertas]]
+codigo = "ulhzpw9a"
+site = "psicologajohanna"
+landing_id = "org-c"
+url = "https://psicologajohanna.com/ldla/evg/vsl/org-c"
+origen = "organico"
+
+[chatwoot]
+account_id = 1
+inbox_id = 9
+
+[inbound]
+scope_key = "libre-de-ansiedad-inbound"
+scope_version = 2
+
+[consentimiento]
+copy_version = "johanna-precheckout-whatsapp-disclosure-v1"
+
+[plantillas]
+precheckout = { nombre = "johanna_interes_precheckout_01", idioma = "es_EC" }
+carrito = { nombre = "johanna_carrito_abandonado_01", idioma = "es_EC" }
+pago_fallido = { nombre = "johanna_compra_fallida_01", idioma = "es_EC" }
+reactivacion = { nombre = "johanna_reactivacion_01", idioma = "es_EC" }
+
+[agente]
+modelo = "agente-comercial"
+conocimiento = "conocimiento/knowledge-v1.toml"
+
+[flujos]
+inbound = true
+precheckout = true
+carrito = true
+pago_fallido = true
+reactivacion = false
+descuento = false
+
+[guardas]
+terminos_sensibles = ["medicacion", "medicamento", "farmaco", "pastilla", "antidepresiv", "ansiolitic"]
+acciones_sensibles = ["dejar", "suspender", "interrumpir", "cambiar", "reducir", "aumentar", "tomar", "dosis", "dosificacion"]
+
+[slack]
+canal = "C0C0YEACVT2"

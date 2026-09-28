@@ -11,6 +11,11 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH="/app/src" \
     CAPTURE_DIR="/app/data/captures"
 
+ARG SETTER_VERSION=""
+ARG GIT_SHA=""
+ENV SETTER_VERSION="${SETTER_VERSION}" \
+    GIT_SHA="${GIT_SHA}"
+
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
