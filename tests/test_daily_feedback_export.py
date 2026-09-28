@@ -246,9 +246,18 @@ def test_materialization_rejects_text_that_bypassed_sanitizer(tmp_path: Path) ->
 
 
 def test_materialization_rejects_unproven_release_lineage(tmp_path: Path) -> None:
+    """Un linaje que el llamador se invento no entra.
+
+    Hasta el 2026-09-28 este guard exigia el literal
+    'release_lineage_unavailable' y por lo tanto el campo no podia llevar nada
+    real. Desde 20260928000100 la procedencia se registra por turno, asi que el
+    guard cambio de forma --- ahora admite el marcador o un digest de verdad ---
+    pero lo que protege es lo mismo: un string arbitrario sigue siendo un linaje
+    inventado, y eso es peor que no tener linaje.
+    """
     with pytest.raises(
         ConversationCollectionError,
-        match="review_package_release_lineage_unavailable_required",
+        match="review_package_release_lineage_invalid",
     ):
         materialize_daily_review_package(
             store=DailyFeedbackBatchStore(tmp_path / "durable"),
@@ -256,6 +265,47 @@ def test_materialization_rejects_unproven_release_lineage(tmp_path: Path) -> Non
             package=_minimal_review_package(
                 release_id="caller-claimed-release",
                 release_version=3,
+            ),
+            authority=_real_batch_grant(),
+        )
+
+
+def test_materialization_accepts_a_real_release_digest(tmp_path: Path) -> None:
+    """Un digest de release de verdad entra, que era el punto del cambio.
+
+    Sin esto el guard viejo seguiria vivo con otro nombre: rechazar lo inventado
+    no prueba que lo legitimo pase. El digest son los 64 hex que
+    `register_agent_prompt_release.py` calcula sobre los artefactos del perfil.
+    """
+    created = materialize_daily_review_package(
+        store=DailyFeedbackBatchStore(tmp_path / "durable"),
+        command_id="materialize-real-release",
+        package=_minimal_review_package(
+            release_id="a" * 64,
+            release_version=7,
+        ),
+        authority=_real_batch_grant(),
+    )
+    assert created is not None
+
+
+def test_a_release_version_of_zero_with_a_digest_is_rejected(tmp_path: Path) -> None:
+    """Un digest con version 0 es media procedencia, y media no sirve.
+
+    `daily_feedback.py` exige `release_version >= 1` cuando el linaje no es el
+    marcador; si el exportador dejara pasar la combinacion, el rechazo llegaria
+    una capa mas abajo y con otro mensaje.
+    """
+    with pytest.raises(
+        ConversationCollectionError,
+        match="review_package_release_lineage_invalid",
+    ):
+        materialize_daily_review_package(
+            store=DailyFeedbackBatchStore(tmp_path / "durable"),
+            command_id="materialize-half-release",
+            package=_minimal_review_package(
+                release_id="b" * 64,
+                release_version=0,
             ),
             authority=_real_batch_grant(),
         )

@@ -10,8 +10,11 @@ import os
 import re
 import tempfile
 from pathlib import Path
+from typing import Protocol
 
 import httpx
+
+from bridge.agent_provenance import AgentTurn, build_turn
 
 
 _CAPTURED_FIELDS = {
@@ -173,6 +176,18 @@ def _is_valid_proposal(proposal: dict[str, object]) -> bool:
     )
 
 
+class TurnProvenanceRecorder(Protocol):
+    """Quien sabe grabar la procedencia de un turno.
+
+    Es un protocolo y no una dependencia concreta para que este modulo no
+    aprenda de Supabase: el procesador sabe QUE paso en el turno, no donde
+    se anota. El cableado vive en `bridge.app`.
+    """
+
+    async def record_agent_turn(self, *, turn: AgentTurn) -> None:
+        ...  # pragma: no cover - protocolo
+
+
 class HermesShadowProcessor:
     """Request and persist an agent proposal without executing it."""
 
@@ -185,6 +200,7 @@ class HermesShadowProcessor:
         shadow_dir: Path,
         transport: httpx.AsyncBaseTransport | None = None,
         timeout_seconds: float = 60.0,
+        provenance_recorder: TurnProvenanceRecorder | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
@@ -192,6 +208,19 @@ class HermesShadowProcessor:
         self._shadow_dir = shadow_dir
         self._transport = transport
         self._timeout_seconds = timeout_seconds
+        self._provenance_recorder = provenance_recorder
+
+    def bind_provenance_recorder(
+        self, recorder: TurnProvenanceRecorder | None
+    ) -> None:
+        """Enchufar el registrador despues de construir el procesador.
+
+        El procesador se arma en `build_app`, donde todavia no existe el cliente
+        de Supabase; el registrador se enchufa en `create_app`, que ya lo tiene.
+        Es explicito y no un atributo privado tocado de afuera para que un doble
+        de test pueda no tener el metodo y el cableado lo detecte con hasattr.
+        """
+        self._provenance_recorder = recorder
 
     def record_failure(self, *, delivery_id: str, reason: str) -> None:
         digest = hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
@@ -252,6 +281,7 @@ class HermesShadowProcessor:
             await self._request_and_persist(
                 digest=digest,
                 context=context,
+                delivery_id=delivery_id,
             )
         finally:
             fcntl.flock(processing_lock_fd, fcntl.LOCK_UN)
@@ -269,9 +299,38 @@ class HermesShadowProcessor:
             except BlockingIOError:
                 await asyncio.sleep(0.01)
 
-    async def _request_and_persist(
-        self, *, digest: str, context: dict[str, object]
+    async def _record_turn(
+        self,
+        *,
+        delivery_id: str,
+        context: dict[str, object],
+        attempt: int,
+        outcome: str,
+        model_answered: str | None,
     ) -> None:
+        """Deja el rastro del turno. Nunca rompe el turno."""
+        if self._provenance_recorder is None:
+            return
+        try:
+            await self._provenance_recorder.record_agent_turn(
+                turn=build_turn(
+                    context=context,
+                    delivery_id=delivery_id,
+                    attempt=attempt,
+                    outcome=outcome,
+                    model_requested=self._model_name,
+                    model_answered=model_answered,
+                )
+            )
+        except Exception:  # noqa: BLE001 - la propuesta manda
+            pass
+
+    async def _request_and_persist(
+        self, *, digest: str, context: dict[str, object], delivery_id: str
+    ) -> None:
+        # Lo ultimo que Hermes dijo que contesto. Se arrastra fuera del
+        # bucle porque el punto terminal de salida invalida esta despues.
+        model_answered: str | None = None
         for attempt in range(1, _MAX_PROPOSAL_ATTEMPTS + 1):
             try:
                 async with httpx.AsyncClient(
@@ -310,10 +369,21 @@ class HermesShadowProcessor:
                         attempt=attempt,
                     ),
                 )
+                await self._record_turn(
+                    delivery_id=delivery_id,
+                    context=context,
+                    attempt=attempt,
+                    outcome="failed",
+                    model_answered=None,
+                )
                 return
 
             try:
                 body = response.json()
+                # El cuerpo se descartaba entero salvo el texto. `model` es
+                # el unico rastro de QUE contesto, y venia gratis.
+                if isinstance(body, dict) and isinstance(body.get("model"), str):
+                    model_answered = body["model"][:128]
                 proposal_text = body["choices"][0]["message"]["content"]
             except (
                 KeyError,
@@ -338,6 +408,13 @@ class HermesShadowProcessor:
                         attempt=attempt,
                     ),
                 )
+                await self._record_turn(
+                    delivery_id=delivery_id,
+                    context=context,
+                    attempt=attempt,
+                    outcome="completed",
+                    model_answered=model_answered,
+                )
                 return
 
         self._persist_result(
@@ -350,6 +427,13 @@ class HermesShadowProcessor:
                 },
                 attempt=_MAX_PROPOSAL_ATTEMPTS,
             ),
+        )
+        await self._record_turn(
+            delivery_id=delivery_id,
+            context=context,
+            attempt=_MAX_PROPOSAL_ATTEMPTS,
+            outcome="failed",
+            model_answered=model_answered,
         )
 
     @staticmethod

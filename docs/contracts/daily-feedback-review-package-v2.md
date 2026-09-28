@@ -60,8 +60,8 @@ Es idempotente. El empaquetador (`_package_items`) y la restriccion `daily_feedb
   "display_label": "Conversación 01",
   "apparent_objective": "Consulta de precio o formas de pago",
   "observed_outcome": "Derivado a humano (explicit_human_request) · Automatización pausada",
-  "release_id": "release_lineage_unavailable",
-  "release_version": 0,
+  "release_id": "<sha256 del release del prompt>",  // o "release_lineage_unavailable"
+  "release_version": 3,                            // o 0 si no se sabe
   "messages": [
     {"actor": "prospect", "kind": "prospect_message", "occurred_at": "2026-09-26T13:41:00Z", "status": "sent", "text": "…", "meta": {}},
     {"actor": "agent", "kind": "agent_reply", "occurred_at": "…", "status": "read", "text": "…",
@@ -89,7 +89,7 @@ Es idempotente. El empaquetador (`_package_items`) y la restriccion `daily_feedb
 Restricciones durables (migracion `20260927000100`):
 
 - `messages`: arreglo de 1 a 1000 elementos; cada elemento tiene exactamente las claves `actor, kind, meta, occurred_at, status, text` (forma v2) **o** `actor, occurred_at, text` (forma v1, que sigue aceptandose); `actor` en `prospect | agent | team | system`; `kind` `^[a-z][a-z0-9_]{0,63}$`; `status` `^[a-z][a-z0-9_]{0,31}$`; `meta` objeto de hasta 4000 caracteres; `text` de 1 a 4000 caracteres sin control (salvo salto de linea) ni bearer tokens.
-- `context`: objeto de hasta 32 KB con claves dentro de `chatwoot_conversation_id, conversation_url, contact, conversation, origin, events, payment_links, prior_reviews, summary`; `conversation_url` https; sin `javascript:` ni bearer tokens.
+- `context`: objeto de hasta 32 KB con claves dentro de `chatwoot_conversation_id, conversation_url, contact, conversation, origin, events, payment_links, prior_reviews, summary, agent_release`; `conversation_url` https; sin `javascript:` ni bearer tokens.
 - `apparent_objective` y `observed_outcome`: 1 a 300 caracteres; `display_label` 1 a 80.
 
 `commit_daily_feedback_batch_v1` acepta items con o sin `context` (sin `context` guarda `{}`). `get_daily_feedback_review_page_v1` devuelve `item.context`.
@@ -144,3 +144,43 @@ Lo que cambia respecto de V1 esta en ADR-0018: la pagina muestra PII del lead a 
 3. Redeploy de `infra_appointment-bridge` (estampa decision y reason code en cada respuesta nueva).
 
 Evidencia del primer lote V2 real: pendiente hasta el E2E (se documenta en `docs/operations/` cuando exista).
+
+## La procedencia del prompt (desde 2026-09-28)
+
+⚠ **`release_id` y `release_version` cambiaron de significado.** Existian en el
+esquema desde `20260910000100` y se escribian como los literales
+`'release_lineage_unavailable'` y `0`; habia incluso un guard que lo **exigia**
+asi. Desde la migracion `20260928000100` llevan el digest del release del prompt
+y su ordinal, y el guard pasó a ser `review_package_release_lineage_invalid`:
+admite el marcador de "no se sabe" o un digest de 64 hex con version ≥ 1, y nada
+mas.
+
+El detalle viaja en `context.agent_release`:
+
+```json
+"agent_release": {
+  "release_digest": "<64 hex>",
+  "release_ordinal": 3,
+  "confidence": "verified",
+  "model_requested": "agente-comercial",
+  "model_answered": "glm-5.2",
+  "bridge_release": "246de1ba",
+  "context_builder_version": "shadow-context-v1",
+  "context_digest": "<64 hex>",
+  "turn_occurred_at": "2026-09-26T14:07:00Z"
+}
+```
+
+**`confidence` es el campo que no se puede ignorar.** El registrador del perfil
+corre por cron, no por turno, asi que la atribucion no se afirma: `verified` = el
+prompt cambio despues del turno; `misattributed` = ya habia cambiado antes, o sea
+que la version que se muestra no es de fiar; `open` = todavia no hay observacion
+posterior; `no_release` = el registrador no habia corrido.
+
+El texto del SOUL **no** entra al paquete: son 19 KB por release y vive en
+`agent_prompt_releases`. Contrato completo:
+[agent-prompt-provenance-v1](agent-prompt-provenance-v1.md) ·
+[ADR-0020](../decisions/0020-agent-prompt-provenance.md).
+
+Una conversacion sin turno registrado se queda con el marcador, no con el release
+de otra: la lectura falla blando y el informe sale igual.

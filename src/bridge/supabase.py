@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import httpx
 
+from bridge.agent_provenance import AgentTurn
 from bridge.commercial_ally import CommercialAllyConfig
 from bridge.correlation_preresolution import (
     CorrelationCandidate,
@@ -451,6 +452,32 @@ class HumanHandoffAttendance:
         esperando, que es lo normal a partir del segundo mensaje del equipo.
         """
         return self.outcome in {"attended", "noop"}
+
+
+@dataclass(frozen=True)
+class AgentTurnProvenance:
+    """Resultado de dejar anotado con que prompt contesto el agente."""
+
+    outcome: str
+    turn_id: str | None
+    release_digest: str | None
+    release_ordinal: int | None
+
+    @property
+    def settled(self) -> bool:
+        """True cuando el turno quedo anotado, con release o sin el.
+
+        'recorded_without_release' no es un fallo: significa que el registrador
+        del perfil todavia no habia corrido cuando el agente contesto. Un turno
+        sin procedencia es un dato --- queda contable en el indice parcial
+        `agent_turn_provenance_without_release_idx` --- y no una perdida
+        silenciosa.
+        """
+        return self.outcome in {"recorded", "recorded_without_release", "replayed"}
+
+    @property
+    def attributed(self) -> bool:
+        return self.release_digest is not None
 
 
 @dataclass(frozen=True)
@@ -3443,6 +3470,119 @@ class SupabaseClient:
             attended_count=attended_count,
             commercial_case_id=row.get("attended_commercial_case_id"),
         )
+
+    async def record_agent_turn_provenance(
+        self,
+        *,
+        tenant_ref: str,
+        scope_ref: str,
+        turn: AgentTurn,
+        occurred_at: str,
+        bridge_release: str,
+        context_builder_version: str,
+    ) -> AgentTurnProvenance:
+        """Dejar anotado con que prompt contesto el agente en este turno.
+
+        La RPC resuelve sola el release vigente --- el mas nuevo observado antes
+        del turno --- y lo guarda desnormalizado, para que registrar un release
+        nuevo no reescriba lo que ya se dijo de un turno viejo. La confianza de
+        esa atribucion NO se afirma acá: se calcula despues comparando el mtime
+        de los artefactos del release siguiente contra el momento del turno.
+        """
+        operation = "agent_turn_provenance"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/record_agent_turn_provenance_v1",
+            content=json.dumps(
+                {
+                    "p_tenant_ref": tenant_ref,
+                    "p_scope_ref": scope_ref,
+                    "p_external_conversation_id": turn.external_conversation_id,
+                    "p_turn_digest": turn.turn_digest,
+                    "p_occurred_at": occurred_at,
+                    "p_outcome": turn.outcome,
+                    "p_model_requested": turn.model_requested,
+                    "p_model_answered": turn.model_answered,
+                    "p_bridge_release": bridge_release,
+                    "p_context_builder_version": context_builder_version,
+                    "p_context_digest": turn.context_digest,
+                    "p_context_added": turn.context_added,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(
+                f"agent_turn_provenance_failed: HTTP {response.status_code}"
+            )
+        # La RPC devuelve jsonb, asi que PostgREST manda el objeto pelado y no
+        # una lista de filas: `_response_rows` no aplica.
+        try:
+            body = response.json()
+        except ValueError:
+            raise SupabaseError("agent_turn_provenance_invalid_body") from None
+        if isinstance(body, list) and len(body) == 1 and isinstance(body[0], dict):
+            body = body[0]
+        if not isinstance(body, dict):
+            raise SupabaseError("agent_turn_provenance_invalid_shape")
+        outcome = body.get("outcome")
+        if outcome not in {"recorded", "recorded_without_release", "replayed"}:
+            raise SupabaseError(f"agent_turn_provenance_invalid_outcome: {operation}")
+        ordinal = body.get("release_ordinal")
+        if ordinal is not None and (
+            not isinstance(ordinal, int) or isinstance(ordinal, bool)
+        ):
+            raise SupabaseError("agent_turn_provenance_invalid_ordinal")
+        return AgentTurnProvenance(
+            outcome=outcome,
+            turn_id=body.get("turn_id"),
+            release_digest=body.get("release_digest"),
+            release_ordinal=ordinal,
+        )
+
+    async def get_agent_turn_provenance(
+        self,
+        *,
+        tenant_ref: str,
+        scope_ref: str,
+        conversation_ids: list[int],
+        window_start: str,
+        window_end: str,
+    ) -> dict[str, object]:
+        """La procedencia del ultimo turno de cada conversacion de la ventana.
+
+        Es lo que lee el paquete de revision diaria para poder decir con que
+        version del agente se produjo lo que el revisor esta juzgando.
+        """
+        if not conversation_ids:
+            return {}
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_agent_turn_provenance_v1",
+            content=json.dumps(
+                {
+                    "p_tenant_ref": tenant_ref,
+                    "p_scope_ref": scope_ref,
+                    "p_conversation_ids": conversation_ids,
+                    "p_window_start": window_start,
+                    "p_window_end": window_end,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(
+                f"agent_turn_provenance_read_failed: HTTP {response.status_code}"
+            )
+        try:
+            body = response.json()
+        except ValueError:
+            raise SupabaseError("agent_turn_provenance_read_invalid_body") from None
+        if isinstance(body, list) and len(body) == 1 and isinstance(body[0], dict):
+            body = body[0]
+        if not isinstance(body, dict):
+            raise SupabaseError("agent_turn_provenance_read_invalid_shape")
+        return body
 
     async def settle_conversation_reactivation(
         self,

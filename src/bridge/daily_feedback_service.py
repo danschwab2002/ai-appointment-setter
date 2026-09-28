@@ -25,6 +25,7 @@ from bridge.daily_feedback import minimize_review_text_v2, sanitize_review_text
 from bridge.daily_feedback_export import (
     PACKAGE_SCHEMA_V2,
     DailyReviewPackage,
+    apply_agent_provenance,
     apply_conversation_context,
 )
 from slack_correlation.catalog import NotificationCommand
@@ -432,7 +433,28 @@ class DailyFeedbackScheduler:
                     "p_conversation_ids": conversation_ids,
                 },
             )
-        return apply_conversation_context(package, contexts)
+        # La procedencia del prompt: se pide aparte y falla BLANDO. El informe
+        # no depende de ella, asi que si la migracion 20260928000100 todavia no
+        # esta aplicada la revision sale igual --- con el marcador de 'no se
+        # sabe' en el linaje, que es lo que habia hasta hoy.
+        provenance: dict[str, object] = {}
+        if conversation_ids:
+            try:
+                provenance = await self._repository.rpc(
+                    "get_agent_turn_provenance_v1",
+                    {
+                        "p_tenant_ref": self.settings.tenant_ref,
+                        "p_scope_ref": self.settings.scope_ref,
+                        "p_conversation_ids": conversation_ids,
+                        "p_window_start": _utc_text(package.window_start),
+                        "p_window_end": _utc_text(package.window_end),
+                    },
+                )
+            except Exception:  # noqa: BLE001 - el informe manda
+                provenance = {}
+        return apply_agent_provenance(
+            apply_conversation_context(package, contexts), provenance
+        )
 
     async def _notify_one(self, *, now: datetime) -> bool:
         claim_command = str(uuid4())
@@ -888,6 +910,7 @@ class SupabaseDailyFeedbackRepository:
             "get_daily_feedback_conversation_context_v1",
             "record_daily_feedback_decision_v1",
             "purge_expired_daily_feedback_v2",
+            "get_agent_turn_provenance_v1",
         }
     )
 
@@ -918,7 +941,11 @@ class SupabaseDailyFeedbackRepository:
         if name not in self._ALLOWED_RPCS:
             raise ValueError("daily_feedback_rpc_not_allowed")
         retry_safe = "p_command_id" in payload or name.startswith(
-            ("get_daily_feedback_", "purge_expired_daily_feedback_")
+            (
+                "get_daily_feedback_",
+                "get_agent_turn_provenance_",
+                "purge_expired_daily_feedback_",
+            )
         )
         attempts = 2 if retry_safe else 1
         last_error: Exception | None = None
@@ -1072,6 +1099,7 @@ _IDENTIFIED_CONTEXT_KEYS = frozenset(
         "payment_links",
         "prior_reviews",
         "summary",
+        "agent_release",
     }
 )
 

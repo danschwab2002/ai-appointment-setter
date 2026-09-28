@@ -3487,6 +3487,46 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         4,
         'handoff_attendance_gates_automation'
+    union all
+    select
+        '20260928000100',
+        '20260928000100_agent_prompt_provenance_v1.sql',
+        (
+            select count(*) = 1
+            from pg_class
+            where oid = to_regclass('public.agent_prompt_releases')
+        )::int
+        + (
+            select count(*) = 1
+            from pg_class
+            where oid = to_regclass('public.agent_turn_provenance')
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.register_agent_prompt_release_v1(text,text,text,text,jsonb,timestamptz,text,timestamptz,text)')
+              and prosecdef
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.record_agent_turn_provenance_v1(text,text,bigint,text,timestamptz,text,text,text,text,text,text,jsonb)')
+              and prosecdef
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.agent_turn_release_confidence_v1(text,text,integer,timestamptz)')
+              and position('misattributed' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.daily_feedback_item_context_valid(jsonb)')
+              and position('agent_release' in definition) > 0
+        )::int,
+        6,
+        'agent_prompt_provenance_per_turn'
 )
 select
     version,

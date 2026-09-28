@@ -96,6 +96,9 @@ const rows = await db.query(`
       ('resume_paused_conversation(bigint,text,text,integer,integer,timestamp with time zone)'),
       ('claim_conversation_reactivation(bigint,text,text,text,text,bigint,integer,integer,integer,timestamp with time zone)'),
       ('mark_human_handoff_attended(bigint,timestamp with time zone,timestamp with time zone)'),
+      ('get_agent_turn_provenance_v1(text,text,bigint[],timestamp with time zone,timestamp with time zone)'),
+      ('record_agent_turn_provenance_v1(text,text,bigint,text,timestamp with time zone,text,text,text,text,text,text,jsonb)'),
+      ('register_agent_prompt_release_v1(text,text,text,text,jsonb,timestamp with time zone,text,timestamp with time zone,text)'),
       ('settle_conversation_reactivation(text,text,bigint,text,timestamp with time zone)'),
       ('apply_chatwoot_inbound_opt_out(bigint,bigint,bigint,bigint,text,timestamp with time zone,text)'),
       ('apply_hotmart_purchase_approved(uuid,text,text,text,text,text,timestamp with time zone)'),
@@ -211,7 +214,7 @@ const result = rows.rows[0];
 // one legacy completion overload, and resuming a paused conversation adds one,
 // and the Slack alert for every human handoff (HND-001) adds three.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 105) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 108) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 const bindingAcl = await db.query(`

@@ -114,5 +114,12 @@ def test_migration_is_transactional() -> None:
 
 
 def test_migration_is_the_tail_of_the_queue() -> None:
+    """Fija la POSICION de esta migracion, no que sea la ultima.
+
+    Afirmar que es la ultima obliga a tocar este test cada vez que se agrega
+    cualquier otra migracion, y lo que importa es distinto: que esta se aplique
+    despues de la que le da el esquema que parchea. Se afirma eso.
+    """
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
-    assert names[-1] == MIGRATION.name
+    posicion = names.index(MIGRATION.name)
+    assert names[posicion - 1] == "20260927000200_sck_length_accepts_255_v1.sql"

@@ -58,9 +58,11 @@ def _fixture() -> dict:
 
 def test_migration_comes_right_after_the_review_context_one_and_keeps_the_signature() -> None:
     versions = sorted(path.name.split("_", 1)[0] for path in MIGRATIONS.glob("*.sql"))
-    assert versions[-1] == "20260927000300"
-    assert versions[-2] == "20260927000200"
-    assert versions[-3] == "20260927000100"
+    # Se fija la POSICION relativa y no la cola: afirmar el ultimo lugar obliga a
+    # tocar este test con cada migracion nueva, y lo que el nombre promete es que
+    # esta va inmediatamente despues de la del contexto de revision.
+    posicion = versions.index("20260927000200")
+    assert versions[posicion - 1] == "20260927000100"
 
     sql = _sql()
     assert sql.count("create or replace function public.reserve_chatwoot_checkout_issuance_v2(") == 1
