@@ -503,6 +503,60 @@ class ConversationReactivationSettlement:
     reactivation_event_id: str | None
 
 
+# Los veredictos que puede devolver claim_conversation_followup_v1. Los
+# 'issuance_*' repiten el de reserve_chatwoot_checkout_issuance_v2 cuando la
+# emision del link no quedo en 'reserved'.
+FOLLOWUP_CLAIM_OUTCOMES = frozenset(
+    {
+        "claimed",
+        "replayed",
+        "not_found",
+        "blocked_followup_limit",
+        "blocked_pending_handoff",
+        "blocked_conversation",
+        "blocked_contact",
+        "purchase_already_approved",
+        "issuance_invalid_request",
+        "issuance_replay_conflict",
+        "issuance_already_accepted",
+        "issuance_delivery_unknown",
+        "issuance_purchase_already_approved",
+        "issuance_request_started_replay",
+        "issuance_blocked_case",
+        "issuance_blocked_scope",
+        "issuance_missing_default_offer",
+        "issuance_blocked_contact",
+        "issuance_blocked_opt_out",
+        "issuance_blocked_conversation",
+        "issuance_blocked_identity",
+        "issuance_missing",
+    }
+)
+
+
+@dataclass(frozen=True)
+class ConversationFollowupClaim:
+    """Reserva de un seguimiento con cupon y el link que se emitio para el."""
+
+    outcome: str
+    followup_event_id: str | None
+    checkout_issuance_id: str | None
+    checkout_url_final: str | None
+    sck_value: str | None
+
+    @property
+    def claimed(self) -> bool:
+        return self.outcome == "claimed"
+
+
+@dataclass(frozen=True)
+class ConversationFollowupSettlement:
+    """Cierre de una reserva de seguimiento con lo que Chatwoot respondio."""
+
+    outcome: str
+    followup_event_id: str | None
+
+
 @dataclass(frozen=True)
 class PaymentLinkCandidate:
     """Authoritative precheckout sequence eligible for a payment-link action."""
@@ -3687,6 +3741,126 @@ class SupabaseClient:
         return ConversationReactivationSettlement(
             outcome=outcome,
             reactivation_event_id=row.get("reactivation_event_id"),
+        )
+
+    async def claim_conversation_followup(
+        self,
+        *,
+        external_conversation_id: int,
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+        external_user_id: str,
+        contact_email: str | None,
+        command_key: str,
+        regime: str,
+        template_name: str,
+        template_language: str,
+        coupon_code: str,
+        last_inbound_message_id: int,
+        last_outbound_message_id: int,
+        inbound_age_seconds: int,
+        issuance_ulid: str,
+    ) -> ConversationFollowupClaim:
+        """Reservar el seguimiento con cupon y emitir su link de pago.
+
+        Las barreras durables (compra por telefono o mail, derivacion sin
+        atender, pausa, opt-out, uno solo por conversacion) viven en la RPC.
+        Una reserva 'claimed' siempre trae el link: sin link no hay boton.
+        """
+        operation = "conversation_followup_claim"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/claim_conversation_followup_v1",
+            content=json.dumps(
+                {
+                    "p_external_conversation_id": external_conversation_id,
+                    "p_chatwoot_account_id": chatwoot_account_id,
+                    "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                    "p_external_user_id": external_user_id,
+                    "p_contact_email": contact_email,
+                    "p_command_key": command_key,
+                    "p_regime": regime,
+                    "p_template_name": template_name,
+                    "p_template_language": template_language,
+                    "p_coupon_code": coupon_code,
+                    "p_last_inbound_message_id": last_inbound_message_id,
+                    "p_last_outbound_message_id": last_outbound_message_id,
+                    "p_inbound_age_seconds": inbound_age_seconds,
+                    "p_issuance_ulid": issuance_ulid,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(
+                f"conversation_followup_claim_failed: HTTP {response.status_code}"
+            )
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError("conversation_followup_claim_invalid_shape")
+        row = rows[0]
+        outcome = row.get("outcome")
+        if outcome not in FOLLOWUP_CLAIM_OUTCOMES:
+            raise SupabaseError("conversation_followup_claim_invalid_outcome")
+        claim = ConversationFollowupClaim(
+            outcome=outcome,
+            followup_event_id=row.get("followup_event_id"),
+            checkout_issuance_id=row.get("checkout_issuance_id"),
+            checkout_url_final=row.get("checkout_url_final"),
+            sck_value=row.get("sck_value"),
+        )
+        if outcome in {"claimed", "replayed"} and not all(
+            isinstance(value, str) and value
+            for value in (
+                claim.followup_event_id,
+                claim.checkout_issuance_id,
+                claim.checkout_url_final,
+                claim.sck_value,
+            )
+        ):
+            raise SupabaseError("conversation_followup_claim_incomplete")
+        return claim
+
+    async def settle_conversation_followup(
+        self,
+        *,
+        command_key: str,
+        status: str,
+        provider_message_id: int | None = None,
+        failure_reason: str | None = None,
+    ) -> ConversationFollowupSettlement:
+        """Cerrar una reserva de seguimiento como entregada o fallida."""
+        operation = "conversation_followup_settlement"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/settle_conversation_followup_v1",
+            content=json.dumps(
+                {
+                    "p_command_key": command_key,
+                    "p_status": status,
+                    "p_provider_message_id": provider_message_id,
+                    "p_failure_reason": failure_reason,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(
+                "conversation_followup_settlement_failed: "
+                f"HTTP {response.status_code}"
+            )
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError("conversation_followup_settlement_invalid_shape")
+        row = rows[0]
+        outcome = row.get("outcome")
+        if outcome not in {"settled", "not_found"}:
+            raise SupabaseError(
+                "conversation_followup_settlement_invalid_outcome"
+            )
+        return ConversationFollowupSettlement(
+            outcome=outcome,
+            followup_event_id=row.get("followup_event_id"),
         )
 
     async def admit_inbound_commercial_case(

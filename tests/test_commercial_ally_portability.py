@@ -243,6 +243,9 @@ LEGACY_ONLY_CAPABILITIES = {
     # El saludo por primer nombre solo esta cableado en los caminos de Johanna.
     "lead_first_name_greeting_enabled",
     "lead_first_name_inference_enabled",
+    # El seguimiento con cupon reserva el link con el catalogo de ofertas de
+    # Johanna (20260928000400): en un runtime portable tiene que frenar.
+    "conversation_followup_enabled",
 }
 
 

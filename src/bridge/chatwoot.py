@@ -2311,6 +2311,48 @@ class ChatwootClient:
         queda en el mensaje para poder cruzar, desde Chatwoot, que envio
         corresponde a que fila de auditoria.
         """
+        return await self._send_agent_bot_template(
+            conversation_id=conversation_id,
+            content=content,
+            marker_key="reactivation_command_key",
+            command_key=command_key,
+            template_params=template_params,
+            error_prefix="reactivation",
+        )
+
+    async def send_followup_template(
+        self,
+        *,
+        conversation_id: int,
+        content: str,
+        command_key: str,
+        template_params: dict[str, object],
+    ) -> dict[str, object]:
+        """Mandar la plantilla del seguimiento con cupon.
+
+        Mismo camino que la reactivacion (sale como el AgentBot, para no pausar
+        la conversacion) con otra marca: ``conversation_followup_command_key``
+        cruza el mensaje con su fila de ``conversation_followup_events``.
+        """
+        return await self._send_agent_bot_template(
+            conversation_id=conversation_id,
+            content=content,
+            marker_key="conversation_followup_command_key",
+            command_key=command_key,
+            template_params=template_params,
+            error_prefix="followup",
+        )
+
+    async def _send_agent_bot_template(
+        self,
+        *,
+        conversation_id: int,
+        content: str,
+        marker_key: str,
+        command_key: str,
+        template_params: dict[str, object],
+        error_prefix: str,
+    ) -> dict[str, object]:
         if self._agent_bot_access_token is None or self._agent_bot_id is None:
             raise ChatwootProtocolError("agent_bot_not_configured")
         if (
@@ -2320,11 +2362,11 @@ class ChatwootClient:
         ):
             raise ChatwootProtocolError("invalid_conversation_id")
         if not isinstance(content, str) or not content.strip():
-            raise ChatwootProtocolError("invalid_reactivation_content")
+            raise ChatwootProtocolError(f"invalid_{error_prefix}_content")
         if not isinstance(command_key, str) or not command_key.strip():
-            raise ChatwootProtocolError("invalid_reactivation_command_key")
+            raise ChatwootProtocolError(f"invalid_{error_prefix}_command_key")
         if not isinstance(template_params, dict) or not template_params:
-            raise ChatwootProtocolError("invalid_reactivation_template_params")
+            raise ChatwootProtocolError(f"invalid_{error_prefix}_template_params")
 
         messages_path = (
             f"/api/v1/accounts/{self._account_id}"
@@ -2336,7 +2378,7 @@ class ChatwootClient:
             "private": False,
             "content_type": "text",
             "content_attributes": {
-                "reactivation_command_key": command_key,
+                marker_key: command_key,
             },
             "template_params": template_params,
         }
@@ -2369,7 +2411,7 @@ class ChatwootClient:
             or message.get("message_type") != 1
             or message.get("private") is not False
             or not isinstance(attributes, dict)
-            or attributes.get("reactivation_command_key") != command_key
+            or attributes.get(marker_key) != command_key
             or not isinstance(sender, dict)
             or sender.get("type") != "agent_bot"
             or not isinstance(sender_id, int)

@@ -1,0 +1,660 @@
+{
+  "_capture": {
+    "origen": "API de Chatwoot de produccion, cuenta 1, inbox 9 (Johanna), GET show + messages, 2026-09-28 ~14:55 UTC, desde el contenedor infra_appointment-bridge",
+    "anonimizacion": "nombre, telefono, mail, identificadores y atributos del contacto reemplazados (telefono y mail sinteticos con forma real); contenido de los mensajes del lead redactado; fbclid y sck del anuncio redactados en los links; el saludo de las plantillas sin el nombre; los wamid de WhatsApp (codifican el telefono en base64) reemplazados",
+    "casos": {
+      "194": "R1: recibio el link del agente (msg 2445) y no compro; ultimo mensaje del lead 2444 el 2026-09-27 16:17 UTC",
+      "193": "R2: pregunto, el agente contesto (2438/2439) y se callo; ultimo mensaje del lead 2437 el 2026-09-27 12:08 UTC"
+    },
+    "medicion": "sobre las 154 conversaciones del inbox 9 el 2026-09-28: 103 nunca contestaron, 6 R1, 8 R2, 0 R3",
+    "hallazgo": "la API de mensajes no devuelve additional_attributes.template_params: la plantilla solo se reconoce por su texto o por content_attributes"
+  },
+  "conversations": {
+    "194": {
+      "regimen_esperado": "R1",
+      "conversation": {
+        "meta": {
+          "sender": {
+            "additional_attributes": {},
+            "availability_status": "offline",
+            "email": "lead194@example.com",
+            "id": 208,
+            "name": "maria fernanda lopez",
+            "phone_number": "+593900000194",
+            "blocked": false,
+            "identifier": null,
+            "thumbnail": "",
+            "custom_attributes": {},
+            "last_activity_at": 1790525852,
+            "created_at": 1790522358
+          },
+          "channel": "Channel::Whatsapp",
+          "hmac_verified": false
+        },
+        "id": 194,
+        "messages": [
+          {
+            "id": 2445,
+            "content": "Claro, te envío el enlace para comprar Libre de Ansiedad por USD 49. Si tienes alguna duda antes de pagar, puedes escribirme por aquí.\nhttps://pay.hotmart.com/F106691755G?off=mgbgpp19&checkoutMode=10&src=hermes&sck=SCK_ANUNCIO_REDACTADO%7Chermes%7Cv1%7C01M3HTHP0F8PVJXSNCWBSFN0W4&fbclid=FBCLID_REDACTADO",
+            "account_id": 1,
+            "inbox_id": 9,
+            "conversation_id": 194,
+            "message_type": 1,
+            "created_at": 1790525891,
+            "updated_at": "2026-09-27T16:18:33.554Z",
+            "private": false,
+            "status": "read",
+            "source_id": "REDACTADO",
+            "content_type": "text",
+            "content_attributes": {
+              "appointment_setter_reply_hash": "9c74a292d16b3e8fb09f3c0acd00a9f693331485425a1216ff02c784ad3bdec8"
+            },
+            "sender_type": "AgentBot",
+            "sender_id": 1,
+            "external_source_ids": {},
+            "additional_attributes": {},
+            "processed_message_content": "Claro, te envío el enlace para comprar Libre de Ansiedad por USD 49. Si tienes alguna duda antes de pagar, puedes escribirme por aquí.\nhttps://pay.hotmart.com/F106691755G?off=mgbgpp19&checkoutMode=10&src=hermes&sck=SCK_ANUNCIO_REDACTADO%7Chermes%7Cv1%7C01M3HTHP0F8PVJXSNCWBSFN0W4&fbclid=FBCLID_REDACTADO",
+            "sentiment": {},
+            "conversation": {
+              "assignee_id": null,
+              "unread_count": 0,
+              "last_activity_at": 1790525891,
+              "contact_inbox": {
+                "source_id": "REDACTADO"
+              }
+            },
+            "sender": {
+              "id": 1,
+              "name": "REDACTADO",
+              "avatar_url": "",
+              "type": "agent_bot"
+            }
+          }
+        ],
+        "account_id": 1,
+        "uuid": "d8040575-1595-4ede-8f25-140477c3cdf8",
+        "additional_attributes": {},
+        "agent_last_seen_at": 1790593040,
+        "assignee_last_seen_at": 0,
+        "can_reply": true,
+        "contact_last_seen_at": 0,
+        "custom_attributes": {},
+        "inbox_id": 9,
+        "labels": [],
+        "muted": false,
+        "snoozed_until": null,
+        "status": "open",
+        "created_at": 1790522358,
+        "updated_at": 1790525891.2991738,
+        "timestamp": 1790525891,
+        "first_reply_created_at": 0,
+        "unread_count": 0,
+        "last_non_activity_message": {
+          "id": 2445,
+          "content": "Claro, te envío el enlace para comprar Libre de Ansiedad por USD 49. Si tienes alguna duda antes de pagar, puedes escribirme por aquí.\nhttps://pay.hotmart.com/F106691755G?off=mgbgpp19&checkoutMode=10&src=hermes&sck=SCK_ANUNCIO_REDACTADO%7Chermes%7Cv1%7C01M3HTHP0F8PVJXSNCWBSFN0W4&fbclid=FBCLID_REDACTADO",
+          "account_id": 1,
+          "inbox_id": 9,
+          "conversation_id": 194,
+          "message_type": 1,
+          "created_at": 1790525891,
+          "updated_at": "2026-09-27T16:18:33.554Z",
+          "private": false,
+          "status": "read",
+          "source_id": "REDACTADO",
+          "content_type": "text",
+          "content_attributes": {
+            "appointment_setter_reply_hash": "9c74a292d16b3e8fb09f3c0acd00a9f693331485425a1216ff02c784ad3bdec8"
+          },
+          "sender_type": "AgentBot",
+          "sender_id": 1,
+          "external_source_ids": {},
+          "additional_attributes": {},
+          "processed_message_content": "Claro, te envío el enlace para comprar Libre de Ansiedad por USD 49. Si tienes alguna duda antes de pagar, puedes escribirme por aquí.\nhttps://pay.hotmart.com/F106691755G?off=mgbgpp19&checkoutMode=10&src=hermes&sck=SCK_ANUNCIO_REDACTADO%7Chermes%7Cv1%7C01M3HTHP0F8PVJXSNCWBSFN0W4&fbclid=FBCLID_REDACTADO",
+          "sentiment": {},
+          "conversation": {
+            "assignee_id": null,
+            "unread_count": 0,
+            "last_activity_at": 1790525891,
+            "contact_inbox": {
+              "source_id": "REDACTADO"
+            }
+          },
+          "sender": {
+            "id": 1,
+            "name": "REDACTADO",
+            "avatar_url": "",
+            "type": "agent_bot"
+          }
+        },
+        "last_activity_at": 1790525891,
+        "priority": null,
+        "waiting_since": 0,
+        "sla_policy_id": null
+      },
+      "messages": [
+        {
+          "id": 2442,
+          "content": "Hola, NOMBRE. Te escribe el equipo de la Psic. Johanna. Vimos que completaste el formulario de Libre de Ansiedad. ¿Quieres que te ayudemos a continuar? Si no deseas recibir más mensajes, responde “No más mensajes”.",
+          "inbox_id": 9,
+          "conversation_id": 194,
+          "message_type": 1,
+          "content_type": "text",
+          "status": "read",
+          "content_attributes": {
+            "recovery_first_touch_hash": "10b93d79350fe15cb419e78f48413f9ad955e5188671d07ce7fd0954d008db50"
+          },
+          "created_at": 1790522358,
+          "private": false,
+          "source_id": "REDACTADO",
+          "sender": {
+            "id": 1,
+            "name": "REDACTADO",
+            "avatar_url": "",
+            "type": "agent_bot"
+          }
+        },
+        {
+          "id": 2443,
+          "content": "[contenido del lead redactado]",
+          "inbox_id": 9,
+          "conversation_id": 194,
+          "message_type": 0,
+          "content_type": "text",
+          "status": "sent",
+          "content_attributes": {
+            "in_reply_to_external_id": "wamid.REDACTADO",
+            "in_reply_to": 2442
+          },
+          "created_at": 1790525849,
+          "private": false,
+          "source_id": "REDACTADO",
+          "sender": {
+            "additional_attributes": {},
+            "custom_attributes": {},
+            "email": "lead194@example.com",
+            "id": 208,
+            "identifier": null,
+            "name": "maria fernanda lopez",
+            "phone_number": "+593900000194",
+            "thumbnail": "",
+            "blocked": false,
+            "type": "contact"
+          }
+        },
+        {
+          "id": 2444,
+          "content": "[contenido del lead redactado]",
+          "inbox_id": 9,
+          "conversation_id": 194,
+          "message_type": 0,
+          "content_type": "text",
+          "status": "sent",
+          "content_attributes": {
+            "in_reply_to_external_id": "wamid.REDACTADO",
+            "in_reply_to": 2442
+          },
+          "created_at": 1790525851,
+          "private": false,
+          "source_id": "REDACTADO",
+          "sender": {
+            "additional_attributes": {},
+            "custom_attributes": {},
+            "email": "lead194@example.com",
+            "id": 208,
+            "identifier": null,
+            "name": "maria fernanda lopez",
+            "phone_number": "+593900000194",
+            "thumbnail": "",
+            "blocked": false,
+            "type": "contact"
+          }
+        },
+        {
+          "id": 2445,
+          "content": "Claro, te envío el enlace para comprar Libre de Ansiedad por USD 49. Si tienes alguna duda antes de pagar, puedes escribirme por aquí.\nhttps://pay.hotmart.com/F106691755G?off=mgbgpp19&checkoutMode=10&src=hermes&sck=SCK_ANUNCIO_REDACTADO%7Chermes%7Cv1%7C01M3HTHP0F8PVJXSNCWBSFN0W4&fbclid=FBCLID_REDACTADO",
+          "inbox_id": 9,
+          "conversation_id": 194,
+          "message_type": 1,
+          "content_type": "text",
+          "status": "read",
+          "content_attributes": {
+            "appointment_setter_reply_hash": "9c74a292d16b3e8fb09f3c0acd00a9f693331485425a1216ff02c784ad3bdec8"
+          },
+          "created_at": 1790525891,
+          "private": false,
+          "source_id": "REDACTADO",
+          "sender": {
+            "id": 1,
+            "name": "REDACTADO",
+            "avatar_url": "",
+            "type": "agent_bot"
+          }
+        }
+      ]
+    },
+    "193": {
+      "regimen_esperado": "R2",
+      "conversation": {
+        "meta": {
+          "sender": {
+            "additional_attributes": {},
+            "availability_status": "offline",
+            "email": "lead193@example.com",
+            "id": 207,
+            "name": "JUAN CARLOS PEREZ",
+            "phone_number": "+593900000193",
+            "blocked": false,
+            "identifier": null,
+            "thumbnail": "",
+            "custom_attributes": {},
+            "last_activity_at": 1790518112,
+            "created_at": 1790518097
+          },
+          "channel": "Channel::Whatsapp",
+          "hmac_verified": false
+        },
+        "id": 193,
+        "messages": [
+          {
+            "id": 2439,
+            "content": "¿Te interesa que te envíe el enlace para comprarlo?",
+            "account_id": 1,
+            "inbox_id": 9,
+            "conversation_id": 193,
+            "message_type": 1,
+            "created_at": 1790518159,
+            "updated_at": "2026-09-27T18:39:16.657Z",
+            "private": false,
+            "status": "read",
+            "source_id": "REDACTADO",
+            "content_type": "text",
+            "content_attributes": {
+              "appointment_setter_reply_hash": "7c80fb1ab68c998ac6e9fa1005fa88c1e0f2988a05553c7a0a1aff26106891ba",
+              "appointment_setter_reply_batch_hash": "889494e9eeea4cafce8425256db6357185a943d77b53302b8e9310ec2af45949",
+              "appointment_setter_reply_part_index": 2,
+              "appointment_setter_reply_part_count": 2
+            },
+            "sender_type": "AgentBot",
+            "sender_id": 1,
+            "external_source_ids": {},
+            "additional_attributes": {},
+            "processed_message_content": "¿Te interesa que te envíe el enlace para comprarlo?",
+            "sentiment": {},
+            "conversation": {
+              "assignee_id": null,
+              "unread_count": 0,
+              "last_activity_at": 1790518159,
+              "contact_inbox": {
+                "source_id": "REDACTADO"
+              }
+            },
+            "sender": {
+              "id": 1,
+              "name": "REDACTADO",
+              "avatar_url": "",
+              "type": "agent_bot"
+            }
+          }
+        ],
+        "account_id": 1,
+        "uuid": "b3367732-df92-401e-a692-7945b20fc537",
+        "additional_attributes": {},
+        "agent_last_seen_at": 1790593083,
+        "assignee_last_seen_at": 0,
+        "can_reply": false,
+        "contact_last_seen_at": 0,
+        "custom_attributes": {},
+        "inbox_id": 9,
+        "labels": [],
+        "muted": false,
+        "snoozed_until": null,
+        "status": "open",
+        "created_at": 1790518098,
+        "updated_at": 1790518159.0991008,
+        "timestamp": 1790518159,
+        "first_reply_created_at": 0,
+        "unread_count": 0,
+        "last_non_activity_message": {
+          "id": 2439,
+          "content": "¿Te interesa que te envíe el enlace para comprarlo?",
+          "account_id": 1,
+          "inbox_id": 9,
+          "conversation_id": 193,
+          "message_type": 1,
+          "created_at": 1790518159,
+          "updated_at": "2026-09-27T18:39:16.657Z",
+          "private": false,
+          "status": "read",
+          "source_id": "REDACTADO",
+          "content_type": "text",
+          "content_attributes": {
+            "appointment_setter_reply_hash": "7c80fb1ab68c998ac6e9fa1005fa88c1e0f2988a05553c7a0a1aff26106891ba",
+            "appointment_setter_reply_batch_hash": "889494e9eeea4cafce8425256db6357185a943d77b53302b8e9310ec2af45949",
+            "appointment_setter_reply_part_index": 2,
+            "appointment_setter_reply_part_count": 2
+          },
+          "sender_type": "AgentBot",
+          "sender_id": 1,
+          "external_source_ids": {},
+          "additional_attributes": {},
+          "processed_message_content": "¿Te interesa que te envíe el enlace para comprarlo?",
+          "sentiment": {},
+          "conversation": {
+            "assignee_id": null,
+            "unread_count": 0,
+            "last_activity_at": 1790518159,
+            "contact_inbox": {
+              "source_id": "REDACTADO"
+            }
+          },
+          "sender": {
+            "id": 1,
+            "name": "REDACTADO",
+            "avatar_url": "",
+            "type": "agent_bot"
+          }
+        },
+        "last_activity_at": 1790518159,
+        "priority": null,
+        "waiting_since": 0,
+        "sla_policy_id": null
+      },
+      "messages": [
+        {
+          "id": 2436,
+          "content": "Hola, NOMBRE. Te escribe el equipo de la Psic. Johanna. Vimos que completaste el formulario de Libre de Ansiedad. ¿Quieres que te ayudemos a continuar? Si no deseas recibir más mensajes, responde “No más mensajes”.",
+          "inbox_id": 9,
+          "conversation_id": 193,
+          "message_type": 1,
+          "content_type": "text",
+          "status": "read",
+          "content_attributes": {
+            "recovery_first_touch_hash": "55a0b5a229c19fe41abf5b6a3564e8699cdc6ec3649fd8f2356913d712ca1dcf"
+          },
+          "created_at": 1790518098,
+          "private": false,
+          "source_id": "REDACTADO",
+          "sender": {
+            "id": 1,
+            "name": "REDACTADO",
+            "avatar_url": "",
+            "type": "agent_bot"
+          }
+        },
+        {
+          "id": 2437,
+          "content": "[contenido del lead redactado]",
+          "inbox_id": 9,
+          "conversation_id": 193,
+          "message_type": 0,
+          "content_type": "text",
+          "status": "sent",
+          "content_attributes": {},
+          "created_at": 1790518112,
+          "private": false,
+          "source_id": "REDACTADO",
+          "sender": {
+            "additional_attributes": {},
+            "custom_attributes": {},
+            "email": "lead193@example.com",
+            "id": 207,
+            "identifier": null,
+            "name": "JUAN CARLOS PEREZ",
+            "phone_number": "+593900000193",
+            "thumbnail": "",
+            "blocked": false,
+            "type": "contact"
+          }
+        },
+        {
+          "id": 2438,
+          "content": "Hola, NOMBRE. Johanna. Te escribo por Libre de Ansiedad, el programa que completaste en el formulario.",
+          "inbox_id": 9,
+          "conversation_id": 193,
+          "message_type": 1,
+          "content_type": "text",
+          "status": "read",
+          "content_attributes": {
+            "appointment_setter_reply_hash": "eddc71b10ae60a8688560bf0c4cbc589261031b0ed9e0483399331285cbb1aae",
+            "appointment_setter_reply_batch_hash": "889494e9eeea4cafce8425256db6357185a943d77b53302b8e9310ec2af45949",
+            "appointment_setter_reply_part_index": 1,
+            "appointment_setter_reply_part_count": 2
+          },
+          "created_at": 1790518155,
+          "private": false,
+          "source_id": "REDACTADO",
+          "sender": {
+            "id": 1,
+            "name": "REDACTADO",
+            "avatar_url": "",
+            "type": "agent_bot"
+          }
+        },
+        {
+          "id": 2439,
+          "content": "¿Te interesa que te envíe el enlace para comprarlo?",
+          "inbox_id": 9,
+          "conversation_id": 193,
+          "message_type": 1,
+          "content_type": "text",
+          "status": "read",
+          "content_attributes": {
+            "appointment_setter_reply_hash": "7c80fb1ab68c998ac6e9fa1005fa88c1e0f2988a05553c7a0a1aff26106891ba",
+            "appointment_setter_reply_batch_hash": "889494e9eeea4cafce8425256db6357185a943d77b53302b8e9310ec2af45949",
+            "appointment_setter_reply_part_index": 2,
+            "appointment_setter_reply_part_count": 2
+          },
+          "created_at": 1790518159,
+          "private": false,
+          "source_id": "REDACTADO",
+          "sender": {
+            "id": 1,
+            "name": "REDACTADO",
+            "avatar_url": "",
+            "type": "agent_bot"
+          }
+        }
+      ]
+    }
+  },
+  "inbox_9_message_templates": [
+    {
+      "id": "1394831152808854",
+      "name": "johanna_reactivacion_01",
+      "status": "APPROVED",
+      "category": "MARKETING",
+      "language": "es_EC",
+      "components": [
+        {
+          "text": "Hola, {{1}}. Soy el asistente virtual del equipo de la Psic. Johanna. \n\nQuedó una conversación pendiente entre nosotros y quiero retomarla. Si todavía necesitas ayuda, escríbeme por aquí y dime qué necesitas para continuar.",
+          "type": "BODY",
+          "example": {
+            "body_text": [
+              [
+                "María"
+              ]
+            ]
+          }
+        }
+      ],
+      "sub_category": "CUSTOM",
+      "parameter_format": "POSITIONAL",
+      "disable_ios_autofill": false,
+      "is_primary_device_delivery_only": false
+    },
+    {
+      "id": "1797881561222895",
+      "name": "johanna_interes_precheckout_01",
+      "status": "APPROVED",
+      "category": "MARKETING",
+      "language": "es_EC",
+      "components": [
+        {
+          "text": "Hola, {{1}}. Soy el asistente virtual del equipo de la Psic. Johanna.\n\nCompletaste el formulario para recibir información sobre {{2}}. Si tienes alguna duda, puedo ayudarte. También puedo enviarte el enlace para que continúes cuando quieras.",
+          "type": "BODY",
+          "example": {
+            "body_text": [
+              [
+                "María",
+                "Libre de ansiedad"
+              ]
+            ]
+          }
+        },
+        {
+          "type": "BUTTONS",
+          "buttons": [
+            {
+              "text": "Envíame el enlace",
+              "type": "QUICK_REPLY"
+            },
+            {
+              "text": "Necesito ayuda",
+              "type": "QUICK_REPLY"
+            },
+            {
+              "text": "No más mensajes",
+              "type": "QUICK_REPLY"
+            }
+          ]
+        }
+      ],
+      "sub_category": "CUSTOM",
+      "parameter_format": "POSITIONAL",
+      "disable_ios_autofill": false,
+      "is_primary_device_delivery_only": false
+    },
+    {
+      "id": "1072593768559796",
+      "name": "johanna_compra_fallida_01",
+      "status": "APPROVED",
+      "category": "MARKETING",
+      "language": "es_EC",
+      "components": [
+        {
+          "text": "Hola, {{1}}. Soy el asistente virtual del equipo de la Psic. Johanna.\n\nTu compra de {{2}} no pudo completarse. Si quieres intentarlo nuevamente, puedo enviarte el enlace o ayudarte con los próximos pasos.\n\nPor seguridad, no compartas datos de tu tarjeta por WhatsApp.",
+          "type": "BODY",
+          "example": {
+            "body_text": [
+              [
+                "María",
+                "Libre de Ansiedad"
+              ]
+            ]
+          }
+        },
+        {
+          "type": "BUTTONS",
+          "buttons": [
+            {
+              "text": "Envíame el enlace",
+              "type": "QUICK_REPLY"
+            },
+            {
+              "text": "Necesito ayuda",
+              "type": "QUICK_REPLY"
+            },
+            {
+              "text": "No más mensajes",
+              "type": "QUICK_REPLY"
+            }
+          ]
+        }
+      ],
+      "sub_category": "CUSTOM",
+      "parameter_format": "POSITIONAL",
+      "disable_ios_autofill": false,
+      "is_primary_device_delivery_only": false
+    },
+    {
+      "id": "2140357833568251",
+      "name": "johanna_carrito_abandonado_01",
+      "status": "APPROVED",
+      "category": "MARKETING",
+      "language": "es_EC",
+      "components": [
+        {
+          "text": "Hola, {{1}}. Soy el asistente virtual del equipo de la Psic. Johanna.\n\nTu proceso para acceder a {{2}} quedó incompleto. Si tuviste alguna duda o dificultad, puedo ayudarte. También puedo enviarte el enlace para que lo retomes cuando quieras!",
+          "type": "BODY",
+          "example": {
+            "body_text": [
+              [
+                "María",
+                "Libre de Ansiedad"
+              ]
+            ]
+          }
+        },
+        {
+          "type": "BUTTONS",
+          "buttons": [
+            {
+              "text": "Envíame el enlace",
+              "type": "QUICK_REPLY"
+            },
+            {
+              "text": "Necesito ayuda",
+              "type": "QUICK_REPLY"
+            },
+            {
+              "text": "No más mensajes",
+              "type": "QUICK_REPLY"
+            }
+          ]
+        }
+      ],
+      "sub_category": "CUSTOM",
+      "parameter_format": "POSITIONAL",
+      "disable_ios_autofill": false,
+      "is_primary_device_delivery_only": false
+    },
+    {
+      "id": "1065788459304715",
+      "name": "libre_ansiedad_test_first_touch_v1",
+      "status": "APPROVED",
+      "category": "MARKETING",
+      "language": "es_AR",
+      "components": [
+        {
+          "text": "¡Hola, {{1}}! Te habla el equipo de Johanna. Vimos que completaste el formulario de Libre de Ansiedad. ¿Te parece si avanzamos por acá?",
+          "type": "BODY",
+          "example": {
+            "body_text": [
+              [
+                "María"
+              ]
+            ]
+          }
+        }
+      ],
+      "parameter_format": "POSITIONAL",
+      "disable_ios_autofill": false,
+      "is_primary_device_delivery_only": false
+    },
+    {
+      "id": "875570985435225",
+      "name": "hello_world",
+      "status": "APPROVED",
+      "category": "UTILITY",
+      "language": "en_US",
+      "components": [
+        {
+          "text": "Hello World",
+          "type": "HEADER",
+          "format": "TEXT"
+        },
+        {
+          "text": "Welcome and congratulations!! This message demonstrates your ability to send a WhatsApp message notification from the Cloud API, hosted by Meta. Thank you for taking the time to test with us.",
+          "type": "BODY"
+        },
+        {
+          "text": "WhatsApp Business Platform sample message",
+          "type": "FOOTER"
+        }
+      ],
+      "parameter_format": "POSITIONAL",
+      "disable_ios_autofill": false,
+      "is_primary_device_delivery_only": false
+    }
+  ]
+}
