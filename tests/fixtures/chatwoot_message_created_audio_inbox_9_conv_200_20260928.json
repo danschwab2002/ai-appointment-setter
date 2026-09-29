@@ -1,0 +1,178 @@
+{
+  "_fixture": {
+    "captured_at": "2026-09-28T18:39:46Z",
+    "source": "Conversacion 200 del inbox 9 (WhatsApp Cloud, cuenta 1), en produccion: el webhook message_created del mensaje 2472 tal como el bridge lo guardo en CAPTURE_DIR el 2026-09-28 18:39:46 UTC (respuesta 202 Accepted en el log del contenedor). Saneado y extraido desde el contenedor del bridge el 2026-09-29.",
+    "why": "Es una nota de voz de 36 s que el lead mando 10 minutos despues de la plantilla de primer contacto. Llego con content null y un adjunto de audio; _shadow_context devolvio None y el worker termino sin responder, sin derivar y sin loguear. Los audios de las conversaciones 124, 138, 174 y 177 capturados antes tienen la misma forma.",
+    "shape": "content null y content_type 'text'. El adjunto viene en attachments[] de la raiz y repetido en conversation.messages[0].attachments: file_type 'audio', extension 'ogg', content_type 'audio/opus', transcribed_text vacio (Chatwoot v4.13.0 no transcribe). data_url es una URL firmada de Active Storage (/rails/active_storage/blobs/redirect/<id-firmado>/<archivo>) en el mismo host que CHATWOOT_BASE_URL; desde el contenedor del bridge responde 302 a /rails/active_storage/disk/... del mismo host y despues 200 audio/opus con 79794 bytes, contenedor OggS con OpusHead, sin autenticacion.",
+    "sanitized": "name, phone_number, email, source_id del contacto, wamid, pubsub_token, additional_attributes del contacto, y el host y la ruta firmada de data_url (reemplazados por chatwoot.example.test y SANEADO). Ids de mensaje, adjunto, conversacion, inbox y cuenta, tamanos y timestamps son los reales."
+  },
+  "webhook": {
+    "account": {
+      "id": 1,
+      "name": "Johanna Psicóloga"
+    },
+    "additional_attributes": {},
+    "content_attributes": {},
+    "content_type": "text",
+    "content": null,
+    "conversation": {
+      "additional_attributes": {},
+      "can_reply": true,
+      "channel": "Channel::Whatsapp",
+      "contact_inbox": {
+        "id": 251,
+        "contact_id": 213,
+        "inbox_id": 9,
+        "source_id": "5210000000200",
+        "created_at": "2026-09-28T18:29:32.436Z",
+        "updated_at": "2026-09-28T18:29:32.436Z",
+        "hmac_verified": false,
+        "pubsub_token": "saneado-0000000000000000"
+      },
+      "id": 200,
+      "inbox_id": 9,
+      "messages": [
+        {
+          "id": 2472,
+          "content": null,
+          "account_id": 1,
+          "inbox_id": 9,
+          "conversation_id": 200,
+          "message_type": 0,
+          "created_at": 1790620785,
+          "updated_at": "2026-09-28T18:39:45.415Z",
+          "private": false,
+          "status": "sent",
+          "source_id": "wamid.SANEADO200",
+          "content_type": "text",
+          "content_attributes": {},
+          "sender_type": "Contact",
+          "sender_id": 213,
+          "external_source_ids": {},
+          "additional_attributes": {},
+          "processed_message_content": null,
+          "sentiment": {},
+          "conversation": {
+            "assignee_id": null,
+            "unread_count": 1,
+            "last_activity_at": 1790620785,
+            "contact_inbox": {
+              "source_id": "5210000000200"
+            }
+          },
+          "attachments": [
+            {
+              "id": 260,
+              "message_id": 2472,
+              "file_type": "audio",
+              "account_id": 1,
+              "extension": "ogg",
+              "content_type": "audio/opus",
+              "data_url": "https://chatwoot.example.test/rails/active_storage/blobs/redirect/SANEADO/audio.ogg",
+              "thumb_url": "",
+              "file_size": 79794,
+              "width": null,
+              "height": null,
+              "transcribed_text": ""
+            }
+          ],
+          "sender": {
+            "additional_attributes": {
+              "avatar_url_hash": "<saneado>",
+              "last_avatar_sync_at": "<saneado>"
+            },
+            "custom_attributes": {},
+            "email": "lead200@example.invalid",
+            "id": 213,
+            "identifier": null,
+            "name": "Lead 200",
+            "phone_number": "+5210000000200",
+            "thumbnail": "",
+            "blocked": false,
+            "type": "contact"
+          }
+        }
+      ],
+      "labels": [],
+      "meta": {
+        "sender": {
+          "additional_attributes": {
+            "avatar_url_hash": "<saneado>",
+            "last_avatar_sync_at": "<saneado>"
+          },
+          "custom_attributes": {},
+          "email": "lead200@example.invalid",
+          "id": 213,
+          "identifier": null,
+          "name": "Lead 200",
+          "phone_number": "+5210000000200",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        },
+        "assignee": null,
+        "assignee_type": null,
+        "team": null,
+        "hmac_verified": false
+      },
+      "status": "open",
+      "custom_attributes": {},
+      "snoozed_until": null,
+      "unread_count": 1,
+      "first_reply_created_at": null,
+      "priority": null,
+      "waiting_since": 0,
+      "agent_last_seen_at": 0,
+      "contact_last_seen_at": 0,
+      "last_activity_at": 1790620785,
+      "timestamp": 1790620785,
+      "created_at": 1790620172,
+      "updated_at": 1790620785.544257
+    },
+    "created_at": "2026-09-28T18:39:45.415Z",
+    "id": 2472,
+    "inbox": {
+      "id": 9,
+      "name": "WABA"
+    },
+    "message_type": "incoming",
+    "private": false,
+    "sender": {
+      "account": {
+        "id": 1,
+        "name": "Johanna Psicóloga"
+      },
+      "additional_attributes": {
+        "avatar_url_hash": "<saneado>",
+        "last_avatar_sync_at": "<saneado>"
+      },
+      "avatar": "",
+      "custom_attributes": {},
+      "email": "lead200@example.invalid",
+      "id": 213,
+      "identifier": null,
+      "name": "Lead 200",
+      "phone_number": "+5210000000200",
+      "thumbnail": "",
+      "blocked": false
+    },
+    "source_id": "wamid.SANEADO200",
+    "attachments": [
+      {
+        "id": 260,
+        "message_id": 2472,
+        "file_type": "audio",
+        "account_id": 1,
+        "extension": "ogg",
+        "content_type": "audio/opus",
+        "data_url": "https://chatwoot.example.test/rails/active_storage/blobs/redirect/SANEADO/audio.ogg",
+        "thumb_url": "",
+        "file_size": 79794,
+        "width": null,
+        "height": null,
+        "transcribed_text": ""
+      }
+    ],
+    "event": "message_created"
+  }
+}

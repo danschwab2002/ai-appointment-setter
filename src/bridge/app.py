@@ -32,6 +32,12 @@ from fastapi import (
     status,
 )
 
+from bridge.audio_transcription import (
+    DEFAULT_TRANSCRIPTION_MODELS,
+    AudioTranscriber,
+    AudioTranscriptionError,
+    needs_audio_transcription,
+)
 from bridge.chatwoot import (
     ChatwootClient,
     ChatwootHistoryScanLimitError,
@@ -184,6 +190,9 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     "operator_correlation_write_enabled",
     "slack_connector_projection_enabled",
     "correlation_preresolution_enabled",
+    # Transcribir un audio no depende del aliado: la key y el host de Chatwoot
+    # ya son configuracion por runtime.
+    "chatwoot_audio_transcription_enabled",
 })
 
 _MEDICATION_GUIDANCE_SUBJECT_RE = re.compile(
@@ -498,6 +507,13 @@ class Settings:
     lead_first_name_greeting_enabled: bool = False
     lead_first_name_inference_enabled: bool = False
     lead_first_name_model_name: str | None = None
+    # Los audios entrantes se transcriben por OpenRouter antes de pasarle el
+    # mensaje al agente (ver bridge.audio_transcription). Apagado, un audio
+    # sigue sin respuesta, pero ahora deja una linea en el log.
+    chatwoot_audio_transcription_enabled: bool = False
+    openrouter_api_key: str | None = None
+    audio_transcription_models: tuple[str, ...] = DEFAULT_TRANSCRIPTION_MODELS
+    audio_transcription_cache_dir: Path = Path("./data/audio-transcriptions")
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -1070,6 +1086,23 @@ class Settings:
             or supabase_service_role_key is None
         ):
             raise ValueError("lead_first_name_configuration_incomplete")
+        chatwoot_audio_transcription_enabled = (
+            os.getenv("CHATWOOT_AUDIO_TRANSCRIPTION_ENABLED", "false").lower()
+            == "true"
+        )
+        openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "").strip() or None
+        audio_transcription_models = tuple(
+            model.strip()
+            for model in os.getenv(
+                "AUDIO_TRANSCRIPTION_MODELS",
+                ",".join(DEFAULT_TRANSCRIPTION_MODELS),
+            ).split(",")
+            if model.strip()
+        )
+        if chatwoot_audio_transcription_enabled and (
+            openrouter_api_key is None or not audio_transcription_models
+        ):
+            raise ValueError("audio_transcription_configuration_incomplete")
         if (
             not math.isfinite(correlation_preresolution_poll_interval_seconds)
             or correlation_preresolution_poll_interval_seconds <= 0
@@ -1384,6 +1417,16 @@ class Settings:
             lead_first_name_greeting_enabled=lead_first_name_greeting_enabled,
             lead_first_name_inference_enabled=lead_first_name_inference_enabled,
             lead_first_name_model_name=lead_first_name_model_name,
+            chatwoot_audio_transcription_enabled=(
+                chatwoot_audio_transcription_enabled
+            ),
+            openrouter_api_key=openrouter_api_key,
+            audio_transcription_models=audio_transcription_models,
+            audio_transcription_cache_dir=Path(
+                os.getenv(
+                    "AUDIO_TRANSCRIPTION_CACHE_DIR", "./data/audio-transcriptions"
+                )
+            ),
             chatwoot_scoped_inbound_senders_enabled=(
                 os.getenv(
                     "CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED", "false"
@@ -1768,6 +1811,7 @@ def create_app(
     message_sender: MessageSender | None = None,
     slack_runtime: SlackBridgeRuntime | None = None,
     lead_first_name_client: FirstNameInferenceClient | None = None,
+    audio_transcriber: AudioTranscriber | None = None,
 ) -> FastAPI:
     boolean_fields = [
         field
@@ -2298,6 +2342,24 @@ def create_app(
         or settings.operator_correlation_write_enabled
     ) and shared_supabase is None:
         raise ValueError("operator correlation access requires Supabase")
+    if not settings.chatwoot_audio_transcription_enabled:
+        audio_transcriber = None
+    elif audio_transcriber is None:
+        # El audio se baja del mismo host que la API de Chatwoot: data_url es
+        # una URL firmada de Active Storage en ese host (medido el 2026-09-28).
+        media_host = (
+            urlparse(settings.chatwoot_base_url).hostname
+            if settings.chatwoot_base_url
+            else None
+        )
+        if settings.openrouter_api_key is None or not media_host:
+            raise ValueError("audio_transcription_configuration_incomplete")
+        audio_transcriber = AudioTranscriber(
+            api_key=settings.openrouter_api_key,
+            models=settings.audio_transcription_models,
+            media_host=media_host,
+            cache_dir=settings.audio_transcription_cache_dir,
+        )
     if not settings.lead_first_name_inference_enabled:
         lead_first_name_client = None
     elif lead_first_name_client is None:
@@ -3074,6 +3136,10 @@ def create_app(
             raise RetryableChatwootWorkError(
                 "chatwoot_canonical_history_unavailable"
             ) from exc
+        if audio_transcriber is not None:
+            # Sin esto, la normalizacion saltea todo mensaje sin texto: un audio
+            # desaparece del historial y el agente nunca sabe que existio.
+            history = await audio_transcriber.enrich_history(history)
         normalized = _normalize_chatwoot_history(
             history,
             agent_bot_id=settings.agent_bot_id,
@@ -3618,26 +3684,65 @@ def create_app(
                 or admission.outcome in {"evidence_conflict", "blocked"}
             ):
                 return
+        audio_handoff_reason: str | None = None
+        if audio_transcriber is not None and needs_audio_transcription(payload):
+            try:
+                transcript = await audio_transcriber.transcribe_message(payload)
+            except AudioTranscriptionError as exc:
+                logger.warning(
+                    "chatwoot_audio_transcription_failed message=%s reason=%s",
+                    payload.get("id"),
+                    exc.reason,
+                )
+                audio_handoff_reason = "audio_transcription_failed"
+            else:
+                payload = {**payload, "content": transcript}
         context = _shadow_context(payload)
-        if context is None:
+        if context is None and audio_handoff_reason is None:
+            # Un entrante sin texto (audio con la transcripcion apagada, imagen,
+            # sticker) no llega al agente. Antes salia de aca sin dejar rastro:
+            # asi se perdieron cinco audios entre el 22 y el 28/09/2026.
+            logger.warning(
+                "chatwoot_inbound_without_text_ignored message=%s",
+                payload.get("id"),
+            )
             return
-        if settings.payment_link_enabled:
-            context["payment_link_action"] = {
-                "enabled": True,
-                "decision": "send_payment_link",
-                "bridge_injects_exact_url": True,
-                "agent_must_not_include_url": True,
+        if audio_handoff_reason is not None:
+            # Fallaron todos los modelos: el audio no se entiende y el agente no
+            # puede contestar algo que no leyo. Lo toma una persona.
+            if not settings.human_handoff_admission_enabled or admission is None:
+                logger.warning(
+                    "chatwoot_audio_handoff_unavailable message=%s",
+                    payload.get("id"),
+                )
+                return
+            completed_proposal: dict[str, object] | None = {
+                "decision": "handoff",
+                "reply": "",
+                "qualification_status": "needs_human",
+                "reason_code": audio_handoff_reason,
             }
-        completed_proposal = (
-            shadow_processor.get_completed_proposal(delivery_id=delivery_id)
-            if shadow_processor is not None
-            else None
-        )
-        must_scan_canonical_history = opt_out_enforcement_enabled or (
-            shadow_processor is not None
-            and not shadow_processor.has_result(delivery_id=delivery_id)
-        )
+            must_scan_canonical_history = False
+        else:
+            assert context is not None
+            if settings.payment_link_enabled:
+                context["payment_link_action"] = {
+                    "enabled": True,
+                    "decision": "send_payment_link",
+                    "bridge_injects_exact_url": True,
+                    "agent_must_not_include_url": True,
+                }
+            completed_proposal = (
+                shadow_processor.get_completed_proposal(delivery_id=delivery_id)
+                if shadow_processor is not None
+                else None
+            )
+            must_scan_canonical_history = opt_out_enforcement_enabled or (
+                shadow_processor is not None
+                and not shadow_processor.has_result(delivery_id=delivery_id)
+            )
         if must_scan_canonical_history:
+            assert context is not None
             message_id = payload.get("id")
             canonical_result = await run_shadow_with_canonical_history(
                 delivery_id=delivery_id,
@@ -4911,6 +5016,10 @@ def create_app(
             and (
                 context is not None
                 or settings.chatwoot_cut_b_admission_enabled
+                or (
+                    audio_transcriber is not None
+                    and needs_audio_transcription(payload)
+                )
             )
         ):
             admitted = chatwoot_inbox.admit(
