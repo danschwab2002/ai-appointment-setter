@@ -1,0 +1,52 @@
+{
+  "_fixture": {
+    "captured_at": "2026-09-29T00:58:00Z",
+    "source": "POST https://openrouter.ai/api/v1/audio/transcriptions desde el contenedor del bridge (infra_appointment-bridge) con la OPENROUTER_API_KEY de produccion, el 2026-09-29. Cuerpo: {model, input_audio: {data: base64, format: 'ogg'}, language: 'es'}.",
+    "audio": "Sintetico, sin datos de nadie: la frase 'Hola, si, quiero continuar con el programa, pero tengo una duda con el precio.' generada con `say` en macOS y codificada con ffmpeg a Ogg/Opus mono 48 kHz 16 kbps (11440 bytes, 5,4 s), la misma forma que una nota de voz de WhatsApp (OggS + OpusHead).",
+    "why": "Es la respuesta del modelo principal y del de respaldo, y el rechazo real de un modelo por la politica de retencion cero (ZDR) de la cuenta: mistralai/voxtral-mini-transcribe y qwen/qwen3-asr-flash devuelven 404 zdr-violation-by-account; assemblyai/universal-3-5-pro devuelve 400 porque solo acepta wav. Pasaron el filtro y transcribieron bien: whisper-large-v3-turbo, whisper-large-v3, mai-transcribe-2, deepgram/nova-3, gpt-transcribe, gpt-4o-mini-transcribe y gemini-3.5-transcribe."
+  },
+  "response": {
+    "text": " Hola, sí, quiero continuar con el programa.  Pero tengo una duda con el precio.",
+    "usage": {
+      "seconds": 5.384,
+      "cost": 1.792872e-05
+    }
+  },
+  "fallback_response": {
+    "text": "Hola, sí, quiero continuar con el programa, pero tengo una duda con el precio.",
+    "usage": {
+      "seconds": 6,
+      "cost": 0.00016666666666666666
+    }
+  },
+  "zdr_rejection": {
+    "status": 404,
+    "body": {
+      "error": {
+        "message": "0 endpoints out of 1 requested are available matching your guardrail restrictions and data policy. We removed them for the following reasons (an endpoint may have matched multiple reasons):\nZDR violation (account settings): 1 endpoint excluded; configurable at https://openrouter.ai/settings/privacy",
+        "code": 404,
+        "metadata": {
+          "input_endpoint_count": 1,
+          "ineligibility_reasons": [
+            {
+              "reason": "zdr-violation-by-account",
+              "endpoint_count": 1,
+              "configure_url": "https://openrouter.ai/settings/privacy"
+            }
+          ],
+          "routing_funnel": [
+            {
+              "step": "Initial Endpoints",
+              "endpoint_count": 2
+            },
+            {
+              "step": "Filter by Regional Surcharge",
+              "endpoint_count": 1
+            }
+          ],
+          "failed_routing_step": "Filter by Guardrails"
+        }
+      }
+    }
+  }
+}
