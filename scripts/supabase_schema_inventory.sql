@@ -3612,6 +3612,45 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'conversation_followup_discount'
+    union all
+    select
+        '20260929000100',
+        '20260929000100_pilot_scope_additional_offers.sql',
+        (
+            select count(*) = 1
+            from pg_attribute
+            where attrelid = to_regclass('public.pilot_scope_versions')
+              and attname = 'additional_offer_codes'
+              and not attisdropped
+        )::int
+        + (
+            select count(*) = 1
+            from pg_constraint
+            where conname = 'pilot_scope_versions_additional_offer_codes_shape'
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.evaluate_lancemos_pilot_scope(text,integer,text,bigint,bigint,text,text,text,text,text,text,uuid)')
+              and prosecdef
+              and position('all(v_scope.additional_offer_codes)' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.authorize_lancemos_pilot_request_start(text,integer,text,bigint,bigint,text,text,text,text,text,text,uuid,uuid,uuid,timestamptz)')
+              and prosecdef
+              and position('all(v_scope.additional_offer_codes)' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.plan_portable_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,timestamptz,bigint,bigint,text,text,integer)')
+              and prosecdef
+              and position('all(v_runtime_binding.additional_offer_codes)' in definition) > 0
+        )::int,
+        5,
+        'pilot_scope_additional_offers'
 )
 select
     version,

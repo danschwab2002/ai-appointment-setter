@@ -199,13 +199,13 @@ await db.exec(`
     max_cohort_contacts,
     max_outbound_request_starts_total,
     max_outbound_request_starts_per_day,
-    approved_by, approved_at, published_at
+    approved_by, approved_at, published_at, additional_offer_codes
   ) values (
     'lancemos-cart-recovery', 1, 'published', 'lancemos',
     10, 20, 'whatsapp', 'waba', 'opaque-number-ref',
     'hotmart', 'PURCHASE_OUT_OF_SHOPPING_CART', '3526906', 'offer-1',
     'cart_recovery', 'cart-recovery-test', 1, 'America/Argentina/Buenos_Aires',
-    2, 2, 1, 'operator-test', now(), now()
+    2, 2, 1, 'operator-test', now(), now(), '{offer3}'
   );
 
   insert into public.pilot_runtime_controls (
@@ -278,6 +278,29 @@ const wrongOffer = await evaluate({ offerCode: 'offer-2' });
 if (wrongOffer.allowed !== false || wrongOffer.reason_code !== 'pilot_offer_mismatch') {
   throw new Error('wrong offer did not fail closed');
 }
+// 20260929000100: una oferta adicional del scope pasa la frontera; una ajena sigue afuera.
+const additionalOffer = await evaluate({ offerCode: 'offer3' });
+if (additionalOffer.allowed !== true || additionalOffer.reason_code !== 'pilot_scope_allowed') {
+  throw new Error(`additional scope offer was not accepted: ${JSON.stringify(additionalOffer)}`);
+}
+const OFFER_PROBE_ACTION = '30000000-0000-0000-0000-000000000009';
+const OFFER_PROBE_ATTEMPT = '40000000-0000-0000-0000-000000000009';
+const wrongOfferStart = await authorize(OFFER_PROBE_ATTEMPT, NOW, {
+  actionId: OFFER_PROBE_ACTION, offerCode: 'offer-2',
+});
+if (wrongOfferStart.authorized !== false
+    || wrongOfferStart.reason_code !== 'pilot_offer_mismatch') {
+  throw new Error('request start with a foreign offer did not fail closed');
+}
+const additionalOfferStart = await authorize(OFFER_PROBE_ATTEMPT, NOW, {
+  actionId: OFFER_PROBE_ACTION, offerCode: 'offer3',
+});
+if (additionalOfferStart.authorized !== false
+    || additionalOfferStart.reason_code !== 'pilot_attempt_mismatch') {
+  // Sin caso ni intento reales solo puede fallar DESPUES de la puerta de oferta.
+  throw new Error(`additional offer did not pass the request-start offer gate: ${JSON.stringify(additionalOfferStart)}`);
+}
+console.log('pilot_scope_additional_offers=OK');
 const outsideCohort = await evaluate({ contactId: CONTACT_3 });
 if (outsideCohort.allowed !== false
     || outsideCohort.reason_code !== 'pilot_contact_not_in_cohort') {
@@ -632,4 +655,46 @@ if (auditCounts.pilot_runtime_state_changed !== 3
   throw new Error(`unexpected pilot audit counts: ${JSON.stringify(auditCounts)}`);
 }
 console.log('pilot_immutability_and_audit=OK');
+
+// La forma del conjunto de ofertas del scope la valida la base (20260929000100).
+for (const [label, additional] of [
+  ['repeats the default offer', ['offer-1']],
+  ['malformed code', ['bad code']],
+  ['null entry', ['offer4', null]],
+]) {
+  let rejected = false;
+  await db.exec('begin');
+  try {
+    await db.query(`
+      insert into public.pilot_scope_versions (
+        scope_key, version, status, tenant_key, chatwoot_account_id, chatwoot_inbox_id,
+        channel, channel_provider, channel_account_ref, source, source_event_type,
+        external_product_id, offer_code, purpose, policy_key, policy_version, timezone,
+        max_cohort_contacts, max_outbound_request_starts_total,
+        max_outbound_request_starts_per_day, additional_offer_codes
+      ) values (
+        'lancemos-shape-probe', 1, 'draft', 'lancemos', 10, 20, 'whatsapp', 'waba',
+        'opaque-number-ref', 'hotmart', 'PURCHASE_OUT_OF_SHOPPING_CART', '3526906',
+        'offer-1', 'cart_recovery', 'cart-recovery-test', 1, 'UTC', 1, 1, 1, $1::text[]
+      )
+    `, [additional]);
+  } catch {
+    rejected = true;
+  } finally {
+    await db.exec('rollback');
+  }
+  if (!rejected) throw new Error(`scope additional offers with ${label} were accepted`);
+}
+for (const signature of [
+  'public.evaluate_lancemos_pilot_scope(text,integer,text,bigint,bigint,text,text,text,text,text,text,uuid)',
+  'public.authorize_lancemos_pilot_request_start(text,integer,text,bigint,bigint,text,text,text,text,text,text,uuid,uuid,uuid,timestamptz)',
+]) {
+  const definition = (await db.query(
+    `select pg_get_functiondef(to_regprocedure($1)) def`, [signature],
+  )).rows[0]?.def ?? '';
+  if (!definition.includes('all(v_scope.additional_offer_codes)')) {
+    throw new Error(`${signature} still compares against the single scope offer`);
+  }
+}
+console.log('pilot_scope_offer_set_shape=OK');
 console.log('LANCEMOS_PILOT_BOUNDARY_OK');
