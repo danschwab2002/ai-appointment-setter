@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import re
 import tomllib
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
@@ -29,10 +30,32 @@ def _load(payload: dict) -> InstanceManifest:
     return InstanceManifest.from_mapping(payload)
 
 
-def test_johanna_manifest_produces_exactly_the_binding_in_code() -> None:
+def test_johanna_manifest_produces_the_binding_in_code_plus_its_other_landing_offers() -> None:
     manifest = InstanceManifest.from_toml_file(FIXTURES / "johanna" / "instancia.toml")
 
-    assert manifest.to_commercial_ally_config() == JOHANNA_COMMERCIAL_ALLY
+    binding = manifest.to_commercial_ally_config()
+
+    # Johanna corre hoy desde el codigo, con una sola oferta en el binding. Lo unico
+    # que el manifiesto suma son sus otras cinco landings (F2c): es lo que gana al
+    # mudarse al manifiesto (F5). Nada mas cambia.
+    assert binding.additional_offer_codes == (
+        "mgbgpp19",
+        "s1qfxm7m",
+        "jtt6fcsm",
+        "ecyu87q0",
+        "ulhzpw9a",
+    )
+    assert replace(binding, additional_offer_codes=()) == JOHANNA_COMMERCIAL_ALLY
+
+
+def test_att1_binding_accepts_the_three_landing_offers() -> None:
+    manifest = InstanceManifest.from_toml_file(FIXTURES / "att1" / "instancia.toml")
+
+    binding = manifest.to_commercial_ally_config()
+
+    assert binding.offer_code == "gopi6lh7"
+    assert binding.additional_offer_codes == ("bmaztyhg", "2uafw5bg")
+    assert binding.accepted_offer_codes == ("gopi6lh7", "bmaztyhg", "2uafw5bg")
 
 
 def test_johanna_manifest_carries_the_six_landing_offers_in_code() -> None:

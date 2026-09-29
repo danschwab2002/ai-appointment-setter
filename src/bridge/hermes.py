@@ -201,10 +201,15 @@ class HermesShadowProcessor:
         transport: httpx.AsyncBaseTransport | None = None,
         timeout_seconds: float = 60.0,
         provenance_recorder: TurnProvenanceRecorder | None = None,
+        system_prompt: str | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._model_name = model_name
+        # El conocimiento comercial de la instancia (contracts/commercial-knowledge-v1).
+        # Hermes apila los mensajes `system` sobre el prompt del profile, asi que el
+        # SOUL comun no cambia y cada instancia pone lo suyo.
+        self._system_prompt = system_prompt
         self._shadow_dir = shadow_dir
         self._transport = transport
         self._timeout_seconds = timeout_seconds
@@ -347,12 +352,17 @@ class HermesShadowProcessor:
                             "model": self._model_name,
                             "stream": False,
                             "messages": [
+                                *(
+                                    [{"role": "system", "content": self._system_prompt}]
+                                    if self._system_prompt
+                                    else []
+                                ),
                                 {
                                     "role": "user",
                                     "content": json.dumps(
                                         context, ensure_ascii=False
                                     ),
-                                }
+                                },
                             ],
                         },
                     )

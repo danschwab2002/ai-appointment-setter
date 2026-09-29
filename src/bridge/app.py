@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, fields as dataclass_fields
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import MappingProxyType
 from typing import AsyncGenerator, Awaitable, Callable, Protocol
 from urllib.parse import urlparse
 
@@ -59,6 +60,8 @@ from bridge.followup_discount import (
 )
 from bridge.reactivation import ConversationReactivationSweeper
 from bridge.commercial_ally import CommercialAllyConfig, JOHANNA_COMMERCIAL_ALLY
+from bridge.commercial_knowledge import CommercialKnowledge
+from bridge.instance_manifest import InstanceManifest
 from bridge.checkout_delivery import CheckoutDeliveryError, deliver_checkout_issuance_v2
 from bridge.filtering import EventDecision, classify_chatwoot_event
 from bridge.agent_provenance import AgentTurn, CONTEXT_BUILDER_VERSION
@@ -195,26 +198,43 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     "chatwoot_audio_transcription_enabled",
 })
 
-_MEDICATION_GUIDANCE_SUBJECT_RE = re.compile(
-    r"\b(?:medicacion|medicamento|farmaco|pastilla|antidepresiv|ansiolitic)\w*\b"
+DEFAULT_SENSITIVE_SUBJECTS = (
+    "medicacion", "medicamento", "farmaco", "pastilla", "antidepresiv", "ansiolitic",
 )
-_MEDICATION_GUIDANCE_ACTION_RE = re.compile(
-    r"\b(?:dejar|suspender|interrumpir|cambiar|reducir|aumentar|tomar|dosis|dosificacion)\w*\b"
+DEFAULT_SENSITIVE_ACTIONS = (
+    "dejar", "suspender", "interrumpir", "cambiar", "reducir", "aumentar",
+    "tomar", "dosis", "dosificacion",
 )
 
 
-def _requires_medication_guidance_handoff(content: object) -> bool:
-    if not isinstance(content, str):
-        return False
-    normalized = "".join(
+def _fold(text: str) -> str:
+    return "".join(
         character
-        for character in unicodedata.normalize("NFKD", content.casefold())
+        for character in unicodedata.normalize("NFKD", text.casefold())
         if not unicodedata.combining(character)
     )
-    return bool(
-        _MEDICATION_GUIDANCE_SUBJECT_RE.search(normalized)
-        and _MEDICATION_GUIDANCE_ACTION_RE.search(normalized)
+
+
+def _stem_pattern(stems: tuple[str, ...]) -> re.Pattern[str]:
+    return re.compile(
+        r"\b(?:" + "|".join(re.escape(_fold(stem)) for stem in stems) + r")\w*\b"
     )
+
+
+_MEDICATION_GUIDANCE_SUBJECT_RE = _stem_pattern(DEFAULT_SENSITIVE_SUBJECTS)
+_MEDICATION_GUIDANCE_ACTION_RE = _stem_pattern(DEFAULT_SENSITIVE_ACTIONS)
+
+
+def _requires_medication_guidance_handoff(
+    content: object,
+    *,
+    subject_re: re.Pattern[str] = _MEDICATION_GUIDANCE_SUBJECT_RE,
+    action_re: re.Pattern[str] = _MEDICATION_GUIDANCE_ACTION_RE,
+) -> bool:
+    if not isinstance(content, str):
+        return False
+    normalized = _fold(content)
+    return bool(subject_re.search(normalized) and action_re.search(normalized))
 
 
 class CanonicalHistoryIncompleteError(RetryableChatwootWorkError):
@@ -337,6 +357,11 @@ class Settings:
     max_age_seconds: int
     commercial_ally_config: CommercialAllyConfig = JOHANNA_COMMERCIAL_ALLY
     commercial_ally_manifest_path: Path | None = None
+    # Manifiesto de instancia v2 (INSTANCE_MANIFEST_PATH). Cuando esta, el binding
+    # sale de el y sus flujos declarados son el techo de los flags del runtime.
+    instance_manifest: InstanceManifest | None = None
+    # Conocimiento comercial aprobado de la instancia, que viaja como `system`.
+    commercial_knowledge: CommercialKnowledge | None = None
     agent_bot_id: int | None = None
     chatwoot_base_url: str | None = None
     chatwoot_account_id: int | None = None
@@ -520,11 +545,35 @@ class Settings:
         commercial_ally_config_path = os.getenv(
             "COMMERCIAL_ALLY_CONFIG_PATH", ""
         ).strip()
-        commercial_ally_config = (
-            CommercialAllyConfig.from_json_file(Path(commercial_ally_config_path))
-            if commercial_ally_config_path
-            else JOHANNA_COMMERCIAL_ALLY
+        instance_manifest_path = os.getenv("INSTANCE_MANIFEST_PATH", "").strip()
+        if instance_manifest_path and commercial_ally_config_path:
+            raise ValueError(
+                "INSTANCE_MANIFEST_PATH and COMMERCIAL_ALLY_CONFIG_PATH are "
+                "mutually exclusive"
+            )
+        instance_manifest = (
+            InstanceManifest.from_toml_file(Path(instance_manifest_path))
+            if instance_manifest_path
+            else None
         )
+        if instance_manifest is not None:
+            commercial_ally_config = instance_manifest.to_commercial_ally_config()
+        else:
+            commercial_ally_config = (
+                CommercialAllyConfig.from_json_file(Path(commercial_ally_config_path))
+                if commercial_ally_config_path
+                else JOHANNA_COMMERCIAL_ALLY
+            )
+        commercial_knowledge: CommercialKnowledge | None = None
+        if os.getenv("COMMERCIAL_KNOWLEDGE_ENABLED", "false").lower() == "true":
+            if instance_manifest is None:
+                raise ValueError(
+                    "COMMERCIAL_KNOWLEDGE_ENABLED requires INSTANCE_MANIFEST_PATH"
+                )
+            commercial_knowledge = CommercialKnowledge.from_toml_file(
+                Path(instance_manifest_path).parent
+                / instance_manifest.agent_knowledge_path
+            )
         shadow_enabled = os.getenv("HERMES_SHADOW_ENABLED", "false").lower() == "true"
         automated_replies_enabled = (
             os.getenv("CHATWOOT_AUTOMATED_REPLIES_ENABLED", "false").lower()
@@ -860,7 +909,7 @@ class Settings:
             commercial_ally_config.chatwoot_account_id,
             commercial_ally_config.chatwoot_inbox_id,
         )
-        if commercial_ally_config_path:
+        if commercial_ally_config_path or instance_manifest_path:
             if configured_chatwoot_scope != expected_chatwoot_scope:
                 raise ValueError(
                     "Chatwoot account and inbox must match commercial ally config"
@@ -1121,10 +1170,12 @@ class Settings:
             max_age_seconds=int(os.getenv("WEBHOOK_MAX_AGE_SECONDS", "300")),
             commercial_ally_config=commercial_ally_config,
             commercial_ally_manifest_path=(
-                Path(commercial_ally_config_path)
-                if commercial_ally_config_path
+                Path(instance_manifest_path or commercial_ally_config_path)
+                if instance_manifest_path or commercial_ally_config_path
                 else None
             ),
+            instance_manifest=instance_manifest,
+            commercial_knowledge=commercial_knowledge,
             agent_bot_id=int(os.environ["CHATWOOT_AGENT_BOT_ID"]),
             chatwoot_base_url=os.environ["CHATWOOT_BASE_URL"],
             chatwoot_account_id=chatwoot_account_id,
@@ -1799,6 +1850,53 @@ def _sent_at(message: dict[str, str]) -> dict[str, str]:
     return {"sent_at": stamp.strftime("%Y-%m-%dT%H:%M:%SZ")}
 
 
+# Que flujo declarado del manifiesto habilita cada flag del runtime. Un flag
+# prendido con su flujo en false no arranca: el manifiesto de la instancia es el
+# techo de lo que el runtime puede hacer (docs/referencia-manifiesto.md).
+_FLAG_REQUIRED_FLOW = MappingProxyType({
+    "automated_replies_enabled": "inbound",
+    "chatwoot_cut_b_agent_enabled": "inbound",
+    "payment_link_enabled": "inbound",
+    "portable_hotmart_recovery_enabled": "carrito",
+    "portable_hotmart_payment_failure_enabled": "pago_fallido",
+    "conversation_reactivation_enabled": "reactivacion",
+    "chatwoot_post_inbound_discount_planning_enabled": "descuento",
+})
+_OUTBOUND_FLOWS = ("precheckout", "carrito", "pago_fallido", "reactivacion", "descuento")
+
+
+def _validate_instance_manifest_gates(settings: Settings) -> None:
+    manifest = settings.instance_manifest
+    assert manifest is not None
+    if settings.hermes_model_name != manifest.agent_model_name:
+        raise ValueError(
+            "HERMES_MODEL_NAME must match the instance manifest agent model"
+        )
+    knowledge = settings.commercial_knowledge
+    if knowledge is not None and knowledge.ally_ref != manifest.ally_ref:
+        raise ValueError("commercial knowledge belongs to another ally")
+    blocked = sorted(
+        f"{flag}->{flow}"
+        for flag, flow in _FLAG_REQUIRED_FLOW.items()
+        if getattr(settings, flag) is True and not manifest.flows[flow]
+    )
+    if settings.lead_precheckout_enabled and "intencion" not in manifest.events:
+        blocked.append("lead_precheckout_enabled->intencion")
+    if settings.meta_final_effect_enabled and not any(
+        manifest.flows[flow] for flow in _OUTBOUND_FLOWS
+    ):
+        blocked.append("meta_final_effect_enabled->outbound")
+    if blocked:
+        raise ValueError(
+            "runtime flags exceed the instance manifest flows: " + ", ".join(blocked)
+        )
+    if settings.automated_replies_enabled and knowledge is None:
+        raise ValueError(
+            "automated replies with an instance manifest require "
+            "COMMERCIAL_KNOWLEDGE_ENABLED"
+        )
+
+
 def create_app(
     settings: Settings,
     *,
@@ -1843,6 +1941,29 @@ def create_app(
             "PAYMENT_LINK_ENABLED requires scoped Cut B admission, agent and replies"
         )
     explicit_manifest_runtime = settings.commercial_ally_manifest_path is not None
+    if settings.instance_manifest is not None:
+        _validate_instance_manifest_gates(settings)
+    elif settings.commercial_knowledge is not None:
+        raise ValueError("commercial knowledge requires an instance manifest")
+    medication_subject_re = _MEDICATION_GUIDANCE_SUBJECT_RE
+    medication_action_re = _MEDICATION_GUIDANCE_ACTION_RE
+    instance_readiness: dict[str, str] = {}
+    if settings.instance_manifest is not None:
+        medication_subject_re = _stem_pattern(
+            settings.instance_manifest.sensitive_subjects
+        )
+        medication_action_re = _stem_pattern(
+            settings.instance_manifest.sensitive_actions
+        )
+        instance_readiness = {
+            "instance_ally": settings.instance_manifest.ally_ref,
+            "instance_product_version": settings.instance_manifest.product_version,
+        }
+    if settings.commercial_knowledge is not None:
+        instance_readiness["commercial_knowledge"] = (
+            f"v{settings.commercial_knowledge.version}:"
+            f"{settings.commercial_knowledge.rendered_sha256}"
+        )
     portable_dynamic_recipient = (
         explicit_manifest_runtime
         and (
@@ -1916,7 +2037,10 @@ def create_app(
                 "post-inbound discount planning requires an explicit commercial "
                 "ally manifest"
             )
-        if settings.commercial_ally_config.tenant_ref != "att1":
+        if (
+            settings.instance_manifest is None
+            and settings.commercial_ally_config.tenant_ref != "att1"
+        ):
             raise ValueError(
                 "post-inbound discount planning is restricted to ATT1"
             )
@@ -3769,7 +3893,11 @@ def create_app(
         if (
             settings.human_handoff_admission_enabled
             and completed_proposal.get("decision") != "handoff"
-            and _requires_medication_guidance_handoff(payload.get("content"))
+            and _requires_medication_guidance_handoff(
+                payload.get("content"),
+                subject_re=medication_subject_re,
+                action_re=medication_action_re,
+            )
         ):
             # El motivo tambien se reescribe: si solo cambiara la decision, la
             # fila y la nota se quedarian con el reason_code que el agente habia
@@ -4756,6 +4884,10 @@ def create_app(
             commercial_ally_readiness = {
                 "commercial_ally_binding": "active",
             }
+        commercial_ally_readiness = {
+            **commercial_ally_readiness,
+            **instance_readiness,
+        }
         precheckout_readiness: dict[str, str] = {
             "precheckout_delayed_first_touch": "disabled",
         }
@@ -6442,10 +6574,18 @@ def build_app() -> FastAPI:
     if settings.hermes_shadow_enabled:
         if settings.hermes_api_base_url is None or settings.hermes_api_key is None:
             raise ValueError("Hermes shadow settings are incomplete")
+        # Sin conocimiento de instancia el procesador se arma igual que siempre:
+        # el pedido a Hermes de un runtime sin manifiesto no cambia.
+        knowledge_kwargs = (
+            {"system_prompt": settings.commercial_knowledge.render()}
+            if settings.commercial_knowledge is not None
+            else {}
+        )
         shadow_processor = HermesShadowProcessor(
             base_url=settings.hermes_api_base_url,
             api_key=settings.hermes_api_key,
             model_name=settings.hermes_model_name,
             shadow_dir=settings.shadow_dir,
+            **knowledge_kwargs,
         )
     return create_app(settings, shadow_processor=shadow_processor)

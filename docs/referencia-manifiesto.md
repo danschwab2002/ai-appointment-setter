@@ -113,4 +113,4 @@ Un mensaje que nombra un término junto con una acción se deriva a una persona 
 
 ## Relación con el binding v1
 
-Mientras los caminos del bridge lean el binding de una aliada (`CommercialAllyConfig`, `docs/contracts/commercial-ally-runtime-v1.md`), el manifiesto v2 se traduce a él con la oferta por defecto. El test `test_johanna_manifest_produces_exactly_the_binding_in_code` prueba que el manifiesto de Johanna produce exactamente el binding que hoy está en el código.
+Mientras los caminos del bridge lean el binding de una aliada (`CommercialAllyConfig`, `docs/contracts/commercial-ally-runtime-v1.md`), el manifiesto v2 se traduce a él: la oferta por defecto es la del binding, y las demás landings van en `additional_offer_codes`, así un carrito o un pago fallido que entra por cualquier landing de la instancia se admite. El test `test_johanna_manifest_produces_the_binding_in_code_plus_its_other_landing_offers` prueba que el manifiesto de Johanna produce el binding que hoy está en el código, y que lo único que suma son sus otras cinco landings.

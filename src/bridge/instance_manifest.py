@@ -159,7 +159,12 @@ class InstanceManifest:
         return tuple(missing)
 
     def to_commercial_ally_config(self) -> CommercialAllyConfig:
-        """El binding v1 que leen hoy los caminos del bridge, con la oferta por defecto."""
+        """El binding v1 que leen hoy los caminos del bridge.
+
+        La oferta por defecto es la del binding; las demas landings van en
+        ``additional_offer_codes`` (F2c), asi un carrito o un pago fallido que
+        entra por cualquier landing de la instancia se admite.
+        """
 
         offer = self.default_offer
         return CommercialAllyConfig(
@@ -177,6 +182,9 @@ class InstanceManifest:
             product_price=self.price,
             currency=self.currency,
             offer_code=offer.code,
+            additional_offer_codes=tuple(
+                other.code for other in self.offers if other is not offer
+            ),
             consent_copy_version=self.consent_copy_version,
             hotmart_product_id=self.hotmart_product_id,
             chatwoot_account_id=self.chatwoot_account_id,
