@@ -21,12 +21,13 @@ El bridge lee el manifiesto de la instancia. Es la primera versión con la que u
 - `/ready` informa `instance_ally`, `instance_product_version` y `commercial_knowledge` (versión y hash del bloque).
 - SOUL común del agente comercial en `profiles/agente-comercial-comun/SOUL.md`: el de Johanna sin lo que es de Johanna, con un test que compara las secciones invariantes byte a byte.
 - `docs/instalar.md`: la guía de instalación, escrita paso a paso con ATT1.
+- La frontera del piloto acepta varias ofertas por scope (migración `20260929000100`): `pilot_scope_versions.additional_offer_codes`, con la misma forma que en el binding. Sin eso, un carrito o un pago fallido de una landing que no es la de la oferta por defecto pasaba la admisión y moría al planificarse (`pilot_offer_mismatch`, `payment_failure_scope_binding_mismatch`) o al arrancar el envío. Los scopes existentes quedan con el conjunto vacío: Johanna no cambia.
 
 ### Qué tiene que hacer una instancia
 
 - Nada, si no usa manifiesto: Johanna sigue con el binding del código.
 - Una instancia nueva monta `instancia.toml`, define `INSTANCE_MANIFEST_PATH` y, para responder automáticamente, `COMMERCIAL_KNOWLEDGE_ENABLED=true` con el conocimiento en `estado = "aprobado"`.
-- Nada en la base.
+- En la base: aplicar la migración `20260929000100` (agrega una columna con valor por defecto; no toca filas). Una instancia con más de una landing carga en su scope del piloto las otras ofertas en `additional_offer_codes`; el scope todavía se siembra a mano (no lo crea ninguna migración del producto ni la guía).
 
 ## [1.0.0] - 2026-09-28
 
