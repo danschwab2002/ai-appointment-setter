@@ -3651,6 +3651,45 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         5,
         'pilot_scope_additional_offers'
+    union all
+    select
+        '20260929000200',
+        '20260929000200_pilot_scope_additional_source_events.sql',
+        (
+            select count(*) = 1
+            from pg_attribute
+            where attrelid = to_regclass('public.pilot_scope_versions')
+              and attname = 'additional_source_event_types'
+              and not attisdropped
+        )::int
+        + (
+            select count(*) = 1
+            from pg_constraint
+            where conname = 'pilot_scope_versions_additional_source_event_types_shape'
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.evaluate_lancemos_pilot_scope(text,integer,text,bigint,bigint,text,text,text,text,text,text,uuid)')
+              and prosecdef
+              and position('all(v_scope.additional_source_event_types)' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.authorize_lancemos_pilot_request_start(text,integer,text,bigint,bigint,text,text,text,text,text,text,uuid,uuid,uuid,timestamptz)')
+              and prosecdef
+              and position('all(v_scope.additional_source_event_types)' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_lancemos_pilot_runtime_status(text,integer,text,text,text)')
+              and prosecdef
+              and position('all(v_scope.additional_source_event_types)' in definition) > 0
+        )::int,
+        5,
+        'pilot_scope_additional_source_events'
 )
 select
     version,

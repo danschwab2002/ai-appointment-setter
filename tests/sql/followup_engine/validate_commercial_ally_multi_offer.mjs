@@ -4,7 +4,8 @@
 // - la forma de `additional_offer_codes` la valida la base;
 // - carrito y pago fallido admiten una oferta adicional del binding, con el scope
 //   de ESA oferta, y rechazan una oferta ajena sin dejar eventos;
-// - la compra aprobada entra con cualquier oferta del producto (frena igual).
+// - la compra aprobada entra con cualquier oferta del producto (frena igual);
+// - la frontera del piloto acepta ofertas y tipos de evento adicionales del scope.
 import { PGlite } from '@electric-sql/pglite';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -300,12 +301,125 @@ if (!planDefinition.includes('all(v_scope.additional_offer_codes)')
   throw new Error('plan_portable_payment_failure_recovery still requires the single offer');
 }
 
+// 7. 20260929000200: un scope de carrito que suma PURCHASE_CANCELED planifica
+// tambien el pago fallido, con la misma politica; el de carrito solo lo rechaza.
+await db.exec(`
+  insert into public.pilot_scope_versions
+    (scope_key, version, status, tenant_key, chatwoot_account_id, chatwoot_inbox_id,
+     channel, channel_provider, channel_account_ref, source, source_event_type,
+     external_product_id, offer_code, purpose, policy_key, policy_version, timezone,
+     max_cohort_contacts, max_outbound_request_starts_total,
+     max_outbound_request_starts_per_day, approved_by, approved_at, published_at,
+     additional_offer_codes, additional_source_event_types)
+  values
+    ('att1-both',1,'published','att1',42,24,'whatsapp','waba','123456','hotmart',
+     'PURCHASE_OUT_OF_SHOPPING_CART','123456','att1offer','cart_recovery',
+     'att1-recovery-policy',1,'UTC',5,5,5,'operator-test',now(),now(),
+     '{att1org}','{PURCHASE_CANCELED}'),
+    ('att1-pf-with-cart',1,'published','att1',42,24,'whatsapp','waba','123456','hotmart',
+     'PURCHASE_CANCELED','123456','att1offer','cart_recovery',
+     'att1-recovery-policy',1,'UTC',5,5,5,'operator-test',now(),now(),
+     '{att1org}','{PURCHASE_OUT_OF_SHOPPING_CART}');
+  insert into public.pilot_runtime_controls
+    (scope_key, scope_version, runtime_state, generation, changed_by, change_reason)
+  values ('att1-both',1,'inactive',0,'test','default-off'),
+         ('att1-pf-with-cart',1,'inactive',0,'test','default-off');
+`);
+for (const scope of ['att1-both', 'att1-pf-with-cart']) {
+  await db.query(`select * from public.set_lancemos_pilot_runtime_state($1,1,0,'armed','operator-test','controlled-test')`, [scope]);
+  await db.query(`select * from public.set_lancemos_pilot_cohort_member($1,1,$2,1,'active','operator-test','controlled-test')`, [scope, CONTACT]);
+}
+// Segunda persona, con su propia intencion previa: la de la primera ya quedo
+// correlacionada con el pago fallido de la seccion 6.
+const CONTACT_2 = '50000000-0000-4000-8000-000000000202';
+await db.exec(`
+  insert into public.purchase_intents
+    (tenant_ref, funnel_ref, landing_ref, product_ref, offer_ref,
+     normalized_email, normalized_phone, submitted_at, lifecycle_state,
+     whatsapp_contact_authorized, provisional, provider_observed,
+     activation_authorized)
+  values ('att1','att1-main','org','ATT1HOTLINK','att1org',
+          'buyer2@example.test','12025550124','2026-09-28T02:30:00Z','waiting_for_purchase',
+          true,false,true,true);
+  insert into public.contacts (id, full_name, email, phone)
+  values ('${CONTACT_2}','Buyer Two','buyer2@example.test','12025550124');
+`);
+for (const scope of ['att1-both', 'att1-cart-multi']) {
+  await db.query(`select * from public.set_lancemos_pilot_cohort_member($1,1,$2,2,'active','operator-test','controlled-test')`, [scope, CONTACT_2]);
+}
+const secondPayload = failure('pf-both-events', 'att1org');
+secondPayload.data.buyer = { name: 'Buyer Two', email: 'buyer2@example.test', checkout_phone: '+1 (202) 555-0124' };
+const secondFailure = (await db.query(`
+  select * from public.admit_portable_hotmart_payment_failure(
+    'att1','att1-main',1,$1,$2::jsonb,'buyer2@example.test','12025550124'
+  )
+`, [secondPayload.id, JSON.stringify(secondPayload)])).rows[0];
+if (secondFailure?.outcome !== 'inserted') {
+  throw new Error(`second payment failure was not admitted: ${JSON.stringify(secondFailure)}`);
+}
+await db.query(`
+  insert into public.contact_points
+    (contact_id,type,raw_value,normalized_value,source,source_event_id)
+  values ($1,'email','buyer2@example.test','buyer2@example.test','hotmart',$2),
+         ($1,'phone','12025550124','12025550124','hotmart',$2)
+`, [CONTACT_2, secondFailure.webhook_event_id]);
+const planSecondFailure = (scope) => db.query(`
+  select * from public.plan_portable_payment_failure_recovery(
+    $1,$2,'123456','ATT1 Offer','att1org','att1-recovery-policy',1,
+    '2026-09-28T03:00:00Z',42,24,'12025550124',$3,1
+  )
+`, [secondFailure.webhook_event_id, CONTACT_2, scope]);
+let cartOnlyPlanError = null;
+await db.exec('begin');
+try {
+  await planSecondFailure('att1-cart-multi');
+} catch (error) {
+  cartOnlyPlanError = error;
+} finally {
+  await db.exec('rollback');
+}
+if (cartOnlyPlanError?.detail !== 'pilot_source_event_mismatch') {
+  throw new Error(`cart-only scope must reject the failure by event type: ${cartOnlyPlanError?.message} ${cartOnlyPlanError?.detail}`);
+}
+const bothPlanned = (await planSecondFailure('att1-both')).rows[0];
+if (!bothPlanned?.created) {
+  throw new Error(`cart scope with PURCHASE_CANCELED did not plan the failure: ${JSON.stringify(bothPlanned)}`);
+}
+const evaluateEvent = (scope, eventType) => db.query(`
+  select * from public.evaluate_lancemos_pilot_scope(
+    $1,1,'att1',42,24,'waba','123456','hotmart',$2,'123456','att1org',$3
+  )
+`, [scope, eventType, CONTACT]);
+const bothCart = (await evaluateEvent('att1-both', 'PURCHASE_OUT_OF_SHOPPING_CART')).rows[0];
+if (bothCart?.allowed !== true) {
+  throw new Error(`scope with both event types rejected the cart: ${JSON.stringify(bothCart)}`);
+}
+const cartOnlyFailure = (await evaluateEvent('att1-cart-multi', 'PURCHASE_CANCELED')).rows[0];
+if (cartOnlyFailure?.allowed !== false || cartOnlyFailure?.reason_code !== 'pilot_source_event_mismatch') {
+  throw new Error(`cart-only scope accepted a payment failure: ${JSON.stringify(cartOnlyFailure)}`);
+}
+const runtimeStatus = async (scope) => (await db.query(`
+  select * from public.get_lancemos_pilot_runtime_status($1,1,'att1','waba','123456')
+`, [scope])).rows[0];
+const failureOnlyStatus = await runtimeStatus('att1-pf-single');
+if (failureOnlyStatus?.configured !== false || failureOnlyStatus?.reason_code !== 'pilot_scope_config_mismatch') {
+  throw new Error(`a scope without carts passed the runtime status: ${JSON.stringify(failureOnlyStatus)}`);
+}
+for (const scope of ['att1-both', 'att1-pf-with-cart']) {
+  const status = await runtimeStatus(scope);
+  if (status?.configured !== true || status?.runtime_state !== 'armed') {
+    throw new Error(`${scope} did not pass the runtime status: ${JSON.stringify(status)}`);
+  }
+}
+
 console.log(JSON.stringify({
-  migration: '20260928000200+20260929000100',
+  migration: '20260928000200+20260929000100+20260929000200',
   binding_additional_offers: resolved.additional_offer_codes,
   cart_additional_offer: cartAdmitted.outcome,
   payment_failure_additional_offer: failureAdmitted.outcome,
   purchase_foreign_offer: foreignPurchase.outcome,
   pilot_payment_failure_additional_offer_planned: failurePlanned.created,
   pilot_cart_scope_additional_offer: cartScope.reason_code,
+  pilot_scope_both_events_failure_planned: bothPlanned.created,
+  pilot_cart_only_scope_failure: cartOnlyFailure.reason_code,
 }));
