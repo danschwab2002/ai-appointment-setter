@@ -773,3 +773,29 @@ def test_one_log_line_per_request_and_never_a_value_of_the_lead(
     assert landing_d["attributionSource"]["fbclid"] not in everything
     assert "test=yes" not in everything and "utm_" not in everything
     assert TOKEN not in everything
+
+
+@pytest.mark.parametrize(
+    "medium_id",
+    [lambda body: body["email"], lambda body: body["attributionSource"]["mediumId"] + "x"],
+    ids=["el-email-del-lead", "id-de-21-caracteres"],
+)
+def test_a_medium_id_without_the_shape_of_a_form_id_is_never_logged(
+    medium_id, caplog: pytest.LogCaptureFixture
+) -> None:
+    # El id del formulario se loguea porque es publico; cualquier otro valor en
+    # mediumId viene del cuerpo y puede ser un dato del lead.
+    body = _ads_a()
+    value = medium_id(body)
+    body["attributionSource"]["mediumId"] = value
+    app, fake = _app()
+
+    with caplog.at_level(logging.INFO, logger="bridge.app"):
+        response = _post(app, body)
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "ghl_form_not_allowed"
+    assert fake is not None and fake.calls == []
+    (line,) = _adapter_lines(caplog)
+    assert " form=- " in line
+    assert value not in "\n".join(record.getMessage() for record in caplog.records)
