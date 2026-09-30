@@ -21,11 +21,12 @@ from bridge.app import (
     _MEDICATION_GUIDANCE_SUBJECT_RE,
     _requires_medication_guidance_handoff,
     _stem_pattern,
+    _waba_template_config,
     create_app,
 )
 from bridge.commercial_knowledge import CommercialKnowledge, KnowledgeError
 from bridge.hermes import HermesShadowProcessor
-from bridge.instance_manifest import InstanceManifest
+from bridge.instance_manifest import InstanceManifest, Template
 
 ATT1 = Path(__file__).parent / "fixtures" / "instances" / "att1"
 
@@ -248,6 +249,150 @@ def test_knowledge_without_manifest_is_refused(instance: Path) -> None:
 
     with pytest.raises(ValueError, match="requires an instance manifest"):
         create_app(settings)
+
+
+# ------------------------------------------------ parametros de las plantillas
+
+
+_WABA_OUTBOUND = {
+    "dispatcher_outbound_enabled": True,
+    "pilot_boundary_enabled": True,
+    "pilot_scope_key": "att1-recuperacion",
+    "pilot_scope_version": 1,
+    "pilot_tenant_key": "lancemos",
+    "pilot_channel_provider": "waba",
+    "pilot_channel_account_ref": "chatwoot-inbox:11",
+    "waba_first_touch_template_name": "att1_carrito_abandonado_01",
+    "waba_payment_failure_template_name": "att1_compra_fallida_01",
+    "waba_template_language": "es_MX",
+    "waba_template_category": "MARKETING",
+}
+
+
+def _with_parameters(manifest: InstanceManifest, **parameters: tuple[str, ...]) -> InstanceManifest:
+    templates = dict(manifest.templates)
+    for slot, declared in parameters.items():
+        templates[slot] = replace(templates[slot], parameters=declared)
+    return replace(manifest, templates=templates)
+
+
+def test_without_manifest_the_waba_template_declares_no_variables() -> None:
+    # Johanna corre sin manifiesto: la plantilla sale igual que hoy.
+    settings = replace(
+        Settings(
+            webhook_secret="test-secret",
+            allowed_jid=None,
+            capture_dir=Path("/tmp/instance-wiring-captures"),
+            max_age_seconds=300,
+        ),
+        **_WABA_OUTBOUND,
+    )
+
+    template = _waba_template_config(settings)
+
+    assert template is not None
+    assert template.first_touch_parameter == "buyer_name_and_product"
+    assert template.first_touch_body_parameters is None
+    assert template.payment_failure_body_parameters is None
+
+
+def test_flows_on_take_the_variables_declared_in_the_manifest() -> None:
+    manifest = _with_parameters(
+        _att1_manifest(carrito=True, pago_fallido=True),
+        carrito=("nombre",),
+        pago_fallido=("producto", "nombre"),
+    )
+
+    template = _waba_template_config(_settings(manifest, **_WABA_OUTBOUND))
+
+    assert template is not None
+    assert template.first_touch_body_parameters == ("nombre",)
+    assert template.payment_failure_body_parameters == ("producto", "nombre")
+    assert template.params(
+        content="copy", followup=False, buyer_name="Ana", product_name="ATT1",
+        trigger_kind="payment_failure",
+    )["processed_params"] == {"body": {"1": "ATT1", "2": "Ana"}}
+
+
+def test_manifest_without_parametros_sends_the_two_variables_of_today() -> None:
+    template = _waba_template_config(
+        _settings(_att1_manifest(carrito=True, pago_fallido=True), **_WABA_OUTBOUND)
+    )
+
+    assert template is not None
+    assert template.first_touch_body_parameters == ("nombre", "producto")
+    assert template.payment_failure_body_parameters == ("nombre", "producto")
+
+
+def test_a_flow_that_is_off_does_not_lend_its_variables() -> None:
+    manifest = _with_parameters(_att1_manifest(), carrito=("nombre",))
+
+    template = _waba_template_config(_settings(manifest, **_WABA_OUTBOUND))
+
+    assert template is not None
+    assert template.first_touch_body_parameters is None
+    assert template.payment_failure_body_parameters is None
+
+
+def test_payment_failure_without_its_own_template_keeps_the_cart_variables() -> None:
+    manifest = _with_parameters(
+        _att1_manifest(carrito=True, pago_fallido=True), carrito=("nombre",)
+    )
+    settings = _settings(
+        manifest, **{**_WABA_OUTBOUND, "waba_payment_failure_template_name": None}
+    )
+
+    template = _waba_template_config(settings)
+
+    assert template is not None
+    assert template.payment_failure_name is None
+    assert template.first_touch_body_parameters == ("nombre",)
+    assert template.payment_failure_body_parameters is None
+
+
+@pytest.mark.parametrize(
+    ("flows", "override", "message"),
+    [
+        (
+            {"carrito": True},
+            {"waba_first_touch_template_name": "johanna_carrito_abandonado_01"},
+            "WABA_FIRST_TOUCH_TEMPLATE_NAME must match plantillas.carrito.nombre",
+        ),
+        (
+            {"pago_fallido": True},
+            {"waba_payment_failure_template_name": "johanna_compra_fallida_01"},
+            "WABA_PAYMENT_FAILURE_TEMPLATE_NAME must match plantillas.pago_fallido.nombre",
+        ),
+        (
+            {"carrito": True},
+            {"waba_template_language": "es_EC"},
+            "WABA_TEMPLATE_LANGUAGE must match plantillas.carrito.idioma",
+        ),
+    ],
+)
+def test_waba_template_variables_must_name_the_manifest_template(
+    flows: dict[str, bool], override: dict[str, str], message: str
+) -> None:
+    settings = _settings(_att1_manifest(**flows), **{**_WABA_OUTBOUND, **override})
+
+    with pytest.raises(ValueError, match=message):
+        create_app(settings)
+
+
+def test_cart_and_payment_failure_templates_must_share_one_language() -> None:
+    manifest = _att1_manifest(carrito=True, pago_fallido=True)
+    templates = dict(manifest.templates)
+    templates["pago_fallido"] = Template(name="att1_compra_fallida_01", language="es_AR")
+    settings = _settings(replace(manifest, templates=templates), **_WABA_OUTBOUND)
+
+    with pytest.raises(ValueError, match="plantillas.pago_fallido.idioma"):
+        create_app(settings)
+
+
+def test_matching_waba_template_variables_build_with_the_manifest() -> None:
+    manifest = _with_parameters(_att1_manifest(carrito=True), carrito=("nombre",))
+
+    assert create_app(_settings(manifest, **_WABA_OUTBOUND)) is not None
 
 
 # ------------------------------------------------------------------ readiness

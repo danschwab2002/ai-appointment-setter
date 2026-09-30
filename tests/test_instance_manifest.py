@@ -16,7 +16,12 @@ from pathlib import Path
 import pytest
 
 from bridge.commercial_ally import JOHANNA_COMMERCIAL_ALLY
-from bridge.instance_manifest import FLOWS, InstanceManifest, ManifestError
+from bridge.instance_manifest import (
+    DEFAULT_TEMPLATE_PARAMETERS,
+    FLOWS,
+    InstanceManifest,
+    ManifestError,
+)
 from bridge.lead_precheckout import _JOHANNA_LANDING_OFFERS
 
 FIXTURES = Path(__file__).parent / "fixtures" / "instances"
@@ -224,3 +229,67 @@ def test_loading_does_not_mutate_the_input_mapping() -> None:
     _load(payload)
 
     assert payload == before
+
+
+# ----------------------------------------------------- parametros de plantilla
+
+
+def test_templates_without_parametros_send_the_two_variables_of_today() -> None:
+    for name in ("att1", "johanna"):
+        manifest = InstanceManifest.from_toml_file(FIXTURES / name / "instancia.toml")
+
+        assert DEFAULT_TEMPLATE_PARAMETERS == ("nombre", "producto")
+        assert {slot: t.parameters for slot, t in manifest.templates.items()} == {
+            slot: ("nombre", "producto") for slot in manifest.templates
+        }
+
+
+def test_first_contact_templates_declare_their_variables_in_order() -> None:
+    payload = _payload("att1")
+    payload["plantillas"]["precheckout"]["parametros"] = ["nombre"]
+    payload["plantillas"]["carrito"]["parametros"] = ["nombre"]
+    payload["plantillas"]["pago_fallido"]["parametros"] = ["producto", "nombre"]
+
+    manifest = _load(payload)
+
+    assert manifest.templates["precheckout"].parameters == ("nombre",)
+    assert manifest.templates["carrito"].parameters == ("nombre",)
+    assert manifest.templates["pago_fallido"].parameters == ("producto", "nombre")
+    # El nombre y el idioma no cambian por declarar las variables.
+    assert manifest.templates["carrito"].name == "att1_carrito_abandonado_01"
+    assert manifest.templates["carrito"].language == "es_MX"
+
+
+@pytest.mark.parametrize("slot", ["reactivacion", "descuento"])
+def test_parametros_is_refused_outside_first_contact_templates(slot: str) -> None:
+    payload = _payload("att1")
+    # att1_descuento_10_post_respuesta_01 esta APPROVED en "en" (comentario del
+    # fixture); sirve como plantilla declarada, el flujo sigue apagado.
+    payload["plantillas"][slot] = {
+        "nombre": "att1_descuento_10_post_respuesta_01",
+        "idioma": "en",
+        "parametros": ["nombre"],
+    }
+
+    with pytest.raises(ManifestError, match=f"plantillas.{slot}.parametros no se admite"):
+        _load(payload)
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ([], "de 1 a 2"),
+        (["nombre", "producto", "nombre"], "de 1 a 2"),
+        ("nombre", "de 1 a 2"),
+        (["nombre", "nombre"], "repetidas"),
+        (["apellido"], "no soportadas apellido"),
+        (["Nombre"], "no soportadas Nombre"),
+        ([1], "no soportadas 1"),
+    ],
+)
+def test_parametros_rules(value: object, message: str) -> None:
+    payload = _payload("att1")
+    payload["plantillas"]["carrito"]["parametros"] = value
+
+    with pytest.raises(ManifestError, match=f"plantillas.carrito.parametros.*{message}"):
+        _load(payload)

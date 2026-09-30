@@ -16,7 +16,8 @@ Con manifiesto, el bridge además exige:
 
 - `HERMES_MODEL_NAME` igual a `agente.modelo`;
 - que cada flag del runtime tenga su flujo declarado en `true`: el manifiesto es el techo de lo que el runtime puede hacer;
-- respuestas automáticas solo con el conocimiento cargado.
+- respuestas automáticas solo con el conocimiento cargado;
+- con el flujo `carrito` o `pago_fallido` en `true` y la salida por WABA, que `WABA_FIRST_TOUCH_TEMPLATE_NAME`, `WABA_PAYMENT_FAILURE_TEMPLATE_NAME` y `WABA_TEMPLATE_LANGUAGE` nombren la plantilla de ese flujo en `[plantillas]`. Las variables del cuerpo de esa plantilla salen de su `parametros` ([referencia-manifiesto.md](../referencia-manifiesto.md#plantillas)).
 
 | Flag del runtime | Flujo que lo habilita |
 |---|---|

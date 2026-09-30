@@ -32,9 +32,20 @@ class FirstTouchResult:
     reason: str | None = None
 
 
+# Body variables a first-contact template may declare, by manifest name
+# (docs/referencia-manifiesto.md, ``parametros``).
+TEMPLATE_BODY_PARAMETERS = ("nombre", "producto")
+
+
 @dataclass(frozen=True)
 class WhatsAppTemplateConfig:
-    """Approved Chatwoot WABA templates and their body placeholders."""
+    """Approved Chatwoot WABA templates and their body placeholders.
+
+    ``first_touch_body_parameters`` and ``payment_failure_body_parameters`` are
+    the body variables an instance declares for each template, in placeholder
+    order. ``None`` keeps the ``first_touch_parameter`` behavior, which is what
+    every runtime without an instance manifest uses.
+    """
 
     first_touch_name: str
     followup_name: str | None
@@ -42,6 +53,76 @@ class WhatsAppTemplateConfig:
     category: str
     first_touch_parameter: str = "content"
     payment_failure_name: str | None = None
+    first_touch_body_parameters: tuple[str, ...] | None = None
+    payment_failure_body_parameters: tuple[str, ...] | None = None
+
+    def __post_init__(self) -> None:
+        for declared in (
+            self.first_touch_body_parameters,
+            self.payment_failure_body_parameters,
+        ):
+            if declared is None:
+                continue
+            if (
+                not isinstance(declared, tuple)
+                or not 1 <= len(declared) <= len(TEMPLATE_BODY_PARAMETERS)
+                or any(item not in TEMPLATE_BODY_PARAMETERS for item in declared)
+                or len(set(declared)) != len(declared)
+            ):
+                raise ValueError("invalid_template_body_parameters")
+        if (
+            self.payment_failure_body_parameters is not None
+            and self.payment_failure_name is None
+        ):
+            raise ValueError("payment_failure_body_parameters_without_template")
+
+    def declared_body_parameters(
+        self, *, trigger_kind: str | None
+    ) -> tuple[str, ...] | None:
+        """The declared variables of the first-contact template this trigger uses."""
+        if trigger_kind == "payment_failure" and self.payment_failure_name is not None:
+            return self.payment_failure_body_parameters
+        return self.first_touch_body_parameters
+
+    def body_values(
+        self,
+        *,
+        trigger_kind: str | None,
+        buyer_name: str | None,
+        product_name: str | None,
+    ) -> dict[str, str] | None:
+        """``{"1": ..., "2": ...}`` from the declared variables, or ``None``."""
+        declared = self.declared_body_parameters(trigger_kind=trigger_kind)
+        if declared is None:
+            return None
+        source = {"nombre": buyer_name or "", "producto": product_name or ""}
+        return {
+            str(position): source[parameter]
+            for position, parameter in enumerate(declared, start=1)
+        }
+
+    def body_parameters_missing(
+        self,
+        *,
+        trigger_kind: str | None,
+        buyer_name: str | None,
+        product_name: str | None,
+    ) -> bool:
+        """True when a variable the first-contact template needs has no value."""
+        declared = self.declared_body_parameters(trigger_kind=trigger_kind)
+        if declared is None:
+            # Without a declaration, the check of today: only the two-variable
+            # template requires its values.
+            declared = (
+                ("nombre", "producto")
+                if self.first_touch_parameter == "buyer_name_and_product"
+                else ()
+            )
+        source = {"nombre": buyer_name, "producto": product_name}
+        return any(
+            not isinstance(source[parameter], str) or not source[parameter].strip()
+            for parameter in declared
+        )
 
     def params(
         self,
@@ -62,7 +143,18 @@ class WhatsAppTemplateConfig:
         if name is None:
             raise ValueError("template_disabled")
         body = {"1": content}
-        if not followup and self.first_touch_parameter == "buyer_name":
+        declared = (
+            None
+            if followup
+            else self.body_values(
+                trigger_kind=trigger_kind,
+                buyer_name=buyer_name,
+                product_name=product_name,
+            )
+        )
+        if declared is not None:
+            body = declared
+        elif not followup and self.first_touch_parameter == "buyer_name":
             body = {"1": buyer_name or ""}
         elif (
             not followup
@@ -321,15 +413,10 @@ class ChatwootMessageSender:
                 message_id=None,
                 reason="target_not_allowed",
             )
-        if (
-            self._template is not None
-            and self._template.first_touch_parameter == "buyer_name_and_product"
-            and (
-                not isinstance(buyer_name, str)
-                or not buyer_name.strip()
-                or not isinstance(product_name, str)
-                or not product_name.strip()
-            )
+        if self._template is not None and self._template.body_parameters_missing(
+            trigger_kind=trigger_kind,
+            buyer_name=buyer_name,
+            product_name=product_name,
         ):
             return FirstTouchResult(
                 status="blocked",

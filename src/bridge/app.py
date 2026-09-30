@@ -1897,6 +1897,91 @@ def _validate_instance_manifest_gates(settings: Settings) -> None:
         )
 
 
+def _manifest_template_parameters(
+    settings: Settings,
+) -> tuple[tuple[str, ...] | None, tuple[str, ...] | None]:
+    """The body variables of the carrito and pago_fallido templates.
+
+    Only for a flow the manifest declares on: its ``[plantillas]`` entry is the
+    template that flow sends, so ``WABA_*_TEMPLATE_NAME`` and
+    ``WABA_TEMPLATE_LANGUAGE`` must name the same template or the bridge does
+    not start. Both share the one ``WABA_TEMPLATE_LANGUAGE``, so two flows
+    with templates in different languages cannot start either. A flow that is
+    off keeps ``None``, the behavior of today.
+    """
+    manifest = settings.instance_manifest
+    if manifest is None:
+        return None, None
+    slots = (
+        ("carrito", settings.waba_first_touch_template_name, "WABA_FIRST_TOUCH_TEMPLATE_NAME"),
+        (
+            "pago_fallido",
+            settings.waba_payment_failure_template_name,
+            "WABA_PAYMENT_FAILURE_TEMPLATE_NAME",
+        ),
+    )
+    parameters: dict[str, tuple[str, ...] | None] = {"carrito": None, "pago_fallido": None}
+    for slot, configured_name, variable in slots:
+        if not manifest.flows[slot]:
+            continue
+        template = manifest.templates[slot]
+        if not configured_name:
+            # Sin plantilla propia el pago fallido sale con la del carrito; el
+            # arranque ya exige la variable cuando el flag del flujo esta prendido.
+            continue
+        if configured_name != template.name:
+            raise ValueError(
+                f"{variable} must match plantillas.{slot}.nombre of the instance manifest"
+            )
+        if settings.waba_template_language != template.language:
+            raise ValueError(
+                f"WABA_TEMPLATE_LANGUAGE must match plantillas.{slot}.idioma "
+                "of the instance manifest"
+            )
+        parameters[slot] = template.parameters
+    return parameters["carrito"], parameters["pago_fallido"]
+
+
+def _waba_template_config(settings: Settings) -> WhatsAppTemplateConfig | None:
+    if not (
+        settings.dispatcher_outbound_enabled
+        or settings.johanna_abandonment_one_shot_enabled
+        or settings.johanna_abandonment_hotmart_auto_enabled
+    ) or settings.pilot_channel_provider != "waba":
+        return None
+    template_fields = (
+        (settings.waba_first_touch_template_name, "WABA_FIRST_TOUCH_TEMPLATE_NAME"),
+        (settings.waba_template_language, "WABA_TEMPLATE_LANGUAGE"),
+        (settings.waba_template_category, "WABA_TEMPLATE_CATEGORY"),
+    )
+    for value, name in template_fields:
+        if value is None or not value.strip():
+            raise ValueError(f"{name} is required for WABA outbound")
+    if (
+        settings.portable_hotmart_payment_failure_enabled
+        and not settings.waba_payment_failure_template_name
+    ):
+        raise ValueError(
+            "WABA_PAYMENT_FAILURE_TEMPLATE_NAME is required for portable "
+            "payment failure"
+        )
+    if settings.waba_template_category not in {"MARKETING", "UTILITY"}:
+        raise ValueError("WABA_TEMPLATE_CATEGORY must be MARKETING or UTILITY")
+    first_touch_parameters, payment_failure_parameters = _manifest_template_parameters(
+        settings
+    )
+    return WhatsAppTemplateConfig(
+        first_touch_name=settings.waba_first_touch_template_name,  # type: ignore[arg-type]
+        followup_name=settings.waba_followup_template_name,  # type: ignore[arg-type]
+        language=settings.waba_template_language,  # type: ignore[arg-type]
+        category=settings.waba_template_category,  # type: ignore[arg-type]
+        first_touch_parameter="buyer_name_and_product",
+        payment_failure_name=settings.waba_payment_failure_template_name,
+        first_touch_body_parameters=first_touch_parameters,
+        payment_failure_body_parameters=payment_failure_parameters,
+    )
+
+
 def create_app(
     settings: Settings,
     *,
@@ -2168,38 +2253,7 @@ def create_app(
         raise ValueError(
             "DURABLE_OUTBOUND_ENABLED requires LANCEMOS_PILOT_BOUNDARY_ENABLED"
         )
-    waba_template: WhatsAppTemplateConfig | None = None
-    if (
-        settings.dispatcher_outbound_enabled
-        or settings.johanna_abandonment_one_shot_enabled
-        or settings.johanna_abandonment_hotmart_auto_enabled
-    ) and settings.pilot_channel_provider == "waba":
-        template_fields = (
-            (settings.waba_first_touch_template_name, "WABA_FIRST_TOUCH_TEMPLATE_NAME"),
-            (settings.waba_template_language, "WABA_TEMPLATE_LANGUAGE"),
-            (settings.waba_template_category, "WABA_TEMPLATE_CATEGORY"),
-        )
-        for value, name in template_fields:
-            if value is None or not value.strip():
-                raise ValueError(f"{name} is required for WABA outbound")
-        if (
-            settings.portable_hotmart_payment_failure_enabled
-            and not settings.waba_payment_failure_template_name
-        ):
-            raise ValueError(
-                "WABA_PAYMENT_FAILURE_TEMPLATE_NAME is required for portable "
-                "payment failure"
-            )
-        if settings.waba_template_category not in {"MARKETING", "UTILITY"}:
-            raise ValueError("WABA_TEMPLATE_CATEGORY must be MARKETING or UTILITY")
-        waba_template = WhatsAppTemplateConfig(
-            first_touch_name=settings.waba_first_touch_template_name,  # type: ignore[arg-type]
-            followup_name=settings.waba_followup_template_name,  # type: ignore[arg-type]
-            language=settings.waba_template_language,  # type: ignore[arg-type]
-            category=settings.waba_template_category,  # type: ignore[arg-type]
-            first_touch_parameter="buyer_name_and_product",
-            payment_failure_name=settings.waba_payment_failure_template_name,
-        )
+    waba_template = _waba_template_config(settings)
     pilot_boundary = (
         PilotBoundaryConfig(
             scope_key=settings.pilot_scope_key,  # type: ignore[arg-type]

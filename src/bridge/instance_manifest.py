@@ -43,6 +43,13 @@ _SLACK_CHANNEL = re.compile(r"[CG][A-Z0-9]{6,20}")
 EVENTS = ("intencion", "carrito", "pago_fallido", "compra", "entrante")
 FLOWS = ("inbound", "precheckout", "carrito", "pago_fallido", "reactivacion", "descuento")
 TEMPLATE_SLOTS = ("precheckout", "carrito", "pago_fallido", "reactivacion", "descuento")
+# Las variables del cuerpo que una plantilla de primer contacto puede pedir, en el
+# orden en que la plantilla aprobada las numera ({{1}}, {{2}}). Por defecto son las
+# dos que el bridge manda hoy. Reactivacion y descuento arman sus parametros en su
+# propio modulo, asi que no aceptan ``parametros``.
+TEMPLATE_PARAMETERS = ("nombre", "producto")
+DEFAULT_TEMPLATE_PARAMETERS = ("nombre", "producto")
+PARAMETERIZED_TEMPLATE_SLOTS = ("precheckout", "carrito", "pago_fallido")
 OFFER_ORIGINS = ("pauta", "organico", "otro")
 
 # Lo que cada flujo necesita para poder prenderse: el evento que lo dispara y la
@@ -98,8 +105,15 @@ class Offer:
 
 @dataclass(frozen=True)
 class Template:
+    """Una plantilla aprobada en Meta.
+
+    ``parameters`` son las variables del cuerpo en orden ({{1}}, {{2}}). Solo lo leen
+    las plantillas de primer contacto (``PARAMETERIZED_TEMPLATE_SLOTS``).
+    """
+
     name: str
     language: str
+    parameters: tuple[str, ...] = DEFAULT_TEMPLATE_PARAMETERS
 
 
 @dataclass(frozen=True)
@@ -459,15 +473,46 @@ def _templates(table: Mapping[str, Any]) -> Mapping[str, Template]:
         where = f"plantillas.{slot}"
         if not isinstance(raw, dict):
             raise ManifestError(f"{where} debe ser una tabla {{ nombre, idioma }}")
-        _exact_keys(where, raw, {"nombre", "idioma"})
+        if "parametros" in raw and slot not in PARAMETERIZED_TEMPLATE_SLOTS:
+            raise ManifestError(
+                f"{where}.parametros no se admite: solo lo aceptan "
+                + ", ".join(PARAMETERIZED_TEMPLATE_SLOTS)
+            )
+        _exact_keys(
+            where,
+            raw,
+            {"nombre", "idioma"},
+            {"parametros"} if slot in PARAMETERIZED_TEMPLATE_SLOTS else set(),
+        )
         name = _str(raw, "nombre", f"{where}.nombre")
         if _TEMPLATE_NAME.fullmatch(name) is None:
             raise ManifestError(f"{where}.nombre debe ser el nombre de Meta (a-z, 0-9, _)")
         language = _str(raw, "idioma", f"{where}.idioma")
         if _LANGUAGE.fullmatch(language) is None:
             raise ManifestError(f"{where}.idioma debe ser un codigo de Meta como es_MX")
-        templates[slot] = Template(name=name, language=language)
+        parameters = (
+            _template_parameters(raw["parametros"], f"{where}.parametros")
+            if "parametros" in raw
+            else DEFAULT_TEMPLATE_PARAMETERS
+        )
+        templates[slot] = Template(name=name, language=language, parameters=parameters)
     return MappingProxyType(templates)
+
+
+def _template_parameters(value: object, where: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or not 1 <= len(value) <= len(TEMPLATE_PARAMETERS):
+        raise ManifestError(
+            f"{where} debe ser una lista de 1 a {len(TEMPLATE_PARAMETERS)} variables"
+        )
+    unknown = [item for item in value if item not in TEMPLATE_PARAMETERS]
+    if unknown:
+        raise ManifestError(
+            f"{where}: variables no soportadas {', '.join(map(str, unknown))} "
+            f"(validas: {', '.join(TEMPLATE_PARAMETERS)})"
+        )
+    if len(set(value)) != len(value):
+        raise ManifestError(f"{where} tiene variables repetidas")
+    return tuple(value)
 
 
 def _events(value: object) -> frozenset[str]:
