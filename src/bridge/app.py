@@ -2154,6 +2154,8 @@ class _GhlAdapterTrace:
     phone_region: str = "-"
     has_utm: str = "-"
     has_fbclid: str = "-"
+    # Por que no se leyo el cuerpo de un pedido sin header, que se responde 401.
+    unauthenticated_reason: str | None = None
 
     def note_form(self, body: dict[str, object]) -> None:
         # The form id is public (it is in the widget URL). Anything that does
@@ -2171,6 +2173,8 @@ class _GhlAdapterTrace:
         not_admitted = (
             status_code != 200 and reason != "ghl_precheckout_adapter_not_enabled"
         )
+        if self.unauthenticated_reason is not None:
+            reason = f"{reason}/{self.unauthenticated_reason}"
         logger.log(
             logging.WARNING if not_admitted else logging.INFO,
             "ghl_precheckout_adapter outcome=%s status=%s reason=%s form=%s "
@@ -5766,6 +5770,26 @@ def create_app(
             ) from exc
         return _lead_admission_response(submission, admission, background_tasks)
 
+    async def _read_ghl_body(request: Request, content_type: str) -> dict[str, object]:
+        # Solo el tipo de medio: GHL manda application/json sin charset, y el
+        # User-Agent (axios) es un detalle suyo que no se valida.
+        if content_type.split(";", 1)[0].strip().lower() != "application/json":
+            raise HTTPException(status_code=400, detail="invalid_ghl_transport")
+        raw = bytearray()
+        async for chunk in request.stream():
+            if len(raw) + len(chunk) > PRECHECKOUT_WEBHOOK_BODY_LIMIT_BYTES:
+                raise HTTPException(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    detail="ghl_adapter_body_too_large",
+                )
+            raw.extend(chunk)
+        try:
+            return parse_ghl_body(bytes(raw))
+        except GhlAdapterRejection as exc:
+            raise HTTPException(
+                status_code=exc.status_code, detail=f"ghl_{exc.reason}"
+            ) from None
+
     async def _admit_ghl_form_submission(
         request: Request,
         background_tasks: BackgroundTasks,
@@ -5791,24 +5815,18 @@ def create_app(
         # Un header distinto corta antes de leer el cuerpo.
         if header_token and not token_matches(header_token):
             raise HTTPException(status_code=401, detail="invalid_adapter_token")
-        # Solo el tipo de medio: GHL manda application/json sin charset, y el
-        # User-Agent (axios) es un detalle suyo que no se valida.
-        if content_type.split(";", 1)[0].strip().lower() != "application/json":
-            raise HTTPException(status_code=400, detail="invalid_ghl_transport")
-
-        raw = bytearray()
-        async for chunk in request.stream():
-            if len(raw) + len(chunk) > PRECHECKOUT_WEBHOOK_BODY_LIMIT_BYTES:
-                raise HTTPException(
-                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-                    detail="ghl_adapter_body_too_large",
-                )
-            raw.extend(chunk)
         try:
-            body = parse_ghl_body(bytes(raw))
-        except GhlAdapterRejection as exc:
+            body = await _read_ghl_body(request, content_type)
+        except HTTPException as exc:
+            if header_token:
+                raise
+            # Sin header el pedido todavia no esta autenticado (el token de la
+            # accion Webhook viaja en el cuerpo): quien no lo tiene recibe solo
+            # 401, sin saber por que no se leyo el cuerpo. La linea de log
+            # conserva el motivo real.
+            trace.unauthenticated_reason = str(exc.detail)
             raise HTTPException(
-                status_code=exc.status_code, detail=f"ghl_{exc.reason}"
+                status_code=401, detail="invalid_adapter_token"
             ) from None
 
         # La accion Webhook estandar de GHL manda el token en Custom Data. Si

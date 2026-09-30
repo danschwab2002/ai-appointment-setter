@@ -403,18 +403,62 @@ def test_a_body_that_is_not_one_json_object_is_a_400(raw: bytes, detail: str) ->
     assert fake is not None and fake.calls == []
 
 
-def test_a_repeated_key_is_a_400_even_with_the_token_in_the_body() -> None:
-    # Dos customData: el adaptador no elige en silencio cual trae el token.
+def test_a_repeated_key_never_picks_the_token(caplog: pytest.LogCaptureFixture) -> None:
+    # Dos customData: el adaptador no elige en silencio cual trae el token. Sin header
+    # el pedido no esta autenticado: 401, con el motivo real en el log. Con el header
+    # correcto, el 400 de siempre.
     raw = _raw(_with_body_token(_ads_a())).replace(
         b'"customData":', b'"customData":{},"customData":', 1
     )
     app, fake = _app()
 
-    response = _post(app, None, header_token=None, raw=raw)
+    with caplog.at_level(logging.INFO, logger="bridge.app"):
+        unauthenticated = _post(app, None, header_token=None, raw=raw)
+        authenticated = _post(app, None, raw=raw)
 
-    assert response.status_code == 400
-    assert response.json()["detail"] == "ghl_invalid_payload"
+    assert unauthenticated.status_code == 401
+    assert unauthenticated.json()["detail"] == "invalid_adapter_token"
+    assert authenticated.status_code == 400
+    assert authenticated.json()["detail"] == "ghl_invalid_payload"
     assert fake is not None and fake.calls == []
+    lines = _adapter_lines(caplog)
+    assert "status=401 reason=invalid_adapter_token/ghl_invalid_payload " in lines[0]
+    assert "status=400 reason=ghl_invalid_payload " in lines[1]
+
+
+@pytest.mark.parametrize(
+    ("content_type", "raw", "real_reason"),
+    [
+        ("text/plain", _raw(ADS_A_CAPTURE["payload"]), "invalid_ghl_transport"),
+        (
+            "application/json",
+            _raw(ADS_A_CAPTURE["payload"]) + b" " * (65 * 1024),
+            "ghl_adapter_body_too_large",
+        ),
+        ("application/json", _raw(ADS_A_CAPTURE["payload"])[:-1], "ghl_invalid_json"),
+        (
+            "application/json",
+            b"[" + _raw(ADS_A_CAPTURE["payload"]) + b"]",
+            "ghl_invalid_payload",
+        ),
+    ],
+    ids=["otro-content-type", "cuerpo-grande", "json-cortado", "no-es-un-objeto"],
+)
+def test_without_the_header_a_body_that_cannot_be_read_is_only_a_401(
+    content_type: str, raw: bytes, real_reason: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Quien no tiene el token no distingue por que no se leyo el cuerpo: el endpoint
+    # no es un oraculo de parseo. El operador si, en la linea de log.
+    app, fake = _app()
+
+    with caplog.at_level(logging.INFO, logger="bridge.app"):
+        response = _post(app, None, header_token=None, content_type=content_type, raw=raw)
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "invalid_adapter_token"}
+    assert fake is not None and fake.calls == []
+    (line,) = _adapter_lines(caplog)
+    assert f"status=401 reason=invalid_adapter_token/{real_reason} " in line
 
 
 @pytest.mark.parametrize("field", ["email", "phone", "contact_id"])

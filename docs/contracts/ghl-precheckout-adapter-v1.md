@@ -27,6 +27,7 @@ X-Setter-Adapter-Token: <token>        (opcional si el token va en el cuerpo)
 
 - **Autenticación.** GHL no firma. La autenticación es `GHL_PRECHECKOUT_ADAPTER_TOKEN` (32 caracteres o más), en el header `X-Setter-Adapter-Token` o en `customData.setter_token`. La acción *Webhook* estándar (la medida) manda `customData` en el cuerpo; que acepte headers no está medido. Si los acepta, se prefiere el header. Se compara en tiempo constante.
   - Un header presente y distinto da `401` sin leer el cuerpo.
+  - Sin header, el pedido no está autenticado hasta leer `customData`: un cuerpo que no se puede leer (tipo de medio, tamaño, JSON inválido, clave repetida, no es un objeto) da `401 invalid_adapter_token`, igual que un token ausente. Quien no tiene el token no distingue por qué se rechazó; el motivo real queda en el log. Con el header correcto, esos rechazos son los `400` y `413` de [Respuestas](#respuestas).
   - Header y cuerpo presentes y distintos: `401`.
   - El token nunca va en la ruta ni en la query: el access log de uvicorn las registra.
 - **El token es la única barrera.** El id del formulario y las URL de las landings son públicos (el id está en la URL del widget; las URL, en los anuncios). Quien lea el token en la configuración del workflow de GHL, es decir cualquier usuario de la subcuenta, puede admitir intenciones con cualquier teléfono y `whatsapp_contact = true`. La lista de formularios y la resolución de la landing filtran errores de configuración, no a quien tiene el token. Ver [Riesgos](#riesgos).
@@ -130,9 +131,9 @@ El adaptador no valida el alfabeto ni el largo. La emisión del link descarta un
 | HTTP | Cuándo |
 |---|---|
 | `200` | `received`, `duplicate` o `conflict`, con el cuerpo de `/webhooks/lead`: `status`, `delivery_id`, `purchase_intent_id`, `activation_authorized = false`, `contact_authorized = false` |
-| `400` | JSON inválido (`ghl_invalid_json`); una clave repetida, un cuerpo que no es un objeto, o faltan `contact_id`, `email`, `phone` o el nombre (`ghl_invalid_payload`); `Content-Type` distinto (`invalid_ghl_transport`) |
-| `401` | Token ausente o distinto (`invalid_adapter_token`) |
-| `413` | Cuerpo mayor a 64 KiB (`ghl_adapter_body_too_large`) |
+| `400` | JSON inválido (`ghl_invalid_json`); una clave repetida, un cuerpo que no es un objeto, o faltan `contact_id`, `email`, `phone` o el nombre (`ghl_invalid_payload`); `Content-Type` distinto (`invalid_ghl_transport`). Sin header, todo lo que impide leer el cuerpo (JSON inválido, clave repetida, no es un objeto, `Content-Type`) es `401`: el token todavía no se leyó |
+| `401` | Token ausente o distinto, o sin header un cuerpo que no se puede leer (`invalid_adapter_token`) |
+| `413` | Cuerpo mayor a 64 KiB (`ghl_adapter_body_too_large`), con el header correcto; sin header, `401` |
 | `422` | `ghl_not_a_form_submission`, `ghl_form_not_allowed`, `ghl_landing_unknown`, `ghl_landing_ambiguous`, `ghl_phone_unusable` o `ghl_translation_rejected`. Ninguno toca la base |
 | `503` | Adaptador apagado (`ghl_precheckout_adapter_not_enabled`), base no configurada (`supabase_not_configured`) o admisión no disponible (`ghl_precheckout_persist_unavailable`) |
 
@@ -146,7 +147,7 @@ El costo es que la base no distingue un reintento de un segundo envío del mismo
 
 ## Logs
 
-Una línea por pedido: resultado, motivo, id del formulario, landing, oferta, `delivery_id`, región del teléfono (también en `ghl_phone_unusable`) y si hubo UTM o fbclid. Un envío que no queda admitido (toda respuesta distinta de `200`, salvo el adaptador apagado) sale como warning: el bridge no configura logging, y bajo uvicorn solo los warnings llegan a la salida del contenedor. La admisión sale como info. Nunca el nombre, el email, el teléfono, la IP, el `userAgent`, `contact_id`, el `fbclid`, `fbEventId`, la query, el token ni el cuerpo.
+Una línea por pedido: resultado, motivo (en un `401` sin header por un cuerpo ilegible, `invalid_adapter_token/<motivo real>`), id del formulario, landing, oferta, `delivery_id`, región del teléfono (también en `ghl_phone_unusable`) y si hubo UTM o fbclid. Un envío que no queda admitido (toda respuesta distinta de `200`, salvo el adaptador apagado) sale como warning: el bridge no configura logging, y bajo uvicorn solo los warnings llegan a la salida del contenedor. La admisión sale como info. Nunca el nombre, el email, el teléfono, la IP, el `userAgent`, `contact_id`, el `fbclid`, `fbEventId`, la query, el token ni el cuerpo.
 
 ## Riesgos
 
