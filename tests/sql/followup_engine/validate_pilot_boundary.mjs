@@ -199,13 +199,14 @@ await db.exec(`
     max_cohort_contacts,
     max_outbound_request_starts_total,
     max_outbound_request_starts_per_day,
-    approved_by, approved_at, published_at, additional_offer_codes
+    approved_by, approved_at, published_at, additional_offer_codes,
+    additional_source_event_types
   ) values (
     'lancemos-cart-recovery', 1, 'published', 'lancemos',
     10, 20, 'whatsapp', 'waba', 'opaque-number-ref',
     'hotmart', 'PURCHASE_OUT_OF_SHOPPING_CART', '3526906', 'offer-1',
     'cart_recovery', 'cart-recovery-test', 1, 'America/Argentina/Buenos_Aires',
-    2, 2, 1, 'operator-test', now(), now(), '{offer3}'
+    2, 2, 1, 'operator-test', now(), now(), '{offer3}', '{PURCHASE_CANCELED}'
   );
 
   insert into public.pilot_runtime_controls (
@@ -301,6 +302,31 @@ if (additionalOfferStart.authorized !== false
   throw new Error(`additional offer did not pass the request-start offer gate: ${JSON.stringify(additionalOfferStart)}`);
 }
 console.log('pilot_scope_additional_offers=OK');
+// 20260929000200: el scope acepta su tipo de evento y los del conjunto; otro sigue afuera.
+const additionalEvent = await evaluate({ eventType: 'PURCHASE_CANCELED' });
+if (additionalEvent.allowed !== true || additionalEvent.reason_code !== 'pilot_scope_allowed') {
+  throw new Error(`additional scope event type was not accepted: ${JSON.stringify(additionalEvent)}`);
+}
+const foreignEvent = await evaluate({ eventType: 'PRECHECKOUT_FORM_SUBMITTED' });
+if (foreignEvent.allowed !== false || foreignEvent.reason_code !== 'pilot_source_event_mismatch') {
+  throw new Error(`foreign event type did not fail closed: ${JSON.stringify(foreignEvent)}`);
+}
+const foreignEventStart = await authorize(OFFER_PROBE_ATTEMPT, NOW, {
+  actionId: OFFER_PROBE_ACTION, eventType: 'PRECHECKOUT_FORM_SUBMITTED',
+});
+if (foreignEventStart.authorized !== false
+    || foreignEventStart.reason_code !== 'pilot_source_event_mismatch') {
+  throw new Error(`request start with a foreign event type did not fail closed: ${JSON.stringify(foreignEventStart)}`);
+}
+const additionalEventStart = await authorize(OFFER_PROBE_ATTEMPT, NOW, {
+  actionId: OFFER_PROBE_ACTION, eventType: 'PURCHASE_CANCELED',
+});
+if (additionalEventStart.authorized !== false
+    || additionalEventStart.reason_code !== 'pilot_attempt_mismatch') {
+  // Sin caso ni intento reales solo puede fallar DESPUES de la puerta del tipo de evento.
+  throw new Error(`additional event type did not pass the request-start event gate: ${JSON.stringify(additionalEventStart)}`);
+}
+console.log('pilot_scope_additional_event_types=OK');
 const outsideCohort = await evaluate({ contactId: CONTACT_3 });
 if (outsideCohort.allowed !== false
     || outsideCohort.reason_code !== 'pilot_contact_not_in_cohort') {
@@ -697,4 +723,49 @@ for (const signature of [
   }
 }
 console.log('pilot_scope_offer_set_shape=OK');
+
+// La forma del conjunto de tipos de evento la valida la base (20260929000200).
+for (const [label, source, eventType, additional] of [
+  ['repeats the main event type', 'hotmart', 'PURCHASE_OUT_OF_SHOPPING_CART', ['PURCHASE_OUT_OF_SHOPPING_CART']],
+  ['an event type outside Hotmart recovery', 'hotmart', 'PURCHASE_OUT_OF_SHOPPING_CART', ['PURCHASE_APPROVED']],
+  ['two additional event types', 'hotmart', 'PURCHASE_OUT_OF_SHOPPING_CART', ['PURCHASE_CANCELED', 'PURCHASE_CANCELED']],
+  ['a null entry', 'hotmart', 'PURCHASE_OUT_OF_SHOPPING_CART', [null]],
+  ['a landing scope', 'landing', 'PRECHECKOUT_FORM_SUBMITTED', ['PURCHASE_CANCELED']],
+]) {
+  let rejected = false;
+  await db.exec('begin');
+  try {
+    await db.query(`
+      insert into public.pilot_scope_versions (
+        scope_key, version, status, tenant_key, chatwoot_account_id, chatwoot_inbox_id,
+        channel, channel_provider, channel_account_ref, source, source_event_type,
+        external_product_id, offer_code, purpose, policy_key, policy_version, timezone,
+        max_cohort_contacts, max_outbound_request_starts_total,
+        max_outbound_request_starts_per_day, additional_source_event_types
+      ) values (
+        'lancemos-event-shape-probe', 1, 'draft', 'lancemos', 10, 20, 'whatsapp', 'waba',
+        'opaque-number-ref', $1, $2, '3526906',
+        'offer-1', 'cart_recovery', 'cart-recovery-test', 1, 'UTC', 1, 1, 1, $3::text[]
+      )
+    `, [source, eventType, additional]);
+  } catch {
+    rejected = true;
+  } finally {
+    await db.exec('rollback');
+  }
+  if (!rejected) throw new Error(`scope additional event types with ${label} were accepted`);
+}
+for (const signature of [
+  'public.evaluate_lancemos_pilot_scope(text,integer,text,bigint,bigint,text,text,text,text,text,text,uuid)',
+  'public.authorize_lancemos_pilot_request_start(text,integer,text,bigint,bigint,text,text,text,text,text,text,uuid,uuid,uuid,timestamptz)',
+  'public.get_lancemos_pilot_runtime_status(text,integer,text,text,text)',
+]) {
+  const definition = (await db.query(
+    `select pg_get_functiondef(to_regprocedure($1)) def`, [signature],
+  )).rows[0]?.def ?? '';
+  if (!definition.includes('all(v_scope.additional_source_event_types)')) {
+    throw new Error(`${signature} still compares against the single scope event type`);
+  }
+}
+console.log('pilot_scope_event_type_set_shape=OK');
 console.log('LANCEMOS_PILOT_BOUNDARY_OK');
