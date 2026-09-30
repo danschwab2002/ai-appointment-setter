@@ -45,6 +45,11 @@ class WhatsAppTemplateConfig:
     the body variables an instance declares for each template, in placeholder
     order. ``None`` keeps the ``first_touch_parameter`` behavior, which is what
     every runtime without an instance manifest uses.
+
+    ``payment_failure_category`` is the Meta category of the payment failure
+    template when it differs from ``category`` (a cart template approved as
+    MARKETING and a payment failure one approved as UTILITY). ``None`` keeps
+    the single ``category`` for every template, as before.
     """
 
     first_touch_name: str
@@ -55,6 +60,7 @@ class WhatsAppTemplateConfig:
     payment_failure_name: str | None = None
     first_touch_body_parameters: tuple[str, ...] | None = None
     payment_failure_body_parameters: tuple[str, ...] | None = None
+    payment_failure_category: str | None = None
 
     def __post_init__(self) -> None:
         for declared in (
@@ -75,6 +81,21 @@ class WhatsAppTemplateConfig:
             and self.payment_failure_name is None
         ):
             raise ValueError("payment_failure_body_parameters_without_template")
+        if self.payment_failure_category is not None:
+            if self.payment_failure_name is None:
+                raise ValueError("payment_failure_category_without_template")
+            if self.payment_failure_category not in {"MARKETING", "UTILITY"}:
+                raise ValueError("invalid_payment_failure_category")
+
+    def category_for(self, *, trigger_kind: str | None) -> str:
+        """The Meta category of the first-contact template this trigger uses."""
+        if (
+            trigger_kind == "payment_failure"
+            and self.payment_failure_name is not None
+            and self.payment_failure_category is not None
+        ):
+            return self.payment_failure_category
+        return self.category
 
     def declared_body_parameters(
         self, *, trigger_kind: str | None
@@ -163,7 +184,11 @@ class WhatsAppTemplateConfig:
             body = {"1": buyer_name or "", "2": product_name or ""}
         return {
             "name": name,
-            "category": self.category,
+            "category": (
+                self.category
+                if followup
+                else self.category_for(trigger_kind=trigger_kind)
+            ),
             "language": self.language,
             "processed_params": {"body": body},
         }

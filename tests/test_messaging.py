@@ -1401,6 +1401,83 @@ def test_payment_failure_variables_need_the_payment_failure_template() -> None:
         )
 
 
+def test_the_payment_failure_template_carries_its_own_category() -> None:
+    # El carrito aprobado como MARKETING y el pago fallido como UTILITY: cada
+    # plantilla sale con su categoria. El seguimiento y el carrito siguen con
+    # la categoria unica.
+    template = WhatsAppTemplateConfig(
+        first_touch_name="att1_carrito_abandonado_01",
+        payment_failure_name="att1_compra_fallida_01",
+        followup_name="att1_seguimiento_01",
+        language="es_MX",
+        category="MARKETING",
+        first_touch_parameter="buyer_name_and_product",
+        payment_failure_category="UTILITY",
+    )
+
+    failure = template.params(
+        content="copy", followup=False, buyer_name="Ana",
+        product_name="ATT1", trigger_kind="payment_failure",
+    )
+    cart = template.params(
+        content="copy", followup=False, buyer_name="Ana",
+        product_name="ATT1", trigger_kind="cart_abandonment",
+    )
+    followup = template.params(content="copy", followup=True)
+
+    assert failure["category"] == "UTILITY"
+    assert cart["category"] == "MARKETING"
+    assert followup["category"] == "MARKETING"
+    assert template.category_for(trigger_kind="payment_failure") == "UTILITY"
+    assert template.category_for(trigger_kind="cart_abandonment") == "MARKETING"
+
+
+def test_without_its_own_category_every_template_keeps_the_single_one() -> None:
+    template = WhatsAppTemplateConfig(
+        first_touch_name="att1_carrito_abandonado_01",
+        payment_failure_name="att1_compra_fallida_01",
+        followup_name=None,
+        language="es_MX",
+        category="MARKETING",
+        first_touch_parameter="buyer_name_and_product",
+    )
+
+    failure = template.params(
+        content="copy", followup=False, buyer_name="Ana",
+        product_name="ATT1", trigger_kind="payment_failure",
+    )
+
+    assert failure["category"] == "MARKETING"
+    assert template.category_for(trigger_kind="payment_failure") == "MARKETING"
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"payment_failure_category": "UTILITY"}, "payment_failure_category_without_template"),
+        (
+            {"payment_failure_name": "att1_compra_fallida_01", "payment_failure_category": "utility"},
+            "invalid_payment_failure_category",
+        ),
+        (
+            {"payment_failure_name": "att1_compra_fallida_01", "payment_failure_category": "AUTHENTICATION"},
+            "invalid_payment_failure_category",
+        ),
+    ],
+)
+def test_an_invalid_payment_failure_category_is_refused(
+    kwargs: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        WhatsAppTemplateConfig(
+            first_touch_name="att1_carrito_abandonado_01",
+            followup_name=None,
+            language="es_MX",
+            category="MARKETING",
+            **kwargs,  # type: ignore[arg-type]
+        )
+
+
 def test_chatwoot_sender_sends_a_one_variable_template_without_product() -> None:
     case = _CAPTURED_LEAD_NAMES["cases"][0]
     transport = _waba_first_touch_transport()

@@ -951,7 +951,7 @@ class DurableDispatcher:
                 inbox,
                 template_name=template_name,
                 expected_language=template.language,
-                expected_category=template.category,
+                expected_category=template.category_for(trigger_kind=trigger_kind),
                 parameter_count=len(declared),
             )
             message = approved.render(values)

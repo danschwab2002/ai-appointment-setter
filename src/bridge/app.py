@@ -505,6 +505,7 @@ class Settings:
     waba_followup_template_name: str | None = None
     waba_template_language: str | None = None
     waba_template_category: str | None = None
+    waba_payment_failure_template_category: str | None = None
     chatwoot_cut_b_admission_enabled: bool = False
     chatwoot_cut_b_scope_key: str | None = None
     chatwoot_cut_b_scope_version: int | None = None
@@ -1406,6 +1407,12 @@ class Settings:
             waba_template_category=(
                 os.getenv("WABA_TEMPLATE_CATEGORY", "").strip().upper() or None
             ),
+            waba_payment_failure_template_category=(
+                os.getenv("WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY", "")
+                .strip()
+                .upper()
+                or None
+            ),
             chatwoot_cut_b_admission_enabled=(
                 os.getenv("CHATWOOT_CUT_B_ADMISSION_ENABLED", "false").lower()
                 == "true"
@@ -1961,6 +1968,23 @@ def _manifest_template_parameters(
 
 
 def _waba_template_config(settings: Settings) -> WhatsAppTemplateConfig | None:
+    payment_failure_category = settings.waba_payment_failure_template_category
+    if payment_failure_category is not None:
+        # Solo con manifiesto: Johanna comparte esta configuracion con sus
+        # one-shots y no la declara, asi que su categoria no cambia.
+        if settings.instance_manifest is None:
+            raise ValueError(
+                "WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY requires an instance manifest"
+            )
+        if payment_failure_category not in {"MARKETING", "UTILITY"}:
+            raise ValueError(
+                "WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY must be MARKETING or UTILITY"
+            )
+        if not settings.waba_payment_failure_template_name:
+            raise ValueError(
+                "WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY requires "
+                "WABA_PAYMENT_FAILURE_TEMPLATE_NAME"
+            )
     if not (
         settings.dispatcher_outbound_enabled
         or settings.johanna_abandonment_one_shot_enabled
@@ -1997,6 +2021,7 @@ def _waba_template_config(settings: Settings) -> WhatsAppTemplateConfig | None:
         payment_failure_name=settings.waba_payment_failure_template_name,
         first_touch_body_parameters=first_touch_parameters,
         payment_failure_body_parameters=payment_failure_parameters,
+        payment_failure_category=payment_failure_category,
     )
 
 

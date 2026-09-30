@@ -395,6 +395,87 @@ def test_matching_waba_template_variables_build_with_the_manifest() -> None:
     assert create_app(_settings(manifest, **_WABA_OUTBOUND)) is not None
 
 
+# --------------------------------------- categoria de la plantilla del pago fallido
+
+
+def test_from_env_reads_the_payment_failure_category(
+    monkeypatch: pytest.MonkeyPatch, instance: Path
+) -> None:
+    _environment(monkeypatch, INSTANCE_MANIFEST_PATH=str(instance / "instancia.toml"))
+    monkeypatch.delenv("WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY", raising=False)
+
+    assert Settings.from_env().waba_payment_failure_template_category is None
+
+    monkeypatch.setenv("WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY", " utility ")
+
+    assert Settings.from_env().waba_payment_failure_template_category == "UTILITY"
+
+
+def test_the_payment_failure_template_takes_its_own_category() -> None:
+    settings = _settings(
+        _att1_manifest(carrito=True, pago_fallido=True),
+        **{**_WABA_OUTBOUND, "waba_payment_failure_template_category": "UTILITY"},
+    )
+
+    template = _waba_template_config(settings)
+
+    assert template is not None
+    assert template.category_for(trigger_kind="payment_failure") == "UTILITY"
+    assert template.category_for(trigger_kind="cart_abandonment") == "MARKETING"
+    assert create_app(settings) is not None
+
+
+def test_without_its_own_category_the_payment_failure_keeps_the_single_one() -> None:
+    template = _waba_template_config(
+        _settings(_att1_manifest(carrito=True, pago_fallido=True), **_WABA_OUTBOUND)
+    )
+
+    assert template is not None
+    assert template.payment_failure_category is None
+    assert template.category_for(trigger_kind="payment_failure") == "MARKETING"
+
+
+def test_the_payment_failure_category_requires_an_instance_manifest() -> None:
+    # Johanna comparte esta configuracion con sus one-shots: no la puede definir.
+    settings = replace(
+        Settings(
+            webhook_secret="test-secret",
+            allowed_jid=None,
+            capture_dir=Path("/tmp/instance-wiring-captures"),
+            max_age_seconds=300,
+        ),
+        **{**_WABA_OUTBOUND, "waba_payment_failure_template_category": "UTILITY"},
+    )
+
+    with pytest.raises(ValueError, match="requires an instance manifest"):
+        _waba_template_config(settings)
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        (
+            {"waba_payment_failure_template_category": "AUTHENTICATION"},
+            "WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY must be MARKETING or UTILITY",
+        ),
+        (
+            {
+                "waba_payment_failure_template_category": "UTILITY",
+                "waba_payment_failure_template_name": None,
+            },
+            "WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY requires WABA_PAYMENT_FAILURE_TEMPLATE_NAME",
+        ),
+    ],
+)
+def test_an_invalid_payment_failure_category_does_not_start(
+    override: dict[str, object], message: str
+) -> None:
+    settings = _settings(_att1_manifest(carrito=True), **{**_WABA_OUTBOUND, **override})
+
+    with pytest.raises(ValueError, match=message):
+        create_app(settings)
+
+
 # ------------------------------------------- plantilla aprobada sin Hermes (A4)
 
 

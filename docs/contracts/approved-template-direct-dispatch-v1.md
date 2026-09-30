@@ -21,6 +21,7 @@ En el modo directo el dispatcher arma el texto con el cuerpo aprobado del catál
 |---|---|---|
 | `DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED` | `false` | Prende el modo directo del dispatcher |
 | `LEAD_FIRST_NAME_GREETING_ENABLED` | `false` | Con el modo directo, la variable `nombre` lleva el saludo por primer nombre. Pasa a estar admitida en un runtime portable |
+| `WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY` | vacía | Solo con manifiesto. La categoría de Meta de la plantilla del pago fallido cuando no es la de `WABA_TEMPLATE_CATEGORY` (`MARKETING` o `UTILITY`). Vacía, todas las plantillas usan `WABA_TEMPLATE_CATEGORY`. Exige `WABA_PAYMENT_FAILURE_TEMPLATE_NAME` |
 
 Con `DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED=true` el bridge no arranca si falta alguna de estas condiciones:
 
@@ -64,7 +65,7 @@ La plantilla se busca por nombre **y** idioma, porque Meta admite el mismo nombr
 | La plantilla no está `APPROVED` | `approved_template_unavailable` | `not_approved` |
 | Está con ese nombre pero en otro idioma | `approved_template_mismatch` | `language_mismatch` |
 | Hay dos con el mismo nombre e idioma | `approved_template_mismatch` | `ambiguous_template` |
-| La categoría no es `WABA_TEMPLATE_CATEGORY` | `approved_template_mismatch` | `category_mismatch` |
+| La categoría no es la de esa plantilla: `WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY` para la del pago fallido si está definida, si no `WABA_TEMPLATE_CATEGORY` | `approved_template_mismatch` | `category_mismatch` |
 | No hay exactamente un `BODY` con texto | `approved_template_mismatch` | `invalid_body` |
 | Los marcadores no son exactamente `{{1}}` a `{{n}}`, con `n` = las variables declaradas (un marcador con nombre también cuenta) | `approved_template_mismatch` | `unexpected_placeholders` |
 | Un botón que no es `QUICK_REPLY` | `approved_template_mismatch` | `unsupported_button` |
@@ -83,7 +84,7 @@ Todos cierran el intento con `failed_before_request`: no se marcó `request_star
 
 ## Lo que no está medido
 
-- **El catálogo del inbox 11 de ATT1** (paso A0 del plan). Sin esa captura no se sabe qué variables, categoría y botones tienen `att1_carrito_abandonado_01` y `att1_compra_fallida_01`. Los tests usan el catálogo capturado del inbox 9 del 28/09. Si el catálogo real no cierra con `parametros`, el intento queda en `approved_template_mismatch` cada minuto hasta vencer.
+- **El catálogo del inbox 11 de ATT1** (paso A0 del plan). Sin esa captura no se sabe qué variables, categoría y botones tienen `att1_carrito_abandonado_01` y `att1_compra_fallida_01`. Los tests usan el catálogo capturado del inbox 9 del 28/09. Antes de prender el flag, la categoría de cada plantilla se lee en esa captura: si la del pago fallido no es la del carrito, va en `WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY`. Si el catálogo real no cierra con `parametros`, el intento queda en `approved_template_mismatch` cada minuto hasta vencer.
 - **Botones `QUICK_REPLY` con solo parámetros de cuerpo.** Las plantillas de Johanna `johanna_carrito_abandonado_01` y `johanna_compra_fallida_01` tienen tres `QUICK_REPLY` en el catálogo del 28/09 y los one-shots de Johanna las mandan con solo `processed_params.body`. No verifiqué que esos envíos sean posteriores a la carga de los botones. La prueba real es el primer envío de ATT1.
 - **El token de control del inbox 11:** el `GET` del inbox lo hace el cliente de control; tiene que tener acceso a ese inbox.
 - **`/ready` no revisa el catálogo.** Un catálogo que no cierra se ve recién en el intento. Queda como mejora.

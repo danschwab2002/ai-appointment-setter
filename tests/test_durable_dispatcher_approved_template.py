@@ -396,6 +396,52 @@ def test_payment_failure_sends_its_own_approved_template(tmp_path: Path) -> None
     assert authority.events[-1] == "accepted"
 
 
+def _payment_failure_as_utility() -> list[dict[str, Any]]:
+    # El catalogo capturado con la plantilla del pago fallido aprobada como
+    # UTILITY y la del carrito como MARKETING: la categoria de ATT1 es un dato
+    # de A0 que falta, y nada obliga a que las dos coincidan.
+    catalog = copy.deepcopy(CATALOG)
+    for template in catalog:
+        if template["name"] == PAYMENT_FAILURE_TEMPLATE:
+            template["category"] = "UTILITY"
+    return catalog
+
+
+def test_each_template_is_checked_against_its_own_category(tmp_path: Path) -> None:
+    template = replace(TEMPLATE, payment_failure_category="UTILITY")
+    catalog = _payment_failure_as_utility()
+
+    failure = _Authority(offer_code="2uafw5bg", anchor_type="payment_failure")
+    failure_chatwoot = _Chatwoot(catalog)
+    _run(_dispatcher(failure, failure_chatwoot, tmp_path, template=template))
+    cart = _Authority(offer_code="gopi6lh7")
+    cart_chatwoot = _Chatwoot(catalog)
+    _run(_dispatcher(cart, cart_chatwoot, tmp_path, template=template))
+
+    [failure_message] = failure_chatwoot.posts("/conversations/200/messages")
+    [cart_message] = cart_chatwoot.posts("/conversations/200/messages")
+    assert failure_message["template_params"]["name"] == PAYMENT_FAILURE_TEMPLATE
+    assert failure_message["template_params"]["category"] == "UTILITY"
+    assert cart_message["template_params"]["name"] == CART_TEMPLATE
+    assert cart_message["template_params"]["category"] == "MARKETING"
+    assert failure.events[-1] == "accepted"
+    assert cart.events[-1] == "accepted"
+
+
+def test_a_single_category_blocks_a_payment_failure_template_of_another_one(
+    tmp_path: Path,
+) -> None:
+    # Sin WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY las dos plantillas se comparan
+    # con la unica categoria: el pago fallido UTILITY no sale.
+    authority = _Authority(offer_code="2uafw5bg", anchor_type="payment_failure")
+    chatwoot = _Chatwoot(_payment_failure_as_utility())
+
+    _run(_dispatcher(authority, chatwoot, tmp_path))
+
+    assert authority.finalizations[-1]["reason_code"] == "approved_template_mismatch"
+    assert chatwoot.posts("/messages") == []
+
+
 def test_an_offer_outside_the_binding_is_not_sent(tmp_path: Path) -> None:
     # 83utgyow es la oferta de la recuperacion de GHL, fuera del binding a proposito.
     authority = _Authority(offer_code="83utgyow")
