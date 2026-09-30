@@ -154,6 +154,12 @@ class _Authority:
             anchor_external_message_id=None,
         )
 
+    # NOTE: this fake answers "execute" without running the real
+    # reevaluate_followup_action, so this test cannot see a rejection that only
+    # the database makes (channel_mode_unsupported for a non-freeform policy
+    # step, contact_authorization_unknown for a payment failure without a
+    # permission). The real reevaluation of the ATT1 chain is covered by
+    # tests/sql/followup_engine/validate_att1_portable_chain.mjs.
     async def reevaluate_followup_action(self, **_: object) -> ReevaluationDecision:
         self.reevaluations += 1
         return ReevaluationDecision(
