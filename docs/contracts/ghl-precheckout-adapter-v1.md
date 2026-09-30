@@ -1,6 +1,6 @@
 # Contrato: adaptador del formulario de GHL a `lead.precheckout` (v1)
 
-- **Estado:** contrato v1, escrito antes de la implementación (2026-09-30). No describe nada desplegado.
+- **Estado:** contrato v1, escrito antes de la implementación (2026-09-30) e implementado en el bridge 1.1.0 (sin publicar), apagado por defecto. No describe nada desplegado.
 - **Endpoint:** `POST /webhooks/adapters/ghl/lead-precheckout`
 - **Emisor:** la acción *Webhook* de un workflow de GHL con disparador *Form submitted*. Es la forma medida el 2026-09-29 por el receptor temporal `ghl-capture-att1` (workflow `b3304158-ec6b-4491-8057-92f695da3db1`).
 - **Salida:** `lead.precheckout` `1.1.0` ([lead-precheckout-v1.md](lead-precheckout-v1.md)), validado por `parse_lead_precheckout` y admitido por `admit_portable_observed_lead_precheckout`, el mismo camino que un formulario de landing en un runtime con manifiesto.
@@ -162,7 +162,7 @@ Es la condición para prenderlo.
   2. la landing y la oferta resueltas son las de la URL;
   3. dos traducciones del mismo cuerpo dan `id` distintos y válidos (ULID de 26 caracteres, Crockford);
   4. un formulario fuera de la lista, una landing desconocida, un teléfono inutilizable o una clave repetida dan `4xx` sin tocar la base;
-  5. contra la RPC real (PGlite): dos entregas del mismo golden producen dos submissions de la misma intención, cero filas en `precheckout_submission_conflicts`, y el envío sigue elegible para el consentimiento (`consented_intent_ok`). Un caso de control con el mismo `id` y otro `created_at` sí deja el conflicto, y documenta por qué el `id` no puede ser determinista.
+  5. contra la RPC real (PGlite, `tests/sql/followup_engine/validate_ghl_precheckout_adapter.mjs`): dos entregas del mismo golden producen dos submissions de la misma intención, cero filas en `precheckout_submission_conflicts`, y el envío sigue elegible para el consentimiento (`consented_intent_ok`). Un caso de control con el mismo `id` y otro `created_at` sí deja el conflicto, y documenta por qué el `id` no puede ser determinista.
 - **Envío nuevo.** Uno que la suite no acepte se agrega como fixture antes de cambiar el adaptador.
 
 ## Lo que este contrato no sabe todavía
