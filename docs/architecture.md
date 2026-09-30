@@ -622,7 +622,8 @@ Las fuentes de verdad son:
   de versión y membresía.
 - `pilot_recovery_case_bindings`, para ligar de forma inmutable cada caso al
   scope/version y al evento autoritativo que admitió su planificación, con el
-  modo de audiencia y la intención con consentimiento con que entró.
+  modo de audiencia, la intención con consentimiento y el envío del formulario
+  con que entró.
 
 `plan_lancemos_pilot_cart_recovery` compone evaluación, planificación y binding
 durable en una sola transacción. Recibe sólo scope/version; tenant y routing se

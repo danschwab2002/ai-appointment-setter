@@ -164,7 +164,7 @@ Además de repetir la evaluación, debe demostrar desde estado canónico que:
 - case tiene producto/oferta del scope;
 - la identidad seleccionada pertenece a account/inbox del scope;
 - la cohorte está activa, si el modo la usa;
-- fuera de `manual_cohort`, la intención del binding del caso sigue siendo del scope y de la oferta del caso, del teléfono de la identidad seleccionada y con el consentimiento vigente. Se verifica bajo lock compartido de la fila y antes de contar los caps: si falla, devuelve el motivo `pilot_audience_*` y no consume cupo;
+- fuera de `manual_cohort`, la intención del binding del caso sigue siendo del scope y de la oferta del caso, del teléfono de la identidad seleccionada y con el consentimiento vigente (contra la `consent_copy_version` del binding comercial activo en ese momento). Se verifica antes de contar los caps, con lock compartido de la fila de la intención (serializa solo con quien cambia esa fila: la compra, un formulario posterior): si falla, devuelve el motivo `pilot_audience_*` y no consume cupo;
 - caps total y diario conservan capacidad.
 
 `now` sólo puede diferir hasta cinco minutos del reloj autoritativo de PostgreSQL. Fuera de esa ventana retorna `pilot_request_time_invalid`. La fecha presupuestaria y `authorized_at` siempre se calculan con `clock_timestamp()` del servidor; el caller no puede elegir otro día para eludir el cap diario.
@@ -218,7 +218,7 @@ Eventos mínimos:
 - `pilot_cohort_member_removed`;
 - `pilot_outbound_request_authorized`.
 
-En `pilot_outbound_request_authorized`, `data` lleva `local_budget_date` y, fuera de `manual_cohort`, `audience_mode` y `audience_purchase_intent_id`. En `manual_cohort` queda como antes.
+En `pilot_outbound_request_authorized`, `data` lleva `local_budget_date` y, fuera de `manual_cohort`, `audience_mode`, `audience_purchase_intent_id` y `audience_precheckout_submission_id` (el envío del formulario que dio el consentimiento al arrancar). En `manual_cohort` queda como antes. El binding del caso guarda la misma evidencia del momento de planificar.
 
 La evidencia contiene IDs internos, versión, generación y reason codes. No contiene teléfono, JID, email, nombre, contenido de mensajes, tokens ni payloads externos.
 

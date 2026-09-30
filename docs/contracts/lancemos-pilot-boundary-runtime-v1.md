@@ -31,7 +31,9 @@ La RPC recibe el contrato existente de planificación, la identidad Chatwoot res
 6. sólo entonces invoca la planificación durable autoritativa.
 7. vincula el caso de forma inmutable en `pilot_recovery_case_bindings` con
    `scope_key/version`, el evento admitido, `audience_mode` y, fuera de
-   `manual_cohort`, `audience_purchase_intent_id`.
+   `manual_cohort`, `audience_purchase_intent_id` y
+   `audience_precheckout_submission_id` (el envío 1.1.0 que dio el
+   consentimiento).
 
 Un rechazo usa SQLSTATE `55000`, mensaje `pilot_scope_rejected` y un `detail` reason code. La transacción no deja casos, secuencias ni acciones parciales.
 
