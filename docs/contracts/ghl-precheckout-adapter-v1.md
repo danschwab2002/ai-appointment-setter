@@ -171,6 +171,7 @@ Es la condición para prenderlo.
   4. un formulario fuera de la lista, una landing desconocida, un teléfono inutilizable o una clave repetida dan `4xx` sin tocar la base;
   5. contra la RPC real (PGlite, `tests/sql/followup_engine/validate_ghl_precheckout_adapter.mjs`): dos entregas del mismo golden producen dos submissions de la misma intención, cero filas en `precheckout_submission_conflicts`, y el envío sigue elegible para el consentimiento (`consented_intent_ok`). Un caso de control con el mismo `id` y otro `created_at` sí deja el conflicto, y documenta por qué el `id` no puede ser determinista.
 - **Envío nuevo.** Uno que la suite no acepte se agrega como fixture antes de cambiar el adaptador.
+- **Los teléfonos de los fixtures no son reservados.** Conservan región, validez, tipo y largo, así que son números marcables en rangos reales (un fijo argentino, un número mexicano de la característica 475, y en las variantes de las pruebas, uno de Roma): pueden ser de terceros. Un fixture de GHL, o una variante, se reproduce contra un bridge real solo sin salida posible: todos los `[flujos]` en `false` y `DURABLE_OUTBOUND_ENABLED=false`. En un stack que pueda mandar mensajes (el primer contacto del formulario, cuando exista), no se reproduce: se captura un envío propio con un teléfono de prueba.
 
 ## Lo que este contrato no sabe todavía
 

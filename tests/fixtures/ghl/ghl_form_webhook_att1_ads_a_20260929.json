@@ -14,6 +14,7 @@
       "fbclid": "ninguno de los tres objetos lo trae"
     },
     "phone_shape": "AR sin el 9 movil: valido, FIXED_LINE (tipo 0) en phonenumbers 9.0.37, igual que el original",
+    "phone_not_reserved": "El telefono sintetico (un fijo de la caracteristica argentina 294) es un numero valido y marcable en un rango real, no reservado: puede ser de un tercero. Este fixture y sus variantes nunca se reproducen contra un bridge con una salida posible (algun [flujos] en true o DURABLE_OUTBOUND_ENABLED=true); ver la prueba de conformidad del contrato del adaptador.",
     "anonymised": "contact_id, first_name, last_name, full_name, email, phone, los campos de location (salvo country), ip (TEST-NET-3), userAgent, fbEventId, fbclid (tambien dentro de las URL) y el texto de personalizado1. Cada valor original distinto tiene un sintetico distinto, asi que las igualdades y diferencias entre los tres objetos de atribucion son las medidas. El telefono sintetico conserva region, validez, tipo y largo con phonenumbers 9.0.37 (el que corre en el bridge de ATT1, donde se anonimizo). El resto es textual: URLs y sus utm_*, ids de Meta (utm_id, adset_id, h_ad_id), ids de formulario, workflow, date_created, tags, contact_source, country, timezone, customData y los nombres de los campos personalizados. Los originales quedan en el VPS (/opt/ghl-capture-att1/captures/), fuera de Git."
   },
   "headers": {
