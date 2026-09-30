@@ -3792,10 +3792,14 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
               and conname = 'pilot_scope_versions_audience_mode_check'
         )::int
         + (
-            select count(*) = 2
+            select count(*) = 3
             from pg_attribute
             where attrelid = to_regclass('public.pilot_recovery_case_bindings')
-              and attname in ('audience_mode', 'audience_purchase_intent_id')
+              and attname in (
+                  'audience_mode',
+                  'audience_purchase_intent_id',
+                  'audience_precheckout_submission_id'
+              )
               and not attisdropped
         )::int
         + (
@@ -3834,6 +3838,7 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
               and prosecdef
               and position('_lancemos_pilot_audience_intent' in definition) > 0
               and position('audience_purchase_intent_id' in definition) > 0
+              and position('audience_precheckout_submission_id' in definition) > 0
         )::int
         + (
             select count(*) = 1

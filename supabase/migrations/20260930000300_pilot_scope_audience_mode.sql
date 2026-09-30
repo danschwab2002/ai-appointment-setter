@@ -17,16 +17,18 @@
 --    Los modos con consentimiento se admiten con source hotmart o landing (el
 --    primer contacto del formulario los va a usar). Los topes total y diario
 --    siguen siendo el freno en los tres modos;
--- 2. suma a pilot_recovery_case_bindings el modo y la intencion con que entro
---    cada caso (audience_mode, audience_purchase_intent_id), con un check de
---    forma: manual_cohort sin intencion, los otros dos con intencion;
+-- 2. suma a pilot_recovery_case_bindings el modo y la evidencia con que entro
+--    cada caso: audience_mode, audience_purchase_intent_id y
+--    audience_precheckout_submission_id (el envio 1.1.0 del formulario que dio
+--    el consentimiento, con su copy_version), con un check de forma:
+--    manual_cohort sin evidencia, los otros dos con las dos;
 -- 3. suma _lancemos_pilot_audience_intent, un helper privado que ata la
 --    evidencia al evento: la intencion con la que se correlaciono el evento
 --    tiene que ser del tenant, el producto y la oferta del scope, de la misma
 --    oferta del evento y con su mapeo activo en hotmart_purchase_intent_scopes;
 --    despues aplica el criterio de Johanna sin sus valores fijos
 --    (_portable_consented_intent_reason, 20260930000100). Devuelve un motivo
---    distinto por cada cosa que falla;
+--    distinto por cada cosa que falla y, si pasa, la intencion y el envio;
 -- 4. copia de su definicion vigente las cuatro funciones que toca, con los
 --    cambios entre comentarios pilot_audience y nada mas:
 --    - evaluate_lancemos_pilot_scope (20260929000200): la cohorte se exige
@@ -36,14 +38,15 @@
 --      un permiso de envio;
 --    - authorize_lancemos_pilot_request_start (20260929000200): la cohorte
 --      solo en los modos que la usan; fuera de manual_cohort re-verifica la
---      intencion del binding contra la identidad seleccionada, bajo lock
---      compartido de la fila, ANTES de consumir presupuesto, y el evento de
---      control suma audience_mode y audience_purchase_intent_id. En
---      manual_cohort el data queda identico;
+--      intencion del binding contra la identidad seleccionada, con lock
+--      compartido de la fila de la intencion, ANTES de consumir presupuesto,
+--      y el evento de control suma audience_mode, audience_purchase_intent_id
+--      y el envio que dio el consentimiento al arrancar. En manual_cohort el
+--      data queda identico;
 --    - plan_lancemos_pilot_cart_recovery (20260810000300) y
 --      plan_portable_payment_failure_recovery (20260930000100): fuera de
 --      manual_cohort exigen la intencion del evento antes de planificar, y
---      escriben el modo y la intencion en el binding.
+--      escriben el modo, la intencion y el envio en el binding.
 --
 -- Un rechazo por audiencia al planificar sale como pilot_scope_rejected con el
 -- motivo en detail, que el bridge guarda en webhook_events.processing_error
@@ -54,6 +57,16 @@
 -- Toda fila existente queda en manual_cohort, y en ese modo las cuatro
 -- funciones ejecutan exactamente la rama de hoy: el helper nunca se llama y el
 -- data de auditoria no cambia. No siembra filas de ningun cliente.
+--
+-- Locks: las dos FK nuevas del binding toman SHARE ROW EXCLUSIVE sobre
+-- purchase_intents y precheckout_submissions hasta el commit. Johanna escribe
+-- las dos en caliente (formulario, correlacion, compra): mientras la migracion
+-- corre, esas escrituras esperan. La migracion no reescribe filas (las
+-- columnas nuevas nacen con su valor por defecto o nulas) y los checks y las
+-- FK recorren solo el scope y el binding, que son chicos, asi que la espera es
+-- breve. Si una transaccion larga retiene alguna de las dos tablas, la
+-- migracion falla por lock_timeout (5 s) sin dejar nada a medias y se
+-- reintenta. Conviene aplicarla con poco trafico.
 
 begin;
 set local lock_timeout = '5s';
@@ -75,15 +88,22 @@ alter table public.pilot_scope_versions
 alter table public.pilot_recovery_case_bindings
     add column audience_mode text not null default 'manual_cohort',
     add column audience_purchase_intent_id uuid
-        references public.purchase_intents(id) on delete restrict;
+        references public.purchase_intents(id) on delete restrict,
+    add column audience_precheckout_submission_id uuid
+        references public.precheckout_submissions(id) on delete restrict;
 
 alter table public.pilot_recovery_case_bindings
     add constraint pilot_recovery_case_bindings_audience_shape
     check (
-        (audience_mode = 'manual_cohort' and audience_purchase_intent_id is null)
+        (
+            audience_mode = 'manual_cohort'
+            and audience_purchase_intent_id is null
+            and audience_precheckout_submission_id is null
+        )
         or (
             audience_mode in ('consented_intent_in_cohort', 'consented_intent')
             and audience_purchase_intent_id is not null
+            and audience_precheckout_submission_id is not null
         )
     );
 
@@ -95,6 +115,7 @@ create or replace function public._lancemos_pilot_audience_intent(
     p_purchase_intent_id uuid,
     p_destination_phone text,
     out purchase_intent_id uuid,
+    out precheckout_submission_id uuid,
     out reason_code text
 )
 language plpgsql
@@ -106,6 +127,7 @@ declare
     v_scope public.pilot_scope_versions%rowtype;
     v_intent public.purchase_intents%rowtype;
     v_consent_reason text;
+    v_consent_submission_id uuid;
 begin
     -- La evidencia de audiencia de un modo con consentimiento: la intencion con
     -- la que el llamador ya ato el evento (la correlacion resuelta del evento
@@ -113,6 +135,7 @@ begin
     -- contacto: una intencion de otra oferta, de otro producto o de otro
     -- telefono no cuenta, aunque sea de la misma persona.
     purchase_intent_id := null;
+    precheckout_submission_id := null;
 
     select scope.* into v_scope
     from public.pilot_scope_versions scope
@@ -161,8 +184,14 @@ begin
     -- permisos del formulario, del telefono de destino y de un contact_point
     -- del contacto, con un envio 1.1.0 con opt-in de WhatsApp y la
     -- copy_version del binding activo. Su motivo se conserva con el prefijo
-    -- pilot_audience_ para no aplastar el diagnostico.
-    select consent.reason_code into v_consent_reason
+    -- pilot_audience_ para no aplastar el diagnostico. El envio que devuelve
+    -- (el ultimo que cumple) es la evidencia que se registra: su
+    -- canonical_payload guarda la copy_version con que se dio el
+    -- consentimiento.
+    select consent.reason_code,
+           consent.precheckout_submission_id
+      into v_consent_reason,
+           v_consent_submission_id
     from public._portable_consented_intent_reason(
         v_intent.id,
         p_contact_id,
@@ -175,6 +204,7 @@ begin
     end if;
 
     purchase_intent_id := v_intent.id;
+    precheckout_submission_id := v_consent_submission_id;
     reason_code := 'pilot_audience_allowed';
 end;
 $function$;
@@ -270,7 +300,9 @@ begin
     -- consented_intent_in_cohort). En consented_intent la evaluacion no mira
     -- la intencion: sus llamadores, los planificadores, la atan al evento en
     -- la misma transaccion (_lancemos_pilot_audience_intent) y la autorizacion
-    -- del envio la vuelve a verificar. Esto no es un permiso de envio.
+    -- del envio la vuelve a verificar. Esto no es un permiso de envio. Todo
+    -- llamador SQL de esta funcion tiene que llamar tambien al helper:
+    -- validate_pilot_scope_audience_mode.mjs lo exige.
     elsif v_scope.audience_mode = 'consented_intent' then
         v_reason := 'pilot_scope_allowed';
     -- pilot_audience: end
@@ -338,6 +370,7 @@ declare
     -- pilot_audience: begin
     v_binding public.pilot_recovery_case_bindings%rowtype;
     v_audience_intent_id uuid;
+    v_audience_submission_id uuid;
     v_audience_reason text;
     v_audience_data jsonb := '{}'::jsonb;
     -- pilot_audience: end
@@ -528,12 +561,15 @@ begin
     -- pilot_audience: begin
     -- Fuera de manual_cohort, la intencion con la que entro el caso se vuelve
     -- a verificar contra la identidad seleccionada, antes de consumir
-    -- presupuesto. El lock compartido serializa con la correlacion de una
-    -- compra, que actualiza la intencion: si entre el plan y el envio la
-    -- intencion se compro o perdio el consentimiento, el request no arranca.
-    -- No hay ciclo de locks: aca es control -> intencion, y la compra toma
-    -- evento -> intencion. El replay de arriba no pasa por aca: ese efecto ya
-    -- cruzo.
+    -- presupuesto: si entre el plan y el envio la intencion se compro, paso a
+    -- identity_conflict o perdio sus permisos, el request no arranca. El lock
+    -- compartido cubre solo la fila de la intencion: espera a quien la este
+    -- cambiando (la correlacion de una compra, un formulario posterior de la
+    -- misma oferta) y el helper lee la version confirmada. Lo que no cambia
+    -- esa fila (un conflicto abierto del envio, la copy_version o el estado
+    -- del binding comercial, el mapeo de la oferta) no queda serializado: se
+    -- ve si ya estaba confirmado al leerlo. El replay de arriba no pasa por
+    -- aca: ese efecto ya cruzo.
     if v_scope.audience_mode <> 'manual_cohort' then
         select binding.* into v_binding
         from public.pilot_recovery_case_bindings binding
@@ -553,8 +589,10 @@ begin
         for share;
 
         select audience.purchase_intent_id,
+               audience.precheckout_submission_id,
                audience.reason_code
           into v_audience_intent_id,
+               v_audience_submission_id,
                v_audience_reason
         from public._lancemos_pilot_audience_intent(
             p_scope_key,
@@ -573,7 +611,8 @@ begin
 
         v_audience_data := jsonb_build_object(
             'audience_mode', v_scope.audience_mode,
-            'audience_purchase_intent_id', v_audience_intent_id
+            'audience_purchase_intent_id', v_audience_intent_id,
+            'audience_precheckout_submission_id', v_audience_submission_id
         );
     end if;
     -- pilot_audience: end
@@ -665,6 +704,7 @@ declare
     v_binding public.pilot_recovery_case_bindings%rowtype;
     -- pilot_audience: begin
     v_audience_intent_id uuid;
+    v_audience_submission_id uuid;
     v_audience_reason text;
     -- pilot_audience: end
 begin
@@ -736,8 +776,10 @@ begin
           and correlation.outcome = 'resolved';
 
         select audience.purchase_intent_id,
+               audience.precheckout_submission_id,
                audience.reason_code
           into v_audience_intent_id,
+               v_audience_submission_id,
                v_audience_reason
         from public._lancemos_pilot_audience_intent(
             p_scope_key,
@@ -781,12 +823,14 @@ begin
     insert into public.pilot_recovery_case_bindings (
         recovery_case_id, scope_key, scope_version, source_event_id
         -- pilot_audience: begin
-        , audience_mode, audience_purchase_intent_id
+        , audience_mode, audience_purchase_intent_id,
+        audience_precheckout_submission_id
         -- pilot_audience: end
     ) values (
         v_recovery_case_id, p_scope_key, p_scope_version, p_webhook_event_id
         -- pilot_audience: begin
-        , v_scope.audience_mode, v_audience_intent_id
+        , v_scope.audience_mode, v_audience_intent_id,
+        v_audience_submission_id
         -- pilot_audience: end
     ) on conflict on constraint pilot_recovery_case_bindings_pkey do nothing;
 
@@ -857,6 +901,7 @@ declare
     -- consented_intent_grant: end
     -- pilot_audience: begin
     v_audience_intent_id uuid;
+    v_audience_submission_id uuid;
     v_audience_reason text;
     -- pilot_audience: end
 begin
@@ -1026,8 +1071,10 @@ begin
     -- telefono de destino) tiene el consentimiento vigente.
     if v_scope.audience_mode <> 'manual_cohort' then
         select audience.purchase_intent_id,
+               audience.precheckout_submission_id,
                audience.reason_code
           into v_audience_intent_id,
+               v_audience_submission_id,
                v_audience_reason
         from public._lancemos_pilot_audience_intent(
             p_scope_key,
@@ -1132,12 +1179,14 @@ begin
     insert into public.pilot_recovery_case_bindings (
         recovery_case_id, scope_key, scope_version, source_event_id
         -- pilot_audience: begin
-        , audience_mode, audience_purchase_intent_id
+        , audience_mode, audience_purchase_intent_id,
+        audience_precheckout_submission_id
         -- pilot_audience: end
     ) values (
         v_recovery_case_id, p_scope_key, p_scope_version, p_webhook_event_id
         -- pilot_audience: begin
-        , v_scope.audience_mode, v_audience_intent_id
+        , v_scope.audience_mode, v_audience_intent_id,
+        v_audience_submission_id
         -- pilot_audience: end
     ) on conflict on constraint pilot_recovery_case_bindings_pkey do nothing;
 

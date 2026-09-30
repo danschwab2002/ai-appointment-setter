@@ -23,8 +23,12 @@
 //      con invalid_next_policy_step. Este validador lo fija;
 //   7. la audiencia de produccion (consented_intent, 20260930000300): con la
 //      v2 del scope, una intencion consentida entra sin cohorte y llega a la
-//      aceptacion; sin formulario o con un formulario sin opt-in no se
-//      planifica; y el tope total corta el arranque del envio siguiente.
+//      aceptacion, con la intencion y el envio del formulario en el binding y
+//      en la autorizacion; una intencion consentida que se da de baja en
+//      Chatwoot entre el plan y el envio no sale, no consume el cupo y no
+//      deja un permiso activo; sin formulario o con un formulario sin opt-in
+//      no se planifica; y el tope total corta el arranque del envio
+//      siguiente.
 //
 // Datos:
 //   - Binding, ofertas, landings, producto, Chatwoot y consentimiento salen de
@@ -817,23 +821,65 @@ if (paused.runtime_state !== 'paused'
   throw new Error(`the v2 with consented_intent is not armed with an empty cohort: ${JSON.stringify({ paused, activated, rearmed, openStatus, openMembers })}`);
 }
 const openPlan = { version: OPEN_VERSION };
+const submissionOf = async (intentId) => one((await db.query(`
+  select submission_id from public.purchase_intent_submissions where purchase_intent_id = $1
+`, [intentId])).rows, 'form submission').submission_id;
 
-// Entra sin cohorte, y el binding y la autorizacion dicen con que evidencia.
+// El opt-out conserva precedencia sin cohorte ni operador: una intencion
+// consentida se planifica en la v2 y la persona se da de baja en Chatwoot
+// (apply_chatwoot_inbound_opt_out) antes del envio. La accion queda cancelada,
+// el permiso del carrito se cierra y no se autoriza ningun arranque. Va antes
+// de la persona siguiente a proposito: la v2 tiene un solo cupo, y si la baja
+// lo hubiera consumido, el envio de abajo no saldria.
+const optedOut = person('audiencia-opt-out');
+const optedOutOffer = additionalOffers[1];
+await admitForm(optedOut, optedOutOffer);
+const optedOutCart = await admitCart(optedOut, optedOutOffer);
+await createContact(optedOut, optedOutCart.eventId);
+const optedOutPlan = one((await planCart(optedOut, optedOutOffer, optedOutCart, openPlan)).rows,
+  'opted-out plan');
+const optedOutResult = one((await db.query(`
+  select * from public.apply_chatwoot_inbound_opt_out($1,$2,$3,$4,$5,$6,'unsubscribe')
+`, [ATT1.accountId, ATT1.inboxId, 8801, 98801, optedOut.phone, await dbNow()])).rows,
+'opt-out');
+const optedOutState = one((await db.query(`
+  select
+    (select status from public.scheduled_actions where id = $1) as action_status,
+    (select count(*)::integer from public.contact_authorizations
+      where contact_id = $2 and authorization_status = 'allowed'
+        and valid_from <= clock_timestamp()
+        and (valid_until is null or valid_until > clock_timestamp())) as active_allowed,
+    (select count(*)::integer from public.pilot_outbound_request_authorizations
+      where scope_key = $3) as starts
+`, [optedOutPlan.scheduled_action_id, optedOut.contact, SCOPE])).rows, 'opted-out state');
+if (optedOutResult.outcome !== 'applied'
+    || optedOutResult.matched_contact_id !== optedOut.contact
+    || optedOutState.action_status !== 'cancelled'
+    || optedOutState.active_allowed !== 0
+    || optedOutState.starts !== starts.count) {
+  throw new Error(`the opt-out did not keep precedence over the consented audience: ${JSON.stringify({ optedOutResult, optedOutState })}`);
+}
+
+// Entra sin cohorte, y el binding y la autorizacion dicen con que evidencia:
+// la intencion y el envio 1.1.0 del formulario.
 const openLead = person('audiencia-consentida');
 const openOffer = defaultOffer;
 const openIntent = await admitForm(openLead, openOffer);
+const openSubmission = await submissionOf(openIntent);
 const openCart = await admitCart(openLead, openOffer);
 await createContact(openLead, openCart.eventId);
 const openCartPlan = one((await planCart(openLead, openOffer, openCart, openPlan)).rows,
   'consented intent cart plan');
 const openBinding = one((await db.query(`
-  select scope_version, audience_mode, audience_purchase_intent_id
+  select scope_version, audience_mode, audience_purchase_intent_id,
+         audience_precheckout_submission_id
   from public.pilot_recovery_case_bindings where recovery_case_id = $1
 `, [openCartPlan.recovery_case_id])).rows, 'consented intent binding');
 if (!openCartPlan.created
     || openBinding.scope_version !== OPEN_VERSION
     || openBinding.audience_mode !== 'consented_intent'
-    || openBinding.audience_purchase_intent_id !== openIntent) {
+    || openBinding.audience_purchase_intent_id !== openIntent
+    || openBinding.audience_precheckout_submission_id !== openSubmission) {
   throw new Error(`the consented intent did not bind the case: ${JSON.stringify({ openCartPlan, openBinding })}`);
 }
 const openRun = await dispatch(openLead, openCartPlan, {
@@ -845,6 +891,7 @@ const openControl = one((await db.query(`
 `, [OPEN_VERSION])).rows, 'consented intent control event').data;
 if (openControl.audience_mode !== 'consented_intent'
     || openControl.audience_purchase_intent_id !== openIntent
+    || openControl.audience_precheckout_submission_id !== openSubmission
     || openRun.started.pilot_authorization_id == null) {
   throw new Error(`the authorization did not record the audience: ${JSON.stringify(openControl)}`);
 }
@@ -935,6 +982,7 @@ console.log(JSON.stringify({
   consented_intent: {
     scope_version: OPEN_VERSION,
     consented_without_cohort: openRun.decision.reason_code,
+    opt_out_before_send: `${optedOutState.action_status}, starts ${optedOutState.starts}, active allowed ${optedOutState.active_allowed}`,
     without_form: 'pilot_scope_rejected:pilot_audience_intent_unresolved',
     form_without_opt_in: 'pilot_scope_rejected:pilot_audience_consented_intent_not_authorized',
     cap: `pilot_request_start_rejected:${cappedError.detail}`,

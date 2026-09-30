@@ -108,7 +108,11 @@ def test_authorize_rechecks_the_intent_before_the_budget() -> None:
     compact = [_executable(block) for block in blocks]
 
     assert len(blocks) == 4
-    assert "v_audience_data jsonb := '{}'::jsonb;" in compact[0]
+    assert compact[0] == (
+        "v_binding public.pilot_recovery_case_bindings%rowtype; "
+        "v_audience_intent_id uuid; v_audience_submission_id uuid; "
+        "v_audience_reason text; v_audience_data jsonb := '{}'::jsonb;"
+    )
     assert compact[1] == "v_scope.audience_mode <> 'consented_intent' and"
     assert new.index(blocks[1]) < new.index("'pilot_contact_not_in_cohort'::text")
     recheck = compact[2]
@@ -122,6 +126,14 @@ def test_authorize_rechecks_the_intent_before_the_budget() -> None:
     assert recheck.index("for share") < recheck.index(f"from public.{HELPER}(")
     assert "v_binding.audience_purchase_intent_id, v_identity.external_user_id" in recheck
     assert "if v_audience_reason is distinct from 'pilot_audience_allowed' then" in recheck
+    # La evidencia del arranque queda en el evento de control: el modo, la
+    # intencion y el envio que dio el consentimiento en ese momento.
+    assert (
+        "v_audience_data := jsonb_build_object( "
+        "'audience_mode', v_scope.audience_mode, "
+        "'audience_purchase_intent_id', v_audience_intent_id, "
+        "'audience_precheckout_submission_id', v_audience_submission_id );"
+    ) in recheck
     # Despues de validar la identidad y antes de contar el presupuesto.
     assert new.index("v_identity.metadata ->> 'inbox_id'") < new.index(blocks[2])
     assert new.index(blocks[2]) < new.index("v_local_date := ")
@@ -145,10 +157,17 @@ def test_planners_bind_the_intent_of_the_event_before_planning(name: str) -> Non
     compact = [_executable(block) for block in blocks]
 
     assert len(blocks) == 4
-    assert compact[0] == "v_audience_intent_id uuid; v_audience_reason text;"
+    assert compact[0] == (
+        "v_audience_intent_id uuid; v_audience_submission_id uuid; v_audience_reason text;"
+    )
     check = compact[1]
     assert check.startswith("if v_scope.audience_mode <> 'manual_cohort' then")
     assert f"from public.{HELPER}(" in check
+    assert (
+        "select audience.purchase_intent_id, audience.precheckout_submission_id, "
+        "audience.reason_code into v_audience_intent_id, v_audience_submission_id, "
+        "v_audience_reason"
+    ) in check
     assert "p_external_user_id ) audience;" in check
     assert (
         "raise exception using errcode = '55000', message = 'pilot_scope_rejected', "
@@ -156,8 +175,10 @@ def test_planners_bind_the_intent_of_the_event_before_planning(name: str) -> Non
     ) in check
     assert new.index("detail = 'pilot_policy_mismatch';") < new.index(blocks[1])
     assert new.index(blocks[1]) < new.index("_recovery_with_identity(")
-    assert compact[2] == ", audience_mode, audience_purchase_intent_id"
-    assert compact[3] == ", v_scope.audience_mode, v_audience_intent_id"
+    assert compact[2] == (
+        ", audience_mode, audience_purchase_intent_id, audience_precheckout_submission_id"
+    )
+    assert compact[3] == ", v_scope.audience_mode, v_audience_intent_id, v_audience_submission_id"
     if name == "plan_lancemos_pilot_cart_recovery":
         # La evidencia es la correlacion resuelta de ESTE evento de carrito.
         assert (
@@ -191,6 +212,12 @@ def test_helper_ties_the_scope_and_applies_the_consented_intent_criterion() -> N
         "mapping.offer_ref = v_intent.offer_ref",
         "from public._portable_consented_intent_reason( v_intent.id, p_contact_id, p_destination_phone )",
         "reason_code := 'pilot_audience_' || coalesce(v_consent_reason, 'consented_intent_unknown');",
+        "out purchase_intent_id uuid, out precheckout_submission_id uuid, out reason_code text",
+        "select consent.reason_code, consent.precheckout_submission_id "
+        "into v_consent_reason, v_consent_submission_id",
+        "purchase_intent_id := v_intent.id; "
+        "precheckout_submission_id := v_consent_submission_id; "
+        "reason_code := 'pilot_audience_allowed';",
     ):
         assert predicate in helper, predicate
     reasons = set(re.findall(r"reason_code := '([a-z_]+)';", raw))
@@ -219,12 +246,16 @@ def test_ddl_keeps_every_existing_row_in_manual_cohort() -> None:
     assert (
         "add column audience_mode text not null default 'manual_cohort', "
         "add column audience_purchase_intent_id uuid "
-        "references public.purchase_intents(id) on delete restrict;"
+        "references public.purchase_intents(id) on delete restrict, "
+        "add column audience_precheckout_submission_id uuid "
+        "references public.precheckout_submissions(id) on delete restrict;"
     ) in compact
     assert (
-        "(audience_mode = 'manual_cohort' and audience_purchase_intent_id is null) "
+        "( audience_mode = 'manual_cohort' and audience_purchase_intent_id is null "
+        "and audience_precheckout_submission_id is null ) "
         "or ( audience_mode in ('consented_intent_in_cohort', 'consented_intent') "
-        "and audience_purchase_intent_id is not null )"
+        "and audience_purchase_intent_id is not null "
+        "and audience_precheckout_submission_id is not null )"
     ) in compact
 
 
@@ -267,3 +298,20 @@ def test_migration_is_transactional_and_seeds_nothing() -> None:
     ]
     assert "insert into public.pilot_scope_versions" not in sql
     assert not re.search(r"\bdrop\s+(table|function|constraint|column)\b", sql, re.IGNORECASE)
+
+
+def test_no_runtime_code_uses_the_evaluation_as_an_audience_filter() -> None:
+    # En consented_intent la evaluacion devuelve pilot_scope_allowed sin mirar
+    # la intencion: sola no es un filtro de audiencia. Todo llamador SQL la
+    # compone con el helper (lo exige validate_pilot_scope_audience_mode.mjs
+    # sobre la base migrada). Del lado de la aplicacion, ni el bridge ni los
+    # scripts la llaman: si alguno empieza a hacerlo, este test lo frena para
+    # que se decida con la intencion a la vista.
+    callers = [
+        path.relative_to(ROOT).as_posix()
+        for folder in ("src", "scripts")
+        for path in sorted((ROOT / folder).rglob("*.py"))
+        if "evaluate_lancemos_pilot_scope" in path.read_text(encoding="utf-8")
+    ]
+
+    assert callers == []
