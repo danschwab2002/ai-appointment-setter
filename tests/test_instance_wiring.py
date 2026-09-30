@@ -569,6 +569,47 @@ def test_the_greeting_is_a_portable_capability() -> None:
     assert create_app(settings) is not None
 
 
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        pytest.param({}, id="everything off"),
+        pytest.param(
+            {**_DIRECT, "dispatcher_approved_template_direct_enabled": False},
+            id="durable outbound in Hermes mode",
+        ),
+    ],
+)
+def test_the_greeting_without_the_direct_mode_does_not_start(
+    overrides: dict[str, object],
+) -> None:
+    # En un runtime portable el saludo solo llega al dispatcher directo: sin el
+    # modo directo el flag se aceptaba y no saludaba a nadie, sin avisar.
+    settings = _settings(
+        _att1_manifest(carrito=True),
+        **{**overrides, "lead_first_name_greeting_enabled": True},
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="LEAD_FIRST_NAME_GREETING_ENABLED in a portable runtime requires "
+        "DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED",
+    ):
+        create_app(settings)
+
+
+def test_johanna_keeps_the_greeting_without_the_direct_mode() -> None:
+    # Sin manifiesto el saludo es de los one-shots de Johanna: no cambia.
+    settings = Settings(
+        webhook_secret="test-secret",
+        allowed_jid="12025550123@s.whatsapp.net",
+        capture_dir=Path("/tmp/instance-wiring-captures"),
+        max_age_seconds=300,
+        lead_first_name_greeting_enabled=True,
+    )
+
+    assert create_app(settings) is not None
+
+
 def test_the_direct_dispatcher_does_not_consume_the_handoff_admission() -> None:
     # La admision de derivacion necesita quien la consuma: el Corte B o un
     # dispatcher que le pregunte a Hermes. El modo directo no le pregunta.

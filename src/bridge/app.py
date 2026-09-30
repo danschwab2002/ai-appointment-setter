@@ -2030,6 +2030,7 @@ def _validate_approved_template_direct(
     *,
     waba_template: WhatsAppTemplateConfig | None,
     portable_dynamic_recipient: bool,
+    portable_runtime: bool,
 ) -> None:
     """Startup gates of the direct mode and of the final Meta effect with a manifest.
 
@@ -2039,7 +2040,21 @@ def _validate_approved_template_direct(
     never reaches Meta and the shared SOUL forbids the agent from writing
     first, so there is nothing valid to send
     (docs/contracts/approved-template-direct-dispatch-v1.md).
+
+    In a portable runtime the first-name greeting only reaches the direct
+    dispatcher (Johanna's one-shots, its other consumer, are not portable), so
+    without the direct mode the flag would be accepted and do nothing. It is
+    refused instead, the same way the dispatcher constructor refuses it.
     """
+    if (
+        portable_runtime
+        and settings.lead_first_name_greeting_enabled
+        and not settings.dispatcher_approved_template_direct_enabled
+    ):
+        raise ValueError(
+            "LEAD_FIRST_NAME_GREETING_ENABLED in a portable runtime requires "
+            "DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED"
+        )
     if settings.dispatcher_approved_template_direct_enabled:
         if settings.instance_manifest is None:
             raise ValueError(
@@ -2348,6 +2363,7 @@ def create_app(
         settings,
         waba_template=waba_template,
         portable_dynamic_recipient=portable_dynamic_recipient,
+        portable_runtime=portable_runtime,
     )
     pilot_boundary = (
         PilotBoundaryConfig(

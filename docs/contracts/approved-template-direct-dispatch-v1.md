@@ -20,7 +20,7 @@ En el modo directo el dispatcher arma el texto con el cuerpo aprobado del catál
 | Variable | Por defecto | Qué hace |
 |---|---|---|
 | `DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED` | `false` | Prende el modo directo del dispatcher |
-| `LEAD_FIRST_NAME_GREETING_ENABLED` | `false` | Con el modo directo, la variable `nombre` lleva el saludo por primer nombre. Pasa a estar admitida en un runtime portable |
+| `LEAD_FIRST_NAME_GREETING_ENABLED` | `false` | Con el modo directo, la variable `nombre` lleva el saludo por primer nombre. En un runtime portable se admite solo con el modo directo: sin él el bridge no arranca |
 | `WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY` | vacía | Solo con manifiesto. La categoría de Meta de la plantilla del pago fallido cuando no es la de `WABA_TEMPLATE_CATEGORY` (`MARKETING` o `UTILITY`). Vacía, todas las plantillas usan `WABA_TEMPLATE_CATEGORY`. Exige `WABA_PAYMENT_FAILURE_TEMPLATE_NAME` |
 
 Con `DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED=true` el bridge no arranca si falta alguna de estas condiciones:
@@ -36,7 +36,7 @@ Con el modo directo prendido:
 
 - Hermes deja de ser una dependencia del dispatcher: `HERMES_API_BASE_URL` y `HERMES_API_KEY` no hacen falta para la salida. `HERMES_MODEL_NAME` se sigue exigiendo porque el manifiesto lo compara con `agente.modelo`.
 - El dispatcher no cuenta como consumidor de `HUMAN_HANDOFF_ADMISSION_ENABLED`: nunca recibe una sugerencia de derivar. Si la admisión está prendida, la tiene que consumir el Corte B.
-- `LEAD_FIRST_NAME_GREETING_ENABLED` llega al dispatcher. Sin el modo directo no llega: el dispatcher de Hermes sigue mandando el nombre completo.
+- `LEAD_FIRST_NAME_GREETING_ENABLED` llega al dispatcher. En un runtime portable el dispatcher directo es el único que lo usa (los one-shots de Johanna, el otro consumidor, no son portables), así que con el flag prendido y el modo directo apagado el bridge no arranca: `LEAD_FIRST_NAME_GREETING_ENABLED in a portable runtime requires DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED`. Antes se aceptaba y no saludaba a nadie. Sin manifiesto (Johanna) nada cambia.
 
 **Guarda nueva sobre el gate final.** Con manifiesto, `META_FINAL_EFFECT_ENABLED=true` junto con `DURABLE_OUTBOUND_ENABLED=true` exige el modo directo. Sin él, lo que se autorizaría es un borrador de Hermes que Meta no muestra. El candado `tenant_ref == "att1"` del binding v1 no cambia; con manifiesto v2 no se activaba, porque ahí `tenant_ref` es `"lancemos"`.
 
