@@ -42,7 +42,8 @@ X-Setter-Adapter-Token: <token>        (opcional si el token va en el cuerpo)
   - manifiesto v2 (`INSTANCE_MANIFEST_PATH`);
   - `"intencion"` en `eventos`;
   - `[adaptadores.ghl]` con al menos un formulario;
-  - un token de 32 caracteres o más, distinto de `LEAD_PRECHECKOUT_SECRET` y de `CHATWOOT_WEBHOOK_SECRET`.
+  - un token de 32 caracteres o más, distinto de `LEAD_PRECHECKOUT_SECRET` y de `CHATWOOT_WEBHOOK_SECRET`;
+  - `[flujos].precheckout` en `false` (ver [Riesgos](#riesgos)).
 - Apagado, ninguna de esas condiciones se evalúa: un runtime sin token ni manifiesto arranca igual que hoy.
 - No depende de `LEAD_PRECHECKOUT_ENABLED` ni de su secreto.
 - `/ready` agrega `ghl_precheckout_adapter: enabled:<n>-forms` solo con el flag prendido, y nunca responde `503` por el adaptador.
@@ -153,7 +154,7 @@ Una línea por pedido: resultado, motivo, id del formulario, landing, oferta, `d
   - una verificación fuera de banda de cada envío: leer el contacto por la API de GHL con `contact_id` y comparar teléfono y email;
   - la aceptación explícita del riesgo por el responsable de la instancia, por escrito.
 
-  Ninguna de las dos es parte de este contrato v1.
+  Ninguna de las dos es parte de este contrato v1. La parte del manifiesto la hace cumplir el arranque: con el adaptador prendido, el bridge no arranca si `[flujos].precheckout` está en `true`, y `validate` lo avisa. Levantar esa guarda es el cambio de código que trae la verificación, o el que cita la aceptación escrita. La audiencia `consented_intent` vive en el scope del piloto en la base, fuera de lo que el bridge ve al arrancar: esa parte de la condición no la hace cumplir ningún código.
 - **El contacto que vuelve.** La admisión reusa la intención viva sin actualizar `purchase_intents.submitted_at`, y la correlación del pago filtra por esa fecha (migración `20260820000100`). Un contacto que vuelve a enviar el formulario después de `max_lookback`, con una intención viva, no correlaciona. Es del producto y le pasa igual a una landing directa; el adaptador no lo empeora ni lo arregla.
 
 ## Prueba de conformidad

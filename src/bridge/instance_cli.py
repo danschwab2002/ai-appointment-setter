@@ -90,6 +90,14 @@ def validate_instance(directory: Path) -> dict[str, Any]:
     for flow, state in flows.items():
         if not state["se_puede_prender"]:
             report["avisos"].append(f"{flow} no se puede prender: " + "; ".join(state["falta"]))
+    if manifest.ghl_form_ids and manifest.flows["precheckout"]:
+        # validate no ve las variables del servicio: lo avisa, y el bridge lo corta
+        # al arrancar (docs/contracts/ghl-precheckout-adapter-v1.md, Riesgos).
+        report["avisos"].append(
+            "precheckout esta prendido y hay [adaptadores.ghl]: el bridge no arranca con "
+            "GHL_PRECHECKOUT_ADAPTER_ENABLED=true, porque el token del adaptador es la "
+            "unica barrera y el primer contacto exige verificar cada envio fuera de banda"
+        )
     report["valida"] = not report["errores"]
     return report
 

@@ -350,6 +350,22 @@ def test_the_ghl_adapter_needs_its_forms_in_the_manifest() -> None:
         create_app(settings)
 
 
+def test_the_ghl_adapter_does_not_run_with_the_precheckout_flow_on() -> None:
+    # E4: el token es la unica barrera. Con el adaptador prendido, el primer contacto
+    # del formulario necesita antes una verificacion fuera de banda de cada envio: la
+    # condicion del contrato la hace cumplir el arranque, no la relectura del texto.
+    manifest = replace(
+        _ghl_manifest(), flows={**_ghl_manifest().flows, "precheckout": True}
+    )
+
+    with pytest.raises(
+        ValueError, match="GHL_PRECHECKOUT_ADAPTER_ENABLED cannot run with flujos.precheckout on"
+    ):
+        create_app(_ghl_settings(manifest))
+    # Con el adaptador apagado la guarda no se evalua (E11).
+    assert create_app(_settings(manifest)) is not None
+
+
 @pytest.mark.parametrize("token", [None, "x" * 31])
 def test_the_ghl_adapter_needs_a_token_of_32_characters(token: str | None) -> None:
     with pytest.raises(ValueError, match="GHL_PRECHECKOUT_ADAPTER_TOKEN must contain"):

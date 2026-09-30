@@ -1951,6 +1951,16 @@ def _validate_instance_manifest_gates(settings: Settings) -> None:
         raise ValueError(
             "runtime flags exceed the instance manifest flows: " + ", ".join(blocked)
         )
+    if settings.ghl_precheckout_adapter_enabled and manifest.flows["precheckout"]:
+        # El token del adaptador es la unica barrera y lo lee cualquier usuario de
+        # la subcuenta de GHL: el primer contacto no sale para intenciones que no
+        # distingue de las de una landing hasta que exista una verificacion fuera
+        # de banda del envio (docs/contracts/ghl-precheckout-adapter-v1.md, Riesgos).
+        raise ValueError(
+            "GHL_PRECHECKOUT_ADAPTER_ENABLED cannot run with flujos.precheckout on: "
+            "the adapter token is the only barrier and the first contact needs an "
+            "out-of-band check of each submission"
+        )
     if settings.automated_replies_enabled and knowledge is None:
         raise ValueError(
             "automated replies with an instance manifest require "

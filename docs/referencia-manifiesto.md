@@ -150,7 +150,7 @@ Reglas: al menos un formulario, sin repetir, y `intencion` en `eventos`; si no, 
 
 **Listar un formulario es una afirmación.** Cada envío traducido se admite con `whatsapp_contact = true`, así que listar un formulario afirma que muestra la aclaración de `consentimiento.copy_version` y que su envío es el paso previo al checkout de la oferta de su landing. Se suma a la lista solo después de verificar las dos.
 
-La sección sola no prende nada: el adaptador corre con `GHL_PRECHECKOUT_ADAPTER_ENABLED` y su token en las variables del servicio. Tampoco prende el primer contacto: sumar `intencion` hace que `validate` diga que el flujo `precheckout` se puede prender si está su plantilla, pero prenderlo con intenciones que llegan por el adaptador tiene una condición más, porque el token es la única barrera (sección *Riesgos* del contrato).
+La sección sola no prende nada: el adaptador corre con `GHL_PRECHECKOUT_ADAPTER_ENABLED` y su token en las variables del servicio. Tampoco prende el primer contacto: sumar `intencion` hace que `validate` diga que el flujo `precheckout` se puede prender si está su plantilla, pero prenderlo con intenciones que llegan por el adaptador tiene una condición más, porque el token es la única barrera (sección *Riesgos* del contrato). Hasta que exista la verificación fuera de banda, el bridge no arranca con `GHL_PRECHECKOUT_ADAPTER_ENABLED=true` y `precheckout = true`, y `validate` lo avisa cuando el manifiesto tiene `[adaptadores.ghl]` y ese flujo prendido.
 
 ## Relación con el binding v1
 

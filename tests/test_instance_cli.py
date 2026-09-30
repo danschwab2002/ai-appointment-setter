@@ -104,6 +104,25 @@ def test_report_lists_the_ghl_adapter_forms(att1_copy: Path, capsys) -> None:
     assert "adaptador ghl, formularios: EgDqRl2xWc59YjVW1q8W" in capsys.readouterr().out
 
 
+def test_the_ghl_adapter_with_the_precheckout_flow_on_is_a_warning(att1_copy: Path) -> None:
+    # validate no ve GHL_PRECHECKOUT_ADAPTER_ENABLED: avisa que el bridge no va a
+    # arrancar con el adaptador prendido (test_instance_wiring lo prueba en el arranque).
+    _add_ghl_adapter(att1_copy, ["EgDqRl2xWc59YjVW1q8W"])
+    path = att1_copy / "instancia.toml"
+    text = path.read_text(encoding="utf-8")
+    assert "precheckout = false" in text
+    path.write_text(text.replace("precheckout = false", "precheckout = true"), encoding="utf-8")
+
+    report = validate_instance(att1_copy)
+
+    assert report["flujos"]["precheckout"]["prendido"] is True
+    assert any(
+        "GHL_PRECHECKOUT_ADAPTER_ENABLED=true" in warning for warning in report["avisos"]
+    )
+    # Sin el adaptador en el manifiesto no hay aviso.
+    assert not any("adaptadores.ghl" in warning for warning in validate_instance(ATT1)["avisos"])
+
+
 def test_report_has_no_adapter_without_the_section() -> None:
     report = validate_instance(ATT1)
 
