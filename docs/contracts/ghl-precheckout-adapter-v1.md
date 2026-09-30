@@ -1,6 +1,6 @@
 # Contrato: adaptador del formulario de GHL a `lead.precheckout` (v1)
 
-- **Estado:** contrato v1, escrito antes de la implementación (2026-09-30) e implementado en el bridge 1.1.0 (sin publicar), apagado por defecto. No describe nada desplegado.
+- **Estado:** contrato v1, escrito antes de la implementación (2026-09-30) e implementado en el bridge 1.2.0 (sin publicar), apagado por defecto. No describe nada desplegado.
 - **Endpoint:** `POST /webhooks/adapters/ghl/lead-precheckout`
 - **Emisor:** la acción *Webhook* de un workflow de GHL con disparador *Form submitted*. Es la forma medida el 2026-09-29 por el receptor temporal `ghl-capture-att1` (workflow `b3304158-ec6b-4491-8057-92f695da3db1`).
 - **Salida:** `lead.precheckout` `1.1.0` ([lead-precheckout-v1.md](lead-precheckout-v1.md)), validado por `parse_lead_precheckout` y admitido por `admit_portable_observed_lead_precheckout`, el mismo camino que un formulario de landing en un runtime con manifiesto.
