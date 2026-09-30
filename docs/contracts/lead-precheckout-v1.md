@@ -41,23 +41,50 @@ del navegador, query strings, logs o Git.
 ## Alcance implementado
 
 El singleton legado de Johanna acepta únicamente la relación cerrada de seis
-pares publicada abajo. Cada runtime con manifiesto explícito conserva un único
-binding escalar suministrado por su configuración; no hereda la relación
-multi-par de Johanna aunque copie alguno de sus valores.
+pares publicada abajo. Cada runtime con manifiesto explícito acepta las landings
+declaradas en su propio binding: la de la oferta por defecto y, desde la
+migración `20260930000200`, una por cada oferta de `additional_offer_landings`
+(ver "Varias landings por binding" abajo). No hereda la relación multi-par de
+Johanna aunque copie alguno de sus valores.
 
 ```text
-site       = <site configurado>
-landing_id = <landing configurada>
-offer.code = <oferta configurada>
-hotlink    = F106691755G
+site       = <site de la landing>
+landing_id = <landing declarada>
+offer.code = <oferta de esa landing>
+hotlink    = <hotlink del binding>
 ```
 
-Un payload que no coincide exactamente con el binding configurado se clasifica
-como inválido y devuelve `400 invalid_lead_precheckout_payload`. En runtimes con
-manifiesto explícito, el bridge envía tenant, funnel y versión server-owned a la
-RPC portable; ésta exige la fila durable activa exacta y vuelve a comprobar todo
-el scope comercial canónico contra esa fila. Sin manifiesto, la RPC legada de
-Johanna aplica los seis pares exactos y rechaza cualquier cruce entre ellos.
+Un payload que no coincide exactamente con una landing del binding configurado
+se clasifica como inválido y devuelve `400 invalid_lead_precheckout_payload`. En
+runtimes con manifiesto explícito, el bridge envía tenant, funnel y versión
+server-owned a la RPC portable; ésta exige la fila durable activa exacta y vuelve
+a comprobar todo el scope comercial canónico contra esa fila. Sin manifiesto, la
+RPC legada de Johanna aplica los seis pares exactos y rechaza cualquier cruce
+entre ellos.
+
+### Varias landings por binding (migración `20260930000200`)
+
+Una aliada vende el mismo producto con una oferta por landing, y sus landings
+pueden estar en sitios y hosts distintos. En un runtime con manifiesto explícito
+la terna `(source.site, source.landing_id, offer.code)` tiene que ser la de una
+landing del binding, con el host y la ruta de `source.page_url` de esa misma
+landing:
+
+- la landing de la oferta por defecto: `lead_site`, `lead_landing_id`,
+  `lead_page_host`, `lead_page_path` y `offer_code`;
+- la de cada oferta adicional, declarada en `additional_offer_landings` (un
+  objeto `offer_code`, `site`, `landing_id`, `page_host`, `page_path` por oferta,
+  en el orden de `additional_offer_codes`). El manifiesto v2 la llena desde
+  `[[hotmart.ofertas]]`.
+
+Un par cruzado (la oferta de una landing en la página de otra, el sitio o el host
+de otra landing, o una oferta sin landing declarada) se rechaza con `400` en el
+bridge y con `observed_precheckout_assurance_mismatch` u
+`observed_precheckout_raw_canonical_mismatch` en la RPC. Sin
+`additional_offer_landings` el formulario entra solo por la landing de la oferta
+por defecto, como antes. La intención es una por oferta: la misma persona en dos
+landings deja dos intenciones, y el carrito y el pago fallido de cada oferta se
+correlacionan con la suya.
 
 La autoridad PostgreSQL de Johanna se publica como una relación inmutable y
 cerrada de seis pares `landing_ref → offer_ref`; no admite ofertas comodín:

@@ -244,6 +244,27 @@ if (consentHelper.length !== 1
     || consentHelper[0].service_x !== false) {
   throw new Error(`consented intent helper ACL failed: ${JSON.stringify(consentHelper)}`);
 }
+// 20260930000200: el check de forma de additional_offer_landings es un helper
+// inmutable que solo usa el constraint. Solo el owner escribe bindings, asi que
+// ningun rol de la API, ni service_role, lo ejecuta.
+const offerLandingsHelper = (await db.query(`
+  select
+    p.prosecdef security_definer,
+    p.provolatile volatility,
+    has_function_privilege('anon', p.oid, 'execute') anon_x,
+    has_function_privilege('authenticated', p.oid, 'execute') auth_x,
+    has_function_privilege('service_role', p.oid, 'execute') service_x
+  from pg_proc p
+  where p.oid = to_regprocedure('public.commercial_ally_offer_landings_are_valid(jsonb,text[],text,text)')
+`)).rows;
+if (offerLandingsHelper.length !== 1
+    || offerLandingsHelper[0].security_definer !== false
+    || offerLandingsHelper[0].volatility !== 'i'
+    || offerLandingsHelper[0].anon_x !== false
+    || offerLandingsHelper[0].auth_x !== false
+    || offerLandingsHelper[0].service_x !== false) {
+  throw new Error(`offer landings helper ACL failed: ${JSON.stringify(offerLandingsHelper)}`);
+}
 const bindingAcl = await db.query(`
   select
     has_table_privilege(

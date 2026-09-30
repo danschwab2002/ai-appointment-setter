@@ -92,6 +92,10 @@ El payload debe coincidir con el manifiesto en:
 - checkout y offer code;
 - versión del consentimiento.
 
+Sitio, landing, URL y oferta son los de una misma landing del binding: la de la
+oferta por defecto (`lead_*`) o una de `additional_offer_landings` (sección
+"Una landing por oferta en el precheckout").
+
 El parser construye un evento canónico con `tenant_ref` y `funnel_ref` del
 manifiesto. Cuando la procedencia es un manifiesto explícito,
 `LEAD_PRECHECKOUT_ENABLED=true` usa
@@ -304,8 +308,31 @@ Una aliada vende el mismo producto con una oferta por landing. El binding suma `
 - **Carrito abandonado y pago fallido:** se aceptan con cualquier oferta del binding, en el bridge (`accepted_offer_codes`) y en las RPC. Cada evento resuelve el scope de intención de **su** oferta (`hotmart_purchase_intent_scopes`), que tiene que existir y estar activo. Una oferta fuera del binding se rechaza sin crear eventos.
 - **Compra aprobada:** se acepta con **cualquier oferta del producto** y frena las intenciones de ese producto, sin importar la oferta. Una compra es una compra aunque entre por una oferta que el setter no ofrece.
 - **Pago fallido que este runtime no procesa** (otro producto, una oferta fuera del binding): responde `200 {"status":"ignored","reason":"invalid_payment_failure_payload"}`, igual que el carrito y la compra. Antes era `422`, y Hotmart cuenta los 4xx como fallas del webhook hasta desactivarlo.
-- **Lo que todavía no es multi-oferta:**
-  - el precheckout portable (una sola landing por binding);
-  - la frontera del piloto que autoriza el envío (`pilot_scope_versions.offer_code`, comparada en `authorize_lancemos_pilot_request_start`).
+- **Lo que esta migración dejó sin multi-oferta:**
+  - el precheckout portable (una sola landing por binding), resuelto en `20260930000200` (sección siguiente);
+  - la frontera del piloto que autoriza el envío (`pilot_scope_versions.offer_code`, comparada en `authorize_lancemos_pilot_request_start`), resuelta en `20260929000100` con `pilot_scope_versions.additional_offer_codes`.
 
-  Hasta que eso cambie, un evento de una oferta adicional queda admitido y correlacionado, pero su envío no está autorizado.
+  Hasta esas dos migraciones, un evento de una oferta adicional quedaba admitido y correlacionado, pero su envío no estaba autorizado.
+
+## Una landing por oferta en el precheckout (2026-09-30, migración `20260930000200`)
+
+Las landings de una aliada pueden estar en sitios y hosts distintos: ATT1 tiene dos en `www.metodoraizana.com` y una en `site.metodoraizana.com.mx`. El binding suma `additional_offer_landings`, una lista con la landing de cada oferta adicional, en el mismo orden que `additional_offer_codes`:
+
+```json
+"additional_offer_landings": [
+  {
+    "offer_code": "second-offer",
+    "site": "ally-one-site",
+    "landing_id": "second",
+    "page_host": "ally-one.example",
+    "page_path": "/offer/second"
+  }
+]
+```
+
+- **Forma:** cada objeto tiene exactamente esas cinco claves, con las mismas reglas que `lead_*` (slugs, hostname canónico, path absoluto sin query ni fragment). La lista va vacía o con una landing por oferta adicional, en su orden, y ninguna repite el sitio y la landing de otra ni de la oferta por defecto. En la base lo exige el check `commercial_ally_runtime_bindings_offer_landings_shape`; en el bridge, `CommercialAllyConfig`.
+- **Vacía** (el valor por defecto, y el de toda fila anterior a la migración): el formulario entra solo por la landing de la oferta por defecto, como antes. En el manifiesto JSON la clave es opcional.
+- **Admisión:** `admit_portable_observed_lead_precheckout` resuelve la oferta del envío (`commerce.offer_ref`) entre la por defecto y las que tienen landing declarada, y exige la landing, el sitio, el host y la ruta de **esa** oferta. Una oferta sin landing declarada se rechaza con `observed_precheckout_assurance_mismatch`, como una oferta ajena. El parser del bridge y `/webhooks/lead` aplican la misma terna (sitio, landing, oferta).
+- **Una intención por oferta:** la misma persona en dos landings deja dos intenciones, una por oferta, como el modelo de seis landings de Johanna. Así el carrito y el pago fallido de cada oferta encuentran su intención.
+- **Manifiesto v2:** `to_commercial_ally_config` llena la lista con el sitio, la landing y la URL de cada oferta de `[[hotmart.ofertas]]` que no es la por defecto.
+- **Orden de despliegue:** la migración, después la fila del binding con sus landings, y después el bridge. Un bridge nuevo con manifiesto sobre la fila vieja ve drift y `/ready` responde `503 commercial_ally_binding_unavailable`.

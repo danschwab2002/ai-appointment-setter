@@ -15,6 +15,68 @@ _HOST = re.compile(
 )
 _CURRENCY = re.compile(r"[A-Z]{3}")
 _OFFER_CODE = re.compile(r"[A-Za-z0-9]{4,32}")
+_OFFER_LANDING_KEYS = frozenset(
+    {"offer_code", "site", "landing_id", "page_host", "page_path"}
+)
+
+
+def _canonical_page_path(path: str) -> bool:
+    return path.startswith("/") and "?" not in path and "#" not in path
+
+
+@dataclass(frozen=True)
+class OfferLanding:
+    """La landing donde se ofrece una oferta del binding.
+
+    El formulario del precheckout de esa landing se admite con esa oferta, en
+    ese sitio, host y ruta. La oferta por defecto usa los campos ``lead_*``.
+    """
+
+    offer_code: str
+    site: str
+    landing_id: str
+    page_host: str
+    page_path: str
+
+    @classmethod
+    def from_json(cls, value: object) -> OfferLanding:
+        """Una landing del manifiesto JSON o de la fila durable del binding."""
+
+        if (
+            not isinstance(value, dict)
+            or set(value) != _OFFER_LANDING_KEYS
+            or not all(isinstance(item, str) for item in value.values())
+        ):
+            raise ValueError(
+                "additional_offer_landings items must be objects with exactly "
+                "offer_code, site, landing_id, page_host and page_path"
+            )
+        return cls(**value)
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.offer_code, str)
+            or not self.offer_code
+            or any(char.isspace() for char in self.offer_code)
+        ):
+            raise ValueError("additional_offer_landings offer_code must not be blank")
+        if any(
+            not isinstance(value, str) or _REF.fullmatch(value) is None
+            for value in (self.site, self.landing_id)
+        ):
+            raise ValueError(
+                "additional_offer_landings site and landing_id must be canonical slugs"
+            )
+        if not isinstance(self.page_host, str) or _HOST.fullmatch(self.page_host) is None:
+            raise ValueError(
+                "additional_offer_landings page_host must be a canonical hostname"
+            )
+        if not isinstance(self.page_path, str) or not _canonical_page_path(
+            self.page_path
+        ):
+            raise ValueError(
+                "additional_offer_landings page_path must be one canonical absolute path"
+            )
 
 
 @dataclass(frozen=True)
@@ -48,6 +110,11 @@ class CommercialAllyConfig:
     # Otras ofertas del mismo producto, una por landing. `offer_code` sigue
     # siendo la oferta por defecto. Opcional en el manifiesto JSON.
     additional_offer_codes: tuple[str, ...] = ()
+    # La landing de cada oferta adicional, en el mismo orden que
+    # ``additional_offer_codes``. Vacio: el formulario del precheckout entra
+    # solo por la landing de la oferta por defecto. Opcional en el manifiesto
+    # JSON.
+    additional_offer_landings: tuple[OfferLanding, ...] = ()
 
     @classmethod
     def from_json_file(cls, path: Path) -> CommercialAllyConfig:
@@ -60,7 +127,7 @@ class CommercialAllyConfig:
         if not isinstance(payload, dict):
             raise ValueError("commercial ally manifest must be a JSON object")
         expected = {field.name for field in fields(cls)}
-        optional = {"additional_offer_codes"}
+        optional = {"additional_offer_codes", "additional_offer_landings"}
         if not expected - optional <= set(payload) <= expected:
             raise ValueError("commercial ally manifest must contain exactly the supported keys")
         additional = payload.get("additional_offer_codes", [])
@@ -69,6 +136,12 @@ class CommercialAllyConfig:
         ):
             raise ValueError("additional_offer_codes must be a JSON list of strings")
         payload["additional_offer_codes"] = tuple(additional)
+        landings = payload.get("additional_offer_landings", [])
+        if not isinstance(landings, list):
+            raise ValueError("additional_offer_landings must be a JSON list of objects")
+        payload["additional_offer_landings"] = tuple(
+            OfferLanding.from_json(landing) for landing in landings
+        )
         price = payload.get("product_price")
         if isinstance(price, bool) or not isinstance(price, (str, int, float)):
             raise ValueError("product_price must be a JSON string or number")
@@ -92,11 +165,7 @@ class CommercialAllyConfig:
             raise ValueError("lead_ally_name must not be blank")
         if _HOST.fullmatch(self.lead_page_host) is None:
             raise ValueError("lead_page_host must be a canonical hostname")
-        if (
-            not self.lead_page_path.startswith("/")
-            or "?" in self.lead_page_path
-            or "#" in self.lead_page_path
-        ):
+        if not _canonical_page_path(self.lead_page_path):
             raise ValueError("lead_page_path must be one canonical absolute path")
         if not self.product_hotlink or "/" in self.product_hotlink:
             raise ValueError("product_hotlink must be one non-empty path segment")
@@ -135,12 +204,50 @@ class CommercialAllyConfig:
                 "additional_offer_codes must be at most 16 distinct codes "
                 "different from offer_code"
             )
+        if not isinstance(self.additional_offer_landings, tuple) or any(
+            not isinstance(landing, OfferLanding)
+            for landing in self.additional_offer_landings
+        ):
+            raise ValueError("additional_offer_landings must be a tuple of OfferLanding")
+        if self.additional_offer_landings and tuple(
+            landing.offer_code for landing in self.additional_offer_landings
+        ) != self.additional_offer_codes:
+            raise ValueError(
+                "additional_offer_landings must declare one landing per additional "
+                "offer, in the order of additional_offer_codes"
+            )
+        pairs = [(landing.site, landing.landing_id) for landing in self.offer_landings]
+        if len(set(pairs)) != len(pairs):
+            raise ValueError(
+                "additional_offer_landings must not repeat a site and landing_id"
+            )
 
     @property
     def accepted_offer_codes(self) -> tuple[str, ...]:
         """La oferta por defecto primero, despues las demas del binding."""
 
         return (self.offer_code, *self.additional_offer_codes)
+
+    @property
+    def offer_landings(self) -> tuple[OfferLanding, ...]:
+        """Las landings donde se admite el formulario: la por defecto primero."""
+
+        default = OfferLanding(
+            offer_code=self.offer_code,
+            site=self.lead_site,
+            landing_id=self.lead_landing_id,
+            page_host=self.lead_page_host,
+            page_path=self.lead_page_path,
+        )
+        return (default, *self.additional_offer_landings)
+
+    def offer_landing(self, site: str, landing_id: str) -> OfferLanding | None:
+        """La oferta declarada para esa landing, o ``None`` si no es del binding."""
+
+        for landing in self.offer_landings:
+            if landing.site == site and landing.landing_id == landing_id:
+                return landing
+        return None
 
     @property
     def lead_page_url(self) -> str:

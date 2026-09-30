@@ -5498,18 +5498,23 @@ def create_app(
         ):
             raise HTTPException(status_code=400, detail="lead_header_payload_mismatch")
         if (
-            submission.site != settings.lead_precheckout_site
-            or (
-                (
-                    explicit_manifest_runtime
-                    or settings.commercial_ally_config is not JOHANNA_COMMERCIAL_ALLY
-                )
-                and (
-                    submission.landing_id != settings.lead_precheckout_landing_id
-                    or submission.offer_code != settings.lead_precheckout_offer_code
-                )
-            )
+            explicit_manifest_runtime
+            or settings.commercial_ally_config is not JOHANNA_COMMERCIAL_ALLY
         ):
+            # Runtime con binding propio: se admite la terna (sitio, landing,
+            # oferta) de cualquier landing declarada en el binding. La por
+            # defecto es la de LEAD_PRECHECKOUT_* (create_app exige que
+            # coincidan); las demas salen de additional_offer_landings.
+            offer_landing = settings.commercial_ally_config.offer_landing(
+                submission.site, submission.landing_id
+            )
+            outside_scope = (
+                offer_landing is None
+                or offer_landing.offer_code != submission.offer_code
+            )
+        else:
+            outside_scope = submission.site != settings.lead_precheckout_site
+        if outside_scope:
             raise HTTPException(status_code=403, detail="lead_precheckout_outside_scope")
         age_seconds = (datetime.now(UTC) - submission.submitted_at).total_seconds()
         if age_seconds < -60 or age_seconds > settings.lead_precheckout_max_age_seconds:

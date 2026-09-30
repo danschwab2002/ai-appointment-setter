@@ -27,7 +27,7 @@ from typing import Any, Mapping
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .commercial_ally import CommercialAllyConfig
+from .commercial_ally import CommercialAllyConfig, OfferLanding
 
 SCHEMA = "setter-instancia/v2"
 
@@ -177,10 +177,13 @@ class InstanceManifest:
 
         La oferta por defecto es la del binding; las demas landings van en
         ``additional_offer_codes`` (F2c), asi un carrito o un pago fallido que
-        entra por cualquier landing de la instancia se admite.
+        entra por cualquier landing de la instancia se admite, y su sitio, host
+        y ruta en ``additional_offer_landings`` (A6), asi tambien se admite el
+        formulario del precheckout de cada landing.
         """
 
         offer = self.default_offer
+        others = tuple(other for other in self.offers if other is not offer)
         return CommercialAllyConfig(
             tenant_ref=self.tenant_ref,
             funnel_ref=self.funnel_ref,
@@ -196,8 +199,16 @@ class InstanceManifest:
             product_price=self.price,
             currency=self.currency,
             offer_code=offer.code,
-            additional_offer_codes=tuple(
-                other.code for other in self.offers if other is not offer
+            additional_offer_codes=tuple(other.code for other in others),
+            additional_offer_landings=tuple(
+                OfferLanding(
+                    offer_code=other.code,
+                    site=other.site,
+                    landing_id=other.landing_id,
+                    page_host=other.page_host,
+                    page_path=other.page_path,
+                )
+                for other in others
             ),
             consent_copy_version=self.consent_copy_version,
             hotmart_product_id=self.hotmart_product_id,

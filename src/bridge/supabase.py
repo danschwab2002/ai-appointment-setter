@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 
 from bridge.agent_provenance import AgentTurn
-from bridge.commercial_ally import CommercialAllyConfig
+from bridge.commercial_ally import CommercialAllyConfig, OfferLanding
 from bridge.lead_first_name import FirstNameInference
 from bridge.correlation_preresolution import (
     CorrelationCandidate,
@@ -1425,6 +1425,12 @@ class SupabaseClient:
             if not isinstance(values["additional_offer_codes"], list):
                 raise ValueError
             values["additional_offer_codes"] = tuple(values["additional_offer_codes"])
+            if not isinstance(values["additional_offer_landings"], list):
+                raise ValueError
+            values["additional_offer_landings"] = tuple(
+                OfferLanding.from_json(landing)
+                for landing in values["additional_offer_landings"]
+            )
             price = values["product_price"]
             if isinstance(price, bool) or not isinstance(price, (str, int, float)):
                 raise ValueError

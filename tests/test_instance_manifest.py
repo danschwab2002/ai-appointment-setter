@@ -41,8 +41,9 @@ def test_johanna_manifest_produces_the_binding_in_code_plus_its_other_landing_of
     binding = manifest.to_commercial_ally_config()
 
     # Johanna corre hoy desde el codigo, con una sola oferta en el binding. Lo unico
-    # que el manifiesto suma son sus otras cinco landings (F2c): es lo que gana al
-    # mudarse al manifiesto (F5). Nada mas cambia.
+    # que el manifiesto suma son sus otras cinco landings: sus ofertas (F2c) y su
+    # sitio, host y ruta (A6). Es lo que gana al mudarse al manifiesto (F5). Nada
+    # mas cambia.
     assert binding.additional_offer_codes == (
         "mgbgpp19",
         "s1qfxm7m",
@@ -50,7 +51,18 @@ def test_johanna_manifest_produces_the_binding_in_code_plus_its_other_landing_of
         "ecyu87q0",
         "ulhzpw9a",
     )
-    assert replace(binding, additional_offer_codes=()) == JOHANNA_COMMERCIAL_ALLY
+    assert [
+        (landing.offer_code, landing.site, landing.landing_id, landing.page_host, landing.page_path)
+        for landing in binding.additional_offer_landings
+    ] == [
+        (code, "psicologajohanna", landing_id, "psicologajohanna.com", f"/ldla/evg/vsl/{landing_id}")
+        for landing_id, code in _JOHANNA_LANDING_OFFERS.items()
+        if landing_id != "ads-a"
+    ]
+    assert (
+        replace(binding, additional_offer_codes=(), additional_offer_landings=())
+        == JOHANNA_COMMERCIAL_ALLY
+    )
 
 
 def test_att1_binding_accepts_the_three_landing_offers() -> None:

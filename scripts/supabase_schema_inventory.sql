@@ -3726,6 +3726,52 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         4,
         'payment_failure_consented_intent_authorization'
+    union all
+    select
+        '20260930000200',
+        '20260930000200_portable_precheckout_offer_landings.sql',
+        (
+            select count(*) = 1
+            from pg_attribute
+            where attrelid = to_regclass('public.commercial_ally_runtime_bindings')
+              and attname = 'additional_offer_landings'
+              and atttypid = 'jsonb'::regtype
+              and attnotnull
+              and not attisdropped
+        )::int
+        + (
+            select count(*) = 1
+            from pg_constraint
+            where conrelid = to_regclass('public.commercial_ally_runtime_bindings')
+              and conname = 'commercial_ally_runtime_bindings_offer_landings_shape'
+              and position('commercial_ally_offer_landings_are_valid' in pg_get_constraintdef(oid)) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.commercial_ally_offer_landings_are_valid(jsonb,text[],text,text)')
+              and not prosecdef
+              and provolatile = 'i'
+        )::int
+        + coalesce(
+            not has_function_privilege(
+                'service_role',
+                to_regprocedure('public.commercial_ally_offer_landings_are_valid(jsonb,text[],text,text)'),
+                'EXECUTE'
+            ),
+            false
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_portable_observed_lead_precheckout(text,text,integer,text,jsonb,jsonb)')
+              and prosecdef
+              and position('v_binding.additional_offer_landings' in definition) > 0
+              and position('is distinct from v_offer_site' in definition) > 0
+              and position('pi.offer_ref = v_offer_code' in definition) > 0
+        )::int,
+        5,
+        'portable_precheckout_offer_landings'
 )
 select
     version,
