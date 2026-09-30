@@ -27,6 +27,7 @@ import asyncio
 import copy
 import hashlib
 import json
+import re
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
@@ -51,6 +52,7 @@ from bridge.supabase import (
     PilotBoundaryConfig,
     ReevaluationDecision,
     ScheduledAction,
+    SupabaseClient,
     SupabaseError,
 )
 from bridge.worker import DurableDispatcher
@@ -889,4 +891,222 @@ def test_create_app_builds_the_direct_dispatcher_without_hermes(tmp_path: Path) 
     }
     assert message["content"] == _expected(
         CART_TEMPLATE, first=case["deterministic"], product="Alimenta Tu Tiroides"
+    )
+
+
+# ------------------------------------------ las RPC que manda el SupabaseClient
+#
+# Los tests de arriba reemplazan la base por _Authority, y
+# validate_att1_portable_chain.mjs (A7) recorre la base real pero elige a mano
+# el modo de la reserva y la RPC de arranque. Aca el DurableDispatcher en modo
+# directo corre con el SupabaseClient real sobre un emulador de PostgREST que
+# solo anota que RPC se llamo y con que cuerpo, y lo que manda se compara con
+# lo que A7 declara. Si el worker cambia el modo, la RPC de arranque o el
+# anchor_type que la decide, este test o A7 lo ven. El recorrido contra
+# PostgREST y Postgres reales sigue siendo deuda (D10).
+
+CHAIN_VALIDATOR = (
+    Path(__file__).parent / "sql" / "followup_engine" / "validate_att1_portable_chain.mjs"
+)
+
+
+class _PostgREST:
+    """PostgREST de mentira: responde cada RPC con la forma de su fila real."""
+
+    def __init__(self, authority: _Authority) -> None:
+        self.authority = authority
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content) if request.content else {}
+        prefix = "/rest/v1/rpc/"
+        assert request.method == "POST" and request.url.path.startswith(prefix), (
+            request.method,
+            request.url.path,
+        )
+        operation = request.url.path.removeprefix(prefix)
+        self.calls.append((operation, body))
+        action = self.authority.action
+        attempt = self.authority.attempt
+        context = self.authority.context
+        attempt_row = {
+            "id": attempt.attempt_id,
+            "action_id": action.action_id,
+            "idempotency_key": attempt.idempotency_key,
+            "attempt_number": attempt.attempt_number,
+            "channel": "whatsapp",
+            "mode": body.get("p_mode", attempt.mode),
+            "phase": "reserved",
+            "lease_generation": action.lease_generation,
+            "expected_case_version": 1,
+            "expected_sequence_revision": 1,
+        }
+        rows: dict[str, list[dict[str, Any]]] = {
+            "claim_due_followup_actions": [{
+                "id": action.action_id,
+                "recovery_case_id": action.recovery_case_id,
+                "followup_sequence_id": action.followup_sequence_id,
+                "action_type": action.action_type,
+                "status": action.status,
+                "due_at": action.due_at,
+                "expires_at": action.expires_at,
+                "expected_case_version": action.expected_case_version,
+                "policy_key": action.policy_key,
+                "policy_version": action.policy_version,
+                "step_key": action.step_key,
+                "anchor_type": action.anchor_type,
+                "anchor_subject_internal_id": action.anchor_subject_internal_id,
+                "anchor_observed_at": action.anchor_observed_at,
+                "lease_owner": action.lease_owner,
+                "lease_generation": action.lease_generation,
+                "lease_expires_at": action.lease_expires_at,
+                "idempotency_key": action.idempotency_key,
+            }],
+            "get_followup_chatwoot_context": [{
+                "action_id": action.action_id,
+                "action_type": action.action_type,
+                "chatwoot_account_id": None,
+                "external_conversation_id": None,
+                "expected_inbox_id": None,
+                "anchor_external_message_id": None,
+            }],
+            "reevaluate_followup_action": [{
+                "action_id": action.action_id,
+                "decision": "execute",
+                "reason_code": "eligible_for_execution",
+                "case_version": 1,
+                "sequence_revision": 1,
+            }],
+            "reserve_followup_delivery_attempt": [attempt_row],
+            "get_followup_execution_context": [{
+                "action_id": action.action_id,
+                "action_type": context.action_type,
+                "step_key": context.step_key,
+                "recovery_case_id": context.recovery_case_id,
+                "contact_id": context.contact_id,
+                "source_event_id": context.source_event_id,
+                "buyer_name": context.buyer_name,
+                "buyer_email": context.buyer_email,
+                "buyer_phone": context.buyer_phone,
+                "product_name": context.product_name,
+                "offer_code": context.offer_code,
+                "current_goal": context.current_goal,
+                "lead_stage": context.lead_stage,
+            }],
+            "record_and_finalize_followup_acceptance": [{
+                "id": action.action_id,
+                "status": "accepted_by_chatwoot",
+                "terminal_reason": None,
+            }],
+        }
+        for start in (
+            "mark_lancemos_pilot_request_started",
+            "mark_portable_payment_failure_request_started",
+        ):
+            rows[start] = [{
+                **attempt_row,
+                "mode": "approved_template",
+                "phase": "request_started",
+                "pilot_authorization_id": "pilot-authorization-att1",
+                "pilot_runtime_generation": 1,
+                "pilot_authorization_replayed": False,
+            }]
+        if operation not in rows:
+            return httpx.Response(404, json={"message": f"not emulated: {operation}"})
+        return httpx.Response(200, json=rows[operation])
+
+    def client(self) -> SupabaseClient:
+        return SupabaseClient(
+            base_url="https://postgrest.test",
+            service_role_key="service-role-test",
+            transport=httpx.MockTransport(self.handler),
+        )
+
+    def operations(self) -> list[str]:
+        return [operation for operation, _ in self.calls]
+
+    def body_of(self, operation: str) -> dict[str, Any]:
+        [body] = [body for name, body in self.calls if name == operation]
+        return body
+
+
+def _chain_validator_contract() -> tuple[str, str, str]:
+    """The reservation mode and the two start RPCs A7 declares."""
+    source = CHAIN_VALIDATOR.read_text(encoding="utf-8")
+    [mode] = re.findall(r"const DIRECT_DELIVERY_MODE = '([a-z_]+)';", source)
+    [(payment_failure, other)] = re.findall(
+        r"const startOperationFor = \(anchorType\) => \(anchorType === 'payment_failure'"
+        r"\s*\?\s*'([a-z_]+)'\s*:\s*'([a-z_]+)'\);",
+        source,
+    )
+    return mode, payment_failure, other
+
+
+def _chain_validator_anchors() -> set[str]:
+    source = CHAIN_VALIDATOR.read_text(encoding="utf-8")
+    return set(re.findall(r"anchor: '([a-z_]+)'", source))
+
+
+@pytest.mark.parametrize(
+    ("anchor_type", "offer_code"),
+    [("cart_abandonment", "gopi6lh7"), ("payment_failure", "2uafw5bg")],
+)
+def test_the_real_supabase_client_sends_what_the_att1_chain_validates(
+    tmp_path: Path, anchor_type: str, offer_code: str
+) -> None:
+    authority = _Authority(offer_code=offer_code, anchor_type=anchor_type)
+    postgrest = _PostgREST(authority)
+    chatwoot = _Chatwoot()
+    client = chatwoot.client()
+    dispatcher = DurableDispatcher(
+        supabase=postgrest.client(),
+        worker_id="att1-dispatcher",
+        chatwoot=client,
+        chatwoot_account_id=ACCOUNT_ID,
+        chatwoot_inbox_id=INBOX_ID,
+        sender=ChatwootMessageSender(
+            chatwoot=client,
+            inbox_id=INBOX_ID,
+            allowed_jid=None,
+            dynamic_recipient_enabled=True,
+            template=TEMPLATE,
+        ),
+        allowed_jid=None,
+        commercial_ally_config=ALLY,
+        portable_recipient_enabled=True,
+        pilot_boundary=BOUNDARY,
+        clock=lambda: FINAL_NOW,
+        final_meta_effect_gate=FinalMetaEffectGate(
+            enabled=True, evidence_dir=tmp_path / "meta-effects"
+        ),
+        waba_template=TEMPLATE,
+        approved_template_direct=True,
+    )
+
+    decisions = _run(dispatcher)
+
+    mode, payment_failure_start, cart_start = _chain_validator_contract()
+    expected_start = payment_failure_start if anchor_type == "payment_failure" else cart_start
+    starts = [
+        operation for operation in postgrest.operations() if operation.startswith("mark_")
+    ]
+    assert decisions[-1].decision == "execute"
+    assert postgrest.body_of("reserve_followup_delivery_attempt")["p_mode"] == mode
+    assert starts == [expected_start]
+    assert "finalize_followup_delivery_attempt" not in postgrest.operations()
+    assert postgrest.operations()[-1] == "record_and_finalize_followup_acceptance"
+    # A7 recorre exactamente estos dos anchor_type, los que escriben los
+    # planificadores (20260803000100 y 20260903000300).
+    assert anchor_type in _chain_validator_anchors()
+    assert _chain_validator_anchors() == {"cart_abandonment", "payment_failure"}
+    assert chatwoot.posts("/conversations/200/messages")
+
+
+def test_the_att1_chain_validator_still_declares_its_contract() -> None:
+    # Si A7 deja de declarar el modo o la regla de arranque, el test de arriba
+    # no tiene contra que comparar: se rompe aca, con un mensaje claro.
+    assert _chain_validator_contract() == (
+        "approved_template",
+        "mark_portable_payment_failure_request_started",
+        "mark_lancemos_pilot_request_started",
     )

@@ -458,6 +458,18 @@ const openActions = async () => (await db.query(`
   where status in ('pending','deferred','retryable_failed')
 `)).rows;
 
+// Lo que elige el bridge en modo directo: la reserva va en approved_template
+// (el scope del piloto es waba) y el arranque del envio sale del anchor_type de
+// la accion reclamada, con la misma regla que
+// SupabaseClient.mark_followup_request_started con la frontera del piloto.
+// tests/test_durable_dispatcher_approved_template.py lee estas dos
+// definiciones y las compara con lo que manda el SupabaseClient real del
+// DurableDispatcher: si una capa cambia el modo o la RPC, la otra se entera.
+const DIRECT_DELIVERY_MODE = 'approved_template';
+const startOperationFor = (anchorType) => (anchorType === 'payment_failure'
+  ? 'mark_portable_payment_failure_request_started'
+  : 'mark_lancemos_pilot_request_started');
+
 // La cadena del dispatcher para una accion recien planificada. Es la unica
 // accion viva de la base: el claim la tiene que devolver sola.
 let messageNumber = 0;
@@ -471,6 +483,11 @@ const dispatch = async (lead, plan, { anchor, stepKey, offer, beforeAcceptance }
     throw new Error(`${lead.label}: claimed ${JSON.stringify(claimed.map((row) => row.id))}, expected ${plan.scheduled_action_id}`);
   }
   const lease = claimed[0].lease_generation;
+  // El anchor_type lo escribe el planificador; el bridge elige la RPC de
+  // arranque con el, no con lo que el test cree que planifico.
+  if (claimed[0].anchor_type !== anchor) {
+    throw new Error(`${lead.label}: claimed anchor_type ${claimed[0].anchor_type}, expected ${anchor}`);
+  }
   // Primer contacto sin conversacion: sin evidencia de Chatwoot.
   const decision = one((await db.query(`
     select * from public.reevaluate_followup_action($1,$2,$3,$4)
@@ -493,19 +510,18 @@ const dispatch = async (lead, plan, { anchor, stepKey, offer, beforeAcceptance }
   // El worker reserva en approved_template porque el scope del piloto es waba.
   const attempt = one((await db.query(`
     select * from public.reserve_followup_delivery_attempt(
-      $1,$2,$3,$4,$5,'whatsapp','approved_template',$6
+      $1,$2,$3,$4,$5,'whatsapp',$6,$7
     )
   `, [plan.scheduled_action_id, worker, lease, decision.case_version,
-    decision.sequence_revision, now])).rows, `${lead.label} reservation`);
-  const startOperation = anchor === 'payment_failure'
-    ? 'mark_portable_payment_failure_request_started'
-    : 'mark_lancemos_pilot_request_started';
+    decision.sequence_revision, DIRECT_DELIVERY_MODE, now])).rows,
+  `${lead.label} reservation`);
+  const startOperation = startOperationFor(claimed[0].anchor_type);
   const started = one((await db.query(`
     select * from public.${startOperation}($1,$2,$3,$4,$5)
   `, [plan.scheduled_action_id, attempt.id, worker, lease, await dbNow()])).rows,
   `${lead.label} request start`);
   if (started.phase !== 'request_started'
-      || started.mode !== 'approved_template'
+      || started.mode !== DIRECT_DELIVERY_MODE
       || started.pilot_authorization_id == null
       || started.pilot_authorization_replayed !== false) {
     throw new Error(`${lead.label}: ${startOperation} did not start: ${JSON.stringify(started)}`);
@@ -627,7 +643,7 @@ for (const [index, offer] of offers.entries()) {
     }
   };
   const run = await dispatch(lead, plan, {
-    anchor: 'cart', stepKey: 'first_contact', offer, beforeAcceptance,
+    anchor: 'cart_abandonment', stepKey: 'first_contact', offer, beforeAcceptance,
   });
   cartResults.push(`${offer.offer_code}:${run.decision.reason_code}`);
 }
@@ -673,7 +689,7 @@ const bothCart = await admitCart(both, bothOffer);
 await createContact(both, bothCart.eventId);
 await enroll(both);
 const bothCartPlan = one((await planCart(both, bothOffer, bothCart)).rows, 'cart before failure plan');
-await dispatch(both, bothCartPlan, { anchor: 'cart', stepKey: 'first_contact', offer: bothOffer });
+await dispatch(both, bothCartPlan, { anchor: 'cart_abandonment', stepKey: 'first_contact', offer: bothOffer });
 const bothFailure = await admitFailure(both, bothOffer, 'HPATT1CHAINPF2');
 if (bothFailure.intentId !== bothIntent) {
   throw new Error('payment failure after a cart did not correlate with the same intent');
