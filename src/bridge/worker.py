@@ -211,7 +211,13 @@ def _is_authorized_followup_recipient(
     commercial_ally_config: CommercialAllyConfig | None,
     portable_recipient_enabled: bool = False,
 ) -> bool:
-    """Validate the recipient through the legacy or portable tenant boundary."""
+    """Validate the recipient through the legacy or portable tenant boundary.
+
+    The portable branch accepts any offer of the binding (the default one plus
+    ``additional_offer_codes``), the same set that admission and the pilot
+    boundary already accept. Comparing only the default offer let a cart from
+    another landing of the instance be planned and then die at dispatch.
+    """
     if is_allowed_whatsapp_target(execution_context.buyer_phone, allowed_jid):
         return True
     return (
@@ -219,7 +225,8 @@ def _is_authorized_followup_recipient(
         and commercial_ally_config is not None
         and execution_context.buyer_phone is not None
         and execution_context.product_name == commercial_ally_config.product_name
-        and execution_context.offer_code == commercial_ally_config.offer_code
+        and execution_context.offer_code
+        in commercial_ally_config.accepted_offer_codes
     )
 
 
