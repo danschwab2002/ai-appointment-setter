@@ -552,6 +552,10 @@ def test_final_meta_effect_of_the_durable_outbound_requires_the_direct_mode() ->
 
 
 def test_final_meta_effect_with_the_direct_mode_builds() -> None:
+    # Tambien fija que el candado viejo de ATT1 (tenant_ref == "att1", del
+    # binding v1) no dispara con el manifiesto v2 (tenant_ref "lancemos"): para
+    # ATT1 v2 el corte del efecto final es META_FINAL_EFFECT_ENABLED.
+    assert _att1_manifest().to_commercial_ally_config().tenant_ref == "lancemos"
     settings = _settings(
         _att1_manifest(carrito=True), **{**_DIRECT, "meta_final_effect_enabled": True}
     )

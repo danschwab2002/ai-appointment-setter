@@ -2165,6 +2165,14 @@ def create_app(
         explicit_manifest_runtime
         or settings.commercial_ally_config != JOHANNA_COMMERCIAL_ALLY
     )
+    # Candado del binding v1 de ATT1 (COMMERCIAL_ALLY_CONFIG_PATH con
+    # tenant_ref "att1", 2026-09-04). Con el manifiesto v2 no dispara: ahi
+    # tenant_ref es "lancemos" y ally_ref "att1". Para ATT1 v2 el efecto final
+    # de Meta lo cortan META_FINAL_EFFECT_ENABLED (que con manifiesto exige el
+    # modo directo, _validate_approved_template_direct) y, en la base, el
+    # estado del piloto, la cohorte y los topes. No se pasa a ally_ref a
+    # proposito: dejaria a ATT1 v2 sin poder abrir nunca el efecto final
+    # (docs/contracts/approved-template-direct-dispatch-v1.md).
     if (
         settings.commercial_ally_config.tenant_ref == "att1"
         and settings.meta_final_effect_enabled

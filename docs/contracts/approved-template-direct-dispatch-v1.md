@@ -38,7 +38,14 @@ Con el modo directo prendido:
 - El dispatcher no cuenta como consumidor de `HUMAN_HANDOFF_ADMISSION_ENABLED`: nunca recibe una sugerencia de derivar. Si la admisión está prendida, la tiene que consumir el Corte B.
 - `LEAD_FIRST_NAME_GREETING_ENABLED` llega al dispatcher. En un runtime portable el dispatcher directo es el único que lo usa (los one-shots de Johanna, el otro consumidor, no son portables), así que con el flag prendido y el modo directo apagado el bridge no arranca: `LEAD_FIRST_NAME_GREETING_ENABLED in a portable runtime requires DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED`. Antes se aceptaba y no saludaba a nadie. Sin manifiesto (Johanna) nada cambia.
 
-**Guarda nueva sobre el gate final.** Con manifiesto, `META_FINAL_EFFECT_ENABLED=true` junto con `DURABLE_OUTBOUND_ENABLED=true` exige el modo directo. Sin él, lo que se autorizaría es un borrador de Hermes que Meta no muestra. El candado `tenant_ref == "att1"` del binding v1 no cambia; con manifiesto v2 no se activaba, porque ahí `tenant_ref` es `"lancemos"`.
+**Guarda nueva sobre el gate final.** Con manifiesto, `META_FINAL_EFFECT_ENABLED=true` junto con `DURABLE_OUTBOUND_ENABLED=true` exige el modo directo. Sin él, lo que se autorizaría es un borrador de Hermes que Meta no muestra.
+
+**Qué corta el efecto final de ATT1 con el manifiesto v2.** El candado de `create_app` que rechaza `META_FINAL_EFFECT_ENABLED` para ATT1 (`commercial_ally_config.tenant_ref == "att1"`, del 2026-09-04) es del binding v1 (`COMMERCIAL_ALLY_CONFIG_PATH`) y **no dispara con el manifiesto v2**: ahí `tenant_ref` es `"lancemos"` y `ally_ref` es `"att1"`. No hay que contar con él. Para ATT1 v2 lo que impide que un mensaje llegue a Meta es:
+
+- en el bridge, `META_FINAL_EFFECT_ENABLED=false` (el único corte del efecto final; con él en `true`, la guarda de arriba solo exige que el texto sea el de la plantilla aprobada);
+- en la base, el estado del piloto (`pilot_runtime_controls` en `inactive` hasta armarlo), la cohorte y los topes del scope, que `mark_*_request_started` revisa antes de cada envío.
+
+El candado viejo no se cambió a `ally_ref`: dejaría a ATT1 v2 sin poder abrir nunca el efecto final. `test_final_meta_effect_with_the_direct_mode_builds` (`tests/test_instance_wiring.py`) fija que con el manifiesto v2 no dispara, y `tests/test_att1_final_meta_gate.py` que sigue disparando con el binding v1.
 
 ## Qué hace el dispatcher con una acción vencida
 
