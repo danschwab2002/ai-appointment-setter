@@ -843,7 +843,7 @@ def test_ghl_noise_never_reaches_the_event() -> None:
     event_text = json.dumps(_translate(body).event, ensure_ascii=False)
 
     leaked = [
-        "fallida att",  # tags: la automatizacion de recuperacion de GHL
+        body["tags"],
         body["personalizado1"],
         "personalizado1",
         "Tipo de condición",

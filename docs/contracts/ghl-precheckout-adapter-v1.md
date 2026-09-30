@@ -119,7 +119,7 @@ El adaptador no valida el alfabeto ni el largo. La emisión del link descarta un
 
 - No lee `contact.attributionSource` (primer toque), ni `contact.lastAttributionSource`, ni los campos estructurados de UTM.
 - No usa `fbEventId` para nada.
-- No lee los tags (`fallida att` es de la automatización de recuperación de GHL), ni los campos personalizados, ni `country`, `timezone`, `contact_source` o `customData` fuera de `setter_token`.
+- No lee los tags (en la subcuenta de ATT1 los pone la automatización de recuperación de GHL), ni los campos personalizados, ni `country`, `timezone`, `contact_source` o `customData` fuera de `setter_token`.
 - No acepta la prueba del editor de GHL ni cualquier POST sin `attributionSource` de primer nivel: `422 ghl_not_a_form_submission`.
 - No trata distinto los envíos con `?test=yes`: son intenciones reales.
 - No reintenta: si la admisión responde `503`, reintenta GHL.
