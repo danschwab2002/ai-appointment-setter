@@ -260,19 +260,23 @@ def _buyer_name(body: Mapping[str, object]) -> str | None:
     return " ".join(part for part in parts if part) or None
 
 
+def _without_trailing_slash(path: str) -> str:
+    return path[:-1] if len(path) > 1 and path.endswith("/") else path
+
+
 def _offer_landing(url: str, config: CommercialAllyConfig) -> OfferLanding:
     try:
         parts = urlsplit(url)
     except ValueError:
         raise _reject("landing_unknown") from None
     host = parts.netloc.lower()
-    path = parts.path
-    if len(path) > 1 and path.endswith("/"):
-        path = path[:-1]
+    path = _without_trailing_slash(parts.path)
+    # The same on both sides: the manifest accepts an offer url ending in "/",
+    # and the event keeps that declared path (the parser and the RPC compare it).
     matches = [
         landing
         for landing in config.offer_landings
-        if landing.page_host == host and landing.page_path == path
+        if landing.page_host == host and _without_trailing_slash(landing.page_path) == path
     ]
     if not matches:
         raise _reject("landing_unknown")

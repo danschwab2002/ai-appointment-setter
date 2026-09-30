@@ -76,7 +76,7 @@ Hay dos capturas del 2026-09-29, anonimizadas, en `tests/fixtures/ghl/`. Cada un
 | `event`, `version` | fijos | `lead.precheckout`, `1.1.0` |
 | `created_at` | reloj del bridge | Momento de la traducción, en UTC con `Z` |
 | `source.system` | fijo | `landing` (lo exigen el parser y la RPC; la procedencia GHL queda solo en el log) |
-| `source.site`, `source.landing_id` | `attributionSource.url` | Host en minúsculas y ruta, sin query ni fragmento y con una barra final tolerada, comparados exactos contra `[[hotmart.ofertas]]`. Sin coincidencia: `422 ghl_landing_unknown`; más de una: `422 ghl_landing_ambiguous` |
+| `source.site`, `source.landing_id` | `attributionSource.url` | Host en minúsculas y ruta, sin query ni fragmento, comparados exactos contra `[[hotmart.ofertas]]` con una barra final tolerada de los dos lados (en la URL del envío y en la `url` de la oferta, que el manifiesto acepta con barra). Sin coincidencia: `422 ghl_landing_unknown`; más de una: `422 ghl_landing_ambiguous` |
 | `source.page_url` | la oferta resuelta | `https://<host><ruta>` de la oferta del manifiesto: la query del envío (`?test=yes`, UTM) no pasa |
 | `source.aliado` | manifiesto | `instancia.marca` |
 | `data.buyer.name` | `full_name`, si falta `first_name` + `last_name` | Sin lo que la base no guarda (abajo) y recortado; vacío: `400` |

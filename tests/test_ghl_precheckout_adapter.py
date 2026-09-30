@@ -408,6 +408,37 @@ def test_an_unknown_landing_is_rejected(url: str) -> None:
     assert (rejection.reason, rejection.status_code) == ("landing_unknown", 422)
 
 
+def _att1_with_offer_url(landing_id: str, url: str) -> InstanceManifest:
+    payload = tomllib.loads(ATT1_TOML.read_text(encoding="utf-8"))
+    payload["eventos"] = [*payload["eventos"], "intencion"]
+    payload["adaptadores"] = {"ghl": {"formularios": [ADS_A_FORM, LANDING_D_FORM]}}
+    (offer,) = [o for o in payload["hotmart"]["ofertas"] if o["landing_id"] == landing_id]
+    offer["url"] = url
+    return InstanceManifest.from_mapping(payload)
+
+
+@pytest.mark.parametrize(
+    "submitted",
+    [
+        "https://www.metodoraizana.com/att1/evg/vsl/org-a",
+        "https://www.metodoraizana.com/att1/evg/vsl/org-a/?test=yes",
+    ],
+    ids=["sin-barra", "con-barra"],
+)
+def test_an_offer_declared_with_a_trailing_slash_still_resolves(submitted: str) -> None:
+    # El manifiesto acepta una url con barra final; la comparacion quita una barra de
+    # los dos lados, y el evento lleva la ruta tal como la declara el manifiesto.
+    declared = "https://www.metodoraizana.com/att1/evg/vsl/org-a/"
+    manifest = _att1_with_offer_url("org-a", declared)
+    config = manifest.to_commercial_ally_config()
+
+    translation = _translate(_ads_a_with_url(submitted), manifest=manifest)
+
+    assert (translation.landing_id, translation.offer_code) == ("org-a", "bmaztyhg")
+    assert translation.event["source"]["page_url"] == declared
+    assert parse_lead_precheckout(translation.event, config=config) is not None
+
+
 def test_two_offers_on_the_same_page_are_ambiguous() -> None:
     config = ATT1_BOTH_FORMS.to_commercial_ally_config()
     twin = OfferLanding(
