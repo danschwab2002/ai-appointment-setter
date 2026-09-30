@@ -18,7 +18,7 @@ El formato es TOML: lo lee la biblioteca estándar de Python, sin dependencias, 
 |---|---|---|
 | `schema` | Siempre `"setter-instancia/v2"` | No carga |
 | `producto` | Versión del setter que usa la instancia, `"v1.0.0"`. Es el tag de la imagen que se despliega | No carga |
-| `eventos` | Qué hechos le llegan a esta instancia: `intencion` (formulario de la landing), `carrito` (abandono en Hotmart), `pago_fallido`, `compra`, `entrante` (mensaje de WhatsApp) | Un evento desconocido no carga. Un evento ausente deja apagados los flujos que dependen de él |
+| `eventos` | Qué hechos le llegan a esta instancia: `intencion` (formulario de la landing, directo por `/webhooks/lead` o por el adaptador de GHL), `carrito` (abandono en Hotmart), `pago_fallido`, `compra`, `entrante` (mensaje de WhatsApp) | Un evento desconocido no carga. Un evento ausente deja apagados los flujos que dependen de él |
 
 ## `[instancia]`
 
@@ -130,6 +130,27 @@ Un mensaje que nombra un término junto con una acción se deriva a una persona 
 |---|---|
 | `slack.canal` | ID del canal de la aliada (`C...`) |
 | `revision_diaria.revisores` | Quién revisa las conversaciones en la revisión diaria |
+
+## `[adaptadores]`, opcional
+
+Un adaptador traduce lo que manda una fuente externa a un evento canónico, que después entra por el mismo camino que el de una landing. Hoy hay uno: el del formulario de GHL, que convierte el webhook de un workflow de GHL en una `intencion` ([ghl-precheckout-adapter-v1.md](contracts/ghl-precheckout-adapter-v1.md)).
+
+```toml
+eventos = ["carrito", "pago_fallido", "compra", "entrante", "intencion"]
+
+[adaptadores.ghl]
+formularios = ["EgDqRl2xWc59YjVW1q8W"]
+```
+
+| Campo | Qué es |
+|---|---|
+| `adaptadores.ghl.formularios` | Los formularios de GHL cuyos envíos entran como `intencion`. Cada uno es el id que llega en `attributionSource.mediumId` del webhook: 20 letras o números |
+
+Reglas: al menos un formulario, sin repetir, y `intencion` en `eventos`; si no, el manifiesto no carga. La landing y la oferta no se declaran acá: salen de la URL del envío, comparada con las `url` de `[[hotmart.ofertas]]`. Sin la sección, o con `[adaptadores]` vacío, no hay adaptador.
+
+**Listar un formulario es una afirmación.** Cada envío traducido se admite con `whatsapp_contact = true`, así que listar un formulario afirma que muestra la aclaración de `consentimiento.copy_version` y que su envío es el paso previo al checkout de la oferta de su landing. Se suma a la lista solo después de verificar las dos.
+
+La sección sola no prende nada: el adaptador corre con `GHL_PRECHECKOUT_ADAPTER_ENABLED` y su token en las variables del servicio. Tampoco prende el primer contacto: sumar `intencion` hace que `validate` diga que el flujo `precheckout` se puede prender si está su plantilla, pero prenderlo con intenciones que llegan por el adaptador tiene una condición más, porque el token es la única barrera (sección *Riesgos* del contrato).
 
 ## Relación con el binding v1
 
