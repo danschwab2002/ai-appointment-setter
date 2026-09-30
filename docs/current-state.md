@@ -1,8 +1,15 @@
 # Estado actual del sistema
 
 - **Tipo:** snapshot de estado operativo versionado. No es arquitectura ni contrato: describe lo observado en una fecha, con su grado de verificación.
-- **Fecha de corte:** 2026-09-25, actualizado con el cambio de modelo del agente comercial, el SOUL desplegado y el pin de la imagen de Hermes. El bloque anterior es del 2026-09-20 (activacion de la respuesta inbound y su E2E); el anterior a ese, del 2026-09-19 (auditoria de ingreso). **Las filas que no llevan fecha del 2026-09-25 no se re-verificaron en esta pasada.**
-- **Commit de referencia:** `origin/main` = `98fd848` (merge del PR #181).
+- **Fecha de corte:** 2026-09-30, **solo para dos filas**: el modelo del agente comercial (§6) y el incidente 15 (§9). El bloque anterior es del 2026-09-25 (cambio a GLM 5.2, SOUL desplegado, pin de la imagen de Hermes); antes, 2026-09-20 (activación de la respuesta inbound y su E2E) y 2026-09-19 (auditoría de ingreso). **Las filas que no llevan fecha del 2026-09-30 no se re-verificaron en esta pasada.**
+- **Commit de referencia:** `origin/main` = `3c94918` (merge del PR #208) al escribir este corte. El 2026-09-30 el contenedor del bridge declaraba `GIT_SHA` = `f7dd227` (merge del PR #204); no se comparó contra el artefacto.
+- ⚠ **Filas que quedaron atrás, sin re-verificar en esta pasada.** Describen el bridge del 2026-09-19/20:
+  - §2: la correspondencia código ↔ Git y los flags;
+  - §5: las filas del PR #156, del monitor de trabadas y del backlog;
+  - §9: el incidente 3;
+  - §10: el punto 5.
+
+  Dos lecturas del 2026-09-30 ya las contradicen: `CHATWOOT_STALLED_MONITOR_ENABLED=true` y `CHATWOOT_REPLY_SPLITTER_ENABLED=true`.
 - **Mantenimiento:** lo actualiza quien programa, en el mismo PR que cambie cualquier fila de la matriz. Se reemplaza el snapshot entero; la historia queda en Git.
 - **Convención:** `Confirmado` = inspección directa en la fecha de corte · `Reportado` = tomado de la auditoría del profile `default` de Hermes del 2026-09-18 o de un documento operativo versionado, sin re-verificar · `No comprobado` = falta evidencia.
 
@@ -143,7 +150,17 @@ Reglas vigentes sobre estos claims:
 
 - **`profiles/client-copilot/SOUL.md` (Git) ≠ `SOUL.md` runtime del profile `client-copilot`.** Reportado 18/09: el runtime es el role de onboarding/copiloto (2026-08-14) y Git tiene el role de operador de correlación; existe además un profile runtime separado `client-copilot-correlation-review`, detenido. **No copiar el archivo de Git sobre el runtime.** Resolución pendiente de Dan: versionar cada role con su nombre real.
 - **Profiles efectivos se copian por fuera de Git** y pueden quedar detrás. **`profiles/agente-comercial/SOUL.md` coincide con `origin/main` (`98fd848`) desde el 2026-09-25 15:39 UTC**, md5 `ba54b79cd2dd8a294c01fad5d6b37ec9`, copiado desde Git y no editado en el servidor; backup del anterior en `private-backups/SOUL.md.2026-09-25-153953`. Confirmado por md5 el 2026-09-25 16:12 UTC.
-- **El modelo del agente comercial no está en Git:** vive en `config.yaml` del profile. Desde el 2026-09-25 15:42 UTC corre `openrouter / z-ai/glm-5.2` con fallback `openrouter / anthropic/claude-sonnet-4.6`; antes era `anthropic / claude-sonnet-4-6` por OAuth. **El fallback no se probó.** Evidencia y riesgo abierto (1 propuesta inválida en 37) en `operations/2026-09-25-agente-comercial-glm-5-2-release.md`. Confirmado.
+- **El modelo del agente comercial no está en Git:** vive en el `config.yaml` del profile.
+  - **Desde el 2026-09-30 18:16:07 UTC** corre `openrouter / z-ai/glm-5.3-flash`, con fallback `openrouter / anthropic/claude-sonnet-4.6`.
+  - Antes: `openrouter / z-ai/glm-5.2` desde el 2026-09-25 15:42 UTC, y `anthropic / claude-sonnet-4-6` por OAuth hasta esa fecha.
+  - **Cambiarlo no exige reiniciar el gateway:** el api_server relee el modelo en cada pedido.
+  - Pasan por este modelo la propuesta por turno, el primer nombre y la pre-resolución de correlación.
+  - **No pasa el partidor de respuestas** (`CHATWOOT_REPLY_SPLITTER_ENABLED=true`, leído el 2026-09-30), que manda su propio modelo en cada pedido (`claude-haiku-4-5` por `anthropic`, credencial OAuth).
+  - **Primer turno real con el modelo nuevo:** 2026-09-30 18:36:12 UTC, conversación 214.
+    - La propuesta salió válida al primer intento, sin `attempts`, con `send_payment_link`.
+    - El enlace quedó `ENTREGADO`.
+  - **El fallback no se probó.**
+  - Evidencia y riesgo abierto (propuestas en prosa sin JSON en un caso emocional, 2 de 6 limpias): `operations/2026-09-30-agente-comercial-glm-5-3-flash.md`. Confirmado en el `agent.log` del profile el 2026-09-30.
 - **Secretos, flags y configuración efectiva viven en EasyPanel y en el bind de Hermes**, no en Git. Reportado; por diseño.
 - **Imágenes con tag `latest`** en el bridge: sin pin por digest, no hay trazabilidad automática commit → imagen → contenedor. Confirmado. Se puede reconstruir a mano comparando objetos Git (§2), y desde el 2026-09-19 existe además un alias `preserved-20260919` de las tres imágenes en producción como destino de rollback. **Hermes salió de esta lista el 2026-09-25** (§2).
 - **La configuración de entrega de Chatwoot no coincide con las rutas del bridge:** el AgentBot apunta a una ruta inexistente (§9, incidente 9). Confirmado 2026-09-19.
@@ -195,7 +212,17 @@ Reglas vigentes sobre estos claims:
 12. ✅ **RESUELTO 2026-09-20 — el agente no respondía ninguna conversación porque el inbound estaba cerrado por configuración.** Encontrado el 2026-09-20 de madrugada: con `CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED=false`, la admisión comparaba al remitente contra un `ALLOWED_WHATSAPP_JID` con **un solo número de prueba** y descartaba a todos los demás en milisegundos, sin razonar ni registrar (`{"status":"ignored","reason":"sender_not_allowed"}`); y aun admitido, `CHATWOOT_AUTOMATED_REPLIES_ENABLED=false` impedía el envío. **El outbound, en cambio, estaba encendido para cualquier lead real**: el sistema abría conversaciones que no podía sostener. Estado del inbox al encontrarlo: 69 conversaciones abiertas y 12 con el último mensaje del contacto sin respuesta, entre el 2026-09-10 y el 2026-09-20; ningún agente humano había respondido desde el 2026-09-12. **Corregido** activando los cinco gates (§2), verificado antes con una simulación local del arranque y después con un E2E desde un número distinto del permitido. **Lo que queda de este incidente:** las 12 conversaciones siguen sin respuesta y nada las va a despertar salvo que esa persona vuelva a escribir; y la deuda de la variable en el panel (§2).
 13. ⚠ **Ningún contador ni endpoint reporta las admisiones rechazadas.** El rechazo por remitente se resuelve dentro del handler y devuelve `200` con un cuerpo de 50 bytes: para el proxy y para cualquier monitor de disponibilidad, es una entrega exitosa. Por eso el incidente 12 pudo durar semanas con todos los health en verde. **No corregido.** Un contador de `ignored` por motivo en `/ready`, o una alerta sobre la relación entrantes/respondidos del inbox, es lo que lo habría hecho visible.
 14. ✅ **RESUELTO 2026-09-25 — un redespliegue con `:latest` dejó al agente comercial 21 minutos muerto.** A las 14:39 UTC, al cargar una variable nueva, `infra_hermes` bajó `nousresearch/hermes-agent:latest`, que ese día era la 0.21.5. Desde la 0.21.4 Hermes exige **un gateway por host** y el contenedor levanta cuatro servicios s6, uno por profile: ganó el del profile `default`, se declaró STANDALONE y los otros tres murieron al arrancar sin que s6 los reintentara. Ningún lead entró en la ventana (cero mensajes en el inbox 9 entre 14:30 y 15:00, verificado en la base de Chatwoot). **Corregido** fijando la imagen a `v2026.8.31` (§2); el agente volvió a `connected` a las 15:00. Evidencia en `operations/2026-09-25-agente-comercial-glm-5-2-release.md` §3. **Lo que queda:** migrar a 0.21.5 con `hermes gateway migrate --multiplex`, probándolo antes con un profile de prueba. ⚠ Durante veinte minutos `gateway_state.json` informó `running` con el pid de un proceso muerto: para saber si un gateway vive se mira `ps` y el log de s6 del profile, no ese archivo.
-15. 🔴 **Una propuesta mal formada del agente deja a esa persona sin respuesta, y nada lo señala.** `invalid_agent_output` se persiste como resultado terminal: el bridge no vuelve a pedir la propuesta. Con el modelo nuevo el riesgo es medible: **1 de 37** llamadas a GLM 5.2 con este SOUL devolvió JSON roto, contra **0 de 91** de Sonnet 4.6 en producción. **No corregido en producción:** el PR #182 agrega un reintento con Idempotency-Key propia (el api_server replica el contenido de una key ya vista) y un campo `attempts` para poder medir la tasa real; está mergeable y sin desplegar.
+15. 🟡 **Una propuesta mal formada del agente puede dejar a esa persona sin respuesta** (actualizado 2026-09-30).
+    - **Mitigado:** el reintento del PR #182 (mergeado el 2026-09-25) está en el bridge desplegado, que el 2026-09-30 declaraba `GIT_SHA` = `f7dd227`. Pide la propuesta una segunda vez, con Idempotency-Key propia, y guarda `attempts` cuando hizo falta.
+    - **Con GLM 5.2:** el listado del shadow dir del 2026-09-30 tiene 34 resultados posteriores a ese cambio (del 2026-09-25 23:26 al 2026-09-30 16:07 UTC). Todos son `completed` y ninguno tiene `attempts`.
+    - **Con GLM 5.3 Flash (desde el 2026-09-30 18:16 UTC):**
+      - En laboratorio respondió en prosa sin JSON 2 de 6 veces en un caso emocional; en total, 2 de 40 inválidas contra 0 de 43 de GLM 5.2.
+      - En producción hubo un solo turno hasta las 19:29 UTC, válido al primer intento.
+    - **Si fallan los dos intentos**, el turno termina `failed / invalid_agent_output` sin respuesta.
+      - **Qué rescata el monitor:** lo readmite una vez, con dos intentos nuevos. Sus readmisiones siguientes reusan esa identidad, encuentran el `failed` guardado y no vuelven a pedir la propuesta.
+      - **Cuándo:** solo si la conversación sigue dentro de la ventana de 24 h, sin asignado y sin `automation_paused`.
+      - **Ese rescate no está verificado de punta a punta.**
+    - **La tasa en producción con el modelo nuevo todavía no se puede medir.** Evidencia: `operations/2026-09-30-agente-comercial-glm-5-3-flash.md` §5.
 
 ## 10. Próxima tarea aprobada y trabajos congelados
 
@@ -234,3 +261,4 @@ El primer PR de Claude Code (`docs/current-state.md`, #162) quedó mergeado el 2
 - Auditoría de ingreso del 2026-09-19: `docs/operations/2026-09-19-claude-production-ingress-audit-v1.md` (log del proxy, comparación de objetos Git, `/ready`, tablas de configuración de Chatwoot, definición del servicio de ATT1).
 - `docs/operations/appointment-bridge-release-runbook-v1.md` y `docs/operations/2026-09-19-claude-suite-determinism-and-portability-v1.md`.
 - `/var/lib/codex-development/operations/README.md`, `workspaces.json` y `READY.json` en el host.
+- Cambio de modelo del 2026-09-30: `docs/operations/2026-09-30-agente-comercial-glm-5-3-flash.md` (harness con auditoría adversarial por cliente, `agent.log` del profile, shadow dir del bridge, código de Hermes `v2026.8.31`).
