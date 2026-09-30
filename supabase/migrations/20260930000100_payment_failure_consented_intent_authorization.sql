@@ -14,7 +14,11 @@
 --    1.1.0 del formulario con whatsapp_contact y marketing_optin en true, la
 --    copy_version del binding activo y ningun conflicto abierto. Devuelve un
 --    motivo distinto por cada cosa que falla, para no borrar el diagnostico.
---    No es un entrypoint: nadie mas que el owner la ejecuta;
+--    Dos condiciones de Johanna no se repiten, a proposito y documentado en
+--    el cuerpo: la ventana entre el formulario y el evento (la garantiza la
+--    correlacion) y el nombre y el producto del envio (las variables las
+--    exige el dispatcher). No es un entrypoint: nadie mas que el owner la
+--    ejecuta;
 -- 2. plan_portable_payment_failure_recovery, copiada de su definicion vigente
 --    (20260929000100), con dos cambios:
 --    a. el contact_point del telefono puede venir de Hotmart o del sistema
@@ -51,6 +55,21 @@ declare
     v_intent public.purchase_intents%rowtype;
     v_binding public.commercial_ally_runtime_bindings%rowtype;
 begin
+    -- El criterio de Johanna (20260827000100) sin sus valores fijos. Dos de
+    -- sus condiciones quedan afuera a proposito:
+    -- 1. La ventana entre el formulario y el pago fallido (Johanna: el evento
+    --    entre submitted_at y submitted_at + 24 h). La garantiza la
+    --    correlacion: correlate_hotmart_purchase_intent solo resuelve una
+    --    intencion con submitted_at en [observed_at - max_lookback,
+    --    observed_at], con el max_lookback de hotmart_purchase_intent_scopes
+    --    de la oferta, y plan_portable_payment_failure_recovery exige
+    --    correlation_outcome = 'resolved' y pasa esa intencion. Un pago
+    --    fallido fuera de la ventana no se correlaciona y no llega aca
+    --    (validate_commercial_ally_payment_failure_recovery.mjs, caso F).
+    -- 2. El nombre y el producto no vacios del envio (Johanna los usa como
+    --    variables de su plantilla). En el camino portable las variables salen
+    --    del contexto de ejecucion del caso, y el dispatcher las exige antes
+    --    de enviar (template_parameters_missing). No son parte del permiso.
     precheckout_submission_id := null;
 
     if p_purchase_intent_id is null

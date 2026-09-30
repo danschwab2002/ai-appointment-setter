@@ -845,14 +845,14 @@ await db.query(`select * from public.set_lancemos_pilot_runtime_state(
   '${CONSENT_SCOPE}',1,0,'armed','operator-test','controlled-test'
 )`);
 
-const precheckout = (id, lead, { consented = true } = {}) => {
+const precheckout = (id, lead, { consented = true, submittedAt = SUBMITTED_AT } = {}) => {
   const national = lead.phone.slice(1);
   const version = consented ? '1.1.0' : '1.0.0';
   const raw = {
     id,
     event: 'lead.precheckout',
     version,
-    created_at: SUBMITTED_AT.toISOString(),
+    created_at: submittedAt.toISOString(),
     source: {
       system: 'landing', site: 'att1-site', aliado: 'ATT1',
       landing_id: 'main', page_url: 'https://att1.example/offer',
@@ -1223,5 +1223,74 @@ await expectReason('retired binding', retiredReason, 'consented_intent_binding_u
 await expectReason('form with an open conflict',
   await consentReason(consentedIntent, consented.contact, consented.phone),
   'consented_intent_submission_missing');
+
+// F. La ventana entre el formulario y el pago fallido. Johanna la exige en su
+// criterio (el evento entre submitted_at y submitted_at + 24 h); el helper no
+// la repite porque la garantiza la correlacion: solo se resuelve una intencion
+// con submitted_at en [observed_at - max_lookback, observed_at] (2 h en este
+// archivo) y el plan exige correlation_outcome = 'resolved'. Un pago fallido
+// fuera de esa ventana, antes o despues, no se correlaciona: el plan se
+// rechaza y no concede permiso, aunque la intencion tenga consentimiento.
+const admitUncorrelatedFailure = async (id, lead, transaction) => {
+  const body = payload(id);
+  body.creation_date = CONSENT_FAILED_AT.getTime();
+  body.data.buyer = {
+    name: lead.name, email: lead.email, checkout_phone: `+${lead.phone}`,
+  };
+  body.data.purchase.transaction = transaction;
+  const admitted = one((await db.query(`
+    select * from public.admit_portable_hotmart_payment_failure(
+      'att1','att1-main',1,$1,$2::jsonb,$3,$4
+    )
+  `, [id, JSON.stringify(body), lead.email, lead.phone])).rows, `${id} admission`);
+  const detail = one((await db.query(`
+    select correlation_outcome, purchase_intent_id
+    from public.commercial_ally_payment_failure_details
+    where webhook_event_id=$1
+  `, [admitted.webhook_event_id])).rows, `${id} correlation`);
+  if (admitted.outcome !== 'inserted'
+      || detail.correlation_outcome !== 'unmatched'
+      || detail.purchase_intent_id !== null) {
+    throw new Error(`${id} was correlated outside the lookback: ${JSON.stringify({ admitted, detail })}`);
+  }
+  return admitted.webhook_event_id;
+};
+const expectOutsideWindow = async (label, lead, submittedAt, transaction) => {
+  const form = await admitPrecheckout(`att1-consent-form-${lead.phone}`, lead, { submittedAt });
+  if (form.outcome !== 'inserted' || form.purchase_intent_id == null) {
+    throw new Error(`${label}: the consented form was not admitted: ${JSON.stringify(form)}`);
+  }
+  const eventId = await admitUncorrelatedFailure(
+    `att1-consent-failure-${lead.phone}`, lead, transaction,
+  );
+  await createContact(lead, eventId);
+  let error = null;
+  await db.exec('begin');
+  try {
+    await planConsentFailure(eventId, lead);
+  } catch (caught) {
+    error = caught;
+  } finally {
+    await db.exec('rollback');
+  }
+  if (error?.code !== '55000' || error?.message !== 'payment_failure_correlation_unresolved') {
+    throw new Error(`${label}: expected payment_failure_correlation_unresolved, got ${error?.code} ${error?.message}`);
+  }
+  if ((await authorizationsOf(lead.contact)).length !== 0) {
+    throw new Error(`${label}: a payment failure outside the window granted contact permission`);
+  }
+  // El helper solo no mira el tiempo: la ventana es de la correlacion.
+  await expectReason(`${label} helper`,
+    await consentReason(form.purchase_intent_id, lead.contact, lead.phone),
+    'consented_intent_ok');
+};
+await expectOutsideWindow('payment failure after the lookback', {
+  contact: '50000000-0000-4000-8000-000000000135',
+  name: 'Stale Form Buyer', email: 'stale-form@example.test', phone: '12025550135',
+}, at(-200), 'ATT1-CONSENT-FAIL-6');
+await expectOutsideWindow('payment failure before the form', {
+  contact: '50000000-0000-4000-8000-000000000136',
+  name: 'Late Form Buyer', email: 'late-form@example.test', phone: '12025550136',
+}, at(-5), 'ATT1-CONSENT-FAIL-7');
 
 console.log('commercial_ally_payment_failure_recovery=OK');

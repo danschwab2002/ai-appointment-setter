@@ -176,6 +176,11 @@ criterio es el de Johanna sin sus valores fijos y vive en
   `consent.whatsapp_contact` y `consent.marketing_optin` en `true`, la
   `consent_copy_version` del binding activo y ningún conflicto abierto.
 
+Dos condiciones del criterio de Johanna no se repiten en el helper, a propósito:
+
+- **La ventana entre el formulario y el evento** (Johanna: el pago fallido entre `submitted_at` y `submitted_at + 24 h`). La garantiza la correlación: `correlate_hotmart_purchase_intent` solo resuelve una intención con `submitted_at` en `[observed_at - max_lookback, observed_at]`, con el `max_lookback` de `hotmart_purchase_intent_scopes` de la oferta, y la RPC exige `correlation_outcome = 'resolved'`. Un pago fallido anterior al formulario o posterior al lookback no se correlaciona, se rechaza con `payment_failure_correlation_unresolved` y no concede nada, aunque la intención tenga consentimiento.
+- **El nombre y el producto del envío no vacíos** (Johanna los usa como variables de su plantilla). En el camino portable las variables salen del contexto de ejecución del caso y el dispatcher las exige antes de enviar (`template_parameters_missing`); no son parte del permiso.
+
 Si falla algo, el helper devuelve un motivo distinto por cada caso
 (`consented_intent_not_live`, `consented_intent_not_authorized`,
 `consented_intent_phone_mismatch`, `consented_intent_submission_missing`, entre

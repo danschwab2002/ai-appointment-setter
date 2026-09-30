@@ -114,7 +114,12 @@ def test_helper_is_a_private_stable_invoker() -> None:
 
 
 def test_helper_is_johanna_criterion_without_fixed_values() -> None:
-    helper = _normalized(_function(MIGRATION.read_text(encoding="utf-8"), HELPER)).lower()
+    raw = _function(MIGRATION.read_text(encoding="utf-8"), HELPER)
+    helper = _normalized(raw).lower()
+    # Lo que ejecuta, sin comentarios: el cuerpo nombra a Johanna para explicar
+    # que se deja afuera. Los comentarios se sacan antes de normalizar, porque
+    # normalizado todo queda en una linea.
+    executable = _normalized(re.sub(r"--[^\n]*", "", raw)).lower()
 
     for predicate in (
         "v_intent.lifecycle_state <> 'waiting_for_purchase'",
@@ -132,9 +137,20 @@ def test_helper_is_johanna_criterion_without_fixed_values() -> None:
         "conflict.resolved_at is null",
         "binding.status = 'active'",
     ):
-        assert predicate in helper, predicate
+        assert predicate in executable, predicate
     for literal in ("johanna", "bxjge6zq", "8104005", "'lancemos'", "psicologajohanna"):
-        assert literal not in helper, literal
+        assert literal not in executable, literal
+    # Dos condiciones de Johanna (20260827000100) quedan afuera a proposito, y
+    # el cuerpo dice por que: la ventana entre el formulario y el evento
+    # (failure_case.observed_at contra submitted_at + 24 h) la garantiza la
+    # correlacion, y el nombre y el producto del envio los exige el
+    # dispatcher. El caso F de validate_commercial_ally_payment_failure_recovery
+    # .mjs prueba la ventana: un pago fallido fuera de ella no concede permiso.
+    for absent in ("submitted_at", "{lead,full_name}", "{commerce,product_name}"):
+        assert absent not in executable, absent
+    assert "correlate_hotmart_purchase_intent solo resuelve" in helper
+    assert "correlation_outcome = 'resolved'" in helper
+    assert "template_parameters_missing" in helper
     reasons = set(re.findall(r"reason_code := '([a-z_]+)'", helper))
     assert reasons == {
         "consented_intent_input_invalid",
