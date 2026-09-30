@@ -3772,6 +3772,86 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         5,
         'portable_precheckout_offer_landings'
+    union all
+    select
+        '20260930000300',
+        '20260930000300_pilot_scope_audience_mode.sql',
+        (
+            select count(*) = 1
+            from pg_attribute
+            where attrelid = to_regclass('public.pilot_scope_versions')
+              and attname = 'audience_mode'
+              and atttypid = 'text'::regtype
+              and attnotnull
+              and not attisdropped
+        )::int
+        + (
+            select count(*) = 1
+            from pg_constraint
+            where conrelid = to_regclass('public.pilot_scope_versions')
+              and conname = 'pilot_scope_versions_audience_mode_check'
+        )::int
+        + (
+            select count(*) = 2
+            from pg_attribute
+            where attrelid = to_regclass('public.pilot_recovery_case_bindings')
+              and attname in ('audience_mode', 'audience_purchase_intent_id')
+              and not attisdropped
+        )::int
+        + (
+            select count(*) = 1
+            from pg_constraint
+            where conrelid = to_regclass('public.pilot_recovery_case_bindings')
+              and conname = 'pilot_recovery_case_bindings_audience_shape'
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._lancemos_pilot_audience_intent(text,integer,uuid,text,uuid,text)')
+              and not prosecdef
+              and provolatile = 's'
+              and position('_portable_consented_intent_reason' in definition) > 0
+        )::int
+        + coalesce(
+            not has_function_privilege(
+                'service_role',
+                to_regprocedure('public._lancemos_pilot_audience_intent(text,integer,uuid,text,uuid,text)'),
+                'EXECUTE'
+            ),
+            false
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.evaluate_lancemos_pilot_scope(text,integer,text,bigint,bigint,text,text,text,text,text,text,uuid)')
+              and prosecdef
+              and position('v_scope.audience_mode = ''consented_intent''' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.authorize_lancemos_pilot_request_start(text,integer,text,bigint,bigint,text,text,text,text,text,text,uuid,uuid,uuid,timestamptz)')
+              and prosecdef
+              and position('_lancemos_pilot_audience_intent' in definition) > 0
+              and position('audience_purchase_intent_id' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.plan_lancemos_pilot_cart_recovery(uuid,uuid,text,text,text,text,integer,timestamptz,bigint,bigint,text,text,integer)')
+              and prosecdef
+              and position('_lancemos_pilot_audience_intent' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.plan_portable_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,timestamptz,bigint,bigint,text,text,integer)')
+              and prosecdef
+              and position('_lancemos_pilot_audience_intent' in definition) > 0
+              and position('_portable_consented_intent_reason' in definition) > 0
+        )::int,
+        10,
+        'pilot_scope_audience_mode'
 )
 select
     version,

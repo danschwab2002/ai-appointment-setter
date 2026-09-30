@@ -610,8 +610,9 @@ armó una cohorte real.
 Las fuentes de verdad son:
 
 - `pilot_scope_versions`, para el scope publicado e inmutable de tenant,
-  account/inbox, cuenta opaca de canal, evento Hotmart, producto, oferta, policy
-  y límites;
+  account/inbox, cuenta opaca de canal, evento Hotmart, producto, oferta, policy,
+  límites y audiencia (`audience_mode`: cohorte manual, intención con
+  consentimiento, o las dos);
 - `pilot_runtime_controls`, para versión seleccionada, estado
   `inactive|armed|paused|closed` y generación CAS;
 - `pilot_cohort_memberships`, para la cohorte explícita por versión y contacto;
@@ -620,18 +621,23 @@ Las fuentes de verdad son:
 - `pilot_control_events`, para la auditoría de activación, pausa/cierre, cambio
   de versión y membresía.
 - `pilot_recovery_case_bindings`, para ligar de forma inmutable cada caso al
-  scope/version y al evento autoritativo que admitió su planificación.
+  scope/version y al evento autoritativo que admitió su planificación, con el
+  modo de audiencia y la intención con consentimiento con que entró.
 
 `plan_lancemos_pilot_cart_recovery` compone evaluación, planificación y binding
 durable en una sola transacción. Recibe sólo scope/version; tenant y routing se
 derivan del scope publicado. Rechaza antes de persistir trabajo si scope,
-versión, policy, identidad o cohorte no coinciden. Los RPC históricos de
+versión, policy, identidad o audiencia no coinciden (la cohorte o la intención
+con consentimiento del evento, según el `audience_mode` de la versión; ver
+`docs/design/lancemos-pilot-boundary.md` §2.4). Los RPC históricos de
 planificación ya no son entrypoints para roles API.
 
 `mark_lancemos_pilot_request_started` no acepta dimensiones de scope del caller:
 las deriva del binding inmutable del caso. Compone la autorización actual del piloto
-con la frontera de request-start y con los guards existentes de autorización
-del contacto, compra, takeover y opt-out. El entrypoint histórico conserva su
+(que, fuera de la cohorte manual, re-verifica la intención con consentimiento
+del binding antes de consumir presupuesto) con la frontera de request-start y
+con los guards existentes de autorización del contacto, compra, takeover y
+opt-out. El entrypoint histórico conserva su
 firma sólo para composición interna, exige la autorización durable del mismo
 action/attempt y no es ejecutable por roles API; la función interna y la
 función de autorización standalone tampoco lo son. Así, un caller con

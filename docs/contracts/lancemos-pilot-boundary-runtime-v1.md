@@ -25,11 +25,13 @@ La RPC recibe el contrato existente de planificación, la identidad Chatwoot res
 
 1. serializa contra cambios del runtime;
 2. exige scope publicado y versión activa;
-3. evalúa tenant, account/inbox, proveedor/cuenta, fuente/evento, producto, oferta y cohorte;
+3. evalúa tenant, account/inbox, proveedor/cuenta, fuente/evento, producto, oferta y cohorte (la cohorte, sólo si el `audience_mode` de la versión la usa);
 4. exige que policy key/version coincidan con el scope;
-5. sólo entonces invoca la planificación durable autoritativa.
-6. vincula el caso de forma inmutable en `pilot_recovery_case_bindings` con
-   `scope_key/version` y el evento admitido.
+5. fuera de `manual_cohort`, exige la intención con consentimiento con la que la admisión correlacionó el evento (`pilot_audience_*`);
+6. sólo entonces invoca la planificación durable autoritativa.
+7. vincula el caso de forma inmutable en `pilot_recovery_case_bindings` con
+   `scope_key/version`, el evento admitido, `audience_mode` y, fuera de
+   `manual_cohort`, `audience_purchase_intent_id`.
 
 Un rechazo usa SQLSTATE `55000`, mensaje `pilot_scope_rejected` y un `detail` reason code. La transacción no deja casos, secuencias ni acciones parciales.
 
@@ -43,7 +45,7 @@ La aplicación usa `mark_lancemos_pilot_request_started` inmediatamente antes de
 
 La RPC no acepta scope, tenant ni routing. Deriva el binding inmutable del caso y, desde el estado canónico, contacto, producto, oferta, account e inbox. En una transacción:
 
-1. ejecuta `authorize_lancemos_pilot_request_start`;
+1. ejecuta `authorize_lancemos_pilot_request_start` (fuera de `manual_cohort` re-verifica la intención del binding antes de consumir presupuesto; un rechazo es `pilot_request_start_rejected` con el motivo en `detail`);
 2. exige autorización actual para el mismo action/attempt;
 3. compone los guards previos de autorización del contacto, compra, takeover y opt-out;
 4. marca el intento como `request_started`;

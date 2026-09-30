@@ -35,7 +35,10 @@ timezone
 max_cohort_contacts > 0
 max_outbound_request_starts_total > 0
 max_outbound_request_starts_per_day > 0
+audience_mode = manual_cohort | consented_intent_in_cohort | consented_intent
 ```
+
+`audience_mode` (migración `20260930000300`, default `manual_cohort`) decide la audiencia de la versión: la cohorte, la intención con consentimiento del evento, o las dos. Los modos con consentimiento se admiten con `source` `hotmart` o `landing`. El criterio completo está en el diseño, [§2.4](../design/lancemos-pilot-boundary.md#24-audiencia-del-scope-cohorte-explícita-o-intención-consentida).
 
 `channel_account_ref` es una referencia opaca al número/cuenta configurada. No es un teléfono ni se registra en logs.
 
@@ -79,6 +82,8 @@ activate_lancemos_pilot_scope_version(
 La versión objetivo debe estar publicada. Sólo puede reemplazarse la versión activa desde `inactive|paused`; `armed` exige pausar primero y `closed` es terminal. Toda activación efectiva fuerza `runtime_state=inactive`, incrementa generación y crea `pilot_scope_version_activated`. La membresía es versionada y no se copia. El presupuesto se cuenta por `scope_key` a través de todas las versiones, por lo que un cambio o rollback no reinicia caps.
 
 ## 3. Cohorte
+
+La cohorte sólo se consulta en `manual_cohort` y `consented_intent_in_cohort`. En `consented_intent` inscribir no tiene efecto (`max_cohort_contacts` sigue siendo obligatorio).
 
 La membresía se identifica por:
 
@@ -127,7 +132,9 @@ Precedencia de razones:
 7. canal/cuenta;
 8. source/evento;
 9. producto/oferta;
-10. cohorte.
+10. cohorte, si el modo la usa.
+
+En `consented_intent` la evaluación no mira la intención y devuelve `pilot_scope_allowed`: la intención consentida la exigen los planificadores, atada al evento en la misma transacción (motivos `pilot_audience_*`, rechazo `pilot_scope_rejected`), y la vuelve a exigir la autorización de request-start.
 
 ## 5. Autorización de request-start
 
@@ -156,7 +163,8 @@ Además de repetir la evaluación, debe demostrar desde estado canónico que:
 - action → case corresponde a `contact_id`;
 - case tiene producto/oferta del scope;
 - la identidad seleccionada pertenece a account/inbox del scope;
-- la cohorte está activa;
+- la cohorte está activa, si el modo la usa;
+- fuera de `manual_cohort`, la intención del binding del caso sigue siendo del scope y de la oferta del caso, del teléfono de la identidad seleccionada y con el consentimiento vigente. Se verifica bajo lock compartido de la fila y antes de contar los caps: si falla, devuelve el motivo `pilot_audience_*` y no consume cupo;
 - caps total y diario conservan capacidad.
 
 `now` sólo puede diferir hasta cinco minutos del reloj autoritativo de PostgreSQL. Fuera de esa ventana retorna `pilot_request_time_invalid`. La fecha presupuestaria y `authorized_at` siempre se calculan con `clock_timestamp()` del servidor; el caller no puede elegir otro día para eludir el cap diario.
@@ -209,6 +217,8 @@ Eventos mínimos:
 - `pilot_cohort_member_enrolled`;
 - `pilot_cohort_member_removed`;
 - `pilot_outbound_request_authorized`.
+
+En `pilot_outbound_request_authorized`, `data` lleva `local_budget_date` y, fuera de `manual_cohort`, `audience_mode` y `audience_purchase_intent_id`. En `manual_cohort` queda como antes.
 
 La evidencia contiene IDs internos, versión, generación y reason codes. No contiene teléfono, JID, email, nombre, contenido de mensajes, tokens ni payloads externos.
 

@@ -20,7 +20,11 @@
 //      de un toque cierra la secuencia (policy_exhausted);
 //   6. el riesgo de la politica de dos pasos: con max_automatic_messages = 2 el
 //      paso siguiente se elige por posicion y la aceptacion del carrito falla
-//      con invalid_next_policy_step. Este validador lo fija.
+//      con invalid_next_policy_step. Este validador lo fija;
+//   7. la audiencia de produccion (consented_intent, 20260930000300): con la
+//      v2 del scope, una intencion consentida entra sin cohorte y llega a la
+//      aceptacion; sin formulario o con un formulario sin opt-in no se
+//      planifica; y el tope total corta el arranque del envio siguiente.
 //
 // Datos:
 //   - Binding, ofertas, landings, producto, Chatwoot y consentimiento salen de
@@ -291,14 +295,17 @@ const person = (label) => {
 };
 
 // Formulario de la landing de la oferta (precedente inline del contrato).
-const admitForm = async (lead, offer) => {
+// consented=false es un envio 1.0.0 sin opt-in: la admision lo acepta y la
+// intencion queda sin los dos permisos.
+const admitForm = async (lead, offer, { consented = true } = {}) => {
+  const version = consented ? '1.1.0' : '1.0.0';
   const id = `att1-chain-form-${lead.email}-${offer.offer_code}`;
   const pageUrl = `https://${offer.page_host}${offer.page_path}`;
   const checkoutUrl = `https://pay.hotmart.com/${ATT1.hotlink}?off=${offer.offer_code}&checkoutMode=10`;
   const raw = {
     id,
     event: 'lead.precheckout',
-    version: '1.1.0',
+    version,
     created_at: SUBMITTED_AT.toISOString(),
     source: {
       system: 'landing', site: offer.site, aliado: ATT1.brand,
@@ -316,16 +323,16 @@ const admitForm = async (lead, offer) => {
       offer: { code: offer.offer_code },
       checkout_url: checkoutUrl,
       checkout_country: { iso: 'US', source: 'phone_country_code' },
-      consent: {
-        marketing_optin: true, whatsapp_contact: true, copy_version: ATT1.copyVersion,
-      },
+      consent: consented
+        ? { marketing_optin: true, whatsapp_contact: true, copy_version: ATT1.copyVersion }
+        : { marketing_optin: false, notice: 'Aviso de privacidad sin opt-in explicito.' },
     },
     dedupe_key: `${offer.site}:${offer.offer_code}:${lead.email}`,
   };
   const canonical = {
     external_submission_id: id,
     event_type: 'PRECHECKOUT_FORM_SUBMITTED',
-    contract_version: '1.1.0',
+    contract_version: version,
     submitted_at: raw.created_at,
     source: {
       tenant_ref: ATT1.tenant, funnel_ref: ATT1.funnel, landing_ref: offer.landing_id,
@@ -341,10 +348,11 @@ const admitForm = async (lead, offer) => {
     },
     dedupe_key: raw.dedupe_key,
     consent: {
-      terms_accepted: false, privacy_accepted: false, marketing_optin: true,
-      whatsapp_contact: true, copy_version: ATT1.copyVersion,
+      terms_accepted: false, privacy_accepted: false, marketing_optin: consented,
+      whatsapp_contact: consented,
+      copy_version: consented ? ATT1.copyVersion : 'lead-precheckout-v1-no-explicit-optin',
     },
-    assurance: { provisional: false, provider_observed: true, activation_authorized: true },
+    assurance: { provisional: false, provider_observed: true, activation_authorized: consented },
   };
   const admitted = one((await db.query(`
     select * from public.admit_portable_observed_lead_precheckout($1,$2,$3,$4,$5::jsonb,$6::jsonb)
@@ -357,8 +365,9 @@ const admitForm = async (lead, offer) => {
   if (admitted.outcome !== 'inserted'
       || intent.landing_ref !== offer.landing_id
       || intent.offer_ref !== offer.offer_code
-      || !intent.whatsapp_contact_authorized || !intent.activation_authorized) {
-    throw new Error(`${lead.label}: the form of ${offer.landing_id} did not leave its consented intent: ${JSON.stringify({ admitted, intent })}`);
+      || intent.whatsapp_contact_authorized !== consented
+      || intent.activation_authorized !== consented) {
+    throw new Error(`${lead.label}: the form of ${offer.landing_id} did not leave the expected intent: ${JSON.stringify({ admitted, intent })}`);
   }
   return admitted.purchase_intent_id;
 };
@@ -445,21 +454,22 @@ const enroll = async (lead) => {
   }
 };
 
-// Los mismos argumentos que arma resolution.resolve_event con el binding portable.
-const planCart = (lead, offer, cart) => db.query(`
+// Los mismos argumentos que arma resolution.resolve_event con el binding
+// portable. version es LANCEMOS_PILOT_SCOPE_VERSION del bridge.
+const planCart = (lead, offer, cart, { version = SCOPE_VERSION } = {}) => db.query(`
   select * from public.plan_lancemos_pilot_cart_recovery(
     $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13
   )
 `, [cart.eventId, lead.contact, String(ATT1.productId), ATT1.productName,
   offer.offer_code, POLICY, POLICY_VERSION, cart.abandonedAt.toISOString(), ATT1.accountId,
-  ATT1.inboxId, lead.phone, SCOPE, SCOPE_VERSION]);
-const planFailure = (lead, offer, failure) => db.query(`
+  ATT1.inboxId, lead.phone, SCOPE, version]);
+const planFailure = (lead, offer, failure, { version = SCOPE_VERSION } = {}) => db.query(`
   select * from public.plan_portable_payment_failure_recovery(
     $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13
   )
 `, [failure.eventId, lead.contact, String(ATT1.productId), ATT1.productName,
   offer.offer_code, POLICY, POLICY_VERSION, failure.failedAt.toISOString(), ATT1.accountId,
-  ATT1.inboxId, lead.phone, SCOPE, SCOPE_VERSION]);
+  ATT1.inboxId, lead.phone, SCOPE, version]);
 
 const expectPilotRejection = async (label, action, reason) => {
   let error = null;
@@ -747,6 +757,173 @@ if (starts.count !== 6) {
   throw new Error(`expected six pilot request starts, got ${starts.count}`);
 }
 
+// ---------------------------------------------------------------------------
+// 5. La audiencia de produccion: consented_intent (migracion 20260930000300),
+//    con el procedimiento del operador de docs/design/lancemos-pilot-boundary.md
+//    (seccion 2.4): pausar la v1, publicar la v2 igual a la v1 salvo
+//    audience_mode y los topes, activarla (queda inactive), apuntar
+//    LANCEMOS_PILOT_SCOPE_VERSION a la v2 y armar. La cohorte de la v2 esta
+//    vacia: la membresia es por version y no se copia.
+//    La v2 todavia no esta en politica-piloto.json (la instancia la publica
+//    despues de este bloque): sus valores salen de la v1 del fixture. El total
+//    cuenta lo que ya consumio la v1, asi que total = consumido + 1 deja salir
+//    uno y corta el siguiente.
+//    Casos: una intencion consentida entra sin cohorte; sin formulario, con un
+//    formulario sin opt-in (carrito y pago fallido), no; el tope corta.
+// ---------------------------------------------------------------------------
+const OPEN_VERSION = SCOPE_VERSION + 1;
+const OPEN_TOTAL = starts.count + 1;
+const generationOf = async () => one((await db.query(`
+  select generation from public.pilot_runtime_controls where scope_key = $1
+`, [SCOPE])).rows, 'scope generation').generation;
+const paused = one((await db.query(`
+  select * from public.set_lancemos_pilot_runtime_state($1,$2,$3,'paused','operator-test','open-audience')
+`, [SCOPE, SCOPE_VERSION, await generationOf()])).rows, 'pause v1');
+await db.query(`
+  insert into public.pilot_scope_versions
+    (scope_key, version, status, tenant_key, chatwoot_account_id, chatwoot_inbox_id,
+     channel, channel_provider, channel_account_ref, source, source_event_type,
+     additional_source_event_types, external_product_id, offer_code,
+     additional_offer_codes, purpose, policy_key, policy_version, timezone,
+     max_cohort_contacts, max_outbound_request_starts_total,
+     max_outbound_request_starts_per_day, audience_mode,
+     approved_by, approved_at, published_at)
+  select scope_key, $2, status, tenant_key, chatwoot_account_id, chatwoot_inbox_id,
+         channel, channel_provider, channel_account_ref, source, source_event_type,
+         additional_source_event_types, external_product_id, offer_code,
+         additional_offer_codes, purpose, policy_key, policy_version, timezone,
+         max_cohort_contacts, $3, $3, 'consented_intent',
+         'operator-test', now(), now()
+  from public.pilot_scope_versions where scope_key = $1 and version = $4
+`, [SCOPE, OPEN_VERSION, OPEN_TOTAL, SCOPE_VERSION]);
+const activated = one((await db.query(`
+  select * from public.activate_lancemos_pilot_scope_version($1,$2,$3,'operator-test','open-audience')
+`, [SCOPE, OPEN_VERSION, await generationOf()])).rows, 'activate v2');
+const rearmed = one((await db.query(`
+  select * from public.set_lancemos_pilot_runtime_state($1,$2,$3,'armed','operator-test','open-audience')
+`, [SCOPE, OPEN_VERSION, await generationOf()])).rows, 'arm v2');
+const openStatus = one((await db.query(`
+  select * from public.get_lancemos_pilot_runtime_status($1,$2,$3,$4,$5)
+`, [SCOPE, OPEN_VERSION, ATT1.tenant, CHANNEL_PROVIDER, CHANNEL_REF])).rows, 'v2 status');
+const openMembers = one((await db.query(`
+  select count(*)::integer as count from public.pilot_cohort_memberships
+  where scope_key = $1 and scope_version = $2
+`, [SCOPE, OPEN_VERSION])).rows, 'v2 cohort').count;
+if (paused.runtime_state !== 'paused'
+    || activated.runtime_state !== 'inactive'
+    || rearmed.runtime_state !== 'armed'
+    || openStatus.configured !== true || openStatus.runtime_state !== 'armed'
+    || openMembers !== 0) {
+  throw new Error(`the v2 with consented_intent is not armed with an empty cohort: ${JSON.stringify({ paused, activated, rearmed, openStatus, openMembers })}`);
+}
+const openPlan = { version: OPEN_VERSION };
+
+// Entra sin cohorte, y el binding y la autorizacion dicen con que evidencia.
+const openLead = person('audiencia-consentida');
+const openOffer = defaultOffer;
+const openIntent = await admitForm(openLead, openOffer);
+const openCart = await admitCart(openLead, openOffer);
+await createContact(openLead, openCart.eventId);
+const openCartPlan = one((await planCart(openLead, openOffer, openCart, openPlan)).rows,
+  'consented intent cart plan');
+const openBinding = one((await db.query(`
+  select scope_version, audience_mode, audience_purchase_intent_id
+  from public.pilot_recovery_case_bindings where recovery_case_id = $1
+`, [openCartPlan.recovery_case_id])).rows, 'consented intent binding');
+if (!openCartPlan.created
+    || openBinding.scope_version !== OPEN_VERSION
+    || openBinding.audience_mode !== 'consented_intent'
+    || openBinding.audience_purchase_intent_id !== openIntent) {
+  throw new Error(`the consented intent did not bind the case: ${JSON.stringify({ openCartPlan, openBinding })}`);
+}
+const openRun = await dispatch(openLead, openCartPlan, {
+  anchor: 'cart_abandonment', stepKey: 'first_contact', offer: openOffer,
+});
+const openControl = one((await db.query(`
+  select data from public.pilot_control_events
+  where event_type = 'pilot_outbound_request_authorized' and scope_version = $1
+`, [OPEN_VERSION])).rows, 'consented intent control event').data;
+if (openControl.audience_mode !== 'consented_intent'
+    || openControl.audience_purchase_intent_id !== openIntent
+    || openRun.started.pilot_authorization_id == null) {
+  throw new Error(`the authorization did not record the audience: ${JSON.stringify(openControl)}`);
+}
+
+// Sin consentimiento no entra: sin formulario, o con un formulario sin opt-in
+// (carrito y pago fallido). No queda ni caso ni permiso.
+const noForm = person('audiencia-sin-formulario');
+const noFormCart = await admitCart(noForm, openOffer);
+await createContact(noForm, noFormCart.eventId);
+await expectPilotRejection('consented_intent without a form',
+  () => planCart(noForm, openOffer, noFormCart, openPlan), 'pilot_audience_intent_unresolved');
+const noOptIn = person('audiencia-sin-opt-in');
+const noOptInOffer = additionalOffers[0];
+await admitForm(noOptIn, noOptInOffer, { consented: false });
+const noOptInCart = await admitCart(noOptIn, noOptInOffer);
+await createContact(noOptIn, noOptInCart.eventId);
+await expectPilotRejection('consented_intent with a form without opt-in (cart)',
+  () => planCart(noOptIn, noOptInOffer, noOptInCart, openPlan),
+  'pilot_audience_consented_intent_not_authorized');
+const noOptInFailure = await admitFailure(noOptIn, noOptInOffer, 'HPATT1CHAINPF3');
+await expectPilotRejection('consented_intent with a form without opt-in (payment failure)',
+  () => planFailure(noOptIn, noOptInOffer, noOptInFailure, openPlan),
+  'pilot_audience_consented_intent_not_authorized');
+const rejectedEffects = one((await db.query(`
+  select
+    (select count(*)::integer from public.recovery_cases where contact_id = any($1::uuid[])) as cases,
+    (select count(*)::integer from public.contact_authorizations where contact_id = any($1::uuid[])) as grants
+`, [[noForm.contact, noOptIn.contact]])).rows, 'rejected audience effects');
+if (rejectedEffects.cases !== 0 || rejectedEffects.grants !== 0) {
+  throw new Error(`a contact outside the audience left durable work: ${JSON.stringify(rejectedEffects)}`);
+}
+
+// El tope corta: otra intencion consentida se planifica, pero el arranque del
+// envio se rechaza sin consumir. La accion queda reservada: va al final.
+const capped = person('audiencia-tope');
+const cappedOffer = additionalOffers[1];
+await admitForm(capped, cappedOffer);
+const cappedCart = await admitCart(capped, cappedOffer);
+await createContact(capped, cappedCart.eventId);
+const cappedPlan = one((await planCart(capped, cappedOffer, cappedCart, openPlan)).rows,
+  'capped plan');
+const cappedWorker = `att1-chain-${capped.label}`;
+const cappedNow = await dbNow();
+const cappedClaim = (await db.query(`
+  select * from public.claim_due_followup_actions($1,$2,interval '5 minutes',100)
+`, [cappedWorker, cappedNow])).rows;
+if (cappedClaim.length !== 1 || cappedClaim[0].id !== cappedPlan.scheduled_action_id) {
+  throw new Error(`capped: claimed ${JSON.stringify(cappedClaim.map((row) => row.id))}`);
+}
+const cappedDecision = one((await db.query(`
+  select * from public.reevaluate_followup_action($1,$2,$3,$4)
+`, [cappedPlan.scheduled_action_id, cappedWorker, cappedClaim[0].lease_generation, cappedNow])).rows,
+'capped reevaluation');
+const cappedAttempt = one((await db.query(`
+  select * from public.reserve_followup_delivery_attempt($1,$2,$3,$4,$5,'whatsapp',$6,$7)
+`, [cappedPlan.scheduled_action_id, cappedWorker, cappedClaim[0].lease_generation,
+  cappedDecision.case_version, cappedDecision.sequence_revision, DIRECT_DELIVERY_MODE,
+  cappedNow])).rows, 'capped reservation');
+let cappedError = null;
+try {
+  await db.query(`select * from public.${startOperationFor(cappedClaim[0].anchor_type)}($1,$2,$3,$4,$5)`, [
+    cappedPlan.scheduled_action_id, cappedAttempt.id, cappedWorker,
+    cappedClaim[0].lease_generation, await dbNow(),
+  ]);
+} catch (caught) {
+  cappedError = caught;
+}
+const finalStarts = one((await db.query(`
+  select count(*)::integer as count from public.pilot_outbound_request_authorizations
+  where scope_key = $1
+`, [SCOPE])).rows, 'final pilot authorizations').count;
+if (cappedDecision.decision !== 'execute'
+    || cappedError?.code !== '55000'
+    || cappedError?.message !== 'pilot_request_start_rejected'
+    || cappedError?.detail !== 'pilot_total_budget_exhausted'
+    || finalStarts !== OPEN_TOTAL) {
+  throw new Error(`the total cap did not cut the consented audience: ${JSON.stringify({ cappedDecision, code: cappedError?.code, message: cappedError?.message, detail: cappedError?.detail, finalStarts })}`);
+}
+
 console.log(JSON.stringify({
   att1_portable_chain: 'OK',
   empty_cohort: 'pilot_scope_rejected:pilot_contact_not_in_cohort',
@@ -755,5 +932,13 @@ console.log(JSON.stringify({
   payment_failure_after_cart: bothRun.decision.reason_code,
   pilot_request_starts: starts.count,
   two_message_policy_risk: 'invalid_next_policy_step',
+  consented_intent: {
+    scope_version: OPEN_VERSION,
+    consented_without_cohort: openRun.decision.reason_code,
+    without_form: 'pilot_scope_rejected:pilot_audience_intent_unresolved',
+    form_without_opt_in: 'pilot_scope_rejected:pilot_audience_consented_intent_not_authorized',
+    cap: `pilot_request_start_rejected:${cappedError.detail}`,
+    pilot_request_starts: finalStarts,
+  },
 }));
 await db.close();
