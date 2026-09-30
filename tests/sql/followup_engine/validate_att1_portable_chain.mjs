@@ -25,13 +25,17 @@
 // Datos:
 //   - Binding, ofertas, landings, producto, Chatwoot y consentimiento salen de
 //     tests/fixtures/instances/att1/instancia.toml (se lee el archivo).
-//   - Politica y scope del piloto: los de setter-instancia-att1
-//     (despliegue/base/aprovisionar-att1.sql, 2026-09-30): att1-recuperacion v1
-//     con att1-recuperacion-un-toque v1, pasos freeform first_contact y
-//     payment_failure_first_contact (decision D2), un toque, gracia 0, vence a
-//     1 dia, topes 20, lookback de la intencion 24 h.
-//     DESVIACION DOCUMENTADA: la ventana de envio es 00:00-23:59 en vez de
-//     09:00-21:00 (America/Mexico_City). La puerta de arranque
+//   - Politica y scope del piloto: se leen de
+//     tests/fixtures/instances/att1/politica-piloto.json, la copia versionada
+//     de las constantes de setter-instancia-att1
+//     (despliegue/base/aprovisionar-att1.sql, con su commit y sha256 en
+//     _fixture): scope, politica de un toque con pasos freeform first_contact
+//     y payment_failure_first_contact (decision D2), gracia, vencimiento,
+//     topes y lookback de la intencion. Si la instancia los cambia, se
+//     actualiza ese archivo y este validador prueba la cadena nueva.
+//     DESVIACION DOCUMENTADA: la ventana de envio usa los dias del fixture
+//     pero de 00:00 a 23:59, en vez de su horario (09:00-21:00,
+//     America/Mexico_City). La puerta de arranque
 //     (authorize_lancemos_pilot_request_start) exige p_now a +-5 minutos del
 //     reloj de la base, asi que la cadena corre con el reloj real y no puede
 //     elegir una hora habil de Ciudad de Mexico.
@@ -149,14 +153,32 @@ const landingOf = (offer) => ({
   page_host: offer.page_host, page_path: offer.page_path,
 });
 
-// Valores de aprovisionar-att1.sql de la instancia (no estan en el manifiesto).
-const SCOPE = 'att1-recuperacion';
-const POLICY = 'att1-recuperacion-un-toque';
-const CHANNEL_REF = `chatwoot-inbox:${ATT1.inboxId}`;
-const STEPS = [
-  { mode: 'freeform', step_key: 'first_contact' },
-  { mode: 'freeform', step_key: 'payment_failure_first_contact' },
-];
+// Valores de aprovisionar-att1.sql de la instancia que el manifiesto no
+// declara, desde su copia versionada (un campo que falte aborta).
+const PILOT = JSON.parse(readFileSync(
+  join(root, 'tests/fixtures/instances/att1/politica-piloto.json'), 'utf8',
+));
+const pilotScope = required(PILOT.pilot_scope, 'politica-piloto.pilot_scope');
+const pilotPolicy = required(PILOT.policy, 'politica-piloto.policy');
+const SCOPE = required(pilotScope.scope_key, 'pilot_scope.scope_key');
+const SCOPE_VERSION = required(pilotScope.version, 'pilot_scope.version');
+const POLICY = required(pilotPolicy.policy_key, 'policy.policy_key');
+const POLICY_VERSION = required(pilotPolicy.version, 'policy.version');
+const CHANNEL_PROVIDER = required(pilotScope.channel_provider, 'pilot_scope.channel_provider');
+const CHANNEL_REF = `${required(pilotScope.channel_account_ref_prefix, 'pilot_scope.channel_account_ref_prefix')}${ATT1.inboxId}`;
+const STEPS = required(pilotPolicy.steps, 'policy.steps');
+const INTENT_LOOKBACK = required(
+  PILOT.purchase_intent_scope?.max_lookback, 'purchase_intent_scope.max_lookback',
+);
+const SEND_WINDOWS = required(pilotPolicy.business_windows, 'policy.business_windows')
+  .map((window) => ({ ...window, start: '00:00', end: '23:59' }));
+if (CHANNEL_PROVIDER !== 'waba'
+    || pilotPolicy.max_automatic_messages !== 1
+    || STEPS.map((step) => step.step_key).join(',') !== 'first_contact,payment_failure_first_contact') {
+  // Los casos de abajo (la plantilla aprobada, un toque, el riesgo de los dos
+  // pasos) asumen esta forma. Si la instancia la cambia, hay que revisarlos.
+  throw new Error(`politica-piloto.json changed shape: ${JSON.stringify({ CHANNEL_PROVIDER, pilotPolicy })}`);
+}
 
 await db.query(`
   insert into public.commercial_ally_runtime_bindings
@@ -182,19 +204,21 @@ for (const offer of offers) {
     insert into public.hotmart_purchase_intent_scopes
       (tenant_ref, funnel_ref, hotmart_product_id, purchase_intent_product_ref,
        offer_ref, max_lookback, active)
-    values ($1,$2,$3,$4,$5,interval '24 hours',true)
-  `, [ATT1.tenant, ATT1.funnel, String(ATT1.productId), ATT1.hotlink, offer.offer_code]);
+    values ($1,$2,$3,$4,$5,$6::interval,true)
+  `, [ATT1.tenant, ATT1.funnel, String(ATT1.productId), ATT1.hotlink, offer.offer_code,
+    INTENT_LOOKBACK]);
 }
 await db.query(`
   insert into public.followup_policy_versions
     (policy_key, version, status, purpose, timezone, business_windows,
      grace_period, expires_after, max_automatic_messages, steps,
      approved_by, approved_at, published_at)
-  values ($1,1,'published','cart_recovery',$2,
-          '[{"days":[1,2,3,4,5,6,7],"start":"00:00","end":"23:59"}]',
-          interval '0 seconds',interval '1 day',1,$3::jsonb,
+  values ($1,$2,'published',$3,$4,$5::jsonb,$6::interval,$7::interval,$8,$9::jsonb,
           'operator-test',now(),now())
-`, [POLICY, ATT1.timezone, JSON.stringify(STEPS)]);
+`, [POLICY, POLICY_VERSION, required(pilotPolicy.purpose, 'policy.purpose'), ATT1.timezone,
+  JSON.stringify(SEND_WINDOWS), required(pilotPolicy.grace_period, 'policy.grace_period'),
+  required(pilotPolicy.expires_after, 'policy.expires_after'),
+  pilotPolicy.max_automatic_messages, JSON.stringify(STEPS)]);
 await db.query(`
   insert into public.pilot_scope_versions
     (scope_key, version, status, tenant_key, chatwoot_account_id, chatwoot_inbox_id,
@@ -203,30 +227,36 @@ await db.query(`
      additional_offer_codes, purpose, policy_key, policy_version, timezone,
      max_cohort_contacts, max_outbound_request_starts_total,
      max_outbound_request_starts_per_day, approved_by, approved_at, published_at)
-  values ($1,1,'published',$2,$3,$4,'whatsapp','waba',$5,'hotmart',
-          'PURCHASE_OUT_OF_SHOPPING_CART','{PURCHASE_CANCELED}',$6,$7,$8::text[],
-          'cart_recovery',$9,1,$10,20,20,20,'operator-test',now(),now())
+  values ($1,$2,'published',$3,$4,$5,'whatsapp',$6,$7,$8,$9,$10::text[],$11,$12,
+          $13::text[],$14,$15,$16,$17,$18,$19,$20,'operator-test',now(),now())
 `, [
-  SCOPE, ATT1.tenant, ATT1.accountId, ATT1.inboxId, CHANNEL_REF,
+  SCOPE, SCOPE_VERSION, ATT1.tenant, ATT1.accountId, ATT1.inboxId, CHANNEL_PROVIDER,
+  CHANNEL_REF, required(pilotScope.source, 'pilot_scope.source'),
+  required(pilotScope.source_event_type, 'pilot_scope.source_event_type'),
+  required(pilotScope.additional_source_event_types, 'pilot_scope.additional_source_event_types'),
   String(ATT1.productId), defaultOffer.offer_code,
-  additionalOffers.map((offer) => offer.offer_code), POLICY, ATT1.timezone,
+  additionalOffers.map((offer) => offer.offer_code),
+  required(pilotScope.purpose, 'pilot_scope.purpose'), POLICY, POLICY_VERSION, ATT1.timezone,
+  required(pilotScope.max_cohort_contacts, 'pilot_scope.max_cohort_contacts'),
+  required(pilotScope.max_outbound_request_starts_total, 'pilot_scope.max_outbound_request_starts_total'),
+  required(pilotScope.max_outbound_request_starts_per_day, 'pilot_scope.max_outbound_request_starts_per_day'),
 ]);
 await db.query(`
   insert into public.pilot_runtime_controls
     (scope_key, scope_version, runtime_state, generation, changed_by, change_reason)
-  values ($1,1,'inactive',0,'operator-test','default-off')
-`, [SCOPE]);
+  values ($1,$2,'inactive',0,'operator-test','default-off')
+`, [SCOPE, SCOPE_VERSION]);
 
 const one = (rows, label) => {
   if (rows.length !== 1) throw new Error(`${label}: expected one row, got ${rows.length}`);
   return rows[0];
 };
 const armed = one((await db.query(`
-  select * from public.set_lancemos_pilot_runtime_state($1,1,0,'armed','operator-test','controlled-test')
-`, [SCOPE])).rows, 'arm');
+  select * from public.set_lancemos_pilot_runtime_state($1,$2,0,'armed','operator-test','controlled-test')
+`, [SCOPE, SCOPE_VERSION])).rows, 'arm');
 const status = one((await db.query(`
-  select * from public.get_lancemos_pilot_runtime_status($1,1,$2,'waba',$3)
-`, [SCOPE, ATT1.tenant, CHANNEL_REF])).rows, 'runtime status');
+  select * from public.get_lancemos_pilot_runtime_status($1,$2,$3,$4,$5)
+`, [SCOPE, SCOPE_VERSION, ATT1.tenant, CHANNEL_PROVIDER, CHANNEL_REF])).rows, 'runtime status');
 if (armed.runtime_state !== 'armed' || status.configured !== true || status.runtime_state !== 'armed') {
   throw new Error(`the ATT1 pilot is not configured and armed: ${JSON.stringify({ armed, status })}`);
 }
@@ -408,8 +438,8 @@ const enroll = async (lead) => {
     select generation from public.pilot_runtime_controls where scope_key = $1
   `, [SCOPE])).rows, 'scope generation');
   const member = one((await db.query(`
-    select * from public.set_lancemos_pilot_cohort_member($1,1,$2,$3,'active','operator-test','controlled-test')
-  `, [SCOPE, lead.contact, generation])).rows, `${lead.label} enrollment`);
+    select * from public.set_lancemos_pilot_cohort_member($1,$2,$3,$4,'active','operator-test','controlled-test')
+  `, [SCOPE, SCOPE_VERSION, lead.contact, generation])).rows, `${lead.label} enrollment`);
   if (member.member_status !== 'active') {
     throw new Error(`${lead.label} was not enrolled: ${JSON.stringify(member)}`);
   }
@@ -418,18 +448,18 @@ const enroll = async (lead) => {
 // Los mismos argumentos que arma resolution.resolve_event con el binding portable.
 const planCart = (lead, offer, cart) => db.query(`
   select * from public.plan_lancemos_pilot_cart_recovery(
-    $1,$2,$3,$4,$5,$6,1,$7,$8,$9,$10,$11,1
+    $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13
   )
 `, [cart.eventId, lead.contact, String(ATT1.productId), ATT1.productName,
-  offer.offer_code, POLICY, cart.abandonedAt.toISOString(), ATT1.accountId,
-  ATT1.inboxId, lead.phone, SCOPE]);
+  offer.offer_code, POLICY, POLICY_VERSION, cart.abandonedAt.toISOString(), ATT1.accountId,
+  ATT1.inboxId, lead.phone, SCOPE, SCOPE_VERSION]);
 const planFailure = (lead, offer, failure) => db.query(`
   select * from public.plan_portable_payment_failure_recovery(
-    $1,$2,$3,$4,$5,$6,1,$7,$8,$9,$10,$11,1
+    $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13
   )
 `, [failure.eventId, lead.contact, String(ATT1.productId), ATT1.productName,
-  offer.offer_code, POLICY, failure.failedAt.toISOString(), ATT1.accountId,
-  ATT1.inboxId, lead.phone, SCOPE]);
+  offer.offer_code, POLICY, POLICY_VERSION, failure.failedAt.toISOString(), ATT1.accountId,
+  ATT1.inboxId, lead.phone, SCOPE, SCOPE_VERSION]);
 
 const expectPilotRejection = async (label, action, reason) => {
   let error = null;

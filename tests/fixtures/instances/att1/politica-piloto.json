@@ -1,0 +1,43 @@
+{
+  "_fixture": {
+    "source": "setter-instancia-att1, despliegue/base/aprovisionar-att1.sql",
+    "source_commit": "792cf31e6e2f1a238cb8ff997b61652ebc11f487",
+    "source_sha256": "fce5c0e6332feef6bba6644b39a2cc46f69a4f918698898a2f85f5e185130791",
+    "copied_at": "2026-09-30",
+    "note": "Los valores del scope del piloto, la politica de un toque y la ventana de la intencion que la instancia publica y que el manifiesto no declara (instancia.toml, al lado, tiene el binding). Copiados literales de las constantes c_* del archivo de arriba, con ese sha256. tests/sql/followup_engine/validate_att1_portable_chain.mjs los lee de aca: un cambio en aprovisionar-att1.sql obliga a actualizar este archivo (y su sha256), o el validador sigue probando la cadena vieja. channel_account_ref sale de [chatwoot].inbox_id del manifiesto, como c_channel_ref."
+  },
+  "pilot_scope": {
+    "scope_key": "att1-recuperacion",
+    "version": 1,
+    "channel_provider": "waba",
+    "channel_account_ref_prefix": "chatwoot-inbox:",
+    "source": "hotmart",
+    "source_event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+    "additional_source_event_types": ["PURCHASE_CANCELED"],
+    "purpose": "cart_recovery",
+    "max_cohort_contacts": 20,
+    "max_outbound_request_starts_total": 20,
+    "max_outbound_request_starts_per_day": 20
+  },
+  "policy": {
+    "policy_key": "att1-recuperacion-un-toque",
+    "version": 1,
+    "purpose": "cart_recovery",
+    "business_windows": [
+      {"days": [1, 2, 3, 4, 5, 6, 7], "start": "09:00", "end": "21:00"}
+    ],
+    "grace_period": "0 seconds",
+    "expires_after": "1 day",
+    "max_automatic_messages": 1,
+    "steps": [
+      {"mode": "freeform", "step_key": "first_contact"},
+      {"mode": "freeform", "step_key": "payment_failure_first_contact"}
+    ]
+  },
+  "purchase_intent_scope": {
+    "max_lookback": "24 hours"
+  },
+  "purchase_policy": {
+    "max_lookback": "7 days"
+  }
+}
