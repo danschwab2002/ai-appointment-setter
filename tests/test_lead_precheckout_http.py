@@ -213,8 +213,9 @@ def _att1_payload(offer: str, site: str, landing_id: str, url: str) -> dict[str,
     payload["source"].update(  # type: ignore[union-attr]
         site=site, aliado="Dra. Nina Garza", landing_id=landing_id, page_url=url
     )
+    config = InstanceManifest.from_toml_file(ATT1_MANIFEST).to_commercial_ally_config()
     payload["data"]["product"].update(  # type: ignore[index]
-        hotlink="D98014973Y", name="Alimenta Tu Tiroides", price=47
+        hotlink=config.product_hotlink, name=config.product_name, price=47
     )
     payload["data"]["offer"]["code"] = offer  # type: ignore[index]
     payload["data"]["checkout_url"] = (  # type: ignore[index]

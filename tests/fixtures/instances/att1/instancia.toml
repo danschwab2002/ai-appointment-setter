@@ -29,7 +29,7 @@ zona_horaria = "America/Mexico_City"   # 60 % del publico es de Mexico (intake-v
 [hotmart]
 product_id = 5071808
 hotlink = "D98014973Y"
-product_name = "Alimenta Tu Tiroides"
+product_name = "Alimenta tu Tiroides"   # checkout publico de D98014973Y, leido el 2026-09-30
 moneda = "USD"
 precio = "47"
 

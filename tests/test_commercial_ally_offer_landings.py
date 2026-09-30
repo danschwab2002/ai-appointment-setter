@@ -79,7 +79,7 @@ def _lead(
             "product": {
                 "hotlink": "D98014973Y",
                 "id": None,
-                "name": "Alimenta Tu Tiroides",
+                "name": _config().product_name,
                 "price": 47,
                 "currency": "USD",
             },

@@ -268,7 +268,7 @@ await db.query(`
      inbound_scope_key, inbound_scope_version, additional_offer_codes,
      additional_offer_landings)
   values ('lancemos', 'att1', 1, 'active', 'att1', 'Dra. Nina Garza',
-          $1, $2, $3, $4, 'D98014973Y', 'Alimenta Tu Tiroides', 47, 'USD', $5,
+          $1, $2, $3, $4, 'D98014973Y', 'Alimenta tu Tiroides', 47, 'USD', $5,
           'att1-whatsapp-contact-v1', 5071808, 2, 11, 'att1-inbound', 1,
           $6::text[], $7::jsonb)
 `, [
@@ -349,7 +349,7 @@ const att1Payloads = (id, { offer_code: offer, site, landing_id: landing, page_h
         phone_country_code: '1', phone_national: '2025550123',
       },
       product: {
-        hotlink: 'D98014973Y', id: null, name: 'Alimenta Tu Tiroides', price: 47,
+        hotlink: 'D98014973Y', id: null, name: 'Alimenta tu Tiroides', price: 47,
         currency: 'USD',
       },
       offer: { code: offer },
@@ -381,7 +381,7 @@ const att1Payloads = (id, { offer_code: offer, site, landing_id: landing, page_h
     },
     lead: { full_name: 'Test Buyer' },
     commerce: {
-      product_ref: 'D98014973Y', product_name: 'Alimenta Tu Tiroides', offer_ref: offer,
+      product_ref: 'D98014973Y', product_name: 'Alimenta tu Tiroides', offer_ref: offer,
       price: '47', currency: 'USD', checkout_url: raw.data.checkout_url,
     },
     dedupe_key: raw.dedupe_key,

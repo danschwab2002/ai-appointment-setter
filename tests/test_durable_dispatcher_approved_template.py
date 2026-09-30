@@ -119,7 +119,7 @@ class _Authority:
         *,
         offer_code: str | None = "gopi6lh7",
         buyer_name: str | None = "Edith García Pérez",
-        product_name: str = "Alimenta Tu Tiroides",
+        product_name: str = "Alimenta tu Tiroides",
         anchor_type: str = "cart_abandonment",
         action_type: str = "first_contact_review",
         inference: FirstNameInference | None = None,
@@ -367,7 +367,7 @@ def test_cart_of_each_att1_offer_sends_the_approved_body_without_hermes(
     decisions = _run(_dispatcher(authority, chatwoot, tmp_path))
 
     expected = _expected(
-        CART_TEMPLATE, first="Edith García Pérez", product="Alimenta Tu Tiroides"
+        CART_TEMPLATE, first="Edith García Pérez", product="Alimenta tu Tiroides"
     )
     assert decisions[-1].decision == "execute"
     assert authority.events == [
@@ -381,7 +381,7 @@ def test_cart_of_each_att1_offer_sends_the_approved_body_without_hermes(
         "category": "MARKETING",
         "language": "es_EC",
         "processed_params": {
-            "body": {"1": "Edith García Pérez", "2": "Alimenta Tu Tiroides"}
+            "body": {"1": "Edith García Pérez", "2": "Alimenta tu Tiroides"}
         },
     }
     assert authority.acceptances[0]["message_content"] == expected
@@ -399,7 +399,7 @@ def test_payment_failure_sends_its_own_approved_template(tmp_path: Path) -> None
     assert message["content"] == _expected(
         PAYMENT_FAILURE_TEMPLATE,
         first="Edith García Pérez",
-        product="Alimenta Tu Tiroides",
+        product="Alimenta tu Tiroides",
     )
     assert authority.events[-1] == "accepted"
 
@@ -416,14 +416,14 @@ def test_a_name_with_whitespace_meta_refuses_goes_out_collapsed(tmp_path: Path) 
     _run(_dispatcher(authority, chatwoot, tmp_path))
 
     expected = _expected(
-        CART_TEMPLATE, first="Edith García Pérez", product="Alimenta Tu Tiroides"
+        CART_TEMPLATE, first="Edith García Pérez", product="Alimenta tu Tiroides"
     )
     [contact] = chatwoot.posts("/contacts")
     [message] = chatwoot.posts("/conversations/200/messages")
     assert contact["name"] == raw_name
     assert message["template_params"]["processed_params"]["body"] == {
         "1": "Edith García Pérez",
-        "2": "Alimenta Tu Tiroides",
+        "2": "Alimenta tu Tiroides",
     }
     assert message["content"] == expected
     assert authority.acceptances[0]["message_content"] == expected
@@ -590,7 +590,7 @@ def test_the_greeting_fills_the_variable_and_the_rendered_text(
 
     _run(_dispatcher(authority, chatwoot, tmp_path, greeting=True))
 
-    expected = _expected(CART_TEMPLATE, first=greeting, product="Alimenta Tu Tiroides")
+    expected = _expected(CART_TEMPLATE, first=greeting, product="Alimenta tu Tiroides")
     [contact] = chatwoot.posts("/contacts")
     [message] = chatwoot.posts("/conversations/200/messages")
     # El contacto de Chatwoot conserva el nombre completo; la variable y el
@@ -598,7 +598,7 @@ def test_the_greeting_fills_the_variable_and_the_rendered_text(
     assert contact["name"] == full_name
     assert message["template_params"]["processed_params"]["body"] == {
         "1": greeting,
-        "2": "Alimenta Tu Tiroides",
+        "2": "Alimenta tu Tiroides",
     }
     assert message["content"] == expected
     assert authority.acceptances[0]["message_content"] == expected
@@ -627,7 +627,7 @@ def test_the_closed_gate_hashes_the_text_rendered_with_the_greeting(tmp_path: Pa
     rendered = _expected(
         PAYMENT_FAILURE_TEMPLATE,
         first=case["model_first_name"],
-        product="Alimenta Tu Tiroides",
+        product="Alimenta tu Tiroides",
     )
     assert evidence["content_sha256"] == hashlib.sha256(rendered.encode()).hexdigest()
     assert evidence["template_name"] == PAYMENT_FAILURE_TEMPLATE
@@ -887,10 +887,10 @@ def test_create_app_builds_the_direct_dispatcher_without_hermes(tmp_path: Path) 
     [message] = chatwoot.posts("/conversations/200/messages")
     assert message["template_params"]["processed_params"]["body"] == {
         "1": case["deterministic"],
-        "2": "Alimenta Tu Tiroides",
+        "2": "Alimenta tu Tiroides",
     }
     assert message["content"] == _expected(
-        CART_TEMPLATE, first=case["deterministic"], product="Alimenta Tu Tiroides"
+        CART_TEMPLATE, first=case["deterministic"], product="Alimenta tu Tiroides"
     )
 
 
