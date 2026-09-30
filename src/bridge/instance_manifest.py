@@ -27,7 +27,7 @@ from typing import Any, Mapping
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .commercial_ally import CommercialAllyConfig
+from .commercial_ally import CommercialAllyConfig, OfferLanding
 
 SCHEMA = "setter-instancia/v2"
 
@@ -43,6 +43,13 @@ _SLACK_CHANNEL = re.compile(r"[CG][A-Z0-9]{6,20}")
 EVENTS = ("intencion", "carrito", "pago_fallido", "compra", "entrante")
 FLOWS = ("inbound", "precheckout", "carrito", "pago_fallido", "reactivacion", "descuento")
 TEMPLATE_SLOTS = ("precheckout", "carrito", "pago_fallido", "reactivacion", "descuento")
+# Las variables del cuerpo que una plantilla de primer contacto puede pedir, en el
+# orden en que la plantilla aprobada las numera ({{1}}, {{2}}). Por defecto son las
+# dos que el bridge manda hoy. Reactivacion y descuento arman sus parametros en su
+# propio modulo, asi que no aceptan ``parametros``.
+TEMPLATE_PARAMETERS = ("nombre", "producto")
+DEFAULT_TEMPLATE_PARAMETERS = ("nombre", "producto")
+PARAMETERIZED_TEMPLATE_SLOTS = ("precheckout", "carrito", "pago_fallido")
 OFFER_ORIGINS = ("pauta", "organico", "otro")
 
 # Lo que cada flujo necesita para poder prenderse: el evento que lo dispara y la
@@ -98,8 +105,15 @@ class Offer:
 
 @dataclass(frozen=True)
 class Template:
+    """Una plantilla aprobada en Meta.
+
+    ``parameters`` son las variables del cuerpo en orden ({{1}}, {{2}}). Solo lo leen
+    las plantillas de primer contacto (``PARAMETERIZED_TEMPLATE_SLOTS``).
+    """
+
     name: str
     language: str
+    parameters: tuple[str, ...] = DEFAULT_TEMPLATE_PARAMETERS
 
 
 @dataclass(frozen=True)
@@ -163,10 +177,13 @@ class InstanceManifest:
 
         La oferta por defecto es la del binding; las demas landings van en
         ``additional_offer_codes`` (F2c), asi un carrito o un pago fallido que
-        entra por cualquier landing de la instancia se admite.
+        entra por cualquier landing de la instancia se admite, y su sitio, host
+        y ruta en ``additional_offer_landings`` (A6), asi tambien se admite el
+        formulario del precheckout de cada landing.
         """
 
         offer = self.default_offer
+        others = tuple(other for other in self.offers if other is not offer)
         return CommercialAllyConfig(
             tenant_ref=self.tenant_ref,
             funnel_ref=self.funnel_ref,
@@ -182,8 +199,16 @@ class InstanceManifest:
             product_price=self.price,
             currency=self.currency,
             offer_code=offer.code,
-            additional_offer_codes=tuple(
-                other.code for other in self.offers if other is not offer
+            additional_offer_codes=tuple(other.code for other in others),
+            additional_offer_landings=tuple(
+                OfferLanding(
+                    offer_code=other.code,
+                    site=other.site,
+                    landing_id=other.landing_id,
+                    page_host=other.page_host,
+                    page_path=other.page_path,
+                )
+                for other in others
             ),
             consent_copy_version=self.consent_copy_version,
             hotmart_product_id=self.hotmart_product_id,
@@ -459,15 +484,46 @@ def _templates(table: Mapping[str, Any]) -> Mapping[str, Template]:
         where = f"plantillas.{slot}"
         if not isinstance(raw, dict):
             raise ManifestError(f"{where} debe ser una tabla {{ nombre, idioma }}")
-        _exact_keys(where, raw, {"nombre", "idioma"})
+        if "parametros" in raw and slot not in PARAMETERIZED_TEMPLATE_SLOTS:
+            raise ManifestError(
+                f"{where}.parametros no se admite: solo lo aceptan "
+                + ", ".join(PARAMETERIZED_TEMPLATE_SLOTS)
+            )
+        _exact_keys(
+            where,
+            raw,
+            {"nombre", "idioma"},
+            {"parametros"} if slot in PARAMETERIZED_TEMPLATE_SLOTS else set(),
+        )
         name = _str(raw, "nombre", f"{where}.nombre")
         if _TEMPLATE_NAME.fullmatch(name) is None:
             raise ManifestError(f"{where}.nombre debe ser el nombre de Meta (a-z, 0-9, _)")
         language = _str(raw, "idioma", f"{where}.idioma")
         if _LANGUAGE.fullmatch(language) is None:
             raise ManifestError(f"{where}.idioma debe ser un codigo de Meta como es_MX")
-        templates[slot] = Template(name=name, language=language)
+        parameters = (
+            _template_parameters(raw["parametros"], f"{where}.parametros")
+            if "parametros" in raw
+            else DEFAULT_TEMPLATE_PARAMETERS
+        )
+        templates[slot] = Template(name=name, language=language, parameters=parameters)
     return MappingProxyType(templates)
+
+
+def _template_parameters(value: object, where: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or not 1 <= len(value) <= len(TEMPLATE_PARAMETERS):
+        raise ManifestError(
+            f"{where} debe ser una lista de 1 a {len(TEMPLATE_PARAMETERS)} variables"
+        )
+    unknown = [item for item in value if item not in TEMPLATE_PARAMETERS]
+    if unknown:
+        raise ManifestError(
+            f"{where}: variables no soportadas {', '.join(map(str, unknown))} "
+            f"(validas: {', '.join(TEMPLATE_PARAMETERS)})"
+        )
+    if len(set(value)) != len(value):
+        raise ManifestError(f"{where} tiene variables repetidas")
+    return tuple(value)
 
 
 def _events(value: object) -> frozenset[str]:

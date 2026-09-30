@@ -340,6 +340,18 @@ if (action.anchor_type !== 'payment_failure'
   throw new Error('payment failure action identity diverged');
 }
 
+// ALCANCE DE ESTE CASO: prueba solo el arranque del envio
+// (mark_portable_payment_failure_request_started y sus guardas: binding,
+// consentimiento, opt-out, topes, lease y canal) y lo que viene despues. Por
+// eso inserta a mano el permiso de contacto y, mas abajo, un
+// followup_action_reevaluated con execute: la intencion de este caso se
+// inserto sin formulario, asi que el plan no concede permiso (lo verifica
+// implicitAuthorizationCount) y la reevaluacion real lo escalaria con
+// contact_authorization_unknown. Este caso NO prueba ni el permiso ni la
+// reevaluacion: un verde aca no cubre una regresion de
+// reevaluate_followup_action. Eso lo prueban, con la reevaluacion real, la
+// seccion 20260930000100 de este archivo (casos A a F) y
+// validate_att1_portable_chain.mjs.
 await db.query(`
   insert into public.contact_authorizations (
     contact_id, channel, purpose, authorization_status,
@@ -356,6 +368,8 @@ const claimed = one((await db.query(`
     'payment-worker',$1,interval '5 minutes',1
   )
 `, [NOW])).rows, 'claimed payment action');
+// Reevaluacion simulada a proposito (ver ALCANCE DE ESTE CASO arriba): la
+// real esta en la seccion 20260930000100 y en validate_att1_portable_chain.mjs.
 await db.query(`
   insert into public.conversation_events
     (recovery_case_id,event_type,actor_type,related_action_id,data)
@@ -784,5 +798,513 @@ await reject('payment provenance delete', () => db.query(`
   delete from public.commercial_ally_hotmart_event_bindings
   where webhook_event_id=$1
 `, [inserted.webhook_event_id]));
+
+// ---------------------------------------------------------------------------
+// 20260930000100 (A5): el permiso de contacto del pago fallido lo concede la
+// intencion con consentimiento con la que el evento quedo correlacionado, y la
+// reevaluacion REAL (no un followup_action_reevaluated insertado a mano) da
+// execute. Arriba, la intencion de este archivo se inserta sin formulario:
+// por eso ese caso no recibio permiso.
+//
+// Politica y scope como los de ATT1 v1 (decision D2): pasos freeform y salida
+// por plantilla (scope waba). Los tiempos salen del reloj de la base: el
+// permiso nace con clock_timestamp() y la puerta de arranque exige +-5 minutos.
+//
+// Datos: no hay PURCHASE_CANCELED ni lead.precheckout capturados (deuda de
+// A0). El pago fallido usa el precedente inline de este archivo (payload()) y
+// el formulario el de validate_commercial_ally_portable_precheckout.mjs, con
+// los valores del binding de arriba.
+// ---------------------------------------------------------------------------
+const CONSENT_SCOPE = 'att1-consented-failure';
+const dbNow = async () => new Date(
+  (await db.query('select clock_timestamp() as now')).rows[0].now,
+);
+const baseMs = Math.floor((await dbNow()).getTime() / 1000) * 1000;
+const at = (minutes) => new Date(baseMs + minutes * 60_000);
+const SUBMITTED_AT = at(-40);
+const CONSENT_FAILED_AT = at(-10);
+
+await db.exec(`
+  insert into public.followup_policy_versions
+    (policy_key, version, status, purpose, timezone, business_windows,
+     grace_period, expires_after, max_automatic_messages, steps,
+     approved_by, approved_at, published_at)
+  values
+    ('${CONSENT_SCOPE}',1,'published','cart_recovery','UTC',
+     '[{"days":[1,2,3,4,5,6,7],"start":"00:00","end":"23:59"}]',
+     interval '0 seconds',interval '1 day',1,
+     '[{"step_key":"first_contact","mode":"freeform"},
+       {"step_key":"payment_failure_first_contact","mode":"freeform"}]',
+     'operator-test',now(),now());
+
+  insert into public.pilot_scope_versions
+    (scope_key, version, status, tenant_key,
+     chatwoot_account_id, chatwoot_inbox_id,
+     channel, channel_provider, channel_account_ref,
+     source, source_event_type, external_product_id, offer_code, purpose,
+     policy_key, policy_version, timezone,
+     max_cohort_contacts, max_outbound_request_starts_total,
+     max_outbound_request_starts_per_day,
+     approved_by, approved_at, published_at)
+  values
+    ('${CONSENT_SCOPE}',1,'published','att1',42,24,
+     'whatsapp','waba','123456','hotmart','PURCHASE_CANCELED',
+     '123456','att1offer','cart_recovery','${CONSENT_SCOPE}',1,'UTC',
+     5,5,5,'operator-test',now(),now());
+  insert into public.pilot_runtime_controls
+    (scope_key,scope_version,runtime_state,generation,changed_by,change_reason)
+  values ('${CONSENT_SCOPE}',1,'inactive',0,'test','default-off');
+`);
+await db.query(`select * from public.set_lancemos_pilot_runtime_state(
+  '${CONSENT_SCOPE}',1,0,'armed','operator-test','controlled-test'
+)`);
+
+const precheckout = (id, lead, { consented = true, submittedAt = SUBMITTED_AT } = {}) => {
+  const national = lead.phone.slice(1);
+  const version = consented ? '1.1.0' : '1.0.0';
+  const raw = {
+    id,
+    event: 'lead.precheckout',
+    version,
+    created_at: submittedAt.toISOString(),
+    source: {
+      system: 'landing', site: 'att1-site', aliado: 'ATT1',
+      landing_id: 'main', page_url: 'https://att1.example/offer',
+    },
+    data: {
+      buyer: {
+        name: lead.name, email: lead.email, phone: `+${lead.phone}`,
+        phone_country_code: '1', phone_national: national,
+      },
+      product: {
+        hotlink: 'ATT1HOTLINK', id: null, name: 'ATT1 Offer', price: 49,
+        currency: 'USD',
+      },
+      offer: { code: 'att1offer' },
+      checkout_url: 'https://pay.hotmart.com/ATT1HOTLINK?off=att1offer&checkoutMode=10',
+      checkout_country: { iso: 'US', source: 'phone_country_code' },
+      consent: consented
+        ? { marketing_optin: true, whatsapp_contact: true, copy_version: 'att1-whatsapp-v1' }
+        : { marketing_optin: false, notice: 'Aviso de privacidad sin opt-in explicito.' },
+    },
+    dedupe_key: `att1-site:att1offer:${lead.email}`,
+  };
+  const canonical = {
+    external_submission_id: id,
+    event_type: 'PRECHECKOUT_FORM_SUBMITTED',
+    contract_version: version,
+    submitted_at: raw.created_at,
+    source: {
+      tenant_ref: 'att1', funnel_ref: 'att1-main', landing_ref: 'main',
+      page_url: raw.source.page_url, aliado: 'ATT1',
+    },
+    identity: {
+      email: lead.email, phone: lead.phone, phone_valid: true,
+      phone_country_iso: 'US',
+    },
+    lead: { full_name: lead.name },
+    commerce: {
+      product_ref: 'ATT1HOTLINK', product_name: 'ATT1 Offer', offer_ref: 'att1offer',
+      price: '49', currency: 'USD', checkout_url: raw.data.checkout_url,
+    },
+    dedupe_key: raw.dedupe_key,
+    consent: {
+      terms_accepted: false, privacy_accepted: false,
+      marketing_optin: consented, whatsapp_contact: consented,
+      copy_version: consented ? 'att1-whatsapp-v1' : 'lead-precheckout-v1-no-explicit-optin',
+    },
+    assurance: {
+      provisional: false, provider_observed: true, activation_authorized: consented,
+    },
+  };
+  return { raw, canonical };
+};
+const admitPrecheckout = async (id, lead, options) => {
+  const { raw, canonical } = precheckout(id, lead, options);
+  return one((await db.query(`
+    select * from public.admit_portable_observed_lead_precheckout(
+      'att1','att1-main',1,$1,$2::jsonb,$3::jsonb
+    )
+  `, [id, JSON.stringify(raw), JSON.stringify(canonical)])).rows, `${id} admission`);
+};
+const admitConsentFailure = async (id, lead, transaction) => {
+  const body = payload(id);
+  body.creation_date = CONSENT_FAILED_AT.getTime();
+  body.data.buyer = {
+    name: lead.name, email: lead.email, checkout_phone: `+${lead.phone}`,
+  };
+  body.data.purchase.transaction = transaction;
+  const admitted = one((await db.query(`
+    select * from public.admit_portable_hotmart_payment_failure(
+      'att1','att1-main',1,$1,$2::jsonb,$3,$4
+    )
+  `, [id, JSON.stringify(body), lead.email, lead.phone])).rows, `${id} admission`);
+  const detail = one((await db.query(`
+    select correlation_outcome, purchase_intent_id
+    from public.commercial_ally_payment_failure_details
+    where webhook_event_id=$1
+  `, [admitted.webhook_event_id])).rows, `${id} correlation`);
+  if (admitted.outcome !== 'inserted' || detail.correlation_outcome !== 'resolved') {
+    throw new Error(`${id} was not admitted and correlated: ${JSON.stringify({ admitted, detail })}`);
+  }
+  return { eventId: admitted.webhook_event_id, intentId: detail.purchase_intent_id };
+};
+// resolve_event crea el contacto y sus puntos antes de planificar; el punto
+// 'system' es el que deja bootstrap_proactive_lead_identity.
+const createContact = async (lead, eventId, { phoneSource = 'hotmart' } = {}) => {
+  await db.query(`
+    insert into public.contacts (id,full_name,email,phone) values ($1,$2,$3,$4)
+  `, [lead.contact, lead.name, lead.email, lead.phone]);
+  await db.query(`
+    insert into public.contact_points
+      (contact_id,type,raw_value,normalized_value,source,source_event_id)
+    values ($1,'email',$2,$2,'hotmart',$3)
+  `, [lead.contact, lead.email, eventId]);
+  if (phoneSource === 'hotmart') {
+    await db.query(`
+      insert into public.contact_points
+        (contact_id,type,raw_value,normalized_value,source,source_event_id)
+      values ($1,'phone',$2,$2,'hotmart',$3)
+    `, [lead.contact, lead.phone, eventId]);
+  } else {
+    await db.query(`
+      insert into public.contact_points
+        (contact_id,type,raw_value,normalized_value,source,verification_status,
+         is_primary,verified_at,metadata)
+      values ($1,'phone',$2,$3,'system','verified',true,now(),
+        jsonb_build_object('reason','authorized_precheckout_identity_bootstrap'))
+    `, [lead.contact, `+${lead.phone}`, lead.phone]);
+  }
+  const { generation } = one((await db.query(`
+    select generation from public.pilot_runtime_controls where scope_key=$1
+  `, [CONSENT_SCOPE])).rows, 'consent scope generation');
+  await db.query(`select * from public.set_lancemos_pilot_cohort_member(
+    '${CONSENT_SCOPE}',1,$1,$2,'active','operator-test','controlled-test'
+  )`, [lead.contact, generation]);
+};
+const planConsentFailure = (eventId, lead) => db.query(`
+  select * from public.plan_portable_payment_failure_recovery(
+    $1,$2,'123456','ATT1 Offer','att1offer',
+    '${CONSENT_SCOPE}',1,$3,42,24,$4,
+    '${CONSENT_SCOPE}',1
+  )
+`, [eventId, lead.contact, CONSENT_FAILED_AT.toISOString(), lead.phone]);
+const authorizationsOf = async (contactId) => (await db.query(`
+  select authorization_status, authorization_source, evidence, valid_until
+  from public.contact_authorizations
+  where contact_id=$1 and channel='whatsapp' and purpose='cart_recovery'
+  order by recorded_at, id
+`, [contactId])).rows;
+// La reevaluacion real, como la llama el dispatcher en un primer contacto sin
+// conversacion: sin evidencia de Chatwoot (p_chatwoot_checked = false).
+const reevaluateReal = async (actionId, worker) => {
+  const now = await dbNow();
+  const claimed = (await db.query(`
+    select * from public.claim_due_followup_actions($1,$2,interval '5 minutes',100)
+  `, [worker, now])).rows;
+  if (claimed.length !== 1 || claimed[0].id !== actionId) {
+    throw new Error(`${worker} claimed ${JSON.stringify(claimed.map((row) => row.id))}, expected ${actionId}`);
+  }
+  const decision = one((await db.query(`
+    select * from public.reevaluate_followup_action($1,$2,$3,$4)
+  `, [actionId, worker, claimed[0].lease_generation, now])).rows, `${worker} reevaluation`);
+  return { claimed: claimed[0], decision };
+};
+
+// A. Intencion con consentimiento y sin carrito previo: el plan concede el
+// permiso y la cadena llega hasta request_started con la reevaluacion real.
+const consented = {
+  contact: '50000000-0000-4000-8000-000000000131',
+  name: 'Consented Buyer', email: 'consented-buyer@example.test', phone: '12025550131',
+};
+const consentedForm = await admitPrecheckout('att1-consent-form-1', consented);
+const consentedFailure = await admitConsentFailure(
+  'att1-consent-failure-1', consented, 'ATT1-CONSENT-FAIL-1',
+);
+if (consentedForm.outcome !== 'inserted'
+    || consentedFailure.intentId !== consentedForm.purchase_intent_id) {
+  throw new Error('consented payment failure did not correlate with the form intent');
+}
+await createContact(consented, consentedFailure.eventId);
+const consentedPlan = one((await planConsentFailure(
+  consentedFailure.eventId, consented,
+)).rows, 'consented payment plan');
+const consentedGrants = await authorizationsOf(consented.contact);
+const grant = consentedGrants[0];
+if (!consentedPlan.created
+    || consentedGrants.length !== 1
+    || grant.authorization_status !== 'allowed'
+    || grant.authorization_source !== 'system'
+    || grant.valid_until !== null
+    || grant.evidence.reason !== 'precheckout_whatsapp_consent'
+    || grant.evidence.purchase_intent_id !== consentedForm.purchase_intent_id
+    || grant.evidence.precheckout_submission_id !== consentedForm.submission_id
+    || grant.evidence.consent_copy_version !== 'att1-whatsapp-v1'
+    || grant.evidence.webhook_event_id !== consentedFailure.eventId
+    || grant.evidence.recovery_case_id !== consentedPlan.recovery_case_id) {
+  throw new Error(`consented intent did not grant the exact contact permission: ${JSON.stringify({ consentedPlan, consentedGrants })}`);
+}
+const consentedReplay = one((await planConsentFailure(
+  consentedFailure.eventId, consented,
+)).rows, 'consented payment replay');
+if (consentedReplay.created
+    || consentedReplay.recovery_case_id !== consentedPlan.recovery_case_id
+    || (await authorizationsOf(consented.contact)).length !== 1) {
+  throw new Error('payment failure replay duplicated the contact permission');
+}
+const consentedRun = await reevaluateReal(
+  consentedPlan.scheduled_action_id, 'consent-worker',
+);
+if (consentedRun.decision.decision !== 'execute'
+    || consentedRun.decision.reason_code !== 'eligible_for_execution') {
+  throw new Error(`real reevaluation did not execute the consented case: ${JSON.stringify(consentedRun.decision)}`);
+}
+const consentedStartNow = await dbNow();
+const consentedAttempt = one((await db.query(`
+  select * from public.reserve_followup_delivery_attempt(
+    $1,'consent-worker',$2,$3,$4,'whatsapp','approved_template',$5
+  )
+`, [consentedPlan.scheduled_action_id, consentedRun.claimed.lease_generation,
+  consentedRun.decision.case_version, consentedRun.decision.sequence_revision,
+  consentedStartNow])).rows, 'consented attempt');
+await db.exec('begin');
+const consentedStart = one((await db.query(`
+  select * from public.mark_portable_payment_failure_request_started(
+    $1,$2,'consent-worker',$3,$4
+  )
+`, [consentedPlan.scheduled_action_id, consentedAttempt.id,
+  consentedRun.claimed.lease_generation, consentedStartNow])).rows,
+'consented request start');
+await db.exec('rollback');
+if (consentedStart.phase !== 'request_started') {
+  throw new Error('consented payment failure did not reach request_started');
+}
+
+// B. El telefono del contacto es un punto 'system' (el del bootstrap del
+// formulario): antes la planificacion moria en payment_failure_contact_mismatch.
+const systemPoint = {
+  contact: '50000000-0000-4000-8000-000000000132',
+  name: 'System Point Buyer', email: 'system-point@example.test', phone: '12025550132',
+};
+const systemForm = await admitPrecheckout('att1-consent-form-2', systemPoint);
+const systemFailure = await admitConsentFailure(
+  'att1-consent-failure-2', systemPoint, 'ATT1-CONSENT-FAIL-2',
+);
+await createContact(systemPoint, systemFailure.eventId, { phoneSource: 'system' });
+const systemPlan = one((await planConsentFailure(
+  systemFailure.eventId, systemPoint,
+)).rows, 'system point payment plan');
+const systemGrants = await authorizationsOf(systemPoint.contact);
+if (!systemPlan.created
+    || systemGrants.length !== 1
+    || systemGrants[0].authorization_status !== 'allowed'
+    || systemGrants[0].evidence.precheckout_submission_id !== systemForm.submission_id) {
+  throw new Error(`system phone point did not plan and grant: ${JSON.stringify({ systemPlan, systemGrants })}`);
+}
+const systemRun = await reevaluateReal(systemPlan.scheduled_action_id, 'system-worker');
+if (systemRun.decision.decision !== 'execute') {
+  throw new Error(`system point case did not execute: ${JSON.stringify(systemRun.decision)}`);
+}
+
+// C. Formulario sin opt-in explicito (1.0.0): el plan crea el caso pero no
+// concede nada, y la reevaluacion real escala como hasta hoy.
+const withoutConsent = {
+  contact: '50000000-0000-4000-8000-000000000133',
+  name: 'No Optin Buyer', email: 'no-optin@example.test', phone: '12025550133',
+};
+const withoutConsentForm = await admitPrecheckout(
+  'att1-consent-form-3', withoutConsent, { consented: false },
+);
+const withoutConsentFailure = await admitConsentFailure(
+  'att1-consent-failure-3', withoutConsent, 'ATT1-CONSENT-FAIL-3',
+);
+await createContact(withoutConsent, withoutConsentFailure.eventId);
+const withoutConsentPlan = one((await planConsentFailure(
+  withoutConsentFailure.eventId, withoutConsent,
+)).rows, 'unconsented payment plan');
+if (!withoutConsentPlan.created
+    || (await authorizationsOf(withoutConsent.contact)).length !== 0) {
+  throw new Error('an intent without WhatsApp consent granted contact permission');
+}
+const withoutConsentRun = await reevaluateReal(
+  withoutConsentPlan.scheduled_action_id, 'no-optin-worker',
+);
+if (withoutConsentRun.decision.decision !== 'escalate'
+    || withoutConsentRun.decision.reason_code !== 'contact_authorization_unknown') {
+  throw new Error(`unconsented case was not escalated: ${JSON.stringify(withoutConsentRun.decision)}`);
+}
+
+// D. Un opt-out previo gana: la fila denied activa impide conceder y la
+// reevaluacion real cancela.
+const optedOut = {
+  contact: '50000000-0000-4000-8000-000000000134',
+  name: 'Opted Out Buyer', email: 'opted-out@example.test', phone: '12025550134',
+};
+await admitPrecheckout('att1-consent-form-4', optedOut);
+const optedOutFailure = await admitConsentFailure(
+  'att1-consent-failure-4', optedOut, 'ATT1-CONSENT-FAIL-4',
+);
+await createContact(optedOut, optedOutFailure.eventId);
+await db.query(`
+  insert into public.channel_identities
+    (contact_id, channel, account_id, external_user_id, identity_status, metadata)
+  values ($1,'whatsapp','chatwoot:42',$2,'active',jsonb_build_object('inbox_id',24))
+`, [optedOut.contact, optedOut.phone]);
+const optOut = one((await db.query(`
+  select * from public.apply_chatwoot_inbound_opt_out(42,24,9301,9302,$1,$2,'baja')
+`, [optedOut.phone, (await dbNow()).toISOString()])).rows, 'opt-out');
+if (optOut.outcome !== 'applied' || optOut.matched_contact_id !== optedOut.contact) {
+  throw new Error(`opt-out fixture did not apply: ${JSON.stringify(optOut)}`);
+}
+const optedOutPlan = one((await planConsentFailure(
+  optedOutFailure.eventId, optedOut,
+)).rows, 'opted-out payment plan');
+const optedOutRows = await authorizationsOf(optedOut.contact);
+if (optedOutRows.length !== 1
+    || optedOutRows[0].authorization_status !== 'denied'
+    || optedOutRows[0].valid_until !== null) {
+  throw new Error(`consented intent overrode a previous opt-out: ${JSON.stringify(optedOutRows)}`);
+}
+const optedOutRun = await reevaluateReal(optedOutPlan.scheduled_action_id, 'opt-out-worker');
+if (optedOutRun.decision.decision !== 'cancel'
+    || optedOutRun.decision.reason_code !== 'contact_blocked') {
+  throw new Error(`opted-out case was not cancelled: ${JSON.stringify(optedOutRun.decision)}`);
+}
+
+// E. El helper directo: un motivo por cada cosa que falla.
+const consentReason = async (intentId, contactId, phone) => one((await db.query(`
+  select * from public._portable_consented_intent_reason($1,$2,$3)
+`, [intentId, contactId, phone])).rows, 'consented intent reason');
+const expectReason = async (label, row, reasonCode) => {
+  if (row.reason_code !== reasonCode
+      || (reasonCode === 'consented_intent_ok') !== (row.precheckout_submission_id !== null)) {
+    throw new Error(`${label}: expected ${reasonCode}, got ${JSON.stringify(row)}`);
+  }
+};
+const consentedIntent = consentedForm.purchase_intent_id;
+await expectReason('consented intent',
+  await consentReason(consentedIntent, consented.contact, consented.phone),
+  'consented_intent_ok');
+await expectReason('missing input',
+  await consentReason(consentedIntent, consented.contact, null),
+  'consented_intent_input_invalid');
+await expectReason('unknown intent',
+  await consentReason('50000000-0000-4000-8000-000000000199', consented.contact, consented.phone),
+  'consented_intent_not_found');
+await expectReason('other destination phone',
+  await consentReason(consentedIntent, consented.contact, '12025550199'),
+  'consented_intent_phone_mismatch');
+await expectReason('phone of another contact',
+  await consentReason(consentedIntent, withoutConsent.contact, consented.phone),
+  'consented_intent_phone_mismatch');
+await expectReason('form without opt-in',
+  await consentReason(withoutConsentForm.purchase_intent_id, withoutConsent.contact, withoutConsent.phone),
+  'consented_intent_not_authorized');
+await expectReason('intent inserted without form',
+  await consentReason(intentState.id, CONTACT, PHONE),
+  'consented_intent_submission_missing');
+await db.exec('begin');
+await db.query(`
+  update public.purchase_intents set lifecycle_state='purchased' where id=$1
+`, [consentedIntent]);
+const purchasedReason = await consentReason(consentedIntent, consented.contact, consented.phone);
+await db.exec('rollback');
+await expectReason('purchased intent', purchasedReason, 'consented_intent_not_live');
+await db.exec('begin');
+await db.query(`
+  update public.commercial_ally_runtime_bindings set status='retired'
+  where tenant_ref='att1' and funnel_ref='att1-main' and binding_version=1
+`);
+const retiredReason = await consentReason(consentedIntent, consented.contact, consented.phone);
+await db.exec('rollback');
+await expectReason('retired binding', retiredReason, 'consented_intent_binding_unavailable');
+// Un reenvio del mismo formulario con otro contenido deja un conflicto abierto:
+// ese envio deja de probar el consentimiento.
+{
+  const { raw, canonical } = precheckout('att1-consent-form-1', consented);
+  raw.data.buyer.name = 'Changed Consented Buyer';
+  canonical.lead.full_name = 'Changed Consented Buyer';
+  const conflicted = one((await db.query(`
+    select * from public.admit_portable_observed_lead_precheckout(
+      'att1','att1-main',1,$1,$2::jsonb,$3::jsonb
+    )
+  `, ['att1-consent-form-1', JSON.stringify(raw), JSON.stringify(canonical)])).rows,
+  'conflicting form');
+  if (conflicted.outcome !== 'semantic_conflict') {
+    throw new Error(`form conflict fixture diverged: ${JSON.stringify(conflicted)}`);
+  }
+}
+await expectReason('form with an open conflict',
+  await consentReason(consentedIntent, consented.contact, consented.phone),
+  'consented_intent_submission_missing');
+
+// F. La ventana entre el formulario y el pago fallido. Johanna la exige en su
+// criterio (el evento entre submitted_at y submitted_at + 24 h); el helper no
+// la repite porque la garantiza la correlacion: solo se resuelve una intencion
+// con submitted_at en [observed_at - max_lookback, observed_at] (2 h en este
+// archivo) y el plan exige correlation_outcome = 'resolved'. Un pago fallido
+// fuera de esa ventana, antes o despues, no se correlaciona: el plan se
+// rechaza y no concede permiso, aunque la intencion tenga consentimiento.
+const admitUncorrelatedFailure = async (id, lead, transaction) => {
+  const body = payload(id);
+  body.creation_date = CONSENT_FAILED_AT.getTime();
+  body.data.buyer = {
+    name: lead.name, email: lead.email, checkout_phone: `+${lead.phone}`,
+  };
+  body.data.purchase.transaction = transaction;
+  const admitted = one((await db.query(`
+    select * from public.admit_portable_hotmart_payment_failure(
+      'att1','att1-main',1,$1,$2::jsonb,$3,$4
+    )
+  `, [id, JSON.stringify(body), lead.email, lead.phone])).rows, `${id} admission`);
+  const detail = one((await db.query(`
+    select correlation_outcome, purchase_intent_id
+    from public.commercial_ally_payment_failure_details
+    where webhook_event_id=$1
+  `, [admitted.webhook_event_id])).rows, `${id} correlation`);
+  if (admitted.outcome !== 'inserted'
+      || detail.correlation_outcome !== 'unmatched'
+      || detail.purchase_intent_id !== null) {
+    throw new Error(`${id} was correlated outside the lookback: ${JSON.stringify({ admitted, detail })}`);
+  }
+  return admitted.webhook_event_id;
+};
+const expectOutsideWindow = async (label, lead, submittedAt, transaction) => {
+  const form = await admitPrecheckout(`att1-consent-form-${lead.phone}`, lead, { submittedAt });
+  if (form.outcome !== 'inserted' || form.purchase_intent_id == null) {
+    throw new Error(`${label}: the consented form was not admitted: ${JSON.stringify(form)}`);
+  }
+  const eventId = await admitUncorrelatedFailure(
+    `att1-consent-failure-${lead.phone}`, lead, transaction,
+  );
+  await createContact(lead, eventId);
+  let error = null;
+  await db.exec('begin');
+  try {
+    await planConsentFailure(eventId, lead);
+  } catch (caught) {
+    error = caught;
+  } finally {
+    await db.exec('rollback');
+  }
+  if (error?.code !== '55000' || error?.message !== 'payment_failure_correlation_unresolved') {
+    throw new Error(`${label}: expected payment_failure_correlation_unresolved, got ${error?.code} ${error?.message}`);
+  }
+  if ((await authorizationsOf(lead.contact)).length !== 0) {
+    throw new Error(`${label}: a payment failure outside the window granted contact permission`);
+  }
+  // El helper solo no mira el tiempo: la ventana es de la correlacion.
+  await expectReason(`${label} helper`,
+    await consentReason(form.purchase_intent_id, lead.contact, lead.phone),
+    'consented_intent_ok');
+};
+await expectOutsideWindow('payment failure after the lookback', {
+  contact: '50000000-0000-4000-8000-000000000135',
+  name: 'Stale Form Buyer', email: 'stale-form@example.test', phone: '12025550135',
+}, at(-200), 'ATT1-CONSENT-FAIL-6');
+await expectOutsideWindow('payment failure before the form', {
+  contact: '50000000-0000-4000-8000-000000000136',
+  name: 'Late Form Buyer', email: 'late-form@example.test', phone: '12025550136',
+}, at(-5), 'ATT1-CONSENT-FAIL-7');
 
 console.log('commercial_ally_payment_failure_recovery=OK');

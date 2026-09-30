@@ -75,6 +75,26 @@ Reglas: al menos una oferta, códigos sin repetir y una sola oferta por landing.
 
 Una entrada por cada plantilla de Meta, con `{ nombre = "...", idioma = "es_MX" }`. Los lugares posibles son `precheckout`, `carrito`, `pago_fallido`, `reactivacion` y `descuento`. El nombre y el idioma tienen que ser **exactamente** los aprobados en Meta: una plantilla aprobada en otro idioma es otra plantilla. Una plantilla que todavía no existe se omite, y el flujo que la usa no se puede prender.
 
+Las plantillas de primer contacto (`precheckout`, `carrito` y `pago_fallido`) aceptan una clave opcional, `parametros`: las variables del cuerpo aprobado, en el orden en que la plantilla las numera.
+
+```toml
+carrito = { nombre = "att1_carrito_abandonado_01", idioma = "es_MX", parametros = ["nombre"] }
+```
+
+| Valor | Qué va en esa variable |
+|---|---|
+| `"nombre"` | El nombre con que se saluda a la persona: el saludo que calcula el envío si lo hay, o el nombre completo que trajo el evento |
+| `"producto"` | El nombre del producto que guardó el caso de recuperación |
+
+- Van una o dos variables, sin repetir. `["nombre"]` llena solo `{{1}}`; `["producto", "nombre"]` pone el producto en `{{1}}` y el nombre en `{{2}}`.
+- Sin `parametros` vale `["nombre", "producto"]`, que es lo que el bridge manda hoy.
+- La lista tiene que coincidir con el cuerpo aprobado en Meta: si la plantilla tiene una sola variable y se le mandan dos, Meta puede rechazar el envío. El bridge no lo verifica contra el catálogo al arrancar. Con `DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED=true` el dispatcher lo verifica en cada envío: lee el catálogo del inbox y, si los marcadores del cuerpo no son exactamente los declarados, no manda y deja `approved_template_mismatch` ([approved-template-direct-dispatch-v1.md](contracts/approved-template-direct-dispatch-v1.md)).
+- Si una variable declarada llega vacía (un carrito sin nombre), el envío se bloquea con `template_parameters_missing`. Una variable que la plantilla no declara no se exige.
+- Hoy el bridge usa las de `carrito` y `pago_fallido`. Las de `precheckout` se validan pero todavía no las lee nadie: las va a usar el primer contacto del formulario.
+- `reactivacion` y `descuento` arman sus variables en su propio código: `parametros` ahí no carga.
+
+Con `carrito` o `pago_fallido` en `true` y la salida por WABA, el bridge no arranca si las variables del servicio no nombran la misma plantilla que el manifiesto: `WABA_FIRST_TOUCH_TEMPLATE_NAME` tiene que ser `carrito.nombre`, `WABA_PAYMENT_FAILURE_TEMPLATE_NAME` tiene que ser `pago_fallido.nombre` (si está definida) y `WABA_TEMPLATE_LANGUAGE` tiene que ser el `idioma` de las dos. Por eso `carrito` y `pago_fallido` prendidos a la vez tienen que estar aprobadas en el mismo idioma. Con el flujo en `false`, sus `parametros` no se usan.
+
 ## `[agente]`
 
 | Campo | Qué es |
@@ -113,4 +133,4 @@ Un mensaje que nombra un término junto con una acción se deriva a una persona 
 
 ## Relación con el binding v1
 
-Mientras los caminos del bridge lean el binding de una aliada (`CommercialAllyConfig`, `docs/contracts/commercial-ally-runtime-v1.md`), el manifiesto v2 se traduce a él: la oferta por defecto es la del binding, y las demás landings van en `additional_offer_codes`, así un carrito o un pago fallido que entra por cualquier landing de la instancia se admite. El test `test_johanna_manifest_produces_the_binding_in_code_plus_its_other_landing_offers` prueba que el manifiesto de Johanna produce el binding que hoy está en el código, y que lo único que suma son sus otras cinco landings.
+Mientras los caminos del bridge lean el binding de una aliada (`CommercialAllyConfig`, `docs/contracts/commercial-ally-runtime-v1.md`), el manifiesto v2 se traduce a él: la oferta por defecto es la del binding, y las demás landings van en `additional_offer_codes`, así un carrito o un pago fallido que entra por cualquier landing de la instancia se admite. El sitio, la landing y la URL de cada una van en `additional_offer_landings`, así también se admite el formulario del precheckout de cada landing (migración `20260930000200`); la fila del binding en la base tiene que declarar las mismas, o el bridge ve drift. El test `test_johanna_manifest_produces_the_binding_in_code_plus_its_other_landing_offers` prueba que el manifiesto de Johanna produce el binding que hoy está en el código, y que lo único que suma son sus otras cinco landings.

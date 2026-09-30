@@ -4,15 +4,19 @@ import asyncio
 import hashlib
 import hmac
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
 import pytest
 
 from bridge.app import Settings, create_app
+from bridge.instance_manifest import InstanceManifest
 
 SECRET = "fixture-lead-secret"
+ATT1_MANIFEST = Path(__file__).parent / "fixtures" / "instances" / "att1" / "instancia.toml"
 
 
 class _FakeSupabase:
@@ -187,6 +191,96 @@ def test_explicit_manifest_lead_uses_portable_rpc_with_server_binding() -> None:
     assert response.status_code == 200
     assert len(supabase.calls) == 1
     assert supabase.calls[0]["config"] == _settings().commercial_ally_config
+
+
+def _att1_settings(**overrides: object) -> Settings:
+    config = InstanceManifest.from_toml_file(ATT1_MANIFEST).to_commercial_ally_config()
+    values: dict[str, object] = {
+        "commercial_ally_config": config,
+        "commercial_ally_manifest_path": "/runtime/instancia.toml",
+        "lead_precheckout_site": config.lead_site,
+        "lead_precheckout_landing_id": config.lead_landing_id,
+        "lead_precheckout_offer_code": config.offer_code,
+    }
+    values.update(overrides)
+    return _settings(**values)
+
+
+def _att1_payload(offer: str, site: str, landing_id: str, url: str) -> dict[str, object]:
+    # No hay lead.precheckout capturado de ATT1: es el payload inline de este
+    # archivo con las landings, ofertas y producto del fixture de ATT1.
+    payload = _authorized_payload()
+    payload["source"].update(  # type: ignore[union-attr]
+        site=site, aliado="Dra. Nina Garza", landing_id=landing_id, page_url=url
+    )
+    config = InstanceManifest.from_toml_file(ATT1_MANIFEST).to_commercial_ally_config()
+    payload["data"]["product"].update(  # type: ignore[index]
+        hotlink=config.product_hotlink, name=config.product_name, price=47
+    )
+    payload["data"]["offer"]["code"] = offer  # type: ignore[index]
+    payload["data"]["checkout_url"] = (  # type: ignore[index]
+        f"https://pay.hotmart.com/D98014973Y?off={offer}&checkoutMode=10"
+    )
+    payload["data"]["consent"]["copy_version"] = "att1-whatsapp-contact-v1"  # type: ignore[index]
+    payload["dedupe_key"] = f"{site}:{offer}:test.person@example.com"
+    return payload
+
+
+ATT1_OFFERS = tuple(
+    (offer.code, offer.site, offer.landing_id, offer.url)
+    for offer in InstanceManifest.from_toml_file(ATT1_MANIFEST).offers
+)
+
+
+@pytest.mark.parametrize(("offer", "site", "landing_id", "url"), ATT1_OFFERS)
+def test_manifest_runtime_admits_the_form_of_every_declared_landing(
+    offer: str, site: str, landing_id: str, url: str
+) -> None:
+    supabase = _PortableFakeSupabase()
+    settings = _att1_settings()
+    app = create_app(settings, supabase_client=supabase)  # type: ignore[arg-type]
+
+    response = _post(app, _att1_payload(offer, site, landing_id, url))
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "received"
+    assert len(supabase.calls) == 1
+    assert supabase.calls[0]["config"] == settings.commercial_ally_config
+    canonical = supabase.calls[0]["canonical_payload"]
+    assert canonical["commerce"]["offer_ref"] == offer  # type: ignore[index]
+    assert canonical["source"]["landing_ref"] == landing_id  # type: ignore[index]
+    assert canonical["source"]["page_url"] == url  # type: ignore[index]
+
+
+def test_manifest_runtime_rejects_a_crossed_landing_offer_pair() -> None:
+    supabase = _PortableFakeSupabase()
+    app = create_app(_att1_settings(), supabase_client=supabase)  # type: ignore[arg-type]
+    _, site, landing_id, url = ATT1_OFFERS[1]
+
+    response = _post(app, _att1_payload(ATT1_OFFERS[0][0], site, landing_id, url))
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "invalid_lead_precheckout_payload"
+    assert supabase.calls == []
+
+
+def test_manifest_runtime_without_landings_keeps_the_single_form_landing() -> None:
+    settings = _att1_settings()
+    settings = replace(
+        settings,
+        commercial_ally_config=replace(
+            settings.commercial_ally_config, additional_offer_landings=()
+        ),
+    )
+
+    for index, expected_status in ((0, 200), (1, 400), (2, 400)):
+        supabase = _PortableFakeSupabase()
+        app = create_app(settings, supabase_client=supabase)  # type: ignore[arg-type]
+
+        response = _post(app, _att1_payload(*ATT1_OFFERS[index]))
+
+        assert response.status_code == expected_status
+        assert len(supabase.calls) == (1 if expected_status == 200 else 0)
 
 
 def test_v1_1_signed_consent_reaches_canonical_admission_but_response_stays_closed() -> None:

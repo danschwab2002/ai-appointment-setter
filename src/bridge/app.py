@@ -178,6 +178,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     "worker_enabled",
     "dispatcher_enabled",
     "dispatcher_outbound_enabled",
+    # El dispatcher manda la plantilla aprobada del catalogo sin pedirle
+    # borrador a Hermes; lo especifico (nombre, idioma, variables) sale de
+    # [plantillas] del manifiesto.
+    "dispatcher_approved_template_direct_enabled",
     "meta_final_effect_enabled",
     "chatwoot_durable_opt_out_enabled",
     "human_handoff_projection_enabled",
@@ -196,6 +200,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # Transcribir un audio no depende del aliado: la key y el host de Chatwoot
     # ya son configuracion por runtime.
     "chatwoot_audio_transcription_enabled",
+    # Saludar por el primer nombre no depende del aliado: la regla
+    # deterministica y las inferencias guardadas son del producto. En un
+    # runtime portable solo lo usa el dispatcher en modo plantilla directa.
+    "lead_first_name_greeting_enabled",
 })
 
 DEFAULT_SENSITIVE_SUBJECTS = (
@@ -470,6 +478,9 @@ class Settings:
     dispatcher_poll_interval_seconds: float = 5.0
     dispatcher_batch_size: int = 10
     dispatcher_outbound_enabled: bool = False
+    # The dispatcher sends the approved template of the Chatwoot catalog without
+    # a Hermes draft (docs/contracts/approved-template-direct-dispatch-v1.md).
+    dispatcher_approved_template_direct_enabled: bool = False
     meta_final_effect_enabled: bool = False
     meta_final_effect_evidence_dir: Path = Path("./data/meta-final-effect-gate")
     chatwoot_durable_opt_out_enabled: bool = False
@@ -494,6 +505,7 @@ class Settings:
     waba_followup_template_name: str | None = None
     waba_template_language: str | None = None
     waba_template_category: str | None = None
+    waba_payment_failure_template_category: str | None = None
     chatwoot_cut_b_admission_enabled: bool = False
     chatwoot_cut_b_scope_key: str | None = None
     chatwoot_cut_b_scope_version: int | None = None
@@ -943,6 +955,10 @@ class Settings:
         dispatcher_outbound_enabled = (
             os.getenv("DURABLE_OUTBOUND_ENABLED", "false").lower() == "true"
         )
+        dispatcher_approved_template_direct_enabled = (
+            os.getenv("DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED", "false").lower()
+            == "true"
+        )
         meta_final_effect_value = os.getenv(
             "META_FINAL_EFFECT_ENABLED", "false"
         ).strip().lower()
@@ -1334,6 +1350,9 @@ class Settings:
             dispatcher_poll_interval_seconds=dispatcher_poll_interval_seconds,
             dispatcher_batch_size=dispatcher_batch_size,
             dispatcher_outbound_enabled=dispatcher_outbound_enabled,
+            dispatcher_approved_template_direct_enabled=(
+                dispatcher_approved_template_direct_enabled
+            ),
             meta_final_effect_enabled=meta_final_effect_enabled,
             meta_final_effect_evidence_dir=meta_final_effect_evidence_dir,
             chatwoot_durable_opt_out_enabled=chatwoot_durable_opt_out_enabled,
@@ -1387,6 +1406,12 @@ class Settings:
             ),
             waba_template_category=(
                 os.getenv("WABA_TEMPLATE_CATEGORY", "").strip().upper() or None
+            ),
+            waba_payment_failure_template_category=(
+                os.getenv("WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY", "")
+                .strip()
+                .upper()
+                or None
             ),
             chatwoot_cut_b_admission_enabled=(
                 os.getenv("CHATWOOT_CUT_B_ADMISSION_ENABLED", "false").lower()
@@ -1897,6 +1922,171 @@ def _validate_instance_manifest_gates(settings: Settings) -> None:
         )
 
 
+def _manifest_template_parameters(
+    settings: Settings,
+) -> tuple[tuple[str, ...] | None, tuple[str, ...] | None]:
+    """The body variables of the carrito and pago_fallido templates.
+
+    Only for a flow the manifest declares on: its ``[plantillas]`` entry is the
+    template that flow sends, so ``WABA_*_TEMPLATE_NAME`` and
+    ``WABA_TEMPLATE_LANGUAGE`` must name the same template or the bridge does
+    not start. Both share the one ``WABA_TEMPLATE_LANGUAGE``, so two flows
+    with templates in different languages cannot start either. A flow that is
+    off keeps ``None``, the behavior of today.
+    """
+    manifest = settings.instance_manifest
+    if manifest is None:
+        return None, None
+    slots = (
+        ("carrito", settings.waba_first_touch_template_name, "WABA_FIRST_TOUCH_TEMPLATE_NAME"),
+        (
+            "pago_fallido",
+            settings.waba_payment_failure_template_name,
+            "WABA_PAYMENT_FAILURE_TEMPLATE_NAME",
+        ),
+    )
+    parameters: dict[str, tuple[str, ...] | None] = {"carrito": None, "pago_fallido": None}
+    for slot, configured_name, variable in slots:
+        if not manifest.flows[slot]:
+            continue
+        template = manifest.templates[slot]
+        if not configured_name:
+            # Sin plantilla propia el pago fallido sale con la del carrito; el
+            # arranque ya exige la variable cuando el flag del flujo esta prendido.
+            continue
+        if configured_name != template.name:
+            raise ValueError(
+                f"{variable} must match plantillas.{slot}.nombre of the instance manifest"
+            )
+        if settings.waba_template_language != template.language:
+            raise ValueError(
+                f"WABA_TEMPLATE_LANGUAGE must match plantillas.{slot}.idioma "
+                "of the instance manifest"
+            )
+        parameters[slot] = template.parameters
+    return parameters["carrito"], parameters["pago_fallido"]
+
+
+def _waba_template_config(settings: Settings) -> WhatsAppTemplateConfig | None:
+    payment_failure_category = settings.waba_payment_failure_template_category
+    if payment_failure_category is not None:
+        # Solo con manifiesto: Johanna comparte esta configuracion con sus
+        # one-shots y no la declara, asi que su categoria no cambia.
+        if settings.instance_manifest is None:
+            raise ValueError(
+                "WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY requires an instance manifest"
+            )
+        if payment_failure_category not in {"MARKETING", "UTILITY"}:
+            raise ValueError(
+                "WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY must be MARKETING or UTILITY"
+            )
+        if not settings.waba_payment_failure_template_name:
+            raise ValueError(
+                "WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY requires "
+                "WABA_PAYMENT_FAILURE_TEMPLATE_NAME"
+            )
+    if not (
+        settings.dispatcher_outbound_enabled
+        or settings.johanna_abandonment_one_shot_enabled
+        or settings.johanna_abandonment_hotmart_auto_enabled
+    ) or settings.pilot_channel_provider != "waba":
+        return None
+    template_fields = (
+        (settings.waba_first_touch_template_name, "WABA_FIRST_TOUCH_TEMPLATE_NAME"),
+        (settings.waba_template_language, "WABA_TEMPLATE_LANGUAGE"),
+        (settings.waba_template_category, "WABA_TEMPLATE_CATEGORY"),
+    )
+    for value, name in template_fields:
+        if value is None or not value.strip():
+            raise ValueError(f"{name} is required for WABA outbound")
+    if (
+        settings.portable_hotmart_payment_failure_enabled
+        and not settings.waba_payment_failure_template_name
+    ):
+        raise ValueError(
+            "WABA_PAYMENT_FAILURE_TEMPLATE_NAME is required for portable "
+            "payment failure"
+        )
+    if settings.waba_template_category not in {"MARKETING", "UTILITY"}:
+        raise ValueError("WABA_TEMPLATE_CATEGORY must be MARKETING or UTILITY")
+    first_touch_parameters, payment_failure_parameters = _manifest_template_parameters(
+        settings
+    )
+    return WhatsAppTemplateConfig(
+        first_touch_name=settings.waba_first_touch_template_name,  # type: ignore[arg-type]
+        followup_name=settings.waba_followup_template_name,  # type: ignore[arg-type]
+        language=settings.waba_template_language,  # type: ignore[arg-type]
+        category=settings.waba_template_category,  # type: ignore[arg-type]
+        first_touch_parameter="buyer_name_and_product",
+        payment_failure_name=settings.waba_payment_failure_template_name,
+        first_touch_body_parameters=first_touch_parameters,
+        payment_failure_body_parameters=payment_failure_parameters,
+        payment_failure_category=payment_failure_category,
+    )
+
+
+def _validate_approved_template_direct(
+    settings: Settings,
+    *,
+    waba_template: WhatsAppTemplateConfig | None,
+    portable_dynamic_recipient: bool,
+    portable_runtime: bool,
+) -> None:
+    """Startup gates of the direct mode and of the final Meta effect with a manifest.
+
+    The direct mode only exists for an instance manifest with the durable WABA
+    outbound and a portable recovery flow. With a manifest, the final Meta
+    effect of the durable outbound requires it: in the Hermes mode the draft
+    never reaches Meta and the shared SOUL forbids the agent from writing
+    first, so there is nothing valid to send
+    (docs/contracts/approved-template-direct-dispatch-v1.md).
+
+    In a portable runtime the first-name greeting only reaches the direct
+    dispatcher (Johanna's one-shots, its other consumer, are not portable), so
+    without the direct mode the flag would be accepted and do nothing. It is
+    refused instead, the same way the dispatcher constructor refuses it.
+    """
+    if (
+        portable_runtime
+        and settings.lead_first_name_greeting_enabled
+        and not settings.dispatcher_approved_template_direct_enabled
+    ):
+        raise ValueError(
+            "LEAD_FIRST_NAME_GREETING_ENABLED in a portable runtime requires "
+            "DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED"
+        )
+    if settings.dispatcher_approved_template_direct_enabled:
+        if settings.instance_manifest is None:
+            raise ValueError(
+                "DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED requires an instance manifest"
+            )
+        if not settings.dispatcher_outbound_enabled:
+            raise ValueError(
+                "DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED requires "
+                "DURABLE_OUTBOUND_ENABLED"
+            )
+        if settings.pilot_channel_provider != "waba" or waba_template is None:
+            raise ValueError(
+                "DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED requires the waba "
+                "provider and its approved templates"
+            )
+        if not portable_dynamic_recipient:
+            raise ValueError(
+                "DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED requires a portable "
+                "recovery flow"
+            )
+    if (
+        settings.instance_manifest is not None
+        and settings.meta_final_effect_enabled
+        and settings.dispatcher_outbound_enabled
+        and not settings.dispatcher_approved_template_direct_enabled
+    ):
+        raise ValueError(
+            "META_FINAL_EFFECT_ENABLED with DURABLE_OUTBOUND_ENABLED and an "
+            "instance manifest requires DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED"
+        )
+
+
 def create_app(
     settings: Settings,
     *,
@@ -1975,6 +2165,14 @@ def create_app(
         explicit_manifest_runtime
         or settings.commercial_ally_config != JOHANNA_COMMERCIAL_ALLY
     )
+    # Candado del binding v1 de ATT1 (COMMERCIAL_ALLY_CONFIG_PATH con
+    # tenant_ref "att1", 2026-09-04). Con el manifiesto v2 no dispara: ahi
+    # tenant_ref es "lancemos" y ally_ref "att1". Para ATT1 v2 el efecto final
+    # de Meta lo cortan META_FINAL_EFFECT_ENABLED (que con manifiesto exige el
+    # modo directo, _validate_approved_template_direct) y, en la base, el
+    # estado del piloto, la cohorte y los topes. No se pasa a ally_ref a
+    # proposito: dejaria a ATT1 v2 sin poder abrir nunca el efecto final
+    # (docs/contracts/approved-template-direct-dispatch-v1.md).
     if (
         settings.commercial_ally_config.tenant_ref == "att1"
         and settings.meta_final_effect_enabled
@@ -2168,38 +2366,13 @@ def create_app(
         raise ValueError(
             "DURABLE_OUTBOUND_ENABLED requires LANCEMOS_PILOT_BOUNDARY_ENABLED"
         )
-    waba_template: WhatsAppTemplateConfig | None = None
-    if (
-        settings.dispatcher_outbound_enabled
-        or settings.johanna_abandonment_one_shot_enabled
-        or settings.johanna_abandonment_hotmart_auto_enabled
-    ) and settings.pilot_channel_provider == "waba":
-        template_fields = (
-            (settings.waba_first_touch_template_name, "WABA_FIRST_TOUCH_TEMPLATE_NAME"),
-            (settings.waba_template_language, "WABA_TEMPLATE_LANGUAGE"),
-            (settings.waba_template_category, "WABA_TEMPLATE_CATEGORY"),
-        )
-        for value, name in template_fields:
-            if value is None or not value.strip():
-                raise ValueError(f"{name} is required for WABA outbound")
-        if (
-            settings.portable_hotmart_payment_failure_enabled
-            and not settings.waba_payment_failure_template_name
-        ):
-            raise ValueError(
-                "WABA_PAYMENT_FAILURE_TEMPLATE_NAME is required for portable "
-                "payment failure"
-            )
-        if settings.waba_template_category not in {"MARKETING", "UTILITY"}:
-            raise ValueError("WABA_TEMPLATE_CATEGORY must be MARKETING or UTILITY")
-        waba_template = WhatsAppTemplateConfig(
-            first_touch_name=settings.waba_first_touch_template_name,  # type: ignore[arg-type]
-            followup_name=settings.waba_followup_template_name,  # type: ignore[arg-type]
-            language=settings.waba_template_language,  # type: ignore[arg-type]
-            category=settings.waba_template_category,  # type: ignore[arg-type]
-            first_touch_parameter="buyer_name_and_product",
-            payment_failure_name=settings.waba_payment_failure_template_name,
-        )
+    waba_template = _waba_template_config(settings)
+    _validate_approved_template_direct(
+        settings,
+        waba_template=waba_template,
+        portable_dynamic_recipient=portable_dynamic_recipient,
+        portable_runtime=portable_runtime,
+    )
     pilot_boundary = (
         PilotBoundaryConfig(
             scope_key=settings.pilot_scope_key,  # type: ignore[arg-type]
@@ -2777,10 +2950,13 @@ def create_app(
             settings.chatwoot_cut_b_admission_enabled
             and settings.chatwoot_cut_b_agent_enabled
         )
+        # In the direct mode the dispatcher never asks Hermes, so it never
+        # receives a handoff suggestion and does not consume the admission.
         dispatcher_handoff_enabled = (
             settings.dispatcher_enabled
             and settings.dispatcher_outbound_enabled
             and settings.pilot_boundary_enabled
+            and not settings.dispatcher_approved_template_direct_enabled
         )
         if not settings.human_handoff_projection_enabled or not (
             inbound_handoff_enabled or dispatcher_handoff_enabled
@@ -3004,10 +3180,14 @@ def create_app(
             raise ValueError("DURABLE_DISPATCHER_BATCH_SIZE must be between 1 and 100")
         outbound_agent: RecoveryAgentClient | None = None
         outbound_sender: MessageSender | None = None
+        approved_template_direct = settings.dispatcher_approved_template_direct_enabled
         if settings.dispatcher_outbound_enabled:
-            outbound_agent = recovery_agent_client
+            # In the direct mode the dispatcher sends the approved template and
+            # never asks Hermes for a draft, so Hermes is not a dependency.
+            outbound_agent = None if approved_template_direct else recovery_agent_client
             if (
-                outbound_agent is None
+                not approved_template_direct
+                and outbound_agent is None
                 and settings.hermes_api_base_url is not None
                 and settings.hermes_api_key is not None
             ):
@@ -3037,7 +3217,9 @@ def create_app(
                     dynamic_recipient_enabled=portable_dynamic_recipient,
                     template=waba_template,
                 )
-            if outbound_agent is None or outbound_sender is None:
+            if outbound_sender is None or (
+                outbound_agent is None and not approved_template_direct
+            ):
                 raise ValueError(
                     "durable outbound requires Hermes and sender dependencies"
                 )
@@ -3065,6 +3247,7 @@ def create_app(
             chatwoot_inbox_id=settings.chatwoot_inbox_id,
             human_handoff_admission_enabled=(
                 settings.human_handoff_admission_enabled
+                and not approved_template_direct
             ),
             handoff_projection_policy_key=settings.handoff_projection_policy_key,
             handoff_projection_policy_version=(
@@ -3080,6 +3263,11 @@ def create_app(
                 else None
             ),
             waba_template=waba_template,
+            approved_template_direct=approved_template_direct,
+            lead_first_name_greeting_enabled=(
+                settings.lead_first_name_greeting_enabled
+                and approved_template_direct
+            ),
         )
 
     opt_out_projection_worker: OptOutProjectionWorker | None = None
@@ -5359,18 +5547,23 @@ def create_app(
         ):
             raise HTTPException(status_code=400, detail="lead_header_payload_mismatch")
         if (
-            submission.site != settings.lead_precheckout_site
-            or (
-                (
-                    explicit_manifest_runtime
-                    or settings.commercial_ally_config is not JOHANNA_COMMERCIAL_ALLY
-                )
-                and (
-                    submission.landing_id != settings.lead_precheckout_landing_id
-                    or submission.offer_code != settings.lead_precheckout_offer_code
-                )
-            )
+            explicit_manifest_runtime
+            or settings.commercial_ally_config is not JOHANNA_COMMERCIAL_ALLY
         ):
+            # Runtime con binding propio: se admite la terna (sitio, landing,
+            # oferta) de cualquier landing declarada en el binding. La por
+            # defecto es la de LEAD_PRECHECKOUT_* (create_app exige que
+            # coincidan); las demas salen de additional_offer_landings.
+            offer_landing = settings.commercial_ally_config.offer_landing(
+                submission.site, submission.landing_id
+            )
+            outside_scope = (
+                offer_landing is None
+                or offer_landing.offer_code != submission.offer_code
+            )
+        else:
+            outside_scope = submission.site != settings.lead_precheckout_site
+        if outside_scope:
             raise HTTPException(status_code=403, detail="lead_precheckout_outside_scope")
         age_seconds = (datetime.now(UTC) - submission.submitted_at).total_seconds()
         if age_seconds < -60 or age_seconds > settings.lead_precheckout_max_age_seconds:

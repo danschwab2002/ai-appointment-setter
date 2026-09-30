@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
+from pathlib import Path
 
 import httpx
 import pytest
@@ -1183,3 +1185,423 @@ def test_evolution_sender_sanitizes_search_http_error() -> None:
     assert result.status == "failed"
     assert result.reason == "chatwoot_http_error"
     assert "15555550100" not in result.reason
+
+
+# ── Body variables declared by the instance (manifest ``parametros``) ──
+
+_FIXTURES = Path(__file__).parent / "fixtures"
+_CAPTURED_INBOX_9 = json.loads(
+    (_FIXTURES / "chatwoot_inbox_9_message_templates_20260923.json").read_text(
+        encoding="utf-8"
+    )
+)
+_CAPTURED_LEAD_NAMES = json.loads(
+    (_FIXTURES / "lead_names_inbox9_template_params_20260928.json").read_text(
+        encoding="utf-8"
+    )
+)
+
+
+def _captured_placeholders(template_name: str) -> list[str]:
+    [template] = [
+        t for t in _CAPTURED_INBOX_9["message_templates"] if t["name"] == template_name
+    ]
+    [body] = [c for c in template["components"] if c["type"] == "BODY"]
+    return sorted(set(re.findall(r"\{\{(\d+)\}\}", body["text"])))
+
+
+@pytest.mark.parametrize(
+    ("first_touch_parameter", "followup", "expected"),
+    [
+        ("content", False, {"1": "copy"}),
+        ("buyer_name", False, {"1": "Ana"}),
+        ("buyer_name_and_product", False, {"1": "Ana", "2": "ATT1"}),
+        ("content", True, {"1": "copy"}),
+        ("buyer_name_and_product", True, {"1": "copy"}),
+    ],
+)
+def test_template_without_declared_variables_keeps_the_body_of_today(
+    first_touch_parameter: str,
+    followup: bool,
+    expected: dict[str, str],
+) -> None:
+    # Las cuatro construcciones de Johanna (app.py) no declaran variables.
+    template = WhatsAppTemplateConfig(
+        first_touch_name="johanna_carrito_abandonado_01",
+        followup_name="johanna_seguimiento_01",
+        language="es_EC",
+        category="MARKETING",
+        first_touch_parameter=first_touch_parameter,
+        payment_failure_name="johanna_compra_fallida_01",
+    )
+
+    for trigger_kind in (None, "cart_abandonment", "payment_failure"):
+        params = template.params(
+            content="copy",
+            followup=followup,
+            buyer_name="Ana",
+            product_name="ATT1",
+            trigger_kind=trigger_kind,
+        )
+        assert params["processed_params"] == {"body": expected}
+        assert template.body_values(
+            trigger_kind=trigger_kind, buyer_name="Ana", product_name="ATT1"
+        ) is None
+
+
+def test_declared_variables_fill_exactly_the_placeholders_of_the_approved_body() -> None:
+    # Cuerpos aprobados capturados: johanna_reactivacion_01 tiene solo {{1}} y
+    # johanna_interes_precheckout_01 tiene {{1}} y {{2}}.
+    assert _captured_placeholders("johanna_reactivacion_01") == ["1"]
+    assert _captured_placeholders("johanna_interes_precheckout_01") == ["1", "2"]
+    case = _CAPTURED_LEAD_NAMES["cases"][0]
+
+    one = WhatsAppTemplateConfig(
+        first_touch_name="johanna_reactivacion_01",
+        followup_name=None,
+        language="es_EC",
+        category="MARKETING",
+        first_touch_parameter="buyer_name_and_product",
+        first_touch_body_parameters=("nombre",),
+    )
+    two = WhatsAppTemplateConfig(
+        first_touch_name="johanna_interes_precheckout_01",
+        followup_name=None,
+        language="es_EC",
+        category="MARKETING",
+        first_touch_parameter="buyer_name_and_product",
+        first_touch_body_parameters=("nombre", "producto"),
+    )
+
+    one_body = one.params(
+        content="copy",
+        followup=False,
+        buyer_name=case["deterministic"],
+        product_name="Libre de Ansiedad",
+    )["processed_params"]["body"]
+    two_body = two.params(
+        content="copy",
+        followup=False,
+        buyer_name=case["deterministic"],
+        product_name="Libre de Ansiedad",
+    )["processed_params"]["body"]
+
+    assert one_body == {"1": case["deterministic"]}
+    assert sorted(one_body) == _captured_placeholders("johanna_reactivacion_01")
+    assert two_body == {"1": case["deterministic"], "2": "Libre de Ansiedad"}
+    assert sorted(two_body) == _captured_placeholders("johanna_interes_precheckout_01")
+
+
+def test_cart_and_payment_failure_use_each_their_declared_variables() -> None:
+    template = WhatsAppTemplateConfig(
+        first_touch_name="att1_carrito_abandonado_01",
+        payment_failure_name="att1_compra_fallida_01",
+        followup_name=None,
+        language="es_MX",
+        category="MARKETING",
+        first_touch_parameter="buyer_name_and_product",
+        first_touch_body_parameters=("nombre",),
+        payment_failure_body_parameters=("producto", "nombre"),
+    )
+
+    cart = template.params(
+        content="copy",
+        followup=False,
+        buyer_name="Ana",
+        product_name="Alimenta Tu Tiroides",
+        trigger_kind="cart_abandonment",
+    )
+    failure = template.params(
+        content="copy",
+        followup=False,
+        buyer_name="Ana",
+        product_name="Alimenta Tu Tiroides",
+        trigger_kind="payment_failure",
+    )
+
+    assert cart["name"] == "att1_carrito_abandonado_01"
+    assert cart["processed_params"] == {"body": {"1": "Ana"}}
+    assert failure["name"] == "att1_compra_fallida_01"
+    assert failure["processed_params"] == {
+        "body": {"1": "Alimenta Tu Tiroides", "2": "Ana"}
+    }
+
+
+def test_payment_failure_without_its_own_template_uses_the_cart_variables() -> None:
+    template = WhatsAppTemplateConfig(
+        first_touch_name="att1_carrito_abandonado_01",
+        followup_name=None,
+        language="es_MX",
+        category="MARKETING",
+        first_touch_parameter="buyer_name_and_product",
+        first_touch_body_parameters=("nombre",),
+    )
+
+    params = template.params(
+        content="copy",
+        followup=False,
+        buyer_name="Ana",
+        product_name="ATT1",
+        trigger_kind="payment_failure",
+    )
+
+    assert params["name"] == "att1_carrito_abandonado_01"
+    assert params["processed_params"] == {"body": {"1": "Ana"}}
+
+
+def test_a_followup_ignores_the_declared_first_contact_variables() -> None:
+    template = WhatsAppTemplateConfig(
+        first_touch_name="att1_carrito_abandonado_01",
+        followup_name="att1_seguimiento_01",
+        language="es_MX",
+        category="MARKETING",
+        first_touch_parameter="buyer_name_and_product",
+        first_touch_body_parameters=("nombre",),
+    )
+
+    params = template.params(content="copy", followup=True)
+
+    assert params["name"] == "att1_seguimiento_01"
+    assert params["processed_params"] == {"body": {"1": "copy"}}
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"first_touch_body_parameters": ()},
+        {"first_touch_body_parameters": ("nombre", "producto", "nombre")},
+        {"first_touch_body_parameters": ("nombre", "nombre")},
+        {"first_touch_body_parameters": ("apellido",)},
+        {"first_touch_body_parameters": ["nombre"]},
+        {
+            "payment_failure_name": "att1_compra_fallida_01",
+            "payment_failure_body_parameters": ("cupon",),
+        },
+    ],
+)
+def test_invalid_declared_variables_are_refused(kwargs: dict[str, object]) -> None:
+    with pytest.raises(ValueError, match="invalid_template_body_parameters"):
+        WhatsAppTemplateConfig(
+            first_touch_name="att1_carrito_abandonado_01",
+            followup_name=None,
+            language="es_MX",
+            category="MARKETING",
+            **kwargs,  # type: ignore[arg-type]
+        )
+
+
+def test_payment_failure_variables_need_the_payment_failure_template() -> None:
+    with pytest.raises(ValueError, match="without_template"):
+        WhatsAppTemplateConfig(
+            first_touch_name="att1_carrito_abandonado_01",
+            followup_name=None,
+            language="es_MX",
+            category="MARKETING",
+            payment_failure_body_parameters=("nombre",),
+        )
+
+
+def test_declared_values_collapse_the_whitespace_meta_refuses() -> None:
+    # Un nombre de Hotmart puede traer saltos de linea, tabulaciones o varios
+    # espacios; Meta rechaza el parametro (132018). Con variables declaradas
+    # (manifiesto) el valor sale colapsado en processed_params y en
+    # body_values, que es de donde el modo directo arma el texto que hashea.
+    template = WhatsAppTemplateConfig(
+        first_touch_name="att1_carrito_abandonado_01",
+        followup_name=None,
+        language="es_MX",
+        category="MARKETING",
+        first_touch_parameter="buyer_name_and_product",
+        first_touch_body_parameters=("nombre", "producto"),
+    )
+    raw_name = " Edith\nGarcía \t      Pérez "
+
+    params = template.params(
+        content="copy", followup=False, buyer_name=raw_name,
+        product_name="Alimenta  Tu\tTiroides", trigger_kind="cart_abandonment",
+    )
+    values = template.body_values(
+        trigger_kind="cart_abandonment", buyer_name=raw_name,
+        product_name="Alimenta  Tu\tTiroides",
+    )
+
+    assert params["processed_params"] == {
+        "body": {"1": "Edith García Pérez", "2": "Alimenta Tu Tiroides"}
+    }
+    assert values == params["processed_params"]["body"]
+
+
+def test_without_declared_variables_the_values_go_as_today() -> None:
+    # Johanna no declara variables: su camino no normaliza nada.
+    template = WhatsAppTemplateConfig(
+        first_touch_name="johanna_carrito_abandonado_01",
+        followup_name=None,
+        language="es_EC",
+        category="MARKETING",
+        first_touch_parameter="buyer_name_and_product",
+    )
+
+    params = template.params(
+        content="copy", followup=False, buyer_name="Edith  García",
+        product_name="Curso", trigger_kind="cart_abandonment",
+    )
+
+    assert params["processed_params"] == {"body": {"1": "Edith  García", "2": "Curso"}}
+
+
+def test_the_payment_failure_template_carries_its_own_category() -> None:
+    # El carrito aprobado como MARKETING y el pago fallido como UTILITY: cada
+    # plantilla sale con su categoria. El seguimiento y el carrito siguen con
+    # la categoria unica.
+    template = WhatsAppTemplateConfig(
+        first_touch_name="att1_carrito_abandonado_01",
+        payment_failure_name="att1_compra_fallida_01",
+        followup_name="att1_seguimiento_01",
+        language="es_MX",
+        category="MARKETING",
+        first_touch_parameter="buyer_name_and_product",
+        payment_failure_category="UTILITY",
+    )
+
+    failure = template.params(
+        content="copy", followup=False, buyer_name="Ana",
+        product_name="ATT1", trigger_kind="payment_failure",
+    )
+    cart = template.params(
+        content="copy", followup=False, buyer_name="Ana",
+        product_name="ATT1", trigger_kind="cart_abandonment",
+    )
+    followup = template.params(content="copy", followup=True)
+
+    assert failure["category"] == "UTILITY"
+    assert cart["category"] == "MARKETING"
+    assert followup["category"] == "MARKETING"
+    assert template.category_for(trigger_kind="payment_failure") == "UTILITY"
+    assert template.category_for(trigger_kind="cart_abandonment") == "MARKETING"
+
+
+def test_without_its_own_category_every_template_keeps_the_single_one() -> None:
+    template = WhatsAppTemplateConfig(
+        first_touch_name="att1_carrito_abandonado_01",
+        payment_failure_name="att1_compra_fallida_01",
+        followup_name=None,
+        language="es_MX",
+        category="MARKETING",
+        first_touch_parameter="buyer_name_and_product",
+    )
+
+    failure = template.params(
+        content="copy", followup=False, buyer_name="Ana",
+        product_name="ATT1", trigger_kind="payment_failure",
+    )
+
+    assert failure["category"] == "MARKETING"
+    assert template.category_for(trigger_kind="payment_failure") == "MARKETING"
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"payment_failure_category": "UTILITY"}, "payment_failure_category_without_template"),
+        (
+            {"payment_failure_name": "att1_compra_fallida_01", "payment_failure_category": "utility"},
+            "invalid_payment_failure_category",
+        ),
+        (
+            {"payment_failure_name": "att1_compra_fallida_01", "payment_failure_category": "AUTHENTICATION"},
+            "invalid_payment_failure_category",
+        ),
+    ],
+)
+def test_an_invalid_payment_failure_category_is_refused(
+    kwargs: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        WhatsAppTemplateConfig(
+            first_touch_name="att1_carrito_abandonado_01",
+            followup_name=None,
+            language="es_MX",
+            category="MARKETING",
+            **kwargs,  # type: ignore[arg-type]
+        )
+
+
+def test_chatwoot_sender_sends_a_one_variable_template_without_product() -> None:
+    case = _CAPTURED_LEAD_NAMES["cases"][0]
+    transport = _waba_first_touch_transport()
+    sender = ChatwootMessageSender(
+        chatwoot=_chatwoot(transport),
+        inbox_id=1,
+        allowed_jid="5531999999999@s.whatsapp.net",
+        template=WhatsAppTemplateConfig(
+            first_touch_name="att1_carrito_abandonado_01",
+            followup_name=None,
+            language="es_MX",
+            category="MARKETING",
+            first_touch_parameter="buyer_name_and_product",
+            first_touch_body_parameters=("nombre",),
+        ),
+    )
+
+    result = _run(sender.send_first_touch(
+        phone="5531999999999",
+        buyer_name=case["full_name"],
+        buyer_email="buyer@test.com",
+        product_name=None,
+        content="¡Hola! Soy el asistente virtual de Dan.",
+        delivery_id="evt-001",
+        greeting_name=case["deterministic"],
+    ))
+
+    # Sin producto no bloquea: la plantilla declarada no lo pide.
+    assert result.status == "sent"
+    body = json.loads(transport.requests[-1][2])
+    assert body["template_params"] == {
+        "name": "att1_carrito_abandonado_01",
+        "category": "MARKETING",
+        "language": "es_MX",
+        "processed_params": {"body": {"1": case["deterministic"]}},
+    }
+
+
+@pytest.mark.parametrize(
+    ("declared", "buyer_name", "product_name"),
+    [
+        (("nombre",), None, "Alimenta Tu Tiroides"),
+        (("nombre",), "   ", "Alimenta Tu Tiroides"),
+        (("producto",), "Ana", None),
+        (("nombre", "producto"), "Ana", ""),
+    ],
+)
+def test_chatwoot_sender_blocks_a_missing_declared_variable(
+    declared: tuple[str, ...],
+    buyer_name: str | None,
+    product_name: str | None,
+) -> None:
+    transport = MockTransport()
+    sender = ChatwootMessageSender(
+        chatwoot=_chatwoot(transport),
+        inbox_id=1,
+        allowed_jid="5531999999999@s.whatsapp.net",
+        template=WhatsAppTemplateConfig(
+            first_touch_name="att1_carrito_abandonado_01",
+            followup_name=None,
+            language="es_MX",
+            category="MARKETING",
+            first_touch_parameter="buyer_name_and_product",
+            first_touch_body_parameters=declared,
+        ),
+    )
+
+    result = _run(sender.send_first_touch(
+        phone="5531999999999",
+        buyer_name=buyer_name,
+        buyer_email="buyer@test.com",
+        product_name=product_name,
+        content="contenido no usado por el template",
+        delivery_id="evt-missing-declared",
+    ))
+
+    assert result.status == "blocked"
+    assert result.reason == "template_parameters_missing"
+    assert transport.requests == []

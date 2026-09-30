@@ -222,6 +222,70 @@ if (result.api_leaks !== 0 || result.trigger_leaks !== 0
     || result.allowlist_mismatches !== 0 || result.expected_count !== 112) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
+// 20260930000100: el criterio de intencion con consentimiento es un helper
+// privado. Lo llaman las RPC security definer; ningun rol de la API, ni
+// service_role, lo ejecuta directo. Con los privilegios por defecto de
+// Supabase de arriba, un revoke faltante lo dejaria ejecutable.
+const consentHelper = (await db.query(`
+  select
+    p.prosecdef security_definer,
+    p.provolatile volatility,
+    has_function_privilege('anon', p.oid, 'execute') anon_x,
+    has_function_privilege('authenticated', p.oid, 'execute') auth_x,
+    has_function_privilege('service_role', p.oid, 'execute') service_x
+  from pg_proc p
+  where p.oid = to_regprocedure('public._portable_consented_intent_reason(uuid,uuid,text)')
+`)).rows;
+if (consentHelper.length !== 1
+    || consentHelper[0].security_definer !== false
+    || consentHelper[0].volatility !== 's'
+    || consentHelper[0].anon_x !== false
+    || consentHelper[0].auth_x !== false
+    || consentHelper[0].service_x !== false) {
+  throw new Error(`consented intent helper ACL failed: ${JSON.stringify(consentHelper)}`);
+}
+// 20260930000200: el check de forma de additional_offer_landings es un helper
+// inmutable que solo usa el constraint. Solo el owner escribe bindings, asi que
+// ningun rol de la API, ni service_role, lo ejecuta.
+const offerLandingsHelper = (await db.query(`
+  select
+    p.prosecdef security_definer,
+    p.provolatile volatility,
+    has_function_privilege('anon', p.oid, 'execute') anon_x,
+    has_function_privilege('authenticated', p.oid, 'execute') auth_x,
+    has_function_privilege('service_role', p.oid, 'execute') service_x
+  from pg_proc p
+  where p.oid = to_regprocedure('public.commercial_ally_offer_landings_are_valid(jsonb,text[],text,text)')
+`)).rows;
+if (offerLandingsHelper.length !== 1
+    || offerLandingsHelper[0].security_definer !== false
+    || offerLandingsHelper[0].volatility !== 'i'
+    || offerLandingsHelper[0].anon_x !== false
+    || offerLandingsHelper[0].auth_x !== false
+    || offerLandingsHelper[0].service_x !== false) {
+  throw new Error(`offer landings helper ACL failed: ${JSON.stringify(offerLandingsHelper)}`);
+}
+// 20260930000300: la evidencia de audiencia del scope del piloto es un helper
+// privado. Lo llaman los dos planificadores y la autorizacion del envio (las
+// tres security definer); ningun rol de la API, ni service_role, lo ejecuta.
+const audienceHelper = (await db.query(`
+  select
+    p.prosecdef security_definer,
+    p.provolatile volatility,
+    has_function_privilege('anon', p.oid, 'execute') anon_x,
+    has_function_privilege('authenticated', p.oid, 'execute') auth_x,
+    has_function_privilege('service_role', p.oid, 'execute') service_x
+  from pg_proc p
+  where p.oid = to_regprocedure('public._lancemos_pilot_audience_intent(text,integer,uuid,text,uuid,text)')
+`)).rows;
+if (audienceHelper.length !== 1
+    || audienceHelper[0].security_definer !== false
+    || audienceHelper[0].volatility !== 's'
+    || audienceHelper[0].anon_x !== false
+    || audienceHelper[0].auth_x !== false
+    || audienceHelper[0].service_x !== false) {
+  throw new Error(`pilot audience helper ACL failed: ${JSON.stringify(audienceHelper)}`);
+}
 const bindingAcl = await db.query(`
   select
     has_table_privilege(

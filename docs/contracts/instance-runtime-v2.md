@@ -16,7 +16,9 @@ Con manifiesto, el bridge además exige:
 
 - `HERMES_MODEL_NAME` igual a `agente.modelo`;
 - que cada flag del runtime tenga su flujo declarado en `true`: el manifiesto es el techo de lo que el runtime puede hacer;
-- respuestas automáticas solo con el conocimiento cargado.
+- respuestas automáticas solo con el conocimiento cargado;
+- con el flujo `carrito` o `pago_fallido` en `true` y la salida por WABA, que `WABA_FIRST_TOUCH_TEMPLATE_NAME`, `WABA_PAYMENT_FAILURE_TEMPLATE_NAME` y `WABA_TEMPLATE_LANGUAGE` nombren la plantilla de ese flujo en `[plantillas]`. Las variables del cuerpo de esa plantilla salen de su `parametros` ([referencia-manifiesto.md](../referencia-manifiesto.md#plantillas)).
+- con `META_FINAL_EFFECT_ENABLED` y `DURABLE_OUTBOUND_ENABLED` en `true`, el modo directo del dispatcher (`DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED=true`): la salida manda el cuerpo aprobado del catálogo y no un borrador de Hermes ([approved-template-direct-dispatch-v1.md](approved-template-direct-dispatch-v1.md)).
 
 | Flag del runtime | Flujo que lo habilita |
 |---|---|
@@ -34,5 +36,5 @@ El agente de una instancia usa el SOUL común del producto (`profiles/agente-com
 
 ## Qué reemplaza del binding v1
 
-- El candado `tenant_ref == "att1"` sobre `META_FINAL_EFFECT_ENABLED` aplica solo a un binding v1. Con manifiesto v2 el envío a Meta lo habilita un flujo de salida declarado en el repo de la instancia, que es igual de explícito y queda versionado.
+- El candado `tenant_ref == "att1"` sobre `META_FINAL_EFFECT_ENABLED` aplica solo a un binding v1. Con manifiesto v2 el envío a Meta lo habilita un flujo de salida declarado en el repo de la instancia, que es igual de explícito y queda versionado, y para la salida del dispatcher además el modo directo.
 - El descuento post-respuesta deja de estar reservado a `tenant_ref == "att1"`: lo habilita el flujo `descuento`.

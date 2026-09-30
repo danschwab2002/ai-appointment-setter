@@ -13,6 +13,7 @@ import httpx
 import bridge.worker as worker_module
 from bridge.app import Settings, create_app
 from bridge.commercial_ally import CommercialAllyConfig
+from bridge.instance_manifest import InstanceManifest
 from bridge.resolution import ResolutionError, resolve_event
 from bridge.supabase import PilotBoundaryConfig, SupabaseClient
 from bridge.supabase import FollowupExecutionContext
@@ -460,6 +461,57 @@ def test_portable_recipient_requires_exact_manifest_context(
         allowed_jid=None,
         commercial_ally_config=_att1_config(),
         portable_recipient_enabled=True,
+    ) is expected
+
+
+# Fixture: tests/fixtures/instances/att1/instancia.toml (datos de ATT1 medidos el
+# 2026-09-28). Las tres ofertas de la instancia son las de sus tres landings;
+# 83utgyow es la de la recuperacion de GHL, que queda afuera a proposito.
+_ATT1_MANIFEST_CONFIG = InstanceManifest.from_toml_file(
+    Path(__file__).parent / "fixtures" / "instances" / "att1" / "instancia.toml"
+).to_commercial_ally_config()
+
+
+@pytest.mark.parametrize(
+    ("offer_code", "portable_recipient_enabled", "expected"),
+    [
+        ("gopi6lh7", True, True),
+        ("bmaztyhg", True, True),
+        ("2uafw5bg", True, True),
+        ("83utgyow", True, False),
+        ("mgbqpp19", True, False),
+        (None, True, False),
+        ("bmaztyhg", False, False),
+    ],
+)
+def test_portable_recipient_accepts_any_offer_of_the_binding(
+    offer_code: str | None,
+    portable_recipient_enabled: bool,
+    expected: bool,
+) -> None:
+    config = _ATT1_MANIFEST_CONFIG
+    assert config.accepted_offer_codes == ("gopi6lh7", "bmaztyhg", "2uafw5bg")
+    context = FollowupExecutionContext(
+        action_id="00000000-0000-4000-8000-000000000020",
+        action_type="first_contact_review",
+        step_key="first_contact",
+        recovery_case_id="00000000-0000-4000-8000-000000000021",
+        contact_id="00000000-0000-4000-8000-000000000022",
+        source_event_id="00000000-0000-4000-8000-000000000023",
+        buyer_name=None,
+        buyer_email=None,
+        buyer_phone="525555555555",
+        product_name=config.product_name,
+        offer_code=offer_code,
+        current_goal=None,
+        lead_stage="new",
+    )
+
+    assert worker_module._is_authorized_followup_recipient(
+        execution_context=context,
+        allowed_jid=None,
+        commercial_ally_config=config,
+        portable_recipient_enabled=portable_recipient_enabled,
     ) is expected
 
 

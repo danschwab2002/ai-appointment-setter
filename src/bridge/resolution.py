@@ -21,6 +21,7 @@ from bridge.messaging import is_allowed_whatsapp_target
 from bridge.supabase import (
     ContactMatch,
     PilotBoundaryConfig,
+    PilotPlanRejectedError,
     SituationReport,
     SupabaseClient,
     SupabaseError,
@@ -264,6 +265,15 @@ async def resolve_event(
                 offer_code=buyer.offer_code,
                 grace_expires_at=grace_expires.isoformat(),
             )
+    except PilotPlanRejectedError as exc:
+        # The pilot planner rejected the event on purpose (cohort, scope,
+        # correlation...). Keep its reason so it is not read as a real failure.
+        await supabase.update_event_status(
+            event_id=webhook_event_id,
+            status="failed",
+            error=exc.reason,
+        )
+        raise ResolutionError(exc.reason) from exc
     except SupabaseError as exc:
         await supabase.update_event_status(
             event_id=webhook_event_id,

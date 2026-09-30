@@ -12,11 +12,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import multiprocessing
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any, Callable
 
 import httpx
 
+from bridge.approved_templates import (
+    REASON_MISMATCH as APPROVED_TEMPLATE_MISMATCH,
+    REASON_PARAMETERS_MISSING as APPROVED_TEMPLATE_PARAMETERS_MISSING,
+    REASON_UNAVAILABLE as APPROVED_TEMPLATE_UNAVAILABLE,
+    ApprovedTemplateError,
+    parse_approved_template,
+)
 from bridge.chatwoot import (
     ChatwootAssignmentConflictError,
     ChatwootClient,
@@ -74,6 +82,29 @@ def _first_touch_template_name(
     ):
         return template.payment_failure_name
     return template.first_touch_name
+
+
+APPROVED_TEMPLATE_DIRECT_UNSUPPORTED_ACTION = (
+    "approved_template_direct_unsupported_action"
+)
+
+
+@dataclass(frozen=True)
+class _ApprovedTemplateComposition:
+    """The direct-mode proposal, or the reason the attempt closes without one.
+
+    ``retryable`` is False when the reason cannot change on its own before the
+    action expires: the action type, the variables the runtime declares, and
+    the values of the case (an empty name, a value Meta refuses). Those close
+    the action as ``permanent_failed`` on the first attempt instead of being
+    claimed again and re-reading the catalog. A catalog problem (unavailable,
+    paused, not matching) stays retryable: Chatwoot or Meta can fix it.
+    """
+
+    proposal: FollowupMessageProposal | None = None
+    greeting_name: str | None = None
+    failure_reason: str | None = None
+    retryable: bool = True
 
 
 def _precheckout_sender_process_entry(
@@ -211,7 +242,13 @@ def _is_authorized_followup_recipient(
     commercial_ally_config: CommercialAllyConfig | None,
     portable_recipient_enabled: bool = False,
 ) -> bool:
-    """Validate the recipient through the legacy or portable tenant boundary."""
+    """Validate the recipient through the legacy or portable tenant boundary.
+
+    The portable branch accepts any offer of the binding (the default one plus
+    ``additional_offer_codes``), the same set that admission and the pilot
+    boundary already accept. Comparing only the default offer let a cart from
+    another landing of the instance be planned and then die at dispatch.
+    """
     if is_allowed_whatsapp_target(execution_context.buyer_phone, allowed_jid):
         return True
     return (
@@ -219,7 +256,8 @@ def _is_authorized_followup_recipient(
         and commercial_ally_config is not None
         and execution_context.buyer_phone is not None
         and execution_context.product_name == commercial_ally_config.product_name
-        and execution_context.offer_code == commercial_ally_config.offer_code
+        and execution_context.offer_code
+        in commercial_ally_config.accepted_offer_codes
     )
 
 
@@ -598,7 +636,39 @@ class DurableDispatcher:
         handoff_projection_policy_version: int | None = None,
         final_meta_effect_gate: FinalMetaEffectGate | None = None,
         waba_template: WhatsAppTemplateConfig | None = None,
+        approved_template_direct: bool = False,
+        lead_first_name_greeting_enabled: bool = False,
     ) -> None:
+        if approved_template_direct:
+            # The direct mode sends the approved body of the catalog and never
+            # asks Hermes for a draft (docs/contracts/
+            # approved-template-direct-dispatch-v1.md). It only exists for the
+            # portable WABA binding, where the final Meta gate is mandatory.
+            if commercial_ally_config is None:
+                raise ValueError(
+                    "approved template direct dispatch requires the portable binding"
+                )
+            if waba_template is None:
+                raise ValueError(
+                    "approved template direct dispatch requires the WABA templates"
+                )
+            if chatwoot is None or chatwoot_inbox_id is None:
+                raise ValueError(
+                    "approved template direct dispatch requires the Chatwoot inbox"
+                )
+            if sender is None:
+                raise ValueError("approved template direct dispatch requires a sender")
+            if recovery_agent is not None:
+                raise ValueError("approved template direct dispatch does not call Hermes")
+            if human_handoff_admission_enabled:
+                raise ValueError(
+                    "approved template direct dispatch has no handoff suggestion"
+                )
+        elif lead_first_name_greeting_enabled:
+            raise ValueError(
+                "dispatcher first-name greeting requires approved template direct "
+                "dispatch"
+            )
         if commercial_ally_config is not None:
             if not portable_recipient_enabled:
                 raise ValueError("portable recipient capability is not enabled")
@@ -647,6 +717,9 @@ class DurableDispatcher:
         self._handoff_projection_policy_version = handoff_projection_policy_version
         self._final_meta_effect_gate = final_meta_effect_gate
         self._waba_template = waba_template
+        self._chatwoot_inbox_id = chatwoot_inbox_id
+        self._approved_template_direct = approved_template_direct
+        self._lead_first_name_greeting_enabled = lead_first_name_greeting_enabled
         self._delivery_mode = (
             "approved_template"
             if pilot_boundary is not None
@@ -715,12 +788,22 @@ class DurableDispatcher:
         action: ScheduledAction,
         attempt: DeliveryAttempt,
         reason_code: str,
+        retryable: bool = True,
     ) -> None:
-        """Close a reserved attempt when no external request could have started."""
+        """Close a reserved attempt when no external request could have started.
+
+        A retryable failure asks for another attempt in a minute; the base
+        grants it while the action has retries left (``max_execution_retries``)
+        and has not expired, and otherwise closes it. A non retryable one
+        passes no next attempt, so the base closes the action as
+        ``permanent_failed`` with ``reason_code`` right away.
+        """
         failed_at = self._clock()
         retry_at = (
-            datetime.fromisoformat(failed_at) + timedelta(minutes=1)
-        ).isoformat()
+            (datetime.fromisoformat(failed_at) + timedelta(minutes=1)).isoformat()
+            if retryable
+            else None
+        )
         finalized = await _commit_outcome_despite_cancellation(
             self._supabase.finalize_followup_delivery_attempt(
                 action_id=action.action_id,
@@ -801,6 +884,122 @@ class DurableDispatcher:
             )
         return evidence
 
+    async def _compose_approved_template_proposal(
+        self,
+        *,
+        action: ScheduledAction,
+        execution_context: FollowupExecutionContext,
+    ) -> _ApprovedTemplateComposition:
+        """Build the first contact from the approved template, without Hermes.
+
+        The text is the approved body of the Chatwoot catalog filled with the
+        same values the sender puts in ``processed_params`` (the greeting name
+        when the flag is on), so the final Meta gate hashes what Meta will
+        show. Every catalog or data problem returns a reason instead of
+        raising: the caller closes the reserved attempt with it.
+        """
+        if action.action_type != "first_contact_review":
+            return _ApprovedTemplateComposition(
+                failure_reason=APPROVED_TEMPLATE_DIRECT_UNSUPPORTED_ACTION,
+                retryable=False,
+            )
+        template = self._waba_template
+        assert template is not None
+        assert self._chatwoot is not None
+        assert self._chatwoot_inbox_id is not None
+        trigger_kind = action.anchor_type
+        declared = template.declared_body_parameters(trigger_kind=trigger_kind)
+        if declared is None:
+            # Without the manifest declaring this template's variables the
+            # bridge does not know what the approved body expects.
+            logger.warning(
+                "approved_template_parameters_undeclared action_id=%s trigger=%s",
+                action.action_id,
+                trigger_kind,
+            )
+            return _ApprovedTemplateComposition(
+                failure_reason=APPROVED_TEMPLATE_MISMATCH,
+                retryable=False,
+            )
+        buyer_name = execution_context.buyer_name
+        product_name = execution_context.product_name
+        if template.body_parameters_missing(
+            trigger_kind=trigger_kind,
+            buyer_name=buyer_name,
+            product_name=product_name,
+        ):
+            return _ApprovedTemplateComposition(
+                failure_reason=APPROVED_TEMPLATE_PARAMETERS_MISSING,
+                retryable=False,
+            )
+        greeting_name: str | None = None
+        name_value = buyer_name
+        if (
+            self._lead_first_name_greeting_enabled
+            and isinstance(buyer_name, str)
+            and buyer_name.strip()
+        ):
+            greeting = await resolve_greeting_name(buyer_name, store=self._supabase)
+            # The sender strips the greeting before using it (messaging.
+            # _template_name); stripping here keeps the rendered text and the
+            # template variable identical.
+            greeting_name = greeting.name.strip()
+            name_value = greeting_name
+            logger.info(
+                "durable_first_touch_greeting action_id=%s source=%s",
+                action.action_id,
+                greeting.source,
+            )
+        values = template.body_values(
+            trigger_kind=trigger_kind,
+            buyer_name=name_value,
+            product_name=product_name,
+        )
+        assert values is not None
+        template_name = _first_touch_template_name(template, anchor_type=trigger_kind)
+        try:
+            inbox = await self._chatwoot.get_inbox(inbox_id=self._chatwoot_inbox_id)
+        except (httpx.HTTPError, ChatwootProtocolError) as exc:
+            logger.warning(
+                "approved_template_catalog_unavailable action_id=%s error=%s",
+                action.action_id,
+                type(exc).__name__,
+            )
+            return _ApprovedTemplateComposition(
+                failure_reason=APPROVED_TEMPLATE_UNAVAILABLE
+            )
+        try:
+            approved = parse_approved_template(
+                inbox,
+                template_name=template_name,
+                expected_language=template.language,
+                expected_category=template.category_for(trigger_kind=trigger_kind),
+                parameter_count=len(declared),
+            )
+            message = approved.render(values)
+        except ApprovedTemplateError as exc:
+            logger.warning(
+                "approved_template_rejected action_id=%s template=%s "
+                "reason=%s detail=%s",
+                action.action_id,
+                template_name,
+                exc.reason,
+                exc.detail,
+            )
+            # A value the render refuses comes from the case and does not
+            # change; a catalog that does not close can.
+            return _ApprovedTemplateComposition(
+                failure_reason=exc.reason,
+                retryable=exc.reason != APPROVED_TEMPLATE_PARAMETERS_MISSING,
+            )
+        return _ApprovedTemplateComposition(
+            proposal=FollowupMessageProposal(
+                strategy=f"approved_template:{template_name}",
+                message=message,
+            ),
+            greeting_name=greeting_name,
+        )
+
     async def dispatch_due(self, *, now: str) -> list[ReevaluationDecision]:
         """Claim and re-evaluate; return execute candidates without side effects."""
         actions = await self.claim_due(now=now)
@@ -838,7 +1037,10 @@ class DurableDispatcher:
                     action.action_id,
                     attempt.attempt_id,
                 )
-                if self._recovery_agent is not None:
+                if self._recovery_agent is not None or self._approved_template_direct:
+                    direct_failure: str | None = None
+                    direct_retryable = True
+                    greeting_name: str | None = None
                     try:
                         execution_context = (
                             await self._supabase.get_followup_execution_context(
@@ -852,14 +1054,27 @@ class DurableDispatcher:
                             action,
                             execution_context,
                         )
-                        proposal = (
-                            await self._recovery_agent.request_followup_message(
-                                attempt_id=attempt.attempt_id,
-                                execution_context=execution_context,
+                        if self._approved_template_direct:
+                            composition = (
+                                await self._compose_approved_template_proposal(
+                                    action=action,
+                                    execution_context=execution_context,
+                                )
                             )
-                        )
-                        if proposal is not None:
-                            _validate_followup_message_proposal(proposal)
+                            proposal = composition.proposal
+                            greeting_name = composition.greeting_name
+                            direct_failure = composition.failure_reason
+                            direct_retryable = composition.retryable
+                        else:
+                            assert self._recovery_agent is not None
+                            proposal = (
+                                await self._recovery_agent.request_followup_message(
+                                    attempt_id=attempt.attempt_id,
+                                    execution_context=execution_context,
+                                )
+                            )
+                            if proposal is not None:
+                                _validate_followup_message_proposal(proposal)
                     except asyncio.CancelledError:
                         await self._finalize_pre_request_failure(
                             action=action,
@@ -874,7 +1089,21 @@ class DurableDispatcher:
                             reason_code="pre_request_failed",
                         )
                         raise
-                    if proposal is None:
+                    if direct_failure is not None:
+                        logger.warning(
+                            "durable_approved_template_not_sent "
+                            "action_id=%s attempt_id=%s reason=%s",
+                            action.action_id,
+                            attempt.attempt_id,
+                            direct_failure,
+                        )
+                        await self._finalize_pre_request_failure(
+                            action=action,
+                            attempt=attempt,
+                            reason_code=direct_failure,
+                            retryable=direct_retryable,
+                        )
+                    elif proposal is None:
                         logger.warning(
                             "durable_followup_proposal_unavailable "
                             "action_id=%s attempt_id=%s",
@@ -1167,14 +1396,24 @@ class DurableDispatcher:
                                         delivery_id=attempt.attempt_id,
                                     )
                                 else:
+                                    first_touch_kwargs: dict[str, Any] = {
+                                        "phone": execution_context.buyer_phone or "",
+                                        "buyer_name": execution_context.buyer_name,
+                                        "buyer_email": execution_context.buyer_email,
+                                        "product_name": execution_context.product_name,
+                                        "content": proposal.message,
+                                        "delivery_id": attempt.attempt_id,
+                                        "trigger_kind": action.anchor_type,
+                                    }
+                                    # The same greeting the approved body was
+                                    # rendered with: the content the final gate
+                                    # hashed is the text Meta shows.
+                                    if greeting_name is not None:
+                                        first_touch_kwargs["greeting_name"] = (
+                                            greeting_name
+                                        )
                                     result = await self._sender.send_first_touch(
-                                        phone=execution_context.buyer_phone or "",
-                                        buyer_name=execution_context.buyer_name,
-                                        buyer_email=execution_context.buyer_email,
-                                        product_name=execution_context.product_name,
-                                        content=proposal.message,
-                                        delivery_id=attempt.attempt_id,
-                                        trigger_kind=action.anchor_type,
+                                        **first_touch_kwargs
                                     )
                             except asyncio.CancelledError:
                                 deadline = (

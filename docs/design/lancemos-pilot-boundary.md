@@ -20,7 +20,7 @@ AND cuenta/número de canal esperado
 AND evento Hotmart de abandono permitido
 AND producto + oferta exactos
 AND autorización del contacto vigente
-AND contacto inscripto en la cohorte
+AND contacto dentro de la audiencia de la versión (cohorte y/o intención consentida, según audience_mode)
 AND presupuesto total y diario disponible
 AND stops negativos ausentes
 → recién entonces puede comenzar un request outbound
@@ -40,6 +40,7 @@ Cada configuración se identifica por `scope_key + version`. Una versión public
 - source/evento `hotmart/PURCHASE_OUT_OF_SHOPPING_CART`;
 - producto y oferta exactos;
 - policy key/version de seguimiento;
+- audiencia (`audience_mode`, §2.4);
 - timezone;
 - máximo de contactos activos;
 - máximo total de request-starts;
@@ -60,15 +61,41 @@ El estado `paused` o `closed` bloquea nuevos request-starts. El RPC de cambio de
 
 No se promete cancelar una llamada externa que ya empezó.
 
-### 2.4 Cohorte explícita
+### 2.4 Audiencia del scope: cohorte explícita o intención consentida
 
-El abandono no incorpora automáticamente un contacto a la cohorte. Un operador autorizado debe inscribirlo mediante RPC. La inscripción:
+Cada versión publicada fija su `audience_mode`, que decide qué contactos pueden entrar al piloto. Es parte de la versión: cambiarlo exige publicar otra versión y activarla (§2.1), nunca editar la publicada. La migración `20260930000300` lo agrega; todos los scopes anteriores quedan en `manual_cohort`.
 
-- usa sólo `contact_id`, nunca PII;
-- respeta el máximo de contactos activos;
-- es idempotente;
-- puede retirarse sin borrar auditoría;
-- no equivale por sí sola a consentimiento ni permiso de envío.
+| modo | cohorte | intención consentida | uso |
+|---|---|---|---|
+| `manual_cohort` (default) | la exige | no la mira | el de siempre; Johanna y la v1 de ATT1 |
+| `consented_intent_in_cohort` | la exige | la exige | E2E controlado con un solo teléfono |
+| `consented_intent` | no la mira | la exige | producción |
+
+- **`manual_cohort`.** El abandono no incorpora automáticamente un contacto a la cohorte. Un operador autorizado debe inscribirlo mediante RPC. La inscripción usa sólo `contact_id`, nunca PII; respeta el máximo de contactos activos; es idempotente; puede retirarse sin borrar auditoría; no equivale por sí sola a consentimiento ni permiso de envío.
+- **`consented_intent_in_cohort`.** Exige las dos cosas: estar inscripto y tener evidencia de intención consentida. Con `max_cohort_contacts = 1` y el teléfono de prueba inscripto se ejercita la misma evidencia que usará producción sin que un lead real pueda entrar. Hace falta: con `consented_intent` y un tope total de 1, el tope limita a un envío pero no a un teléfono, y el primer lead real que abandone se lo lleva.
+- **`consented_intent`.** La cohorte no se consulta. Entra un contacto cuyo evento quedó atado a una intención de compra que:
+  - es la que la admisión correlacionó con **ese** evento: `hotmart_purchase_intent_correlations.outcome = 'resolved'` para el carrito, `commercial_ally_payment_failure_details.correlation_outcome = 'resolved'` para el pago fallido;
+  - es del tenant, el producto y una oferta del scope, de **la misma oferta del evento**, con su mapeo activo en `hotmart_purchase_intent_scopes`;
+  - cumple el criterio de Johanna sin sus valores fijos (`_portable_consented_intent_reason`, migración `20260930000100`): sigue viva (`waiting_for_purchase`, observada por el proveedor, no provisional, sin `identity_conflict`, `tracking_incomplete` ni `expired_unknown`), tiene `whatsapp_contact_authorized` y `activation_authorized`, su teléfono es el de destino y un `contact_point` del contacto, y tiene un envío 1.1.0 del formulario con `whatsapp_contact` y `marketing_optin` en `true`, la `consent_copy_version` del binding activo y ningún conflicto abierto.
+
+  Los modos con consentimiento se admiten en scopes con `source` `hotmart` o `landing` (el primer contacto del formulario los va a usar).
+
+La evidencia se verifica en dos momentos, siempre atada al evento y nunca buscada por contacto (una intención de otra oferta, otro producto u otro teléfono no cuenta aunque sea de la misma persona):
+
+1. **Al planificar.** `plan_lancemos_pilot_cart_recovery` y `plan_portable_payment_failure_recovery` la exigen antes de crear el caso y registran en `pilot_recovery_case_bindings` el modo, el `purchase_intent_id` y el envío 1.1.0 del formulario que dio el consentimiento (`audience_precheckout_submission_id`; su `canonical_payload` guarda la `copy_version`). Así se puede reconstruir con qué evidencia exacta entró cada caso, aunque después llegue otro formulario. Un rechazo es `pilot_scope_rejected` con el motivo en `detail`, no deja caso ni permiso, y el bridge lo guarda en `webhook_events.processing_error` con estado `failed`.
+2. **Al arrancar el envío.** `authorize_lancemos_pilot_request_start` vuelve a verificar la intención del binding contra la identidad seleccionada **antes de consumir presupuesto**, y registra en `pilot_outbound_request_authorized` el modo, la intención y el envío que dio el consentimiento en ese momento. Si entre el plan y el envío la intención se compró (la correlación de la compra aprobada), pasó a `identity_conflict` (otro formulario de la misma oferta con otro teléfono o email), salió del mapeo activo o perdió el envío que la sostenía, el request no arranca, devuelve el motivo `pilot_audience_*` y no consume cupo. Lo que serializa el lock compartido es solo la fila de la intención: espera a quien la esté cambiando (la compra, un formulario posterior) y lee la versión confirmada. Lo que no toca esa fila (un conflicto abierto del envío, la `copy_version` o el estado del binding comercial, el mapeo de la oferta) no queda serializado: se ve si ya estaba confirmado al leerlo. Las pruebas corren en PGlite, que tiene una sola conexión: cubren cada uno de esos cambios hecho antes del arranque, no una carrera entre dos transacciones. El replay de una autorización ya cruzada no re-chequea (probado: con el consentimiento perdido, el mismo intento vuelve a arrancar con `replayed = true`).
+
+   La compra la corta primero el worker de compras, que cierra el caso; la re-verificación cubre el envío que ya estaba en vuelo cuando entró la compra.
+
+La evaluación temprana (`evaluate_lancemos_pilot_scope`) sólo mira la cohorte en los modos que la usan. En `consented_intent` devuelve `pilot_scope_allowed` sin mirar la intención, porque sus llamadores (los planificadores) la atan al evento en la misma transacción; como siempre, una evaluación positiva no es un permiso de envío (§2.6). Sola no sirve como filtro de audiencia, y dos pruebas lo frenan: `validate_pilot_scope_audience_mode.mjs` exige que toda función SQL que la llame llame también a `_lancemos_pilot_audience_intent` (un llamador nuevo, como el primer contacto del formulario, rompe ahí si se olvida), y `test_pilot_scope_audience_mode_migration.py` exige que ni el bridge ni los scripts la llamen.
+
+En `consented_intent` el freno son los topes total y diario (§2.5); `max_cohort_contacts` sigue siendo obligatorio pero no se consulta, e inscribir miembros no tiene efecto. Ningún modo equivale por sí solo a permiso de envío: opt-out, compra, takeover, delivery incierto y conflicto de correlación conservan precedencia (§1). La audiencia no mira el opt-out; lo frenan las piezas de siempre, y en `consented_intent` está probado sin cohorte: con la baja previa al evento el caso se planifica, pero no se concede ningún permiso `allowed` y la reevaluación lo cancela (`contact_blocked`); con la baja entre el plan y el envío la acción queda cancelada, o, si el intento ya estaba reservado, el arranque se rechaza. En ningún caso se consume cupo.
+
+Pasar del E2E a producción: pausar, publicar la versión siguiente con `consented_intent` y los topes aprobados (el total cuenta lo consumido por todas las versiones), activarla (queda `inactive`), apuntar `LANCEMOS_PILOT_SCOPE_VERSION` a la versión nueva, reiniciar y armar. Los casos planificados con la versión anterior ya no se envían (`pilot_scope_version_mismatch`).
+
+Rotar la `consent_copy_version` del binding comercial con casos pendientes de un scope con consentimiento los deja trabados. La re-verificación del arranque compara el envío del formulario con la copy del binding activo **en ese momento**, no con la que regía al planificar: un caso planificado con la copy vieja se rechaza para siempre con `pilot_audience_consented_intent_submission_missing`. Además, el dispatcher no distingue ese rechazo de otras fallas del arranque: registra el error y la acción no avanza ni se cierra sola. Por eso la copy no se rota mientras un scope con consentimiento tenga acciones pendientes: primero se dejan salir o vencer (o se cierran), y recién después se rota. La alternativa, comparar contra la copy que regía al planificar (el envío ya está en el binding), queda como decisión abierta.
+
+Riesgos que quedan: si el carrito de Hotmart llega antes que el formulario, la correlación queda `unmatched` y no se recalcula, así que ese carrito no entra; y `resolve_event` crea el contacto también para compradores fuera de la audiencia (ya pasaba, pero el volumen crece).
 
 ### 2.5 Presupuesto conservador
 
@@ -88,7 +115,7 @@ El cap total forma parte del cierre conservador de este diseño. La política co
 ### 2.6 Dos fronteras
 
 1. **Evaluación:** permite rechazar temprano admisión/planificación fuera de scope, sin consumir presupuesto.
-2. **Autorización de request-start:** revalida todo, exige cohorte y consume presupuesto atómicamente inmediatamente antes del efecto.
+2. **Autorización de request-start:** revalida todo, exige la audiencia de la versión (§2.4) y consume presupuesto atómicamente inmediatamente antes del efecto.
 
 Sólo la segunda habilita un efecto. Una evaluación positiva anterior no es un permiso durable para enviar después.
 
@@ -106,13 +133,17 @@ Estado mutable `inactive|armed|paused|closed`, versión activa y generación CAS
 
 Membresía auditable por contacto y versión, con estado `active|removed`.
 
+### `pilot_recovery_case_bindings`
+
+Vínculo inmutable de cada caso con `scope_key/version` y el evento admitido. Registra además `audience_mode` y `audience_purchase_intent_id`: con qué evidencia entró el caso (`manual_cohort` sin intención; los otros dos modos, con la intención).
+
 ### `pilot_outbound_request_authorizations`
 
 Ledger append-only de slots consumidos por `attempt_id`. Conserva action/contact, fecha local, versión y generación observada.
 
 ### `pilot_control_events`
 
-Auditoría append-only de activación, pausa, cierre e inscripción/retiro.
+Auditoría append-only de activación, pausa, cierre e inscripción/retiro. En `pilot_outbound_request_authorized`, fuera de `manual_cohort`, `data` suma `audience_mode` y `audience_purchase_intent_id`; en `manual_cohort` queda igual que antes (`local_budget_date`).
 
 ## 4. Reason codes mínimos
 
@@ -130,6 +161,10 @@ Evaluación y autorización devuelven un resultado tipado. Entre otros:
 - `pilot_product_mismatch`;
 - `pilot_offer_mismatch`;
 - `pilot_contact_not_in_cohort`;
+- `pilot_audience_intent_unresolved` (el evento no quedó correlacionado con una intención);
+- `pilot_audience_intent_scope_mismatch` (la intención no es del tenant, producto u oferta del evento y del scope, o su mapeo no está activo);
+- `pilot_audience_consented_intent_*`, el motivo de `_portable_consented_intent_reason` con el prefijo `pilot_audience_`: `not_found`, `not_live`, `not_authorized`, `phone_mismatch`, `binding_unavailable`, `submission_missing`, `input_invalid`;
+- `pilot_audience_input_invalid`;
 - `pilot_total_budget_exhausted`;
 - `pilot_daily_budget_exhausted`;
 - `pilot_attempt_mismatch`;
@@ -166,8 +201,8 @@ No modifica todavía los entrypoints centrales que el workstream de abandono pue
 3. Sólo una versión puede estar seleccionada por el control runtime.
 4. Cambiar versión exige pausa/inactividad y siempre deja el runtime `inactive`.
 5. `paused|closed|inactive` nunca autorizan un request nuevo.
-6. Un contacto no inscripto nunca consume presupuesto ni envía.
-7. El máximo de cohorte se aplica bajo el mismo lock del control.
+6. Un contacto fuera de la audiencia de su versión nunca consume presupuesto ni envía.
+7. El máximo de cohorte se aplica bajo el mismo lock del control (en los modos que usan la cohorte).
 8. Los caps total/diario se verifican y consumen en una transacción y no se reinician al cambiar versión.
 9. El replay del mismo `attempt_id` devuelve el resultado original sin consumir otro slot.
 10. Otro `attempt_id` no puede reutilizar la misma acción de forma incompatible.

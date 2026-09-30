@@ -281,21 +281,30 @@ def parse_lead_precheckout(
         return None
     price = Decimal(str(product_price))
     if config is JOHANNA_COMMERCIAL_ALLY:
+        expected_site = config.lead_site
         expected_offer_code = _JOHANNA_LANDING_OFFERS.get(landing_id)
+        expected_page_host = config.lead_page_host
         expected_page_path = f"/ldla/evg/vsl/{landing_id}"
     else:
-        expected_offer_code = config.offer_code
-        expected_page_path = config.lead_page_path
+        # Cada landing del binding con su oferta, su sitio, su host y su ruta:
+        # la por defecto (lead_*) y las de additional_offer_landings.
+        offer_landing = config.offer_landing(site, landing_id)
+        if offer_landing is None:
+            return None
+        expected_site = offer_landing.site
+        expected_offer_code = offer_landing.offer_code
+        expected_page_host = offer_landing.page_host
+        expected_page_path = offer_landing.page_path
     if (
         _ULID.fullmatch(delivery_id) is None
         or event.get("event") != "lead.precheckout"
         or contract_version not in _SUPPORTED_VERSIONS
         or source.get("system") != "landing"
-        or site != config.lead_site
+        or site != expected_site
         or aliado != config.lead_ally_name
         or expected_offer_code != offer_code
         or page.scheme != "https"
-        or page.netloc != config.lead_page_host
+        or page.netloc != expected_page_host
         or page.path != expected_page_path
         or bool(page.query)
         or bool(page.fragment)
