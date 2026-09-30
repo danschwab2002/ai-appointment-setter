@@ -94,6 +94,49 @@ Cada instancia tiene su base. Nunca se comparte con otra aliada.
 
 **Verificación prevista:** `/ready` da 200 con `instance_ally` igual a la aliada, `instance_product_version` igual a `producto` y, si el conocimiento está cargado, `commercial_knowledge` con su versión y hash.
 
+### Actualizar el bridge de una instancia que ya tiene la base sembrada
+
+El orden es siempre **migraciones → filas de la instancia → bridge → `/ready`**. La misma imagen corre en todas las instancias, así que el bridge nuevo llega a una base que puede no tener todavía lo que él espera. Un bridge viejo sobre una base migrada sigue andando (toma solo los campos que conoce); al revés no.
+
+**Caso `20260930000200` (landings por oferta, CHANGELOG 1.1.0).** Desde esa versión el manifiesto v2 declara la landing de cada oferta adicional y el bridge compara la fila del binding campo por campo. Una fila sembrada antes de la migración queda con `additional_offer_landings = []` y el bridge nuevo ve drift: `/ready` responde `503 commercial_ally_binding_unavailable` y, con `SLACK_CONNECTOR_PROJECTION_ENABLED=true`, el arranque falla. Pasos, con los valores de ATT1 (salen de `[[hotmart.ofertas]]` del manifiesto, en su orden):
+
+1. Aplicar la migración.
+2. Ver si la fila ya existe y cómo está:
+
+   ```sql
+   select binding_version, status, additional_offer_codes, additional_offer_landings
+   from public.commercial_ally_runtime_bindings
+   where tenant_ref = 'lancemos' and funnel_ref = 'att1';
+   ```
+
+   Si no hay fila, se siembra ya con las landings (el `aprovisionar-*.sql` de la instancia las tiene que incluir en el insert y en su verificación). Si hay una fila `active` con `additional_offer_landings = []`, se sigue con el paso 3.
+3. Completar las landings **en la misma fila**:
+
+   ```sql
+   begin;
+   update public.commercial_ally_runtime_bindings
+   set additional_offer_landings = '[
+         {"offer_code": "bmaztyhg", "site": "metodoraizana", "landing_id": "org-a",
+          "page_host": "www.metodoraizana.com", "page_path": "/att1/evg/vsl/org-a"},
+         {"offer_code": "2uafw5bg", "site": "metodoraizana-mx", "landing_id": "alimenta-tu-tiroides-d",
+          "page_host": "site.metodoraizana.com.mx", "page_path": "/alimenta-tu-tiroides-d"}
+       ]'::jsonb,
+       updated_at = now()
+   where tenant_ref = 'lancemos'
+     and funnel_ref = 'att1'
+     and binding_version = 1
+     and status = 'active'
+     and additional_offer_codes = array['bmaztyhg', '2uafw5bg']::text[]
+     and additional_offer_landings = '[]'::jsonb;
+   commit;
+   ```
+
+   **Verificación:** dice `UPDATE 1`. `UPDATE 0` quiere decir que la fila no es la esperada (otras ofertas, otro orden, landings ya cargadas): no se sigue, se mira la fila. El check `commercial_ally_runtime_bindings_offer_landings_shape` rechaza una lista con otra forma. Correrlo dos veces no cambia nada.
+4. Desplegar el bridge.
+5. **Verificación:** `/ready` da 200 con `commercial_ally_binding: "active"`. Un 503 `commercial_ally_binding_unavailable` es drift: la fila y el manifiesto no coinciden en algún campo.
+
+**Por qué se completa la fila y no se publica un `binding_version` nuevo.** Los eventos ya admitidos guardan su `binding_version` en la procedencia (`commercial_ally_hotmart_event_bindings`), y las RPC de planificación exigen que esa versión siga `active`; la política de compra (`commercial_ally_hotmart_purchase_policies`) también va por versión. Retirar la versión 1 dejaría sin planificar lo que ya entró. Completar las landings solo agrega: ninguna intención ni evento se validó contra ellas (antes el formulario de esas landings se rechazaba). Lo que no se toca una vez publicado son los valores de negocio (producto, precio, ofertas, consentimiento).
+
 ## 10. Chatwoot: AgentBot y webhook
 
 > Pendiente. Un AgentBot conectado solo al inbox de la aliada, y el webhook de su cuenta apuntando al bridge de la instancia.
