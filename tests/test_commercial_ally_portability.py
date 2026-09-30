@@ -240,8 +240,9 @@ LEGACY_ONLY_CAPABILITIES = {
     "johanna_abandonment_hotmart_auto_enabled",
     "johanna_payment_failure_hotmart_enabled",
     "johanna_payment_failure_outbound_enabled",
-    # El saludo por primer nombre solo esta cableado en los caminos de Johanna.
-    "lead_first_name_greeting_enabled",
+    # La inferencia del primer nombre corre al admitir el formulario de Johanna.
+    # El saludo (lead_first_name_greeting_enabled) dejo de estar aca con A4: en
+    # un runtime portable lo usa el dispatcher en modo plantilla directa.
     "lead_first_name_inference_enabled",
     # El seguimiento con cupon reserva el link con el catalogo de ofertas de
     # Johanna (20260928000400): en un runtime portable tiene que frenar.

@@ -178,6 +178,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     "worker_enabled",
     "dispatcher_enabled",
     "dispatcher_outbound_enabled",
+    # El dispatcher manda la plantilla aprobada del catalogo sin pedirle
+    # borrador a Hermes; lo especifico (nombre, idioma, variables) sale de
+    # [plantillas] del manifiesto.
+    "dispatcher_approved_template_direct_enabled",
     "meta_final_effect_enabled",
     "chatwoot_durable_opt_out_enabled",
     "human_handoff_projection_enabled",
@@ -196,6 +200,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # Transcribir un audio no depende del aliado: la key y el host de Chatwoot
     # ya son configuracion por runtime.
     "chatwoot_audio_transcription_enabled",
+    # Saludar por el primer nombre no depende del aliado: la regla
+    # deterministica y las inferencias guardadas son del producto. En un
+    # runtime portable solo lo usa el dispatcher en modo plantilla directa.
+    "lead_first_name_greeting_enabled",
 })
 
 DEFAULT_SENSITIVE_SUBJECTS = (
@@ -470,6 +478,9 @@ class Settings:
     dispatcher_poll_interval_seconds: float = 5.0
     dispatcher_batch_size: int = 10
     dispatcher_outbound_enabled: bool = False
+    # The dispatcher sends the approved template of the Chatwoot catalog without
+    # a Hermes draft (docs/contracts/approved-template-direct-dispatch-v1.md).
+    dispatcher_approved_template_direct_enabled: bool = False
     meta_final_effect_enabled: bool = False
     meta_final_effect_evidence_dir: Path = Path("./data/meta-final-effect-gate")
     chatwoot_durable_opt_out_enabled: bool = False
@@ -943,6 +954,10 @@ class Settings:
         dispatcher_outbound_enabled = (
             os.getenv("DURABLE_OUTBOUND_ENABLED", "false").lower() == "true"
         )
+        dispatcher_approved_template_direct_enabled = (
+            os.getenv("DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED", "false").lower()
+            == "true"
+        )
         meta_final_effect_value = os.getenv(
             "META_FINAL_EFFECT_ENABLED", "false"
         ).strip().lower()
@@ -1334,6 +1349,9 @@ class Settings:
             dispatcher_poll_interval_seconds=dispatcher_poll_interval_seconds,
             dispatcher_batch_size=dispatcher_batch_size,
             dispatcher_outbound_enabled=dispatcher_outbound_enabled,
+            dispatcher_approved_template_direct_enabled=(
+                dispatcher_approved_template_direct_enabled
+            ),
             meta_final_effect_enabled=meta_final_effect_enabled,
             meta_final_effect_evidence_dir=meta_final_effect_evidence_dir,
             chatwoot_durable_opt_out_enabled=chatwoot_durable_opt_out_enabled,
@@ -1982,6 +2000,53 @@ def _waba_template_config(settings: Settings) -> WhatsAppTemplateConfig | None:
     )
 
 
+def _validate_approved_template_direct(
+    settings: Settings,
+    *,
+    waba_template: WhatsAppTemplateConfig | None,
+    portable_dynamic_recipient: bool,
+) -> None:
+    """Startup gates of the direct mode and of the final Meta effect with a manifest.
+
+    The direct mode only exists for an instance manifest with the durable WABA
+    outbound and a portable recovery flow. With a manifest, the final Meta
+    effect of the durable outbound requires it: in the Hermes mode the draft
+    never reaches Meta and the shared SOUL forbids the agent from writing
+    first, so there is nothing valid to send
+    (docs/contracts/approved-template-direct-dispatch-v1.md).
+    """
+    if settings.dispatcher_approved_template_direct_enabled:
+        if settings.instance_manifest is None:
+            raise ValueError(
+                "DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED requires an instance manifest"
+            )
+        if not settings.dispatcher_outbound_enabled:
+            raise ValueError(
+                "DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED requires "
+                "DURABLE_OUTBOUND_ENABLED"
+            )
+        if settings.pilot_channel_provider != "waba" or waba_template is None:
+            raise ValueError(
+                "DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED requires the waba "
+                "provider and its approved templates"
+            )
+        if not portable_dynamic_recipient:
+            raise ValueError(
+                "DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED requires a portable "
+                "recovery flow"
+            )
+    if (
+        settings.instance_manifest is not None
+        and settings.meta_final_effect_enabled
+        and settings.dispatcher_outbound_enabled
+        and not settings.dispatcher_approved_template_direct_enabled
+    ):
+        raise ValueError(
+            "META_FINAL_EFFECT_ENABLED with DURABLE_OUTBOUND_ENABLED and an "
+            "instance manifest requires DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED"
+        )
+
+
 def create_app(
     settings: Settings,
     *,
@@ -2254,6 +2319,11 @@ def create_app(
             "DURABLE_OUTBOUND_ENABLED requires LANCEMOS_PILOT_BOUNDARY_ENABLED"
         )
     waba_template = _waba_template_config(settings)
+    _validate_approved_template_direct(
+        settings,
+        waba_template=waba_template,
+        portable_dynamic_recipient=portable_dynamic_recipient,
+    )
     pilot_boundary = (
         PilotBoundaryConfig(
             scope_key=settings.pilot_scope_key,  # type: ignore[arg-type]
@@ -2831,10 +2901,13 @@ def create_app(
             settings.chatwoot_cut_b_admission_enabled
             and settings.chatwoot_cut_b_agent_enabled
         )
+        # In the direct mode the dispatcher never asks Hermes, so it never
+        # receives a handoff suggestion and does not consume the admission.
         dispatcher_handoff_enabled = (
             settings.dispatcher_enabled
             and settings.dispatcher_outbound_enabled
             and settings.pilot_boundary_enabled
+            and not settings.dispatcher_approved_template_direct_enabled
         )
         if not settings.human_handoff_projection_enabled or not (
             inbound_handoff_enabled or dispatcher_handoff_enabled
@@ -3058,10 +3131,14 @@ def create_app(
             raise ValueError("DURABLE_DISPATCHER_BATCH_SIZE must be between 1 and 100")
         outbound_agent: RecoveryAgentClient | None = None
         outbound_sender: MessageSender | None = None
+        approved_template_direct = settings.dispatcher_approved_template_direct_enabled
         if settings.dispatcher_outbound_enabled:
-            outbound_agent = recovery_agent_client
+            # In the direct mode the dispatcher sends the approved template and
+            # never asks Hermes for a draft, so Hermes is not a dependency.
+            outbound_agent = None if approved_template_direct else recovery_agent_client
             if (
-                outbound_agent is None
+                not approved_template_direct
+                and outbound_agent is None
                 and settings.hermes_api_base_url is not None
                 and settings.hermes_api_key is not None
             ):
@@ -3091,7 +3168,9 @@ def create_app(
                     dynamic_recipient_enabled=portable_dynamic_recipient,
                     template=waba_template,
                 )
-            if outbound_agent is None or outbound_sender is None:
+            if outbound_sender is None or (
+                outbound_agent is None and not approved_template_direct
+            ):
                 raise ValueError(
                     "durable outbound requires Hermes and sender dependencies"
                 )
@@ -3119,6 +3198,7 @@ def create_app(
             chatwoot_inbox_id=settings.chatwoot_inbox_id,
             human_handoff_admission_enabled=(
                 settings.human_handoff_admission_enabled
+                and not approved_template_direct
             ),
             handoff_projection_policy_key=settings.handoff_projection_policy_key,
             handoff_projection_policy_version=(
@@ -3134,6 +3214,11 @@ def create_app(
                 else None
             ),
             waba_template=waba_template,
+            approved_template_direct=approved_template_direct,
+            lead_first_name_greeting_enabled=(
+                settings.lead_first_name_greeting_enabled
+                and approved_template_direct
+            ),
         )
 
     opt_out_projection_worker: OptOutProjectionWorker | None = None

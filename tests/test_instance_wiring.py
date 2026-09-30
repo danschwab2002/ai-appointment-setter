@@ -395,6 +395,118 @@ def test_matching_waba_template_variables_build_with_the_manifest() -> None:
     assert create_app(_settings(manifest, **_WABA_OUTBOUND)) is not None
 
 
+# ------------------------------------------- plantilla aprobada sin Hermes (A4)
+
+
+_DIRECT = {
+    **_WABA_OUTBOUND,
+    "portable_hotmart_recovery_enabled": True,
+    "dispatcher_approved_template_direct_enabled": True,
+}
+
+
+def test_from_env_reads_the_direct_mode_default_off(
+    monkeypatch: pytest.MonkeyPatch, instance: Path
+) -> None:
+    _environment(monkeypatch, INSTANCE_MANIFEST_PATH=str(instance / "instancia.toml"))
+    monkeypatch.delenv("DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED", raising=False)
+
+    assert Settings.from_env().dispatcher_approved_template_direct_enabled is False
+
+    monkeypatch.setenv("DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED", "true")
+
+    assert Settings.from_env().dispatcher_approved_template_direct_enabled is True
+
+
+def test_direct_mode_with_its_flow_builds() -> None:
+    assert create_app(_settings(_att1_manifest(carrito=True), **_DIRECT)) is not None
+
+
+def test_direct_mode_requires_an_instance_manifest() -> None:
+    # Johanna corre sin manifiesto: el modo directo no se le puede prender.
+    settings = replace(
+        Settings(
+            webhook_secret="test-secret",
+            allowed_jid="12025550123@s.whatsapp.net",
+            capture_dir=Path("/tmp/instance-wiring-captures"),
+            max_age_seconds=300,
+        ),
+        **{**_WABA_OUTBOUND, "dispatcher_approved_template_direct_enabled": True},
+    )
+
+    with pytest.raises(ValueError, match="requires an instance manifest"):
+        create_app(settings)
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ({"dispatcher_outbound_enabled": False}, "requires DURABLE_OUTBOUND_ENABLED"),
+        ({"portable_hotmart_recovery_enabled": False}, "requires a portable recovery flow"),
+    ],
+)
+def test_direct_mode_requires_the_durable_waba_outbound_of_a_portable_flow(
+    override: dict[str, object], message: str
+) -> None:
+    settings = _settings(_att1_manifest(carrito=True), **{**_DIRECT, **override})
+
+    with pytest.raises(ValueError, match=message):
+        create_app(settings)
+
+
+def test_final_meta_effect_of_the_durable_outbound_requires_the_direct_mode() -> None:
+    # Sin el modo directo el texto sale de un borrador de Hermes, que nunca llega
+    # a Meta y que el SOUL comun prohibe: con manifiesto no se abre el gate.
+    settings = _settings(
+        _att1_manifest(carrito=True),
+        **{
+            **_DIRECT,
+            "dispatcher_approved_template_direct_enabled": False,
+            "meta_final_effect_enabled": True,
+        },
+    )
+
+    with pytest.raises(ValueError, match="requires DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED"):
+        create_app(settings)
+
+
+def test_final_meta_effect_with_the_direct_mode_builds() -> None:
+    settings = _settings(
+        _att1_manifest(carrito=True), **{**_DIRECT, "meta_final_effect_enabled": True}
+    )
+
+    assert create_app(settings) is not None
+
+
+def test_the_greeting_is_a_portable_capability() -> None:
+    # Hasta A4 un runtime portable rechazaba LEAD_FIRST_NAME_GREETING_ENABLED al
+    # arrancar.
+    settings = _settings(
+        _att1_manifest(carrito=True), **{**_DIRECT, "lead_first_name_greeting_enabled": True}
+    )
+
+    assert create_app(settings) is not None
+
+
+def test_the_direct_dispatcher_does_not_consume_the_handoff_admission() -> None:
+    # La admision de derivacion necesita quien la consuma: el Corte B o un
+    # dispatcher que le pregunte a Hermes. El modo directo no le pregunta.
+    settings = _settings(
+        _att1_manifest(carrito=True),
+        **{
+            **_DIRECT,
+            "dispatcher_enabled": True,
+            "human_handoff_admission_enabled": True,
+            "human_handoff_projection_enabled": True,
+            "handoff_projection_policy_key": "att1-derivacion",
+            "handoff_projection_policy_version": 1,
+        },
+    )
+
+    with pytest.raises(ValueError, match="HUMAN_HANDOFF_ADMISSION_ENABLED requires"):
+        create_app(settings)
+
+
 # ------------------------------------------------------------------ readiness
 
 

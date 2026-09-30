@@ -88,7 +88,7 @@ carrito = { nombre = "att1_carrito_abandonado_01", idioma = "es_MX", parametros 
 
 - Van una o dos variables, sin repetir. `["nombre"]` llena solo `{{1}}`; `["producto", "nombre"]` pone el producto en `{{1}}` y el nombre en `{{2}}`.
 - Sin `parametros` vale `["nombre", "producto"]`, que es lo que el bridge manda hoy.
-- La lista tiene que coincidir con el cuerpo aprobado en Meta: si la plantilla tiene una sola variable y se le mandan dos, Meta puede rechazar el envío. El bridge no lo verifica contra el catálogo al arrancar.
+- La lista tiene que coincidir con el cuerpo aprobado en Meta: si la plantilla tiene una sola variable y se le mandan dos, Meta puede rechazar el envío. El bridge no lo verifica contra el catálogo al arrancar. Con `DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED=true` el dispatcher lo verifica en cada envío: lee el catálogo del inbox y, si los marcadores del cuerpo no son exactamente los declarados, no manda y deja `approved_template_mismatch` ([approved-template-direct-dispatch-v1.md](contracts/approved-template-direct-dispatch-v1.md)).
 - Si una variable declarada llega vacía (un carrito sin nombre), el envío se bloquea con `template_parameters_missing`. Una variable que la plantilla no declara no se exige.
 - Hoy el bridge usa las de `carrito` y `pago_fallido`. Las de `precheckout` se validan pero todavía no las lee nadie: las va a usar el primer contacto del formulario.
 - `reactivacion` y `descuento` arman sus variables en su propio código: `parametros` ahí no carga.
