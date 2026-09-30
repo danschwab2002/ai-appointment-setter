@@ -438,6 +438,23 @@ def test_an_unknown_landing_is_rejected(url: str) -> None:
     assert (rejection.reason, rejection.status_code) == ("landing_unknown", 422)
 
 
+def test_a_url_with_only_utm_id_has_utm() -> None:
+    # El utm_id real de -d en la URL de ads-a: no es una de las cinco UTM del evento,
+    # pero cuenta como UTM para el sck (E02) y para has_utm, que va al log.
+    utm_id = re.search(
+        r"[?&]utm_id=([0-9]+)", _editor()["contact"]["lastAttributionSource"]["url"]
+    ).group(1)
+    assert utm_id == "120250442190930484"
+    body = _ads_a_with_url(f"https://www.metodoraizana.com/att1/evg/vsl/ads-a?utm_id={utm_id}")
+
+    translation = _translate(body)
+    attribution = translation.event["data"]["attribution"]
+
+    assert translation.has_utm is True
+    assert attribution["sck"] == f"~~~~~{utm_id}"
+    assert [attribution[f"utm_{field}"] for field in ("source", "medium", "campaign", "content", "term")] == [""] * 5
+
+
 def _att1_with_offer_url(landing_id: str, url: str) -> InstanceManifest:
     payload = tomllib.loads(ATT1_TOML.read_text(encoding="utf-8"))
     payload["eventos"] = [*payload["eventos"], "intencion"]
