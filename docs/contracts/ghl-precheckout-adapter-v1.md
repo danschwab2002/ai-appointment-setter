@@ -125,11 +125,11 @@ El adaptador no valida el alfabeto ni el largo. La emisión del link descarta un
 | HTTP | Cuándo |
 |---|---|
 | `200` | `received`, `duplicate` o `conflict`, con el cuerpo de `/webhooks/lead`: `status`, `delivery_id`, `purchase_intent_id`, `activation_authorized = false`, `contact_authorized = false` |
-| `400` | JSON inválido, una clave repetida, `Content-Type` distinto, o faltan `contact_id`, `email`, `phone` o el nombre (`ghl_invalid_payload`) |
-| `401` | Token ausente o distinto |
-| `413` | Cuerpo mayor a 64 KiB |
+| `400` | JSON inválido (`ghl_invalid_json`); una clave repetida, un cuerpo que no es un objeto, o faltan `contact_id`, `email`, `phone` o el nombre (`ghl_invalid_payload`); `Content-Type` distinto (`invalid_ghl_transport`) |
+| `401` | Token ausente o distinto (`invalid_adapter_token`) |
+| `413` | Cuerpo mayor a 64 KiB (`ghl_adapter_body_too_large`) |
 | `422` | `ghl_not_a_form_submission`, `ghl_form_not_allowed`, `ghl_landing_unknown`, `ghl_landing_ambiguous`, `ghl_phone_unusable` o `ghl_translation_rejected`. Ninguno toca la base |
-| `503` | Adaptador apagado, base no configurada o admisión no disponible |
+| `503` | Adaptador apagado (`ghl_precheckout_adapter_not_enabled`), base no configurada (`supabase_not_configured`) o admisión no disponible (`ghl_precheckout_persist_unavailable`) |
 
 ## Reintentos
 
@@ -141,7 +141,7 @@ El costo es que la base no distingue un reintento de un segundo envío del mismo
 
 ## Logs
 
-Una línea por pedido: resultado, motivo, id del formulario, landing, oferta, `delivery_id`, región del teléfono (también en `ghl_phone_unusable`) y si hubo UTM o fbclid. Nunca el nombre, el email, el teléfono, la IP, el `userAgent`, `contact_id`, el `fbclid`, `fbEventId`, la query, el token ni el cuerpo.
+Una línea por pedido: resultado, motivo, id del formulario, landing, oferta, `delivery_id`, región del teléfono (también en `ghl_phone_unusable`) y si hubo UTM o fbclid. Un envío que no queda admitido (toda respuesta distinta de `200`, salvo el adaptador apagado) sale como warning: el bridge no configura logging, y bajo uvicorn solo los warnings llegan a la salida del contenedor. La admisión sale como info. Nunca el nombre, el email, el teléfono, la IP, el `userAgent`, `contact_id`, el `fbclid`, `fbEventId`, la query, el token ni el cuerpo.
 
 ## Riesgos
 
