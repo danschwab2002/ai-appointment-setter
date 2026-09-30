@@ -740,6 +740,10 @@ def test_an_email_with_what_cannot_be_stored_is_a_400_not_another_address(email:
         # Valido para phonenumbers y para el parser, pero de 7 digitos: la RPC exige
         # identity.phone de 8 a 15 (22023 en cada entrega, que seria un 503).
         ("+6834002", "NU"),
+        # No geografico: valido para phonenumbers, con region "001", que no es un
+        # pais ISO para checkout_country. El log lleva esa region: no es un dato
+        # del lead y dice por que se rechazo.
+        ("+80012345678", "001"),
     ],
     ids=[
         "ar-truncado",
@@ -749,6 +753,7 @@ def test_an_email_with_what_cannot_be_stored_is_a_400_not_another_address(email:
         "521-con-11-digitos",
         "it-largo",
         "nu-de-7-digitos",
+        "no-geografico",
     ],
 )
 def test_an_unusable_phone_is_a_422_with_its_region(phone: str, region: str) -> None:
