@@ -427,6 +427,74 @@ def test_a_name_with_whitespace_meta_refuses_goes_out_collapsed(tmp_path: Path) 
     assert authority.acceptances[0]["message_content"] == expected
 
 
+# Una plantilla de una sola variable (parametros = ["nombre"]): el ejemplo de la
+# documentacion y el caso probable de ATT1. La unica captura con un solo
+# marcador es johanna_reactivacion_01 (catalogo del inbox 9 del 23/09), servida
+# bajo el inbox 11 como el resto del archivo.
+ONE_VARIABLE_CATALOG: list[dict[str, Any]] = json.loads(
+    (FIXTURES / "chatwoot_inbox_9_message_templates_20260923.json").read_text(
+        encoding="utf-8"
+    )
+)["message_templates"]
+ONE_VARIABLE_TEMPLATE = "johanna_reactivacion_01"
+ONE_VARIABLE = replace(
+    TEMPLATE,
+    first_touch_name=ONE_VARIABLE_TEMPLATE,
+    first_touch_body_parameters=("nombre",),
+)
+
+
+def _one_variable_body() -> str:
+    [template] = [t for t in ONE_VARIABLE_CATALOG if t["name"] == ONE_VARIABLE_TEMPLATE]
+    [body] = [c["text"] for c in template["components"] if c["type"] == "BODY"]
+    return body
+
+
+def test_a_one_variable_template_sends_only_its_variable_end_to_end(
+    tmp_path: Path,
+) -> None:
+    [case] = [c for c in LEAD_NAMES if c["pattern"] == "all lowercase"]
+    authority = _Authority(buyer_name=case["full_name"])
+    chatwoot = _Chatwoot(ONE_VARIABLE_CATALOG)
+
+    _run(_dispatcher(authority, chatwoot, tmp_path, greeting=True, template=ONE_VARIABLE))
+
+    body = _one_variable_body()
+    assert body.count("{{1}}") == 1 and "{{2}}" not in body
+    expected = body.replace("{{1}}", case["deterministic"])
+    [message] = chatwoot.posts("/conversations/200/messages")
+    assert message["template_params"] == {
+        "name": ONE_VARIABLE_TEMPLATE,
+        "category": "MARKETING",
+        "language": "es_EC",
+        "processed_params": {"body": {"1": case["deterministic"]}},
+    }
+    assert message["content"] == expected
+    assert authority.acceptances[0]["message_content"] == expected
+    assert authority.events[-1] == "accepted"
+
+
+def test_the_closed_gate_hashes_the_one_variable_text(tmp_path: Path) -> None:
+    [case] = [c for c in LEAD_NAMES if c["pattern"] == "all lowercase"]
+    authority = _Authority(buyer_name=case["full_name"])
+    chatwoot = _Chatwoot(ONE_VARIABLE_CATALOG)
+
+    _run(
+        _dispatcher(
+            authority, chatwoot, tmp_path,
+            gate_open=False, greeting=True, template=ONE_VARIABLE,
+        )
+    )
+
+    rendered = _one_variable_body().replace("{{1}}", case["deterministic"])
+    assert chatwoot.posts("/messages") == []
+    assert authority.finalizations[-1]["reason_code"] == "final_meta_gate_closed"
+    [evidence_file] = (tmp_path / "meta-effects").glob("*.json")
+    evidence = json.loads(evidence_file.read_text())
+    assert evidence["content_sha256"] == hashlib.sha256(rendered.encode()).hexdigest()
+    assert evidence["template_name"] == ONE_VARIABLE_TEMPLATE
+
+
 def _payment_failure_as_utility() -> list[dict[str, Any]]:
     # El catalogo capturado con la plantilla del pago fallido aprobada como
     # UTILITY y la del carrito como MARKETING: la categoria de ATT1 es un dato
