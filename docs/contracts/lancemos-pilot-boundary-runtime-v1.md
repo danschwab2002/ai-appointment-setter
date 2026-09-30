@@ -33,6 +33,8 @@ La RPC recibe el contrato existente de planificación, la identidad Chatwoot res
 
 Un rechazo usa SQLSTATE `55000`, mensaje `pilot_scope_rejected` y un `detail` reason code. La transacción no deja casos, secuencias ni acciones parciales.
 
+El bridge copia ese rechazo a `webhook_events.processing_error` (estado `failed`) como `mensaje:detail`, o solo `mensaje` cuando el SQL no manda `detail` (por ejemplo `payment_failure_correlation_unresolved` de `plan_portable_payment_failure_recovery`). Solo lo hace para `plan_lancemos_pilot_cart_recovery` y `plan_portable_payment_failure_recovery`, y solo si el mensaje y el `detail` son tokens `snake_case`; cualquier otra falla sigue quedando como `create_recovery_case_failed`.
+
 Los RPC históricos de planificación no tienen `EXECUTE` para roles API después de esta migración.
 
 ## 3. Request-start

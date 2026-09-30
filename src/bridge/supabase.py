@@ -125,6 +125,53 @@ _OPERATOR_CORRELATION_RESOLUTION_ERRORS = frozenset(
 )
 
 
+class PilotPlanRejectedError(SupabaseError):
+    """Fail-closed domain rejection from a pilot-scoped planning RPC.
+
+    ``reason`` keeps what the SQL raised with SQLSTATE 55000: the message
+    alone (``payment_failure_correlation_unresolved``) or the message and its
+    detail (``pilot_scope_rejected:pilot_contact_not_in_cohort``). Without it
+    every rejection of the pilot boundary was recorded as the same generic
+    planning failure and the reason was lost.
+    """
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
+
+
+_PILOT_PLAN_REJECTION_SQLSTATE = "55000"
+# Only snake_case tokens are copied into webhook_events.processing_error: the
+# reasons raised by the pilot planners are fixed literals, and anything else
+# (free text, a phone, a quote from the payload) must not reach that column.
+_PILOT_PLAN_REJECTION_TOKEN = re.compile(r"[a-z][a-z_]{0,79}")
+
+
+def _pilot_plan_rejection(response: httpx.Response) -> str | None:
+    """Return the rejection reason of a pilot planner, or None if unknown."""
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    if not isinstance(body, dict):
+        return None
+    if body.get("code") != _PILOT_PLAN_REJECTION_SQLSTATE:
+        return None
+    message = body.get("message")
+    if not isinstance(message, str) or not _PILOT_PLAN_REJECTION_TOKEN.fullmatch(
+        message
+    ):
+        return None
+    details = body.get("details")
+    if details is None:
+        return message
+    if not isinstance(details, str) or not _PILOT_PLAN_REJECTION_TOKEN.fullmatch(
+        details
+    ):
+        return None
+    return f"{message}:{details}"
+
+
 def _raise_operator_correlation_resolution_error(
     response: httpx.Response, *, operation: str
 ) -> None:
@@ -4682,6 +4729,10 @@ class SupabaseClient:
             content=body,
         )
         if response.status_code != 200:
+            if rpc_name == "plan_lancemos_pilot_cart_recovery":
+                rejection = _pilot_plan_rejection(response)
+                if rejection is not None:
+                    raise PilotPlanRejectedError(rejection)
             raise SupabaseError(
                 f"plan_cart_recovery_failed: HTTP {response.status_code}"
             )
@@ -4752,6 +4803,9 @@ class SupabaseClient:
             }, ensure_ascii=False),
         )
         if response.status_code != 200:
+            rejection = _pilot_plan_rejection(response)
+            if rejection is not None:
+                raise PilotPlanRejectedError(rejection)
             raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
         rows = _response_rows(response, operation=operation)
         if len(rows) != 1:
