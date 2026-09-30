@@ -99,7 +99,7 @@ Hay dos capturas del 2026-09-29, anonimizadas, en `tests/fixtures/ghl/`. Cada un
 
 ### Móviles de México con `+521`
 
-México dejó de marcar el `1` de los móviles en 2019, y `phonenumbers` 9.0.37 da inválido un `+521` seguido de 10 dígitos (y válido el mismo número sin el `1`). Antes de validar, `+521` seguido de exactamente 10 dígitos pasa a `+52` seguido de esos 10. Es traducción de formato, no una decisión comercial: sin ella, un lead mexicano guardado así por GHL se perdería entero con `422`. Ningún otro prefijo se reescribe.
+México dejó de marcar el `1` de los móviles en 2019, y `phonenumbers` 9.0.37 da inválido un `+521` seguido de 10 dígitos (y válido el mismo número sin el `1`). Antes de validar, `+521` seguido de exactamente 10 dígitos pasa a `+52` seguido de esos 10. Es traducción de formato, no una decisión comercial: sin ella, un lead mexicano guardado así por GHL se perdería entero con `422`. Ningún otro prefijo se reescribe. Las otras fuentes del mismo teléfono no normalizan: ver [Riesgos](#riesgos).
 
 ### El `sck`
 
@@ -155,6 +155,7 @@ Una línea por pedido: resultado, motivo, id del formulario, landing, oferta, `d
   - la aceptación explícita del riesgo por el responsable de la instancia, por escrito.
 
   Ninguna de las dos es parte de este contrato v1. La parte del manifiesto la hace cumplir el arranque: con el adaptador prendido, el bridge no arranca si `[flujos].precheckout` está en `true`, y `validate` lo avisa. Levantar esa guarda es el cambio de código que trae la verificación, o el que cita la aceptación escrita. La audiencia `consented_intent` vive en el scope del piloto en la base, fuera de lo que el bridge ve al arrancar: esa parte de la condición no la hace cumplir ningún código.
+- **El móvil mexicano normalizado no cruza con las fuentes que no normalizan.** La intención de un `+521…` queda con `normalized_phone = 52…`, sin el `1`. Hotmart guarda los dígitos tal cual (`hotmart.normalize_phone`), y el número de WhatsApp de ATT1 figura en Chatwoot con el `1` (`+5217296521530`, medido el 2026-09-28, cabecera del manifiesto de la instancia). El permiso del pago fallido y la audiencia comparan el teléfono exacto (`_portable_consented_intent_reason`, migración `20260930000100`): si Hotmart o el contacto de WhatsApp traen el mismo móvil con el `1`, la intención admitida por el adaptador da `consented_intent_phone_mismatch` y ese lead se queda sin el contacto, sin aviso. No es peor que sin normalizar (el lead se perdía entero con `422`), pero la normalización no es neutra. Se mide en el E2E de F4.
 - **El contacto que vuelve.** La admisión reusa la intención viva sin actualizar `purchase_intents.submitted_at`, y la correlación del pago filtra por esa fecha (migración `20260820000100`). Un contacto que vuelve a enviar el formulario después de `max_lookback`, con una intención viva, no correlaciona. Es del producto y le pasa igual a una landing directa; el adaptador no lo empeora ni lo arregla.
 
 ## Prueba de conformidad
@@ -175,6 +176,6 @@ Es la condición para prenderlo.
 - Si todo envío real trae `attributionSource` de primer nivel: hay uno medido.
 - Si la acción *Webhook* estándar acepta headers.
 - Cuándo reintenta GHL y ante qué códigos.
-- Con qué forma guarda GHL los móviles de México (`+52` o `+521`): la única captura mexicana viene sin el `1`.
+- Con qué forma guarda GHL los móviles de México (`+52` o `+521`): la única captura mexicana viene sin el `1`. Tampoco cómo llega ese mismo móvil en el pago fallido de Hotmart y en el contacto de WhatsApp (ver [Riesgos](#riesgos)).
 - Qué hace el formulario después del envío: si abre el checkout.
 - Si el formulario `Om5FpIg5Sr5ce7nSkuPy` (landing `-d`) muestra la aclaración de `att1-whatsapp-contact-v1`.
