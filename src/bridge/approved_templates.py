@@ -33,6 +33,11 @@ REASON_MISMATCH = "approved_template_mismatch"
 REASON_PARAMETERS_MISSING = "template_parameters_missing"
 
 _PLACEHOLDER_RE = re.compile(r"\{\{(\d+)\}\}")
+# Meta refuses a body parameter with a new line, a tab or more than four
+# consecutive spaces (error 132018), after the request has started. The values
+# the bridge builds are already collapsed (messaging.WhatsAppTemplateConfig.
+# body_values); render() refuses anything else before the final gate.
+_META_INVALID_PARAMETER_RE = re.compile(r"[\n\r\t]| {5,}")
 # Components the send can carry with only body parameters. A static header or
 # footer needs nothing; a quick reply button needs no parameter either.
 _STATIC_COMPONENTS = frozenset({"HEADER", "FOOTER"})
@@ -60,8 +65,9 @@ class ApprovedTemplate:
     def render(self, values: Mapping[str, str]) -> str:
         """The text Meta will show: the approved body with its variables filled.
 
-        ``values`` must carry exactly ``"1"`` to ``"n"``, none empty: an empty
-        variable makes Meta reject the send. The substitution is one pass, so a
+        ``values`` must carry exactly ``"1"`` to ``"n"``, none empty and none
+        with a new line, a tab or more than four consecutive spaces: Meta
+        rejects the send for any of them. The substitution is one pass, so a
         value that contains ``{{2}}`` is not substituted again.
         """
         expected = {str(position) for position in range(1, self.parameter_count + 1)}
@@ -70,6 +76,10 @@ class ApprovedTemplate:
         for value in values.values():
             if not isinstance(value, str) or not value.strip():
                 raise ApprovedTemplateError(REASON_PARAMETERS_MISSING, "empty_parameter")
+            if _META_INVALID_PARAMETER_RE.search(value):
+                raise ApprovedTemplateError(
+                    REASON_PARAMETERS_MISSING, "invalid_parameter_whitespace"
+                )
         rendered = _PLACEHOLDER_RE.sub(lambda match: values[match.group(1)], self.body)
         if len(rendered) > APPROVED_TEMPLATE_BODY_MAX_CHARS:
             raise ApprovedTemplateError(REASON_MISMATCH, "rendered_body_too_long")

@@ -46,7 +46,7 @@ La reevaluación, la reserva del intento, el chequeo del destinatario, la segund
 
 1. **Solo `first_contact_review`.** Cualquier otra acción (un seguimiento `no_reply_review`) se cierra con `approved_template_direct_unsupported_action`, sin consultar a nadie y sin reintento.
 2. **La plantilla** se elige como hasta ahora: la de `pago_fallido` si la acción viene de un pago fallido y hay una propia, si no la de `carrito`.
-3. **Las variables** salen de `parametros` de esa plantilla en el manifiesto ([referencia-manifiesto.md](../referencia-manifiesto.md#plantillas)). Si el runtime no las tiene declaradas (el flujo está en `false`), el intento se cierra con `approved_template_mismatch`: el dispatcher no adivina el cuerpo. Si una variable declarada llega vacía (sin nombre o sin producto), se cierra con `template_parameters_missing` antes de leer el catálogo.
+3. **Las variables** salen de `parametros` de esa plantilla en el manifiesto ([referencia-manifiesto.md](../referencia-manifiesto.md#plantillas)). Si el runtime no las tiene declaradas (el flujo está en `false`), el intento se cierra con `approved_template_mismatch`: el dispatcher no adivina el cuerpo. Si una variable declarada llega vacía (sin nombre o sin producto), se cierra con `template_parameters_missing` antes de leer el catálogo. Cada valor sale con los espacios colapsados (`WhatsAppTemplateConfig.body_values`): Meta rechaza (132018) un parámetro con salto de línea, tabulación o más de cuatro espacios seguidos, y lo rechaza después de empezado el pedido. El texto hasheado y `processed_params` salen de esos mismos valores; el contacto de Chatwoot conserva el nombre tal como llegó.
 4. **El saludo.** Con `LEAD_FIRST_NAME_GREETING_ENABLED=true`, `nombre` es `resolve_greeting_name(nombre completo)`: la inferencia `confident` guardada si hay, si no el primer nombre determinístico, si no el nombre completo. El contacto de Chatwoot se sigue creando con el nombre completo.
 5. **El catálogo** se lee en cada envío (`GET /api/v1/accounts/{cuenta}/inboxes/{inbox}`) con el token de control, igual que la reactivación. Una plantilla que Meta pausa o rechaza corta el envío en vez de producir mensajes rechazados.
 6. **El texto** es el cuerpo aprobado con `{{1}}` a `{{n}}` reemplazados en una sola pasada. Es lo que va al hash del gate final (`content_sha256`), al `content` del mensaje de Chatwoot y a `record_and_finalize_followup_acceptance`.
@@ -73,6 +73,7 @@ La plantilla se busca por nombre **y** idioma, porque Meta admite el mismo nombr
 | Otro tipo de componente | `approved_template_mismatch` | `unsupported_component` |
 | El texto renderizado pasa de 1024 caracteres | `approved_template_mismatch` | `rendered_body_too_long` |
 | Un valor vacío al renderizar | `template_parameters_missing` | `empty_parameter` |
+| Un valor con salto de línea, tabulación o más de cuatro espacios seguidos al renderizar (uno que no pasó por `body_values`) | `template_parameters_missing` | `invalid_parameter_whitespace` |
 
 Todos cierran el intento con `failed_before_request`: no se marcó `request_started` ni salió ningún POST. El `reason_code` es texto libre en la base, así que no hace falta migración.
 

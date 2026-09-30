@@ -1401,6 +1401,54 @@ def test_payment_failure_variables_need_the_payment_failure_template() -> None:
         )
 
 
+def test_declared_values_collapse_the_whitespace_meta_refuses() -> None:
+    # Un nombre de Hotmart puede traer saltos de linea, tabulaciones o varios
+    # espacios; Meta rechaza el parametro (132018). Con variables declaradas
+    # (manifiesto) el valor sale colapsado en processed_params y en
+    # body_values, que es de donde el modo directo arma el texto que hashea.
+    template = WhatsAppTemplateConfig(
+        first_touch_name="att1_carrito_abandonado_01",
+        followup_name=None,
+        language="es_MX",
+        category="MARKETING",
+        first_touch_parameter="buyer_name_and_product",
+        first_touch_body_parameters=("nombre", "producto"),
+    )
+    raw_name = " Edith\nGarcía \t      Pérez "
+
+    params = template.params(
+        content="copy", followup=False, buyer_name=raw_name,
+        product_name="Alimenta  Tu\tTiroides", trigger_kind="cart_abandonment",
+    )
+    values = template.body_values(
+        trigger_kind="cart_abandonment", buyer_name=raw_name,
+        product_name="Alimenta  Tu\tTiroides",
+    )
+
+    assert params["processed_params"] == {
+        "body": {"1": "Edith García Pérez", "2": "Alimenta Tu Tiroides"}
+    }
+    assert values == params["processed_params"]["body"]
+
+
+def test_without_declared_variables_the_values_go_as_today() -> None:
+    # Johanna no declara variables: su camino no normaliza nada.
+    template = WhatsAppTemplateConfig(
+        first_touch_name="johanna_carrito_abandonado_01",
+        followup_name=None,
+        language="es_EC",
+        category="MARKETING",
+        first_touch_parameter="buyer_name_and_product",
+    )
+
+    params = template.params(
+        content="copy", followup=False, buyer_name="Edith  García",
+        product_name="Curso", trigger_kind="cart_abandonment",
+    )
+
+    assert params["processed_params"] == {"body": {"1": "Edith  García", "2": "Curso"}}
+
+
 def test_the_payment_failure_template_carries_its_own_category() -> None:
     # El carrito aprobado como MARKETING y el pago fallido como UTILITY: cada
     # plantilla sale con su categoria. El seguimiento y el carrito siguen con

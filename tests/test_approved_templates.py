@@ -245,8 +245,38 @@ def test_the_count_comes_from_the_declared_variables() -> None:
             "approved_template_mismatch",
             "rendered_body_too_long",
         ),
+        # Meta rechaza (132018) un parametro con salto de linea, tabulacion o
+        # mas de cuatro espacios seguidos, despues de empezado el pedido.
+        (
+            {"1": "Edith\nGarcía", "2": "Alimenta Tu Tiroides"},
+            "template_parameters_missing",
+            "invalid_parameter_whitespace",
+        ),
+        (
+            {"1": "Edith\r\nGarcía", "2": "Alimenta Tu Tiroides"},
+            "template_parameters_missing",
+            "invalid_parameter_whitespace",
+        ),
+        (
+            {"1": "Edith", "2": "Alimenta\tTu Tiroides"},
+            "template_parameters_missing",
+            "invalid_parameter_whitespace",
+        ),
+        (
+            {"1": "Edith     García", "2": "Alimenta Tu Tiroides"},
+            "template_parameters_missing",
+            "invalid_parameter_whitespace",
+        ),
     ],
-    ids=["one value short", "blank value", "past the Meta limit"],
+    ids=[
+        "one value short",
+        "blank value",
+        "past the Meta limit",
+        "a new line",
+        "a carriage return",
+        "a tab",
+        "five spaces",
+    ],
 )
 def test_render_refuses_values_meta_would_reject(
     values: dict[str, str], reason: str, detail: str
@@ -257,6 +287,14 @@ def test_render_refuses_values_meta_would_reject(
         template.render(values)
 
     assert (raised.value.reason, raised.value.detail) == (reason, detail)
+
+
+def test_four_spaces_in_a_row_are_still_a_valid_parameter() -> None:
+    template = _parse(_inbox_0928(), CART)
+
+    rendered = template.render({"1": "Edith    García", "2": "Alimenta Tu Tiroides"})
+
+    assert "Edith    García" in rendered
 
 
 def test_the_limit_is_meta_s_not_the_500_of_an_agent_draft() -> None:

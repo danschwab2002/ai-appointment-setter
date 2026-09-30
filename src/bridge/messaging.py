@@ -112,13 +112,21 @@ class WhatsAppTemplateConfig:
         buyer_name: str | None,
         product_name: str | None,
     ) -> dict[str, str] | None:
-        """``{"1": ..., "2": ...}`` from the declared variables, or ``None``."""
+        """``{"1": ..., "2": ...}`` from the declared variables, or ``None``.
+
+        Each value has its whitespace collapsed to single spaces: Meta refuses
+        a body parameter with a new line, a tab or more than four consecutive
+        spaces, and a name from Hotmart can carry any of them. The direct
+        dispatcher renders the text it hashes from these same values and the
+        sender puts them in ``processed_params``, so both stay identical.
+        Without a declaration (Johanna) nothing changes.
+        """
         declared = self.declared_body_parameters(trigger_kind=trigger_kind)
         if declared is None:
             return None
         source = {"nombre": buyer_name or "", "producto": product_name or ""}
         return {
-            str(position): source[parameter]
+            str(position): " ".join(source[parameter].split())
             for position, parameter in enumerate(declared, start=1)
         }
 

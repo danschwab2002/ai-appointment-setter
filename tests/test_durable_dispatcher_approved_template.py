@@ -402,6 +402,31 @@ def test_payment_failure_sends_its_own_approved_template(tmp_path: Path) -> None
     assert authority.events[-1] == "accepted"
 
 
+def test_a_name_with_whitespace_meta_refuses_goes_out_collapsed(tmp_path: Path) -> None:
+    # Meta rechaza un parametro con salto de linea, tabulacion o mas de cuatro
+    # espacios seguidos, despues de empezado el pedido. El valor sale
+    # colapsado, igual en el texto hasheado, en processed_params y en la
+    # aceptacion; el contacto de Chatwoot conserva el nombre tal como llego.
+    raw_name = "Edith\nGarcía\t     Pérez"
+    authority = _Authority(buyer_name=raw_name)
+    chatwoot = _Chatwoot()
+
+    _run(_dispatcher(authority, chatwoot, tmp_path))
+
+    expected = _expected(
+        CART_TEMPLATE, first="Edith García Pérez", product="Alimenta Tu Tiroides"
+    )
+    [contact] = chatwoot.posts("/contacts")
+    [message] = chatwoot.posts("/conversations/200/messages")
+    assert contact["name"] == raw_name
+    assert message["template_params"]["processed_params"]["body"] == {
+        "1": "Edith García Pérez",
+        "2": "Alimenta Tu Tiroides",
+    }
+    assert message["content"] == expected
+    assert authority.acceptances[0]["message_content"] == expected
+
+
 def _payment_failure_as_utility() -> list[dict[str, Any]]:
     # El catalogo capturado con la plantilla del pago fallido aprobada como
     # UTILITY y la del carrito como MARKETING: la categoria de ATT1 es un dato
