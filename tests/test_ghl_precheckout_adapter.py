@@ -707,6 +707,9 @@ def test_an_email_with_what_cannot_be_stored_is_a_400_not_another_address(email:
         ("telefono", "unknown"),
         ("+52147555501021", "MX"),
         ("+3906123456789012", "IT"),
+        # Valido para phonenumbers y para el parser, pero de 7 digitos: la RPC exige
+        # identity.phone de 8 a 15 (22023 en cada entrega, que seria un 503).
+        ("+6834002", "NU"),
     ],
     ids=[
         "ar-truncado",
@@ -715,6 +718,7 @@ def test_an_email_with_what_cannot_be_stored_is_a_400_not_another_address(email:
         "texto",
         "521-con-11-digitos",
         "it-largo",
+        "nu-de-7-digitos",
     ],
 )
 def test_an_unusable_phone_is_a_422_with_its_region(phone: str, region: str) -> None:

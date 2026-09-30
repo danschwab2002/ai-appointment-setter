@@ -49,6 +49,9 @@ REJECTION_STATUS: Mapping[str, int] = MappingProxyType(
 _ASCII_TRIM_CHARS = " \t\n\r\f\v"
 _EMAIL = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+")
 _REGION = re.compile(r"[A-Z]{2}")
+# identity.phone of the portable admission (migration 20260930000200) and the
+# check of purchase_intents.normalized_phone.
+_RPC_PHONE_DIGITS = re.compile(r"[1-9][0-9]{7,14}")
 # Mexico stopped dialing the ``1`` of mobiles in 2019 and phonenumbers rejects it.
 _MX_LEGACY_MOBILE = re.compile(r"\+521([0-9]{10})")
 _UTM_FIELDS = ("utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term")
@@ -307,6 +310,11 @@ def _phone(raw: str) -> tuple[str, str, str, str]:
     ):
         raise _reject("phone_unusable", phone_region=country_region)
     e164 = phonenumbers.format_number(number, phonenumbers.PhoneNumberFormat.E164)
+    if not _RPC_PHONE_DIGITS.fullmatch(e164[1:]):
+        # phonenumbers gives valid numbers of 7 digits in all (Niue, +683 4002),
+        # the parser accepts them, and the RPC demands identity.phone of 8 to 15
+        # digits: 22023 on every delivery, which the route would answer 503.
+        raise _reject("phone_unusable", phone_region=region)
     country_code = str(number.country_code)
     national = e164[1 + len(country_code) :]
     if national != str(number.national_number):
