@@ -340,6 +340,18 @@ if (action.anchor_type !== 'payment_failure'
   throw new Error('payment failure action identity diverged');
 }
 
+// ALCANCE DE ESTE CASO: prueba solo el arranque del envio
+// (mark_portable_payment_failure_request_started y sus guardas: binding,
+// consentimiento, opt-out, topes, lease y canal) y lo que viene despues. Por
+// eso inserta a mano el permiso de contacto y, mas abajo, un
+// followup_action_reevaluated con execute: la intencion de este caso se
+// inserto sin formulario, asi que el plan no concede permiso (lo verifica
+// implicitAuthorizationCount) y la reevaluacion real lo escalaria con
+// contact_authorization_unknown. Este caso NO prueba ni el permiso ni la
+// reevaluacion: un verde aca no cubre una regresion de
+// reevaluate_followup_action. Eso lo prueban, con la reevaluacion real, la
+// seccion 20260930000100 de este archivo (casos A a F) y
+// validate_att1_portable_chain.mjs.
 await db.query(`
   insert into public.contact_authorizations (
     contact_id, channel, purpose, authorization_status,
@@ -356,6 +368,8 @@ const claimed = one((await db.query(`
     'payment-worker',$1,interval '5 minutes',1
   )
 `, [NOW])).rows, 'claimed payment action');
+// Reevaluacion simulada a proposito (ver ALCANCE DE ESTE CASO arriba): la
+// real esta en la seccion 20260930000100 y en validate_att1_portable_chain.mjs.
 await db.query(`
   insert into public.conversation_events
     (recovery_case_id,event_type,actor_type,related_action_id,data)
