@@ -3690,6 +3690,42 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         5,
         'pilot_scope_additional_source_events'
+    union all
+    select
+        '20260930000100',
+        '20260930000100_payment_failure_consented_intent_authorization.sql',
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._portable_consented_intent_reason(uuid,uuid,text)')
+              and not prosecdef
+              and provolatile = 's'
+              and position('consented_intent_submission_missing' in definition) > 0
+        )::int
+        + coalesce(
+            not has_function_privilege(
+                'service_role',
+                to_regprocedure('public._portable_consented_intent_reason(uuid,uuid,text)'),
+                'EXECUTE'
+            ),
+            false
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.plan_portable_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,timestamptz,bigint,bigint,text,text,integer)')
+              and prosecdef
+              and position('_portable_consented_intent_reason' in definition) > 0
+              and position('precheckout_whatsapp_consent' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.plan_portable_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,timestamptz,bigint,bigint,text,text,integer)')
+              and position('point.source in (''hotmart'', ''system'')' in definition) > 0
+        )::int,
+        4,
+        'payment_failure_consented_intent_authorization'
 )
 select
     version,

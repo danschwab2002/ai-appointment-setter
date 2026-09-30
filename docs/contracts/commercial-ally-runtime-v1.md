@@ -149,14 +149,43 @@ semántica de abandono confirmado.
 la secuencia y la primera acción. Una vez que existe
 `payment_failure_first_contact`, cualquier pago fallido posterior del mismo caso
 se agrega como evidencia y reutiliza esa acción incluso si ya quedó terminal; no
-crea otra secuencia ni un segundo contacto inicial. El evento de pago fallido no concede permiso
-de contacto: la autorización debe existir antes de iniciar la salida y se
-comprueba en esa frontera. Antes de planificar, la RPC exige procedencia durable
-del webhook y correlación resuelta; además comprueba que tenant, binding activo,
-producto, oferta, cuenta, inbox, teléfono y contacto coincidan con el evento y
-la intención de compra, y deriva el instante de fallo del payload durable en vez
-de confiar en el timestamp del caller. El dispatcher selecciona
-`WABA_PAYMENT_FAILURE_TEMPLATE_NAME` (default
+crea otra secuencia ni un segundo contacto inicial. Antes de planificar, la RPC
+exige procedencia durable del webhook y correlación resuelta; además comprueba
+que tenant, binding activo, producto, oferta, cuenta, inbox, teléfono y contacto
+coincidan con el evento y la intención de compra, y deriva el instante de fallo
+del payload durable en vez de confiar en el timestamp del caller. El punto de
+contacto del teléfono puede venir de Hotmart o del sistema (el bootstrap de la
+identidad del formulario crea puntos con fuente `system`).
+
+El evento de pago fallido no concede permiso de contacto por sí solo. Desde la
+migración `20260930000100` lo concede, al planificar, la intención de compra con
+la que el evento quedó correlacionada, si tiene consentimiento vigente. El
+criterio es el de Johanna sin sus valores fijos y vive en
+`_portable_consented_intent_reason`, que devuelve `consented_intent_ok` solo si:
+
+- la intención sigue viva: `waiting_for_purchase`, observada por el proveedor,
+  no provisional y sin `identity_conflict`, `tracking_incomplete` ni
+  `expired_unknown`;
+- tiene `whatsapp_contact_authorized` y `activation_authorized`;
+- su teléfono es el de destino y es un punto de contacto del contacto;
+- tiene vinculado un envío `lead.precheckout` 1.1.0 con
+  `consent.whatsapp_contact` y `consent.marketing_optin` en `true`, la
+  `consent_copy_version` del binding activo y ningún conflicto abierto.
+
+Si falla algo, el helper devuelve un motivo distinto por cada caso
+(`consented_intent_not_live`, `consented_intent_not_authorized`,
+`consented_intent_phone_mismatch`, `consented_intent_submission_missing`, entre
+otros). No es un entrypoint: ningún rol de la API ni `service_role` lo ejecuta.
+
+Con el contacto bloqueado, y solo si no existe una fila de permiso activa, la RPC
+inserta `contact_authorizations` `allowed` con fuente `system` y evidencia
+`reason=precheckout_whatsapp_consent`, la intención, el envío, la
+`consent_copy_version`, el evento y el caso. Una fila activa de cualquier estado
+gana: un opt-out previo no se pisa y un replay no duplica el permiso. Sin
+consentimiento no se concede nada y la reevaluación escala con
+`contact_authorization_unknown`.
+
+El dispatcher selecciona `WABA_PAYMENT_FAILURE_TEMPLATE_NAME` (default
 `att1_compra_fallida_01`) y `mark_portable_payment_failure_request_started`
 revalida binding, consentimiento, opt-out, límites, lease y canal en la frontera
 durable previa al proveedor.

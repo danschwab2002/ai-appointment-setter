@@ -222,6 +222,28 @@ if (result.api_leaks !== 0 || result.trigger_leaks !== 0
     || result.allowlist_mismatches !== 0 || result.expected_count !== 112) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
+// 20260930000100: el criterio de intencion con consentimiento es un helper
+// privado. Lo llaman las RPC security definer; ningun rol de la API, ni
+// service_role, lo ejecuta directo. Con los privilegios por defecto de
+// Supabase de arriba, un revoke faltante lo dejaria ejecutable.
+const consentHelper = (await db.query(`
+  select
+    p.prosecdef security_definer,
+    p.provolatile volatility,
+    has_function_privilege('anon', p.oid, 'execute') anon_x,
+    has_function_privilege('authenticated', p.oid, 'execute') auth_x,
+    has_function_privilege('service_role', p.oid, 'execute') service_x
+  from pg_proc p
+  where p.oid = to_regprocedure('public._portable_consented_intent_reason(uuid,uuid,text)')
+`)).rows;
+if (consentHelper.length !== 1
+    || consentHelper[0].security_definer !== false
+    || consentHelper[0].volatility !== 's'
+    || consentHelper[0].anon_x !== false
+    || consentHelper[0].auth_x !== false
+    || consentHelper[0].service_x !== false) {
+  throw new Error(`consented intent helper ACL failed: ${JSON.stringify(consentHelper)}`);
+}
 const bindingAcl = await db.query(`
   select
     has_table_privilege(
