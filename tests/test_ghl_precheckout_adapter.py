@@ -558,6 +558,112 @@ def test_the_email_is_trimmed_and_lowercased_in_the_event_and_the_dedupe_key() -
     assert event["dedupe_key"] == "metodoraizana:gopi6lh7:lead.anonimo.1@example.com"
 
 
+# ------------------------------------------ lo que ninguna admision puede guardar
+# U+0000 lo rechaza un texto de jsonb (22P05) y un surrogate suelto no se codifica
+# en UTF-8: el parser deja pasar los dos, y la RPC fallaria en cada entrega (503 que
+# GHL reintenta sin fin). Cualquiera los pone en la URL de la landing.
+
+
+def _strings(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [text for item in value.values() for text in _strings(item)]
+    if isinstance(value, list):
+        return [text for item in value for text in _strings(item)]
+    return []
+
+
+def _assert_storable(event: dict) -> None:
+    assert [text for text in _strings(event) if re.search("[\u0000\ud800-\udfff]", text)] == []
+    # Lo que viaja a PostgREST: UTF-8 sin surrogates.
+    json.dumps(event, ensure_ascii=False).encode("utf-8")
+    assert parse_lead_precheckout(event, config=CONFIG) is not None
+
+
+@pytest.mark.parametrize(
+    ("url_query", "field", "expected"),
+    [
+        ("?utm_campaign=a%00b&utm_source=fb", "utm_campaign", "ab"),
+        ("?utm_campaign=a%00b&utm_source=fb", "sck", "fb~~~~ab"),
+        ("?sck=DEL-%00ANUNCIO", "sck", "DEL-ANUNCIO"),
+        ("?fbclid=Anon%00Fbclid", "fbclid", "AnonFbclid"),
+        ("?utm_campaign=a\ud800b", "utm_campaign", "ab"),
+        ("?sck=DEL-\udfffANUNCIO", "sck", "DEL-ANUNCIO"),
+    ],
+    ids=[
+        "nul-en-utm",
+        "nul-en-utm-sck",
+        "nul-en-sck-entrante",
+        "nul-en-fbclid",
+        "surrogate-en-utm",
+        "surrogate-en-sck-entrante",
+    ],
+)
+def test_attribution_drops_what_no_admission_can_store(
+    url_query: str, field: str, expected: str
+) -> None:
+    body = _ads_a()
+    body["attributionSource"]["url"] = body["attributionSource"]["url"].split("?")[0] + url_query
+
+    event = _translate(body).event
+
+    assert event["data"]["attribution"][field] == expected
+    _assert_storable(event)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected_name"),
+    [
+        (lambda body: body.__setitem__("full_name", "Lead\u0000 Anonimo"), "Lead Anonimo"),
+        (lambda body: body.__setitem__("full_name", "Lead \ud800Anonimo"), "Lead Anonimo"),
+        # Un full_name que queda vacio cae a first_name + last_name.
+        (lambda body: body.__setitem__("full_name", "\u0000"), "Lead Anonimo"),
+        (
+            lambda body: body["attributionSource"].__setitem__(
+                "referrer", "https://instagram.com\u0000"
+            ),
+            "Lead Anonimo",
+        ),
+    ],
+    ids=["nul-en-el-nombre", "surrogate-en-el-nombre", "nombre-solo-nul", "nul-en-referrer"],
+)
+def test_the_name_and_the_referrer_drop_what_no_admission_can_store(
+    mutate, expected_name: str
+) -> None:
+    body = _ads_a()
+    mutate(body)
+
+    event = _translate(body).event
+
+    assert event["data"]["buyer"]["name"] == expected_name
+    _assert_storable(event)
+
+
+def test_a_name_made_only_of_what_cannot_be_stored_is_a_400() -> None:
+    body = _ads_a()
+    for key in ("full_name", "first_name", "last_name"):
+        body[key] = "\u0000\ud800"
+
+    rejection = _rejection(body)
+
+    assert (rejection.reason, rejection.status_code) == ("invalid_payload", 400)
+
+
+@pytest.mark.parametrize(
+    "email",
+    ["lead.anonimo.1\u0000@example.com", "lead.anonimo.1@exam\ud800ple.com"],
+    ids=["nul", "surrogate"],
+)
+def test_an_email_with_what_cannot_be_stored_is_a_400_not_another_address(email: str) -> None:
+    body = _ads_a()
+    body["email"] = email
+
+    rejection = _rejection(body)
+
+    assert (rejection.reason, rejection.status_code) == ("invalid_payload", 400)
+
+
 # ------------------------------------------------------------------- telefono
 
 

@@ -568,6 +568,29 @@ def test_a_mexican_mobile_with_the_legacy_1_is_admitted_as_plus_52() -> None:
     assert identity["phone_valid"] is True
 
 
+def test_a_nul_or_a_lone_surrogate_never_reaches_the_rpc() -> None:
+    # U+0000 en la URL (?utm_campaign=%00, que cualquiera escribe) y un surrogate
+    # suelto en el nombre, que JSON permite escapado. Los dos harian fallar la RPC en
+    # cada entrega (22P05 o UnicodeEncodeError), y GHL reintentaria sin fin.
+    body = _ads_a()
+    body["attributionSource"]["url"] += "&utm_campaign=a%00b&utm_source=fb"
+    body["full_name"] = "Lead \ud800Anonimo"
+    raw = json.dumps(body, separators=(",", ":")).encode("ascii")
+    assert b"\\ud800" in raw
+    app, fake = _app()
+
+    response = _post(app, None, raw=raw)
+
+    assert response.status_code == 200
+    assert fake is not None and len(fake.calls) == 1
+    call = fake.calls[0]
+    sent = json.dumps([call["raw_payload"], call["canonical_payload"]], ensure_ascii=False)
+    sent.encode("utf-8")
+    assert "\u0000" not in sent
+    assert call["raw_payload"]["data"]["attribution"]["utm_campaign"] == "ab"  # type: ignore[index]
+    assert call["raw_payload"]["data"]["buyer"]["name"] == "Lead Anonimo"  # type: ignore[index]
+
+
 # ---------------------------------------------------- admision y reintentos
 
 

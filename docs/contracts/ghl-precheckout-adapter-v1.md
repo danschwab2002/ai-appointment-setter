@@ -79,8 +79,8 @@ Hay dos capturas del 2026-09-29, anonimizadas, en `tests/fixtures/ghl/`. Cada un
 | `source.site`, `source.landing_id` | `attributionSource.url` | Host en minúsculas y ruta, sin query ni fragmento y con una barra final tolerada, comparados exactos contra `[[hotmart.ofertas]]`. Sin coincidencia: `422 ghl_landing_unknown`; más de una: `422 ghl_landing_ambiguous` |
 | `source.page_url` | la oferta resuelta | `https://<host><ruta>` de la oferta del manifiesto: la query del envío (`?test=yes`, UTM) no pasa |
 | `source.aliado` | manifiesto | `instancia.marca` |
-| `data.buyer.name` | `full_name`, si falta `first_name` + `last_name` | Recorte; vacío: `400` |
-| `data.buyer.email` | `email` | Recorte y minúsculas; fuera de forma: `400` |
+| `data.buyer.name` | `full_name`, si falta `first_name` + `last_name` | Sin lo que la base no guarda (abajo) y recortado; vacío: `400` |
+| `data.buyer.email` | `email` | Recorte y minúsculas; fuera de forma, o con algo que la base no guarda: `400` (nunca se reescribe a otra dirección) |
 | `data.buyer.phone`, `phone_country_code`, `phone_national` | `phone` | `phonenumbers` sin región por defecto, después de normalizar el móvil mexicano con el `1` heredado (abajo). `phone` es el E.164 de `phonenumbers`; `phone_country_code`, el código de país; `phone_national`, los dígitos de `phone` que siguen al código. Un número que no se puede parsear o inválido: `422 ghl_phone_unusable`, porque la admisión portable 1.1.0 rechaza `phone_valid = false`. Fuera de eso, el número se manda como lo guardó GHL: no se inserta el `9` de Argentina |
 | `data.checkout_country` | región del teléfono | `{iso, source: "phone_country_code"}` |
 | `data.product` | `[hotmart]` | `hotlink`, `product_name`, `precio`, `moneda`; `id = null` |
@@ -91,6 +91,10 @@ Hay dos capturas del 2026-09-29, anonimizadas, en `tests/fixtures/ghl/`. Cada un
 | `data.attribution.referrer` | `attributionSource.referrer` | `""` si es `null` |
 | `data.consent` | manifiesto | `marketing_optin = true`, `whatsapp_contact = true`, `copy_version = [consentimiento].copy_version` |
 | `dedupe_key` | derivado | `<site>:<oferta>:<email normalizado>` |
+
+### Lo que la base no guarda
+
+`U+0000` no entra en un texto de `jsonb` (la RPC falla con `22P05`) y un surrogate suelto no se codifica en UTF-8. El parser deja pasar los dos, así que un evento con uno fallaría en cada entrega: `503`, y GHL reintentaría sin fin. Cualquiera los pone en la URL de la landing (`?utm_campaign=%00`). El adaptador los quita del nombre y de toda la atribución (`utm_*`, `sck`, `fbclid`, `referrer`) y conserva el lead; un email con uno de ellos da `400`. Los demás caracteres de control pasan como vienen, igual que por `/webhooks/lead`: la base los guarda.
 
 ### Móviles de México con `+521`
 

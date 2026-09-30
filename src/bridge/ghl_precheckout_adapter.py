@@ -53,6 +53,11 @@ _REGION = re.compile(r"[A-Z]{2}")
 _MX_LEGACY_MOBILE = re.compile(r"\+521([0-9]{10})")
 _UTM_FIELDS = ("utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term")
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+# What no admission can carry: U+0000 is refused by a jsonb text (22P05) and a lone
+# surrogate cannot be encoded as UTF-8. The parser lets both through, so an event
+# with one fails the RPC on every delivery: the route would answer 503 and GHL
+# would retry forever. Anyone can put one in the landing URL (``%00``).
+_UNSTORABLE = re.compile("[\u0000\ud800-\udfff]")
 
 # ---------------------------------------------------------------- sck (core port)
 # Literal port of ``readSck``, ``sanearCampoSck`` and ``sanearSckEntrante`` from
@@ -235,11 +240,23 @@ def _text(value: object) -> str | None:
     return cleaned or None
 
 
+def _storable(value: str) -> str:
+    """``value`` without what no admission can carry (``_UNSTORABLE``)."""
+
+    return _UNSTORABLE.sub("", value)
+
+
+def _name_part(value: object) -> str | None:
+    # The name is display text: an invisible NUL or a lone surrogate is dropped
+    # instead of losing the lead.
+    return _text(_storable(value)) if isinstance(value, str) else None
+
+
 def _buyer_name(body: Mapping[str, object]) -> str | None:
-    full_name = _text(body.get("full_name"))
+    full_name = _name_part(body.get("full_name"))
     if full_name is not None:
         return full_name
-    parts = (_text(body.get("first_name")), _text(body.get("last_name")))
+    parts = (_name_part(body.get("first_name")), _name_part(body.get("last_name")))
     return " ".join(part for part in parts if part) or None
 
 
@@ -330,7 +347,9 @@ def translate_ghl_form_submission(
     if contact_id is None or email_raw is None or phone_raw is None or name is None:
         raise _reject("invalid_payload")
     email = email_raw.lower()
-    if _EMAIL.fullmatch(email) is None:
+    # The email is identity: one with a NUL or a lone surrogate is out of shape,
+    # never silently rewritten into another address.
+    if _EMAIL.fullmatch(email) is None or _UNSTORABLE.search(email) is not None:
         raise _reject("invalid_payload")
 
     # 2. The submission that fired the workflow: only the top-level object. The
@@ -367,6 +386,9 @@ def translate_ghl_form_submission(
     attribution["sck"] = compose_lancemos_sck(query)
     attribution["fbclid"] = fbclid
     attribution["referrer"] = referrer if isinstance(referrer, str) else ""
+    # Free text from a URL anyone can write: what cannot be stored is dropped and
+    # the lead is kept.
+    attribution = {field: _storable(value) for field, value in attribution.items()}
 
     # 6. The phone.
     phone, country_code, national, region = _phone(phone_raw)
@@ -424,5 +446,5 @@ def translate_ghl_form_submission(
         offer_code=landing.offer_code,
         phone_region=region,
         has_utm=any(_first(params, f"utm_{field}") for field in (*_SCK_FIELDS, "id")),
-        has_fbclid=bool(fbclid),
+        has_fbclid=bool(attribution["fbclid"]),
     )
