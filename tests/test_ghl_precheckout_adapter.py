@@ -636,6 +636,28 @@ def test_the_email_is_trimmed_and_lowercased_in_the_event_and_the_dedupe_key() -
     assert event["dedupe_key"] == "metodoraizana:gopi6lh7:lead.anonimo.1@example.com"
 
 
+def test_an_email_up_to_254_characters_is_admitted_and_a_longer_one_is_a_400() -> None:
+    domain = "@example.com"
+    at_limit = "a" * (254 - len(domain)) + domain
+    body = _ads_a()
+    body["email"] = at_limit
+
+    assert _translate(body).event["data"]["buyer"]["email"] == at_limit
+
+    body = _ads_a()
+    body["email"] = "a" + at_limit
+    rejection = _rejection(body)
+
+    assert (rejection.reason, rejection.status_code) == ("invalid_payload", 400)
+
+    # Lo que rompia la RPC: un email de varios KB, que el cuerpo admite (64 KiB).
+    body = _ads_a()
+    body["email"] = "a" * 3000 + domain
+    rejection = _rejection(body)
+
+    assert (rejection.reason, rejection.status_code) == ("invalid_payload", 400)
+
+
 # ------------------------------------------ lo que ninguna admision puede guardar
 # U+0000 lo rechaza un texto de jsonb (22P05) y un surrogate suelto no se codifica
 # en UTF-8: el parser deja pasar los dos, y la RPC fallaria en cada entrega (503 que

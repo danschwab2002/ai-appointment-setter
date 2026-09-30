@@ -82,7 +82,7 @@ Hay dos capturas del 2026-09-29, anonimizadas, en `tests/fixtures/ghl/`. Cada un
 | `source.page_url` | la oferta resuelta | `https://<host><ruta>` de la oferta del manifiesto: la query del envío (`?test=yes`, UTM) no pasa |
 | `source.aliado` | manifiesto | `instancia.marca` |
 | `data.buyer.name` | `full_name`, si falta `first_name` + `last_name` | Sin lo que la base no guarda (abajo) y recortado; vacío: `400` |
-| `data.buyer.email` | `email` | Recorte y minúsculas; fuera de forma, o con algo que la base no guarda: `400` (nunca se reescribe a otra dirección) |
+| `data.buyer.email` | `email` | Recorte y minúsculas; fuera de forma, de más de 254 caracteres (el tope de una dirección SMTP; pasados ~2,7 KB no entra en la fila del índice `purchase_intents_one_observed_email_idx` y la RPC fallaría en cada entrega), o con algo que la base no guarda: `400` (nunca se reescribe a otra dirección) |
 | `data.buyer.phone`, `phone_country_code`, `phone_national` | `phone` | `phonenumbers` sin región por defecto, después de normalizar el móvil mexicano con el `1` heredado (abajo). `phone` es el E.164 de `phonenumbers`; `phone_country_code`, el código de país; `phone_national`, los dígitos de `phone` que siguen al código. Un número que no se puede parsear, inválido, o de menos de 8 o más de 15 dígitos en total (`phonenumbers` da válidos números de 7, como los de Niue, y la RPC exige `^[1-9][0-9]{7,14}$`): `422 ghl_phone_unusable`, porque la admisión portable 1.1.0 los rechaza en cada entrega. Fuera de eso, el número se manda como lo guardó GHL: no se inserta el `9` de Argentina |
 | `data.checkout_country` | región del teléfono | `{iso, source: "phone_country_code"}` |
 | `data.product` | `[hotmart]` | `hotlink`, `product_name`, `precio`, `moneda`; `id = null` |

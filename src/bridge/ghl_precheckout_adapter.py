@@ -48,6 +48,7 @@ REJECTION_STATUS: Mapping[str, int] = MappingProxyType(
 # The same edge rules as ``lead_precheckout`` (the parser checks them again).
 _ASCII_TRIM_CHARS = " \t\n\r\f\v"
 _EMAIL = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+")
+_EMAIL_MAX_LENGTH = 254  # RFC 5321: the longest address a mail server accepts
 _REGION = re.compile(r"[A-Z]{2}")
 # identity.phone of the portable admission (migration 20260930000200) and the
 # check of purchase_intents.normalized_phone.
@@ -360,8 +361,15 @@ def translate_ghl_form_submission(
         raise _reject("invalid_payload")
     email = email_raw.lower()
     # The email is identity: one with a NUL or a lone surrogate is out of shape,
-    # never silently rewritten into another address.
-    if _EMAIL.fullmatch(email) is None or _UNSTORABLE.search(email) is not None:
+    # never silently rewritten into another address. One longer than an SMTP
+    # address can be (254) is out of shape too: past ~2.7 KB it no longer fits the
+    # btree row of purchase_intents_one_observed_email_idx, the RPC fails on every
+    # delivery and GHL would retry forever.
+    if (
+        _EMAIL.fullmatch(email) is None
+        or _UNSTORABLE.search(email) is not None
+        or len(email) > _EMAIL_MAX_LENGTH
+    ):
         raise _reject("invalid_payload")
 
     # 2. The submission that fired the workflow: only the top-level object. The
