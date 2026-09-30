@@ -194,6 +194,22 @@ gana: un opt-out previo no se pisa y un replay no duplica el permiso. Sin
 consentimiento no se concede nada y la reevaluación escala con
 `contact_authorization_unknown`.
 
+**Deuda: el permiso es del contacto, no de la aliada.** `contact_authorizations`
+no tiene tenant ni funnel (`20260803000100`), `purpose` solo admite
+`cart_recovery`, y `reevaluate_followup_action` lo lee por `contact_id` para
+cualquier acción durable. Los dos permisos que el producto concede solo tienen
+esa forma: el del carrito (`plan_cart_recovery_with_identity`, `20260805000200`,
+fuente `hotmart`, vigente desde agosto) y el del pago fallido (`20260930000100`,
+fuente `system`). Ninguno lleva `valid_until`, y la aliada queda solo en
+`evidence`. Hoy no se cruzan porque cada instancia tiene su base y nunca se
+comparte con otra aliada (`docs/instalar.md` §6; la unidad de instancia en
+`docs/design/setter-producto-instalable-v1.md` §9): ATT1 corre en su propio
+Postgres. Si dos aliadas llegaran a compartir una base y se prendiera el motor
+durable para la segunda, un permiso concedido por una habilitaría a la otra
+para el mismo contacto. Antes de eso hay que acotarlo: atar `valid_until` a la
+vida de la intención o del caso, o que la reevaluación exija que la evidencia
+del permiso (`consent_copy_version`, el binding) coincida con la del caso.
+
 El dispatcher selecciona `WABA_PAYMENT_FAILURE_TEMPLATE_NAME` (default
 `att1_compra_fallida_01`) y `mark_portable_payment_failure_request_started`
 revalida binding, consentimiento, opt-out, límites, lease y canal en la frontera

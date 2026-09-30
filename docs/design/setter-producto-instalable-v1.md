@@ -283,6 +283,8 @@ Esta secuencia se hace una sola vez: lleva al sistema actual, con Johanna en pro
 
 Después de F7: el agente instalador (§6.5) y los adaptadores de catálogo.
 
+**Antes de F5, o de cualquier base compartida entre aliadas:** los permisos de contacto que concede el motor durable (el del carrito desde `20260805000200` y el del pago fallido desde `20260930000100`) son del contacto, sin aliada ni vencimiento, y la reevaluación los lee por `contact_id`. Con una base por instancia no se cruzan. Si la mudanza de Johanna dejara a Johanna y a otra aliada en la misma base con el motor durable prendido, un permiso de una habilitaría a la otra. El detalle y las dos salidas posibles están en `docs/contracts/commercial-ally-runtime-v1.md` (Deuda: el permiso es del contacto, no de la aliada).
+
 **Calendario con Lancemos:** F1 a F3 no tocan nada de lo que Lancemos mide. F4 cambia el formulario de la landing de ATT1, que ese mismo equipo muda el 29/09 con lectura el 06/10; F4 va después de esa lectura, para no medir dos cambios juntos.
 
 ## 9. Decisiones
