@@ -91,11 +91,20 @@ APPROVED_TEMPLATE_DIRECT_UNSUPPORTED_ACTION = (
 
 @dataclass(frozen=True)
 class _ApprovedTemplateComposition:
-    """The direct-mode proposal, or the reason the attempt closes without one."""
+    """The direct-mode proposal, or the reason the attempt closes without one.
+
+    ``retryable`` is False when the reason cannot change on its own before the
+    action expires: the action type, the variables the runtime declares, and
+    the values of the case (an empty name, a value Meta refuses). Those close
+    the action as ``permanent_failed`` on the first attempt instead of being
+    claimed again and re-reading the catalog. A catalog problem (unavailable,
+    paused, not matching) stays retryable: Chatwoot or Meta can fix it.
+    """
 
     proposal: FollowupMessageProposal | None = None
     greeting_name: str | None = None
     failure_reason: str | None = None
+    retryable: bool = True
 
 
 def _precheckout_sender_process_entry(
@@ -779,12 +788,22 @@ class DurableDispatcher:
         action: ScheduledAction,
         attempt: DeliveryAttempt,
         reason_code: str,
+        retryable: bool = True,
     ) -> None:
-        """Close a reserved attempt when no external request could have started."""
+        """Close a reserved attempt when no external request could have started.
+
+        A retryable failure asks for another attempt in a minute; the base
+        grants it while the action has retries left (``max_execution_retries``)
+        and has not expired, and otherwise closes it. A non retryable one
+        passes no next attempt, so the base closes the action as
+        ``permanent_failed`` with ``reason_code`` right away.
+        """
         failed_at = self._clock()
         retry_at = (
-            datetime.fromisoformat(failed_at) + timedelta(minutes=1)
-        ).isoformat()
+            (datetime.fromisoformat(failed_at) + timedelta(minutes=1)).isoformat()
+            if retryable
+            else None
+        )
         finalized = await _commit_outcome_despite_cancellation(
             self._supabase.finalize_followup_delivery_attempt(
                 action_id=action.action_id,
@@ -881,7 +900,8 @@ class DurableDispatcher:
         """
         if action.action_type != "first_contact_review":
             return _ApprovedTemplateComposition(
-                failure_reason=APPROVED_TEMPLATE_DIRECT_UNSUPPORTED_ACTION
+                failure_reason=APPROVED_TEMPLATE_DIRECT_UNSUPPORTED_ACTION,
+                retryable=False,
             )
         template = self._waba_template
         assert template is not None
@@ -898,7 +918,8 @@ class DurableDispatcher:
                 trigger_kind,
             )
             return _ApprovedTemplateComposition(
-                failure_reason=APPROVED_TEMPLATE_MISMATCH
+                failure_reason=APPROVED_TEMPLATE_MISMATCH,
+                retryable=False,
             )
         buyer_name = execution_context.buyer_name
         product_name = execution_context.product_name
@@ -908,7 +929,8 @@ class DurableDispatcher:
             product_name=product_name,
         ):
             return _ApprovedTemplateComposition(
-                failure_reason=APPROVED_TEMPLATE_PARAMETERS_MISSING
+                failure_reason=APPROVED_TEMPLATE_PARAMETERS_MISSING,
+                retryable=False,
             )
         greeting_name: str | None = None
         name_value = buyer_name
@@ -964,7 +986,12 @@ class DurableDispatcher:
                 exc.reason,
                 exc.detail,
             )
-            return _ApprovedTemplateComposition(failure_reason=exc.reason)
+            # A value the render refuses comes from the case and does not
+            # change; a catalog that does not close can.
+            return _ApprovedTemplateComposition(
+                failure_reason=exc.reason,
+                retryable=exc.reason != APPROVED_TEMPLATE_PARAMETERS_MISSING,
+            )
         return _ApprovedTemplateComposition(
             proposal=FollowupMessageProposal(
                 strategy=f"approved_template:{template_name}",
@@ -1012,6 +1039,7 @@ class DurableDispatcher:
                 )
                 if self._recovery_agent is not None or self._approved_template_direct:
                     direct_failure: str | None = None
+                    direct_retryable = True
                     greeting_name: str | None = None
                     try:
                         execution_context = (
@@ -1036,6 +1064,7 @@ class DurableDispatcher:
                             proposal = composition.proposal
                             greeting_name = composition.greeting_name
                             direct_failure = composition.failure_reason
+                            direct_retryable = composition.retryable
                         else:
                             assert self._recovery_agent is not None
                             proposal = (
@@ -1072,6 +1101,7 @@ class DurableDispatcher:
                             action=action,
                             attempt=attempt,
                             reason_code=direct_failure,
+                            retryable=direct_retryable,
                         )
                     elif proposal is None:
                         logger.warning(

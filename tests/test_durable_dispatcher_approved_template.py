@@ -221,8 +221,14 @@ class _Authority:
 
     async def finalize_followup_delivery_attempt(self, **kwargs: object) -> object:
         self.finalizations.append(kwargs)
+        # Como _finalize_followup_delivery_attempt: sin proximo intento, un
+        # failed_before_request cierra la accion como permanent_failed.
         status = {
-            "failed_before_request": "retryable_failed",
+            "failed_before_request": (
+                "retryable_failed"
+                if kwargs["next_attempt_at"] is not None
+                else "permanent_failed"
+            ),
             "rejected": "permanent_failed",
         }.get(str(kwargs["outcome"]), "delivery_unknown")
         return type("Finalized", (), {"status": status})()
@@ -611,6 +617,9 @@ def test_a_catalog_that_does_not_close_leaves_the_reason_and_posts_nothing(
     assert authority.events == ["reevaluate", "reserve"]
     assert authority.finalizations[-1]["outcome"] == "failed_before_request"
     assert authority.finalizations[-1]["reason_code"] == reason
+    # Un catalogo lo puede arreglar Chatwoot o Meta: se reintenta al minuto,
+    # mientras la accion tenga reintentos (max_execution_retries) y no venza.
+    assert authority.finalizations[-1]["next_attempt_at"] is not None
     assert [method for method, _, _ in chatwoot.requests] == ["GET"]
 
 
@@ -628,6 +637,8 @@ def test_a_missing_variable_closes_before_reading_the_catalog(
     _run(_dispatcher(authority, chatwoot, tmp_path))
 
     assert authority.finalizations[-1]["reason_code"] == "template_parameters_missing"
+    # El nombre del caso no cambia solo: la accion se cierra sin reintento.
+    assert authority.finalizations[-1]["next_attempt_at"] is None
     assert chatwoot.requests == []
 
 
@@ -639,6 +650,7 @@ def test_undeclared_variables_do_not_guess_the_body(tmp_path: Path) -> None:
     _run(_dispatcher(authority, chatwoot, tmp_path, template=template))
 
     assert authority.finalizations[-1]["reason_code"] == "approved_template_mismatch"
+    assert authority.finalizations[-1]["next_attempt_at"] is None
     assert chatwoot.requests == []
 
 
@@ -653,6 +665,7 @@ def test_an_action_that_is_not_the_first_contact_is_closed_without_hermes(
     assert authority.finalizations[-1]["reason_code"] == (
         "approved_template_direct_unsupported_action"
     )
+    assert authority.finalizations[-1]["next_attempt_at"] is None
     assert chatwoot.requests == []
 
 

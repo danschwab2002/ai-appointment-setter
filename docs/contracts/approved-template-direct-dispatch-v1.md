@@ -44,7 +44,7 @@ Con el modo directo prendido:
 
 La reevaluación, la reserva del intento, el chequeo del destinatario, la segunda reevaluación, el gate final, `request_started`, el envío y la aceptación son los mismos del modo con Hermes. Lo que cambia es de dónde sale el texto.
 
-1. **Solo `first_contact_review`.** Cualquier otra acción (un seguimiento `no_reply_review`) se cierra con `approved_template_direct_unsupported_action`, sin consultar a nadie.
+1. **Solo `first_contact_review`.** Cualquier otra acción (un seguimiento `no_reply_review`) se cierra con `approved_template_direct_unsupported_action`, sin consultar a nadie y sin reintento.
 2. **La plantilla** se elige como hasta ahora: la de `pago_fallido` si la acción viene de un pago fallido y hay una propia, si no la de `carrito`.
 3. **Las variables** salen de `parametros` de esa plantilla en el manifiesto ([referencia-manifiesto.md](../referencia-manifiesto.md#plantillas)). Si el runtime no las tiene declaradas (el flujo está en `false`), el intento se cierra con `approved_template_mismatch`: el dispatcher no adivina el cuerpo. Si una variable declarada llega vacía (sin nombre o sin producto), se cierra con `template_parameters_missing` antes de leer el catálogo.
 4. **El saludo.** Con `LEAD_FIRST_NAME_GREETING_ENABLED=true`, `nombre` es `resolve_greeting_name(nombre completo)`: la inferencia `confident` guardada si hay, si no el primer nombre determinístico, si no el nombre completo. El contacto de Chatwoot se sigue creando con el nombre completo.
@@ -74,7 +74,12 @@ La plantilla se busca por nombre **y** idioma, porque Meta admite el mismo nombr
 | El texto renderizado pasa de 1024 caracteres | `approved_template_mismatch` | `rendered_body_too_long` |
 | Un valor vacío al renderizar | `template_parameters_missing` | `empty_parameter` |
 
-Todos cierran el intento con `failed_before_request`: no se marcó `request_started` ni salió ningún POST. El `reason_code` es texto libre en la base, así que no hace falta migración. Como en el resto de los cierres previos al envío, el intento se reintenta al minuto hasta que la acción vence.
+Todos cierran el intento con `failed_before_request`: no se marcó `request_started` ni salió ningún POST. El `reason_code` es texto libre en la base, así que no hace falta migración.
+
+### Cuándo se reintenta
+
+- **Lo que puede arreglarse solo se reintenta:** el catálogo que no responde, una plantilla que no está, está pausada o no cierra con idioma, categoría, marcadores o botones (`approved_template_unavailable`, `approved_template_mismatch` del catálogo). El dispatcher pide otro intento al minuto; la base lo concede mientras la acción tenga reintentos (`max_execution_retries`, 3 por defecto: cuatro intentos en total) y no haya vencido, y después la cierra como `permanent_failed` con el último motivo. Cada reintento vuelve a leer el catálogo.
+- **Lo que no cambia solo cierra la acción en el primer intento** como `permanent_failed`, sin pedir otro: la acción que no es primer contacto (`approved_template_direct_unsupported_action`), las variables que el runtime no declara (`approved_template_mismatch` sin `parametros`) y un valor del caso que falta o que Meta rechaza (`template_parameters_missing`). Reintentarlos solo volvía a reclamar la acción y a leer el catálogo tres veces más para llegar al mismo cierre.
 
 ## Qué no cambia
 
@@ -84,10 +89,10 @@ Todos cierran el intento con `failed_before_request`: no se marcó `request_star
 
 ## Lo que no está medido
 
-- **El catálogo del inbox 11 de ATT1** (paso A0 del plan). Sin esa captura no se sabe qué variables, categoría y botones tienen `att1_carrito_abandonado_01` y `att1_compra_fallida_01`. Los tests usan el catálogo capturado del inbox 9 del 28/09. Antes de prender el flag, la categoría de cada plantilla se lee en esa captura: si la del pago fallido no es la del carrito, va en `WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY`. Si el catálogo real no cierra con `parametros`, el intento queda en `approved_template_mismatch` cada minuto hasta vencer.
+- **El catálogo del inbox 11 de ATT1** (paso A0 del plan). Sin esa captura no se sabe qué variables, categoría y botones tienen `att1_carrito_abandonado_01` y `att1_compra_fallida_01`. Los tests usan el catálogo capturado del inbox 9 del 28/09. Antes de prender el flag, la categoría de cada plantilla se lee en esa captura: si la del pago fallido no es la del carrito, va en `WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY`. Si el catálogo real no cierra con `parametros`, cada acción termina en `permanent_failed` con `approved_template_mismatch` después de cuatro intentos, uno por minuto.
 - **Botones `QUICK_REPLY` con solo parámetros de cuerpo.** Las plantillas de Johanna `johanna_carrito_abandonado_01` y `johanna_compra_fallida_01` tienen tres `QUICK_REPLY` en el catálogo del 28/09 y los one-shots de Johanna las mandan con solo `processed_params.body`. No verifiqué que esos envíos sean posteriores a la carga de los botones. La prueba real es el primer envío de ATT1.
 - **El token de control del inbox 11:** el `GET` del inbox lo hace el cliente de control; tiene que tener acceso a ese inbox.
-- **`/ready` no revisa el catálogo.** Un catálogo que no cierra se ve recién en el intento. Queda como mejora.
+- **`/ready` no revisa el catálogo.** Un catálogo que no cierra se ve recién en el intento, y cada acción vencida gasta sus cuatro intentos antes de cerrarse. Queda como deuda operativa: un chequeo del catálogo en `/ready` (leer el inbox y validar las plantillas de los flujos prendidos) lo mostraría antes del primer envío. Mientras no exista, se valida el catálogo a mano contra la captura del inbox antes de prender el flag.
 
 ## Pruebas
 
