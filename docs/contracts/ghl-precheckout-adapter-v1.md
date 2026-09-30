@@ -42,7 +42,7 @@ X-Setter-Adapter-Token: <token>        (opcional si el token va en el cuerpo)
   - manifiesto v2 (`INSTANCE_MANIFEST_PATH`);
   - `"intencion"` en `eventos`;
   - `[adaptadores.ghl]` con al menos un formulario;
-  - un token de 32 caracteres o más, distinto de `LEAD_PRECHECKOUT_SECRET` y de `CHATWOOT_WEBHOOK_SECRET`;
+  - un token de 32 caracteres o más, distinto de todo otro secreto y valor de texto de la configuración del bridge (`LEAD_PRECHECKOUT_SECRET`, `CHATWOOT_WEBHOOK_SECRET`, el token del primer contacto, los de Hotmart, Slack, Supabase, Hermes, OpenRouter, etc.): lo lee cualquier usuario de la subcuenta de GHL, y repetido le daría esa otra autoridad;
   - `[flujos].precheckout` en `false` (ver [Riesgos](#riesgos)).
 - Apagado, ninguna de esas condiciones se evalúa: un runtime sin token ni manifiesto arranca igual que hoy.
 - No depende de `LEAD_PRECHECKOUT_ENABLED` ni de su secreto.

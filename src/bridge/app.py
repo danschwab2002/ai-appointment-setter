@@ -2470,16 +2470,25 @@ def create_app(
             raise ValueError(
                 "GHL_PRECHECKOUT_ADAPTER_TOKEN must contain at least 32 characters"
             )
-        if any(
-            secret is not None
+        # Cualquier usuario de la subcuenta de GHL lee este token en el workflow:
+        # igual a otro valor de la configuracion, le daria esa otra autoridad (el
+        # token del primer contacto manda mensajes). Se compara contra todos los
+        # textos de Settings, no contra una lista de nombres que envejece.
+        clashing = sorted(
+            field.name
+            for field in dataclass_fields(settings)
+            if field.name != "ghl_precheckout_adapter_token"
+            and isinstance(value := getattr(settings, field.name), str)
             and hmac.compare_digest(
-                adapter_token.encode("utf-8"), secret.encode("utf-8")
+                adapter_token.encode("utf-8", "surrogatepass"),
+                value.encode("utf-8", "surrogatepass"),
             )
-            for secret in (settings.lead_precheckout_secret, settings.webhook_secret)
-        ):
+        )
+        if clashing:
             raise ValueError(
-                "GHL_PRECHECKOUT_ADAPTER_TOKEN must differ from "
-                "LEAD_PRECHECKOUT_SECRET and CHATWOOT_WEBHOOK_SECRET"
+                "GHL_PRECHECKOUT_ADAPTER_TOKEN must differ from every other secret "
+                "and value of the bridge configuration; it equals "
+                + ", ".join(clashing)
             )
     pilot_fields = (
         (settings.pilot_scope_key, "LANCEMOS_PILOT_SCOPE_KEY"),

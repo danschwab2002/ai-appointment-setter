@@ -6,9 +6,10 @@ Fixtures: tests/fixtures/instances/att1 (datos de ATT1 medidos el 2026-09-28).
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
+from dataclasses import fields as dataclass_fields, replace
 import json
 from pathlib import Path
+import re
 import shutil
 
 import httpx
@@ -376,11 +377,55 @@ def test_a_ghl_adapter_token_of_exactly_32_characters_builds() -> None:
     assert create_app(_ghl_settings(ghl_precheckout_adapter_token="x" * 32)) is not None
 
 
-@pytest.mark.parametrize("secret", ["lead_precheckout_secret", "webhook_secret"])
+# Todo secreto de texto de Settings: el token del adaptador lo lee cualquier usuario
+# de la subcuenta de GHL, y si repite otro secreto le da esa otra autoridad (el del
+# primer contacto manda mensajes). La lista sale de Settings, asi un secreto nuevo
+# queda cubierto sin tocar el test.
+_SECRET_FIELD = re.compile(r"(secret|token|key|hottok)$")
+_SETTINGS_SECRETS = sorted(
+    field.name
+    for field in dataclass_fields(Settings)
+    if field.type in ("str", "str | None")
+    and _SECRET_FIELD.search(field.name)
+    and field.name != "ghl_precheckout_adapter_token"
+)
+
+
+def test_the_secret_list_covers_the_ones_the_review_named() -> None:
+    assert {
+        "lead_precheckout_secret",
+        "webhook_secret",
+        "precheckout_form_token",
+        "precheckout_first_touch_token",
+        "johanna_abandonment_one_shot_token",
+        "operator_correlation_read_token",
+        "operator_correlation_write_token",
+        "slack_connector_bearer_token",
+        "hotmart_hottok",
+        "supabase_service_role_key",
+        "hermes_api_key",
+        "openrouter_api_key",
+        "chatwoot_control_api_access_token",
+        "chatwoot_agent_bot_access_token",
+    } <= set(_SETTINGS_SECRETS)
+
+
+# El runtime con manifiesto no acepta estos secretos cargados, sea cual sea su valor:
+# el arranque los corta antes de comparar el token. Si alguno pasa a ser portable,
+# este test falla y hay que mirarlo.
+_REFUSED_BY_THE_MANIFEST_RUNTIME = {"hotmart_hottok"}
+
+
+@pytest.mark.parametrize("secret", _SETTINGS_SECRETS)
 def test_the_ghl_adapter_token_must_differ_from_the_other_secrets(secret: str) -> None:
     settings = _ghl_settings(**{secret: _GHL_TOKEN})
+    expected = (
+        f"runtime capabilities are not portable: {secret}$"
+        if secret in _REFUSED_BY_THE_MANIFEST_RUNTIME
+        else f"GHL_PRECHECKOUT_ADAPTER_TOKEN must differ.*it equals {secret}$"
+    )
 
-    with pytest.raises(ValueError, match="GHL_PRECHECKOUT_ADAPTER_TOKEN must differ"):
+    with pytest.raises(ValueError, match=expected):
         create_app(settings)
 
 
