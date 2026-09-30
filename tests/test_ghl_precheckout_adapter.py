@@ -342,6 +342,36 @@ def test_fbclid_falls_back_to_the_submission_object() -> None:
     assert translation.has_fbclid is True
 
 
+def _url_fbclid(body: dict) -> str:
+    (value,) = re.findall(r"[?&]fbclid=([^&]*)", body["attributionSource"]["url"])
+    return value
+
+
+def test_the_fbclid_is_read_from_the_url_query() -> None:
+    # Sin fbclid en el objeto: el de 165 caracteres de la URL llega igual al evento.
+    body = _landing_d()
+    body["attributionSource"].pop("fbclid")
+
+    translation = _translate(body)
+
+    assert len(_url_fbclid(body)) == 165
+    assert translation.event["data"]["attribution"]["fbclid"] == _url_fbclid(body)
+    assert translation.has_fbclid is True
+
+
+def test_the_fbclid_of_the_url_query_wins_over_the_object() -> None:
+    # En la captura los dos son iguales (medido); con el del objeto distinto, gana la
+    # URL, que es la que ve la landing.
+    body = _landing_d()
+    url_fbclid = _url_fbclid(body)
+    assert body["attributionSource"]["fbclid"] == url_fbclid
+    body["attributionSource"]["fbclid"] = url_fbclid[::-1]
+
+    attribution = _translate(body).event["data"]["attribution"]
+
+    assert attribution["fbclid"] == url_fbclid
+
+
 # -------------------------------------------------------------- landing por URL
 
 

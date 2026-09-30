@@ -88,7 +88,7 @@ Hay dos capturas del 2026-09-29, anonimizadas, en `tests/fixtures/ghl/`. Cada un
 | `data.offer.code`, `data.checkout_url` | la oferta resuelta | `https://pay.hotmart.com/<hotlink>?off=<oferta>` |
 | `data.attribution.utm_*` | query de `attributionSource.url` | Decodificada; `""` si falta. Nunca de los campos estructurados de GHL |
 | `data.attribution.sck` | query de `attributionSource.url` | Ver abajo |
-| `data.attribution.fbclid` | query de la URL, si falta `attributionSource.fbclid` | `""` si no hay |
+| `data.attribution.fbclid` | query de `attributionSource.url`; si no está, `attributionSource.fbclid` | Gana el de la URL, que es el que ve la landing. `""` si no hay ninguno |
 | `data.attribution.referrer` | `attributionSource.referrer` | `""` si es `null` |
 | `data.consent` | manifiesto | `marketing_optin = true`, `whatsapp_contact = true`, `copy_version = [consentimiento].copy_version` |
 | `dedupe_key` | derivado | `<site>:<oferta>:<email normalizado>` |
