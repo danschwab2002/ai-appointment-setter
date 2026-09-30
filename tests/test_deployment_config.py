@@ -549,6 +549,32 @@ def test_deployment_declares_observed_lead_receiver_default_off() -> None:
     assert "${LEAD_PRECHECKOUT_ENABLED:-false}" in compose
 
 
+def test_deployment_declares_ghl_precheckout_adapter_default_off(
+    tmp_path: Path,
+) -> None:
+    # compose.yaml pasa las variables una por una: sin estas lineas el flag y el
+    # token no llegan al contenedor (docs/contracts/ghl-precheckout-adapter-v1.md).
+    env_example = (PROJECT_ROOT / ".env.example").read_text()
+    compose = (PROJECT_ROOT / "compose.yaml").read_text()
+
+    env_lines = env_example.splitlines()
+    assert "GHL_PRECHECKOUT_ADAPTER_ENABLED=false" in env_lines
+    assert "GHL_PRECHECKOUT_ADAPTER_TOKEN=" in env_lines
+    assert (
+        "GHL_PRECHECKOUT_ADAPTER_ENABLED: ${GHL_PRECHECKOUT_ADAPTER_ENABLED:-false}"
+        in compose
+    )
+    assert "GHL_PRECHECKOUT_ADAPTER_TOKEN: ${GHL_PRECHECKOUT_ADAPTER_TOKEN:-}" in compose
+    settings = Settings(
+        webhook_secret="test-secret",
+        allowed_jid="12025550123@s.whatsapp.net",
+        capture_dir=tmp_path,
+        max_age_seconds=300,
+    )
+    assert settings.ghl_precheckout_adapter_enabled is False
+    assert settings.ghl_precheckout_adapter_token is None
+
+
 def test_deployment_declares_johanna_one_shot_default_off() -> None:
     env_example = (PROJECT_ROOT / ".env.example").read_text()
     compose = (PROJECT_ROOT / "compose.yaml").read_text()

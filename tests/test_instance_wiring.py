@@ -251,6 +251,188 @@ def test_knowledge_without_manifest_is_refused(instance: Path) -> None:
         create_app(settings)
 
 
+# ---------------------------------------------------------- adaptador de GHL
+# docs/contracts/ghl-precheckout-adapter-v1.md, "Configuracion". El fixture de ATT1
+# es copia de la instancia y todavia no tiene "intencion" ni [adaptadores.ghl]: se
+# arman por mutacion. EgDq es el formulario de ads-a medido el 2026-09-29
+# (tests/fixtures/ghl/).
+
+_GHL_FORM = "EgDqRl2xWc59YjVW1q8W"
+_GHL_LANDING_D_FORM = "Om5FpIg5Sr5ce7nSkuPy"
+_GHL_TOKEN = "ghl-adapter-test-token-0123456789abcdef"
+
+
+def _ghl_manifest(
+    *, intencion: bool = True, forms: tuple[str, ...] = (_GHL_FORM,)
+) -> InstanceManifest:
+    manifest = _att1_manifest()
+    events = manifest.events | {"intencion"} if intencion else manifest.events
+    return replace(manifest, events=frozenset(events), ghl_form_ids=forms)
+
+
+def _ghl_settings(
+    manifest: InstanceManifest | None = None, **overrides: object
+) -> Settings:
+    return _settings(
+        manifest or _ghl_manifest(),
+        **{
+            "ghl_precheckout_adapter_enabled": True,
+            "ghl_precheckout_adapter_token": _GHL_TOKEN,
+            **overrides,
+        },
+    )
+
+
+def _johanna_settings(**overrides: object) -> Settings:
+    # Johanna hoy: sin manifiesto, con /webhooks/lead prendido y su secreto.
+    settings = Settings(
+        webhook_secret="test-secret",
+        allowed_jid="12025550123@s.whatsapp.net",
+        capture_dir=Path("/tmp/instance-wiring-captures"),
+        max_age_seconds=300,
+        lead_precheckout_enabled=True,
+        lead_precheckout_secret="johanna-lead-secret",
+    )
+    return replace(settings, **overrides)
+
+
+def test_ghl_adapter_with_the_intent_its_forms_and_a_token_builds() -> None:
+    # Con manifiesto el bridge rechaza toda capacidad que no este en
+    # PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES: que arranque prueba que el flag lo esta.
+    assert create_app(_ghl_settings()) is not None
+
+
+def test_johanna_without_token_and_the_flag_off_starts_as_today() -> None:
+    # E11: con el flag apagado no se evalua ninguna guarda del adaptador, ni la
+    # comparacion de un token ausente contra un secreto ausente o vacio.
+    for settings in (
+        _johanna_settings(),
+        _johanna_settings(lead_precheckout_enabled=False, lead_precheckout_secret=None),
+        replace(_johanna_settings(), webhook_secret="", lead_precheckout_secret=""),
+    ):
+        assert settings.ghl_precheckout_adapter_enabled is False
+        assert settings.ghl_precheckout_adapter_token is None
+        with TestClient(create_app(settings)) as client:
+            response = client.get("/ready")
+
+        assert response.status_code == 200
+        assert "ghl_precheckout_adapter" not in response.json()
+
+
+def test_the_ghl_adapter_requires_an_instance_manifest() -> None:
+    johanna = _johanna_settings(
+        ghl_precheckout_adapter_enabled=True, ghl_precheckout_adapter_token=_GHL_TOKEN
+    )
+    # El binding v1 (COMMERCIAL_ALLY_CONFIG_PATH) es un runtime portable sin
+    # manifiesto v2: tampoco alcanza.
+    binding_v1 = replace(_ghl_settings(), instance_manifest=None)
+
+    for settings in (johanna, binding_v1):
+        with pytest.raises(
+            ValueError, match="GHL_PRECHECKOUT_ADAPTER_ENABLED requires an instance manifest"
+        ):
+            create_app(settings)
+
+
+def test_the_ghl_adapter_needs_the_intent_event() -> None:
+    settings = _ghl_settings(_ghl_manifest(intencion=False))
+
+    with pytest.raises(ValueError, match="ghl_precheckout_adapter_enabled->intencion"):
+        create_app(settings)
+
+
+def test_the_ghl_adapter_needs_its_forms_in_the_manifest() -> None:
+    settings = _ghl_settings(_ghl_manifest(forms=()))
+
+    with pytest.raises(
+        ValueError, match="ghl_precheckout_adapter_enabled->adaptadores.ghl"
+    ):
+        create_app(settings)
+
+
+@pytest.mark.parametrize("token", [None, "x" * 31])
+def test_the_ghl_adapter_needs_a_token_of_32_characters(token: str | None) -> None:
+    with pytest.raises(ValueError, match="GHL_PRECHECKOUT_ADAPTER_TOKEN must contain"):
+        create_app(_ghl_settings(ghl_precheckout_adapter_token=token))
+
+
+def test_a_ghl_adapter_token_of_exactly_32_characters_builds() -> None:
+    assert create_app(_ghl_settings(ghl_precheckout_adapter_token="x" * 32)) is not None
+
+
+@pytest.mark.parametrize("secret", ["lead_precheckout_secret", "webhook_secret"])
+def test_the_ghl_adapter_token_must_differ_from_the_other_secrets(secret: str) -> None:
+    settings = _ghl_settings(**{secret: _GHL_TOKEN})
+
+    with pytest.raises(ValueError, match="GHL_PRECHECKOUT_ADAPTER_TOKEN must differ"):
+        create_app(settings)
+
+
+def test_from_env_leaves_the_ghl_adapter_off_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # El entorno de Johanna: cuenta 1 e inbox 9 de Chatwoot, sin manifiesto.
+    _environment(monkeypatch, CHATWOOT_ACCOUNT_ID="1", CHATWOOT_INBOX_ID="9")
+    for name in (
+        "INSTANCE_MANIFEST_PATH",
+        "GHL_PRECHECKOUT_ADAPTER_ENABLED",
+        "GHL_PRECHECKOUT_ADAPTER_TOKEN",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    settings = Settings.from_env()
+
+    assert settings.ghl_precheckout_adapter_enabled is False
+    assert settings.ghl_precheckout_adapter_token is None
+
+
+@pytest.mark.parametrize("token", ["", "x" * 31])
+def test_from_env_refuses_the_ghl_adapter_without_a_long_token(
+    monkeypatch: pytest.MonkeyPatch, token: str
+) -> None:
+    _environment(
+        monkeypatch,
+        GHL_PRECHECKOUT_ADAPTER_ENABLED="true",
+        GHL_PRECHECKOUT_ADAPTER_TOKEN=token,
+    )
+
+    with pytest.raises(ValueError, match="GHL_PRECHECKOUT_ADAPTER_TOKEN must contain"):
+        Settings.from_env()
+
+
+def test_from_env_to_ready_with_the_ghl_adapter_of_the_instance(
+    monkeypatch: pytest.MonkeyPatch, instance: Path
+) -> None:
+    path = instance / "instancia.toml"
+    text = path.read_text(encoding="utf-8")
+    events = 'eventos = ["carrito", "pago_fallido", "compra", "entrante"]'
+    assert events in text
+    path.write_text(
+        text.replace(events, events[:-1] + ', "intencion"]')
+        + f'\n[adaptadores.ghl]\nformularios = ["{_GHL_FORM}"]\n',
+        encoding="utf-8",
+    )
+    manifest = InstanceManifest.from_toml_file(path)
+    _environment(
+        monkeypatch,
+        INSTANCE_MANIFEST_PATH=str(path),
+        HERMES_MODEL_NAME=manifest.agent_model_name,
+        GHL_PRECHECKOUT_ADAPTER_ENABLED="true",
+        GHL_PRECHECKOUT_ADAPTER_TOKEN=_GHL_TOKEN,
+    )
+
+    settings = Settings.from_env()
+
+    assert settings.ghl_precheckout_adapter_enabled is True
+    assert settings.ghl_precheckout_adapter_token == _GHL_TOKEN
+    assert settings.instance_manifest is not None
+    assert settings.instance_manifest.ghl_form_ids == (_GHL_FORM,)
+    with TestClient(create_app(settings, supabase_client=_BindingAuthority())) as client:  # type: ignore[arg-type]
+        response = client.get("/ready")
+    assert response.status_code == 200
+    assert response.json()["ghl_precheckout_adapter"] == "enabled:1-forms"
+
+
 # ------------------------------------------------ parametros de las plantillas
 
 
@@ -655,6 +837,26 @@ def test_readiness_reports_the_instance_and_knowledge(instance: Path) -> None:
     assert body["instance_ally"] == "att1"
     assert body["instance_product_version"] == "v1.0.0"
     assert body["commercial_knowledge"] == f"v1:{knowledge.rendered_sha256}"
+
+
+def _ready(settings: Settings) -> dict[str, str]:
+    with TestClient(create_app(settings, supabase_client=_BindingAuthority())) as client:  # type: ignore[arg-type]
+        response = client.get("/ready")
+    assert response.status_code == 200
+    return response.json()
+
+
+def test_readiness_counts_the_ghl_forms_only_with_the_flag_on() -> None:
+    off = _ready(_settings(_ghl_manifest()))
+    one = _ready(_ghl_settings())
+    two = _ready(_ghl_settings(_ghl_manifest(forms=(_GHL_FORM, _GHL_LANDING_D_FORM))))
+
+    assert "ghl_precheckout_adapter" not in off
+    assert one["ghl_precheckout_adapter"] == "enabled:1-forms"
+    assert two["ghl_precheckout_adapter"] == "enabled:2-forms"
+    # Los ids de los formularios no se publican, y el resto del payload no cambia.
+    assert _GHL_FORM not in json.dumps(two)
+    assert {key: value for key, value in one.items() if key != "ghl_precheckout_adapter"} == off
 
 
 # -------------------------------------------------------- guarda de medicacion

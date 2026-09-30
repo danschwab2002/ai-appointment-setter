@@ -175,6 +175,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     "portable_hotmart_purchase_stop_enabled",
     "hotmart_purchase_worker_enabled",
     "lead_precheckout_enabled",
+    # El adaptador de GHL traduce el formulario a lead.precheckout y lo manda
+    # a la misma admision portable que /webhooks/lead; lo especifico (que
+    # formularios) sale de [adaptadores.ghl] del manifiesto.
+    "ghl_precheckout_adapter_enabled",
     "worker_enabled",
     "dispatcher_enabled",
     "dispatcher_outbound_enabled",
@@ -455,6 +459,8 @@ class Settings:
     lead_precheckout_site: str = "psicologajohanna"
     lead_precheckout_landing_id: str = "ads-a"
     lead_precheckout_offer_code: str = "bxjge6zq"
+    ghl_precheckout_adapter_enabled: bool = False
+    ghl_precheckout_adapter_token: str | None = None
     precheckout_first_touch_enabled: bool = False
     precheckout_first_touch_token: str | None = None
     precheckout_delayed_first_touch_enabled: bool = False
@@ -820,6 +826,12 @@ class Settings:
         lead_precheckout_offer_code = os.getenv(
             "LEAD_PRECHECKOUT_OFFER_CODE", commercial_ally_config.offer_code
         ).strip()
+        ghl_precheckout_adapter_enabled = (
+            os.getenv("GHL_PRECHECKOUT_ADAPTER_ENABLED", "false").lower() == "true"
+        )
+        ghl_precheckout_adapter_token = (
+            os.getenv("GHL_PRECHECKOUT_ADAPTER_TOKEN", "").strip() or None
+        )
         allowed_jid = os.getenv("ALLOWED_WHATSAPP_JID", "").strip() or None
         allowed_phone = (
             allowed_jid.removesuffix("@s.whatsapp.net")
@@ -879,6 +891,13 @@ class Settings:
             )
         ):
             raise ValueError("lead precheckout scope must be complete")
+        if ghl_precheckout_adapter_enabled and (
+            ghl_precheckout_adapter_token is None
+            or len(ghl_precheckout_adapter_token) < 32
+        ):
+            raise ValueError(
+                "GHL_PRECHECKOUT_ADAPTER_TOKEN must contain at least 32 characters"
+            )
         supabase_base_url = os.getenv("SUPABASE_BASE_URL", "").strip() or None
         supabase_service_role_key = (
             os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip() or None
@@ -1313,6 +1332,8 @@ class Settings:
             lead_precheckout_site=lead_precheckout_site,
             lead_precheckout_landing_id=lead_precheckout_landing_id,
             lead_precheckout_offer_code=lead_precheckout_offer_code,
+            ghl_precheckout_adapter_enabled=ghl_precheckout_adapter_enabled,
+            ghl_precheckout_adapter_token=ghl_precheckout_adapter_token,
             precheckout_first_touch_enabled=precheckout_first_touch_enabled,
             precheckout_first_touch_token=precheckout_first_touch_token,
             precheckout_delayed_first_touch_enabled=(
@@ -1907,6 +1928,14 @@ def _validate_instance_manifest_gates(settings: Settings) -> None:
     )
     if settings.lead_precheckout_enabled and "intencion" not in manifest.events:
         blocked.append("lead_precheckout_enabled->intencion")
+    if settings.ghl_precheckout_adapter_enabled:
+        # Lo que el adaptador produce es el evento intencion, y solo traduce
+        # los formularios que la instancia lista (docs/contracts/
+        # ghl-precheckout-adapter-v1.md).
+        if "intencion" not in manifest.events:
+            blocked.append("ghl_precheckout_adapter_enabled->intencion")
+        if not manifest.ghl_form_ids:
+            blocked.append("ghl_precheckout_adapter_enabled->adaptadores.ghl")
     if settings.meta_final_effect_enabled and not any(
         manifest.flows[flow] for flow in _OUTBOUND_FLOWS
     ):
@@ -2149,6 +2178,12 @@ def create_app(
             "instance_ally": settings.instance_manifest.ally_ref,
             "instance_product_version": settings.instance_manifest.product_version,
         }
+        if settings.ghl_precheckout_adapter_enabled:
+            # Cuantos formularios admite, sin exponer sus ids. Solo con el
+            # flag prendido: apagado, el payload de /ready no cambia.
+            instance_readiness["ghl_precheckout_adapter"] = (
+                f"enabled:{len(settings.instance_manifest.ghl_form_ids)}-forms"
+            )
     if settings.commercial_knowledge is not None:
         instance_readiness["commercial_knowledge"] = (
             f"v{settings.commercial_knowledge.version}:"
@@ -2349,6 +2384,30 @@ def create_app(
         settings.commercial_ally_config.offer_code,
     ):
         raise ValueError("lead precheckout scope must match commercial ally config")
+    if settings.ghl_precheckout_adapter_enabled:
+        # Todo condicionado al flag: apagado (Johanna, y ATT1 hasta prenderlo)
+        # no se evalua nada, ni siquiera un token ausente contra otro secreto
+        # ausente.
+        if settings.instance_manifest is None:
+            raise ValueError(
+                "GHL_PRECHECKOUT_ADAPTER_ENABLED requires an instance manifest"
+            )
+        adapter_token = settings.ghl_precheckout_adapter_token
+        if adapter_token is None or len(adapter_token) < 32:
+            raise ValueError(
+                "GHL_PRECHECKOUT_ADAPTER_TOKEN must contain at least 32 characters"
+            )
+        if any(
+            secret is not None
+            and hmac.compare_digest(
+                adapter_token.encode("utf-8"), secret.encode("utf-8")
+            )
+            for secret in (settings.lead_precheckout_secret, settings.webhook_secret)
+        ):
+            raise ValueError(
+                "GHL_PRECHECKOUT_ADAPTER_TOKEN must differ from "
+                "LEAD_PRECHECKOUT_SECRET and CHATWOOT_WEBHOOK_SECRET"
+            )
     pilot_fields = (
         (settings.pilot_scope_key, "LANCEMOS_PILOT_SCOPE_KEY"),
         (settings.pilot_scope_version, "LANCEMOS_PILOT_SCOPE_VERSION"),
