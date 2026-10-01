@@ -2,7 +2,9 @@
 
 - **Estado:** Implementado en feature branch; no mergeado, desplegado ni activado
 - **Versión:** 1
-- **Migración:** `20260816000200_inbound_commercial_case_draft_only.sql`
+- **Migración:** `20260816000200_inbound_commercial_case_draft_only.sql`; el
+  entrypoint portable de §3.1, `20261001000400` y `20261001000500` (bridge
+  1.3.1, sin publicar)
 - **Efectos externos:** ninguno
 
 ## 1. Propósito
@@ -39,6 +41,80 @@ admit_inbound_commercial_case(
 Única firma ejecutable por `service_role`. `anon` y `authenticated` no tienen
 `EXECUTE`; los roles API no reciben DML directo sobre tablas de Corte B.
 
+### 3.1 Entrypoint portable: adopción de la conversación de una plantilla (H7)
+
+Migración `20261001000400_portable_inbound_adopts_template_conversation.sql`,
+bridge 1.3.1, sin publicar:
+
+```text
+admit_portable_inbound_commercial_case_v1(
+  p_scope_key text,
+  p_scope_version integer,
+  p_external_conversation_id bigint,
+  p_external_user_id text
+)
+```
+
+La llama solo el bridge con manifiesto, en las tres admisiones del entrante:
+el mensaje, la reautorización antes de responder y la readmisión después de
+reanudar. Sin manifiesto (Johanna) el bridge sigue llamando a
+`admit_inbound_commercial_case_v2` con los mismos argumentos. Mismo resultado
+(§5), mismos errores (§8) y la misma ACL: `security definer`,
+`search_path = pg_catalog, public, pg_temp`, `EXECUTE` revocado a `public`,
+`anon` y `authenticated` y concedido a `service_role`.
+
+**Qué resuelve.** Cuando Chatwoot acepta una plantilla del dispatcher del
+piloto (carrito, pago fallido o primer contacto), la aceptación crea la
+conversación canónica del caso en `automation_status = 'enabled'`. La
+admisión de §4 solo toma una conversación existente en `draft_only`, así que
+la respuesta del lead daba `inbound_canonical_conversation_conflict`.
+
+**Qué hace.** Con el scope publicado, toma los mismos tres advisory locks que
+la admisión base, en el mismo orden. Si todavía no hay admisión para la
+command key (§6), bloquea la identidad que contesta (activa, del inbox del
+scope) y después su conversación (`commercial_context` exacto, `enabled`, sin
+`human_takeover`, status vivo). La **adopta** solo si se cumplen las tres
+condiciones:
+
+1. Una plantilla del piloto salió en esa conversación. La cadena es: mensaje
+   outbound de `ai_agent` con `strategy = durable_followup` → intento
+   `accepted_by_chatwoot` → acción → caso de recuperación de esa identidad,
+   contacto y conversación → su fila en `pilot_recovery_case_bindings`.
+2. El contacto no está dado de baja: `contact_permission` fuera de
+   `opted_out`, `blocked` y `restricted`, y `lifecycle_status` distinto de
+   `do_not_contact`.
+3. Ninguna acción de recuperación de esa persona (en esta conversación o sin
+   conversación) está en `pending`, `deferred`, `retryable_failed` o
+   `delivery_unknown`.
+
+Adoptar es pasar la conversación a `draft_only` (`version + 1`) y escribir un
+`conversation_events` `inbound_adopted_template_conversation` (actor
+`integration`, `related_message_id` = la plantilla, `related_action_id` = su
+acción). Después delega **siempre** en `admit_inbound_commercial_case_v2`,
+sin tocarla, en la misma transacción: si la v2 levanta un error, la adopción
+también se deshace. Si no adopta, el resultado es exactamente el de la v2.
+
+**Lo que no adopta, a propósito.** Un contacto dado de baja (condición 2) que
+responde a una plantilla vieja lo atiende una persona en Chatwoot: la v2 da el
+conflicto y solo el respaldo del bridge para la baja actúa (decisión de Dan
+del 2026-10-01). Lo mismo pasa con un paso de recuperación pendiente
+(condición 3) y con dos identidades del mismo móvil (`23505`).
+
+**El caso de la conversación adoptada.** La conversación adoptada tiene dos
+raíces: el `cart_recovery` que copia el trigger de sombra y el `inbound_sales`
+de la respuesta. La migración `20261001000500` hace que
+`mark_human_handoff_attended`, `claim_conversation_reactivation`,
+`resume_paused_conversation` y `claim_conversation_followup_v1` cuenten y
+elijan solo `case_kind = 'inbound_sales'` **cuando la conversación tiene el
+evento de adopción**. Sin el evento cuentan todas las raíces, como antes. El
+filtro depende del evento porque una medición de solo lectura en la base de
+Johanna (2026-10-01) encontró 2 conversaciones con un único `cart_recovery`, y
+un filtro para todas les habría cambiado el resultado.
+
+**Despliegue.** Las migraciones `000400` y `000500` van antes que el bridge.
+Sin la `000400`, PostgREST responde `404` (`PGRST202`) y el bridge reintenta el
+entrante sin tope hasta que se aplique.
+
 ## 4. Canonicalización
 
 La admisión serializa por command key, conversación externa e identidad. Resuelve
@@ -62,7 +138,9 @@ last-write-wins. Un anchor histórico no puede ser reclamado por otra identidad.
 
 Una conversación nueva queda `active + draft_only`. Una conversación existente
 debe pertenecer al mismo contacto/identidad y ya estar `draft_only`; conflictos de
-ownership, inbox o estado fallan cerrado sin estado parcial.
+ownership, inbox o estado fallan cerrado sin estado parcial. La única
+conversación `enabled` que pasa a `draft_only` es la que adopta el entrypoint
+portable de §3.1, antes de delegar en esta admisión.
 
 ## 5. Resultado
 
@@ -102,6 +180,24 @@ La command key durable es:
   drift canónico devuelve
   `evidence_conflict`, conserva el caso original y agrega evidencia append-only;
 - el conflicto no crea una segunda raíz ni habilita ningún efecto.
+
+Con el entrypoint portable (§3.1):
+
+- la adopción solo ocurre si no hay fila de admisión para la command key. Una
+  entrega repetida del mismo entrante se serializa en el primer advisory lock;
+  la segunda ve la fila, no adopta otra vez, y la v2 da `already_exists`. Queda
+  un solo evento `inbound_adopted_template_conversation`;
+- la readmisión después de reanudar una conversación adoptada da
+  `already_exists` con `draft_only`, como en una conversación que nació
+  `draft_only`;
+- una respuesta que la admisión confirma **antes** de que la reconciliación
+  acepte su plantilla (envío en `delivery_unknown`) no encuentra conversación
+  que adoptar: la v2 la crea en `draft_only` y la aceptación tardía le ata el
+  caso de recuperación. Quedan `cart_recovery` e `inbound_sales` sin el
+  evento de adopción, y en esa conversación las cuatro búsquedas del caso
+  siguen dando `*_ambiguous_case`. La respuesta no se pierde, pero una
+  derivación ahí no se puede marcar atendida. Es un límite conocido, fijado en
+  `tests/sql/followup_engine/real_postgres_portable_inbound_adoption.py`.
 
 ## 7. Correlación de intención
 
