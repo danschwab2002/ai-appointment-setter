@@ -55,6 +55,7 @@ from bridge.supabase import (
     DeliveryAttempt,
     FollowupExecutionContext,
     PilotBoundaryConfig,
+    PilotRequestStartRejectedError,
     ReevaluationDecision,
     ScheduledAction,
     SupabaseClient,
@@ -1666,6 +1667,136 @@ def test_the_form_first_contact_without_its_template_is_never_sent(
     assert finalization["reason_code"] == "first_touch_template_not_configured"
     assert finalization["next_attempt_at"] is None
     assert not (tmp_path / "meta-effects").exists()
+
+
+class _TwoActionsAuthority(_Authority):
+    """Dos acciones reclamadas en el mismo lote; la base rechaza el arranque de la primera."""
+
+    def __init__(self, *, rejection: Exception, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.rejection = rejection
+        self.second_action = replace(
+            self.action,
+            action_id="action-att1-2",
+            recovery_case_id="case-att1-2",
+            followup_sequence_id="sequence-att1-2",
+            idempotency_key=f"{self.action.anchor_type}:first_contact:case-att1-2",
+        )
+        self.starts: list[str] = []
+
+    def _action(self, action_id: object) -> ScheduledAction:
+        return self.action if action_id == self.action.action_id else self.second_action
+
+    async def claim_due_followup_actions(self, **_: object) -> list[ScheduledAction]:
+        return [self.action, self.second_action]
+
+    async def get_followup_chatwoot_context(self, **kwargs: object) -> ChatwootAuthorityContext:
+        return replace(
+            await super().get_followup_chatwoot_context(),
+            action_id=str(kwargs["action_id"]),
+        )
+
+    async def reevaluate_followup_action(self, **kwargs: object) -> ReevaluationDecision:
+        return replace(
+            await super().reevaluate_followup_action(),
+            action_id=str(kwargs["action_id"]),
+        )
+
+    async def reserve_followup_delivery_attempt(self, **kwargs: object) -> DeliveryAttempt:
+        action = self._action(kwargs["action_id"])
+        return replace(
+            await super().reserve_followup_delivery_attempt(**kwargs),
+            attempt_id=f"attempt-of-{action.action_id}",
+            action_id=action.action_id,
+            idempotency_key=action.idempotency_key,
+        )
+
+    async def get_followup_execution_context(self, **kwargs: object) -> FollowupExecutionContext:
+        action = self._action(kwargs["action_id"])
+        return replace(
+            self.context,
+            action_id=action.action_id,
+            recovery_case_id=action.recovery_case_id,
+        )
+
+    async def mark_followup_request_started(self, **kwargs: object) -> DeliveryAttempt:
+        action = self._action(kwargs["action_id"])
+        self.starts.append(action.action_id)
+        if action.action_id == self.action.action_id:
+            raise self.rejection
+        self.events.append("request_started")
+        return replace(
+            self.attempt,
+            attempt_id=str(kwargs["attempt_id"]),
+            action_id=action.action_id,
+            idempotency_key=action.idempotency_key,
+            phase="request_started",
+        )
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["pilot_daily_budget_exhausted", "pilot_runtime_not_armed", "precheckout_conversation_handoff"],
+)
+def test_a_rejected_request_start_does_not_cut_the_batch(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, reason: str
+) -> None:
+    # La base rechaza el arranque de la primera accion (un tope del scope, el
+    # piloto desarmado, o un freno que entro despues de la reevaluacion final).
+    # Antes el error subia sin atrapar: cortaba el lote, la segunda accion
+    # quedaba con el lease tomado y sin procesar, y el motivo se perdia.
+    authority = _TwoActionsAuthority(
+        rejection=PilotRequestStartRejectedError(reason),
+        anchor_type="precheckout_intent",
+        offer_code="2uafw5bg",
+    )
+    chatwoot = _Chatwoot(ATT1_CATALOG)
+
+    with caplog.at_level("WARNING", logger="bridge.worker"):
+        decisions = _run(
+            _dispatcher(authority, chatwoot, tmp_path, template=WITH_FORM_TEMPLATE)
+        )
+
+    # Las dos acciones se intentaron; solo la segunda salio.
+    assert authority.starts == ["action-att1", "action-att1-2"]
+    assert [decision.action_id for decision in decisions] == ["action-att1", "action-att1-2"]
+    [sent] = chatwoot.posts("/conversations/200/messages")
+    assert sent["template_params"]["name"] == FORM_TEMPLATE
+    [accepted] = authority.acceptances
+    assert accepted["action_id"] == "action-att1-2"
+    # El intento rechazado queda reservado: lo resuelve el lease siguiente (la
+    # reevaluacion cancela el caso con el freno, o la accion vence con el).
+    # Cerrarlo sin reintento dejaria la accion permanent_failed y el caso
+    # abierto para siempre.
+    assert authority.finalizations == []
+    # Y el motivo queda en el log, con ids y un codigo.
+    [warning] = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("durable_request_start_rejected")
+    ]
+    assert warning == (
+        "durable_request_start_rejected action_id=action-att1 "
+        f"attempt_id=attempt-of-action-att1 anchor=precheckout_intent reason={reason}"
+    )
+    assert PHONE not in warning
+
+
+def test_any_other_failed_request_start_still_stops_the_batch(tmp_path: Path) -> None:
+    # Una falla que no es un rechazo (la base caida, una respuesta rara) sigue
+    # subiendo: no se sabe si el arranque quedo o no, y no se sigue mandando.
+    authority = _TwoActionsAuthority(
+        rejection=SupabaseError("mark_portable_precheckout_request_started_failed: HTTP 503"),
+        anchor_type="precheckout_intent",
+        offer_code="2uafw5bg",
+    )
+    chatwoot = _Chatwoot(ATT1_CATALOG)
+
+    with pytest.raises(SupabaseError, match="HTTP 503"):
+        _run(_dispatcher(authority, chatwoot, tmp_path, template=WITH_FORM_TEMPLATE))
+
+    assert authority.starts == ["action-att1"]
+    assert chatwoot.posts("/conversations/200/messages") == []
 
 
 def test_the_composition_refuses_the_form_anchor_without_its_template(

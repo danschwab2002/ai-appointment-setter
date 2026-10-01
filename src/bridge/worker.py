@@ -66,6 +66,7 @@ from bridge.supabase import (
     DeliveryAttempt,
     FollowupExecutionContext,
     PilotBoundaryConfig,
+    PilotRequestStartRejectedError,
     ReevaluationDecision,
     ScheduledAction,
     SupabaseClient,
@@ -1514,6 +1515,29 @@ class DurableDispatcher:
                                         )
                                     )
                                 )
+                            except PilotRequestStartRejectedError as exc:
+                                # The base refused to start: a cap of the
+                                # scope, a disarmed runtime, or a stop that
+                                # came in after the final reevaluation. Nothing
+                                # went out and no start was consumed. The
+                                # attempt stays reserved on purpose: closing it
+                                # without a retry would leave the action
+                                # permanent_failed and its case open for good,
+                                # while the next lease lets the reevaluation
+                                # cancel the case with the stop, or the action
+                                # expire with it. What must not happen is what
+                                # used to: the error cut the whole batch and
+                                # the reason was lost.
+                                logger.warning(
+                                    "durable_request_start_rejected "
+                                    "action_id=%s attempt_id=%s anchor=%s reason=%s",
+                                    action.action_id,
+                                    attempt.attempt_id,
+                                    action.anchor_type,
+                                    exc.reason,
+                                )
+                                decisions.append(decision)
+                                continue
                             except SupabaseCommittedResponseError:
                                 deadline = (
                                     datetime.fromisoformat(final_now)

@@ -15,6 +15,7 @@ import pytest
 from bridge.instance_manifest import InstanceManifest
 from bridge.supabase import (
     PilotBoundaryConfig,
+    PilotRequestStartRejectedError,
     PrecheckoutAdmissionResult,
     SupabaseClient,
     SupabaseCommittedResponseError,
@@ -376,6 +377,105 @@ def test_the_request_start_rpc_is_chosen_by_the_anchor(
         "p_lease_generation": 3,
         "p_now": "2026-10-01T15:01:00+00:00",
     }
+
+
+def _rejecting_client(body: object, *, status: int = 500) -> SupabaseClient:
+    # La forma con que PostgREST devuelve un raise de SQLSTATE 55000
+    # (code/message/details/hint, HTTP 500): el precedente de
+    # tests/test_resolution_pilot_plan_rejection.py. No es un payload de
+    # Hotmart ni de Chatwoot.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, json=body)
+
+    return SupabaseClient(
+        base_url="https://supabase.example.test",
+        service_role_key="service-role",
+        transport=httpx.MockTransport(handler),
+    )
+
+
+def _start(client: SupabaseClient, *, anchor_type: str | None, boundary: object = BOUNDARY) -> object:
+    return asyncio.run(
+        client.mark_followup_request_started(
+            action_id=ACTION_ID,
+            attempt_id=ATTEMPT_ID,
+            worker_id="att1-dispatcher",
+            lease_generation=3,
+            now="2026-10-01T15:01:00+00:00",
+            pilot_boundary=boundary,  # type: ignore[arg-type]
+            anchor_type=anchor_type,
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    ("anchor_type", "reason"),
+    [
+        ("precheckout_intent", "precheckout_conversation_handoff"),
+        ("precheckout_intent", "intent_purchase_ambiguous"),
+        ("payment_failure", "pilot_daily_budget_exhausted"),
+        ("cart_abandonment", "pilot_runtime_not_armed"),
+        (None, "pilot_audience_consented_intent_prior_opt_out"),
+    ],
+)
+def test_a_rejected_request_start_keeps_its_reason(
+    anchor_type: str | None, reason: str
+) -> None:
+    client = _rejecting_client(
+        {
+            "code": "55000",
+            "message": "pilot_request_start_rejected",
+            "details": reason,
+            "hint": None,
+        }
+    )
+
+    with pytest.raises(PilotRequestStartRejectedError) as rejected:
+        _start(client, anchor_type=anchor_type)
+
+    assert rejected.value.reason == reason
+    assert str(rejected.value) == f"pilot_request_start_rejected:{reason}"
+    assert not isinstance(rejected.value, SupabaseCommittedResponseError)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        # Otro error de la base: no es un rechazo del arranque.
+        {"code": "55000", "message": "pilot_authorization_without_request_start", "details": None},
+        {"code": "P0002", "message": "pilot_request_start_rejected", "details": "pilot_runtime_not_armed"},
+        # Un detail que no es un codigo no se copia a ningun lado.
+        {"code": "55000", "message": "pilot_request_start_rejected", "details": "Compradora 5215555550101"},
+        {"code": "55000", "message": "pilot_request_start_rejected", "details": None},
+        ["not", "an", "object"],
+    ],
+)
+def test_any_other_failed_request_start_stays_a_generic_failure(body: object) -> None:
+    client = _rejecting_client(body)
+
+    with pytest.raises(SupabaseError) as failed:
+        _start(client, anchor_type="precheckout_intent")
+
+    assert not isinstance(failed.value, PilotRequestStartRejectedError)
+    assert str(failed.value) == "mark_portable_precheckout_request_started_failed: HTTP 500"
+
+
+def test_without_the_pilot_boundary_a_failed_start_is_never_read_as_a_rejection() -> None:
+    # Johanna (sin frontera) llama a mark_followup_request_started: su fallo
+    # sale como siempre, diga lo que diga el cuerpo.
+    client = _rejecting_client(
+        {
+            "code": "55000",
+            "message": "pilot_request_start_rejected",
+            "details": "pilot_runtime_not_armed",
+        }
+    )
+
+    with pytest.raises(SupabaseError) as failed:
+        _start(client, anchor_type=None, boundary=None)
+
+    assert not isinstance(failed.value, PilotRequestStartRejectedError)
+    assert str(failed.value) == "mark_followup_request_started_failed: HTTP 500"
 
 
 def test_a_precheckout_request_never_starts_without_the_pilot_boundary() -> None:

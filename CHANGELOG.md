@@ -55,6 +55,7 @@ Tres cosas para una instancia con manifiesto: el primer contacto tras el formula
 - **`instance_cli validate` da error, no aviso**, cuando un flujo bajo la guarda está prendido con la sección y sin la aceptación: ese manifiesto no arranca.
 - **Con un opt-out previo, el pago fallido portable en un scope con consentimiento ya no se planifica** (`pilot_audience_consented_intent_prior_opt_out`). Antes se planificaba y lo frenaba la reevaluación. Nadie recibía el mensaje en ninguno de los dos casos.
 - El worker le pasa el ancla de la acción al cliente de Supabase, que elige la RPC por ancla. Para toda ancla que no sea `precheckout_intent` llama a la misma RPC con el mismo cuerpo.
+- **Un arranque que la frontera del piloto rechaza ya no corta el lote del dispatcher** (carrito, pago fallido y primer contacto). Antes el rechazo (`pilot_request_start_rejected`: un tope, el piloto desarmado, un freno tardío) subía como error sin atrapar, las demás acciones reclamadas quedaban con el lease tomado y el motivo se perdía. Ahora queda en el log (`durable_request_start_rejected … reason=…`) y el lote sigue. El intento queda reservado, igual que antes: lo resuelve el lease siguiente. Solo con la frontera del piloto: sin ella nada cambia.
 
 ### Qué tiene que hacer una instancia
 

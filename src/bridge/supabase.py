@@ -140,6 +140,23 @@ class PilotPlanRejectedError(SupabaseError):
         super().__init__(reason)
 
 
+class PilotRequestStartRejectedError(SupabaseError):
+    """Fail-closed rejection of a pilot request start.
+
+    The three pilot request-start RPCs raise SQLSTATE 55000
+    ``pilot_request_start_rejected`` with the reason in ``detail``: a cap of
+    the scope, a disarmed runtime, a contact outside the cohort, or a stop of
+    the flow that came in after the last reevaluation (a purchase, an opt-out,
+    a handoff). Nothing was started and no request start was consumed.
+    ``reason`` keeps that detail; without it the rejection surfaced as a
+    generic failure and the reason was lost.
+    """
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(f"pilot_request_start_rejected:{reason}")
+
+
 _PILOT_PLAN_REJECTION_SQLSTATE = "55000"
 # Only snake_case tokens are copied into webhook_events.processing_error: the
 # reasons raised by the pilot planners are fixed literals, and anything else
@@ -180,6 +197,34 @@ def _pilot_plan_rejection(response: httpx.Response) -> str | None:
     ):
         return None
     return f"{message}:{details}"
+
+
+_PILOT_REQUEST_START_REJECTION_REASON = re.compile(r"[a-z][a-z0-9_]{0,79}")
+
+
+def _pilot_request_start_rejection(response: httpx.Response) -> str | None:
+    """Return the reason of a rejected pilot request start, or None if unknown.
+
+    Only the exact rejection the request-start RPCs raise counts, and only a
+    reason with the shape of a code: anything else stays a generic failure.
+    """
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    if not isinstance(body, dict):
+        return None
+    if (
+        body.get("code") != _PILOT_PLAN_REJECTION_SQLSTATE
+        or body.get("message") != "pilot_request_start_rejected"
+    ):
+        return None
+    details = body.get("details")
+    if not isinstance(
+        details, str
+    ) or not _PILOT_REQUEST_START_REJECTION_REASON.fullmatch(details):
+        return None
+    return details
 
 
 def _raise_operator_correlation_resolution_error(
@@ -6053,6 +6098,13 @@ class SupabaseClient:
             content=json.dumps(rpc_body, ensure_ascii=False),
         )
         if response.status_code != 200:
+            if pilot_boundary is not None:
+                # The base refused to start on purpose. It is not a failure
+                # of the call: the dispatcher leaves this action and goes on
+                # with the rest of the batch.
+                rejection = _pilot_request_start_rejection(response)
+                if rejection is not None:
+                    raise PilotRequestStartRejectedError(rejection)
             raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
         try:
             rows = _response_rows(response, operation=operation)
