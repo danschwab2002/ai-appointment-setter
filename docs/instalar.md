@@ -82,6 +82,22 @@ Si el manifiesto tiene `[adaptadores.ghl]`, `validate` dice además si la secci�
 
 Cada instancia tiene su base. Nunca se comparte con otra aliada.
 
+**El proxy delante de PostgREST no registra la query.** El bridge pone teléfonos y emails en la query de algunos `GET` (desde 1.3.0, uno por cada mensaje entrante de un móvil de México o Argentina), así que el log de acceso de ese proxy escribe la ruta sin la query. En ATT1 el proxy es un nginx, y la config y su prueba local están en el repo de la instancia (`despliegue/gateway/nginx.conf` y `probar-log.sh`):
+
+```nginx
+log_format sin_query '$remote_addr [$time_local] "$request_method $uri $server_protocol" '
+                     '$status $body_bytes_sent $request_time "$http_user_agent"';
+
+server {
+    access_log /var/log/nginx/access.log sin_query;
+    # ...
+}
+```
+
+`log_format` va en el contexto `http` (un archivo de `conf.d/` ya está adentro), y nginx lee la config solo al arrancar: el servicio se reinicia después de cambiarla. Con un proyecto de Supabase como base, ese log es de Supabase y la instancia no lo configura. Qué queda con la query y cuándo: `CHANGELOG.md`, `[1.3.0]`, *Qué tiene que hacer una instancia*.
+
+**Verificación:** un `GET` con una query inventada deja en el log de acceso una línea con la ruta y sin `?`.
+
 ## 7. Secretos
 
 > Pendiente. Lista completa en `.env.example` del repo de la instancia.
