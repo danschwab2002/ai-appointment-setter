@@ -7,6 +7,10 @@
 //   reevaluate_followup_action REAL (nada de followup_action_reevaluated
 //   insertado a mano) -> contexto de ejecucion -> reserva approved_template ->
 //   mark_*_request_started -> record_and_finalize_followup_acceptance.
+// Y, desde 1.3.0, el primer contacto tras el formulario:
+//   formulario (admit_and_plan_portable_lead_precheckout) -> claim ->
+//   reevaluate_portable_precheckout_action REAL -> contexto -> reserva ->
+//   mark_portable_precheckout_request_started -> aceptacion.
 //
 // Casos:
 //   1. con la cohorte vacia, carrito y pago fallido se rechazan con
@@ -28,7 +32,23 @@
 //      Chatwoot entre el plan y el envio no sale, no consume el cupo y no
 //      deja un permiso activo; sin formulario o con un formulario sin opt-in
 //      no se planifica; y el tope total corta el arranque del envio
-//      siguiente.
+//      siguiente;
+//   8. Hotmart en 521 contra una intencion en 52 (20261001000100): el pago
+//      fallido de un movil mexicano que el formulario guardo como 52 + 10 y
+//      Hotmart manda como 521 + 10 correlaciona con esa intencion, el permiso
+//      lo concede la intencion con phone_match = whatsapp_equivalent y llega a
+//      la aceptacion. En la audiencia de produccion, el carrito de un movil
+//      argentino (formulario 54 + 10, Hotmart 549 + 10) entra por la misma
+//      intencion;
+//   9. el primer contacto tras el formulario (20261001000200), con el scope y
+//      la politica que publica la instancia (first_contact de
+//      politica-piloto.json, consented_intent_in_cohort) y en el orden de su
+//      E2E: con el scope desarmado el formulario se admite y no planifica ni
+//      crea el contacto; con el contacto sembrado e inscripto y el scope
+//      armado, el reenvio planifica con la demora de la politica, la
+//      reevaluacion propia deja ejecutar y llega a la aceptacion; y una
+//      compra de Hotmart en 521 antes del envio (formulario en 52) hace que la
+//      reevaluacion propia cancele el caso sin consumir cupo.
 //
 // Datos:
 //   - Binding, ofertas, landings, producto, Chatwoot y consentimiento salen de
@@ -51,12 +71,21 @@
 //     con producto y oferta sustituidos (como test_commercial_ally_multi_offer.py),
 //     y ademas id, creation_date y comprador: cada caso es otra persona y el
 //     evento tiene que caer dentro del lookback de su intencion.
-//   - Deuda (A0): no hay PURCHASE_CANCELED ni lead.precheckout capturados, ni el
-//     catalogo del inbox 11. El pago fallido usa el precedente inline de
-//     validate_commercial_ally_payment_failure_recovery.mjs y el formulario el de
-//     validate_commercial_ally_portable_precheckout.mjs, con los valores de ATT1.
-//     El texto aceptado es un marcador: la base guarda el que le pasa el bridge.
+//   - Formulario de los casos 8 y 9: los goldens del traductor de GHL
+//     (tests/fixtures/ghl/expected/), que salen de los dos envios capturados,
+//     con id, fecha y comprador (email y telefono) sustituidos, igual que
+//     validate_portable_precheckout_first_contact.mjs. Los telefonos son
+//     sinteticos.
+//   - Deuda (A0): no hay PURCHASE_CANCELED, PURCHASE_APPROVED ni lead.precheckout
+//     capturados. El pago fallido usa el precedente inline de
+//     validate_commercial_ally_payment_failure_recovery.mjs, la compra el de
+//     validate_commercial_ally_multi_offer.mjs y el formulario de los casos 1 a
+//     7 el de validate_commercial_ally_portable_precheckout.mjs, con los valores
+//     de ATT1. El texto aceptado es un marcador: la base guarda el que le pasa
+//     el bridge (el cuerpo de la plantilla capturada del inbox 11 lo prueba
+//     tests/test_durable_dispatcher_approved_template.py).
 import { PGlite } from '@electric-sql/pglite';
+import { randomBytes } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -68,6 +97,7 @@ await db.exec(`
   create role anon nologin;
   create role authenticated nologin;
   create role service_role nologin;
+  grant usage on schema public to service_role;
 `);
 for (const file of [
   join(root, 'supabase/baseline/20260803_public_schema.sql'),
@@ -187,6 +217,27 @@ if (CHANNEL_PROVIDER !== 'waba'
   // pasos) asumen esta forma. Si la instancia la cambia, hay que revisarlos.
   throw new Error(`politica-piloto.json changed shape: ${JSON.stringify({ CHANNEL_PROVIDER, pilotPolicy })}`);
 }
+// El scope y la politica del primer contacto tras el formulario (caso 9).
+const fcScope = required(PILOT.first_contact?.pilot_scope, 'politica-piloto.first_contact.pilot_scope');
+const fcPolicy = required(PILOT.first_contact?.policy, 'politica-piloto.first_contact.policy');
+const FC_SCOPE = required(fcScope.scope_key, 'first_contact.pilot_scope.scope_key');
+const FC_SCOPE_VERSION = required(fcScope.version, 'first_contact.pilot_scope.version');
+const FC_POLICY = required(fcPolicy.policy_key, 'first_contact.policy.policy_key');
+const FC_GRACE_MINUTES = 60;
+if (fcScope.channel_provider !== CHANNEL_PROVIDER
+    || fcScope.channel_account_ref_prefix !== pilotScope.channel_account_ref_prefix
+    || fcScope.source !== 'landing'
+    || fcScope.source_event_type !== 'PRECHECKOUT_FORM_SUBMITTED'
+    || fcScope.audience_mode !== 'consented_intent_in_cohort'
+    || fcScope.max_cohort_contacts < 2
+    || FC_SCOPE === SCOPE
+    || fcPolicy.grace_period !== `${FC_GRACE_MINUTES} minutes`
+    || fcPolicy.max_automatic_messages !== 1
+    || fcPolicy.steps.map((step) => `${step.step_key}:${step.mode}`).join(',') !== 'first_contact:freeform') {
+  // El caso 9 (el E2E en cohorte con dos personas, la demora, un toque) asume
+  // esta forma. Si la instancia la cambia, hay que revisarlo.
+  throw new Error(`politica-piloto.json first_contact changed shape: ${JSON.stringify({ fcScope, fcPolicy })}`);
+}
 
 await db.query(`
   insert into public.commercial_ally_runtime_bindings
@@ -255,9 +306,70 @@ await db.query(`
   values ($1,$2,'inactive',0,'operator-test','default-off')
 `, [SCOPE, SCOPE_VERSION]);
 
+// Lo que la instancia publica para el primer contacto: su politica, su scope
+// (con el control inactive, como nace en aprovisionar-att1.sql) y la politica
+// de compra del binding, que es la que deja admitir un PURCHASE_APPROVED.
+await db.query(`
+  insert into public.followup_policy_versions
+    (policy_key, version, status, purpose, timezone, business_windows,
+     grace_period, expires_after, max_automatic_messages, steps,
+     approved_by, approved_at, published_at)
+  values ($1,$2,'published',$3,$4,$5::jsonb,$6::interval,$7::interval,$8,$9::jsonb,
+          'operator-test',now(),now())
+`, [FC_POLICY, required(fcPolicy.version, 'first_contact.policy.version'),
+  required(fcPolicy.purpose, 'first_contact.policy.purpose'), ATT1.timezone,
+  JSON.stringify(required(fcPolicy.business_windows, 'first_contact.policy.business_windows')
+    .map((window) => ({ ...window, start: '00:00', end: '23:59' }))),
+  fcPolicy.grace_period, required(fcPolicy.expires_after, 'first_contact.policy.expires_after'),
+  fcPolicy.max_automatic_messages, JSON.stringify(fcPolicy.steps)]);
+await db.query(`
+  insert into public.pilot_scope_versions
+    (scope_key, version, status, tenant_key, chatwoot_account_id, chatwoot_inbox_id,
+     channel, channel_provider, channel_account_ref, source, source_event_type,
+     additional_source_event_types, external_product_id, offer_code,
+     additional_offer_codes, purpose, policy_key, policy_version, timezone,
+     max_cohort_contacts, max_outbound_request_starts_total,
+     max_outbound_request_starts_per_day, audience_mode,
+     approved_by, approved_at, published_at)
+  values ($1,$2,'published',$3,$4,$5,'whatsapp',$6,$7,$8,$9,$10::text[],$11,$12,
+          $13::text[],$14,$15,$16,$17,$18,$19,$20,$21,'operator-test',now(),now())
+`, [
+  FC_SCOPE, FC_SCOPE_VERSION, ATT1.tenant, ATT1.accountId, ATT1.inboxId, CHANNEL_PROVIDER,
+  CHANNEL_REF, fcScope.source, fcScope.source_event_type,
+  required(fcScope.additional_source_event_types, 'first_contact.pilot_scope.additional_source_event_types'),
+  String(ATT1.productId), defaultOffer.offer_code,
+  additionalOffers.map((offer) => offer.offer_code),
+  required(fcScope.purpose, 'first_contact.pilot_scope.purpose'), FC_POLICY, fcPolicy.version,
+  ATT1.timezone, fcScope.max_cohort_contacts,
+  required(fcScope.max_outbound_request_starts_total, 'first_contact.pilot_scope.max_outbound_request_starts_total'),
+  required(fcScope.max_outbound_request_starts_per_day, 'first_contact.pilot_scope.max_outbound_request_starts_per_day'),
+  fcScope.audience_mode,
+]);
+await db.query(`
+  insert into public.pilot_runtime_controls
+    (scope_key, scope_version, runtime_state, generation, changed_by, change_reason)
+  values ($1,$2,'inactive',0,'operator-test','default-off')
+`, [FC_SCOPE, FC_SCOPE_VERSION]);
+await db.query(`
+  insert into public.commercial_ally_hotmart_purchase_policies
+    (tenant_ref, funnel_ref, binding_version, enabled, max_lookback)
+  values ($1,$2,$3,true,$4::interval)
+`, [ATT1.tenant, ATT1.funnel, ATT1.bindingVersion,
+  required(PILOT.purchase_policy?.max_lookback, 'purchase_policy.max_lookback')]);
+
 const one = (rows, label) => {
   if (rows.length !== 1) throw new Error(`${label}: expected one row, got ${rows.length}`);
   return rows[0];
+};
+// Los entrypoints de 1.3.0 se llaman como service_role, el rol del bridge; el
+// resto de la cadena, como hasta ahora, con el rol de la sesion.
+const asService = async (action) => {
+  await db.exec('set role service_role');
+  try {
+    return await action();
+  } finally {
+    await db.exec('reset role');
+  }
 };
 const armed = one((await db.query(`
   select * from public.set_lancemos_pilot_runtime_state($1,$2,0,'armed','operator-test','controlled-test')
@@ -296,6 +408,109 @@ const person = (label) => {
     email: `att1-chain-${suffix}@example.test`,
     phone: `120255501${suffix}`,
   };
+};
+
+// Casos 8 y 9: el formulario es el golden del traductor de GHL de la landing
+// (el de -d es un movil mexicano, 52 + 10 digitos; el de ads-a uno argentino,
+// 54 + 10), con id, fecha y comprador sustituidos.
+const golden = (name, { country, callingCode, offerCode }) => {
+  const file = JSON.parse(readFileSync(join(root, 'tests/fixtures/ghl/expected', name), 'utf8'));
+  const { raw_payload: raw, canonical_payload: canonical } = file;
+  const offer = offers.find((candidate) => candidate.offer_code === offerCode);
+  if (!raw || !canonical || raw.id !== canonical.external_submission_id
+      || raw.version !== '1.1.0'
+      || canonical.identity.phone_country_iso !== country
+      || raw.data.buyer.phone_country_code !== callingCode
+      || !new RegExp(`^${callingCode}[0-9]{10}$`).test(canonical.identity.phone)
+      || canonical.commerce.offer_ref !== offerCode
+      || canonical.consent.copy_version !== ATT1.copyVersion
+      || canonical.consent.whatsapp_contact !== true
+      || offer === undefined) {
+    throw new Error(`${name} is not the ${country} translator golden this validator expects`);
+  }
+  return { raw, canonical, offer, callingCode, country, name: canonical.lead.full_name };
+};
+const GOLDEN = {
+  MX: golden('ghl_form_webhook_landing_d_derived_20260929.lead_precheckout.json',
+    { country: 'MX', callingCode: '52', offerCode: '2uafw5bg' }),
+  AR: golden('ghl_form_webhook_att1_ads_a_20260929.lead_precheckout.json',
+    { country: 'AR', callingCode: '54', offerCode: 'gopi6lh7' }),
+};
+// ULID como el del adaptador: 48 bits de milisegundos y 80 aleatorios.
+const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const ulidAt = (ms) => {
+  let value = (BigInt(ms) << 80n) | BigInt(`0x${randomBytes(10).toString('hex')}`);
+  let out = '';
+  for (let i = 0; i < 26; i += 1) {
+    out = CROCKFORD[Number(value & 31n)] + out;
+    value >>= 5n;
+  }
+  return out;
+};
+// Una persona con un movil sintetico en sus dos formas: formPhone (52 / 54 +
+// 10 digitos, la que guarda el formulario) y whatsapp (521 / 549 + 10, la de
+// Hotmart y el wa_id). phone es el telefono del contacto de la base: el que
+// trae el evento que lo crea (Hotmart) o el que siembra el operador (el del
+// formulario).
+const mobilePerson = (label, country, { contactForm }) => {
+  personIndex += 1;
+  const suffix = String(personIndex).padStart(2, '0');
+  const { callingCode, offer, name } = GOLDEN[country];
+  const national = `${country === 'MX' ? '55' : '11'}555506${suffix}`;
+  const formPhone = `${callingCode}${national}`;
+  const whatsapp = `${callingCode}${country === 'MX' ? '1' : '9'}${national}`;
+  return {
+    label,
+    country,
+    offer,
+    name,
+    callingCode,
+    email: `att1-chain-${suffix}@example.test`,
+    formPhone,
+    whatsapp,
+    phone: contactForm === 'whatsapp' ? whatsapp : formPhone,
+  };
+};
+const goldenForm = (lead, submittedAt) => {
+  const source = GOLDEN[lead.country];
+  const raw = structuredClone(source.raw);
+  const canonical = structuredClone(source.canonical);
+  const id = ulidAt(submittedAt.getTime());
+  const dedupeKey = `${raw.source.site}:${raw.data.offer.code}:${lead.email}`;
+  raw.id = id;
+  raw.created_at = submittedAt.toISOString();
+  raw.data.buyer.email = lead.email;
+  raw.data.buyer.phone = `+${lead.formPhone}`;
+  raw.data.buyer.phone_country_code = lead.callingCode;
+  raw.data.buyer.phone_national = lead.formPhone.slice(lead.callingCode.length);
+  raw.dedupe_key = dedupeKey;
+  canonical.external_submission_id = id;
+  canonical.submitted_at = submittedAt.toISOString().replace('.000Z', 'Z');
+  canonical.identity.email = lead.email;
+  canonical.identity.phone = lead.formPhone;
+  canonical.dedupe_key = dedupeKey;
+  return { id, raw, canonical, submittedAt };
+};
+const intentOf = async (id) => one((await db.query(`
+  select normalized_phone, offer_ref, lifecycle_state
+  from public.purchase_intents where id = $1
+`, [id])).rows, 'intent');
+// El formulario por la admision de siempre (la de una instancia sin el flag
+// del primer contacto): deja la intencion con el telefono en la forma 52 / 54.
+const admitGoldenForm = async (lead) => {
+  const form = goldenForm(lead, SUBMITTED_AT);
+  const admitted = one((await db.query(`
+    select * from public.admit_portable_observed_lead_precheckout($1,$2,$3,$4,$5::jsonb,$6::jsonb)
+  `, [ATT1.tenant, ATT1.funnel, ATT1.bindingVersion, form.id, JSON.stringify(form.raw),
+    JSON.stringify(form.canonical)])).rows, `${lead.label} form`);
+  const intent = await intentOf(admitted.purchase_intent_id);
+  if (admitted.outcome !== 'inserted'
+      || intent.normalized_phone !== lead.formPhone
+      || intent.normalized_phone === lead.whatsapp
+      || intent.offer_ref !== lead.offer.offer_code) {
+    throw new Error(`${lead.label}: the GHL form did not leave the intent in the form phone: ${JSON.stringify({ outcome: admitted.outcome, offer: intent.offer_ref })}`);
+  }
+  return admitted.purchase_intent_id;
 };
 
 // Formulario de la landing de la oferta (precedente inline del contrato).
@@ -509,10 +724,30 @@ const openActions = async () => (await db.query(`
 // tests/test_durable_dispatcher_approved_template.py lee estas dos
 // definiciones y las compara con lo que manda el SupabaseClient real del
 // DurableDispatcher: si una capa cambia el modo o la RPC, la otra se entera.
+// Desde 1.3.0 el ancla precheckout_intent (el primer contacto tras el
+// formulario) tiene tambien su propia reevaluacion: la compartida sola
+// ejecutaria sin mirar sus frenos (compra, carrito, opt-out, consentimiento).
 const DIRECT_DELIVERY_MODE = 'approved_template';
-const startOperationFor = (anchorType) => (anchorType === 'payment_failure'
-  ? 'mark_portable_payment_failure_request_started'
-  : 'mark_lancemos_pilot_request_started');
+const START_OPERATION_BY_ANCHOR = {
+  cart_abandonment: 'mark_lancemos_pilot_request_started',
+  payment_failure: 'mark_portable_payment_failure_request_started',
+  precheckout_intent: 'mark_portable_precheckout_request_started',
+};
+const REEVALUATE_OPERATION_BY_ANCHOR = {
+  cart_abandonment: 'reevaluate_followup_action',
+  payment_failure: 'reevaluate_followup_action',
+  precheckout_intent: 'reevaluate_portable_precheckout_action',
+};
+const operationFor = (operations, anchorType) => {
+  const operation = operations[anchorType];
+  if (operation === undefined) throw new Error(`no RPC declared for anchor_type ${anchorType}`);
+  return operation;
+};
+const startOperationFor = (anchorType) => operationFor(START_OPERATION_BY_ANCHOR, anchorType);
+const reevaluateOperationFor = (anchorType) => operationFor(REEVALUATE_OPERATION_BY_ANCHOR, anchorType);
+// Las RPC propias del primer contacto se llaman como service_role.
+const asBridge = (anchorType, action) => (
+  anchorType === 'precheckout_intent' ? asService(action) : action());
 
 // La cadena del dispatcher para una accion recien planificada. Es la unica
 // accion viva de la base: el claim la tiene que devolver sola.
@@ -533,9 +768,10 @@ const dispatch = async (lead, plan, { anchor, stepKey, offer, beforeAcceptance }
     throw new Error(`${lead.label}: claimed anchor_type ${claimed[0].anchor_type}, expected ${anchor}`);
   }
   // Primer contacto sin conversacion: sin evidencia de Chatwoot.
-  const decision = one((await db.query(`
-    select * from public.reevaluate_followup_action($1,$2,$3,$4)
-  `, [plan.scheduled_action_id, worker, lease, now])).rows, `${lead.label} reevaluation`);
+  const reevaluateOperation = reevaluateOperationFor(claimed[0].anchor_type);
+  const decision = one((await asBridge(claimed[0].anchor_type, () => db.query(`
+    select * from public.${reevaluateOperation}($1,$2,$3,$4)
+  `, [plan.scheduled_action_id, worker, lease, now]))).rows, `${lead.label} reevaluation`);
   if (decision.decision !== 'execute' || decision.reason_code !== 'eligible_for_execution') {
     throw new Error(`${lead.label}: the real reevaluation did not execute: ${JSON.stringify(decision)}`);
   }
@@ -560,9 +796,10 @@ const dispatch = async (lead, plan, { anchor, stepKey, offer, beforeAcceptance }
     decision.sequence_revision, DIRECT_DELIVERY_MODE, now])).rows,
   `${lead.label} reservation`);
   const startOperation = startOperationFor(claimed[0].anchor_type);
-  const started = one((await db.query(`
+  const startedAt = await dbNow();
+  const started = one((await asBridge(claimed[0].anchor_type, () => db.query(`
     select * from public.${startOperation}($1,$2,$3,$4,$5)
-  `, [plan.scheduled_action_id, attempt.id, worker, lease, await dbNow()])).rows,
+  `, [plan.scheduled_action_id, attempt.id, worker, lease, startedAt]))).rows,
   `${lead.label} request start`);
   if (started.phase !== 'request_started'
       || started.mode !== DIRECT_DELIVERY_MODE
@@ -612,7 +849,7 @@ const dispatch = async (lead, plan, { anchor, stepKey, offer, beforeAcceptance }
   if (later.length !== 0) {
     throw new Error(`${lead.label}: a claim two days later found work: ${JSON.stringify(later)}`);
   }
-  return { decision, context, started };
+  return { decision, context, started, reevaluateOperation, startOperation };
 };
 
 // ---------------------------------------------------------------------------
@@ -752,13 +989,294 @@ const bothRun = await dispatch(both, bothFailurePlan, {
   anchor: 'payment_failure', stepKey: 'payment_failure_first_contact', offer: bothOffer,
 });
 
+// ---------------------------------------------------------------------------
+// 8a. Hotmart en 521 contra una intencion en 52. El formulario de GHL guarda el
+//     movil mexicano como 52 + 10 digitos; Hotmart manda el pago fallido con
+//     521 + 10, y con ese telefono crea resolve_event el contacto y arma el
+//     plan. Antes de 20261001000100 el evento no correlacionaba con la
+//     intencion y el plan cerraba sin permiso.
+// ---------------------------------------------------------------------------
+const mxFailure = mobilePerson('pago-fallido-521-contra-52', 'MX', { contactForm: 'whatsapp' });
+const mxFailureIntent = await admitGoldenForm(mxFailure);
+const mxFailureEvent = await admitFailure(mxFailure, mxFailure.offer, 'HPATT1CHAINMX1');
+if (mxFailureEvent.intentId !== mxFailureIntent
+    || mxFailure.phone !== mxFailure.whatsapp
+    || !/^521[0-9]{10}$/.test(mxFailure.phone)
+    || !/^52[0-9]{10}$/.test(mxFailure.formPhone)) {
+  throw new Error('the payment failure in 521 did not correlate with the form intent in 52');
+}
+await createContact(mxFailure, mxFailureEvent.eventId);
+await enroll(mxFailure);
+const mxFailurePlan = one((await planFailure(mxFailure, mxFailure.offer, mxFailureEvent)).rows,
+  'payment failure in 521 plan');
+const mxFailureGrants = await authorizationsOf(mxFailure);
+if (!mxFailurePlan.created
+    || mxFailureGrants.length !== 1
+    || mxFailureGrants[0].authorization_status !== 'allowed'
+    || mxFailureGrants[0].authorization_source !== 'system'
+    || mxFailureGrants[0].evidence.reason !== 'precheckout_whatsapp_consent'
+    || mxFailureGrants[0].evidence.purchase_intent_id !== mxFailureIntent
+    || mxFailureGrants[0].evidence.phone_match !== 'whatsapp_equivalent') {
+  throw new Error(`the payment failure in 521 did not get the consented permission of the intent in 52: ${JSON.stringify({ created: mxFailurePlan.created, grants: mxFailureGrants.length, source: mxFailureGrants[0]?.authorization_source, phone_match: mxFailureGrants[0]?.evidence?.phone_match })}`);
+}
+// El control: en los casos de arriba formulario y Hotmart traen el mismo
+// telefono, y la evidencia lo dice.
+if (failureOnlyGrants[0].evidence.phone_match !== 'exact') {
+  throw new Error(`an exact phone did not record phone_match = exact: ${failureOnlyGrants[0].evidence.phone_match}`);
+}
+const mxFailureRun = await dispatch(mxFailure, mxFailurePlan, {
+  anchor: 'payment_failure', stepKey: 'payment_failure_first_contact', offer: mxFailure.offer,
+});
+
 // Cada envio consumio exactamente una autorizacion del piloto.
 const starts = one((await db.query(`
   select count(*)::integer as count from public.pilot_outbound_request_authorizations
   where scope_key = $1
 `, [SCOPE])).rows, 'pilot authorizations');
-if (starts.count !== 6) {
-  throw new Error(`expected six pilot request starts, got ${starts.count}`);
+if (starts.count !== 7) {
+  throw new Error(`expected seven pilot request starts, got ${starts.count}`);
+}
+
+// ---------------------------------------------------------------------------
+// 9. El primer contacto tras el formulario, con el scope de la instancia
+//    (consented_intent_in_cohort) y en el orden de su E2E. El formulario entra
+//    por admit_and_plan_portable_lead_precheckout, lo que llama el bridge con
+//    PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED.
+// ---------------------------------------------------------------------------
+const FC_DUE = at(-(FC_GRACE_MINUTES + 1));
+const fcStarts = async () => one((await db.query(`
+  select count(*)::integer as count from public.pilot_outbound_request_authorizations
+  where scope_key = $1
+`, [FC_SCOPE])).rows, 'first contact pilot authorizations').count;
+const fcStatus = async () => one((await asService(() => db.query(`
+  select * from public.get_portable_precheckout_pilot_runtime_status($1,$2,$3,$4,$5)
+`, [FC_SCOPE, FC_SCOPE_VERSION, ATT1.tenant, CHANNEL_PROVIDER, CHANNEL_REF]))).rows,
+'first contact status');
+// Envia el formulario por el entrypoint y devuelve la admision con el renglon
+// del plan y, si se planifico, su accion, con la forma que espera dispatch.
+const submitFirstContact = async (lead, submittedAt) => {
+  const form = goldenForm(lead, submittedAt);
+  const admitted = one((await asService(() => db.query(`
+    select * from public.admit_and_plan_portable_lead_precheckout($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8)
+  `, [ATT1.tenant, ATT1.funnel, ATT1.bindingVersion, form.id, JSON.stringify(form.raw),
+    JSON.stringify(form.canonical), FC_SCOPE, FC_SCOPE_VERSION]))).rows, `${lead.label} form`);
+  const ledger = one((await db.query(`
+    select * from public.portable_precheckout_first_contact_plans where submission_id = $1
+  `, [admitted.submission_id])).rows, `${lead.label} plan row`);
+  if (admitted.outcome !== 'inserted'
+      || ledger.outcome !== admitted.plan_outcome
+      || ledger.reason_code !== admitted.plan_reason
+      || ledger.purchase_intent_id !== admitted.purchase_intent_id) {
+    throw new Error(`${lead.label}: the form was not admitted with its plan row: ${JSON.stringify({ outcome: admitted.outcome, plan: admitted.plan_outcome, reason: admitted.plan_reason })}`);
+  }
+  const result = {
+    form,
+    submission: admitted.submission_id,
+    intent: admitted.purchase_intent_id,
+    result: `${ledger.outcome}:${ledger.reason_code}`,
+    contact: ledger.contact_id,
+    recovery_case_id: ledger.recovery_case_id,
+  };
+  if (ledger.outcome === 'planned') {
+    const action = one((await db.query(`
+      select id, followup_sequence_id, due_at, anchor_type, step_key, action_type
+      from public.scheduled_actions where recovery_case_id = $1
+    `, [ledger.recovery_case_id])).rows, `${lead.label} action`);
+    result.scheduled_action_id = action.id;
+    result.followup_sequence_id = action.followup_sequence_id;
+    result.action = action;
+  }
+  return result;
+};
+const peopleFootprint = async () => JSON.stringify(one((await db.query(`
+  select
+    (select count(*)::integer from public.contacts) as contacts,
+    (select count(*)::integer from public.contact_points) as points,
+    (select count(*)::integer from public.channel_identities) as identities,
+    (select count(*)::integer from public.recovery_cases) as cases,
+    (select count(*)::integer from public.scheduled_actions) as actions
+`)).rows, 'people footprint'));
+// Lo que deja el script de siembra de la instancia para el E2E.
+const seedContact = async (lead) => {
+  lead.contact = one((await db.query(`
+    insert into public.contacts (full_name, email, phone, country_iso)
+    values ($1,$2,$3,$4) returning id
+  `, [lead.name, lead.email, lead.phone, lead.country])).rows, `${lead.label} contact`).id;
+  await db.query(`
+    insert into public.contact_points (contact_id, type, raw_value, normalized_value, source)
+    values ($1,'email',$2,$2,'manual'), ($1,'phone',$3,$3,'manual')
+  `, [lead.contact, lead.email, lead.phone]);
+};
+const enrollFirstContact = async (lead) => {
+  const { generation } = one((await db.query(`
+    select generation from public.pilot_runtime_controls where scope_key = $1
+  `, [FC_SCOPE])).rows, 'first contact generation');
+  const member = one((await db.query(`
+    select * from public.set_lancemos_pilot_cohort_member($1,$2,$3,$4,'active','operator-test','controlled-test')
+  `, [FC_SCOPE, FC_SCOPE_VERSION, lead.contact, generation])).rows, `${lead.label} enrollment`);
+  if (member.member_status !== 'active') {
+    throw new Error(`${lead.label} was not enrolled in the first contact scope`);
+  }
+};
+const expectFirstContactPlan = (label, lead, plan) => {
+  const dueMs = plan.action ? new Date(plan.action.due_at).getTime() : null;
+  if (plan.result !== 'planned:first_contact_scheduled'
+      || plan.contact !== lead.contact
+      || plan.action.anchor_type !== 'precheckout_intent'
+      || plan.action.step_key !== 'first_contact'
+      || plan.action.action_type !== 'first_contact_review'
+      || dueMs !== plan.form.submittedAt.getTime() + FC_GRACE_MINUTES * 60_000) {
+    throw new Error(`${label}: the form did not plan the first contact after the grace period: ${JSON.stringify({ result: plan.result, action: plan.action })}`);
+  }
+};
+
+// 9.1 Con el scope desarmado: el formulario se admite, no planifica y no crea
+//     ni contacto ni trabajo.
+const fcLead = mobilePerson('primer-contacto', 'MX', { contactForm: 'form' });
+const fcInactive = await fcStatus();
+const fcEmpty = await peopleFootprint();
+const fcDisarmed = await submitFirstContact(fcLead, FC_DUE);
+if (fcInactive.configured !== true || fcInactive.runtime_state !== 'inactive'
+    || fcDisarmed.result !== 'not_planned:pilot_runtime_not_armed'
+    || fcDisarmed.contact !== null
+    || (await peopleFootprint()) !== fcEmpty) {
+  throw new Error(`the disarmed first contact scope planned or created something: ${JSON.stringify({ state: fcInactive.runtime_state, result: fcDisarmed.result })}`);
+}
+// 9.2 Sembrar el contacto, inscribirlo y armar; el reenvio planifica.
+await seedContact(fcLead);
+await enrollFirstContact(fcLead);
+const fcArmed = one((await db.query(`
+  select * from public.set_lancemos_pilot_runtime_state($1,$2,
+    (select generation from public.pilot_runtime_controls where scope_key = $1),
+    'armed','operator-test','controlled-test')
+`, [FC_SCOPE, FC_SCOPE_VERSION])).rows, 'arm first contact');
+const fcArmedStatus = await fcStatus();
+if (fcArmed.runtime_state !== 'armed' || fcArmedStatus.configured !== true
+    || fcArmedStatus.runtime_state !== 'armed') {
+  throw new Error(`the first contact scope is not configured and armed: ${JSON.stringify({ fcArmed, fcArmedStatus })}`);
+}
+const fcPlan = await submitFirstContact(fcLead, FC_DUE);
+expectFirstContactPlan('first contact', fcLead, fcPlan);
+if (fcPlan.intent !== fcDisarmed.intent || fcPlan.submission === fcDisarmed.submission) {
+  throw new Error('the resend did not reuse the intent with a new submission');
+}
+// 9.3 El caso queda atado al scope del primer contacto, no al de recuperacion,
+//     con la intencion y el envio del formulario como evidencia de audiencia.
+const fcBinding = one((await db.query(`
+  select scope_key, scope_version, audience_mode, audience_purchase_intent_id,
+         audience_precheckout_submission_id
+  from public.pilot_recovery_case_bindings where recovery_case_id = $1
+`, [fcPlan.recovery_case_id])).rows, 'first contact binding');
+if (fcBinding.scope_key !== FC_SCOPE || fcBinding.scope_version !== FC_SCOPE_VERSION
+    || fcBinding.audience_mode !== fcScope.audience_mode
+    || fcBinding.audience_purchase_intent_id !== fcPlan.intent
+    || fcBinding.audience_precheckout_submission_id !== fcPlan.submission) {
+  throw new Error(`the first contact case is not bound to its own scope: ${JSON.stringify(fcBinding)}`);
+}
+// 9.4 La cadena del dispatcher, con la reevaluacion y el arranque propios.
+const fcRun = await dispatch(fcLead, fcPlan, {
+  anchor: 'precheckout_intent', stepKey: 'first_contact', offer: fcLead.offer,
+});
+if (fcRun.reevaluateOperation !== 'reevaluate_portable_precheckout_action'
+    || fcRun.startOperation !== 'mark_portable_precheckout_request_started'
+    || fcRun.context.buyer_name !== fcLead.name
+    || (await fcStarts()) !== 1) {
+  throw new Error(`the first contact did not go through its own RPCs: ${JSON.stringify({ reevaluate: fcRun.reevaluateOperation, start: fcRun.startOperation, starts: await fcStarts() })}`);
+}
+const fcGrants = await authorizationsOf(fcLead);
+const fcControl = one((await db.query(`
+  select data from public.pilot_control_events
+  where event_type = 'pilot_outbound_request_authorized' and scope_key = $1
+`, [FC_SCOPE])).rows, 'first contact control event').data;
+if (fcGrants.length !== 1
+    || fcGrants[0].authorization_source !== 'system'
+    || fcGrants[0].evidence.reason !== 'precheckout_whatsapp_consent'
+    || fcGrants[0].evidence.purchase_intent_id !== fcPlan.intent
+    || fcControl.audience_mode !== fcScope.audience_mode
+    || fcControl.audience_purchase_intent_id !== fcPlan.intent
+    || fcControl.audience_precheckout_submission_id !== fcPlan.submission) {
+  throw new Error(`the first contact did not record the consent of the form: ${JSON.stringify({ grants: fcGrants.length, mode: fcControl.audience_mode })}`);
+}
+// 9.5 La compra antes del envio, con otra persona sembrada e inscripta. El
+//     formulario guardo 52 + 10 y Hotmart manda la compra con 521 + 10: la
+//     intencion queda purchased y la reevaluacion propia cancela el caso
+//     (cancelled, no won) sin intento y sin consumir cupo.
+const fcBuyer = mobilePerson('primer-contacto-compra', 'MX', { contactForm: 'form' });
+await seedContact(fcBuyer);
+await enrollFirstContact(fcBuyer);
+const fcBuyerPlan = await submitFirstContact(fcBuyer, FC_DUE);
+expectFirstContactPlan('first contact buyer', fcBuyer, fcBuyerPlan);
+const fcPurchasePayload = {
+  id: `att1-chain-purchase-${fcBuyer.email}`,
+  creation_date: at(-2).getTime(),
+  event: 'PURCHASE_APPROVED',
+  version: '2.0.0',
+  data: {
+    product: { id: ATT1.productId, ucode: 'ATT1-CHAIN-UCODE' },
+    buyer: { email: fcBuyer.email, checkout_phone: `+${fcBuyer.whatsapp}` },
+    purchase: {
+      approved_date: at(-2).getTime(),
+      status: 'APPROVED',
+      transaction: 'HPATT1CHAINBUY1',
+      offer: { code: fcBuyer.offer.offer_code },
+    },
+  },
+};
+const fcPurchase = one((await db.query(`
+  select * from public.admit_portable_hotmart_purchase_approved($1,$2,$3,$4,$5::jsonb,$6,$7)
+`, [ATT1.tenant, ATT1.funnel, ATT1.bindingVersion, fcPurchasePayload.id,
+  JSON.stringify(fcPurchasePayload), fcBuyer.email, fcBuyer.whatsapp])).rows,
+'first contact purchase');
+const fcCorrelation = one((await db.query(`
+  select outcome, purchase_intent_id from public.portable_hotmart_purchase_correlations
+  where webhook_event_id = $1
+`, [fcPurchase.webhook_event_id])).rows, 'first contact purchase correlation');
+if (fcPurchase.outcome !== 'inserted'
+    || fcCorrelation.outcome !== 'resolved'
+    || fcCorrelation.purchase_intent_id !== fcBuyerPlan.intent
+    || (await intentOf(fcBuyerPlan.intent)).lifecycle_state !== 'purchased'
+    || (await intentOf(fcBuyerPlan.intent)).normalized_phone !== fcBuyer.formPhone) {
+  throw new Error(`the purchase in 521 did not close the intent in 52: ${JSON.stringify({ outcome: fcPurchase.outcome, correlation: fcCorrelation.outcome })}`);
+}
+const fcBuyerWorker = `att1-chain-${fcBuyer.label}`;
+const fcBuyerNow = await dbNow();
+const fcBuyerClaim = (await db.query(`
+  select * from public.claim_due_followup_actions($1,$2,interval '5 minutes',100)
+`, [fcBuyerWorker, fcBuyerNow])).rows;
+if (fcBuyerClaim.length !== 1 || fcBuyerClaim[0].id !== fcBuyerPlan.scheduled_action_id
+    || fcBuyerClaim[0].anchor_type !== 'precheckout_intent') {
+  throw new Error(`first contact buyer: claimed ${JSON.stringify(fcBuyerClaim.map((row) => [row.id, row.anchor_type]))}`);
+}
+const fcBuyerDecision = one((await asService(() => db.query(`
+  select * from public.${reevaluateOperationFor(fcBuyerClaim[0].anchor_type)}($1,$2,$3,$4)
+`, [fcBuyerPlan.scheduled_action_id, fcBuyerWorker, fcBuyerClaim[0].lease_generation,
+  fcBuyerNow]))).rows, 'first contact buyer reevaluation');
+const fcBuyerState = one((await db.query(`
+  select
+    (select status from public.recovery_cases where id = $1) as case_status,
+    (select purchase_event_id from public.recovery_cases where id = $1) as purchase_event_id,
+    (select status from public.scheduled_actions where id = $2) as action_status,
+    (select terminal_reason from public.scheduled_actions where id = $2) as terminal_reason,
+    (select count(*)::integer from public.followup_delivery_attempts where action_id = $2) as attempts
+`, [fcBuyerPlan.recovery_case_id, fcBuyerPlan.scheduled_action_id])).rows, 'first contact buyer state');
+if (fcBuyerDecision.decision !== 'cancel'
+    || fcBuyerDecision.reason_code !== 'intent_purchased'
+    || fcBuyerState.case_status !== 'cancelled'
+    || fcBuyerState.purchase_event_id !== null
+    || fcBuyerState.action_status !== 'cancelled'
+    || fcBuyerState.terminal_reason !== 'intent_purchased'
+    || fcBuyerState.attempts !== 0
+    || (await fcStarts()) !== 1
+    || (await openActions()).length !== 0) {
+  throw new Error(`the purchase before the send did not cancel the first contact: ${JSON.stringify({ decision: fcBuyerDecision, state: fcBuyerState, starts: await fcStarts() })}`);
+}
+// El primer contacto no toco el scope de recuperacion.
+const startsAfterFirstContact = one((await db.query(`
+  select count(*)::integer as count from public.pilot_outbound_request_authorizations
+  where scope_key = $1
+`, [SCOPE])).rows, 'recovery starts after the first contact').count;
+if (startsAfterFirstContact !== starts.count) {
+  throw new Error(`the first contact consumed starts of the recovery scope: ${startsAfterFirstContact}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -770,13 +1288,14 @@ if (starts.count !== 6) {
 //    vacia: la membresia es por version y no se copia.
 //    La v2 todavia no esta en politica-piloto.json (la instancia la publica
 //    despues de este bloque): sus valores salen de la v1 del fixture. El total
-//    cuenta lo que ya consumio la v1, asi que total = consumido + 1 deja salir
-//    uno y corta el siguiente.
+//    cuenta lo que ya consumio la v1, asi que total = consumido + 2 deja salir
+//    dos (la intencion consentida y el carrito argentino del caso 8b) y corta
+//    el siguiente.
 //    Casos: una intencion consentida entra sin cohorte; sin formulario, con un
 //    formulario sin opt-in (carrito y pago fallido), no; el tope corta.
 // ---------------------------------------------------------------------------
 const OPEN_VERSION = SCOPE_VERSION + 1;
-const OPEN_TOTAL = starts.count + 1;
+const OPEN_TOTAL = starts.count + 2;
 const generationOf = async () => one((await db.query(`
   select generation from public.pilot_runtime_controls where scope_key = $1
 `, [SCOPE])).rows, 'scope generation').generation;
@@ -829,8 +1348,8 @@ const submissionOf = async (intentId) => one((await db.query(`
 // consentida se planifica en la v2 y la persona se da de baja en Chatwoot
 // (apply_chatwoot_inbound_opt_out) antes del envio. La accion queda cancelada,
 // el permiso del carrito se cierra y no se autoriza ningun arranque. Va antes
-// de la persona siguiente a proposito: la v2 tiene un solo cupo, y si la baja
-// lo hubiera consumido, el envio de abajo no saldria.
+// de las personas siguientes a proposito: la v2 tiene dos cupos, y si la baja
+// hubiera consumido uno, el segundo envio de abajo no saldria.
 const optedOut = person('audiencia-opt-out');
 const optedOutOffer = additionalOffers[1];
 await admitForm(optedOut, optedOutOffer);
@@ -895,6 +1414,33 @@ if (openControl.audience_mode !== 'consented_intent'
     || openRun.started.pilot_authorization_id == null) {
   throw new Error(`the authorization did not record the audience: ${JSON.stringify(openControl)}`);
 }
+
+// 8b. Hotmart en 549 contra una intencion en 54, en la audiencia de produccion:
+//     el carrito de un movil argentino entra sin cohorte por la intencion que
+//     dejo el formulario de GHL con 54 + 10 digitos. Antes de 20261001000100
+//     se rechazaba con pilot_audience_intent_unresolved.
+const arCart = mobilePerson('carrito-549-contra-54', 'AR', { contactForm: 'whatsapp' });
+const arCartIntent = await admitGoldenForm(arCart);
+const arCartSubmission = await submissionOf(arCartIntent);
+const arCartEvent = await admitCart(arCart, arCart.offer);
+await createContact(arCart, arCartEvent.eventId);
+const arCartPlan = one((await planCart(arCart, arCart.offer, arCartEvent, openPlan)).rows,
+  'cart in 549 plan');
+const arCartBinding = one((await db.query(`
+  select audience_mode, audience_purchase_intent_id, audience_precheckout_submission_id
+  from public.pilot_recovery_case_bindings where recovery_case_id = $1
+`, [arCartPlan.recovery_case_id])).rows, 'cart in 549 binding');
+if (!arCartPlan.created
+    || !/^549[0-9]{10}$/.test(arCart.phone)
+    || !/^54[0-9]{10}$/.test(arCart.formPhone)
+    || arCartBinding.audience_mode !== 'consented_intent'
+    || arCartBinding.audience_purchase_intent_id !== arCartIntent
+    || arCartBinding.audience_precheckout_submission_id !== arCartSubmission) {
+  throw new Error(`the cart in 549 did not enter by the intent in 54: ${JSON.stringify({ created: arCartPlan.created, mode: arCartBinding.audience_mode })}`);
+}
+const arCartRun = await dispatch(arCart, arCartPlan, {
+  anchor: 'cart_abandonment', stepKey: 'first_contact', offer: arCart.offer,
+});
 
 // Sin consentimiento no entra: sin formulario, o con un formulario sin opt-in
 // (carrito y pago fallido). No queda ni caso ni permiso.
@@ -979,6 +1525,21 @@ console.log(JSON.stringify({
   payment_failure_after_cart: bothRun.decision.reason_code,
   pilot_request_starts: starts.count,
   two_message_policy_risk: 'invalid_next_policy_step',
+  hotmart_in_whatsapp_form: {
+    mx_payment_failure_521_against_intent_52: `${mxFailureGrants[0].evidence.phone_match}:${mxFailureRun.decision.reason_code}`,
+    ar_cart_549_against_intent_54: `consented_intent:${arCartRun.decision.reason_code}`,
+    mx_purchase_521_against_intent_52: 'purchased',
+  },
+  first_contact: {
+    scope: `${FC_SCOPE} v${FC_SCOPE_VERSION} (${fcScope.audience_mode})`,
+    disarmed: fcDisarmed.result,
+    planned: fcPlan.result,
+    grace_minutes: FC_GRACE_MINUTES,
+    reevaluation: `${fcRun.reevaluateOperation}:${fcRun.decision.reason_code}`,
+    request_start: fcRun.startOperation,
+    purchase_before_the_send: `${fcBuyerDecision.decision}:${fcBuyerDecision.reason_code}`,
+    pilot_request_starts: await fcStarts(),
+  },
   consented_intent: {
     scope_version: OPEN_VERSION,
     consented_without_cohort: openRun.decision.reason_code,

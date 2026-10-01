@@ -922,6 +922,7 @@ def test_create_app_builds_the_direct_dispatcher_without_hermes(tmp_path: Path) 
 CHAIN_VALIDATOR = (
     Path(__file__).parent / "sql" / "followup_engine" / "validate_att1_portable_chain.mjs"
 )
+FORM_ANCHOR = "precheckout_intent"
 
 
 class _PostgREST:
@@ -1044,16 +1045,25 @@ class _PostgREST:
         return body
 
 
-def _chain_validator_contract() -> tuple[str, str, str]:
-    """The reservation mode and the two start RPCs A7 declares."""
+def _chain_validator_operations(name: str) -> dict[str, str]:
+    """An ``anchor_type -> RPC`` table A7 declares as an object literal."""
+    source = CHAIN_VALIDATOR.read_text(encoding="utf-8")
+    [block] = re.findall(rf"const {name} = \{{\n(.*?)\n\}};", source, flags=re.DOTALL)
+    lines = [line.strip() for line in block.splitlines()]
+    entries = [re.fullmatch(r"([a-z_]+): '([a-z_]+)',", line) for line in lines]
+    assert all(entries), lines
+    return {entry.group(1): entry.group(2) for entry in entries if entry}
+
+
+def _chain_validator_contract() -> tuple[str, dict[str, str], dict[str, str]]:
+    """The reservation mode and the start and reevaluation RPCs A7 declares."""
     source = CHAIN_VALIDATOR.read_text(encoding="utf-8")
     [mode] = re.findall(r"const DIRECT_DELIVERY_MODE = '([a-z_]+)';", source)
-    [(payment_failure, other)] = re.findall(
-        r"const startOperationFor = \(anchorType\) => \(anchorType === 'payment_failure'"
-        r"\s*\?\s*'([a-z_]+)'\s*:\s*'([a-z_]+)'\);",
-        source,
+    return (
+        mode,
+        _chain_validator_operations("START_OPERATION_BY_ANCHOR"),
+        _chain_validator_operations("REEVALUATE_OPERATION_BY_ANCHOR"),
     )
-    return mode, payment_failure, other
 
 
 def _chain_validator_anchors() -> set[str]:
@@ -1099,20 +1109,25 @@ def test_the_real_supabase_client_sends_what_the_att1_chain_validates(
 
     decisions = _run(dispatcher)
 
-    mode, payment_failure_start, cart_start = _chain_validator_contract()
-    expected_start = payment_failure_start if anchor_type == "payment_failure" else cart_start
-    starts = [
-        operation for operation in postgrest.operations() if operation.startswith("mark_")
-    ]
+    mode, start_by_anchor, reevaluate_by_anchor = _chain_validator_contract()
+    operations = postgrest.operations()
     assert decisions[-1].decision == "execute"
     assert postgrest.body_of("reserve_followup_delivery_attempt")["p_mode"] == mode
-    assert starts == [expected_start]
-    assert "finalize_followup_delivery_attempt" not in postgrest.operations()
-    assert postgrest.operations()[-1] == "record_and_finalize_followup_acceptance"
-    # A7 recorre exactamente estos dos anchor_type, los que escriben los
-    # planificadores (20260803000100 y 20260903000300).
+    assert [name for name in operations if name.startswith("mark_")] == [
+        start_by_anchor[anchor_type]
+    ]
+    assert [name for name in operations if name.startswith("reevaluate_")] == [
+        reevaluate_by_anchor[anchor_type]
+    ] * 2
+    assert "finalize_followup_delivery_attempt" not in operations
+    assert operations[-1] == "record_and_finalize_followup_acceptance"
+    # A7 recorre exactamente estos tres anchor_type, los que escriben los
+    # planificadores (20260803000100, 20260903000300 y 20261001000200). El del
+    # formulario se compara mas abajo, con sus RPC propias.
     assert anchor_type in _chain_validator_anchors()
-    assert _chain_validator_anchors() == {"cart_abandonment", "payment_failure"}
+    assert _chain_validator_anchors() == {
+        "cart_abandonment", "payment_failure", FORM_ANCHOR,
+    }
     assert chatwoot.posts("/conversations/200/messages")
 
 
@@ -1121,8 +1136,16 @@ def test_the_att1_chain_validator_still_declares_its_contract() -> None:
     # no tiene contra que comparar: se rompe aca, con un mensaje claro.
     assert _chain_validator_contract() == (
         "approved_template",
-        "mark_portable_payment_failure_request_started",
-        "mark_lancemos_pilot_request_started",
+        {
+            "cart_abandonment": "mark_lancemos_pilot_request_started",
+            "payment_failure": "mark_portable_payment_failure_request_started",
+            "precheckout_intent": "mark_portable_precheckout_request_started",
+        },
+        {
+            "cart_abandonment": "reevaluate_followup_action",
+            "payment_failure": "reevaluate_followup_action",
+            "precheckout_intent": "reevaluate_portable_precheckout_action",
+        },
     )
 
 
@@ -1450,7 +1473,6 @@ def test_create_app_turns_the_equivalence_on_only_for_the_portable_sender(
 # carrito y el pago fallido de esta configuracion son tambien los del
 # manifiesto.
 
-FORM_ANCHOR = "precheckout_intent"
 ATT1_TEMPLATE_NAMES = {
     "cart_abandonment": MANIFEST.templates["carrito"].name,
     "payment_failure": MANIFEST.templates["pago_fallido"].name,
@@ -1753,6 +1775,17 @@ def test_the_real_supabase_client_uses_the_first_contact_rpcs_for_its_anchor(
     assert postgrest.body_of("reserve_followup_delivery_attempt")["p_mode"] == (
         "approved_template"
     )
+    # Lo mismo que recorre validate_att1_portable_chain.mjs contra la base
+    # para este ancla (caso 9): si una capa cambia de RPC, la otra se entera.
+    mode, start_by_anchor, reevaluate_by_anchor = _chain_validator_contract()
+    assert postgrest.body_of("reserve_followup_delivery_attempt")["p_mode"] == mode
+    assert [name for name in operations if name.startswith("mark_")] == [
+        start_by_anchor[FORM_ANCHOR]
+    ]
+    assert {name for name in operations if name.startswith("reevaluate_")} == {
+        reevaluate_by_anchor[FORM_ANCHOR]
+    }
+    assert FORM_ANCHOR in _chain_validator_anchors()
     assert operations[-1] == "record_and_finalize_followup_acceptance"
     [message] = chatwoot.posts("/conversations/200/messages")
     assert message["template_params"]["name"] == FORM_TEMPLATE
