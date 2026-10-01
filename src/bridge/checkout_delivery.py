@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -11,7 +14,14 @@ import httpx
 from bridge.chatwoot import ChatwootProtocolError, ChatwootReplyDeliveryUnknownError
 from bridge.checkout_issuance import generate_issuance_ulid
 from bridge.payment_link import PaymentLinkUnavailable, render_payment_link_reply
+from bridge.payment_link_template import (
+    parse_payment_link_template,
+    payment_link_button_suffix,
+)
 from bridge.supabase import SupabaseError
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -41,8 +51,19 @@ async def deliver_checkout_issuance_v2(
     delivery_id: str,
     preamble: str,
     expected_jid: str | None = None,
+    link_template_name: str | None = None,
+    link_template_language: str | None = None,
+    part_delay_seconds: float = 0.0,
+    part_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> CheckoutDeliveryResult:
-    """Reserve a stable URL, authorize at the last boundary, and send once."""
+    """Reserve a stable URL, authorize at the last boundary, and send once.
+
+    Con ``link_template_name`` el link sale en el boton de esa plantilla, en
+    una segunda parte despues del texto del agente. La autorizacion de la
+    emision va en la parte del link, como siempre, y el cierre de la emision
+    queda atado a ese mensaje. Si la plantilla no esta disponible, el link sale
+    escrito, en un solo mensaje, como antes.
+    """
 
     context = {
         "external_user_id": external_user_id,
@@ -80,6 +101,14 @@ async def deliver_checkout_issuance_v2(
             "blocked", "payment_link_reply_rejected", reservation.issuance_id, None
         )
 
+    link_part = await _resolve_link_template_part(
+        control_client=control_client,
+        inbox_id=chatwoot_inbox_id,
+        template_name=link_template_name,
+        expected_language=link_template_language,
+        final_url=reservation.checkout_url_final,
+    )
+
     authorization = None
 
     async def authorize() -> bool:
@@ -104,6 +133,54 @@ async def deliver_checkout_issuance_v2(
     }
     if expected_jid is not None:
         send_args["expected_jid"] = expected_jid
+
+    if link_part is not None:
+        # Primero el texto del agente, sin link y sin autorizar la emision: la
+        # autorizacion cuida al link, que va en la segunda parte.
+        preamble_part = preamble.rstrip()
+        template_content, template_params = link_part
+        first_args = {
+            key: value
+            for key, value in send_args.items()
+            if key != "pre_send_authorizer"
+        }
+        first_args.update(
+            {
+                "content": preamble_part,
+                "part_index": 1,
+                "part_count": 2,
+                "prior_parts": (),
+            }
+        )
+        try:
+            first = await control_client.send_agent_bot_reply(**first_args)
+        except ChatwootReplyDeliveryUnknownError as exc:
+            raise CheckoutDeliveryError("checkout_issuance_delivery_unknown") from exc
+        except (ChatwootProtocolError, httpx.HTTPError) as exc:
+            raise CheckoutDeliveryError("checkout_issuance_send_unconfirmed") from exc
+        first_status = first.get("status")
+        if first_status == "blocked":
+            reason = first.get("reason")
+            return CheckoutDeliveryResult(
+                "blocked", reason if isinstance(reason, str) else "chatwoot_blocked",
+                reservation.issuance_id, None,
+            )
+        if first_status not in {"sent", "duplicate"}:
+            raise CheckoutDeliveryError("checkout_issuance_invalid_chatwoot_result")
+        # La misma pausa que entre las partes de una respuesta larga: Chatwoot
+        # manda cada mensaje a WhatsApp desde su cola, y sin pausa la plantilla
+        # puede llegar antes que el texto. En un reintento el texto ya salio.
+        if first_status == "sent" and part_delay_seconds > 0:
+            await part_sleep(part_delay_seconds)
+        send_args.update(
+            {
+                "content": template_content,
+                "part_index": 2,
+                "part_count": 2,
+                "prior_parts": (preamble_part,),
+                "template_params": template_params,
+            }
+        )
 
     try:
         result = await control_client.send_agent_bot_reply(**send_args)
@@ -190,3 +267,42 @@ async def deliver_checkout_issuance_v2(
     return CheckoutDeliveryResult(
         outcome, None, reservation.issuance_id, result_message_id
     )
+
+
+async def _resolve_link_template_part(
+    *,
+    control_client: Any,
+    inbox_id: int,
+    template_name: str | None,
+    expected_language: str | None,
+    final_url: str,
+) -> tuple[str, dict[str, object]] | None:
+    """El contenido y los parametros de la plantilla, o ``None`` para el texto.
+
+    Ante cualquier duda el link sale escrito, como antes: el lead no se queda
+    sin link porque la plantilla no este aprobada, falte en el catalogo de
+    Chatwoot o el link no entre en el boton. El motivo queda en un WARNING,
+    porque el bridge no muestra los INFO.
+    """
+    if template_name is None:
+        return None
+    try:
+        inbox = await control_client.get_inbox(inbox_id=inbox_id)
+        template = parse_payment_link_template(
+            inbox,
+            template_name=template_name,
+            expected_language=expected_language,
+        )
+        button_suffix = payment_link_button_suffix(final_url)
+        return (
+            template.content(final_url=final_url),
+            template.params(button_suffix=button_suffix),
+        )
+    except (ChatwootProtocolError, ValueError) as exc:
+        reason = exc.args[0] if exc.args else type(exc).__name__
+        logger.warning("payment_link_template_unavailable reason=%s", reason)
+    except httpx.HTTPError as exc:
+        logger.warning(
+            "payment_link_template_unavailable reason=%s", type(exc).__name__
+        )
+    return None

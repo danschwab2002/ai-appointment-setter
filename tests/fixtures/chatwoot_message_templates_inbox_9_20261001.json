@@ -1,0 +1,255 @@
+{
+  "_capture": {
+    "source": "GET /api/v1/accounts/<cuenta>/inboxes/9 (Chatwoot 4.13, produccion)",
+    "captured_at": "2026-10-01T16:35:30Z",
+    "kept_fields": [
+      "id",
+      "channel_type",
+      "message_templates"
+    ],
+    "redactions": [
+      "cupon configurado y todo valor de offDiscount -> CUPON_REDACTADO"
+    ]
+  },
+  "id": 9,
+  "channel_type": "Channel::Whatsapp",
+  "message_templates": [
+    {
+      "id": "1366360281995578",
+      "name": "johanna_seguimiento_descuento_01",
+      "status": "APPROVED",
+      "category": "MARKETING",
+      "language": "en",
+      "components": [
+        {
+          "text": "Hola, {{1}}. Soy el asistente virtual del equipo de la Psic. Johanna. Quería retomar nuestra conversación sobre {{2}}. Para ayudarte a dar el paso, te reservé un 10 % de descuento con el código {{3}}, válido solo por las próximas 24 horas. Con el botón de abajo entras al pago con el descuento ya cargado. ¡No lo dejes pasar!",
+          "type": "BODY",
+          "example": {
+            "body_text": [
+              [
+                "María",
+                "Libérate de la Ansiedad",
+                "CUPON_REDACTADO"
+              ]
+            ]
+          }
+        },
+        {
+          "type": "BUTTONS",
+          "buttons": [
+            {
+              "url": "https://pay.hotmart.com/{{1}}",
+              "text": "Usar mi descuento",
+              "type": "URL",
+              "example": [
+                "https://pay.hotmart.com/F106691755G?off=bxjge6zq&checkoutMode=10&offDiscount=CUPON_REDACTADO"
+              ]
+            }
+          ]
+        }
+      ],
+      "sub_category": "CUSTOM",
+      "parameter_format": "POSITIONAL",
+      "disable_ios_autofill": false,
+      "is_primary_device_delivery_only": false
+    },
+    {
+      "id": "1394831152808854",
+      "name": "johanna_reactivacion_01",
+      "status": "APPROVED",
+      "category": "MARKETING",
+      "language": "es_EC",
+      "components": [
+        {
+          "text": "Hola, {{1}}. Soy el asistente virtual del equipo de la Psic. Johanna. \n\nQuedó una conversación pendiente entre nosotros y quiero retomarla. Si todavía necesitas ayuda, escríbeme por aquí y dime qué necesitas para continuar.",
+          "type": "BODY",
+          "example": {
+            "body_text": [
+              [
+                "María"
+              ]
+            ]
+          }
+        }
+      ],
+      "sub_category": "CUSTOM",
+      "parameter_format": "POSITIONAL",
+      "disable_ios_autofill": false,
+      "is_primary_device_delivery_only": false
+    },
+    {
+      "id": "1797881561222895",
+      "name": "johanna_interes_precheckout_01",
+      "status": "APPROVED",
+      "category": "MARKETING",
+      "language": "es_EC",
+      "components": [
+        {
+          "text": "Hola, {{1}}. Soy el asistente virtual del equipo de la Psic. Johanna.\n\nCompletaste el formulario para recibir información sobre {{2}}. Si tienes alguna duda, puedo ayudarte. También puedo enviarte el enlace para que continúes cuando quieras.",
+          "type": "BODY",
+          "example": {
+            "body_text": [
+              [
+                "María",
+                "Libre de ansiedad"
+              ]
+            ]
+          }
+        },
+        {
+          "type": "BUTTONS",
+          "buttons": [
+            {
+              "text": "Envíame el enlace",
+              "type": "QUICK_REPLY"
+            },
+            {
+              "text": "Necesito ayuda",
+              "type": "QUICK_REPLY"
+            },
+            {
+              "text": "No más mensajes",
+              "type": "QUICK_REPLY"
+            }
+          ]
+        }
+      ],
+      "sub_category": "CUSTOM",
+      "parameter_format": "POSITIONAL",
+      "disable_ios_autofill": false,
+      "is_primary_device_delivery_only": false
+    },
+    {
+      "id": "1072593768559796",
+      "name": "johanna_compra_fallida_01",
+      "status": "APPROVED",
+      "category": "MARKETING",
+      "language": "es_EC",
+      "components": [
+        {
+          "text": "Hola, {{1}}. Soy el asistente virtual del equipo de la Psic. Johanna.\n\nTu compra de {{2}} no pudo completarse. Si quieres intentarlo nuevamente, puedo enviarte el enlace o ayudarte con los próximos pasos.\n\nPor seguridad, no compartas datos de tu tarjeta por WhatsApp.",
+          "type": "BODY",
+          "example": {
+            "body_text": [
+              [
+                "María",
+                "Libre de Ansiedad"
+              ]
+            ]
+          }
+        },
+        {
+          "type": "BUTTONS",
+          "buttons": [
+            {
+              "text": "Envíame el enlace",
+              "type": "QUICK_REPLY"
+            },
+            {
+              "text": "Necesito ayuda",
+              "type": "QUICK_REPLY"
+            },
+            {
+              "text": "No más mensajes",
+              "type": "QUICK_REPLY"
+            }
+          ]
+        }
+      ],
+      "sub_category": "CUSTOM",
+      "parameter_format": "POSITIONAL",
+      "disable_ios_autofill": false,
+      "is_primary_device_delivery_only": false
+    },
+    {
+      "id": "2140357833568251",
+      "name": "johanna_carrito_abandonado_01",
+      "status": "APPROVED",
+      "category": "MARKETING",
+      "language": "es_EC",
+      "components": [
+        {
+          "text": "Hola, {{1}}. Soy el asistente virtual del equipo de la Psic. Johanna.\n\nTu proceso para acceder a {{2}} quedó incompleto. Si tuviste alguna duda o dificultad, puedo ayudarte. También puedo enviarte el enlace para que lo retomes cuando quieras!",
+          "type": "BODY",
+          "example": {
+            "body_text": [
+              [
+                "María",
+                "Libre de Ansiedad"
+              ]
+            ]
+          }
+        },
+        {
+          "type": "BUTTONS",
+          "buttons": [
+            {
+              "text": "Envíame el enlace",
+              "type": "QUICK_REPLY"
+            },
+            {
+              "text": "Necesito ayuda",
+              "type": "QUICK_REPLY"
+            },
+            {
+              "text": "No más mensajes",
+              "type": "QUICK_REPLY"
+            }
+          ]
+        }
+      ],
+      "sub_category": "CUSTOM",
+      "parameter_format": "POSITIONAL",
+      "disable_ios_autofill": false,
+      "is_primary_device_delivery_only": false
+    },
+    {
+      "id": "1065788459304715",
+      "name": "libre_ansiedad_test_first_touch_v1",
+      "status": "APPROVED",
+      "category": "MARKETING",
+      "language": "es_AR",
+      "components": [
+        {
+          "text": "¡Hola, {{1}}! Te habla el equipo de Johanna. Vimos que completaste el formulario de Libre de Ansiedad. ¿Te parece si avanzamos por acá?",
+          "type": "BODY",
+          "example": {
+            "body_text": [
+              [
+                "María"
+              ]
+            ]
+          }
+        }
+      ],
+      "parameter_format": "POSITIONAL",
+      "disable_ios_autofill": false,
+      "is_primary_device_delivery_only": false
+    },
+    {
+      "id": "875570985435225",
+      "name": "hello_world",
+      "status": "APPROVED",
+      "category": "UTILITY",
+      "language": "en_US",
+      "components": [
+        {
+          "text": "Hello World",
+          "type": "HEADER",
+          "format": "TEXT"
+        },
+        {
+          "text": "Welcome and congratulations!! This message demonstrates your ability to send a WhatsApp message notification from the Cloud API, hosted by Meta. Thank you for taking the time to test with us.",
+          "type": "BODY"
+        },
+        {
+          "text": "WhatsApp Business Platform sample message",
+          "type": "FOOTER"
+        }
+      ],
+      "parameter_format": "POSITIONAL",
+      "disable_ios_autofill": false,
+      "is_primary_device_delivery_only": false
+    }
+  ]
+}

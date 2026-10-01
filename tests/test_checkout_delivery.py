@@ -1,4 +1,7 @@
 import asyncio
+import copy
+import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -149,3 +152,232 @@ def test_live_inbox_mismatch_blocks_before_post_authorization(tmp_path: Path) ->
     assert result.reason == "conversation_scope_changed"
     assert [name for name, _ in db.calls] == ["reserve"]
     assert len(requests) == 1
+
+
+# --- El link en el boton de una plantilla -------------------------------------
+#
+# El catalogo es el del inbox 9 capturado el 2026-10-01. La plantilla del link
+# todavia no esta aprobada: se arma sobre la del seguimiento capturada, como en
+# ``test_payment_link_template.py``. PENDIENTE: la captura real cuando Meta la
+# apruebe.
+
+CATALOG_FIXTURE = (
+    Path(__file__).parent / "fixtures" / "chatwoot_message_templates_inbox_9_20261001.json"
+)
+LINK_TEMPLATE = "johanna_enlace_pago_01"
+LINK_BODY = (
+    "Aquí tienes tu enlace de pago. Toca el botón de abajo para ir directo al "
+    "pago seguro en Hotmart. Si tienes alguna duda antes de pagar, escríbeme "
+    "por aquí."
+)
+PREAMBLE = "Perfecto. Acá tenés el link:"
+
+
+def _catalog(*, with_link_template=True, **changes):
+    catalog = json.loads(CATALOG_FIXTURE.read_text(encoding="utf-8"))
+    if with_link_template:
+        followup = next(
+            template
+            for template in catalog["message_templates"]
+            if template["name"] == "johanna_seguimiento_descuento_01"
+        )
+        link = copy.deepcopy(followup)
+        link.update({
+            "name": LINK_TEMPLATE,
+            "language": "es_EC",
+            "category": "UTILITY",
+            "components": [
+                {"type": "BODY", "text": LINK_BODY},
+                {"type": "BUTTONS", "buttons": [{
+                    "type": "URL",
+                    "text": "Ir al pago",
+                    "url": "https://pay.hotmart.com/{{1}}",
+                }]},
+            ],
+        })
+        link.update(changes)
+        catalog["message_templates"].append(link)
+    return catalog
+
+
+class TemplateControl:
+    """Chatwoot de prueba: devuelve el catalogo y registra cada parte enviada."""
+
+    def __init__(self, catalog, *, first=None, second=None, inbox_error=None):
+        self.catalog = catalog
+        self.first = first or {"status": "sent", "message_id": 7101}
+        self.second = second or {"status": "sent", "message_id": 7102}
+        self.inbox_error = inbox_error
+        self.calls = []
+
+    async def get_inbox(self, *, inbox_id):
+        self.calls.append(("get_inbox", {"inbox_id": inbox_id}))
+        if self.inbox_error is not None:
+            raise self.inbox_error
+        return self.catalog
+
+    async def send_agent_bot_reply(self, **kwargs):
+        self.calls.append(("send", kwargs))
+        if kwargs.get("part_count") == 2 and kwargs.get("part_index") == 1:
+            return self.first
+        if self.second.get("status") == "sent":
+            assert await kwargs["pre_send_authorizer"]() is True
+        return self.second
+
+
+def _deliver_with_template(db, control, sleeps):
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    return asyncio.run(deliver_checkout_issuance_v2(
+        supabase=db,
+        control_client=control,
+        commercial_case_id="00000000-0000-0000-0000-000000000300",
+        external_user_id="12025550123",
+        chatwoot_account_id=1,
+        chatwoot_inbox_id=9,
+        chatwoot_conversation_id=9101,
+        trigger_message_id=501,
+        delivery_id="delivery-1",
+        preamble=PREAMBLE,
+        expected_jid="12025550123@s.whatsapp.net",
+        link_template_name=LINK_TEMPLATE,
+        link_template_language="es_EC",
+        part_delay_seconds=2.5,
+        part_sleep=fake_sleep,
+    ))
+
+
+def _sends(control):
+    return [kwargs for name, kwargs in control.calls if name == "send"]
+
+
+def test_the_link_goes_in_the_template_button_after_the_agent_text() -> None:
+    db = FakeSupabase()
+    control = TemplateControl(_catalog())
+    sleeps = []
+
+    result = _deliver_with_template(db, control, sleeps)
+
+    assert result.outcome == "sent"
+    assert result.chatwoot_message_id == 7102
+    assert control.calls[0] == ("get_inbox", {"inbox_id": 9})
+    first, second = _sends(control)
+    # El texto del agente sale solo, sin link y sin autorizar la emision.
+    assert first["content"] == PREAMBLE
+    assert (first["part_index"], first["part_count"], first["prior_parts"]) == (1, 2, ())
+    assert "pre_send_authorizer" not in first
+    assert "template_params" not in first
+    assert sleeps == [2.5]
+    # El link va en el boton, entero, y es la parte que autoriza la emision.
+    assert second["content"] == f"{LINK_BODY}\n{URL}"
+    assert (second["part_index"], second["part_count"]) == (2, 2)
+    assert second["prior_parts"] == (PREAMBLE,)
+    assert second["template_params"] == {
+        "name": LINK_TEMPLATE,
+        "category": "UTILITY",
+        "language": "es_EC",
+        "processed_params": {
+            "buttons": [{"type": "url", "parameter": URL.removeprefix("https://pay.hotmart.com/")}],
+        },
+    }
+    assert second["expected_jid"] == "12025550123@s.whatsapp.net"
+    assert [name for name, _ in db.calls] == ["reserve", "authorize", "finalize"]
+    assert db.calls[-1][1]["status"] == "accepted_by_chatwoot"
+    assert db.calls[-1][1]["chatwoot_message_id"] == 7102
+
+
+@pytest.mark.parametrize(
+    ("catalog", "inbox_error", "reason"),
+    [
+        (_catalog(with_link_template=False), None, "payment_link_template_not_found"),
+        (_catalog(status="PAUSED"), None, "payment_link_template_not_approved"),
+        (_catalog(), httpx.ConnectError("boom"), "ConnectError"),
+    ],
+)
+def test_without_a_usable_template_the_link_goes_as_text(
+    catalog, inbox_error, reason, caplog
+) -> None:
+    db = FakeSupabase()
+    control = TemplateControl(catalog, inbox_error=inbox_error)
+    sleeps = []
+
+    with caplog.at_level(logging.WARNING, logger="bridge.checkout_delivery"):
+        result = _deliver_with_template(db, control, sleeps)
+
+    assert result.outcome == "sent"
+    (only,) = _sends(control)
+    assert only["content"] == f"{PREAMBLE}\n{URL}"
+    assert "part_count" not in only
+    assert "template_params" not in only
+    assert sleeps == []
+    assert [name for name, _ in db.calls] == ["reserve", "authorize", "finalize"]
+    assert f"payment_link_template_unavailable reason={reason}" in caplog.text
+
+
+def test_a_blocked_agent_text_never_authorizes_the_link() -> None:
+    db = FakeSupabase()
+    control = TemplateControl(
+        _catalog(), first={"status": "blocked", "reason": "human_assignee_present"}
+    )
+    sleeps = []
+
+    result = _deliver_with_template(db, control, sleeps)
+
+    assert result.outcome == "blocked"
+    assert result.reason == "human_assignee_present"
+    assert len(_sends(control)) == 1
+    assert sleeps == []
+    assert [name for name, _ in db.calls] == ["reserve"]
+
+
+def test_a_retry_after_the_text_went_out_sends_only_the_template() -> None:
+    # El intento anterior mando el texto y se corto antes de autorizar el link:
+    # la emision sigue reservada y la plantilla sale ahora.
+    db = FakeSupabase()
+    control = TemplateControl(
+        _catalog(), first={"status": "duplicate", "message_id": 7101}
+    )
+    sleeps = []
+
+    result = _deliver_with_template(db, control, sleeps)
+
+    assert result.outcome == "sent"
+    assert result.chatwoot_message_id == 7102
+    # El texto ya estaba en Chatwoot: no se espera de nuevo.
+    assert sleeps == []
+    assert [name for name, _ in db.calls] == ["reserve", "authorize", "finalize"]
+
+
+def test_a_retry_after_both_parts_reconciles_from_the_template_message() -> None:
+    db = FakeSupabase(
+        reserve_outcome="delivery_unknown", authorize_outcome="delivery_unknown"
+    )
+    control = TemplateControl(
+        _catalog(),
+        first={"status": "duplicate", "message_id": 7101},
+        second={"status": "duplicate", "message_id": 7102},
+    )
+    sleeps = []
+
+    result = _deliver_with_template(db, control, sleeps)
+
+    assert result.outcome == "reconciled"
+    assert [name for name, _ in db.calls] == ["reserve", "authorize", "finalize"]
+    assert db.calls[-1][1]["chatwoot_message_id"] == 7102
+
+
+def test_a_template_blocked_after_the_text_is_reported_for_handoff() -> None:
+    db = FakeSupabase()
+    control = TemplateControl(
+        _catalog(), second={"status": "blocked", "reason": "conversation_advanced"}
+    )
+    sleeps = []
+
+    result = _deliver_with_template(db, control, sleeps)
+
+    # app.py deriva a una persona con este motivo: el texto salio, el link no.
+    assert result.outcome == "blocked"
+    assert result.reason == "conversation_advanced"
+    assert len(_sends(control)) == 2
+    assert [name for name, _ in db.calls] == ["reserve"]

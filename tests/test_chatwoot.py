@@ -3630,3 +3630,157 @@ def test_an_invalid_status_list_never_scans(tmp_path: Path, statuses) -> None:
                 active_since_epoch=RECENT_CUTOFF,
             )
         )
+
+
+# --- Una parte de la respuesta como plantilla (link de pago en boton) ----------
+#
+# Los ``template_params`` tienen la forma que Chatwoot guardo para el seguimiento
+# con cupon en produccion (``additional_attributes.template_params`` del mensaje
+# 2629, claves leidas el 2026-10-01): ``name``, ``category``, ``language`` y
+# ``processed_params`` con ``buttons[0] = {type: url, parameter}``. La del link
+# no lleva ``body``: su texto no tiene marcadores.
+
+LINK_TEMPLATE_PARAMS = {
+    "name": "johanna_enlace_pago_01",
+    "category": "UTILITY",
+    "language": "es_EC",
+    "processed_params": {
+        "buttons": [
+            {
+                "type": "url",
+                "parameter": (
+                    "F106691755G?off=mgbgpp19&checkoutMode=10&src=hermes"
+                    "&sck=hermes%7Cv1%7C01K5ABCDEFX2VYB4M6X9CDPTZR"
+                ),
+            }
+        ]
+    },
+}
+
+
+def test_sends_a_reply_part_as_a_whatsapp_template(tmp_path: Path) -> None:
+    requests: list[httpx.Request] = []
+    batch_hash = hashlib.sha256(b"2:10").hexdigest()
+    first_hash = hashlib.sha256(f"{batch_hash}:1:2".encode()).hexdigest()
+    second_hash = hashlib.sha256(f"{batch_hash}:2:2".encode()).hexdigest()
+    content = "Aquí tienes tu enlace de pago.\nhttps://pay.hotmart.com/F106691755G?off=mgbgpp19"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.method == "GET" and request.url.path.endswith("/labels"):
+            return httpx.Response(200, json={"payload": []})
+        if request.method == "GET" and request.url.path.endswith("/messages"):
+            return httpx.Response(
+                200,
+                json={
+                    "payload": [
+                        {
+                            "id": 10,
+                            "conversation_id": 2,
+                            "message_type": 0,
+                            "private": False,
+                            "content": "Envíame el enlace",
+                            "sender": {"type": "contact", "id": 20},
+                        },
+                        {
+                            "id": 11,
+                            "conversation_id": 2,
+                            "message_type": 1,
+                            "private": False,
+                            "content": "Perfecto, te lo paso.",
+                            "content_attributes": {
+                                "appointment_setter_reply_hash": first_hash,
+                                "appointment_setter_reply_batch_hash": batch_hash,
+                                "appointment_setter_reply_part_index": 1,
+                                "appointment_setter_reply_part_count": 2,
+                            },
+                            "sender": {"type": "agent_bot", "id": 1},
+                        },
+                    ]
+                },
+            )
+        assert request.method == "POST"
+        body = json.loads(request.content)
+        # Misma idempotencia que una parte de texto, mas la plantilla.
+        assert body == {
+            "content": content,
+            "message_type": "outgoing",
+            "private": False,
+            "content_type": "text",
+            "content_attributes": {
+                "appointment_setter_reply_hash": second_hash,
+                "appointment_setter_reply_batch_hash": batch_hash,
+                "appointment_setter_reply_part_index": 2,
+                "appointment_setter_reply_part_count": 2,
+            },
+            "template_params": LINK_TEMPLATE_PARAMS,
+        }
+        return httpx.Response(
+            200,
+            json={
+                "id": 12,
+                "conversation_id": 2,
+                "message_type": 1,
+                "private": False,
+                "content": content,
+                "content_attributes": body["content_attributes"],
+                "sender": {"type": "agent_bot", "id": 1},
+            },
+        )
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        agent_bot_access_token="agent-bot-token",
+        agent_bot_id=1,
+        reply_dir=tmp_path,
+        transport=AuthorizedConversationTransport(httpx.MockTransport(handler)),
+    )
+
+    result = asyncio.run(
+        client.send_agent_bot_reply(
+            conversation_id=2,
+            trigger_message_id=10,
+            delivery_id="link-delivery",
+            content=content,
+            part_index=2,
+            part_count=2,
+            prior_parts=("Perfecto, te lo paso.",),
+            template_params=LINK_TEMPLATE_PARAMS,
+        )
+    )
+
+    assert result == {"status": "sent", "message_id": 12}
+    assert [request.method for request in requests][-1] == "POST"
+
+
+@pytest.mark.parametrize("template_params", [{}, ["johanna_enlace_pago_01"]])
+def test_refuses_empty_template_params_before_any_request(
+    tmp_path: Path, template_params: object
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("invalid template params must stop before Chatwoot")
+
+    client = ChatwootClient(
+        base_url="https://chatwoot.example.test",
+        account_id=1,
+        access_token="control-token",
+        allowed_jid=ALLOWED_JID,
+        agent_bot_access_token="agent-bot-token",
+        agent_bot_id=1,
+        reply_dir=tmp_path,
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(ChatwootProtocolError, match="invalid_reply_template_params"):
+        asyncio.run(
+            client.send_agent_bot_reply(
+                conversation_id=2,
+                trigger_message_id=10,
+                delivery_id="link-delivery",
+                content="Aquí tienes tu enlace de pago.",
+                template_params=template_params,  # type: ignore[arg-type]
+            )
+        )
