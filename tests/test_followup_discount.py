@@ -8,6 +8,10 @@ Fixtures:
 * ``meta_template_url_button_documented_20260928.json``: la plantilla con boton
   de URL dinamica. NO es captura (no existia ninguna con ese boton); se
   reemplaza cuando Meta apruebe la de Johanna.
+* ``chatwoot_followup_resolved_conversations_inbox_9_20261001.json``: la 201
+  (R1) que el equipo marco resuelta 16 h despues del link sin escribirle,
+  capturada el 2026-10-01 y anonimizada, con las paginas de abiertas y
+  resueltas del inbox 9.
 """
 
 from __future__ import annotations
@@ -44,13 +48,21 @@ DOCUMENTED = json.loads(
         encoding="utf-8"
     )
 )
+RESOLVED = json.loads(
+    (
+        FIXTURES / "chatwoot_followup_resolved_conversations_inbox_9_20261001.json"
+    ).read_text(encoding="utf-8")
+)
 TEMPLATE = "johanna_seguimiento_descuento_01"
 COUPON = "JOHANNA10"
 HOUR = 3_600
 
 
 def _conversation(conversation_id: str) -> tuple[dict, list[dict]]:
-    entry = copy.deepcopy(CAPTURED["conversations"][conversation_id])
+    if conversation_id == "201":
+        entry = copy.deepcopy(RESOLVED["conversation"])
+    else:
+        entry = copy.deepcopy(CAPTURED["conversations"][conversation_id])
     return entry["conversation"], entry["messages"]
 
 
@@ -145,6 +157,42 @@ def test_a_last_message_from_a_person_of_the_team_is_not_ours_to_follow() -> Non
         _evaluate(details, messages, hours_after=30).skip_reason
         == "last_message_not_from_agent"
     )
+
+
+def test_a_conversation_the_team_resolved_is_still_a_candidate() -> None:
+    # La 201: el agente le mando el link, la persona se callo y el equipo la
+    # marco resuelta para ordenar la bandeja, sin escribirle. Sigue siendo R1.
+    details, messages = _conversation("201")
+    assert details["status"] == "resolved" and details["labels"] == []
+    assert any(message["message_type"] == 2 for message in messages)
+    decision = _evaluate(details, messages, hours_after=30)
+    assert decision.eligible
+    assert decision.candidate.regime == REGIME_LINK_SENT
+    assert decision.candidate.last_inbound_message_id == 2506
+    assert decision.candidate.last_outbound_message_id == 2507
+
+
+@pytest.mark.parametrize("status", ["pending", "snoozed"])
+def test_pending_and_snoozed_conversations_are_still_skipped(status: str) -> None:
+    details, messages = _conversation("201")
+    details["status"] = status
+    assert (
+        _evaluate(details, messages, hours_after=30).skip_reason
+        == "conversation_status_excluded"
+    )
+
+
+@pytest.mark.parametrize(
+    ("labels", "reason"),
+    [
+        (["automation_paused"], "conversation_paused"),
+        (["automation_opted_out"], "contact_opted_out"),
+    ],
+)
+def test_resolving_does_not_skip_any_barrier(labels: list[str], reason: str) -> None:
+    details, messages = _conversation("201")
+    details["labels"] = labels
+    assert _evaluate(details, messages, hours_after=30).skip_reason == reason
 
 
 def test_the_payment_failure_template_marks_its_regime() -> None:
@@ -289,11 +337,13 @@ class _FakeChatwoot:
         self.fail_send = fail_send
         self.sent: list[dict] = []
         self.overrides: dict[int, list[dict]] = {}
+        self.listings: list[dict] = []
 
     async def get_inbox(self, *, inbox_id: int) -> dict:
         return copy.deepcopy(DOCUMENTED)
 
-    async def list_open_conversations_with_messages(self, **_: object) -> list[dict]:
+    async def list_recent_conversations_with_messages(self, **kwargs: object) -> list[dict]:
+        self.listings.append(kwargs)
         return copy.deepcopy(self.entries)
 
     async def get_conversation_messages(self, *, conversation_id: int, limit: int) -> list[dict]:
@@ -394,6 +444,28 @@ def test_the_sweeper_sends_one_followup_per_real_case() -> None:
     assert [f["status"] for f in supabase.finalized] == ["accepted_by_chatwoot"] * 2
     assert [s["status"] for s in supabase.settled] == ["sent"] * 2
     assert sweeper.last_scan_summary.startswith("scanned=2 sent=2")
+
+
+def test_the_sweeper_reads_resolved_conversations_inside_the_window() -> None:
+    # Antes el barrido pedia solo las abiertas y la 201 no le llegaba nunca.
+    chatwoot = _FakeChatwoot(["194", "201"])
+    supabase = _FakeSupabase()
+    sweeper = _sweeper(chatwoot, supabase, hours_after=25)
+    now = int(sweeper._clock())
+    assert asyncio.run(sweeper.run_once()) == 2
+
+    assert chatwoot.listings == [
+        {
+            "expected_inbox_id": 9,
+            "statuses": ("open", "resolved"),
+            "active_since_epoch": now - 72 * HOUR - HOUR,
+            "max_pages": 5,
+        }
+    ]
+    by_conversation = {claim["external_conversation_id"]: claim for claim in supabase.claims}
+    assert by_conversation[201]["regime"] == REGIME_LINK_SENT
+    assert by_conversation[201]["last_outbound_message_id"] == 2507
+    assert {sent["conversation_id"] for sent in chatwoot.sent} == {194, 201}
 
 
 def test_a_durable_barrier_stops_the_send_and_names_itself() -> None:
