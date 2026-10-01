@@ -49,7 +49,7 @@ Arregla el límite conocido de 1.3.0 que frenaba todo flujo de salida (H7): quie
 - `real_postgres_portable_inbound_adoption.py`, en el CI (paso *Verify portable inbound template adoption on PostgreSQL*): dos respuestas a la vez a la misma plantilla (una vez ordenadas y otra esperando las dos juntas detrás de una barrera, comprobado en `pg_stat_activity`), la respuesta contra la reconciliación de un intento en vuelo, y la respuesta contra una transacción que tiene tomada solo la fila de su conversación y la pausa (espera, no adopta y da lo mismo que la v2). Ese lock de la fila es defensa en profundidad: hoy todo camino que cambia esa conversación bloquea antes la identidad, así que la prueba usa un escritor directo.
 - `tests/test_portable_inbound_template_adoption_migration.py` y `tests/test_commercial_case_lookups_by_inbound_kind_migration.py`: cada función contra su definición vigente. `tests/test_supabase.py` y `tests/test_whatsapp_inbound_equivalence.py`: la ruta, el cuerpo, los errores, los tres botones por la portable, la plantilla antes del botón en el contexto del agente, y que sin manifiesto la portable nunca se llama.
 
-## [1.3.0] - sin publicar
+## [1.3.0] - 2026-10-01
 
 Tres cosas para una instancia con manifiesto: el primer contacto tras el formulario de la landing, la equivalencia de teléfonos de WhatsApp entre fuentes, y la aceptación escrita del riesgo del adaptador de GHL. Todo lo nuevo está apagado por defecto o atado al manifiesto. Trae tres migraciones. Ningún flujo nuevo tiene todavía un E2E real: el envío del primer contacto y la forma de entrega del teléfono se confirman en el E2E de la instancia antes de prender.
 
