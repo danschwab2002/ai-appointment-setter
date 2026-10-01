@@ -26,7 +26,9 @@
 //      del envio + gracia; no sale antes), dos entregas del mismo envio, un
 //      solo primer contacto vivo por persona, un segundo envio de la misma
 //      intencion con el primer caso cerrado (ancla nueva, due_at del envio
-//      nuevo) y el toque aceptado que frena 24 h;
+//      nuevo) y el toque aceptado que frena 24 h: a las 23 h todavia frena y
+//      a las 25 ya no; el toque de resultado desconocido y el caso en paused
+//      frenan igual;
 //   3. quien escribio primero por WhatsApp y despues deja el formulario: se
 //      reutilizan el contacto y la identidad (521... con formulario 52...) y
 //      se completan telefono, nombre y email;
@@ -40,7 +42,9 @@
 //   5. compra: resuelta, ambigua antes de la reevaluacion, ambigua entre la
 //      reevaluacion y el arranque, intencion de mas de 7 dias reenviada (el
 //      due_at es el del reenvio) y comprada (frena por identidad), y compra
-//      previa al formulario;
+//      previa al formulario; la compra por identidad tambien por telefono en
+//      la otra forma con otro email, y por un punto de contacto (email o
+//      telefono) del contacto, al planificar y al reevaluar;
 //   6. carrito o pago fallido que lo reemplazan; el flujo de Hotmart sigue
 //      planificando para la misma persona, y con su caso abierto el formulario
 //      no planifica;
@@ -66,6 +70,8 @@
 // tests/fixtures/instances/att1/politica-piloto.json (first_contact). El scope
 // abierto y el manual_cohort son derivados del de la instancia: cambian la
 // clave, el modo y los topes.
+// RELOJES MOVIDOS A MANO (declarado en cada caso): la ventana de 24 h del toque
+// no tiene otra forma de envejecer que cambiar executed_at o updated_at.
 // DESVIACION DOCUMENTADA (la misma de validate_att1_portable_chain.mjs): la
 // ventana de envio usa los dias del fixture pero de 00:00 a 23:59, porque la
 // puerta de arranque exige p_now a +-5 minutos del reloj de la base. Por lo
@@ -1051,7 +1057,9 @@ const enroll = async (lead, scope) => {
 
 // Compra aprobada por la admision portable (precedente inline, sin captura).
 let transactionIndex = 0;
-const purchasePayload = (lead, { phone = lead.whatsapp, approvedAt = PURCHASED_AT, offer = lead.offer } = {}) => {
+const purchasePayload = (lead, {
+  phone = lead.whatsapp, approvedAt = PURCHASED_AT, offer = lead.offer, email = lead.email,
+} = {}) => {
   transactionIndex += 1;
   return {
     id: `att1-first-contact-purchase-${transactionIndex}`,
@@ -1060,7 +1068,7 @@ const purchasePayload = (lead, { phone = lead.whatsapp, approvedAt = PURCHASED_A
     version: '2.0.0',
     data: {
       product: { id: ATT1.productId, ucode: 'ATT1-FIRST-CONTACT-UCODE' },
-      buyer: { email: lead.email, checkout_phone: `+${phone}` },
+      buyer: { email, checkout_phone: `+${phone}` },
       purchase: {
         approved_date: approvedAt.getTime(),
         status: 'APPROVED',
@@ -1076,7 +1084,7 @@ const admitPurchase = async (lead, options = {}) => {
   const admitted = one((await db.query(`
     select * from public.admit_portable_hotmart_purchase_approved($1,$2,$3,$4,$5::jsonb,$6,$7)
   `, [ATT1.tenant, ATT1.funnel, ATT1.bindingVersion, payload.id, JSON.stringify(payload),
-    lead.email, phone])).rows, `${lead.label} purchase`);
+    options.email ?? lead.email, phone])).rows, `${lead.label} purchase`);
   const correlation = one((await db.query(`
     select outcome, purchase_intent_id, candidate_count
     from public.portable_hotmart_purchase_correlations where webhook_event_id = $1
@@ -1324,12 +1332,117 @@ const statusOf = async (scope) => one((await asService(() => db.query(`
   const third = await submit(lead, OPEN_SCOPE);
   const thirdResult = expectPlan('form after an accepted touch', third,
     'not_planned', 'precheckout_contact_already_planned');
+
+  // El borde de la ventana. RELOJ MOVIDO A MANO: el toque no tiene otra forma
+  // de envejecer que cambiar su executed_at. A las 23 h todavia frena; a las
+  // 25 ya no, y el formulario planifica otro primer contacto.
+  const ageAcceptedTouch = async (actionId, hours) => {
+    const moved = await db.query(`
+      update public.scheduled_actions
+      set executed_at = clock_timestamp() - make_interval(hours => $2)
+      where id = $1 and status = 'accepted_by_chatwoot' and executed_at is not null
+    `, [actionId, hours]);
+    if (moved.affectedRows !== 1) throw new Error('the accepted touch was not aged');
+  };
+  await ageAcceptedTouch(resend.actionId, 23);
+  const inside = await submit(lead, OPEN_SCOPE, { submittedAt: at(-7) });
+  const insideResult = expectPlan('form 23 h after the touch', inside,
+    'not_planned', 'precheckout_contact_already_planned');
+  await ageAcceptedTouch(resend.actionId, 25);
+  const outside = await submit(lead, OPEN_SCOPE, { submittedAt: at(-6) });
+  const outsideResult = expectPlan('form 25 h after the touch', outside,
+    'planned', 'first_contact_scheduled');
+  await expectPlanned('form 25 h after the touch', lead, outside);
+  // Ese caso se cierra sin toque (vence), para no dejar trabajo pendiente.
+  const expire = async (label, plan) => {
+    await claimNow(label, { now: new Date(new Date(plan.action.expires_at).getTime() + 60_000) });
+    if ((await caseOf(plan.caseId)).status !== 'expired') {
+      throw new Error(`${label}: the case did not expire`);
+    }
+  };
+  await expire('ventana-vence', outside);
+
+  // El toque de resultado desconocido y el caso en paused, por el camino real:
+  // el envio arranca, el resultado no se sabe (delivery_unknown) y, vencida la
+  // ventana de reconciliacion, se escala: el caso queda en paused.
+  const unknown = person('resultado-desconocido', 'AR');
+  const unknownPlan = await submit(unknown, OPEN_SCOPE);
+  expectPlan('plan before an unknown delivery', unknownPlan, 'planned', 'first_contact_scheduled');
+  const unknownReservation = await reserve(unknown, unknownPlan);
+  one((await start(unknownPlan, unknownReservation)).rows, 'unknown delivery start');
+  const unknownAt = await dbNow();
+  const deadline = new Date(unknownAt.getTime() + 15 * 60_000);
+  const unknownAction = one((await db.query(`
+    select * from public.finalize_followup_delivery_attempt(
+      $1,$2,$3,$4,'delivery_unknown',null,null,'request_start_response_invalid',null,$5,$6)
+  `, [unknownPlan.actionId, unknownReservation.attempt.id, unknownReservation.worker,
+    unknownReservation.lease, deadline, unknownAt])).rows, 'unknown delivery');
+  const withUnknown = await submit(unknown, OPEN_SCOPE, { submittedAt: at(-7) });
+  const withUnknownResult = expectPlan('form with an unknown delivery', withUnknown,
+    'not_planned', 'precheckout_contact_already_planned');
+  one((await db.query(`
+    select * from public.reconcile_followup_delivery_attempt(
+      $1,$2,$3,'escalated',null,null,null,'reconciliation_inconclusive',$4)
+  `, [unknownPlan.actionId, unknownReservation.attempt.id, unknownReservation.lease,
+    new Date(deadline.getTime() + 60_000)])).rows, 'unknown delivery escalation');
+  const pausedCase = await caseOf(unknownPlan.caseId);
+  const pausedAction = await actionOf(unknownPlan.actionId);
+  // RELOJ MOVIDO A MANO: una accion delivery_unknown no tiene executed_at, asi
+  // que la ventana mira su updated_at, que el trigger de la tabla pisa en cada
+  // update. Se mueve con los triggers de la sesion apagados.
+  const ageUnknownTouch = async (hours) => {
+    await db.exec('set session_replication_role = replica');
+    try {
+      const moved = await db.query(`
+        update public.scheduled_actions
+        set updated_at = clock_timestamp() - make_interval(hours => $2)
+        where id = $1 and status = 'delivery_unknown' and executed_at is null
+      `, [unknownPlan.actionId, hours]);
+      if (moved.affectedRows !== 1) throw new Error('the unknown delivery was not aged');
+    } finally {
+      await db.exec('set session_replication_role = origin');
+    }
+  };
+  // Con el caso en paused, pasadas las 24 h del toque: sigue sin planificar.
+  // Lo frena el caso abierto, no la ventana.
+  await ageUnknownTouch(25);
+  const withPaused = await submit(unknown, OPEN_SCOPE, { submittedAt: at(-6) });
+  const withPausedResult = expectPlan('form with the case in paused', withPaused,
+    'not_planned', 'precheckout_contact_already_planned');
+  // ESTADO ARMADO A MANO: una persona del equipo cierra el caso escalado (hoy
+  // ninguna RPC lo hace). Con el caso cerrado, lo que frena es el toque de
+  // resultado desconocido dentro de las 24 h; pasadas, planifica.
+  const closed = await db.query(`
+    update public.recovery_cases
+    set status = 'cancelled', closed_at = clock_timestamp(), version = version + 1
+    where id = $1 and status = 'paused'
+  `, [unknownPlan.caseId]);
+  await ageUnknownTouch(23);
+  const unknownInside = await submit(unknown, OPEN_SCOPE, { submittedAt: at(-5) });
+  const unknownInsideResult = expectPlan('form 23 h after an unknown delivery', unknownInside,
+    'not_planned', 'precheckout_contact_already_planned');
+  await ageUnknownTouch(25);
+  const unknownOutside = await submit(unknown, OPEN_SCOPE, { submittedAt: at(-4) });
+  const unknownOutsideResult = expectPlan('form 25 h after an unknown delivery', unknownOutside,
+    'planned', 'first_contact_scheduled');
+  await expire('desconocido-vence', unknownOutside);
+  if (unknownAction.status !== 'delivery_unknown'
+      || pausedCase.status !== 'paused' || pausedAction.status !== 'delivery_unknown'
+      || closed.affectedRows !== 1) {
+    throw new Error(`unknown delivery: ${JSON.stringify({ action: unknownAction.status, pausedCase: pausedCase.status, pausedAction: pausedAction.status })}`);
+  }
   results.open_scope = {
     delay: `due_at = submitted_at + ${GRACE_MINUTES} min; not claimed before`,
     duplicate_delivery: `${again.outcome}:${again.plan_outcome}`,
     second_form_with_open_case: secondResult,
     resend_after_closed_case: `planned with its own anchor:${sent}`,
     form_after_accepted_touch: thirdResult,
+    form_23h_after_the_touch: insideResult,
+    form_25h_after_the_touch: outsideResult,
+    form_with_unknown_delivery: withUnknownResult,
+    form_with_case_in_paused: withPausedResult,
+    form_23h_after_unknown_delivery_case_closed: unknownInsideResult,
+    form_25h_after_unknown_delivery_case_closed: unknownOutsideResult,
   };
 }
 
@@ -1585,11 +1698,86 @@ const statusOf = async (scope) => one((await asService(() => db.query(`
     'not_planned', 'purchase_by_identity');
   await expectNoFootprint('form after a purchase', beforeCustomer);
 
+  // f. La compra por identidad no depende del email. Quien compro en Hotmart
+  //    con OTRO email y el mismo movil, en la forma de Hotmart (521... contra
+  //    el 52... del formulario): la intencion vieja reenviada se cancela.
+  const otherEmail = (lead) => `otro-${lead.email}`;
+  const byPhone = person('compra-por-telefono', 'MX');
+  await submit(byPhone, OPEN_SCOPE, { submittedAt: STALE_AT });
+  const byPhonePlan = await submit(byPhone, OPEN_SCOPE);
+  expectPlan('resend before a purchase by phone', byPhonePlan, 'planned', 'first_contact_scheduled');
+  const byPhonePurchase = await admitPurchase(byPhone, { email: otherEmail(byPhone) });
+  const byPhoneIntent = await intentOf(byPhonePlan.intent);
+  const byPhoneResult = await expectCancelled(byPhone, byPhonePlan, 'purchase_by_identity');
+
+  // g. Lo mismo antes del formulario (54... del formulario, 549... de
+  //    Hotmart): no se planifica ni se crea el contacto.
+  const byPhoneBefore = person('ya-compro-con-otro-email', 'AR');
+  const byPhoneBeforePurchase = await admitPurchase(byPhoneBefore, {
+    email: otherEmail(byPhoneBefore), approvedAt: at(-3 * 60),
+  });
+  const beforeByPhone = await footprint();
+  const byPhoneBeforePlan = await submit(byPhoneBefore, OPEN_SCOPE);
+  const byPhoneBeforeResult = expectPlan('form after a purchase by phone', byPhoneBeforePlan,
+    'not_planned', 'purchase_by_identity');
+  await expectNoFootprint('form after a purchase by phone', beforeByPhone);
+  // Ese freno se decide antes de crear el contacto, con el telefono de la
+  // intencion: el helper, sin contacto, ya lo ve. (Si no lo viera, el plan lo
+  // frenaria igual despues de crear el contacto, por su punto de telefono, y
+  // se desharia: el resultado seria el mismo, asi que se mira el helper.)
+  const withoutContact = one((await db.query(`
+    select public._portable_precheckout_stop_reason($1::uuid, null) as reason
+  `, [byPhoneBeforePlan.intent])).rows, 'stop reason without a contact').reason;
+  if (withoutContact !== 'purchase_by_identity') {
+    throw new Error(`the purchase by phone is not seen before the contact exists: ${withoutContact}`);
+  }
+
+  // h. La compra cruza por un punto de contacto del CONTACTO, no por la
+  //    intencion: el contacto tiene otro email guardado y el comprador uso
+  //    ese, con otro telefono. Antes del formulario no se planifica (y no se
+  //    toca al contacto).
+  const addPoint = async (lead, type, value) => db.query(`
+    insert into public.contact_points (contact_id, type, raw_value, normalized_value, source)
+    values ($1,$2,$3,$3,'manual')
+  `, [lead.contact, type, value]);
+  const byEmailPoint = person('compra-por-punto-de-email', 'MX');
+  await seedContact(byEmailPoint);
+  await addPoint(byEmailPoint, 'email', otherEmail(byEmailPoint));
+  const byEmailPointPurchase = await admitPurchase(byEmailPoint, {
+    email: otherEmail(byEmailPoint), phone: byEmailPoint.other, approvedAt: at(-3 * 60),
+  });
+  const beforeByEmailPoint = await footprint();
+  const byEmailPointPlan = await submit(byEmailPoint, OPEN_SCOPE);
+  const byEmailPointResult = expectPlan('form after a purchase by an email point', byEmailPointPlan,
+    'not_planned', 'purchase_by_identity');
+  await expectNoFootprint('form after a purchase by an email point', beforeByEmailPoint);
+
+  // i. Y al reevaluar: el contacto tiene otro telefono guardado (52...) y la
+  //    compra llega despues del plan con ese numero en la forma de Hotmart
+  //    (521...) y otro email. Solo el contacto del caso la cruza.
+  const byPhonePoint = person('compra-por-punto-de-telefono', 'MX');
+  await seedContact(byPhonePoint);
+  await addPoint(byPhonePoint, 'phone', byPhonePoint.other);
+  const byPhonePointPlan = await submit(byPhonePoint, OPEN_SCOPE);
+  expectPlan('plan before a purchase by a phone point', byPhonePointPlan,
+    'planned', 'first_contact_scheduled');
+  const byPhonePointPurchase = await admitPurchase(byPhonePoint, {
+    email: otherEmail(byPhonePoint),
+    phone: `521${byPhonePoint.other.slice(2)}`,
+  });
+  const byPhonePointResult = await expectCancelled(byPhonePoint, byPhonePointPlan, 'purchase_by_identity');
+
   if (resolvedPurchase.outcome !== 'resolved'
       || oldPlan.intent !== stale.intent
       || oldPurchase.outcome !== 'unmatched' || oldIntent.lifecycle_state !== 'waiting_for_purchase'
-      || customerPurchase.outcome !== 'unmatched') {
-    throw new Error(`purchase cases: ${JSON.stringify({ resolved: resolvedPurchase.outcome, old: oldPurchase.outcome, oldIntent: oldIntent.lifecycle_state, customer: customerPurchase.outcome })}`);
+      || customerPurchase.outcome !== 'unmatched'
+      || byPhonePurchase.outcome !== 'unmatched'
+      || byPhoneIntent.lifecycle_state !== 'waiting_for_purchase'
+      || byPhoneBeforePurchase.outcome !== 'unmatched'
+      || byEmailPointPurchase.outcome !== 'unmatched'
+      || byPhonePointPurchase.outcome !== 'unmatched'
+      || (await intentOf(byPhonePointPlan.intent)).lifecycle_state !== 'waiting_for_purchase') {
+    throw new Error(`purchase cases: ${JSON.stringify({ resolved: resolvedPurchase.outcome, old: oldPurchase.outcome, oldIntent: oldIntent.lifecycle_state, customer: customerPurchase.outcome, byPhone: byPhonePurchase.outcome, byPhoneBefore: byPhoneBeforePurchase.outcome, byEmailPoint: byEmailPointPurchase.outcome, byPhonePoint: byPhonePointPurchase.outcome })}`);
   }
   results.purchase = {
     ambiguous_before_reevaluation: ambiguousBefore,
@@ -1598,6 +1786,10 @@ const statusOf = async (scope) => one((await asService(() => db.query(`
     stale_form: staleResult,
     old_intent_resent_and_purchased: byIdentity,
     form_after_a_purchase: customerResult,
+    purchase_with_another_email_same_phone_other_form: byPhoneResult,
+    form_after_a_purchase_with_another_email: byPhoneBeforeResult,
+    form_after_a_purchase_by_an_email_point_of_the_contact: byEmailPointResult,
+    purchase_by_a_phone_point_of_the_contact: byPhonePointResult,
   };
 }
 
