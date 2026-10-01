@@ -24,6 +24,10 @@ Datos:
   de la pulsacion del boton QUICK_REPLY (deuda anotada en el commit).
 * Las filas de ``channel_identities`` son la forma con que PostgREST devuelve
   la tabla (no son un payload externo).
+* Los botones de la plantilla salen de ``chatwoot_inbox_11_message_templates_20261001.json``
+  y la plantilla saliente en el historial, de la forma del mensaje 2224 de
+  ``chatwoot_message_created_inbox_9_conv_158_20260923.json`` (ver la seccion
+  H7, abajo).
 """
 
 from __future__ import annotations
@@ -45,6 +49,7 @@ from bridge.app import (
     Settings,
     create_app,
 )
+from bridge.approved_templates import parse_approved_template
 from bridge.chatwoot_inbox import RetryableChatwootWorkError
 from bridge.commercial_knowledge import CommercialKnowledge
 from bridge.instance_manifest import InstanceManifest
@@ -1058,6 +1063,83 @@ def test_send_me_the_link_reaches_the_agent_and_the_link_goes_out(
     [reservation] = supabase.candidate_calls
     assert reservation["commercial_case_id"] == "case-1"
     assert reservation["phone_equivalence"] is True
+    [reply] = chatwoot.reply_calls
+    assert "src=hermes" in str(reply["content"])
+    assert _pending(app) == []
+
+
+# La plantilla saliente en el historial. De ATT1 no hay captura de un mensaje
+# de plantilla en Chatwoot: la forma es la del mensaje 2224 de la conversacion
+# 158 del inbox 9 (``chatwoot_message_created_inbox_9_conv_158_20260923.json``),
+# la plantilla de primer contacto de Johanna que el bridge mando con su agent
+# bot, justo antes del «Envíame el enlace» capturado. El texto es el que arma
+# el dispatcher en modo directo: el cuerpo aprobado de la plantilla del carrito
+# del catalogo del inbox 11, renderizado por ``ApprovedTemplate.render`` con
+# los valores de ejemplo que Meta guarda en ese mismo catalogo. Que el
+# dispatcher de ATT1 mande con el agent bot, como en Johanna, no esta medido
+# en la instancia.
+CONVERSATION_158 = (
+    Path(__file__).parent / "fixtures" / "chatwoot_message_created_inbox_9_conv_158_20260923.json"
+)
+
+
+def _att1_cart_template_message(button_message: dict[str, Any]) -> dict[str, Any]:
+    """La plantilla del carrito como la guarda Chatwoot, antes del boton."""
+    captured = json.loads(INBOX_11_TEMPLATES.read_text(encoding="utf-8"))
+    template = parse_approved_template(
+        {"message_templates": captured["templates"]},
+        template_name="att1_carrito_abandonado_01",
+        expected_language="es_MX",
+        expected_category="MARKETING",
+        parameter_count=2,
+    )
+    [example] = [
+        component["example"]["body_text"][0]
+        for template_entry in captured["templates"]
+        if template_entry["name"] == "att1_carrito_abandonado_01"
+        for component in template_entry["components"]
+        if component["type"] == "BODY"
+    ]
+    rendered = template.render({"1": example[0], "2": example[1]})
+    [template_message, pressed] = json.loads(CONVERSATION_158.read_text(encoding="utf-8"))[
+        "messages"
+    ]
+    assert template_message["message_type"] == 1 and pressed["message_type"] == 0
+    assert template_message["sender"]["type"] == "agent_bot"
+    message = copy.deepcopy(template_message)
+    message["content"] = rendered
+    message["conversation_id"] = button_message["conversation_id"]
+    message["id"] = button_message["id"] - 1
+    # La misma distancia que en la 158 entre la plantilla y el boton.
+    message["created_at"] = button_message["created_at"] - (
+        pressed["created_at"] - template_message["created_at"]
+    )
+    return message
+
+
+def test_the_agent_sees_the_template_before_the_button(tmp_path: Path) -> None:
+    [button] = [b for b in _pilot_buttons() if b == "Envíame el enlace"]
+    webhook, history = _text_webhook(button)
+    template = _att1_cart_template_message(history[0])
+    supabase = _TemplateConversation(identities=(FORM_ID,))
+
+    chatwoot, shadow, app = _process(
+        tmp_path,
+        supabase,
+        settings=replace(_manifest_settings(tmp_path), payment_link_enabled=True),
+        webhook=webhook,
+        history=[template, *history],
+        proposal=PAYMENT_LINK_PROPOSAL,
+    )
+
+    # El agente ve la plantilla, como mensaje suyo, y despues el boton.
+    [(_, context)] = shadow.calls
+    assert [
+        (message["actor"], message["text"])  # type: ignore[index]
+        for message in context["messages"][-2:]  # type: ignore[index]
+    ] == [("assistant", template["content"]), ("prospect", button)]
+    assert "Alimenta tu Tiroides" in template["content"]
+    assert supabase.admission_rpcs == ["portable"]
     [reply] = chatwoot.reply_calls
     assert "src=hermes" in str(reply["content"])
     assert _pending(app) == []
