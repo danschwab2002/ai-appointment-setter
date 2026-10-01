@@ -1261,6 +1261,44 @@ def _deterministic_rejection(response: httpx.Response) -> str | None:
     return sqlstate
 
 
+# The two conflicts the inbound admission raises on purpose outside SQLSTATE
+# class 22. A bare 23505 (a unique index hit by a race) is not one of them: it
+# can succeed on a retry.
+_INBOUND_ADMISSION_CONFLICTS = frozenset(
+    {
+        ("21000", "inbound_external_conversation_ownership_ambiguous"),
+        ("23505", "inbound_external_conversation_owned_by_another_identity"),
+    }
+)
+_INBOUND_ADMISSION_REJECTION_REASON = re.compile(r"[a-z][a-z0-9_]{0,79}")
+
+
+def _inbound_admission_rejection(response: httpx.Response) -> str | None:
+    """Return why the inbound admission can never pass unchanged, or None.
+
+    The admission rejects a conversation it cannot own with a data exception
+    (``inbound_canonical_conversation_conflict``: the conversation exists and
+    is not a draft-only inbound one, which is how a recovery template leaves
+    it) or with one of two named conflicts (the conversation belongs to another
+    identity). Replaying the same message never changes that. Only a reason
+    with the shape of a code is returned.
+    """
+    reason = _deterministic_rejection(response)
+    if reason is None:
+        try:
+            body = response.json()
+        except ValueError:
+            return None
+        if not isinstance(body, dict):
+            return None
+        if (body.get("code"), body.get("message")) not in _INBOUND_ADMISSION_CONFLICTS:
+            return None
+        reason = str(body["message"])
+    if _INBOUND_ADMISSION_REJECTION_REASON.fullmatch(reason) is None:
+        return None
+    return reason
+
+
 def _response_rows(
     response: httpx.Response,
     *,
@@ -4094,6 +4132,15 @@ class SupabaseClient:
             ),
         )
         if response.status_code != 200:
+            # Same text as always; a rejection that cannot pass unchanged also
+            # carries its reason, so the caller can tell it from an outage.
+            rejection = _inbound_admission_rejection(response)
+            if rejection is not None:
+                raise SupabasePermanentError(
+                    "inbound_commercial_case_admission_failed: "
+                    f"HTTP {response.status_code}",
+                    reason=rejection,
+                )
             raise SupabaseError(
                 f"inbound_commercial_case_admission_failed: HTTP {response.status_code}"
             )

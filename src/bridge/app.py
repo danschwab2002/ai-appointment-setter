@@ -272,6 +272,15 @@ class CanonicalWorkResult:
     stopped: bool = False
 
 
+class ChatwootInboundAdmissionRejectedError(RuntimeError):
+    """The inbound admission rejected the conversation for good.
+
+    Not a ``RetryableChatwootWorkError`` on purpose: replaying the same
+    message cannot change the answer, so the work ends as failed after the
+    bounded attempts instead of being retried without limit.
+    """
+
+
 class ChatwootControl(Protocol):
     async def list_stalled_conversations(
         self,
@@ -3932,8 +3941,11 @@ def create_app(
         batch_message_ids: tuple[int, ...],
         context: dict[str, object],
         expected_jid: str | None = None,
+        opt_out_only: bool = False,
     ) -> CanonicalWorkResult:
         if control_client is None or settings.agent_bot_id is None:
+            if opt_out_only:
+                return CanonicalWorkResult(proposal=None)
             if shadow_processor is not None:
                 shadow_processor.record_failure(
                     delivery_id=delivery_id,
@@ -4098,6 +4110,10 @@ def create_app(
                     result.opt_out_event_id,
                 )
                 return CanonicalWorkResult(proposal=None, stopped=True)
+        if opt_out_only:
+            # Only the stop and the opt-out were asked for: the agent does
+            # not run.
+            return CanonicalWorkResult(proposal=None)
         first_batch_index = min(
             (message_indexes[message_ref] for message_ref in expected_refs),
             default=current_index,
@@ -4446,6 +4462,44 @@ def create_app(
                     external_user_id=external_user_id,
                 )
             except SupabaseError as exc:
+                if whatsapp_inbound_equivalence:
+                    # With a manifest, a "No mas mensajes" does not depend on
+                    # the admission. The conversation a recovery template
+                    # opened is not a draft-only inbound one, so the admission
+                    # rejects every reply to that template: without this the
+                    # opt-out of the person who pressed the button was never
+                    # recorded and the message was retried without limit.
+                    stop_context = _shadow_context(payload)
+                    stop_message_id = payload.get("id")
+                    if (
+                        stop_context is not None
+                        and isinstance(stop_message_id, int)
+                        and not isinstance(stop_message_id, bool)
+                    ):
+                        stop_result = await run_shadow_with_canonical_history(
+                            delivery_id=delivery_id,
+                            current_message_id=stop_message_id,
+                            batch_message_ids=batch_message_ids,
+                            context=stop_context,
+                            expected_jid=scoped_expected_jid,
+                            opt_out_only=True,
+                        )
+                        if stop_result.stopped:
+                            return
+                    if isinstance(exc, SupabasePermanentError):
+                        # Replaying the message cannot change the answer: the
+                        # reason goes to the log and the work ends as failed
+                        # after the bounded attempts. Nobody answers this
+                        # message from here; a person takes it in Chatwoot.
+                        logger.warning(
+                            "chatwoot_cut_b_admission_rejected "
+                            "conversation=%s reason=%s",
+                            conversation_id,
+                            exc.reason,
+                        )
+                        raise ChatwootInboundAdmissionRejectedError(
+                            "chatwoot_cut_b_admission_rejected"
+                        ) from exc
                 raise RetryableChatwootWorkError(
                     "chatwoot_cut_b_admission_failed"
                 ) from exc

@@ -160,6 +160,8 @@ Una instancia con `[adaptadores.ghl]`, sin aceptación y con `LANCEMOS_PILOT_BOU
 ## 12. Prender los flujos de a uno
 
 > Pendiente. Orden previsto: `inbound` → `pago_fallido` → `carrito` → el resto. Cada uno: `true` en el manifiesto, PR en el repo de la instancia, flag en el servicio, una prueba controlada y la medición del efecto antes de pasar al siguiente.
+>
+> **Antes de abrir un flujo de salida a personas reales:** hoy el agente no contesta en la conversación que abre una plantilla (la admisión entrante la rechaza; ver *Qué no hace* en `docs/contracts/portable-precheckout-first-contact-v1.md`). Lo único que funciona ahí es la baja. La prueba controlada de cada flujo de salida incluye apretar los tres botones de la plantilla desde el teléfono de prueba y mirar qué queda en la base y en Chatwoot: mientras «quiero el enlace» o «tengo una duda» no tengan respuesta, el flujo no se abre.
 
 ### El formulario de la landing cuando es de GHL
 

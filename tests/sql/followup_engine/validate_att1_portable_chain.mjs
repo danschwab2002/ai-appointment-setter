@@ -1197,6 +1197,60 @@ if (fcGrants.length !== 1
     || fcControl.audience_precheckout_submission_id !== fcPlan.submission) {
   throw new Error(`the first contact did not record the consent of the form: ${JSON.stringify({ grants: fcGrants.length, mode: fcControl.audience_mode })}`);
 }
+// 9.4b LIMITE CONOCIDO, fijado aca para que no pase inadvertido: quien
+//      responde a la plantilla NO pasa la admision entrante. La aceptacion deja
+//      la conversacion del caso en automation_status = 'enabled'
+//      (record_and_finalize_followup_acceptance) y la admision entrante solo
+//      toma una conversacion 'draft_only': rechaza con 22000
+//      inbound_canonical_conversation_conflict. Vale igual para carrito y pago
+//      fallido. Adoptar esa conversacion para el agente entrante es una
+//      decision de diseno pendiente; el dia que se resuelva, este bloque falla
+//      y hay que cambiarlo por la cadena completa (respuesta, enlace,
+//      derivacion). Lo que SI funciona sobre esa conversacion es el opt-out
+//      durable, que el bridge aplica aunque la admision rechace.
+{
+  await db.query(`
+    insert into public.inbound_commercial_scope_versions
+      (scope_key, version, status, tenant_key, chatwoot_account_id, chatwoot_inbox_id,
+       external_product_id, offer_code, approved_by, approved_at, published_at)
+    values ($1,$2,'published',$3,$4,$5,$6,$7,'operator-test',now(),now())
+  `, [ATT1.inboundScope, ATT1.inboundVersion, ATT1.tenant, ATT1.accountId, ATT1.inboxId,
+    String(ATT1.productId), fcLead.offer.offer_code]);
+  // La conversacion de Chatwoot en la que salio la plantilla (la que registro
+  // la aceptacion) y la identidad que resuelve el entrante del bridge: la que
+  // creo el plan, con el telefono del formulario (52 + 10).
+  const replyConversation = 900100 + messageNumber;
+  const fcConversation = one((await db.query(`
+    select conversation.automation_status, conversation.status, identity.external_user_id
+    from public.recovery_cases recovery
+    join public.conversations conversation on conversation.id = recovery.conversation_id
+    join public.channel_identities identity on identity.id = conversation.channel_identity_id
+    where recovery.id = $1
+      and conversation.commercial_context ->> 'chatwoot_conversation_id' = $2
+  `, [fcPlan.recovery_case_id, String(replyConversation)])).rows, 'first contact conversation');
+  let replyError = null;
+  try {
+    await db.query('select * from public.admit_inbound_commercial_case_v2($1,$2,$3,$4)',
+      [ATT1.inboundScope, ATT1.inboundVersion, replyConversation, fcLead.formPhone]);
+  } catch (caught) {
+    replyError = caught;
+  }
+  const replyOptOut = one((await db.query(`
+    select * from public.apply_chatwoot_inbound_opt_out($1,$2,$3,$4,$5,$6,'stop_receiving_messages')
+  `, [ATT1.accountId, ATT1.inboxId, replyConversation, 990100 + messageNumber,
+    fcLead.formPhone, await dbNow()])).rows, 'opt-out on the template conversation');
+  const fcContactAfter = one((await db.query(`
+    select contact_permission from public.contacts where id = $1
+  `, [fcLead.contact])).rows, 'first contact contact after the opt-out');
+  if (fcConversation.automation_status !== 'enabled'
+      || fcConversation.external_user_id !== fcLead.formPhone
+      || replyError?.code !== '22000'
+      || replyError?.message !== 'inbound_canonical_conversation_conflict'
+      || replyOptOut.outcome !== 'applied'
+      || fcContactAfter.contact_permission !== 'opted_out') {
+    throw new Error(`the reply to the template is no longer what the known limit says: ${JSON.stringify({ conversation: fcConversation.automation_status, reply: [replyError?.code, replyError?.message], optOut: replyOptOut.outcome, permission: fcContactAfter.contact_permission })}`);
+  }
+}
 // 9.5 La compra antes del envio, con otra persona sembrada e inscripta. El
 //     formulario guardo 52 + 10 y Hotmart manda la compra con 521 + 10: la
 //     intencion queda purchased y la reevaluacion propia cancela el caso
@@ -1538,6 +1592,7 @@ console.log(JSON.stringify({
     reevaluation: `${fcRun.reevaluateOperation}:${fcRun.decision.reason_code}`,
     request_start: fcRun.startOperation,
     purchase_before_the_send: `${fcBuyerDecision.decision}:${fcBuyerDecision.reason_code}`,
+    known_limit_reply_to_the_template: 'inbound admission 22000 inbound_canonical_conversation_conflict; opt-out applied',
     pilot_request_starts: await fcStarts(),
   },
   consented_intent: {

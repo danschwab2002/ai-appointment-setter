@@ -40,13 +40,19 @@ from typing import Any
 import httpx
 import pytest
 
-from bridge.app import Settings, create_app
+from bridge.app import (
+    ChatwootInboundAdmissionRejectedError,
+    Settings,
+    create_app,
+)
+from bridge.chatwoot_inbox import RetryableChatwootWorkError
 from bridge.commercial_knowledge import CommercialKnowledge
 from bridge.instance_manifest import InstanceManifest
 from bridge.supabase import (
     InboundOptOutResult,
     SupabaseClient,
     SupabaseError,
+    SupabasePermanentError,
     WhatsAppIdentityMatch,
 )
 from test_audio_transcription import _webhook_200
@@ -581,3 +587,150 @@ def test_identity_lookup_refuses_a_row_it_did_not_ask_for() -> None:
             chatwoot_inbox_id=9,
             external_user_ids=(FORM_ID, WA_ID),
         ))
+
+
+# ------------------------------------- el opt-out cuando la admision no pasa
+
+
+class _RejectingAdmission(_Supabase):
+    """La base rechaza la admision entrante de esta conversacion.
+
+    Es lo que pasa hoy con quien responde a una plantilla del dispatcher: la
+    aceptacion deja la conversacion en ``enabled`` y la admision entrante solo
+    acepta una ``draft_only`` (22000 ``inbound_canonical_conversation_conflict``;
+    lo fija ``validate_att1_portable_chain.mjs``). El cliente lo levanta como
+    un rechazo permanente con ese motivo; ``transient`` es una caida comun.
+    """
+
+    def __init__(self, *, transient: bool = False, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.transient = transient
+
+    async def admit_inbound_commercial_case(self, **kwargs: object) -> Any:
+        self.admission_calls.append(kwargs)
+        if self.transient:
+            raise SupabaseError("inbound_commercial_case_admission_failed: HTTP 503")
+        raise SupabasePermanentError(
+            "inbound_commercial_case_admission_failed: HTTP 400",
+            reason="inbound_canonical_conversation_conflict",
+        )
+
+
+def _pending(app: Any) -> list[dict[str, Any]]:
+    return [
+        json.loads(item.path.read_text(encoding="utf-8"))
+        for item in app.state.chatwoot_inbox.admitted_items(include_deferred=True)
+    ]
+
+
+@pytest.mark.parametrize("transient", [False, True])
+def test_an_opt_out_is_recorded_even_when_the_admission_does_not_pass(
+    tmp_path: Path, transient: bool
+) -> None:
+    # La persona que recibio la plantilla aprieta «No mas mensajes». La
+    # admision de esa conversacion no pasa, y antes el opt-out (que se detecta
+    # despues de admitir) no se registraba nunca.
+    supabase = _RejectingAdmission(identities=(FORM_ID,), transient=transient)
+    webhook, history = _text_webhook(OPT_OUT_TEXT)
+
+    chatwoot, shadow, app = _process(tmp_path, supabase, webhook=webhook, history=history)
+
+    [opt_out] = supabase.opt_outs
+    assert opt_out["external_user_id"] == FORM_ID
+    assert opt_out["chatwoot_conversation_id"] == 200
+    assert opt_out["chatwoot_message_id"] == 2472
+    assert opt_out["rule_key"] == "stop_receiving_messages"
+    # El trabajo termina: no queda reintentando.
+    assert _pending(app) == []
+    # Y el agente no corre ni contesta.
+    assert shadow.calls == []
+    assert chatwoot.reply_calls == []
+    assert {call["expected_jid"] for call in chatwoot.authority_calls} == {WA_JID}
+
+
+def test_a_stopped_person_is_not_retried_when_the_admission_does_not_pass(
+    tmp_path: Path,
+) -> None:
+    # Ya se habia dado de baja (el opt-out quedo bajo el wa_id textual) y
+    # vuelve a escribir en la conversacion de la plantilla: se reconcilia el
+    # stop y el trabajo termina.
+    supabase = _RejectingAdmission(identities=(FORM_ID,), stopped_user_ids=(WA_ID,))
+    webhook, history = _text_webhook("Hola, ¿siguen ahí?")
+
+    chatwoot, shadow, app = _process(tmp_path, supabase, webhook=webhook, history=history)
+
+    assert [call["external_user_id"] for call in supabase.reconciliations] == [WA_ID]
+    assert supabase.opt_outs == []
+    assert _pending(app) == []
+    assert shadow.calls == [] and chatwoot.reply_calls == []
+
+
+def test_a_rejected_admission_is_not_retried_without_limit(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Un mensaje comun sobre una conversacion que la admision rechaza para
+    # siempre. Reintentarlo no cambia la respuesta: el motivo queda en el log y
+    # el trabajo deja de ser "reintentable sin limite" (termina como failed
+    # tras los intentos acotados). Nadie contesta desde aca.
+    supabase = _RejectingAdmission(identities=(FORM_ID,))
+    webhook, history = _text_webhook("Sí, quiero el enlace")
+
+    with caplog.at_level(logging.WARNING):
+        chatwoot, shadow, app = _process(tmp_path, supabase, webhook=webhook, history=history)
+
+    assert supabase.opt_outs == [] and supabase.reconciliations == []
+    assert shadow.calls == [] and chatwoot.reply_calls == []
+    [item] = _pending(app)
+    assert item["attempts"] == 1
+    assert item["last_error_type"] == "ChatwootInboundAdmissionRejectedError"
+    [warning] = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("chatwoot_cut_b_admission_rejected")
+    ]
+    assert warning == (
+        "chatwoot_cut_b_admission_rejected conversation=200 "
+        "reason=inbound_canonical_conversation_conflict"
+    )
+    assert WA_ID not in caplog.text and FORM_ID not in caplog.text
+    # El worker reintenta sin limite solo un RetryableChatwootWorkError; todo
+    # otro error tiene los intentos acotados y termina como failed.
+    assert not issubclass(
+        ChatwootInboundAdmissionRejectedError, RetryableChatwootWorkError
+    )
+
+
+def test_a_transient_admission_failure_is_still_retried(tmp_path: Path) -> None:
+    # La base caida no es un rechazo: el trabajo queda para reintentar, sin
+    # limite, como siempre.
+    supabase = _RejectingAdmission(identities=(FORM_ID,), transient=True)
+    webhook, history = _text_webhook("Sí, quiero el enlace")
+
+    _, shadow, app = _process(tmp_path, supabase, webhook=webhook, history=history)
+
+    assert supabase.opt_outs == []
+    assert shadow.calls == []
+    [item] = _pending(app)
+    assert item["last_error_type"] == "RetryableChatwootWorkError"
+
+
+def test_without_a_manifest_a_failed_admission_behaves_as_before(tmp_path: Path) -> None:
+    # Johanna: sin manifiesto no hay opt-out previo a la admision ni corte de
+    # los reintentos. Un fallo de la admision, del tipo que sea, reintenta.
+    supabase = _RejectingAdmission()
+    webhook, history = _text_webhook(OPT_OUT_TEXT)
+
+    chatwoot, shadow, app = _process(
+        tmp_path,
+        supabase,
+        settings=_johanna_settings(tmp_path),
+        webhook=webhook,
+        history=history,
+    )
+
+    assert supabase.identity_lookups == []
+    assert supabase.stop_checks == [] and supabase.opt_outs == []
+    assert chatwoot.authority_calls == []
+    assert shadow.calls == []
+    [item] = _pending(app)
+    assert item["last_error_type"] == "RetryableChatwootWorkError"

@@ -20,6 +20,7 @@ from bridge.supabase import (
     SupabaseClient,
     SupabaseCommittedResponseError,
     SupabaseError,
+    SupabasePermanentError,
 )
 
 
@@ -377,6 +378,69 @@ def test_the_request_start_rpc_is_chosen_by_the_anchor(
         "p_lease_generation": 3,
         "p_now": "2026-10-01T15:01:00+00:00",
     }
+
+
+def _admit_inbound(client: SupabaseClient) -> object:
+    return asyncio.run(
+        client.admit_inbound_commercial_case(
+            scope_key="att1-inbound",
+            scope_version=1,
+            external_conversation_id=200,
+            external_user_id="520000000200",
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "code", "message"),
+    [
+        # La conversacion existe y no es una entrante draft_only: asi la deja
+        # una plantilla del dispatcher.
+        (400, "22000", "inbound_canonical_conversation_conflict"),
+        (400, "22000", "inbound_canonical_identity_conflict"),
+        (409, "23505", "inbound_external_conversation_owned_by_another_identity"),
+        (400, "21000", "inbound_external_conversation_ownership_ambiguous"),
+    ],
+)
+def test_an_inbound_admission_the_base_rejects_for_good_carries_its_reason(
+    status: int, code: str, message: str
+) -> None:
+    # La forma con que PostgREST devuelve un raise (code/message/details/hint).
+    client = _rejecting_client(
+        {"code": code, "message": message, "details": None, "hint": None}, status=status
+    )
+
+    with pytest.raises(SupabasePermanentError) as rejected:
+        _admit_inbound(client)
+
+    assert rejected.value.reason == message
+    # El texto del error es el de siempre: quien no mira el tipo no nota nada.
+    assert str(rejected.value) == f"inbound_commercial_case_admission_failed: HTTP {status}"
+
+
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [
+        # Un 23505 a secas es un indice unico tocado por una carrera: reintentar
+        # puede pasar.
+        (409, {"code": "23505", "message": "duplicate key value violates unique constraint"}),
+        (503, {"code": "57P03", "message": "the database system is starting up"}),
+        (500, {"code": "55000", "message": "inbound_commercial_scope_unavailable"}),
+        # Un mensaje que no es un codigo no se copia a ningun lado.
+        (400, {"code": "22000", "message": "Compradora 5215555550101"}),
+        (502, ["not", "an", "object"]),
+    ],
+)
+def test_any_other_failed_inbound_admission_stays_retryable(
+    status: int, body: object
+) -> None:
+    client = _rejecting_client(body, status=status)
+
+    with pytest.raises(SupabaseError) as failed:
+        _admit_inbound(client)
+
+    assert not isinstance(failed.value, SupabasePermanentError)
+    assert str(failed.value) == f"inbound_commercial_case_admission_failed: HTTP {status}"
 
 
 def _rejecting_client(body: object, *, status: int = 500) -> SupabaseClient:
