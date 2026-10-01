@@ -179,12 +179,12 @@ Una instancia con `[adaptadores.ghl]`, sin aceptación y con `LANCEMOS_PILOT_BOU
 **Condición antes de prender** `[flujos].precheckout`, `[flujos].pago_fallido` o una audiencia `consented_intent` o `consented_intent_in_cohort`: el token es la única barrera (el id del formulario y las URL son públicos), así que hace falta una verificación fuera de banda de cada envío, que todavía no existe, o la aceptación del riesgo por escrito del responsable de la instancia (contrato, sección Riesgos). Desde el bridge 1.3.0 la aceptación son tres claves en `[adaptadores.ghl]`:
 
 ```toml
-riesgo_aceptado_por = "<nombre de quien decide>"
-riesgo_aceptado_el = 2026-10-02
+riesgo_aceptado_por = "<COMPLETAR: nombre de quien decide>"
+riesgo_aceptado_el = 2026-10-01
 riesgo_contrato = "ghl-precheckout-adapter-v1"
 ```
 
-Las escribe a mano quien decide, por PR en el repo de la instancia: nadie más las completa. **Verificación:** `validate` informa `riesgo aceptado por … el … (contrato …)`, y después del redespliegue `/ready` da `ghl_adapter_risk: "accepted:<fecha>:<contrato>"`. Sin ellas, con la sección en el manifiesto, el bridge no arranca con esos flujos prendidos ni con un scope del piloto de audiencia con consentimiento (`/ready` responde `503 ghl_adapter_risk_not_accepted`). La sección no se quita del manifiesto mientras haya en la base intenciones admitidas por el adaptador: quitarla saca la guarda, no las intenciones.
+Las escribe a mano quien decide, por PR en el repo de la instancia: nadie más las completa. El marcador entre `<` y `>` no carga: se reemplaza por el nombre. La fecha es la del día en que se acepta y no puede ser posterior a hoy. **Verificación:** `validate` informa `riesgo aceptado por … el … (contrato …)`, y después del redespliegue `/ready` da `ghl_adapter_risk: "accepted:<fecha>:<contrato>"`. Sin ellas, con la sección en el manifiesto, el bridge no arranca con esos flujos prendidos ni con un scope del piloto de audiencia con consentimiento (`/ready` responde `503 ghl_adapter_risk_not_accepted`). La sección no se quita del manifiesto mientras haya en la base intenciones admitidas por el adaptador: quitarla saca la guarda, no las intenciones.
 
 ### El primer contacto tras el formulario
 

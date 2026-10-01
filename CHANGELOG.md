@@ -41,6 +41,7 @@ Tres cosas para una instancia con manifiesto: el primer contacto tras el formula
   - Variables nuevas, vacías por defecto: `LANCEMOS_PILOT_PRECHECKOUT_SCOPE_KEY`, `LANCEMOS_PILOT_PRECHECKOUT_SCOPE_VERSION` y `WABA_PRECHECKOUT_TEMPLATE_NAME`. Están en `.env.example` y en `compose.yaml`.
   - Contrato: `docs/contracts/portable-precheckout-first-contact-v1.md`.
 - **Aceptación escrita del riesgo del adaptador de GHL** (cabo LAN-054). `[adaptadores.ghl]` admite tres claves opcionales, todas o ninguna: `riesgo_aceptado_por`, `riesgo_aceptado_el` (fecha TOML) y `riesgo_contrato`, que tiene que ser `ghl-precheckout-adapter-v1`.
+  - `riesgo_aceptado_por` no carga con `<` o `>`: el marcador de los ejemplos de la documentación, copiado sin editar, no levanta la guarda. `riesgo_aceptado_el` no carga si es posterior a hoy (con un día de margen sobre la fecha UTC).
   - Con la aceptación, `flujos.precheckout` y `flujos.pago_fallido` arrancan con la sección en el manifiesto, y el formulario de GHL admite y planifica el primer contacto.
   - `/ready` suma `ghl_adapter_risk` (`accepted:<fecha>:<contrato>`, `not_accepted` o `no_adapter_section`), sin el nombre de quien acepta, que va solo al log de arranque.
   - `instance_cli validate` informa la aceptación.

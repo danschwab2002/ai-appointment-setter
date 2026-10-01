@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from bridge import instance_manifest
 from bridge.commercial_ally import JOHANNA_COMMERCIAL_ALLY
 from bridge.instance_manifest import (
     DEFAULT_TEMPLATE_PARAMETERS,
@@ -533,6 +534,13 @@ def test_the_ghl_risk_acceptance_is_all_or_nothing(missing: tuple[str, ...]) -> 
         ({"riesgo_aceptado_por": "   "}, "riesgo_aceptado_por debe ser un texto no vacio"),
         ({"riesgo_aceptado_por": " prueba"}, "riesgo_aceptado_por debe ser un texto no vacio"),
         ({"riesgo_aceptado_por": True}, "riesgo_aceptado_por debe ser un texto no vacio"),
+        # El marcador del ejemplo de la documentacion, copiado sin editar.
+        (
+            {"riesgo_aceptado_por": "<nombre de quien decide>"},
+            "riesgo_aceptado_por es el marcador del ejemplo",
+        ),
+        ({"riesgo_aceptado_por": "Nombre >"}, "riesgo_aceptado_por es el marcador del ejemplo"),
+        ({"riesgo_aceptado_el": date(2099, 1, 1)}, "riesgo_aceptado_el no puede ser posterior a hoy"),
         ({"riesgo_contrato": ""}, "riesgo_contrato debe ser un texto no vacio"),
         (
             {"riesgo_contrato": "ghl-precheckout-adapter-v2"},
@@ -549,6 +557,74 @@ def test_ghl_risk_acceptance_rules(override: dict, message: str) -> None:
 
     with pytest.raises(ManifestError, match=f"adaptadores.ghl.{message}"):
         _load(payload)
+
+
+@pytest.mark.parametrize(
+    ("accepted_on", "loads"),
+    [
+        (date(2026, 10, 1), True),
+        (date(2026, 9, 1), True),
+        # Un dia de margen: quien firma al este de UTC ya esta en el dia siguiente.
+        (date(2026, 10, 2), True),
+        (date(2026, 10, 3), False),
+    ],
+)
+def test_the_acceptance_date_is_not_after_today(
+    monkeypatch: pytest.MonkeyPatch, accepted_on: date, loads: bool
+) -> None:
+    monkeypatch.setattr(instance_manifest, "_utc_today", lambda: date(2026, 10, 1))
+    payload = _with_ghl_acceptance(
+        _payload("att1"), _test_acceptance(riesgo_aceptado_el=accepted_on)
+    )
+
+    if loads:
+        assert _load(payload).ghl_risk_acceptance.accepted_on == accepted_on
+    else:
+        with pytest.raises(
+            ManifestError, match="adaptadores.ghl.riesgo_aceptado_el no puede ser posterior a hoy"
+        ):
+            _load(payload)
+
+
+_DOCS = Path(__file__).parents[1] / "docs"
+_DOCS_WITH_THE_ACCEPTANCE_EXAMPLE = (
+    _DOCS / "contracts" / "ghl-precheckout-adapter-v1.md",
+    _DOCS / "instalar.md",
+    _DOCS / "referencia-manifiesto.md",
+)
+
+
+@pytest.mark.parametrize(
+    "doc", _DOCS_WITH_THE_ACCEPTANCE_EXAMPLE, ids=lambda doc: doc.name
+)
+def test_the_docs_acceptance_example_does_not_load(doc: Path) -> None:
+    # Copiado de la documentacion sin editar, el ejemplo no levanta la guarda
+    # de LAN-054: el nombre lo escribe a mano quien decide.
+    text = doc.read_text(encoding="utf-8")
+    names = re.findall(r'^riesgo_aceptado_por = "([^"]*)"', text, flags=re.MULTILINE)
+    dates = re.findall(r"^riesgo_aceptado_el = (\d{4}-\d{2}-\d{2})\b", text, flags=re.MULTILINE)
+    assert names, f"{doc.name} ya no trae el ejemplo de la aceptacion"
+    assert len(dates) == len(names)
+
+    for name, raw_date in zip(names, dates):
+        accepted_on = date.fromisoformat(raw_date)
+        with pytest.raises(
+            ManifestError, match="adaptadores.ghl.riesgo_aceptado_por es el marcador del ejemplo"
+        ):
+            _load(
+                _with_ghl_acceptance(
+                    _payload("att1"),
+                    _test_acceptance(riesgo_aceptado_por=name, riesgo_aceptado_el=accepted_on),
+                )
+            )
+        # Con un nombre en lugar del marcador, el resto del ejemplo carga: lo
+        # que lo frena es el marcador y nada mas.
+        accepted = _load(
+            _with_ghl_acceptance(
+                _payload("att1"), _test_acceptance(riesgo_aceptado_el=accepted_on)
+            )
+        )
+        assert accepted.ghl_adapter_risk == "accepted"
 
 
 def test_the_acceptance_needs_the_adapter_section_with_its_forms() -> None:

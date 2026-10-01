@@ -18,7 +18,7 @@ manifiesto v2 se traduce a ese binding con ``to_commercial_ally_config``.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import re
 import tomllib
@@ -51,6 +51,9 @@ _GHL_FORM_ID = re.compile(r"[A-Za-z0-9]{20}")
 # vencida tiene que verse, no degradar en silencio.
 GHL_ADAPTER_RISK_CONTRACT = "ghl-precheckout-adapter-v1"
 _GHL_RISK_KEYS = ("riesgo_aceptado_por", "riesgo_aceptado_el", "riesgo_contrato")
+# Los ejemplos de la documentacion firman con un marcador entre < y >: copiado
+# sin editar no es una firma, y no carga.
+_GHL_RISK_PLACEHOLDER_CHARS = ("<", ">")
 # Los flujos que usan una intencion como permiso o como audiencia sin mirar la
 # base: con [adaptadores.ghl] y sin la aceptacion no se prenden.
 GHL_RISK_GATED_FLOWS = ("precheckout", "pago_fallido")
@@ -523,6 +526,11 @@ def _ghl_adapter(
     return forms, _ghl_risk_acceptance(ghl)
 
 
+def _utc_today() -> date:
+    # Aparte para que las pruebas fijen el dia sin depender del reloj.
+    return datetime.now(timezone.utc).date()
+
+
 def _ghl_risk_acceptance(ghl: Mapping[str, Any]) -> GhlRiskAcceptance | None:
     """Las tres claves de la aceptacion, todas o ninguna.
 
@@ -540,10 +548,22 @@ def _ghl_risk_acceptance(ghl: Mapping[str, Any]) -> GhlRiskAcceptance | None:
             "riesgo_aceptado_por, riesgo_aceptado_el y riesgo_contrato"
         )
     accepted_by = _str(ghl, "riesgo_aceptado_por", "adaptadores.ghl.riesgo_aceptado_por")
+    if any(char in accepted_by for char in _GHL_RISK_PLACEHOLDER_CHARS):
+        raise ManifestError(
+            "adaptadores.ghl.riesgo_aceptado_por es el marcador del ejemplo (<...>): "
+            "lo escribe a mano quien decide, con su nombre"
+        )
     accepted_on = ghl["riesgo_aceptado_el"]
     # Una fecha TOML (2026-10-02), no un texto ni una fecha con hora.
     if not isinstance(accepted_on, date) or hasattr(accepted_on, "hour"):
         raise ManifestError("adaptadores.ghl.riesgo_aceptado_el debe ser una fecha (2026-10-02)")
+    # Es el dia en que se acepto. Un dia de margen sobre la fecha UTC: quien
+    # firma al este de UTC ya esta en el dia siguiente.
+    if accepted_on > _utc_today() + timedelta(days=1):
+        raise ManifestError(
+            "adaptadores.ghl.riesgo_aceptado_el no puede ser posterior a hoy: "
+            "es el dia en que se acepto"
+        )
     contract = _str(ghl, "riesgo_contrato", "adaptadores.ghl.riesgo_contrato")
     if contract != GHL_ADAPTER_RISK_CONTRACT:
         raise ManifestError(

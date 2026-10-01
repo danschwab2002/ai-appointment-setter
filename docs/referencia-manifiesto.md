@@ -145,16 +145,18 @@ eventos = ["carrito", "pago_fallido", "compra", "entrante", "intencion"]
 [adaptadores.ghl]
 formularios = ["EgDqRl2xWc59YjVW1q8W"]
 # Opcionales, las tres o ninguna: la aceptación escrita del riesgo del adaptador.
-riesgo_aceptado_por = "<nombre de quien decide>"
-riesgo_aceptado_el = 2026-10-02
+riesgo_aceptado_por = "<COMPLETAR: nombre de quien decide>"
+riesgo_aceptado_el = 2026-10-01
 riesgo_contrato = "ghl-precheckout-adapter-v1"
 ```
+
+El marcador entre `<` y `>` no carga: se reemplaza por el nombre de quien decide.
 
 | Campo | Qué es | Si está mal |
 |---|---|---|
 | `adaptadores.ghl.formularios` | Los formularios de GHL cuyos envíos entran como `intencion`. Cada uno es el id que llega en `attributionSource.mediumId` del webhook: 20 letras o números | No carga |
-| `adaptadores.ghl.riesgo_aceptado_por` | Opcional. Quién acepta el riesgo del adaptador: el responsable de la instancia. Texto no vacío | No carga |
-| `adaptadores.ghl.riesgo_aceptado_el` | Opcional. Cuándo lo aceptó. Una fecha TOML sin comillas ni hora (`2026-10-02`) | Un texto o una fecha con hora no cargan |
+| `adaptadores.ghl.riesgo_aceptado_por` | Opcional. Quién acepta el riesgo del adaptador: el responsable de la instancia. Texto no vacío, sin `<` ni `>` | No carga. El marcador del ejemplo tampoco |
+| `adaptadores.ghl.riesgo_aceptado_el` | Opcional. Cuándo lo aceptó. Una fecha TOML sin comillas ni hora (`2026-10-01`), no posterior a hoy (un día de margen sobre la fecha UTC) | Un texto, una fecha con hora o una fecha futura no cargan |
 | `adaptadores.ghl.riesgo_contrato` | Opcional. Contra qué contrato lo aceptó. Tiene que ser `"ghl-precheckout-adapter-v1"`, el vigente | Otro valor no carga: la aceptación es de otra versión del contrato |
 
 Reglas: al menos un formulario, sin repetir, y `intencion` en `eventos`; si no, el manifiesto no carga. La landing y la oferta no se declaran acá: salen de la URL del envío, comparada con las `url` de `[[hotmart.ofertas]]`. Sin la sección, o con `[adaptadores]` vacío, no hay adaptador.

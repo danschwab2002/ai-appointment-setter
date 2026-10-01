@@ -63,13 +63,16 @@ El token es la única barrera del adaptador ([Riesgos](#riesgos)). Para que las 
 ```toml
 [adaptadores.ghl]
 formularios = ["EgDqRl2xWc59YjVW1q8W"]
-riesgo_aceptado_por = "<nombre de quien decide>"
-riesgo_aceptado_el = 2026-10-02            # fecha TOML, sin hora
+riesgo_aceptado_por = "<COMPLETAR: nombre de quien decide>"
+riesgo_aceptado_el = 2026-10-01            # fecha TOML, sin hora
 riesgo_contrato = "ghl-precheckout-adapter-v1"
 ```
 
+El marcador entre `<` y `>` no carga: se reemplaza por el nombre de quien decide.
+
 - **Todas o ninguna.** Con una o dos de las tres, el manifiesto no carga.
-- `riesgo_aceptado_el` es una fecha TOML: un texto o una fecha con hora no cargan.
+- `riesgo_aceptado_por` es el nombre de quien decide, sin `<` ni `>`: el marcador del ejemplo copiado sin editar no carga.
+- `riesgo_aceptado_el` es una fecha TOML: un texto o una fecha con hora no cargan. Es el día en que se aceptó, así que no puede ser posterior a hoy (con un día de margen sobre la fecha UTC, por quien firma al este de UTC).
 - `riesgo_contrato` tiene que ser `ghl-precheckout-adapter-v1`, el contrato vigente. Otro valor es un error de carga: una aceptación escrita contra otra versión de este contrato tiene que verse, no degradar en silencio.
 - No hay una clave de estado: la presencia completa es la aceptación. No caduca ni se ata a la lista de formularios (sumar un formulario ya es un cambio firmado del manifiesto).
 - El producto solo la lee. La escribe a mano quien decide, en el repo de la instancia; ningún código del producto la genera.
