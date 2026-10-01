@@ -141,6 +141,7 @@ const rows = await db.query(`
       ('get_human_handoff_projection_status()'),
       ('get_precheckout_delayed_first_touch_readiness()'),
       ('get_lancemos_pilot_runtime_status(text,integer,text,text,text)'),
+      ('get_lancemos_pilot_scope_audience_mode(text,integer)'),
       ('get_operator_unresolved_correlation(text,text,uuid)'),
       ('has_chatwoot_opt_out_stop(bigint,bigint,bigint,text)'),
       ('list_due_hotmart_abandonment_reevaluations(timestamp with time zone,integer)'),
@@ -222,9 +223,10 @@ const result = rows.rows[0];
 // one legacy completion overload, and resuming a paused conversation adds one,
 // and the Slack alert for every human handoff (HND-001) adds three, and the
 // lead first-name inference adds two, and the discount follow-up adds two, and
-// the portable first contact after the form (20261001000200) adds four.
+// the portable first contact after the form (20261001000200) adds four, and
+// the read of the pilot scope audience mode (20261001000300) adds one.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 116) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 117) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

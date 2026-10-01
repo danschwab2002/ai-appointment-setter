@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import copy
 import re
+import shutil
 import tomllib
 from dataclasses import replace
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -19,6 +21,9 @@ from bridge.commercial_ally import JOHANNA_COMMERCIAL_ALLY
 from bridge.instance_manifest import (
     DEFAULT_TEMPLATE_PARAMETERS,
     FLOWS,
+    GHL_ADAPTER_RISK_CONTRACT,
+    GHL_RISK_GATED_FLOWS,
+    GhlRiskAcceptance,
     InstanceManifest,
     ManifestError,
 )
@@ -403,3 +408,214 @@ def test_loading_the_ghl_adapter_does_not_mutate_the_input_mapping() -> None:
     _load(payload)
 
     assert payload == before
+
+
+# ---------------------------------- aceptacion del riesgo del adaptador de GHL
+# docs/contracts/ghl-precheckout-adapter-v1.md, Riesgos. Tres claves opcionales en
+# [adaptadores.ghl], todas o ninguna. La aceptacion de estos tests es DE PRUEBA:
+# ningun manifiesto real la recibe de este codigo; la escribe a mano quien firma.
+
+_TEST_ACCEPTED_BY = "aceptacion de prueba (tests)"
+_TEST_ACCEPTED_ON = date(2026, 10, 1)
+
+
+def _test_acceptance(**overrides: object) -> dict:
+    return {
+        "riesgo_aceptado_por": _TEST_ACCEPTED_BY,
+        "riesgo_aceptado_el": _TEST_ACCEPTED_ON,
+        "riesgo_contrato": GHL_ADAPTER_RISK_CONTRACT,
+        **overrides,
+    }
+
+
+def _with_ghl_acceptance(payload: dict, acceptance: dict) -> dict:
+    _with_ghl_adapter(payload, [_GHL_ADS_A_FORM])
+    payload["adaptadores"]["ghl"].update(acceptance)
+    return payload
+
+
+def test_the_risk_contract_is_the_adapter_contract_v1() -> None:
+    # La constante nombra el documento cuya seccion Riesgos se acepta. Subirla
+    # invalida a proposito toda aceptacion escrita contra el contrato anterior.
+    assert GHL_ADAPTER_RISK_CONTRACT == "ghl-precheckout-adapter-v1"
+    assert (
+        Path(__file__).parents[1] / "docs" / "contracts" / f"{GHL_ADAPTER_RISK_CONTRACT}.md"
+    ).is_file()
+    assert GHL_RISK_GATED_FLOWS == ("precheckout", "pago_fallido")
+
+
+def test_the_ghl_risk_acceptance_loads_with_its_three_keys() -> None:
+    manifest = _load(_with_ghl_acceptance(_payload("att1"), _test_acceptance()))
+
+    assert manifest.ghl_risk_acceptance == GhlRiskAcceptance(
+        accepted_by=_TEST_ACCEPTED_BY,
+        accepted_on=_TEST_ACCEPTED_ON,
+        contract="ghl-precheckout-adapter-v1",
+    )
+    assert manifest.ghl_form_ids == (_GHL_ADS_A_FORM,)
+    assert manifest.ghl_adapter_risk == "accepted"
+
+
+def test_the_ghl_risk_acceptance_is_read_from_the_toml_file(tmp_path: Path) -> None:
+    # La fecha es una fecha TOML sin comillas: asi la escribe quien firma.
+    target = tmp_path / "instancia"
+    shutil.copytree(FIXTURES / "att1", target)
+    path = target / "instancia.toml"
+    text = path.read_text(encoding="utf-8")
+    events = 'eventos = ["carrito", "pago_fallido", "compra", "entrante"]'
+    assert events in text
+    path.write_text(
+        text.replace(events, events[:-1] + ', "intencion"]')
+        + "\n[adaptadores.ghl]\n"
+        + f'formularios = ["{_GHL_ADS_A_FORM}"]\n'
+        + f'riesgo_aceptado_por = "{_TEST_ACCEPTED_BY}"\n'
+        + "riesgo_aceptado_el = 2026-10-01\n"
+        + 'riesgo_contrato = "ghl-precheckout-adapter-v1"\n',
+        encoding="utf-8",
+    )
+
+    manifest = InstanceManifest.from_toml_file(path)
+
+    assert manifest.ghl_risk_acceptance == GhlRiskAcceptance(
+        accepted_by=_TEST_ACCEPTED_BY,
+        accepted_on=date(2026, 10, 1),
+        contract="ghl-precheckout-adapter-v1",
+    )
+
+
+def test_without_the_three_keys_there_is_no_acceptance() -> None:
+    # El default, y lo que tiene hoy toda instancia: la seccion sin aceptacion.
+    with_adapter = _load(_with_ghl_adapter(_payload("att1"), [_GHL_ADS_A_FORM]))
+
+    assert with_adapter.ghl_risk_acceptance is None
+    assert with_adapter.ghl_adapter_risk == "not_accepted"
+    for name in ("att1", "johanna"):
+        manifest = InstanceManifest.from_toml_file(FIXTURES / name / "instancia.toml")
+        assert manifest.ghl_risk_acceptance is None
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        ("riesgo_aceptado_por",),
+        ("riesgo_aceptado_el",),
+        ("riesgo_contrato",),
+        ("riesgo_aceptado_por", "riesgo_aceptado_el"),
+        ("riesgo_aceptado_por", "riesgo_contrato"),
+        ("riesgo_aceptado_el", "riesgo_contrato"),
+    ],
+    ids=lambda missing: "sin-" + "+".join(key.removeprefix("riesgo_") for key in missing),
+)
+def test_the_ghl_risk_acceptance_is_all_or_nothing(missing: tuple[str, ...]) -> None:
+    acceptance = _test_acceptance()
+    for key in missing:
+        del acceptance[key]
+
+    with pytest.raises(
+        ManifestError,
+        match="adaptadores.ghl: la aceptacion del riesgo lleva "
+        "riesgo_aceptado_por, riesgo_aceptado_el y riesgo_contrato",
+    ):
+        _load(_with_ghl_acceptance(_payload("att1"), acceptance))
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ({"riesgo_aceptado_el": "2026-10-01"}, "riesgo_aceptado_el debe ser una fecha"),
+        (
+            {"riesgo_aceptado_el": datetime(2026, 10, 1, 12, 0)},
+            "riesgo_aceptado_el debe ser una fecha",
+        ),
+        ({"riesgo_aceptado_el": 20261001}, "riesgo_aceptado_el debe ser una fecha"),
+        ({"riesgo_aceptado_el": True}, "riesgo_aceptado_el debe ser una fecha"),
+        ({"riesgo_aceptado_por": ""}, "riesgo_aceptado_por debe ser un texto no vacio"),
+        ({"riesgo_aceptado_por": "   "}, "riesgo_aceptado_por debe ser un texto no vacio"),
+        ({"riesgo_aceptado_por": " prueba"}, "riesgo_aceptado_por debe ser un texto no vacio"),
+        ({"riesgo_aceptado_por": True}, "riesgo_aceptado_por debe ser un texto no vacio"),
+        ({"riesgo_contrato": ""}, "riesgo_contrato debe ser un texto no vacio"),
+        (
+            {"riesgo_contrato": "ghl-precheckout-adapter-v2"},
+            "riesgo_contrato debe ser 'ghl-precheckout-adapter-v1'",
+        ),
+        (
+            {"riesgo_contrato": "GHL-precheckout-adapter-v1"},
+            "riesgo_contrato debe ser 'ghl-precheckout-adapter-v1'",
+        ),
+    ],
+)
+def test_ghl_risk_acceptance_rules(override: dict, message: str) -> None:
+    payload = _with_ghl_acceptance(_payload("att1"), _test_acceptance(**override))
+
+    with pytest.raises(ManifestError, match=f"adaptadores.ghl.{message}"):
+        _load(payload)
+
+
+def test_the_acceptance_needs_the_adapter_section_with_its_forms() -> None:
+    # Las claves viven en [adaptadores.ghl]: sin formularios no hay que aceptar.
+    payload = _with_ghl_acceptance(_payload("att1"), _test_acceptance())
+    del payload["adaptadores"]["ghl"]["formularios"]
+
+    with pytest.raises(ManifestError, match="adaptadores.ghl: faltan formularios"):
+        _load(payload)
+
+
+def test_the_ghl_risk_acceptance_does_not_change_the_binding_nor_the_flows() -> None:
+    plain = _load(_with_ghl_adapter(_payload("att1"), [_GHL_ADS_A_FORM]))
+    accepted = _load(_with_ghl_acceptance(_payload("att1"), _test_acceptance()))
+
+    assert accepted.to_commercial_ally_config() == plain.to_commercial_ally_config()
+    assert replace(accepted, ghl_risk_acceptance=None) == plain
+
+
+def test_loading_the_acceptance_does_not_mutate_the_input_mapping() -> None:
+    payload = _with_ghl_acceptance(_payload("att1"), _test_acceptance())
+    before = copy.deepcopy(payload)
+
+    _load(payload)
+
+    assert payload == before
+
+
+@pytest.mark.parametrize(
+    ("intencion", "flows", "expected"),
+    [
+        # El fixture de ATT1: sin intenciones, no aplica.
+        (False, {}, None),
+        (False, {"pago_fallido": True}, None),
+        # Recibe intenciones pero ningun flujo las usa como permiso.
+        (True, {}, None),
+        (True, {"carrito": True}, None),
+        # Sin la seccion y con un flujo que usa la intencion: nada lo bloquea,
+        # se avisa.
+        (True, {"pago_fallido": True}, "no_adapter_section"),
+        (True, {"precheckout": True}, "no_adapter_section"),
+    ],
+)
+def test_ghl_adapter_risk_without_the_section(
+    intencion: bool, flows: dict[str, bool], expected: str | None
+) -> None:
+    payload = _payload("att1")
+    if intencion:
+        payload["eventos"] = [*payload["eventos"], "intencion"]
+    payload["flujos"].update(flows)
+
+    manifest = _load(payload)
+
+    assert manifest.ghl_form_ids == ()
+    assert manifest.ghl_adapter_risk == expected
+
+
+@pytest.mark.parametrize("flows", [{}, {"precheckout": True}, {"pago_fallido": True}])
+def test_ghl_adapter_risk_with_the_section_does_not_depend_on_the_flows(
+    flows: dict[str, bool],
+) -> None:
+    # El manifiesto carga igual: la guarda de los flujos es del arranque del bridge
+    # (tests/test_instance_wiring.py) y de validate (tests/test_instance_cli.py).
+    plain = _with_ghl_adapter(_payload("att1"), [_GHL_ADS_A_FORM])
+    plain["flujos"].update(flows)
+    accepted = _with_ghl_acceptance(_payload("att1"), _test_acceptance())
+    accepted["flujos"].update(flows)
+
+    assert _load(plain).ghl_adapter_risk == "not_accepted"
+    assert _load(accepted).ghl_adapter_risk == "accepted"

@@ -210,7 +210,8 @@ def test_whatsapp_phone_equivalence_fingerprint_checks_the_portable_functions() 
 
 def test_portable_precheckout_first_contact_fingerprint_checks_table_checks_and_functions() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    fingerprint = sql.split("'20261001000200'", 1)[1].split(")\nselect", 1)[0]
+    # Hasta la fila siguiente: las cuentas de abajo son de esta migracion sola.
+    fingerprint = sql.split("'20261001000200'", 1)[1].split("'20261001000300'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", fingerprint)
 
     for signature in (
@@ -252,11 +253,36 @@ def test_portable_precheckout_first_contact_fingerprint_checks_table_checks_and_
     assert "portable_precheckout_first_contact" in fingerprint
 
 
+def test_pilot_scope_audience_mode_read_fingerprint_checks_the_function_and_its_acl() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    fingerprint = sql.split("'20261001000300'", 1)[1].split(")\nselect", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", fingerprint)
+
+    assert "'20261001000300_pilot_scope_audience_mode_read.sql'" in fingerprint
+    assert (
+        compact_fingerprint.count(
+            "to_regprocedure('public.get_lancemos_pilot_scope_audience_mode(text,integer)')"
+        )
+        == 2
+    )
+    assert "proname" not in fingerprint
+    # Lee el modo de una version publicada, como definer y sin escribir.
+    assert "andprosecdef" in compact_fingerprint
+    assert "provolatile='s'" in compact_fingerprint
+    assert "position('scope.audience_mode'indefinition)>0" in compact_fingerprint
+    assert "position('scope.status=''published'''indefinition)>0" in compact_fingerprint
+    # Es un entrypoint del bridge: solo service_role.
+    assert "has_function_privilege('service_role',oid,'EXECUTE')" in compact_fingerprint
+    assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint
+    assert "nothas_function_privilege('authenticated',oid,'EXECUTE')" in compact_fingerprint
+    assert compact_fingerprint.endswith(",2,'pilot_scope_audience_mode_read'")
+
+
 def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
 
-    assert len(allowlisted) == 116
+    assert len(allowlisted) == 117
     assert (
         "claim_conversation_followup_v1(bigint, bigint, bigint, text, text, text, text, text, "
         "text, text, bigint, bigint, integer, text, timestamp with time zone)"
@@ -279,6 +305,7 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     assert "get_daily_feedback_conversation_context_v1(text, text, bigint, bigint, bigint[])" in allowlisted
     assert not any(item.startswith("configure_daily_feedback_scope_v1(") for item in allowlisted)
     assert "admit_observed_lead_precheckout(text, jsonb, jsonb)" in allowlisted
+    assert "get_lancemos_pilot_scope_audience_mode(text, integer)" in allowlisted
     assert (
         "admit_portable_observed_lead_precheckout"
         "(text, text, integer, text, jsonb, jsonb)" in allowlisted

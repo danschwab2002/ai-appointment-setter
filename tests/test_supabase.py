@@ -464,3 +464,80 @@ def test_a_malformed_first_contact_scope_status_is_refused() -> None:
         asyncio.run(
             failing.get_portable_precheckout_pilot_runtime_status(pilot_boundary=BOUNDARY)
         )
+
+
+# --------------------------------------- modo de audiencia del scope del piloto
+# La RPC es la de la migracion 20261001000300: devuelve un texto (PostgREST lo
+# manda como un escalar JSON) o null si la version no esta publicada. El bridge
+# la lee para la guarda del adaptador de GHL sin aceptacion del riesgo y falla
+# cerrado ante cualquier otra cosa.
+
+
+def _scalar_client(
+    body: bytes, *, status: int = 200
+) -> tuple[SupabaseClient, list[httpx.Request]]:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            status, content=body, headers={"content-type": "application/json"}
+        )
+
+    client = SupabaseClient(
+        base_url="https://supabase.example.test",
+        service_role_key="service-role",
+        transport=httpx.MockTransport(handler),
+    )
+    return client, requests
+
+
+@pytest.mark.parametrize(
+    "mode", ["manual_cohort", "consented_intent_in_cohort", "consented_intent"]
+)
+def test_the_pilot_scope_audience_mode_is_read_by_scope_and_version(mode: str) -> None:
+    client, requests = _scalar_client(json.dumps(mode).encode())
+    # El scope de recuperacion de ATT1 en su segunda version (la del E2E).
+    boundary = PilotBoundaryConfig(
+        scope_key="att1-recuperacion",
+        scope_version=2,
+        tenant_key="lancemos",
+        channel_provider="waba",
+        channel_account_ref="chatwoot-inbox:11",
+    )
+
+    observed = asyncio.run(client.get_pilot_scope_audience_mode(pilot_boundary=boundary))
+
+    assert observed == mode
+    [request] = requests
+    assert request.method == "POST"
+    assert request.url.path == "/rest/v1/rpc/get_lancemos_pilot_scope_audience_mode"
+    # Solo la clave y la version: la funcion no recibe tenant ni canal.
+    assert json.loads(request.content) == {
+        "p_scope_key": "att1-recuperacion",
+        "p_scope_version": 2,
+    }
+
+
+@pytest.mark.parametrize(
+    ("body", "status", "error"),
+    [
+        # Una version que no esta publicada llega como null.
+        (b"null", 200, "^pilot_scope_audience_mode_scope_not_published$"),
+        (b'"everyone"', 200, "^pilot_scope_audience_mode_invalid_mode$"),
+        (b'""', 200, "^pilot_scope_audience_mode_invalid_mode$"),
+        (b'["manual_cohort"]', 200, "^pilot_scope_audience_mode_invalid_mode$"),
+        (b'{"audience_mode": "manual_cohort"}', 200, "^pilot_scope_audience_mode_invalid_mode$"),
+        (b"true", 200, "^pilot_scope_audience_mode_invalid_mode$"),
+        (b"not json", 200, "^pilot_scope_audience_mode_invalid_json$"),
+        (b'"manual_cohort"', 404, "^pilot_scope_audience_mode_failed: HTTP 404$"),
+        (b'"manual_cohort"', 503, "^pilot_scope_audience_mode_failed: HTTP 503$"),
+    ],
+)
+def test_an_audience_mode_that_cannot_be_trusted_is_refused(
+    body: bytes, status: int, error: str
+) -> None:
+    client, _ = _scalar_client(body, status=status)
+
+    with pytest.raises(SupabaseError, match=error):
+        asyncio.run(client.get_pilot_scope_audience_mode(pilot_boundary=BOUNDARY))

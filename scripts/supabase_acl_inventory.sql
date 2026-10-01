@@ -67,6 +67,7 @@ expected_service_role(signature) as (
         ('public.get_human_handoff_projection_status()'),
         ('public.get_precheckout_delayed_first_touch_readiness()'),
         ('public.get_lancemos_pilot_runtime_status(text, integer, text, text, text)'),
+        ('public.get_lancemos_pilot_scope_audience_mode(text, integer)'),
         ('public.get_operator_unresolved_correlation(text, text, uuid)'),
         ('public.has_chatwoot_opt_out_stop(bigint, bigint, bigint, text)'),
         ('public.list_due_hotmart_abandonment_reevaluations(timestamp with time zone, integer)'),

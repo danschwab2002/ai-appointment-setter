@@ -4027,6 +4027,29 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         7,
         'portable_precheckout_first_contact'
+    union all
+    select
+        '20261001000300',
+        '20261001000300_pilot_scope_audience_mode_read.sql',
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_lancemos_pilot_scope_audience_mode(text,integer)')
+              and prosecdef
+              and provolatile = 's'
+              and position('scope.audience_mode' in definition) > 0
+              and position('scope.status = ''published''' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_lancemos_pilot_scope_audience_mode(text,integer)')
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        2,
+        'pilot_scope_audience_mode_read'
 )
 select
     version,

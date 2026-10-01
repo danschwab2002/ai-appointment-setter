@@ -582,8 +582,8 @@ def test_the_model_is_not_called_when_off_or_when_the_form_was_not_new(
 # tambien planifica el primer contacto, en una sola RPC. El set completo con el
 # que ese flag arranca esta en test_instance_wiring.py. El payload es el inline
 # de este archivo con los datos del fixture de ATT1 (no hay lead.precheckout
-# capturado de ATT1); el formulario de GHL espera a la aceptacion del riesgo
-# del adaptador.
+# capturado de ATT1); el formulario de GHL, con la captura real y la aceptacion
+# del riesgo del adaptador, esta en test_ghl_precheckout_adapter_http.py.
 
 FIRST_CONTACT_SECRET = "first-contact-lead-secret"
 

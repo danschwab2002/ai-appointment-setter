@@ -29,7 +29,9 @@
 // invalido se rechaza, un modo consentido se admite con source landing, la
 // version publicada es inmutable, el binding exige su forma, y toda funcion
 // SQL que llama a evaluate_lancemos_pilot_scope llama tambien al helper (en
-// consented_intent la evaluacion sola no mira la intencion).
+// consented_intent la evaluacion sola no mira la intencion). Y la lectura del
+// modo que usa el bridge (migracion 20261001000300): el modo de cada version
+// publicada, null para lo que no esta publicado, y solo para service_role.
 //
 // Datos: binding, ofertas, landings, producto, Chatwoot y consentimiento de
 // tests/fixtures/instances/att1/instancia.toml; politica y ventana de la
@@ -1282,6 +1284,91 @@ if (evaluateCallers.length === 0 || evaluateCallers.some((caller) => !caller.cal
   throw new Error(`a SQL caller of evaluate_lancemos_pilot_scope does not bind the audience: ${JSON.stringify(evaluateCallers)}`);
 }
 results.evaluate_callers_bind_the_audience = evaluateCallers.map((caller) => caller.proname);
+
+// ---------------------------------------------------------------------------
+// 7. La lectura del modo (migracion 20261001000300): el bridge la usa para la
+//    guarda del adaptador de GHL sin aceptacion del riesgo. Devuelve el modo
+//    de cada version publicada y null para una version en borrador, otra
+//    version u otra clave (el bridge trata null como bloqueo). Solo
+//    service_role la ejecuta, y la tabla sigue sin poder leerse directo: por
+//    eso hace falta la RPC.
+// ---------------------------------------------------------------------------
+const asRole = async (role, action) => {
+  await db.exec(`set role ${role}`);
+  try {
+    return await action();
+  } finally {
+    await db.exec('reset role');
+  }
+};
+const readMode = async (key, version) => one((await db.query(
+  'select public.get_lancemos_pilot_scope_audience_mode($1,$2) as mode', [key, version],
+)).rows, `audience mode of ${key} v${version}`).mode;
+const modeRead = {};
+for (const scope of [MANUAL, IN_COHORT, OPEN]) {
+  const mode = await asRole('service_role', () => readMode(scope.key, scope.version));
+  if (mode !== scope.mode) {
+    throw new Error(`audience mode of ${scope.key}: expected ${scope.mode}, got ${mode}`);
+  }
+  modeRead[scope.key] = mode;
+}
+for (const [label, key, version] of [
+  ['draft', 'att1-audiencia-landing', 1],
+  ['other_version', OPEN.key, OPEN.version + 1],
+  ['unknown_scope', 'att1-audiencia-inexistente', 1],
+  ['null_scope', null, 1],
+  ['null_version', OPEN.key, null],
+]) {
+  const mode = await asRole('service_role', () => readMode(key, version));
+  if (mode !== null) throw new Error(`audience mode ${label}: expected null, got ${mode}`);
+  modeRead[label] = mode;
+}
+const draftRow = one((await db.query(`
+  select status, audience_mode from public.pilot_scope_versions
+  where scope_key = 'att1-audiencia-landing' and version = 1
+`)).rows, 'the draft scope');
+if (draftRow.status !== 'draft' || draftRow.audience_mode !== 'consented_intent') {
+  throw new Error(`the draft scope changed: ${JSON.stringify(draftRow)}`);
+}
+for (const role of ['anon', 'authenticated']) {
+  let denied = null;
+  try {
+    await asRole(role, () => readMode(OPEN.key, OPEN.version));
+  } catch (caught) {
+    denied = caught;
+  }
+  if (denied?.code !== '42501') {
+    throw new Error(`${role} read the audience mode: ${denied?.code} ${denied?.message}`);
+  }
+}
+let tableDenied = null;
+try {
+  await asRole('service_role', () => db.query(
+    'select audience_mode from public.pilot_scope_versions limit 1',
+  ));
+} catch (caught) {
+  tableDenied = caught;
+}
+if (tableDenied?.code !== '42501') {
+  throw new Error(`service_role read pilot_scope_versions directly: ${tableDenied?.code}`);
+}
+const modeReadShape = one((await db.query(`
+  select p.prosecdef as security_definer, p.provolatile as volatility,
+         p.proconfig as config,
+         has_function_privilege('service_role', p.oid, 'execute') as service_x,
+         has_function_privilege('anon', p.oid, 'execute') as anon_x,
+         has_function_privilege('authenticated', p.oid, 'execute') as auth_x,
+         has_function_privilege('public', p.oid, 'execute') as public_x
+  from pg_proc p
+  where p.oid = to_regprocedure('public.get_lancemos_pilot_scope_audience_mode(text,integer)')
+`)).rows, 'the audience mode read');
+if (modeReadShape.security_definer !== true || modeReadShape.volatility !== 's'
+    || !modeReadShape.config?.includes('search_path=public, pg_temp')
+    || modeReadShape.service_x !== true || modeReadShape.anon_x !== false
+    || modeReadShape.auth_x !== false || modeReadShape.public_x !== false) {
+  throw new Error(`audience mode read shape: ${JSON.stringify(modeReadShape)}`);
+}
+results.audience_mode_read = modeRead;
 
 console.log(JSON.stringify({ pilot_scope_audience_mode: 'OK', ...results }));
 await db.close();

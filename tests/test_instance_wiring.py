@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import fields as dataclass_fields, replace
+from datetime import date
 import json
 from pathlib import Path
 import re
@@ -21,6 +22,7 @@ from bridge.app import (
     Settings,
     _MEDICATION_GUIDANCE_ACTION_RE,
     _MEDICATION_GUIDANCE_SUBJECT_RE,
+    _ghl_adapter_audience_block,
     _requires_medication_guidance_handoff,
     _stem_pattern,
     _waba_template_config,
@@ -29,7 +31,8 @@ from bridge.app import (
 from bridge.chatwoot import ChatwootClient
 from bridge.commercial_knowledge import CommercialKnowledge, KnowledgeError
 from bridge.hermes import HermesShadowProcessor
-from bridge.instance_manifest import InstanceManifest, Template
+from bridge.instance_manifest import GhlRiskAcceptance, InstanceManifest, Template
+from bridge.supabase import PilotBoundaryConfig, SupabaseError
 
 ATT1 = Path(__file__).parent / "fixtures" / "instances" / "att1"
 
@@ -266,12 +269,30 @@ _GHL_LANDING_D_FORM = "Om5FpIg5Sr5ce7nSkuPy"
 _GHL_TOKEN = "ghl-adapter-test-token-0123456789abcdef"
 
 
+# Una aceptacion DE PRUEBA del riesgo del adaptador. Ningun manifiesto real la
+# recibe de este codigo: la escribe a mano quien firma, en la instancia.
+_TEST_RISK_ACCEPTANCE = GhlRiskAcceptance(
+    accepted_by="aceptacion de prueba (tests)",
+    accepted_on=date(2026, 10, 1),
+    contract="ghl-precheckout-adapter-v1",
+)
+
+
 def _ghl_manifest(
-    *, intencion: bool = True, forms: tuple[str, ...] = (_GHL_FORM,)
+    *,
+    intencion: bool = True,
+    forms: tuple[str, ...] = (_GHL_FORM,),
+    accepted: bool = False,
+    **flows: bool,
 ) -> InstanceManifest:
-    manifest = _att1_manifest()
+    manifest = _att1_manifest(**flows)
     events = manifest.events | {"intencion"} if intencion else manifest.events
-    return replace(manifest, events=frozenset(events), ghl_form_ids=forms)
+    return replace(
+        manifest,
+        events=frozenset(events),
+        ghl_form_ids=forms,
+        ghl_risk_acceptance=_TEST_RISK_ACCEPTANCE if accepted else None,
+    )
 
 
 def _ghl_settings(
@@ -321,6 +342,7 @@ def test_johanna_without_token_and_the_flag_off_starts_as_today() -> None:
 
         assert response.status_code == 200
         assert "ghl_precheckout_adapter" not in response.json()
+        assert "ghl_adapter_risk" not in response.json()
 
 
 def test_the_ghl_adapter_requires_an_instance_manifest() -> None:
@@ -354,20 +376,93 @@ def test_the_ghl_adapter_needs_its_forms_in_the_manifest() -> None:
         create_app(settings)
 
 
-def test_the_ghl_adapter_does_not_run_with_the_precheckout_flow_on() -> None:
-    # E4: el token es la unica barrera. Con el adaptador prendido, el primer contacto
-    # del formulario necesita antes una verificacion fuera de banda de cada envio: la
-    # condicion del contrato la hace cumplir el arranque, no la relectura del texto.
-    manifest = replace(
-        _ghl_manifest(), flows={**_ghl_manifest().flows, "precheckout": True}
-    )
+# E4 (cabo LAN-054): el token del adaptador es la unica barrera y una intencion que
+# entro por el adaptador no se distingue en la base de la de una landing. La salida
+# es la aceptacion escrita del riesgo en [adaptadores.ghl]; sin ella no arrancan los
+# dos flujos que usan la intencion como permiso de contacto. La condicion la hace
+# cumplir el arranque, no la relectura del contrato.
 
-    with pytest.raises(
-        ValueError, match="GHL_PRECHECKOUT_ADAPTER_ENABLED cannot run with flujos.precheckout on"
-    ):
+
+@pytest.mark.parametrize(
+    ("flows", "named"),
+    [
+        ({"precheckout": True}, "flujos.precheckout on"),
+        ({"pago_fallido": True}, "flujos.pago_fallido on"),
+        (
+            {"precheckout": True, "pago_fallido": True},
+            "flujos.precheckout, flujos.pago_fallido on",
+        ),
+    ],
+    ids=["precheckout", "pago_fallido", "los-dos"],
+)
+def test_the_adapter_section_without_the_acceptance_does_not_start_a_gated_flow(
+    flows: dict[str, bool], named: str
+) -> None:
+    manifest = _ghl_manifest(**flows)
+    expected = re.escape(f"[adaptadores.ghl] cannot run with {named} without the written risk acceptance")
+
+    with pytest.raises(ValueError, match=expected):
         create_app(_ghl_settings(manifest))
-    # Con el adaptador apagado la guarda no se evalua (E11).
+    # La guarda cuelga de la seccion y no del flag (D6): apagar el adaptador no
+    # saca de la base las intenciones que ya admitio.
+    with pytest.raises(ValueError, match=expected):
+        create_app(_settings(manifest))
+
+
+def test_the_gate_error_names_the_way_out() -> None:
+    with pytest.raises(ValueError) as error:
+        create_app(_ghl_settings(_ghl_manifest(precheckout=True)))
+
+    message = str(error.value)
+    for key in ("riesgo_aceptado_por", "riesgo_aceptado_el", "riesgo_contrato"):
+        assert key in message
+    assert "out-of-band check" in message
+
+
+@pytest.mark.parametrize(
+    "flows",
+    [{"precheckout": True}, {"pago_fallido": True}, {"precheckout": True, "pago_fallido": True}],
+    ids=["precheckout", "pago_fallido", "los-dos"],
+)
+def test_with_the_written_acceptance_the_gated_flows_start(flows: dict[str, bool]) -> None:
+    manifest = _ghl_manifest(accepted=True, **flows)
+
+    assert create_app(_ghl_settings(manifest)) is not None
     assert create_app(_settings(manifest)) is not None
+
+
+@pytest.mark.parametrize("flow", ["inbound", "carrito"])
+def test_the_flows_that_do_not_grant_from_the_intent_start_without_the_acceptance(
+    flow: str,
+) -> None:
+    # El carrito no concede permiso desde la intencion y el entrante responde a
+    # quien escribio. La audiencia del carrito (consented_intent) vive en la base:
+    # la corta la guarda de audiencia, mas abajo.
+    manifest = _ghl_manifest(**{flow: True})
+
+    assert create_app(_ghl_settings(manifest)) is not None
+
+
+@pytest.mark.parametrize("flow", ["precheckout", "pago_fallido"])
+def test_without_the_adapter_section_a_gated_flow_starts_with_a_warning(
+    flow: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    # D6 y la correccion 14 en su version minima: sin [adaptadores.ghl] nada
+    # bloquea. Si la instancia uso el adaptador, sus intenciones siguen en la base:
+    # el arranque lo avisa y /ready lo publica.
+    manifest = _ghl_manifest(forms=(), **{flow: True})
+    assert manifest.ghl_form_ids == ()
+
+    with caplog.at_level("WARNING", logger="bridge.app"):
+        ready = _ready(_settings(manifest))
+
+    assert ready["ghl_adapter_risk"] == "no_adapter_section"
+    [record] = [r for r in caplog.records if r.getMessage().startswith("ghl_adapter_risk ")]
+    assert record.levelname == "WARNING"
+    assert record.getMessage() == (
+        f"ghl_adapter_risk acceptance=no_adapter_section flows={flow} "
+        "detail=intents_admitted_by_a_removed_adapter_are_not_gated"
+    )
 
 
 @pytest.mark.parametrize("token", [None, "x" * 31])
@@ -886,7 +981,8 @@ def test_the_direct_dispatcher_does_not_consume_the_handoff_admission() -> None:
 # manifiesto es el fixture de ATT1 con "intencion" y los flujos precheckout e
 # inbound prendidos por mutacion (el fixture es copia de la instancia del
 # 28/09, con todo apagado). El formulario entra por /webhooks/lead: el caso con
-# el adaptador de GHL espera a la aceptacion del riesgo del adaptador.
+# el adaptador de GHL (que exige la aceptacion escrita del riesgo) esta en
+# test_ghl_precheckout_adapter_http.py.
 
 _FIRST_CONTACT_SCOPE = "att1-primer-contacto"
 _FIRST_CONTACT_TEMPLATE = "att1_interes_precheckout_01"
@@ -1386,6 +1482,290 @@ def test_readiness_counts_the_ghl_forms_only_with_the_flag_on() -> None:
     # Los ids de los formularios no se publican, y el resto del payload no cambia.
     assert _GHL_FORM not in json.dumps(two)
     assert {key: value for key, value in one.items() if key != "ghl_precheckout_adapter"} == off
+
+
+def test_readiness_reports_the_adapter_risk_of_the_manifest(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # La clave cuelga de [adaptadores.ghl], con el flag prendido o apagado.
+    with caplog.at_level("WARNING", logger="bridge.app"):
+        not_accepted = [_ready(_ghl_settings()), _ready(_settings(_ghl_manifest()))]
+        accepted = [
+            _ready(_ghl_settings(_ghl_manifest(accepted=True))),
+            _ready(_settings(_ghl_manifest(accepted=True))),
+        ]
+
+    assert [ready["ghl_adapter_risk"] for ready in not_accepted] == ["not_accepted"] * 2
+    assert [ready["ghl_adapter_risk"] for ready in accepted] == [
+        "accepted:2026-10-01:ghl-precheckout-adapter-v1"
+    ] * 2
+    # /ready no lleva datos personales: el nombre de quien acepta va solo al log
+    # de arranque (D11), una vez por arranque.
+    for ready in accepted:
+        assert _TEST_RISK_ACCEPTANCE.accepted_by not in json.dumps(ready)
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("ghl_adapter_risk ")
+    ]
+    assert messages == [
+        "ghl_adapter_risk acceptance=absent gated=precheckout,pago_fallido,consented_audience"
+    ] * 2 + [
+        "ghl_adapter_risk acceptance=accepted by=aceptacion de prueba (tests) "
+        "on=2026-10-01 contract=ghl-precheckout-adapter-v1"
+    ] * 2
+    assert {record.levelname for record in caplog.records if "ghl_adapter_risk" in record.getMessage()} == {"WARNING"}
+
+
+def test_without_the_section_and_without_a_gated_flow_readiness_does_not_change(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # El fixture de ATT1 (sin intenciones), una instancia que recibe intenciones
+    # sin un flujo que las use como permiso, y Johanna: ni clave ni aviso.
+    with caplog.at_level("WARNING", logger="bridge.app"):
+        plain = _ready(_settings(_att1_manifest()))
+        intents_only = _ready(_settings(_ghl_manifest(forms=(), carrito=True)))
+        with TestClient(create_app(_johanna_settings())) as client:
+            johanna = client.get("/ready").json()
+
+    for ready in (plain, intents_only, johanna):
+        assert "ghl_adapter_risk" not in ready
+    assert not [r for r in caplog.records if "ghl_adapter_risk" in r.getMessage()]
+
+
+# ------------------------------------- guarda de audiencia del adaptador de GHL
+# Con [adaptadores.ghl] y sin la aceptacion, el scope del piloto no puede tener
+# una audiencia con consentimiento (consented_intent, consented_intent_in_cohort):
+# usa la intencion del formulario como audiencia. El modo vive en la base, asi que
+# se lee en el arranque (antes de cualquier worker) y en /ready, y falla cerrado.
+# El set es el de ATT1 con el carrito prendido: el flujo que queda disponible sin
+# la aceptacion.
+
+_WORKERS = (
+    "durable_dispatcher",
+    "opt_out_projection_worker",
+    "human_handoff_projection_worker",
+    "chatwoot_worker",
+)
+
+
+class _AudienceAuthority(_FirstContactAuthority):
+    """La base de /ready mas la lectura del modo de audiencia del scope."""
+
+    def __init__(self, mode: object = "manual_cohort") -> None:
+        super().__init__()
+        self.mode = mode
+        self.audience_boundaries: list[object] = []
+
+    async def get_pilot_scope_audience_mode(self, *, pilot_boundary: object) -> object:
+        self.audience_boundaries.append(pilot_boundary)
+        if isinstance(self.mode, Exception):
+            raise self.mode
+        return self.mode
+
+
+def _cart_settings(
+    instance: Path, *, adapter: bool = True, accepted: bool = False, **overrides: object
+) -> Settings:
+    """ATT1 con el carrito y el entrante prendidos y la frontera del piloto."""
+    base = _first_contact_settings(instance)
+    manifest = _ghl_manifest(
+        forms=(_GHL_FORM,) if adapter else (),
+        accepted=accepted,
+        carrito=True,
+        inbound=True,
+    )
+    values: dict[str, object] = {
+        "instance_manifest": manifest,
+        "portable_precheckout_first_contact_enabled": False,
+        "pilot_precheckout_scope_key": None,
+        "pilot_precheckout_scope_version": None,
+        "waba_precheckout_template_name": None,
+        "portable_hotmart_recovery_enabled": True,
+    }
+    values.update(overrides)
+    return replace(base, **values)
+
+
+def _run_lifespan(app: object, started: list[str] | None = None) -> list[str]:
+    """Corre el arranque y el cierre; anota en ``started`` los workers que arrancan."""
+    started = [] if started is None else started
+    for name in _WORKERS:
+        worker = getattr(app.state, name)  # type: ignore[attr-defined]
+        assert worker is not None, name
+
+        async def start(name: str = name) -> None:
+            started.append(name)
+
+        worker.start = start
+
+    async def run() -> None:
+        async with app.router.lifespan_context(app):  # type: ignore[attr-defined]
+            pass
+
+    try:
+        asyncio.run(run())
+    finally:
+        for name in _WORKERS:
+            del getattr(app.state, name).start  # type: ignore[attr-defined]
+    return started
+
+
+def test_a_manual_cohort_scope_starts_without_the_acceptance(instance: Path) -> None:
+    authority = _AudienceAuthority("manual_cohort")
+    app = _first_contact_app(_cart_settings(instance), authority)
+
+    started = _run_lifespan(app)
+    ready = _get_ready(app)
+
+    assert started == list(_WORKERS)
+    assert ready.status_code == 200
+    assert ready.json()["ghl_adapter_risk"] == "not_accepted"
+    assert ready.json()["pilot_boundary"] == "configured"
+    # Una lectura en el arranque y otra en /ready, del scope de recuperacion.
+    assert len(authority.audience_boundaries) == 2
+    for boundary in authority.audience_boundaries:
+        assert (boundary.scope_key, boundary.scope_version) == ("att1-recuperacion", 1)  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize("mode", ["consented_intent", "consented_intent_in_cohort"])
+def test_a_consented_audience_does_not_start_without_the_acceptance(
+    instance: Path, mode: str
+) -> None:
+    authority = _AudienceAuthority(mode)
+    app = _first_contact_app(_cart_settings(instance), authority)
+
+    started: list[str] = []
+
+    with pytest.raises(RuntimeError, match="^ghl_adapter_risk_not_accepted: "):
+        _run_lifespan(app, started)
+    ready = _get_ready(app)
+
+    # Ningun worker llego a arrancar: los workers corren aunque /ready de 503.
+    assert started == []
+    assert len(authority.audience_boundaries) == 2
+
+    assert ready.status_code == 503
+    assert ready.json()["detail"] == "ghl_adapter_risk_not_accepted"
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        SupabaseError("pilot_scope_audience_mode_failed: HTTP 503"),
+        SupabaseError("pilot_scope_audience_mode_scope_not_published"),
+        RuntimeError("database down"),
+        None,
+        "everyone",
+        "",
+    ],
+    ids=["rpc-503", "sin-publicar", "caida", "null", "modo-desconocido", "vacio"],
+)
+def test_an_audience_that_cannot_be_read_blocks_without_the_acceptance(
+    instance: Path, mode: object
+) -> None:
+    # Falla cerrado: sin poder leer el modo no se sabe si la audiencia usa
+    # intenciones del adaptador.
+    authority = _AudienceAuthority(mode)
+    app = _first_contact_app(_cart_settings(instance), authority)
+    started: list[str] = []
+
+    with pytest.raises(RuntimeError, match="^ghl_adapter_risk_audience_unavailable: "):
+        _run_lifespan(app, started)
+    ready = _get_ready(app)
+
+    assert started == []
+    assert ready.status_code == 503
+    assert ready.json()["detail"] == "ghl_adapter_risk_audience_unavailable"
+
+
+def test_a_base_without_the_read_migration_blocks_without_the_acceptance(
+    instance: Path,
+) -> None:
+    # El cliente sin el metodo es el doble de una base sin la migracion
+    # 20261001000300: tampoco arranca.
+    app = _first_contact_app(_cart_settings(instance), _FirstContactAuthority())
+
+    with pytest.raises(RuntimeError, match="^ghl_adapter_risk_audience_unavailable: "):
+        _run_lifespan(app)
+    assert _get_ready(app).json()["detail"] == "ghl_adapter_risk_audience_unavailable"
+
+
+def test_without_a_supabase_client_the_audience_gate_blocks() -> None:
+    # Sin Supabase /ready ya responde 503 por la frontera del piloto; el arranque
+    # tambien corta, sin poder leer el modo.
+    boundary = PilotBoundaryConfig(
+        scope_key="att1-recuperacion",
+        scope_version=1,
+        tenant_key="lancemos",
+        channel_provider="waba",
+        channel_account_ref="chatwoot-inbox:11",
+    )
+
+    assert (
+        asyncio.run(_ghl_adapter_audience_block(None, boundary))
+        == "ghl_adapter_risk_audience_unavailable"
+    )
+
+
+def test_the_pilot_readiness_reason_comes_before_the_audience_gate(instance: Path) -> None:
+    # Un scope sin configurar ya responde 503 con su motivo, como hoy.
+    class _NotConfigured(_AudienceAuthority):
+        async def get_pilot_runtime_status(self, *, pilot_boundary: object) -> object:
+            return SimpleNamespace(
+                configured=False, runtime_state=None, runtime_generation=None,
+                reason_code="pilot_scope_config_mismatch",
+            )
+
+    authority = _NotConfigured("consented_intent")
+    ready = _get_ready(_first_contact_app(_cart_settings(instance), authority))
+
+    assert ready.status_code == 503
+    assert ready.json()["detail"] == "pilot_scope_config_mismatch"
+    assert authority.audience_boundaries == []
+
+
+@pytest.mark.parametrize("mode", ["consented_intent", "consented_intent_in_cohort"])
+def test_with_the_acceptance_the_audience_is_not_read(instance: Path, mode: str) -> None:
+    authority = _AudienceAuthority(mode)
+    app = _first_contact_app(_cart_settings(instance, accepted=True), authority)
+
+    started = _run_lifespan(app)
+    ready = _get_ready(app)
+
+    assert started == list(_WORKERS)
+    assert ready.status_code == 200
+    assert ready.json()["ghl_adapter_risk"] == "accepted:2026-10-01:ghl-precheckout-adapter-v1"
+    assert authority.audience_boundaries == []
+
+
+def test_without_the_adapter_section_the_audience_is_not_read(instance: Path) -> None:
+    # Una instancia que nunca declaro el adaptador: su audiencia con consentimiento
+    # es de su landing. No hay lectura ni clave.
+    authority = _AudienceAuthority("consented_intent")
+    app = _first_contact_app(_cart_settings(instance, adapter=False), authority)
+
+    started = _run_lifespan(app)
+    ready = _get_ready(app)
+
+    assert started == list(_WORKERS)
+    assert ready.status_code == 200
+    assert "ghl_adapter_risk" not in ready.json()
+    assert authority.audience_boundaries == []
+
+
+def test_without_the_pilot_boundary_the_audience_is_not_read() -> None:
+    # ATT1 hoy: el adaptador prendido, sin aceptacion y con la frontera apagada.
+    authority = _AudienceAuthority("consented_intent")
+    app = create_app(_ghl_settings(), supabase_client=authority)  # type: ignore[arg-type]
+
+    with TestClient(app) as client:
+        ready = client.get("/ready")
+
+    assert ready.status_code == 200
+    assert ready.json()["pilot_boundary"] == "disabled"
+    assert ready.json()["ghl_adapter_risk"] == "not_accepted"
+    assert authority.audience_boundaries == []
 
 
 # -------------------------------------------------------- guarda de medicacion

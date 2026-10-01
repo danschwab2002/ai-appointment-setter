@@ -17,7 +17,12 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from .commercial_knowledge import CommercialKnowledge, KnowledgeError
-from .instance_manifest import FLOWS, InstanceManifest, ManifestError
+from .instance_manifest import (
+    FLOWS,
+    GHL_RISK_GATED_FLOWS,
+    InstanceManifest,
+    ManifestError,
+)
 
 MANIFEST_FILE = "instancia.toml"
 
@@ -51,8 +56,21 @@ def validate_instance(directory: Path) -> dict[str, Any]:
         "eventos": sorted(manifest.events),
     }
     if manifest.ghl_form_ids:
+        acceptance = manifest.ghl_risk_acceptance
         report["manifiesto"]["adaptadores"] = {
-            "ghl": {"formularios": list(manifest.ghl_form_ids)}
+            "ghl": {
+                "formularios": list(manifest.ghl_form_ids),
+                # La aceptacion escrita del riesgo del adaptador, o null si falta.
+                "riesgo": (
+                    None
+                    if acceptance is None
+                    else {
+                        "aceptado_por": acceptance.accepted_by,
+                        "aceptado_el": acceptance.accepted_on.isoformat(),
+                        "contrato": acceptance.contract,
+                    }
+                ),
+            }
         }
     flows: dict[str, Any] = {}
     for flow in FLOWS:
@@ -90,13 +108,39 @@ def validate_instance(directory: Path) -> dict[str, Any]:
     for flow, state in flows.items():
         if not state["se_puede_prender"]:
             report["avisos"].append(f"{flow} no se puede prender: " + "; ".join(state["falta"]))
-    if manifest.ghl_form_ids and manifest.flows["precheckout"]:
-        # validate no ve las variables del servicio: lo avisa, y el bridge lo corta
-        # al arrancar (docs/contracts/ghl-precheckout-adapter-v1.md, Riesgos).
+    # El riesgo del adaptador de GHL (docs/contracts/ghl-precheckout-adapter-v1.md,
+    # Riesgos): el token es la unica barrera y una intencion que entro por el
+    # adaptador no se distingue en la base de la de una landing.
+    risk = manifest.ghl_adapter_risk
+    if risk == "not_accepted":
+        # La guarda cuelga de la seccion y no de una variable del servicio, asi
+        # que validate la ve entera: con esos flujos prendidos el bridge no arranca.
+        for flow in GHL_RISK_GATED_FLOWS:
+            if manifest.flows[flow]:
+                report["errores"].append(
+                    f"flujos.{flow} esta prendido y hay [adaptadores.ghl] sin la "
+                    "aceptacion del riesgo (riesgo_aceptado_por, riesgo_aceptado_el, "
+                    "riesgo_contrato): el bridge no arranca"
+                )
         report["avisos"].append(
-            "precheckout esta prendido y hay [adaptadores.ghl]: el bridge no arranca con "
-            "GHL_PRECHECKOUT_ADAPTER_ENABLED=true, porque el token del adaptador es la "
-            "unica barrera y el primer contacto exige verificar cada envio fuera de banda"
+            "[adaptadores.ghl] no tiene la aceptacion del riesgo: precheckout y "
+            "pago_fallido no se pueden prender, y el bridge no arranca con un scope "
+            "del piloto de audiencia consented_intent o consented_intent_in_cohort "
+            "(eso vive en la base y validate no la ve)"
+        )
+    if risk in ("accepted", "not_accepted"):
+        report["avisos"].append(
+            "quitar [adaptadores.ghl] no saca de la base las intenciones que el "
+            "adaptador ya admitio: sin la seccion el bridge deja de exigir la "
+            "aceptacion y las trata como las de una landing"
+        )
+    if risk == "no_adapter_section":
+        gated = ", ".join(flow for flow in GHL_RISK_GATED_FLOWS if manifest.flows[flow])
+        report["avisos"].append(
+            f"hay flujos prendidos que usan la intencion como permiso ({gated}) y no "
+            "hay [adaptadores.ghl]: si la instancia uso el adaptador de GHL, sus "
+            "intenciones siguen vivas en la base y el riesgo queda sin aceptar "
+            "(ghl_adapter_risk: no_adapter_section)"
         )
     report["valida"] = not report["errores"]
     return report
@@ -116,6 +160,14 @@ def _print_human(report: dict[str, Any]) -> None:
         ghl = manifest.get("adaptadores", {}).get("ghl")
         if ghl:
             print(f"  adaptador ghl, formularios: {', '.join(ghl['formularios'])}")
+            accepted = ghl["riesgo"]
+            if accepted:
+                print(
+                    f"  adaptador ghl, riesgo aceptado por {accepted['aceptado_por']} "
+                    f"el {accepted['aceptado_el']} (contrato {accepted['contrato']})"
+                )
+            else:
+                print("  adaptador ghl, riesgo sin aceptar")
     for flow, state in report.get("flujos", {}).items():
         status = "prendido" if state["prendido"] else "apagado"
         ready = "" if state["se_puede_prender"] else " — no se puede prender"

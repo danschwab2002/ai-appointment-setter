@@ -61,7 +61,7 @@ from bridge.followup_discount import (
 from bridge.reactivation import ConversationReactivationSweeper
 from bridge.commercial_ally import CommercialAllyConfig, JOHANNA_COMMERCIAL_ALLY
 from bridge.commercial_knowledge import CommercialKnowledge
-from bridge.instance_manifest import InstanceManifest
+from bridge.instance_manifest import GHL_RISK_GATED_FLOWS, InstanceManifest
 from bridge.checkout_delivery import CheckoutDeliveryError, deliver_checkout_issuance_v2
 from bridge.filtering import EventDecision, classify_chatwoot_event
 from bridge.agent_provenance import AgentTurn, CONTEXT_BUILDER_VERSION
@@ -135,6 +135,7 @@ from bridge.slack_handoff_projection import SlackHandoffProjectionWorker
 from bridge.slack_projection import SlackCorrelationProjectionWorker
 from bridge.slack_runtime import SlackBridgeRuntime, create_slack_bridge_runtime
 from bridge.supabase import (
+    PILOT_SCOPE_CONSENTED_AUDIENCE_MODES,
     OperatorCorrelationResolutionError,
     PilotBoundaryConfig,
     PrecheckoutAdmissionResult,
@@ -1990,16 +1991,28 @@ def _validate_instance_manifest_gates(settings: Settings) -> None:
         raise ValueError(
             "runtime flags exceed the instance manifest flows: " + ", ".join(blocked)
         )
-    if settings.ghl_precheckout_adapter_enabled and manifest.flows["precheckout"]:
+    if manifest.ghl_form_ids and manifest.ghl_risk_acceptance is None:
         # El token del adaptador es la unica barrera y lo lee cualquier usuario de
-        # la subcuenta de GHL: el primer contacto no sale para intenciones que no
-        # distingue de las de una landing hasta que exista una verificacion fuera
-        # de banda del envio (docs/contracts/ghl-precheckout-adapter-v1.md, Riesgos).
-        raise ValueError(
-            "GHL_PRECHECKOUT_ADAPTER_ENABLED cannot run with flujos.precheckout on: "
-            "the adapter token is the only barrier and the first contact needs an "
-            "out-of-band check of each submission"
-        )
+        # la subcuenta de GHL, y una intencion que entro por el adaptador no se
+        # distingue en la base de la de una landing. Los dos flujos que usan la
+        # intencion como permiso de contacto (el primer contacto del formulario y
+        # el pago fallido, que concede el permiso en cualquier audience_mode) no
+        # arrancan hasta que alguien acepte ese riesgo por escrito en el
+        # manifiesto, o exista una verificacion fuera de banda de cada envio
+        # (docs/contracts/ghl-precheckout-adapter-v1.md, Riesgos). Cuelga de la
+        # seccion y no del flag: apagar GHL_PRECHECKOUT_ADAPTER_ENABLED no saca
+        # de la base las intenciones que el adaptador ya admitio.
+        gated = [flow for flow in GHL_RISK_GATED_FLOWS if manifest.flows[flow]]
+        if gated:
+            raise ValueError(
+                "[adaptadores.ghl] cannot run with flujos."
+                + ", flujos.".join(gated)
+                + " on without the written risk acceptance: the adapter token is "
+                "the only barrier and an adapter intent is not told apart from a "
+                "landing one. It needs an out-of-band check of each submission or "
+                "riesgo_aceptado_por, riesgo_aceptado_el and riesgo_contrato in "
+                "[adaptadores.ghl]"
+            )
     if settings.automated_replies_enabled and knowledge is None:
         raise ValueError(
             "automated replies with an instance manifest require "
@@ -2332,6 +2345,79 @@ class _GhlAdapterTrace:
         )
 
 
+def _ghl_adapter_risk_readiness(manifest: InstanceManifest) -> str | None:
+    """The ``ghl_adapter_risk`` value of /ready, or None when it does not apply.
+
+    Never the name of who accepted: /ready carries no personal data. The name
+    goes to the startup log only.
+    """
+    state = manifest.ghl_adapter_risk
+    acceptance = manifest.ghl_risk_acceptance
+    if state == "accepted" and acceptance is not None:
+        return f"accepted:{acceptance.accepted_on.isoformat()}:{acceptance.contract}"
+    return state
+
+
+def _log_ghl_adapter_risk(manifest: InstanceManifest) -> None:
+    # Un warning y no un info: el bridge no configura logging y bajo uvicorn
+    # solo los warnings llegan a la salida del contenedor. Una vez por arranque.
+    state = manifest.ghl_adapter_risk
+    acceptance = manifest.ghl_risk_acceptance
+    if state == "accepted" and acceptance is not None:
+        logger.warning(
+            "ghl_adapter_risk acceptance=accepted by=%s on=%s contract=%s",
+            acceptance.accepted_by,
+            acceptance.accepted_on.isoformat(),
+            acceptance.contract,
+        )
+    elif state == "not_accepted":
+        logger.warning(
+            "ghl_adapter_risk acceptance=absent gated=%s,consented_audience",
+            ",".join(GHL_RISK_GATED_FLOWS),
+        )
+    elif state == "no_adapter_section":
+        # Sin la seccion no hay guarda: si la instancia uso el adaptador, sus
+        # intenciones siguen en la base y estos flujos las tratan como las de
+        # una landing.
+        logger.warning(
+            "ghl_adapter_risk acceptance=no_adapter_section flows=%s "
+            "detail=intents_admitted_by_a_removed_adapter_are_not_gated",
+            ",".join(flow for flow in GHL_RISK_GATED_FLOWS if manifest.flows[flow]),
+        )
+
+
+async def _ghl_adapter_audience_block(
+    supabase: SupabaseClient | None, pilot_boundary: PilotBoundaryConfig
+) -> str | None:
+    """Why this pilot scope cannot run with ``[adaptadores.ghl]`` unaccepted.
+
+    Only asked when the manifest has the adapter section, no written risk
+    acceptance and the pilot boundary on. An audience with consent
+    (``consented_intent`` or ``consented_intent_in_cohort``) uses the intent of
+    the form as the audience, and the base cannot tell an adapter intent from a
+    landing one. Fails closed: a read that fails, a scope that is not
+    published or an unknown mode block too. ``None`` only for
+    ``manual_cohort``.
+    """
+    if supabase is None:
+        return "ghl_adapter_risk_audience_unavailable"
+    try:
+        mode = await supabase.get_pilot_scope_audience_mode(
+            pilot_boundary=pilot_boundary
+        )
+    except Exception as exc:
+        logger.warning(
+            "ghl_adapter_risk_audience_check_failed error_type=%s",
+            type(exc).__name__,
+        )
+        return "ghl_adapter_risk_audience_unavailable"
+    if mode in PILOT_SCOPE_CONSENTED_AUDIENCE_MODES:
+        return "ghl_adapter_risk_not_accepted"
+    if mode != "manual_cohort":
+        return "ghl_adapter_risk_audience_unavailable"
+    return None
+
+
 def create_app(
     settings: Settings,
     *,
@@ -2400,6 +2486,14 @@ def create_app(
             instance_readiness["ghl_precheckout_adapter"] = (
                 f"enabled:{len(settings.instance_manifest.ghl_form_ids)}-forms"
             )
+        # El riesgo del adaptador cuelga de [adaptadores.ghl] y no del flag
+        # (las intenciones que admitio siguen en la base con el flag apagado).
+        # La clave aparece solo cuando aplica: sin la seccion y sin un flujo
+        # que use intenciones, el payload de /ready no cambia.
+        ghl_adapter_risk = _ghl_adapter_risk_readiness(settings.instance_manifest)
+        if ghl_adapter_risk is not None:
+            instance_readiness["ghl_adapter_risk"] = ghl_adapter_risk
+        _log_ghl_adapter_risk(settings.instance_manifest)
     if settings.commercial_knowledge is not None:
         instance_readiness["commercial_knowledge"] = (
             f"v{settings.commercial_knowledge.version}:"
@@ -2672,6 +2766,16 @@ def create_app(
         )
         if settings.pilot_boundary_enabled
         else None
+    )
+    # Con [adaptadores.ghl] y sin la aceptacion escrita del riesgo, el scope
+    # del piloto no puede tener una audiencia con consentimiento: se lee de la
+    # base en el arranque (lifespan, antes de cualquier worker) y en /ready.
+    # Con la aceptacion, o sin la seccion, no se lee nada.
+    ghl_adapter_audience_gate = (
+        pilot_boundary is not None
+        and settings.instance_manifest is not None
+        and bool(settings.instance_manifest.ghl_form_ids)
+        and settings.instance_manifest.ghl_risk_acceptance is None
     )
     # El scope del primer contacto del formulario: otra clave y otra version,
     # el mismo tenant y el mismo canal que el de recuperacion. Solo lo lee
@@ -3641,6 +3745,21 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+        if ghl_adapter_audience_gate:
+            # Antes de arrancar cualquier worker: los workers corren aunque
+            # /ready responda 503. Falla cerrado, tambien si la base no
+            # responde.
+            assert pilot_boundary is not None
+            audience_block = await _ghl_adapter_audience_block(
+                shared_supabase, pilot_boundary
+            )
+            if audience_block is not None:
+                raise RuntimeError(
+                    f"{audience_block}: [adaptadores.ghl] without the written risk "
+                    "acceptance cannot run with a consented pilot audience "
+                    "(consented_intent, consented_intent_in_cohort), and the "
+                    "audience mode of the pilot scope must be readable"
+                )
         try:
             if resolution_worker is not None:
                 await resolution_worker.start()
@@ -5667,6 +5786,17 @@ def create_app(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=pilot_status.reason_code,
             )
+        if ghl_adapter_audience_gate:
+            # La misma lectura del arranque (que ya corta antes de los
+            # workers): aca el motivo queda visible para quien consulta /ready.
+            audience_block = await _ghl_adapter_audience_block(
+                shared_supabase, pilot_boundary
+            )
+            if audience_block is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=audience_block,
+                )
         return {
             "status": "ready",
             "pilot_boundary": "configured",

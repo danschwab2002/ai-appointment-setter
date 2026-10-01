@@ -11,6 +11,10 @@ clave). Ninguna esta escrita de cero. Goldens: tests/fixtures/ghl/expected/.
 
 La admision es un fake de la RPC portable: la admision real contra PGlite es
 tests/sql/followup_engine/validate_ghl_precheckout_adapter.mjs.
+
+Al final, el adaptador con el primer contacto del formulario: solo arranca con la
+aceptacion escrita del riesgo en [adaptadores.ghl] (la de estos tests es de
+prueba), y entonces el envio de GHL admite y planifica en una sola RPC.
 """
 
 from __future__ import annotations
@@ -20,9 +24,10 @@ import copy
 import json
 import logging
 import re
+import shutil
 import tomllib
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -31,8 +36,14 @@ import pytest
 
 import bridge.app as app_module
 from bridge.app import Settings, create_app
-from bridge.instance_manifest import InstanceManifest
+from bridge.instance_manifest import GhlRiskAcceptance, InstanceManifest
 from bridge.supabase import SupabaseError
+from test_instance_wiring import (
+    ATT1 as ATT1_INSTANCE,
+    _FirstContactAuthority,
+    _first_contact_app,
+    _first_contact_settings,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 GHL = FIXTURES / "ghl"
@@ -843,3 +854,206 @@ def test_a_medium_id_without_the_shape_of_a_form_id_is_never_logged(
     (line,) = _adapter_lines(caplog)
     assert " form=- " in line
     assert value not in "\n".join(record.getMessage() for record in caplog.records)
+
+
+# ------------------------- el adaptador con el primer contacto del formulario
+# El caso que el primer contacto dejo pendiente: el formulario que entra por GHL.
+# Con [adaptadores.ghl] en el manifiesto, flujos.precheckout solo arranca con la
+# aceptacion escrita del riesgo del adaptador. El set completo del primer contacto
+# es el de test_instance_wiring.py; aca la entrada del formulario es el adaptador y
+# el envio es la captura real de ads-a. La aceptacion es DE PRUEBA: ningun
+# manifiesto real la recibe de este codigo.
+
+TEST_RISK_ACCEPTANCE = GhlRiskAcceptance(
+    accepted_by="aceptacion de prueba (tests)",
+    accepted_on=date(2026, 10, 1),
+    contract="ghl-precheckout-adapter-v1",
+)
+ADS_A_GOLDEN = "ghl_form_webhook_att1_ads_a_20260929.lead_precheckout.json"
+
+
+@pytest.fixture
+def att1_instance(tmp_path: Path) -> Path:
+    target = tmp_path / "instancia"
+    shutil.copytree(ATT1_INSTANCE, target)
+    return target
+
+
+def _first_contact_through_ghl(
+    instance: Path, *, accepted: bool = True, **overrides: object
+) -> Settings:
+    """El set del primer contacto con el adaptador de GHL como unica entrada."""
+    base = _first_contact_settings(instance)
+    assert base.instance_manifest is not None
+    manifest = replace(
+        base.instance_manifest,
+        ghl_form_ids=(ADS_A_FORM,),
+        ghl_risk_acceptance=TEST_RISK_ACCEPTANCE if accepted else None,
+    )
+    values: dict[str, object] = {
+        "instance_manifest": manifest,
+        "ghl_precheckout_adapter_enabled": True,
+        "ghl_precheckout_adapter_token": TOKEN,
+        "lead_precheckout_enabled": False,
+        "lead_precheckout_secret": None,
+    }
+    values.update(overrides)
+    return replace(base, **values)
+
+
+def _first_contact_off(settings: Settings) -> Settings:
+    # El mismo runtime sin el flag (y sin lo que solo el flag habilita: el modo
+    # directo y la salida durable).
+    return replace(
+        settings,
+        portable_precheckout_first_contact_enabled=False,
+        dispatcher_approved_template_direct_enabled=False,
+        dispatcher_outbound_enabled=False,
+    )
+
+
+def test_the_adapter_with_the_acceptance_and_the_flag_admits_and_plans_in_one_rpc(
+    att1_instance: Path,
+) -> None:
+    settings = _first_contact_through_ghl(att1_instance)
+    authority = _FirstContactAuthority()
+
+    response = _post(_first_contact_app(settings, authority), _ads_a())
+
+    assert response.status_code == 200
+    # La RPC que admite y planifica, nunca la admision sola.
+    assert authority.admission_calls == []
+    [call] = authority.plan_calls
+    assert set(call) == {
+        "config", "external_submission_id", "raw_payload", "canonical_payload",
+        "scope_key", "scope_version",
+    }
+    assert call["config"] == settings.commercial_ally_config
+    assert (call["scope_key"], call["scope_version"]) == ("att1-primer-contacto", 1)
+    # Lo que se admite es el evento traducido de la captura real, igual que sin el
+    # flag: nada del cuerpo de GHL llega a la base.
+    _assert_admitted_as_golden(call, ADS_A_GOLDEN)
+    assert GHL_ONLY_KEYS.isdisjoint(call["raw_payload"])  # type: ignore[arg-type]
+    assert call["canonical_payload"]["consent"]["whatsapp_contact"] is True  # type: ignore[index]
+    # La respuesta a GHL no cambia: nunca dice que hay permiso de contacto.
+    assert response.json() == {
+        "status": "received",
+        "delivery_id": call["external_submission_id"],
+        "purchase_intent_id": "1f581f3a-c469-45da-8208-9483d1b26f0b",
+        "activation_authorized": False,
+        "contact_authorized": False,
+    }
+
+
+def test_the_adapter_with_the_acceptance_and_the_flag_off_only_admits(
+    att1_instance: Path,
+) -> None:
+    settings = _first_contact_off(_first_contact_through_ghl(att1_instance))
+    authority = _FirstContactAuthority()
+
+    response = _post(_first_contact_app(settings, authority), _ads_a())
+
+    assert response.status_code == 200
+    assert authority.plan_calls == []
+    [call] = authority.admission_calls
+    assert set(call) == {
+        "config", "external_submission_id", "raw_payload", "canonical_payload",
+    }
+    _assert_admitted_as_golden(call, ADS_A_GOLDEN)
+
+
+def test_without_the_acceptance_the_first_contact_through_the_adapter_does_not_start(
+    att1_instance: Path,
+) -> None:
+    # El mismo set, completo, sin la aceptacion: no arranca, con el flag del primer
+    # contacto prendido o apagado, porque flujos.precheckout esta en true.
+    settings = _first_contact_through_ghl(att1_instance, accepted=False)
+
+    for candidate in (settings, _first_contact_off(settings)):
+        with pytest.raises(
+            ValueError,
+            match=re.escape(
+                "[adaptadores.ghl] cannot run with flujos.precheckout on without the "
+                "written risk acceptance"
+            ),
+        ):
+            _first_contact_app(candidate, _FirstContactAuthority())
+
+
+@pytest.mark.parametrize(
+    ("plan_outcome", "plan_reason", "level"),
+    [
+        ("planned", "first_contact_scheduled", logging.INFO),
+        ("not_planned", "pilot_runtime_not_armed", logging.INFO),
+        ("plan_failed", "channel_identity_inbox_mismatch", logging.WARNING),
+    ],
+)
+def test_ghl_gets_the_same_200_whatever_the_plan_and_the_logs_carry_no_lead_value(
+    att1_instance: Path,
+    caplog: pytest.LogCaptureFixture,
+    plan_outcome: str,
+    plan_reason: str,
+    level: int,
+) -> None:
+    # Un plan que no procede no es un error para GHL: con 5xx reintentaria un
+    # envio que ya quedo admitido.
+    authority = _FirstContactAuthority()
+    authority.plan = {"plan_outcome": plan_outcome, "plan_reason": plan_reason}
+    app = _first_contact_app(_first_contact_through_ghl(att1_instance), authority)
+    body = _ads_a()
+
+    with caplog.at_level(logging.INFO, logger="bridge.app"):
+        response = _post(app, body)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "received"
+    assert response.json()["contact_authorized"] is False
+    # La linea del adaptador no cambia, y el plan sale en la suya.
+    (adapter_line,) = _adapter_lines(caplog)
+    assert adapter_line.startswith(
+        "ghl_precheckout_adapter outcome=received status=200 reason=-"
+    )
+    [plan_record] = [
+        record
+        for record in caplog.records
+        if record.getMessage().startswith("portable_precheckout_first_contact ")
+    ]
+    assert plan_record.levelno == level
+    assert plan_record.getMessage() == (
+        "portable_precheckout_first_contact admission=inserted "
+        f"plan={plan_outcome} reason={plan_reason} "
+        "submission_id=bfc778e7-5c9f-45e6-a910-651f92312157"
+    )
+    everything = "\n".join(record.getMessage() for record in caplog.records)
+    for value in (body["email"], body["phone"], body["full_name"], body["contact_id"], TOKEN):
+        assert value not in everything
+
+
+def test_an_unavailable_admit_and_plan_is_a_503_so_ghl_retries(att1_instance: Path) -> None:
+    class _Unavailable(_FirstContactAuthority):
+        async def admit_and_plan_portable_lead_precheckout(self, **_: object) -> object:
+            raise SupabaseError("portable_lead_precheckout_admission_and_plan_failed: HTTP 503")
+
+    app = _first_contact_app(_first_contact_through_ghl(att1_instance), _Unavailable())
+
+    response = _post(app, _ads_a())
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "ghl_precheckout_persist_unavailable"
+
+
+def test_the_acceptance_alone_changes_nothing_of_the_admission() -> None:
+    # ATT1 con la aceptacion y todo lo demas como hoy (flujos apagados): el mismo
+    # envio se admite igual, por la RPC de siempre.
+    accepted = replace(ATT1_ONLY_EGDQ, ghl_risk_acceptance=TEST_RISK_ACCEPTANCE)
+    plain_app, plain = _app()
+    accepted_app, with_acceptance = _app(_settings(accepted))
+
+    responses = [_post(plain_app, _ads_a()), _post(accepted_app, _ads_a())]
+
+    assert [response.status_code for response in responses] == [200, 200]
+    assert plain is not None and with_acceptance is not None
+    [plain_call], [accepted_call] = plain.calls, with_acceptance.calls
+    for call in (plain_call, accepted_call):
+        _assert_admitted_as_golden(call, ADS_A_GOLDEN)
+    assert plain_call["config"] == accepted_call["config"]

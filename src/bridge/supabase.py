@@ -717,6 +717,16 @@ class PilotBoundaryConfig:
     channel_account_ref: str
 
 
+# pilot_scope_versions.audience_mode (migracion 20260930000300). Los dos modos
+# con consentimiento usan la intencion del formulario como audiencia.
+PILOT_SCOPE_AUDIENCE_MODES = frozenset(
+    {"manual_cohort", "consented_intent_in_cohort", "consented_intent"}
+)
+PILOT_SCOPE_CONSENTED_AUDIENCE_MODES = frozenset(
+    {"consented_intent_in_cohort", "consented_intent"}
+)
+
+
 @dataclass(frozen=True)
 class PilotRuntimeStatus:
     configured: bool
@@ -4743,6 +4753,42 @@ class SupabaseClient:
             rpc="get_portable_precheckout_pilot_runtime_status",
             operation="portable_precheckout_pilot_runtime_status",
         )
+
+    async def get_pilot_scope_audience_mode(
+        self,
+        *,
+        pilot_boundary: PilotBoundaryConfig,
+    ) -> str:
+        """Audience mode of one published pilot scope version, or fail closed.
+
+        ``pilot_scope_versions`` cannot be read through PostgREST (RLS, revoked
+        to every API role), so the mode comes from an RPC. A version that is
+        not published comes back as SQL null; that and any value other than
+        the three known modes raise, and the caller treats it as a block.
+        """
+        operation = "pilot_scope_audience_mode"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_lancemos_pilot_scope_audience_mode",
+            content=json.dumps(
+                {
+                    "p_scope_key": pilot_boundary.scope_key,
+                    "p_scope_version": pilot_boundary.scope_version,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        try:
+            mode = response.json()
+        except ValueError as exc:
+            raise SupabaseError(f"{operation}_invalid_json") from exc
+        if mode is None:
+            raise SupabaseError(f"{operation}_scope_not_published")
+        if not isinstance(mode, str) or mode not in PILOT_SCOPE_AUDIENCE_MODES:
+            raise SupabaseError(f"{operation}_invalid_mode")
+        return mode
 
     async def _get_pilot_runtime_status(
         self,
