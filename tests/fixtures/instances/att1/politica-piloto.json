@@ -2,8 +2,8 @@
   "_fixture": {
     "source": "setter-instancia-att1, despliegue/base/aprovisionar-att1.sql",
     "source_branch": "instalacion/primer-contacto-y-v1.3.0",
-    "source_commit": "d304084d961393ee7c622d2ab85af5eebfd6fb85",
-    "source_sha256": "f4b9abb9dd510ffe50dbb896219aa19a0da705fe34b9b37f2dd67b1441bc3fc6",
+    "source_commit": "c12079fa3062c21ec58d39266c0a3babcb88960c",
+    "source_sha256": "486208c3dad8125ee2751c9fd43631259d0be487aea83d81676d430a9c700199",
     "copied_at": "2026-10-01",
     "note": "Los valores del scope del piloto, la politica de un toque y la ventana de la intencion que la instancia publica y que el manifiesto no declara (instancia.toml, al lado, tiene el binding). Copiados literales de las constantes c_* del archivo de arriba, con ese sha256. tests/sql/followup_engine/validate_att1_portable_chain.mjs los lee de aca: un cambio en aprovisionar-att1.sql obliga a actualizar este archivo (y su sha256), o el validador sigue probando la cadena vieja. channel_account_ref sale de [chatwoot].inbox_id del manifiesto, como c_channel_ref. first_contact (2026-10-01) son las constantes c_fc_* que sumo el commit 2828f92 de esa rama (todavia sin mergear en la instancia): la politica y el scope del primer contacto tras el formulario, que lee tests/sql/followup_engine/validate_portable_precheckout_first_contact.mjs. pilot_scope, policy, purchase_intent_scope y purchase_policy no cambiaron entre el commit anterior (792cf31) y este: se volvieron a comparar contra el archivo con este sha256."
   },
