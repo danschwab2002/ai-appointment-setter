@@ -3642,7 +3642,7 @@ def test_an_invalid_status_list_never_scans(tmp_path: Path, statuses) -> None:
 
 LINK_TEMPLATE_PARAMS = {
     "name": "johanna_enlace_pago_01",
-    "category": "UTILITY",
+    "category": "MARKETING",
     "language": "es_EC",
     "processed_params": {
         "buttons": [

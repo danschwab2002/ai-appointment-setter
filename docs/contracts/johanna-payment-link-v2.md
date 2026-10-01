@@ -66,7 +66,7 @@ The issued URL is not modified. The button suffix is the URL without `https://pa
 - the header, body and footer have no placeholders;
 - it has exactly one URL button, whose URL is `https://pay.hotmart.com/{{1}}`.
 
-The category is whatever Meta assigned; `UTILITY` is the intent.
+The category is whatever Meta assigned; `UTILITY` is the intent. `johanna_enlace_pago_01` was submitted as `UTILITY` and Meta approved it as `MARKETING` on 2026-10-01 (catalog capture in `tests/fixtures/chatwoot_message_templates_inbox_9_20261001.json`). The template only goes out in reply to the lead's request, inside the customer service window, where Meta applies neither the per-user marketing limit (`131049`) nor its marketing experiment (`130472`). A lead who turned off the business's marketing messages does not receive it (`131050`); see **Not handled**.
 
 **Two parts.** The message goes out as two parts of the same reply batch, with the existing per-part idempotency:
 1. The agent's text, with no URL and no issuance authorization.
@@ -88,7 +88,7 @@ In each case the bridge logs `payment_link_template_unavailable reason=<code>` a
 
 **Part 2 blocked after part 1.** If part 1 is delivered and part 2 is blocked by the live checks (a takeover, a pause, or a new message from the lead), the delivery is `blocked`, and the conversation goes to a human with that reason. The lead got the agent's text without the URL.
 
-**Not handled.** If WhatsApp fails the template after Chatwoot accepted it, the message turns `failed` in Chatwoot, and the bridge does not watch for that.
+**Not handled.** If WhatsApp fails the template after Chatwoot accepted it (for example `131050`), the message turns `failed` in Chatwoot, and the bridge does not watch for that.
 
 ## Purchase correlation
 
