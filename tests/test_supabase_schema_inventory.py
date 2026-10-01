@@ -302,7 +302,8 @@ def test_pilot_scope_audience_mode_read_fingerprint_checks_the_function_and_its_
 
 def test_portable_inbound_template_adoption_fingerprint_checks_the_function_and_its_acl() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    fingerprint = sql.split("'20261001000400'", 1)[1].split(")\nselect", 1)[0]
+    # Hasta la fila siguiente: las cuentas de abajo son de esta migracion sola.
+    fingerprint = sql.split("'20261001000400'", 1)[1].split("'20261001000500'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", fingerprint)
 
     assert "'20261001000400_portable_inbound_adopts_template_conversation.sql'" in fingerprint
@@ -327,7 +328,53 @@ def test_portable_inbound_template_adoption_fingerprint_checks_the_function_and_
     assert "has_function_privilege('service_role',oid,'EXECUTE')" in compact_fingerprint
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint
     assert "nothas_function_privilege('authenticated',oid,'EXECUTE')" in compact_fingerprint
-    assert compact_fingerprint.endswith(",3,'portable_inbound_template_adoption'")
+    assert compact_fingerprint.endswith(",3,'portable_inbound_template_adoption'unionallselect")
+
+
+def test_commercial_case_lookups_by_inbound_kind_fingerprint_checks_the_four_rpcs() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    fingerprint = sql.split("'20261001000500'", 1)[1].split(")\nselect", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", fingerprint)
+
+    assert "'20261001000500_commercial_case_lookups_by_inbound_kind.sql'" in fingerprint
+    assert "proname" not in fingerprint
+    # Un marcador por funcion, por su firma exacta, con su guarda de ambiguedad.
+    for signature, ambiguous in (
+        (
+            "mark_human_handoff_attended(bigint,timestamptz,timestamptz)",
+            "mark_human_handoff_attended_ambiguous_case",
+        ),
+        (
+            "claim_conversation_reactivation(bigint,text,text,text,text,bigint,integer,"
+            "integer,integer,timestamptz)",
+            "claim_conversation_reactivation_ambiguous_case",
+        ),
+        (
+            "resume_paused_conversation(bigint,text,text,integer,integer,timestamptz)",
+            "resume_paused_conversation_ambiguous_case",
+        ),
+        (
+            "claim_conversation_followup_v1(bigint,bigint,bigint,text,text,text,text,text,"
+            "text,text,bigint,bigint,integer,text,timestamptz)",
+            "claim_conversation_followup_ambiguous_case",
+        ),
+    ):
+        assert compact_fingerprint.count(f"to_regprocedure('public.{signature}')") == 1, signature
+        assert f"position('{ambiguous}'indefinition)>0" in compact_fingerprint, ambiguous
+    # Definer con search_path fijo y el filtro condicionado al evento de
+    # adopcion, en las cuatro.
+    for marker in (
+        "andprosecdef",
+        "array_to_string(proconfig,',')='search_path=pg_catalog,public,pg_temp'",
+        "position('inbound_adopted_template_conversation'indefinition)>0",
+        "position('''inbound_sales''ornotv_inbound_only'indefinition)>0",
+        # Entrypoints del bridge: solo service_role.
+        "has_function_privilege('service_role',oid,'EXECUTE')",
+        "nothas_function_privilege('anon',oid,'EXECUTE')",
+        "nothas_function_privilege('authenticated',oid,'EXECUTE')",
+    ):
+        assert compact_fingerprint.count(marker) == 4, marker
+    assert compact_fingerprint.endswith(",4,'commercial_case_lookups_by_inbound_kind'")
 
 
 def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
