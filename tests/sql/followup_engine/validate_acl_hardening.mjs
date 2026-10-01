@@ -166,6 +166,7 @@ const rows = await db.query(`
       ('prepare_chatwoot_payment_link_send(uuid,text,bigint,bigint,bigint,text,integer,uuid,uuid,text,text,text,text,text,timestamp with time zone)'),
       ('finalize_chatwoot_payment_link_send(uuid,text,bigint,text,timestamp with time zone)'),
       ('reserve_chatwoot_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamp with time zone)'),
+      ('reserve_portable_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamp with time zone)'),
       ('authorize_chatwoot_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,timestamp with time zone)'),
       ('finalize_chatwoot_checkout_issuance_v2(uuid,text,bigint,text,timestamp with time zone)'),
       ('admit_and_correlate_hotmart_checkout_issuance_v2(text,jsonb,text,timestamp with time zone)'),
@@ -224,9 +225,10 @@ const result = rows.rows[0];
 // and the Slack alert for every human handoff (HND-001) adds three, and the
 // lead first-name inference adds two, and the discount follow-up adds two, and
 // the portable first contact after the form (20261001000200) adds four, and
-// the read of the pilot scope audience mode (20261001000300) adds one.
+// the read of the pilot scope audience mode (20261001000300) adds one, and the
+// portable reserve of the inbound payment link (20261001000100) adds one.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 117) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 118) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

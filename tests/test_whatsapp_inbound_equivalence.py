@@ -59,6 +59,7 @@ from test_audio_transcription import _webhook_200
 from test_webhook import (
     StubChatwootClient,
     StubInboundCommercialSupabase,
+    StubPaymentLinkSupabase,
     StubShadowProcessor,
     _post,
     _signed_headers,
@@ -226,8 +227,11 @@ def _process(
     settings: Settings | None = None,
     webhook: dict[str, Any] | None = None,
     history: list[dict[str, Any]] | None = None,
+    proposal: dict[str, object] | None = None,
 ) -> tuple[StubChatwootClient, StubShadowProcessor, Any]:
-    shadow = StubShadowProcessor({"decision": "reply", "reply": "Te leemos."})
+    shadow = StubShadowProcessor(
+        proposal or {"decision": "reply", "reply": "Te leemos."}
+    )
     chatwoot = StubChatwootClient(
         messages=history
         if history is not None
@@ -734,3 +738,165 @@ def test_without_a_manifest_a_failed_admission_behaves_as_before(tmp_path: Path)
     assert shadow.calls == []
     [item] = _pending(app)
     assert item["last_error_type"] == "RetryableChatwootWorkError"
+
+
+# ------------------------------------------ el enlace de pago del entrante
+#
+# Quien dejo el formulario con 52... y escribe desde su wa_id 521... pide el
+# enlace. La reserva compartida busca la intencion con el mismo id con que
+# exige la identidad del caso: con la identidad en 521... y la intencion del
+# formulario en 52... el enlace salia con la oferta por defecto, sin el sck
+# del formulario, y le llegaba a quien ya habia comprado. Con manifiesto el
+# bridge reserva con reserve_portable_checkout_issuance_v2, que busca la
+# intencion por las dos formas. El comportamiento de las dos RPC se prueba en
+# tests/sql/followup_engine/validate_whatsapp_phone_equivalence.mjs (10).
+
+PAYMENT_LINK_PROPOSAL: dict[str, object] = {
+    "decision": "send_payment_link",
+    "qualification_status": "in_progress",
+    "reason_code": "payment_link_requested",
+    "reply": "Claro, aca tenes el enlace:",
+    "captured_fields": {},
+    "missing_fields": [],
+}
+
+
+class _PaymentLinkSupabase(_Supabase, StubPaymentLinkSupabase):
+    """La base del entrante con la emision del enlace (reserva, autorizacion
+    y cierre) del stub de tests/test_webhook.py."""
+
+
+def _payment_link(
+    tmp_path: Path, supabase: _PaymentLinkSupabase, settings: Settings
+) -> StubChatwootClient:
+    webhook, history = _text_webhook("Pasame el link para pagar")
+    chatwoot, _, _ = _process(
+        tmp_path,
+        supabase,
+        settings=replace(settings, payment_link_enabled=True),
+        webhook=webhook,
+        history=history,
+        proposal=PAYMENT_LINK_PROPOSAL,
+    )
+    return chatwoot
+
+
+def test_with_a_manifest_the_payment_link_looks_for_the_intent_in_every_form(
+    tmp_path: Path,
+) -> None:
+    supabase = _PaymentLinkSupabase(identities=(FORM_ID,))
+
+    chatwoot = _payment_link(tmp_path, supabase, _manifest_settings(tmp_path))
+
+    [reservation] = supabase.candidate_calls
+    assert reservation["phone_equivalence"] is True
+    assert reservation["external_user_id"] == FORM_ID
+    assert reservation["chatwoot_conversation_id"] == 200
+    # Autorizar y cerrar no cambian: trabajan por issuance_id.
+    [authorization] = supabase.prepare_calls
+    assert "phone_equivalence" not in authorization
+    assert authorization["external_user_id"] == FORM_ID
+    [finalization] = supabase.finalize_calls
+    assert "phone_equivalence" not in finalization
+    [reply] = chatwoot.reply_calls
+    assert "src=hermes" in str(reply["content"])
+
+
+def test_without_a_manifest_the_payment_link_uses_the_shared_reserve(
+    tmp_path: Path,
+) -> None:
+    supabase = _PaymentLinkSupabase(identities=(FORM_ID,))
+
+    # Johanna con el enlace prendido: el mismo armado que el test del enlace
+    # de tests/test_webhook.py (scoped, opt-out durable y derivacion).
+    johanna = replace(
+        _johanna_settings(tmp_path),
+        chatwoot_scoped_inbound_senders_enabled=True,
+        chatwoot_durable_opt_out_enabled=True,
+        chatwoot_human_pause_enabled=True,
+        chatwoot_opt_out_macro_id=2,
+        opt_out_projection_worker_id="opt-out-test",
+        human_handoff_admission_enabled=True,
+        human_handoff_projection_enabled=True,
+        handoff_projection_policy_key="lancemos-inbound-handoff",
+        handoff_projection_policy_version=1,
+        human_handoff_projection_worker_id="handoff-projection-test",
+    )
+    chatwoot = _payment_link(tmp_path, supabase, johanna)
+
+    # Johanna: la reserva de siempre, con el wa_id textual y sin el flag.
+    [reservation] = supabase.candidate_calls
+    assert "phone_equivalence" not in reservation
+    assert reservation["external_user_id"] == WA_ID
+    assert supabase.identity_lookups == []
+    assert len(chatwoot.reply_calls) == 1
+
+
+def _reserving_client(seen: list[httpx.Request]) -> SupabaseClient:
+    ulid = "01K3F8QW7N2VYB4M6X9CDPTZRA"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=[{
+            "outcome": "reserved",
+            "issuance_id": "00000000-0000-0000-0000-000000000301",
+            "issuance_ulid": ulid,
+            "purchase_intent_id": "00000000-0000-0000-0000-000000000302",
+            "source_kind": "precheckout_request",
+            "checkout_url_final": (
+                "https://pay.hotmart.com/D98014973Y?off=2uafw5bg&checkoutMode=10"
+                f"&src=hermes&sck=hermes%7Cv1%7C{ulid}"
+            ),
+            "source_value": "hermes",
+            "sck_value": f"hermes|v1|{ulid}",
+        }], request=request)
+
+    return SupabaseClient(
+        base_url="https://supabase.example.test",
+        service_role_key="test-key",
+        transport=httpx.MockTransport(handler),
+    )
+
+
+@pytest.mark.parametrize(
+    ("flag", "path"),
+    [
+        ({"phone_equivalence": True}, "/rest/v1/rpc/reserve_portable_checkout_issuance_v2"),
+        ({"phone_equivalence": False}, "/rest/v1/rpc/reserve_chatwoot_checkout_issuance_v2"),
+        ({}, "/rest/v1/rpc/reserve_chatwoot_checkout_issuance_v2"),
+    ],
+)
+def test_the_reserve_rpc_depends_only_on_the_flag(
+    flag: dict[str, bool], path: str
+) -> None:
+    seen: list[httpx.Request] = []
+    client = _reserving_client(seen)
+
+    result = asyncio.run(client.reserve_chatwoot_checkout_issuance_v2(
+        commercial_case_id="00000000-0000-0000-0000-000000000300",
+        external_user_id=FORM_ID,
+        chatwoot_account_id=1,
+        chatwoot_inbox_id=9,
+        chatwoot_conversation_id=200,
+        trigger_external_message_id="501",
+        issuance_ulid="01K3F8QW7N2VYB4M6X9CDPTZRA",
+        now="2026-10-01T12:00:00+00:00",
+        **flag,
+    ))
+
+    [request] = seen
+    assert request.method == "POST"
+    assert request.url.path == path
+    # Mismo payload y misma validacion de la respuesta en las dos.
+    assert json.loads(request.content) == {
+        "p_commercial_case_id": "00000000-0000-0000-0000-000000000300",
+        "p_external_user_id": FORM_ID,
+        "p_chatwoot_account_id": 1,
+        "p_chatwoot_inbox_id": 9,
+        "p_chatwoot_conversation_id": 200,
+        "p_trigger_external_message_id": "501",
+        "p_issuance_ulid": "01K3F8QW7N2VYB4M6X9CDPTZRA",
+        "p_now": "2026-10-01T12:00:00+00:00",
+    }
+    assert result.outcome == "reserved"
+    assert result.source_kind == "precheckout_request"

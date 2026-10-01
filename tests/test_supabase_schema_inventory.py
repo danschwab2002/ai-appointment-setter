@@ -195,6 +195,8 @@ def test_whatsapp_phone_equivalence_fingerprint_checks_the_portable_functions() 
         "public._portable_chatwoot_opt_out_stop(bigint,uuid,text)",
         "public.mark_lancemos_pilot_request_started(uuid,uuid,text,bigint,timestamptz)",
         "public.mark_portable_payment_failure_request_started(uuid,uuid,text,bigint,timestamptz)",
+        "public.reserve_portable_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,"
+        "timestamptz)",
     ):
         assert f"to_regprocedure('{signature}')" in compact_fingerprint, signature
     assert "proname" not in fingerprint
@@ -211,6 +213,19 @@ def test_whatsapp_phone_equivalence_fingerprint_checks_the_portable_functions() 
     assert "consented_intent_contact_phone_mismatch" in fingerprint
     assert "consented_intent_prior_opt_out" in fingerprint
     assert "whatsapp_equivalent" in fingerprint
+    # La reserva portable del enlace: un entrypoint solo de service_role, con la
+    # intencion buscada por las formas y el opt-out mirado en cada una.
+    assert (
+        "position('intent.normalized_phone=any(public._whatsapp_phone_variants(p_external_user_id))'"
+        "indefinition)>0" in compact_fingerprint
+    )
+    assert (
+        "position('intent.normalized_phone=p_external_user_id'indefinition)=0"
+        in compact_fingerprint
+    )
+    assert "position('asopt_out_form(user_id)'indefinition)>0" in compact_fingerprint
+    # Diez chequeos: la reserva portable es el decimo.
+    assert ",10,'whatsapp_phone_equivalence_portable_runtime'" in compact_fingerprint
     assert "whatsapp_phone_equivalence_portable_runtime" in fingerprint
 
 
@@ -288,7 +303,7 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
 
-    assert len(allowlisted) == 117
+    assert len(allowlisted) == 118
     assert (
         "claim_conversation_followup_v1(bigint, bigint, bigint, text, text, text, text, text, "
         "text, text, bigint, bigint, integer, text, timestamp with time zone)"
@@ -317,6 +332,11 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
         "(text, text, integer, text, jsonb, jsonb)" in allowlisted
     )
     assert "admit_inbound_commercial_case_v2(text, integer, bigint, text)" in allowlisted
+    assert (
+        "reserve_portable_checkout_issuance_v2"
+        "(uuid, text, bigint, bigint, bigint, text, text, timestamp with time zone)"
+        in allowlisted
+    )
     assert (
         "admit_and_correlate_hotmart_checkout_issuance_v2"
         "(text, jsonb, text, timestamp with time zone)" in allowlisted

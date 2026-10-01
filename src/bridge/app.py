@@ -2294,6 +2294,38 @@ def _validate_approved_template_direct(
         )
 
 
+class _PhoneEquivalentCheckoutIssuance:
+    """El cliente que recibe deliver_checkout_issuance_v2 con manifiesto.
+
+    La reserva va a reserve_portable_checkout_issuance_v2, que busca la
+    intencion del movil y el opt-out por las dos formas del telefono: quien
+    dejo el formulario con 52... (54...) y escribe desde su wa_id 521...
+    (549...) recibe el enlace con la oferta, el sck y la intencion del
+    formulario, y quien ya compro no recibe otro. Autorizar y finalizar
+    trabajan por issuance_id y no cambian. Sin manifiesto (Johanna) el
+    bridge le pasa el cliente tal cual y la reserva sigue siendo la
+    compartida.
+    """
+
+    def __init__(self, client: object) -> None:
+        self._client = client
+
+    async def reserve_chatwoot_checkout_issuance_v2(self, **kwargs: object) -> object:
+        return await self._client.reserve_chatwoot_checkout_issuance_v2(  # type: ignore[attr-defined]
+            phone_equivalence=True, **kwargs
+        )
+
+    async def authorize_chatwoot_checkout_issuance_v2(self, **kwargs: object) -> object:
+        return await self._client.authorize_chatwoot_checkout_issuance_v2(  # type: ignore[attr-defined]
+            **kwargs
+        )
+
+    async def finalize_chatwoot_checkout_issuance_v2(self, **kwargs: object) -> object:
+        return await self._client.finalize_chatwoot_checkout_issuance_v2(  # type: ignore[attr-defined]
+            **kwargs
+        )
+
+
 GHL_PRECHECKOUT_ADAPTER_PATH = "/webhooks/adapters/ghl/lead-precheckout"
 _GHL_LOGGABLE_FORM_ID = re.compile(r"[A-Za-z0-9]{20}")
 
@@ -4780,7 +4812,13 @@ def create_app(
             assert control_client is not None
             try:
                 delivery = await deliver_checkout_issuance_v2(
-                    supabase=shared_supabase,
+                    # Con manifiesto, la reserva busca la intencion por las
+                    # dos formas del movil. Sin manifiesto, como siempre.
+                    supabase=(
+                        _PhoneEquivalentCheckoutIssuance(shared_supabase)
+                        if whatsapp_inbound_equivalence
+                        else shared_supabase
+                    ),
                     control_client=control_client,
                     commercial_case_id=admission.commercial_case_id,
                     external_user_id=external_user_id,

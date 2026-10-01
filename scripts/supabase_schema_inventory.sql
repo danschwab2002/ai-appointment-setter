@@ -3955,8 +3955,20 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
               and prosecdef
               and position('_portable_chatwoot_opt_out_stop(' in definition) > 0
               and position('pilot_chatwoot_opt_out_stop' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.reserve_portable_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamptz)')
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+              and position('intent.normalized_phone = any(public._whatsapp_phone_variants(p_external_user_id))' in definition) > 0
+              and position('intent.normalized_phone = p_external_user_id' in definition) = 0
+              and position('as opt_out_form(user_id)' in definition) > 0
         )::int,
-        9,
+        10,
         'whatsapp_phone_equivalence_portable_runtime'
     union all
     select

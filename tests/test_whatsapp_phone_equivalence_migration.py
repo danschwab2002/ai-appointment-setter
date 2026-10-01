@@ -7,8 +7,9 @@ exacta y recien ahi se compara) y lo aditivo, que va entre comentarios
 ``whatsapp_phone_equivalence``. Tambien que el correlador portable se derive
 del compartido con ocurrencias exactas, que los helpers nuevos queden privados
 y que la migracion no redefina nada de lo que ejecuta Johanna. Los dos
-arranques del piloto frenan con un opt-out en cualquiera de las formas. El
-comportamiento se prueba en
+arranques del piloto frenan con un opt-out en cualquiera de las formas. La
+reserva portable del enlace de pago se deriva de la compartida con ocurrencias
+exactas, como el correlador. El comportamiento se prueba en
 tests/sql/followup_engine/validate_whatsapp_phone_equivalence.mjs.
 """
 
@@ -39,6 +40,10 @@ OPT_OUT_STOP = "_portable_chatwoot_opt_out_stop"
 PILOT_START = "mark_lancemos_pilot_request_started"
 FAILURE_START = "mark_portable_payment_failure_request_started"
 SHARED_CORRELATOR = "correlate_hotmart_purchase_intent"
+PORTABLE_RESERVE = "reserve_portable_checkout_issuance_v2"
+SHARED_RESERVE = "reserve_chatwoot_checkout_issuance_v2"
+# La definicion vigente de la reserva compartida (la ultima que la redefine).
+SHARED_RESERVE_VIGENT = "20260927000200_sck_length_accepts_255_v1.sql"
 # Cada funcion copiada y la migracion que tiene su definicion vigente.
 VIGENT = {
     CART: "20260928000200_commercial_ally_additional_offers.sql",
@@ -63,8 +68,9 @@ SIGNATURES = {
     OPT_OUT_STOP: "(bigint,uuid,text)",
     PILOT_START: REQUEST_START,
     FAILURE_START: REQUEST_START,
+    PORTABLE_RESERVE: "(uuid,text,bigint,bigint,bigint,text,text,timestamptz)",
 }
-ENTRYPOINTS = {CART, PURCHASE, FAILURE, PLAN, PILOT_START, FAILURE_START}
+ENTRYPOINTS = {CART, PURCHASE, FAILURE, PLAN, PILOT_START, FAILURE_START, PORTABLE_RESERVE}
 # Por funcion: (comparacion nueva, comparacion vigente, ocurrencias). Todo con
 # los espacios normalizados.
 CANONICAL_COMPARISONS = {
@@ -424,6 +430,87 @@ def test_portable_correlator_is_derived_with_exact_occurrences() -> None:
     assert sql.index(f"create or replace function public.{VARIANTS}(") < sql.index(block)
 
 
+def test_portable_reserve_is_derived_with_exact_occurrences() -> None:
+    sql = _sql()
+    (block,) = re.findall(r"do \$reserve\$.*?\$reserve\$;", sql, re.DOTALL)
+    compact = _executable(block)
+
+    assert (
+        f"select pg_get_functiondef( 'public.{SHARED_RESERVE}"
+        "(uuid,text,bigint,bigint,bigint,text,text,timestamptz)'::regprocedure ) "
+        "into v_definition;"
+    ) in compact
+    assert f"v_shared_name constant text := '{SHARED_RESERVE}';" in compact
+    assert f"v_shared_head constant text := 'public.{SHARED_RESERVE}(';" in compact
+    assert f"v_portable_head constant text := 'public.{PORTABLE_RESERVE}(';" in compact
+    assert (
+        "v_exact_intent constant text := 'intent.normalized_phone = p_external_user_id';"
+    ) in compact
+    assert (
+        "v_equivalent_intent constant text := "
+        f"'intent.normalized_phone = any(public.{VARIANTS}(p_external_user_id))';"
+    ) in compact
+    # El nombre una vez, la cabecera una vez, las tres busquedas de la
+    # intencion y el chequeo del opt-out una vez; si no, 55000 y nada.
+    for check in (
+        "length(v_definition) - length(replace(v_definition, v_shared_name, '')) "
+        "<> length(v_shared_name)",
+        "length(v_definition) - length(replace(v_definition, v_shared_head, '')) "
+        "<> length(v_shared_head)",
+        "length(v_definition) - length(replace(v_definition, v_exact_intent, '')) "
+        "<> 3 * length(v_exact_intent)",
+        "length(v_definition) - length(replace(v_definition, v_exact_opt_out, '')) "
+        "<> length(v_exact_opt_out)",
+        "position('_whatsapp_phone_' in v_definition) > 0",
+    ):
+        assert check in compact, check
+    assert (
+        "raise exception using errcode = '55000', "
+        "message = 'unexpected_checkout_issuance_reserve_definition';"
+    ) in compact
+    assert (
+        "execute replace( replace( replace(v_definition, v_shared_head, v_portable_head), "
+        "v_exact_intent, v_equivalent_intent ), v_exact_opt_out, v_equivalent_opt_out );"
+    ) in compact
+
+    # La definicion de origen: la vigente, con esos textos y esas cuentas. Los
+    # E-strings del bloque son exactamente el llamado al opt-out de la fuente.
+    vigent = [
+        path.name
+        for path in sorted(MIGRATIONS.glob("*.sql"))
+        if path.name < MIGRATION.name
+        and re.search(
+            rf"create\s+(?:or\s+replace\s+)?function\s+public\.{SHARED_RESERVE}\s*\(",
+            path.read_text(encoding="utf-8"),
+        )
+    ]
+    assert vigent[-1] == SHARED_RESERVE_VIGENT
+    source = _function(
+        (MIGRATIONS / SHARED_RESERVE_VIGENT).read_text(encoding="utf-8"), SHARED_RESERVE
+    )
+    body = source.split("$function$", 1)[1]
+    assert body.count("intent.normalized_phone = p_external_user_id") == 3
+    assert body.count(SHARED_RESERVE) == 0
+    opt_out_call = (
+        "public.has_chatwoot_opt_out_stop(\n"
+        "        p_chatwoot_account_id, p_chatwoot_inbox_id,\n"
+        "        p_chatwoot_conversation_id, p_external_user_id\n"
+        "    )"
+    )
+    assert body.count(opt_out_call) == 1
+    escaped = (
+        "E'public.has_chatwoot_opt_out_stop(\\n' "
+        "|| E'        p_chatwoot_account_id, p_chatwoot_inbox_id,\\n' "
+        "|| E'        p_chatwoot_conversation_id, p_external_user_id\\n' "
+        "|| E'    )'"
+    )
+    assert _normalized(escaped) in compact
+    # La identidad del caso y el replay quedan exactos.
+    assert body.count("identity.external_user_id = p_external_user_id") == 2
+    # Se deriva despues de crear las variantes que la copia usa.
+    assert sql.index(f"create or replace function public.{VARIANTS}(") < sql.index(block)
+
+
 def test_copies_keep_the_fingerprints_of_the_schema_inventory() -> None:
     # scripts/supabase_schema_inventory.sql busca estos literales dentro de las
     # funciones copiadas (filas 20260901000300, 20260903000100, 20260928000200,
@@ -502,9 +589,12 @@ def test_migration_redefines_only_the_portable_functions() -> None:
             FAILURE_START,
         ]
     )
-    # Un solo SQL dinamico que cree funciones: el correlador portable.
+    # Dos SQL dinamicos que crean funciones: el correlador portable y la
+    # reserva portable del enlace. Ninguno redefine la compartida.
     executable = re.sub(r"--[^\n]*", "", sql)
-    assert len(re.findall(r"\bexecute\s+replace\(", executable)) == 1
+    assert len(re.findall(r"\bexecute\s+replace\(", executable)) == 2
+    assert f"create or replace function public.{SHARED_RESERVE}" not in sql
+    assert PORTABLE_RESERVE not in defined
     assert not re.search(r"\balter\s+function\b", executable, re.IGNORECASE)
     assert not re.search(r"\bdrop\s+function\b", executable, re.IGNORECASE)
 

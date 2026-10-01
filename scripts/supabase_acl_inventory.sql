@@ -89,6 +89,7 @@ expected_service_role(signature) as (
         ('public.prepare_chatwoot_payment_link_send(uuid, text, bigint, bigint, bigint, text, integer, uuid, uuid, text, text, text, text, text, timestamp with time zone)'),
         ('public.finalize_chatwoot_payment_link_send(uuid, text, bigint, text, timestamp with time zone)'),
         ('public.reserve_chatwoot_checkout_issuance_v2(uuid, text, bigint, bigint, bigint, text, text, timestamp with time zone)'),
+        ('public.reserve_portable_checkout_issuance_v2(uuid, text, bigint, bigint, bigint, text, text, timestamp with time zone)'),
         ('public.authorize_chatwoot_checkout_issuance_v2(uuid, text, bigint, bigint, bigint, text, timestamp with time zone)'),
         ('public.finalize_chatwoot_checkout_issuance_v2(uuid, text, bigint, text, timestamp with time zone)'),
         ('public.admit_and_correlate_hotmart_checkout_issuance_v2(text, jsonb, text, timestamp with time zone)'),

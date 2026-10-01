@@ -4189,13 +4189,26 @@ class SupabaseClient:
         trigger_external_message_id: str,
         issuance_ulid: str,
         now: str,
+        phone_equivalence: bool = False,
     ) -> CheckoutIssuanceReservation:
-        """Atomically persist one V2 checkout issuance before Chatwoot."""
+        """Atomically persist one V2 checkout issuance before Chatwoot.
 
-        operation = "chatwoot_checkout_issuance_v2_reserve"
+        Con ``phone_equivalence`` (solo el runtime con manifiesto) pega en
+        reserve_portable_checkout_issuance_v2: la misma reserva, con la
+        intencion del movil y el opt-out buscados por las dos formas del
+        telefono (52/521, 54/549). Mismo payload y misma respuesta. Sin el
+        flag, la compartida de siempre.
+        """
+
+        if phone_equivalence:
+            operation = "portable_checkout_issuance_v2_reserve"
+            path = "/rest/v1/rpc/reserve_portable_checkout_issuance_v2"
+        else:
+            operation = "chatwoot_checkout_issuance_v2_reserve"
+            path = "/rest/v1/rpc/reserve_chatwoot_checkout_issuance_v2"
         response = await self._request(
             "POST",
-            "/rest/v1/rpc/reserve_chatwoot_checkout_issuance_v2",
+            path,
             content=json.dumps({
                 "p_commercial_case_id": commercial_case_id,
                 "p_external_user_id": external_user_id,

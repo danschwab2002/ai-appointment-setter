@@ -4,10 +4,12 @@
 // El mismo movil llega con dos formas: el formulario guarda 52 + 10 digitos
 // (Mexico) o 54 + 10 (Argentina), y Hotmart y el wa_id traen 521 + 10 y
 // 549 + 10. Este validador prueba:
-//   0. que la migracion cambia exactamente lo que dice: cuatro funciones
-//      nuevas, siete reemplazadas, ninguna otra definicion ni grant de
-//      service_role distinto, y las funciones que ejecuta Johanna identicas
-//      antes y despues (pg_get_functiondef);
+//   0. que la migracion cambia exactamente lo que dice: cuatro helpers
+//      nuevos y una RPC nueva (la reserva portable del enlace), siete
+//      reemplazadas, ninguna otra definicion ni grant de service_role
+//      distinto, y las funciones que ejecuta Johanna identicas antes y
+//      despues (pg_get_functiondef), la reserva compartida del enlace
+//      incluida;
 //   1. la tabla de la forma canonica y de sus variantes: Mexico y Argentina en
 //      los dos sentidos, con '+', espacios y guiones, los 12 digitos que
 //      empiezan con 521 o 549 intactos, Brasil y otros paises intactos, vacio
@@ -40,7 +42,18 @@
 //      conflict por admit_and_correlate_hotmart_cart_abandonment) y el
 //      portable es el compartido con sus tres reemplazos y nada mas (deriva);
 //   9. el inventario de esquema da fingerprint_present en las filas de las
-//      migraciones cuyas funciones se copiaron.
+//      migraciones cuyas funciones se copiaron;
+//  10. el enlace de pago del entrante (reserve_portable_checkout_issuance_v2):
+//      quien dejo el formulario con 52... (54...) y escribe desde su wa_id
+//      521... (549...) recibe el enlace con la oferta de su landing, el sck y
+//      el fbclid del formulario y la intencion del formulario, sin fabricar
+//      una segunda; tambien si escribio antes del formulario; quien ya compro
+//      no recibe otro enlace; un opt-out en la otra forma, en otra
+//      conversacion, frena. La reserva compartida (Johanna) sigue exacta con
+//      el mismo caso, y la portable es la compartida con sus reemplazos y nada
+//      mas (deriva). El scope entrante y el catalogo de las tres ofertas se
+//      siembran como despliegue/base/aprovisionar-att1.sql de la instancia: el
+//      hotlink como external_product_id y la primera oferta por defecto.
 //
 // Datos: binding, ofertas, landings, producto, Chatwoot y consentimiento de
 // tests/fixtures/instances/att1/instancia.toml; politica y ventanas de
@@ -123,6 +136,10 @@ const NEW_FUNCTIONS = [
   '_whatsapp_phone_canonical(text)',
   '_whatsapp_phone_variants(text)',
 ];
+// La reserva portable del enlace: un entrypoint del bridge, solo service_role.
+const NEW_ENTRYPOINTS = [
+  'reserve_portable_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamp with time zone)',
+];
 const REPLACED_FUNCTIONS = [
   '_portable_consented_intent_reason(uuid,uuid,text)',
   'admit_portable_hotmart_cart_abandonment(text,text,integer,text,jsonb,text,text)',
@@ -147,6 +164,11 @@ const JOHANNA_FUNCTIONS = [
   'mark_followup_request_started(uuid,uuid,text,bigint,timestamp with time zone)',
   'reevaluate_followup_action(uuid,text,bigint,timestamp with time zone,boolean,text,text,timestamp with time zone,text,boolean,boolean,boolean,boolean,boolean)',
   'bootstrap_proactive_lead_identity(text,uuid,text,integer,bigint,text,text)',
+  // El enlace de pago del entrante: la reserva compartida no se redefine.
+  'reserve_chatwoot_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamp with time zone)',
+  'authorize_chatwoot_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,timestamp with time zone)',
+  'finalize_chatwoot_checkout_issuance_v2(uuid,text,bigint,text,timestamp with time zone)',
+  'has_chatwoot_opt_out_stop(bigint,bigint,bigint,text)',
   // Del piloto, no reemplazadas: delegan en el helper del consentimiento.
   '_lancemos_pilot_audience_intent(text,integer,uuid,text,uuid,text)',
   'evaluate_lancemos_pilot_scope(text,integer,text,bigint,bigint,text,text,text,text,text,text,uuid)',
@@ -161,7 +183,7 @@ const changed = [...before.keys()].filter((signature) => after.has(signature)
 const aclChanged = [...before.keys()].filter((signature) => after.has(signature)
   && (after.get(signature).service_x !== before.get(signature).service_x
       || after.get(signature).api_x !== before.get(signature).api_x));
-if (!sameSet(added, NEW_FUNCTIONS) || removed.length !== 0
+if (!sameSet(added, [...NEW_FUNCTIONS, ...NEW_ENTRYPOINTS]) || removed.length !== 0
     || !sameSet(changed, REPLACED_FUNCTIONS) || aclChanged.length !== 0) {
   throw new Error(`the migration changed something else: ${JSON.stringify({ added, removed, changed, aclChanged })}`);
 }
@@ -175,6 +197,12 @@ for (const signature of NEW_FUNCTIONS) {
   const row = after.get(signature);
   if (row.service_x !== false || row.api_x !== false) {
     throw new Error(`a new helper is executable by an API role: ${JSON.stringify({ signature, service_x: row.service_x, api_x: row.api_x })}`);
+  }
+}
+for (const signature of NEW_ENTRYPOINTS) {
+  const row = after.get(signature);
+  if (row.service_x !== true || row.api_x !== false) {
+    throw new Error(`a new entrypoint is not service_role only: ${JSON.stringify({ signature, service_x: row.service_x, api_x: row.api_x })}`);
   }
 }
 for (const signature of REPLACED_FUNCTIONS) {
@@ -1328,6 +1356,249 @@ for (const version of FINGERPRINTS) {
   }
 }
 results.schema_fingerprints = FINGERPRINTS.length;
+
+// ---------------------------------------------------------------------------
+// 10. El enlace de pago del entrante. La persona dejo el formulario (52... o
+//     54...) y escribe por WhatsApp desde su wa_id (521... o 549...). El bridge
+//     admite el caso entrante con el external_user_id resuelto
+//     (resolve_inbound_external_user_id: sin identidad guardada, el wa_id
+//     textual) y, con manifiesto, reserva el enlace con la reserva portable.
+//     La compartida busca la intencion con ese mismo id exacto: daba la
+//     oferta por defecto sin el sck del formulario, fabricaba una segunda
+//     intencion viva y no veia la compra de quien ya compro.
+// ---------------------------------------------------------------------------
+{
+  // El scope entrante y el catalogo de las tres ofertas, como
+  // despliegue/base/aprovisionar-att1.sql de la instancia: el hotlink como
+  // external_product_id y la primera oferta por defecto. Con el product_id
+  // numerico la reserva da missing_default_offer para cualquier telefono.
+  await db.query(`
+    insert into public.inbound_commercial_scope_versions
+      (scope_key, version, status, tenant_key, chatwoot_account_id, chatwoot_inbox_id,
+       external_product_id, offer_code, approved_by, approved_at, published_at)
+    values ($1,$2,'published',$3,$4,$5,$6,$7,'operator-test',now(),now())
+  `, [ATT1.inboundScope, ATT1.inboundVersion, ATT1.tenant, ATT1.accountId, ATT1.inboxId,
+    ATT1.hotlink, defaultOffer.offer_code]);
+  for (const offer of offers) {
+    await db.query(`
+      insert into public.checkout_offer_catalog
+        (tenant_ref, funnel_ref, scope_key, scope_version, product_ref, landing_ref,
+         offer_code, checkout_base_url, checkout_mode, default_for_inbound, status,
+         version, approved_by, approved_at)
+      values ($1,$2,$3,$4,$5,$6,$7,$8,10,$9,'active',1,'operator-test',now())
+    `, [ATT1.tenant, ATT1.funnel, ATT1.inboundScope, ATT1.inboundVersion, ATT1.hotlink,
+      offer.landing_id, offer.offer_code, `https://pay.hotmart.com/${ATT1.hotlink}`,
+      offer.default]);
+  }
+
+  let inboundConversation = 930000;
+  let inboundMessage = 940000;
+  const admitInbound = async (userId, conversation) => one((await db.query(`
+    select * from public.admit_inbound_commercial_case_v2($1,$2,$3,$4)
+  `, [ATT1.inboundScope, ATT1.inboundVersion, conversation, userId])).rows,
+  `inbound admission ${conversation}`);
+  // Una reserva por mensaje del lead, con la RPC que elige el bridge.
+  const reserveLink = async (rpc, caseId, userId, conversation) => {
+    inboundMessage += 1;
+    const ulid = ulidAt(Date.now());
+    const row = one((await db.query(`
+      select * from public.${rpc}($1,$2,$3,$4,$5,$6,$7,clock_timestamp())
+    `, [caseId, userId, ATT1.accountId, ATT1.inboxId, conversation,
+      String(inboundMessage), ulid])).rows, `${rpc} ${conversation}`);
+    const issuance = row.issuance_id === null ? null : one((await db.query(`
+      select issuance.source_kind, issuance.offer_resolution,
+             issuance.attribution_resolution, issuance.purchase_intent_id,
+             issuance.checkout_url_final, offer.offer_code
+      from public.checkout_link_issuances issuance
+      join public.checkout_offer_catalog offer on offer.id = issuance.offer_catalog_id
+      where issuance.id = $1
+    `, [row.issuance_id])).rows, `${rpc} issuance`);
+    return { outcome: row.outcome, ulid, issuance };
+  };
+  const PORTABLE = 'reserve_portable_checkout_issuance_v2';
+  const SHARED = 'reserve_chatwoot_checkout_issuance_v2';
+  const liveIntents = async (lead) => one((await db.query(`
+    select count(*)::integer as count from public.purchase_intents
+    where normalized_phone = any($1::text[]) and lifecycle_state = 'waiting_for_purchase'
+  `, [[lead.plain, lead.whatsapp]])).rows, `${lead.label} live intents`).count;
+  const formSck = GOLDEN.MX.raw.data.attribution.sck;
+  const formFbclid = GOLDEN.MX.raw.data.attribution.fbclid;
+  // El enlace del formulario: su oferta, su intencion, su sck y su fbclid.
+  const expectFormLink = (label, lead, link, { attribution }) => {
+    const url = link.issuance?.checkout_url_final ?? '';
+    const sckInUrl = attribution === 'full'
+      ? `&sck=${formSck}%7Chermes%7Cv1%7C${link.ulid}`
+      : `&sck=hermes%7Cv1%7C${link.ulid}`;
+    if (link.outcome !== 'reserved'
+        || link.issuance.source_kind !== 'precheckout_request'
+        || link.issuance.offer_resolution !== 'lead_intent'
+        || link.issuance.offer_code !== lead.offer.offer_code
+        || link.issuance.purchase_intent_id !== lead.intent
+        || link.issuance.attribution_resolution !== attribution
+        || !url.includes(`?off=${lead.offer.offer_code}&`)
+        || !url.includes(sckInUrl)
+        || (attribution === 'full') !== url.endsWith(`&fbclid=${formFbclid}`)) {
+      throw new Error(`${label}: the link is not the one of the form: ${JSON.stringify({ outcome: link.outcome, ...link.issuance, form_offer: lead.offer.offer_code })}`);
+    }
+    return `${link.outcome}:${link.issuance.source_kind}:${link.issuance.offer_resolution}:${link.issuance.offer_code}:${link.issuance.attribution_resolution}`;
+  };
+
+  // a. Mexico: formulario 52 por la landing -d (2uafw5bg) y entrante desde
+  //    521 sin identidad previa. Una sola intencion viva antes y despues.
+  const mx = person('enlace-mx', 'MX');
+  await submitForm(mx);
+  inboundConversation += 1;
+  const mxCase = await admitInbound(mx.whatsapp, inboundConversation);
+  const mxLink = await reserveLink(PORTABLE, mxCase.commercial_case_id, mx.whatsapp,
+    inboundConversation);
+  const mxSummary = expectFormLink('MX 52 form, 521 inbound', mx, mxLink, { attribution: 'full' });
+  if (mxCase.outcome !== 'created' || (await liveIntents(mx)) !== 1) {
+    throw new Error(`MX link: ${JSON.stringify({ admission: mxCase.outcome, live: await liveIntents(mx) })}`);
+  }
+
+  // b. Argentina: formulario 54 por ads-a (la oferta por defecto, sin sck) y
+  //    entrante desde 549. Despues compra con el telefono de Hotmart (549): no
+  //    queda ninguna intencion viva y el proximo mensaje no recibe otro enlace.
+  const ar = person('enlace-ar', 'AR');
+  await submitForm(ar);
+  inboundConversation += 1;
+  const arConversation = inboundConversation;
+  const arCase = await admitInbound(ar.whatsapp, arConversation);
+  const arLink = await reserveLink(PORTABLE, arCase.commercial_case_id, ar.whatsapp,
+    arConversation);
+  const arSummary = expectFormLink('AR 54 form, 549 inbound', ar, arLink,
+    { attribution: 'marker_only' });
+  const arLiveAfterLink = await liveIntents(ar);
+  const arPurchase = await admitPurchase(ar, { phone: ar.whatsapp });
+  const arLiveAfterPurchase = await liveIntents(ar);
+  const arAgain = await reserveLink(PORTABLE, arCase.commercial_case_id, ar.whatsapp,
+    arConversation);
+  if (arLiveAfterLink !== 1 || arPurchase.correlation.outcome !== 'resolved'
+      || arLiveAfterPurchase !== 0 || arAgain.outcome !== 'purchase_already_approved') {
+    throw new Error(`AR link then purchase: ${JSON.stringify({ arLiveAfterLink, purchase: arPurchase.correlation.outcome, arLiveAfterPurchase, again: arAgain.outcome })}`);
+  }
+
+  // c. Mexico: escribio primero desde 521 (la admision crea la identidad
+  //    521), despues dejo el formulario 52 y vuelve a escribir en la misma
+  //    conversacion.
+  const first = person('enlace-escribio-primero', 'MX');
+  inboundConversation += 1;
+  const firstCase = await admitInbound(first.whatsapp, inboundConversation);
+  await submitForm(first);
+  const firstAgain = await admitInbound(first.whatsapp, inboundConversation);
+  const firstLink = await reserveLink(PORTABLE, firstAgain.commercial_case_id, first.whatsapp,
+    inboundConversation);
+  const firstSummary = expectFormLink('MX wrote first, then the form', first, firstLink,
+    { attribution: 'full' });
+  if (firstCase.outcome !== 'created' || firstAgain.commercial_case_id !== firstCase.commercial_case_id
+      || (await liveIntents(first)) !== 1) {
+    throw new Error(`MX wrote first: ${JSON.stringify({ first: firstCase.outcome, again: firstAgain.outcome })}`);
+  }
+
+  // d. Mexico: formulario 52 y compra aprobada (Hotmart 521); despues escribe
+  //    desde 521. No recibe un enlace de pago.
+  const bought = person('enlace-ya-compro', 'MX');
+  await submitForm(bought);
+  const boughtPurchase = await admitPurchase(bought, { phone: bought.whatsapp });
+  inboundConversation += 1;
+  const boughtCase = await admitInbound(bought.whatsapp, inboundConversation);
+  const boughtLink = await reserveLink(PORTABLE, boughtCase.commercial_case_id,
+    bought.whatsapp, inboundConversation);
+  if (boughtPurchase.correlation.outcome !== 'resolved'
+      || boughtLink.outcome !== 'purchase_already_approved' || boughtLink.issuance !== null
+      || (await liveIntents(bought)) !== 0) {
+    throw new Error(`a buyer received a link: ${JSON.stringify({ purchase: boughtPurchase.correlation.outcome, link: boughtLink.outcome, live: await liveIntents(bought) })}`);
+  }
+
+  // e. Opt-out en la otra forma y en otra conversacion: pidio la baja desde
+  //    521 (queda unmatched, sin contacto), despues dejo el formulario y la
+  //    base lo conoce como 52 en otra conversacion. La compartida solo mira
+  //    esta conversacion y el id exacto.
+  const stopped = person('enlace-opt-out', 'MX');
+  const stoppedOptOut = await optOutFrom(stopped.whatsapp);
+  await submitForm(stopped);
+  inboundConversation += 1;
+  const stoppedCase = await admitInbound(stopped.plain, inboundConversation);
+  const stoppedLink = await reserveLink(PORTABLE, stoppedCase.commercial_case_id,
+    stopped.plain, inboundConversation);
+  if (stoppedOptOut.outcome !== 'recorded_unmatched'
+      || stoppedLink.outcome !== 'blocked_opt_out' || stoppedLink.issuance !== null) {
+    throw new Error(`an opt-out in the other form did not stop the link: ${JSON.stringify({ optOut: stoppedOptOut.outcome, admission: stoppedCase.outcome, link: stoppedLink.outcome })}`);
+  }
+
+  // f. Johanna: la compartida, con el mismo caso que a., sigue exacta: la
+  //    oferta por defecto, sin el formulario, y una segunda intencion viva.
+  const johanna = person('enlace-compartida', 'MX');
+  await submitForm(johanna);
+  inboundConversation += 1;
+  const johannaCase = await admitInbound(johanna.whatsapp, inboundConversation);
+  const johannaLink = await reserveLink(SHARED, johannaCase.commercial_case_id,
+    johanna.whatsapp, inboundConversation);
+  if (johannaLink.outcome !== 'reserved'
+      || johannaLink.issuance.source_kind !== 'inbound_request'
+      || johannaLink.issuance.offer_resolution !== 'default_no_intent'
+      || johannaLink.issuance.offer_code !== defaultOffer.offer_code
+      || johannaLink.issuance.purchase_intent_id === johanna.intent
+      || (await liveIntents(johanna)) !== 2) {
+    throw new Error(`the shared reserve changed: ${JSON.stringify({ outcome: johannaLink.outcome, ...johannaLink.issuance })}`);
+  }
+
+  // g. La portable es la compartida con sus reemplazos y nada mas.
+  const reserveDrift = one((await db.query(`
+    with definitions as (
+      select
+        pg_get_functiondef('public.reserve_chatwoot_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamptz)'::regprocedure) as shared,
+        pg_get_functiondef('public.reserve_portable_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamptz)'::regprocedure) as portable
+    )
+    select
+      replace(
+        replace(
+          replace(shared, 'public.reserve_chatwoot_checkout_issuance_v2(',
+            'public.reserve_portable_checkout_issuance_v2('),
+          'intent.normalized_phone = p_external_user_id',
+          'intent.normalized_phone = any(public._whatsapp_phone_variants(p_external_user_id))'
+        ),
+        $1, $2
+      ) = portable as derived,
+      (length(shared) - length(replace(shared, 'intent.normalized_phone = p_external_user_id', '')))
+        / length('intent.normalized_phone = p_external_user_id') as exact_intent_lookups,
+      position('_whatsapp_phone_' in shared) as shared_mentions_equivalence,
+      position('identity.external_user_id = p_external_user_id' in portable) > 0
+        and position('replay_identity.external_user_id = p_external_user_id' in portable) > 0
+        as identity_stays_exact
+    from definitions
+  `, [
+    'public.has_chatwoot_opt_out_stop(\n'
+      + '        p_chatwoot_account_id, p_chatwoot_inbox_id,\n'
+      + '        p_chatwoot_conversation_id, p_external_user_id\n'
+      + '    )',
+    'exists (\n'
+      + '        select 1\n'
+      + '        from unnest(public._whatsapp_phone_variants(p_external_user_id))\n'
+      + '            as opt_out_form(user_id)\n'
+      + '        where public.has_chatwoot_opt_out_stop(\n'
+      + '            p_chatwoot_account_id, p_chatwoot_inbox_id,\n'
+      + '            p_chatwoot_conversation_id, opt_out_form.user_id\n'
+      + '        )\n'
+      + '    )',
+  ])).rows, 'reserve drift');
+  if (reserveDrift.derived !== true || reserveDrift.exact_intent_lookups !== 3
+      || reserveDrift.shared_mentions_equivalence !== 0
+      || reserveDrift.identity_stays_exact !== true) {
+    throw new Error(`the portable reserve drifted from the shared one: ${JSON.stringify(reserveDrift)}`);
+  }
+
+  results.inbound_payment_link = {
+    mx_form_52_inbound_521: mxSummary,
+    ar_form_54_inbound_549: arSummary,
+    ar_after_purchase: `live intents ${arLiveAfterPurchase}, next message ${arAgain.outcome}`,
+    mx_wrote_first_then_form: firstSummary,
+    mx_bought_then_wrote: boughtLink.outcome,
+    opt_out_other_form_other_conversation: stoppedLink.outcome,
+    shared_reserve_same_case: `${johannaLink.issuance.source_kind}:${johannaLink.issuance.offer_resolution}:${johannaLink.issuance.offer_code}, live intents 2`,
+    portable_is_shared_plus_replacements: reserveDrift.derived,
+  };
+}
 
 console.log(JSON.stringify({ whatsapp_phone_equivalence: 'OK', ...results }));
 await db.close();

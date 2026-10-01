@@ -65,7 +65,22 @@
 --    chequeo del punto 5 no corre en manual_cohort: un opt-out guardado
 --    unmatched bajo 521... no frenaba el carrito de esa cohorte con la
 --    identidad en 52..., ni el pago fallido que usa el permiso que concedio
---    ese carrito. El envio salia al mismo wa_id que pidio la baja.
+--    ese carrito. El envio salia al mismo wa_id que pidio la baja;
+-- 8. suma reserve_portable_checkout_issuance_v2, la reserva del enlace de pago
+--    del entrante para el runtime portable. Se deriva de la definicion vigente
+--    de reserve_chatwoot_checkout_issuance_v2 (20260927000200) con
+--    pg_get_functiondef + replace, como el correlador del punto 3: cambian el
+--    nombre, las tres busquedas de la intencion del movil (la compra previa,
+--    la intencion del lead y la intencion de la emision) y el chequeo del
+--    opt-out, que pasan a mirar cada forma; cada texto con su cantidad exacta
+--    de ocurrencias o la migracion falla con 55000. La compartida usa el
+--    mismo p_external_user_id para exigir la identidad del caso y para buscar
+--    la intencion, asi que con la identidad en 521... y la intencion del
+--    formulario en 52... el enlace salia con la oferta por defecto, sin el sck
+--    del formulario, fabricaba una segunda intencion viva bajo 521... y no
+--    veia la compra de quien ya compro: le mandaba otro enlace. Quedan exactos
+--    el chequeo de la identidad del caso, el del replay y la intencion que se
+--    inserta cuando no hay ninguna viva en ninguna forma.
 --
 -- El helper del punto 5 lo usan los dos planificadores del piloto y la
 -- autorizacion del envio a traves de _lancemos_pilot_audience_intent, que no
@@ -75,17 +90,21 @@
 --
 -- Johanna no cambia. No se redefine nada de lo que ejecuta:
 -- correlate_hotmart_purchase_intent, _admit_hotmart_purchase_intent_identity,
--- sus admisiones, el opt-out de Chatwoot, mark_followup_request_started ni
--- reevaluate_followup_action. Lo reemplazado son las admit_portable_hotmart_*
--- (detras de los flags PORTABLE_HOTMART_*) y cuatro funciones del piloto: el
--- helper del consentimiento, el plan del pago fallido y los dos arranques
--- del punto 7. El bridge solo llama a esos arranques con
--- LANCEMOS_PILOT_BOUNDARY_ENABLED, que en Johanna esta en false: sin la
--- frontera arranca por mark_followup_request_started.
+-- sus admisiones, el opt-out de Chatwoot, mark_followup_request_started,
+-- reevaluate_followup_action ni reserve_chatwoot_checkout_issuance_v2. Lo
+-- reemplazado son las admit_portable_hotmart_* (detras de los flags
+-- PORTABLE_HOTMART_*) y cuatro funciones del piloto: el helper del
+-- consentimiento, el plan del pago fallido y los dos arranques del punto 7.
+-- El bridge solo llama a esos arranques con LANCEMOS_PILOT_BOUNDARY_ENABLED,
+-- que en Johanna esta en false: sin la frontera arranca por
+-- mark_followup_request_started. La reserva del punto 8 la llama el bridge
+-- solo con manifiesto; sin manifiesto sigue llamando a la compartida con el
+-- wa_id textual.
 --
 -- Locks: solo crea y reemplaza funciones. No toca tablas ni filas, y no
 -- siembra nada de ningun cliente. En ejecucion, los dos arranques del punto 7
--- toman hasta cuatro locks de opt-out (en orden) en vez de uno.
+-- toman hasta cuatro locks de opt-out (en orden) en vez de uno; la reserva
+-- del punto 8 toma los mismos que la compartida.
 
 begin;
 set local lock_timeout = '5s';
@@ -1692,11 +1711,81 @@ begin
 end;
 $function$;
 
+-- La reserva portable del enlace de pago (punto 8): la definicion viva de la
+-- compartida con otro nombre, la intencion del movil buscada por sus formas y
+-- el opt-out mirado en cada una. Como en el correlador, se exige la cantidad
+-- exacta de cada texto: si alguien cambio la reserva compartida, esto falla y
+-- hay que mirarlo, en vez de derivar una copia a ciegas. El chequeo de la
+-- identidad del caso, el del replay y la intencion que se inserta siguen con
+-- p_external_user_id exacto: el bridge le pasa el external_user_id con que la
+-- base conoce a quien escribe (resolve_inbound_external_user_id).
+do $reserve$
+declare
+    v_definition text;
+    v_shared_name constant text := 'reserve_chatwoot_checkout_issuance_v2';
+    v_shared_head constant text :=
+        'public.reserve_chatwoot_checkout_issuance_v2(';
+    v_portable_head constant text :=
+        'public.reserve_portable_checkout_issuance_v2(';
+    v_exact_intent constant text :=
+        'intent.normalized_phone = p_external_user_id';
+    v_equivalent_intent constant text :=
+        'intent.normalized_phone = any(public._whatsapp_phone_variants(p_external_user_id))';
+    v_exact_opt_out constant text :=
+        E'public.has_chatwoot_opt_out_stop(\n'
+        || E'        p_chatwoot_account_id, p_chatwoot_inbox_id,\n'
+        || E'        p_chatwoot_conversation_id, p_external_user_id\n'
+        || E'    )';
+    v_equivalent_opt_out constant text :=
+        E'exists (\n'
+        || E'        select 1\n'
+        || E'        from unnest(public._whatsapp_phone_variants(p_external_user_id))\n'
+        || E'            as opt_out_form(user_id)\n'
+        || E'        where public.has_chatwoot_opt_out_stop(\n'
+        || E'            p_chatwoot_account_id, p_chatwoot_inbox_id,\n'
+        || E'            p_chatwoot_conversation_id, opt_out_form.user_id\n'
+        || E'        )\n'
+        || E'    )';
+begin
+    select pg_get_functiondef(
+        'public.reserve_chatwoot_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamptz)'::regprocedure
+    ) into v_definition;
+    if v_definition is null
+       or length(v_definition) - length(replace(v_definition, v_shared_name, ''))
+          <> length(v_shared_name)
+       or length(v_definition) - length(replace(v_definition, v_shared_head, ''))
+          <> length(v_shared_head)
+       or length(v_definition) - length(replace(v_definition, v_exact_intent, ''))
+          <> 3 * length(v_exact_intent)
+       or length(v_definition) - length(replace(v_definition, v_exact_opt_out, ''))
+          <> length(v_exact_opt_out)
+       or position('_whatsapp_phone_' in v_definition) > 0 then
+        raise exception using errcode = '55000',
+            message = 'unexpected_checkout_issuance_reserve_definition';
+    end if;
+    execute replace(
+        replace(
+            replace(v_definition, v_shared_head, v_portable_head),
+            v_exact_intent,
+            v_equivalent_intent
+        ),
+        v_exact_opt_out,
+        v_equivalent_opt_out
+    );
+    if to_regprocedure(
+        'public.reserve_portable_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamptz)'
+    ) is null then
+        raise exception using errcode = '55000',
+            message = 'portable_checkout_issuance_reserve_not_created';
+    end if;
+end;
+$reserve$;
+
 -- create or replace conserva los grants de las funciones reemplazadas, pero
 -- Supabase le da execute por defecto a toda funcion nueva: los cuatro helpers
 -- nuevos y el helper del consentimiento se revocan a todos (los llaman las RPC
--- security definer), y las seis RPC se reafirman como entrypoints solo de
--- service_role.
+-- security definer), y las seis RPC reemplazadas y la reserva portable se
+-- reafirman como entrypoints solo de service_role.
 revoke all on function public._whatsapp_phone_canonical(text) from public;
 revoke all on function public._whatsapp_phone_variants(text) from public;
 revoke all on function public._correlate_portable_hotmart_purchase_intent(uuid) from public;
@@ -1708,6 +1797,7 @@ revoke all on function public.admit_portable_hotmart_payment_failure(text,text,i
 revoke all on function public.plan_portable_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,timestamptz,bigint,bigint,text,text,integer) from public;
 revoke all on function public.mark_lancemos_pilot_request_started(uuid,uuid,text,bigint,timestamptz) from public;
 revoke all on function public.mark_portable_payment_failure_request_started(uuid,uuid,text,bigint,timestamptz) from public;
+revoke all on function public.reserve_portable_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamptz) from public;
 do $roles$
 declare v_role text;
 begin
@@ -1723,6 +1813,7 @@ begin
   execute format('revoke all on function public.plan_portable_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,timestamptz,bigint,bigint,text,text,integer) from %I',v_role);
   execute format('revoke all on function public.mark_lancemos_pilot_request_started(uuid,uuid,text,bigint,timestamptz) from %I',v_role);
   execute format('revoke all on function public.mark_portable_payment_failure_request_started(uuid,uuid,text,bigint,timestamptz) from %I',v_role);
+  execute format('revoke all on function public.reserve_portable_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamptz) from %I',v_role);
  end loop;
  if exists(select 1 from pg_roles where rolname='service_role') then
   grant execute on function public.admit_portable_hotmart_cart_abandonment(text,text,integer,text,jsonb,text,text) to service_role;
@@ -1731,6 +1822,7 @@ begin
   grant execute on function public.plan_portable_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,timestamptz,bigint,bigint,text,text,integer) to service_role;
   grant execute on function public.mark_lancemos_pilot_request_started(uuid,uuid,text,bigint,timestamptz) to service_role;
   grant execute on function public.mark_portable_payment_failure_request_started(uuid,uuid,text,bigint,timestamptz) to service_role;
+  grant execute on function public.reserve_portable_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamptz) to service_role;
  end if;
 end;
 $roles$;
