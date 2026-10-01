@@ -1523,6 +1523,20 @@ begin
             message = 'precheckout_intent_action_required';
     end if;
 
+    -- La intencion antes que el contacto: es el orden de la admision del
+    -- formulario (que toma la intencion for update y despues el contacto) y
+    -- del arranque. Si la reevaluacion la tomara despues del contacto, un
+    -- reenvio del formulario de la misma persona y esta funcion se esperarian
+    -- en cruz (40P01). El lock espera a quien este cambiando la intencion (la
+    -- correlacion de una compra, un formulario posterior) y deja leer lo
+    -- confirmado mas abajo.
+    perform 1
+    from public.purchase_intents intent
+    join public.pilot_recovery_case_bindings binding
+      on binding.audience_purchase_intent_id = intent.id
+    where binding.recovery_case_id = v_action.recovery_case_id
+    for share of intent;
+
     -- Global order for this aggregate: contact -> case -> sequence -> action.
     perform 1
     from public.contacts c
@@ -1593,13 +1607,7 @@ begin
             v_reason := 'precheckout_authorization_lost';
             v_detail := 'pilot_attempt_mismatch';
         else
-            -- Espera a quien este cambiando la intencion (la correlacion de
-            -- una compra, un formulario posterior) y lee lo confirmado.
-            perform 1
-            from public.purchase_intents intent
-            where intent.id = v_pilot_binding.audience_purchase_intent_id
-            for share;
-
+            -- La intencion ya esta tomada for share desde el principio.
             v_reason := public._portable_precheckout_stop_reason(
                 v_pilot_binding.audience_purchase_intent_id,
                 v_case.contact_id

@@ -562,6 +562,20 @@ def test_reevaluation_delegates_to_the_shared_one_and_never_wins_the_case() -> N
         new.index("set status = 'cancelled', terminal_reason = v_reason,"),
     ]
     assert order == sorted(order)
+    # Los locks van intencion -> contacto, el orden de la admision del
+    # formulario: al reves, un reenvio de la misma persona y la reevaluacion se
+    # esperarian en cruz (40P01).
+    locks = [
+        new.index("for share of intent;"),
+        new.index("-- Global order for this aggregate: contact -> case -> sequence -> action."),
+        new.index("for update of c;"),
+    ]
+    assert locks == sorted(locks)
+    assert compact.count("for share") == 1
+    admission = _new(ADMIT)
+    assert admission.index("from public.admit_portable_observed_lead_precheckout(") < admission.index(
+        f"v_contact_id := public.{ENSURE}("
+    )
     # Cancela; nunca gana el caso ni le atribuye una compra (D2).
     assert "'won'" not in new and "purchase_event_id" not in new
     assert "set status = 'cancelled', closed_at = p_now, version = version + 1" in compact
