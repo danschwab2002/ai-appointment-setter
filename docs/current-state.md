@@ -1,8 +1,8 @@
 # Estado actual del sistema
 
 - **Tipo:** snapshot de estado operativo versionado. No es arquitectura ni contrato: describe lo observado en una fecha, con su grado de verificación.
-- **Fecha de corte:** 2026-09-30, **solo para dos filas**: el modelo del agente comercial (§6) y el incidente 15 (§9). El bloque anterior es del 2026-09-25 (cambio a GLM 5.2, SOUL desplegado, pin de la imagen de Hermes); antes, 2026-09-20 (activación de la respuesta inbound y su E2E) y 2026-09-19 (auditoría de ingreso). **Las filas que no llevan fecha del 2026-09-30 no se re-verificaron en esta pasada.**
-- **Commit de referencia:** `origin/main` = `3c94918` (merge del PR #208) al escribir este corte. El 2026-09-30 el contenedor del bridge declaraba `GIT_SHA` = `f7dd227` (merge del PR #204); no se comparó contra el artefacto.
+- **Fecha de corte:** 2026-10-01, **solo para ATT1**: el stack `setter-att1` (§2), sus tres filas de la matriz (§5), su estado por aliada (§7) y los claims y PR abiertos (§3, §4); y, para Johanna, **solo la fila del seguimiento con cupón** (§5). Antes, 2026-09-30, **solo para dos filas**: el modelo del agente comercial (§6) y el incidente 15 (§9). El bloque anterior es del 2026-09-25 (cambio a GLM 5.2, SOUL desplegado, pin de la imagen de Hermes); antes, 2026-09-20 (activación de la respuesta inbound y su E2E) y 2026-09-19 (auditoría de ingreso). **Las filas que no llevan fecha del 2026-10-01 o del 2026-09-30 no se re-verificaron en esas pasadas.**
+- **Commit de referencia:** `origin/main` = `74d1187` (merge del PR #210, tag `v1.2.0`) al escribir el corte del 2026-10-01; `3c94918` (merge del PR #208) en el del 2026-09-30. El 2026-09-30 el contenedor del bridge declaraba `GIT_SHA` = `f7dd227` (merge del PR #204); no se comparó contra el artefacto. El 2026-10-01 12:35 UTC seguía declarando `f7dd227`, iniciado el 2026-09-29 12:03 UTC.
 - ⚠ **Filas que quedaron atrás, sin re-verificar en esta pasada.** Describen el bridge del 2026-09-19/20:
   - §2: la correspondencia código ↔ Git y los flags;
   - §5: las filas del PR #156, del monitor de trabadas y del backlog;
@@ -48,6 +48,23 @@ Modelo de trabajo:
 - Tags mutables: `infra_appointment-bridge` usa `easypanel/infra/appointment-bridge:latest`. `infra_chatwoot` está fijado a `v4.13.0`. **Confirmado.**
 - **`infra_hermes` dejó de usar un tag móvil el 2026-09-25**, después de que un redespliegue trajera la 0.21.5 y dejara al agente comercial 21 minutos sin atender (§9, incidente 14). Está fijado a `nousresearch/hermes-agent:v2026.8.31` (0.21.0, upstream `29112bef`). **Confirmado 2026-09-25 16:12 UTC.** No volver a `:latest` sin migrar antes a gateway único.
 
+### Instancia de ATT1 (stack `setter-att1`)
+
+**Confirmado 2026-10-01 03:58 UTC** con `docker service ls`, `docker inspect` y `/ready` desde dentro del contenedor. Detalle y método en `operations/2026-10-01-att1-instancia-y-adaptador-ghl-e2e.md`.
+
+| Servicio | Imagen | Contenedor iniciado (UTC) | Health Docker |
+|---|---|---|---|
+| `setter-att1_att1-bridge` | `setter-bridge:v1.2.0` (`6054079a79b2`), compilada en el VPS desde el tag | 2026-10-01 03:41:49 | healthy |
+| `setter-att1_att1-db` | `supabase/postgres:17.6.1.167` | 2026-09-30 04:14:42 | healthy |
+| `setter-att1_att1-rest` | `supabase/postgrest:v14.15` | 2026-09-30 04:14:40 | sin healthcheck |
+| `setter-att1_att1-gateway` | `nginx:alpine` | 2026-09-30 04:14:51 | sin healthcheck |
+
+- El bridge declara `SETTER_VERSION=1.2.0` y `GIT_SHA=74d1187`. Se comparó el commit, no el artefacto: la imagen es local y su digest no es el de la release de GHCR.
+- Es la primera instancia que corre desde el manifiesto (`instancia.toml`), con base propia (baseline más la cadena hasta `20260930000300`) y sin datos de Johanna.
+- `/ready`: `instance_product_version: v1.2.0`, `commercial_ally_binding: active`, `automation_state: default_off`, `pilot_boundary: disabled`, `ghl_precheckout_adapter: enabled:2-forms`, conocimiento `v1` cargado.
+- Ruta pública propia con tres rutas exactas (adaptador de GHL, Chatwoot y Hotmart). **Ni el webhook de Chatwoot de la cuenta de ATT1 ni el de Hotmart apuntan todavía a este bridge.**
+- El stack viejo `att1-production_*` de la tabla de arriba sigue definido y sin tocar (`docker service ls` del 2026-10-01: bridge dark 1/1, postgres 1/1, product-hermes 1/1, agent-profile 0/1).
+
 ### Correspondencia código desplegado ↔ Git
 
 - **Confirmado 2026-09-19 contra el artefacto:** el bridge corre el árbol `src/` del commit `108d2ee8` (merge del PR #154). Se comparó el hash de objeto Git de los 44 archivos de `/app/src` del contenedor contra los últimos 40 commits de `main`: coinciden 44 de 44 con `108d2ee8` y 43 de 44 con `origin/main`. La variable `GIT_SHA` del servicio declara ese mismo commit, de modo que declaración y artefacto concuerdan. **La única diferencia con `origin/main` es `src/bridge/chatwoot.py`**, por el commit `2c80d82` del PR #156: esa es toda la superficie de riesgo de un release desde `main`. El método está en `operations/appointment-bridge-release-runbook-v1.md` §4.
@@ -86,6 +103,8 @@ El `automation_state=default_off` / `pilot_boundary=disabled` que `/ready` sigue
 
 Mergeados el 2026-09-18, en orden: #152, #151, #153, #154, #155, #156, #157, #159. Mergeado el 2026-09-19: #162 (`b04ad14`).
 
+**Confirmado 2026-10-01 (GitHub):** de la tabla de arriba siguen abiertos #125, #87, #60 y #27, más el #165 (propuesta de las guardas de metadata de migraciones). Los demás se mergearon o cerraron después del 2026-09-19 y la tabla no se rehízo. Mergeados el 2026-09-30 y el 2026-10-01: #208 (`3c94918`), #209 (`284fad0`, tag `v1.1.0`) y #210 (`74d1187`, tag `v1.2.0`).
+
 **Cola de integración propuesta** (decide Dan): (1) #158 · (2) #160 · (3) #163 · (4) #161 cuando se resuelva la frontera con daily-feedback · (5) #125 y #138 según sus dueños · (6) revisar si #87, #60 y #27 siguen teniendo sentido o se cierran.
 
 Los tres primeros son independientes entre sí y ninguno toca runtime salvo el #158, que agrega una línea. **Mergear no despliega**: se verificó que los merges del 18 y del 19 de septiembre no dispararon ninguna acción de EasyPanel. Cada merge libera además los paths reservados por su claim, que es lo que hoy bloquea trabajo nuevo: el #160 libera `src/bridge/app.py` y `src/bridge/config.py`, necesarios para la propuesta `design/hotmart-delivery-durability-v1.md`.
@@ -114,6 +133,8 @@ Los tres primeros son independientes entre sí y ninguno toca runtime salvo el #
 | `claude-suite-determinism-v1` | review | no | `feat/claude-suite-determinism-v1` | `claude-code-andy-20260919` | PR #163. |
 | `claude-production-ingress-audit-v1` | implementing | no | `docs/claude-production-ingress-audit-v1` | `claude-code-andy-20260919` | Esta actualización y la auditoría de ingreso. |
 
+**Confirmado 2026-10-01** leyendo los JSON del registro: los claims no terminales son `att1-product-hermes-runtime` y `codex-admin-operations-v1` (`implementing`, ajenos y sucios), `claude-johanna-conocimiento-desde-equipo-v1` (`implementing`), `claude-migration-metadata-guards-v1` (`review`, PR #165), `johanna-product-content-deployment-evidence-v1` (`review`, PR #125) y `claude-att1-estado-instancia-y-adaptador-v1` (esta actualización). La tabla de arriba es del 2026-09-19 y no se rehízo: `daily-feedback-operational-context-v2-r3` y `johanna-first-name-personalization-v1` ya no están en `implementing`, y los PR #158, #160, #138 y #163 que figuran en `review` ya no están abiertos.
+
 Reglas vigentes sobre estos claims:
 
 - Los cuatro worktrees sucios **se preservan tal cual**: no se limpian, stashean, commitean ni adoptan desde otra sesión sin transferencia formal de ownership decidida por Dan.
@@ -141,9 +162,13 @@ Reglas vigentes sobre estos claims:
 | Opt-out durable y pausa humana | sí | sí | sí | sí | **no**: activados, sin ejercer | Confirmado (flag) |
 | Respuesta al backlog de conversaciones sin contestar | no aplica | — | — | **no**: nada barre el backlog | — | **Confirmado**: el único disparador inbound es el webhook `message_created` y el monitor de estancadas está en `false` |
 | **Payment Link V2 Johanna** | sí | sí | sí | **sí, desde 2026-09-22 11:39Z** (`PAYMENT_LINK_ENABLED=true`) | **parcial**: 3 emisiones, **ninguna entregada con atribución**. La oferta resuelve por el intent del lead (migración `20260922000100`, aplicada 2026-09-22 13:41Z) y la atribución resolvió en **`full`** el 2026-09-23 02:39Z (migración `20260922000200`, aplicada 2026-09-22 22:55Z): emisión `01M362384RZJCBHRZ9RQM61NA4`, conv 110, `dropped_unsafe_fields = null`. **Las dos emisiones con oferta del lead quedaron en `reserved`** porque un humano estaba atendiendo y el bridge derivó | **Confirmado** (`docs/operations/2026-09-22-johanna-checkout-offer-by-lead-intent-release.md`, `docs/operations/2026-09-22-johanna-checkout-link-full-attribution-release.md`) |
+| **Seguimiento con cupón Johanna (PR #203)** | sí | sí | sí (bridge `f7dd227`) | **sí, desde 2026-09-28 23:57 UTC** (`CONVERSATION_FOLLOWUP_ENABLED=true`) | **sí, 2026-10-01 11:36:49 UTC**: conv 212, plantilla con botón al checkout y el cupón (aplica el 10 % en esa oferta), emisión `accepted_by_chatwoot`, mensaje `read`. **Barre solo conversaciones `open`**: desde la activación salió 1 vez y perdió 3 candidatas que el equipo había resuelto. La rama `feat/claude-followup-resolved-conversations-v1` suma las resueltas (sin desplegar). Sin medir: qué arma WhatsApp con el sufijo al tocar el botón | **Confirmado 2026-10-01** (`docs/operations/2026-10-01-seguimiento-con-cupon-primer-envio.md`) |
 | Daily feedback: contexto operacional V2 | en curso (worktree sucio r3) | no | no | no | no | Confirmado |
 | Personalización por primer nombre Johanna | en curso (worktree sucio) | no | no | no | no | Confirmado |
 | ATT1: runtime y Conversation Release | parcial (candidato inerte) | parcial | infra dark; `att1-agent-profile` sin réplica | **no** | no | Reportado + Confirmado (0/1) |
+| **ATT1: instancia desde el manifiesto (`setter-att1`)** | sí | sí (`v1.2.0`) | **sí, 2026-10-01** (bridge `74d1187`, base propia) | conocimiento cargado; **todos los `[flujos]` en `false`** | bridge → profile del agente `200`; ningún mensaje a un lead | **Confirmado 2026-10-01** (`operations/2026-10-01-att1-instancia-y-adaptador-ghl-e2e.md`) |
+| **Adaptador del formulario de GHL (PR #210)** | sí | sí (`v1.2.0`) | sí, solo en ATT1 | **sí, desde 2026-10-01 03:04 UTC**, dos formularios | **sí**: una admisión por formulario, con consentimiento y sin conflictos; sin tráfico real medido | **Confirmado 2026-10-01** (misma evidencia) |
+| Cadena portable de recuperación: pago fallido, carrito y audiencia (PR #208) | sí | sí (`v1.1.0`) | sí en ATT1 (migraciones `20260930000100` a `000300` y bridge) | **no**: flags apagados, scope del piloto publicado en `manual_cohort` con el control en `inactive` | no | **Confirmado 2026-10-01** (misma evidencia) |
 | Canal administrativo de Codex | en curso (worktree sucio) | no | daemon `codex-preflight.service` apagado y deshabilitado el 19/09 (archivos conservados) | discontinuado | — | Confirmado |
 
 ## 6. Diferencias entre Git y runtime
@@ -174,7 +199,11 @@ Reglas vigentes sobre estos claims:
 
 ### ATT1
 
-**Reportado 18/09 + Confirmado 19/09.** Infraestructura aislada en dark/default-off (`att1-bridge-dark` healthy, `att1-product-hermes` corriendo, `att1-agent-profile` sin réplica por recursos). Candidato de profile inerte versionado en `profiles/att1/`. Sin Conversation Release aprobada; faltan aprobaciones de Juan y materiales ratificados por Marcela. No reutilizar identificadores ni canal de Slack de Johanna. Sin outbound autorizado. Fuentes de intención: `docs/design/att1-conversation-release-v1.md` y `docs/design/att1-commercial-information-approval-v1.md`; el worktree sucio puede ir más adelante que esos documentos.
+**Confirmado 2026-10-01** (`operations/2026-10-01-att1-instancia-y-adaptador-ghl-e2e.md`). ATT1 tiene una instancia propia instalada desde el manifiesto: stack `setter-att1` con base, PostgREST y bridge `v1.2.0` (§2), profile `att1-agente-comercial` en el Hermes compartido y el conocimiento `v1` aprobado y cargado. El adaptador del formulario de GHL está prendido con dos formularios y cada envío deja una intención de compra con consentimiento de WhatsApp. **Ningún flujo que escriba a un lead está prendido** y el bridge no recibe todavía los webhooks de Chatwoot ni de Hotmart. La cadena de recuperación (pago fallido y carrito) está desplegada y apagada; el primer contacto tras el formulario no tiene código en `main`.
+
+Para prender cualquier envío falta, además del código y de los webhooks: la condición del contrato del adaptador (verificación fuera de banda del envío o aceptación escrita del riesgo), resolver que un mismo móvil escrito con y sin el prefijo de móvil no cruza entre fuentes, y coordinar con la recuperación que hoy corre en GHL.
+
+**Reportado 18/09 + Confirmado 19/09, sin re-verificar salvo los servicios (§2).** La infraestructura vieja sigue definida en dark/default-off (`att1-bridge-dark` healthy, `att1-product-hermes` corriendo, `att1-agent-profile` sin réplica por recursos). Candidato de profile inerte versionado en `profiles/att1/`. Sin Conversation Release aprobada por el circuito de §8 y §11: el conocimiento que carga la instancia nueva lo aprobó Dan el 2026-09-30, y las aprobaciones de Juan y la ratificación de materiales de Marcela siguen como estaban. No reutilizar identificadores ni canal de Slack de Johanna. Sin outbound autorizado. Fuentes de intención: `docs/design/att1-conversation-release-v1.md` y `docs/design/att1-commercial-information-approval-v1.md`; el worktree sucio puede ir más adelante que esos documentos.
 
 ## 8. Decisiones pendientes por persona
 

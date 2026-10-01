@@ -17,9 +17,11 @@ Cuatro piezas, separadas a proposito, con la misma forma que la reactivacion:
 * ``evaluate_followup_candidate`` es el criterio, puro y sin red: decide sobre
   el detalle de la conversacion y su historial si corresponde el seguimiento o
   por que no. Se testea contra payloads capturados de produccion.
-* ``ConversationFollowupSweeper`` es el worker recurrente: reserva en Supabase
-  (donde viven las barreras de compra, derivacion y opt-out), autoriza el link,
-  manda la plantilla y cierra las dos filas con lo que Chatwoot responda.
+* ``ConversationFollowupSweeper`` es el worker recurrente: barre las
+  conversaciones abiertas y las resueltas con actividad dentro de la ventana,
+  reserva en Supabase (donde viven las barreras de compra, derivacion y
+  opt-out), autoriza el link, manda la plantilla y cierra las dos filas con lo
+  que Chatwoot responda.
 
 No se pisa con la reactivacion: la reactivacion exige que el ultimo mensaje sea
 del lead y el seguimiento que sea nuestro. Ver
@@ -52,6 +54,17 @@ logger = logging.getLogger(__name__)
 DEFAULT_MIN_INBOUND_AGE_SECONDS = 86_400
 DEFAULT_MAX_INBOUND_AGE_SECONDS = 259_200
 DEFAULT_SCAN_INTERVAL_SECONDS = 300.0
+
+# Una conversacion resuelta sigue siendo del seguimiento. Medido el 2026-10-01:
+# las 149 resueltas del inbox 9 las resolvio a mano el equipo para ordenar su
+# bandeja, tambien las que atendio solo el agente (una, un minuto despues de que
+# el agente mandara el link). Resolver no dice nada del lead; la pausa, la
+# derivacion y el opt-out si, y siguen siendo barreras. ``pending`` (esperando a
+# un bot) y ``snoozed`` (pospuesta a proposito) quedan afuera.
+FOLLOWUP_CONVERSATION_STATUSES = ("open", "resolved")
+# Margen del corte del listado sobre la ventana: el barrido tarda, y la edad del
+# mensaje del lead se mide contra el reloj de antes de listar.
+LISTING_MARGIN_SECONDS = 3_600
 
 HOTMART_CHECKOUT_PREFIX = "https://pay.hotmart.com/"
 FOLLOWUP_BUTTON_URL = HOTMART_CHECKOUT_PREFIX + "{{1}}"
@@ -357,8 +370,8 @@ def evaluate_followup_candidate(
     ):
         raise ChatwootProtocolError("invalid_conversation_scope")
 
-    if details.get("status") != "open":
-        return _skip("conversation_not_open")
+    if details.get("status") not in FOLLOWUP_CONVERSATION_STATUSES:
+        return _skip("conversation_status_excluded")
     if details.get("muted") is True:
         return _skip("conversation_muted")
     if details.get("snoozed_until") not in (None, ""):
@@ -586,11 +599,18 @@ class ConversationFollowupSweeper:
             template_name=self._template_name,
             expected_language=self._expected_template_language,
         )
-        conversations = await self._chatwoot.list_open_conversations_with_messages(
+        now_epoch = int(self._clock())
+        # Abiertas y resueltas, solo las que tuvieron actividad dentro de la
+        # ventana: una conversacion con el ultimo mensaje del lead hace mas de
+        # 72 h no puede recibir el seguimiento y no se lee.
+        conversations = await self._chatwoot.list_recent_conversations_with_messages(
             expected_inbox_id=self._inbox_id,
+            statuses=FOLLOWUP_CONVERSATION_STATUSES,
+            active_since_epoch=(
+                now_epoch - self._max_inbound_age_seconds - LISTING_MARGIN_SECONDS
+            ),
             max_pages=self._max_pages,
         )
-        now_epoch = int(self._clock())
         sent = 0
         failed = False
         motivos: Counter[str] = Counter()

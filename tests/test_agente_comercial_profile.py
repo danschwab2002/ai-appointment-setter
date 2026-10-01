@@ -210,3 +210,46 @@ def test_profile_prohibe_avisar_que_falta_un_dato() -> None:
     prohibidos = compacto.split("Patrones prohibidos:", 1)[1]
     assert "`No tengo información sobre…`" in prohibidos
     assert "`No tengo detalles sobre…`" in prohibidos
+
+
+def test_profile_cabe_sin_truncarse_en_hermes() -> None:
+    # Hermes corta por el medio, sin avisarle a nadie, todo SOUL que pase de su
+    # tope de caracteres (`_truncate_content` en `agent/prompt_builder.py`,
+    # imagen v2026.8.31): deja el 70 % del principio y el 20 % del final. El
+    # piso de ese tope es 20.000 y solo sube si Hermes conoce la ventana del
+    # modelo. El medio del SOUL son el enlace de pago y la politica de
+    # derivacion: un SOUL mas largo perderia justo eso. Medido el 2026-10-01:
+    # 18.833 caracteres antes de sumar el conocimiento del equipo.
+    soul = SOUL.read_text(encoding="utf-8").strip()
+
+    assert len(soul) <= 20_000, len(soul)
+
+
+def test_profile_responde_modalidad_y_acceso_sin_derivar() -> None:
+    # Entre el 08/09 y el 30/09/2026 el equipo tomo a mano conversaciones del
+    # inbox 9 para contestar lo que el SOUL listaba como "no confirmado"
+    # (modalidad, duracion, acceso, soporte): el agente derivaba, como mandaba
+    # la politica. Los datos de aca son los que el equipo respondio, siempre
+    # igual, en esas conversaciones (63, 90, 114, 177, 203, 209, 211, 213).
+    soul = SOUL.read_text(encoding="utf-8")
+    compacto = " ".join(soul.split())
+
+    for dato in (
+        "Es 100% online",
+        "no hay material físico",
+        "No tiene duración fija ni días u horarios",
+        "El acceso es vitalicio",
+        "Los accesos llegan al correo usado en la compra",
+        "No incluye consultas ni asesorías individuales",
+        "No se garantiza un resultado",
+        "sin derivar el caso sólo por esa pregunta",
+    ):
+        assert dato in compacto, dato
+
+    # Lo que el equipo resolvio como excepcion o revisando una compra sigue
+    # sin ser conocimiento del agente.
+    sin_confirmar = compacto.split("No están confirmados:", 1)[1].split(".", 1)[0]
+    for pendiente in ("cuotas", "pago por transferencia", "procedimiento de reembolso"):
+        assert pendiente in sin_confirmar, pendiente
+    for confirmado in ("modalidad", "duración general", "fecha de acceso"):
+        assert confirmado not in sin_confirmar, confirmado
