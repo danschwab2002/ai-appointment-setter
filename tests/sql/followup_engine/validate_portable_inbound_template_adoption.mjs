@@ -30,7 +30,11 @@
 //      movil mexicano (521), sin identidad propia (23505), y la baja de esa
 //      otra forma, que la RPC real deja unmatched (el contacto conserva su
 //      permiso). Y una conversacion enabled sin ninguna plantilla (sin
-//      ancla): 22000;
+//      ancla): 22000. Cada eslabon de la prueba de la plantilla roto de a
+//      uno (el mensaje sin durable_followup, el intento no aceptado, el
+//      caso en otra conversacion o con otra identidad) y, despues de la
+//      adopcion, la conversacion ya admitida que vuelve a enabled: la
+//      portable da lo mismo que la v2 y no adopta otra vez;
 //   3. el paso pendiente de otro caso de la misma persona, por las RPC reales:
 //      con el carrito aceptado, el pago fallido planificado (pending) y
 //      despues en delivery_unknown frenan la adopcion; cuando la reconciliacion
@@ -926,10 +930,88 @@ await expectBrake('enabled_without_template', { chatwoot: 920010, user: '1202555
 // Un tercero que escribe en la conversacion de la plantilla.
 await expectBrake('third_party_identity', { chatwoot: CART_CHATWOOT, user: '120255509902' },
   null, OTHER_IDENTITY);
+// Cada eslabon de la prueba de la plantilla, roto de a uno sobre la plantilla
+// aceptada del carrito. Ninguna RPC deja hoy estos estados (solo la
+// aceptacion escribe un mensaje outbound de ai_agent con accepted_message_id,
+// y lo escribe con durable_followup sobre el caso de la conversacion): se
+// fijan con un update para probar el predicado exacto, no un camino real.
+const cartTemplate = await acceptedMessageOf(cartPlan.scheduled_action_id);
+// El mensaje no es una plantilla del dispatcher (sin strategy durable_followup).
+await expectBrake('template_without_durable_followup', cartReply, () => db.query(`
+  update public.messages set semantic_metadata = semantic_metadata - 'strategy' where id = $1
+`, [cartTemplate]));
+// El intento que apunta al mensaje no quedo aceptado por Chatwoot (el check
+// de la tabla exige el mensaje al aceptado, no al reves).
+await expectBrake('template_attempt_not_accepted', cartReply, () => db.query(`
+  update public.followup_delivery_attempts set outcome = 'rejected' where accepted_message_id = $1
+`, [cartTemplate]));
+// El caso de la plantilla esta atado a otra conversacion de la misma persona.
+await expectBrake('template_case_in_another_conversation', cartReply, async () => {
+  const other = one((await db.query(`
+    insert into public.conversations
+      (contact_id, channel_identity_id, status, automation_status, human_takeover, commercial_context)
+    select contact_id, channel_identity_id, 'active', 'draft_only', false,
+           jsonb_build_object('chatwoot_conversation_id', '920020')
+    from public.conversations where id = $1
+    returning id
+  `, [cartConversation.id])).rows, 'another conversation of the cart lead').id;
+  await db.query('update public.recovery_cases set conversation_id = $2 where id = $1',
+    [cartPlan.recovery_case_id, other]);
+});
+// El caso de la plantilla eligio otra identidad de la misma persona. Con el
+// caso atado a esta conversacion, la base no deja llegar a este estado: el
+// trigger de sombra copia el cambio a commercial_cases y
+// protect_commercial_case_shadow exige que la conversacion del caso sea de su
+// identidad elegida (23514 commercial_case_conversation_mismatch). El
+// predicado es defensa en profundidad; para probarlo se apaga la copia a la
+// sombra dentro de la transaccion que se deshace.
+await expectBrake('template_case_with_another_identity', cartReply, async () => {
+  await db.exec('alter table public.recovery_cases disable trigger recovery_cases_sync_commercial_case');
+  const other = one((await db.query(`
+    insert into public.channel_identities
+      (contact_id, channel, account_id, external_user_id, external_conversation_id,
+       identity_status, metadata)
+    values ($1,'whatsapp',$2,'120255509920','920021','active',jsonb_build_object('inbox_id',$3::text))
+    returning id
+  `, [cartLead.contact, `chatwoot:${ATT1.accountId}`, String(ATT1.inboxId)])).rows,
+  'another identity of the cart lead').id;
+  await db.query('update public.recovery_cases set selected_channel_identity_id = $2 where id = $1',
+    [cartPlan.recovery_case_id, other]);
+});
 await expectAdoption('cart', {
   chatwoot: CART_CHATWOOT, user: cartLead.phone,
   recoveryCaseId: cartPlan.recovery_case_id, actionId: cartPlan.scheduled_action_id,
 });
+// Una conversacion ya admitida que volvio a enabled (en Johanna hay
+// conversaciones enabled) con la plantilla todavia ahi: como ya tiene fila de
+// admision, la portable no la adopta otra vez y da exactamente lo que da la
+// v2, sin otro evento ni otra version.
+await db.exec('begin');
+let readmitted;
+try {
+  await db.query(`update public.conversations set automation_status = 'enabled' where id = $1`,
+    [cartConversation.id]);
+  const before = await conversationState(CART_CHATWOOT);
+  const v2 = await inSavepoint(V2_SQL, inboundArgs(CART_CHATWOOT, cartLead.phone));
+  const portable = await inSavepoint(PORTABLE_SQL, inboundArgs(CART_CHATWOOT, cartLead.phone));
+  const after = await conversationState(CART_CHATWOOT);
+  readmitted = {
+    before, after, v2: show(v2), portable: show(portable),
+    portable_status_after: portable.automation_status_after,
+    v2_status_after: v2.automation_status_after,
+    events: (await adoptionEvents(cartConversation.id)).length,
+  };
+} finally {
+  await db.exec('rollback');
+}
+brakes.already_admitted_back_to_enabled = readmitted.portable;
+if (readmitted.portable !== readmitted.v2
+    || readmitted.portable_status_after !== readmitted.v2_status_after
+    || readmitted.before.automation_status !== 'enabled'
+    || readmitted.after.version !== readmitted.before.version
+    || readmitted.events !== 1) {
+  throw new Error(`brake already_admitted_back_to_enabled: ${JSON.stringify(readmitted)}`);
+}
 
 // ---------------------------------------------------------------------------
 // 1c + 5. El pago fallido sin carrito previo. Primero la respuesta llega en
