@@ -1839,12 +1839,17 @@ const statusOf = async (scope) => one((await asService(() => db.query(`
   const cartIntent = await intentOf(cartFirst.intent);
   const cartSuperseded = await expectCancelled(cartLead, cartFirst, 'superseded_by_provider_event');
   await addHotmartPoints(cartLead, cart.eventId, cart.phone);
+  // El bridge planifica con la identidad que el contacto ya tiene para ese
+  // movil (resolution._stored_whatsapp_identity): la que creo el primer
+  // contacto con el telefono del formulario (54...), no el 549... de Hotmart.
+  // Con el crudo el contacto quedaba con dos identidades activas.
   const cartPlan = one((await db.query(`
     select * from public.plan_lancemos_pilot_cart_recovery($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
   `, [cart.eventId, cartLead.contact, String(ATT1.productId), ATT1.productName,
     cart.offer.offer_code, recoveryPolicy.policy_key, recoveryPolicy.version,
-    cart.abandonedAt.toISOString(), ATT1.accountId, ATT1.inboxId, cart.phone,
+    cart.abandonedAt.toISOString(), ATT1.accountId, ATT1.inboxId, cartLead.plain,
     HOTMART_SCOPE.key, HOTMART_SCOPE.version])).rows, 'cart plan');
+  const cartIdentities = await identitiesOf(cartLead.contact);
   const beforeOtherLanding = await footprint();
   const withOpenCase = await submit(cartLead, OPEN_SCOPE, { landing: 'MX' });
   const withOpenCaseResult = expectPlan('form with an open recovery case', withOpenCase,
@@ -1871,8 +1876,9 @@ const statusOf = async (scope) => one((await asService(() => db.query(`
     select * from public.plan_portable_payment_failure_recovery($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
   `, [failure.eventId, failureLead.contact, String(ATT1.productId), ATT1.productName,
     failureLead.offer.offer_code, recoveryPolicy.policy_key, recoveryPolicy.version,
-    failure.failedAt.toISOString(), ATT1.accountId, ATT1.inboxId, failure.phone,
+    failure.failedAt.toISOString(), ATT1.accountId, ATT1.inboxId, failureLead.plain,
     HOTMART_SCOPE.key, HOTMART_SCOPE.version])).rows, 'payment failure plan');
+  const failureIdentities = await identitiesOf(failureLead.contact);
   const failureGrants = await activeAllowed(failureLead.contact);
   const failureSent = await dispatchRecovery(failureLead, failurePlan, 'payment_failure');
   // Con el caso de Hotmart cerrado, la intencion sigue clasificada: otro
@@ -1886,6 +1892,9 @@ const statusOf = async (scope) => one((await asService(() => db.query(`
       || !cartPlan.created || !failurePlan.created
       || failureGrants.length !== 1
       || failureGrants[0].evidence.recovery_case_id !== failureFirst.caseId
+      || cart.phone === cartLead.plain || failure.phone === failureLead.plain
+      || !same(cartIdentities.map((row) => row.external_user_id), [cartLead.plain])
+      || !same(failureIdentities.map((row) => row.external_user_id), [failureLead.plain])
       || cartSent !== 'accepted_by_chatwoot' || failureSent !== 'accepted_by_chatwoot') {
     throw new Error(`superseded: ${JSON.stringify({ cart: cartIntent.current_classification, failure: failureIntent.current_classification, grants: failureGrants.length, cartSent, failureSent })}`);
   }

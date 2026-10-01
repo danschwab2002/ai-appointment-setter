@@ -21,7 +21,7 @@ Tres cosas para una instancia con manifiesto: el primer contacto tras el formula
   - `plan_portable_payment_failure_recovery` deja `phone_match` (`exact` o `whatsapp_equivalent`) en la evidencia del permiso.
   - Solo crea y reemplaza funciones; no toca tablas ni filas. Contratos: `docs/contracts/commercial-ally-runtime-v1.md` y `docs/contracts/hotmart-purchase-intent-correlation-v1.md` (§8).
 - **Equivalencia de teléfonos de WhatsApp, en el bridge**, solo con manifiesto (`src/bridge/phones.py`).
-  - La resolución del evento de Hotmart busca el contacto por las dos formas.
+  - La resolución del evento de Hotmart busca el contacto por las dos formas, y planifica con la identidad de WhatsApp que el contacto ya tiene para ese móvil (la del formulario o la del `wa_id`) en vez de sumarle otra con el teléfono de Hotmart.
   - Un mensaje entrante usa la identidad que la base ya tenía si hay exactamente una entre las formas del `wa_id`; con más de una usa la textual y deja un warning sin el número. El chequeo de opt-out del entrante mira todas las formas.
   - Las proyecciones a Chatwoot (macro de opt-out, asignación y nota de la derivación) prueban la forma guardada y después la otra.
   - En un primer contacto, el dispatcher resuelve el destinatario en Chatwoot antes del gate final, buscando las dos formas: el gate recibe el `wa_id` que Meta va a recibir. Si no es el teléfono consentido cierra con `chatwoot_recipient_phone_mismatch`, sin reintento.
@@ -76,7 +76,7 @@ Tres cosas para una instancia con manifiesto: el primer contacto tras el formula
 
 ### Lo que queda fuera
 
-- **La respuesta a una plantilla de salida.** Quien responde a una plantilla del dispatcher (carrito, pago fallido o primer contacto) no pasa la admisión entrante: la aceptación deja la conversación en `enabled` y la admisión solo toma una `draft_only` (`22000 inbound_canonical_conversation_conflict`). No hay respuesta del agente, ni enlace, ni derivación. Es heredado del runtime portable (1.0.0) y necesita una decisión de diseño; queda fijado en `validate_att1_portable_chain.mjs`. Esta versión solo asegura la baja (ver *Cambiado*). **Ningún flujo de salida se abre a personas reales antes de resolverlo.**
+- **La respuesta a una plantilla de salida.** Quien responde a una plantilla del dispatcher (carrito, pago fallido o primer contacto) no pasa la admisión entrante: la aceptación deja la conversación en `enabled` y la admisión solo toma una `draft_only` (`22000 inbound_canonical_conversation_conflict`). No hay respuesta del agente, ni enlace, ni derivación. Es heredado de las versiones anteriores del runtime portable y necesita una decisión de diseño; queda fijado en `validate_att1_portable_chain.mjs`. Esta versión solo asegura la baja (ver *Cambiado*). **Ningún flujo de salida se abre a personas reales antes de resolverlo.**
 - El tope de mensajes proactivos por persona entre flujos: quien recibió el primer contacto del formulario puede recibir después el del carrito. Se decide antes de abrir carrito y primer contacto juntos en `consented_intent`.
 - Quien escribió primero por WhatsApp y después abandona el carrito o falla el pago: ese evento de Hotmart no encuentra el contacto del entrante y falla cerrado (se pierde la recuperación, no se manda nada indebido).
 - La verificación fuera de banda de cada envío del adaptador de GHL contra la API de GHL.
