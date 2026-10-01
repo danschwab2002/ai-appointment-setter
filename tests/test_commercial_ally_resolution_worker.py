@@ -196,7 +196,10 @@ def test_portable_resolution_worker_reaches_real_parser_and_planner() -> None:
         async def find_contact_by_email(self, _value: str):
             return None
 
-        async def find_contact_by_phone(self, _value: str):
+        async def find_contact_by_phones(self, values: tuple[str, ...]):
+            # The portable resolution searches the equivalent forms of the
+            # phone, not only the exact one Hotmart sent.
+            calls["phone_lookup"] = values
             return None
 
         async def create_contact(self, **_kwargs: object) -> str:
@@ -268,6 +271,9 @@ def test_portable_resolution_worker_reaches_real_parser_and_planner() -> None:
     assert calls["chatwoot_inbox_id"] == 24
     assert calls["external_user_id"] == "5215550100999"
     assert calls["pilot_boundary"] is boundary
+    # Mexico: the form of the landing (52 + 10) and the one Hotmart and
+    # WhatsApp use (521 + 10). The identity above stays raw.
+    assert calls["phone_lookup"] == ("525550100999", "5215550100999")
 
 
 def test_portable_resolution_worker_plans_payment_failure() -> None:
@@ -278,7 +284,7 @@ def test_portable_resolution_worker_plans_payment_failure() -> None:
         async def find_contact_by_email(self, _value: str):
             return None
 
-        async def find_contact_by_phone(self, _value: str):
+        async def find_contact_by_phones(self, _values: tuple[str, ...]):
             return None
 
         async def create_contact(self, **_kwargs: object) -> str:

@@ -27,6 +27,8 @@ from bridge.supabase import (
     ChatwootAuthorityContext,
     DeliveryAttempt,
     FollowupExecutionContext,
+    HumanHandoffProjectionClaim,
+    HumanHandoffProjectionFinalization,
     OptOutProjectionClaim,
     PilotBoundaryConfig,
     ReevaluationDecision,
@@ -40,6 +42,7 @@ from bridge.commercial_ally import CommercialAllyConfig
 from bridge.worker import (
     DurableDispatcher,
     HotmartAbandonmentTimerWorker,
+    HumanHandoffProjectionWorker,
     OptOutProjectionWorker,
     ResolutionWorker,
     _await_despite_cancellation,
@@ -64,6 +67,39 @@ def test_payment_failure_final_effect_selects_declared_template() -> None:
         template,
         anchor_type="payment_failure",
     ) == "att1_compra_fallida_01"
+
+
+def test_precheckout_first_contact_selects_only_its_own_template() -> None:
+    # El primer contacto del formulario no tiene prestamo: sin su plantilla no
+    # hay plantilla, nunca la del carrito ni la del pago fallido.
+    without = WhatsAppTemplateConfig(
+        first_touch_name="att1_carrito_abandonado_01",
+        payment_failure_name="att1_compra_fallida_01",
+        followup_name=None,
+        language="es_MX",
+        category="MARKETING",
+    )
+    with_template = WhatsAppTemplateConfig(
+        first_touch_name="att1_carrito_abandonado_01",
+        payment_failure_name="att1_compra_fallida_01",
+        precheckout_name="att1_interes_precheckout_01",
+        followup_name=None,
+        language="es_MX",
+        category="MARKETING",
+    )
+    name = worker_module._first_touch_template_name  # type: ignore[attr-defined]
+
+    assert name(without, anchor_type="precheckout_intent") is None
+    assert name(with_template, anchor_type="precheckout_intent") == (
+        "att1_interes_precheckout_01"
+    )
+    for template in (without, with_template):
+        assert name(template, anchor_type="cart_abandonment") == (
+            "att1_carrito_abandonado_01"
+        )
+        assert name(template, anchor_type="payment_failure") == (
+            "att1_compra_fallida_01"
+        )
 
 
 PAYLOAD: dict[str, object] = {
@@ -377,12 +413,15 @@ def test_durable_dispatcher_reevaluates_every_claim_without_external_effects() -
     decisions = _run(dispatcher.dispatch_due(now="2026-08-03T13:00:00+00:00"))
 
     assert [decision.decision for decision in decisions] == ["execute"]
+    # El ancla viaja al cliente de Supabase, que con ella elige la RPC: un
+    # carrito sigue en reevaluate_followup_action (tests/test_supabase.py).
     assert calls == [{
         "action_id": "action-001",
         "worker_id": "dispatcher-test",
         "lease_generation": 3,
         "now": "2026-08-03T13:00:00+00:00",
         "chatwoot_evidence": None,
+        "anchor_type": "cart_abandonment",
     }]
     assert reservation_calls == [{
         "action_id": "action-001",
@@ -2165,6 +2204,261 @@ def test_opt_out_projection_worker_records_retryable_chatwoot_failure() -> None:
     )
 
 
+# ── Proyecciones a Chatwoot con la otra forma del mismo movil ───────
+#
+# Con manifiesto, la fila durable lleva la identidad como la guarda la base
+# (52 + 10 digitos cuando la creo el formulario) y la conversacion de Chatwoot
+# es del wa_id (521 + 10). Sin whatsapp_equivalence_enabled la proyeccion
+# validaba la forma guardada y nunca llegaba a Chatwoot.
+
+_PROJECTION_MX_FORM = "525512345678"
+_PROJECTION_MX_WHATSAPP = "5215512345678"
+
+
+class _EquivalenceChatwoot:
+    """Chatwoot cuya conversacion pertenece a un wa_id concreto."""
+
+    account_id = 1
+
+    def __init__(self, *, conversation_wa_id: str) -> None:
+        self.conversation_jid = f"{conversation_wa_id}@s.whatsapp.net"
+        self.validations: list[str] = []
+        self.macro_calls: list[dict[str, object]] = []
+        self.assignments: list[dict[str, object]] = []
+        self.notes: list[dict[str, object]] = []
+
+    async def validate_conversation_authority(
+        self,
+        *,
+        conversation_id: int,
+        expected_inbox_id: int,
+        expected_jid: str | None = None,
+    ) -> None:
+        assert expected_jid is not None
+        self.validations.append(expected_jid)
+        if expected_jid != self.conversation_jid:
+            raise ChatwootProtocolError("conversation_identity_mismatch")
+
+    async def apply_opt_out_macro(self, **kwargs: object) -> None:
+        await self.validate_conversation_authority(
+            conversation_id=kwargs["conversation_id"],  # type: ignore[arg-type]
+            expected_inbox_id=kwargs["expected_inbox_id"],  # type: ignore[arg-type]
+            expected_jid=kwargs["expected_jid"],  # type: ignore[arg-type]
+        )
+        self.macro_calls.append(kwargs)
+
+    async def ensure_handoff_assignment(self, **kwargs: object) -> str:
+        if kwargs["expected_jid"] != self.conversation_jid:
+            raise ChatwootProtocolError("invalid_conversation_authority")
+        self.assignments.append(kwargs)
+        return "team_assigned"
+
+    async def ensure_private_handoff_note(self, **kwargs: object) -> bool:
+        if kwargs["expected_jid"] != self.conversation_jid:
+            raise ChatwootProtocolError("invalid_conversation_authority")
+        self.notes.append(kwargs)
+        return True
+
+
+class _OptOutClaimSupabase(StubProjectionSupabase):
+    def __init__(self, *, external_user_id: str) -> None:
+        super().__init__()
+        self._external_user_id = external_user_id
+
+    async def claim_chatwoot_opt_out_projections(
+        self, **_: object
+    ) -> list[OptOutProjectionClaim]:
+        return [OptOutProjectionClaim(
+            opt_out_event_id="opt-out-event-1",
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=9,
+            chatwoot_conversation_id=42,
+            external_user_id=self._external_user_id,
+            lease_generation=3,
+        )]
+
+
+@pytest.mark.parametrize(
+    ("stored", "conversation"),
+    [
+        # La identidad guardada por el formulario y el wa_id de la conversacion.
+        (_PROJECTION_MX_FORM, _PROJECTION_MX_WHATSAPP),
+        # Y al reves: la de Hotmart en 549 + 10 y Chatwoot en 54 + 10.
+        ("5491112345678", "541112345678"),
+        # La misma forma de los dos lados: una sola validacion previa.
+        (_PROJECTION_MX_WHATSAPP, _PROJECTION_MX_WHATSAPP),
+    ],
+)
+def test_opt_out_projection_reaches_the_conversation_of_the_other_form(
+    stored: str, conversation: str
+) -> None:
+    supabase = _OptOutClaimSupabase(external_user_id=stored)
+    chatwoot = _EquivalenceChatwoot(conversation_wa_id=conversation)
+    worker = OptOutProjectionWorker(
+        supabase=supabase,  # type: ignore[arg-type]
+        chatwoot=chatwoot,  # type: ignore[arg-type]
+        worker_id="projection-worker-1",
+        whatsapp_equivalence_enabled=True,
+    )
+
+    assert asyncio.run(worker.run_once()) == 1
+
+    [macro] = chatwoot.macro_calls
+    assert macro["expected_jid"] == f"{conversation}@s.whatsapp.net"
+    assert supabase.finalizations[0]["applied"] is True
+    # La forma guardada se prueba primero.
+    assert chatwoot.validations[0] == f"{stored}@s.whatsapp.net"
+
+
+def test_opt_out_projection_of_a_third_number_still_fails_closed() -> None:
+    supabase = _OptOutClaimSupabase(external_user_id=_PROJECTION_MX_FORM)
+    chatwoot = _EquivalenceChatwoot(conversation_wa_id="5215599999999")
+    worker = OptOutProjectionWorker(
+        supabase=supabase,  # type: ignore[arg-type]
+        chatwoot=chatwoot,  # type: ignore[arg-type]
+        worker_id="projection-worker-1",
+        whatsapp_equivalence_enabled=True,
+    )
+
+    assert asyncio.run(worker.run_once()) == 1
+
+    assert chatwoot.macro_calls == []
+    assert supabase.finalizations[0]["applied"] is False
+    assert supabase.finalizations[0]["error_code"] == "chatwoot_ChatwootProtocolError"
+
+
+def test_opt_out_projection_without_the_flag_validates_the_stored_form_only() -> None:
+    # Sin manifiesto (Johanna): la forma guardada, exacta, y ninguna lectura de mas.
+    supabase = _OptOutClaimSupabase(external_user_id=_PROJECTION_MX_FORM)
+    chatwoot = _EquivalenceChatwoot(conversation_wa_id=_PROJECTION_MX_WHATSAPP)
+    worker = OptOutProjectionWorker(
+        supabase=supabase,  # type: ignore[arg-type]
+        chatwoot=chatwoot,  # type: ignore[arg-type]
+        worker_id="projection-worker-1",
+    )
+
+    assert asyncio.run(worker.run_once()) == 1
+
+    assert chatwoot.validations == [f"{_PROJECTION_MX_FORM}@s.whatsapp.net"]
+    assert chatwoot.macro_calls == []
+    assert supabase.finalizations[0]["applied"] is False
+
+
+def test_opt_out_projection_does_not_probe_a_number_with_a_single_form() -> None:
+    supabase = _OptOutClaimSupabase(external_user_id="12025550124")
+    chatwoot = _EquivalenceChatwoot(conversation_wa_id="12025550124")
+    worker = OptOutProjectionWorker(
+        supabase=supabase,  # type: ignore[arg-type]
+        chatwoot=chatwoot,  # type: ignore[arg-type]
+        worker_id="projection-worker-1",
+        whatsapp_equivalence_enabled=True,
+    )
+
+    assert asyncio.run(worker.run_once()) == 1
+
+    # Solo la validacion del propio macro.
+    assert chatwoot.validations == ["12025550124@s.whatsapp.net"]
+    assert len(chatwoot.macro_calls) == 1
+
+
+class _HandoffClaimSupabase:
+    def __init__(self, *, external_user_id: str) -> None:
+        self._external_user_id = external_user_id
+        self.finalizations: list[dict[str, object]] = []
+
+    async def claim_human_handoff_projection_effects(
+        self, **_: object
+    ) -> list[HumanHandoffProjectionClaim]:
+        return [
+            HumanHandoffProjectionClaim(
+                effect_id=f"effect-{effect_kind}",
+                handoff_request_id="handoff-1",
+                effect_kind=effect_kind,
+                current_effect_status="pending",
+                attempt_count=1,
+                lease_generation=2,
+                expected_team_id=17,
+                chatwoot_account_id=1,
+                chatwoot_inbox_id=7,
+                chatwoot_conversation_id=42,
+                external_user_id=self._external_user_id,
+                private_note_body="Revisá la conversación.",
+                idempotency_marker="[supportmagician-handoff:test:v1]",
+            )
+            for effect_kind in ("assignment", "private_note")
+        ]
+
+    async def finalize_human_handoff_projection_effect(
+        self, **kwargs: object
+    ) -> HumanHandoffProjectionFinalization:
+        self.finalizations.append(kwargs)
+        return HumanHandoffProjectionFinalization(
+            effect_status=str(kwargs["outcome"]),
+            handoff_status="projected",
+        )
+
+
+def test_handoff_projection_reaches_the_conversation_of_the_other_form() -> None:
+    # Quien dejo el formulario (52…) contesta la plantilla desde 521…: la
+    # derivacion tiene que llegar a esa conversacion.
+    supabase = _HandoffClaimSupabase(external_user_id=_PROJECTION_MX_FORM)
+    chatwoot = _EquivalenceChatwoot(conversation_wa_id=_PROJECTION_MX_WHATSAPP)
+    worker = HumanHandoffProjectionWorker(
+        supabase=supabase,  # type: ignore[arg-type]
+        chatwoot=chatwoot,  # type: ignore[arg-type]
+        worker_id="handoff-worker",
+        clock=lambda: "2026-10-01T00:00:00+00:00",
+        whatsapp_equivalence_enabled=True,
+    )
+
+    assert asyncio.run(worker.run_once()) == 2
+
+    expected = f"{_PROJECTION_MX_WHATSAPP}@s.whatsapp.net"
+    assert [call["expected_jid"] for call in chatwoot.assignments] == [expected]
+    assert [call["expected_jid"] for call in chatwoot.notes] == [expected]
+    assert [item["outcome"] for item in supabase.finalizations] == [
+        "applied",
+        "applied",
+    ]
+
+
+def test_handoff_projection_without_the_flag_keeps_the_stored_form() -> None:
+    supabase = _HandoffClaimSupabase(external_user_id=_PROJECTION_MX_FORM)
+    chatwoot = _EquivalenceChatwoot(conversation_wa_id=_PROJECTION_MX_WHATSAPP)
+    worker = HumanHandoffProjectionWorker(
+        supabase=supabase,  # type: ignore[arg-type]
+        chatwoot=chatwoot,  # type: ignore[arg-type]
+        worker_id="handoff-worker",
+        clock=lambda: "2026-10-01T00:00:00+00:00",
+    )
+
+    assert asyncio.run(worker.run_once()) == 2
+
+    assert chatwoot.validations == []
+    assert chatwoot.assignments == [] and chatwoot.notes == []
+    assert [item["outcome"] for item in supabase.finalizations] == [
+        "retryable_failed",
+        "retryable_failed",
+    ]
+
+
+def test_projection_workers_refuse_a_non_boolean_equivalence_flag() -> None:
+    with pytest.raises(ValueError, match="invalid whatsapp equivalence flag"):
+        OptOutProjectionWorker(
+            supabase=StubProjectionSupabase(),  # type: ignore[arg-type]
+            chatwoot=StubProjectionChatwoot(),  # type: ignore[arg-type]
+            worker_id="projection-worker-1",
+            whatsapp_equivalence_enabled="true",  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError, match="invalid whatsapp equivalence flag"):
+        HumanHandoffProjectionWorker(
+            supabase=StubProjectionSupabase(),  # type: ignore[arg-type]
+            chatwoot=StubProjectionChatwoot(),  # type: ignore[arg-type]
+            worker_id="handoff-worker",
+            whatsapp_equivalence_enabled=None,  # type: ignore[arg-type]
+        )
+
+
 class StubHotmartTimerSupabase:
     def __init__(self, *, fail_id: str | None = None) -> None:
         self.fail_id = fail_id
@@ -3001,3 +3295,184 @@ def test_supabase_parses_exact_precheckout_sender_projection() -> None:
     assert command.template_name == "johanna_interes_precheckout_01"
     assert command.send_authorized is True
     assert command.authorization_reason is None
+
+
+# ------------------------------------------- primer contacto tras el formulario
+
+
+def _precheckout_intent_dispatch(
+    tmp_path: Path, *, waba_template: WhatsAppTemplateConfig | None
+) -> tuple[list[str], list[dict[str, object]], list[dict[str, object]], list[ReevaluationDecision]]:
+    """Un dispatcher en modo Hermes con una accion de ancla precheckout_intent."""
+    events: list[str] = []
+    reevaluations: list[dict[str, object]] = []
+    finalizations: list[dict[str, object]] = []
+    action = ScheduledAction(
+        action_id="action-form", recovery_case_id="case-form",
+        followup_sequence_id="sequence-form", action_type="first_contact_review",
+        status="pending", due_at="2026-10-01T13:00:00+00:00",
+        expires_at="2026-10-02T12:00:00+00:00", expected_case_version=1,
+        policy_key="att1-primer-contacto-formulario", policy_version=1,
+        step_key="first_contact", anchor_type="precheckout_intent",
+        anchor_subject_internal_id="event-form",
+        anchor_observed_at="2026-10-01T12:00:00+00:00",
+        lease_owner="dispatcher-test", lease_generation=1,
+        lease_expires_at="2026-10-01T13:05:00+00:00",
+        idempotency_key="precheckout_first_contact:case-form",
+    )
+    attempt = DeliveryAttempt(
+        attempt_id="attempt-form", action_id=action.action_id,
+        idempotency_key=action.idempotency_key, attempt_number=1,
+        channel="whatsapp", mode="approved_template", phase="reserved",
+        lease_generation=1, expected_case_version=1,
+        expected_sequence_revision=1,
+    )
+
+    class SupabaseStub:
+        async def claim_due_followup_actions(self, **_: object) -> list[ScheduledAction]:
+            return [action]
+
+        async def get_followup_chatwoot_context(self, **_: object) -> ChatwootAuthorityContext:
+            return ChatwootAuthorityContext(
+                action_id=action.action_id, action_type=action.action_type,
+                chatwoot_account_id=None, external_conversation_id=None,
+                expected_inbox_id=None, anchor_external_message_id=None,
+            )
+
+        async def reevaluate_followup_action(self, **kwargs: object) -> ReevaluationDecision:
+            reevaluations.append(kwargs)
+            events.append("reevaluate")
+            return ReevaluationDecision(
+                action_id=action.action_id, decision="execute",
+                reason_code="eligible_for_execution", case_version=1,
+                sequence_revision=1,
+            )
+
+        async def reserve_followup_delivery_attempt(self, **_: object) -> DeliveryAttempt:
+            events.append("reserve")
+            return attempt
+
+        async def get_followup_execution_context(self, **_: object) -> FollowupExecutionContext:
+            events.append("context")
+            return FollowupExecutionContext(
+                action_id=action.action_id, action_type=action.action_type,
+                step_key=action.step_key, recovery_case_id=action.recovery_case_id,
+                contact_id="contact-form", source_event_id="event-form",
+                buyer_name="Ana", buyer_email="ana@example.test",
+                buyer_phone="15555550100", product_name="Curso Uno",
+                offer_code="OFERTA1", current_goal=None, lead_stage="new",
+            )
+
+        async def mark_followup_request_started(self, **kwargs: object) -> DeliveryAttempt:
+            events.append(f"request_started:{kwargs['anchor_type']}")
+            return replace(attempt, phase="request_started")
+
+        async def finalize_followup_delivery_attempt(self, **kwargs: object) -> object:
+            finalizations.append(kwargs)
+            return SimpleNamespace(
+                status=(
+                    "retryable_failed"
+                    if kwargs["next_attempt_at"] is not None
+                    else "permanent_failed"
+                )
+            )
+
+        async def record_and_finalize_followup_acceptance(self, **_: object) -> object:
+            events.append("accepted")
+            return SimpleNamespace(status="accepted_by_chatwoot")
+
+    class AgentStub:
+        async def request_followup_message(self, **_: object) -> FollowupMessageProposal:
+            events.append("hermes")
+            return FollowupMessageProposal(
+                strategy="primer contacto", message="Hola Ana, vi tu formulario."
+            )
+
+    class SenderStub:
+        async def send_first_touch(self, **kwargs: object) -> FirstTouchResult:
+            events.append(f"sender:{kwargs['trigger_kind']}")
+            return FirstTouchResult(
+                status="sent", reason="sent", conversation_id=7001, message_id=8001
+            )
+
+    dispatcher = DurableDispatcher(
+        supabase=SupabaseStub(),  # type: ignore[arg-type]
+        worker_id="dispatcher-test",
+        recovery_agent=AgentStub(),  # type: ignore[arg-type]
+        sender=SenderStub(),  # type: ignore[arg-type]
+        allowed_jid="15555550100@s.whatsapp.net",
+        clock=lambda: "2026-10-01T13:01:00+00:00",
+        pilot_boundary=PilotBoundaryConfig(
+            scope_key="lancemos-cart-recovery",
+            scope_version=1,
+            tenant_key="lancemos",
+            channel_provider="waba",
+            channel_account_ref="opaque-account-ref",
+        ),
+        final_meta_effect_gate=FinalMetaEffectGate(
+            enabled=True, evidence_dir=tmp_path / "meta-effects"
+        ),
+        waba_template=waba_template,
+    )
+    decisions = _run(dispatcher.dispatch_due(now="2026-10-01T13:00:00+00:00"))
+    return events, reevaluations, finalizations, decisions
+
+
+_FORM_TEMPLATES = WhatsAppTemplateConfig(
+    first_touch_name="att1_carrito_abandonado_01",
+    payment_failure_name="att1_compra_fallida_01",
+    followup_name=None,
+    language="es_MX",
+    category="MARKETING",
+    first_touch_parameter="buyer_name_and_product",
+)
+
+
+@pytest.mark.parametrize(
+    "waba_template",
+    [
+        pytest.param(_FORM_TEMPLATES, id="templates without the precheckout one"),
+        pytest.param(None, id="no templates at all"),
+    ],
+)
+def test_precheckout_intent_without_its_template_closes_before_any_effect(
+    tmp_path: Path, waba_template: WhatsAppTemplateConfig | None
+) -> None:
+    # Falla cerrado: ni Hermes, ni el gate final, ni el arranque, ni el sender.
+    # Nunca cae en la plantilla del carrito. No cambia reintentando, asi que
+    # cierra la accion en el primer intento.
+    events, reevaluations, finalizations, decisions = _precheckout_intent_dispatch(
+        tmp_path, waba_template=waba_template
+    )
+
+    assert events == ["reevaluate", "reserve"]
+    assert [call["anchor_type"] for call in reevaluations] == ["precheckout_intent"]
+    [finalization] = finalizations
+    assert finalization["outcome"] == "failed_before_request"
+    assert finalization["reason_code"] == "first_touch_template_not_configured"
+    assert finalization["next_attempt_at"] is None
+    assert [decision.decision for decision in decisions] == ["execute"]
+    assert not (tmp_path / "meta-effects").exists()
+
+
+def test_precheckout_intent_with_its_template_passes_the_anchor_to_every_step(
+    tmp_path: Path,
+) -> None:
+    events, reevaluations, finalizations, _ = _precheckout_intent_dispatch(
+        tmp_path,
+        waba_template=replace(
+            _FORM_TEMPLATES, precheckout_name="att1_interes_precheckout_01"
+        ),
+    )
+
+    # Las dos reevaluaciones, el arranque y el sender reciben el ancla: con
+    # ella el cliente de Supabase elige las RPC del primer contacto.
+    assert events == [
+        "reevaluate", "reserve", "context", "hermes", "reevaluate",
+        "request_started:precheckout_intent", "sender:precheckout_intent",
+        "accepted",
+    ]
+    assert [call["anchor_type"] for call in reevaluations] == [
+        "precheckout_intent", "precheckout_intent",
+    ]
+    assert finalizations == []

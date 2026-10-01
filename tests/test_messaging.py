@@ -12,7 +12,15 @@ import httpx
 import pytest
 
 from bridge.chatwoot import ChatwootClient, ChatwootProtocolError
-from bridge.messaging import ChatwootMessageSender, WhatsAppTemplateConfig, _to_e164
+from bridge.messaging import (
+    FIRST_TOUCH_RECIPIENT_MISMATCH,
+    FIRST_TOUCH_TEMPLATE_NOT_CONFIGURED,
+    ChatwootMessageSender,
+    FirstTouchRecipient,
+    WhatsAppTemplateConfig,
+    _to_e164,
+)
+from bridge.phones import whatsapp_delivery_phone
 
 
 def test_payment_failure_first_touch_uses_dedicated_approved_template() -> None:
@@ -1605,3 +1613,648 @@ def test_chatwoot_sender_blocks_a_missing_declared_variable(
     assert result.status == "blocked"
     assert result.reason == "template_parameters_missing"
     assert transport.requests == []
+
+
+# ── Equivalencia de telefonos de WhatsApp (solo el runtime portable) ─
+#
+# El mismo movil puede estar en Chatwoot con cualquiera de sus dos formas: 52 +
+# 10 digitos (lo creo un envio anterior) o 521 + 10 (lo creo la persona al
+# escribir, que es la forma del wa_id). En Argentina, 54 y 549. Medido el
+# 2026-10-01 sobre el Chatwoot de produccion (decisiones D13 y D14).
+#
+# No hay captura de /contacts/search, /contacts, /conversations ni /messages:
+# sigue el precedente inline de este archivo (deuda de A0). Lo que si esta
+# medido es que en un inbox de WhatsApp Cloud el source_id de un contacto es
+# su wa_id, los digitos de su telefono (170 de 170 contactos de los inboxes 9
+# y 11), y asi lo emula _WhatsAppCloudInbox. Los telefonos son de prueba.
+
+MX_FORM = "525512345678"
+MX_WHATSAPP = "5215512345678"
+AR_FORM = "541112345678"
+AR_WHATSAPP = "5491112345678"
+
+
+class _WhatsAppCloudInbox:
+    """Chatwoot de un inbox de WhatsApp Cloud, con memoria de sus contactos."""
+
+    def __init__(
+        self,
+        contacts: dict[str, int] | None = None,
+        *,
+        created_source_id: str | None = None,
+        blocked: set[int] | None = None,
+    ) -> None:
+        # telefono E.164 -> id del contacto
+        self.contacts = dict(contacts or {})
+        self.created_source_id = created_source_id
+        self.blocked = blocked or set()
+        self.source_ids: dict[int, str] = {
+            contact_id: phone.lstrip("+") for phone, contact_id in self.contacts.items()
+        }
+        self.requests: list[tuple[str, str, dict[str, object] | None]] = []
+        self.searches: list[str] = []
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content) if request.content else None
+        path = request.url.path
+        self.requests.append((request.method, path, body))
+        prefix = "/api/v1/accounts/1"
+        if request.method == "GET" and path == f"{prefix}/contacts/search":
+            query = request.url.params["q"]
+            self.searches.append(query)
+            contact_id = self.contacts.get(query)
+            if contact_id is None:
+                return httpx.Response(200, json={"payload": []})
+            return httpx.Response(200, json={"payload": [{
+                "id": contact_id,
+                "phone_number": query,
+                "blocked": contact_id in self.blocked,
+                "contact_inboxes": [{
+                    "source_id": self.source_ids[contact_id],
+                    "inbox": {"id": 1},
+                }],
+            }]})
+        if request.method == "POST" and path == f"{prefix}/contacts":
+            assert body is not None
+            phone = str(body["phone_number"])
+            contact_id = 500 + len(self.contacts)
+            self.contacts[phone] = contact_id
+            self.source_ids[contact_id] = self.created_source_id or phone.lstrip("+")
+            return httpx.Response(200, json={"payload": {"id": contact_id}})
+        if request.method == "POST" and path == f"{prefix}/conversations":
+            return httpx.Response(200, json={"id": 200})
+        if request.method == "POST" and path == f"{prefix}/conversations/200/messages":
+            assert body is not None
+            return httpx.Response(200, json={
+                "id": 888,
+                "conversation_id": 200,
+                "message_type": 1,
+                "private": False,
+                "content": body["content"],
+                "content_attributes": body["content_attributes"],
+            })
+        return httpx.Response(404, json={"error": "not_emulated"})
+
+    def posts(self, suffix: str) -> list[dict[str, object]]:
+        return [
+            body
+            for method, path, body in self.requests
+            if method == "POST" and path.endswith(suffix) and body is not None
+        ]
+
+    def sender(self, *, equivalence: bool = True) -> ChatwootMessageSender:
+        return ChatwootMessageSender(
+            chatwoot=ChatwootClient(
+                base_url="https://chatwoot.test",
+                account_id=1,
+                access_token="test-token",
+                agent_bot_access_token="bot-token",
+                agent_bot_id=99,
+                transport=httpx.MockTransport(self.handler),
+            ),
+            inbox_id=1,
+            allowed_jid=None,
+            dynamic_recipient_enabled=True,
+            whatsapp_equivalence_enabled=equivalence,
+        )
+
+
+def _first_touch(sender: ChatwootMessageSender, phone: str, **kwargs: object):
+    return _run(sender.send_first_touch(
+        phone=phone,
+        buyer_name="Lead de prueba",
+        buyer_email=None,
+        content="Texto de la plantilla aprobada",
+        delivery_id="evt-equivalence",
+        **kwargs,  # type: ignore[arg-type]
+    ))
+
+
+def test_equivalence_reuses_the_contact_that_exists_under_the_other_form() -> None:
+    # La base tiene 52 + 10 (el formulario) y la persona ya escribio: su
+    # contacto de Chatwoot es 521 + 10. Antes se creaba un segundo contacto
+    # 52… y la respuesta caia en otra conversacion.
+    inbox = _WhatsAppCloudInbox({f"+{MX_WHATSAPP}": 41})
+
+    result = _first_touch(inbox.sender(), MX_FORM)
+
+    assert result.status == "sent"
+    assert inbox.searches == [f"+{MX_FORM}", f"+{MX_WHATSAPP}"]
+    assert inbox.posts("/contacts") == []
+    assert inbox.posts("/conversations") == [
+        {"inbox_id": 1, "contact_id": 41, "source_id": MX_WHATSAPP}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("phone", "created_phone"),
+    [
+        # Mexico: el contacto nace con el 1, que es donde cae la respuesta.
+        (MX_FORM, f"+{MX_WHATSAPP}"),
+        (MX_WHATSAPP, f"+{MX_WHATSAPP}"),
+        # Argentina: sin el 9, la forma que Chatwoot normaliza.
+        (AR_FORM, f"+{AR_FORM}"),
+        (AR_WHATSAPP, f"+{AR_FORM}"),
+        # Cualquier otro pais: tal cual.
+        ("573001234567", "+573001234567"),
+    ],
+)
+def test_equivalence_creates_the_contact_in_the_delivery_form(
+    phone: str, created_phone: str
+) -> None:
+    inbox = _WhatsAppCloudInbox()
+
+    result = _first_touch(inbox.sender(), phone)
+
+    assert result.status == "sent"
+    [contact] = inbox.posts("/contacts")
+    assert contact["phone_number"] == created_phone
+    [conversation] = inbox.posts("/conversations")
+    assert conversation["source_id"] == created_phone.lstrip("+")
+
+
+@pytest.mark.parametrize(
+    ("form", "whatsapp", "region", "expected_contact", "expected_form"),
+    [
+        # Mexico: Chatwoot no normaliza, la respuesta cae en el contacto 521.
+        (MX_FORM, MX_WHATSAPP, "MX", 41, "whatsapp"),
+        # Argentina: Chatwoot busca primero el contacto 54 para un entrante
+        # 549, asi que la respuesta cae en el 54. Elegir el 549 mandaba la
+        # plantilla por una conversacion y la respuesta caia en otra.
+        (AR_FORM, AR_WHATSAPP, "AR", 40, "form"),
+    ],
+)
+@pytest.mark.parametrize("asked", ["form", "whatsapp"])
+def test_with_both_contacts_the_one_where_the_reply_lands_is_used(
+    caplog: pytest.LogCaptureFixture,
+    form: str,
+    whatsapp: str,
+    region: str,
+    expected_contact: int,
+    expected_form: str,
+    asked: str,
+) -> None:
+    # La misma persona dos veces en Chatwoot (medido el 2026-10-01: 14 pares
+    # en el inbox de Johanna). Se usa el contacto de la forma de entrega
+    # (whatsapp_delivery_phone), que es donde Chatwoot resuelve la respuesta,
+    # venga el telefono consentido en la forma que venga.
+    inbox = _WhatsAppCloudInbox({f"+{form}": 40, f"+{whatsapp}": 41})
+    expected = form if expected_form == "form" else whatsapp
+    assert whatsapp_delivery_phone(form) == expected
+
+    with caplog.at_level("WARNING"):
+        recipient = _run(
+            inbox.sender().resolve_first_touch_recipient(
+                phone=form if asked == "form" else whatsapp
+            )
+        )
+
+    assert recipient == FirstTouchRecipient(
+        wa_id=expected, contact_id=expected_contact, source_id=expected
+    )
+    assert "first_touch_recipient_duplicated_in_chatwoot" in caplog.text
+    assert f"region={region}" in caplog.text
+    assert "contact_ids=40,41" in caplog.text
+    # El aviso lleva ids de Chatwoot y region, nunca el numero.
+    assert form not in caplog.text and whatsapp not in caplog.text
+    assert form[2:] not in caplog.text
+
+
+def test_a_resolved_recipient_is_not_searched_again() -> None:
+    inbox = _WhatsAppCloudInbox({f"+{MX_WHATSAPP}": 41})
+    sender = inbox.sender()
+    recipient = _run(sender.resolve_first_touch_recipient(phone=MX_FORM))
+    assert recipient == FirstTouchRecipient(
+        wa_id=MX_WHATSAPP, contact_id=41, source_id=MX_WHATSAPP
+    )
+    inbox.searches.clear()
+
+    result = _first_touch(sender, MX_FORM, recipient=recipient)
+
+    assert result.status == "sent"
+    assert inbox.searches == []
+    assert inbox.posts("/conversations") == [
+        {"inbox_id": 1, "contact_id": 41, "source_id": MX_WHATSAPP}
+    ]
+
+
+def test_a_recipient_resolved_without_a_contact_is_created_in_its_form() -> None:
+    inbox = _WhatsAppCloudInbox()
+    sender = inbox.sender()
+    recipient = _run(sender.resolve_first_touch_recipient(phone=MX_FORM))
+    assert recipient == FirstTouchRecipient(wa_id=MX_WHATSAPP)
+    inbox.searches.clear()
+
+    result = _first_touch(sender, MX_FORM, recipient=recipient)
+
+    assert result.status == "sent"
+    # Solo la lectura que confirma el contacto recien creado.
+    assert inbox.searches == [f"+{MX_WHATSAPP}"]
+    assert [c["phone_number"] for c in inbox.posts("/contacts")] == [f"+{MX_WHATSAPP}"]
+
+
+def test_resolving_the_recipient_only_reads() -> None:
+    inbox = _WhatsAppCloudInbox()
+
+    _run(inbox.sender().resolve_first_touch_recipient(phone=MX_FORM))
+
+    assert {method for method, _, _ in inbox.requests} == {"GET"}
+
+
+def test_a_recipient_of_another_phone_is_blocked_before_any_request() -> None:
+    inbox = _WhatsAppCloudInbox()
+    other = FirstTouchRecipient(wa_id="5215512345679", contact_id=77, source_id="5215512345679")
+
+    result = _first_touch(inbox.sender(), MX_FORM, recipient=other)
+
+    assert result.status == "blocked"
+    assert result.reason == FIRST_TOUCH_RECIPIENT_MISMATCH
+    assert inbox.requests == []
+
+
+def test_an_existing_contact_with_a_foreign_source_is_blocked() -> None:
+    # El contacto se encuentra por su telefono, pero Chatwoot entregaria a su
+    # source_id: si no es el mismo movil, no sale nada.
+    inbox = _WhatsAppCloudInbox({f"+{MX_WHATSAPP}": 41})
+    inbox.source_ids[41] = "5215599999999"
+
+    result = _first_touch(inbox.sender(), MX_FORM)
+
+    assert result.status == "blocked"
+    assert result.reason == FIRST_TOUCH_RECIPIENT_MISMATCH
+    assert inbox.posts("/conversations") == []
+    assert inbox.posts("/messages") == []
+
+
+def test_a_new_contact_that_chatwoot_binds_to_another_source_is_blocked() -> None:
+    inbox = _WhatsAppCloudInbox(created_source_id="5215599999999")
+
+    result = _first_touch(inbox.sender(), MX_FORM)
+
+    assert result.status == "blocked"
+    assert result.reason == "contact_inbox_source_mismatch"
+    assert inbox.posts("/conversations") == []
+    assert inbox.posts("/messages") == []
+
+
+def test_a_blocked_contact_under_the_other_form_stops_the_send() -> None:
+    inbox = _WhatsAppCloudInbox({f"+{MX_WHATSAPP}": 41}, blocked={41})
+
+    result = _first_touch(inbox.sender(), MX_FORM)
+
+    assert result.status == "failed"
+    assert result.reason == "contact_blocked"
+    assert inbox.posts("/contacts") == []
+
+
+def test_without_the_equivalence_the_search_stays_exact() -> None:
+    # Un sender sin el flag (todo runtime sin manifiesto) busca y crea con el
+    # telefono exacto, como siempre, aunque exista el contacto de la otra forma.
+    inbox = _WhatsAppCloudInbox({f"+{MX_WHATSAPP}": 41})
+    sender = inbox.sender(equivalence=False)
+
+    result = _first_touch(sender, MX_FORM)
+
+    assert result.status == "sent"
+    assert set(inbox.searches) == {f"+{MX_FORM}"}
+    assert [c["phone_number"] for c in inbox.posts("/contacts")] == [f"+{MX_FORM}"]
+    assert sender.whatsapp_equivalence_enabled is False
+
+
+def test_without_the_equivalence_a_resolved_recipient_is_refused() -> None:
+    inbox = _WhatsAppCloudInbox()
+    sender = inbox.sender(equivalence=False)
+
+    with pytest.raises(ValueError, match="whatsapp_equivalence_disabled"):
+        _run(sender.resolve_first_touch_recipient(phone=MX_FORM))
+    result = _first_touch(
+        sender, MX_FORM, recipient=FirstTouchRecipient(wa_id=MX_WHATSAPP)
+    )
+
+    assert result.status == "blocked"
+    assert result.reason == "recipient_not_supported"
+    assert inbox.requests == []
+
+
+def test_the_equivalence_needs_the_dynamic_recipient() -> None:
+    with pytest.raises(ValueError, match="requires the dynamic recipient"):
+        ChatwootMessageSender(
+            chatwoot=_chatwoot(MockTransport()),
+            inbox_id=1,
+            allowed_jid="5215512345678@s.whatsapp.net",
+            whatsapp_equivalence_enabled=True,
+        )
+    with pytest.raises(ValueError, match="invalid whatsapp equivalence flag"):
+        ChatwootMessageSender(
+            chatwoot=_chatwoot(MockTransport()),
+            inbox_id=1,
+            allowed_jid=None,
+            dynamic_recipient_enabled=True,
+            whatsapp_equivalence_enabled="true",  # type: ignore[arg-type]
+        )
+
+
+def test_a_recipient_is_a_contact_with_its_source_or_neither() -> None:
+    with pytest.raises(ValueError, match="invalid_first_touch_recipient"):
+        FirstTouchRecipient(wa_id=MX_WHATSAPP, contact_id=41)
+    with pytest.raises(ValueError, match="invalid_first_touch_recipient"):
+        FirstTouchRecipient(wa_id=MX_WHATSAPP, source_id=MX_WHATSAPP)
+
+
+# ── La plantilla del primer contacto tras el formulario ──────────────
+#
+# El ancla precheckout_intent tiene su propia plantilla aprobada
+# (plantillas.precheckout del manifiesto). A diferencia del pago fallido, que
+# sin plantilla propia sale con la del carrito, este disparador no tiene
+# prestamo: sin su plantilla no se manda nada. Los nombres son los del
+# manifiesto de ATT1 (tests/fixtures/instances/att1/instancia.toml); Chatwoot
+# es el emulador de arriba (deuda: no hay captura de sus respuestas al envio).
+
+PRECHECKOUT_TRIGGER = "precheckout_intent"
+
+
+def _att1_templates(**overrides: object) -> WhatsAppTemplateConfig:
+    values: dict[str, object] = {
+        "first_touch_name": "att1_carrito_abandonado_01",
+        "payment_failure_name": "att1_compra_fallida_01",
+        "followup_name": None,
+        "language": "es_MX",
+        "category": "MARKETING",
+        "first_touch_parameter": "buyer_name_and_product",
+        "first_touch_body_parameters": ("nombre", "producto"),
+        "payment_failure_body_parameters": ("nombre", "producto"),
+    }
+    values.update(overrides)
+    return WhatsAppTemplateConfig(**values)  # type: ignore[arg-type]
+
+
+def _templated_sender(
+    inbox: _WhatsAppCloudInbox, template: WhatsAppTemplateConfig
+) -> ChatwootMessageSender:
+    return ChatwootMessageSender(
+        chatwoot=ChatwootClient(
+            base_url="https://chatwoot.test",
+            account_id=1,
+            access_token="test-token",
+            agent_bot_access_token="bot-token",
+            agent_bot_id=99,
+            transport=httpx.MockTransport(inbox.handler),
+        ),
+        inbox_id=1,
+        allowed_jid=None,
+        dynamic_recipient_enabled=True,
+        template=template,
+        whatsapp_equivalence_enabled=True,
+    )
+
+
+def test_the_precheckout_trigger_names_its_own_template() -> None:
+    template = _att1_templates(
+        precheckout_name="att1_interes_precheckout_01",
+        precheckout_body_parameters=("nombre",),
+    )
+
+    assert template.first_touch_name_for(trigger_kind=PRECHECKOUT_TRIGGER) == (
+        "att1_interes_precheckout_01"
+    )
+    assert template.declared_body_parameters(trigger_kind=PRECHECKOUT_TRIGGER) == (
+        "nombre",
+    )
+    assert template.category_for(trigger_kind=PRECHECKOUT_TRIGGER) == "MARKETING"
+    assert template.params(
+        content="copy",
+        followup=False,
+        buyer_name="Ana",
+        product_name="Alimenta tu Tiroides",
+        trigger_kind=PRECHECKOUT_TRIGGER,
+    ) == {
+        "name": "att1_interes_precheckout_01",
+        "category": "MARKETING",
+        "language": "es_MX",
+        "processed_params": {"body": {"1": "Ana"}},
+    }
+    # Los otros disparadores no cambian por declarar la plantilla del formulario.
+    plain = _att1_templates()
+    for trigger_kind in (None, "cart_abandonment", "payment_failure"):
+        assert template.first_touch_name_for(
+            trigger_kind=trigger_kind
+        ) == plain.first_touch_name_for(trigger_kind=trigger_kind)
+        assert template.params(
+            content="copy", followup=False, buyer_name="Ana",
+            product_name="ATT1", trigger_kind=trigger_kind,
+        ) == plain.params(
+            content="copy", followup=False, buyer_name="Ana",
+            product_name="ATT1", trigger_kind=trigger_kind,
+        )
+
+
+def test_the_precheckout_trigger_without_its_template_has_no_template() -> None:
+    # Nunca la del carrito, ni la del pago fallido, ni sus variables.
+    template = _att1_templates()
+
+    assert template.first_touch_name_for(trigger_kind=PRECHECKOUT_TRIGGER) is None
+    assert template.declared_body_parameters(trigger_kind=PRECHECKOUT_TRIGGER) is None
+    with pytest.raises(ValueError, match="template_disabled"):
+        template.params(
+            content="copy",
+            followup=False,
+            buyer_name="Ana",
+            product_name="Alimenta tu Tiroides",
+            trigger_kind=PRECHECKOUT_TRIGGER,
+        )
+    # El prestamo del pago fallido sigue como estaba.
+    assert _att1_templates(
+        payment_failure_name=None, payment_failure_body_parameters=None
+    ).first_touch_name_for(trigger_kind="payment_failure") == "att1_carrito_abandonado_01"
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "error"),
+    [
+        (
+            {"precheckout_body_parameters": ("nombre",)},
+            "precheckout_body_parameters_without_template",
+        ),
+        (
+            {
+                "precheckout_name": "att1_interes_precheckout_01",
+                "precheckout_body_parameters": ("cupon",),
+            },
+            "invalid_template_body_parameters",
+        ),
+        ({"precheckout_name": "  "}, "invalid_precheckout_template_name"),
+    ],
+)
+def test_an_invalid_precheckout_template_is_refused(
+    kwargs: dict[str, object], error: str
+) -> None:
+    with pytest.raises(ValueError, match=error):
+        _att1_templates(**kwargs)
+
+
+def test_the_sender_sends_the_first_contact_of_the_form_with_its_template() -> None:
+    inbox = _WhatsAppCloudInbox()
+    sender = _templated_sender(
+        inbox,
+        _att1_templates(
+            precheckout_name="att1_interes_precheckout_01",
+            precheckout_body_parameters=("nombre", "producto"),
+        ),
+    )
+
+    result = _first_touch(
+        sender, MX_FORM, product_name="Alimenta tu Tiroides",
+        trigger_kind=PRECHECKOUT_TRIGGER,
+    )
+
+    assert result.status == "sent"
+    [message] = inbox.posts("/conversations/200/messages")
+    assert message["template_params"] == {
+        "name": "att1_interes_precheckout_01",
+        "category": "MARKETING",
+        "language": "es_MX",
+        "processed_params": {
+            "body": {"1": "Lead de prueba", "2": "Alimenta tu Tiroides"}
+        },
+    }
+
+
+def test_the_sender_blocks_the_first_contact_of_the_form_without_its_template() -> None:
+    # Falla cerrado antes de tocar Chatwoot: ni busca ni crea el contacto, no
+    # abre la conversacion y no manda la plantilla del carrito.
+    inbox = _WhatsAppCloudInbox()
+    sender = _templated_sender(inbox, _att1_templates())
+
+    result = _first_touch(
+        sender, MX_FORM, product_name="Alimenta tu Tiroides",
+        trigger_kind=PRECHECKOUT_TRIGGER,
+    )
+
+    assert result.status == "blocked"
+    assert result.reason == FIRST_TOUCH_TEMPLATE_NOT_CONFIGURED
+    assert result.reason == "first_touch_template_not_configured"
+    assert inbox.requests == []
+    # El mismo sender sigue mandando el carrito.
+    cart = _first_touch(
+        sender, MX_FORM, product_name="Alimenta tu Tiroides",
+        trigger_kind="cart_abandonment",
+    )
+    assert cart.status == "sent"
+    [message] = inbox.posts("/conversations/200/messages")
+    assert message["template_params"]["name"] == "att1_carrito_abandonado_01"  # type: ignore[index]
+
+
+# ── Las tres plantillas de ATT1 contra el catalogo capturado del inbox 11 ──
+#
+# chatwoot_inbox_11_message_templates_20261001.json: el catalogo del inbox 11
+# leido por psql de channel_whatsapp.message_templates el 2026-10-01. Lo que
+# el sender pone en template_params (nombre, idioma, categoria y las claves de
+# processed_params.body) tiene que ser lo que Meta aprobo para cada plantilla:
+# si no, Meta rechaza el envio despues de empezado el pedido.
+
+_CAPTURED_INBOX_11 = json.loads(
+    (_FIXTURES / "chatwoot_inbox_11_message_templates_20261001.json").read_text(
+        encoding="utf-8"
+    )
+)
+_ATT1_TEMPLATE_BY_TRIGGER = {
+    "cart_abandonment": "att1_carrito_abandonado_01",
+    "payment_failure": "att1_compra_fallida_01",
+    PRECHECKOUT_TRIGGER: "att1_interes_precheckout_01",
+}
+
+
+def _captured_att1(template_name: str) -> dict[str, object]:
+    [template] = [
+        t for t in _CAPTURED_INBOX_11["templates"] if t["name"] == template_name
+    ]
+    return template
+
+
+def _captured_att1_placeholders(template_name: str) -> list[str]:
+    [body] = [
+        c for c in _captured_att1(template_name)["components"]  # type: ignore[union-attr]
+        if c["type"] == "BODY"
+    ]
+    return sorted(set(re.findall(r"\{\{(\d+)\}\}", body["text"])))
+
+
+def _att1_templates_with_the_form() -> WhatsAppTemplateConfig:
+    return _att1_templates(
+        precheckout_name="att1_interes_precheckout_01",
+        precheckout_body_parameters=("nombre", "producto"),
+    )
+
+
+@pytest.mark.parametrize("trigger_kind", sorted(_ATT1_TEMPLATE_BY_TRIGGER))
+def test_each_att1_trigger_fills_exactly_what_the_captured_template_declares(
+    trigger_kind: str,
+) -> None:
+    name = _ATT1_TEMPLATE_BY_TRIGGER[trigger_kind]
+    captured = _captured_att1(name)
+
+    params = _att1_templates_with_the_form().params(
+        content="copy",
+        followup=False,
+        buyer_name="Ana",
+        product_name="Alimenta tu Tiroides",
+        trigger_kind=trigger_kind,
+    )
+
+    assert _captured_att1_placeholders(name) == ["1", "2"]
+    assert params == {
+        "name": captured["name"],
+        "category": captured["category"],
+        "language": captured["language"],
+        "processed_params": {"body": {"1": "Ana", "2": "Alimenta tu Tiroides"}},
+    }
+    assert sorted(params["processed_params"]["body"]) == (  # type: ignore[index]
+        _captured_att1_placeholders(name)
+    )
+    assert captured["status"] == "APPROVED"
+
+
+@pytest.mark.parametrize("trigger_kind", sorted(_ATT1_TEMPLATE_BY_TRIGGER))
+def test_the_sender_sends_each_att1_trigger_as_the_captured_template(
+    trigger_kind: str,
+) -> None:
+    name = _ATT1_TEMPLATE_BY_TRIGGER[trigger_kind]
+    captured = _captured_att1(name)
+    inbox = _WhatsAppCloudInbox()
+    sender = _templated_sender(inbox, _att1_templates_with_the_form())
+
+    result = _first_touch(
+        sender, MX_FORM, product_name="Alimenta tu Tiroides", trigger_kind=trigger_kind,
+    )
+
+    assert result.status == "sent"
+    [message] = inbox.posts("/conversations/200/messages")
+    template_params = message["template_params"]
+    assert (
+        template_params["name"],  # type: ignore[index]
+        template_params["language"],  # type: ignore[index]
+        template_params["category"],  # type: ignore[index]
+    ) == (captured["name"], captured["language"], captured["category"])
+    assert sorted(template_params["processed_params"]["body"]) == (  # type: ignore[index]
+        _captured_att1_placeholders(name)
+    )
+
+
+def test_one_declared_variable_does_not_fill_the_captured_att1_form_template() -> None:
+    # att1_interes_precheckout_01 tiene {{1}} y {{2}}: una instancia que declare
+    # solo "nombre" mandaria un cuerpo que Meta no aprobo. El sender no lee el
+    # catalogo; lo frena el modo directo (parse_approved_template).
+    params = _att1_templates(
+        precheckout_name="att1_interes_precheckout_01",
+        precheckout_body_parameters=("nombre",),
+    ).params(
+        content="copy",
+        followup=False,
+        buyer_name="Ana",
+        product_name="Alimenta tu Tiroides",
+        trigger_kind=PRECHECKOUT_TRIGGER,
+    )
+
+    assert sorted(params["processed_params"]["body"]) != (  # type: ignore[index]
+        _captured_att1_placeholders("att1_interes_precheckout_01")
+    )

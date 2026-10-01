@@ -18,6 +18,7 @@ manifiesto v2 se traduce a ese binding con ``to_commercial_ally_config``.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import re
 import tomllib
@@ -43,6 +44,19 @@ _SLACK_CHANNEL = re.compile(r"[CG][A-Z0-9]{6,20}")
 # dos medidos (2026-09-29) tienen 20 alfanumericos; un id fuera de esa forma falla al
 # cargar, en voz alta, y no en cada envio.
 _GHL_FORM_ID = re.compile(r"[A-Za-z0-9]{20}")
+# El contrato cuyo riesgo acepta por escrito quien firma ``[adaptadores.ghl]``
+# (docs/contracts/ghl-precheckout-adapter-v1.md, Riesgos). Cuando esa seccion
+# cambie de fondo el producto sube esta constante y una aceptacion escrita
+# contra el contrato anterior deja de cargar, a proposito: una aceptacion
+# vencida tiene que verse, no degradar en silencio.
+GHL_ADAPTER_RISK_CONTRACT = "ghl-precheckout-adapter-v1"
+_GHL_RISK_KEYS = ("riesgo_aceptado_por", "riesgo_aceptado_el", "riesgo_contrato")
+# Los ejemplos de la documentacion firman con un marcador entre < y >: copiado
+# sin editar no es una firma, y no carga.
+_GHL_RISK_PLACEHOLDER_CHARS = ("<", ">")
+# Los flujos que usan una intencion como permiso o como audiencia sin mirar la
+# base: con [adaptadores.ghl] y sin la aceptacion no se prenden.
+GHL_RISK_GATED_FLOWS = ("precheckout", "pago_fallido")
 
 EVENTS = ("intencion", "carrito", "pago_fallido", "compra", "entrante")
 FLOWS = ("inbound", "precheckout", "carrito", "pago_fallido", "reactivacion", "descuento")
@@ -121,6 +135,23 @@ class Template:
 
 
 @dataclass(frozen=True)
+class GhlRiskAcceptance:
+    """La aceptacion escrita del riesgo del adaptador de GHL.
+
+    El token del adaptador es la unica barrera de sus envios y lo lee cualquier
+    usuario de la subcuenta de GHL; una intencion que entro por el adaptador no
+    se distingue en la base de la de una landing. Quien firma acepta que esas
+    intenciones se usen como permiso de contacto y como audiencia. No caduca ni
+    se ata a la lista de formularios: sumar un formulario ya es un cambio
+    firmado del manifiesto.
+    """
+
+    accepted_by: str
+    accepted_on: date
+    contract: str
+
+
+@dataclass(frozen=True)
 class InstanceManifest:
     product_version: str
     tenant_ref: str
@@ -153,6 +184,31 @@ class InstanceManifest:
     # Los formularios de GHL que el adaptador traduce a lead.precheckout
     # (docs/contracts/ghl-precheckout-adapter-v1.md). Vacio = sin adaptador.
     ghl_form_ids: tuple[str, ...] = ()
+    # La aceptacion escrita del riesgo del adaptador. None = sin aceptacion: con
+    # [adaptadores.ghl], precheckout, pago_fallido y una audiencia con
+    # consentimiento no arrancan.
+    ghl_risk_acceptance: GhlRiskAcceptance | None = None
+
+    @property
+    def ghl_adapter_risk(self) -> str | None:
+        """El estado del riesgo del adaptador de GHL que ve el manifiesto.
+
+        * ``accepted`` / ``not_accepted``: hay ``[adaptadores.ghl]``, con o sin
+          la aceptacion escrita.
+        * ``no_adapter_section``: no hay seccion, pero la instancia recibe
+          intenciones y tiene prendido un flujo que las usa como permiso. Si
+          alguna vez uso el adaptador, sus intenciones siguen en la base y no
+          se distinguen de las de una landing: nada lo bloquea, se avisa.
+        * ``None``: no aplica.
+        """
+
+        if self.ghl_form_ids:
+            return "accepted" if self.ghl_risk_acceptance is not None else "not_accepted"
+        if "intencion" in self.events and any(
+            self.flows[flow] for flow in GHL_RISK_GATED_FLOWS
+        ):
+            return "no_adapter_section"
+        return None
 
     @property
     def default_offer(self) -> Offer:
@@ -321,7 +377,7 @@ class InstanceManifest:
             review = _table(payload, "revision_diaria")
             _exact_keys("revision_diaria", review, set(), {"revisores"})
             reviewers = _str_list(review.get("revisores", []), "revision_diaria.revisores")
-        ghl_form_ids = _ghl_form_ids(payload, events)
+        ghl_form_ids, ghl_risk_acceptance = _ghl_adapter(payload, events)
 
         manifest = cls(
             product_version=product_version,
@@ -353,6 +409,7 @@ class InstanceManifest:
             slack_channel=slack_channel,
             daily_review_reviewers=reviewers,
             ghl_form_ids=ghl_form_ids,
+            ghl_risk_acceptance=ghl_risk_acceptance,
         )
         for flow, enabled in manifest.flows.items():
             blockers = manifest.flow_blockers(flow)
@@ -434,8 +491,11 @@ def _str_list(value: object, where: str) -> tuple[str, ...]:
     return tuple(value)
 
 
-def _ghl_form_ids(payload: Mapping[str, Any], events: frozenset[str]) -> tuple[str, ...]:
-    """``[adaptadores.ghl].formularios``: los formularios de GHL que entran como intencion.
+def _ghl_adapter(
+    payload: Mapping[str, Any], events: frozenset[str]
+) -> tuple[tuple[str, ...], GhlRiskAcceptance | None]:
+    """``[adaptadores.ghl]``: los formularios de GHL que entran como intencion y,
+    si esta, la aceptacion escrita del riesgo del adaptador.
 
     Listar un formulario afirma que muestra la aclaracion de
     ``consentimiento.copy_version``: cada envio traducido sale con
@@ -443,15 +503,15 @@ def _ghl_form_ids(payload: Mapping[str, Any], events: frozenset[str]) -> tuple[s
     """
 
     if "adaptadores" not in payload:
-        return ()
+        return (), None
     adapters = _table(payload, "adaptadores")
     _exact_keys("adaptadores", adapters, set(), {"ghl"})
     if "ghl" not in adapters:
-        return ()
+        return (), None
     ghl = adapters["ghl"]
     if not isinstance(ghl, dict):
         raise ManifestError("adaptadores.ghl debe ser una tabla")
-    _exact_keys("adaptadores.ghl", ghl, {"formularios"})
+    _exact_keys("adaptadores.ghl", ghl, {"formularios"}, set(_GHL_RISK_KEYS))
     forms = _str_list(ghl["formularios"], "adaptadores.ghl.formularios")
     if not forms:
         raise ManifestError("adaptadores.ghl.formularios debe tener al menos un formulario")
@@ -463,7 +523,54 @@ def _ghl_form_ids(payload: Mapping[str, Any], events: frozenset[str]) -> tuple[s
             )
     if "intencion" not in events:
         raise ManifestError("adaptadores.ghl exige el evento 'intencion' en eventos")
-    return forms
+    return forms, _ghl_risk_acceptance(ghl)
+
+
+def _utc_today() -> date:
+    # Aparte para que las pruebas fijen el dia sin depender del reloj.
+    return datetime.now(timezone.utc).date()
+
+
+def _ghl_risk_acceptance(ghl: Mapping[str, Any]) -> GhlRiskAcceptance | None:
+    """Las tres claves de la aceptacion, todas o ninguna.
+
+    No hay una clave de estado: la presencia completa es la aceptacion. Este
+    codigo solo la lee; la escribe a mano quien firma, en el manifiesto de la
+    instancia.
+    """
+
+    present = [key for key in _GHL_RISK_KEYS if key in ghl]
+    if not present:
+        return None
+    if len(present) != len(_GHL_RISK_KEYS):
+        raise ManifestError(
+            "adaptadores.ghl: la aceptacion del riesgo lleva "
+            "riesgo_aceptado_por, riesgo_aceptado_el y riesgo_contrato"
+        )
+    accepted_by = _str(ghl, "riesgo_aceptado_por", "adaptadores.ghl.riesgo_aceptado_por")
+    if any(char in accepted_by for char in _GHL_RISK_PLACEHOLDER_CHARS):
+        raise ManifestError(
+            "adaptadores.ghl.riesgo_aceptado_por es el marcador del ejemplo (<...>): "
+            "lo escribe a mano quien decide, con su nombre"
+        )
+    accepted_on = ghl["riesgo_aceptado_el"]
+    # Una fecha TOML (2026-10-02), no un texto ni una fecha con hora.
+    if not isinstance(accepted_on, date) or hasattr(accepted_on, "hour"):
+        raise ManifestError("adaptadores.ghl.riesgo_aceptado_el debe ser una fecha (2026-10-02)")
+    # Es el dia en que se acepto. Un dia de margen sobre la fecha UTC: quien
+    # firma al este de UTC ya esta en el dia siguiente.
+    if accepted_on > _utc_today() + timedelta(days=1):
+        raise ManifestError(
+            "adaptadores.ghl.riesgo_aceptado_el no puede ser posterior a hoy: "
+            "es el dia en que se acepto"
+        )
+    contract = _str(ghl, "riesgo_contrato", "adaptadores.ghl.riesgo_contrato")
+    if contract != GHL_ADAPTER_RISK_CONTRACT:
+        raise ManifestError(
+            f"adaptadores.ghl.riesgo_contrato debe ser '{GHL_ADAPTER_RISK_CONTRACT}': "
+            "la aceptacion es de otra version del contrato del adaptador"
+        )
+    return GhlRiskAcceptance(accepted_by=accepted_by, accepted_on=accepted_on, contract=contract)
 
 
 def _offers(value: object) -> tuple[Offer, ...]:

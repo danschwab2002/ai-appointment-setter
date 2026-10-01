@@ -18,9 +18,9 @@
 //     opt-in, de otra oferta, de otro telefono o fuera del mapeo activo, no.
 //     Cada condicion del helper que ata la intencion al scope (tenant,
 //     producto, oferta del scope, oferta del evento) se ejerce sola llamandolo
-//     directo. El opt-out conserva precedencia: previo al evento o aplicado con
-//     el envio en vuelo, no sale, no consume tope y no deja un permiso
-//     allowed activo. La autorizacion del envio re-verifica la intencion antes
+//     directo. El opt-out conserva precedencia: previo al evento (la
+//     planificacion lo rechaza, 20261001000100) o aplicado con el envio en
+//     vuelo, no sale, no consume tope y no deja un permiso allowed activo. La autorizacion del envio re-verifica la intencion antes
 //     del presupuesto: el tope diario corta, y la intencion que entre el plan y
 //     el envio pasa a identity_conflict (un formulario posterior con otro
 //     telefono), se compra (la compra aprobada real) o sale del mapeo activo
@@ -29,7 +29,9 @@
 // invalido se rechaza, un modo consentido se admite con source landing, la
 // version publicada es inmutable, el binding exige su forma, y toda funcion
 // SQL que llama a evaluate_lancemos_pilot_scope llama tambien al helper (en
-// consented_intent la evaluacion sola no mira la intencion).
+// consented_intent la evaluacion sola no mira la intencion). Y la lectura del
+// modo que usa el bridge (migracion 20261001000300): el modo de cada version
+// publicada, null para lo que no esta publicado, y solo para service_role.
 //
 // Datos: binding, ofertas, landings, producto, Chatwoot y consentimiento de
 // tests/fixtures/instances/att1/instancia.toml; politica y ventana de la
@@ -1080,17 +1082,18 @@ const openResults = {};
     await dispatch(failureLead, failurePlan, 'payment_failure'), OPEN, failureEvidence);
   openResults.payment_failure_without_cohort = 'accepted';
 
-  // El opt-out conserva precedencia sin cohorte ni operador. La audiencia no
-  // lo mira: lo frenan la reevaluacion real, el arranque y el permiso activo.
-  // Estos dos casos van con cupo libre (2 de 3): el tercero de abajo sale
-  // igual, asi que ninguno consumio.
+  // El opt-out conserva precedencia sin cohorte ni operador. Desde
+  // 20261001000100 el helper del consentimiento mira el opt-out previo de la
+  // cuenta en las dos formas del telefono; ademas lo frenan el arranque y el
+  // permiso activo. Estos dos casos van con cupo libre (2 de 3): el tercero de
+  // abajo sale igual, asi que ninguno consumio.
   //   a. Previo: la persona se dio de baja en Chatwoot despues del carrito (que
-  //      queda cancelado) y despues llega su pago fallido. Se planifica (la
-  //      intencion sigue consentida), pero no se concede ningun permiso
-  //      allowed y la reevaluacion no lo ejecuta.
+  //      queda cancelado) y despues llega su pago fallido. La intencion sigue
+  //      viva y con sus permisos, pero la planificacion la rechaza: no queda
+  //      caso del pago fallido, ni accion, ni permiso allowed.
   const prior = person('abierto-opt-out-previo');
   const priorOffer = additionalOffers[0];
-  const priorEvidence = await admitForm(prior, priorOffer);
+  await admitForm(prior, priorOffer);
   const priorCart = await admitCart(prior, priorOffer);
   await createContact(prior, priorCart.eventId);
   const priorCartPlan = one((await planCart(prior, priorOffer, priorCart, OPEN)).rows,
@@ -1100,30 +1103,35 @@ const openResults = {};
     select status from public.scheduled_actions where id = $1
   `, [priorCartPlan.scheduled_action_id])).rows, 'opted-out cart action');
   const priorFailure = await admitFailure(prior, priorOffer);
-  const priorFailurePlan = one((await planFailure(prior, priorOffer, priorFailure, OPEN)).rows,
-    'plan after the opt-out');
-  await expectBinding('open after opt-out', priorFailurePlan, OPEN, priorEvidence);
+  await expectError('open payment failure after the opt-out',
+    () => planFailure(prior, priorOffer, priorFailure, OPEN),
+    {
+      code: '55000',
+      message: 'pilot_scope_rejected',
+      detail: 'pilot_audience_consented_intent_prior_opt_out',
+    });
   const priorAllowed = await activeAllowed(prior);
-  const priorWorker = `att1-audience-${prior.label}`;
-  const priorNow = await dbNow();
+  const priorWork = one((await db.query(`
+    select
+      (select count(*)::integer from public.recovery_cases where contact_id = $1) as cases,
+      (select count(*)::integer from public.scheduled_actions action
+        join public.recovery_cases recovery_case on recovery_case.id = action.recovery_case_id
+        where recovery_case.contact_id = $1 and action.anchor_type = 'payment_failure')
+        as payment_failure_actions
+  `, [prior.contact])).rows, 'work after the opt-out');
   const priorClaim = (await db.query(`
     select * from public.claim_due_followup_actions($1,$2,interval '5 minutes',100)
-  `, [priorWorker, priorNow])).rows;
+  `, [`att1-audience-${prior.label}`, await dbNow()])).rows;
   if (priorOptOut.affected_actions !== 1
       || priorCartAction.status !== 'cancelled'
       || priorAllowed !== 0
-      || priorClaim.length !== 1
-      || priorClaim[0].id !== priorFailurePlan.scheduled_action_id) {
-    throw new Error(`the opt-out before the payment failure: ${JSON.stringify({ priorOptOut, priorCartAction, priorAllowed, claimed: priorClaim.map((row) => row.id) })}`);
+      || priorWork.cases !== 1
+      || priorWork.payment_failure_actions !== 0
+      || priorClaim.length !== 0) {
+    throw new Error(`the opt-out before the payment failure: ${JSON.stringify({ priorOptOut, priorCartAction, priorAllowed, priorWork, claimed: priorClaim.map((row) => row.id) })}`);
   }
-  const priorDecision = one((await db.query(`
-    select * from public.reevaluate_followup_action($1,$2,$3,$4)
-  `, [priorFailurePlan.scheduled_action_id, priorWorker, priorClaim[0].lease_generation,
-    priorNow])).rows, 'reevaluation after the opt-out');
-  if (priorDecision.decision === 'execute' || priorDecision.reason_code !== 'contact_blocked') {
-    throw new Error(`the real reevaluation executed an opted-out contact: ${JSON.stringify(priorDecision)}`);
-  }
-  openResults.opt_out_before_the_event = `${priorDecision.decision}:${priorDecision.reason_code}`;
+  openResults.opt_out_before_the_event =
+    'pilot_scope_rejected:pilot_audience_consented_intent_prior_opt_out';
 
   //   b. En vuelo: la baja llega con el intento ya reservado. El opt-out lo
   //      cierra y el arranque se rechaza sin autorizar ni consumir.
@@ -1276,6 +1284,91 @@ if (evaluateCallers.length === 0 || evaluateCallers.some((caller) => !caller.cal
   throw new Error(`a SQL caller of evaluate_lancemos_pilot_scope does not bind the audience: ${JSON.stringify(evaluateCallers)}`);
 }
 results.evaluate_callers_bind_the_audience = evaluateCallers.map((caller) => caller.proname);
+
+// ---------------------------------------------------------------------------
+// 7. La lectura del modo (migracion 20261001000300): el bridge la usa para la
+//    guarda del adaptador de GHL sin aceptacion del riesgo. Devuelve el modo
+//    de cada version publicada y null para una version en borrador, otra
+//    version u otra clave (el bridge trata null como bloqueo). Solo
+//    service_role la ejecuta, y la tabla sigue sin poder leerse directo: por
+//    eso hace falta la RPC.
+// ---------------------------------------------------------------------------
+const asRole = async (role, action) => {
+  await db.exec(`set role ${role}`);
+  try {
+    return await action();
+  } finally {
+    await db.exec('reset role');
+  }
+};
+const readMode = async (key, version) => one((await db.query(
+  'select public.get_lancemos_pilot_scope_audience_mode($1,$2) as mode', [key, version],
+)).rows, `audience mode of ${key} v${version}`).mode;
+const modeRead = {};
+for (const scope of [MANUAL, IN_COHORT, OPEN]) {
+  const mode = await asRole('service_role', () => readMode(scope.key, scope.version));
+  if (mode !== scope.mode) {
+    throw new Error(`audience mode of ${scope.key}: expected ${scope.mode}, got ${mode}`);
+  }
+  modeRead[scope.key] = mode;
+}
+for (const [label, key, version] of [
+  ['draft', 'att1-audiencia-landing', 1],
+  ['other_version', OPEN.key, OPEN.version + 1],
+  ['unknown_scope', 'att1-audiencia-inexistente', 1],
+  ['null_scope', null, 1],
+  ['null_version', OPEN.key, null],
+]) {
+  const mode = await asRole('service_role', () => readMode(key, version));
+  if (mode !== null) throw new Error(`audience mode ${label}: expected null, got ${mode}`);
+  modeRead[label] = mode;
+}
+const draftRow = one((await db.query(`
+  select status, audience_mode from public.pilot_scope_versions
+  where scope_key = 'att1-audiencia-landing' and version = 1
+`)).rows, 'the draft scope');
+if (draftRow.status !== 'draft' || draftRow.audience_mode !== 'consented_intent') {
+  throw new Error(`the draft scope changed: ${JSON.stringify(draftRow)}`);
+}
+for (const role of ['anon', 'authenticated']) {
+  let denied = null;
+  try {
+    await asRole(role, () => readMode(OPEN.key, OPEN.version));
+  } catch (caught) {
+    denied = caught;
+  }
+  if (denied?.code !== '42501') {
+    throw new Error(`${role} read the audience mode: ${denied?.code} ${denied?.message}`);
+  }
+}
+let tableDenied = null;
+try {
+  await asRole('service_role', () => db.query(
+    'select audience_mode from public.pilot_scope_versions limit 1',
+  ));
+} catch (caught) {
+  tableDenied = caught;
+}
+if (tableDenied?.code !== '42501') {
+  throw new Error(`service_role read pilot_scope_versions directly: ${tableDenied?.code}`);
+}
+const modeReadShape = one((await db.query(`
+  select p.prosecdef as security_definer, p.provolatile as volatility,
+         p.proconfig as config,
+         has_function_privilege('service_role', p.oid, 'execute') as service_x,
+         has_function_privilege('anon', p.oid, 'execute') as anon_x,
+         has_function_privilege('authenticated', p.oid, 'execute') as auth_x,
+         has_function_privilege('public', p.oid, 'execute') as public_x
+  from pg_proc p
+  where p.oid = to_regprocedure('public.get_lancemos_pilot_scope_audience_mode(text,integer)')
+`)).rows, 'the audience mode read');
+if (modeReadShape.security_definer !== true || modeReadShape.volatility !== 's'
+    || !modeReadShape.config?.includes('search_path=public, pg_temp')
+    || modeReadShape.service_x !== true || modeReadShape.anon_x !== false
+    || modeReadShape.auth_x !== false || modeReadShape.public_x !== false) {
+  throw new Error(`audience mode read shape: ${JSON.stringify(modeReadShape)}`);
+}
+results.audience_mode_read = modeRead;
 
 console.log(JSON.stringify({ pilot_scope_audience_mode: 'OK', ...results }));
 await db.close();

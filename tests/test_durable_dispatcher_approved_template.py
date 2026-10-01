@@ -9,11 +9,16 @@ Datos:
 * ``chatwoot_followup_candidates_inbox_9_20260928.json``: el catalogo de
   plantillas del inbox 9 capturado el 28/09 (``johanna_carrito_abandonado_01`` y
   ``johanna_compra_fallida_01``, cada una con ``{{1}}``, ``{{2}}`` y tres botones
-  QUICK_REPLY). No hay captura del catalogo del inbox 11 de ATT1 (paso A0), asi
-  que el dispatcher de estos tests manda las plantillas de Johanna con su idioma
-  (``es_EC``). El catalogo se sirve bajo el id del inbox 11, el unico campo del
-  sobre que el cliente chequea, igual que ``test_followup_discount.py`` envuelve
-  la misma lista.
+  QUICK_REPLY). Los tests escritos antes de tener el catalogo de ATT1 mandan las
+  plantillas de Johanna con su idioma (``es_EC``). El catalogo se sirve bajo el
+  id del inbox 11, el unico campo del sobre que el cliente chequea, igual que
+  ``test_followup_discount.py`` envuelve la misma lista.
+* ``chatwoot_inbox_11_message_templates_20261001.json``: el catalogo del inbox 11
+  de ATT1 del 01/10 (psql sobre ``channel_whatsapp.message_templates``), con las
+  tres plantillas ``att1_*`` de primer contacto en ``es_MX``. Lo usan la seccion
+  del final (los tres disparadores con las plantillas de ``[plantillas]`` del
+  manifiesto) y la del primer contacto tras el formulario. De la respuesta de
+  ``GET /inboxes/11`` no hay captura: el sobre es el mismo de arriba.
 * ``lead_names_inbox9_template_params_20260928.json``: nombres capturados (con
   los apellidos cambiados) para el saludo.
 * Las respuestas de Chatwoot al envio (``contacts/search``, ``contacts``,
@@ -27,6 +32,7 @@ import asyncio
 import copy
 import hashlib
 import json
+import logging
 import re
 from dataclasses import replace
 from pathlib import Path
@@ -50,6 +56,7 @@ from bridge.supabase import (
     DeliveryAttempt,
     FollowupExecutionContext,
     PilotBoundaryConfig,
+    PilotRequestStartRejectedError,
     ReevaluationDecision,
     ScheduledAction,
     SupabaseClient,
@@ -97,9 +104,15 @@ BOUNDARY = PilotBoundaryConfig(
     channel_account_ref=f"chatwoot-inbox:{INBOX_ID}",
 )
 
+ATT1_CATALOG: list[dict[str, Any]] = json.loads(
+    (FIXTURES / "chatwoot_inbox_11_message_templates_20261001.json").read_text(
+        encoding="utf-8"
+    )
+)["templates"]
+
 
 def _captured_body(name: str) -> str:
-    [template] = [t for t in CATALOG if t["name"] == name]
+    [template] = [t for t in (*CATALOG, *ATT1_CATALOG) if t["name"] == name]
     [body] = [c["text"] for c in template["components"] if c["type"] == "BODY"]
     return body
 
@@ -269,7 +282,10 @@ class _Chatwoot:
                 "id": 55,
                 "phone_number": f"+{PHONE}",
                 "blocked": False,
-                "contact_inboxes": [{"source_id": "source-55", "inbox": {"id": INBOX_ID}}],
+                # En un inbox de WhatsApp Cloud el source_id es el wa_id: los
+                # digitos del telefono del contacto (medido el 2026-10-01 sobre
+                # los 170 contactos de los inboxes 9 y 11: 170 de 170).
+                "contact_inboxes": [{"source_id": PHONE, "inbox": {"id": INBOX_ID}}],
             }]})
         if request.method == "POST" and path == f"{prefix}/contacts":
             self._contact_created = True
@@ -908,6 +924,7 @@ def test_create_app_builds_the_direct_dispatcher_without_hermes(tmp_path: Path) 
 CHAIN_VALIDATOR = (
     Path(__file__).parent / "sql" / "followup_engine" / "validate_att1_portable_chain.mjs"
 )
+FORM_ANCHOR = "precheckout_intent"
 
 
 class _PostgREST:
@@ -1030,16 +1047,25 @@ class _PostgREST:
         return body
 
 
-def _chain_validator_contract() -> tuple[str, str, str]:
-    """The reservation mode and the two start RPCs A7 declares."""
+def _chain_validator_operations(name: str) -> dict[str, str]:
+    """An ``anchor_type -> RPC`` table A7 declares as an object literal."""
+    source = CHAIN_VALIDATOR.read_text(encoding="utf-8")
+    [block] = re.findall(rf"const {name} = \{{\n(.*?)\n\}};", source, flags=re.DOTALL)
+    lines = [line.strip() for line in block.splitlines()]
+    entries = [re.fullmatch(r"([a-z_]+): '([a-z_]+)',", line) for line in lines]
+    assert all(entries), lines
+    return {entry.group(1): entry.group(2) for entry in entries if entry}
+
+
+def _chain_validator_contract() -> tuple[str, dict[str, str], dict[str, str]]:
+    """The reservation mode and the start and reevaluation RPCs A7 declares."""
     source = CHAIN_VALIDATOR.read_text(encoding="utf-8")
     [mode] = re.findall(r"const DIRECT_DELIVERY_MODE = '([a-z_]+)';", source)
-    [(payment_failure, other)] = re.findall(
-        r"const startOperationFor = \(anchorType\) => \(anchorType === 'payment_failure'"
-        r"\s*\?\s*'([a-z_]+)'\s*:\s*'([a-z_]+)'\);",
-        source,
+    return (
+        mode,
+        _chain_validator_operations("START_OPERATION_BY_ANCHOR"),
+        _chain_validator_operations("REEVALUATE_OPERATION_BY_ANCHOR"),
     )
-    return mode, payment_failure, other
 
 
 def _chain_validator_anchors() -> set[str]:
@@ -1085,20 +1111,25 @@ def test_the_real_supabase_client_sends_what_the_att1_chain_validates(
 
     decisions = _run(dispatcher)
 
-    mode, payment_failure_start, cart_start = _chain_validator_contract()
-    expected_start = payment_failure_start if anchor_type == "payment_failure" else cart_start
-    starts = [
-        operation for operation in postgrest.operations() if operation.startswith("mark_")
-    ]
+    mode, start_by_anchor, reevaluate_by_anchor = _chain_validator_contract()
+    operations = postgrest.operations()
     assert decisions[-1].decision == "execute"
     assert postgrest.body_of("reserve_followup_delivery_attempt")["p_mode"] == mode
-    assert starts == [expected_start]
-    assert "finalize_followup_delivery_attempt" not in postgrest.operations()
-    assert postgrest.operations()[-1] == "record_and_finalize_followup_acceptance"
-    # A7 recorre exactamente estos dos anchor_type, los que escriben los
-    # planificadores (20260803000100 y 20260903000300).
+    assert [name for name in operations if name.startswith("mark_")] == [
+        start_by_anchor[anchor_type]
+    ]
+    assert [name for name in operations if name.startswith("reevaluate_")] == [
+        reevaluate_by_anchor[anchor_type]
+    ] * 2
+    assert "finalize_followup_delivery_attempt" not in operations
+    assert operations[-1] == "record_and_finalize_followup_acceptance"
+    # A7 recorre exactamente estos tres anchor_type, los que escriben los
+    # planificadores (20260803000100, 20260903000300 y 20261001000200). El del
+    # formulario se compara mas abajo, con sus RPC propias.
     assert anchor_type in _chain_validator_anchors()
-    assert _chain_validator_anchors() == {"cart_abandonment", "payment_failure"}
+    assert _chain_validator_anchors() == {
+        "cart_abandonment", "payment_failure", FORM_ANCHOR,
+    }
     assert chatwoot.posts("/conversations/200/messages")
 
 
@@ -1107,6 +1138,886 @@ def test_the_att1_chain_validator_still_declares_its_contract() -> None:
     # no tiene contra que comparar: se rompe aca, con un mensaje claro.
     assert _chain_validator_contract() == (
         "approved_template",
-        "mark_portable_payment_failure_request_started",
-        "mark_lancemos_pilot_request_started",
+        {
+            "cart_abandonment": "mark_lancemos_pilot_request_started",
+            "payment_failure": "mark_portable_payment_failure_request_started",
+            "precheckout_intent": "mark_portable_precheckout_request_started",
+        },
+        {
+            "cart_abandonment": "reevaluate_followup_action",
+            "payment_failure": "reevaluate_followup_action",
+            "precheckout_intent": "reevaluate_portable_precheckout_action",
+        },
     )
+
+
+# ------------------------------ equivalencia de telefonos antes del gate final
+#
+# Con whatsapp_equivalence_enabled el dispatcher resuelve el contacto de
+# Chatwoot ANTES del gate final y del arranque del pedido: el gate hashea el
+# wa_id que Meta va a recibir, no el telefono como lo guarda el contacto de la
+# base. El flag es explicito: no se deduce de portable_recipient_enabled, asi
+# que los tests de arriba (sin el flag) no cambian.
+#
+# Chatwoot: el precedente inline de este archivo (no hay captura de
+# /contacts/search). El source_id de un contacto de WhatsApp Cloud es su wa_id,
+# medido el 2026-10-01. Los telefonos son de prueba.
+
+MX_FORM = "525512345678"  # 52 + 10: lo que guardo el formulario
+MX_WHATSAPP = "5215512345678"  # 521 + 10: el wa_id
+
+
+class _ChatwootWithContacts(_Chatwoot):
+    """El mismo Chatwoot, con los contactos que ya existen en el inbox."""
+
+    def __init__(
+        self,
+        contacts: dict[str, tuple[int, str]] | None = None,
+        *,
+        search_status: int = 200,
+    ) -> None:
+        super().__init__()
+        # telefono E.164 -> (id del contacto, source_id en el inbox)
+        self.contacts = dict(contacts or {})
+        self.search_status = search_status
+        self.searches: list[str] = []
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        prefix = f"/api/v1/accounts/{ACCOUNT_ID}"
+        if request.method == "GET" and path == f"{prefix}/contacts/search":
+            self.requests.append((request.method, path, None))
+            query = request.url.params["q"]
+            self.searches.append(query)
+            if self.search_status != 200:
+                return httpx.Response(self.search_status, json={"error": "unavailable"})
+            found = self.contacts.get(query)
+            if found is None:
+                return httpx.Response(200, json={"payload": []})
+            contact_id, source_id = found
+            return httpx.Response(200, json={"payload": [{
+                "id": contact_id,
+                "phone_number": query,
+                "blocked": False,
+                "contact_inboxes": [{"source_id": source_id, "inbox": {"id": INBOX_ID}}],
+            }]})
+        if request.method == "POST" and path == f"{prefix}/contacts":
+            body = json.loads(request.content)
+            self.requests.append((request.method, path, body))
+            phone = body["phone_number"]
+            self.contacts[phone] = (55, phone.lstrip("+"))
+            return httpx.Response(200, json={"payload": {"id": 55}})
+        return super().handler(request)
+
+
+class _AuthorityWatchingChatwoot(_Authority):
+    """Anota que busquedas de Chatwoot ya habian salido al arrancar el pedido."""
+
+    def __init__(self, chatwoot: _ChatwootWithContacts, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._chatwoot = chatwoot
+        self.searches_before_request_start: list[str] | None = None
+        self.context = replace(self.context, buyer_phone=MX_FORM)
+
+    async def mark_followup_request_started(self, **kwargs: object) -> DeliveryAttempt:
+        self.searches_before_request_start = list(self._chatwoot.searches)
+        return await super().mark_followup_request_started(**kwargs)
+
+
+def _equivalence_dispatcher(
+    authority: _Authority,
+    chatwoot: _Chatwoot,
+    tmp_path: Path,
+    *,
+    gate_open: bool = True,
+) -> DurableDispatcher:
+    client = chatwoot.client()
+    return DurableDispatcher(
+        supabase=authority,  # type: ignore[arg-type]
+        worker_id="att1-dispatcher",
+        chatwoot=client,
+        chatwoot_account_id=ACCOUNT_ID,
+        chatwoot_inbox_id=INBOX_ID,
+        sender=ChatwootMessageSender(
+            chatwoot=client,
+            inbox_id=INBOX_ID,
+            allowed_jid=None,
+            dynamic_recipient_enabled=True,
+            template=TEMPLATE,
+            whatsapp_equivalence_enabled=True,
+        ),
+        allowed_jid=None,
+        commercial_ally_config=ALLY,
+        portable_recipient_enabled=True,
+        pilot_boundary=BOUNDARY,
+        clock=lambda: FINAL_NOW,
+        final_meta_effect_gate=FinalMetaEffectGate(
+            enabled=gate_open, evidence_dir=tmp_path / "meta-effects"
+        ),
+        waba_template=TEMPLATE,
+        approved_template_direct=True,
+        whatsapp_equivalence_enabled=True,
+    )
+
+
+def _gate_target(tmp_path: Path) -> str:
+    [evidence_file] = (tmp_path / "meta-effects").glob("*.json")
+    return json.loads(evidence_file.read_text(encoding="utf-8"))["target_sha256"]
+
+
+def _sha256(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def test_the_gate_records_the_wa_id_of_the_chatwoot_contact_that_exists(
+    tmp_path: Path,
+) -> None:
+    # La base guarda 52 + 10 y la persona ya escribio: su contacto de Chatwoot
+    # es 521 + 10, y ahi es adonde va a entregar Meta.
+    chatwoot = _ChatwootWithContacts({f"+{MX_WHATSAPP}": (41, MX_WHATSAPP)})
+    authority = _AuthorityWatchingChatwoot(chatwoot)
+
+    _run(_equivalence_dispatcher(authority, chatwoot, tmp_path, gate_open=False))
+
+    assert _gate_target(tmp_path) == _sha256(f"+{MX_WHATSAPP}")
+    assert _gate_target(tmp_path) != _sha256(f"+{MX_FORM}")
+    assert authority.finalizations[-1]["reason_code"] == "final_meta_gate_closed"
+    assert "request_started" not in authority.events
+    # Con el gate cerrado no se escribe nada en Chatwoot: solo lecturas.
+    assert chatwoot.posts("/contacts") == []
+    assert chatwoot.posts("/conversations") == []
+
+
+def test_the_send_goes_through_the_resolved_contact_without_searching_again(
+    tmp_path: Path,
+) -> None:
+    chatwoot = _ChatwootWithContacts({f"+{MX_WHATSAPP}": (41, MX_WHATSAPP)})
+    authority = _AuthorityWatchingChatwoot(chatwoot)
+
+    _run(_equivalence_dispatcher(authority, chatwoot, tmp_path))
+
+    assert authority.events == [
+        "reevaluate", "reserve", "reevaluate", "request_started", "accepted",
+    ]
+    # Las dos formas se buscaron antes de arrancar el pedido, y despues nada.
+    assert authority.searches_before_request_start == [
+        f"+{MX_FORM}", f"+{MX_WHATSAPP}",
+    ]
+    assert chatwoot.searches == [f"+{MX_FORM}", f"+{MX_WHATSAPP}"]
+    assert chatwoot.posts("/contacts") == []
+    assert chatwoot.posts("/conversations") == [
+        {"inbox_id": INBOX_ID, "contact_id": 41, "source_id": MX_WHATSAPP}
+    ]
+    assert chatwoot.posts("/conversations/200/messages")
+
+
+def test_without_a_chatwoot_contact_the_gate_records_the_delivery_form(
+    tmp_path: Path,
+) -> None:
+    # Nadie escribio todavia: el contacto nace con la forma de entrega (Mexico
+    # con el 1), y esa es la que hashea el gate.
+    chatwoot = _ChatwootWithContacts()
+    authority = _AuthorityWatchingChatwoot(chatwoot)
+
+    _run(_equivalence_dispatcher(authority, chatwoot, tmp_path, gate_open=False))
+
+    assert _gate_target(tmp_path) == _sha256(f"+{MX_WHATSAPP}")
+    assert chatwoot.posts("/contacts") == []
+
+    opened_chatwoot = _ChatwootWithContacts()
+    opened = _AuthorityWatchingChatwoot(opened_chatwoot)
+    _run(_equivalence_dispatcher(opened, opened_chatwoot, tmp_path / "abierto"))
+
+    assert opened.events[-1] == "accepted"
+    [contact] = opened_chatwoot.posts("/contacts")
+    assert contact["phone_number"] == f"+{MX_WHATSAPP}"
+    assert opened_chatwoot.posts("/conversations") == [
+        {"inbox_id": INBOX_ID, "contact_id": 55, "source_id": MX_WHATSAPP}
+    ]
+
+
+def test_a_chatwoot_contact_of_another_number_fails_closed_for_good(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # El contacto se encuentra por su telefono, pero Chatwoot entregaria a su
+    # source_id y ese no es el movil consentido: no sale y no se reintenta.
+    chatwoot = _ChatwootWithContacts({f"+{MX_WHATSAPP}": (41, "5215599999999")})
+    authority = _AuthorityWatchingChatwoot(chatwoot)
+
+    with caplog.at_level("WARNING"):
+        decisions = _run(_equivalence_dispatcher(authority, chatwoot, tmp_path))
+
+    assert decisions[-1].decision == "execute"
+    [finalization] = authority.finalizations
+    assert finalization["outcome"] == "failed_before_request"
+    assert finalization["reason_code"] == "chatwoot_recipient_phone_mismatch"
+    assert finalization["next_attempt_at"] is None
+    assert "request_started" not in authority.events
+    assert not (tmp_path / "meta-effects").exists()
+    assert chatwoot.posts("/conversations") == []
+    assert "durable_first_touch_recipient_mismatch" in caplog.text
+    assert "region=MX" in caplog.text and "chatwoot_contact_id=41" in caplog.text
+    for number in (MX_FORM, MX_WHATSAPP, "5215599999999"):
+        assert number not in caplog.text
+
+
+def test_a_chatwoot_failure_while_resolving_is_a_retryable_pre_request_failure(
+    tmp_path: Path,
+) -> None:
+    chatwoot = _ChatwootWithContacts(search_status=503)
+    authority = _AuthorityWatchingChatwoot(chatwoot)
+
+    decisions = _run(_equivalence_dispatcher(authority, chatwoot, tmp_path))
+
+    # No levanta: el resto del lote sigue.
+    assert decisions[-1].decision == "execute"
+    [finalization] = authority.finalizations
+    assert finalization["outcome"] == "failed_before_request"
+    assert finalization["reason_code"] == "pre_request_failed"
+    assert finalization["next_attempt_at"] is not None
+    # La busqueda es anterior a la segunda reevaluacion, al gate y al arranque.
+    assert authority.events == ["reevaluate", "reserve"]
+    assert not (tmp_path / "meta-effects").exists()
+
+
+def test_the_equivalence_needs_the_portable_binding() -> None:
+    with pytest.raises(ValueError, match="requires the portable binding"):
+        DurableDispatcher(
+            supabase=_Authority(),  # type: ignore[arg-type]
+            worker_id="johanna-dispatcher",
+            whatsapp_equivalence_enabled=True,
+        )
+    with pytest.raises(ValueError, match="invalid whatsapp equivalence flag"):
+        DurableDispatcher(
+            supabase=_Authority(),  # type: ignore[arg-type]
+            worker_id="johanna-dispatcher",
+            whatsapp_equivalence_enabled=1,  # type: ignore[arg-type]
+        )
+
+
+def test_without_the_flag_the_dispatcher_keeps_the_exact_phone(tmp_path: Path) -> None:
+    # El mismo caso que el primero, sin el flag: el gate hashea el telefono
+    # como lo guarda la base y el sender busca solo esa forma. Es lo que hace
+    # hoy todo runtime sin el flag.
+    chatwoot = _ChatwootWithContacts({f"+{MX_WHATSAPP}": (41, MX_WHATSAPP)})
+    authority = _AuthorityWatchingChatwoot(chatwoot)
+
+    _run(_dispatcher(authority, chatwoot, tmp_path, gate_open=False))
+
+    assert _gate_target(tmp_path) == _sha256(f"+{MX_FORM}")
+    assert chatwoot.searches == []
+
+
+def test_create_app_turns_the_equivalence_on_only_for_the_portable_sender(
+    tmp_path: Path,
+) -> None:
+    # Por create_app, con el carrito portable prendido: el dispatcher y el
+    # sender que arma el bridge comparan por forma equivalente.
+    manifest = replace(
+        MANIFEST,
+        flows={**MANIFEST.flows, "carrito": True},
+        templates={
+            **MANIFEST.templates,
+            "carrito": Template(
+                name=CART_TEMPLATE, language="es_EC", parameters=("nombre", "producto")
+            ),
+        },
+    )
+    settings = Settings(
+        webhook_secret="test-secret",
+        allowed_jid=None,
+        capture_dir=tmp_path / "captures",
+        max_age_seconds=300,
+        commercial_ally_config=manifest.to_commercial_ally_config(),
+        commercial_ally_manifest_path=Path("/instancia/instancia.toml"),
+        instance_manifest=manifest,
+        hermes_model_name=manifest.agent_model_name,
+        chatwoot_account_id=ACCOUNT_ID,
+        chatwoot_inbox_id=INBOX_ID,
+        portable_hotmart_recovery_enabled=True,
+        dispatcher_enabled=True,
+        dispatcher_worker_id="att1-dispatcher",
+        dispatcher_outbound_enabled=True,
+        dispatcher_approved_template_direct_enabled=True,
+        meta_final_effect_enabled=False,
+        meta_final_effect_evidence_dir=tmp_path / "meta-effects",
+        pilot_boundary_enabled=True,
+        pilot_scope_key=BOUNDARY.scope_key,
+        pilot_scope_version=BOUNDARY.scope_version,
+        pilot_tenant_key=BOUNDARY.tenant_key,
+        pilot_channel_provider="waba",
+        pilot_channel_account_ref=BOUNDARY.channel_account_ref,
+        waba_first_touch_template_name=CART_TEMPLATE,
+        waba_template_language="es_EC",
+        waba_template_category="MARKETING",
+    )
+    chatwoot = _ChatwootWithContacts({f"+{MX_WHATSAPP}": (41, MX_WHATSAPP)})
+    authority = _AuthorityWatchingChatwoot(chatwoot)
+
+    app = create_app(
+        settings,
+        supabase_client=authority,  # type: ignore[arg-type]
+        chatwoot_client=chatwoot.client(),
+    )
+    asyncio.run(app.state.durable_dispatcher.dispatch_due(now=NOW))
+
+    assert _gate_target(tmp_path) == _sha256(f"+{MX_WHATSAPP}")
+    assert chatwoot.searches == [f"+{MX_FORM}", f"+{MX_WHATSAPP}"]
+
+
+# ------------------------------------------- primer contacto tras el formulario
+#
+# Una accion de ancla precheckout_intent (la planifica
+# admit_and_plan_portable_lead_precheckout) sale con la plantilla propia del
+# flujo, y sin ella no sale. La plantilla es att1_interes_precheckout_01, la de
+# [plantillas.precheckout] del manifiesto de ATT1, leida del catalogo capturado
+# del inbox 11 (dos variables, es_MX, MARKETING y tres botones QUICK_REPLY). El
+# carrito y el pago fallido de esta configuracion son tambien los del
+# manifiesto.
+
+ATT1_TEMPLATE_NAMES = {
+    "cart_abandonment": MANIFEST.templates["carrito"].name,
+    "payment_failure": MANIFEST.templates["pago_fallido"].name,
+    FORM_ANCHOR: MANIFEST.templates["precheckout"].name,
+}
+FORM_TEMPLATE = ATT1_TEMPLATE_NAMES[FORM_ANCHOR]
+ATT1_CART_TEMPLATE = ATT1_TEMPLATE_NAMES["cart_abandonment"]
+ATT1_LANGUAGE = MANIFEST.templates["precheckout"].language
+# Sin la plantilla del formulario: lo que tiene una instancia que no prendio
+# el primer contacto.
+ATT1_WITHOUT_FORM_TEMPLATE = WhatsAppTemplateConfig(
+    first_touch_name=ATT1_CART_TEMPLATE,
+    payment_failure_name=ATT1_TEMPLATE_NAMES["payment_failure"],
+    followup_name=None,
+    language=ATT1_LANGUAGE,
+    category="MARKETING",
+    first_touch_parameter="buyer_name_and_product",
+    first_touch_body_parameters=("nombre", "producto"),
+    payment_failure_body_parameters=("nombre", "producto"),
+)
+WITH_FORM_TEMPLATE = replace(
+    ATT1_WITHOUT_FORM_TEMPLATE,
+    precheckout_name=FORM_TEMPLATE,
+    precheckout_body_parameters=("nombre", "producto"),
+)
+
+
+def test_the_att1_manifest_names_the_templates_of_the_captured_catalog() -> None:
+    assert ATT1_TEMPLATE_NAMES == {
+        "cart_abandonment": "att1_carrito_abandonado_01",
+        "payment_failure": "att1_compra_fallida_01",
+        FORM_ANCHOR: "att1_interes_precheckout_01",
+    }
+    assert {MANIFEST.templates[key].language for key in (
+        "carrito", "pago_fallido", "precheckout",
+    )} == {"es_MX"}
+    by_name = {template["name"]: template for template in ATT1_CATALOG}
+    for name in ATT1_TEMPLATE_NAMES.values():
+        captured = by_name[name]
+        assert (captured["status"], captured["language"], captured["category"]) == (
+            "APPROVED", "es_MX", "MARKETING",
+        )
+
+
+@pytest.mark.parametrize(
+    ("anchor_type", "offer_code"),
+    [
+        ("cart_abandonment", "gopi6lh7"),
+        ("payment_failure", "2uafw5bg"),
+        (FORM_ANCHOR, "bmaztyhg"),
+    ],
+)
+def test_each_att1_trigger_sends_its_template_of_the_captured_inbox_11_catalog(
+    tmp_path: Path, anchor_type: str, offer_code: str
+) -> None:
+    name = ATT1_TEMPLATE_NAMES[anchor_type]
+    authority = _Authority(offer_code=offer_code, anchor_type=anchor_type)
+    chatwoot = _Chatwoot(ATT1_CATALOG)
+
+    decisions = _run(
+        _dispatcher(authority, chatwoot, tmp_path, template=WITH_FORM_TEMPLATE)
+    )
+
+    expected = _expected(name, first="Edith García Pérez", product="Alimenta tu Tiroides")
+    assert decisions[-1].decision == "execute"
+    assert authority.events == [
+        "reevaluate", "reserve", "reevaluate", "request_started", "accepted",
+    ]
+    assert chatwoot.inbox_reads() == 1
+    [message] = chatwoot.posts("/conversations/200/messages")
+    assert message["content"] == expected
+    assert message["template_params"] == {
+        "name": name,
+        "category": "MARKETING",
+        "language": "es_MX",
+        "processed_params": {
+            "body": {"1": "Edith García Pérez", "2": "Alimenta tu Tiroides"}
+        },
+    }
+    assert authority.acceptances[0]["message_content"] == expected
+    assert authority.finalizations == []
+
+
+def test_the_three_att1_triggers_send_three_different_texts() -> None:
+    assert len({
+        _expected(name, first="Edith", product="Alimenta tu Tiroides")
+        for name in ATT1_TEMPLATE_NAMES.values()
+    }) == 3
+
+
+def test_the_att1_templates_asked_in_the_language_of_johanna_are_not_sent(
+    tmp_path: Path,
+) -> None:
+    # WABA_TEMPLATE_LANGUAGE mal cargada (es_EC, la de Johanna) contra el
+    # catalogo real: no cierra y no manda nada.
+    authority = _Authority(offer_code="gopi6lh7", anchor_type=FORM_ANCHOR)
+    chatwoot = _Chatwoot(ATT1_CATALOG)
+
+    _run(
+        _dispatcher(
+            authority, chatwoot, tmp_path,
+            template=replace(WITH_FORM_TEMPLATE, language="es_EC"),
+        )
+    )
+
+    assert chatwoot.posts("/messages") == []
+    assert "request_started" not in authority.events
+    assert authority.finalizations[-1]["reason_code"] == "approved_template_mismatch"
+
+
+def test_the_form_first_contact_sends_its_own_approved_template(tmp_path: Path) -> None:
+    authority = _Authority(offer_code="gopi6lh7", anchor_type=FORM_ANCHOR)
+    chatwoot = _Chatwoot(ATT1_CATALOG)
+
+    decisions = _run(
+        _dispatcher(authority, chatwoot, tmp_path, template=WITH_FORM_TEMPLATE)
+    )
+
+    expected = _expected(
+        FORM_TEMPLATE, first="Edith García Pérez", product="Alimenta tu Tiroides"
+    )
+    assert expected != _expected(
+        ATT1_CART_TEMPLATE, first="Edith García Pérez", product="Alimenta tu Tiroides"
+    )
+    assert expected == (
+        "Hola, Edith García Pérez. Soy del equipo de Dra. Nina.\n\n"
+        "Completaste el formulario para recibir información sobre "
+        "Alimenta tu Tiroides. Si tienes alguna duda, puedo ayudarte. También "
+        "puedo enviarte el enlace para que continúes cuando quieras."
+    )
+    assert decisions[-1].decision == "execute"
+    assert authority.events == [
+        "reevaluate", "reserve", "reevaluate", "request_started", "accepted",
+    ]
+    [message] = chatwoot.posts("/conversations/200/messages")
+    assert message["content"] == expected
+    assert message["template_params"] == {
+        "name": FORM_TEMPLATE,
+        "category": "MARKETING",
+        "language": "es_MX",
+        "processed_params": {
+            "body": {"1": "Edith García Pérez", "2": "Alimenta tu Tiroides"}
+        },
+    }
+    assert authority.acceptances[0]["message_content"] == expected
+    assert authority.finalizations == []
+
+
+def test_the_form_first_contact_final_gate_records_its_own_template(
+    tmp_path: Path,
+) -> None:
+    authority = _Authority(offer_code="gopi6lh7", anchor_type=FORM_ANCHOR)
+    chatwoot = _Chatwoot(ATT1_CATALOG)
+
+    _run(
+        _dispatcher(
+            authority, chatwoot, tmp_path, gate_open=False, template=WITH_FORM_TEMPLATE
+        )
+    )
+
+    [evidence_file] = list((tmp_path / "meta-effects").glob("*.json"))
+    evidence = json.loads(evidence_file.read_text(encoding="utf-8"))
+    assert evidence["template_name"] == FORM_TEMPLATE
+    assert evidence["content_sha256"] == hashlib.sha256(
+        _expected(
+            FORM_TEMPLATE, first="Edith García Pérez", product="Alimenta tu Tiroides"
+        ).encode("utf-8")
+    ).hexdigest()
+    assert authority.finalizations[-1]["reason_code"] == "final_meta_gate_closed"
+    assert chatwoot.posts("/messages") == []
+
+
+def test_the_form_first_contact_without_its_template_is_never_sent(
+    tmp_path: Path,
+) -> None:
+    # Falla cerrado antes de leer el catalogo: no busca ni crea el contacto, no
+    # pasa por el gate final ni arranca el pedido, y no usa la plantilla del
+    # carrito. Cierra la accion en el primer intento.
+    authority = _Authority(offer_code="gopi6lh7", anchor_type=FORM_ANCHOR)
+    chatwoot = _Chatwoot(ATT1_CATALOG)
+
+    decisions = _run(
+        _dispatcher(authority, chatwoot, tmp_path, template=ATT1_WITHOUT_FORM_TEMPLATE)
+    )
+
+    assert decisions[-1].decision == "execute"
+    assert authority.events == ["reevaluate", "reserve"]
+    assert chatwoot.requests == []
+    [finalization] = authority.finalizations
+    assert finalization["outcome"] == "failed_before_request"
+    assert finalization["reason_code"] == "first_touch_template_not_configured"
+    assert finalization["next_attempt_at"] is None
+    assert not (tmp_path / "meta-effects").exists()
+
+
+# Un nombre que no es un nombre. El formulario publico (y Hotmart) traen el
+# nombre con un telefono que nadie verifico, y el saludo cae al nombre completo
+# cuando la primera palabra no sirve; sin saludo, el nombre va tal cual. La
+# plantilla del formulario de ATT1 dice "Hola, {{1}}. Soy del equipo de Dra.
+# Nina.": sin el filtro, una URL, un email o un texto largo salian ahi.
+
+_NOT_A_NAME = [
+    pytest.param("http://evil.example/premio", id="url"),
+    pytest.param("soporte@evil.example", id="email"),
+    pytest.param("\U0001F381 evil.example", id="emoji and domain"),
+    pytest.param("x" * 61, id="61 characters"),
+    pytest.param("5512345678", id="digits"),
+]
+
+
+@pytest.mark.parametrize("greeting", [True, False], ids=["greeting", "no greeting"])
+@pytest.mark.parametrize("name", _NOT_A_NAME)
+def test_the_form_first_contact_refuses_a_name_that_is_not_a_name(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, name: str, greeting: bool
+) -> None:
+    authority = _Authority(
+        offer_code="gopi6lh7", anchor_type=FORM_ANCHOR, buyer_name=name
+    )
+    chatwoot = _Chatwoot(ATT1_CATALOG)
+
+    with caplog.at_level(logging.WARNING, logger="bridge.worker"):
+        decisions = _run(
+            _dispatcher(
+                authority, chatwoot, tmp_path,
+                greeting=greeting, template=WITH_FORM_TEMPLATE,
+            )
+        )
+
+    assert decisions[-1].decision == "execute"
+    assert chatwoot.posts("/messages") == []
+    # Cierra antes del catalogo: no busca ni crea el contacto.
+    assert chatwoot.requests == []
+    assert "request_started" not in authority.events
+    [finalization] = authority.finalizations
+    assert finalization["outcome"] == "failed_before_request"
+    assert finalization["reason_code"] == "template_parameters_missing"
+    # El nombre del caso no cambia solo: sin reintento.
+    assert finalization["next_attempt_at"] is None
+    assert not (tmp_path / "meta-effects").exists()
+    assert "approved_template_name_refused" in caplog.text
+    # El log no lleva el nombre: es dato personal y es el texto del atacante.
+    assert name not in caplog.text
+
+
+@pytest.mark.parametrize("greeting", [True, False], ids=["greeting", "no greeting"])
+@pytest.mark.parametrize("case", LEAD_NAMES, ids=[c["pattern"] for c in LEAD_NAMES])
+def test_the_form_first_contact_still_greets_every_captured_name(
+    tmp_path: Path, case: dict[str, Any], greeting: bool
+) -> None:
+    # El costo del filtro, medido: los 19 patrones capturados del inbox 9
+    # (incluidos una sola letra, iniciales con emoji y solo emoji) siguen
+    # saliendo, con saludo y sin saludo.
+    authority = _Authority(
+        offer_code="gopi6lh7", anchor_type=FORM_ANCHOR, buyer_name=case["full_name"]
+    )
+    chatwoot = _Chatwoot(ATT1_CATALOG)
+
+    _run(
+        _dispatcher(
+            authority, chatwoot, tmp_path, greeting=greeting, template=WITH_FORM_TEMPLATE
+        )
+    )
+
+    if greeting:
+        first = case["deterministic"] or case["full_name"].strip()
+    else:
+        first = " ".join(case["full_name"].split())
+    [message] = chatwoot.posts("/conversations/200/messages")
+    assert message["template_params"]["processed_params"]["body"] == {
+        "1": first,
+        "2": "Alimenta tu Tiroides",
+    }
+    assert message["content"] == _expected(
+        FORM_TEMPLATE, first=first, product="Alimenta tu Tiroides"
+    )
+    assert authority.events[-1] == "accepted"
+
+
+def test_a_template_without_the_name_does_not_look_at_it(tmp_path: Path) -> None:
+    # El filtro mira lo que va a la plantilla. Si la plantilla no declara
+    # `nombre`, el nombre no sale en el mensaje y no frena el envio.
+    authority = _Authority(buyer_name="http://evil.example/premio")
+    chatwoot = _Chatwoot(ONE_VARIABLE_CATALOG)
+    template = replace(ONE_VARIABLE, first_touch_body_parameters=("producto",))
+
+    _run(_dispatcher(authority, chatwoot, tmp_path, greeting=True, template=template))
+
+    [message] = chatwoot.posts("/conversations/200/messages")
+    assert message["template_params"]["processed_params"] == {
+        "body": {"1": "Alimenta tu Tiroides"}
+    }
+    assert "evil.example" not in message["content"]
+    assert authority.events[-1] == "accepted"
+
+
+class _TwoActionsAuthority(_Authority):
+    """Dos acciones reclamadas en el mismo lote; la base rechaza el arranque de la primera."""
+
+    def __init__(self, *, rejection: Exception, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.rejection = rejection
+        self.second_action = replace(
+            self.action,
+            action_id="action-att1-2",
+            recovery_case_id="case-att1-2",
+            followup_sequence_id="sequence-att1-2",
+            idempotency_key=f"{self.action.anchor_type}:first_contact:case-att1-2",
+        )
+        self.starts: list[str] = []
+
+    def _action(self, action_id: object) -> ScheduledAction:
+        return self.action if action_id == self.action.action_id else self.second_action
+
+    async def claim_due_followup_actions(self, **_: object) -> list[ScheduledAction]:
+        return [self.action, self.second_action]
+
+    async def get_followup_chatwoot_context(self, **kwargs: object) -> ChatwootAuthorityContext:
+        return replace(
+            await super().get_followup_chatwoot_context(),
+            action_id=str(kwargs["action_id"]),
+        )
+
+    async def reevaluate_followup_action(self, **kwargs: object) -> ReevaluationDecision:
+        return replace(
+            await super().reevaluate_followup_action(),
+            action_id=str(kwargs["action_id"]),
+        )
+
+    async def reserve_followup_delivery_attempt(self, **kwargs: object) -> DeliveryAttempt:
+        action = self._action(kwargs["action_id"])
+        return replace(
+            await super().reserve_followup_delivery_attempt(**kwargs),
+            attempt_id=f"attempt-of-{action.action_id}",
+            action_id=action.action_id,
+            idempotency_key=action.idempotency_key,
+        )
+
+    async def get_followup_execution_context(self, **kwargs: object) -> FollowupExecutionContext:
+        action = self._action(kwargs["action_id"])
+        return replace(
+            self.context,
+            action_id=action.action_id,
+            recovery_case_id=action.recovery_case_id,
+        )
+
+    async def mark_followup_request_started(self, **kwargs: object) -> DeliveryAttempt:
+        action = self._action(kwargs["action_id"])
+        self.starts.append(action.action_id)
+        if action.action_id == self.action.action_id:
+            raise self.rejection
+        self.events.append("request_started")
+        return replace(
+            self.attempt,
+            attempt_id=str(kwargs["attempt_id"]),
+            action_id=action.action_id,
+            idempotency_key=action.idempotency_key,
+            phase="request_started",
+        )
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["pilot_daily_budget_exhausted", "pilot_runtime_not_armed", "precheckout_conversation_handoff"],
+)
+def test_a_rejected_request_start_does_not_cut_the_batch(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, reason: str
+) -> None:
+    # La base rechaza el arranque de la primera accion (un tope del scope, el
+    # piloto desarmado, o un freno que entro despues de la reevaluacion final).
+    # Antes el error subia sin atrapar: cortaba el lote, la segunda accion
+    # quedaba con el lease tomado y sin procesar, y el motivo se perdia.
+    authority = _TwoActionsAuthority(
+        rejection=PilotRequestStartRejectedError(reason),
+        anchor_type="precheckout_intent",
+        offer_code="2uafw5bg",
+    )
+    chatwoot = _Chatwoot(ATT1_CATALOG)
+
+    with caplog.at_level("WARNING", logger="bridge.worker"):
+        decisions = _run(
+            _dispatcher(authority, chatwoot, tmp_path, template=WITH_FORM_TEMPLATE)
+        )
+
+    # Las dos acciones se intentaron; solo la segunda salio.
+    assert authority.starts == ["action-att1", "action-att1-2"]
+    assert [decision.action_id for decision in decisions] == ["action-att1", "action-att1-2"]
+    [sent] = chatwoot.posts("/conversations/200/messages")
+    assert sent["template_params"]["name"] == FORM_TEMPLATE
+    [accepted] = authority.acceptances
+    assert accepted["action_id"] == "action-att1-2"
+    # El intento rechazado queda reservado: lo resuelve el lease siguiente (la
+    # reevaluacion cancela el caso con el freno, o la accion vence con el).
+    # Cerrarlo sin reintento dejaria la accion permanent_failed y el caso
+    # abierto para siempre.
+    assert authority.finalizations == []
+    # Y el motivo queda en el log, con ids y un codigo.
+    [warning] = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("durable_request_start_rejected")
+    ]
+    assert warning == (
+        "durable_request_start_rejected action_id=action-att1 "
+        f"attempt_id=attempt-of-action-att1 anchor=precheckout_intent reason={reason}"
+    )
+    assert PHONE not in warning
+
+
+def test_any_other_failed_request_start_still_stops_the_batch(tmp_path: Path) -> None:
+    # Una falla que no es un rechazo (la base caida, una respuesta rara) sigue
+    # subiendo: no se sabe si el arranque quedo o no, y no se sigue mandando.
+    authority = _TwoActionsAuthority(
+        rejection=SupabaseError("mark_portable_precheckout_request_started_failed: HTTP 503"),
+        anchor_type="precheckout_intent",
+        offer_code="2uafw5bg",
+    )
+    chatwoot = _Chatwoot(ATT1_CATALOG)
+
+    with pytest.raises(SupabaseError, match="HTTP 503"):
+        _run(_dispatcher(authority, chatwoot, tmp_path, template=WITH_FORM_TEMPLATE))
+
+    assert authority.starts == ["action-att1"]
+    assert chatwoot.posts("/conversations/200/messages") == []
+
+
+def test_the_composition_refuses_the_form_anchor_without_its_template(
+    tmp_path: Path,
+) -> None:
+    # La segunda barrera, por si la del dispatcher cambia: la composicion del
+    # modo directo tampoco arma nada, con el motivo propio y sin leer el
+    # catalogo.
+    authority = _Authority(offer_code="gopi6lh7", anchor_type=FORM_ANCHOR)
+    chatwoot = _Chatwoot(ATT1_CATALOG)
+    dispatcher = _dispatcher(
+        authority, chatwoot, tmp_path, template=ATT1_WITHOUT_FORM_TEMPLATE
+    )
+
+    composition = asyncio.run(
+        dispatcher._compose_approved_template_proposal(  # type: ignore[attr-defined]
+            action=authority.action, execution_context=authority.context
+        )
+    )
+
+    assert composition.proposal is None
+    assert composition.failure_reason == "first_touch_template_not_configured"
+    assert composition.retryable is False
+    assert chatwoot.requests == []
+
+
+class _FirstContactPostgREST(_PostgREST):
+    """El mismo PostgREST, con las RPC propias del ancla precheckout_intent.
+
+    Las dos devuelven la misma tabla que su par: la reevaluacion la de
+    reevaluate_followup_action, y el arranque la de
+    mark_portable_payment_failure_request_started, de la que es copia
+    (migracion 20261001000200).
+    """
+
+    SIBLINGS = {
+        "reevaluate_portable_precheckout_action": "reevaluate_followup_action",
+        "mark_portable_precheckout_request_started": (
+            "mark_portable_payment_failure_request_started"
+        ),
+    }
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        prefix = "/rest/v1/rpc/"
+        operation = request.url.path.removeprefix(prefix)
+        sibling = self.SIBLINGS.get(operation)
+        if sibling is None:
+            return super().handler(request)
+        response = super().handler(
+            httpx.Request(
+                request.method,
+                request.url.copy_with(path=prefix + sibling),
+                content=request.content,
+            )
+        )
+        self.calls[-1] = (operation, self.calls[-1][1])
+        return response
+
+
+def test_the_real_supabase_client_uses_the_first_contact_rpcs_for_its_anchor(
+    tmp_path: Path,
+) -> None:
+    # La reevaluacion compartida sola ejecutaria sin mirar los frenos del
+    # primer contacto (compra, carrito, opt-out, consentimiento), y el arranque
+    # compartido autorizaria contra otro scope: para este ancla el worker y el
+    # cliente usan solo las RPC propias, las dos veces que reevaluan.
+    authority = _Authority(offer_code="gopi6lh7", anchor_type=FORM_ANCHOR)
+    postgrest = _FirstContactPostgREST(authority)
+    chatwoot = _Chatwoot(ATT1_CATALOG)
+    client = chatwoot.client()
+    dispatcher = DurableDispatcher(
+        supabase=postgrest.client(),
+        worker_id="att1-dispatcher",
+        chatwoot=client,
+        chatwoot_account_id=ACCOUNT_ID,
+        chatwoot_inbox_id=INBOX_ID,
+        sender=ChatwootMessageSender(
+            chatwoot=client,
+            inbox_id=INBOX_ID,
+            allowed_jid=None,
+            dynamic_recipient_enabled=True,
+            template=WITH_FORM_TEMPLATE,
+        ),
+        allowed_jid=None,
+        commercial_ally_config=ALLY,
+        portable_recipient_enabled=True,
+        pilot_boundary=BOUNDARY,
+        clock=lambda: FINAL_NOW,
+        final_meta_effect_gate=FinalMetaEffectGate(
+            enabled=True, evidence_dir=tmp_path / "meta-effects"
+        ),
+        waba_template=WITH_FORM_TEMPLATE,
+        approved_template_direct=True,
+    )
+
+    decisions = _run(dispatcher)
+
+    operations = postgrest.operations()
+    assert decisions[-1].decision == "execute"
+    assert [name for name in operations if name.startswith("reevaluate_")] == [
+        "reevaluate_portable_precheckout_action",
+        "reevaluate_portable_precheckout_action",
+    ]
+    assert [name for name in operations if name.startswith("mark_")] == [
+        "mark_portable_precheckout_request_started"
+    ]
+    assert postgrest.body_of("reserve_followup_delivery_attempt")["p_mode"] == (
+        "approved_template"
+    )
+    # Lo mismo que recorre validate_att1_portable_chain.mjs contra la base
+    # para este ancla (caso 9): si una capa cambia de RPC, la otra se entera.
+    mode, start_by_anchor, reevaluate_by_anchor = _chain_validator_contract()
+    assert postgrest.body_of("reserve_followup_delivery_attempt")["p_mode"] == mode
+    assert [name for name in operations if name.startswith("mark_")] == [
+        start_by_anchor[FORM_ANCHOR]
+    ]
+    assert {name for name in operations if name.startswith("reevaluate_")} == {
+        reevaluate_by_anchor[FORM_ANCHOR]
+    }
+    assert FORM_ANCHOR in _chain_validator_anchors()
+    assert operations[-1] == "record_and_finalize_followup_acceptance"
+    [message] = chatwoot.posts("/conversations/200/messages")
+    assert message["template_params"]["name"] == FORM_TEMPLATE

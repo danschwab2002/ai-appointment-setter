@@ -8,6 +8,7 @@ invoking the LLM.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 from bridge.commercial_ally import CommercialAllyConfig
@@ -18,6 +19,7 @@ from bridge.hotmart import (
     parse_hotmart_payment_failure_buyer_payload,
 )
 from bridge.messaging import is_allowed_whatsapp_target
+from bridge.phones import equivalent_whatsapp_phones, whatsapp_phone_region
 from bridge.supabase import (
     ContactMatch,
     PilotBoundaryConfig,
@@ -31,8 +33,71 @@ from bridge.supabase import (
 DEFAULT_GRACE_HOURS = 1
 
 
+logger = logging.getLogger(__name__)
+
+
 class ResolutionError(RuntimeError):
     """Raised when identity resolution cannot complete."""
+
+
+async def _stored_whatsapp_identity(
+    supabase: SupabaseClient,
+    *,
+    contact_id: str,
+    phone: str,
+    chatwoot_account_id: int,
+    chatwoot_inbox_id: int,
+) -> str:
+    """The id of the WhatsApp identity this contact already has for the phone.
+
+    Portable runtime only. The first contact after the form creates the
+    identity with the phone of the form (``52`` + 10 digits) and an inbound
+    message with the ``wa_id`` (``521`` + 10); Hotmart may bring the other
+    form of the same mobile. Planning with the raw phone then gave the contact
+    a SECOND active identity, and with two the inbound resolver falls back to
+    the textual ``wa_id`` and the admission collides with the conversation of
+    the other identity. So when this contact already owns exactly one active
+    identity of the inbox among the forms of the phone, and it is not the raw
+    one, the plan reuses it. The planners compare that id with the consented
+    phone in canonical form, so either form is the same recipient.
+
+    Anything else keeps the raw phone, as before: no identity yet, the raw one
+    already there, both forms already there, or an identity of another contact
+    (the planner rejects that one). A failed lookup also keeps the raw phone:
+    the event is not lost for a read.
+    """
+    forms = equivalent_whatsapp_phones(phone)
+    if len(forms) < 2:
+        return phone
+    try:
+        identities = await supabase.find_active_whatsapp_identities(
+            chatwoot_account_id=chatwoot_account_id,
+            chatwoot_inbox_id=chatwoot_inbox_id,
+            external_user_ids=forms,
+        )
+    except SupabaseError as exc:
+        logger.warning(
+            "resolution_whatsapp_identity_lookup_failed contact_id=%s region=%s error=%s",
+            contact_id,
+            whatsapp_phone_region(phone),
+            type(exc).__name__,
+        )
+        return phone
+    own = sorted(
+        {
+            identity.external_user_id
+            for identity in identities
+            if identity.contact_id == contact_id
+        }
+    )
+    if len(own) == 1 and own[0] != phone:
+        logger.info(
+            "resolution_whatsapp_identity_reused contact_id=%s region=%s",
+            contact_id,
+            whatsapp_phone_region(phone),
+        )
+        return own[0]
+    return phone
 
 
 async def resolve_event(
@@ -105,7 +170,19 @@ async def resolve_event(
 
     if buyer.buyer_phone is not None:
         try:
-            phone_match = await supabase.find_contact_by_phone(buyer.buyer_phone)
+            if commercial_ally_config is not None:
+                # Portable runtime: the contact may only own the other form of
+                # the same mobile (the landing form stores 52 + 10 digits,
+                # Hotmart sends 521 + 10). The lookup compares the equivalent
+                # forms; the contact point and the identity written below stay
+                # raw, because the base validates them against the payload.
+                phone_match = await supabase.find_contact_by_phones(
+                    equivalent_whatsapp_phones(buyer.buyer_phone)
+                )
+            else:
+                phone_match = await supabase.find_contact_by_phone(
+                    buyer.buyer_phone
+                )
         except SupabaseError as exc:
             if str(exc).endswith("_ambiguous"):
                 await supabase.update_event_status(
@@ -227,6 +304,23 @@ async def resolve_event(
                 and is_allowed_whatsapp_target(buyer.buyer_phone, allowed_jid)
             )
             identity_allowed = portable_identity_allowed or legacy_identity_allowed
+            external_user_id = buyer.buyer_phone if identity_allowed else None
+            if (
+                portable_identity_allowed
+                and match is not None
+                and external_user_id is not None
+            ):
+                # A contact that already existed may own the identity of this
+                # mobile under its other form. A new contact has none.
+                assert chatwoot_account_id is not None
+                assert chatwoot_inbox_id is not None
+                external_user_id = await _stored_whatsapp_identity(
+                    supabase,
+                    contact_id=contact_id,
+                    phone=external_user_id,
+                    chatwoot_account_id=chatwoot_account_id,
+                    chatwoot_inbox_id=chatwoot_inbox_id,
+                )
             planner = (
                 supabase.plan_payment_failure_recovery
                 if buyer.event_type == EVENT_PURCHASE_CANCELED
@@ -245,7 +339,7 @@ async def resolve_event(
                     chatwoot_account_id if identity_allowed else None
                 ),
                 chatwoot_inbox_id=(chatwoot_inbox_id if identity_allowed else None),
-                external_user_id=(buyer.buyer_phone if identity_allowed else None),
+                external_user_id=external_user_id,
                 pilot_boundary=pilot_boundary,
             )
             recovery_case_id = plan.recovery_case_id

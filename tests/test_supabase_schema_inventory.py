@@ -176,11 +176,134 @@ def test_precheckout_readiness_fingerprint_binds_timer_to_exact_policy() -> None
     assert "policy.grace_period = interval '60 minutes'" in compact_fingerprint
 
 
+def test_whatsapp_phone_equivalence_fingerprint_checks_the_portable_functions() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # Hasta la fila siguiente: las cuentas de abajo son de esta migracion sola.
+    fingerprint = sql.split("'20261001000100'", 1)[1].split("'20261001000200'", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", fingerprint)
+
+    for signature in (
+        "public._whatsapp_phone_canonical(text)",
+        "public._whatsapp_phone_variants(text)",
+        "public._correlate_portable_hotmart_purchase_intent(uuid)",
+        "public.admit_portable_hotmart_cart_abandonment(text,text,integer,text,jsonb,text,text)",
+        "public.admit_portable_hotmart_payment_failure(text,text,integer,text,jsonb,text,text)",
+        "public.admit_portable_hotmart_purchase_approved(text,text,integer,text,jsonb,text,text)",
+        "public._portable_consented_intent_reason(uuid,uuid,text)",
+        "public.plan_portable_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,"
+        "timestamptz,bigint,bigint,text,text,integer)",
+        "public._portable_chatwoot_opt_out_stop(bigint,uuid,text)",
+        "public.mark_lancemos_pilot_request_started(uuid,uuid,text,bigint,timestamptz)",
+        "public.mark_portable_payment_failure_request_started(uuid,uuid,text,bigint,timestamptz)",
+        "public.reserve_portable_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,"
+        "timestamptz)",
+    ):
+        assert f"to_regprocedure('{signature}')" in compact_fingerprint, signature
+    assert "proname" not in fingerprint
+    # Los cuatro helpers nuevos no son entrypoints: ni service_role los ejecuta.
+    assert compact_fingerprint.count("nothas_function_privilege('service_role',") == 4
+    # Los dos arranques del piloto frenan con el opt-out en las dos formas.
+    assert "position('_portable_chatwoot_opt_out_stop('indefinition)>0" in compact_fingerprint
+    assert "pilot_chatwoot_opt_out_stop" in fingerprint
+    # La comparacion exacta del telefono no puede quedar en el correlador
+    # portable ni en la compra, y carrito y pago fallido no pueden volver al
+    # correlador compartido.
+    assert compact_fingerprint.count("position('intent.normalized_phone=v_phone'indefinition)=0") == 2
+    assert "position('public.correlate_hotmart_purchase_intent('indefinition)=0" in compact_fingerprint
+    assert "consented_intent_contact_phone_mismatch" in fingerprint
+    assert "consented_intent_prior_opt_out" in fingerprint
+    assert "whatsapp_equivalent" in fingerprint
+    # La reserva portable del enlace: un entrypoint solo de service_role, con la
+    # intencion buscada por las formas y el opt-out mirado en cada una.
+    assert (
+        "position('intent.normalized_phone=any(public._whatsapp_phone_variants(p_external_user_id))'"
+        "indefinition)>0" in compact_fingerprint
+    )
+    assert (
+        "position('intent.normalized_phone=p_external_user_id'indefinition)=0"
+        in compact_fingerprint
+    )
+    assert "position('asopt_out_form(user_id)'indefinition)>0" in compact_fingerprint
+    # Diez chequeos: la reserva portable es el decimo.
+    assert ",10,'whatsapp_phone_equivalence_portable_runtime'" in compact_fingerprint
+    assert "whatsapp_phone_equivalence_portable_runtime" in fingerprint
+
+
+def test_portable_precheckout_first_contact_fingerprint_checks_table_checks_and_functions() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # Hasta la fila siguiente: las cuentas de abajo son de esta migracion sola.
+    fingerprint = sql.split("'20261001000200'", 1)[1].split("'20261001000300'", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", fingerprint)
+
+    for signature in (
+        "public._portable_precheckout_stop_reason(uuid,uuid)",
+        "public._find_portable_precheckout_contact(uuid)",
+        "public._ensure_portable_precheckout_contact(uuid,uuid)",
+        "public._plan_portable_precheckout_first_contact(uuid,uuid,uuid,text,integer)",
+        "public.admit_and_plan_portable_lead_precheckout(text,text,integer,text,jsonb,jsonb,text,integer)",
+        "public.reevaluate_portable_precheckout_action(uuid,text,bigint,timestamptz,boolean,text,"
+        "text,timestamptz,text,boolean,boolean,boolean,boolean,boolean)",
+        "public.mark_portable_precheckout_request_started(uuid,uuid,text,bigint,timestamptz)",
+        "public.get_portable_precheckout_pilot_runtime_status(text,integer,text,text,text)",
+    ):
+        assert f"to_regprocedure('{signature}')" in compact_fingerprint, signature
+    assert "proname" not in fingerprint
+    # La tabla del resultado de cada plan: con RLS y sin privilegios de
+    # service_role. Los cuatro helpers, tampoco ejecutables por service_role.
+    assert "to_regclass('public.portable_precheckout_first_contact_plans')" in compact_fingerprint
+    assert "relrowsecurity" in fingerprint
+    assert compact_fingerprint.count("nothas_table_privilege('service_role',oid,") == 2
+    assert "nothas_function_privilege('service_role',oid,'EXECUTE')" in compact_fingerprint
+    # Los tres checks con su valor nuevo.
+    for constraint, value in (
+        ("recovery_cases_source_check", "landing"),
+        ("recovery_case_events_event_role_check", "precheckout_intent"),
+        ("followup_sequences_reason_check", "precheckout_intent"),
+    ):
+        assert (
+            f"conname='{constraint}'andposition('{value}'inpg_get_constraintdef(oid))>0"
+            in compact_fingerprint
+        ), constraint
+    # El plan corre los triggers diferidos adentro del bloque, la reevaluacion
+    # delega en la compartida y el arranque vuelve a mirar los frenos.
+    assert "position('setconstraintsallimmediate'indefinition)>0" in compact_fingerprint
+    assert "position('public.reevaluate_followup_action('indefinition)>0" in compact_fingerprint
+    assert compact_fingerprint.count("position('_portable_precheckout_stop_reason('indefinition)>0") == 3
+    assert "position('_lancemos_pilot_audience_intent('indefinition)>0" in compact_fingerprint
+    assert "position('chatwoot-opt-out-user'indefinition)>0" in compact_fingerprint
+    assert "portable_precheckout_first_contact" in fingerprint
+
+
+def test_pilot_scope_audience_mode_read_fingerprint_checks_the_function_and_its_acl() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    fingerprint = sql.split("'20261001000300'", 1)[1].split(")\nselect", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", fingerprint)
+
+    assert "'20261001000300_pilot_scope_audience_mode_read.sql'" in fingerprint
+    assert (
+        compact_fingerprint.count(
+            "to_regprocedure('public.get_lancemos_pilot_scope_audience_mode(text,integer)')"
+        )
+        == 2
+    )
+    assert "proname" not in fingerprint
+    # Lee el modo de una version publicada, como definer y sin escribir.
+    assert "andprosecdef" in compact_fingerprint
+    assert "provolatile='s'" in compact_fingerprint
+    assert "position('scope.audience_mode'indefinition)>0" in compact_fingerprint
+    assert "position('scope.status=''published'''indefinition)>0" in compact_fingerprint
+    # Es un entrypoint del bridge: solo service_role.
+    assert "has_function_privilege('service_role',oid,'EXECUTE')" in compact_fingerprint
+    assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint
+    assert "nothas_function_privilege('authenticated',oid,'EXECUTE')" in compact_fingerprint
+    assert compact_fingerprint.endswith(",2,'pilot_scope_audience_mode_read'")
+
+
 def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
 
-    assert len(allowlisted) == 112
+    assert len(allowlisted) == 118
     assert (
         "claim_conversation_followup_v1(bigint, bigint, bigint, text, text, text, text, text, "
         "text, text, bigint, bigint, integer, text, timestamp with time zone)"
@@ -203,11 +326,17 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     assert "get_daily_feedback_conversation_context_v1(text, text, bigint, bigint, bigint[])" in allowlisted
     assert not any(item.startswith("configure_daily_feedback_scope_v1(") for item in allowlisted)
     assert "admit_observed_lead_precheckout(text, jsonb, jsonb)" in allowlisted
+    assert "get_lancemos_pilot_scope_audience_mode(text, integer)" in allowlisted
     assert (
         "admit_portable_observed_lead_precheckout"
         "(text, text, integer, text, jsonb, jsonb)" in allowlisted
     )
     assert "admit_inbound_commercial_case_v2(text, integer, bigint, text)" in allowlisted
+    assert (
+        "reserve_portable_checkout_issuance_v2"
+        "(uuid, text, bigint, bigint, bigint, text, text, timestamp with time zone)"
+        in allowlisted
+    )
     assert (
         "admit_and_correlate_hotmart_checkout_issuance_v2"
         "(text, jsonb, text, timestamp with time zone)" in allowlisted

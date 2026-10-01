@@ -74,3 +74,13 @@ jobs:
         run: >-
           createdb -h 127.0.0.1 -p 5432 hotmart_intent_correlation_ci
           && uv run python tests/sql/followup_engine/real_postgres_hotmart_intent_correlation.py
+      - name: Verify portable first contact on PostgreSQL
+        env:
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          DATABASE_URL: postgresql://postgres@127.0.0.1:5432/portable_precheckout_first_contact_ci
+          PSQL: /usr/bin/psql
+          ALLOW_DISPOSABLE_DATABASE: portable-precheckout-first-contact
+        run: >-
+          createdb -h 127.0.0.1 -p 5432 portable_precheckout_first_contact_ci
+          && uv run python tests/sql/followup_engine/real_postgres_portable_precheckout_first_contact.py

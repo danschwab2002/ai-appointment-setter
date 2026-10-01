@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import shutil
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,6 +15,13 @@ import pytest
 
 from bridge.app import Settings, create_app
 from bridge.instance_manifest import InstanceManifest
+from bridge.supabase import SupabaseError
+from test_instance_wiring import (
+    ATT1 as ATT1_INSTANCE,
+    _FirstContactAuthority,
+    _first_contact_app,
+    _first_contact_settings,
+)
 
 SECRET = "fixture-lead-secret"
 ATT1_MANIFEST = Path(__file__).parent / "fixtures" / "instances" / "att1" / "instancia.toml"
@@ -567,3 +575,172 @@ def test_the_model_is_not_called_when_off_or_when_the_form_was_not_new(
     assert response.status_code == 200
     assert requests == []
     assert supabase.stored == {}
+
+
+# ------------------------------------------- primer contacto tras el formulario
+# Con PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED la admision del formulario
+# tambien planifica el primer contacto, en una sola RPC. El set completo con el
+# que ese flag arranca esta en test_instance_wiring.py. El payload es el inline
+# de este archivo con los datos del fixture de ATT1 (no hay lead.precheckout
+# capturado de ATT1); el formulario de GHL, con la captura real y la aceptacion
+# del riesgo del adaptador, esta en test_ghl_precheckout_adapter_http.py.
+
+FIRST_CONTACT_SECRET = "first-contact-lead-secret"
+
+
+@pytest.fixture
+def att1_instance(tmp_path: Path) -> Path:
+    target = tmp_path / "instancia"
+    shutil.copytree(ATT1_INSTANCE, target)
+    return target
+
+
+def _first_contact_off(settings: Settings) -> Settings:
+    # El mismo runtime con manifiesto sin el flag (y sin lo que solo el flag
+    # habilita: el modo directo y la salida durable).
+    return replace(
+        settings,
+        portable_precheckout_first_contact_enabled=False,
+        dispatcher_approved_template_direct_enabled=False,
+        dispatcher_outbound_enabled=False,
+    )
+
+
+def _post_att1_form(app: object, index: int = 0) -> httpx.Response:
+    return _post(app, _att1_payload(*ATT1_OFFERS[index]), secret=FIRST_CONTACT_SECRET)
+
+
+def test_the_first_contact_flag_admits_and_plans_in_one_rpc(att1_instance: Path) -> None:
+    settings = _first_contact_settings(att1_instance)
+    authority = _FirstContactAuthority()
+
+    response = _post_att1_form(_first_contact_app(settings, authority))
+
+    assert response.status_code == 200
+    assert authority.admission_calls == []
+    [call] = authority.plan_calls
+    assert call["config"] == settings.commercial_ally_config
+    assert call["external_submission_id"] == "01K3F8QW7N2VYB4M6X9CDPTZRA"
+    assert (call["scope_key"], call["scope_version"]) == ("att1-primer-contacto", 1)
+    assert call["raw_payload"]["event"] == "lead.precheckout"  # type: ignore[index]
+    assert call["canonical_payload"]["commerce"]["offer_ref"] == ATT1_OFFERS[0][0]  # type: ignore[index]
+    assert call["canonical_payload"]["consent"]["whatsapp_contact"] is True  # type: ignore[index]
+
+
+def test_without_the_first_contact_flag_the_manifest_runtime_keeps_its_rpc(
+    att1_instance: Path,
+) -> None:
+    settings = _first_contact_off(_first_contact_settings(att1_instance))
+    authority = _FirstContactAuthority()
+
+    response = _post_att1_form(_first_contact_app(settings, authority))
+
+    assert response.status_code == 200
+    assert authority.plan_calls == []
+    [call] = authority.admission_calls
+    assert set(call) == {
+        "config", "external_submission_id", "raw_payload", "canonical_payload",
+    }
+
+
+@pytest.mark.parametrize(
+    "plan",
+    [
+        {"plan_outcome": "planned", "plan_reason": "first_contact_scheduled"},
+        {"plan_outcome": "not_planned", "plan_reason": "pilot_runtime_not_armed"},
+        {"plan_outcome": "plan_failed", "plan_reason": "channel_identity_inbox_mismatch"},
+    ],
+)
+def test_the_lead_response_does_not_change_with_the_first_contact_plan(
+    att1_instance: Path, plan: dict[str, str]
+) -> None:
+    # La admision queda igual aunque el plan no proceda: el emisor recibe lo
+    # mismo que sin el flag, y nunca un permiso de contacto.
+    on = _first_contact_settings(att1_instance)
+    authority = _FirstContactAuthority()
+    authority.plan = plan
+
+    planned = _post_att1_form(_first_contact_app(on, authority))
+    plain = _post_att1_form(
+        _first_contact_app(_first_contact_off(on), _FirstContactAuthority())
+    )
+
+    assert planned.status_code == plain.status_code == 200
+    assert planned.json() == plain.json() == {
+        "status": "received",
+        "delivery_id": "01K3F8QW7N2VYB4M6X9CDPTZRA",
+        "purchase_intent_id": "1f581f3a-c469-45da-8208-9483d1b26f0b",
+        "activation_authorized": False,
+        "contact_authorized": False,
+    }
+
+
+@pytest.mark.parametrize(
+    ("plan_outcome", "level"),
+    [("planned", "INFO"), ("not_planned", "INFO"), ("plan_failed", "WARNING")],
+)
+def test_the_first_contact_plan_is_logged_with_ids_and_codes_only(
+    att1_instance: Path,
+    caplog: pytest.LogCaptureFixture,
+    plan_outcome: str,
+    level: str,
+) -> None:
+    authority = _FirstContactAuthority()
+    authority.plan = {"plan_outcome": plan_outcome, "plan_reason": "some_reason_code"}
+    app = _first_contact_app(_first_contact_settings(att1_instance), authority)
+
+    with caplog.at_level("INFO", logger="bridge.app"):
+        response = _post_att1_form(app)
+
+    assert response.status_code == 200
+    [record] = [
+        record
+        for record in caplog.records
+        if record.getMessage().startswith("portable_precheckout_first_contact ")
+    ]
+    assert record.levelname == level
+    assert record.getMessage() == (
+        "portable_precheckout_first_contact admission=inserted "
+        f"plan={plan_outcome} reason=some_reason_code "
+        "submission_id=bfc778e7-5c9f-45e6-a910-651f92312157"
+    )
+    # Ni el nombre, ni el email, ni el telefono del formulario.
+    for personal in ("Test Person", "test.person@example.com", "2025550123"):
+        assert personal not in caplog.text
+
+
+def test_a_failed_admit_and_plan_rpc_is_a_retryable_503(att1_instance: Path) -> None:
+    class _Unavailable(_FirstContactAuthority):
+        async def admit_and_plan_portable_lead_precheckout(self, **_: object) -> object:
+            raise SupabaseError("portable_lead_precheckout_admission_and_plan_failed: HTTP 503")
+
+    app = _first_contact_app(_first_contact_settings(att1_instance), _Unavailable())
+
+    response = _post_att1_form(app)
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "lead_precheckout_persist_unavailable"
+
+
+def test_a_duplicate_form_without_a_stored_plan_stays_a_terminal_200(
+    att1_instance: Path,
+) -> None:
+    class _Duplicate(_FirstContactAuthority):
+        async def admit_and_plan_portable_lead_precheckout(self, **kwargs: object) -> object:
+            self.plan_calls.append(kwargs)
+            return SimpleNamespace(
+                outcome="duplicate",
+                submission_id="bfc778e7-5c9f-45e6-a910-651f92312157",
+                purchase_intent_id="1f581f3a-c469-45da-8208-9483d1b26f0b",
+                plan_outcome=None,
+                plan_reason=None,
+            )
+
+    authority = _Duplicate()
+    app = _first_contact_app(_first_contact_settings(att1_instance), authority)
+
+    response = _post_att1_form(app)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "duplicate"
+    assert len(authority.plan_calls) == 1

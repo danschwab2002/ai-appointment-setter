@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import uuid
@@ -18,8 +19,16 @@ from typing import Protocol
 
 from bridge.chatwoot import ChatwootClient, ChatwootProtocolError
 from bridge.hotmart import normalize_phone
+from bridge.phones import (
+    equivalent_whatsapp_phones,
+    same_whatsapp_phone,
+    whatsapp_delivery_phone,
+    whatsapp_phone_region,
+)
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -32,19 +41,68 @@ class FirstTouchResult:
     reason: str | None = None
 
 
+@dataclass(frozen=True)
+class FirstTouchRecipient:
+    """The Chatwoot recipient of a first touch, resolved before the final gate.
+
+    ``wa_id`` is the number Meta receives, digits only: the ``source_id`` of
+    the Chatwoot contact the template goes through or, when no contact exists
+    yet, the delivery form the new contact is created with
+    (``bridge.phones.whatsapp_delivery_phone``). ``contact_id`` and
+    ``source_id`` are set only for a contact that already exists.
+    """
+
+    wa_id: str
+    contact_id: int | None = None
+    source_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.contact_id is None) != (self.source_id is None):
+            raise ValueError("invalid_first_touch_recipient")
+
+
+FIRST_TOUCH_RECIPIENT_MISMATCH = "chatwoot_recipient_phone_mismatch"
+_WA_ID_RE = re.compile(r"[1-9][0-9]{6,14}")
+
+
+def first_touch_recipient_matches(
+    recipient: FirstTouchRecipient,
+    *,
+    phone: str | None,
+) -> bool:
+    """True when the resolved ``wa_id`` is the consented phone, in any form."""
+    return _WA_ID_RE.fullmatch(recipient.wa_id) is not None and same_whatsapp_phone(
+        recipient.wa_id, phone
+    )
+
+
 # Body variables a first-contact template may declare, by manifest name
 # (docs/referencia-manifiesto.md, ``parametros``).
 TEMPLATE_BODY_PARAMETERS = ("nombre", "producto")
+
+# The trigger of the first contact after the landing form: the ``anchor_type``
+# of the action planned by ``admit_and_plan_portable_lead_precheckout``.
+PRECHECKOUT_INTENT_TRIGGER = "precheckout_intent"
+# The first contact after the form has its own approved template. Without it
+# nothing is sent: it never goes out with the cart template.
+FIRST_TOUCH_TEMPLATE_NOT_CONFIGURED = "first_touch_template_not_configured"
 
 
 @dataclass(frozen=True)
 class WhatsAppTemplateConfig:
     """Approved Chatwoot WABA templates and their body placeholders.
 
-    ``first_touch_body_parameters`` and ``payment_failure_body_parameters`` are
-    the body variables an instance declares for each template, in placeholder
-    order. ``None`` keeps the ``first_touch_parameter`` behavior, which is what
-    every runtime without an instance manifest uses.
+    ``first_touch_body_parameters``, ``payment_failure_body_parameters`` and
+    ``precheckout_body_parameters`` are the body variables an instance declares
+    for each template, in placeholder order. ``None`` keeps the
+    ``first_touch_parameter`` behavior, which is what every runtime without an
+    instance manifest uses.
+
+    ``precheckout_name`` is the template of the first contact after the landing
+    form (trigger ``precheckout_intent``). Unlike the payment failure, which
+    borrows the cart template when it has none, this trigger has no fallback:
+    without ``precheckout_name`` it has no template at all
+    (``first_touch_name_for`` returns ``None``) and nothing is sent.
 
     ``payment_failure_category`` is the Meta category of the payment failure
     template when it differs from ``category`` (a cart template approved as
@@ -61,11 +119,14 @@ class WhatsAppTemplateConfig:
     first_touch_body_parameters: tuple[str, ...] | None = None
     payment_failure_body_parameters: tuple[str, ...] | None = None
     payment_failure_category: str | None = None
+    precheckout_name: str | None = None
+    precheckout_body_parameters: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         for declared in (
             self.first_touch_body_parameters,
             self.payment_failure_body_parameters,
+            self.precheckout_body_parameters,
         ):
             if declared is None:
                 continue
@@ -81,11 +142,30 @@ class WhatsAppTemplateConfig:
             and self.payment_failure_name is None
         ):
             raise ValueError("payment_failure_body_parameters_without_template")
+        if self.precheckout_name is not None and not self.precheckout_name.strip():
+            raise ValueError("invalid_precheckout_template_name")
+        if (
+            self.precheckout_body_parameters is not None
+            and self.precheckout_name is None
+        ):
+            raise ValueError("precheckout_body_parameters_without_template")
         if self.payment_failure_category is not None:
             if self.payment_failure_name is None:
                 raise ValueError("payment_failure_category_without_template")
             if self.payment_failure_category not in {"MARKETING", "UTILITY"}:
                 raise ValueError("invalid_payment_failure_category")
+
+    def first_touch_name_for(self, *, trigger_kind: str | None) -> str | None:
+        """The first-contact template this trigger sends, or ``None``.
+
+        ``None`` only for the first contact after the form without its own
+        template: the caller fails closed instead of sending another one.
+        """
+        if trigger_kind == PRECHECKOUT_INTENT_TRIGGER:
+            return self.precheckout_name
+        if trigger_kind == "payment_failure" and self.payment_failure_name is not None:
+            return self.payment_failure_name
+        return self.first_touch_name
 
     def category_for(self, *, trigger_kind: str | None) -> str:
         """The Meta category of the first-contact template this trigger uses."""
@@ -101,6 +181,9 @@ class WhatsAppTemplateConfig:
         self, *, trigger_kind: str | None
     ) -> tuple[str, ...] | None:
         """The declared variables of the first-contact template this trigger uses."""
+        if trigger_kind == PRECHECKOUT_INTENT_TRIGGER:
+            # Its own template or nothing: never the variables of the cart one.
+            return self.precheckout_body_parameters
         if trigger_kind == "payment_failure" and self.payment_failure_name is not None:
             return self.payment_failure_body_parameters
         return self.first_touch_body_parameters
@@ -162,13 +245,11 @@ class WhatsAppTemplateConfig:
         product_name: str | None = None,
         trigger_kind: str | None = None,
     ) -> dict[str, object]:
-        name = self.followup_name if followup else self.first_touch_name
-        if (
-            not followup
-            and trigger_kind == "payment_failure"
-            and self.payment_failure_name is not None
-        ):
-            name = self.payment_failure_name
+        name = (
+            self.followup_name
+            if followup
+            else self.first_touch_name_for(trigger_kind=trigger_kind)
+        )
         if name is None:
             raise ValueError("template_disabled")
         body = {"1": content}
@@ -313,7 +394,14 @@ class MessageSender(Protocol):
         require_existing_contact: bool = False,
         trigger_kind: str | None = None,
         greeting_name: str | None = None,
+        recipient: FirstTouchRecipient | None = None,
     ) -> FirstTouchResult: ...
+
+    async def resolve_first_touch_recipient(
+        self,
+        *,
+        phone: str,
+    ) -> FirstTouchRecipient: ...
 
     async def send_first_touch_to_conversation(
         self,
@@ -393,16 +481,29 @@ class ChatwootMessageSender:
         allowed_jid: str | None,
         dynamic_recipient_enabled: bool = False,
         template: WhatsAppTemplateConfig | None = None,
+        whatsapp_equivalence_enabled: bool = False,
     ) -> None:
         if (allowed_jid is None and not dynamic_recipient_enabled) or (
             allowed_jid is not None and dynamic_recipient_enabled
         ):
             raise ValueError("exactly one recipient authority is required")
+        if type(whatsapp_equivalence_enabled) is not bool:
+            raise ValueError("invalid whatsapp equivalence flag")
+        if whatsapp_equivalence_enabled and not dynamic_recipient_enabled:
+            # The equivalent forms of a phone only exist for the portable
+            # binding. A sender tied to one fixed JID keeps comparing exactly.
+            raise ValueError("whatsapp equivalence requires the dynamic recipient")
         self._chatwoot = chatwoot
         self._inbox_id = inbox_id
         self._allowed_jid = allowed_jid
         self._dynamic_recipient_enabled = dynamic_recipient_enabled
         self._template = template
+        self._whatsapp_equivalence_enabled = whatsapp_equivalence_enabled
+
+    @property
+    def whatsapp_equivalence_enabled(self) -> bool:
+        """True when this sender resolves the recipient by its equivalent forms."""
+        return self._whatsapp_equivalence_enabled
 
     def _is_target_allowed(self, phone: str | None) -> bool:
         if self._dynamic_recipient_enabled:
@@ -412,6 +513,73 @@ class ChatwootMessageSender:
                 and normalize_phone(phone) is not None
             )
         return is_allowed_whatsapp_target(phone, self._allowed_jid)
+
+    async def resolve_first_touch_recipient(
+        self,
+        *,
+        phone: str,
+    ) -> FirstTouchRecipient:
+        """Find the Chatwoot contact a first touch will go through.
+
+        Only reads. Chatwoot matches a contact by its exact phone number, and
+        the same mobile can be there under either form (``52…`` created by an
+        earlier send, ``521…`` created by the person writing in). Both forms
+        are searched:
+
+        * one contact exists: it is the recipient, with its ``source_id``;
+        * both exist (the same person twice): the one in the delivery form
+          (``whatsapp_delivery_phone``), which is where Chatwoot puts the
+          reply: the ``521…`` contact in Mexico and the ``54…`` one in
+          Argentina, with a warning that never carries the number;
+        * none exists: the recipient is the delivery form, and the contact is
+          created with it when the send starts.
+
+        The dispatcher calls this before the final Meta gate, so the gate
+        hashes the number Meta will really receive. A Chatwoot failure raises
+        ``ChatwootProtocolError`` or ``httpx.HTTPError``.
+        """
+        if not self._whatsapp_equivalence_enabled:
+            raise ValueError("whatsapp_equivalence_disabled")
+        normalized = normalize_phone(phone)
+        if normalized is None or not self._is_target_allowed(phone):
+            raise ChatwootProtocolError("invalid_recipient_phone")
+        delivery = whatsapp_delivery_phone(normalized)
+        assert delivery is not None
+        found: list[tuple[int, str]] = []
+        in_delivery_form: tuple[int, str] | None = None
+        for variant in equivalent_whatsapp_phones(normalized):
+            binding = await self._chatwoot.find_contact_inbox_by_phone(
+                inbox_id=self._inbox_id,
+                phone_number=_to_e164(variant),
+            )
+            if binding is not None:
+                found.append(binding)
+                if variant == delivery:
+                    in_delivery_form = binding
+        if not found:
+            return FirstTouchRecipient(wa_id=delivery)
+        if len(found) > 1:
+            logger.warning(
+                "first_touch_recipient_duplicated_in_chatwoot inbox_id=%s "
+                "region=%s contact_ids=%s",
+                self._inbox_id,
+                whatsapp_phone_region(normalized),
+                ",".join(str(contact_id) for contact_id, _ in found),
+            )
+        # With both contacts, the one Chatwoot resolves the reply to: the
+        # same form the send uses when it has to create the contact. Chatwoot
+        # has no normalizer for Mexico (the reply lands on the 521... contact)
+        # and normalizes Argentina to 54... first. Picking the WhatsApp form
+        # for both sent an Argentine template through the 549... contact while
+        # the reply landed on the 54... one, in another conversation.
+        contact_id, source_id = (
+            in_delivery_form if in_delivery_form is not None else found[0]
+        )
+        return FirstTouchRecipient(
+            wa_id=source_id,
+            contact_id=contact_id,
+            source_id=source_id,
+        )
 
     async def send_first_touch(
         self,
@@ -425,11 +593,19 @@ class ChatwootMessageSender:
         require_existing_contact: bool = False,
         trigger_kind: str | None = None,
         greeting_name: str | None = None,
+        recipient: FirstTouchRecipient | None = None,
     ) -> FirstTouchResult:
         """Send the first template; ``greeting_name`` fills ``{{1}}`` when given.
 
         ``buyer_name`` stays the full name: it names the Chatwoot contact that
         this call may create. ``greeting_name`` is only the template variable.
+
+        ``recipient`` is the Chatwoot recipient already resolved by
+        ``resolve_first_touch_recipient`` (the dispatcher does it before the
+        final Meta gate): the contact is not searched again. Without it, a
+        sender with the WhatsApp equivalence on resolves it here; one with the
+        equivalence off (every runtime without a manifest) searches the exact
+        phone, as before.
         """
         normalized = normalize_phone(phone)
         if normalized is None:
@@ -446,6 +622,19 @@ class ChatwootMessageSender:
                 message_id=None,
                 reason="target_not_allowed",
             )
+        if (
+            self._template is not None
+            and self._template.first_touch_name_for(trigger_kind=trigger_kind) is None
+        ):
+            # The first contact after the form without its own template. It is
+            # blocked before any Chatwoot call: no contact, no conversation and
+            # never the cart template.
+            return FirstTouchResult(
+                status="blocked",
+                conversation_id=None,
+                message_id=None,
+                reason=FIRST_TOUCH_TEMPLATE_NOT_CONFIGURED,
+            )
         if self._template is not None and self._template.body_parameters_missing(
             trigger_kind=trigger_kind,
             buyer_name=buyer_name,
@@ -458,13 +647,44 @@ class ChatwootMessageSender:
                 reason="template_parameters_missing",
             )
 
+        if recipient is not None and not self._whatsapp_equivalence_enabled:
+            return FirstTouchResult(
+                status="blocked",
+                conversation_id=None,
+                message_id=None,
+                reason="recipient_not_supported",
+            )
+
         e164 = _to_e164(normalized)
 
         try:
-            contact_binding = await self._chatwoot.find_contact_inbox_by_phone(
-                inbox_id=self._inbox_id,
-                phone_number=e164,
-            )
+            if self._whatsapp_equivalence_enabled and recipient is None:
+                recipient = await self.resolve_first_touch_recipient(phone=phone)
+            if recipient is not None:
+                if not first_touch_recipient_matches(recipient, phone=normalized):
+                    # Fail closed: the Chatwoot contact found for this phone
+                    # would deliver to a number that is not the consented one.
+                    return FirstTouchResult(
+                        status="blocked",
+                        conversation_id=None,
+                        message_id=None,
+                        reason=FIRST_TOUCH_RECIPIENT_MISMATCH,
+                    )
+                e164 = _to_e164(recipient.wa_id)
+            if recipient is not None and recipient.contact_id is not None:
+                assert recipient.source_id is not None
+                contact_binding: tuple[int, str] | None = (
+                    recipient.contact_id,
+                    recipient.source_id,
+                )
+            elif recipient is not None:
+                # Resolved without a contact: there is nothing to find yet.
+                contact_binding = None
+            else:
+                contact_binding = await self._chatwoot.find_contact_inbox_by_phone(
+                    inbox_id=self._inbox_id,
+                    phone_number=e164,
+                )
             if contact_binding is None:
                 if require_existing_contact:
                     raise ChatwootProtocolError("existing_contact_required")
@@ -483,6 +703,16 @@ class ChatwootMessageSender:
                     or contact_binding[0] != created_contact_id
                 ):
                     raise ChatwootProtocolError("contact_inbox_binding_missing")
+                if recipient is not None and contact_binding[1] != recipient.wa_id:
+                    # The final gate recorded ``recipient.wa_id`` as the
+                    # target. Chatwoot gave the new contact another source:
+                    # nothing was sent, and nothing is sent to it.
+                    return FirstTouchResult(
+                        status="blocked",
+                        conversation_id=None,
+                        message_id=None,
+                        reason="contact_inbox_source_mismatch",
+                    )
             contact_id, source_id = contact_binding
             conversation_id = await self._chatwoot.create_conversation(
                 inbox_id=self._inbox_id,

@@ -12,7 +12,7 @@ import uuid
 from dataclasses import dataclass, field, fields
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Sequence
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -140,11 +140,38 @@ class PilotPlanRejectedError(SupabaseError):
         super().__init__(reason)
 
 
+class PilotRequestStartRejectedError(SupabaseError):
+    """Fail-closed rejection of a pilot request start.
+
+    The three pilot request-start RPCs raise SQLSTATE 55000
+    ``pilot_request_start_rejected`` with the reason in ``detail``: a cap of
+    the scope, a disarmed runtime, a contact outside the cohort, or a stop of
+    the flow that came in after the last reevaluation (a purchase, an opt-out,
+    a handoff). Nothing was started and no request start was consumed.
+    ``reason`` keeps that detail; without it the rejection surfaced as a
+    generic failure and the reason was lost.
+    """
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(f"pilot_request_start_rejected:{reason}")
+
+
 _PILOT_PLAN_REJECTION_SQLSTATE = "55000"
 # Only snake_case tokens are copied into webhook_events.processing_error: the
 # reasons raised by the pilot planners are fixed literals, and anything else
 # (free text, a phone, a quote from the payload) must not reach that column.
 _PILOT_PLAN_REJECTION_TOKEN = re.compile(r"[a-z][a-z_]{0,79}")
+# The anchor of the first contact planned from the landing form
+# (admit_and_plan_portable_lead_precheckout). Its actions use their own
+# reevaluation and request-start RPCs.
+PRECHECKOUT_INTENT_ANCHOR = "precheckout_intent"
+_PRECHECKOUT_PLAN_OUTCOMES = frozenset({"planned", "not_planned", "plan_failed"})
+# The reason of a plan as the base stores it: always a code, never free text.
+_PRECHECKOUT_PLAN_REASON = re.compile(r"[a-z0-9_]{1,64}")
+# A phone as the base stores it: digits only, international length. It is the
+# only shape allowed inside a PostgREST ``in.(...)`` filter built from phones.
+_PHONE_DIGITS_RE = re.compile(r"[1-9][0-9]{6,14}")
 
 
 def _pilot_plan_rejection(response: httpx.Response) -> str | None:
@@ -170,6 +197,34 @@ def _pilot_plan_rejection(response: httpx.Response) -> str | None:
     ):
         return None
     return f"{message}:{details}"
+
+
+_PILOT_REQUEST_START_REJECTION_REASON = re.compile(r"[a-z][a-z0-9_]{0,79}")
+
+
+def _pilot_request_start_rejection(response: httpx.Response) -> str | None:
+    """Return the reason of a rejected pilot request start, or None if unknown.
+
+    Only the exact rejection the request-start RPCs raise counts, and only a
+    reason with the shape of a code: anything else stays a generic failure.
+    """
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    if not isinstance(body, dict):
+        return None
+    if (
+        body.get("code") != _PILOT_PLAN_REJECTION_SQLSTATE
+        or body.get("message") != "pilot_request_start_rejected"
+    ):
+        return None
+    details = body.get("details")
+    if not isinstance(
+        details, str
+    ) or not _PILOT_REQUEST_START_REJECTION_REASON.fullmatch(details):
+        return None
+    return details
 
 
 def _raise_operator_correlation_resolution_error(
@@ -247,11 +302,21 @@ class CommercialAllyPostInboundDiscountPlan:
 
 @dataclass(frozen=True)
 class PrecheckoutAdmissionResult:
-    """Atomic admission outcome for one provisional form submission."""
+    """Atomic admission outcome for one provisional form submission.
+
+    ``plan_outcome`` and ``plan_reason`` are set only by the admission that
+    also plans the portable first contact
+    (``admit_and_plan_portable_lead_precheckout``): ``planned``,
+    ``not_planned`` or ``plan_failed`` with its reason code. Both stay ``None``
+    for every other admission, and for a duplicate whose plan was never
+    decided.
+    """
 
     outcome: str
     submission_id: str
     purchase_intent_id: str
+    plan_outcome: str | None = None
+    plan_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -697,6 +762,16 @@ class PilotBoundaryConfig:
     channel_account_ref: str
 
 
+# pilot_scope_versions.audience_mode (migracion 20260930000300). Los dos modos
+# con consentimiento usan la intencion del formulario como audiencia.
+PILOT_SCOPE_AUDIENCE_MODES = frozenset(
+    {"manual_cohort", "consented_intent_in_cohort", "consented_intent"}
+)
+PILOT_SCOPE_CONSENTED_AUDIENCE_MODES = frozenset(
+    {"consented_intent_in_cohort", "consented_intent"}
+)
+
+
 @dataclass(frozen=True)
 class PilotRuntimeStatus:
     configured: bool
@@ -971,6 +1046,15 @@ class ChannelIdentitySummary:
     identity_status: str
 
 
+@dataclass(frozen=True)
+class WhatsAppIdentityMatch:
+    """An active WhatsApp identity found by one of the forms of a phone."""
+
+    channel_identity_id: str
+    contact_id: str
+    external_user_id: str
+
+
 @dataclass
 class SituationReport:
     """Structured report built by the bridge for the agent.
@@ -1175,6 +1259,44 @@ def _deterministic_rejection(response: httpx.Response) -> str | None:
     if isinstance(message, str) and message.strip():
         return message.strip()
     return sqlstate
+
+
+# The two conflicts the inbound admission raises on purpose outside SQLSTATE
+# class 22. A bare 23505 (a unique index hit by a race) is not one of them: it
+# can succeed on a retry.
+_INBOUND_ADMISSION_CONFLICTS = frozenset(
+    {
+        ("21000", "inbound_external_conversation_ownership_ambiguous"),
+        ("23505", "inbound_external_conversation_owned_by_another_identity"),
+    }
+)
+_INBOUND_ADMISSION_REJECTION_REASON = re.compile(r"[a-z][a-z0-9_]{0,79}")
+
+
+def _inbound_admission_rejection(response: httpx.Response) -> str | None:
+    """Return why the inbound admission can never pass unchanged, or None.
+
+    The admission rejects a conversation it cannot own with a data exception
+    (``inbound_canonical_conversation_conflict``: the conversation exists and
+    is not a draft-only inbound one, which is how a recovery template leaves
+    it) or with one of two named conflicts (the conversation belongs to another
+    identity). Replaying the same message never changes that. Only a reason
+    with the shape of a code is returned.
+    """
+    reason = _deterministic_rejection(response)
+    if reason is None:
+        try:
+            body = response.json()
+        except ValueError:
+            return None
+        if not isinstance(body, dict):
+            return None
+        if (body.get("code"), body.get("message")) not in _INBOUND_ADMISSION_CONFLICTS:
+            return None
+        reason = str(body["message"])
+    if _INBOUND_ADMISSION_REJECTION_REASON.fullmatch(reason) is None:
+        return None
+    return reason
 
 
 def _response_rows(
@@ -1909,6 +2031,76 @@ class SupabaseClient:
             outcome=outcome,
             submission_id=submission_id,
             purchase_intent_id=purchase_intent_id,
+        )
+
+    async def admit_and_plan_portable_lead_precheckout(
+        self,
+        *,
+        config: CommercialAllyConfig,
+        external_submission_id: str,
+        raw_payload: dict[str, object],
+        canonical_payload: dict[str, object],
+        scope_key: str,
+        scope_version: int,
+    ) -> PrecheckoutAdmissionResult:
+        """Admit a lead and plan its first contact in one transaction.
+
+        The admission is the one of ``admit_portable_observed_lead_precheckout``
+        and is never lost because of the plan: a plan that does not proceed
+        comes back as ``not_planned`` or ``plan_failed`` with its reason code,
+        and the same reason stays in the plan ledger of the base.
+        """
+        operation = "portable_lead_precheckout_admission_and_plan"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/admit_and_plan_portable_lead_precheckout",
+            content=json.dumps(
+                {
+                    "p_tenant_ref": config.tenant_ref,
+                    "p_funnel_ref": config.funnel_ref,
+                    "p_binding_version": config.binding_version,
+                    "p_external_submission_id": external_submission_id,
+                    "p_raw_payload": raw_payload,
+                    "p_canonical_payload": canonical_payload,
+                    "p_scope_key": scope_key,
+                    "p_scope_version": scope_version,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        outcome = row.get("outcome")
+        submission_id = row.get("submission_id")
+        purchase_intent_id = row.get("purchase_intent_id")
+        plan_outcome = row.get("plan_outcome")
+        plan_reason = row.get("plan_reason")
+        if outcome not in {"inserted", "duplicate", "semantic_conflict"}:
+            raise SupabaseError(f"{operation}_invalid_outcome")
+        if not isinstance(submission_id, str) or not submission_id:
+            raise SupabaseError(f"{operation}_invalid_submission_id")
+        if not isinstance(purchase_intent_id, str) or not purchase_intent_id:
+            raise SupabaseError(f"{operation}_invalid_purchase_intent_id")
+        # A new submission always carries its plan. A duplicate or a conflict
+        # carries the plan already stored for it, or nothing.
+        plan_missing = plan_outcome is None and plan_reason is None
+        plan_valid = (
+            plan_outcome in _PRECHECKOUT_PLAN_OUTCOMES
+            and isinstance(plan_reason, str)
+            and _PRECHECKOUT_PLAN_REASON.fullmatch(plan_reason) is not None
+        )
+        if not plan_valid and not (plan_missing and outcome != "inserted"):
+            raise SupabaseError(f"{operation}_invalid_plan")
+        return PrecheckoutAdmissionResult(
+            outcome=outcome,
+            submission_id=submission_id,
+            purchase_intent_id=purchase_intent_id,
+            plan_outcome=plan_outcome if plan_valid else None,
+            plan_reason=plan_reason if plan_valid else None,
         )
 
     async def get_lead_first_name_inference(
@@ -3940,6 +4132,15 @@ class SupabaseClient:
             ),
         )
         if response.status_code != 200:
+            # Same text as always; a rejection that cannot pass unchanged also
+            # carries its reason, so the caller can tell it from an outage.
+            rejection = _inbound_admission_rejection(response)
+            if rejection is not None:
+                raise SupabasePermanentError(
+                    "inbound_commercial_case_admission_failed: "
+                    f"HTTP {response.status_code}",
+                    reason=rejection,
+                )
             raise SupabaseError(
                 f"inbound_commercial_case_admission_failed: HTTP {response.status_code}"
             )
@@ -3988,13 +4189,26 @@ class SupabaseClient:
         trigger_external_message_id: str,
         issuance_ulid: str,
         now: str,
+        phone_equivalence: bool = False,
     ) -> CheckoutIssuanceReservation:
-        """Atomically persist one V2 checkout issuance before Chatwoot."""
+        """Atomically persist one V2 checkout issuance before Chatwoot.
 
-        operation = "chatwoot_checkout_issuance_v2_reserve"
+        Con ``phone_equivalence`` (solo el runtime con manifiesto) pega en
+        reserve_portable_checkout_issuance_v2: la misma reserva, con la
+        intencion del movil y el opt-out buscados por las dos formas del
+        telefono (52/521, 54/549). Mismo payload y misma respuesta. Sin el
+        flag, la compartida de siempre.
+        """
+
+        if phone_equivalence:
+            operation = "portable_checkout_issuance_v2_reserve"
+            path = "/rest/v1/rpc/reserve_portable_checkout_issuance_v2"
+        else:
+            operation = "chatwoot_checkout_issuance_v2_reserve"
+            path = "/rest/v1/rpc/reserve_chatwoot_checkout_issuance_v2"
         response = await self._request(
             "POST",
-            "/rest/v1/rpc/reserve_chatwoot_checkout_issuance_v2",
+            path,
             content=json.dumps({
                 "p_commercial_case_id": commercial_case_id,
                 "p_external_user_id": external_user_id,
@@ -4622,7 +4836,72 @@ class SupabaseClient:
         *,
         pilot_boundary: PilotBoundaryConfig,
     ) -> PilotRuntimeStatus:
-        operation = "pilot_runtime_status"
+        return await self._get_pilot_runtime_status(
+            pilot_boundary=pilot_boundary,
+            rpc="get_lancemos_pilot_runtime_status",
+            operation="pilot_runtime_status",
+        )
+
+    async def get_portable_precheckout_pilot_runtime_status(
+        self,
+        *,
+        pilot_boundary: PilotBoundaryConfig,
+    ) -> PilotRuntimeStatus:
+        """Runtime status of the scope of the first contact after the form.
+
+        Same row as ``get_pilot_runtime_status``, for a published scope of
+        source ``landing`` / ``PRECHECKOUT_FORM_SUBMITTED`` that is not
+        ``manual_cohort``.
+        """
+        return await self._get_pilot_runtime_status(
+            pilot_boundary=pilot_boundary,
+            rpc="get_portable_precheckout_pilot_runtime_status",
+            operation="portable_precheckout_pilot_runtime_status",
+        )
+
+    async def get_pilot_scope_audience_mode(
+        self,
+        *,
+        pilot_boundary: PilotBoundaryConfig,
+    ) -> str:
+        """Audience mode of one published pilot scope version, or fail closed.
+
+        ``pilot_scope_versions`` cannot be read through PostgREST (RLS, revoked
+        to every API role), so the mode comes from an RPC. A version that is
+        not published comes back as SQL null; that and any value other than
+        the three known modes raise, and the caller treats it as a block.
+        """
+        operation = "pilot_scope_audience_mode"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_lancemos_pilot_scope_audience_mode",
+            content=json.dumps(
+                {
+                    "p_scope_key": pilot_boundary.scope_key,
+                    "p_scope_version": pilot_boundary.scope_version,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        try:
+            mode = response.json()
+        except ValueError as exc:
+            raise SupabaseError(f"{operation}_invalid_json") from exc
+        if mode is None:
+            raise SupabaseError(f"{operation}_scope_not_published")
+        if not isinstance(mode, str) or mode not in PILOT_SCOPE_AUDIENCE_MODES:
+            raise SupabaseError(f"{operation}_invalid_mode")
+        return mode
+
+    async def _get_pilot_runtime_status(
+        self,
+        *,
+        pilot_boundary: PilotBoundaryConfig,
+        rpc: str,
+        operation: str,
+    ) -> PilotRuntimeStatus:
         body = {
             "p_scope_key": pilot_boundary.scope_key,
             "p_scope_version": pilot_boundary.scope_version,
@@ -4632,16 +4911,16 @@ class SupabaseClient:
         }
         response = await self._request(
             "POST",
-            "/rest/v1/rpc/get_lancemos_pilot_runtime_status",
+            f"/rest/v1/rpc/{rpc}",
             content=json.dumps(body, ensure_ascii=False),
         )
         if response.status_code != 200:
             raise SupabaseError(
-                f"pilot_runtime_status_failed: HTTP {response.status_code}"
+                f"{operation}_failed: HTTP {response.status_code}"
             )
         rows = _response_rows(response, operation=operation)
         if len(rows) != 1:
-            raise SupabaseError("pilot_runtime_status_invalid_shape")
+            raise SupabaseError(f"{operation}_invalid_shape")
         row = rows[0]
         try:
             configured = row.get("configured")
@@ -5696,8 +5975,23 @@ class SupabaseClient:
         lease_generation: int,
         now: str,
         chatwoot_evidence: dict[str, object] | None = None,
+        anchor_type: str | None = None,
     ) -> ReevaluationDecision:
-        """Apply deterministic guards and atomically persist non-execute results."""
+        """Apply deterministic guards and atomically persist non-execute results.
+
+        ``anchor_type`` picks the RPC. An action anchored to
+        ``precheckout_intent`` (the first contact after the landing form) goes
+        through ``reevaluate_portable_precheckout_action``, which first checks
+        the stops of that flow (purchase, cart or payment failure, opt-out,
+        lost consent) and only then delegates to the shared reevaluation. Every
+        other anchor, and no anchor, uses ``reevaluate_followup_action`` as
+        before. Both take the same arguments and return the same row.
+        """
+        operation = (
+            "reevaluate_portable_precheckout_action"
+            if anchor_type == PRECHECKOUT_INTENT_ANCHOR
+            else "reevaluate_followup_action"
+        )
         rpc_body: dict[str, object] = {
             "p_action_id": action_id,
             "p_worker_id": worker_id,
@@ -5710,14 +6004,13 @@ class SupabaseClient:
         body = json.dumps(rpc_body, ensure_ascii=False)
         response = await self._request(
             "POST",
-            "/rest/v1/rpc/reevaluate_followup_action",
+            f"/rest/v1/rpc/{operation}",
             content=body,
         )
         if response.status_code != 200:
             raise SupabaseError(
-                f"reevaluate_followup_action_failed: HTTP {response.status_code}"
+                f"{operation}_failed: HTTP {response.status_code}"
             )
-        operation = "reevaluate_followup_action"
         rows = _response_rows(response, operation=operation)
         if len(rows) != 1:
             raise SupabaseError(f"{operation}_invalid_shape")
@@ -5840,6 +6133,14 @@ class SupabaseClient:
             if pilot_boundary is None:
                 raise SupabaseError("payment_failure_pilot_boundary_required")
             operation = "mark_portable_payment_failure_request_started"
+        elif anchor_type == PRECHECKOUT_INTENT_ANCHOR:
+            # The first contact after the form only starts through its own
+            # RPC: it authorizes against the landing scope bound to the case
+            # and checks the stops of the flow again under the opt-out lock.
+            # Without the pilot boundary it does not start at all.
+            if pilot_boundary is None:
+                raise SupabaseError("precheckout_intent_pilot_boundary_required")
+            operation = "mark_portable_precheckout_request_started"
         elif pilot_boundary is not None:
             operation = "mark_lancemos_pilot_request_started"
         else:
@@ -5857,6 +6158,13 @@ class SupabaseClient:
             content=json.dumps(rpc_body, ensure_ascii=False),
         )
         if response.status_code != 200:
+            if pilot_boundary is not None:
+                # The base refused to start on purpose. It is not a failure
+                # of the call: the dispatcher leaves this action and goes on
+                # with the rest of the batch.
+                rejection = _pilot_request_start_rejection(response)
+                if rejection is not None:
+                    raise PilotRequestStartRejectedError(rejection)
             raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
         try:
             rows = _response_rows(response, operation=operation)
@@ -6156,6 +6464,79 @@ class SupabaseClient:
             matched_by="phone",
         )
 
+    async def find_contact_by_phones(
+        self, phones: Sequence[str]
+    ) -> ContactMatch | None:
+        """Find one contact by any of the equivalent forms of a phone.
+
+        The portable runtime passes the forms that share one canonical WhatsApp
+        phone (``bridge.phones.equivalent_whatsapp_phones``): the landing form
+        stores ``52`` + 10 digits and Hotmart ``521`` + 10 for the same mobile.
+        One contact can own a point for each form, so the lookup is ambiguous
+        only when the rows belong to different contacts.
+        ``find_contact_by_phone`` stays exact for every other caller.
+        """
+        operation = "find_contact_by_phones"
+        values = tuple(dict.fromkeys(phones))
+        if not values or any(
+            not isinstance(value, str) or _PHONE_DIGITS_RE.fullmatch(value) is None
+            for value in values
+        ):
+            raise SupabaseError(f"{operation}_invalid_input")
+        response = await self._request(
+            "GET",
+            "/rest/v1/contact_points",
+            params={
+                "select": (
+                    "contact_id,"
+                    "normalized_value,"
+                    "type,"
+                    "contacts!inner("
+                    "id,full_name,email,phone,"
+                    "contact_permission,lifecycle_status"
+                    ")"
+                ),
+                "normalized_value": f"in.({','.join(values)})",
+                "type": "eq.phone",
+                # One contact owns at most one point per form; one row more
+                # is enough to see a second owner.
+                "limit": str(len(values) + 1),
+            },
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if not rows:
+            return None
+        contacts: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            contact = row.get("contacts")
+            if not isinstance(contact, dict):
+                raise SupabaseError(f"{operation}_invalid_row")
+            contacts[_required_string(contact, "id", operation=operation)] = contact
+        if len(contacts) != 1:
+            raise SupabaseError(f"{operation}_ambiguous")
+        [(contact_id, contact)] = contacts.items()
+        return ContactMatch(
+            contact_id=contact_id,
+            full_name=_optional_string(contact, "full_name", operation=operation),
+            email=_optional_string(contact, "email", operation=operation),
+            phone=_optional_string(contact, "phone", operation=operation),
+            contact_permission=_required_enum(
+                contact,
+                "contact_permission",
+                _CONTACT_PERMISSIONS,
+                operation=operation,
+            ),
+            lifecycle_status=_required_enum(
+                contact,
+                "lifecycle_status",
+                _LIFECYCLE_STATUSES,
+                operation=operation,
+            ),
+            matched_by="phone",
+        )
+
     # ── Contact creation ──────────────────────────────────────────
 
     async def create_contact(
@@ -6378,6 +6759,81 @@ class SupabaseClient:
                 )
             )
         return summaries
+
+    async def find_active_whatsapp_identities(
+        self,
+        *,
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+        external_user_ids: Sequence[str],
+    ) -> list[WhatsAppIdentityMatch]:
+        """Active WhatsApp identities of one Chatwoot inbox among some ids.
+
+        Read only. The portable inbound path uses it to find the identity a
+        person already has under the other form of the same phone (``52…``
+        saved by the form, ``521…`` reported by WhatsApp). Only an identity
+        bound to this inbox counts, the same condition the durable opt-out and
+        the inbound admission apply (``metadata ->> 'inbox_id'``).
+        """
+        operation = "find_active_whatsapp_identities"
+        values = tuple(dict.fromkeys(external_user_ids))
+        if (
+            not isinstance(chatwoot_account_id, int)
+            or isinstance(chatwoot_account_id, bool)
+            or chatwoot_account_id <= 0
+            or not isinstance(chatwoot_inbox_id, int)
+            or isinstance(chatwoot_inbox_id, bool)
+            or chatwoot_inbox_id <= 0
+            or not values
+            or any(
+                not isinstance(value, str)
+                or _PHONE_DIGITS_RE.fullmatch(value) is None
+                for value in values
+            )
+        ):
+            raise SupabaseError(f"{operation}_invalid_input")
+        response = await self._request(
+            "GET",
+            "/rest/v1/channel_identities",
+            params={
+                "select": "id,contact_id,external_user_id,metadata",
+                "channel": "eq.whatsapp",
+                "account_id": f"eq.chatwoot:{chatwoot_account_id}",
+                "external_user_id": f"in.({','.join(values)})",
+                "identity_status": "eq.active",
+                "order": "created_at.asc",
+            },
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        matches: list[WhatsAppIdentityMatch] = []
+        for row in rows:
+            external_user_id = _required_string(
+                row, "external_user_id", operation=operation
+            )
+            if external_user_id not in values:
+                raise _invalid_row_error(operation)
+            metadata = row.get("metadata")
+            if metadata is not None and not isinstance(metadata, dict):
+                raise _invalid_row_error(operation)
+            inbox = (metadata or {}).get("inbox_id")
+            if isinstance(inbox, bool) or not isinstance(inbox, (int, str)):
+                continue
+            if str(inbox) != str(chatwoot_inbox_id):
+                continue
+            matches.append(
+                WhatsAppIdentityMatch(
+                    channel_identity_id=_required_string(
+                        row, "id", operation=operation
+                    ),
+                    contact_id=_required_string(
+                        row, "contact_id", operation=operation
+                    ),
+                    external_user_id=external_user_id,
+                )
+            )
+        return matches
 
     # ── Recovery case creation ────────────────────────────────────
 

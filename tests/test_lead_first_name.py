@@ -18,9 +18,11 @@ from bridge.lead_first_name import (
     FirstNameInference,
     FirstNameInferenceClient,
     FirstNameInferenceProviderError,
+    MAX_TEMPLATE_GREETING_CHARS,
     infer_and_record_first_name,
     lead_name_key,
     resolve_greeting_name,
+    template_greeting_name_is_safe,
     validated_model_first_name,
 )
 
@@ -300,3 +302,57 @@ def test_prompt_examples_are_not_names_of_the_measured_sample() -> None:
 
 def test_the_prompt_version_changes_the_idempotency_key() -> None:
     assert PROMPT_VERSION == "lead-first-name-v2"
+
+
+# ---------------------------------------------- el nombre en una plantilla
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param("http://evil.example/premio", id="url"),
+        pytest.param("soporte@evil.example", id="email"),
+        pytest.param("\U0001F381 evil.example", id="emoji and domain"),
+        pytest.param("evil.example", id="bare domain"),
+        pytest.param("x" * (MAX_TEMPLATE_GREETING_CHARS + 1), id="61 characters"),
+        pytest.param("5512345678", id="only digits"),
+        pytest.param("Ana 2", id="a digit"),
+        pytest.param("evil\uff0eexample", id="fullwidth full stop"),
+        pytest.param("Ana\u202eelpmaxe", id="right-to-left override"),
+        pytest.param("Juan_Perez", id="underscore"),
+        pytest.param("   ", id="blank"),
+        pytest.param(None, id="not a string"),
+    ],
+)
+def test_a_value_that_is_not_a_name_does_not_go_in_a_template(value) -> None:
+    assert template_greeting_name_is_safe(value) is False
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param("J.C. Pérez", id="initials with dots"),
+        pytest.param("O’Brien", id="typographic apostrophe"),
+        pytest.param("O'Brien", id="apostrophe"),
+        pytest.param("Ana-Lucía", id="hyphen"),
+        pytest.param("Pérez, Juan", id="comma"),
+        pytest.param("María de los Ángeles Fernández Gutiérrez", id="41 characters"),
+        pytest.param("x" * MAX_TEMPLATE_GREETING_CHARS, id="60 characters"),
+        pytest.param("\U0001F44D\U0001F3FD Ana", id="emoji with skin tone"),
+        pytest.param("\U0001F468\u200d\U0001F469\u200d\U0001F467", id="zwj family"),
+        pytest.param("Edith\nGarcía\t     Pérez", id="whitespace Meta refuses, collapsed"),
+    ],
+)
+def test_the_shapes_of_a_real_name_go_in_a_template(value) -> None:
+    assert template_greeting_name_is_safe(value) is True
+
+
+@pytest.mark.parametrize("case", CASES, ids=[c["pattern"] for c in CASES])
+def test_every_captured_name_and_greeting_goes_in_a_template(case) -> None:
+    for value in (
+        case["full_name"],
+        case["deterministic"],
+        case.get("model_first_name"),
+    ):
+        if value is not None:
+            assert template_greeting_name_is_safe(value) is True, value

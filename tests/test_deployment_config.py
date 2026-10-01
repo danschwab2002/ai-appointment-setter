@@ -575,6 +575,43 @@ def test_deployment_declares_ghl_precheckout_adapter_default_off(
     assert settings.ghl_precheckout_adapter_token is None
 
 
+def test_deployment_declares_portable_precheckout_first_contact_default_off(
+    tmp_path: Path,
+) -> None:
+    # compose.yaml pasa las variables una por una: sin estas lineas el flag, el
+    # scope y la plantilla del primer contacto del formulario no llegan al
+    # contenedor de quien despliega con compose.
+    env_lines = (PROJECT_ROOT / ".env.example").read_text().splitlines()
+    compose_lines = [
+        line.strip() for line in (PROJECT_ROOT / "compose.yaml").read_text().splitlines()
+    ]
+
+    assert "PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED=false" in env_lines
+    assert (
+        "PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED: "
+        "${PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED:-false}"
+    ) in compose_lines
+    # Vacias por defecto, en los dos archivos: ni un scope ni una plantilla de
+    # otra instancia.
+    for variable in (
+        "LANCEMOS_PILOT_PRECHECKOUT_SCOPE_KEY",
+        "LANCEMOS_PILOT_PRECHECKOUT_SCOPE_VERSION",
+        "WABA_PRECHECKOUT_TEMPLATE_NAME",
+    ):
+        assert f"{variable}=" in env_lines
+        assert f"{variable}: ${{{variable}:-}}" in compose_lines
+    settings = Settings(
+        webhook_secret="test-secret",
+        allowed_jid="12025550123@s.whatsapp.net",
+        capture_dir=tmp_path,
+        max_age_seconds=300,
+    )
+    assert settings.portable_precheckout_first_contact_enabled is False
+    assert settings.pilot_precheckout_scope_key is None
+    assert settings.pilot_precheckout_scope_version is None
+    assert settings.waba_precheckout_template_name is None
+
+
 def test_deployment_declares_johanna_one_shot_default_off() -> None:
     env_example = (PROJECT_ROOT / ".env.example").read_text()
     compose = (PROJECT_ROOT / "compose.yaml").read_text()

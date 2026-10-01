@@ -74,11 +74,29 @@ uv run python -m bridge.instance_cli validate ../setter-instancia-<aliada>
 
 **Verificación:** termina en `VALIDA`. Los avisos listan qué flujos no se pueden prender y por qué. Se guarda la salida en `evidencia/<fecha>-validate.txt`.
 
+Si el manifiesto tiene `[adaptadores.ghl]`, `validate` dice además si la sección lleva la aceptación del riesgo del adaptador (quién, cuándo, qué contrato). Con `precheckout` o `pago_fallido` en `true` y sin esa aceptación da **error**, no aviso: ese manifiesto no arranca (`docs/referencia-manifiesto.md`, *La aceptación del riesgo*).
+
 ## 6. La base de la instancia
 
 > Pendiente de ejecutar con ATT1. Decisión abierta: un proyecto de Supabase aparte, o Postgres de Supabase + PostgREST en el VPS.
 
 Cada instancia tiene su base. Nunca se comparte con otra aliada.
+
+**El proxy delante de PostgREST no registra la query.** El bridge pone teléfonos y emails en la query de algunos `GET` (desde 1.3.0, uno por cada mensaje entrante de un móvil de México o Argentina), así que el log de acceso de ese proxy escribe la ruta sin la query. En ATT1 el proxy es un nginx, y la config y su prueba local están en el repo de la instancia (`despliegue/gateway/nginx.conf` y `probar-log.sh`):
+
+```nginx
+log_format sin_query '$remote_addr [$time_local] "$request_method $uri $server_protocol" '
+                     '$status $body_bytes_sent $request_time "$http_user_agent"';
+
+server {
+    access_log /var/log/nginx/access.log sin_query;
+    # ...
+}
+```
+
+`log_format` va en el contexto `http` (un archivo de `conf.d/` ya está adentro), y nginx lee la config solo al arrancar: el servicio se reinicia después de cambiarla. Con un proyecto de Supabase como base, ese log es de Supabase y la instancia no lo configura. Qué queda con la query y cuándo: `CHANGELOG.md`, `[1.3.0]`, *Qué tiene que hacer una instancia*.
+
+**Verificación:** un `GET` con una query inventada deja en el log de acceso una línea con la ruta y sin `?`.
 
 ## 7. Secretos
 
@@ -135,6 +153,16 @@ El orden es siempre **migraciones → filas de la instancia → bridge → `/rea
 4. Desplegar el bridge.
 5. **Verificación:** `/ready` da 200 con `commercial_ally_binding: "active"`. Un 503 `commercial_ally_binding_unavailable` es drift: la fila y el manifiesto no coinciden en algún campo.
 
+**Caso 1.3.0 (migraciones `20261001000100`, `20261001000200` y `20261001000300`).** Secuencia prevista; no se ejecutó todavía en ninguna instancia.
+
+1. Aplicar las tres migraciones, en ese orden, con poco tráfico. La `000100` solo crea y reemplaza funciones. La `000200` toma un lock exclusivo breve sobre `recovery_cases`, `recovery_case_events` y `followup_sequences` para sumar un valor a tres checks, y mientras corre también esperan las escrituras de `contacts`, `purchase_intents` y `precheckout_submissions` (las referencia la tabla nueva), con `lock_timeout` de 5 s: si una transacción larga tiene tomada alguna de esas tablas, falla sin dejar nada a medias y se reintenta. La `000300` solo crea una función.
+   **Verificación:** `scripts/supabase_schema_inventory.sql` da `fingerprint_present` en las tres nuevas, y en las demás lo mismo que daba antes de aplicarlas; `scripts/supabase_acl_inventory.sql` da `ok` en todas. En una instancia armada desde la base de Johanna, dos filas dan `fingerprint_partial` por diseño, antes y después: `20260825000400` y `20260829000500` buscan filas de Johanna que la limpieza de la instancia borra (medido en ATT1 el 2026-10-01). Por eso se compara contra la corrida de antes, no contra «todo present»: es lo que hace `despliegue/base/aplicar-migraciones.sh` del repo de la instancia ATT1, que falla solo si aparece un fingerprint no presente nuevo o un ACL distinto de `ok`.
+2. Desplegar el bridge 1.3.0 con el manifiesto que ya tenía la instancia. Un bridge 1.2.0 sigue andando sobre la base migrada: las funciones que la `000100` reemplaza conservan su firma (con un flujo portable prendido ya comparan el teléfono por sus dos formas).
+3. Recién con la imagen 1.3.0 corriendo, mergear el manifiesto que suma las claves `riesgo_*` de `[adaptadores.ghl]`, si la instancia las va a usar: un bridge 1.2.0 no carga un manifiesto con esas claves.
+4. **Verificación:** `/ready` da 200. Con `[adaptadores.ghl]` suma `ghl_adapter_risk` (`accepted:<fecha>:<contrato>` o `not_accepted`). El log de arranque trae una línea `ghl_adapter_risk acceptance=…`.
+
+Una instancia con `[adaptadores.ghl]`, sin aceptación y con `LANCEMOS_PILOT_BOUNDARY_ENABLED=true` necesita la `000300` aplicada **antes** del bridge 1.3.0: el arranque lee el modo de audiencia del scope y, sin esa función, no arranca.
+
 **Por qué se completa la fila y no se publica un `binding_version` nuevo.** Los eventos ya admitidos guardan su `binding_version` en la procedencia (`commercial_ally_hotmart_event_bindings`), y las RPC de planificación exigen que esa versión siga `active`; la política de compra (`commercial_ally_hotmart_purchase_policies`) también va por versión. Retirar la versión 1 dejaría sin planificar lo que ya entró. Completar las landings solo agrega: ninguna intención ni evento se validó contra ellas (antes el formulario de esas landings se rechazaba). Lo que no se toca una vez publicado son los valores de negocio (producto, precio, ofertas, consentimiento).
 
 ## 10. Chatwoot: AgentBot y webhook
@@ -148,6 +176,8 @@ El orden es siempre **migraciones → filas de la instancia → bridge → `/rea
 ## 12. Prender los flujos de a uno
 
 > Pendiente. Orden previsto: `inbound` → `pago_fallido` → `carrito` → el resto. Cada uno: `true` en el manifiesto, PR en el repo de la instancia, flag en el servicio, una prueba controlada y la medición del efecto antes de pasar al siguiente.
+>
+> **Antes de abrir un flujo de salida a personas reales:** hoy el agente no contesta en la conversación que abre una plantilla (la admisión entrante la rechaza; ver *Qué no hace* en `docs/contracts/portable-precheckout-first-contact-v1.md`). Lo único que funciona ahí es la baja. La prueba controlada de cada flujo de salida incluye apretar los tres botones de la plantilla desde el teléfono de prueba y mirar qué queda en la base y en Chatwoot: mientras «quiero el enlace» o «tengo una duda» no tengan respuesta, el flujo no se abre.
 
 ### El formulario de la landing cuando es de GHL
 
@@ -157,9 +187,37 @@ El orden es siempre **migraciones → filas de la instancia → bridge → `/rea
 2. **Manifiesto** (PR en el repo de la instancia): `"intencion"` en `eventos` y `[adaptadores.ghl]` con el id de cada formulario (el `attributionSource.mediumId` del webhook, 20 letras o números). Un formulario se lista solo después de verificar que muestra la aclaración de `consentimiento.copy_version`: listarlo afirma `whatsapp_contact = true` para cada envío. `validate` tiene que dar verde.
 3. **Secretos:** `GHL_PRECHECKOUT_ADAPTER_TOKEN`, aleatorio, de 32 caracteres o más y distinto de todo otro secreto del bridge (el arranque lo compara contra toda la configuración y nombra el que repite), generado como el resto de los secretos de la instancia (paso 7). No rota en cada despliegue: GHL lo tiene copiado.
 4. **Bridge:** `GHL_PRECHECKOUT_ADAPTER_ENABLED=true` y redespliegue. El proxy tiene que enrutar `/webhooks/adapters/ghl/lead-precheckout` al bridge.
-   **Verificación:** `/ready` da 200 con `ghl_precheckout_adapter: "enabled:<n>-forms"`, con `n` igual a los formularios del manifiesto. Si el bridge no arranca, el error nombra lo que falta (`runtime flags exceed the instance manifest flows: ghl_precheckout_adapter_enabled->intencion` o `->adaptadores.ghl`, o el token), o dice que `flujos.precheckout` está prendido: con el adaptador, el primer contacto del formulario espera la verificación fuera de banda del envío (sección *Riesgos* del contrato).
+   **Verificación:** `/ready` da 200 con `ghl_precheckout_adapter: "enabled:<n>-forms"`, con `n` igual a los formularios del manifiesto. Si el bridge no arranca, el error nombra lo que falta (`runtime flags exceed the instance manifest flows: ghl_precheckout_adapter_enabled->intencion` o `->adaptadores.ghl`, o el token), o dice que `[adaptadores.ghl] cannot run with flujos.precheckout` (o `flujos.pago_fallido`) `on without the written risk acceptance`: con la sección en el manifiesto, esos dos flujos exigen la aceptación escrita del riesgo (sección *Riesgos* del contrato).
 5. **GHL:** en el workflow con disparador *Form submitted* filtrado por esos formularios, una acción *Webhook* `POST` a `https://<dominio del bridge>/webhooks/adapters/ghl/lead-precheckout`, con el token en *Custom Data* como `setter_token` (o en el header `X-Setter-Adapter-Token`, si la acción admite headers). Nunca en la URL.
 6. **Prueba controlada:** un envío real del formulario desde la URL de la landing.
    **Verificación:** la ejecución del workflow en GHL registra `200`; en la base hay una fila nueva en `precheckout_submissions` y la intención en `purchase_intents` con la `landing_ref` y la `offer_ref` de esa landing y `whatsapp_contact_authorized = true`. Un `422` dice por qué en el log del bridge (`ghl_form_not_allowed`, `ghl_landing_unknown`, `ghl_phone_unusable`) y no toca la base.
 
-**Condición antes de prender** `[flujos].precheckout`, o una audiencia `consented_intent` alimentada por estas intenciones: el token es la única barrera (el id del formulario y las URL son públicos), así que hace falta una verificación fuera de banda de cada envío o la aceptación del riesgo por escrito del responsable de la instancia (contrato, sección Riesgos).
+**Condición antes de prender** `[flujos].precheckout`, `[flujos].pago_fallido` o una audiencia `consented_intent` o `consented_intent_in_cohort`: el token es la única barrera (el id del formulario y las URL son públicos), así que hace falta una verificación fuera de banda de cada envío, que todavía no existe, o la aceptación del riesgo por escrito del responsable de la instancia (contrato, sección Riesgos). Desde el bridge 1.3.0 la aceptación son tres claves en `[adaptadores.ghl]`:
+
+```toml
+riesgo_aceptado_por = "<COMPLETAR: nombre de quien decide>"
+riesgo_aceptado_el = 2026-10-01
+riesgo_contrato = "ghl-precheckout-adapter-v1"
+```
+
+Las escribe a mano quien decide, por PR en el repo de la instancia: nadie más las completa. El marcador entre `<` y `>` no carga: se reemplaza por el nombre. La fecha es la del día en que se acepta y no puede ser posterior a hoy. **Verificación:** `validate` informa `riesgo aceptado por … el … (contrato …)`, y después del redespliegue `/ready` da `ghl_adapter_risk: "accepted:<fecha>:<contrato>"`. Sin ellas, con la sección en el manifiesto, el bridge no arranca con esos flujos prendidos ni con un scope del piloto de audiencia con consentimiento (`/ready` responde `503 ghl_adapter_risk_not_accepted`). Con `LANCEMOS_PILOT_BOUNDARY_ENABLED=true` y sin la aceptación, el arranque lee el modo de audiencia del scope antes de arrancar ningún worker: si la base no responde, falta la migración `20261001000300`, el scope no está publicado o es de audiencia con consentimiento, el bridge sale y el orquestador lo reinicia, y mientras tanto no recibe entrantes, bajas, formularios de GHL ni el webhook de Hotmart. Por eso la aceptación (o un scope `manual_cohort` publicado) y la `000300` van antes de prender la frontera. La sección no se quita del manifiesto mientras haya en la base intenciones admitidas por el adaptador: quitarla saca la guarda, no las intenciones.
+
+### El primer contacto tras el formulario
+
+> Pendiente de ejecutar con ATT1. Es la secuencia prevista para el flujo `precheckout` (`docs/contracts/portable-precheckout-first-contact-v1.md`): quien deja el formulario con consentimiento y no llega al checkout recibe un único mensaje, demorado, con la plantilla de `[plantillas.precheckout]`.
+
+1. **Antes:** la entrada del formulario ya admite intenciones (los pasos de arriba, o `/webhooks/lead`), `inbound` está prendido y probado (el opt-out y la derivación son los frenos del flujo), y Hotmart ya entrega la compra aprobada al bridge con `PORTABLE_HOTMART_PURCHASE_STOP_ENABLED=true` y el hottok cargado.
+2. **Base:** las migraciones `20261001000100` y `20261001000200` aplicadas. Publicar la política del flujo (propósito `cart_recovery`, un paso `first_contact`, la demora en `grace_period`) y un scope del piloto **propio**, distinto del de recuperación: fuente `landing`, evento `PRECHECKOUT_FORM_SUBMITTED`, audiencia `consented_intent_in_cohort` para la primera prueba, con el control en `inactive`.
+   **Verificación:** `pilot_scope_versions` tiene el scope publicado y `pilot_runtime_controls` lo tiene en `inactive`.
+3. **Manifiesto** (PR en el repo de la instancia): `precheckout = true` en `[flujos]`, con su plantilla en `[plantillas]` y sus `parametros` iguales a los del cuerpo aprobado. Con `[adaptadores.ghl]`, la aceptación del riesgo. `validate` tiene que dar verde.
+4. **Servicio:** `PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED=true`, `LANCEMOS_PILOT_PRECHECKOUT_SCOPE_KEY`, `LANCEMOS_PILOT_PRECHECKOUT_SCOPE_VERSION` y `WABA_PRECHECKOUT_TEMPLATE_NAME` (igual a `plantillas.precheckout.nombre`), además de la frontera del piloto, el dispatcher, la salida durable y el modo directo con sus `WABA_*`. `META_FINAL_EFFECT_ENABLED` sigue en `false` hasta el paso 7.
+   **Verificación:** `/ready` da 200 con `portable_precheckout_first_contact: "inactive"`. Un `503 portable_precheckout_pilot_scope_config_mismatch` quiere decir que el scope del paso 2 no está publicado para este flujo; el healthcheck del contenedor usa `/ready`, así que el scope va antes que el flag. Si el bridge no arranca, el error nombra la variable que falta.
+5. **Formulario con el scope desarmado.** Un envío real del formulario con un teléfono propio.
+   **Verificación:** hay un renglón en `portable_precheckout_first_contact_plans` con `outcome = 'not_planned'` y `reason_code = 'pilot_runtime_not_armed'`, y ninguna fila nueva en `contacts`. Ese envío no se planifica después.
+6. **Armar.** Sembrar el contacto de prueba, inscribirlo en la cohorte del scope y armar el runtime del scope.
+   **Verificación:** `/ready` da `portable_precheckout_first_contact: "armed"`.
+7. **Corrida de envío.** Con `META_FINAL_EFFECT_ENABLED=true`, reenviar el formulario y esperar la demora.
+   **Verificación:** el renglón nuevo dice `planned` / `first_contact_scheduled`; la acción tiene `due_at` igual al envío más la demora; llega la plantilla al teléfono y la respuesta cae en la misma conversación de Chatwoot. Es también la prueba de la forma de entrega del teléfono, que hasta ese momento sale de una medición del 2026-10-01 sobre otro inbox.
+8. **Corrida de compra antes de la demora**, con **otro** teléfono y otro email de prueba, sembrados e inscriptos igual.
+   **Verificación:** el caso queda `cancelled` con `intent_purchased` y no hay ningún intento de envío. El orden importa: la identidad que compra queda frenada sin ventana (`purchase_by_identity`), así que la corrida de envío va primero y la de compra usa otra identidad.
+9. **Abrir.** Un scope publicado no se edita: se pausa, se publica la versión siguiente con `audience_mode = 'consented_intent'` y los topes aprobados, se apunta `LANCEMOS_PILOT_PRECHECKOUT_SCOPE_VERSION` a esa versión, se redespliega y se arma. Antes de tener carrito y primer contacto abiertos a la vez hay que decidir el tope de mensajes proactivos por persona: el producto no lo limita entre flujos.

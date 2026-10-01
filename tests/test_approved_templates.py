@@ -10,8 +10,17 @@ Catalogos capturados de Chatwoot, sin tocar:
   ``johanna_compra_fallida_01`` (tres botones QUICK_REPLY cada una) y un
   ``hello_world`` con HEADER y FOOTER.
 
-No hay captura del catalogo del inbox 11 de ATT1 (paso A0). Las ramas de
-rechazo se ejercitan mutando una copia de la captura, como
+* ``chatwoot_inbox_11_message_templates_20261001.json``: el catalogo del inbox 11
+  de ATT1 del 01/10, leido por psql de ``channel_whatsapp.message_templates``
+  (``att1_carrito_abandonado_01``, ``att1_compra_fallida_01`` y
+  ``att1_interes_precheckout_01`` en ``es_MX``, con ``{{1}}``, ``{{2}}`` y tres
+  botones QUICK_REPLY; ``att1_descuento_10_post_respuesta_01`` en ``en``, con
+  FOOTER y dos botones). La captura trae la lista bajo ``templates``, la columna
+  de la base; el parser lee ``message_templates``, la clave de ``GET /inboxes``,
+  asi que se envuelve como el catalogo del 28/09. De ``GET /inboxes/11`` no hay
+  captura.
+
+Las ramas de rechazo se ejercitan mutando una copia de la captura, como
 ``test_followup_discount.py``.
 """
 
@@ -46,8 +55,19 @@ LEAD_NAMES: list[dict[str, Any]] = json.loads(
         encoding="utf-8"
     )
 )["cases"]
+INBOX_11_1001: dict[str, Any] = json.loads(
+    (FIXTURES / "chatwoot_inbox_11_message_templates_20261001.json").read_text(
+        encoding="utf-8"
+    )
+)
 
 CART = "johanna_carrito_abandonado_01"
+ATT1_FIRST_CONTACT_TEMPLATES = (
+    "att1_carrito_abandonado_01",
+    "att1_compra_fallida_01",
+    "att1_interes_precheckout_01",
+)
+ATT1_DISCOUNT = "att1_descuento_10_post_respuesta_01"
 
 
 def _inbox_0928(catalog: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -63,6 +83,18 @@ def _parse(payload: object, name: str = CART, *, count: int = 2, language: str =
         expected_category=category,
         parameter_count=count,
     )
+
+
+def _inbox_11(catalog: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    return {
+        "message_templates": copy.deepcopy(
+            INBOX_11_1001["templates"] if catalog is None else catalog
+        )
+    }
+
+
+def _parse_att1(payload: object, name: str, *, language: str = "es_MX"):
+    return _parse(payload, name, language=language)
 
 
 def _body(payload: dict[str, Any], name: str) -> str:
@@ -85,6 +117,107 @@ def test_captured_first_contact_templates_with_quick_replies_are_accepted(name: 
     assert (template.name, template.language, template.category) == (name, "es_EC", "MARKETING")
     assert template.body == _body(payload, name)
     assert template.parameter_count == 2
+
+
+# El catalogo del inbox 11 de ATT1 (01/10): lo que el modo directo va a leer en
+# produccion para los tres primeros contactos.
+
+
+def test_the_inbox_11_capture_is_the_catalog_of_the_att1_channel() -> None:
+    assert (INBOX_11_1001["inbox_id"], INBOX_11_1001["channel_id"]) == (11, 10)
+    assert sorted(t["name"] for t in INBOX_11_1001["templates"]) == sorted(
+        (*ATT1_FIRST_CONTACT_TEMPLATES, ATT1_DISCOUNT)
+    )
+    # Tal como esta guardada no es una respuesta de GET /inboxes: falla cerrado
+    # en vez de leerse como un catalogo vacio.
+    with pytest.raises(ApprovedTemplateError) as raised:
+        _parse_att1(INBOX_11_1001, ATT1_FIRST_CONTACT_TEMPLATES[0])
+    assert raised.value.detail == "invalid_inbox_payload"
+
+
+@pytest.mark.parametrize("name", ATT1_FIRST_CONTACT_TEMPLATES)
+def test_the_three_att1_first_contact_templates_are_accepted(name: str) -> None:
+    payload = _inbox_11()
+    [captured] = [t for t in payload["message_templates"] if t["name"] == name]
+
+    template = _parse_att1(payload, name)
+
+    assert (template.name, template.language, template.category) == (
+        name, "es_MX", "MARKETING",
+    )
+    assert template.parameter_count == 2
+    assert template.body == _body(payload, name)
+    assert [b["type"] for b in _buttons(captured)] == ["QUICK_REPLY"] * 3
+    assert [b["text"] for b in _buttons(captured)] == [
+        "Envíame el enlace", "Necesito ayuda", "No más mensajes",
+    ]
+    assert [c["type"] for c in captured["components"]] == ["BODY", "BUTTONS"]
+
+
+@pytest.mark.parametrize("name", ATT1_FIRST_CONTACT_TEMPLATES)
+def test_the_att1_bodies_render_with_the_name_and_the_product(name: str) -> None:
+    payload = _inbox_11()
+    template = _parse_att1(payload, name)
+
+    rendered = template.render({"1": "Edith", "2": "Alimenta tu Tiroides"})
+
+    assert "{{" not in rendered
+    assert rendered == (
+        _body(payload, name)
+        .replace("{{1}}", "Edith")
+        .replace("{{2}}", "Alimenta tu Tiroides")
+    )
+    assert rendered.startswith("Hola, Edith. ")
+    assert "Alimenta tu Tiroides" in rendered
+    assert len(rendered) <= APPROVED_TEMPLATE_BODY_MAX_CHARS
+
+
+def test_the_three_att1_bodies_are_different_texts() -> None:
+    payload = _inbox_11()
+
+    assert len({_body(payload, name) for name in ATT1_FIRST_CONTACT_TEMPLATES}) == 3
+
+
+@pytest.mark.parametrize("name", ATT1_FIRST_CONTACT_TEMPLATES)
+@pytest.mark.parametrize(
+    ("language", "category", "detail"),
+    [
+        # El idioma de Johanna: el del manifiesto de ATT1 es es_MX.
+        ("es_EC", "MARKETING", "language_mismatch"),
+        # Las tres son MARKETING: ninguna necesita
+        # WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY.
+        ("es_MX", "UTILITY", "category_mismatch"),
+    ],
+)
+def test_an_att1_template_asked_with_another_language_or_category_fails_closed(
+    name: str, language: str, category: str, detail: str
+) -> None:
+    with pytest.raises(ApprovedTemplateError) as raised:
+        _parse(_inbox_11(), name, language=language, category=category)
+
+    assert (raised.value.reason, raised.value.detail) == (
+        "approved_template_mismatch", detail,
+    )
+
+
+def test_the_att1_discount_template_is_not_in_the_language_of_the_instance() -> None:
+    # Esta APPROVED en "en" (el manifiesto lo anota y no la declara): pedida en
+    # es_MX no cierra. En su idioma si se lee, con FOOTER y dos botones.
+    with pytest.raises(ApprovedTemplateError) as raised:
+        _parse_att1(_inbox_11(), ATT1_DISCOUNT)
+    assert raised.value.detail == "language_mismatch"
+
+    template = _parse_att1(_inbox_11(), ATT1_DISCOUNT, language="en")
+    assert template.parameter_count == 2
+
+
+def test_a_johanna_template_is_not_in_the_att1_catalog() -> None:
+    with pytest.raises(ApprovedTemplateError) as raised:
+        _parse(_inbox_11(), CART)
+
+    assert (raised.value.reason, raised.value.detail) == (
+        "approved_template_unavailable", "not_found",
+    )
 
 
 def test_the_full_inbox_response_of_the_23rd_is_read_as_is() -> None:

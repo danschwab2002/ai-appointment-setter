@@ -61,7 +61,7 @@ from bridge.followup_discount import (
 from bridge.reactivation import ConversationReactivationSweeper
 from bridge.commercial_ally import CommercialAllyConfig, JOHANNA_COMMERCIAL_ALLY
 from bridge.commercial_knowledge import CommercialKnowledge
-from bridge.instance_manifest import InstanceManifest
+from bridge.instance_manifest import GHL_RISK_GATED_FLOWS, InstanceManifest
 from bridge.checkout_delivery import CheckoutDeliveryError, deliver_checkout_issuance_v2
 from bridge.filtering import EventDecision, classify_chatwoot_event
 from bridge.agent_provenance import AgentTurn, CONTEXT_BUILDER_VERSION
@@ -93,6 +93,7 @@ from bridge.messaging import (
     allowed_phone_from_jid,
 )
 from bridge.opt_out import detect_explicit_opt_out
+from bridge.phones import equivalent_whatsapp_phones, whatsapp_phone_region
 from bridge.operator_correlations import (
     InvalidCorrelationEvidence,
     build_unresolved_correlation,
@@ -134,6 +135,7 @@ from bridge.slack_handoff_projection import SlackHandoffProjectionWorker
 from bridge.slack_projection import SlackCorrelationProjectionWorker
 from bridge.slack_runtime import SlackBridgeRuntime, create_slack_bridge_runtime
 from bridge.supabase import (
+    PILOT_SCOPE_CONSENTED_AUDIENCE_MODES,
     OperatorCorrelationResolutionError,
     PilotBoundaryConfig,
     PrecheckoutAdmissionResult,
@@ -186,6 +188,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # a la misma admision portable que /webhooks/lead; lo especifico (que
     # formularios) sale de [adaptadores.ghl] del manifiesto.
     "ghl_precheckout_adapter_enabled",
+    # El primer contacto tras el formulario solo existe con manifiesto: el
+    # flujo, el evento y la plantilla salen de la instancia, y el scope del
+    # piloto de LANCEMOS_PILOT_PRECHECKOUT_SCOPE_*.
+    "portable_precheckout_first_contact_enabled",
     "worker_enabled",
     "dispatcher_enabled",
     "dispatcher_outbound_enabled",
@@ -264,6 +270,15 @@ class CanonicalHistoryIncompleteError(RetryableChatwootWorkError):
 class CanonicalWorkResult:
     proposal: dict[str, object] | None
     stopped: bool = False
+
+
+class ChatwootInboundAdmissionRejectedError(RuntimeError):
+    """The inbound admission rejected the conversation for good.
+
+    Not a ``RetryableChatwootWorkError`` on purpose: replaying the same
+    message cannot change the answer, so the work ends as failed after the
+    bounded attempts instead of being retried without limit.
+    """
 
 
 class ChatwootControl(Protocol):
@@ -513,8 +528,17 @@ class Settings:
     pilot_tenant_key: str | None = None
     pilot_channel_provider: str | None = None
     pilot_channel_account_ref: str | None = None
+    # Primer contacto portable tras el formulario de la landing (migracion
+    # 20261001000200). Apagado, el formulario solo deja la intencion, como
+    # hasta ahora. Prendido, la admision tambien planifica el primer contacto
+    # contra este scope (fuente landing), que es otro que el de recuperacion, y
+    # el dispatcher lo manda con la plantilla de [plantillas.precheckout].
+    portable_precheckout_first_contact_enabled: bool = False
+    pilot_precheckout_scope_key: str | None = None
+    pilot_precheckout_scope_version: int | None = None
     waba_first_touch_template_name: str | None = None
     waba_payment_failure_template_name: str | None = None
+    waba_precheckout_template_name: str | None = None
     waba_followup_template_name: str | None = None
     waba_template_language: str | None = None
     waba_template_category: str | None = None
@@ -747,6 +771,12 @@ class Settings:
         portable_hotmart_payment_failure_enabled = (
             os.getenv(
                 "PORTABLE_HOTMART_PAYMENT_FAILURE_ENABLED", "false"
+            ).lower()
+            == "true"
+        )
+        portable_precheckout_first_contact_enabled = (
+            os.getenv(
+                "PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED", "false"
             ).lower()
             == "true"
         )
@@ -1118,6 +1148,9 @@ class Settings:
         pilot_scope_version_raw = os.getenv(
             "LANCEMOS_PILOT_SCOPE_VERSION", ""
         ).strip()
+        pilot_precheckout_scope_version_raw = os.getenv(
+            "LANCEMOS_PILOT_PRECHECKOUT_SCOPE_VERSION", ""
+        ).strip()
         chatwoot_cut_b_scope_version_raw = os.getenv(
             "CHATWOOT_CUT_B_SCOPE_VERSION", ""
         ).strip()
@@ -1318,6 +1351,9 @@ class Settings:
             portable_hotmart_payment_failure_enabled=(
                 portable_hotmart_payment_failure_enabled
             ),
+            portable_precheckout_first_contact_enabled=(
+                portable_precheckout_first_contact_enabled
+            ),
             hotmart_purchase_worker_enabled=hotmart_purchase_worker_enabled,
             hotmart_abandonment_timer_worker_enabled=(
                 hotmart_abandonment_timer_worker_enabled
@@ -1411,6 +1447,15 @@ class Settings:
             pilot_scope_version=(
                 int(pilot_scope_version_raw) if pilot_scope_version_raw else None
             ),
+            pilot_precheckout_scope_key=(
+                os.getenv("LANCEMOS_PILOT_PRECHECKOUT_SCOPE_KEY", "").strip()
+                or None
+            ),
+            pilot_precheckout_scope_version=(
+                int(pilot_precheckout_scope_version_raw)
+                if pilot_precheckout_scope_version_raw
+                else None
+            ),
             pilot_tenant_key=(
                 os.getenv("LANCEMOS_PILOT_TENANT_KEY", "").strip() or None
             ),
@@ -1425,6 +1470,9 @@ class Settings:
             ),
             waba_payment_failure_template_name=(
                 os.getenv("WABA_PAYMENT_FAILURE_TEMPLATE_NAME", "").strip() or None
+            ),
+            waba_precheckout_template_name=(
+                os.getenv("WABA_PRECHECKOUT_TEMPLATE_NAME", "").strip() or None
             ),
             waba_followup_template_name=(
                 os.getenv("WABA_FOLLOWUP_TEMPLATE_NAME", "").strip() or None
@@ -1912,6 +1960,7 @@ _FLAG_REQUIRED_FLOW = MappingProxyType({
     "payment_link_enabled": "inbound",
     "portable_hotmart_recovery_enabled": "carrito",
     "portable_hotmart_payment_failure_enabled": "pago_fallido",
+    "portable_precheckout_first_contact_enabled": "precheckout",
     "conversation_reactivation_enabled": "reactivacion",
     "chatwoot_post_inbound_discount_planning_enabled": "descuento",
 })
@@ -1951,16 +2000,28 @@ def _validate_instance_manifest_gates(settings: Settings) -> None:
         raise ValueError(
             "runtime flags exceed the instance manifest flows: " + ", ".join(blocked)
         )
-    if settings.ghl_precheckout_adapter_enabled and manifest.flows["precheckout"]:
+    if manifest.ghl_form_ids and manifest.ghl_risk_acceptance is None:
         # El token del adaptador es la unica barrera y lo lee cualquier usuario de
-        # la subcuenta de GHL: el primer contacto no sale para intenciones que no
-        # distingue de las de una landing hasta que exista una verificacion fuera
-        # de banda del envio (docs/contracts/ghl-precheckout-adapter-v1.md, Riesgos).
-        raise ValueError(
-            "GHL_PRECHECKOUT_ADAPTER_ENABLED cannot run with flujos.precheckout on: "
-            "the adapter token is the only barrier and the first contact needs an "
-            "out-of-band check of each submission"
-        )
+        # la subcuenta de GHL, y una intencion que entro por el adaptador no se
+        # distingue en la base de la de una landing. Los dos flujos que usan la
+        # intencion como permiso de contacto (el primer contacto del formulario y
+        # el pago fallido, que concede el permiso en cualquier audience_mode) no
+        # arrancan hasta que alguien acepte ese riesgo por escrito en el
+        # manifiesto, o exista una verificacion fuera de banda de cada envio
+        # (docs/contracts/ghl-precheckout-adapter-v1.md, Riesgos). Cuelga de la
+        # seccion y no del flag: apagar GHL_PRECHECKOUT_ADAPTER_ENABLED no saca
+        # de la base las intenciones que el adaptador ya admitio.
+        gated = [flow for flow in GHL_RISK_GATED_FLOWS if manifest.flows[flow]]
+        if gated:
+            raise ValueError(
+                "[adaptadores.ghl] cannot run with flujos."
+                + ", flujos.".join(gated)
+                + " on without the written risk acceptance: the adapter token is "
+                "the only barrier and an adapter intent is not told apart from a "
+                "landing one. It needs an out-of-band check of each submission or "
+                "riesgo_aceptado_por, riesgo_aceptado_el and riesgo_contrato in "
+                "[adaptadores.ghl]"
+            )
     if settings.automated_replies_enabled and knowledge is None:
         raise ValueError(
             "automated replies with an instance manifest require "
@@ -1970,19 +2031,21 @@ def _validate_instance_manifest_gates(settings: Settings) -> None:
 
 def _manifest_template_parameters(
     settings: Settings,
-) -> tuple[tuple[str, ...] | None, tuple[str, ...] | None]:
-    """The body variables of the carrito and pago_fallido templates.
+) -> tuple[
+    tuple[str, ...] | None, tuple[str, ...] | None, tuple[str, ...] | None
+]:
+    """The body variables of the carrito, pago_fallido and precheckout templates.
 
     Only for a flow the manifest declares on: its ``[plantillas]`` entry is the
     template that flow sends, so ``WABA_*_TEMPLATE_NAME`` and
     ``WABA_TEMPLATE_LANGUAGE`` must name the same template or the bridge does
-    not start. Both share the one ``WABA_TEMPLATE_LANGUAGE``, so two flows
+    not start. All share the one ``WABA_TEMPLATE_LANGUAGE``, so two flows
     with templates in different languages cannot start either. A flow that is
     off keeps ``None``, the behavior of today.
     """
     manifest = settings.instance_manifest
     if manifest is None:
-        return None, None
+        return None, None, None
     slots = (
         ("carrito", settings.waba_first_touch_template_name, "WABA_FIRST_TOUCH_TEMPLATE_NAME"),
         (
@@ -1990,15 +2053,26 @@ def _manifest_template_parameters(
             settings.waba_payment_failure_template_name,
             "WABA_PAYMENT_FAILURE_TEMPLATE_NAME",
         ),
+        (
+            "precheckout",
+            settings.waba_precheckout_template_name,
+            "WABA_PRECHECKOUT_TEMPLATE_NAME",
+        ),
     )
-    parameters: dict[str, tuple[str, ...] | None] = {"carrito": None, "pago_fallido": None}
+    parameters: dict[str, tuple[str, ...] | None] = {
+        "carrito": None,
+        "pago_fallido": None,
+        "precheckout": None,
+    }
     for slot, configured_name, variable in slots:
         if not manifest.flows[slot]:
             continue
         template = manifest.templates[slot]
         if not configured_name:
             # Sin plantilla propia el pago fallido sale con la del carrito; el
-            # arranque ya exige la variable cuando el flag del flujo esta prendido.
+            # arranque ya exige la variable cuando el flag del flujo esta
+            # prendido. El primer contacto del formulario no tiene ese
+            # prestamo: sin su plantilla no sale nada.
             continue
         if configured_name != template.name:
             raise ValueError(
@@ -2010,10 +2084,83 @@ def _manifest_template_parameters(
                 "of the instance manifest"
             )
         parameters[slot] = template.parameters
-    return parameters["carrito"], parameters["pago_fallido"]
+    return parameters["carrito"], parameters["pago_fallido"], parameters["precheckout"]
+
+
+def _validate_precheckout_first_contact(settings: Settings) -> None:
+    """Startup gates of the portable first contact after the landing form.
+
+    The flag makes the form admission also plan a first contact, and the
+    dispatcher send it. It only starts when everything that flow needs to go
+    out, and everything that has to be able to stop it, is on:
+
+    * an instance manifest (through it, ``flujos.precheckout``, the
+      ``intencion`` event and ``[plantillas.precheckout]``) and an entry that
+      admits the form;
+    * the pilot boundary, the dispatcher and the direct mode (the approved
+      template without Hermes), with the scope of this flow, which is another
+      one than the recovery scope: a published scope has a single source;
+    * its own approved template: there is no fallback to the cart one;
+    * what stops it: the purchase from Hotmart (the stop flag and the hottok
+      its webhook needs) and the scoped inbound, which carries the durable
+      opt-out and the handoff.
+    """
+    if not settings.portable_precheckout_first_contact_enabled:
+        return
+    flag = "PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED"
+    if settings.instance_manifest is None:
+        raise ValueError(f"{flag} requires an instance manifest")
+    if not (
+        settings.lead_precheckout_enabled or settings.ghl_precheckout_adapter_enabled
+    ):
+        raise ValueError(
+            f"{flag} requires LEAD_PRECHECKOUT_ENABLED or "
+            "GHL_PRECHECKOUT_ADAPTER_ENABLED"
+        )
+    if not settings.pilot_boundary_enabled:
+        raise ValueError(f"{flag} requires LANCEMOS_PILOT_BOUNDARY_ENABLED")
+    if not settings.dispatcher_enabled:
+        raise ValueError(f"{flag} requires DURABLE_DISPATCHER_ENABLED")
+    if not settings.dispatcher_approved_template_direct_enabled:
+        raise ValueError(
+            f"{flag} requires DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED"
+        )
+    if not settings.pilot_precheckout_scope_key:
+        raise ValueError(f"LANCEMOS_PILOT_PRECHECKOUT_SCOPE_KEY is required for {flag}")
+    if (
+        settings.pilot_precheckout_scope_version is None
+        or settings.pilot_precheckout_scope_version < 1
+    ):
+        raise ValueError("LANCEMOS_PILOT_PRECHECKOUT_SCOPE_VERSION must be positive")
+    if settings.pilot_precheckout_scope_key == settings.pilot_scope_key:
+        raise ValueError(
+            "LANCEMOS_PILOT_PRECHECKOUT_SCOPE_KEY must differ from "
+            "LANCEMOS_PILOT_SCOPE_KEY"
+        )
+    if not settings.waba_precheckout_template_name:
+        raise ValueError(f"WABA_PRECHECKOUT_TEMPLATE_NAME is required for {flag}")
+    if not settings.portable_hotmart_purchase_stop_enabled:
+        raise ValueError(f"{flag} requires PORTABLE_HOTMART_PURCHASE_STOP_ENABLED")
+    if settings.hotmart_hottok is None:
+        # Sin el hottok el webhook de Hotmart responde 503 y ninguna compra
+        # llega a frenar el primer contacto.
+        raise ValueError(f"{flag} requires HOTMART_HOTTOK")
+    if not settings.chatwoot_scoped_inbound_senders_enabled:
+        raise ValueError(
+            f"{flag} requires CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED"
+        )
 
 
 def _waba_template_config(settings: Settings) -> WhatsAppTemplateConfig | None:
+    if (
+        settings.waba_precheckout_template_name is not None
+        and settings.instance_manifest is None
+    ):
+        # Solo con manifiesto, igual que la categoria del pago fallido: sin
+        # manifiesto no hay flujo que la mande.
+        raise ValueError(
+            "WABA_PRECHECKOUT_TEMPLATE_NAME requires an instance manifest"
+        )
     payment_failure_category = settings.waba_payment_failure_template_category
     if payment_failure_category is not None:
         # Solo con manifiesto: Johanna comparte esta configuracion con sus
@@ -2055,8 +2202,18 @@ def _waba_template_config(settings: Settings) -> WhatsAppTemplateConfig | None:
         )
     if settings.waba_template_category not in {"MARKETING", "UTILITY"}:
         raise ValueError("WABA_TEMPLATE_CATEGORY must be MARKETING or UTILITY")
-    first_touch_parameters, payment_failure_parameters = _manifest_template_parameters(
-        settings
+    (
+        first_touch_parameters,
+        payment_failure_parameters,
+        precheckout_parameters,
+    ) = _manifest_template_parameters(settings)
+    # La plantilla del primer contacto del formulario entra solo con su flag.
+    # Apagado, una accion precheckout_intent que hubiera quedado planificada
+    # no encuentra plantilla y cierra sin mandar nada: nunca usa la del carrito.
+    precheckout_name = (
+        settings.waba_precheckout_template_name
+        if settings.portable_precheckout_first_contact_enabled
+        else None
     )
     return WhatsAppTemplateConfig(
         first_touch_name=settings.waba_first_touch_template_name,  # type: ignore[arg-type]
@@ -2068,6 +2225,10 @@ def _waba_template_config(settings: Settings) -> WhatsAppTemplateConfig | None:
         first_touch_body_parameters=first_touch_parameters,
         payment_failure_body_parameters=payment_failure_parameters,
         payment_failure_category=payment_failure_category,
+        precheckout_name=precheckout_name,
+        precheckout_body_parameters=(
+            precheckout_parameters if precheckout_name is not None else None
+        ),
     )
 
 
@@ -2133,6 +2294,38 @@ def _validate_approved_template_direct(
         )
 
 
+class _PhoneEquivalentCheckoutIssuance:
+    """El cliente que recibe deliver_checkout_issuance_v2 con manifiesto.
+
+    La reserva va a reserve_portable_checkout_issuance_v2, que busca la
+    intencion del movil y el opt-out por las dos formas del telefono: quien
+    dejo el formulario con 52... (54...) y escribe desde su wa_id 521...
+    (549...) recibe el enlace con la oferta, el sck y la intencion del
+    formulario, y quien ya compro no recibe otro. Autorizar y finalizar
+    trabajan por issuance_id y no cambian. Sin manifiesto (Johanna) el
+    bridge le pasa el cliente tal cual y la reserva sigue siendo la
+    compartida.
+    """
+
+    def __init__(self, client: object) -> None:
+        self._client = client
+
+    async def reserve_chatwoot_checkout_issuance_v2(self, **kwargs: object) -> object:
+        return await self._client.reserve_chatwoot_checkout_issuance_v2(  # type: ignore[attr-defined]
+            phone_equivalence=True, **kwargs
+        )
+
+    async def authorize_chatwoot_checkout_issuance_v2(self, **kwargs: object) -> object:
+        return await self._client.authorize_chatwoot_checkout_issuance_v2(  # type: ignore[attr-defined]
+            **kwargs
+        )
+
+    async def finalize_chatwoot_checkout_issuance_v2(self, **kwargs: object) -> object:
+        return await self._client.finalize_chatwoot_checkout_issuance_v2(  # type: ignore[attr-defined]
+            **kwargs
+        )
+
+
 GHL_PRECHECKOUT_ADAPTER_PATH = "/webhooks/adapters/ghl/lead-precheckout"
 _GHL_LOGGABLE_FORM_ID = re.compile(r"[A-Za-z0-9]{20}")
 
@@ -2191,6 +2384,79 @@ class _GhlAdapterTrace:
             self.has_utm,
             self.has_fbclid,
         )
+
+
+def _ghl_adapter_risk_readiness(manifest: InstanceManifest) -> str | None:
+    """The ``ghl_adapter_risk`` value of /ready, or None when it does not apply.
+
+    Never the name of who accepted: /ready carries no personal data. The name
+    goes to the startup log only.
+    """
+    state = manifest.ghl_adapter_risk
+    acceptance = manifest.ghl_risk_acceptance
+    if state == "accepted" and acceptance is not None:
+        return f"accepted:{acceptance.accepted_on.isoformat()}:{acceptance.contract}"
+    return state
+
+
+def _log_ghl_adapter_risk(manifest: InstanceManifest) -> None:
+    # Un warning y no un info: el bridge no configura logging y bajo uvicorn
+    # solo los warnings llegan a la salida del contenedor. Una vez por arranque.
+    state = manifest.ghl_adapter_risk
+    acceptance = manifest.ghl_risk_acceptance
+    if state == "accepted" and acceptance is not None:
+        logger.warning(
+            "ghl_adapter_risk acceptance=accepted by=%s on=%s contract=%s",
+            acceptance.accepted_by,
+            acceptance.accepted_on.isoformat(),
+            acceptance.contract,
+        )
+    elif state == "not_accepted":
+        logger.warning(
+            "ghl_adapter_risk acceptance=absent gated=%s,consented_audience",
+            ",".join(GHL_RISK_GATED_FLOWS),
+        )
+    elif state == "no_adapter_section":
+        # Sin la seccion no hay guarda: si la instancia uso el adaptador, sus
+        # intenciones siguen en la base y estos flujos las tratan como las de
+        # una landing.
+        logger.warning(
+            "ghl_adapter_risk acceptance=no_adapter_section flows=%s "
+            "detail=intents_admitted_by_a_removed_adapter_are_not_gated",
+            ",".join(flow for flow in GHL_RISK_GATED_FLOWS if manifest.flows[flow]),
+        )
+
+
+async def _ghl_adapter_audience_block(
+    supabase: SupabaseClient | None, pilot_boundary: PilotBoundaryConfig
+) -> str | None:
+    """Why this pilot scope cannot run with ``[adaptadores.ghl]`` unaccepted.
+
+    Only asked when the manifest has the adapter section, no written risk
+    acceptance and the pilot boundary on. An audience with consent
+    (``consented_intent`` or ``consented_intent_in_cohort``) uses the intent of
+    the form as the audience, and the base cannot tell an adapter intent from a
+    landing one. Fails closed: a read that fails, a scope that is not
+    published or an unknown mode block too. ``None`` only for
+    ``manual_cohort``.
+    """
+    if supabase is None:
+        return "ghl_adapter_risk_audience_unavailable"
+    try:
+        mode = await supabase.get_pilot_scope_audience_mode(
+            pilot_boundary=pilot_boundary
+        )
+    except Exception as exc:
+        logger.warning(
+            "ghl_adapter_risk_audience_check_failed error_type=%s",
+            type(exc).__name__,
+        )
+        return "ghl_adapter_risk_audience_unavailable"
+    if mode in PILOT_SCOPE_CONSENTED_AUDIENCE_MODES:
+        return "ghl_adapter_risk_not_accepted"
+    if mode != "manual_cohort":
+        return "ghl_adapter_risk_audience_unavailable"
+    return None
 
 
 def create_app(
@@ -2261,6 +2527,14 @@ def create_app(
             instance_readiness["ghl_precheckout_adapter"] = (
                 f"enabled:{len(settings.instance_manifest.ghl_form_ids)}-forms"
             )
+        # El riesgo del adaptador cuelga de [adaptadores.ghl] y no del flag
+        # (las intenciones que admitio siguen en la base con el flag apagado).
+        # La clave aparece solo cuando aplica: sin la seccion y sin un flujo
+        # que use intenciones, el payload de /ready no cambia.
+        ghl_adapter_risk = _ghl_adapter_risk_readiness(settings.instance_manifest)
+        if ghl_adapter_risk is not None:
+            instance_readiness["ghl_adapter_risk"] = ghl_adapter_risk
+        _log_ghl_adapter_risk(settings.instance_manifest)
     if settings.commercial_knowledge is not None:
         instance_readiness["commercial_knowledge"] = (
             f"v{settings.commercial_knowledge.version}:"
@@ -2271,6 +2545,10 @@ def create_app(
         and (
             settings.portable_hotmart_recovery_enabled
             or settings.portable_hotmart_payment_failure_enabled
+            # El primer contacto del formulario tambien le escribe a quien
+            # dice la base y no a un JID fijo: sin esto el dispatcher directo
+            # no recibe el binding ni arranca.
+            or settings.portable_precheckout_first_contact_enabled
         )
     )
     portable_runtime = (
@@ -2511,6 +2789,7 @@ def create_app(
         raise ValueError(
             "DURABLE_OUTBOUND_ENABLED requires LANCEMOS_PILOT_BOUNDARY_ENABLED"
         )
+    _validate_precheckout_first_contact(settings)
     waba_template = _waba_template_config(settings)
     _validate_approved_template_direct(
         settings,
@@ -2527,6 +2806,30 @@ def create_app(
             channel_account_ref=settings.pilot_channel_account_ref,  # type: ignore[arg-type]
         )
         if settings.pilot_boundary_enabled
+        else None
+    )
+    # Con [adaptadores.ghl] y sin la aceptacion escrita del riesgo, el scope
+    # del piloto no puede tener una audiencia con consentimiento: se lee de la
+    # base en el arranque (lifespan, antes de cualquier worker) y en /ready.
+    # Con la aceptacion, o sin la seccion, no se lee nada.
+    ghl_adapter_audience_gate = (
+        pilot_boundary is not None
+        and settings.instance_manifest is not None
+        and bool(settings.instance_manifest.ghl_form_ids)
+        and settings.instance_manifest.ghl_risk_acceptance is None
+    )
+    # El scope del primer contacto del formulario: otra clave y otra version,
+    # el mismo tenant y el mismo canal que el de recuperacion. Solo lo lee
+    # /ready; el envio resuelve el scope por el binding del caso.
+    precheckout_pilot_boundary = (
+        PilotBoundaryConfig(
+            scope_key=settings.pilot_precheckout_scope_key,  # type: ignore[arg-type]
+            scope_version=settings.pilot_precheckout_scope_version,  # type: ignore[arg-type]
+            tenant_key=settings.pilot_tenant_key,  # type: ignore[arg-type]
+            channel_provider=settings.pilot_channel_provider,  # type: ignore[arg-type]
+            channel_account_ref=settings.pilot_channel_account_ref,  # type: ignore[arg-type]
+        )
+        if settings.portable_precheckout_first_contact_enabled
         else None
     )
     if settings.hotmart_purchase_worker_enabled and not settings.worker_enabled:
@@ -3275,6 +3578,7 @@ def create_app(
                 allowed_jid=settings.allowed_jid,
                 dynamic_recipient_enabled=portable_dynamic_recipient,
                 template=waba_template,
+                whatsapp_equivalence_enabled=portable_dynamic_recipient,
             )
         resolution_worker = ResolutionWorker(
             supabase=shared_supabase,
@@ -3361,6 +3665,7 @@ def create_app(
                     allowed_jid=settings.allowed_jid,
                     dynamic_recipient_enabled=portable_dynamic_recipient,
                     template=waba_template,
+                    whatsapp_equivalence_enabled=portable_dynamic_recipient,
                 )
             if outbound_sender is None or (
                 outbound_agent is None and not approved_template_direct
@@ -3413,6 +3718,16 @@ def create_app(
                 settings.lead_first_name_greeting_enabled
                 and approved_template_direct
             ),
+            # Solo el runtime portable trata 52/521 y 54/549 como el mismo
+            # telefono, y solo con un sender que sabe resolver el destinatario
+            # en Chatwoot antes del gate final (el que el bridge arma arriba).
+            # Con cualquier otro sender el dispatcher sigue mandando al
+            # telefono exacto del contacto.
+            whatsapp_equivalence_enabled=(
+                portable_dynamic_recipient
+                and isinstance(outbound_sender, ChatwootMessageSender)
+                and outbound_sender.whatsapp_equivalence_enabled
+            ),
         )
 
     opt_out_projection_worker: OptOutProjectionWorker | None = None
@@ -3440,6 +3755,10 @@ def create_app(
             supabase=shared_supabase,
             chatwoot=control_client,  # type: ignore[arg-type]
             worker_id=settings.opt_out_projection_worker_id,
+            # Con manifiesto, el opt-out queda guardado con la identidad que la
+            # base ya tenia (52…) y la conversacion de Chatwoot es del wa_id
+            # (521…): la proyeccion acepta la otra forma del mismo movil.
+            whatsapp_equivalence_enabled=settings.instance_manifest is not None,
         )
     if settings.human_handoff_projection_enabled:
         assert shared_supabase is not None
@@ -3455,6 +3774,7 @@ def create_app(
             batch_size=settings.human_handoff_projection_batch_size,
             lease_seconds=settings.human_handoff_projection_lease_seconds,
             max_attempts=settings.human_handoff_projection_max_attempts,
+            whatsapp_equivalence_enabled=settings.instance_manifest is not None,
         )
 
     chatwoot_worker: ChatwootWorker | None = None
@@ -3466,6 +3786,21 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+        if ghl_adapter_audience_gate:
+            # Antes de arrancar cualquier worker: los workers corren aunque
+            # /ready responda 503. Falla cerrado, tambien si la base no
+            # responde.
+            assert pilot_boundary is not None
+            audience_block = await _ghl_adapter_audience_block(
+                shared_supabase, pilot_boundary
+            )
+            if audience_block is not None:
+                raise RuntimeError(
+                    f"{audience_block}: [adaptadores.ghl] without the written risk "
+                    "acceptance cannot run with a consented pilot audience "
+                    "(consented_intent, consented_intent_in_cohort), and the "
+                    "audience mode of the pilot scope must be readable"
+                )
         try:
             if resolution_worker is not None:
                 await resolution_worker.start()
@@ -3554,6 +3889,83 @@ def create_app(
     )
     app.state.conversation_followup_sweeper = conversation_followup_sweeper
 
+    # Con manifiesto, el mismo movil puede estar guardado con la otra forma
+    # (52 + 10 del formulario, 521 + 10 del wa_id; 54 y 549 en Argentina). Sin
+    # manifiesto (Johanna) nada de esto corre: el wa_id se usa textual.
+    whatsapp_inbound_equivalence = settings.instance_manifest is not None
+
+    async def resolve_inbound_external_user_id(
+        wa_id: str,
+        *,
+        conversation_id: object,
+    ) -> str:
+        """El external_user_id con que la base ya conoce a quien escribe.
+
+        Si entre las formas equivalentes del wa_id hay exactamente una
+        identidad activa del inbox y no es la textual, se usa la guardada: asi
+        el opt-out, la admision y el enlace caen en el contacto que ya existe
+        en vez de abrir otro. Con mas de una se usa la textual y queda un
+        warning con ids de Chatwoot y region, nunca el numero. Sin ninguna, la
+        textual.
+        """
+        if (
+            not whatsapp_inbound_equivalence
+            or shared_supabase is None
+            or settings.chatwoot_account_id is None
+            or settings.chatwoot_inbox_id is None
+        ):
+            return wa_id
+        forms = equivalent_whatsapp_phones(wa_id)
+        if len(forms) < 2:
+            return wa_id
+        try:
+            identities = await shared_supabase.find_active_whatsapp_identities(
+                chatwoot_account_id=settings.chatwoot_account_id,
+                chatwoot_inbox_id=settings.chatwoot_inbox_id,
+                external_user_ids=forms,
+            )
+        except SupabaseError as exc:
+            raise RetryableChatwootWorkError(
+                "chatwoot_inbound_identity_lookup_failed"
+            ) from exc
+        stored = sorted({identity.external_user_id for identity in identities})
+        if len(stored) == 1 and stored[0] != wa_id:
+            logger.info(
+                "chatwoot_inbound_identity_equivalent conversation=%s region=%s",
+                conversation_id,
+                whatsapp_phone_region(wa_id),
+            )
+            return stored[0]
+        if len(stored) > 1:
+            logger.warning(
+                "chatwoot_inbound_identity_duplicated account=%s inbox=%s "
+                "conversation=%s region=%s identities=%s",
+                settings.chatwoot_account_id,
+                settings.chatwoot_inbox_id,
+                conversation_id,
+                whatsapp_phone_region(wa_id),
+                len(stored),
+            )
+        return wa_id
+
+    def inbound_opt_out_stop_user_ids(
+        wa_id: str,
+        external_user_id: str,
+    ) -> tuple[str, ...]:
+        """Los ids cuyo opt-out frena a quien escribe.
+
+        Sin manifiesto, el de siempre. Con manifiesto, el resuelto y despues
+        cada forma del wa_id: un opt-out guardado bajo 521… frena igual a
+        quien hoy la base conoce como 52….
+        """
+        if not whatsapp_inbound_equivalence:
+            return (external_user_id,)
+        return tuple(
+            dict.fromkeys(
+                (external_user_id, wa_id, *equivalent_whatsapp_phones(wa_id))
+            )
+        )
+
     async def run_shadow_with_canonical_history(
         *,
         delivery_id: str,
@@ -3561,8 +3973,11 @@ def create_app(
         batch_message_ids: tuple[int, ...],
         context: dict[str, object],
         expected_jid: str | None = None,
+        opt_out_only: bool = False,
     ) -> CanonicalWorkResult:
         if control_client is None or settings.agent_bot_id is None:
+            if opt_out_only:
+                return CanonicalWorkResult(proposal=None)
             if shadow_processor is not None:
                 shadow_processor.record_failure(
                     delivery_id=delivery_id,
@@ -3631,29 +4046,41 @@ def create_app(
             raise CanonicalHistoryIncompleteError(
                 "canonical_external_user_id_invalid"
             )
+        inbound_wa_id = external_user_id
+        external_user_id = await resolve_inbound_external_user_id(
+            inbound_wa_id,
+            conversation_id=conversation_id,
+        )
         if opt_out_enforcement_enabled:
             assert shared_supabase is not None
             assert settings.chatwoot_account_id is not None
             assert settings.chatwoot_inbox_id is not None
-            try:
-                stopped = await shared_supabase.has_chatwoot_opt_out_stop(
-                    chatwoot_account_id=settings.chatwoot_account_id,
-                    chatwoot_inbox_id=settings.chatwoot_inbox_id,
-                    chatwoot_conversation_id=conversation_id,
-                    external_user_id=external_user_id,
-                )
-            except SupabaseError as exc:
-                raise RetryableChatwootWorkError(
-                    "chatwoot_opt_out_stop_check_failed"
-                ) from exc
-            if stopped:
+            stopped_user_id: str | None = None
+            for stop_user_id in inbound_opt_out_stop_user_ids(
+                inbound_wa_id, external_user_id
+            ):
+                try:
+                    stopped = await shared_supabase.has_chatwoot_opt_out_stop(
+                        chatwoot_account_id=settings.chatwoot_account_id,
+                        chatwoot_inbox_id=settings.chatwoot_inbox_id,
+                        chatwoot_conversation_id=conversation_id,
+                        external_user_id=stop_user_id,
+                    )
+                except SupabaseError as exc:
+                    raise RetryableChatwootWorkError(
+                        "chatwoot_opt_out_stop_check_failed"
+                    ) from exc
+                if stopped:
+                    stopped_user_id = stop_user_id
+                    break
+            if stopped_user_id is not None:
                 try:
                     reconciliation = (
                         await shared_supabase.reconcile_chatwoot_opt_out_stop(
                             chatwoot_account_id=settings.chatwoot_account_id,
                             chatwoot_inbox_id=settings.chatwoot_inbox_id,
                             chatwoot_conversation_id=conversation_id,
-                            external_user_id=external_user_id,
+                            external_user_id=stopped_user_id,
                         )
                     )
                 except SupabaseError as exc:
@@ -3715,6 +4142,10 @@ def create_app(
                     result.opt_out_event_id,
                 )
                 return CanonicalWorkResult(proposal=None, stopped=True)
+        if opt_out_only:
+            # Only the stop and the opt-out were asked for: the agent does
+            # not run.
+            return CanonicalWorkResult(proposal=None)
         first_batch_index = min(
             (message_indexes[message_ref] for message_ref in expected_refs),
             default=current_index,
@@ -3908,25 +4339,37 @@ def create_app(
                 )
                 if not external_user_id.isdigit():
                     raise RuntimeError("chatwoot_reset_external_user_id_invalid")
-                try:
-                    stopped = await shared_supabase.has_chatwoot_opt_out_stop(
-                        chatwoot_account_id=settings.chatwoot_account_id,
-                        chatwoot_inbox_id=settings.chatwoot_inbox_id,
-                        chatwoot_conversation_id=conversation_id,
-                        external_user_id=external_user_id,
-                    )
-                except SupabaseError as exc:
-                    raise RetryableChatwootWorkError(
-                        "chatwoot_reset_opt_out_stop_check_failed"
-                    ) from exc
-                if stopped:
+                reset_wa_id = external_user_id
+                external_user_id = await resolve_inbound_external_user_id(
+                    reset_wa_id,
+                    conversation_id=conversation_id,
+                )
+                reset_stopped_user_id: str | None = None
+                for stop_user_id in inbound_opt_out_stop_user_ids(
+                    reset_wa_id, external_user_id
+                ):
+                    try:
+                        stopped = await shared_supabase.has_chatwoot_opt_out_stop(
+                            chatwoot_account_id=settings.chatwoot_account_id,
+                            chatwoot_inbox_id=settings.chatwoot_inbox_id,
+                            chatwoot_conversation_id=conversation_id,
+                            external_user_id=stop_user_id,
+                        )
+                    except SupabaseError as exc:
+                        raise RetryableChatwootWorkError(
+                            "chatwoot_reset_opt_out_stop_check_failed"
+                        ) from exc
+                    if stopped:
+                        reset_stopped_user_id = stop_user_id
+                        break
+                if reset_stopped_user_id is not None:
                     try:
                         reconciliation = (
                             await shared_supabase.reconcile_chatwoot_opt_out_stop(
                                 chatwoot_account_id=settings.chatwoot_account_id,
                                 chatwoot_inbox_id=settings.chatwoot_inbox_id,
                                 chatwoot_conversation_id=conversation_id,
-                                external_user_id=external_user_id,
+                                external_user_id=reset_stopped_user_id,
                             )
                         )
                     except SupabaseError as exc:
@@ -3978,6 +4421,13 @@ def create_app(
                 or not external_user_id.isdigit()
             ):
                 raise RuntimeError("chatwoot_cut_b_canonical_identity_invalid")
+            # Toda llamada a la base de aca en adelante usa la identidad que ya
+            # existe para este movil. Lo que se valida contra Chatwoot
+            # (scoped_expected_jid) sigue siendo el wa_id textual del webhook.
+            external_user_id = await resolve_inbound_external_user_id(
+                external_user_id,
+                conversation_id=conversation_id,
+            )
             if settings.chatwoot_post_inbound_discount_planning_enabled:
                 assert settings.commercial_ally_discount_policy_key is not None
                 assert settings.commercial_ally_discount_policy_version is not None
@@ -4044,6 +4494,44 @@ def create_app(
                     external_user_id=external_user_id,
                 )
             except SupabaseError as exc:
+                if whatsapp_inbound_equivalence:
+                    # With a manifest, a "No mas mensajes" does not depend on
+                    # the admission. The conversation a recovery template
+                    # opened is not a draft-only inbound one, so the admission
+                    # rejects every reply to that template: without this the
+                    # opt-out of the person who pressed the button was never
+                    # recorded and the message was retried without limit.
+                    stop_context = _shadow_context(payload)
+                    stop_message_id = payload.get("id")
+                    if (
+                        stop_context is not None
+                        and isinstance(stop_message_id, int)
+                        and not isinstance(stop_message_id, bool)
+                    ):
+                        stop_result = await run_shadow_with_canonical_history(
+                            delivery_id=delivery_id,
+                            current_message_id=stop_message_id,
+                            batch_message_ids=batch_message_ids,
+                            context=stop_context,
+                            expected_jid=scoped_expected_jid,
+                            opt_out_only=True,
+                        )
+                        if stop_result.stopped:
+                            return
+                    if isinstance(exc, SupabasePermanentError):
+                        # Replaying the message cannot change the answer: the
+                        # reason goes to the log and the work ends as failed
+                        # after the bounded attempts. Nobody answers this
+                        # message from here; a person takes it in Chatwoot.
+                        logger.warning(
+                            "chatwoot_cut_b_admission_rejected "
+                            "conversation=%s reason=%s",
+                            conversation_id,
+                            exc.reason,
+                        )
+                        raise ChatwootInboundAdmissionRejectedError(
+                            "chatwoot_cut_b_admission_rejected"
+                        ) from exc
                 raise RetryableChatwootWorkError(
                     "chatwoot_cut_b_admission_failed"
                 ) from exc
@@ -4324,7 +4812,13 @@ def create_app(
             assert control_client is not None
             try:
                 delivery = await deliver_checkout_issuance_v2(
-                    supabase=shared_supabase,
+                    # Con manifiesto, la reserva busca la intencion por las
+                    # dos formas del movil. Sin manifiesto, como siempre.
+                    supabase=(
+                        _PhoneEquivalentCheckoutIssuance(shared_supabase)
+                        if whatsapp_inbound_equivalence
+                        else shared_supabase
+                    ),
                     control_client=control_client,
                     commercial_case_id=admission.commercial_case_id,
                     external_user_id=external_user_id,
@@ -5306,6 +5800,49 @@ def create_app(
                     handoff_status.dead_letter_count
                 ),
             }
+        # El primer contacto del formulario tiene su propio scope del piloto:
+        # se publica su estado (inactive, armed, paused, closed). La clave solo
+        # aparece con el flag, para no cambiarle el payload a quien no lo usa.
+        first_contact_readiness: dict[str, str] = {}
+        if precheckout_pilot_boundary is not None:
+            if shared_supabase is None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="portable_precheckout_readiness_unavailable",
+                )
+            try:
+                first_contact_status = await (
+                    shared_supabase.get_portable_precheckout_pilot_runtime_status(
+                        pilot_boundary=precheckout_pilot_boundary
+                    )
+                )
+            except Exception as exc:
+                logger.warning(
+                    "portable_precheckout_readiness_check_failed error_type=%s",
+                    type(exc).__name__,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="portable_precheckout_readiness_unavailable",
+                ) from exc
+            if (
+                not first_contact_status.configured
+                or first_contact_status.runtime_state is None
+            ):
+                # Scope sin publicar, de otra fuente, manual_cohort o con otra
+                # version activa: el flujo no puede planificar ni mandar.
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=(
+                        "portable_precheckout_"
+                        f"{first_contact_status.reason_code}"
+                    ),
+                )
+            first_contact_readiness = {
+                "portable_precheckout_first_contact": (
+                    first_contact_status.runtime_state
+                ),
+            }
         if pilot_boundary is None:
             return {
                 "status": "ready",
@@ -5314,6 +5851,7 @@ def create_app(
                 "reason_code": "pilot_boundary_disabled",
                 **commercial_ally_readiness,
                 **precheckout_readiness,
+                **first_contact_readiness,
                 **handoff_readiness,
                 **stalled_monitor_readiness,
             }
@@ -5340,6 +5878,17 @@ def create_app(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=pilot_status.reason_code,
             )
+        if ghl_adapter_audience_gate:
+            # La misma lectura del arranque (que ya corta antes de los
+            # workers): aca el motivo queda visible para quien consulta /ready.
+            audience_block = await _ghl_adapter_audience_block(
+                shared_supabase, pilot_boundary
+            )
+            if audience_block is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=audience_block,
+                )
         return {
             "status": "ready",
             "pilot_boundary": "configured",
@@ -5347,6 +5896,7 @@ def create_app(
             "reason_code": pilot_status.reason_code,
             **commercial_ally_readiness,
             **precheckout_readiness,
+            **first_contact_readiness,
             **handoff_readiness,
             **stalled_monitor_readiness,
         }
@@ -5666,6 +6216,52 @@ def create_app(
             "contact_authorized": False,
         }
 
+    async def _admit_portable_lead(
+        submission: LeadPrecheckoutSubmission,
+        raw_payload: dict[str, object],
+    ) -> PrecheckoutAdmissionResult:
+        # La admision portable de lead.precheckout, la misma para /webhooks/lead
+        # con manifiesto y para el adaptador de GHL. Apagado el primer contacto,
+        # es la RPC de siempre. Prendido, la base admite el envio y planifica
+        # el primer contacto en la misma transaccion: la admision no se pierde
+        # si el plan no procede, y la respuesta HTTP es la misma en los dos
+        # casos.
+        assert shared_supabase is not None
+        if not settings.portable_precheckout_first_contact_enabled:
+            return await shared_supabase.admit_portable_observed_lead_precheckout(
+                config=settings.commercial_ally_config,
+                external_submission_id=submission.external_submission_id,
+                raw_payload=raw_payload,
+                canonical_payload=submission.as_canonical_payload(),
+            )
+        # create_app ya no arranca sin el scope con el flag prendido.
+        assert settings.pilot_precheckout_scope_key is not None
+        assert settings.pilot_precheckout_scope_version is not None
+        admission = await shared_supabase.admit_and_plan_portable_lead_precheckout(
+            config=settings.commercial_ally_config,
+            external_submission_id=submission.external_submission_id,
+            raw_payload=raw_payload,
+            canonical_payload=submission.as_canonical_payload(),
+            scope_key=settings.pilot_precheckout_scope_key,
+            scope_version=settings.pilot_precheckout_scope_version,
+        )
+        # Solo ids y codigos: nunca el nombre, el email ni el telefono. Un plan
+        # que fallo sale como warning (bajo uvicorn solo los warnings llegan a
+        # la salida del contenedor); el motivo de cada envio queda ademas en
+        # portable_precheckout_first_contact_plans.
+        logger.log(
+            logging.WARNING
+            if admission.plan_outcome == "plan_failed"
+            else logging.INFO,
+            "portable_precheckout_first_contact admission=%s plan=%s reason=%s "
+            "submission_id=%s",
+            admission.outcome,
+            admission.plan_outcome or "-",
+            admission.plan_reason or "-",
+            admission.submission_id,
+        )
+        return admission
+
     @app.post("/webhooks/lead", status_code=status.HTTP_200_OK)
     async def receive_lead_precheckout_webhook(
         request: Request,
@@ -5751,12 +6347,7 @@ def create_app(
         assert isinstance(payload, dict)
         try:
             admission = (
-                await shared_supabase.admit_portable_observed_lead_precheckout(
-                    config=settings.commercial_ally_config,
-                    external_submission_id=submission.external_submission_id,
-                    raw_payload=payload,
-                    canonical_payload=submission.as_canonical_payload(),
-                )
+                await _admit_portable_lead(submission, payload)
                 if explicit_manifest_runtime
                 else await shared_supabase.admit_observed_lead_precheckout(
                     external_submission_id=submission.external_submission_id,
@@ -5875,12 +6466,7 @@ def create_app(
         try:
             # Siempre la admision portable, con el evento traducido: el cuerpo
             # de GHL no se guarda.
-            admission = await shared_supabase.admit_portable_observed_lead_precheckout(
-                config=settings.commercial_ally_config,
-                external_submission_id=submission.external_submission_id,
-                raw_payload=translation.event,
-                canonical_payload=submission.as_canonical_payload(),
-            )
+            admission = await _admit_portable_lead(submission, translation.event)
         except SupabaseError as exc:
             raise HTTPException(
                 status_code=503, detail="ghl_precheckout_persist_unavailable"

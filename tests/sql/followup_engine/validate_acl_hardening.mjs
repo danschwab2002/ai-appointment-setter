@@ -141,12 +141,17 @@ const rows = await db.query(`
       ('get_human_handoff_projection_status()'),
       ('get_precheckout_delayed_first_touch_readiness()'),
       ('get_lancemos_pilot_runtime_status(text,integer,text,text,text)'),
+      ('get_lancemos_pilot_scope_audience_mode(text,integer)'),
       ('get_operator_unresolved_correlation(text,text,uuid)'),
       ('has_chatwoot_opt_out_stop(bigint,bigint,bigint,text)'),
       ('list_due_hotmart_abandonment_reevaluations(timestamp with time zone,integer)'),
       ('list_operator_unresolved_correlations(text,text,integer,uuid)'),
       ('mark_lancemos_pilot_request_started(uuid,uuid,text,bigint,timestamp with time zone)'),
       ('mark_portable_payment_failure_request_started(uuid,uuid,text,bigint,timestamp with time zone)'),
+      ('admit_and_plan_portable_lead_precheckout(text,text,integer,text,jsonb,jsonb,text,integer)'),
+      ('reevaluate_portable_precheckout_action(uuid,text,bigint,timestamp with time zone,boolean,text,text,timestamp with time zone,text,boolean,boolean,boolean,boolean,boolean)'),
+      ('mark_portable_precheckout_request_started(uuid,uuid,text,bigint,timestamp with time zone)'),
+      ('get_portable_precheckout_pilot_runtime_status(text,integer,text,text,text)'),
       ('plan_lancemos_pilot_cart_recovery(uuid,uuid,text,text,text,text,integer,timestamp with time zone,bigint,bigint,text,text,integer)'),
       ('plan_commercial_ally_post_inbound_discount(text,text,integer,text,integer,bigint,bigint,bigint,bigint,text,timestamp with time zone)'),
       ('plan_portable_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,timestamp with time zone,bigint,bigint,text,text,integer)'),
@@ -161,6 +166,7 @@ const rows = await db.query(`
       ('prepare_chatwoot_payment_link_send(uuid,text,bigint,bigint,bigint,text,integer,uuid,uuid,text,text,text,text,text,timestamp with time zone)'),
       ('finalize_chatwoot_payment_link_send(uuid,text,bigint,text,timestamp with time zone)'),
       ('reserve_chatwoot_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamp with time zone)'),
+      ('reserve_portable_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamp with time zone)'),
       ('authorize_chatwoot_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,timestamp with time zone)'),
       ('finalize_chatwoot_checkout_issuance_v2(uuid,text,bigint,text,timestamp with time zone)'),
       ('admit_and_correlate_hotmart_checkout_issuance_v2(text,jsonb,text,timestamp with time zone)'),
@@ -217,9 +223,12 @@ const result = rows.rows[0];
 // pre-resolution adds five, and the rolling-safe reason-code contract retains
 // one legacy completion overload, and resuming a paused conversation adds one,
 // and the Slack alert for every human handoff (HND-001) adds three, and the
-// lead first-name inference adds two, and the discount follow-up adds two.
+// lead first-name inference adds two, and the discount follow-up adds two, and
+// the portable first contact after the form (20261001000200) adds four, and
+// the read of the pilot scope audience mode (20261001000300) adds one, and the
+// portable reserve of the inbound payment link (20261001000100) adds one.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 112) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 118) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper
@@ -285,6 +294,107 @@ if (audienceHelper.length !== 1
     || audienceHelper[0].auth_x !== false
     || audienceHelper[0].service_x !== false) {
   throw new Error(`pilot audience helper ACL failed: ${JSON.stringify(audienceHelper)}`);
+}
+// 20261001000100: la forma canonica del telefono, sus variantes, el correlador
+// portable y el freno de opt-out de los arranques del piloto son privados. Los
+// llaman las RPC security definer del runtime portable; ningun rol de la API,
+// ni service_role, los ejecuta directo. El correlador se crea con execute
+// dinamico desde la definicion del compartido (que si es un entrypoint de
+// service_role): sin el revoke heredaria los privilegios por defecto. El freno
+// toma locks: volatil, aunque no escribe.
+const phoneHelpers = (await db.query(`
+  select
+    p.oid::regprocedure::text signature,
+    p.prosecdef security_definer,
+    p.provolatile volatility,
+    has_function_privilege('anon', p.oid, 'execute') anon_x,
+    has_function_privilege('authenticated', p.oid, 'execute') auth_x,
+    has_function_privilege('service_role', p.oid, 'execute') service_x
+  from pg_proc p
+  where p.oid in (
+    to_regprocedure('public._whatsapp_phone_canonical(text)'),
+    to_regprocedure('public._whatsapp_phone_variants(text)'),
+    to_regprocedure('public._correlate_portable_hotmart_purchase_intent(uuid)'),
+    to_regprocedure('public._portable_chatwoot_opt_out_stop(bigint,uuid,text)')
+  )
+  order by 1
+`)).rows;
+const expectedPhoneHelpers = {
+  '_correlate_portable_hotmart_purchase_intent(uuid)': { security_definer: true, volatility: 'v' },
+  '_portable_chatwoot_opt_out_stop(bigint,uuid,text)': { security_definer: false, volatility: 'v' },
+  '_whatsapp_phone_canonical(text)': { security_definer: false, volatility: 'i' },
+  '_whatsapp_phone_variants(text)': { security_definer: false, volatility: 'i' },
+};
+if (phoneHelpers.length !== 4
+    || phoneHelpers.some((helper) => {
+      const expected = expectedPhoneHelpers[helper.signature];
+      return expected === undefined
+        || helper.security_definer !== expected.security_definer
+        || helper.volatility !== expected.volatility
+        || helper.anon_x !== false
+        || helper.auth_x !== false
+        || helper.service_x !== false;
+    })) {
+  throw new Error(`whatsapp phone helpers ACL failed: ${JSON.stringify(phoneHelpers)}`);
+}
+// 20261001000200: el primer contacto tras el formulario. Sus cuatro helpers
+// son privados (los llaman los cuatro entrypoints security definer) y la tabla
+// del resultado de cada plan no la lee ni la escribe ningun rol de la API. Con
+// los privilegios por defecto de Supabase de arriba (execute en funciones y
+// todo en tablas para service_role), un revoke faltante los dejaria abiertos.
+const firstContactHelpers = (await db.query(`
+  select
+    p.oid::regprocedure::text signature,
+    p.prosecdef security_definer,
+    p.provolatile volatility,
+    has_function_privilege('anon', p.oid, 'execute') anon_x,
+    has_function_privilege('authenticated', p.oid, 'execute') auth_x,
+    has_function_privilege('service_role', p.oid, 'execute') service_x
+  from pg_proc p
+  where p.oid in (
+    to_regprocedure('public._portable_precheckout_stop_reason(uuid,uuid)'),
+    to_regprocedure('public._find_portable_precheckout_contact(uuid)'),
+    to_regprocedure('public._ensure_portable_precheckout_contact(uuid,uuid)'),
+    to_regprocedure('public._plan_portable_precheckout_first_contact(uuid,uuid,uuid,text,integer)')
+  )
+  order by 1
+`)).rows;
+const expectedFirstContactHelpers = {
+  '_portable_precheckout_stop_reason(uuid,uuid)': { security_definer: false, volatility: 's' },
+  '_find_portable_precheckout_contact(uuid)': { security_definer: false, volatility: 's' },
+  '_ensure_portable_precheckout_contact(uuid,uuid)': { security_definer: true, volatility: 'v' },
+  '_plan_portable_precheckout_first_contact(uuid,uuid,uuid,text,integer)': { security_definer: true, volatility: 'v' },
+};
+if (firstContactHelpers.length !== 4
+    || firstContactHelpers.some((helper) => {
+      const expected = expectedFirstContactHelpers[helper.signature];
+      return expected === undefined
+        || helper.security_definer !== expected.security_definer
+        || helper.volatility !== expected.volatility
+        || helper.anon_x !== false
+        || helper.auth_x !== false
+        || helper.service_x !== false;
+    })) {
+  throw new Error(`first contact helpers ACL failed: ${JSON.stringify(firstContactHelpers)}`);
+}
+const firstContactPlans = (await db.query(`
+  select
+    c.relrowsecurity rls,
+    exists (
+      select 1
+      from unnest(array['anon', 'authenticated', 'service_role']) role_name
+      cross join unnest(array[
+        'select', 'insert', 'update', 'delete', 'truncate', 'references', 'trigger'
+      ]) privilege_name
+      where has_table_privilege(role_name, c.oid, privilege_name)
+    ) api_privilege
+  from pg_class c
+  where c.oid = to_regclass('public.portable_precheckout_first_contact_plans')
+`)).rows;
+if (firstContactPlans.length !== 1
+    || firstContactPlans[0].rls !== true
+    || firstContactPlans[0].api_privilege !== false) {
+  throw new Error(`first contact plans table ACL failed: ${JSON.stringify(firstContactPlans)}`);
 }
 const bindingAcl = await db.query(`
   select

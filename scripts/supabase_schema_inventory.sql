@@ -3857,6 +3857,231 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         10,
         'pilot_scope_audience_mode'
+    union all
+    select
+        '20261001000100',
+        '20261001000100_whatsapp_phone_equivalence.sql',
+        (
+            select count(*) = 2
+            from functions
+            where oid in (
+                to_regprocedure('public._whatsapp_phone_canonical(text)'),
+                to_regprocedure('public._whatsapp_phone_variants(text)')
+            )
+              and not prosecdef
+              and provolatile = 'i'
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._correlate_portable_hotmart_purchase_intent(uuid)')
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+              and position('_whatsapp_phone_variants(v_phone)' in definition) > 0
+              and position('intent.normalized_phone = v_phone' in definition) = 0
+        )::int
+        + coalesce(
+            not has_function_privilege(
+                'service_role',
+                to_regprocedure('public._whatsapp_phone_canonical(text)'),
+                'EXECUTE'
+            )
+            and not has_function_privilege(
+                'service_role',
+                to_regprocedure('public._whatsapp_phone_variants(text)'),
+                'EXECUTE'
+            )
+            and not has_function_privilege(
+                'service_role',
+                to_regprocedure('public._correlate_portable_hotmart_purchase_intent(uuid)'),
+                'EXECUTE'
+            ),
+            false
+        )::int
+        + (
+            select count(*) = 2
+            from functions
+            where oid in (
+                to_regprocedure('public.admit_portable_hotmart_cart_abandonment(text,text,integer,text,jsonb,text,text)'),
+                to_regprocedure('public.admit_portable_hotmart_payment_failure(text,text,integer,text,jsonb,text,text)')
+            )
+              and prosecdef
+              and position('public._correlate_portable_hotmart_purchase_intent(' in definition) > 0
+              and position('public.correlate_hotmart_purchase_intent(' in definition) = 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_portable_hotmart_purchase_approved(text,text,integer,text,jsonb,text,text)')
+              and prosecdef
+              and position('_whatsapp_phone_variants(v_phone)' in definition) > 0
+              and position('intent.normalized_phone = v_phone' in definition) = 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._portable_consented_intent_reason(uuid,uuid,text)')
+              and not prosecdef
+              and provolatile = 's'
+              and position('_whatsapp_phone_canonical(p_destination_phone)' in definition) > 0
+              and position('consented_intent_contact_phone_mismatch' in definition) > 0
+              and position('consented_intent_prior_opt_out' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.plan_portable_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,timestamptz,bigint,bigint,text,text,integer)')
+              and prosecdef
+              and position('_whatsapp_phone_canonical(p_external_user_id)' in definition) > 0
+              and position('whatsapp_equivalent' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._portable_chatwoot_opt_out_stop(bigint,uuid,text)')
+              and not prosecdef
+              and provolatile = 'v'
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and position('chatwoot-opt-out-user' in definition) > 0
+        )::int
+        + (
+            select count(*) = 2
+            from functions
+            where oid in (
+                to_regprocedure('public.mark_lancemos_pilot_request_started(uuid,uuid,text,bigint,timestamptz)'),
+                to_regprocedure('public.mark_portable_payment_failure_request_started(uuid,uuid,text,bigint,timestamptz)')
+            )
+              and prosecdef
+              and position('_portable_chatwoot_opt_out_stop(' in definition) > 0
+              and position('pilot_chatwoot_opt_out_stop' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.reserve_portable_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamptz)')
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+              and position('intent.normalized_phone = any(public._whatsapp_phone_variants(p_external_user_id))' in definition) > 0
+              and position('intent.normalized_phone = p_external_user_id' in definition) = 0
+              and position('as opt_out_form(user_id)' in definition) > 0
+        )::int,
+        10,
+        'whatsapp_phone_equivalence_portable_runtime'
+    union all
+    select
+        '20261001000200',
+        '20261001000200_portable_precheckout_first_contact.sql',
+        (
+            select count(*) = 1
+            from pg_class
+            where oid = to_regclass('public.portable_precheckout_first_contact_plans')
+              and relrowsecurity
+              and not has_table_privilege('service_role', oid, 'SELECT')
+              and not has_table_privilege('service_role', oid, 'INSERT')
+        )::int
+        + (
+            select count(*) = 3
+            from pg_constraint
+            where (
+                    conrelid = to_regclass('public.recovery_cases')
+                and conname = 'recovery_cases_source_check'
+                and position('landing' in pg_get_constraintdef(oid)) > 0
+            ) or (
+                    conrelid = to_regclass('public.recovery_case_events')
+                and conname = 'recovery_case_events_event_role_check'
+                and position('precheckout_intent' in pg_get_constraintdef(oid)) > 0
+            ) or (
+                    conrelid = to_regclass('public.followup_sequences')
+                and conname = 'followup_sequences_reason_check'
+                and position('precheckout_intent' in pg_get_constraintdef(oid)) > 0
+            )
+        )::int
+        + (
+            select count(*) = 4
+            from functions
+            where oid in (
+                to_regprocedure('public._portable_precheckout_stop_reason(uuid,uuid)'),
+                to_regprocedure('public._find_portable_precheckout_contact(uuid)'),
+                to_regprocedure('public._ensure_portable_precheckout_contact(uuid,uuid)'),
+                to_regprocedure('public._plan_portable_precheckout_first_contact(uuid,uuid,uuid,text,integer)')
+            )
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._plan_portable_precheckout_first_contact(uuid,uuid,uuid,text,integer)')
+              and prosecdef
+              and position('evaluate_lancemos_pilot_scope(' in definition) > 0
+              and position('_lancemos_pilot_audience_intent(' in definition) > 0
+              and position('_portable_precheckout_stop_reason(' in definition) > 0
+              and position('precheckout_contact_already_planned' in definition) > 0
+              and position('precheckout-submission:' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_and_plan_portable_lead_precheckout(text,text,integer,text,jsonb,jsonb,text,integer)')
+              and prosecdef
+              and position('public.admit_portable_observed_lead_precheckout(' in definition) > 0
+              and position('set constraints all immediate' in definition) > 0
+              and position('plan_failed' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.reevaluate_portable_precheckout_action(uuid,text,bigint,timestamptz,boolean,text,text,timestamptz,text,boolean,boolean,boolean,boolean,boolean)')
+              and prosecdef
+              and position('public.reevaluate_followup_action(' in definition) > 0
+              and position('_portable_precheckout_stop_reason(' in definition) > 0
+              and position('precheckout_authorization_lost' in definition) > 0
+        )::int
+        + (
+            select count(*) = 2
+            from functions
+            where (
+                    oid = to_regprocedure('public.mark_portable_precheckout_request_started(uuid,uuid,text,bigint,timestamptz)')
+                and prosecdef
+                and position('_portable_precheckout_stop_reason(' in definition) > 0
+                and position('chatwoot-opt-out-user' in definition) > 0
+                and position('public.mark_followup_request_started(' in definition) > 0
+                and position('PRECHECKOUT_FORM_SUBMITTED' in definition) > 0
+            ) or (
+                    oid = to_regprocedure('public.get_portable_precheckout_pilot_runtime_status(text,integer,text,text,text)')
+                and prosecdef
+                and provolatile = 's'
+                and position('PRECHECKOUT_FORM_SUBMITTED' in definition) > 0
+                and position('manual_cohort' in definition) > 0
+            )
+        )::int,
+        7,
+        'portable_precheckout_first_contact'
+    union all
+    select
+        '20261001000300',
+        '20261001000300_pilot_scope_audience_mode_read.sql',
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_lancemos_pilot_scope_audience_mode(text,integer)')
+              and prosecdef
+              and provolatile = 's'
+              and position('scope.audience_mode' in definition) > 0
+              and position('scope.status = ''published''' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_lancemos_pilot_scope_audience_mode(text,integer)')
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        2,
+        'pilot_scope_audience_mode_read'
 )
 select
     version,
