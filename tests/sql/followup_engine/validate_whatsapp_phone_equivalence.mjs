@@ -4,10 +4,10 @@
 // El mismo movil llega con dos formas: el formulario guarda 52 + 10 digitos
 // (Mexico) o 54 + 10 (Argentina), y Hotmart y el wa_id traen 521 + 10 y
 // 549 + 10. Este validador prueba:
-//   0. que la migracion cambia exactamente lo que dice: tres funciones nuevas,
-//      cinco reemplazadas, ninguna otra definicion ni grant de service_role
-//      distinto, y las funciones que ejecuta Johanna identicas antes y despues
-//      (pg_get_functiondef);
+//   0. que la migracion cambia exactamente lo que dice: cuatro funciones
+//      nuevas, siete reemplazadas, ninguna otra definicion ni grant de
+//      service_role distinto, y las funciones que ejecuta Johanna identicas
+//      antes y despues (pg_get_functiondef);
 //   1. la tabla de la forma canonica y de sus variantes: Mexico y Argentina en
 //      los dos sentidos, con '+', espacios y guiones, los 12 digitos que
 //      empiezan con 521 o 549 intactos, Brasil y otros paises intactos, vacio
@@ -28,7 +28,12 @@
 //   6. opt-out previo en la otra forma: guardado unmatched bajo el wa_id
 //      (521...), con la intencion y la identidad en 52..., no planifica en un
 //      modo con consentimiento, no arranca si llega con el envio en vuelo y no
-//      concede permiso en manual_cohort. El opt-out de otra cuenta no frena;
+//      concede permiso al pago fallido en manual_cohort. En manual_cohort el
+//      carrito (Mexico y Argentina) y el pago fallido que usa el permiso de
+//      ese carrito se reservan, pero el arranque los rechaza
+//      (pilot_chatwoot_opt_out_stop) sin consumir cupo; tambien con la baja
+//      del numero de contacts.phone, que es adonde sale el envio. El opt-out
+//      de otra cuenta no frena, y sin opt-out el carrito de la cohorte sale;
 //   7. negativos: otros diez digitos siguen dando conflict en la correlacion y
 //      consented_intent_phone_mismatch en el helper;
 //   8. Johanna: el correlador compartido sigue exacto (52 contra 521 da
@@ -114,6 +119,7 @@ for (const name of migrationNames.slice(targetIndex + 1)) {
 
 const NEW_FUNCTIONS = [
   '_correlate_portable_hotmart_purchase_intent(uuid)',
+  '_portable_chatwoot_opt_out_stop(bigint,uuid,text)',
   '_whatsapp_phone_canonical(text)',
   '_whatsapp_phone_variants(text)',
 ];
@@ -123,6 +129,9 @@ const REPLACED_FUNCTIONS = [
   'admit_portable_hotmart_payment_failure(text,text,integer,text,jsonb,text,text)',
   'admit_portable_hotmart_purchase_approved(text,text,integer,text,jsonb,text,text)',
   'plan_portable_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,timestamp with time zone,bigint,bigint,text,text,integer)',
+  // Los dos arranques del piloto: solo los llama el bridge con la frontera.
+  'mark_lancemos_pilot_request_started(uuid,uuid,text,bigint,timestamp with time zone)',
+  'mark_portable_payment_failure_request_started(uuid,uuid,text,bigint,timestamp with time zone)',
 ];
 // Lo que ejecuta Johanna (sin manifiesto, con el piloto y los portable_*
 // apagados) y lo que comparte con el runtime portable.
@@ -143,7 +152,6 @@ const JOHANNA_FUNCTIONS = [
   'evaluate_lancemos_pilot_scope(text,integer,text,bigint,bigint,text,text,text,text,text,text,uuid)',
   'authorize_lancemos_pilot_request_start(text,integer,text,bigint,bigint,text,text,text,text,text,text,uuid,uuid,uuid,timestamp with time zone)',
   'plan_lancemos_pilot_cart_recovery(uuid,uuid,text,text,text,text,integer,timestamp with time zone,bigint,bigint,text,text,integer)',
-  'mark_portable_payment_failure_request_started(uuid,uuid,text,bigint,timestamp with time zone)',
 ];
 const sameSet = (left, right) => JSON.stringify([...left].sort()) === JSON.stringify([...right].sort());
 const added = [...after.keys()].filter((signature) => !before.has(signature));
@@ -404,7 +412,8 @@ await db.query(`
   JSON.stringify(required(pilotPolicy.steps, 'policy.steps'))]);
 
 // Dos scopes con los valores de ATT1: el de produccion (consented_intent) y el
-// de cohorte manual, cada uno con su control armado.
+// de cohorte manual, cada uno con su control armado. La cohorte admite diez
+// contactos: el caso 6 inscribe siete.
 const OPEN = { key: 'att1-telefonos-abierta', version: 1, mode: 'consented_intent' };
 const MANUAL = { key: 'att1-telefonos-manual', version: 1, mode: 'manual_cohort' };
 for (const scope of [OPEN, MANUAL]) {
@@ -419,7 +428,7 @@ for (const scope of [OPEN, MANUAL]) {
        approved_by, approved_at, published_at)
     values ($1,$2,'published',$3,$4,$5,'whatsapp',$6,$7,'hotmart',
             'PURCHASE_OUT_OF_SHOPPING_CART',$8::text[],$9,$10,$11::text[],
-            'cart_recovery',$12,$13,$14,5,20,20,$15,'operator-test',now(),now())
+            'cart_recovery',$12,$13,$14,10,20,20,$15,'operator-test',now(),now())
   `, [scope.key, scope.version, ATT1.tenant, ATT1.accountId, ATT1.inboxId,
     CHANNEL_PROVIDER, CHANNEL_REF, ['PURCHASE_CANCELED'], String(ATT1.productId),
     defaultOffer.offer_code, additionalOffers.map((offer) => offer.offer_code),
@@ -1049,11 +1058,168 @@ results.purchase = {
     throw new Error(`opt-out in flight: ${JSON.stringify({ optOut: inFlightOptOut.outcome, code: startError?.code, message: startError?.message, detail: startError?.detail })}`);
   }
 
+  // e. Carrito en manual_cohort. La audiencia es la cohorte: el chequeo del
+  //    consentimiento no corre, y el carrito concede su propio permiso. El
+  //    freno compartido del arranque busca el id exacto de la identidad (52...
+  //    o 54...), y el envio saldria al wa_id que pidio la baja. Lo frena el
+  //    arranque del piloto, que mira las dos formas con el lock tomado: la
+  //    reevaluacion real ejecuta, el intento queda reservado y no consume
+  //    cupo.
+  const attemptPhase = async (attemptId) => one((await db.query(`
+    select phase from public.followup_delivery_attempts where id = $1
+  `, [attemptId])).rows, 'attempt phase').phase;
+  const manualCartStop = async (label, country) => {
+    const lead = person(label, country);
+    const optOut = await optOutFrom(lead.whatsapp);
+    const cart = await admitCart(lead, { phone: lead.plain });
+    await createContact(lead, cart.eventId, { phone: lead.plain });
+    await enroll(lead, MANUAL);
+    const plan = one((await planCart(lead, cart, MANUAL)).rows, `${label} plan`);
+    await expectBinding(label, plan, MANUAL, lead);
+    const grants = (await activeAllowed(lead)).length;
+    const startsBefore = await startsOf(MANUAL);
+    const reservation = await reserve(lead, plan, 'cart_abandonment');
+    if (optOut.outcome !== 'recorded_unmatched' || grants !== 1
+        || reservation.operation !== 'mark_lancemos_pilot_request_started') {
+      throw new Error(`${label}: unexpected setup ${JSON.stringify({ optOut: optOut.outcome, grants, operation: reservation.operation })}`);
+    }
+    await expectError(`${label} start`, async () => db.query(
+      `select * from public.${reservation.operation}($1,$2,$3,$4,$5)`,
+      [plan.scheduled_action_id, reservation.attempt.id, reservation.worker,
+        reservation.lease, await dbNow()],
+    ), { code: '55000', message: 'pilot_request_start_rejected', detail: 'pilot_chatwoot_opt_out_stop' });
+    const phase = await attemptPhase(reservation.attempt.id);
+    if ((await startsOf(MANUAL)) !== startsBefore || phase !== 'reserved') {
+      throw new Error(`${label}: the rejected start consumed budget or moved the attempt: ${phase}`);
+    }
+    return `execute, ${reservation.operation}: pilot_request_start_rejected:pilot_chatwoot_opt_out_stop, starts +0, attempt ${phase}`;
+  };
+  const manualCartMx = await manualCartStop('opt-out-carrito-manual-mx', 'MX');
+  const manualCartAr = await manualCartStop('opt-out-carrito-manual-ar', 'AR');
+
+  // h. El envio sale a contacts.phone (get_followup_execution_context), no a
+  //    la identidad. Un contacto encontrado por email con otro numero en
+  //    contacts.phone: la baja de ese otro numero, en su forma wa_id, tambien
+  //    frena el arranque, aunque la identidad del caso sea otra.
+  const otherPhone = person('opt-out-contacts-phone', 'MX');
+  const otherPhoneWaId = `521${otherPhone.other.slice(2)}`;
+  const otherPhoneOptOut = await optOutFrom(otherPhoneWaId);
+  const otherPhoneCart = await admitCart(otherPhone, { phone: otherPhone.plain });
+  await createContact(otherPhone, otherPhoneCart.eventId, {
+    phone: otherPhone.plain, contactPhone: otherPhone.other,
+  });
+  await enroll(otherPhone, MANUAL);
+  const otherPhonePlan = one((await planCart(otherPhone, otherPhoneCart, MANUAL)).rows,
+    'contacts.phone opt-out plan');
+  const otherPhoneStartsBefore = await startsOf(MANUAL);
+  const otherPhoneReservation = await reserve(otherPhone, otherPhonePlan, 'cart_abandonment');
+  await expectError('contacts.phone opt-out start', async () => db.query(
+    `select * from public.${otherPhoneReservation.operation}($1,$2,$3,$4,$5)`,
+    [otherPhonePlan.scheduled_action_id, otherPhoneReservation.attempt.id,
+      otherPhoneReservation.worker, otherPhoneReservation.lease, await dbNow()],
+  ), { code: '55000', message: 'pilot_request_start_rejected', detail: 'pilot_chatwoot_opt_out_stop' });
+  if (otherPhoneOptOut.outcome !== 'recorded_unmatched'
+      || (await startsOf(MANUAL)) !== otherPhoneStartsBefore
+      || (await attemptPhase(otherPhoneReservation.attempt.id)) !== 'reserved') {
+    throw new Error(`contacts.phone opt-out: ${JSON.stringify({ optOut: otherPhoneOptOut.outcome })}`);
+  }
+
+  // f. El camino compuesto: el carrito en manual_cohort concede el permiso
+  //    cart_recovery y el pago fallido de la misma persona lo usa, asi que su
+  //    reevaluacion ejecuta. Se reclaman las dos acciones juntas y ninguno de
+  //    los dos arranques sale ni consume cupo.
+  const composite = person('opt-out-compuesto', 'MX');
+  const compositeOptOut = await optOutFrom(composite.whatsapp);
+  await submitForm(composite);
+  const compositeCart = await admitCart(composite, { phone: composite.plain });
+  await createContact(composite, compositeCart.eventId, { phone: composite.plain });
+  await enroll(composite, MANUAL);
+  const compositeCartPlan = one((await planCart(composite, compositeCart, MANUAL)).rows,
+    'composite cart plan');
+  const compositeGrants = (await activeAllowed(composite)).length;
+  const compositeFailure = await admitFailure(composite, { phone: composite.plain });
+  const compositeFailurePlan = one((await planFailure(composite, compositeFailure, MANUAL)).rows,
+    'composite payment failure plan');
+  const compositeWorker = 'att1-phones-opt-out-compuesto';
+  const compositeNow = await dbNow();
+  const compositeClaimed = (await db.query(`
+    select * from public.claim_due_followup_actions($1,$2,interval '5 minutes',100)
+  `, [compositeWorker, compositeNow])).rows;
+  const compositeActions = [
+    [compositeFailurePlan, 'payment_failure'],
+    [compositeCartPlan, 'cart_abandonment'],
+  ];
+  if (compositeOptOut.outcome !== 'recorded_unmatched'
+      || compositeFailure.correlationOutcome !== 'resolved'
+      || compositeGrants !== 1
+      || !sameSet(compositeClaimed.map((row) => `${row.id}:${row.anchor_type}`),
+        compositeActions.map(([plan, anchor]) => `${plan.scheduled_action_id}:${anchor}`))) {
+    throw new Error(`composite setup: ${JSON.stringify({ optOut: compositeOptOut.outcome, correlation: compositeFailure.correlationOutcome, grants: compositeGrants, claimed: compositeClaimed.map((row) => row.anchor_type) })}`);
+  }
+  const compositeStartsBefore = await startsOf(MANUAL);
+  const compositeResults = {};
+  for (const [plan, anchor] of compositeActions) {
+    const { lease_generation: lease } = compositeClaimed.find(
+      (row) => row.id === plan.scheduled_action_id,
+    );
+    const decision = one((await db.query(`
+      select * from public.reevaluate_followup_action($1,$2,$3,$4)
+    `, [plan.scheduled_action_id, compositeWorker, lease, compositeNow])).rows,
+    `composite ${anchor} reevaluation`);
+    if (decision.decision !== 'execute' || decision.reason_code !== 'eligible_for_execution') {
+      throw new Error(`composite ${anchor}: the real reevaluation did not execute: ${JSON.stringify(decision)}`);
+    }
+    const attempt = one((await db.query(`
+      select * from public.reserve_followup_delivery_attempt($1,$2,$3,$4,$5,'whatsapp','approved_template',$6)
+    `, [plan.scheduled_action_id, compositeWorker, lease, decision.case_version,
+      decision.sequence_revision, compositeNow])).rows, `composite ${anchor} reservation`);
+    const operation = startOperationFor(anchor);
+    await expectError(`composite ${anchor} start`, async () => db.query(
+      `select * from public.${operation}($1,$2,$3,$4,$5)`,
+      [plan.scheduled_action_id, attempt.id, compositeWorker, lease, await dbNow()],
+    ), { code: '55000', message: 'pilot_request_start_rejected', detail: 'pilot_chatwoot_opt_out_stop' });
+    compositeResults[anchor] = `${decision.decision}, ${operation}: pilot_chatwoot_opt_out_stop, attempt ${await attemptPhase(attempt.id)}`;
+  }
+  if ((await startsOf(MANUAL)) !== compositeStartsBefore
+      || Object.values(compositeResults).some((value) => !value.endsWith('attempt reserved'))) {
+    throw new Error(`composite: a rejected start consumed budget or moved the attempt: ${JSON.stringify(compositeResults)}`);
+  }
+
+  // g. Controles en manual_cohort: el mismo carrito sin opt-out, y con un
+  //    opt-out de otra cuenta de Chatwoot en la otra forma, salen.
+  const manualCartControl = async (label, country, { foreignOptOut }) => {
+    const lead = person(label, country);
+    const optOut = foreignOptOut
+      ? await optOutFrom(lead.whatsapp, { accountId: 999, inboxId: 1 })
+      : null;
+    const cart = await admitCart(lead, { phone: lead.plain });
+    await createContact(lead, cart.eventId, { phone: lead.plain });
+    await enroll(lead, MANUAL);
+    const plan = one((await planCart(lead, cart, MANUAL)).rows, `${label} plan`);
+    const startsBefore = await startsOf(MANUAL);
+    const outcome = await dispatch(lead, plan, 'cart_abandonment');
+    if ((optOut !== null && optOut.outcome !== 'recorded_unmatched')
+        || (await startsOf(MANUAL)) !== startsBefore + 1) {
+      throw new Error(`${label}: the control did not start once: ${JSON.stringify({ optOut: optOut?.outcome })}`);
+    }
+    return outcome;
+  };
+  const manualWithout = await manualCartControl('carrito-manual-sin-opt-out', 'MX',
+    { foreignOptOut: false });
+  const manualForeign = await manualCartControl('carrito-manual-opt-out-otra-cuenta', 'AR',
+    { foreignOptOut: true });
+
   results.prior_opt_out = {
     other_form_unmatched: priorPlan,
     other_account: otherAccountReason.reason_code,
     manual_cohort: `planned, grants ${manualGrants.length}, ${manualClaim.decision.decision}:${manualClaim.decision.reason_code}`,
     in_flight: `${startError.message}:${startError.detail}`,
+    manual_cohort_cart_mx: manualCartMx,
+    manual_cohort_cart_ar: manualCartAr,
+    manual_cohort_contacts_phone: 'pilot_request_start_rejected:pilot_chatwoot_opt_out_stop',
+    manual_cohort_cart_then_payment_failure: compositeResults,
+    manual_cohort_cart_without_opt_out: manualWithout,
+    manual_cohort_cart_other_account: manualForeign,
   };
 }
 

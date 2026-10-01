@@ -3935,8 +3935,28 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
               and prosecdef
               and position('_whatsapp_phone_canonical(p_external_user_id)' in definition) > 0
               and position('whatsapp_equivalent' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._portable_chatwoot_opt_out_stop(bigint,uuid,text)')
+              and not prosecdef
+              and provolatile = 'v'
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and position('chatwoot-opt-out-user' in definition) > 0
+        )::int
+        + (
+            select count(*) = 2
+            from functions
+            where oid in (
+                to_regprocedure('public.mark_lancemos_pilot_request_started(uuid,uuid,text,bigint,timestamptz)'),
+                to_regprocedure('public.mark_portable_payment_failure_request_started(uuid,uuid,text,bigint,timestamptz)')
+            )
+              and prosecdef
+              and position('_portable_chatwoot_opt_out_stop(' in definition) > 0
+              and position('pilot_chatwoot_opt_out_stop' in definition) > 0
         )::int,
-        7,
+        9,
         'whatsapp_phone_equivalence_portable_runtime'
     union all
     select

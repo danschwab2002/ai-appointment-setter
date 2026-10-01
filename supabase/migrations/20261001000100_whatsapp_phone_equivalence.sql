@@ -51,22 +51,41 @@
 -- 6. copia de su definicion vigente (20260930000300)
 --    plan_portable_payment_failure_recovery, con la comparacion canonica del
 --    destino y del contact_point, y phone_match (exact o whatsapp_equivalent)
---    en la evidencia del permiso que concede.
+--    en la evidencia del permiso que concede;
+-- 7. suma _portable_chatwoot_opt_out_stop(bigint, uuid, text) y copia de su
+--    definicion vigente los dos arranques del piloto que no son el del primer
+--    contacto: mark_lancemos_pilot_request_started (20260810000300, carrito)
+--    y mark_portable_payment_failure_request_started (20260903000300). Cada
+--    copia suma un bloque whatsapp_phone_equivalence despues de la
+--    autorizacion y antes del arranque compartido: con el lock de opt-out de
+--    cada forma tomado (las de la identidad y las de contacts.phone), si hay
+--    un opt-out de Chatwoot de la cuenta en cualquiera de ellas, rechaza con
+--    pilot_request_start_rejected / pilot_chatwoot_opt_out_stop, sin consumir
+--    cupo. El freno compartido busca el id exacto de la identidad, y el
+--    chequeo del punto 5 no corre en manual_cohort: un opt-out guardado
+--    unmatched bajo 521... no frenaba el carrito de esa cohorte con la
+--    identidad en 52..., ni el pago fallido que usa el permiso que concedio
+--    ese carrito. El envio salia al mismo wa_id que pidio la baja.
 --
 -- El helper del punto 5 lo usan los dos planificadores del piloto y la
 -- autorizacion del envio a traves de _lancemos_pilot_audience_intent, que no
 -- se redefine: en los modos con consentimiento los dos chequeos nuevos corren
--- al planificar y al arrancar, para carrito y para pago fallido.
+-- al planificar y al arrancar, para carrito y para pago fallido. El del punto
+-- 7 corre al arrancar en los tres modos.
 --
 -- Johanna no cambia. No se redefine nada de lo que ejecuta:
 -- correlate_hotmart_purchase_intent, _admit_hotmart_purchase_intent_identity,
 -- sus admisiones, el opt-out de Chatwoot, mark_followup_request_started ni
 -- reevaluate_followup_action. Lo reemplazado son las admit_portable_hotmart_*
--- (detras de los flags PORTABLE_HOTMART_*) y dos funciones del piloto
--- (LANCEMOS_PILOT_BOUNDARY_ENABLED=false en Johanna).
+-- (detras de los flags PORTABLE_HOTMART_*) y cuatro funciones del piloto: el
+-- helper del consentimiento, el plan del pago fallido y los dos arranques
+-- del punto 7. El bridge solo llama a esos arranques con
+-- LANCEMOS_PILOT_BOUNDARY_ENABLED, que en Johanna esta en false: sin la
+-- frontera arranca por mark_followup_request_started.
 --
 -- Locks: solo crea y reemplaza funciones. No toca tablas ni filas, y no
--- siembra nada de ningun cliente.
+-- siembra nada de ningun cliente. En ejecucion, los dos arranques del punto 7
+-- toman hasta cuatro locks de opt-out (en orden) en vez de uno.
 
 begin;
 set local lock_timeout = '5s';
@@ -1186,19 +1205,509 @@ begin
 end;
 $function$;
 
+-- El opt-out de Chatwoot de un destinatario en cualquiera de sus formas, para
+-- los dos arranques del piloto de abajo. Se miran las formas de la identidad
+-- del caso y las de contacts.phone, que es adonde sale el envio
+-- (get_followup_execution_context). Toma en orden el lock de opt-out de cada
+-- forma, el mismo que toman apply_chatwoot_inbound_opt_out y
+-- mark_followup_request_started, para esperar a una baja en vuelo desde
+-- cualquiera. La identidad del plan se guarda con solo digitos (lo exige
+-- 20260804000200), asi que su forma exacta esta entre ellas y el lock que
+-- mark_followup_request_started toma despues ya es de esta transaccion.
+-- Mira los mismos estados que frena ese arranque. No escribe nada.
+create or replace function public._portable_chatwoot_opt_out_stop(
+    p_account_id bigint,
+    p_contact_id uuid,
+    p_external_user_id text
+)
+returns boolean
+language plpgsql
+volatile
+security invoker
+set search_path = pg_catalog, public, pg_temp
+as $function$
+declare
+    v_user_ids text[];
+    v_user_id text;
+begin
+    select coalesce(
+               array_agg(distinct variant.user_id order by variant.user_id),
+               array[]::text[]
+           )
+      into v_user_ids
+    from unnest(
+        coalesce(public._whatsapp_phone_variants(p_external_user_id), array[]::text[])
+        || coalesce(
+            (
+                select public._whatsapp_phone_variants(contact.phone)
+                from public.contacts contact
+                where contact.id = p_contact_id
+            ),
+            array[]::text[]
+        )
+    ) as variant(user_id);
+
+    foreach v_user_id in array v_user_ids loop
+        perform pg_advisory_xact_lock(hashtextextended(
+            concat_ws(':', 'chatwoot-opt-out-user', p_account_id, v_user_id),
+            0
+        ));
+    end loop;
+
+    return exists (
+        select 1
+        from public.contact_opt_out_events optout
+        where optout.source = 'chatwoot'
+          and optout.channel = 'whatsapp'
+          and optout.canonical_account_id = p_account_id
+          and optout.external_user_id = any(v_user_ids)
+          and optout.correlation_status in (
+              'applied', 'unmatched', 'ambiguous', 'evidence_conflict'
+          )
+    );
+end;
+$function$;
+
+-- Los dos arranques del piloto que no son el del primer contacto: copia de su
+-- definicion vigente (20260810000300 y 20260903000300) con un solo bloque
+-- marcado. Los llama el bridge solo con LANCEMOS_PILOT_BOUNDARY_ENABLED.
+create or replace function public.mark_lancemos_pilot_request_started(
+    p_action_id uuid,
+    p_attempt_id uuid,
+    p_worker_id text,
+    p_lease_generation bigint,
+    p_now timestamptz
+)
+returns table (
+    id uuid,
+    action_id uuid,
+    idempotency_key text,
+    attempt_number integer,
+    channel text,
+    mode text,
+    phase text,
+    lease_generation bigint,
+    expected_case_version bigint,
+    expected_sequence_revision bigint,
+    pilot_authorization_id uuid,
+    pilot_runtime_generation bigint,
+    pilot_authorization_replayed boolean
+)
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $function$
+declare
+    v_case public.recovery_cases%rowtype;
+    v_identity public.channel_identities%rowtype;
+    v_binding public.pilot_recovery_case_bindings%rowtype;
+    v_scope public.pilot_scope_versions%rowtype;
+    v_attempt public.followup_delivery_attempts%rowtype;
+    v_account_id bigint;
+    v_inbox_id bigint;
+    v_authorized boolean;
+    v_reason text;
+    v_runtime_generation bigint;
+    v_authorization_id uuid;
+    v_replayed boolean;
+begin
+    if p_action_id is null
+       or p_attempt_id is null
+       or p_worker_id is null or btrim(p_worker_id) = ''
+       or p_lease_generation is null or p_lease_generation < 1
+       or p_now is null then
+        raise exception using
+            errcode = '22023',
+            message = 'invalid_pilot_request_start_parameters';
+    end if;
+
+    select recovery_case.* into v_case
+    from public.scheduled_actions action
+    join public.recovery_cases recovery_case
+      on recovery_case.id = action.recovery_case_id
+    join public.pilot_recovery_case_bindings binding
+      on binding.recovery_case_id = recovery_case.id
+    where action.id = p_action_id;
+    if not found or v_case.selected_channel_identity_id is null then
+        raise exception using
+            errcode = '55000',
+            message = 'pilot_request_start_rejected',
+            detail = 'pilot_attempt_mismatch';
+    end if;
+
+    select binding.* into strict v_binding
+    from public.pilot_recovery_case_bindings binding
+    where binding.recovery_case_id = v_case.id;
+    select scope.* into strict v_scope
+    from public.pilot_scope_versions scope
+    where scope.scope_key = v_binding.scope_key
+      and scope.version = v_binding.scope_version;
+
+    select attempt.* into v_attempt
+    from public.followup_delivery_attempts attempt
+    where attempt.id = p_attempt_id
+      and attempt.action_id = p_action_id;
+    if not found
+       or v_attempt.channel <> 'whatsapp'
+       or (
+           v_scope.channel_provider = 'waba'
+           and v_attempt.mode <> 'approved_template'
+       )
+       or (
+           v_scope.channel_provider <> 'waba'
+           and v_attempt.mode <> 'freeform'
+       ) then
+        raise exception using
+            errcode = '55000',
+            message = 'pilot_request_start_rejected',
+            detail = 'pilot_delivery_mode_mismatch';
+    end if;
+
+    select identity.* into v_identity
+    from public.channel_identities identity
+    where identity.id = v_case.selected_channel_identity_id;
+    if not found
+       or v_identity.account_id !~ '^chatwoot:[0-9]+$'
+       or coalesce(v_identity.metadata ->> 'inbox_id', '') !~ '^[0-9]+$' then
+        raise exception using
+            errcode = '55000',
+            message = 'pilot_request_start_rejected',
+            detail = 'pilot_attempt_mismatch';
+    end if;
+
+    v_account_id := substring(v_identity.account_id from '^chatwoot:([0-9]+)$')::bigint;
+    v_inbox_id := (v_identity.metadata ->> 'inbox_id')::bigint;
+
+    select auth_result.authorized,
+           auth_result.reason_code,
+           auth_result.runtime_generation,
+           auth_result.request_authorization_id,
+           auth_result.replayed
+      into v_authorized,
+           v_reason,
+           v_runtime_generation,
+           v_authorization_id,
+           v_replayed
+    from public.authorize_lancemos_pilot_request_start(
+        v_binding.scope_key,
+        v_binding.scope_version,
+        v_scope.tenant_key,
+        v_account_id,
+        v_inbox_id,
+        v_scope.channel_provider,
+        v_scope.channel_account_ref,
+        'hotmart',
+        'PURCHASE_OUT_OF_SHOPPING_CART',
+        v_case.external_product_id,
+        v_case.offer_code,
+        v_case.contact_id,
+        p_action_id,
+        p_attempt_id,
+        p_now
+    ) auth_result;
+
+    if not coalesce(v_authorized, false) then
+        raise exception using
+            errcode = '55000',
+            message = 'pilot_request_start_rejected',
+            detail = coalesce(v_reason, 'pilot_request_start_unknown');
+    end if;
+
+    if v_replayed then
+        select attempt.* into v_attempt
+        from public.followup_delivery_attempts attempt
+        where attempt.id = p_attempt_id
+          and attempt.action_id = p_action_id;
+        if not found or v_attempt.phase <> 'request_started' then
+            raise exception using
+                errcode = '55000',
+                message = 'pilot_authorization_without_request_start';
+        end if;
+    end if;
+
+    -- whatsapp_phone_equivalence: begin
+    -- El opt-out de Chatwoot en cualquiera de las dos formas del telefono, con
+    -- su lock tomado, antes de arrancar. El freno compartido
+    -- (mark_followup_request_started) busca el id exacto de la identidad, y la
+    -- audiencia con consentimiento lo mira en las dos formas solo fuera de
+    -- manual_cohort. Un "No mas mensajes" guardado unmatched bajo el wa_id
+    -- (521..., 549...) no frenaba, en manual_cohort, ni el carrito ni el pago
+    -- fallido que usa el permiso que ese carrito concedio, con la identidad
+    -- en 52... o 54...; y el envio salia a ese mismo wa_id. Va despues de la
+    -- autorizacion para conservar el orden control -> lock de opt-out de los
+    -- otros arranques; el rechazo deshace la autorizacion, asi que no consume
+    -- cupo. El replay no pasa por aca: ese efecto ya cruzo.
+    if not coalesce(v_replayed, false)
+       and public._portable_chatwoot_opt_out_stop(
+           v_account_id,
+           v_case.contact_id,
+           v_identity.external_user_id
+       ) then
+        raise exception using
+            errcode = '55000',
+            message = 'pilot_request_start_rejected',
+            detail = 'pilot_chatwoot_opt_out_stop';
+    end if;
+    -- whatsapp_phone_equivalence: end
+
+    select attempt.* into strict v_attempt
+    from public.mark_followup_request_started(
+        p_action_id,
+        p_attempt_id,
+        p_worker_id,
+        p_lease_generation,
+        p_now
+    ) attempt;
+
+    return query select
+        v_attempt.id,
+        v_attempt.action_id,
+        v_attempt.idempotency_key,
+        v_attempt.attempt_number,
+        v_attempt.channel,
+        v_attempt.mode,
+        v_attempt.phase,
+        v_attempt.lease_generation,
+        v_attempt.expected_case_version,
+        v_attempt.expected_sequence_revision,
+        v_authorization_id,
+        v_runtime_generation,
+        v_replayed;
+end;
+$function$;
+
+create or replace function public.mark_portable_payment_failure_request_started(
+    p_action_id uuid,
+    p_attempt_id uuid,
+    p_worker_id text,
+    p_lease_generation bigint,
+    p_now timestamptz
+)
+returns table (
+    id uuid,
+    action_id uuid,
+    idempotency_key text,
+    attempt_number integer,
+    channel text,
+    mode text,
+    phase text,
+    lease_generation bigint,
+    expected_case_version bigint,
+    expected_sequence_revision bigint,
+    pilot_authorization_id uuid,
+    pilot_runtime_generation bigint,
+    pilot_authorization_replayed boolean
+)
+language plpgsql
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $function$
+declare
+    v_case public.recovery_cases%rowtype;
+    v_identity public.channel_identities%rowtype;
+    v_binding public.pilot_recovery_case_bindings%rowtype;
+    v_scope public.pilot_scope_versions%rowtype;
+    v_attempt public.followup_delivery_attempts%rowtype;
+    v_account_id bigint;
+    v_inbox_id bigint;
+    v_authorized boolean;
+    v_reason text;
+    v_runtime_generation bigint;
+    v_authorization_id uuid;
+    v_replayed boolean;
+begin
+    if p_action_id is null
+       or p_attempt_id is null
+       or p_worker_id is null or btrim(p_worker_id) = ''
+       or p_lease_generation is null or p_lease_generation < 1
+       or p_now is null then
+        raise exception using
+            errcode = '22023',
+            message = 'invalid_pilot_request_start_parameters';
+    end if;
+
+    if not exists (
+        select 1 from public.scheduled_actions action
+        where action.id = p_action_id
+          and action.anchor_type = 'payment_failure'
+    ) then
+        raise exception using
+            errcode = '55000',
+            message = 'pilot_request_start_rejected',
+            detail = 'payment_failure_action_required';
+    end if;
+
+    select recovery_case.* into v_case
+    from public.scheduled_actions action
+    join public.recovery_cases recovery_case
+      on recovery_case.id = action.recovery_case_id
+    join public.pilot_recovery_case_bindings binding
+      on binding.recovery_case_id = recovery_case.id
+    where action.id = p_action_id;
+    if not found or v_case.selected_channel_identity_id is null then
+        raise exception using
+            errcode = '55000',
+            message = 'pilot_request_start_rejected',
+            detail = 'pilot_attempt_mismatch';
+    end if;
+
+    select binding.* into strict v_binding
+    from public.pilot_recovery_case_bindings binding
+    where binding.recovery_case_id = v_case.id;
+    select scope.* into strict v_scope
+    from public.pilot_scope_versions scope
+    where scope.scope_key = v_binding.scope_key
+      and scope.version = v_binding.scope_version;
+
+    select attempt.* into v_attempt
+    from public.followup_delivery_attempts attempt
+    where attempt.id = p_attempt_id
+      and attempt.action_id = p_action_id;
+    if not found
+       or v_attempt.channel <> 'whatsapp'
+       or (
+           v_scope.channel_provider = 'waba'
+           and v_attempt.mode <> 'approved_template'
+       )
+       or (
+           v_scope.channel_provider <> 'waba'
+           and v_attempt.mode <> 'freeform'
+       ) then
+        raise exception using
+            errcode = '55000',
+            message = 'pilot_request_start_rejected',
+            detail = 'pilot_delivery_mode_mismatch';
+    end if;
+
+    select identity.* into v_identity
+    from public.channel_identities identity
+    where identity.id = v_case.selected_channel_identity_id;
+    if not found
+       or v_identity.account_id !~ '^chatwoot:[0-9]+$'
+       or coalesce(v_identity.metadata ->> 'inbox_id', '') !~ '^[0-9]+$' then
+        raise exception using
+            errcode = '55000',
+            message = 'pilot_request_start_rejected',
+            detail = 'pilot_attempt_mismatch';
+    end if;
+
+    v_account_id := substring(v_identity.account_id from '^chatwoot:([0-9]+)$')::bigint;
+    v_inbox_id := (v_identity.metadata ->> 'inbox_id')::bigint;
+
+    select auth_result.authorized,
+           auth_result.reason_code,
+           auth_result.runtime_generation,
+           auth_result.request_authorization_id,
+           auth_result.replayed
+      into v_authorized,
+           v_reason,
+           v_runtime_generation,
+           v_authorization_id,
+           v_replayed
+    from public.authorize_lancemos_pilot_request_start(
+        v_binding.scope_key,
+        v_binding.scope_version,
+        v_scope.tenant_key,
+        v_account_id,
+        v_inbox_id,
+        v_scope.channel_provider,
+        v_scope.channel_account_ref,
+        'hotmart',
+        'PURCHASE_CANCELED',
+        v_case.external_product_id,
+        v_case.offer_code,
+        v_case.contact_id,
+        p_action_id,
+        p_attempt_id,
+        p_now
+    ) auth_result;
+
+    if not coalesce(v_authorized, false) then
+        raise exception using
+            errcode = '55000',
+            message = 'pilot_request_start_rejected',
+            detail = coalesce(v_reason, 'pilot_request_start_unknown');
+    end if;
+
+    if v_replayed then
+        select attempt.* into v_attempt
+        from public.followup_delivery_attempts attempt
+        where attempt.id = p_attempt_id
+          and attempt.action_id = p_action_id;
+        if not found or v_attempt.phase <> 'request_started' then
+            raise exception using
+                errcode = '55000',
+                message = 'pilot_authorization_without_request_start';
+        end if;
+    end if;
+
+    -- whatsapp_phone_equivalence: begin
+    -- El opt-out de Chatwoot en cualquiera de las dos formas del telefono, con
+    -- su lock tomado, antes de arrancar. El freno compartido
+    -- (mark_followup_request_started) busca el id exacto de la identidad, y la
+    -- audiencia con consentimiento lo mira en las dos formas solo fuera de
+    -- manual_cohort. Un "No mas mensajes" guardado unmatched bajo el wa_id
+    -- (521..., 549...) no frenaba, en manual_cohort, ni el carrito ni el pago
+    -- fallido que usa el permiso que ese carrito concedio, con la identidad
+    -- en 52... o 54...; y el envio salia a ese mismo wa_id. Va despues de la
+    -- autorizacion para conservar el orden control -> lock de opt-out de los
+    -- otros arranques; el rechazo deshace la autorizacion, asi que no consume
+    -- cupo. El replay no pasa por aca: ese efecto ya cruzo.
+    if not coalesce(v_replayed, false)
+       and public._portable_chatwoot_opt_out_stop(
+           v_account_id,
+           v_case.contact_id,
+           v_identity.external_user_id
+       ) then
+        raise exception using
+            errcode = '55000',
+            message = 'pilot_request_start_rejected',
+            detail = 'pilot_chatwoot_opt_out_stop';
+    end if;
+    -- whatsapp_phone_equivalence: end
+
+    select attempt.* into strict v_attempt
+    from public.mark_followup_request_started(
+        p_action_id,
+        p_attempt_id,
+        p_worker_id,
+        p_lease_generation,
+        p_now
+    ) attempt;
+
+    return query select
+        v_attempt.id,
+        v_attempt.action_id,
+        v_attempt.idempotency_key,
+        v_attempt.attempt_number,
+        v_attempt.channel,
+        v_attempt.mode,
+        v_attempt.phase,
+        v_attempt.lease_generation,
+        v_attempt.expected_case_version,
+        v_attempt.expected_sequence_revision,
+        v_authorization_id,
+        v_runtime_generation,
+        v_replayed;
+end;
+$function$;
+
 -- create or replace conserva los grants de las funciones reemplazadas, pero
--- Supabase le da execute por defecto a toda funcion nueva: los tres helpers
+-- Supabase le da execute por defecto a toda funcion nueva: los cuatro helpers
 -- nuevos y el helper del consentimiento se revocan a todos (los llaman las RPC
--- security definer), y las cuatro RPC se reafirman como entrypoints solo de
+-- security definer), y las seis RPC se reafirman como entrypoints solo de
 -- service_role.
 revoke all on function public._whatsapp_phone_canonical(text) from public;
 revoke all on function public._whatsapp_phone_variants(text) from public;
 revoke all on function public._correlate_portable_hotmart_purchase_intent(uuid) from public;
 revoke all on function public._portable_consented_intent_reason(uuid,uuid,text) from public;
+revoke all on function public._portable_chatwoot_opt_out_stop(bigint,uuid,text) from public;
 revoke all on function public.admit_portable_hotmart_cart_abandonment(text,text,integer,text,jsonb,text,text) from public;
 revoke all on function public.admit_portable_hotmart_purchase_approved(text,text,integer,text,jsonb,text,text) from public;
 revoke all on function public.admit_portable_hotmart_payment_failure(text,text,integer,text,jsonb,text,text) from public;
 revoke all on function public.plan_portable_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,timestamptz,bigint,bigint,text,text,integer) from public;
+revoke all on function public.mark_lancemos_pilot_request_started(uuid,uuid,text,bigint,timestamptz) from public;
+revoke all on function public.mark_portable_payment_failure_request_started(uuid,uuid,text,bigint,timestamptz) from public;
 do $roles$
 declare v_role text;
 begin
@@ -1207,16 +1716,21 @@ begin
   execute format('revoke all on function public._whatsapp_phone_variants(text) from %I',v_role);
   execute format('revoke all on function public._correlate_portable_hotmart_purchase_intent(uuid) from %I',v_role);
   execute format('revoke all on function public._portable_consented_intent_reason(uuid,uuid,text) from %I',v_role);
+  execute format('revoke all on function public._portable_chatwoot_opt_out_stop(bigint,uuid,text) from %I',v_role);
   execute format('revoke all on function public.admit_portable_hotmart_cart_abandonment(text,text,integer,text,jsonb,text,text) from %I',v_role);
   execute format('revoke all on function public.admit_portable_hotmart_purchase_approved(text,text,integer,text,jsonb,text,text) from %I',v_role);
   execute format('revoke all on function public.admit_portable_hotmart_payment_failure(text,text,integer,text,jsonb,text,text) from %I',v_role);
   execute format('revoke all on function public.plan_portable_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,timestamptz,bigint,bigint,text,text,integer) from %I',v_role);
+  execute format('revoke all on function public.mark_lancemos_pilot_request_started(uuid,uuid,text,bigint,timestamptz) from %I',v_role);
+  execute format('revoke all on function public.mark_portable_payment_failure_request_started(uuid,uuid,text,bigint,timestamptz) from %I',v_role);
  end loop;
  if exists(select 1 from pg_roles where rolname='service_role') then
   grant execute on function public.admit_portable_hotmart_cart_abandonment(text,text,integer,text,jsonb,text,text) to service_role;
   grant execute on function public.admit_portable_hotmart_purchase_approved(text,text,integer,text,jsonb,text,text) to service_role;
   grant execute on function public.admit_portable_hotmart_payment_failure(text,text,integer,text,jsonb,text,text) to service_role;
   grant execute on function public.plan_portable_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,timestamptz,bigint,bigint,text,text,integer) to service_role;
+  grant execute on function public.mark_lancemos_pilot_request_started(uuid,uuid,text,bigint,timestamptz) to service_role;
+  grant execute on function public.mark_portable_payment_failure_request_started(uuid,uuid,text,bigint,timestamptz) to service_role;
  end if;
 end;
 $roles$;

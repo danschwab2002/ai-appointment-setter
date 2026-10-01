@@ -192,11 +192,17 @@ def test_whatsapp_phone_equivalence_fingerprint_checks_the_portable_functions() 
         "public._portable_consented_intent_reason(uuid,uuid,text)",
         "public.plan_portable_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,"
         "timestamptz,bigint,bigint,text,text,integer)",
+        "public._portable_chatwoot_opt_out_stop(bigint,uuid,text)",
+        "public.mark_lancemos_pilot_request_started(uuid,uuid,text,bigint,timestamptz)",
+        "public.mark_portable_payment_failure_request_started(uuid,uuid,text,bigint,timestamptz)",
     ):
         assert f"to_regprocedure('{signature}')" in compact_fingerprint, signature
     assert "proname" not in fingerprint
-    # Los tres helpers nuevos no son entrypoints: ni service_role los ejecuta.
-    assert compact_fingerprint.count("nothas_function_privilege('service_role',") == 3
+    # Los cuatro helpers nuevos no son entrypoints: ni service_role los ejecuta.
+    assert compact_fingerprint.count("nothas_function_privilege('service_role',") == 4
+    # Los dos arranques del piloto frenan con el opt-out en las dos formas.
+    assert "position('_portable_chatwoot_opt_out_stop('indefinition)>0" in compact_fingerprint
+    assert "pilot_chatwoot_opt_out_stop" in fingerprint
     # La comparacion exacta del telefono no puede quedar en el correlador
     # portable ni en la compra, y carrito y pago fallido no pueden volver al
     # correlador compartido.

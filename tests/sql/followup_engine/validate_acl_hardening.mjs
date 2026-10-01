@@ -293,12 +293,13 @@ if (audienceHelper.length !== 1
     || audienceHelper[0].service_x !== false) {
   throw new Error(`pilot audience helper ACL failed: ${JSON.stringify(audienceHelper)}`);
 }
-// 20261001000100: la forma canonica del telefono, sus variantes y el correlador
-// portable son privados. Los llaman las RPC security definer del runtime
-// portable; ningun rol de la API, ni service_role, los ejecuta directo. El
-// correlador se crea con execute dinamico desde la definicion del compartido
-// (que si es un entrypoint de service_role): sin el revoke heredaria los
-// privilegios por defecto.
+// 20261001000100: la forma canonica del telefono, sus variantes, el correlador
+// portable y el freno de opt-out de los arranques del piloto son privados. Los
+// llaman las RPC security definer del runtime portable; ningun rol de la API,
+// ni service_role, los ejecuta directo. El correlador se crea con execute
+// dinamico desde la definicion del compartido (que si es un entrypoint de
+// service_role): sin el revoke heredaria los privilegios por defecto. El freno
+// toma locks: volatil, aunque no escribe.
 const phoneHelpers = (await db.query(`
   select
     p.oid::regprocedure::text signature,
@@ -311,16 +312,18 @@ const phoneHelpers = (await db.query(`
   where p.oid in (
     to_regprocedure('public._whatsapp_phone_canonical(text)'),
     to_regprocedure('public._whatsapp_phone_variants(text)'),
-    to_regprocedure('public._correlate_portable_hotmart_purchase_intent(uuid)')
+    to_regprocedure('public._correlate_portable_hotmart_purchase_intent(uuid)'),
+    to_regprocedure('public._portable_chatwoot_opt_out_stop(bigint,uuid,text)')
   )
   order by 1
 `)).rows;
 const expectedPhoneHelpers = {
   '_correlate_portable_hotmart_purchase_intent(uuid)': { security_definer: true, volatility: 'v' },
+  '_portable_chatwoot_opt_out_stop(bigint,uuid,text)': { security_definer: false, volatility: 'v' },
   '_whatsapp_phone_canonical(text)': { security_definer: false, volatility: 'i' },
   '_whatsapp_phone_variants(text)': { security_definer: false, volatility: 'i' },
 };
-if (phoneHelpers.length !== 3
+if (phoneHelpers.length !== 4
     || phoneHelpers.some((helper) => {
       const expected = expectedPhoneHelpers[helper.signature];
       return expected === undefined

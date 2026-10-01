@@ -1,12 +1,13 @@
 """Migracion 20261001000100: equivalencia de telefonos de WhatsApp.
 
-Las cinco funciones que reemplaza se copian de su definicion vigente. Este test
+Las siete funciones que reemplaza se copian de su definicion vigente. Este test
 verifica que cada copia sea la vigente salvo lo declarado: las comparaciones
 del telefono que pasan a la forma canonica (se cuentan, se revierten a la
 exacta y recien ahi se compara) y lo aditivo, que va entre comentarios
 ``whatsapp_phone_equivalence``. Tambien que el correlador portable se derive
 del compartido con ocurrencias exactas, que los helpers nuevos queden privados
-y que la migracion no redefina nada de lo que ejecuta Johanna. El
+y que la migracion no redefina nada de lo que ejecuta Johanna. Los dos
+arranques del piloto frenan con un opt-out en cualquiera de las formas. El
 comportamiento se prueba en
 tests/sql/followup_engine/validate_whatsapp_phone_equivalence.mjs.
 """
@@ -34,6 +35,9 @@ PLAN = "plan_portable_payment_failure_recovery"
 CANONICAL = "_whatsapp_phone_canonical"
 VARIANTS = "_whatsapp_phone_variants"
 PORTABLE_CORRELATOR = "_correlate_portable_hotmart_purchase_intent"
+OPT_OUT_STOP = "_portable_chatwoot_opt_out_stop"
+PILOT_START = "mark_lancemos_pilot_request_started"
+FAILURE_START = "mark_portable_payment_failure_request_started"
 SHARED_CORRELATOR = "correlate_hotmart_purchase_intent"
 # Cada funcion copiada y la migracion que tiene su definicion vigente.
 VIGENT = {
@@ -42,8 +46,11 @@ VIGENT = {
     FAILURE: "20260928000200_commercial_ally_additional_offers.sql",
     HELPER: "20260930000100_payment_failure_consented_intent_authorization.sql",
     PLAN: "20260930000300_pilot_scope_audience_mode.sql",
+    PILOT_START: "20260810000300_lancemos_pilot_boundary_runtime.sql",
+    FAILURE_START: "20260903000300_commercial_ally_payment_failure_recovery.sql",
 }
 HOTMART_ADMISSION = "(text,text,integer,text,jsonb,text,text)"
+REQUEST_START = "(uuid,uuid,text,bigint,timestamptz)"
 SIGNATURES = {
     CANONICAL: "(text)",
     VARIANTS: "(text)",
@@ -53,8 +60,11 @@ SIGNATURES = {
     PURCHASE: HOTMART_ADMISSION,
     FAILURE: HOTMART_ADMISSION,
     PLAN: "(uuid,uuid,text,text,text,text,integer,timestamptz,bigint,bigint,text,text,integer)",
+    OPT_OUT_STOP: "(bigint,uuid,text)",
+    PILOT_START: REQUEST_START,
+    FAILURE_START: REQUEST_START,
 }
-ENTRYPOINTS = {CART, PURCHASE, FAILURE, PLAN}
+ENTRYPOINTS = {CART, PURCHASE, FAILURE, PLAN, PILOT_START, FAILURE_START}
 # Por funcion: (comparacion nueva, comparacion vigente, ocurrencias). Todo con
 # los espacios normalizados.
 CANONICAL_COMPARISONS = {
@@ -106,8 +116,19 @@ CANONICAL_COMPARISONS = {
             1,
         ),
     ],
+    # Los arranques no cambian ninguna comparacion: solo suman su bloque.
+    PILOT_START: [],
+    FAILURE_START: [],
 }
-MARKED_BLOCKS = {CART: 0, FAILURE: 0, PURCHASE: 0, HELPER: 2, PLAN: 1}
+MARKED_BLOCKS = {
+    CART: 0,
+    FAILURE: 0,
+    PURCHASE: 0,
+    HELPER: 2,
+    PLAN: 1,
+    PILOT_START: 1,
+    FAILURE_START: 1,
+}
 
 
 def _function(sql: str, name: str) -> str:
@@ -167,6 +188,7 @@ def test_body_is_the_vigent_one_plus_the_declared_changes(name: str) -> None:
     # Nada de la equivalencia queda fuera de lo declarado arriba.
     assert "_whatsapp_phone_" not in reverted
     assert PORTABLE_CORRELATOR not in reverted
+    assert OPT_OUT_STOP not in reverted
     assert reverted == _normalized(vigent)
 
 
@@ -255,6 +277,80 @@ def test_plan_records_the_phone_match_in_the_grant_evidence() -> None:
     assert grant is not None and block in grant.group(0)
     assert new.index("'recovery_case_id', v_recovery_case_id\n") < new.index(block)
     assert new.index(block) < new.index("            v_consent_now\n        );")
+
+
+@pytest.mark.parametrize("name", [PILOT_START, FAILURE_START])
+def test_request_starts_stop_on_an_opt_out_in_either_form(name: str) -> None:
+    new = _new(name)
+    (block,) = MARKED_BLOCK.findall(new)
+
+    # El rechazo tiene la forma que el bridge toma como rechazo limpio
+    # (_pilot_request_start_rejection): 55000, el mensaje del piloto y el
+    # motivo como codigo en detail.
+    assert _executable(block) == (
+        "if not coalesce(v_replayed, false) "
+        f"and public.{OPT_OUT_STOP}( v_account_id, v_case.contact_id, "
+        "v_identity.external_user_id ) then "
+        "raise exception using errcode = '55000', "
+        "message = 'pilot_request_start_rejected', "
+        "detail = 'pilot_chatwoot_opt_out_stop'; end if;"
+    )
+    # Despues de la autorizacion y del replay (el control antes que el lock de
+    # opt-out, como el arranque del primer contacto) y antes del arranque
+    # compartido, que despues toma otra vez el lock de la forma exacta.
+    replay = new.index("\n    if v_replayed then\n")
+    order = [
+        new.index("from public.authorize_lancemos_pilot_request_start("),
+        replay,
+        new.index("\n    end if;\n", replay),
+        new.index(block),
+        new.index("from public.mark_followup_request_started("),
+    ]
+    assert order == sorted(order)
+
+
+def test_opt_out_stop_locks_and_reads_every_form_like_the_shared_start() -> None:
+    helper = _executable(_new(OPT_OUT_STOP))
+    shared = _normalized(
+        _function(
+            (MIGRATIONS / "20260810000300_lancemos_pilot_boundary_runtime.sql").read_text(
+                encoding="utf-8"
+            ),
+            "mark_followup_request_started",
+        )
+    )
+
+    assert "returns boolean language plpgsql volatile security invoker" in helper
+    assert "set search_path = pg_catalog, public, pg_temp" in helper
+    # Las formas de la identidad y las de contacts.phone (adonde sale el
+    # envio), sin repetir y en orden.
+    assert "array_agg(distinct variant.user_id order by variant.user_id)" in helper
+    assert f"coalesce(public.{VARIANTS}(p_external_user_id), array[]::text[])" in helper
+    assert (
+        f"select public.{VARIANTS}(contact.phone) from public.contacts contact "
+        "where contact.id = p_contact_id"
+    ) in helper
+    # El lock de cada forma es el de apply_chatwoot_inbound_opt_out y el del
+    # arranque compartido, con la misma clave.
+    assert (
+        "foreach v_user_id in array v_user_ids loop "
+        "perform pg_advisory_xact_lock(hashtextextended( "
+        "concat_ws(':', 'chatwoot-opt-out-user', p_account_id, v_user_id), 0 )); "
+        "end loop;"
+    ) in helper
+    assert "':', 'chatwoot-opt-out-user', v_account_id, v_external_user_id" in shared
+    # Los mismos estados que frena el arranque compartido, en la cuenta.
+    states = "optout.correlation_status in ( 'applied', 'unmatched', 'ambiguous', 'evidence_conflict' )"
+    assert states in shared
+    assert (
+        "return exists ( select 1 from public.contact_opt_out_events optout "
+        "where optout.source = 'chatwoot' and optout.channel = 'whatsapp' "
+        "and optout.canonical_account_id = p_account_id "
+        f"and optout.external_user_id = any(v_user_ids) and {states} );"
+    ) in helper
+    # No escribe nada.
+    assert not re.search(r"\b(insert|update|delete)\b", helper, re.IGNORECASE)
+    assert "for update" not in helper.lower()
 
 
 def test_canonical_form_rewrites_only_thirteen_digit_mexico_and_argentina() -> None:
@@ -392,7 +488,20 @@ def test_migration_redefines_only_the_portable_functions() -> None:
     sql = _sql()
     defined = re.findall(r"create\s+(?:or\s+replace\s+)?function\s+public\.([a-z0-9_]+)\s*\(", sql)
 
-    assert sorted(defined) == sorted([CANONICAL, VARIANTS, CART, PURCHASE, FAILURE, HELPER, PLAN])
+    assert sorted(defined) == sorted(
+        [
+            CANONICAL,
+            VARIANTS,
+            CART,
+            PURCHASE,
+            FAILURE,
+            HELPER,
+            PLAN,
+            OPT_OUT_STOP,
+            PILOT_START,
+            FAILURE_START,
+        ]
+    )
     # Un solo SQL dinamico que cree funciones: el correlador portable.
     executable = re.sub(r"--[^\n]*", "", sql)
     assert len(re.findall(r"\bexecute\s+replace\(", executable)) == 1

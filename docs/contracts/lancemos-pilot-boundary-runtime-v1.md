@@ -48,10 +48,11 @@ La aplicación usa `mark_lancemos_pilot_request_started` inmediatamente antes de
 La RPC no acepta scope, tenant ni routing. Deriva el binding inmutable del caso y, desde el estado canónico, contacto, producto, oferta, account e inbox. En una transacción:
 
 1. ejecuta `authorize_lancemos_pilot_request_start` (fuera de `manual_cohort` re-verifica la intención del binding antes de consumir presupuesto; un rechazo es `pilot_request_start_rejected` con el motivo en `detail`);
-2. exige autorización actual para el mismo action/attempt;
-3. compone los guards previos de autorización del contacto, compra, takeover y opt-out;
-4. marca el intento como `request_started`;
-5. devuelve el intento y la identidad durable de autorización.
+2. salvo en un replay, toma el lock de opt-out de cada forma del teléfono, las de la identidad del caso y las de `contacts.phone` (adonde sale el envío), y rechaza con `pilot_request_start_rejected` / `pilot_chatwoot_opt_out_stop` si hay un opt-out de Chatwoot de la cuenta en cualquiera de ellas, en los tres modos de audiencia. El rechazo deshace la autorización: no consume cupo (desde `20261001000100`; ver §9);
+3. exige autorización actual para el mismo action/attempt;
+4. compone los guards previos de autorización del contacto, compra, takeover y opt-out;
+5. marca el intento como `request_started`;
+6. devuelve el intento y la identidad durable de autorización.
 
 Respuesta adicional obligatoria:
 
@@ -115,7 +116,7 @@ La frontera del bridge sigue siendo una (`LANCEMOS_PILOT_SCOPE_KEY`, de fuente `
 
 - **Configuración.** `LANCEMOS_PILOT_PRECHECKOUT_SCOPE_KEY` y `LANCEMOS_PILOT_PRECHECKOUT_SCOPE_VERSION`, vacías por defecto. Las exige `PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED`, que además exige `LANCEMOS_PILOT_BOUNDARY_ENABLED` y que la clave sea distinta de `LANCEMOS_PILOT_SCOPE_KEY`.
 - **Planificación.** `admit_and_plan_portable_lead_precheckout` recibe `scope_key/version`. Evalúa el scope y la audiencia con `evaluate_lancemos_pilot_scope` y `_lancemos_pilot_audience_intent`, que no se redefinen, y vincula el caso en `pilot_recovery_case_bindings` igual que §2. Un rechazo del scope no se devuelve como error: la admisión del formulario queda y el motivo se guarda en `portable_precheckout_first_contact_plans`. No acepta un scope `manual_cohort`.
-- **Request-start.** El bridge elige la RPC por el `anchor_type` de la acción: `cart_abandonment` → `mark_lancemos_pilot_request_started`, `payment_failure` → `mark_portable_payment_failure_request_started`, `precheckout_intent` → `mark_portable_precheckout_request_started`. Las tres ejecutan `authorize_lancemos_pilot_request_start` y resuelven el scope por el binding inmutable del caso, no por la configuración del proceso. La del primer contacto, además, vuelve a mirar los frenos del flujo con el lock de opt-out tomado; un freno es `pilot_request_start_rejected` con el motivo en `detail` y no consume cupo. Para las tres, el cliente del bridge convierte ese rechazo en un error con su motivo y el dispatcher lo deja en el log (`durable_request_start_rejected … reason=<detail>`) y sigue con el resto del lote; el intento queda reservado y lo resuelve el lease siguiente. Cualquier otra falla del arranque sigue cortando el lote, como antes.
+- **Request-start.** El bridge elige la RPC por el `anchor_type` de la acción: `cart_abandonment` → `mark_lancemos_pilot_request_started`, `payment_failure` → `mark_portable_payment_failure_request_started`, `precheckout_intent` → `mark_portable_precheckout_request_started`. Las tres ejecutan `authorize_lancemos_pilot_request_start` y resuelven el scope por el binding inmutable del caso, no por la configuración del proceso. Después las tres miran el opt-out en las dos formas del teléfono con el lock de opt-out tomado: las del carrito y el pago fallido con `pilot_chatwoot_opt_out_stop` (§9), la del primer contacto junto con los demás frenos de su flujo. Un freno es `pilot_request_start_rejected` con el motivo en `detail` y no consume cupo. Para las tres, el cliente del bridge convierte ese rechazo en un error con su motivo y el dispatcher lo deja en el log (`durable_request_start_rejected … reason=<detail>`) y sigue con el resto del lote; el intento queda reservado y lo resuelve el lease siguiente. Cualquier otra falla del arranque sigue cortando el lote, como antes.
 - **Reevaluación.** Para el ancla `precheckout_intent` el bridge llama a `reevaluate_portable_precheckout_action`, que delega en `reevaluate_followup_action` cuando nada frena. Las otras anclas siguen en `reevaluate_followup_action`.
 - **Readiness.** Con el flag, `/ready` consulta `get_portable_precheckout_pilot_runtime_status` y suma `portable_precheckout_first_contact` con el estado del runtime de ese scope (`inactive`, `armed`, `paused`, `closed`). Un scope mal configurado responde `503` con `portable_precheckout_` más el motivo de §5 (`pilot_runtime_config_invalid`, `pilot_scope_config_mismatch`, `pilot_active_scope_mismatch`); una dependencia inaccesible, `portable_precheckout_readiness_unavailable`. Esa función es una copia de `get_lancemos_pilot_runtime_status` para la fuente `landing`, y además informa `pilot_scope_config_mismatch` para un scope `manual_cohort`. Sin el flag, `/ready` es el de §4.
 - **Topes.** Cada scope tiene sus topes y su cohorte. El total de envíos de un scope cuenta lo consumido por todas sus versiones; no hay un tope compartido entre el scope de recuperación y el del primer contacto.
@@ -135,11 +136,17 @@ La usa una sola guarda: con `[adaptadores.ghl]` en el manifiesto, sin la aceptac
 
 En `/ready` va después del chequeo del scope de §4: un scope sin configurar responde su motivo de siempre. Sin la sección, con la aceptación o con la frontera apagada, la función no se llama. Contrato: [ghl-precheckout-adapter-v1.md](ghl-precheckout-adapter-v1.md), *La aceptación escrita del riesgo*.
 
-## 9. Audiencia con consentimiento: dos motivos más (2026-10-01, migración `20261001000100`)
+## 9. Teléfonos en dos formas: dos motivos más de la audiencia y el opt-out al arrancar (2026-10-01, migración `20261001000100`)
 
 En `consented_intent` y `consented_intent_in_cohort`, la evidencia que se exige al planificar y se vuelve a verificar al arrancar suma dos chequeos, para carrito y pago fallido:
 
 - `pilot_audience_consented_intent_contact_phone_mismatch`: el teléfono del contacto, que es adonde sale el envío, no es el teléfono consentido;
 - `pilot_audience_consented_intent_prior_opt_out`: hay un opt-out de Chatwoot de la cuenta del binding en cualquiera de las dos formas del teléfono.
 
-Las comparaciones de teléfono de esa evidencia pasan a ser en forma canónica (`52…` ≡ `521…`, `54…` ≡ `549…`). En `manual_cohort` nada cambia. Detalle: [commercial-ally-runtime-v1.md](commercial-ally-runtime-v1.md#equivalencia-de-teléfonos-de-whatsapp-2026-10-01-migración-20261001000100).
+Las comparaciones de teléfono de esa evidencia pasan a ser en forma canónica (`52…` ≡ `521…`, `54…` ≡ `549…`). En `manual_cohort` la evidencia no cambia.
+
+Además, en los tres modos, `mark_lancemos_pilot_request_started` (carrito) y `mark_portable_payment_failure_request_started` miran el opt-out justo antes de arrancar (paso 2 de §3), con `_portable_chatwoot_opt_out_stop`: toma en orden el lock de opt-out de cada forma de la identidad y de `contacts.phone`, el mismo de `apply_chatwoot_inbound_opt_out` y `mark_followup_request_started`, y mira los mismos estados que este último (`applied`, `unmatched`, `ambiguous`, `evidence_conflict`) en la cuenta de la identidad. El rechazo es `pilot_request_start_rejected` / `pilot_chatwoot_opt_out_stop`, que el bridge trata como cualquier rechazo del piloto (§7). Existe por `manual_cohort`: ahí la evidencia de arriba no corre y el freno compartido busca el id exacto de la identidad, así que un «No más mensajes» guardado `unmatched` bajo `521…` no frenaba el carrito de una identidad `52…`, ni el pago fallido que usa el permiso que ese carrito concedió (los dos comparten el propósito `cart_recovery`), y el envío salía a ese mismo `wa_id`.
+
+Límite conocido: con un opt-out `unmatched` la reevaluación no lo ve y sigue ejecutando, así que el intento queda reservado y el arranque lo rechaza en cada lease hasta que la acción vence, como pasa hoy con el `pending_chatwoot_opt_out_stop` del freno compartido. El permiso `allowed` que concedió el carrito sigue vivo, pero no tiene efecto: los dos arranques lo frenan.
+
+Detalle: [commercial-ally-runtime-v1.md](commercial-ally-runtime-v1.md#equivalencia-de-teléfonos-de-whatsapp-2026-10-01-migración-20261001000100).

@@ -28,6 +28,10 @@ MARKED_BLOCK = re.compile(
     r"[ \t]*-- precheckout_first_contact: begin\n.*?-- precheckout_first_contact: end\n",
     re.DOTALL,
 )
+EQUIVALENCE_BLOCK = re.compile(
+    r"[ \t]*-- whatsapp_phone_equivalence: begin\n.*?-- whatsapp_phone_equivalence: end\n",
+    re.DOTALL,
+)
 STOP = "_portable_precheckout_stop_reason"
 FIND = "_find_portable_precheckout_contact"
 ENSURE = "_ensure_portable_precheckout_contact"
@@ -52,18 +56,26 @@ SIGNATURES = {
 }
 ENTRYPOINTS = {ADMIT, REEVALUATE, START, STATUS}
 # Las dos copias: la funcion nueva, la vigente de la que sale, la migracion que
-# la define, los literales que cambian (nuevo, vigente, ocurrencias) y la
-# cantidad de bloques marcados que se suman.
+# la define, los literales que cambian (nuevo, vigente, ocurrencias), la
+# cantidad de bloques marcados que se suman y la de bloques
+# whatsapp_phone_equivalence de la vigente que la copia deja afuera.
+#
+# El arranque del pago fallido vigente es el de 20261001000100, que suma el
+# freno del opt-out en las dos formas (_portable_chatwoot_opt_out_stop). El del
+# primer contacto no lo lleva: su propio bloque toma el lock de opt-out de las
+# dos formas de la identidad y mira el opt-out en las dos formas del telefono
+# de la intencion (precheckout_prior_opt_out, en _portable_precheckout_stop_reason).
 COPIES = {
     START: (
         "mark_portable_payment_failure_request_started",
-        "20260903000300_commercial_ally_payment_failure_recovery.sql",
+        "20261001000100_whatsapp_phone_equivalence.sql",
         [
             ("and action.anchor_type = 'precheckout_intent'", "and action.anchor_type = 'payment_failure'", 1),
             ("detail = 'precheckout_intent_action_required';", "detail = 'payment_failure_action_required';", 1),
             ("'landing', 'PRECHECKOUT_FORM_SUBMITTED',", "'hotmart', 'PURCHASE_CANCELED',", 1),
         ],
         2,
+        1,
     ),
     STATUS: (
         "get_lancemos_pilot_runtime_status",
@@ -73,6 +85,7 @@ COPIES = {
             ("'PRECHECKOUT_FORM_SUBMITTED'", "'PURCHASE_OUT_OF_SHOPPING_CART'", 2),
         ],
         1,
+        0,
     ),
 }
 
@@ -131,7 +144,7 @@ def test_migration_only_creates_new_functions() -> None:
 
 @pytest.mark.parametrize("name", sorted(COPIES))
 def test_the_copied_definition_is_the_vigent_one(name: str) -> None:
-    source, vigent, _, _ = COPIES[name]
+    source, vigent, _, _, _ = COPIES[name]
     later = [
         path.name
         for path in sorted(MIGRATIONS.glob("*.sql"))
@@ -148,9 +161,13 @@ def test_the_copied_definition_is_the_vigent_one(name: str) -> None:
 
 @pytest.mark.parametrize("name", sorted(COPIES))
 def test_copy_is_the_vigent_one_plus_the_declared_changes(name: str) -> None:
-    source, vigent, replacements, marked = COPIES[name]
+    source, vigent, replacements, marked, left_out = COPIES[name]
     original = _function((MIGRATIONS / vigent).read_text(encoding="utf-8"), source)
     new = _new(name)
+
+    assert len(EQUIVALENCE_BLOCK.findall(original)) == left_out
+    assert not EQUIVALENCE_BLOCK.findall(new)
+    original = EQUIVALENCE_BLOCK.sub("", original)
 
     assert len(MARKED_BLOCK.findall(new)) == marked
     reverted = _normalized(MARKED_BLOCK.sub("", new))

@@ -62,10 +62,14 @@
 --    reevaluate_followup_action, que queda intacta. Es security definer porque
 --    lee tablas que service_role no puede leer.
 -- 8. mark_portable_precheckout_request_started: copia de
---    mark_portable_payment_failure_request_started (vigente 20260903000300)
---    con el ancla precheckout_intent y la autorizacion por landing /
---    PRECHECKOUT_FORM_SUBMITTED, mas un bloque marcado: con el lock de opt-out
---    de las dos formas del telefono tomado, vuelve a mirar los frenos. Un
+--    mark_portable_payment_failure_request_started (vigente 20261001000100,
+--    sin su bloque whatsapp_phone_equivalence) con el ancla precheckout_intent
+--    y la autorizacion por landing / PRECHECKOUT_FORM_SUBMITTED, mas un bloque
+--    marcado: con el lock de opt-out de las dos formas del telefono tomado,
+--    vuelve a mirar los frenos, entre ellos el opt-out en las dos formas del
+--    telefono de la intencion (precheckout_prior_opt_out). Ese telefono es
+--    canonicamente contacts.phone (el scope nunca es manual_cohort y la
+--    autorizacion lo re-verifica), asi que cumple el papel de aquel bloque. Un
 --    rechazo deshace la autorizacion: no consume cupo.
 -- 9. get_portable_precheckout_pilot_runtime_status: copia de
 --    get_lancemos_pilot_runtime_status (vigente 20260929000200) para un scope
