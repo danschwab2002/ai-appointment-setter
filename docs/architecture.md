@@ -585,6 +585,41 @@ la plantilla `johanna_compra_fallida_01`; el unique index por teléfono arbitra 
 presupuesto físico contra el command de carrito. La admisión y el efecto tienen
 flags separados para poder desplegar el receiver sin autorizar envíos.
 
+## Adaptador de fuente: formulario de GHL
+
+Una instancia cuya landing no puede emitir `lead.precheckout` por sí misma usa un
+adaptador: código fijo del bridge que traduce el envío de una fuente al evento
+canónico y lo admite por la misma RPC que un formulario de landing
+(`admit_portable_observed_lead_precheckout`). El primero es el del formulario de
+GHL, `POST /webhooks/adapters/ghl/lead-precheckout`, publicado en `v1.2.0`
+(PR #210, commit `74d1187`). Solo existe para runtimes con manifiesto; Johanna no
+lo carga.
+
+- **Qué decide el manifiesto y qué decide el envío.** Los formularios admitidos se
+  declaran en `[adaptadores.ghl]`. La landing y la oferta salen de la URL del
+  envío, comparada por host y ruta exactos contra `[[hotmart.ofertas]]`; un
+  formulario fuera de la lista o una landing desconocida se rechazan con `422`
+  antes de tocar la base.
+- **Consentimiento.** El adaptador declara `whatsapp_contact = true` con la
+  `copy_version` del manifiesto. Por eso un formulario entra a la lista solo si
+  muestra el texto de esa versión; el código no puede comprobarlo.
+- **Autenticación.** Un token propio (`GHL_PRECHECKOUT_ADAPTER_TOKEN`, por header
+  o en `customData`), distinto de todo otro secreto del bridge. Es la única
+  barrera: el id del formulario y las URL son públicos. Mientras no exista una
+  verificación fuera de banda del envío o una aceptación escrita del riesgo, el
+  bridge no arranca con el adaptador y `[flujos].precheckout` prendidos a la vez.
+- **Reintentos.** Cada entrega lleva un `id` aleatorio: un reintento de GHL es otra
+  submission de la misma intención y no deja un conflicto que le quite el
+  consentimiento.
+- **Teléfono.** Normaliza el `+521` mexicano a `+52`; no inserta el 9 argentino.
+  Las demás fuentes guardan el teléfono como llega, y los caminos que comparan el
+  teléfono exacto pueden no cruzar un mismo móvil escrito de dos formas.
+
+La instancia de ATT1 lo tiene prendido con dos formularios desde el 2026-10-01,
+con una admisión de punta a punta por cada uno. Evidencia y límites medidos:
+[operations/2026-10-01-att1-instancia-y-adaptador-ghl-e2e.md](operations/2026-10-01-att1-instancia-y-adaptador-ghl-e2e.md).
+Contrato: [ghl-precheckout-adapter-v1](contracts/ghl-precheckout-adapter-v1.md).
+
 ## Ingreso autoritativo de abandono de carrito
 
 `PURCHASE_OUT_OF_SHOPPING_CART` se autentica por Hottok y se valida contra el contrato
