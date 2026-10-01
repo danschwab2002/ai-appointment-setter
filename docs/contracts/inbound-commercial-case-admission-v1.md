@@ -81,8 +81,16 @@ condiciones:
    `accepted_by_chatwoot` → acción → caso de recuperación de esa identidad,
    contacto y conversación → su fila en `pilot_recovery_case_bindings`.
 2. El contacto no está dado de baja: `contact_permission` fuera de
-   `opted_out`, `blocked` y `restricted`, y `lifecycle_status` distinto de
-   `do_not_contact`.
+   `opted_out`, `blocked` y `restricted`, `lifecycle_status` distinto de
+   `do_not_contact`, y ninguna baja de Chatwoot de ese móvil en
+   `contact_opt_out_events` (las formas del que contesta y las de
+   `contacts.phone`; `correlation_status` `applied`, `unmatched`, `ambiguous`
+   o `evidence_conflict`, los estados que frena el arranque del piloto en
+   `_portable_chatwoot_opt_out_stop`). Una baja que no quedó aplicada a este
+   contacto, porque entró por la otra forma del móvil o hay dos contactos,
+   también frena. Se lee sin el advisory lock de opt-out: la adopción ya
+   tiene la identidad bloqueada y `apply_chatwoot_inbound_opt_out` toma ese
+   lock antes que la identidad.
 3. Ninguna acción de recuperación de esa persona (en esta conversación o sin
    conversación) está en `pending`, `deferred`, `retryable_failed` o
    `delivery_unknown`.

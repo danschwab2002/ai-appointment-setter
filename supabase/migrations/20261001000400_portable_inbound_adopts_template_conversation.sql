@@ -32,8 +32,14 @@
 --    pilot_recovery_case_bindings (un caso sin binding, como los de Johanna,
 --    no se adopta);
 -- 2. el contacto no esta dado de baja: contact_permission fuera de opted_out,
---    blocked y restricted, y lifecycle_status distinto de do_not_contact
---    (decision 5: lo atiende una persona y el resultado es el de hoy);
+--    blocked y restricted, lifecycle_status distinto de do_not_contact, y
+--    ninguna baja de Chatwoot de ese movil en cualquiera de sus formas (las
+--    del que contesta y las de contacts.phone) con correlation_status
+--    applied, unmatched, ambiguous o evidence_conflict, los mismos estados
+--    que frena el arranque del piloto (_portable_chatwoot_opt_out_stop): una
+--    baja que no quedo aplicada a este contacto, porque entro por la otra
+--    forma del movil o hay dos contactos, tambien frena (decision 5: lo
+--    atiende una persona y el resultado es el de hoy);
 -- 3. no hay un paso pendiente para esa persona (decision 6): ningun caso de
 --    recuperacion del contacto atado a esta conversacion, o todavia sin
 --    conversacion, tiene una accion en un estado vivo del constraint de
@@ -50,10 +56,14 @@
 --
 -- Locks: ademas de los de la admision base, solo la fila de la identidad y la
 -- de la conversacion, en el mismo orden en que los toma la base; el contacto,
--- los casos, las acciones y los intentos se leen sin bloquear. Una entrega
--- repetida del mismo entrante se serializa en el primer advisory lock y la
--- segunda ve la fila de admision: no adopta otra vez y la v2 da
--- already_exists.
+-- sus bajas, los casos, las acciones y los intentos se leen sin bloquear. Las
+-- bajas se leen sin el advisory lock de opt-out del arranque del piloto:
+-- apply_chatwoot_inbound_opt_out lo toma antes de bloquear la identidad, y la
+-- adopcion ya la tiene bloqueada, asi que esperarlo aca invertiria el orden.
+-- Una baja en vuelo no se espera; la frena despues el bridge, que antes de
+-- correr al agente mira has_chatwoot_opt_out_stop. Una entrega repetida del
+-- mismo entrante se serializa en el primer advisory lock y la segunda ve la
+-- fila de admision: no adopta otra vez y la v2 da already_exists.
 --
 -- Johanna no cambia: es una funcion nueva, no reemplaza ni toca ninguna, y el
 -- bridge sin manifiesto sigue llamando a admit_inbound_commercial_case_v2.
@@ -201,6 +211,33 @@ begin
                            'opted_out', 'blocked', 'restricted'
                        )
                        and v_contact.lifecycle_status <> 'do_not_contact'
+                       -- Una baja de Chatwoot de ese movil, en cualquiera de
+                       -- sus formas, aunque no haya quedado aplicada a este
+                       -- contacto: los estados que frena el arranque del
+                       -- piloto (_portable_chatwoot_opt_out_stop,
+                       -- 20261001000100), sin su advisory lock (ver Locks
+                       -- arriba).
+                       and not exists (
+                           select 1
+                           from public.contact_opt_out_events optout
+                           where optout.source = 'chatwoot'
+                             and optout.channel = 'whatsapp'
+                             and optout.canonical_account_id = v_scope.chatwoot_account_id
+                             and optout.external_user_id = any(
+                                 coalesce(
+                                     public._whatsapp_phone_variants(p_external_user_id),
+                                     array[]::text[]
+                                 )
+                                 || coalesce(
+                                     public._whatsapp_phone_variants(v_contact.phone),
+                                     array[]::text[]
+                                 )
+                             )
+                             and optout.correlation_status in (
+                                 'applied', 'unmatched', 'ambiguous',
+                                 'evidence_conflict'
+                             )
+                       )
                        and not exists (
                            select 1
                            from public.scheduled_actions action

@@ -8,7 +8,8 @@ redefina ninguna funcion existente, que su salida sea la de la v2, que tome
 los mismos advisory locks que la admision base y en el orden identidad ->
 conversacion, los tres frenos que corrigen el borrador del diseno (los
 estados vivos del constraint, el contacto dado de baja y la cadena de la
-plantilla hasta el binding del piloto), que lo unico que escribe sea la
+plantilla hasta el binding del piloto), la baja de Chatwoot de ese movil
+aunque no haya quedado aplicada al contacto, que lo unico que escribe sea la
 conversacion y su evento, y que el ACL sea explicito. El comportamiento se
 prueba en tests/sql/followup_engine/validate_portable_inbound_template_adoption.mjs.
 """
@@ -200,6 +201,28 @@ def test_the_contact_and_the_live_actions_stop_the_adoption() -> None:
         "and v_contact.contact_permission not in ( 'opted_out', 'blocked', 'restricted' ) "
         "and v_contact.lifecycle_status <> 'do_not_contact'"
     ) in body
+    # Y ninguna baja de Chatwoot de ese movil, aunque no haya quedado aplicada
+    # al contacto: las formas del que contesta y las de contacts.phone, con
+    # los estados que frena el arranque del piloto. Sin el advisory lock de
+    # opt-out (la adopcion ya tiene la identidad bloqueada).
+    assert (
+        "and not exists ( select 1 from public.contact_opt_out_events optout "
+        "where optout.source = 'chatwoot' and optout.channel = 'whatsapp' "
+        "and optout.canonical_account_id = v_scope.chatwoot_account_id "
+        "and optout.external_user_id = any( coalesce( "
+        "public._whatsapp_phone_variants(p_external_user_id), array[]::text[] ) "
+        "|| coalesce( public._whatsapp_phone_variants(v_contact.phone), array[]::text[] ) ) "
+        "and optout.correlation_status in ( 'applied', 'unmatched', 'ambiguous', "
+        "'evidence_conflict' ) )"
+    ) in body
+    stop = _normalized(
+        (MIGRATIONS / "20261001000100_whatsapp_phone_equivalence.sql").read_text(encoding="utf-8")
+    )
+    assert (
+        "and optout.correlation_status in ( 'applied', 'unmatched', 'ambiguous', "
+        "'evidence_conflict' )"
+    ) in stop
+    assert "chatwoot-opt-out-user" not in body
     live = re.search(r"and action\.status in \(([^)]*)\)", body)
     assert live is not None
     states = [state.strip().strip("'") for state in live.group(1).split(",")]

@@ -319,11 +319,13 @@ def test_portable_inbound_template_adoption_fingerprint_checks_the_function_and_
     assert "array_to_string(proconfig,',')='search_path=pg_catalog,public,pg_temp'" in compact_fingerprint
     assert "position('public.admit_inbound_commercial_case_v2('indefinition)>0" in compact_fingerprint
     assert "position('human_handoff'indefinition)=0" in compact_fingerprint
-    # La adopcion: el evento, el binding del piloto, los estados vivos y la baja.
+    # La adopcion: el evento, el binding del piloto, los estados vivos, la baja
+    # del contacto y las bajas de Chatwoot de ese movil.
     assert "position('inbound_adopted_template_conversation'indefinition)>0" in compact_fingerprint
     assert "position('public.pilot_recovery_case_bindings'indefinition)>0" in compact_fingerprint
     assert "position('''delivery_unknown'''indefinition)>0" in compact_fingerprint
     assert "position('''do_not_contact'''indefinition)>0" in compact_fingerprint
+    assert "position('public.contact_opt_out_events'indefinition)>0" in compact_fingerprint
     # Es un entrypoint del bridge: solo service_role.
     assert "has_function_privilege('service_role',oid,'EXECUTE')" in compact_fingerprint
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint

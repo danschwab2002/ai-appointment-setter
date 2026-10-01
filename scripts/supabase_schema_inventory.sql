@@ -4104,6 +4104,7 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
               and position('public.pilot_recovery_case_bindings' in definition) > 0
               and position('''delivery_unknown''' in definition) > 0
               and position('''do_not_contact''' in definition) > 0
+              and position('public.contact_opt_out_events' in definition) > 0
         )::int
         + (
             select count(*) = 1

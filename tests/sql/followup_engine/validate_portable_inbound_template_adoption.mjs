@@ -27,8 +27,10 @@
 //      binding del piloto (ancla sin binding), la accion en pending,
 //      deferred, retryable_failed o delivery_unknown, y un tercero que
 //      escribe ahi (23505). Sobre la del primer contacto, la otra forma del
-//      movil mexicano (521), sin identidad propia (23505). Y una
-//      conversacion enabled sin ninguna plantilla (sin ancla): 22000;
+//      movil mexicano (521), sin identidad propia (23505), y la baja de esa
+//      otra forma, que la RPC real deja unmatched (el contacto conserva su
+//      permiso). Y una conversacion enabled sin ninguna plantilla (sin
+//      ancla): 22000;
 //   3. el paso pendiente de otro caso de la misma persona, por las RPC reales:
 //      con el carrito aceptado, el pago fallido planificado (pending) y
 //      despues en delivery_unknown frenan la adopcion; cuando la reconciliacion
@@ -826,6 +828,26 @@ await dispatch(fcLead, fcPlan, {
 // formulario y la base da el 23505 de hoy.
 await expectBrake('other_form_of_the_mobile', { chatwoot: FC_CHATWOOT, user: fcLead.whatsapp },
   null, OTHER_IDENTITY);
+// Una baja que no quedo aplicada a este contacto (decision 5): entro por la
+// otra forma del movil (521), que no tiene identidad, y la RPC real la deja
+// unmatched. El contacto sigue con su permiso, pero la persona pidio no
+// recibir mas mensajes: la portable no adopta, como el arranque del piloto
+// (_portable_chatwoot_opt_out_stop), y la v2 da el conflicto de hoy.
+await expectBrake('opt_out_unmatched_other_form', { chatwoot: FC_CHATWOOT, user: fcLead.formPhone },
+  async () => {
+    const optOut = one((await db.query(`
+      select * from public.apply_chatwoot_inbound_opt_out($1,$2,$3,$4,$5,$6,'stop_receiving_messages')
+    `, [ATT1.accountId, ATT1.inboxId, 919001, 999001, fcLead.whatsapp, await dbNow()])).rows,
+    'unmatched opt-out');
+    const contact = one((await db.query(`
+      select contact_permission, lifecycle_status from public.contacts where id = $1
+    `, [fcLead.contact])).rows, 'contact after the unmatched opt-out');
+    if (optOut.outcome !== 'recorded_unmatched' || optOut.matched_contact_id !== null
+        || ['opted_out', 'blocked', 'restricted'].includes(contact.contact_permission)
+        || contact.lifecycle_status === 'do_not_contact') {
+      throw new Error(`the opt-out of the other form was not left unmatched: ${JSON.stringify({ optOut, contact })}`);
+    }
+  });
 await expectAdoption('first_contact', {
   chatwoot: FC_CHATWOOT, user: fcLead.formPhone,
   recoveryCaseId: fcPlan.recovery_case_id, actionId: fcPlan.scheduled_action_id,
