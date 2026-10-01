@@ -26,6 +26,10 @@ with two real sessions, what depends on locks:
 * a reply while the reconciliation of the template itself is being committed
   (a first touch in delivery_unknown: the conversation does not exist yet):
   the reply waits and adopts the conversation the reconciliation creates;
+* a reply while another transaction holds only the row of its conversation
+  and pauses it (defense in depth: today every writer of that conversation
+  locks the identity first, see case 5): the reply waits for that row and
+  does not adopt; it gives what the shared admission gives there;
 * KNOWN LIMIT, pinned here so it does not go unnoticed: a reply that the
   admission commits BEFORE that reconciliation starts finds no conversation,
   so it creates one in draft_only (as the shared admission always did) and
@@ -83,6 +87,12 @@ SCOPE = PILOT["pilot_scope"]
 POLICY = PILOT["policy"]
 NOW = datetime.now(timezone.utc).replace(microsecond=0)
 ADOPTION_EVENT = "inbound_adopted_template_conversation"
+# A projection policy for the handoff of a recovery case of the pilot scope
+# (request_human_handoff). ATT1 only publishes the inbound one (att1-derivacion,
+# validate_att1_portable_chain.mjs); case 5 uses this one to measure that the
+# recovery handoff does not apply to the exhausted case of a one-touch
+# template.
+RECOVERY_HANDOFF_POLICY = "att1-adoption-pg-recovery"
 WORKER = "att1-adoption-pg"
 # How long a session keeps its transaction, and when the other one arrives.
 # Wide on purpose: the CI runner starts a psql per session.
@@ -150,6 +160,27 @@ def result_line(done: subprocess.CompletedProcess[str]) -> list[str]:
         f"the session failed: {done.stdout.strip()} {done.stderr.strip()}",
     )
     return lines[0].split("|")
+
+
+def first_error(done: subprocess.CompletedProcess[str]) -> str:
+    """What a session gave: outcome and automation_status of its first row,
+    or the text of its first ERROR."""
+    if done.returncode == 0:
+        return "|".join(result_line(done)[:2])
+    return first_error_text(done.stderr, True)
+
+
+def first_error_text(output: str, failed: bool) -> str:
+    """The same for the output of query(): the first ERROR line of psql,
+    without the context (it names the function that raised, which differs
+    between the portable and the v2)."""
+    if not failed:
+        rows = [line for line in output.splitlines() if line.strip()]
+        return "|".join(rows[0].split("|")[:2]) if rows else ""
+    for line in output.splitlines():
+        if "ERROR:" in line:
+            return line.split("ERROR:", 1)[1].strip()
+    return output.strip()
 
 
 def apply(path: Path) -> None:
@@ -345,6 +376,14 @@ def seed() -> None:
         (scope_key, scope_version, runtime_state, generation, changed_by, change_reason)
       values ({literal(SCOPE['scope_key'])},{SCOPE['version']},'inactive',0,
         'operator-test','default-off');
+    """)
+    query(f"""
+      insert into public.human_handoff_projection_policies
+        (policy_key, policy_version, scope_key, scope_version, expected_team_id,
+         note_template_key, note_template_version, private_note_body, active)
+      values ({literal(RECOVERY_HANDOFF_POLICY)}, 1, {literal(SCOPE['scope_key'])},
+        {SCOPE['version']}, {CHATWOOT['equipo_derivacion']}, 'att1-nota-derivacion', 1,
+        'Derivacion de prueba del caso de recuperacion.', true);
     """)
     armed = query(
         "select runtime_state from public.set_lancemos_pilot_runtime_state("
@@ -859,6 +898,68 @@ def main() -> None:
         f"the known limit changed (reply before the reconciliation): {replied[:2]} {reconciled} {after} {attendance}",
     )
     print("inbound_adoption_known_limit_reply_before_the_reconciliation=PINNED")
+
+    # 5. The row lock of the conversation, as defense in depth. Every writer
+    #    that can change a template conversation today locks the identity
+    #    first (the acceptance and its reconciliation, the Chatwoot opt-out,
+    #    the shared admission), so the identity lock already serializes them
+    #    with the reply; the handoff of the recovery case does not lock the
+    #    identity, but after the only touch of ATT1 the case is exhausted
+    #    and it refuses (handoff_case_terminal, measured here). So the
+    #    writer is direct: a transaction that takes only the conversation row
+    #    and leaves it as request_human_handoff would (paused_human/paused,
+    #    version + 1). The reply gets the identity and has to wait for that
+    #    row; when the writer commits, the conversation is no longer
+    #    adoptable: no adoption, and the reply gives exactly what the shared
+    #    admission gives there. Read without the lock, the reply would see it
+    #    still enabled, try to adopt it and fail when its update finds the row
+    #    changed (P0002 from the "into strict").
+    lead, delivery = cart_case(6)
+    accept(delivery, 950006)
+    recovery_case = query(
+        f"select recovery_case_id from public.scheduled_actions where id={delivery['action']!r}::uuid"
+    )
+    terminal = query(
+        "begin; select outcome from public.request_human_handoff("
+        f"{recovery_case!r}::uuid, 'att1-adoption-pg-handoff-6', 'explicit_human_request', "
+        f"'operator', {literal(RECOVERY_HANDOFF_POLICY)}, 1); rollback;",
+        expect_failure=True,
+    )
+    require("handoff_case_terminal" in terminal, f"the recovery handoff applies here: {terminal}")
+    before = conversation(950006)
+    held, arrived, waited = concurrent(
+        "set deadlock_timeout='100ms'; begin; "
+        "update public.conversations set status = 'paused_human', automation_status = 'paused', "
+        f"version = version + 1 where id = {before['id']!r}::uuid returning version; "
+        f"select pg_sleep({HOLD_SECONDS}); commit;",
+        reply(950006, lead["phone"]),
+        "admit_portable_inbound_commercial_case_v1",
+        ROW_LOCK,
+    )
+    paused_version = result_line(held)
+    after = conversation(950006)
+    failed = arrived.returncode != 0
+    shared = query(
+        "begin; set local role service_role; "
+        "select outcome, automation_status, commercial_case_id "
+        "from public.admit_inbound_commercial_case_v2("
+        f"{literal(INBOUND['scope_key'])}, {INBOUND['scope_version']}, 950006, "
+        f"{literal(lead['phone'])}); rollback;",
+        expect_failure=failed,
+    )
+    require(waited, "the reply did not wait for the conversation row")
+    require(
+        before["state"] == "active/enabled"
+        and paused_version == [str(before["version"] + 1)]
+        and after["state"] == "paused_human/paused"
+        and after["version"] == before["version"] + 1
+        and after["adoptions"] == 0
+        and after["kinds"] == "cart_recovery"
+        and first_error(arrived) == first_error_text(shared, failed),
+        "the reply against a writer of its conversation: "
+        f"{before} {after} {arrived.stdout.strip()} {arrived.stderr.strip()} {shared}",
+    )
+    print("inbound_adoption_waits_for_the_conversation_row=OK")
 
     total = query(
         f"select count(*) from public.conversation_events where event_type={literal(ADOPTION_EVENT)}"

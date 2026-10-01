@@ -55,7 +55,13 @@
 -- un error, la adopcion tambien se deshace.
 --
 -- Locks: ademas de los de la admision base, solo la fila de la identidad y la
--- de la conversacion, en el mismo orden en que los toma la base; el contacto,
+-- de la conversacion, en el mismo orden en que los toma la base. El de la
+-- conversacion es defensa en profundidad: hoy todo camino que cambia esa
+-- conversacion bloquea antes la identidad (la aceptacion, su reconciliacion,
+-- la baja y la admision base), y la derivacion del caso de recuperacion, que
+-- no la bloquea, no aplica al caso agotado de un toque; lo prueba con un
+-- escritor directo el caso 5 de real_postgres_portable_inbound_adoption.py. El
+-- contacto,
 -- sus bajas, los casos, las acciones y los intentos se leen sin bloquear. Las
 -- bajas se leen sin el advisory lock de opt-out del arranque del piloto:
 -- apply_chatwoot_inbound_opt_out lo toma antes de bloquear la identidad, y la
