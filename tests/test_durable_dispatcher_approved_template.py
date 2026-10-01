@@ -9,11 +9,16 @@ Datos:
 * ``chatwoot_followup_candidates_inbox_9_20260928.json``: el catalogo de
   plantillas del inbox 9 capturado el 28/09 (``johanna_carrito_abandonado_01`` y
   ``johanna_compra_fallida_01``, cada una con ``{{1}}``, ``{{2}}`` y tres botones
-  QUICK_REPLY). No hay captura del catalogo del inbox 11 de ATT1 (paso A0), asi
-  que el dispatcher de estos tests manda las plantillas de Johanna con su idioma
-  (``es_EC``). El catalogo se sirve bajo el id del inbox 11, el unico campo del
-  sobre que el cliente chequea, igual que ``test_followup_discount.py`` envuelve
-  la misma lista.
+  QUICK_REPLY). Los tests escritos antes de tener el catalogo de ATT1 mandan las
+  plantillas de Johanna con su idioma (``es_EC``). El catalogo se sirve bajo el
+  id del inbox 11, el unico campo del sobre que el cliente chequea, igual que
+  ``test_followup_discount.py`` envuelve la misma lista.
+* ``chatwoot_inbox_11_message_templates_20261001.json``: el catalogo del inbox 11
+  de ATT1 del 01/10 (psql sobre ``channel_whatsapp.message_templates``), con las
+  tres plantillas ``att1_*`` de primer contacto en ``es_MX``. Lo usan la seccion
+  del final (los tres disparadores con las plantillas de ``[plantillas]`` del
+  manifiesto) y la del primer contacto tras el formulario. De la respuesta de
+  ``GET /inboxes/11`` no hay captura: el sobre es el mismo de arriba.
 * ``lead_names_inbox9_template_params_20260928.json``: nombres capturados (con
   los apellidos cambiados) para el saludo.
 * Las respuestas de Chatwoot al envio (``contacts/search``, ``contacts``,
@@ -97,9 +102,15 @@ BOUNDARY = PilotBoundaryConfig(
     channel_account_ref=f"chatwoot-inbox:{INBOX_ID}",
 )
 
+ATT1_CATALOG: list[dict[str, Any]] = json.loads(
+    (FIXTURES / "chatwoot_inbox_11_message_templates_20261001.json").read_text(
+        encoding="utf-8"
+    )
+)["templates"]
+
 
 def _captured_body(name: str) -> str:
-    [template] = [t for t in CATALOG if t["name"] == name]
+    [template] = [t for t in (*CATALOG, *ATT1_CATALOG) if t["name"] == name]
     [body] = [c["text"] for c in template["components"] if c["type"] == "BODY"]
     return body
 
@@ -1433,23 +1444,126 @@ def test_create_app_turns_the_equivalence_on_only_for_the_portable_sender(
 #
 # Una accion de ancla precheckout_intent (la planifica
 # admit_and_plan_portable_lead_precheckout) sale con la plantilla propia del
-# flujo, y sin ella no sale. El catalogo capturado del inbox 9 trae
-# johanna_interes_precheckout_01 (dos variables y tres botones QUICK_REPLY),
-# servida bajo el inbox 11 como el resto del archivo; la captura del catalogo
-# del inbox 11 con att1_interes_precheckout_01 entra con su propio fixture.
+# flujo, y sin ella no sale. La plantilla es att1_interes_precheckout_01, la de
+# [plantillas.precheckout] del manifiesto de ATT1, leida del catalogo capturado
+# del inbox 11 (dos variables, es_MX, MARKETING y tres botones QUICK_REPLY). El
+# carrito y el pago fallido de esta configuracion son tambien los del
+# manifiesto.
 
-FORM_TEMPLATE = "johanna_interes_precheckout_01"
 FORM_ANCHOR = "precheckout_intent"
+ATT1_TEMPLATE_NAMES = {
+    "cart_abandonment": MANIFEST.templates["carrito"].name,
+    "payment_failure": MANIFEST.templates["pago_fallido"].name,
+    FORM_ANCHOR: MANIFEST.templates["precheckout"].name,
+}
+FORM_TEMPLATE = ATT1_TEMPLATE_NAMES[FORM_ANCHOR]
+ATT1_CART_TEMPLATE = ATT1_TEMPLATE_NAMES["cart_abandonment"]
+ATT1_LANGUAGE = MANIFEST.templates["precheckout"].language
+# Sin la plantilla del formulario: lo que tiene una instancia que no prendio
+# el primer contacto.
+ATT1_WITHOUT_FORM_TEMPLATE = WhatsAppTemplateConfig(
+    first_touch_name=ATT1_CART_TEMPLATE,
+    payment_failure_name=ATT1_TEMPLATE_NAMES["payment_failure"],
+    followup_name=None,
+    language=ATT1_LANGUAGE,
+    category="MARKETING",
+    first_touch_parameter="buyer_name_and_product",
+    first_touch_body_parameters=("nombre", "producto"),
+    payment_failure_body_parameters=("nombre", "producto"),
+)
 WITH_FORM_TEMPLATE = replace(
-    TEMPLATE,
+    ATT1_WITHOUT_FORM_TEMPLATE,
     precheckout_name=FORM_TEMPLATE,
     precheckout_body_parameters=("nombre", "producto"),
 )
 
 
+def test_the_att1_manifest_names_the_templates_of_the_captured_catalog() -> None:
+    assert ATT1_TEMPLATE_NAMES == {
+        "cart_abandonment": "att1_carrito_abandonado_01",
+        "payment_failure": "att1_compra_fallida_01",
+        FORM_ANCHOR: "att1_interes_precheckout_01",
+    }
+    assert {MANIFEST.templates[key].language for key in (
+        "carrito", "pago_fallido", "precheckout",
+    )} == {"es_MX"}
+    by_name = {template["name"]: template for template in ATT1_CATALOG}
+    for name in ATT1_TEMPLATE_NAMES.values():
+        captured = by_name[name]
+        assert (captured["status"], captured["language"], captured["category"]) == (
+            "APPROVED", "es_MX", "MARKETING",
+        )
+
+
+@pytest.mark.parametrize(
+    ("anchor_type", "offer_code"),
+    [
+        ("cart_abandonment", "gopi6lh7"),
+        ("payment_failure", "2uafw5bg"),
+        (FORM_ANCHOR, "bmaztyhg"),
+    ],
+)
+def test_each_att1_trigger_sends_its_template_of_the_captured_inbox_11_catalog(
+    tmp_path: Path, anchor_type: str, offer_code: str
+) -> None:
+    name = ATT1_TEMPLATE_NAMES[anchor_type]
+    authority = _Authority(offer_code=offer_code, anchor_type=anchor_type)
+    chatwoot = _Chatwoot(ATT1_CATALOG)
+
+    decisions = _run(
+        _dispatcher(authority, chatwoot, tmp_path, template=WITH_FORM_TEMPLATE)
+    )
+
+    expected = _expected(name, first="Edith García Pérez", product="Alimenta tu Tiroides")
+    assert decisions[-1].decision == "execute"
+    assert authority.events == [
+        "reevaluate", "reserve", "reevaluate", "request_started", "accepted",
+    ]
+    assert chatwoot.inbox_reads() == 1
+    [message] = chatwoot.posts("/conversations/200/messages")
+    assert message["content"] == expected
+    assert message["template_params"] == {
+        "name": name,
+        "category": "MARKETING",
+        "language": "es_MX",
+        "processed_params": {
+            "body": {"1": "Edith García Pérez", "2": "Alimenta tu Tiroides"}
+        },
+    }
+    assert authority.acceptances[0]["message_content"] == expected
+    assert authority.finalizations == []
+
+
+def test_the_three_att1_triggers_send_three_different_texts() -> None:
+    assert len({
+        _expected(name, first="Edith", product="Alimenta tu Tiroides")
+        for name in ATT1_TEMPLATE_NAMES.values()
+    }) == 3
+
+
+def test_the_att1_templates_asked_in_the_language_of_johanna_are_not_sent(
+    tmp_path: Path,
+) -> None:
+    # WABA_TEMPLATE_LANGUAGE mal cargada (es_EC, la de Johanna) contra el
+    # catalogo real: no cierra y no manda nada.
+    authority = _Authority(offer_code="gopi6lh7", anchor_type=FORM_ANCHOR)
+    chatwoot = _Chatwoot(ATT1_CATALOG)
+
+    _run(
+        _dispatcher(
+            authority, chatwoot, tmp_path,
+            template=replace(WITH_FORM_TEMPLATE, language="es_EC"),
+        )
+    )
+
+    assert chatwoot.posts("/messages") == []
+    assert "request_started" not in authority.events
+    assert authority.finalizations[-1]["reason_code"] == "approved_template_mismatch"
+
+
 def test_the_form_first_contact_sends_its_own_approved_template(tmp_path: Path) -> None:
     authority = _Authority(offer_code="gopi6lh7", anchor_type=FORM_ANCHOR)
-    chatwoot = _Chatwoot()
+    chatwoot = _Chatwoot(ATT1_CATALOG)
 
     decisions = _run(
         _dispatcher(authority, chatwoot, tmp_path, template=WITH_FORM_TEMPLATE)
@@ -1459,7 +1573,13 @@ def test_the_form_first_contact_sends_its_own_approved_template(tmp_path: Path) 
         FORM_TEMPLATE, first="Edith García Pérez", product="Alimenta tu Tiroides"
     )
     assert expected != _expected(
-        CART_TEMPLATE, first="Edith García Pérez", product="Alimenta tu Tiroides"
+        ATT1_CART_TEMPLATE, first="Edith García Pérez", product="Alimenta tu Tiroides"
+    )
+    assert expected == (
+        "Hola, Edith García Pérez. Soy del equipo de Dra. Nina.\n\n"
+        "Completaste el formulario para recibir información sobre "
+        "Alimenta tu Tiroides. Si tienes alguna duda, puedo ayudarte. También "
+        "puedo enviarte el enlace para que continúes cuando quieras."
     )
     assert decisions[-1].decision == "execute"
     assert authority.events == [
@@ -1470,7 +1590,7 @@ def test_the_form_first_contact_sends_its_own_approved_template(tmp_path: Path) 
     assert message["template_params"] == {
         "name": FORM_TEMPLATE,
         "category": "MARKETING",
-        "language": "es_EC",
+        "language": "es_MX",
         "processed_params": {
             "body": {"1": "Edith García Pérez", "2": "Alimenta tu Tiroides"}
         },
@@ -1483,7 +1603,7 @@ def test_the_form_first_contact_final_gate_records_its_own_template(
     tmp_path: Path,
 ) -> None:
     authority = _Authority(offer_code="gopi6lh7", anchor_type=FORM_ANCHOR)
-    chatwoot = _Chatwoot()
+    chatwoot = _Chatwoot(ATT1_CATALOG)
 
     _run(
         _dispatcher(
@@ -1510,9 +1630,11 @@ def test_the_form_first_contact_without_its_template_is_never_sent(
     # pasa por el gate final ni arranca el pedido, y no usa la plantilla del
     # carrito. Cierra la accion en el primer intento.
     authority = _Authority(offer_code="gopi6lh7", anchor_type=FORM_ANCHOR)
-    chatwoot = _Chatwoot()
+    chatwoot = _Chatwoot(ATT1_CATALOG)
 
-    decisions = _run(_dispatcher(authority, chatwoot, tmp_path))
+    decisions = _run(
+        _dispatcher(authority, chatwoot, tmp_path, template=ATT1_WITHOUT_FORM_TEMPLATE)
+    )
 
     assert decisions[-1].decision == "execute"
     assert authority.events == ["reevaluate", "reserve"]
@@ -1531,8 +1653,10 @@ def test_the_composition_refuses_the_form_anchor_without_its_template(
     # modo directo tampoco arma nada, con el motivo propio y sin leer el
     # catalogo.
     authority = _Authority(offer_code="gopi6lh7", anchor_type=FORM_ANCHOR)
-    chatwoot = _Chatwoot()
-    dispatcher = _dispatcher(authority, chatwoot, tmp_path)
+    chatwoot = _Chatwoot(ATT1_CATALOG)
+    dispatcher = _dispatcher(
+        authority, chatwoot, tmp_path, template=ATT1_WITHOUT_FORM_TEMPLATE
+    )
 
     composition = asyncio.run(
         dispatcher._compose_approved_template_proposal(  # type: ignore[attr-defined]
@@ -1588,7 +1712,7 @@ def test_the_real_supabase_client_uses_the_first_contact_rpcs_for_its_anchor(
     # cliente usan solo las RPC propias, las dos veces que reevaluan.
     authority = _Authority(offer_code="gopi6lh7", anchor_type=FORM_ANCHOR)
     postgrest = _FirstContactPostgREST(authority)
-    chatwoot = _Chatwoot()
+    chatwoot = _Chatwoot(ATT1_CATALOG)
     client = chatwoot.client()
     dispatcher = DurableDispatcher(
         supabase=postgrest.client(),

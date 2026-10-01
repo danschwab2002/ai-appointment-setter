@@ -2115,3 +2115,119 @@ def test_the_sender_blocks_the_first_contact_of_the_form_without_its_template() 
     assert cart.status == "sent"
     [message] = inbox.posts("/conversations/200/messages")
     assert message["template_params"]["name"] == "att1_carrito_abandonado_01"  # type: ignore[index]
+
+
+# ── Las tres plantillas de ATT1 contra el catalogo capturado del inbox 11 ──
+#
+# chatwoot_inbox_11_message_templates_20261001.json: el catalogo del inbox 11
+# leido por psql de channel_whatsapp.message_templates el 2026-10-01. Lo que
+# el sender pone en template_params (nombre, idioma, categoria y las claves de
+# processed_params.body) tiene que ser lo que Meta aprobo para cada plantilla:
+# si no, Meta rechaza el envio despues de empezado el pedido.
+
+_CAPTURED_INBOX_11 = json.loads(
+    (_FIXTURES / "chatwoot_inbox_11_message_templates_20261001.json").read_text(
+        encoding="utf-8"
+    )
+)
+_ATT1_TEMPLATE_BY_TRIGGER = {
+    "cart_abandonment": "att1_carrito_abandonado_01",
+    "payment_failure": "att1_compra_fallida_01",
+    PRECHECKOUT_TRIGGER: "att1_interes_precheckout_01",
+}
+
+
+def _captured_att1(template_name: str) -> dict[str, object]:
+    [template] = [
+        t for t in _CAPTURED_INBOX_11["templates"] if t["name"] == template_name
+    ]
+    return template
+
+
+def _captured_att1_placeholders(template_name: str) -> list[str]:
+    [body] = [
+        c for c in _captured_att1(template_name)["components"]  # type: ignore[union-attr]
+        if c["type"] == "BODY"
+    ]
+    return sorted(set(re.findall(r"\{\{(\d+)\}\}", body["text"])))
+
+
+def _att1_templates_with_the_form() -> WhatsAppTemplateConfig:
+    return _att1_templates(
+        precheckout_name="att1_interes_precheckout_01",
+        precheckout_body_parameters=("nombre", "producto"),
+    )
+
+
+@pytest.mark.parametrize("trigger_kind", sorted(_ATT1_TEMPLATE_BY_TRIGGER))
+def test_each_att1_trigger_fills_exactly_what_the_captured_template_declares(
+    trigger_kind: str,
+) -> None:
+    name = _ATT1_TEMPLATE_BY_TRIGGER[trigger_kind]
+    captured = _captured_att1(name)
+
+    params = _att1_templates_with_the_form().params(
+        content="copy",
+        followup=False,
+        buyer_name="Ana",
+        product_name="Alimenta tu Tiroides",
+        trigger_kind=trigger_kind,
+    )
+
+    assert _captured_att1_placeholders(name) == ["1", "2"]
+    assert params == {
+        "name": captured["name"],
+        "category": captured["category"],
+        "language": captured["language"],
+        "processed_params": {"body": {"1": "Ana", "2": "Alimenta tu Tiroides"}},
+    }
+    assert sorted(params["processed_params"]["body"]) == (  # type: ignore[index]
+        _captured_att1_placeholders(name)
+    )
+    assert captured["status"] == "APPROVED"
+
+
+@pytest.mark.parametrize("trigger_kind", sorted(_ATT1_TEMPLATE_BY_TRIGGER))
+def test_the_sender_sends_each_att1_trigger_as_the_captured_template(
+    trigger_kind: str,
+) -> None:
+    name = _ATT1_TEMPLATE_BY_TRIGGER[trigger_kind]
+    captured = _captured_att1(name)
+    inbox = _WhatsAppCloudInbox()
+    sender = _templated_sender(inbox, _att1_templates_with_the_form())
+
+    result = _first_touch(
+        sender, MX_FORM, product_name="Alimenta tu Tiroides", trigger_kind=trigger_kind,
+    )
+
+    assert result.status == "sent"
+    [message] = inbox.posts("/conversations/200/messages")
+    template_params = message["template_params"]
+    assert (
+        template_params["name"],  # type: ignore[index]
+        template_params["language"],  # type: ignore[index]
+        template_params["category"],  # type: ignore[index]
+    ) == (captured["name"], captured["language"], captured["category"])
+    assert sorted(template_params["processed_params"]["body"]) == (  # type: ignore[index]
+        _captured_att1_placeholders(name)
+    )
+
+
+def test_one_declared_variable_does_not_fill_the_captured_att1_form_template() -> None:
+    # att1_interes_precheckout_01 tiene {{1}} y {{2}}: una instancia que declare
+    # solo "nombre" mandaria un cuerpo que Meta no aprobo. El sender no lee el
+    # catalogo; lo frena el modo directo (parse_approved_template).
+    params = _att1_templates(
+        precheckout_name="att1_interes_precheckout_01",
+        precheckout_body_parameters=("nombre",),
+    ).params(
+        content="copy",
+        followup=False,
+        buyer_name="Ana",
+        product_name="Alimenta tu Tiroides",
+        trigger_kind=PRECHECKOUT_TRIGGER,
+    )
+
+    assert sorted(params["processed_params"]["body"]) != (  # type: ignore[index]
+        _captured_att1_placeholders("att1_interes_precheckout_01")
+    )
