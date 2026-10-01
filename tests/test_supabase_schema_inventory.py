@@ -178,7 +178,8 @@ def test_precheckout_readiness_fingerprint_binds_timer_to_exact_policy() -> None
 
 def test_whatsapp_phone_equivalence_fingerprint_checks_the_portable_functions() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    fingerprint = sql.split("'20261001000100'", 1)[1].split(")\nselect", 1)[0]
+    # Hasta la fila siguiente: las cuentas de abajo son de esta migracion sola.
+    fingerprint = sql.split("'20261001000100'", 1)[1].split("'20261001000200'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", fingerprint)
 
     for signature in (
@@ -207,11 +208,55 @@ def test_whatsapp_phone_equivalence_fingerprint_checks_the_portable_functions() 
     assert "whatsapp_phone_equivalence_portable_runtime" in fingerprint
 
 
+def test_portable_precheckout_first_contact_fingerprint_checks_table_checks_and_functions() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    fingerprint = sql.split("'20261001000200'", 1)[1].split(")\nselect", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", fingerprint)
+
+    for signature in (
+        "public._portable_precheckout_stop_reason(uuid,uuid)",
+        "public._find_portable_precheckout_contact(uuid)",
+        "public._ensure_portable_precheckout_contact(uuid,uuid)",
+        "public._plan_portable_precheckout_first_contact(uuid,uuid,uuid,text,integer)",
+        "public.admit_and_plan_portable_lead_precheckout(text,text,integer,text,jsonb,jsonb,text,integer)",
+        "public.reevaluate_portable_precheckout_action(uuid,text,bigint,timestamptz,boolean,text,"
+        "text,timestamptz,text,boolean,boolean,boolean,boolean,boolean)",
+        "public.mark_portable_precheckout_request_started(uuid,uuid,text,bigint,timestamptz)",
+        "public.get_portable_precheckout_pilot_runtime_status(text,integer,text,text,text)",
+    ):
+        assert f"to_regprocedure('{signature}')" in compact_fingerprint, signature
+    assert "proname" not in fingerprint
+    # La tabla del resultado de cada plan: con RLS y sin privilegios de
+    # service_role. Los cuatro helpers, tampoco ejecutables por service_role.
+    assert "to_regclass('public.portable_precheckout_first_contact_plans')" in compact_fingerprint
+    assert "relrowsecurity" in fingerprint
+    assert compact_fingerprint.count("nothas_table_privilege('service_role',oid,") == 2
+    assert "nothas_function_privilege('service_role',oid,'EXECUTE')" in compact_fingerprint
+    # Los tres checks con su valor nuevo.
+    for constraint, value in (
+        ("recovery_cases_source_check", "landing"),
+        ("recovery_case_events_event_role_check", "precheckout_intent"),
+        ("followup_sequences_reason_check", "precheckout_intent"),
+    ):
+        assert (
+            f"conname='{constraint}'andposition('{value}'inpg_get_constraintdef(oid))>0"
+            in compact_fingerprint
+        ), constraint
+    # El plan corre los triggers diferidos adentro del bloque, la reevaluacion
+    # delega en la compartida y el arranque vuelve a mirar los frenos.
+    assert "position('setconstraintsallimmediate'indefinition)>0" in compact_fingerprint
+    assert "position('public.reevaluate_followup_action('indefinition)>0" in compact_fingerprint
+    assert compact_fingerprint.count("position('_portable_precheckout_stop_reason('indefinition)>0") == 3
+    assert "position('_lancemos_pilot_audience_intent('indefinition)>0" in compact_fingerprint
+    assert "position('chatwoot-opt-out-user'indefinition)>0" in compact_fingerprint
+    assert "portable_precheckout_first_contact" in fingerprint
+
+
 def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
 
-    assert len(allowlisted) == 112
+    assert len(allowlisted) == 116
     assert (
         "claim_conversation_followup_v1(bigint, bigint, bigint, text, text, text, text, text, "
         "text, text, bigint, bigint, integer, text, timestamp with time zone)"
