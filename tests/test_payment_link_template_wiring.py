@@ -2,8 +2,7 @@
 
 Recorre la app entera con los stubs de ``test_webhook.py`` y el catalogo de
 plantillas capturado del inbox 9 (``chatwoot_message_templates_inbox_9_20261001.json``),
-con la plantilla del link armada como en ``test_payment_link_template.py``.
-PENDIENTE: la captura real de ``johanna_enlace_pago_01`` cuando Meta la apruebe.
+con ``johanna_enlace_pago_01`` tal como la aprobo Meta.
 """
 
 from __future__ import annotations
@@ -215,7 +214,7 @@ def test_configured_template_sends_the_link_in_its_button(tmp_path: Path) -> Non
         None,
         {
             "name": LINK_TEMPLATE,
-            "category": "UTILITY",
+            "category": "MARKETING",
             "language": "es_EC",
             "processed_params": {
                 "buttons": [{
