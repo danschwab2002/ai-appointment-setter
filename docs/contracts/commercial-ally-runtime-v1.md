@@ -111,6 +111,13 @@ La transacción conserva las semánticas existentes de `inserted`, `duplicate` y
 reevaluaciones ni crea actions, commands, messages o delivery attempts. La RPC
 legada `admit_observed_lead_precheckout` no cambió.
 
+Con `PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED` (apagado por defecto, solo con
+manifiesto v2) el bridge llama a `admit_and_plan_portable_lead_precheckout`, que
+invoca esa misma admisión sin cambiarla y, si el envío es nuevo, planifica el
+primer contacto del formulario. Lo que escribe el plan y cuándo no planifica
+está en [portable-precheckout-first-contact-v1.md](portable-precheckout-first-contact-v1.md).
+Sin el flag, la admisión es la de arriba y no crea nada más.
+
 ### Hotmart salida de carrito portable
 
 `PORTABLE_HOTMART_RECOVERY_ENABLED` es `false` por defecto y requiere un
@@ -171,7 +178,13 @@ criterio es el de Johanna sin sus valores fijos y vive en
   no provisional y sin `identity_conflict`, `tracking_incomplete` ni
   `expired_unknown`;
 - tiene `whatsapp_contact_authorized` y `activation_authorized`;
-- su teléfono es el de destino y es un punto de contacto del contacto;
+- su teléfono es el de destino y es un punto de contacto del contacto. Desde
+  `20261001000100` las dos comparaciones son en forma canónica (`52…` ≡ `521…`,
+  `54…` ≡ `549…`);
+- el teléfono del contacto (`contacts.phone`, que es adonde sale el envío) es
+  canónicamente el de la intención (desde `20261001000100`);
+- no hay un opt-out de Chatwoot de la cuenta del binding en ninguna de las dos
+  formas del teléfono (desde `20261001000100`);
 - tiene vinculado un envío `lead.precheckout` 1.1.0 con
   `consent.whatsapp_contact` y `consent.marketing_optin` en `true`, la
   `consent_copy_version` del binding activo y ningún conflicto abierto.
@@ -183,13 +196,16 @@ Dos condiciones del criterio de Johanna no se repiten en el helper, a propósito
 
 Si falla algo, el helper devuelve un motivo distinto por cada caso
 (`consented_intent_not_live`, `consented_intent_not_authorized`,
-`consented_intent_phone_mismatch`, `consented_intent_submission_missing`, entre
+`consented_intent_phone_mismatch`, `consented_intent_contact_phone_mismatch`,
+`consented_intent_prior_opt_out`, `consented_intent_submission_missing`, entre
 otros). No es un entrypoint: ningún rol de la API ni `service_role` lo ejecuta.
 
 Con el contacto bloqueado, y solo si no existe una fila de permiso activa, la RPC
 inserta `contact_authorizations` `allowed` con fuente `system` y evidencia
 `reason=precheckout_whatsapp_consent`, la intención, el envío, la
-`consent_copy_version`, el evento y el caso. Una fila activa de cualquier estado
+`consent_copy_version`, el evento y el caso, y desde `20261001000100`
+`phone_match`: `exact` si el teléfono de destino es textualmente el de la
+intención, `whatsapp_equivalent` si es la otra forma del mismo móvil. Una fila activa de cualquier estado
 gana: un opt-out previo no se pisa y un replay no duplica el permiso. Sin
 consentimiento no se concede nada y la reevaluación escala con
 `contact_authorization_unknown`.
@@ -257,7 +273,8 @@ es `enabled=false` y `max_lookback` es la única política temporal durable; no 
 presupone una ventana de 24 horas.
 
 La correlación considera exclusivamente intents del mismo binding, producto y
-oferta, dentro del lookback provisionado. Los outcomes append-only son
+oferta, dentro del lookback provisionado. Desde `20261001000100` el teléfono se
+compara por sus dos formas en las consultas de candidatos. Los outcomes append-only son
 `resolved`, `unmatched`, `ambiguous` y `conflict`. Sólo `resolved` cambia el intent
 exacto a `purchased`, desactiva `activation_authorized` y cancela o supersede
 atómicamente cualquier reevaluación ya existente. Los otros outcomes no mutan
@@ -357,3 +374,44 @@ Las landings de una aliada pueden estar en sitios y hosts distintos: ATT1 tiene 
 - **Una intención por oferta:** la misma persona en dos landings deja dos intenciones, una por oferta, como el modelo de seis landings de Johanna. Así el carrito y el pago fallido de cada oferta encuentran su intención.
 - **Manifiesto v2:** `to_commercial_ally_config` llena la lista con el sitio, la landing y la URL de cada oferta de `[[hotmart.ofertas]]` que no es la por defecto.
 - **Orden de despliegue:** la migración, después la fila del binding con sus landings, y después el bridge. Un bridge nuevo con manifiesto sobre la fila vieja ve drift: `/ready` responde `503 commercial_ally_binding_unavailable` y, con la proyección de Slack prendida, el arranque falla. Una fila ya sembrada se completa en el lugar (no con un `binding_version` nuevo, que dejaría sin planificar los eventos admitidos con la versión vigente); el `UPDATE` exacto para ATT1, con su verificación, está en `docs/instalar.md` (paso 9, "Actualizar el bridge de una instancia que ya tiene la base sembrada"). Antes de desplegar hay que confirmar si la fila de la instancia ya existe.
+
+## Equivalencia de teléfonos de WhatsApp (2026-10-01, migración `20261001000100`)
+
+El mismo móvil llega con dos formas. El formulario (el adaptador de GHL y `/webhooks/lead`) guarda `52` + 10 dígitos en México y `54` + 10 en Argentina; Hotmart y el `wa_id` de WhatsApp traen `521` + 10 y `549` + 10. Con la comparación exacta, el lead que dejó el formulario se perdía antes del permiso: el correlador lo encontraba por email y no por teléfono, daba `conflict`, la intención quedaba en `identity_conflict` y el pago fallido moría en `payment_failure_correlation_unresolved`. La compra portable tampoco marcaba `purchased`.
+
+**La regla.** Se compara en forma canónica y **no se reescribe nada al guardar**: lo guardado se sigue validando contra el payload crudo de cada fuente.
+
+- `_whatsapp_phone_canonical(text)`: deja solo los dígitos y reescribe únicamente `521` + 10 dígitos a `52` + 10 y `549` + 10 a `54` + 10. Va anclada por largo (13 dígitos): un nacional de 10 dígitos que empieza con 1 o con 9 queda igual a sí mismo.
+- `_whatsapp_phone_variants(text)`: las formas que comparten canónica (una o dos), para buscar con `= any(...)`.
+- Brasil (el noveno dígito) queda afuera: no hay medición.
+- Las dos son privadas: ningún rol de la API las ejecuta. `bridge/phones.py` es su espejo en Python.
+
+**Qué cambia en la base.** La migración solo crea y reemplaza funciones; no toca tablas ni filas.
+
+- `_correlate_portable_hotmart_purchase_intent(uuid)`: el correlador portable, derivado del compartido ([hotmart-purchase-intent-correlation-v1.md](hotmart-purchase-intent-correlation-v1.md), §8). `admit_portable_hotmart_cart_abandonment` y `admit_portable_hotmart_payment_failure` pasan a llamarlo.
+- `admit_portable_hotmart_purchase_approved` compara el teléfono por sus formas.
+- `_portable_consented_intent_reason` compara el destino y el punto de contacto en forma canónica, y suma dos chequeos:
+  - `consented_intent_contact_phone_mismatch`: `contacts.phone`, que es adonde sale el envío, tiene que ser canónicamente el teléfono consentido;
+  - `consented_intent_prior_opt_out`: no hay un opt-out de Chatwoot (`contact_opt_out_events`) de la cuenta del binding en ninguna de las dos formas, en los estados que frena el arranque del envío. Un opt-out guardado como `unmatched` bajo `521…` no frenaba a una identidad `52…`.
+
+  Los dos corren al planificar y al arrancar el envío, en carrito y en pago fallido, en los modos de audiencia con consentimiento (el helper lo usa la frontera del piloto a través de `_lancemos_pilot_audience_intent`, que no se redefine). La comparación del envío del formulario con su propia intención queda exacta: son la misma fuente.
+- `plan_portable_payment_failure_recovery` compara en forma canónica y deja `phone_match` en la evidencia del permiso.
+- **Un cambio de resultado:** con un opt-out previo, un pago fallido en un scope con consentimiento ya no se planifica (`pilot_scope_rejected` con `pilot_audience_consented_intent_prior_opt_out`). Antes se planificaba y lo frenaba la reevaluación.
+
+**Qué cambia en el bridge, solo con manifiesto.**
+
+- **Resolución del evento de Hotmart.** `resolve_event` busca el contacto por las formas equivalentes del teléfono (`find_contact_by_phones`); es ambiguo solo si las filas son de contactos distintos. El punto de contacto y la identidad se siguen guardando crudos.
+- **Mensaje entrante.** Si entre las formas del `wa_id` hay exactamente una identidad activa del inbox y no es la textual, se usa la guardada: así el opt-out, la admisión y el enlace caen en el contacto que ya existe. Con más de una se usa la textual, con un warning que lleva ids de Chatwoot y la región, nunca el número. Si la lectura falla, el trabajo queda para reintentar. Lo que se valida contra Chatwoot sigue siendo el `wa_id` textual.
+- **Opt-out del entrante.** El chequeo que frena una respuesta mira el opt-out en todas las formas, no solo en la resuelta.
+- **Proyecciones a Chatwoot** (la macro de opt-out, la asignación y la nota de la derivación): prueban la forma guardada y, ante `conversation_identity_mismatch`, la otra forma del mismo móvil.
+- **Primer contacto por el dispatcher.** El destinatario se resuelve antes del gate final, buscando las dos formas en Chatwoot ([approved-template-direct-dispatch-v1.md](approved-template-direct-dispatch-v1.md), "El destinatario").
+
+**Con qué forma se manda** y se crea el contacto de Chatwoot lo decide `whatsapp_delivery_phone`: México como `521` + 10, Argentina como `54` + 10, cualquier otro igual a sí mismo. Sale de una medición del 2026-10-01 sobre el Chatwoot de producción (versión 4.13), detallada en [portable-precheckout-first-contact-v1.md](portable-precheckout-first-contact-v1.md#teléfonos-las-dos-formas-del-mismo-móvil). La medición es de otro inbox y no prueba el envío en ATT1: ahí se confirma en el E2E.
+
+**Fuera de este cambio.** Los seguimientos (`no_reply_review`) siguen usando el teléfono del contacto tal como está guardado. La reactivación y el descuento post-respuesta comparan el `external_user_id` exacto.
+
+**Johanna no cambia.** No se redefine nada de lo que ejecuta: `correlate_hotmart_purchase_intent`, `_admit_hotmart_purchase_intent_identity`, sus admisiones, el opt-out de Chatwoot, `mark_followup_request_started` ni `reevaluate_followup_action`. Lo de Python entra solo con manifiesto. `validate_whatsapp_phone_equivalence.mjs` compara `pg_get_functiondef` de todas las funciones de `public` antes y después de la migración: cambian las cinco reemplazadas, se suman tres y ninguna otra.
+
+## Entrante primero, Hotmart después (límite conocido, 2026-10-01)
+
+Quien escribió primero por WhatsApp tiene un contacto sin email, teléfono ni puntos: solo la identidad con su `wa_id`. Si después abandona el carrito o falla el pago, `resolve_event` busca por email y por punto de teléfono y no lo encuentra; al planificar, la identidad del mismo `wa_id` ya es de otro contacto (`channel_identity_contact_mismatch`) y el evento queda `create_recovery_case_failed`. Falla cerrado: se pierde esa recuperación y no se manda nada indebido. Sale de leer el código; ningún test fija todavía ese recorrido. El primer contacto del formulario sí cubre el caso (busca el contacto también por identidad y le completa los datos).

@@ -2,8 +2,8 @@
 
 - **Estado:** construido; apagado por defecto; sin E2E real.
 - **Fecha:** 2026-09-30
-- **Alcance:** el primer contacto del carrito y del pago fallido que sale por el dispatcher durable de una instancia con manifiesto v2 y salida por WABA.
-- **Relacionados:** [instance-runtime-v2.md](instance-runtime-v2.md), [lancemos-pilot-boundary-runtime-v1.md](lancemos-pilot-boundary-runtime-v1.md), [referencia-manifiesto.md](../referencia-manifiesto.md#plantillas), [lead-first-name-inference-v1.md](lead-first-name-inference-v1.md).
+- **Alcance:** el primer contacto del carrito, del pago fallido y, desde el bridge 1.3.0, del formulario de la landing, que sale por el dispatcher durable de una instancia con manifiesto v2 y salida por WABA.
+- **Relacionados:** [instance-runtime-v2.md](instance-runtime-v2.md), [lancemos-pilot-boundary-runtime-v1.md](lancemos-pilot-boundary-runtime-v1.md), [referencia-manifiesto.md](../referencia-manifiesto.md#plantillas), [lead-first-name-inference-v1.md](lead-first-name-inference-v1.md), [portable-precheckout-first-contact-v1.md](portable-precheckout-first-contact-v1.md).
 
 ## Por qué existe
 
@@ -22,13 +22,14 @@ En el modo directo el dispatcher arma el texto con el cuerpo aprobado del catál
 | `DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED` | `false` | Prende el modo directo del dispatcher |
 | `LEAD_FIRST_NAME_GREETING_ENABLED` | `false` | Con el modo directo, la variable `nombre` lleva el saludo por primer nombre. En un runtime portable se admite solo con el modo directo: sin él el bridge no arranca |
 | `WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY` | vacía | Solo con manifiesto. La categoría de Meta de la plantilla del pago fallido cuando no es la de `WABA_TEMPLATE_CATEGORY` (`MARKETING` o `UTILITY`). Vacía, todas las plantillas usan `WABA_TEMPLATE_CATEGORY`. Exige `WABA_PAYMENT_FAILURE_TEMPLATE_NAME` |
+| `WABA_PRECHECKOUT_TEMPLATE_NAME` | vacía | Solo con manifiesto. La plantilla del primer contacto del formulario; tiene que ser `plantillas.precheckout.nombre`. Entra a la configuración del dispatcher solo con `PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED`. Usa `WABA_TEMPLATE_CATEGORY` y `WABA_TEMPLATE_LANGUAGE` |
 
 Con `DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED=true` el bridge no arranca si falta alguna de estas condiciones:
 
 - `INSTANCE_MANIFEST_PATH` (un manifiesto v2);
 - `DURABLE_OUTBOUND_ENABLED=true`, que ya exige la frontera del piloto;
 - `LANCEMOS_PILOT_CHANNEL_PROVIDER=waba` y las variables `WABA_*` de la plantilla;
-- un flujo portable de recuperación prendido (`PORTABLE_HOTMART_RECOVERY_ENABLED` o `PORTABLE_HOTMART_PAYMENT_FAILURE_ENABLED`), que es lo que le da al dispatcher el binding de la instancia.
+- un flujo portable de salida prendido (`PORTABLE_HOTMART_RECOVERY_ENABLED`, `PORTABLE_HOTMART_PAYMENT_FAILURE_ENABLED` o `PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED`), que es lo que le da al dispatcher el binding de la instancia. El primer contacto del formulario alcanza solo, sin carrito ni pago fallido.
 
 El dispatcher, además, rechaza al construirse un cliente de Hermes, la admisión de derivación, o que le falten las plantillas, el inbox de Chatwoot o el sender.
 
@@ -49,10 +50,10 @@ El candado viejo no se cambió a `ally_ref`: dejaría a ATT1 v2 sin poder abrir 
 
 ## Qué hace el dispatcher con una acción vencida
 
-La reevaluación, la reserva del intento, el chequeo del destinatario, la segunda reevaluación, el gate final, `request_started`, el envío y la aceptación son los mismos del modo con Hermes. Lo que cambia es de dónde sale el texto.
+La reevaluación, la reserva del intento, el chequeo del destinatario, la segunda reevaluación, el gate final, `request_started`, el envío y la aceptación son los mismos del modo con Hermes. Lo que cambia es de dónde sale el texto. Para una acción de ancla `precheckout_intent`, la reevaluación y `request_started` son las RPC propias de ese flujo ([portable-precheckout-first-contact-v1.md](portable-precheckout-first-contact-v1.md)); el bridge las elige por el `anchor_type`.
 
 1. **Solo `first_contact_review`.** Cualquier otra acción (un seguimiento `no_reply_review`) se cierra con `approved_template_direct_unsupported_action`, sin consultar a nadie y sin reintento.
-2. **La plantilla** se elige como hasta ahora: la de `pago_fallido` si la acción viene de un pago fallido y hay una propia, si no la de `carrito`.
+2. **La plantilla** se elige por el ancla de la acción. `payment_failure`: la de `pago_fallido` si hay una propia, si no la de `carrito`. `cart_abandonment`: la de `carrito`. `precheckout_intent`: la de `precheckout`, y **sin préstamo**: si no está configurada, el intento se cierra con `first_touch_template_not_configured`, sin reintento, antes de leer el catálogo, del gate final y de `request_started`. El sender repite ese corte antes de tocar Chatwoot. Un primer contacto del formulario nunca sale con la plantilla del carrito.
 3. **Las variables** salen de `parametros` de esa plantilla en el manifiesto ([referencia-manifiesto.md](../referencia-manifiesto.md#plantillas)). Si el runtime no las tiene declaradas (el flujo está en `false`), el intento se cierra con `approved_template_mismatch`: el dispatcher no adivina el cuerpo. Si una variable declarada llega vacía (sin nombre o sin producto), se cierra con `template_parameters_missing` antes de leer el catálogo. Cada valor sale con los espacios colapsados (`WhatsAppTemplateConfig.body_values`): Meta rechaza (132018) un parámetro con salto de línea, tabulación o más de cuatro espacios seguidos, y lo rechaza después de empezado el pedido. El texto hasheado y `processed_params` salen de esos mismos valores; el contacto de Chatwoot conserva el nombre tal como llegó.
 4. **El saludo.** Con `LEAD_FIRST_NAME_GREETING_ENABLED=true`, `nombre` es `resolve_greeting_name(nombre completo)`: la inferencia `confident` guardada si hay, si no el primer nombre determinístico, si no el nombre completo. El contacto de Chatwoot se sigue creando con el nombre completo.
 5. **El catálogo** se lee en cada envío (`GET /api/v1/accounts/{cuenta}/inboxes/{inbox}`) con el token de control, igual que la reactivación. Una plantilla que Meta pausa o rechaza corta el envío en vez de producir mensajes rechazados.
@@ -60,6 +61,22 @@ La reevaluación, la reserva del intento, el chequeo del destinatario, la segund
 7. **El envío** pasa a `send_first_touch` el mismo saludo como `greeting_name`, así que la variable que recibe Meta y el texto que se hasheó salen del mismo valor.
 
 La propuesta interna queda como `strategy = "approved_template:<nombre>"`. No se guarda en ningún lado; sirve para los logs.
+
+### El destinatario
+
+Desde el bridge 1.3.0, en un runtime con destinatario dinámico (un flujo portable de salida prendido) el dispatcher resuelve a quién le va a escribir **antes** de la reevaluación final, del gate final y de `request_started`. El mismo móvil puede estar en Chatwoot con dos formas (`52` + 10 dígitos o `521` + 10 en México; `54` + 10 o `549` + 10 en Argentina).
+
+1. **Busca las dos formas** en Chatwoot, solo con lecturas (`resolve_first_touch_recipient`).
+   - Existe un contacto: es el destinatario, con su `source_id`.
+   - Existen los dos: el de forma WhatsApp (`521…`, `549…`), que es donde cae una respuesta. Queda un warning con el inbox, la región y los ids de Chatwoot, nunca el número.
+   - No existe ninguno: el destinatario es la forma de entrega, y el contacto se crea con ella al mandar.
+2. **La forma de entrega** la decide una sola función, `whatsapp_delivery_phone`: México como `521` + 10, Argentina como `54` + 10, cualquier otro número igual a sí mismo. Sale de una medición del 2026-10-01 sobre el Chatwoot de producción (versión 4.13), en otro inbox; el detalle está en [portable-precheckout-first-contact-v1.md](portable-precheckout-first-contact-v1.md#teléfonos-las-dos-formas-del-mismo-móvil). No prueba el envío en ATT1: ahí se confirma en el E2E.
+3. **El gate final recibe ese `wa_id`.** `target_phone` del efecto final, y su hash en la evidencia, son los del número que Meta va a recibir, no los del teléfono como lo guarda el contacto.
+4. **Si no es el teléfono consentido, no sale.** Cuando el `wa_id` resuelto no es canónicamente el teléfono del caso, el intento se cierra con `chatwoot_recipient_phone_mismatch`, sin reintento.
+5. **Si Chatwoot falla** en esa búsqueda, el intento se cierra con `pre_request_failed` y el lote sigue. La búsqueda es anterior a `request_started`.
+6. **El envío no vuelve a buscar.** `send_first_touch` recibe el destinatario ya resuelto. Si el contacto recién creado queda con otro `source_id` que el esperado, no manda (`contact_inbox_source_mismatch`).
+
+Sin manifiesto (Johanna) nada de esto corre: el sender y el dispatcher nacen con la equivalencia apagada y el destinatario es el de siempre.
 
 ### Qué exige del catálogo
 
@@ -82,12 +99,14 @@ La plantilla se busca por nombre **y** idioma, porque Meta admite el mismo nombr
 | Un valor vacío al renderizar | `template_parameters_missing` | `empty_parameter` |
 | Un valor con salto de línea, tabulación o más de cuatro espacios seguidos al renderizar (uno que no pasó por `body_values`) | `template_parameters_missing` | `invalid_parameter_whitespace` |
 
+Hay dos cierres que no dependen del catálogo: `first_touch_template_not_configured` (el primer contacto del formulario sin su plantilla, antes de leerlo) y `chatwoot_recipient_phone_mismatch` (el destinatario resuelto no es el teléfono consentido, después de armar el texto y antes del gate final).
+
 Todos cierran el intento con `failed_before_request`: no se marcó `request_started` ni salió ningún POST. El `reason_code` es texto libre en la base, así que no hace falta migración.
 
 ### Cuándo se reintenta
 
 - **Lo que puede arreglarse solo se reintenta:** el catálogo que no responde, una plantilla que no está, está pausada o no cierra con idioma, categoría, marcadores o botones (`approved_template_unavailable`, `approved_template_mismatch` del catálogo). El dispatcher pide otro intento al minuto; la base lo concede mientras la acción tenga reintentos (`max_execution_retries`, 3 por defecto: cuatro intentos en total) y no haya vencido, y después la cierra como `permanent_failed` con el último motivo. Cada reintento vuelve a leer el catálogo.
-- **Lo que no cambia solo cierra la acción en el primer intento** como `permanent_failed`, sin pedir otro: la acción que no es primer contacto (`approved_template_direct_unsupported_action`), las variables que el runtime no declara (`approved_template_mismatch` sin `parametros`) y un valor del caso que falta o que Meta rechaza (`template_parameters_missing`). Reintentarlos solo volvía a reclamar la acción y a leer el catálogo tres veces más para llegar al mismo cierre.
+- **Lo que no cambia solo cierra la acción en el primer intento** como `permanent_failed`, sin pedir otro: la acción que no es primer contacto (`approved_template_direct_unsupported_action`), las variables que el runtime no declara (`approved_template_mismatch` sin `parametros`), un valor del caso que falta o que Meta rechaza (`template_parameters_missing`), el primer contacto del formulario sin su plantilla (`first_touch_template_not_configured`) y un destinatario que no es el teléfono consentido (`chatwoot_recipient_phone_mismatch`). Reintentarlos solo volvía a reclamar la acción y a leer el catálogo tres veces más para llegar al mismo cierre.
 
 ## Qué no cambia
 
@@ -97,14 +116,15 @@ Todos cierran el intento con `failed_before_request`: no se marcó `request_star
 
 ## Lo que no está medido
 
-- **El catálogo del inbox 11 de ATT1** (paso A0 del plan). Sin esa captura no se sabe qué variables, categoría y botones tienen `att1_carrito_abandonado_01` y `att1_compra_fallida_01`. Los tests usan el catálogo capturado del inbox 9 del 28/09. Antes de prender el flag, la categoría de cada plantilla se lee en esa captura: si la del pago fallido no es la del carrito, va en `WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY`. Si el catálogo real no cierra con `parametros`, cada acción termina en `permanent_failed` con `approved_template_mismatch` después de cuatro intentos, uno por minuto.
+- **El catálogo del inbox 11 de ATT1 está capturado, no su respuesta por la API.** `tests/fixtures/chatwoot_inbox_11_message_templates_20261001.json` es la columna `message_templates` del canal, leída el 2026-10-01: `att1_carrito_abandonado_01`, `att1_compra_fallida_01` y `att1_interes_precheckout_01` tienen dos variables, idioma `es_MX`, categoría `MARKETING` y tres botones `QUICK_REPLY`, así que con esa captura ninguna necesita `WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY`. La cuarta, `att1_descuento_10_post_respuesta_01`, figura en idioma `en` y no cierra con el idioma de la instancia. De `GET /inboxes/11` no hay captura: los tests envuelven la lista como `{"message_templates": …}`. El catálogo puede cambiar después de la captura (Meta pausa o recategoriza una plantilla): si el real no cierra con `parametros`, cada acción termina en `permanent_failed` con `approved_template_mismatch` después de cuatro intentos, uno por minuto.
+- **La forma de entrega en ATT1.** La regla de `whatsapp_delivery_phone` sale de una medición del 2026-10-01 sobre otro inbox del mismo Chatwoot. Ningún envío de ATT1 la confirma todavía, y no hay ningún contacto `549` medido.
 - **Botones `QUICK_REPLY` con solo parámetros de cuerpo.** Las plantillas de Johanna `johanna_carrito_abandonado_01` y `johanna_compra_fallida_01` tienen tres `QUICK_REPLY` en el catálogo del 28/09 y los one-shots de Johanna las mandan con solo `processed_params.body`. No verifiqué que esos envíos sean posteriores a la carga de los botones. La prueba real es el primer envío de ATT1.
 - **El token de control del inbox 11:** el `GET` del inbox lo hace el cliente de control; tiene que tener acceso a ese inbox.
 - **`/ready` no revisa el catálogo.** Un catálogo que no cierra se ve recién en el intento, y cada acción vencida gasta sus cuatro intentos antes de cerrarse. Queda como deuda operativa: un chequeo del catálogo en `/ready` (leer el inbox y validar las plantillas de los flujos prendidos) lo mostraría antes del primer envío. Mientras no exista, se valida el catálogo a mano contra la captura del inbox antes de prender el flag.
 
 ## Pruebas
 
-- `tests/test_approved_templates.py`: el parser contra los dos catálogos capturados del inbox 9 (23/09 y 28/09), cada rama de rechazo y el render.
-- `tests/test_durable_dispatcher_approved_template.py`: el dispatcher con un `ChatwootClient` real sobre un emulador y el `ChatwootMessageSender` real. Cubre las tres ofertas de ATT1 sin Hermes, el pago fallido con su plantilla, el saludo con los nombres capturados (determinístico, inferido y nombre completo), el hash del gate cerrado, una plantilla de una sola variable de punta a punta (`johanna_reactivacion_01` del 23/09: el cuerpo, el hash del gate y `processed_params` llevan solo `{"1"}`), cada plantilla contra su categoría, los catálogos que no cierran (ningún POST), los valores faltantes y los que Meta rechaza, la acción que no es primer contacto y el dispatcher armado por `create_app` sin llamar a Hermes.
+- `tests/test_approved_templates.py`: el parser contra los dos catálogos capturados del inbox 9 (23/09 y 28/09) y el del inbox 11 (2026-10-01), cada rama de rechazo y el render.
+- `tests/test_durable_dispatcher_approved_template.py`: el dispatcher con un `ChatwootClient` real sobre un emulador y el `ChatwootMessageSender` real. Cubre las tres ofertas de ATT1 sin Hermes, el pago fallido con su plantilla, el saludo con los nombres capturados (determinístico, inferido y nombre completo), las tres plantillas de primer contacto del catálogo capturado del inbox 11 (una por ancla), el primer contacto del formulario sin plantilla, el destinatario resuelto antes del gate y el que no es el teléfono consentido, el hash del gate cerrado, una plantilla de una sola variable de punta a punta (`johanna_reactivacion_01` del 23/09: el cuerpo, el hash del gate y `processed_params` llevan solo `{"1"}`), cada plantilla contra su categoría, los catálogos que no cierran (ningún POST), los valores faltantes y los que Meta rechaza, la acción que no es primer contacto y el dispatcher armado por `create_app` sin llamar a Hermes.
 - `tests/test_instance_wiring.py`: los gates de arranque.
-- Entre las dos capas: el mismo archivo corre el dispatcher directo con el `SupabaseClient` real sobre un emulador de PostgREST y compara el modo de la reserva y la RPC de arranque de cada `anchor_type` con lo que declara `tests/sql/followup_engine/validate_att1_portable_chain.mjs` (`DIRECT_DELIVERY_MODE` y `startOperationFor`), que a su vez elige la RPC con el `anchor_type` que escribió el planificador. **Deuda (D10):** ninguna prueba corre el dispatcher contra PostgREST y Postgres reales; si una capa cambia sin que la otra lo declare, las dos siguen en verde.
+- Entre las dos capas: el mismo archivo corre el dispatcher directo con el `SupabaseClient` real sobre un emulador de PostgREST y compara el modo de la reserva, la RPC de arranque y la RPC de reevaluación de cada `anchor_type` (`cart_abandonment`, `payment_failure` y `precheckout_intent`) con lo que declara `tests/sql/followup_engine/validate_att1_portable_chain.mjs` (`DIRECT_DELIVERY_MODE` y las tablas `START_OPERATION_BY_ANCHOR` y `REEVALUATE_OPERATION_BY_ANCHOR`), que a su vez elige cada RPC con el `anchor_type` que escribió el planificador. **Deuda (D10):** ninguna prueba corre el dispatcher contra PostgREST y Postgres reales; si una capa cambia sin que la otra lo declare, las dos siguen en verde.

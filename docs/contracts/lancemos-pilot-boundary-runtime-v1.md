@@ -108,3 +108,38 @@ No expone IDs de contacto, JID, teléfonos, emails, payloads, URLs ni credencial
 - La imagen y `compose.yaml` usan `/ready` como healthcheck.
 - Todas las flags de efectos permanecen apagadas por defecto.
 - Integrar este contrato no prueba migración aplicada, configuración remota, WABA disponible, runtime armado ni mensajes enviados.
+
+## 7. Segundo scope: el primer contacto tras el formulario (2026-10-01, migración `20261001000200`)
+
+La frontera del bridge sigue siendo una (`LANCEMOS_PILOT_SCOPE_KEY`, de fuente `hotmart`). El primer contacto del formulario usa **otro** scope publicado, de fuente `landing` y evento `PRECHECKOUT_FORM_SUBMITTED`, con el mismo tenant, proveedor y cuenta de canal. Un scope publicado tiene una sola fuente, así que no puede ser el mismo. Contrato del flujo: [portable-precheckout-first-contact-v1.md](portable-precheckout-first-contact-v1.md).
+
+- **Configuración.** `LANCEMOS_PILOT_PRECHECKOUT_SCOPE_KEY` y `LANCEMOS_PILOT_PRECHECKOUT_SCOPE_VERSION`, vacías por defecto. Las exige `PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED`, que además exige `LANCEMOS_PILOT_BOUNDARY_ENABLED` y que la clave sea distinta de `LANCEMOS_PILOT_SCOPE_KEY`.
+- **Planificación.** `admit_and_plan_portable_lead_precheckout` recibe `scope_key/version`. Evalúa el scope y la audiencia con `evaluate_lancemos_pilot_scope` y `_lancemos_pilot_audience_intent`, que no se redefinen, y vincula el caso en `pilot_recovery_case_bindings` igual que §2. Un rechazo del scope no se devuelve como error: la admisión del formulario queda y el motivo se guarda en `portable_precheckout_first_contact_plans`. No acepta un scope `manual_cohort`.
+- **Request-start.** El bridge elige la RPC por el `anchor_type` de la acción: `cart_abandonment` → `mark_lancemos_pilot_request_started`, `payment_failure` → `mark_portable_payment_failure_request_started`, `precheckout_intent` → `mark_portable_precheckout_request_started`. Las tres ejecutan `authorize_lancemos_pilot_request_start` y resuelven el scope por el binding inmutable del caso, no por la configuración del proceso. La del primer contacto, además, vuelve a mirar los frenos del flujo con el lock de opt-out tomado; un freno es `pilot_request_start_rejected` con el motivo en `detail` y no consume cupo.
+- **Reevaluación.** Para el ancla `precheckout_intent` el bridge llama a `reevaluate_portable_precheckout_action`, que delega en `reevaluate_followup_action` cuando nada frena. Las otras anclas siguen en `reevaluate_followup_action`.
+- **Readiness.** Con el flag, `/ready` consulta `get_portable_precheckout_pilot_runtime_status` y suma `portable_precheckout_first_contact` con el estado del runtime de ese scope (`inactive`, `armed`, `paused`, `closed`). Un scope mal configurado responde `503` con `portable_precheckout_` más el motivo de §5 (`pilot_runtime_config_invalid`, `pilot_scope_config_mismatch`, `pilot_active_scope_mismatch`); una dependencia inaccesible, `portable_precheckout_readiness_unavailable`. Esa función es una copia de `get_lancemos_pilot_runtime_status` para la fuente `landing`, y además informa `pilot_scope_config_mismatch` para un scope `manual_cohort`. Sin el flag, `/ready` es el de §4.
+- **Topes.** Cada scope tiene sus topes y su cohorte. El total de envíos de un scope cuenta lo consumido por todas sus versiones; no hay un tope compartido entre el scope de recuperación y el del primer contacto.
+
+## 8. Lectura del modo de audiencia (2026-10-01, migración `20261001000300`)
+
+```text
+public.get_lancemos_pilot_scope_audience_mode(p_scope_key text, p_scope_version integer) returns text
+```
+
+Devuelve el `audience_mode` de una versión **publicada**, o `null` si no existe o no está publicada. Es `security definer`, estable y ejecutable solo por `service_role`; no reemplaza ninguna función y no toma locks sobre tablas calientes. Existe porque `pilot_scope_versions` tiene RLS y ningún rol de la API la lee.
+
+La usa una sola guarda: con `[adaptadores.ghl]` en el manifiesto, sin la aceptación escrita del riesgo y con la frontera prendida, el bridge lee el modo del scope de `LANCEMOS_PILOT_SCOPE_KEY` en el arranque (antes de levantar cualquier worker) y en `/ready`, y solo sigue con `manual_cohort`. Motivos, en el arranque y como `detail` del `503` de `/ready`:
+
+- `ghl_adapter_risk_not_accepted`: el scope es `consented_intent` o `consented_intent_in_cohort`;
+- `ghl_adapter_risk_audience_unavailable`: la lectura falla, devuelve `null`, devuelve un modo desconocido o el bridge no tiene Supabase.
+
+En `/ready` va después del chequeo del scope de §4: un scope sin configurar responde su motivo de siempre. Sin la sección, con la aceptación o con la frontera apagada, la función no se llama. Contrato: [ghl-precheckout-adapter-v1.md](ghl-precheckout-adapter-v1.md), *La aceptación escrita del riesgo*.
+
+## 9. Audiencia con consentimiento: dos motivos más (2026-10-01, migración `20261001000100`)
+
+En `consented_intent` y `consented_intent_in_cohort`, la evidencia que se exige al planificar y se vuelve a verificar al arrancar suma dos chequeos, para carrito y pago fallido:
+
+- `pilot_audience_consented_intent_contact_phone_mismatch`: el teléfono del contacto, que es adonde sale el envío, no es el teléfono consentido;
+- `pilot_audience_consented_intent_prior_opt_out`: hay un opt-out de Chatwoot de la cuenta del binding en cualquiera de las dos formas del teléfono.
+
+Las comparaciones de teléfono de esa evidencia pasan a ser en forma canónica (`52…` ≡ `521…`, `54…` ≡ `549…`). En `manual_cohort` nada cambia. Detalle: [commercial-ally-runtime-v1.md](commercial-ally-runtime-v1.md#equivalencia-de-teléfonos-de-whatsapp-2026-10-01-migración-20261001000100).

@@ -1,14 +1,14 @@
 # Contrato: adaptador del formulario de GHL a `lead.precheckout` (v1)
 
-- **Estado:** contrato v1, escrito antes de la implementación (2026-09-30) e implementado en el bridge 1.2.0 (sin publicar), apagado por defecto. No describe nada desplegado.
+- **Estado:** contrato v1, escrito antes de la implementación (2026-09-30) e implementado en el bridge 1.2.0, apagado por defecto. La aceptación escrita del riesgo y sus guardas ([Riesgos](#riesgos)) son del bridge 1.3.0 (sin publicar). No describe nada desplegado.
 - **Endpoint:** `POST /webhooks/adapters/ghl/lead-precheckout`
 - **Emisor:** la acción *Webhook* de un workflow de GHL con disparador *Form submitted*. Es la forma medida el 2026-09-29 por el receptor temporal `ghl-capture-att1` (workflow `b3304158-ec6b-4491-8057-92f695da3db1`).
-- **Salida:** `lead.precheckout` `1.1.0` ([lead-precheckout-v1.md](lead-precheckout-v1.md)), validado por `parse_lead_precheckout` y admitido por `admit_portable_observed_lead_precheckout`, el mismo camino que un formulario de landing en un runtime con manifiesto.
+- **Salida:** `lead.precheckout` `1.1.0` ([lead-precheckout-v1.md](lead-precheckout-v1.md)), validado por `parse_lead_precheckout` y admitido por `admit_portable_observed_lead_precheckout`, el mismo camino que un formulario de landing en un runtime con manifiesto. Con `PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED`, la admisión es `admit_and_plan_portable_lead_precheckout`, que además planifica el primer contacto ([portable-precheckout-first-contact-v1.md](portable-precheckout-first-contact-v1.md)); la respuesta HTTP es la misma.
 - **Origen:** [ADR-0021](../decisions/0021-setter-producto-instalable.md), punto 8 (el centro solo entiende eventos canónicos y cada fuente entra por un adaptador), y la decisión del 2026-09-29 de que el formulario de ATT1 entra por un adaptador del webhook de GHL. Consentimiento: decisión `2026-09-29-att1-consentimiento-por-aclaracion-al-enviar-sin-casilla`.
 
 ## Propósito y límite
 
-Traduce el POST que GHL manda cuando alguien envía un formulario de la landing al evento canónico, y lo admite por el camino de siempre. No escribe nada propio, no guarda el cuerpo de GHL (en `precheckout_submissions` queda solo el evento traducido) y no decide nada comercial.
+Traduce el POST que GHL manda cuando alguien envía un formulario de la landing al evento canónico, y lo admite por el camino de siempre. No escribe nada propio, no guarda el cuerpo de GHL (en `precheckout_submissions` queda solo el evento traducido) y no decide nada comercial: si el envío termina en un primer contacto lo decide el flujo del formulario, con su propio flag y su propio contrato.
 
 Listar un formulario en `[adaptadores.ghl].formularios` afirma dos cosas que el adaptador no puede verificar:
 
@@ -44,10 +44,10 @@ X-Setter-Adapter-Token: <token>        (opcional si el token va en el cuerpo)
   - `"intencion"` en `eventos`;
   - `[adaptadores.ghl]` con al menos un formulario;
   - un token de 32 caracteres o más, distinto de todo otro secreto y valor de texto de la configuración del bridge (`LEAD_PRECHECKOUT_SECRET`, `CHATWOOT_WEBHOOK_SECRET`, el token del primer contacto, los de Hotmart, Slack, Supabase, Hermes, OpenRouter, etc.): lo lee cualquier usuario de la subcuenta de GHL, y repetido le daría esa otra autoridad;
-  - `[flujos].precheckout` en `false` (ver [Riesgos](#riesgos)).
 - Apagado, ninguna de esas condiciones se evalúa: un runtime sin token ni manifiesto arranca igual que hoy.
 - No depende de `LEAD_PRECHECKOUT_ENABLED` ni de su secreto.
-- `/ready` agrega `ghl_precheckout_adapter: enabled:<n>-forms` solo con el flag prendido, y nunca responde `503` por el adaptador.
+- `/ready` agrega `ghl_precheckout_adapter: enabled:<n>-forms` solo con el flag prendido, y nunca responde `503` por el flag.
+- La guarda del riesgo no depende del flag: cuelga de que el manifiesto tenga `[adaptadores.ghl]` (abajo).
 
 ```toml
 eventos = ["carrito", "pago_fallido", "compra", "entrante", "intencion"]
@@ -55,6 +55,39 @@ eventos = ["carrito", "pago_fallido", "compra", "entrante", "intencion"]
 [adaptadores.ghl]
 formularios = ["EgDqRl2xWc59YjVW1q8W"]   # attributionSource.mediumId; 20 alfanuméricos
 ```
+
+### La aceptación escrita del riesgo
+
+El token es la única barrera del adaptador ([Riesgos](#riesgos)). Para que las intenciones que admite se usen como permiso de contacto o como audiencia, el responsable de la instancia lo acepta por escrito en el manifiesto, con tres claves opcionales en `[adaptadores.ghl]`:
+
+```toml
+[adaptadores.ghl]
+formularios = ["EgDqRl2xWc59YjVW1q8W"]
+riesgo_aceptado_por = "<nombre de quien decide>"
+riesgo_aceptado_el = 2026-10-02            # fecha TOML, sin hora
+riesgo_contrato = "ghl-precheckout-adapter-v1"
+```
+
+- **Todas o ninguna.** Con una o dos de las tres, el manifiesto no carga.
+- `riesgo_aceptado_el` es una fecha TOML: un texto o una fecha con hora no cargan.
+- `riesgo_contrato` tiene que ser `ghl-precheckout-adapter-v1`, el contrato vigente. Otro valor es un error de carga: una aceptación escrita contra otra versión de este contrato tiene que verse, no degradar en silencio.
+- No hay una clave de estado: la presencia completa es la aceptación. No caduca ni se ata a la lista de formularios (sumar un formulario ya es un cambio firmado del manifiesto).
+- El producto solo la lee. La escribe a mano quien decide, en el repo de la instancia; ningún código del producto la genera.
+
+**Qué bloquea la falta de aceptación.** La guarda cuelga de la sección y no de `GHL_PRECHECKOUT_ADAPTER_ENABLED`: apagar el flag no saca de la base las intenciones que el adaptador ya admitió.
+
+| Manifiesto | Qué pasa |
+|---|---|
+| Sin `[adaptadores.ghl]`, sin `intencion` o sin `precheckout` ni `pago_fallido` prendidos | No aplica. `/ready` no suma la clave |
+| Sin `[adaptadores.ghl]`, con `intencion` y `precheckout` o `pago_fallido` prendido | Arranca, con un warning en cada arranque, y `/ready` dice `ghl_adapter_risk: no_adapter_section`. No bloquea: si la instancia usó el adaptador, sus intenciones siguen en la base y estos flujos las tratan como las de una landing |
+| Con la sección, sin aceptación | No arranca con `flujos.precheckout` ni `flujos.pago_fallido` en `true` (el pago fallido concede el permiso desde la intención en cualquier `audience_mode`). Con `LANCEMOS_PILOT_BOUNDARY_ENABLED`, tampoco arranca si el scope del piloto de `LANCEMOS_PILOT_SCOPE_KEY` es de audiencia `consented_intent` o `consented_intent_in_cohort`, ni si ese modo no se puede leer. `/ready` dice `ghl_adapter_risk: not_accepted` |
+| Con la sección y la aceptación | Esos flujos y esas audiencias arrancan. `/ready` dice `ghl_adapter_risk: accepted:<fecha>:<contrato>` |
+
+- **La guarda de audiencia lee la base.** El `audience_mode` vive en `pilot_scope_versions`, que el bridge no puede leer por PostgREST. Lo lee con `get_lancemos_pilot_scope_audience_mode(text, integer)` (migración `20261001000300`, solo para `service_role`), que devuelve el modo de una versión publicada o `null`. Se lee en el arranque, antes de levantar cualquier worker, y otra vez en `/ready`. Con la aceptación, sin la sección o sin la frontera del piloto no se lee nada.
+- **Falla cerrado.** Solo `manual_cohort` pasa. Una audiencia con consentimiento es `ghl_adapter_risk_not_accepted`; una lectura que falla, un scope sin publicar (`null`), un modo desconocido o un bridge sin Supabase son `ghl_adapter_risk_audience_unavailable`. En el arranque, el bridge no arranca; en `/ready`, `503` con ese `detail`. El chequeo va después del estado del scope del piloto: un scope sin configurar sigue respondiendo su motivo de siempre.
+- **Quién aceptó no sale en `/ready`.** La clave lleva la fecha y el contrato. El nombre va solo al log de arranque: un warning por arranque, `ghl_adapter_risk acceptance=accepted by=… on=… contract=…`, o `acceptance=absent …` sin aceptación.
+- `instance_cli validate` informa la aceptación (quién, cuándo, qué contrato). Un flujo bajo la guarda prendido con la sección y sin aceptación es un **error**, no un aviso: ese manifiesto no arranca nunca. Con la sección, avisa además que quitarla no saca las intenciones de la base.
+- **Orden de despliegue.** Un bridge 1.2.0 no carga un manifiesto con las claves nuevas (la sección solo aceptaba `formularios`). Primero la migración `20261001000300` y la imagen 1.3.0, después el manifiesto con la aceptación.
 
 ## Forma de entrada (medida)
 
@@ -130,7 +163,7 @@ El adaptador no valida el alfabeto ni el largo. La emisión del link descarta un
 
 | HTTP | Cuándo |
 |---|---|
-| `200` | `received`, `duplicate` o `conflict`, con el cuerpo de `/webhooks/lead`: `status`, `delivery_id`, `purchase_intent_id`, `activation_authorized = false`, `contact_authorized = false` |
+| `200` | `received`, `duplicate` o `conflict`, con el cuerpo de `/webhooks/lead`: `status`, `delivery_id`, `purchase_intent_id`, `activation_authorized = false`, `contact_authorized = false`. Es el mismo con el primer contacto prendido: el resultado del plan no viaja a GHL |
 | `400` | JSON inválido (`ghl_invalid_json`); una clave repetida, un cuerpo que no es un objeto, o faltan `contact_id`, `email`, `phone` o el nombre (`ghl_invalid_payload`); `Content-Type` distinto (`invalid_ghl_transport`). Sin header, todo lo que impide leer el cuerpo (JSON inválido, clave repetida, no es un objeto, `Content-Type`) es `401`: el token todavía no se leyó |
 | `401` | Token ausente o distinto, o sin header un cuerpo que no se puede leer (`invalid_adapter_token`) |
 | `413` | Cuerpo mayor a 64 KiB (`ghl_adapter_body_too_large`), con el header correcto; sin header, `401` |
@@ -147,16 +180,18 @@ El costo es que la base no distingue un reintento de un segundo envío del mismo
 
 ## Logs
 
-Una línea por pedido: resultado, motivo (en un `401` sin header por un cuerpo ilegible, `invalid_adapter_token/<motivo real>`), id del formulario, landing, oferta, `delivery_id`, región del teléfono (también en `ghl_phone_unusable`) y si hubo UTM o fbclid. Un envío que no queda admitido (toda respuesta distinta de `200`, salvo el adaptador apagado) sale como warning: el bridge no configura logging, y bajo uvicorn solo los warnings llegan a la salida del contenedor. La admisión sale como info. Nunca el nombre, el email, el teléfono, la IP, el `userAgent`, `contact_id`, el `fbclid`, `fbEventId`, la query, el token ni el cuerpo.
+Una línea por pedido: resultado, motivo (en un `401` sin header por un cuerpo ilegible, `invalid_adapter_token/<motivo real>`), id del formulario, landing, oferta, `delivery_id`, región del teléfono (también en `ghl_phone_unusable`) y si hubo UTM o fbclid. Un envío que no queda admitido (toda respuesta distinta de `200`, salvo el adaptador apagado) sale como warning: el bridge no configura logging, y bajo uvicorn solo los warnings llegan a la salida del contenedor. La admisión sale como info. Con el primer contacto prendido hay una segunda línea, con el resultado del plan (ids y códigos; warning solo si el plan falló). Nunca el nombre, el email, el teléfono, la IP, el `userAgent`, `contact_id`, el `fbclid`, `fbEventId`, la query, el token ni el cuerpo.
 
 ## Riesgos
 
-- **El token es la única barrera.** Con el token, cualquiera admite intenciones con `whatsapp_contact = true` para cualquier teléfono. Mientras esas intenciones no disparen mensajes, el daño se limita a filas en la base. Por eso es **condición para prender** `[flujos].precheckout` (el primer contacto del formulario), o una audiencia `consented_intent` alimentada por este adaptador, una de estas dos cosas:
-  - una verificación fuera de banda de cada envío: leer el contacto por la API de GHL con `contact_id` y comparar teléfono y email;
-  - la aceptación explícita del riesgo por el responsable de la instancia, por escrito.
+- **El token es la única barrera.** Con el token, cualquiera admite intenciones con `whatsapp_contact = true` para cualquier teléfono, y una intención que entró por el adaptador no se distingue en la base de la de una landing (`source.system` es `landing` en las dos). Mientras esas intenciones no disparen mensajes, el daño se limita a filas en la base. Por eso es **condición para prender** `[flujos].precheckout` (el primer contacto del formulario), `[flujos].pago_fallido` (que concede el permiso desde la intención) o una audiencia `consented_intent` o `consented_intent_in_cohort`, una de estas dos cosas:
+  - una verificación fuera de banda de cada envío: leer el contacto por la API de GHL con `contact_id` y comparar teléfono y email. No existe todavía;
+  - la aceptación explícita del riesgo por el responsable de la instancia, por escrito en el manifiesto ([La aceptación escrita del riesgo](#la-aceptación-escrita-del-riesgo)).
 
-  Ninguna de las dos es parte de este contrato v1. La parte del manifiesto la hace cumplir el arranque: con el adaptador prendido, el bridge no arranca si `[flujos].precheckout` está en `true`, y `validate` lo avisa. Levantar esa guarda es el cambio de código que trae la verificación, o el que cita la aceptación escrita. La audiencia `consented_intent` vive en el scope del piloto en la base, fuera de lo que el bridge ve al arrancar: esa parte de la condición no la hace cumplir ningún código.
-- **El móvil mexicano normalizado no cruza con las fuentes que no normalizan.** La intención de un `+521…` queda con `normalized_phone = 52…`, sin el `1`. Hotmart guarda los dígitos tal cual (`hotmart.normalize_phone`), y el número de WhatsApp de ATT1 figura en Chatwoot con el `1` (`+5217296521530`, medido el 2026-09-28, cabecera del manifiesto de la instancia). El permiso del pago fallido y la audiencia comparan el teléfono exacto (`_portable_consented_intent_reason`, migración `20260930000100`): si Hotmart o el contacto de WhatsApp traen el mismo móvil con el `1`, la intención admitida por el adaptador da `consented_intent_phone_mismatch` y ese lead se queda sin el contacto, sin aviso. No es peor que sin normalizar (el lead se perdía entero con `422`), pero la normalización no es neutra. Se mide en el E2E de F4.
+  El arranque y `/ready` hacen cumplir las tres partes de la condición: los dos flujos con el manifiesto solo, y la audiencia leyendo el scope del piloto en la base. La guarda de audiencia mira el scope de `LANCEMOS_PILOT_SCOPE_KEY`; el del primer contacto no hace falta mirarlo, porque sin aceptación `flujos.precheckout` no arranca.
+- **Quitar la sección no saca las intenciones de la base.** La guarda cuelga de `[adaptadores.ghl]`. Una instancia que usó el adaptador y después quita la sección deja de estar bajo la guarda, y las intenciones que el adaptador ya admitió siguen vivas y se tratan como las de una landing. El bridge lo avisa (`ghl_adapter_risk: no_adapter_section`, con un warning en cada arranque) solo si la instancia recibe `intencion` y tiene prendido `precheckout` o `pago_fallido`. No lo avisa una instancia sin la sección que tenga solo `carrito` con un scope de audiencia con consentimiento: detectarlo exigiría leer la base en instancias que nunca declararon el adaptador. La sección no se quita con intenciones vivas admitidas por el adaptador.
+- **Una base que no responde al arrancar.** Con la sección, sin aceptación y la frontera del piloto prendida, el arranque depende de leer el scope: si la base no responde, el bridge no arranca y el orquestador lo reinicia hasta que responda. Lo mismo pasa con una base sin la migración `20261001000300`.
+- **El móvil mexicano normalizado y las fuentes que no normalizan.** La intención de un `+521…` queda con `normalized_phone = 52…`, sin el `1`. Hotmart guarda los dígitos tal cual (`hotmart.normalize_phone`) y el `wa_id` de WhatsApp de un móvil mexicano lleva el `1`. Hasta la migración `20261001000100` el permiso del pago fallido, la audiencia y la correlación comparaban el teléfono exacto, y ese lead quedaba sin contacto, sin aviso. Desde esa migración el runtime portable compara las dos formas (`52…` ≡ `521…`, `54…` ≡ `549…`) sin reescribir lo guardado: ver [commercial-ally-runtime-v1.md](commercial-ally-runtime-v1.md#equivalencia-de-teléfonos-de-whatsapp-2026-10-01-migración-20261001000100). Con qué forma se manda sale de una medición del 2026-10-01 sobre el Chatwoot de producción, en otro inbox; en ATT1 se confirma en el E2E.
 - **El contacto que vuelve.** La admisión reusa la intención viva sin actualizar `purchase_intents.submitted_at`, y la correlación del pago filtra por esa fecha (migración `20260820000100`). Un contacto que vuelve a enviar el formulario después de `max_lookback`, con una intención viva, no correlaciona. Es del producto y le pasa igual a una landing directa; el adaptador no lo empeora ni lo arregla.
 
 ## Prueba de conformidad
@@ -171,13 +206,13 @@ Es la condición para prenderlo.
   4. un formulario fuera de la lista, una landing desconocida, un teléfono inutilizable o una clave repetida dan `4xx` sin tocar la base;
   5. contra la RPC real (PGlite, `tests/sql/followup_engine/validate_ghl_precheckout_adapter.mjs`): dos entregas del mismo golden producen dos submissions de la misma intención, cero filas en `precheckout_submission_conflicts`, y el envío sigue elegible para el consentimiento (`consented_intent_ok`). Un caso de control con el mismo `id` y otro `created_at` sí deja el conflicto, y documenta por qué el `id` no puede ser determinista.
 - **Envío nuevo.** Uno que la suite no acepte se agrega como fixture antes de cambiar el adaptador.
-- **Los teléfonos de los fixtures no son reservados.** Conservan región, validez, tipo y largo, así que son números marcables en rangos reales (un fijo argentino, un número mexicano de la característica 475, y en las variantes de las pruebas, uno de Roma): pueden ser de terceros. Un fixture de GHL, o una variante, se reproduce contra un bridge real solo sin salida posible: todos los `[flujos]` en `false` y `DURABLE_OUTBOUND_ENABLED=false`. En un stack que pueda mandar mensajes (el primer contacto del formulario, cuando exista), no se reproduce: se captura un envío propio con un teléfono de prueba.
+- **Los teléfonos de los fixtures no son reservados.** Conservan región, validez, tipo y largo, así que son números marcables en rangos reales (un fijo argentino, un número mexicano de la característica 475, y en las variantes de las pruebas, uno de Roma): pueden ser de terceros. Un fixture de GHL, o una variante, se reproduce contra un bridge real solo sin salida posible: todos los `[flujos]` en `false` y `DURABLE_OUTBOUND_ENABLED=false`. En un stack que pueda mandar mensajes (el primer contacto del formulario, `PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED`), no se reproduce: se captura un envío propio con un teléfono de prueba.
 
 ## Lo que este contrato no sabe todavía
 
 - Si todo envío real trae `attributionSource` de primer nivel: hay uno medido.
 - Si la acción *Webhook* estándar acepta headers.
 - Cuándo reintenta GHL y ante qué códigos.
-- Con qué forma guarda GHL los móviles de México (`+52` o `+521`): la única captura mexicana viene sin el `1`. Tampoco cómo llega ese mismo móvil en el pago fallido de Hotmart y en el contacto de WhatsApp (ver [Riesgos](#riesgos)).
+- Con qué forma guarda GHL los móviles de México (`+52` o `+521`): la única captura mexicana viene sin el `1`. Tampoco cómo llega ese mismo móvil en el pago fallido de Hotmart del producto de ATT1: no hay un evento capturado. El runtime portable compara las dos formas (ver [Riesgos](#riesgos)).
 - Qué hace el formulario después del envío: si abre el checkout.
 - Si el formulario `Om5FpIg5Sr5ce7nSkuPy` (landing `-d`) muestra la aclaración de `att1-whatsapp-contact-v1`.

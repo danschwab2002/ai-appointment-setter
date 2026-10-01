@@ -150,3 +150,22 @@ Este contrato no:
 - activa workers generales;
 - interpreta pago rechazado o estado incierto;
 - acredita procedencia oficial de una entrega emitida por Hotmart.
+
+## 8. Correlador portable (2026-10-01, migración `20261001000100`)
+
+Lo anterior describe el correlador compartido, que usa Johanna y **no cambia**: su coincidencia de teléfono sigue siendo exacta (§3).
+
+Un runtime portable (con manifiesto) correlaciona con una copia derivada:
+
+```text
+public._correlate_portable_hotmart_purchase_intent(p_webhook_event_id uuid)
+```
+
+- **Qué cambia.** Las dos comparaciones del teléfono pasan a ser en forma canónica: `521` + 10 dígitos equivale a `52` + 10 (México) y `549` + 10 a `54` + 10 (Argentina). El formulario guarda la forma sin el `1` o el `9`; Hotmart, la otra. Con la comparación exacta, un evento que coincidía por email y no por teléfono daba `conflict` y dejaba la intención en `identity_conflict`. Todo lo demás (scope, candidatos, ventana, outcomes, transiciones) es lo de §2 a §5.
+- **Cómo se deriva.** La definición vigente del correlador compartido no está en un solo archivo (es la de `20260820000100` más parches posteriores), así que la migración la lee con `pg_get_functiondef` y reemplaza el nombre y las dos comparaciones, exigiendo las ocurrencias exactas. Si la definición compartida no es la esperada, la migración falla con `55000` y no deja nada. Un cambio futuro al correlador compartido no llega solo a la copia: hay que volver a derivarla.
+- **El ledger es el mismo.** Escribe en `hotmart_purchase_intent_correlations`, así que un replay por el RPC exact-ID devuelve esa fila. En un match por la otra forma, `matched_by` y `reason_code` dicen lo mismo que en uno exacto (`reason_code` sigue siendo `exact_phone` o `exact_email_and_phone`); no hay un valor nuevo.
+- **Quién lo llama.** `admit_portable_hotmart_cart_abandonment` y `admit_portable_hotmart_payment_failure`. No es un entrypoint: ningún rol de la API lo ejecuta, `service_role` incluido. La compra aprobada portable tiene su propia correlación (`admit_portable_hotmart_purchase_approved`, [commercial-ally-runtime-v1.md](commercial-ally-runtime-v1.md)), que compara el teléfono con la misma regla.
+- **Nada se reescribe al guardar.** `hotmart_purchase_intent_event_identities` y `purchase_intents` conservan el teléfono como llegó.
+- **Brasil** (el noveno dígito) queda fuera de la regla: no hay medición.
+
+Prueba: `tests/sql/followup_engine/validate_whatsapp_phone_equivalence.mjs` (México y Argentina en los dos sentidos, y que el correlador compartido sigue dando `conflict` con `52` contra `521`) y `tests/sql/followup_engine/real_postgres_hotmart_intent_correlation.py`.

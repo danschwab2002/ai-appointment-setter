@@ -8,7 +8,7 @@ Se valida sin red ni secretos:
 uv run python -m bridge.instance_cli validate <carpeta-de-la-instancia>
 ```
 
-Sale con 0 si es válido y con 1 si no, y dice en castellano qué campo está mal y por qué. También lista qué flujos se pueden prender y qué le falta a cada uno.
+Sale con 0 si es válido y con 1 si no, y dice en castellano qué campo está mal y por qué. También lista qué flujos se pueden prender y qué le falta a cada uno, y si `[adaptadores.ghl]` tiene la aceptación del riesgo.
 
 El formato es TOML: lo lee la biblioteca estándar de Python, sin dependencias, y no convierte en booleano un código de oferta como `no` u `off`. Un ejemplo completo y real es el manifiesto de ATT1 en `tests/fixtures/instances/att1/instancia.toml`.
 
@@ -90,10 +90,12 @@ carrito = { nombre = "att1_carrito_abandonado_01", idioma = "es_MX", parametros 
 - Sin `parametros` vale `["nombre", "producto"]`, que es lo que el bridge manda hoy.
 - La lista tiene que coincidir con el cuerpo aprobado en Meta: si la plantilla tiene una sola variable y se le mandan dos, Meta puede rechazar el envío. El bridge no lo verifica contra el catálogo al arrancar. Con `DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED=true` el dispatcher lo verifica en cada envío: lee el catálogo del inbox y, si los marcadores del cuerpo no son exactamente los declarados, no manda y deja `approved_template_mismatch` ([approved-template-direct-dispatch-v1.md](contracts/approved-template-direct-dispatch-v1.md)).
 - Si una variable declarada llega vacía (un carrito sin nombre), el envío se bloquea con `template_parameters_missing`. Una variable que la plantilla no declara no se exige.
-- Hoy el bridge usa las de `carrito` y `pago_fallido`. Las de `precheckout` se validan pero todavía no las lee nadie: las va a usar el primer contacto del formulario.
+- El bridge usa las de `carrito`, las de `pago_fallido` y, con `PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED`, las de `precheckout` (el primer contacto del formulario).
 - `reactivacion` y `descuento` arman sus variables en su propio código: `parametros` ahí no carga.
 
 Con `carrito` o `pago_fallido` en `true` y la salida por WABA, el bridge no arranca si las variables del servicio no nombran la misma plantilla que el manifiesto: `WABA_FIRST_TOUCH_TEMPLATE_NAME` tiene que ser `carrito.nombre`, `WABA_PAYMENT_FAILURE_TEMPLATE_NAME` tiene que ser `pago_fallido.nombre` (si está definida) y `WABA_TEMPLATE_LANGUAGE` tiene que ser el `idioma` de las dos. Por eso `carrito` y `pago_fallido` prendidos a la vez tienen que estar aprobadas en el mismo idioma. Con el flujo en `false`, sus `parametros` no se usan.
+
+Para `precheckout` vale la misma regla con `WABA_PRECHECKOUT_TEMPLATE_NAME`, que tiene que ser `precheckout.nombre` y compartir `WABA_TEMPLATE_LANGUAGE` y `WABA_TEMPLATE_CATEGORY` con las otras. No tiene préstamo: sin esa variable, el primer contacto del formulario no sale, y nunca usa la plantilla del carrito ([portable-precheckout-first-contact-v1.md](contracts/portable-precheckout-first-contact-v1.md)).
 
 ## `[agente]`
 
@@ -114,6 +116,8 @@ Los seis flujos, cada uno `true` o `false`: `inbound`, `precheckout`, `carrito`,
 | `pago_fallido` | `pago_fallido` | `pago_fallido` |
 | `reactivacion` | `entrante` | `reactivacion` |
 | `descuento` | `entrante` | `descuento` |
+
+El flujo declarado es el techo: el mensaje sale recién cuando además está prendido el flag del servicio ([instance-runtime-v2.md](contracts/instance-runtime-v2.md)). Para `precheckout` ese flag es `PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED`: el envío del formulario con consentimiento planifica un único primer contacto, demorado, con la plantilla `precheckout`. Con `[adaptadores.ghl]` en el manifiesto, `precheckout` y `pago_fallido` en `true` exigen además la aceptación escrita del riesgo del adaptador (abajo): sin ella el bridge no arranca y `validate` da error.
 
 ## `[guardas]`
 
@@ -140,17 +144,37 @@ eventos = ["carrito", "pago_fallido", "compra", "entrante", "intencion"]
 
 [adaptadores.ghl]
 formularios = ["EgDqRl2xWc59YjVW1q8W"]
+# Opcionales, las tres o ninguna: la aceptación escrita del riesgo del adaptador.
+riesgo_aceptado_por = "<nombre de quien decide>"
+riesgo_aceptado_el = 2026-10-02
+riesgo_contrato = "ghl-precheckout-adapter-v1"
 ```
 
-| Campo | Qué es |
-|---|---|
-| `adaptadores.ghl.formularios` | Los formularios de GHL cuyos envíos entran como `intencion`. Cada uno es el id que llega en `attributionSource.mediumId` del webhook: 20 letras o números |
+| Campo | Qué es | Si está mal |
+|---|---|---|
+| `adaptadores.ghl.formularios` | Los formularios de GHL cuyos envíos entran como `intencion`. Cada uno es el id que llega en `attributionSource.mediumId` del webhook: 20 letras o números | No carga |
+| `adaptadores.ghl.riesgo_aceptado_por` | Opcional. Quién acepta el riesgo del adaptador: el responsable de la instancia. Texto no vacío | No carga |
+| `adaptadores.ghl.riesgo_aceptado_el` | Opcional. Cuándo lo aceptó. Una fecha TOML sin comillas ni hora (`2026-10-02`) | Un texto o una fecha con hora no cargan |
+| `adaptadores.ghl.riesgo_contrato` | Opcional. Contra qué contrato lo aceptó. Tiene que ser `"ghl-precheckout-adapter-v1"`, el vigente | Otro valor no carga: la aceptación es de otra versión del contrato |
 
 Reglas: al menos un formulario, sin repetir, y `intencion` en `eventos`; si no, el manifiesto no carga. La landing y la oferta no se declaran acá: salen de la URL del envío, comparada con las `url` de `[[hotmart.ofertas]]`. Sin la sección, o con `[adaptadores]` vacío, no hay adaptador.
 
 **Listar un formulario es una afirmación.** Cada envío traducido se admite con `whatsapp_contact = true`, así que listar un formulario afirma que muestra la aclaración de `consentimiento.copy_version` y que su envío es el paso previo al checkout de la oferta de su landing. Se suma a la lista solo después de verificar las dos.
 
-La sección sola no prende nada: el adaptador corre con `GHL_PRECHECKOUT_ADAPTER_ENABLED` y su token en las variables del servicio. Tampoco prende el primer contacto: sumar `intencion` hace que `validate` diga que el flujo `precheckout` se puede prender si está su plantilla, pero prenderlo con intenciones que llegan por el adaptador tiene una condición más, porque el token es la única barrera (sección *Riesgos* del contrato). Hasta que exista la verificación fuera de banda, el bridge no arranca con `GHL_PRECHECKOUT_ADAPTER_ENABLED=true` y `precheckout = true`, y `validate` lo avisa cuando el manifiesto tiene `[adaptadores.ghl]` y ese flujo prendido.
+La sección sola no prende nada: el adaptador corre con `GHL_PRECHECKOUT_ADAPTER_ENABLED` y su token en las variables del servicio.
+
+### La aceptación del riesgo
+
+El token del adaptador es su única barrera y lo lee cualquier usuario de la subcuenta de GHL; una intención que entró por el adaptador no se distingue en la base de la de una landing (sección *Riesgos* del contrato). Para usar esas intenciones como permiso de contacto o como audiencia, quien decide por la instancia lo acepta por escrito con las tres claves `riesgo_*`.
+
+- **Las tres o ninguna.** Con una o dos, el manifiesto no carga. No hay una clave de estado: la presencia completa es la aceptación.
+- **Se escriben a mano.** Ningún código del producto las genera ni las completa. Van en el repo de la instancia, por PR, con el nombre y la fecha de quien decide.
+- **Sin la aceptación, y con la sección en el manifiesto**, el bridge no arranca con `precheckout` ni `pago_fallido` en `true`, esté o no prendido `GHL_PRECHECKOUT_ADAPTER_ENABLED`. `validate` lo marca como error. Con la frontera del piloto prendida tampoco arranca si el scope del piloto es de audiencia `consented_intent` o `consented_intent_in_cohort`: eso vive en la base y `validate` no lo ve, lo avisa.
+- **Con la aceptación**, esos flujos y esas audiencias se pueden prender. `validate` informa quién, cuándo y qué contrato; `/ready` informa la fecha y el contrato, nunca el nombre.
+- **Quitar la sección no saca de la base las intenciones que el adaptador ya admitió.** Sin la sección el bridge deja de exigir la aceptación y las trata como las de una landing; `validate` lo avisa. La sección no se quita mientras haya intenciones vivas admitidas por el adaptador.
+- **Orden al actualizar.** Un bridge anterior a 1.3.0 no carga un manifiesto con estas claves: primero la imagen nueva, después el manifiesto con la aceptación.
+
+La guarda completa, con lo que responde `/ready` en cada caso, está en [ghl-precheckout-adapter-v1.md](contracts/ghl-precheckout-adapter-v1.md), *La aceptación escrita del riesgo*.
 
 ## Relación con el binding v1
 
