@@ -33,7 +33,7 @@ Tres cosas para una instancia con manifiesto: el primer contacto tras el formula
   - El contacto se crea solo con el scope armado y nunca en `consented_intent_in_cohort`. Un formulario que llega con el scope desarmado no se planifica después.
   - La admisión del formulario no se pierde si el plan falla: el motivo queda en `portable_precheckout_first_contact_plans`, que guarda solo ids y códigos.
   - RPC nuevas, solo para `service_role`: `admit_and_plan_portable_lead_precheckout`, `reevaluate_portable_precheckout_action`, `mark_portable_precheckout_request_started` y `get_portable_precheckout_pilot_runtime_status`.
-  - Tres checks suman un valor: `recovery_cases.source` admite `landing`; `recovery_case_events.event_role` y `followup_sequences.reason` admiten `precheckout_intent`.
+  - Tres checks suman un valor: `recovery_cases.source` admite `landing`; `recovery_case_events.event_role` y `followup_sequences.reason` admiten `precheckout_intent`. El de `source` nació sin nombre, así que la migración lo busca por definición (el único check de la tabla sobre `source` que acepta `hotmart` y `simulator`); con cero o con más de uno aborta entera con `recovery_cases_source_check_not_found`.
 - **Primer contacto portable tras el formulario, en el bridge**, detrás de `PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED` (apagado por defecto, solo con manifiesto).
   - `/webhooks/lead` y el adaptador de GHL admiten el formulario y planifican el primer contacto en una sola RPC. La respuesta HTTP no cambia.
   - El dispatcher manda la acción de ancla `precheckout_intent` con la plantilla de `[plantillas.precheckout]`, con la reevaluación y el arranque propios del flujo. Sin esa plantilla no manda nada (`first_touch_template_not_configured`): nunca usa la del carrito.

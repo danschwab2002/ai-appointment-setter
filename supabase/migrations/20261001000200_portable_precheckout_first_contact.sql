@@ -97,8 +97,46 @@ begin;
 set local lock_timeout = '5s';
 set local statement_timeout = '30s';
 
-alter table public.recovery_cases
-    drop constraint recovery_cases_source_check;
+-- El check de recovery_cases.source nacio inline y sin nombre (baseline): el
+-- nombre recovery_cases_source_check es el que Postgres le pone solo, y
+-- ninguna migracion lo nombra. Una base que no nacio del baseline puede
+-- tenerlo con otro nombre, asi que se busca por definicion: el unico check de
+-- la tabla sobre la columna source que acepta exactamente hotmart y simulator.
+-- Con cero o con mas de uno la migracion aborta entera, sin dejar nada a
+-- medias, y dice cuantos encontro.
+do $source_check$
+declare
+    v_names text[];
+begin
+    select coalesce(array_agg(con.conname::text order by con.conname), array[]::text[])
+      into v_names
+    from pg_constraint con
+    where con.conrelid = 'public.recovery_cases'::regclass
+      and con.contype = 'c'
+      and con.conkey = array[(
+          select att.attnum
+          from pg_attribute att
+          where att.attrelid = con.conrelid
+            and att.attname = 'source'
+      )]
+      and array(
+          select accepted.value[1]
+          from regexp_matches(
+              pg_get_constraintdef(con.oid), '''([a-z_]+)''', 'g'
+          ) as accepted(value)
+          order by 1
+      ) = array['hotmart', 'simulator'];
+    if cardinality(v_names) <> 1 then
+        raise exception using
+            errcode = '55000',
+            message = 'recovery_cases_source_check_not_found',
+            detail = cardinality(v_names)::text;
+    end if;
+    execute format(
+        'alter table public.recovery_cases drop constraint %I', v_names[1]
+    );
+end;
+$source_check$;
 alter table public.recovery_cases
     add constraint recovery_cases_source_check
     check (source = any (array['hotmart', 'simulator', 'landing']));

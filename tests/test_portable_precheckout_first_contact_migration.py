@@ -244,7 +244,12 @@ def test_the_three_checks_only_gain_one_value() -> None:
     }
     for (table, constraint), (vigent, added) in expected.items():
         assert vigent is not None, constraint
-        assert f"alter table public.{table} drop constraint {constraint};" in _normalized(sql)
+        if table == "recovery_cases":
+            # El check de source nacio sin nombre: se quita por definicion, no
+            # por el nombre que Postgres le puso solo (ver el test de abajo).
+            assert f"drop constraint {constraint}" not in _normalized(sql)
+        else:
+            assert f"alter table public.{table} drop constraint {constraint};" in _normalized(sql)
         new = re.search(
             rf"alter table public\.{table}\s+add constraint {constraint}\s+check \((.*?)\);",
             sql,
@@ -264,6 +269,45 @@ def test_the_three_checks_only_gain_one_value() -> None:
     # No hay otros alter table: nada mas cambia en tablas existentes.
     assert len(re.findall(r"\balter\s+table\b", sql, re.IGNORECASE)) == 7
     assert f"alter table public.{TABLE} enable row level security;" in sql
+
+
+def test_the_source_check_is_dropped_by_definition_not_by_name() -> None:
+    sql = _sql()
+    block = re.search(r"do \$source_check\$\n(.*?)\n\$source_check\$;", sql, re.DOTALL)
+    assert block is not None
+    body = _executable(block.group(1))
+
+    # Ninguna migracion nombra el check: existe solo inline en el baseline, y
+    # el nombre lo eligio Postgres. La migracion no puede depender de el.
+    baseline = BASELINE.read_text(encoding="utf-8")
+    assert "recovery_cases_source_check" not in baseline
+    assert not [
+        path.name
+        for path in sorted(MIGRATIONS.glob("*.sql"))
+        if path.name < MIGRATION.name
+        and "recovery_cases_source_check" in path.read_text(encoding="utf-8")
+    ]
+    # Lo busca entre los checks de la tabla sobre la columna source, por los
+    # valores que acepta, y exige exactamente uno.
+    assert "from pg_constraint con where con.conrelid = 'public.recovery_cases'::regclass" in body
+    assert "and con.contype = 'c'" in body
+    assert "and att.attname = 'source'" in body
+    assert "pg_get_constraintdef(con.oid)" in body
+    assert ") = array['hotmart', 'simulator'];" in body
+    assert (
+        "if cardinality(v_names) <> 1 then raise exception using errcode = '55000', "
+        "message = 'recovery_cases_source_check_not_found', "
+        "detail = cardinality(v_names)::text; end if;"
+    ) in body
+    assert (
+        "execute format( 'alter table public.recovery_cases drop constraint %I', v_names[1] );"
+    ) in body
+    # Y lo repone enseguida con el nombre de siempre, que es el que mira el
+    # inventario de esquema.
+    after = sql.split(block.group(0), 1)[1].lstrip()
+    assert after.startswith(
+        "alter table public.recovery_cases\n    add constraint recovery_cases_source_check\n"
+    )
 
 
 def test_plan_row_has_ids_and_codes_only() -> None:

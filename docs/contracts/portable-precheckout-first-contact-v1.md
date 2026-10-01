@@ -252,8 +252,8 @@ El detalle de la migración y de lo que cambia para carrito y pago fallido está
 - **El envío en ATT1.** Ningún mensaje de este flujo salió por el inbox de ATT1. La forma de entrega, el `wa_id` con que responde Meta y la conversación en que cae la respuesta se confirman en el E2E.
 - **Argentina con `549`.** No hay ningún contacto `549` medido en el inbox del 2026-10-01.
 - **PostgREST real.** La forma de las filas que devuelven las cuatro RPC por PostgREST no se probó contra un PostgREST real: los tests usan la del `returns table`.
-- **Concurrencia.** El relanzamiento de los errores transitorios y el lock de opt-out bajo dos sesiones reales tienen prueba en un Postgres descartable local (`real_postgres_portable_precheckout_first_contact.py`), que todavía no corre en el CI.
-- **El nombre del check `recovery_cases_source_check`** en una base que no nació del baseline: la migración lo quita por nombre y, si difiere, falla sin dejar nada a medias.
+- **Los locks de `_ensure_portable_precheckout_contact`.** Dos formularios de la misma persona a la vez dejan un contacto y un caso, pero lo que los serializa es la admisión del formulario, que bloquea el binding de la instancia hasta el fin de la transacción. Los locks por teléfono y por email del contacto son un segundo cinturón que ninguna prueba ejercita por separado.
+- **El check de `recovery_cases.source` en la base de Johanna.** Nació sin nombre (inline en la tabla), así que la migración lo busca por definición: el único check de la tabla sobre `source` que acepta exactamente `hotmart` y `simulator`. Si en una base hay cero o más de uno, la migración aborta entera con `55000 recovery_cases_source_check_not_found` y el `detail` dice cuántos encontró. No se leyó la base de Johanna para confirmarlo.
 
 ## Riesgos conocidos
 

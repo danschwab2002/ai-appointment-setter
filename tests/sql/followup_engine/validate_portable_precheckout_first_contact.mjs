@@ -14,7 +14,9 @@
 //   0. la migracion cambia exactamente lo que dice: ocho funciones nuevas,
 //      ninguna reemplazada, ningun grant distinto, las que ejecuta Johanna
 //      identicas (pg_get_functiondef), y los tres checks aceptan lo que
-//      aceptaban mas un valor;
+//      aceptaban mas un valor; el check de recovery_cases.source se quita por
+//      definicion, no por nombre (con otro nombre lo encuentra; con cero o con
+//      dos aborta);
 //   1. el E2E de la instancia, con su scope (consented_intent_in_cohort): con
 //      el scope desarmado no se planifica ni se crea nada; armado y sin
 //      contacto en la cohorte, tampoco; con el contacto sembrado e inscripto,
@@ -251,11 +253,65 @@ for (const [, name] of CHECKS) {
     throw new Error(`${name} did not only gain ${ADDED_CHECK_VALUES[name]}: ${JSON.stringify({ before: checksBefore[name], after: checksAfter[name] })}`);
   }
 }
+// El check de recovery_cases.source se quita por definicion. Nacio inline y
+// sin nombre, asi que una base que no salio del baseline puede tenerlo con
+// otro: se corre el bloque de la migracion (el do y el add constraint que le
+// sigue) sobre tres estados armados adentro de una transaccion que se deshace.
+const sourceCheckStatements = readFileSync(join(root, 'supabase/migrations', TARGET), 'utf8')
+  .match(/do \$source_check\$\n[\s\S]*?\n\$source_check\$;\nalter table public\.recovery_cases\n    add constraint recovery_cases_source_check\n[^;]*;/);
+if (sourceCheckStatements === null) {
+  throw new Error('the migration does not drop the source check through the $source_check$ block');
+}
+const OLD_SOURCE_CHECK = "check (source = any (array['hotmart', 'simulator']))";
+const sourceChecks = async () => (await db.query(`
+  select conname, pg_get_constraintdef(oid) as definition
+  from pg_constraint
+  where conrelid = 'public.recovery_cases'::regclass and contype = 'c'
+    and pg_get_constraintdef(oid) like '%simulator%'
+  order by conname
+`)).rows;
+const withSourceChecks = async (names) => {
+  await db.exec('begin');
+  try {
+    await db.exec('alter table public.recovery_cases drop constraint recovery_cases_source_check');
+    for (const name of names) {
+      await db.exec(`alter table public.recovery_cases add constraint ${name} ${OLD_SOURCE_CHECK}`);
+    }
+    let error = null;
+    try {
+      await db.exec(sourceCheckStatements[0]);
+    } catch (caught) {
+      error = caught;
+    }
+    return { error, checks: error === null ? await sourceChecks() : null };
+  } finally {
+    await db.exec('rollback');
+  }
+};
+const renamed = await withSourceChecks(['recovery_cases_origen_valido']);
+const missing = await withSourceChecks([]);
+const doubled = await withSourceChecks(['recovery_cases_origen_valido', 'recovery_cases_origen_repetido']);
+const restored = await sourceChecks();
+if (renamed.error !== null
+    || renamed.checks.length !== 1
+    || renamed.checks[0].conname !== 'recovery_cases_source_check'
+    || !renamed.checks[0].definition.includes("'landing'")
+    || missing.error?.code !== '55000'
+    || missing.error?.message !== 'recovery_cases_source_check_not_found'
+    || missing.error?.detail !== '0'
+    || doubled.error?.code !== '55000'
+    || doubled.error?.message !== 'recovery_cases_source_check_not_found'
+    || doubled.error?.detail !== '2'
+    || restored.length !== 1 || restored[0].conname !== 'recovery_cases_source_check'
+    || !restored[0].definition.includes("'landing'")) {
+  throw new Error(`the source check is not dropped by definition: ${JSON.stringify({ renamed: renamed.error?.message ?? renamed.checks, missing: [missing.error?.message, missing.error?.detail], doubled: [doubled.error?.message, doubled.error?.detail], restored })}`);
+}
 results.migration_scope = {
   new_functions: added.length,
   replaced: changed.length,
   untouched_identical: UNTOUCHED.length,
   checks_gained_one_value: CHECKS.length,
+  source_check_dropped_by_definition: 'another name found; zero or two abort with 55000',
 };
 
 // ---------------------------------------------------------------------------
