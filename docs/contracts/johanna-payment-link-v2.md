@@ -2,7 +2,7 @@
 
 ## Status
 
-This contract supersedes V1 for new sends. It describes the interface of the durable checkout issuance (migration `20260914000100`) and the offer resolution introduced by migration `20260922000100` (offer by lead intent). Enablement, deployment and E2E are operations recorded under `docs/operations/`, not here.
+This contract supersedes V1 for new sends. It describes the interface of the durable checkout issuance (migration `20260914000100`), the offer resolution introduced by migration `20260922000100` (offer by lead intent), and the optional delivery of the URL in a WhatsApp template button (2026-10-01). Enablement, deployment and E2E are operations recorded under `docs/operations/`, not here.
 
 ## Authorized catalog
 
@@ -53,6 +53,42 @@ Before any Chatwoot POST, a reserve RPC creates one `checkout_link_issuances` ro
 Inbound requests create a purchase intent without fabricating a precheckout submission. A real matching precheckout intent is reused and its original SCK is read from the retained raw payload and stored in the issuance row, both on its own column and as the leading field of the emitted SCK.
 
 The unique conversation/message key makes retries reuse the same row, ULID, and URL. A replay never creates a second issuance or authorizes a blind second POST. Delivery states are `reserved`, `request_started`, `accepted_by_chatwoot`, `delivery_unknown`, and `purchase_matched`. After Chatwoot's live assignee/takeover checks, a second RPC reauthorizes durable state and transitions `reserved` to `request_started` immediately before the POST.
+
+## Delivery in a template button
+
+When the bridge is configured with a payment-link template name, the URL travels in the URL button of that WhatsApp template instead of being written in the message. This was requested on 2026-10-01: when the lead arrived from an ad, the URL measures 318 to 352 characters, and the `fbclid` alone takes 161 to 195 of them. WhatsApp's free-form URL button (`cta_url`) is not an option, because neither Chatwoot 4.13 nor 4.18.0 sends it.
+
+The issued URL is not modified. The button suffix is the URL without `https://pay.hotmart.com/`, so the offer, `src`, SCK and `fbclid` all travel whole.
+
+**The template.** The bridge reads the inbox catalog that Chatwoot publishes (`GET /inboxes/<id>`) on every delivery, and uses the template only if all of these hold:
+- it is approved;
+- its language equals the configured one;
+- the header, body and footer have no placeholders;
+- it has exactly one URL button, whose URL is `https://pay.hotmart.com/{{1}}`.
+
+The category is whatever Meta assigned; `UTILITY` is the intent.
+
+**Two parts.** The message goes out as two parts of the same reply batch, with the existing per-part idempotency:
+1. The agent's text, with no URL and no issuance authorization.
+2. The template, posted with `template_params`: `name`, `category`, `language`, and `processed_params.buttons[0] = {type: url, parameter: <suffix>}`. There is no `body` key, because the body has no placeholders.
+
+The configured reply-part delay separates the two parts, because Chatwoot sends each message to WhatsApp from its own job.
+
+**Authorization.** The durable issuance is authorized at part 2, immediately before its POST, and finalized with part 2's Chatwoot message id. Retry semantics for the URL are unchanged.
+
+**What the team sees.** Part 2's Chatwoot `content` is the template body, a newline, and the full URL. Chatwoot sends only the template to WhatsApp and shows `content` to the team. Readers that detect an agent link by `pay.hotmart.com` keep working, such as the coupon follow-up and the OS readers.
+
+**Fallback to the written URL.** The URL is written in a single message, as before, in any of these cases:
+- the template is missing or not approved;
+- the template fails validation;
+- the catalog read fails;
+- the URL does not fit the button suffix, which must match `[A-Za-z0-9_-]+\?[A-Za-z0-9._~%=&-]+` and be at most 1,800 characters.
+
+In each case the bridge logs `payment_link_template_unavailable reason=<code>` at WARNING. The log line carries no URL.
+
+**Part 2 blocked after part 1.** If part 1 is delivered and part 2 is blocked by the live checks (a takeover, a pause, or a new message from the lead), the delivery is `blocked`, and the conversation goes to a human with that reason. The lead got the agent's text without the URL.
+
+**Not handled.** If WhatsApp fails the template after Chatwoot accepted it, the message turns `failed` in Chatwoot, and the bridge does not watch for that.
 
 ## Purchase correlation
 

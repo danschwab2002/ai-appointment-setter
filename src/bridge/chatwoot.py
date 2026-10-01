@@ -655,6 +655,7 @@ class ChatwootClient:
         pre_send_authorizer: Callable[[], Awaitable[bool]] | None = None,
         agent_decision: str | None = None,
         agent_reason_code: str | None = None,
+        template_params: dict[str, object] | None = None,
     ) -> dict[str, object]:
         """Authorize and send one idempotent part of a public AgentBot reply.
 
@@ -663,6 +664,10 @@ class ChatwootClient:
         ``handoff``...). Van como ``content_attributes`` del mensaje en
         Chatwoot para que la revision diaria pueda mostrar por que el agente
         contesto lo que contesto; no cambian la idempotencia ni el contenido.
+
+        Con ``template_params`` la parte sale como plantilla de WhatsApp:
+        Chatwoot manda la plantilla y guarda ``content`` solo para mostrarlo.
+        La idempotencia es la misma que la de una parte de texto.
         """
         if (
             self._agent_bot_access_token is None
@@ -677,6 +682,10 @@ class ChatwootClient:
                 or _AGENT_DECISION_MARKER_RE.fullmatch(marker) is None
             ):
                 raise ChatwootProtocolError("invalid_agent_decision_marker")
+        if template_params is not None and (
+            not isinstance(template_params, dict) or not template_params
+        ):
+            raise ChatwootProtocolError("invalid_reply_template_params")
         if (
             not isinstance(part_index, int)
             or isinstance(part_index, bool)
@@ -729,6 +738,7 @@ class ChatwootClient:
                 pre_send_authorizer=pre_send_authorizer,
                 agent_decision=agent_decision,
                 agent_reason_code=agent_reason_code,
+                template_params=template_params,
             )
         finally:
             if lock_fd >= 0:
@@ -856,6 +866,7 @@ class ChatwootClient:
         pre_send_authorizer: Callable[[], Awaitable[bool]] | None,
         agent_decision: str | None = None,
         agent_reason_code: str | None = None,
+        template_params: dict[str, object] | None = None,
     ) -> dict[str, object]:
         agent_bot_access_token = self._agent_bot_access_token
         if agent_bot_access_token is None:
@@ -948,16 +959,19 @@ class ChatwootClient:
                 marker_attributes["appointment_setter_reason_code"] = (
                     agent_reason_code
                 )
+            message_body: dict[str, object] = {
+                "content": content,
+                "message_type": "outgoing",
+                "private": False,
+                "content_type": "text",
+                "content_attributes": marker_attributes,
+            }
+            if template_params is not None:
+                message_body["template_params"] = template_params
             response = await final_client.post(
                 messages_path,
                 headers={"api_access_token": agent_bot_access_token},
-                json={
-                    "content": content,
-                    "message_type": "outgoing",
-                    "private": False,
-                    "content_type": "text",
-                    "content_attributes": marker_attributes,
-                },
+                json=message_body,
             )
             response.raise_for_status()
         try:
