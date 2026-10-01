@@ -8,7 +8,76 @@ Cada versión dice qué cambia y **qué tiene que hacer quien actualiza una inst
 
 Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab2002/setter-bridge`, `setter-slack-connector` y `setter-daily-feedback`. La release de GitHub lleva el digest de cada una. Cómo se pasa un servicio a la imagen y cómo se vuelve atrás: [docs/operations/release-por-imagen-v1.md](docs/operations/release-por-imagen-v1.md).
 
-## [1.2.0] - sin publicar
+## [1.3.0] - sin publicar
+
+Tres cosas para una instancia con manifiesto: el primer contacto tras el formulario de la landing, la equivalencia de teléfonos de WhatsApp entre fuentes, y la aceptación escrita del riesgo del adaptador de GHL. Todo lo nuevo está apagado por defecto o atado al manifiesto. Trae tres migraciones. Ningún flujo nuevo tiene todavía un E2E real: el envío del primer contacto y la forma de entrega del teléfono se confirman en el E2E de la instancia antes de prender.
+
+### Agregado
+
+- **Equivalencia de teléfonos de WhatsApp, en la base** (migración `20261001000100_whatsapp_phone_equivalence.sql`). El mismo móvil llega con dos formas: el formulario guarda `52` + 10 dígitos en México y `54` + 10 en Argentina; Hotmart y el `wa_id` traen `521` + 10 y `549` + 10. Toda comparación era exacta, así que el lead que dejó el formulario se perdía antes del permiso (`payment_failure_correlation_unresolved`) y la compra portable no marcaba `purchased`. Ahora el runtime portable compara en forma canónica y no reescribe nada al guardar.
+  - `_whatsapp_phone_canonical` y `_whatsapp_phone_variants`: solo dígitos, y solo `521` + 10 → `52` + 10 y `549` + 10 → `54` + 10, anclado por largo. Brasil queda afuera: no hay medición.
+  - `_correlate_portable_hotmart_purchase_intent`: el correlador portable, derivado del compartido. Lo llaman `admit_portable_hotmart_cart_abandonment` y `admit_portable_hotmart_payment_failure`; `admit_portable_hotmart_purchase_approved` compara el teléfono por sus formas.
+  - `_portable_consented_intent_reason` suma dos chequeos, al planificar y al arrancar el envío, en carrito y pago fallido, en los modos de audiencia con consentimiento: `consented_intent_contact_phone_mismatch` (el teléfono del contacto, que es adonde sale el envío, tiene que ser el consentido) y `consented_intent_prior_opt_out` (no hay un opt-out de Chatwoot en ninguna de las dos formas).
+  - `plan_portable_payment_failure_recovery` deja `phone_match` (`exact` o `whatsapp_equivalent`) en la evidencia del permiso.
+  - Solo crea y reemplaza funciones; no toca tablas ni filas. Contratos: `docs/contracts/commercial-ally-runtime-v1.md` y `docs/contracts/hotmart-purchase-intent-correlation-v1.md` (§8).
+- **Equivalencia de teléfonos de WhatsApp, en el bridge**, solo con manifiesto (`src/bridge/phones.py`).
+  - La resolución del evento de Hotmart busca el contacto por las dos formas.
+  - Un mensaje entrante usa la identidad que la base ya tenía si hay exactamente una entre las formas del `wa_id`; con más de una usa la textual y deja un warning sin el número. El chequeo de opt-out del entrante mira todas las formas.
+  - Las proyecciones a Chatwoot (macro de opt-out, asignación y nota de la derivación) prueban la forma guardada y después la otra.
+  - En un primer contacto, el dispatcher resuelve el destinatario en Chatwoot antes del gate final, buscando las dos formas: el gate recibe el `wa_id` que Meta va a recibir. Si no es el teléfono consentido cierra con `chatwoot_recipient_phone_mismatch`, sin reintento.
+  - Con qué forma se manda y se crea el contacto de Chatwoot lo decide una sola función, `whatsapp_delivery_phone`: México como `521` + 10, Argentina como `54` + 10, lo demás igual. Sale de una medición del 2026-10-01 sobre el Chatwoot de producción (versión 4.13, otro inbox): los contactos mexicanos que escribieron tienen todos el `wa_id` con el `1`, Chatwoot no normaliza México, y sí normaliza Argentina hacia `54…`. No está probado en ATT1.
+- **Primer contacto portable tras el formulario, en la base** (migración `20261001000200_portable_precheckout_first_contact.sql`). El envío del formulario con consentimiento de WhatsApp planifica un único primer contacto: caso de fuente `landing`, ancla `precheckout_intent`, demorado el `grace_period` de la política del scope contado desde el envío que dispara.
+  - Se cancela (`cancelled`, nunca `won`) si antes de salir la persona compra, la compra queda ambigua, llega su carrito o su pago fallido, se da de baja en cualquiera de las dos formas del teléfono o pierde el consentimiento.
+  - Hay un solo primer contacto vivo por persona, y un toque aceptado (o de resultado desconocido) frena otro por 24 h.
+  - El contacto se crea solo con el scope armado y nunca en `consented_intent_in_cohort`. Un formulario que llega con el scope desarmado no se planifica después.
+  - La admisión del formulario no se pierde si el plan falla: el motivo queda en `portable_precheckout_first_contact_plans`, que guarda solo ids y códigos.
+  - RPC nuevas, solo para `service_role`: `admit_and_plan_portable_lead_precheckout`, `reevaluate_portable_precheckout_action`, `mark_portable_precheckout_request_started` y `get_portable_precheckout_pilot_runtime_status`.
+  - Tres checks suman un valor: `recovery_cases.source` admite `landing`; `recovery_case_events.event_role` y `followup_sequences.reason` admiten `precheckout_intent`.
+- **Primer contacto portable tras el formulario, en el bridge**, detrás de `PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED` (apagado por defecto, solo con manifiesto).
+  - `/webhooks/lead` y el adaptador de GHL admiten el formulario y planifican el primer contacto en una sola RPC. La respuesta HTTP no cambia.
+  - El dispatcher manda la acción de ancla `precheckout_intent` con la plantilla de `[plantillas.precheckout]`, con la reevaluación y el arranque propios del flujo. Sin esa plantilla no manda nada (`first_touch_template_not_configured`): nunca usa la del carrito.
+  - `/ready` suma `portable_precheckout_first_contact` con el estado del scope del formulario, y responde `503` si ese scope no está publicado para el flujo.
+  - Variables nuevas, vacías por defecto: `LANCEMOS_PILOT_PRECHECKOUT_SCOPE_KEY`, `LANCEMOS_PILOT_PRECHECKOUT_SCOPE_VERSION` y `WABA_PRECHECKOUT_TEMPLATE_NAME`. Están en `.env.example` y en `compose.yaml`.
+  - Contrato: `docs/contracts/portable-precheckout-first-contact-v1.md`.
+- **Aceptación escrita del riesgo del adaptador de GHL** (cabo LAN-054). `[adaptadores.ghl]` admite tres claves opcionales, todas o ninguna: `riesgo_aceptado_por`, `riesgo_aceptado_el` (fecha TOML) y `riesgo_contrato`, que tiene que ser `ghl-precheckout-adapter-v1`.
+  - Con la aceptación, `flujos.precheckout` y `flujos.pago_fallido` arrancan con la sección en el manifiesto, y el formulario de GHL admite y planifica el primer contacto.
+  - `/ready` suma `ghl_adapter_risk` (`accepted:<fecha>:<contrato>`, `not_accepted` o `no_adapter_section`), sin el nombre de quien acepta, que va solo al log de arranque.
+  - `instance_cli validate` informa la aceptación.
+  - Migración `20261001000300_pilot_scope_audience_mode_read.sql`: suma `get_lancemos_pilot_scope_audience_mode(text,integer)`, solo para `service_role`. No reemplaza nada ni toca tablas.
+  - Contrato: `docs/contracts/ghl-precheckout-adapter-v1.md`, *La aceptación escrita del riesgo*.
+- **Pruebas de punta a punta de ATT1.** Fixture nuevo `tests/fixtures/chatwoot_inbox_11_message_templates_20261001.json`: el catálogo de plantillas del inbox 11, leído el 2026-10-01. Con él, el modo directo se prueba con las tres plantillas de primer contacto de ATT1 (`att1_carrito_abandonado_01`, `att1_compra_fallida_01` y `att1_interes_precheckout_01`: dos variables, `es_MX`, `MARKETING`, tres botones `QUICK_REPLY`), así que con esa captura ninguna necesita `WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY`. `validate_att1_portable_chain.mjs` suma el primer contacto tras el formulario con el scope y la política de la instancia, y Hotmart en `521`/`549` contra una intención en `52`/`54`. `tests/test_att1_production_settings.py` arranca el bridge desde variables de entorno con el set completo de cada flujo y con los tres juntos. No cambia nada en tiempo de ejecución.
+
+### Cambiado
+
+- **La guarda del adaptador de GHL cuelga del manifiesto, no del flag.** En 1.2.0, con `GHL_PRECHECKOUT_ADAPTER_ENABLED` el bridge no arrancaba con `flujos.precheckout`, sin salida. Ahora, con `[adaptadores.ghl]` en el manifiesto y sin la aceptación, no arranca con `flujos.precheckout` **ni con `flujos.pago_fallido`** en `true`, esté o no prendido el flag: apagarlo no saca de la base las intenciones ya admitidas, y el pago fallido concede el permiso desde la intención. Con `LANCEMOS_PILOT_BOUNDARY_ENABLED` tampoco arranca si el scope del piloto es de audiencia `consented_intent` o `consented_intent_in_cohort`, ni si ese modo no se puede leer; `/ready` responde `503` con `ghl_adapter_risk_not_accepted` o `ghl_adapter_risk_audience_unavailable`. Una instancia con la sección ve un warning `ghl_adapter_risk …` en cada arranque.
+- **`instance_cli validate` da error, no aviso**, cuando un flujo bajo la guarda está prendido con la sección y sin la aceptación: ese manifiesto no arranca.
+- **Con un opt-out previo, el pago fallido portable en un scope con consentimiento ya no se planifica** (`pilot_audience_consented_intent_prior_opt_out`). Antes se planificaba y lo frenaba la reevaluación. Nadie recibía el mensaje en ninguno de los dos casos.
+- El worker le pasa el ancla de la acción al cliente de Supabase, que elige la RPC por ancla. Para toda ancla que no sea `precheckout_intent` llama a la misma RPC con el mismo cuerpo.
+
+### Qué tiene que hacer una instancia
+
+- **En la base, las tres migraciones en orden, antes de desplegar el bridge 1.3.0:** `20261001000100`, `20261001000200` y `20261001000300`. La `000200` toma un lock exclusivo breve sobre `recovery_cases`, `recovery_case_events` y `followup_sequences`, y mientras corre también esperan las escrituras de `contacts`, `purchase_intents` y `precheckout_submissions` (las referencia la tabla nueva), con `lock_timeout` de 5 s: conviene aplicarla con poco tráfico. Si falla por el timeout no deja nada a medias y se reintenta. Las otras dos solo crean o reemplazan funciones.
+- **Nada más, si no usa manifiesto o no prende nada nuevo**, salvo el caso siguiente.
+- **Una instancia con `[adaptadores.ghl]` en el manifiesto:** sin la aceptación escrita ya no arranca con `flujos.pago_fallido` en `true` ni con un scope del piloto de audiencia con consentimiento (ver *Cambiado*). Antes de actualizar hay que mirar si alguna de las dos cosas está prendida. Para prenderlas, quien decide por la instancia escribe las tres claves `riesgo_*` a mano en el manifiesto: ningún código del producto las escribe. Quitar la sección no saca de la base las intenciones que el adaptador ya admitió.
+- **Orden con el manifiesto:** un bridge 1.2.0 no carga un manifiesto con las claves `riesgo_*`. Primero la imagen 1.3.0, después el manifiesto con la aceptación.
+- **Para prender el primer contacto del formulario:**
+  - publicar una política con el paso `first_contact` y un scope del piloto de fuente `landing` / `PRECHECKOUT_FORM_SUBMITTED`, que no sea `manual_cohort` y sea distinto del de recuperación, y cargar su clave y versión en `LANCEMOS_PILOT_PRECHECKOUT_SCOPE_KEY` y `LANCEMOS_PILOT_PRECHECKOUT_SCOPE_VERSION`. El scope va antes que el flag: sin él `/ready` responde `503` y el healthcheck de `compose.yaml` deja el contenedor en `unhealthy`;
+  - cargar `WABA_PRECHECKOUT_TEMPLATE_NAME` igual a `plantillas.precheckout.nombre`;
+  - tener prendidos `flujos.precheckout`, una entrada del formulario (`LEAD_PRECHECKOUT_ENABLED` o `GHL_PRECHECKOUT_ADAPTER_ENABLED`), `LANCEMOS_PILOT_BOUNDARY_ENABLED`, `DURABLE_DISPATCHER_ENABLED`, `DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED`, `PORTABLE_HOTMART_PURCHASE_STOP_ENABLED` con `HOTMART_HOTTOK`, y `CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED`;
+  - recién entonces `PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED=true`. Un formulario que llega con el scope desarmado no se planifica después.
+  - Pasos y verificación: `docs/instalar.md`, paso 12, *El primer contacto tras el formulario*.
+- **Dos datos para quien arma el entorno:** `HOTMART_PURCHASE_WORKER_ENABLED` va solo con `RESOLUTION_WORKER_ENABLED` (carrito o pago fallido), así que una instancia que prenda solo el primer contacto no lo carga; y el arranque exige `HOTMART_HOTTOK` solo para el primer contacto, así que para carrito y pago fallido hay que cargarlo a mano antes de apuntar el webhook de Hotmart (sin él responde `503`).
+- **Antes de prender cualquier flujo de salida en una instancia nueva:** confirmar en su propio inbox la forma de entrega del teléfono (un móvil mexicano y uno argentino). La regla sale de una medición sobre otro inbox.
+- **Johanna:** aplicar las tres migraciones y nada más. Corre sin manifiesto: ninguna función que ejecuta cambia, los tres checks aceptan todo lo que aceptaban, el flag nuevo no arranca sin manifiesto y su `/ready` es el mismo.
+
+### Lo que queda fuera
+
+- El tope de mensajes proactivos por persona entre flujos: quien recibió el primer contacto del formulario puede recibir después el del carrito. Se decide antes de abrir carrito y primer contacto juntos en `consented_intent`.
+- Quien escribió primero por WhatsApp y después abandona el carrito o falla el pago: ese evento de Hotmart no encuentra el contacto del entrante y falla cerrado (se pierde la recuperación, no se manda nada indebido).
+- El paso de Postgres real del primer contacto (`real_postgres_portable_precheckout_first_contact.py`) corre a mano; todavía no está en el workflow de CI.
+- La verificación fuera de banda de cada envío del adaptador de GHL contra la API de GHL.
+
+## [1.2.0] - 2026-10-01
 
 El adaptador del formulario de GHL. Una instancia cuya landing usa un formulario de GHL deja su intención de compra con consentimiento sin cambiar la landing: es lo que necesitan el permiso del pago fallido y la audiencia `consented_intent` de 1.1.0. Apagado por defecto: sin `GHL_PRECHECKOUT_ADAPTER_ENABLED` el bridge arranca igual que en 1.1.0.
 
