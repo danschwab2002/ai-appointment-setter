@@ -551,6 +551,11 @@ class Settings:
     payment_link_tracking_fields: tuple[str, ...] = ("src", "xcod")
     payment_link_tracking_prefix: str = "hermes-"
     payment_link_max_age_seconds: int = 604800
+    # La plantilla de WhatsApp que lleva el link en su boton
+    # (docs/contracts/johanna-payment-link-v2.md). Sin nombre, el link sale
+    # escrito en el mensaje, como siempre.
+    payment_link_template_name: str | None = None
+    payment_link_template_language: str | None = None
     chatwoot_post_inbound_discount_planning_enabled: bool = False
     commercial_ally_discount_policy_key: str | None = None
     commercial_ally_discount_policy_version: int | None = None
@@ -1520,6 +1525,12 @@ class Settings:
             ).strip(),
             payment_link_max_age_seconds=int(
                 os.getenv("PAYMENT_LINK_MAX_AGE_SECONDS", "604800")
+            ),
+            payment_link_template_name=(
+                os.getenv("PAYMENT_LINK_TEMPLATE_NAME", "").strip() or None
+            ),
+            payment_link_template_language=(
+                os.getenv("PAYMENT_LINK_TEMPLATE_LANGUAGE", "").strip() or None
             ),
             chatwoot_post_inbound_discount_planning_enabled=(
                 os.getenv(
@@ -4829,6 +4840,13 @@ def create_app(
                     delivery_id=delivery_id,
                     preamble=reply,
                     expected_jid=scoped_expected_jid,
+                    # Con plantilla, el link viaja en su boton: primero el
+                    # texto del agente y, tras la pausa entre partes, la
+                    # plantilla. Si no se puede usar, sale escrito.
+                    link_template_name=settings.payment_link_template_name,
+                    link_template_language=settings.payment_link_template_language,
+                    part_delay_seconds=settings.reply_part_delay_seconds,
+                    part_sleep=reply_part_sleep,
                 )
             except CheckoutDeliveryError as exc:
                 raise RetryableChatwootWorkError(exc.code) from exc

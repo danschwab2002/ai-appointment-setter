@@ -408,9 +408,12 @@ def test_deployment_declares_payment_link_configuration_default_off() -> None:
         "PAYMENT_LINK_TRACKING_FIELDS": "src,xcod",
         "PAYMENT_LINK_TRACKING_PREFIX": "hermes-",
         "PAYMENT_LINK_MAX_AGE_SECONDS": "604800",
+        # Sin plantilla, el link sale escrito en el mensaje.
+        "PAYMENT_LINK_TEMPLATE_NAME": "",
+        "PAYMENT_LINK_TEMPLATE_LANGUAGE": "",
     }
     for variable, default in expected.items():
-        assert f"{variable}={default}" in env_example
+        assert f"\n{variable}={default}\n" in env_example
         assert f"{variable}: ${{{variable}:-{default}}}" in compose
 
 

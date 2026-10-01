@@ -56,7 +56,7 @@ The unique conversation/message key makes retries reuse the same row, ULID, and 
 
 ## Delivery in a template button
 
-When the bridge is configured with a payment-link template name, the URL travels in the URL button of that WhatsApp template instead of being written in the message. This was requested on 2026-10-01: when the lead arrived from an ad, the URL measures 318 to 352 characters, and the `fbclid` alone takes 161 to 195 of them. WhatsApp's free-form URL button (`cta_url`) is not an option, because neither Chatwoot 4.13 nor 4.18.0 sends it.
+When the bridge is configured with a payment-link template name (`PAYMENT_LINK_TEMPLATE_NAME`, and optionally `PAYMENT_LINK_TEMPLATE_LANGUAGE`), the URL travels in the URL button of that WhatsApp template instead of being written in the message. Without a name, the URL is written in the message as before. This was requested on 2026-10-01: when the lead arrived from an ad, the URL measures 318 to 352 characters, and the `fbclid` alone takes 161 to 195 of them. WhatsApp's free-form URL button (`cta_url`) is not an option, because neither Chatwoot 4.13 nor 4.18.0 sends it.
 
 The issued URL is not modified. The button suffix is the URL without `https://pay.hotmart.com/`, so the offer, `src`, SCK and `fbclid` all travel whole.
 
@@ -72,7 +72,7 @@ The category is whatever Meta assigned; `UTILITY` is the intent.
 1. The agent's text, with no URL and no issuance authorization.
 2. The template, posted with `template_params`: `name`, `category`, `language`, and `processed_params.buttons[0] = {type: url, parameter: <suffix>}`. There is no `body` key, because the body has no placeholders.
 
-The configured reply-part delay separates the two parts, because Chatwoot sends each message to WhatsApp from its own job.
+The configured reply-part delay (`CHATWOOT_REPLY_PART_DELAY_SECONDS`, 2 s by default) separates the two parts, because Chatwoot sends each message to WhatsApp from its own job.
 
 **Authorization.** The durable issuance is authorized at part 2, immediately before its POST, and finalized with part 2's Chatwoot message id. Retry semantics for the URL are unchanged.
 
