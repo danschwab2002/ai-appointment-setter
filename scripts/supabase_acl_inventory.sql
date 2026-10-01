@@ -21,6 +21,7 @@ expected_service_role(signature) as (
         ('public.prepare_johanna_payment_failure_invalid_contact_retry(text, uuid, bigint, bigint)'),
         ('public.admit_inbound_commercial_case(text, integer, bigint, text)'),
         ('public.admit_inbound_commercial_case_v2(text, integer, bigint, text)'),
+        ('public.admit_portable_inbound_commercial_case_v1(text, integer, bigint, text)'),
         ('public.resume_paused_conversation(bigint, text, text, integer, integer, timestamp with time zone)'),
         ('public.claim_conversation_reactivation(bigint, text, text, text, text, bigint, integer, integer, integer, timestamp with time zone)'),
         ('public.mark_human_handoff_attended(bigint, timestamp with time zone, timestamp with time zone)'),

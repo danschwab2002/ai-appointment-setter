@@ -93,6 +93,7 @@ const rows = await db.query(`
       ('begin_precheckout_test_first_touch(text,uuid,text,bigint,bigint)'),
       ('admit_inbound_commercial_case(text,integer,bigint,text)'),
       ('admit_inbound_commercial_case_v2(text,integer,bigint,text)'),
+      ('admit_portable_inbound_commercial_case_v1(text,integer,bigint,text)'),
       ('resume_paused_conversation(bigint,text,text,integer,integer,timestamp with time zone)'),
       ('claim_conversation_reactivation(bigint,text,text,text,text,bigint,integer,integer,integer,timestamp with time zone)'),
       ('mark_human_handoff_attended(bigint,timestamp with time zone,timestamp with time zone)'),
@@ -226,9 +227,11 @@ const result = rows.rows[0];
 // lead first-name inference adds two, and the discount follow-up adds two, and
 // the portable first contact after the form (20261001000200) adds four, and
 // the read of the pilot scope audience mode (20261001000300) adds one, and the
-// portable reserve of the inbound payment link (20261001000100) adds one.
+// portable reserve of the inbound payment link (20261001000100) adds one, and
+// the portable inbound admission that adopts the conversation of a pilot
+// template (20261001000400) adds one.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 118) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 119) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

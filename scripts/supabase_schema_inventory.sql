@@ -4082,6 +4082,39 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'pilot_scope_audience_mode_read'
+    union all
+    select
+        '20261001000400',
+        '20261001000400_portable_inbound_adopts_template_conversation.sql',
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_portable_inbound_commercial_case_v1(text,integer,bigint,text)')
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+              and position('public.admit_inbound_commercial_case_v2(' in definition) > 0
+              and position('human_handoff' in definition) = 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_portable_inbound_commercial_case_v1(text,integer,bigint,text)')
+              and position('inbound_adopted_template_conversation' in definition) > 0
+              and position('public.pilot_recovery_case_bindings' in definition) > 0
+              and position('''delivery_unknown''' in definition) > 0
+              and position('''do_not_contact''' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_portable_inbound_commercial_case_v1(text,integer,bigint,text)')
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        3,
+        'portable_inbound_template_adoption'
 )
 select
     version,

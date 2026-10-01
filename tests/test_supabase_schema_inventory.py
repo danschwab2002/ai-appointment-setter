@@ -276,7 +276,8 @@ def test_portable_precheckout_first_contact_fingerprint_checks_table_checks_and_
 
 def test_pilot_scope_audience_mode_read_fingerprint_checks_the_function_and_its_acl() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    fingerprint = sql.split("'20261001000300'", 1)[1].split(")\nselect", 1)[0]
+    # Hasta la fila siguiente: las cuentas de abajo son de esta migracion sola.
+    fingerprint = sql.split("'20261001000300'", 1)[1].split("'20261001000400'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", fingerprint)
 
     assert "'20261001000300_pilot_scope_audience_mode_read.sql'" in fingerprint
@@ -296,14 +297,44 @@ def test_pilot_scope_audience_mode_read_fingerprint_checks_the_function_and_its_
     assert "has_function_privilege('service_role',oid,'EXECUTE')" in compact_fingerprint
     assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint
     assert "nothas_function_privilege('authenticated',oid,'EXECUTE')" in compact_fingerprint
-    assert compact_fingerprint.endswith(",2,'pilot_scope_audience_mode_read'")
+    assert compact_fingerprint.endswith(",2,'pilot_scope_audience_mode_read'unionallselect")
+
+
+def test_portable_inbound_template_adoption_fingerprint_checks_the_function_and_its_acl() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    fingerprint = sql.split("'20261001000400'", 1)[1].split(")\nselect", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", fingerprint)
+
+    assert "'20261001000400_portable_inbound_adopts_template_conversation.sql'" in fingerprint
+    assert (
+        compact_fingerprint.count(
+            "to_regprocedure('public.admit_portable_inbound_commercial_case_v1(text,integer,bigint,text)')"
+        )
+        == 3
+    )
+    assert "proname" not in fingerprint
+    # Definer con search_path fijo, delega en la v2 y no toca derivaciones.
+    assert "andprosecdef" in compact_fingerprint
+    assert "array_to_string(proconfig,',')='search_path=pg_catalog,public,pg_temp'" in compact_fingerprint
+    assert "position('public.admit_inbound_commercial_case_v2('indefinition)>0" in compact_fingerprint
+    assert "position('human_handoff'indefinition)=0" in compact_fingerprint
+    # La adopcion: el evento, el binding del piloto, los estados vivos y la baja.
+    assert "position('inbound_adopted_template_conversation'indefinition)>0" in compact_fingerprint
+    assert "position('public.pilot_recovery_case_bindings'indefinition)>0" in compact_fingerprint
+    assert "position('''delivery_unknown'''indefinition)>0" in compact_fingerprint
+    assert "position('''do_not_contact'''indefinition)>0" in compact_fingerprint
+    # Es un entrypoint del bridge: solo service_role.
+    assert "has_function_privilege('service_role',oid,'EXECUTE')" in compact_fingerprint
+    assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint
+    assert "nothas_function_privilege('authenticated',oid,'EXECUTE')" in compact_fingerprint
+    assert compact_fingerprint.endswith(",3,'portable_inbound_template_adoption'")
 
 
 def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
 
-    assert len(allowlisted) == 118
+    assert len(allowlisted) == 119
     assert (
         "claim_conversation_followup_v1(bigint, bigint, bigint, text, text, text, text, text, "
         "text, text, bigint, bigint, integer, text, timestamp with time zone)"
@@ -327,6 +358,7 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     assert not any(item.startswith("configure_daily_feedback_scope_v1(") for item in allowlisted)
     assert "admit_observed_lead_precheckout(text, jsonb, jsonb)" in allowlisted
     assert "get_lancemos_pilot_scope_audience_mode(text, integer)" in allowlisted
+    assert "admit_portable_inbound_commercial_case_v1(text, integer, bigint, text)" in allowlisted
     assert (
         "admit_portable_observed_lead_precheckout"
         "(text, text, integer, text, jsonb, jsonb)" in allowlisted
