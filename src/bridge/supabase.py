@@ -1299,6 +1299,59 @@ def _inbound_admission_rejection(response: httpx.Response) -> str | None:
     return reason
 
 
+def _inbound_commercial_case_admission_result(
+    response: httpx.Response,
+) -> InboundCommercialCaseAdmissionResult:
+    """Parse the answer of either inbound admission RPC (v2 or portable)."""
+    operation = "inbound_commercial_case_admission"
+    if response.status_code != 200:
+        # Same text as always; a rejection that cannot pass unchanged also
+        # carries its reason, so the caller can tell it from an outage.
+        rejection = _inbound_admission_rejection(response)
+        if rejection is not None:
+            raise SupabasePermanentError(
+                "inbound_commercial_case_admission_failed: "
+                f"HTTP {response.status_code}",
+                reason=rejection,
+            )
+        raise SupabaseError(
+            f"inbound_commercial_case_admission_failed: HTTP {response.status_code}"
+        )
+    rows = _response_rows(response, operation=operation)
+    if len(rows) != 1:
+        raise SupabaseError("inbound_commercial_case_admission_invalid_shape")
+    row = rows[0]
+    outcome = row.get("outcome")
+    if outcome not in {
+        "created",
+        "already_exists",
+        "evidence_conflict",
+        "blocked",
+    }:
+        raise SupabaseError("inbound_commercial_case_admission_invalid_outcome")
+    automation_status = row.get("automation_status")
+    if automation_status not in {"draft_only", "disabled"}:
+        raise SupabaseError("inbound_commercial_case_admission_not_draft_only")
+    if outcome == "blocked" and automation_status != "disabled":
+        raise SupabaseError("inbound_commercial_case_admission_blocked_state_invalid")
+    if outcome != "blocked" and automation_status != "draft_only":
+        raise SupabaseError("inbound_commercial_case_admission_replyable_state_invalid")
+    return InboundCommercialCaseAdmissionResult(
+        outcome=outcome,
+        commercial_case_id=_required_string(
+            row, "commercial_case_id", operation=operation
+        ),
+        contact_id=_required_string(row, "contact_id", operation=operation),
+        channel_identity_id=_required_string(
+            row, "channel_identity_id", operation=operation
+        ),
+        conversation_id=_required_string(
+            row, "conversation_id", operation=operation
+        ),
+        automation_status=automation_status,
+    )
+
+
 def _response_rows(
     response: httpx.Response,
     *,
@@ -4117,10 +4170,50 @@ class SupabaseClient:
         external_user_id: str,
     ) -> InboundCommercialCaseAdmissionResult:
         """Create or replay one canonical draft-only inbound commercial case."""
-        operation = "inbound_commercial_case_admission"
+        return await self._admit_inbound_commercial_case(
+            "/rest/v1/rpc/admit_inbound_commercial_case_v2",
+            scope_key=scope_key,
+            scope_version=scope_version,
+            external_conversation_id=external_conversation_id,
+            external_user_id=external_user_id,
+        )
+
+    async def admit_portable_inbound_commercial_case(
+        self,
+        *,
+        scope_key: str,
+        scope_version: int,
+        external_conversation_id: int,
+        external_user_id: str,
+    ) -> InboundCommercialCaseAdmissionResult:
+        """The same admission for a runtime with a manifest (ATT1).
+
+        admit_portable_inbound_commercial_case_v1 first adopts the conversation
+        a pilot template opened (enabled, with the accepted template and its
+        binding) and then delegates to admit_inbound_commercial_case_v2.
+        Without an adoption the answer is the v2's. Same body, same outcomes
+        and same error mapping as the v2.
+        """
+        return await self._admit_inbound_commercial_case(
+            "/rest/v1/rpc/admit_portable_inbound_commercial_case_v1",
+            scope_key=scope_key,
+            scope_version=scope_version,
+            external_conversation_id=external_conversation_id,
+            external_user_id=external_user_id,
+        )
+
+    async def _admit_inbound_commercial_case(
+        self,
+        path: str,
+        *,
+        scope_key: str,
+        scope_version: int,
+        external_conversation_id: int,
+        external_user_id: str,
+    ) -> InboundCommercialCaseAdmissionResult:
         response = await self._request(
             "POST",
-            "/rest/v1/rpc/admit_inbound_commercial_case_v2",
+            path,
             content=json.dumps(
                 {
                     "p_scope_key": scope_key,
@@ -4131,52 +4224,7 @@ class SupabaseClient:
                 ensure_ascii=False,
             ),
         )
-        if response.status_code != 200:
-            # Same text as always; a rejection that cannot pass unchanged also
-            # carries its reason, so the caller can tell it from an outage.
-            rejection = _inbound_admission_rejection(response)
-            if rejection is not None:
-                raise SupabasePermanentError(
-                    "inbound_commercial_case_admission_failed: "
-                    f"HTTP {response.status_code}",
-                    reason=rejection,
-                )
-            raise SupabaseError(
-                f"inbound_commercial_case_admission_failed: HTTP {response.status_code}"
-            )
-        rows = _response_rows(response, operation=operation)
-        if len(rows) != 1:
-            raise SupabaseError("inbound_commercial_case_admission_invalid_shape")
-        row = rows[0]
-        outcome = row.get("outcome")
-        if outcome not in {
-            "created",
-            "already_exists",
-            "evidence_conflict",
-            "blocked",
-        }:
-            raise SupabaseError("inbound_commercial_case_admission_invalid_outcome")
-        automation_status = row.get("automation_status")
-        if automation_status not in {"draft_only", "disabled"}:
-            raise SupabaseError("inbound_commercial_case_admission_not_draft_only")
-        if outcome == "blocked" and automation_status != "disabled":
-            raise SupabaseError("inbound_commercial_case_admission_blocked_state_invalid")
-        if outcome != "blocked" and automation_status != "draft_only":
-            raise SupabaseError("inbound_commercial_case_admission_replyable_state_invalid")
-        return InboundCommercialCaseAdmissionResult(
-            outcome=outcome,
-            commercial_case_id=_required_string(
-                row, "commercial_case_id", operation=operation
-            ),
-            contact_id=_required_string(row, "contact_id", operation=operation),
-            channel_identity_id=_required_string(
-                row, "channel_identity_id", operation=operation
-            ),
-            conversation_id=_required_string(
-                row, "conversation_id", operation=operation
-            ),
-            automation_status=automation_status,
-        )
+        return _inbound_commercial_case_admission_result(response)
 
     async def reserve_chatwoot_checkout_issuance_v2(
         self,

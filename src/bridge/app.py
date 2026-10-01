@@ -136,6 +136,7 @@ from bridge.slack_projection import SlackCorrelationProjectionWorker
 from bridge.slack_runtime import SlackBridgeRuntime, create_slack_bridge_runtime
 from bridge.supabase import (
     PILOT_SCOPE_CONSENTED_AUDIENCE_MODES,
+    InboundCommercialCaseAdmissionResult,
     OperatorCorrelationResolutionError,
     PilotBoundaryConfig,
     PrecheckoutAdmissionResult,
@@ -3894,6 +3895,39 @@ def create_app(
     # manifiesto (Johanna) nada de esto corre: el wa_id se usa textual.
     whatsapp_inbound_equivalence = settings.instance_manifest is not None
 
+    async def admit_inbound_commercial_case(
+        *,
+        scope_key: str,
+        scope_version: int,
+        external_conversation_id: int,
+        external_user_id: str,
+    ) -> InboundCommercialCaseAdmissionResult:
+        """La admision entrante que corresponde a este runtime.
+
+        Con manifiesto (ATT1) va por admit_portable_inbound_commercial_case_v1:
+        quien responde a una plantilla del piloto escribe en la conversacion
+        que la aceptacion del envio dejo en ``enabled``, y la v2 sola la
+        rechaza (22000 ``inbound_canonical_conversation_conflict``). La
+        portable adopta esa conversacion y despues delega en la v2. Sin
+        manifiesto (Johanna), la v2 de siempre con los mismos argumentos.
+        Las tres llamadas (admision, reautorizacion y readmision tras
+        reanudar) pasan por aca, asi un runtime habla con una sola RPC.
+        """
+        assert shared_supabase is not None
+        if whatsapp_inbound_equivalence:
+            return await shared_supabase.admit_portable_inbound_commercial_case(
+                scope_key=scope_key,
+                scope_version=scope_version,
+                external_conversation_id=external_conversation_id,
+                external_user_id=external_user_id,
+            )
+        return await shared_supabase.admit_inbound_commercial_case(
+            scope_key=scope_key,
+            scope_version=scope_version,
+            external_conversation_id=external_conversation_id,
+            external_user_id=external_user_id,
+        )
+
     async def resolve_inbound_external_user_id(
         wa_id: str,
         *,
@@ -4487,7 +4521,7 @@ def create_app(
                 return
 
             try:
-                admission = await shared_supabase.admit_inbound_commercial_case(
+                admission = await admit_inbound_commercial_case(
                     scope_key=settings.chatwoot_cut_b_scope_key,
                     scope_version=settings.chatwoot_cut_b_scope_version,
                     external_conversation_id=conversation_id,
@@ -4539,7 +4573,7 @@ def create_app(
             async def reauthorize_durable_reply() -> bool:
                 try:
                     authorization = (
-                        await shared_supabase.admit_inbound_commercial_case(
+                        await admit_inbound_commercial_case(
                             scope_key=settings.chatwoot_cut_b_scope_key,
                             scope_version=settings.chatwoot_cut_b_scope_version,
                             external_conversation_id=conversation_id,
@@ -4607,7 +4641,7 @@ def create_app(
                 if resumed and admission.outcome == "blocked":
                     try:
                         admission = (
-                            await shared_supabase.admit_inbound_commercial_case(
+                            await admit_inbound_commercial_case(
                                 scope_key=settings.chatwoot_cut_b_scope_key,
                                 scope_version=(
                                     settings.chatwoot_cut_b_scope_version

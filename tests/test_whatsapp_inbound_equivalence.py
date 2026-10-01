@@ -49,6 +49,8 @@ from bridge.chatwoot_inbox import RetryableChatwootWorkError
 from bridge.commercial_knowledge import CommercialKnowledge
 from bridge.instance_manifest import InstanceManifest
 from bridge.supabase import (
+    ConversationResumeResult,
+    InboundCommercialCaseAdmissionResult,
     InboundOptOutResult,
     SupabaseClient,
     SupabaseError,
@@ -56,6 +58,14 @@ from bridge.supabase import (
     WhatsAppIdentityMatch,
 )
 from test_audio_transcription import _webhook_200
+from test_app import (
+    AHORA_177,
+    JID_DEL_LEAD_177,
+    NUMERO_DE_PRUEBA,
+    _Chatwoot177,
+    _cliente_177,
+    _fixture_177,
+)
 from test_webhook import (
     StubChatwootClient,
     StubInboundCommercialSupabase,
@@ -599,11 +609,14 @@ def test_identity_lookup_refuses_a_row_it_did_not_ask_for() -> None:
 class _RejectingAdmission(_Supabase):
     """La base rechaza la admision entrante de esta conversacion.
 
-    Es lo que pasa hoy con quien responde a una plantilla del dispatcher: la
-    aceptacion deja la conversacion en ``enabled`` y la admision entrante solo
-    acepta una ``draft_only`` (22000 ``inbound_canonical_conversation_conflict``;
-    lo fija ``validate_att1_portable_chain.mjs``). El cliente lo levanta como
-    un rechazo permanente con ese motivo; ``transient`` es una caida comun.
+    La aceptacion de una plantilla del dispatcher deja la conversacion en
+    ``enabled`` y la v2 solo acepta una ``draft_only`` (22000
+    ``inbound_canonical_conversation_conflict``). Desde H7 la portable adopta
+    esa conversacion, pero no siempre: con el contacto dado de baja, otra
+    identidad o un paso pendiente no adopta y delega en la v2, que rechaza
+    igual (``validate_portable_inbound_template_adoption.mjs``). Aca rechazan
+    las dos RPC. El cliente lo levanta como un rechazo permanente con ese
+    motivo; ``transient`` es una caida comun.
     """
 
     def __init__(self, *, transient: bool = False, **kwargs: Any) -> None:
@@ -611,6 +624,14 @@ class _RejectingAdmission(_Supabase):
         self.transient = transient
 
     async def admit_inbound_commercial_case(self, **kwargs: object) -> Any:
+        self.admission_rpcs.append("v2")
+        return self._reject(kwargs)
+
+    async def admit_portable_inbound_commercial_case(self, **kwargs: object) -> Any:
+        self.admission_rpcs.append("portable")
+        return self._reject(kwargs)
+
+    def _reject(self, kwargs: dict[str, object]) -> Any:
         self.admission_calls.append(kwargs)
         if self.transient:
             raise SupabaseError("inbound_commercial_case_admission_failed: HTTP 503")
@@ -900,3 +921,353 @@ def test_the_reserve_rpc_depends_only_on_the_flag(
     }
     assert result.outcome == "reserved"
     assert result.source_kind == "precheckout_request"
+
+
+# ------------------------- la respuesta a una plantilla del piloto (H7)
+#
+# Quien recibio una plantilla del dispatcher (primer contacto, carrito o pago
+# fallido) aprieta un boton y escribe en la conversacion que la aceptacion del
+# envio dejo en ``enabled``. La v2 la rechaza (22000
+# ``inbound_canonical_conversation_conflict``) y antes el agente no corria. Con
+# manifiesto el bridge admite con admit_portable_inbound_commercial_case_v1,
+# que adopta esa conversacion y delega en la v2; lo que hace la RPC se prueba
+# en tests/sql/followup_engine/validate_portable_inbound_template_adoption.mjs.
+# Aca se prueba que el bridge pide la portable en las tres llamadas a la
+# admision y que Johanna sigue pidiendo la v2 con los mismos argumentos.
+#
+# Datos: los botones salen de la captura de las plantillas del inbox 11
+# (``chatwoot_inbox_11_message_templates_20261001.json``). Un QUICK_REPLY llega
+# a Chatwoot como un mensaje entrante de texto con el texto del boton en
+# ``content``: asi esta en la captura del mensaje 2233 de la conversacion 158
+# (``chatwoot_message_created_inbox_9_conv_158_20260923.json``, «Envíame el
+# enlace» de una plantilla de Johanna). De ATT1 no hay captura de la pulsacion;
+# por eso el webhook es la captura de la conversacion 200 con ``content``
+# reemplazado, como en los tests del opt-out de arriba.
+
+PILOT_TEMPLATES = (
+    "att1_interes_precheckout_01",
+    "att1_carrito_abandonado_01",
+    "att1_compra_fallida_01",
+)
+INBOX_11_TEMPLATES = (
+    Path(__file__).parent / "fixtures" / "chatwoot_inbox_11_message_templates_20261001.json"
+)
+
+
+def _pilot_buttons() -> tuple[str, ...]:
+    """Los botones de las plantillas del piloto, iguales en las tres."""
+    captured = json.loads(INBOX_11_TEMPLATES.read_text(encoding="utf-8"))
+    buttons = {
+        template["name"]: tuple(
+            button["text"]
+            for component in template["components"]
+            if component["type"] == "BUTTONS"
+            for button in component["buttons"]
+            if button["type"] == "QUICK_REPLY"
+        )
+        for template in captured["templates"]
+        if template["name"] in PILOT_TEMPLATES
+    }
+    assert set(buttons) == set(PILOT_TEMPLATES)
+    [shared] = set(buttons.values())
+    return shared
+
+
+def test_the_pilot_templates_carry_the_three_buttons() -> None:
+    # Si una plantilla cambiara sus botones, los tests de abajo dejarian de
+    # cubrir lo que el lead realmente aprieta.
+    assert sorted(_pilot_buttons()) == sorted(
+        ("Envíame el enlace", "Necesito ayuda", "No más mensajes")
+    )
+
+
+class _TemplateConversation(_PaymentLinkSupabase):
+    """La conversacion que abrio una plantilla del piloto.
+
+    La v2 la rechaza como hoy (22000 ``inbound_canonical_conversation_conflict``,
+    lo fija ``validate_att1_portable_chain.mjs``); la portable la adopta y la
+    admite en ``draft_only``.
+    """
+
+    async def admit_inbound_commercial_case(self, **kwargs: object) -> Any:
+        self.admission_rpcs.append("v2")
+        self.admission_calls.append(kwargs)
+        raise SupabasePermanentError(
+            "inbound_commercial_case_admission_failed: HTTP 400",
+            reason="inbound_canonical_conversation_conflict",
+        )
+
+
+HANDOFF_PROPOSAL: dict[str, object] = {
+    "decision": "handoff",
+    "reply": "Te paso con una persona del equipo.",
+}
+
+
+def _press(
+    tmp_path: Path, supabase: _TemplateConversation, button: str, proposal: dict[str, object]
+) -> tuple[StubChatwootClient, StubShadowProcessor, Any]:
+    webhook, history = _text_webhook(button)
+    return _process(
+        tmp_path,
+        supabase,
+        settings=replace(_manifest_settings(tmp_path), payment_link_enabled=True),
+        webhook=webhook,
+        history=history,
+        proposal=proposal,
+    )
+
+
+def _admission_kwargs(external_user_id: str, *, scope_key: str, scope_version: int) -> dict[str, object]:
+    return {
+        "scope_key": scope_key,
+        "scope_version": scope_version,
+        "external_conversation_id": 200,
+        "external_user_id": external_user_id,
+    }
+
+
+def _manifest_settings_scope() -> tuple[str, int]:
+    """El scope entrante de ATT1, el mismo que arma _manifest_settings."""
+    manifest = InstanceManifest.from_toml_file(ATT1 / "instancia.toml")
+    config = manifest.to_commercial_ally_config()
+    return config.inbound_scope_key, config.inbound_scope_version
+
+
+def _att1_admission() -> dict[str, object]:
+    scope_key, scope_version = _manifest_settings_scope()
+    return _admission_kwargs(FORM_ID, scope_key=scope_key, scope_version=scope_version)
+
+
+def test_send_me_the_link_reaches_the_agent_and_the_link_goes_out(
+    tmp_path: Path,
+) -> None:
+    [button] = [b for b in _pilot_buttons() if b == "Envíame el enlace"]
+    supabase = _TemplateConversation(identities=(FORM_ID,))
+
+    chatwoot, shadow, app = _press(tmp_path, supabase, button, PAYMENT_LINK_PROPOSAL)
+
+    # El agente ve el boton.
+    [(_, context)] = shadow.calls
+    assert context["messages"][-1]["text"] == button  # type: ignore[index]
+    # La admision, por la portable y con la identidad del formulario. La v2 no
+    # se pide nunca.
+    assert supabase.admission_rpcs == ["portable"]
+    assert supabase.admission_calls == [_att1_admission()]
+    # El enlace sale sobre el caso que devolvio la admision.
+    [reservation] = supabase.candidate_calls
+    assert reservation["commercial_case_id"] == "case-1"
+    assert reservation["phone_equivalence"] is True
+    [reply] = chatwoot.reply_calls
+    assert "src=hermes" in str(reply["content"])
+    assert _pending(app) == []
+
+
+def test_need_help_reaches_the_agent_and_its_handoff_goes_through(
+    tmp_path: Path,
+) -> None:
+    # Decide el agente, como en Johanna (decision 3 de H7). Si deriva, la
+    # derivacion pasa sobre el caso que devolvio la admision portable.
+    [button] = [b for b in _pilot_buttons() if b == "Necesito ayuda"]
+    supabase = _TemplateConversation(identities=(FORM_ID,))
+
+    chatwoot, shadow, app = _press(tmp_path, supabase, button, HANDOFF_PROPOSAL)
+
+    [(_, context)] = shadow.calls
+    assert context["messages"][-1]["text"] == button  # type: ignore[index]
+    assert set(supabase.admission_rpcs) == {"portable"}
+    assert supabase.admission_calls[0] == _att1_admission()
+    [handoff] = supabase.handoff_calls
+    assert handoff["commercial_case_id"] == "case-1"
+    assert chatwoot.calls == [(200, "automation_paused")]
+    assert _pending(app) == []
+
+
+def test_an_answer_to_a_button_is_reauthorized_by_the_portable_too(
+    tmp_path: Path,
+) -> None:
+    # El agente contesta con texto (por ejemplo, pregunta que paso). Antes de
+    # responder, la respuesta se reautoriza dos veces contra la admision, y las
+    # dos van por la portable. En la base real una conversacion ya adoptada
+    # tambien pasaria por la v2; el doble la rechaza para que se vea por que
+    # RPC va cada llamada.
+    [button] = [b for b in _pilot_buttons() if b == "Necesito ayuda"]
+    supabase = _TemplateConversation(identities=(FORM_ID,))
+
+    chatwoot, shadow, app = _press(
+        tmp_path, supabase, button, {"decision": "reply", "reply": "Claro, cuéntame qué pasó."}
+    )
+
+    assert len(shadow.calls) == 1
+    # La admision y las dos reautorizaciones antes de responder.
+    assert supabase.admission_rpcs == ["portable"] * 3
+    assert supabase.admission_calls == [_att1_admission()] * 3
+    [reply] = chatwoot.reply_calls
+    assert reply["content"] == "Claro, cuéntame qué pasó."
+    assert reply["expected_jid"] == WA_JID
+    assert _pending(app) == []
+
+
+def test_no_more_messages_is_admitted_and_recorded_as_an_opt_out(
+    tmp_path: Path,
+) -> None:
+    # La baja la detecta el camino normal, despues de admitir. El respaldo de
+    # f57631f (la baja antes de la admision) no hace falta.
+    [button] = [b for b in _pilot_buttons() if b == "No más mensajes"]
+    supabase = _TemplateConversation(identities=(FORM_ID,))
+
+    chatwoot, shadow, app = _press(tmp_path, supabase, button, PAYMENT_LINK_PROPOSAL)
+
+    assert supabase.admission_rpcs == ["portable"]
+    assert supabase.admission_calls == [_att1_admission()]
+    [opt_out] = supabase.opt_outs
+    assert opt_out["external_user_id"] == FORM_ID
+    assert opt_out["chatwoot_conversation_id"] == 200
+    assert opt_out["rule_key"] == "stop_receiving_messages"
+    assert shadow.calls == [] and chatwoot.reply_calls == []
+    assert _pending(app) == []
+
+
+def test_without_a_manifest_the_portable_admission_is_never_asked_for(
+    tmp_path: Path,
+) -> None:
+    supabase = _JohannaSupabase()
+    webhook, history = _text_webhook("Envíame el enlace")
+
+    chatwoot, shadow, _ = _process(
+        tmp_path,
+        supabase,
+        settings=_johanna_settings(tmp_path),
+        webhook=webhook,
+        history=history,
+    )
+
+    # La admision y las dos reautorizaciones, por la v2 y con los argumentos
+    # de siempre: el wa_id textual y el scope de Johanna.
+    assert supabase.admission_rpcs == ["v2"] * 3
+    assert supabase.admission_calls == [
+        _admission_kwargs(WA_ID, scope_key="libre-de-ansiedad-inbound", scope_version=2)
+    ] * 3
+    assert len(shadow.calls) == 1
+    assert len(chatwoot.reply_calls) == 1
+
+
+# La tercera llamada: la readmision despues de reanudar. Corre sobre la captura
+# de la conversacion 177 (inbox 9, un movil mexicano 521 que respondio con la
+# conversacion pausada), con el mismo armado que
+# tests/test_app.py::test_the_resume_trigger_resumes_a_paused_lead_whose_number_is_not_the_test_number.
+
+
+class _PausedConversation(_Supabase):
+    """La admision da ``blocked`` hasta que se reanuda; despues, ``already_exists``."""
+
+    def __init__(self, *, portable_available: bool) -> None:
+        super().__init__()
+        self.portable_available = portable_available
+        self.resumes: list[dict[str, object]] = []
+
+    def _paused_admission(self, kwargs: dict[str, object]) -> Any:
+        self.admission_calls.append(kwargs)
+        outcome = "already_exists" if self.resumes else "blocked"
+        return InboundCommercialCaseAdmissionResult(
+            outcome=outcome,
+            commercial_case_id="case-177",
+            contact_id="contact-177",
+            channel_identity_id="identity-177",
+            conversation_id="conversation-177",
+            automation_status="disabled" if outcome == "blocked" else "draft_only",
+        )
+
+    async def admit_inbound_commercial_case(self, **kwargs: object) -> Any:
+        self.admission_rpcs.append("v2")
+        if self.portable_available:
+            # Con manifiesto, la conversacion adoptada: la v2 sola la rechaza.
+            self.admission_calls.append(kwargs)
+            raise SupabasePermanentError(
+                "inbound_commercial_case_admission_failed: HTTP 400",
+                reason="inbound_canonical_conversation_conflict",
+            )
+        return self._paused_admission(kwargs)
+
+    async def admit_portable_inbound_commercial_case(self, **kwargs: object) -> Any:
+        self.admission_rpcs.append("portable")
+        if not self.portable_available:
+            raise AssertionError("a runtime without a manifest never asks for it")
+        return self._paused_admission(kwargs)
+
+    async def resume_paused_conversation(self, **kwargs: object) -> Any:
+        self.resumes.append(kwargs)
+        return ConversationResumeResult(
+            outcome="resumed",
+            conversation_id="conversation-177",
+            commercial_case_id="case-177",
+            resume_event_id="event-177",
+        )
+
+
+@pytest.mark.parametrize("runtime", ["att1", "johanna"])
+def test_the_readmission_after_resuming_uses_the_same_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runtime: str
+) -> None:
+    monkeypatch.setattr("bridge.app.time.time", lambda: AHORA_177)
+    fixture = _fixture_177()
+    transport = _Chatwoot177(fixture)
+    wa_id = JID_DEL_LEAD_177.removesuffix("@s.whatsapp.net")
+    if runtime == "att1":
+        settings = replace(
+            _manifest_settings(tmp_path),
+            conversation_resume_enabled=True,
+            chatwoot_resume_macro_id=3,
+        )
+        scope_key, scope_version = _manifest_settings_scope()
+    else:
+        # Johanna, con los flags de produccion del test de la 177.
+        settings = replace(
+            _johanna_settings(tmp_path),
+            allowed_jid=NUMERO_DE_PRUEBA,
+            chatwoot_scoped_inbound_senders_enabled=True,
+            chatwoot_durable_opt_out_enabled=True,
+            chatwoot_human_pause_enabled=True,
+            chatwoot_opt_out_macro_id=2,
+            opt_out_projection_worker_id="opt-out-test",
+            human_handoff_admission_enabled=True,
+            human_handoff_projection_enabled=True,
+            handoff_projection_policy_key="lancemos-inbound-handoff",
+            handoff_projection_policy_version=1,
+            human_handoff_projection_worker_id="handoff-projection-test",
+            conversation_resume_enabled=True,
+            chatwoot_resume_macro_id=3,
+        )
+        scope_key, scope_version = "libre-de-ansiedad-inbound", 2
+    supabase = _PausedConversation(portable_available=runtime == "att1")
+    app = create_app(
+        settings,
+        chatwoot_client=_cliente_177(transport),  # type: ignore[arg-type]
+        shadow_processor=StubShadowProcessor(),  # sin propuesta: termina en la admision
+        supabase_client=supabase,  # type: ignore[arg-type]
+    )
+    raw_body = json.dumps(fixture["webhook"], separators=(",", ":")).encode("utf-8")
+
+    response = _post(
+        app,
+        raw_body,
+        _signed_headers(raw_body, secret=SECRET, delivery="inbound-177", timestamp=AHORA_177),
+    )
+    asyncio.run(app.state.chatwoot_worker.run_once())
+
+    assert response.status_code == 202
+    assert [call["command_key"] for call in supabase.resumes] == ["resume:177:2376"]
+    assert transport.macro_executed is True
+    # Bloqueada, reanudada y admitida de nuevo: las dos por la misma RPC y con
+    # los mismos argumentos.
+    expected = "portable" if runtime == "att1" else "v2"
+    assert supabase.admission_rpcs == [expected, expected]
+    assert supabase.admission_calls == [
+        {
+            "scope_key": scope_key,
+            "scope_version": scope_version,
+            "external_conversation_id": 177,
+            "external_user_id": wa_id,
+        }
+    ] * 2
+    assert _pending(app) == []
