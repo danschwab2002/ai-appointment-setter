@@ -68,7 +68,7 @@ Desde el bridge 1.3.0, en un runtime con destinatario dinámico (un flujo portab
 
 1. **Busca las dos formas** en Chatwoot, solo con lecturas (`resolve_first_touch_recipient`).
    - Existe un contacto: es el destinatario, con su `source_id`.
-   - Existen los dos: el de forma WhatsApp (`521…`, `549…`), que es donde cae una respuesta. Queda un warning con el inbox, la región y los ids de Chatwoot, nunca el número.
+   - Existen los dos: el de la forma de entrega (`521…` en México, `54…` en Argentina), que es donde Chatwoot resuelve la respuesta: no normaliza México y a un entrante `549…` le busca primero el contacto `54…`. Queda un warning con el inbox, la región y los ids de Chatwoot, nunca el número.
    - No existe ninguno: el destinatario es la forma de entrega, y el contacto se crea con ella al mandar.
 2. **La forma de entrega** la decide una sola función, `whatsapp_delivery_phone`: México como `521` + 10, Argentina como `54` + 10, cualquier otro número igual a sí mismo. Sale de una medición del 2026-10-01 sobre el Chatwoot de producción (versión 4.13), en otro inbox; el detalle está en [portable-precheckout-first-contact-v1.md](portable-precheckout-first-contact-v1.md#teléfonos-las-dos-formas-del-mismo-móvil). No prueba el envío en ATT1: ahí se confirma en el E2E.
 3. **El gate final recibe ese `wa_id`.** `target_phone` del efecto final, y su hash en la evidencia, son los del número que Meta va a recibir, no los del teléfono como lo guarda el contacto.

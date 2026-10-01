@@ -527,9 +527,10 @@ class ChatwootMessageSender:
         are searched:
 
         * one contact exists: it is the recipient, with its ``source_id``;
-        * both exist (the same person twice): the one in the WhatsApp form,
-          which is where a reply lands, with a warning that never carries the
-          number;
+        * both exist (the same person twice): the one in the delivery form
+          (``whatsapp_delivery_phone``), which is where Chatwoot puts the
+          reply: the ``521…`` contact in Mexico and the ``54…`` one in
+          Argentina, with a warning that never carries the number;
         * none exists: the recipient is the delivery form, and the contact is
           created with it when the send starts.
 
@@ -542,7 +543,10 @@ class ChatwootMessageSender:
         normalized = normalize_phone(phone)
         if normalized is None or not self._is_target_allowed(phone):
             raise ChatwootProtocolError("invalid_recipient_phone")
+        delivery = whatsapp_delivery_phone(normalized)
+        assert delivery is not None
         found: list[tuple[int, str]] = []
+        in_delivery_form: tuple[int, str] | None = None
         for variant in equivalent_whatsapp_phones(normalized):
             binding = await self._chatwoot.find_contact_inbox_by_phone(
                 inbox_id=self._inbox_id,
@@ -550,9 +554,9 @@ class ChatwootMessageSender:
             )
             if binding is not None:
                 found.append(binding)
+                if variant == delivery:
+                    in_delivery_form = binding
         if not found:
-            delivery = whatsapp_delivery_phone(normalized)
-            assert delivery is not None
             return FirstTouchRecipient(wa_id=delivery)
         if len(found) > 1:
             logger.warning(
@@ -562,8 +566,15 @@ class ChatwootMessageSender:
                 whatsapp_phone_region(normalized),
                 ",".join(str(contact_id) for contact_id, _ in found),
             )
-        # The forms come canonical first, WhatsApp form last.
-        contact_id, source_id = found[-1]
+        # With both contacts, the one Chatwoot resolves the reply to: the
+        # same form the send uses when it has to create the contact. Chatwoot
+        # has no normalizer for Mexico (the reply lands on the 521... contact)
+        # and normalizes Argentina to 54... first. Picking the WhatsApp form
+        # for both sent an Argentine template through the 549... contact while
+        # the reply landed on the 54... one, in another conversation.
+        contact_id, source_id = (
+            in_delivery_form if in_delivery_form is not None else found[0]
+        )
         return FirstTouchRecipient(
             wa_id=source_id,
             contact_id=contact_id,

@@ -72,6 +72,10 @@ def same_whatsapp_phone(first: str | None, second: str | None) -> bool:
 def whatsapp_delivery_phone(phone: str | None) -> str | None:
     """The form used to send and to create the Chatwoot contact (D13).
 
+    It is also the form that picks the contact when Chatwoot already has the
+    same mobile under both (D14): the reply lands where Chatwoot resolves the
+    incoming ``wa_id``, and that is this form.
+
     This is the only place where that decision lives. Measured on the
     production Chatwoot (4.13) on 2026-10-01:
 

@@ -20,6 +20,7 @@ from bridge.messaging import (
     WhatsAppTemplateConfig,
     _to_e164,
 )
+from bridge.phones import whatsapp_delivery_phone
 
 
 def test_payment_failure_first_touch_uses_dedicated_approved_template() -> None:
@@ -1772,25 +1773,51 @@ def test_equivalence_creates_the_contact_in_the_delivery_form(
     assert conversation["source_id"] == created_phone.lstrip("+")
 
 
-def test_equivalence_prefers_the_whatsapp_form_when_both_contacts_exist(
+@pytest.mark.parametrize(
+    ("form", "whatsapp", "region", "expected_contact", "expected_form"),
+    [
+        # Mexico: Chatwoot no normaliza, la respuesta cae en el contacto 521.
+        (MX_FORM, MX_WHATSAPP, "MX", 41, "whatsapp"),
+        # Argentina: Chatwoot busca primero el contacto 54 para un entrante
+        # 549, asi que la respuesta cae en el 54. Elegir el 549 mandaba la
+        # plantilla por una conversacion y la respuesta caia en otra.
+        (AR_FORM, AR_WHATSAPP, "AR", 40, "form"),
+    ],
+)
+@pytest.mark.parametrize("asked", ["form", "whatsapp"])
+def test_with_both_contacts_the_one_where_the_reply_lands_is_used(
     caplog: pytest.LogCaptureFixture,
+    form: str,
+    whatsapp: str,
+    region: str,
+    expected_contact: int,
+    expected_form: str,
+    asked: str,
 ) -> None:
-    # La misma persona dos veces en Chatwoot (medido: 14 pares en el inbox de
-    # Johanna). Se usa el contacto de forma WhatsApp, donde cae la respuesta.
-    inbox = _WhatsAppCloudInbox({f"+{AR_FORM}": 40, f"+{AR_WHATSAPP}": 41})
+    # La misma persona dos veces en Chatwoot (medido el 2026-10-01: 14 pares
+    # en el inbox de Johanna). Se usa el contacto de la forma de entrega
+    # (whatsapp_delivery_phone), que es donde Chatwoot resuelve la respuesta,
+    # venga el telefono consentido en la forma que venga.
+    inbox = _WhatsAppCloudInbox({f"+{form}": 40, f"+{whatsapp}": 41})
+    expected = form if expected_form == "form" else whatsapp
+    assert whatsapp_delivery_phone(form) == expected
 
     with caplog.at_level("WARNING"):
-        recipient = _run(inbox.sender().resolve_first_touch_recipient(phone=AR_FORM))
+        recipient = _run(
+            inbox.sender().resolve_first_touch_recipient(
+                phone=form if asked == "form" else whatsapp
+            )
+        )
 
     assert recipient == FirstTouchRecipient(
-        wa_id=AR_WHATSAPP, contact_id=41, source_id=AR_WHATSAPP
+        wa_id=expected, contact_id=expected_contact, source_id=expected
     )
     assert "first_touch_recipient_duplicated_in_chatwoot" in caplog.text
-    assert "region=AR" in caplog.text
+    assert f"region={region}" in caplog.text
     assert "contact_ids=40,41" in caplog.text
     # El aviso lleva ids de Chatwoot y region, nunca el numero.
-    assert AR_FORM not in caplog.text and AR_WHATSAPP not in caplog.text
-    assert AR_FORM[2:] not in caplog.text
+    assert form not in caplog.text and whatsapp not in caplog.text
+    assert form[2:] not in caplog.text
 
 
 def test_a_resolved_recipient_is_not_searched_again() -> None:
