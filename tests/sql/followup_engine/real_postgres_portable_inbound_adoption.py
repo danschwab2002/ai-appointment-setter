@@ -11,7 +11,10 @@ with two real sessions, what depends on locks:
 * two replies to the same template at once (two Chatwoot messages, the same
   admission): the second waits for the first in the advisory lock of the
   admission and gets already_exists; one adoption event, one inbound_sales
-  case. Ordered with a sleep, and also without any ordering;
+  case. Ordered with a sleep, and also unordered: both replies wait at the
+  same time behind a barrier session that holds the same advisory lock, and
+  the probe checks in pg_stat_activity that both were waiting before it is
+  released;
 * a reply while the reconciliation of a delivery_unknown attempt of the same
   person is being committed (the payment failure after the cart, accepted late
   in the cart conversation, as case 3 of
@@ -176,8 +179,9 @@ def literal(value: object) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
-def waiting_on_lock(fragment: str, events: tuple[str, ...]) -> bool:
-    """True once a session running ``fragment`` waits for one of ``events``."""
+def waiting_on_lock(fragment: str, events: tuple[str, ...], sessions: int = 1) -> bool:
+    """True once ``sessions`` sessions running ``fragment`` wait, at the same
+    time, for one of ``events``."""
     wanted = ",".join(literal(event) for event in events)
     deadline = time.monotonic() + HOLD_SECONDS - 0.5
     while time.monotonic() < deadline:
@@ -186,7 +190,7 @@ def waiting_on_lock(fragment: str, events: tuple[str, ...]) -> bool:
             "where pid <> pg_backend_pid() and wait_event_type = 'Lock' "
             f"and wait_event in ({wanted}) and query like '%{fragment}%'"
         )
-        if waiting.returncode == 0 and waiting.stdout.strip() == "1":
+        if waiting.returncode == 0 and waiting.stdout.strip() == str(sessions):
             return True
         time.sleep(0.2)
     return False
@@ -709,12 +713,34 @@ def main() -> None:
     )
     print("inbound_adoption_two_replies_ordered_one_adoption=OK")
 
-    #    The same two replies without any ordering: whoever gets the lock
+    #    The same two replies without ordering them against each other. A
+    #    third session holds the first advisory lock of the admission (the
+    #    same key) as a barrier; the two replies are launched and the probe
+    #    waits until pg_stat_activity shows both of them waiting on it at the
+    #    same time. Only then is the barrier released: whoever gets the lock
     #    first adopts, the other one reads its admission.
     lead, delivery = cart_case(2)
     accept(delivery, 950002)
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        outcomes = list(pool.map(lambda _: session(reply(950002, lead["phone"])), range(2)))
+    barrier = (
+        "set deadlock_timeout='100ms'; begin; "
+        "select pg_advisory_xact_lock(hashtextextended(concat_ws(':', "
+        f"'inbound-commercial-case', {literal(INBOUND['scope_key'])}, "
+        f"{INBOUND['scope_version']}, 950002), 0)); "
+        f"select pg_sleep({HOLD_SECONDS}); commit;"
+    )
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        holder = pool.submit(session, barrier)
+        time.sleep(SECOND_ARRIVES)
+        replying = [
+            pool.submit(session, reply(950002, lead["phone"])) for _ in range(2)
+        ]
+        both_waited = waiting_on_lock(
+            "admit_portable_inbound_commercial_case_v1", ADVISORY, sessions=2
+        )
+        held = holder.result()
+        outcomes = [future.result() for future in replying]
+    require(held.returncode == 0, f"the barrier failed: {held.stderr.strip()}")
+    require(both_waited, "the two replies were not waiting at the same time")
     replies = sorted(result_line(outcome)[0] for outcome in outcomes)
     after = conversation(950002)
     require(
