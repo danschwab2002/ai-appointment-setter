@@ -32,6 +32,7 @@ import asyncio
 import copy
 import hashlib
 import json
+import logging
 import re
 from dataclasses import replace
 from pathlib import Path
@@ -1667,6 +1668,106 @@ def test_the_form_first_contact_without_its_template_is_never_sent(
     assert finalization["reason_code"] == "first_touch_template_not_configured"
     assert finalization["next_attempt_at"] is None
     assert not (tmp_path / "meta-effects").exists()
+
+
+# Un nombre que no es un nombre. El formulario publico (y Hotmart) traen el
+# nombre con un telefono que nadie verifico, y el saludo cae al nombre completo
+# cuando la primera palabra no sirve; sin saludo, el nombre va tal cual. La
+# plantilla del formulario de ATT1 dice "Hola, {{1}}. Soy del equipo de Dra.
+# Nina.": sin el filtro, una URL, un email o un texto largo salian ahi.
+
+_NOT_A_NAME = [
+    pytest.param("http://evil.example/premio", id="url"),
+    pytest.param("soporte@evil.example", id="email"),
+    pytest.param("\U0001F381 evil.example", id="emoji and domain"),
+    pytest.param("x" * 61, id="61 characters"),
+    pytest.param("5512345678", id="digits"),
+]
+
+
+@pytest.mark.parametrize("greeting", [True, False], ids=["greeting", "no greeting"])
+@pytest.mark.parametrize("name", _NOT_A_NAME)
+def test_the_form_first_contact_refuses_a_name_that_is_not_a_name(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, name: str, greeting: bool
+) -> None:
+    authority = _Authority(
+        offer_code="gopi6lh7", anchor_type=FORM_ANCHOR, buyer_name=name
+    )
+    chatwoot = _Chatwoot(ATT1_CATALOG)
+
+    with caplog.at_level(logging.WARNING, logger="bridge.worker"):
+        decisions = _run(
+            _dispatcher(
+                authority, chatwoot, tmp_path,
+                greeting=greeting, template=WITH_FORM_TEMPLATE,
+            )
+        )
+
+    assert decisions[-1].decision == "execute"
+    assert chatwoot.posts("/messages") == []
+    # Cierra antes del catalogo: no busca ni crea el contacto.
+    assert chatwoot.requests == []
+    assert "request_started" not in authority.events
+    [finalization] = authority.finalizations
+    assert finalization["outcome"] == "failed_before_request"
+    assert finalization["reason_code"] == "template_parameters_missing"
+    # El nombre del caso no cambia solo: sin reintento.
+    assert finalization["next_attempt_at"] is None
+    assert not (tmp_path / "meta-effects").exists()
+    assert "approved_template_name_refused" in caplog.text
+    # El log no lleva el nombre: es dato personal y es el texto del atacante.
+    assert name not in caplog.text
+
+
+@pytest.mark.parametrize("greeting", [True, False], ids=["greeting", "no greeting"])
+@pytest.mark.parametrize("case", LEAD_NAMES, ids=[c["pattern"] for c in LEAD_NAMES])
+def test_the_form_first_contact_still_greets_every_captured_name(
+    tmp_path: Path, case: dict[str, Any], greeting: bool
+) -> None:
+    # El costo del filtro, medido: los 19 patrones capturados del inbox 9
+    # (incluidos una sola letra, iniciales con emoji y solo emoji) siguen
+    # saliendo, con saludo y sin saludo.
+    authority = _Authority(
+        offer_code="gopi6lh7", anchor_type=FORM_ANCHOR, buyer_name=case["full_name"]
+    )
+    chatwoot = _Chatwoot(ATT1_CATALOG)
+
+    _run(
+        _dispatcher(
+            authority, chatwoot, tmp_path, greeting=greeting, template=WITH_FORM_TEMPLATE
+        )
+    )
+
+    if greeting:
+        first = case["deterministic"] or case["full_name"].strip()
+    else:
+        first = " ".join(case["full_name"].split())
+    [message] = chatwoot.posts("/conversations/200/messages")
+    assert message["template_params"]["processed_params"]["body"] == {
+        "1": first,
+        "2": "Alimenta tu Tiroides",
+    }
+    assert message["content"] == _expected(
+        FORM_TEMPLATE, first=first, product="Alimenta tu Tiroides"
+    )
+    assert authority.events[-1] == "accepted"
+
+
+def test_a_template_without_the_name_does_not_look_at_it(tmp_path: Path) -> None:
+    # El filtro mira lo que va a la plantilla. Si la plantilla no declara
+    # `nombre`, el nombre no sale en el mensaje y no frena el envio.
+    authority = _Authority(buyer_name="http://evil.example/premio")
+    chatwoot = _Chatwoot(ONE_VARIABLE_CATALOG)
+    template = replace(ONE_VARIABLE, first_touch_body_parameters=("producto",))
+
+    _run(_dispatcher(authority, chatwoot, tmp_path, greeting=True, template=template))
+
+    [message] = chatwoot.posts("/conversations/200/messages")
+    assert message["template_params"]["processed_params"] == {
+        "body": {"1": "Alimenta tu Tiroides"}
+    }
+    assert "evil.example" not in message["content"]
+    assert authority.events[-1] == "accepted"
 
 
 class _TwoActionsAuthority(_Authority):

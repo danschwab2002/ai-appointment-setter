@@ -39,7 +39,10 @@ from bridge.hotmart import (
     EVENT_PURCHASE_CANCELED,
     parse_hotmart_purchase_payload,
 )
-from bridge.lead_first_name import resolve_greeting_name
+from bridge.lead_first_name import (
+    resolve_greeting_name,
+    template_greeting_name_is_safe,
+)
 from bridge.messaging import (
     FIRST_TOUCH_RECIPIENT_MISMATCH,
     FIRST_TOUCH_TEMPLATE_NOT_CONFIGURED,
@@ -1030,6 +1033,7 @@ class DurableDispatcher:
             )
         greeting_name: str | None = None
         name_value = buyer_name
+        name_source = "buyer_name"
         if (
             self._lead_first_name_greeting_enabled
             and isinstance(buyer_name, str)
@@ -1041,10 +1045,28 @@ class DurableDispatcher:
             # template variable identical.
             greeting_name = greeting.name.strip()
             name_value = greeting_name
+            name_source = greeting.source
             logger.info(
                 "durable_first_touch_greeting action_id=%s source=%s",
                 action.action_id,
                 greeting.source,
+            )
+        if "nombre" in declared and not template_greeting_name_is_safe(name_value):
+            # The name is unverified input (the public form, Hotmart) and the
+            # full name is the last resort of the greeting, or the value itself
+            # without it: a URL, an email or a long text would go out inside
+            # the approved template. It does not change on its own, so the
+            # action closes on the first attempt, before the catalog and any
+            # Chatwoot call. The log never carries the name.
+            logger.warning(
+                "approved_template_name_refused action_id=%s trigger=%s source=%s",
+                action.action_id,
+                trigger_kind,
+                name_source,
+            )
+            return _ApprovedTemplateComposition(
+                failure_reason=APPROVED_TEMPLATE_PARAMETERS_MISSING,
+                retryable=False,
             )
         values = template.body_values(
             trigger_kind=trigger_kind,

@@ -18,6 +18,11 @@ El saludo sale de una cadena de tres niveles, en este orden:
 
 El modelo corre una sola vez por nombre, fuera del camino del envio: el envio
 solo lee lo que quedo guardado y nunca espera al modelo.
+
+El tercer nivel es texto de quien lleno el formulario, sin verificar.
+``template_greeting_name_is_safe`` es el filtro que el modo directo del
+dispatcher le aplica a lo que va a ir en ``{{1}}``; la cadena no lo aplica,
+porque sus otros consumidores (los one-shots de Johanna) no cambian.
 """
 
 from __future__ import annotations
@@ -26,6 +31,7 @@ import hashlib
 import json
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib.parse import urlsplit
@@ -42,6 +48,22 @@ MAX_FIRST_NAME_CHARS = 80
 MAX_FIRST_NAME_WORDS = 3
 _TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)
 _LETTER_WORD_RE = re.compile(r"^[^\W\d_](?:[^\W\d_]|['’-])*$", re.UNICODE)
+
+# El tope del nombre que va en una plantilla aprobada. El nombre compuesto mas
+# largo que se probo tiene 41 caracteres; el tope limita el texto libre que un
+# formulario sin verificar puede meter en un mensaje que sale con la marca.
+MAX_TEMPLATE_GREETING_CHARS = 60
+# Ademas de letras, marcas y emoji: los signos que aparecen en nombres reales
+# ("O'Brien", "O’Brien", "Ana-Lucía", "J.C. Pérez", "Pérez, Juan").
+_TEMPLATE_NAME_PUNCTUATION = frozenset("'’-.,")
+# El unico caracter de formato admitido es el ZWJ que une los emoji compuestos
+# (y las etiquetas de las banderas de subdivision). Los de direccion de texto
+# (U+202E y familia) no: reordenan lo que se ve.
+_TEMPLATE_NAME_FORMAT_CHARS = frozenset("‍")
+_TEMPLATE_NAME_TAG_RANGE = ("\U000e0020", "\U000e007f")
+# Un punto pegado a dos letras es la forma de un dominio ("evil.example"), que
+# WhatsApp convierte en enlace. "J.C. Pérez" no la tiene.
+_DOMAIN_SHAPE_RE = re.compile(r"\.[^\W\d_]{2,}", re.UNICODE)
 
 # v2 (2026-09-28). La v1 pedia "el primer nombre" y aceptaba compuestos de uso
 # comun: medida contra el modelo real con los 136 nombres del inbox 9, devolvio
@@ -360,3 +382,36 @@ async def resolve_greeting_name(
     if deterministic is not None:
         return GreetingName(deterministic, "deterministic")
     return GreetingName(full_name.strip(), "full_name")
+
+
+def template_greeting_name_is_safe(value: object) -> bool:
+    """True si el valor puede ir como nombre en una plantilla aprobada.
+
+    El nombre llega de un formulario publico (o de Hotmart) con un telefono que
+    nadie verifico, y la plantilla sale con la marca del aliado. Cuando el
+    saludo cae al nombre completo, o sin saludo, lo que la persona escribio va
+    tal cual a ``{{1}}``: una URL, un email o un texto largo saldrian en un
+    mensaje aprobado. El filtro admite lo que tiene un nombre real (letras,
+    marcas, emoji, espacios y ``'’-.,``) hasta ``MAX_TEMPLATE_GREETING_CHARS``,
+    y rechaza digitos, ``/``, ``@``, ``:``, ``_`` y la forma de un dominio.
+    Mira el valor con los espacios colapsados, igual que ``body_values``.
+    """
+    if not isinstance(value, str):
+        return False
+    collapsed = " ".join(value.split())
+    if not collapsed or len(collapsed) > MAX_TEMPLATE_GREETING_CHARS:
+        return False
+    tag_low, tag_high = _TEMPLATE_NAME_TAG_RANGE
+    for char in collapsed:
+        if (
+            char == " "
+            or char in _TEMPLATE_NAME_PUNCTUATION
+            or char in _TEMPLATE_NAME_FORMAT_CHARS
+            or tag_low <= char <= tag_high
+        ):
+            continue
+        category = unicodedata.category(char)
+        if category[0] in {"L", "M"} or category in {"So", "Sk"}:
+            continue
+        return False
+    return _DOMAIN_SHAPE_RE.search(collapsed) is None
