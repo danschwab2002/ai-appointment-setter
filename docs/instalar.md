@@ -148,3 +148,18 @@ El orden es siempre **migraciones → filas de la instancia → bridge → `/rea
 ## 12. Prender los flujos de a uno
 
 > Pendiente. Orden previsto: `inbound` → `pago_fallido` → `carrito` → el resto. Cada uno: `true` en el manifiesto, PR en el repo de la instancia, flag en el servicio, una prueba controlada y la medición del efecto antes de pasar al siguiente.
+
+### El formulario de la landing cuando es de GHL
+
+> Pendiente de ejecutar con ATT1. Es la secuencia prevista para una landing cuyo formulario es de GHL: el envío entra como `intencion` por el adaptador (`docs/contracts/ghl-precheckout-adapter-v1.md`), sin tocar la landing. Nadie recibe un mensaje por esto: el adaptador solo admite la intención.
+
+1. **Antes:** la base tiene la migración `20260930000200` y la fila del binding con `additional_offer_landings` (paso 9). Sin eso, solo entra el formulario de la landing por defecto y el resto da `503` (que GHL reintenta).
+2. **Manifiesto** (PR en el repo de la instancia): `"intencion"` en `eventos` y `[adaptadores.ghl]` con el id de cada formulario (el `attributionSource.mediumId` del webhook, 20 letras o números). Un formulario se lista solo después de verificar que muestra la aclaración de `consentimiento.copy_version`: listarlo afirma `whatsapp_contact = true` para cada envío. `validate` tiene que dar verde.
+3. **Secretos:** `GHL_PRECHECKOUT_ADAPTER_TOKEN`, aleatorio, de 32 caracteres o más y distinto de todo otro secreto del bridge (el arranque lo compara contra toda la configuración y nombra el que repite), generado como el resto de los secretos de la instancia (paso 7). No rota en cada despliegue: GHL lo tiene copiado.
+4. **Bridge:** `GHL_PRECHECKOUT_ADAPTER_ENABLED=true` y redespliegue. El proxy tiene que enrutar `/webhooks/adapters/ghl/lead-precheckout` al bridge.
+   **Verificación:** `/ready` da 200 con `ghl_precheckout_adapter: "enabled:<n>-forms"`, con `n` igual a los formularios del manifiesto. Si el bridge no arranca, el error nombra lo que falta (`runtime flags exceed the instance manifest flows: ghl_precheckout_adapter_enabled->intencion` o `->adaptadores.ghl`, o el token), o dice que `flujos.precheckout` está prendido: con el adaptador, el primer contacto del formulario espera la verificación fuera de banda del envío (sección *Riesgos* del contrato).
+5. **GHL:** en el workflow con disparador *Form submitted* filtrado por esos formularios, una acción *Webhook* `POST` a `https://<dominio del bridge>/webhooks/adapters/ghl/lead-precheckout`, con el token en *Custom Data* como `setter_token` (o en el header `X-Setter-Adapter-Token`, si la acción admite headers). Nunca en la URL.
+6. **Prueba controlada:** un envío real del formulario desde la URL de la landing.
+   **Verificación:** la ejecución del workflow en GHL registra `200`; en la base hay una fila nueva en `precheckout_submissions` y la intención en `purchase_intents` con la `landing_ref` y la `offer_ref` de esa landing y `whatsapp_contact_authorized = true`. Un `422` dice por qué en el log del bridge (`ghl_form_not_allowed`, `ghl_landing_unknown`, `ghl_phone_unusable`) y no toca la base.
+
+**Condición antes de prender** `[flujos].precheckout`, o una audiencia `consented_intent` alimentada por estas intenciones: el token es la única barrera (el id del formulario y las URL son públicos), así que hace falta una verificación fuera de banda de cada envío o la aceptación del riesgo por escrito del responsable de la instancia (contrato, sección Riesgos).

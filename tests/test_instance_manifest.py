@@ -305,3 +305,101 @@ def test_parametros_rules(value: object, message: str) -> None:
 
     with pytest.raises(ManifestError, match=f"plantillas.carrito.parametros.*{message}"):
         _load(payload)
+
+
+# ------------------------------------------------------- adaptador de GHL
+# El fixture de ATT1 es copia de la instancia y no tiene la seccion todavia: los
+# casos la arman por mutacion. Los dos ids son los formularios medidos el 2026-09-29
+# (tests/fixtures/ghl/): EgDq en ads-a y Om5F en la landing -d de Mexico.
+
+_GHL_ADS_A_FORM = "EgDqRl2xWc59YjVW1q8W"
+_GHL_LANDING_D_FORM = "Om5FpIg5Sr5ce7nSkuPy"
+
+
+def _with_ghl_adapter(payload: dict, forms: object) -> dict:
+    payload["eventos"] = [*payload["eventos"], "intencion"]
+    payload["adaptadores"] = {"ghl": {"formularios": forms}}
+    return payload
+
+
+def test_ghl_adapter_section_loads_its_forms_in_order() -> None:
+    manifest = _load(_with_ghl_adapter(_payload("att1"), [_GHL_ADS_A_FORM, _GHL_LANDING_D_FORM]))
+
+    assert manifest.ghl_form_ids == (_GHL_ADS_A_FORM, _GHL_LANDING_D_FORM)
+    assert "intencion" in manifest.events
+
+
+def test_without_the_ghl_adapter_section_there_are_no_forms() -> None:
+    for name in ("att1", "johanna"):
+        manifest = InstanceManifest.from_toml_file(FIXTURES / name / "instancia.toml")
+
+        assert manifest.ghl_form_ids == ()
+
+
+def test_an_empty_adaptadores_table_means_no_adapter() -> None:
+    payload = _payload("att1")
+    payload["adaptadores"] = {}
+
+    assert _load(payload).ghl_form_ids == ()
+
+
+def test_the_ghl_adapter_does_not_change_the_binding() -> None:
+    plain = InstanceManifest.from_toml_file(FIXTURES / "att1" / "instancia.toml")
+    with_adapter = _load(_with_ghl_adapter(_payload("att1"), [_GHL_ADS_A_FORM]))
+
+    assert with_adapter.to_commercial_ally_config() == plain.to_commercial_ally_config()
+
+
+@pytest.mark.parametrize(
+    ("forms", "message"),
+    [
+        ([], "al menos un formulario"),
+        ("EgDqRl2xWc59YjVW1q8W", "lista de textos"),
+        ([_GHL_ADS_A_FORM[:19]], "no es un id de formulario de GHL"),
+        ([_GHL_ADS_A_FORM + "X"], "no es un id de formulario de GHL"),
+        (["EgDqRl2xWc59YjVW1q8-"], "no es un id de formulario de GHL"),
+        ([_GHL_ADS_A_FORM, _GHL_ADS_A_FORM], "repetidos"),
+        ([" " + _GHL_ADS_A_FORM], "lista de textos"),
+    ],
+)
+def test_ghl_form_ids_rules(forms: object, message: str) -> None:
+    payload = _with_ghl_adapter(_payload("att1"), forms)
+
+    with pytest.raises(ManifestError, match=f"adaptadores.ghl.formularios.*{message}"):
+        _load(payload)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda p: p["adaptadores"].__setitem__("hubspot", {}), "adaptadores: claves no soportadas hubspot"),
+        (lambda p: p["adaptadores"]["ghl"].__setitem__("token", "x"), "adaptadores.ghl: claves no soportadas token"),
+        (lambda p: p["adaptadores"]["ghl"].pop("formularios"), "adaptadores.ghl: faltan formularios"),
+        (lambda p: p["adaptadores"].__setitem__("ghl", ["EgDqRl2xWc59YjVW1q8W"]), "adaptadores.ghl debe ser una tabla"),
+        (lambda p: p.__setitem__("adaptadores", "ghl"), "adaptadores debe ser una tabla"),
+    ],
+)
+def test_ghl_adapter_section_shape(mutate, message: str) -> None:
+    payload = _with_ghl_adapter(_payload("att1"), [_GHL_ADS_A_FORM])
+    mutate(payload)
+
+    with pytest.raises(ManifestError, match=message):
+        _load(payload)
+
+
+def test_ghl_adapter_requires_the_intencion_event() -> None:
+    payload = _payload("att1")
+    assert "intencion" not in payload["eventos"]
+    payload["adaptadores"] = {"ghl": {"formularios": [_GHL_ADS_A_FORM]}}
+
+    with pytest.raises(ManifestError, match="adaptadores.ghl exige el evento 'intencion' en eventos"):
+        _load(payload)
+
+
+def test_loading_the_ghl_adapter_does_not_mutate_the_input_mapping() -> None:
+    payload = _with_ghl_adapter(_payload("att1"), [_GHL_ADS_A_FORM])
+    before = copy.deepcopy(payload)
+
+    _load(payload)
+
+    assert payload == before

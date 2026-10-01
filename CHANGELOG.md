@@ -8,7 +8,20 @@ Cada versión dice qué cambia y **qué tiene que hacer quien actualiza una inst
 
 Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab2002/setter-bridge`, `setter-slack-connector` y `setter-daily-feedback`. La release de GitHub lleva el digest de cada una. Cómo se pasa un servicio a la imagen y cómo se vuelve atrás: [docs/operations/release-por-imagen-v1.md](docs/operations/release-por-imagen-v1.md).
 
-## [1.1.0] - sin publicar
+## [1.2.0] - sin publicar
+
+El adaptador del formulario de GHL. Una instancia cuya landing usa un formulario de GHL deja su intención de compra con consentimiento sin cambiar la landing: es lo que necesitan el permiso del pago fallido y la audiencia `consented_intent` de 1.1.0. Apagado por defecto: sin `GHL_PRECHECKOUT_ADAPTER_ENABLED` el bridge arranca igual que en 1.1.0.
+
+### Agregado
+
+- `GHL_PRECHECKOUT_ADAPTER_ENABLED` (apagado por defecto, solo con manifiesto): el adaptador del formulario de GHL, `POST /webhooks/adapters/ghl/lead-precheckout`. Traduce el webhook de un workflow *Form submitted* de GHL a `lead.precheckout` 1.1.0 y lo admite por la admisión portable, la misma de un formulario de landing: así una landing cuyo formulario es de GHL (ATT1) deja su intención con consentimiento sin cambiar la landing. Los formularios admitidos se declaran en `[adaptadores.ghl]` del manifiesto; la landing y la oferta salen de la URL del envío, comparada con `[[hotmart.ofertas]]`; las UTM y el `sck` se componen de la query con el port literal del core de Lancemos. Autentica con `GHL_PRECHECKOUT_ADAPTER_TOKEN` (header `X-Setter-Adapter-Token` o `customData.setter_token`), que es la única barrera: el id del formulario y las URL son públicos. Rechaza con `422`, sin tocar la base, la prueba del editor de GHL, un formulario fuera de la lista, una landing desconocida y un teléfono inválido (el móvil mexicano con `+521` se normaliza a `+52`); con `400` una clave repetida en el JSON o un email de más de 254 caracteres (el tope de una dirección SMTP; uno de varios KB no entra en la fila del índice y la RPC fallaría en cada entrega). El `id` de cada entrega es un ULID aleatorio: un reintento de GHL es otra submission de la misma intención y no deja un conflicto que le quite el consentimiento (`validate_ghl_precheckout_adapter.mjs`, dentro de `npm test`, lo prueba contra la RPC real, con el caso de control del id repetido). Prendido, el bridge no arranca sin `intencion` en `eventos`, sin formularios, con un token de menos de 32 caracteres o igual a otro secreto, o con `[flujos].precheckout` prendido (hasta que exista la verificación fuera de banda del envío; `validate` lo avisa), y `/ready` informa `ghl_precheckout_adapter`. Fixtures: los dos envíos capturados el 2026-09-29, en `tests/fixtures/ghl/`. Contrato: `docs/contracts/ghl-precheckout-adapter-v1.md`. Johanna corre sin manifiesto: `/webhooks/lead` y su arranque no cambian.
+
+### Qué tiene que hacer una instancia
+
+- Nada, si no usa el adaptador. Esta versión no trae migraciones.
+- Para que el formulario de GHL deje la intención: `"intencion"` en `eventos`, `[adaptadores.ghl]` con los formularios que muestran la aclaración del consentimiento, `GHL_PRECHECKOUT_ADAPTER_TOKEN` y `GHL_PRECHECKOUT_ADAPTER_ENABLED=true`, y en GHL una acción *Webhook* al bridge con el token en *Custom Data* (`setter_token`). Antes, la migración `20260930000200` y la fila del binding con sus landings. Pasos y verificación: `docs/instalar.md`, paso 12. No prende ningún mensaje; prender `[flujos].precheckout` o una audiencia `consented_intent` alimentada por el adaptador exige además una verificación fuera de banda del envío o la aceptación del riesgo por escrito (contrato, Riesgos). Johanna: nada.
+
+## [1.1.0] - 2026-09-30
 
 El bridge lee el manifiesto de la instancia. Es la primera versión con la que una aliada se instala desde su repo (`setter-instancia-<aliada>`) sin código propio. Apagado por defecto: sin `INSTANCE_MANIFEST_PATH` el bridge arranca igual que en 1.0.0.
 

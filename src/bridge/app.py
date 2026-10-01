@@ -78,7 +78,13 @@ from bridge.hotmart import (
     verify_hotmart_token,
 )
 from bridge.inbound_handoff import request_handoff_for_inbound_proposal
-from bridge.lead_precheckout import parse_lead_precheckout
+from bridge.ghl_precheckout_adapter import (
+    GhlAdapterRejection,
+    ghl_body_token,
+    parse_ghl_body,
+    translate_ghl_form_submission,
+)
+from bridge.lead_precheckout import LeadPrecheckoutSubmission, parse_lead_precheckout
 from bridge.messaging import (
     ChatwootMessageSender,
     FinalMetaEffectGate,
@@ -130,6 +136,7 @@ from bridge.slack_runtime import SlackBridgeRuntime, create_slack_bridge_runtime
 from bridge.supabase import (
     OperatorCorrelationResolutionError,
     PilotBoundaryConfig,
+    PrecheckoutAdmissionResult,
     SupabaseClient,
     SupabaseError,
     SupabasePermanentError,
@@ -175,6 +182,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     "portable_hotmart_purchase_stop_enabled",
     "hotmart_purchase_worker_enabled",
     "lead_precheckout_enabled",
+    # El adaptador de GHL traduce el formulario a lead.precheckout y lo manda
+    # a la misma admision portable que /webhooks/lead; lo especifico (que
+    # formularios) sale de [adaptadores.ghl] del manifiesto.
+    "ghl_precheckout_adapter_enabled",
     "worker_enabled",
     "dispatcher_enabled",
     "dispatcher_outbound_enabled",
@@ -455,6 +466,8 @@ class Settings:
     lead_precheckout_site: str = "psicologajohanna"
     lead_precheckout_landing_id: str = "ads-a"
     lead_precheckout_offer_code: str = "bxjge6zq"
+    ghl_precheckout_adapter_enabled: bool = False
+    ghl_precheckout_adapter_token: str | None = None
     precheckout_first_touch_enabled: bool = False
     precheckout_first_touch_token: str | None = None
     precheckout_delayed_first_touch_enabled: bool = False
@@ -820,6 +833,12 @@ class Settings:
         lead_precheckout_offer_code = os.getenv(
             "LEAD_PRECHECKOUT_OFFER_CODE", commercial_ally_config.offer_code
         ).strip()
+        ghl_precheckout_adapter_enabled = (
+            os.getenv("GHL_PRECHECKOUT_ADAPTER_ENABLED", "false").lower() == "true"
+        )
+        ghl_precheckout_adapter_token = (
+            os.getenv("GHL_PRECHECKOUT_ADAPTER_TOKEN", "").strip() or None
+        )
         allowed_jid = os.getenv("ALLOWED_WHATSAPP_JID", "").strip() or None
         allowed_phone = (
             allowed_jid.removesuffix("@s.whatsapp.net")
@@ -879,6 +898,13 @@ class Settings:
             )
         ):
             raise ValueError("lead precheckout scope must be complete")
+        if ghl_precheckout_adapter_enabled and (
+            ghl_precheckout_adapter_token is None
+            or len(ghl_precheckout_adapter_token) < 32
+        ):
+            raise ValueError(
+                "GHL_PRECHECKOUT_ADAPTER_TOKEN must contain at least 32 characters"
+            )
         supabase_base_url = os.getenv("SUPABASE_BASE_URL", "").strip() or None
         supabase_service_role_key = (
             os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip() or None
@@ -1313,6 +1339,8 @@ class Settings:
             lead_precheckout_site=lead_precheckout_site,
             lead_precheckout_landing_id=lead_precheckout_landing_id,
             lead_precheckout_offer_code=lead_precheckout_offer_code,
+            ghl_precheckout_adapter_enabled=ghl_precheckout_adapter_enabled,
+            ghl_precheckout_adapter_token=ghl_precheckout_adapter_token,
             precheckout_first_touch_enabled=precheckout_first_touch_enabled,
             precheckout_first_touch_token=precheckout_first_touch_token,
             precheckout_delayed_first_touch_enabled=(
@@ -1907,6 +1935,14 @@ def _validate_instance_manifest_gates(settings: Settings) -> None:
     )
     if settings.lead_precheckout_enabled and "intencion" not in manifest.events:
         blocked.append("lead_precheckout_enabled->intencion")
+    if settings.ghl_precheckout_adapter_enabled:
+        # Lo que el adaptador produce es el evento intencion, y solo traduce
+        # los formularios que la instancia lista (docs/contracts/
+        # ghl-precheckout-adapter-v1.md).
+        if "intencion" not in manifest.events:
+            blocked.append("ghl_precheckout_adapter_enabled->intencion")
+        if not manifest.ghl_form_ids:
+            blocked.append("ghl_precheckout_adapter_enabled->adaptadores.ghl")
     if settings.meta_final_effect_enabled and not any(
         manifest.flows[flow] for flow in _OUTBOUND_FLOWS
     ):
@@ -1914,6 +1950,16 @@ def _validate_instance_manifest_gates(settings: Settings) -> None:
     if blocked:
         raise ValueError(
             "runtime flags exceed the instance manifest flows: " + ", ".join(blocked)
+        )
+    if settings.ghl_precheckout_adapter_enabled and manifest.flows["precheckout"]:
+        # El token del adaptador es la unica barrera y lo lee cualquier usuario de
+        # la subcuenta de GHL: el primer contacto no sale para intenciones que no
+        # distingue de las de una landing hasta que exista una verificacion fuera
+        # de banda del envio (docs/contracts/ghl-precheckout-adapter-v1.md, Riesgos).
+        raise ValueError(
+            "GHL_PRECHECKOUT_ADAPTER_ENABLED cannot run with flujos.precheckout on: "
+            "the adapter token is the only barrier and the first contact needs an "
+            "out-of-band check of each submission"
         )
     if settings.automated_replies_enabled and knowledge is None:
         raise ValueError(
@@ -2087,6 +2133,66 @@ def _validate_approved_template_direct(
         )
 
 
+GHL_PRECHECKOUT_ADAPTER_PATH = "/webhooks/adapters/ghl/lead-precheckout"
+_GHL_LOGGABLE_FORM_ID = re.compile(r"[A-Za-z0-9]{20}")
+
+
+@dataclass
+class _GhlAdapterTrace:
+    """The one log line of a GHL adapter request.
+
+    docs/contracts/ghl-precheckout-adapter-v1.md, "Logs": outcome, reason, form
+    id, landing, offer, delivery id, phone region and whether UTM or fbclid
+    came. Never the name, email, phone, IP, userAgent, contact_id, fbclid,
+    fbEventId, the URL query, the token or the body.
+    """
+
+    form: str = "-"
+    landing: str = "-"
+    offer: str = "-"
+    delivery_id: str = "-"
+    phone_region: str = "-"
+    has_utm: str = "-"
+    has_fbclid: str = "-"
+    # Por que no se leyo el cuerpo de un pedido sin header, que se responde 401.
+    unauthenticated_reason: str | None = None
+
+    def note_form(self, body: dict[str, object]) -> None:
+        # The form id is public (it is in the widget URL). Anything that does
+        # not have its shape is not logged: the value comes from the body.
+        submission = body.get("attributionSource")
+        form_id = submission.get("mediumId") if isinstance(submission, dict) else None
+        if isinstance(form_id, str) and _GHL_LOGGABLE_FORM_ID.fullmatch(form_id):
+            self.form = form_id
+
+    def emit(self, *, outcome: str, status_code: int, reason: str) -> None:
+        # Un envio que no quedo admitido sale como warning: el bridge no
+        # configura logging y bajo uvicorn solo los warnings llegan a la salida
+        # del contenedor. El adaptador apagado es configuracion, no un envio
+        # perdido.
+        not_admitted = (
+            status_code != 200 and reason != "ghl_precheckout_adapter_not_enabled"
+        )
+        if self.unauthenticated_reason is not None:
+            reason = f"{reason}/{self.unauthenticated_reason}"
+        logger.log(
+            logging.WARNING if not_admitted else logging.INFO,
+            "ghl_precheckout_adapter outcome=%s status=%s reason=%s form=%s "
+            "landing=%s offer=%s delivery_id=%s phone_region=%s has_utm=%s "
+            "has_fbclid=%s",
+            outcome,
+            status_code,
+            reason,
+            self.form,
+            self.landing,
+            self.offer,
+            self.delivery_id,
+            self.phone_region,
+            self.has_utm,
+            self.has_fbclid,
+        )
+
+
 def create_app(
     settings: Settings,
     *,
@@ -2149,6 +2255,12 @@ def create_app(
             "instance_ally": settings.instance_manifest.ally_ref,
             "instance_product_version": settings.instance_manifest.product_version,
         }
+        if settings.ghl_precheckout_adapter_enabled:
+            # Cuantos formularios admite, sin exponer sus ids. Solo con el
+            # flag prendido: apagado, el payload de /ready no cambia.
+            instance_readiness["ghl_precheckout_adapter"] = (
+                f"enabled:{len(settings.instance_manifest.ghl_form_ids)}-forms"
+            )
     if settings.commercial_knowledge is not None:
         instance_readiness["commercial_knowledge"] = (
             f"v{settings.commercial_knowledge.version}:"
@@ -2349,6 +2461,39 @@ def create_app(
         settings.commercial_ally_config.offer_code,
     ):
         raise ValueError("lead precheckout scope must match commercial ally config")
+    if settings.ghl_precheckout_adapter_enabled:
+        # Todo condicionado al flag: apagado (Johanna, y ATT1 hasta prenderlo)
+        # no se evalua nada, ni siquiera un token ausente contra otro secreto
+        # ausente.
+        if settings.instance_manifest is None:
+            raise ValueError(
+                "GHL_PRECHECKOUT_ADAPTER_ENABLED requires an instance manifest"
+            )
+        adapter_token = settings.ghl_precheckout_adapter_token
+        if adapter_token is None or len(adapter_token) < 32:
+            raise ValueError(
+                "GHL_PRECHECKOUT_ADAPTER_TOKEN must contain at least 32 characters"
+            )
+        # Cualquier usuario de la subcuenta de GHL lee este token en el workflow:
+        # igual a otro valor de la configuracion, le daria esa otra autoridad (el
+        # token del primer contacto manda mensajes). Se compara contra todos los
+        # textos de Settings, no contra una lista de nombres que envejece.
+        clashing = sorted(
+            field.name
+            for field in dataclass_fields(settings)
+            if field.name != "ghl_precheckout_adapter_token"
+            and isinstance(value := getattr(settings, field.name), str)
+            and hmac.compare_digest(
+                adapter_token.encode("utf-8", "surrogatepass"),
+                value.encode("utf-8", "surrogatepass"),
+            )
+        )
+        if clashing:
+            raise ValueError(
+                "GHL_PRECHECKOUT_ADAPTER_TOKEN must differ from every other secret "
+                "and value of the bridge configuration; it equals "
+                + ", ".join(clashing)
+            )
     pilot_fields = (
         (settings.pilot_scope_key, "LANCEMOS_PILOT_SCOPE_KEY"),
         (settings.pilot_scope_version, "LANCEMOS_PILOT_SCOPE_VERSION"),
@@ -5488,6 +5633,39 @@ def create_app(
             return {"status": "conflict", "event_id": admission.event_id}
         return {"status": "received", "event_id": admission.event_id}
 
+    def _lead_admission_response(
+        submission: LeadPrecheckoutSubmission,
+        admission: PrecheckoutAdmissionResult,
+        background_tasks: BackgroundTasks,
+    ) -> dict[str, object]:
+        # La respuesta de una admision de lead.precheckout, la misma para
+        # /webhooks/lead y para el adaptador de GHL.
+        response_status = {
+            "inserted": "received",
+            "duplicate": "duplicate",
+            "semantic_conflict": "conflict",
+        }[admission.outcome]
+        if (
+            admission.outcome == "inserted"
+            and lead_first_name_client is not None
+            and shared_supabase is not None
+        ):
+            # Despues de responder: el formulario ya quedo admitido y el modelo
+            # nunca demora ni rompe esa respuesta.
+            background_tasks.add_task(
+                infer_and_record_first_name,
+                full_name=submission.buyer_name,
+                client=lead_first_name_client,
+                store=shared_supabase,
+            )
+        return {
+            "status": response_status,
+            "delivery_id": submission.external_submission_id,
+            "purchase_intent_id": admission.purchase_intent_id,
+            "activation_authorized": False,
+            "contact_authorized": False,
+        }
+
     @app.post("/webhooks/lead", status_code=status.HTTP_200_OK)
     async def receive_lead_precheckout_webhook(
         request: Request,
@@ -5590,31 +5768,149 @@ def create_app(
             raise HTTPException(
                 status_code=503, detail="lead_precheckout_persist_unavailable"
             ) from exc
-        response_status = {
-            "inserted": "received",
-            "duplicate": "duplicate",
-            "semantic_conflict": "conflict",
-        }[admission.outcome]
-        if (
-            admission.outcome == "inserted"
-            and lead_first_name_client is not None
-            and shared_supabase is not None
-        ):
-            # Despues de responder: el formulario ya quedo admitido y el modelo
-            # nunca demora ni rompe esa respuesta.
-            background_tasks.add_task(
-                infer_and_record_first_name,
-                full_name=submission.buyer_name,
-                client=lead_first_name_client,
-                store=shared_supabase,
+        return _lead_admission_response(submission, admission, background_tasks)
+
+    async def _read_ghl_body(request: Request, content_type: str) -> dict[str, object]:
+        # Solo el tipo de medio: GHL manda application/json sin charset, y el
+        # User-Agent (axios) es un detalle suyo que no se valida.
+        if content_type.split(";", 1)[0].strip().lower() != "application/json":
+            raise HTTPException(status_code=400, detail="invalid_ghl_transport")
+        raw = bytearray()
+        async for chunk in request.stream():
+            if len(raw) + len(chunk) > PRECHECKOUT_WEBHOOK_BODY_LIMIT_BYTES:
+                raise HTTPException(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    detail="ghl_adapter_body_too_large",
+                )
+            raw.extend(chunk)
+        try:
+            return parse_ghl_body(bytes(raw))
+        except GhlAdapterRejection as exc:
+            raise HTTPException(
+                status_code=exc.status_code, detail=f"ghl_{exc.reason}"
+            ) from None
+
+    async def _admit_ghl_form_submission(
+        request: Request,
+        background_tasks: BackgroundTasks,
+        content_type: str,
+        header_token: str,
+        trace: _GhlAdapterTrace,
+    ) -> dict[str, object]:
+        manifest = settings.instance_manifest
+        token = settings.ghl_precheckout_adapter_token
+        # create_app ya no arranca sin esto con el flag prendido: se repite
+        # como defensa.
+        if not settings.ghl_precheckout_adapter_enabled or manifest is None or not token:
+            raise HTTPException(
+                status_code=503, detail="ghl_precheckout_adapter_not_enabled"
             )
-        return {
-            "status": response_status,
-            "delivery_id": submission.external_submission_id,
-            "purchase_intent_id": admission.purchase_intent_id,
-            "activation_authorized": False,
-            "contact_authorized": False,
-        }
+        expected_token = token.encode("utf-8")
+
+        def token_matches(candidate: str) -> bool:
+            return hmac.compare_digest(
+                candidate.encode("utf-8", "surrogatepass"), expected_token
+            )
+
+        # Un header distinto corta antes de leer el cuerpo.
+        if header_token and not token_matches(header_token):
+            raise HTTPException(status_code=401, detail="invalid_adapter_token")
+        try:
+            body = await _read_ghl_body(request, content_type)
+        except HTTPException as exc:
+            if header_token:
+                raise
+            # Sin header el pedido todavia no esta autenticado (el token de la
+            # accion Webhook viaja en el cuerpo): quien no lo tiene recibe solo
+            # 401, sin saber por que no se leyo el cuerpo. La linea de log
+            # conserva el motivo real.
+            trace.unauthenticated_reason = str(exc.detail)
+            raise HTTPException(
+                status_code=401, detail="invalid_adapter_token"
+            ) from None
+
+        # La accion Webhook estandar de GHL manda el token en Custom Data. Si
+        # viene en los dos lugares, los dos tienen que coincidir.
+        body_token = ghl_body_token(body)
+        if body_token is None and not header_token:
+            raise HTTPException(status_code=401, detail="invalid_adapter_token")
+        if body_token is not None and not token_matches(body_token):
+            raise HTTPException(status_code=401, detail="invalid_adapter_token")
+
+        trace.note_form(body)
+        try:
+            translation = translate_ghl_form_submission(
+                body,
+                config=settings.commercial_ally_config,
+                allowed_forms=frozenset(manifest.ghl_form_ids),
+                now=datetime.now(UTC),
+            )
+        except GhlAdapterRejection as exc:
+            if exc.phone_region is not None:
+                trace.phone_region = exc.phone_region
+            raise HTTPException(
+                status_code=exc.status_code, detail=f"ghl_{exc.reason}"
+            ) from None
+        trace.form = translation.form_id
+        trace.landing = f"{translation.site}/{translation.landing_id}"
+        trace.offer = translation.offer_code
+        trace.phone_region = translation.phone_region
+        trace.has_utm = str(translation.has_utm).lower()
+        trace.has_fbclid = str(translation.has_fbclid).lower()
+
+        submission = parse_lead_precheckout(
+            translation.event, config=settings.commercial_ally_config
+        )
+        if submission is None:
+            # Un error del traductor: reintentar no lo arregla, asi que no es
+            # 5xx. La linea del pedido sale como warning.
+            raise HTTPException(status_code=422, detail="ghl_translation_rejected")
+        trace.delivery_id = submission.external_submission_id
+        if not submission.phone_valid:
+            # La admision portable 1.1.0 lo rechazaria con 22023, que llega como
+            # 503 y GHL reintentaria para siempre.
+            raise HTTPException(status_code=422, detail="ghl_phone_unusable")
+        if shared_supabase is None:
+            raise HTTPException(status_code=503, detail="supabase_not_configured")
+        try:
+            # Siempre la admision portable, con el evento traducido: el cuerpo
+            # de GHL no se guarda.
+            admission = await shared_supabase.admit_portable_observed_lead_precheckout(
+                config=settings.commercial_ally_config,
+                external_submission_id=submission.external_submission_id,
+                raw_payload=translation.event,
+                canonical_payload=submission.as_canonical_payload(),
+            )
+        except SupabaseError as exc:
+            raise HTTPException(
+                status_code=503, detail="ghl_precheckout_persist_unavailable"
+            ) from exc
+        return _lead_admission_response(submission, admission, background_tasks)
+
+    @app.post(GHL_PRECHECKOUT_ADAPTER_PATH, status_code=status.HTTP_200_OK)
+    async def receive_ghl_precheckout_adapter_webhook(
+        request: Request,
+        background_tasks: BackgroundTasks,
+        content_type: str = Header(default=""),
+        x_setter_adapter_token: str = Header(default=""),
+    ) -> dict[str, object]:
+        # docs/contracts/ghl-precheckout-adapter-v1.md. Una linea de log por
+        # pedido, con o sin rechazo.
+        trace = _GhlAdapterTrace()
+        try:
+            result = await _admit_ghl_form_submission(
+                request, background_tasks, content_type, x_setter_adapter_token, trace
+            )
+        except HTTPException as exc:
+            trace.emit(
+                outcome="rejected", status_code=exc.status_code, reason=str(exc.detail)
+            )
+            raise
+        except Exception as exc:
+            trace.emit(outcome="error", status_code=500, reason=type(exc).__name__)
+            raise
+        trace.emit(outcome=str(result["status"]), status_code=200, reason="-")
+        return result
 
     @app.post("/webhooks/precheckout", status_code=status.HTTP_202_ACCEPTED)
     async def receive_precheckout_webhook(

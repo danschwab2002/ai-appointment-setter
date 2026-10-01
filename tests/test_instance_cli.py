@@ -80,3 +80,63 @@ def test_inbound_on_with_draft_knowledge_is_an_error(att1_copy: Path) -> None:
 
     assert report["valida"] is False
     assert "inbound" in report["errores"][0]
+
+
+def _add_ghl_adapter(instance: Path, forms: list[str]) -> None:
+    # El fixture de ATT1 no tiene la seccion: se arma sobre la copia, nunca sobre el fixture.
+    path = instance / "instancia.toml"
+    text = path.read_text(encoding="utf-8")
+    events = 'eventos = ["carrito", "pago_fallido", "compra", "entrante"]'
+    assert events in text
+    text = text.replace(events, 'eventos = ["carrito", "pago_fallido", "compra", "entrante", "intencion"]')
+    text += "\n[adaptadores.ghl]\nformularios = [" + ", ".join(f'"{form}"' for form in forms) + "]\n"
+    path.write_text(text, encoding="utf-8")
+
+
+def test_report_lists_the_ghl_adapter_forms(att1_copy: Path, capsys) -> None:
+    _add_ghl_adapter(att1_copy, ["EgDqRl2xWc59YjVW1q8W"])
+
+    report = validate_instance(att1_copy)
+
+    assert report["valida"] is True
+    assert report["manifiesto"]["adaptadores"] == {"ghl": {"formularios": ["EgDqRl2xWc59YjVW1q8W"]}}
+    assert main(["validate", str(att1_copy)]) == 0
+    assert "adaptador ghl, formularios: EgDqRl2xWc59YjVW1q8W" in capsys.readouterr().out
+
+
+def test_the_ghl_adapter_with_the_precheckout_flow_on_is_a_warning(att1_copy: Path) -> None:
+    # validate no ve GHL_PRECHECKOUT_ADAPTER_ENABLED: avisa que el bridge no va a
+    # arrancar con el adaptador prendido (test_instance_wiring lo prueba en el arranque).
+    _add_ghl_adapter(att1_copy, ["EgDqRl2xWc59YjVW1q8W"])
+    path = att1_copy / "instancia.toml"
+    text = path.read_text(encoding="utf-8")
+    assert "precheckout = false" in text
+    path.write_text(text.replace("precheckout = false", "precheckout = true"), encoding="utf-8")
+
+    report = validate_instance(att1_copy)
+
+    assert report["flujos"]["precheckout"]["prendido"] is True
+    assert any(
+        "GHL_PRECHECKOUT_ADAPTER_ENABLED=true" in warning for warning in report["avisos"]
+    )
+    # Sin el adaptador en el manifiesto no hay aviso.
+    assert not any("adaptadores.ghl" in warning for warning in validate_instance(ATT1)["avisos"])
+
+
+def test_report_has_no_adapter_without_the_section() -> None:
+    report = validate_instance(ATT1)
+
+    assert "adaptadores" not in report["manifiesto"]
+
+
+def test_ghl_adapter_without_intencion_is_an_error(att1_copy: Path) -> None:
+    path = att1_copy / "instancia.toml"
+    path.write_text(
+        path.read_text(encoding="utf-8") + '\n[adaptadores.ghl]\nformularios = ["EgDqRl2xWc59YjVW1q8W"]\n',
+        encoding="utf-8",
+    )
+
+    report = validate_instance(att1_copy)
+
+    assert report["valida"] is False
+    assert "adaptadores.ghl exige el evento 'intencion'" in report["errores"][0]

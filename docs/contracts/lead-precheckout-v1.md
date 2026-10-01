@@ -4,6 +4,7 @@
 - **Versiones externas:** `1.0.0`, `1.1.0`
 - **Endpoint:** `POST /webhooks/lead`
 - **Emisor previsto:** `/api/lead` server-side de la landing
+- **Segundo emisor (bridge 1.2.0, apagado por defecto con `GHL_PRECHECKOUT_ADAPTER_ENABLED`):** el adaptador del formulario de GHL, `POST /webhooks/adapters/ghl/lead-precheckout`, que traduce el webhook de GHL a este evento `1.1.0` con `source.system = "landing"` y lo admite por la admisión portable. Ver [ghl-precheckout-adapter-v1.md](ghl-precheckout-adapter-v1.md).
 
 ## Propósito y límite
 

@@ -28,9 +28,12 @@ Con manifiesto, el bridge además exige:
 | `CONVERSATION_REACTIVATION_ENABLED` | `reactivacion` |
 | `CHATWOOT_POST_INBOUND_DISCOUNT_PLANNING_ENABLED` | `descuento` |
 | `LEAD_PRECHECKOUT_ENABLED` | el evento `intencion` en `eventos` |
+| `GHL_PRECHECKOUT_ADAPTER_ENABLED` | el evento `intencion` en `eventos` y `[adaptadores.ghl]` con al menos un formulario |
 | `META_FINAL_EFFECT_ENABLED` | algún flujo que manda plantillas: `precheckout`, `carrito`, `pago_fallido`, `reactivacion` o `descuento` |
 
 La guarda de medicación usa `guardas.terminos_sensibles` y `guardas.acciones_sensibles` del manifiesto en vez de la lista por defecto. `/ready` informa `instance_ally`, `instance_product_version` y `commercial_knowledge` (`v<versión>:<sha256 del bloque>`).
+
+`GHL_PRECHECKOUT_ADAPTER_ENABLED` solo existe con manifiesto: prendido sin él, el bridge no arranca. Además exige `GHL_PRECHECKOUT_ADAPTER_TOKEN` de 32 caracteres o más, distinto de todo otro secreto y valor de texto de la configuración del bridge, no arranca con `[flujos].precheckout` en `true` (el token es la única barrera; ver *Riesgos* del contrato del adaptador), y suma a `/ready` `ghl_precheckout_adapter: enabled:<n>-forms`. Apagado, nada de eso se evalúa. Contrato: [ghl-precheckout-adapter-v1.md](ghl-precheckout-adapter-v1.md).
 
 El agente de una instancia usa el SOUL común del producto (`profiles/agente-comercial-comun/SOUL.md`) con el conocimiento de la instancia encima.
 

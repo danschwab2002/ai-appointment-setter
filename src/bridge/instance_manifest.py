@@ -39,6 +39,10 @@ _HOTLINK = re.compile(r"[A-Za-z0-9]{4,32}")
 _TEMPLATE_NAME = re.compile(r"[a-z0-9_]{1,512}")
 _LANGUAGE = re.compile(r"[a-z]{2}(?:_[A-Z]{2})?")
 _SLACK_CHANNEL = re.compile(r"[CG][A-Z0-9]{6,20}")
+# El id de un formulario de GHL, tal como llega en attributionSource.mediumId. Los
+# dos medidos (2026-09-29) tienen 20 alfanumericos; un id fuera de esa forma falla al
+# cargar, en voz alta, y no en cada envio.
+_GHL_FORM_ID = re.compile(r"[A-Za-z0-9]{20}")
 
 EVENTS = ("intencion", "carrito", "pago_fallido", "compra", "entrante")
 FLOWS = ("inbound", "precheckout", "carrito", "pago_fallido", "reactivacion", "descuento")
@@ -78,7 +82,7 @@ _TOP_KEYS_REQUIRED = {
     "flujos",
     "guardas",
 }
-_TOP_KEYS_OPTIONAL = {"slack", "revision_diaria"}
+_TOP_KEYS_OPTIONAL = {"slack", "revision_diaria", "adaptadores"}
 
 
 class ManifestError(ValueError):
@@ -146,6 +150,9 @@ class InstanceManifest:
     sensitive_actions: tuple[str, ...]
     slack_channel: str | None
     daily_review_reviewers: tuple[str, ...]
+    # Los formularios de GHL que el adaptador traduce a lead.precheckout
+    # (docs/contracts/ghl-precheckout-adapter-v1.md). Vacio = sin adaptador.
+    ghl_form_ids: tuple[str, ...] = ()
 
     @property
     def default_offer(self) -> Offer:
@@ -314,6 +321,7 @@ class InstanceManifest:
             review = _table(payload, "revision_diaria")
             _exact_keys("revision_diaria", review, set(), {"revisores"})
             reviewers = _str_list(review.get("revisores", []), "revision_diaria.revisores")
+        ghl_form_ids = _ghl_form_ids(payload, events)
 
         manifest = cls(
             product_version=product_version,
@@ -344,6 +352,7 @@ class InstanceManifest:
             sensitive_actions=_str_list(guardas["acciones_sensibles"], "guardas.acciones_sensibles"),
             slack_channel=slack_channel,
             daily_review_reviewers=reviewers,
+            ghl_form_ids=ghl_form_ids,
         )
         for flow, enabled in manifest.flows.items():
             blockers = manifest.flow_blockers(flow)
@@ -423,6 +432,38 @@ def _str_list(value: object, where: str) -> tuple[str, ...]:
     if len(set(value)) != len(value):
         raise ManifestError(f"{where} tiene elementos repetidos")
     return tuple(value)
+
+
+def _ghl_form_ids(payload: Mapping[str, Any], events: frozenset[str]) -> tuple[str, ...]:
+    """``[adaptadores.ghl].formularios``: los formularios de GHL que entran como intencion.
+
+    Listar un formulario afirma que muestra la aclaracion de
+    ``consentimiento.copy_version``: cada envio traducido sale con
+    ``whatsapp_contact = true``.
+    """
+
+    if "adaptadores" not in payload:
+        return ()
+    adapters = _table(payload, "adaptadores")
+    _exact_keys("adaptadores", adapters, set(), {"ghl"})
+    if "ghl" not in adapters:
+        return ()
+    ghl = adapters["ghl"]
+    if not isinstance(ghl, dict):
+        raise ManifestError("adaptadores.ghl debe ser una tabla")
+    _exact_keys("adaptadores.ghl", ghl, {"formularios"})
+    forms = _str_list(ghl["formularios"], "adaptadores.ghl.formularios")
+    if not forms:
+        raise ManifestError("adaptadores.ghl.formularios debe tener al menos un formulario")
+    for form in forms:
+        if _GHL_FORM_ID.fullmatch(form) is None:
+            raise ManifestError(
+                f"adaptadores.ghl.formularios: '{form}' no es un id de formulario de GHL "
+                "(20 letras o numeros)"
+            )
+    if "intencion" not in events:
+        raise ManifestError("adaptadores.ghl exige el evento 'intencion' en eventos")
+    return forms
 
 
 def _offers(value: object) -> tuple[Offer, ...]:

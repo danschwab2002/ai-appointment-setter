@@ -50,6 +50,10 @@ def validate_instance(directory: Path) -> dict[str, Any]:
         "chatwoot": f"cuenta {manifest.chatwoot_account_id}, inbox {manifest.chatwoot_inbox_id}",
         "eventos": sorted(manifest.events),
     }
+    if manifest.ghl_form_ids:
+        report["manifiesto"]["adaptadores"] = {
+            "ghl": {"formularios": list(manifest.ghl_form_ids)}
+        }
     flows: dict[str, Any] = {}
     for flow in FLOWS:
         blockers = manifest.flow_blockers(flow)
@@ -86,6 +90,14 @@ def validate_instance(directory: Path) -> dict[str, Any]:
     for flow, state in flows.items():
         if not state["se_puede_prender"]:
             report["avisos"].append(f"{flow} no se puede prender: " + "; ".join(state["falta"]))
+    if manifest.ghl_form_ids and manifest.flows["precheckout"]:
+        # validate no ve las variables del servicio: lo avisa, y el bridge lo corta
+        # al arrancar (docs/contracts/ghl-precheckout-adapter-v1.md, Riesgos).
+        report["avisos"].append(
+            "precheckout esta prendido y hay [adaptadores.ghl]: el bridge no arranca con "
+            "GHL_PRECHECKOUT_ADAPTER_ENABLED=true, porque el token del adaptador es la "
+            "unica barrera y el primer contacto exige verificar cada envio fuera de banda"
+        )
     report["valida"] = not report["errores"]
     return report
 
@@ -101,6 +113,9 @@ def _print_human(report: dict[str, Any]) -> None:
             print(f"  oferta {offer['codigo']} ← {offer['landing']}{mark}")
         print(f"  chatwoot {manifest['chatwoot']}")
         print(f"  eventos: {', '.join(manifest['eventos'])}")
+        ghl = manifest.get("adaptadores", {}).get("ghl")
+        if ghl:
+            print(f"  adaptador ghl, formularios: {', '.join(ghl['formularios'])}")
     for flow, state in report.get("flujos", {}).items():
         status = "prendido" if state["prendido"] else "apagado"
         ready = "" if state["se_puede_prender"] else " — no se puede prender"

@@ -1,0 +1,104 @@
+{
+  "_golden": {
+    "what": "evento lead.precheckout 1.1.0 que produce el adaptador de GHL",
+    "source_fixture": "tests/fixtures/ghl/ghl_form_webhook_att1_ads_a_20260929.json",
+    "derivation": "ninguna: el payload capturado tal cual",
+    "translated_with": "translate_ghl_form_submission con now=2026-09-29T16:00:00.000Z y el binding del fixture de ATT1 (tests/fixtures/instances/att1/instancia.toml) con 'intencion' en eventos y [adaptadores.ghl] formularios = [EgDqRl2xWc59YjVW1q8W, Om5FpIg5Sr5ce7nSkuPy]. raw_payload es el evento traducido; canonical_payload, parse_lead_precheckout(raw_payload).as_canonical_payload(). El id es un ULID aleatorio (cada traduccion saca otro): el de este archivo quedo fijo al generarlo, y la prueba compara todo lo demas."
+  },
+  "raw_payload": {
+    "id": "01M3PY9X00VYHP5X3GNWPGRMV4",
+    "event": "lead.precheckout",
+    "version": "1.1.0",
+    "created_at": "2026-09-29T16:00:00.000Z",
+    "source": {
+      "system": "landing",
+      "site": "metodoraizana",
+      "aliado": "Dra. Nina Garza",
+      "landing_id": "ads-a",
+      "page_url": "https://www.metodoraizana.com/att1/evg/vsl/ads-a"
+    },
+    "data": {
+      "buyer": {
+        "name": "Lead Anonimo",
+        "email": "lead.anonimo.1@example.com",
+        "phone": "+542944440101",
+        "phone_country_code": "54",
+        "phone_national": "2944440101"
+      },
+      "product": {
+        "hotlink": "D98014973Y",
+        "id": null,
+        "name": "Alimenta tu Tiroides",
+        "price": 47,
+        "currency": "USD"
+      },
+      "offer": {
+        "code": "gopi6lh7"
+      },
+      "checkout_url": "https://pay.hotmart.com/D98014973Y?off=gopi6lh7",
+      "checkout_country": {
+        "iso": "AR",
+        "source": "phone_country_code"
+      },
+      "attribution": {
+        "utm_source": "",
+        "utm_medium": "",
+        "utm_campaign": "",
+        "utm_content": "",
+        "utm_term": "",
+        "sck": "",
+        "fbclid": "",
+        "referrer": ""
+      },
+      "consent": {
+        "marketing_optin": true,
+        "whatsapp_contact": true,
+        "copy_version": "att1-whatsapp-contact-v1"
+      }
+    },
+    "dedupe_key": "metodoraizana:gopi6lh7:lead.anonimo.1@example.com"
+  },
+  "canonical_payload": {
+    "event_type": "PRECHECKOUT_FORM_SUBMITTED",
+    "contract_version": "1.1.0",
+    "external_submission_id": "01M3PY9X00VYHP5X3GNWPGRMV4",
+    "submitted_at": "2026-09-29T16:00:00Z",
+    "source": {
+      "tenant_ref": "lancemos",
+      "funnel_ref": "att1",
+      "landing_ref": "ads-a",
+      "page_url": "https://www.metodoraizana.com/att1/evg/vsl/ads-a",
+      "aliado": "Dra. Nina Garza"
+    },
+    "identity": {
+      "email": "lead.anonimo.1@example.com",
+      "phone": "542944440101",
+      "phone_valid": true,
+      "phone_country_iso": "AR"
+    },
+    "lead": {
+      "full_name": "Lead Anonimo"
+    },
+    "commerce": {
+      "product_ref": "D98014973Y",
+      "product_name": "Alimenta tu Tiroides",
+      "price": "47",
+      "currency": "USD",
+      "offer_ref": "gopi6lh7",
+      "checkout_url": "https://pay.hotmart.com/D98014973Y?off=gopi6lh7"
+    },
+    "consent": {
+      "terms_accepted": false,
+      "privacy_accepted": false,
+      "whatsapp_contact": true,
+      "marketing_optin": true,
+      "copy_version": "att1-whatsapp-contact-v1"
+    },
+    "dedupe_key": "metodoraizana:gopi6lh7:lead.anonimo.1@example.com",
+    "assurance": {
+      "provisional": false,
+      "provider_observed": true,
+      "activation_authorized": true
+    }
+  }
+}
