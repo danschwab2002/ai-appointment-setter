@@ -22,12 +22,14 @@
 --
 -- Que hace. Redefine las cuatro, copiadas de su definicion vigente, con un
 -- solo cambio: si la conversacion tiene un conversation_events
--- 'inbound_adopted_template_conversation' (lo escribe solo la 000400, en la
--- misma transaccion en la que la v2 crea el inbound_sales), el conteo y el
--- select del caso miran solo case_kind = 'inbound_sales'. Sin ese evento
--- hacen exactamente lo de antes: cuentan todos los casos. La guarda de
--- ambiguedad se mantiene: dos inbound_sales en una conversacion adoptada
--- siguen dando P0001.
+-- 'inbound_adopted_template_conversation', el conteo y el select del caso
+-- miran solo case_kind = 'inbound_sales'. Ninguna funcion ni el bridge
+-- escriben ese evento salvo la 000400, en la misma transaccion en la que la v2
+-- crea el inbound_sales; la tabla no lo impone (event_type no tiene check y
+-- service_role conserva el DML), asi que un insert a mano de ese evento en una
+-- conversacion la pasaria a este filtro. Sin ese evento hacen exactamente lo
+-- de antes: cuentan todos los casos. La guarda de ambiguedad se mantiene: dos
+-- inbound_sales en una conversacion adoptada siguen dando P0001.
 --
 -- Por que condicionado al evento y no para todas. La medicion de solo lectura
 -- en la base de Johanna (2026-10-01, autorizada por Dan) dio 2 conversaciones
@@ -35,7 +37,9 @@
 -- con mas de un caso. Un filtro incondicional les cambiaria el resultado: su
 -- unico caso pasaria a not_found. Johanna nunca tiene el evento de adopcion,
 -- porque su bridge no tiene manifiesto y no llama a la 000400, asi que para
--- ella las cuatro funciones devuelven lo mismo que antes, fila por fila.
+-- ella las cuatro funciones devuelven lo mismo que antes, fila por fila. Que
+-- siga asi se verifica: el count de ese evento en su base da 0 despues de
+-- aplicar y tiene que seguir en 0 (docs/instalar.md).
 --
 -- El plan. El evento se busca una sola vez por llamada, por el indice
 -- conversation_events_conversation_time_idx, despues de bloquear la

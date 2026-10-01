@@ -161,7 +161,7 @@ El orden es siempre **migraciones → filas de la instancia → bridge → `/rea
 3. Recién con la imagen 1.3.0 o posterior corriendo, mergear el manifiesto que suma las claves `riesgo_*` de `[adaptadores.ghl]`, si la instancia las va a usar: un bridge 1.2.0 no carga un manifiesto con esas claves.
 4. **Verificación:** `/ready` da 200. Con `[adaptadores.ghl]` suma `ghl_adapter_risk` (`accepted:<fecha>:<contrato>` o `not_accepted`). El log de arranque trae una línea `ghl_adapter_risk acceptance=…`.
 
-En la base de Johanna, después de aplicar la `000400` y la `000500`: `select count(*) from public.conversation_events where event_type = 'inbound_adopted_template_conversation';` tiene que dar 0. Su bridge corre sin manifiesto y no llama a la `000400`, así que las cuatro funciones de la `000500` le devuelven lo mismo que antes.
+En la base de Johanna, después de aplicar la `000400` y la `000500`: `select count(*) from public.conversation_events where event_type = 'inbound_adopted_template_conversation';` tiene que dar 0, y seguir en 0 en cada revisión posterior. Su bridge corre sin manifiesto y no llama a la `000400`, así que las cuatro funciones de la `000500` le devuelven lo mismo que antes. Ninguna función ni el bridge escriben ese evento salvo la `000400`, pero la tabla no lo impide (`event_type` no tiene check y `service_role` conserva el DML): un insert a mano de ese evento en una conversación de Johanna haría que las cuatro funciones miren solo su `inbound_sales`, y con un único `cart_recovery` darían `not_found`.
 
 Una instancia con `[adaptadores.ghl]`, sin aceptación y con `LANCEMOS_PILOT_BOUNDARY_ENABLED=true` necesita la `000300` aplicada **antes** del bridge 1.3.0: el arranque lee el modo de audiencia del scope y, sin esa función, no arranca.
 
