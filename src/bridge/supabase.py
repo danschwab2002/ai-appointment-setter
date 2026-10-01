@@ -145,6 +145,13 @@ _PILOT_PLAN_REJECTION_SQLSTATE = "55000"
 # reasons raised by the pilot planners are fixed literals, and anything else
 # (free text, a phone, a quote from the payload) must not reach that column.
 _PILOT_PLAN_REJECTION_TOKEN = re.compile(r"[a-z][a-z_]{0,79}")
+# The anchor of the first contact planned from the landing form
+# (admit_and_plan_portable_lead_precheckout). Its actions use their own
+# reevaluation and request-start RPCs.
+PRECHECKOUT_INTENT_ANCHOR = "precheckout_intent"
+_PRECHECKOUT_PLAN_OUTCOMES = frozenset({"planned", "not_planned", "plan_failed"})
+# The reason of a plan as the base stores it: always a code, never free text.
+_PRECHECKOUT_PLAN_REASON = re.compile(r"[a-z0-9_]{1,64}")
 # A phone as the base stores it: digits only, international length. It is the
 # only shape allowed inside a PostgREST ``in.(...)`` filter built from phones.
 _PHONE_DIGITS_RE = re.compile(r"[1-9][0-9]{6,14}")
@@ -250,11 +257,21 @@ class CommercialAllyPostInboundDiscountPlan:
 
 @dataclass(frozen=True)
 class PrecheckoutAdmissionResult:
-    """Atomic admission outcome for one provisional form submission."""
+    """Atomic admission outcome for one provisional form submission.
+
+    ``plan_outcome`` and ``plan_reason`` are set only by the admission that
+    also plans the portable first contact
+    (``admit_and_plan_portable_lead_precheckout``): ``planned``,
+    ``not_planned`` or ``plan_failed`` with its reason code. Both stay ``None``
+    for every other admission, and for a duplicate whose plan was never
+    decided.
+    """
 
     outcome: str
     submission_id: str
     purchase_intent_id: str
+    plan_outcome: str | None = None
+    plan_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1921,6 +1938,76 @@ class SupabaseClient:
             outcome=outcome,
             submission_id=submission_id,
             purchase_intent_id=purchase_intent_id,
+        )
+
+    async def admit_and_plan_portable_lead_precheckout(
+        self,
+        *,
+        config: CommercialAllyConfig,
+        external_submission_id: str,
+        raw_payload: dict[str, object],
+        canonical_payload: dict[str, object],
+        scope_key: str,
+        scope_version: int,
+    ) -> PrecheckoutAdmissionResult:
+        """Admit a lead and plan its first contact in one transaction.
+
+        The admission is the one of ``admit_portable_observed_lead_precheckout``
+        and is never lost because of the plan: a plan that does not proceed
+        comes back as ``not_planned`` or ``plan_failed`` with its reason code,
+        and the same reason stays in the plan ledger of the base.
+        """
+        operation = "portable_lead_precheckout_admission_and_plan"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/admit_and_plan_portable_lead_precheckout",
+            content=json.dumps(
+                {
+                    "p_tenant_ref": config.tenant_ref,
+                    "p_funnel_ref": config.funnel_ref,
+                    "p_binding_version": config.binding_version,
+                    "p_external_submission_id": external_submission_id,
+                    "p_raw_payload": raw_payload,
+                    "p_canonical_payload": canonical_payload,
+                    "p_scope_key": scope_key,
+                    "p_scope_version": scope_version,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        outcome = row.get("outcome")
+        submission_id = row.get("submission_id")
+        purchase_intent_id = row.get("purchase_intent_id")
+        plan_outcome = row.get("plan_outcome")
+        plan_reason = row.get("plan_reason")
+        if outcome not in {"inserted", "duplicate", "semantic_conflict"}:
+            raise SupabaseError(f"{operation}_invalid_outcome")
+        if not isinstance(submission_id, str) or not submission_id:
+            raise SupabaseError(f"{operation}_invalid_submission_id")
+        if not isinstance(purchase_intent_id, str) or not purchase_intent_id:
+            raise SupabaseError(f"{operation}_invalid_purchase_intent_id")
+        # A new submission always carries its plan. A duplicate or a conflict
+        # carries the plan already stored for it, or nothing.
+        plan_missing = plan_outcome is None and plan_reason is None
+        plan_valid = (
+            plan_outcome in _PRECHECKOUT_PLAN_OUTCOMES
+            and isinstance(plan_reason, str)
+            and _PRECHECKOUT_PLAN_REASON.fullmatch(plan_reason) is not None
+        )
+        if not plan_valid and not (plan_missing and outcome != "inserted"):
+            raise SupabaseError(f"{operation}_invalid_plan")
+        return PrecheckoutAdmissionResult(
+            outcome=outcome,
+            submission_id=submission_id,
+            purchase_intent_id=purchase_intent_id,
+            plan_outcome=plan_outcome if plan_valid else None,
+            plan_reason=plan_reason if plan_valid else None,
         )
 
     async def get_lead_first_name_inference(
@@ -4634,7 +4721,36 @@ class SupabaseClient:
         *,
         pilot_boundary: PilotBoundaryConfig,
     ) -> PilotRuntimeStatus:
-        operation = "pilot_runtime_status"
+        return await self._get_pilot_runtime_status(
+            pilot_boundary=pilot_boundary,
+            rpc="get_lancemos_pilot_runtime_status",
+            operation="pilot_runtime_status",
+        )
+
+    async def get_portable_precheckout_pilot_runtime_status(
+        self,
+        *,
+        pilot_boundary: PilotBoundaryConfig,
+    ) -> PilotRuntimeStatus:
+        """Runtime status of the scope of the first contact after the form.
+
+        Same row as ``get_pilot_runtime_status``, for a published scope of
+        source ``landing`` / ``PRECHECKOUT_FORM_SUBMITTED`` that is not
+        ``manual_cohort``.
+        """
+        return await self._get_pilot_runtime_status(
+            pilot_boundary=pilot_boundary,
+            rpc="get_portable_precheckout_pilot_runtime_status",
+            operation="portable_precheckout_pilot_runtime_status",
+        )
+
+    async def _get_pilot_runtime_status(
+        self,
+        *,
+        pilot_boundary: PilotBoundaryConfig,
+        rpc: str,
+        operation: str,
+    ) -> PilotRuntimeStatus:
         body = {
             "p_scope_key": pilot_boundary.scope_key,
             "p_scope_version": pilot_boundary.scope_version,
@@ -4644,16 +4760,16 @@ class SupabaseClient:
         }
         response = await self._request(
             "POST",
-            "/rest/v1/rpc/get_lancemos_pilot_runtime_status",
+            f"/rest/v1/rpc/{rpc}",
             content=json.dumps(body, ensure_ascii=False),
         )
         if response.status_code != 200:
             raise SupabaseError(
-                f"pilot_runtime_status_failed: HTTP {response.status_code}"
+                f"{operation}_failed: HTTP {response.status_code}"
             )
         rows = _response_rows(response, operation=operation)
         if len(rows) != 1:
-            raise SupabaseError("pilot_runtime_status_invalid_shape")
+            raise SupabaseError(f"{operation}_invalid_shape")
         row = rows[0]
         try:
             configured = row.get("configured")
@@ -5708,8 +5824,23 @@ class SupabaseClient:
         lease_generation: int,
         now: str,
         chatwoot_evidence: dict[str, object] | None = None,
+        anchor_type: str | None = None,
     ) -> ReevaluationDecision:
-        """Apply deterministic guards and atomically persist non-execute results."""
+        """Apply deterministic guards and atomically persist non-execute results.
+
+        ``anchor_type`` picks the RPC. An action anchored to
+        ``precheckout_intent`` (the first contact after the landing form) goes
+        through ``reevaluate_portable_precheckout_action``, which first checks
+        the stops of that flow (purchase, cart or payment failure, opt-out,
+        lost consent) and only then delegates to the shared reevaluation. Every
+        other anchor, and no anchor, uses ``reevaluate_followup_action`` as
+        before. Both take the same arguments and return the same row.
+        """
+        operation = (
+            "reevaluate_portable_precheckout_action"
+            if anchor_type == PRECHECKOUT_INTENT_ANCHOR
+            else "reevaluate_followup_action"
+        )
         rpc_body: dict[str, object] = {
             "p_action_id": action_id,
             "p_worker_id": worker_id,
@@ -5722,14 +5853,13 @@ class SupabaseClient:
         body = json.dumps(rpc_body, ensure_ascii=False)
         response = await self._request(
             "POST",
-            "/rest/v1/rpc/reevaluate_followup_action",
+            f"/rest/v1/rpc/{operation}",
             content=body,
         )
         if response.status_code != 200:
             raise SupabaseError(
-                f"reevaluate_followup_action_failed: HTTP {response.status_code}"
+                f"{operation}_failed: HTTP {response.status_code}"
             )
-        operation = "reevaluate_followup_action"
         rows = _response_rows(response, operation=operation)
         if len(rows) != 1:
             raise SupabaseError(f"{operation}_invalid_shape")
@@ -5852,6 +5982,14 @@ class SupabaseClient:
             if pilot_boundary is None:
                 raise SupabaseError("payment_failure_pilot_boundary_required")
             operation = "mark_portable_payment_failure_request_started"
+        elif anchor_type == PRECHECKOUT_INTENT_ANCHOR:
+            # The first contact after the form only starts through its own
+            # RPC: it authorizes against the landing scope bound to the case
+            # and checks the stops of the flow again under the opt-out lock.
+            # Without the pilot boundary it does not start at all.
+            if pilot_boundary is None:
+                raise SupabaseError("precheckout_intent_pilot_boundary_required")
+            operation = "mark_portable_precheckout_request_started"
         elif pilot_boundary is not None:
             operation = "mark_lancemos_pilot_request_started"
         else:

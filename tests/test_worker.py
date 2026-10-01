@@ -69,6 +69,39 @@ def test_payment_failure_final_effect_selects_declared_template() -> None:
     ) == "att1_compra_fallida_01"
 
 
+def test_precheckout_first_contact_selects_only_its_own_template() -> None:
+    # El primer contacto del formulario no tiene prestamo: sin su plantilla no
+    # hay plantilla, nunca la del carrito ni la del pago fallido.
+    without = WhatsAppTemplateConfig(
+        first_touch_name="att1_carrito_abandonado_01",
+        payment_failure_name="att1_compra_fallida_01",
+        followup_name=None,
+        language="es_MX",
+        category="MARKETING",
+    )
+    with_template = WhatsAppTemplateConfig(
+        first_touch_name="att1_carrito_abandonado_01",
+        payment_failure_name="att1_compra_fallida_01",
+        precheckout_name="att1_interes_precheckout_01",
+        followup_name=None,
+        language="es_MX",
+        category="MARKETING",
+    )
+    name = worker_module._first_touch_template_name  # type: ignore[attr-defined]
+
+    assert name(without, anchor_type="precheckout_intent") is None
+    assert name(with_template, anchor_type="precheckout_intent") == (
+        "att1_interes_precheckout_01"
+    )
+    for template in (without, with_template):
+        assert name(template, anchor_type="cart_abandonment") == (
+            "att1_carrito_abandonado_01"
+        )
+        assert name(template, anchor_type="payment_failure") == (
+            "att1_compra_fallida_01"
+        )
+
+
 PAYLOAD: dict[str, object] = {
     "id": "evt-worker-001",
     "creation_date": NOW_MS,
@@ -380,12 +413,15 @@ def test_durable_dispatcher_reevaluates_every_claim_without_external_effects() -
     decisions = _run(dispatcher.dispatch_due(now="2026-08-03T13:00:00+00:00"))
 
     assert [decision.decision for decision in decisions] == ["execute"]
+    # El ancla viaja al cliente de Supabase, que con ella elige la RPC: un
+    # carrito sigue en reevaluate_followup_action (tests/test_supabase.py).
     assert calls == [{
         "action_id": "action-001",
         "worker_id": "dispatcher-test",
         "lease_generation": 3,
         "now": "2026-08-03T13:00:00+00:00",
         "chatwoot_evidence": None,
+        "anchor_type": "cart_abandonment",
     }]
     assert reservation_calls == [{
         "action_id": "action-001",
@@ -3259,3 +3295,184 @@ def test_supabase_parses_exact_precheckout_sender_projection() -> None:
     assert command.template_name == "johanna_interes_precheckout_01"
     assert command.send_authorized is True
     assert command.authorization_reason is None
+
+
+# ------------------------------------------- primer contacto tras el formulario
+
+
+def _precheckout_intent_dispatch(
+    tmp_path: Path, *, waba_template: WhatsAppTemplateConfig | None
+) -> tuple[list[str], list[dict[str, object]], list[dict[str, object]], list[ReevaluationDecision]]:
+    """Un dispatcher en modo Hermes con una accion de ancla precheckout_intent."""
+    events: list[str] = []
+    reevaluations: list[dict[str, object]] = []
+    finalizations: list[dict[str, object]] = []
+    action = ScheduledAction(
+        action_id="action-form", recovery_case_id="case-form",
+        followup_sequence_id="sequence-form", action_type="first_contact_review",
+        status="pending", due_at="2026-10-01T13:00:00+00:00",
+        expires_at="2026-10-02T12:00:00+00:00", expected_case_version=1,
+        policy_key="att1-primer-contacto-formulario", policy_version=1,
+        step_key="first_contact", anchor_type="precheckout_intent",
+        anchor_subject_internal_id="event-form",
+        anchor_observed_at="2026-10-01T12:00:00+00:00",
+        lease_owner="dispatcher-test", lease_generation=1,
+        lease_expires_at="2026-10-01T13:05:00+00:00",
+        idempotency_key="precheckout_first_contact:case-form",
+    )
+    attempt = DeliveryAttempt(
+        attempt_id="attempt-form", action_id=action.action_id,
+        idempotency_key=action.idempotency_key, attempt_number=1,
+        channel="whatsapp", mode="approved_template", phase="reserved",
+        lease_generation=1, expected_case_version=1,
+        expected_sequence_revision=1,
+    )
+
+    class SupabaseStub:
+        async def claim_due_followup_actions(self, **_: object) -> list[ScheduledAction]:
+            return [action]
+
+        async def get_followup_chatwoot_context(self, **_: object) -> ChatwootAuthorityContext:
+            return ChatwootAuthorityContext(
+                action_id=action.action_id, action_type=action.action_type,
+                chatwoot_account_id=None, external_conversation_id=None,
+                expected_inbox_id=None, anchor_external_message_id=None,
+            )
+
+        async def reevaluate_followup_action(self, **kwargs: object) -> ReevaluationDecision:
+            reevaluations.append(kwargs)
+            events.append("reevaluate")
+            return ReevaluationDecision(
+                action_id=action.action_id, decision="execute",
+                reason_code="eligible_for_execution", case_version=1,
+                sequence_revision=1,
+            )
+
+        async def reserve_followup_delivery_attempt(self, **_: object) -> DeliveryAttempt:
+            events.append("reserve")
+            return attempt
+
+        async def get_followup_execution_context(self, **_: object) -> FollowupExecutionContext:
+            events.append("context")
+            return FollowupExecutionContext(
+                action_id=action.action_id, action_type=action.action_type,
+                step_key=action.step_key, recovery_case_id=action.recovery_case_id,
+                contact_id="contact-form", source_event_id="event-form",
+                buyer_name="Ana", buyer_email="ana@example.test",
+                buyer_phone="15555550100", product_name="Curso Uno",
+                offer_code="OFERTA1", current_goal=None, lead_stage="new",
+            )
+
+        async def mark_followup_request_started(self, **kwargs: object) -> DeliveryAttempt:
+            events.append(f"request_started:{kwargs['anchor_type']}")
+            return replace(attempt, phase="request_started")
+
+        async def finalize_followup_delivery_attempt(self, **kwargs: object) -> object:
+            finalizations.append(kwargs)
+            return SimpleNamespace(
+                status=(
+                    "retryable_failed"
+                    if kwargs["next_attempt_at"] is not None
+                    else "permanent_failed"
+                )
+            )
+
+        async def record_and_finalize_followup_acceptance(self, **_: object) -> object:
+            events.append("accepted")
+            return SimpleNamespace(status="accepted_by_chatwoot")
+
+    class AgentStub:
+        async def request_followup_message(self, **_: object) -> FollowupMessageProposal:
+            events.append("hermes")
+            return FollowupMessageProposal(
+                strategy="primer contacto", message="Hola Ana, vi tu formulario."
+            )
+
+    class SenderStub:
+        async def send_first_touch(self, **kwargs: object) -> FirstTouchResult:
+            events.append(f"sender:{kwargs['trigger_kind']}")
+            return FirstTouchResult(
+                status="sent", reason="sent", conversation_id=7001, message_id=8001
+            )
+
+    dispatcher = DurableDispatcher(
+        supabase=SupabaseStub(),  # type: ignore[arg-type]
+        worker_id="dispatcher-test",
+        recovery_agent=AgentStub(),  # type: ignore[arg-type]
+        sender=SenderStub(),  # type: ignore[arg-type]
+        allowed_jid="15555550100@s.whatsapp.net",
+        clock=lambda: "2026-10-01T13:01:00+00:00",
+        pilot_boundary=PilotBoundaryConfig(
+            scope_key="lancemos-cart-recovery",
+            scope_version=1,
+            tenant_key="lancemos",
+            channel_provider="waba",
+            channel_account_ref="opaque-account-ref",
+        ),
+        final_meta_effect_gate=FinalMetaEffectGate(
+            enabled=True, evidence_dir=tmp_path / "meta-effects"
+        ),
+        waba_template=waba_template,
+    )
+    decisions = _run(dispatcher.dispatch_due(now="2026-10-01T13:00:00+00:00"))
+    return events, reevaluations, finalizations, decisions
+
+
+_FORM_TEMPLATES = WhatsAppTemplateConfig(
+    first_touch_name="att1_carrito_abandonado_01",
+    payment_failure_name="att1_compra_fallida_01",
+    followup_name=None,
+    language="es_MX",
+    category="MARKETING",
+    first_touch_parameter="buyer_name_and_product",
+)
+
+
+@pytest.mark.parametrize(
+    "waba_template",
+    [
+        pytest.param(_FORM_TEMPLATES, id="templates without the precheckout one"),
+        pytest.param(None, id="no templates at all"),
+    ],
+)
+def test_precheckout_intent_without_its_template_closes_before_any_effect(
+    tmp_path: Path, waba_template: WhatsAppTemplateConfig | None
+) -> None:
+    # Falla cerrado: ni Hermes, ni el gate final, ni el arranque, ni el sender.
+    # Nunca cae en la plantilla del carrito. No cambia reintentando, asi que
+    # cierra la accion en el primer intento.
+    events, reevaluations, finalizations, decisions = _precheckout_intent_dispatch(
+        tmp_path, waba_template=waba_template
+    )
+
+    assert events == ["reevaluate", "reserve"]
+    assert [call["anchor_type"] for call in reevaluations] == ["precheckout_intent"]
+    [finalization] = finalizations
+    assert finalization["outcome"] == "failed_before_request"
+    assert finalization["reason_code"] == "first_touch_template_not_configured"
+    assert finalization["next_attempt_at"] is None
+    assert [decision.decision for decision in decisions] == ["execute"]
+    assert not (tmp_path / "meta-effects").exists()
+
+
+def test_precheckout_intent_with_its_template_passes_the_anchor_to_every_step(
+    tmp_path: Path,
+) -> None:
+    events, reevaluations, finalizations, _ = _precheckout_intent_dispatch(
+        tmp_path,
+        waba_template=replace(
+            _FORM_TEMPLATES, precheckout_name="att1_interes_precheckout_01"
+        ),
+    )
+
+    # Las dos reevaluaciones, el arranque y el sender reciben el ancla: con
+    # ella el cliente de Supabase elige las RPC del primer contacto.
+    assert events == [
+        "reevaluate", "reserve", "context", "hermes", "reevaluate",
+        "request_started:precheckout_intent", "sender:precheckout_intent",
+        "accepted",
+    ]
+    assert [call["anchor_type"] for call in reevaluations] == [
+        "precheckout_intent", "precheckout_intent",
+    ]
+    assert finalizations == []

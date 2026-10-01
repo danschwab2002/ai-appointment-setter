@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 import re
 import shutil
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -25,6 +26,7 @@ from bridge.app import (
     _waba_template_config,
     create_app,
 )
+from bridge.chatwoot import ChatwootClient
 from bridge.commercial_knowledge import CommercialKnowledge, KnowledgeError
 from bridge.hermes import HermesShadowProcessor
 from bridge.instance_manifest import InstanceManifest, Template
@@ -173,6 +175,7 @@ def test_agent_model_must_match_the_manifest() -> None:
         ("chatwoot_cut_b_agent_enabled", "inbound"),
         ("portable_hotmart_recovery_enabled", "carrito"),
         ("portable_hotmart_payment_failure_enabled", "pago_fallido"),
+        ("portable_precheckout_first_contact_enabled", "precheckout"),
         ("conversation_reactivation_enabled", "reactivacion"),
         ("chatwoot_post_inbound_discount_planning_enabled", "descuento"),
     ],
@@ -874,6 +877,471 @@ def test_the_direct_dispatcher_does_not_consume_the_handoff_admission() -> None:
 
     with pytest.raises(ValueError, match="HUMAN_HANDOFF_ADMISSION_ENABLED requires"):
         create_app(settings)
+
+
+# ------------------------------------------- primer contacto tras el formulario
+# El flag PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED hace que la admision del
+# formulario planifique un primer contacto y que el dispatcher lo mande. Solo
+# arranca con todo lo que ese envio necesita y con todo lo que lo frena. El
+# manifiesto es el fixture de ATT1 con "intencion" y los flujos precheckout e
+# inbound prendidos por mutacion (el fixture es copia de la instancia del
+# 28/09, con todo apagado). El formulario entra por /webhooks/lead: el caso con
+# el adaptador de GHL espera a la aceptacion del riesgo del adaptador.
+
+_FIRST_CONTACT_SCOPE = "att1-primer-contacto"
+_FIRST_CONTACT_TEMPLATE = "att1_interes_precheckout_01"
+_FIRST_CONTACT_FLAG = "PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED"
+
+
+def _first_contact_manifest() -> InstanceManifest:
+    manifest = _att1_manifest(precheckout=True, inbound=True)
+    return replace(manifest, events=frozenset(manifest.events | {"intencion"}))
+
+
+def _first_contact_settings(instance: Path, **overrides: object) -> Settings:
+    """El set completo con el que arranca el primer contacto del formulario."""
+    knowledge_path = instance / "conocimiento" / "knowledge-v1.toml"
+    if 'estado = "borrador"' in knowledge_path.read_text(encoding="utf-8"):
+        _approve(knowledge_path)
+    manifest = _first_contact_manifest()
+    config = manifest.to_commercial_ally_config()
+    values: dict[str, object] = {
+        "commercial_knowledge": CommercialKnowledge.from_toml_file(knowledge_path),
+        "agent_bot_id": 1,
+        "chatwoot_account_id": config.chatwoot_account_id,
+        "chatwoot_inbox_id": config.chatwoot_inbox_id,
+        # La entrada del formulario.
+        "lead_precheckout_enabled": True,
+        "lead_precheckout_secret": "first-contact-lead-secret",
+        "lead_precheckout_site": config.lead_site,
+        "lead_precheckout_landing_id": config.lead_landing_id,
+        "lead_precheckout_offer_code": config.offer_code,
+        # El envio: frontera del piloto, dispatcher y plantilla aprobada directa.
+        **_WABA_OUTBOUND,
+        "dispatcher_enabled": True,
+        "dispatcher_worker_id": "att1-dispatcher",
+        "dispatcher_approved_template_direct_enabled": True,
+        "portable_precheckout_first_contact_enabled": True,
+        "pilot_precheckout_scope_key": _FIRST_CONTACT_SCOPE,
+        "pilot_precheckout_scope_version": 1,
+        "waba_precheckout_template_name": _FIRST_CONTACT_TEMPLATE,
+        # Lo que lo frena: la compra de Hotmart y el entrante scoped, que
+        # arrastra el opt-out durable, la pausa y la derivacion.
+        "portable_hotmart_purchase_stop_enabled": True,
+        "hotmart_hottok": "first-contact-hottok",
+        "chatwoot_scoped_inbound_senders_enabled": True,
+        "chatwoot_cut_b_admission_enabled": True,
+        "chatwoot_cut_b_scope_key": config.inbound_scope_key,
+        "chatwoot_cut_b_scope_version": config.inbound_scope_version,
+        "chatwoot_cut_b_agent_enabled": True,
+        "automated_replies_enabled": True,
+        "chatwoot_durable_opt_out_enabled": True,
+        "chatwoot_opt_out_macro_id": 5,
+        "opt_out_projection_worker_id": "att1-opt-out-projection",
+        "chatwoot_human_pause_enabled": True,
+        "human_handoff_admission_enabled": True,
+        "human_handoff_projection_enabled": True,
+        "handoff_projection_policy_key": "att1-derivacion",
+        "handoff_projection_policy_version": 1,
+        "human_handoff_projection_worker_id": "att1-handoff-projection",
+    }
+    values.update(overrides)
+    return replace(
+        _settings(manifest),
+        capture_dir=instance / "captures",
+        meta_final_effect_evidence_dir=instance / "meta-effects",
+        **values,
+    )
+
+
+class _FirstContactAuthority:
+    """La base que /ready consulta, y la admision del formulario."""
+
+    def __init__(self, **first_contact_status: object) -> None:
+        self.first_contact_status = {
+            "configured": True,
+            "runtime_state": "inactive",
+            "runtime_generation": 0,
+            "reason_code": "pilot_runtime_inactive",
+            **first_contact_status,
+        }
+        self.first_contact_boundaries: list[object] = []
+        self.plan_calls: list[dict[str, object]] = []
+        self.admission_calls: list[dict[str, object]] = []
+        self.plan = {"plan_outcome": "planned", "plan_reason": "first_contact_scheduled"}
+
+    async def resolve_commercial_ally_runtime_binding(self, config: object) -> object:
+        return config
+
+    async def get_human_handoff_projection_status(self) -> object:
+        return SimpleNamespace(
+            pending_count=0, retryable_count=0, delivery_unknown_count=0,
+            conflict_count=0, dead_letter_count=0,
+        )
+
+    async def get_pilot_runtime_status(self, *, pilot_boundary: object) -> object:
+        return SimpleNamespace(
+            configured=True, runtime_state="inactive", runtime_generation=0,
+            reason_code="pilot_runtime_inactive",
+        )
+
+    async def get_portable_precheckout_pilot_runtime_status(
+        self, *, pilot_boundary: object
+    ) -> object:
+        self.first_contact_boundaries.append(pilot_boundary)
+        return SimpleNamespace(**self.first_contact_status)
+
+    async def admit_portable_observed_lead_precheckout(self, **kwargs: object) -> object:
+        self.admission_calls.append(kwargs)
+        return SimpleNamespace(
+            outcome="inserted",
+            submission_id="bfc778e7-5c9f-45e6-a910-651f92312157",
+            purchase_intent_id="1f581f3a-c469-45da-8208-9483d1b26f0b",
+        )
+
+    async def admit_and_plan_portable_lead_precheckout(self, **kwargs: object) -> object:
+        self.plan_calls.append(kwargs)
+        return SimpleNamespace(
+            outcome="inserted",
+            submission_id="bfc778e7-5c9f-45e6-a910-651f92312157",
+            purchase_intent_id="1f581f3a-c469-45da-8208-9483d1b26f0b",
+            **self.plan,
+        )
+
+
+class _ShadowProcessor:
+    async def run(self, **_: object) -> object:
+        raise AssertionError("Hermes is not called by these tests")
+
+
+def _first_contact_app(
+    settings: Settings, authority: _FirstContactAuthority | None = None
+) -> object:
+    # El dispatcher exige un ChatwootClient de verdad; ninguno de estos tests
+    # llega a Chatwoot.
+    return create_app(
+        settings,
+        chatwoot_client=ChatwootClient(
+            base_url="https://chatwoot.example.test",
+            account_id=settings.chatwoot_account_id or 0,
+            access_token="test-control-token",
+            agent_bot_access_token="test-bot-token",
+            agent_bot_id=1,
+            transport=httpx.MockTransport(lambda request: httpx.Response(404)),
+        ),
+        shadow_processor=_ShadowProcessor(),  # type: ignore[arg-type]
+        supabase_client=authority or _FirstContactAuthority(),  # type: ignore[arg-type]
+    )
+
+
+def _get_ready(app: object) -> httpx.Response:
+    # Sin lifespan: los workers no arrancan, solo se consulta /ready.
+    async def get() -> httpx.Response:
+        transport = httpx.ASGITransport(app=app)  # type: ignore[arg-type]
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.get("/ready")
+
+    return asyncio.run(get())
+
+
+def test_from_env_reads_the_first_contact_variables_default_off(
+    monkeypatch: pytest.MonkeyPatch, instance: Path
+) -> None:
+    _environment(monkeypatch, INSTANCE_MANIFEST_PATH=str(instance / "instancia.toml"))
+    for name in (
+        _FIRST_CONTACT_FLAG,
+        "LANCEMOS_PILOT_PRECHECKOUT_SCOPE_KEY",
+        "LANCEMOS_PILOT_PRECHECKOUT_SCOPE_VERSION",
+        "WABA_PRECHECKOUT_TEMPLATE_NAME",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    settings = Settings.from_env()
+
+    assert settings.portable_precheckout_first_contact_enabled is False
+    assert settings.pilot_precheckout_scope_key is None
+    assert settings.pilot_precheckout_scope_version is None
+    assert settings.waba_precheckout_template_name is None
+
+    monkeypatch.setenv(_FIRST_CONTACT_FLAG, "true")
+    monkeypatch.setenv("LANCEMOS_PILOT_PRECHECKOUT_SCOPE_KEY", f" {_FIRST_CONTACT_SCOPE} ")
+    monkeypatch.setenv("LANCEMOS_PILOT_PRECHECKOUT_SCOPE_VERSION", "2")
+    monkeypatch.setenv("WABA_PRECHECKOUT_TEMPLATE_NAME", f" {_FIRST_CONTACT_TEMPLATE} ")
+
+    settings = Settings.from_env()
+
+    assert settings.portable_precheckout_first_contact_enabled is True
+    assert settings.pilot_precheckout_scope_key == _FIRST_CONTACT_SCOPE
+    assert settings.pilot_precheckout_scope_version == 2
+    assert settings.waba_precheckout_template_name == _FIRST_CONTACT_TEMPLATE
+
+
+def test_the_first_contact_with_its_complete_set_builds(instance: Path) -> None:
+    # Tambien prueba que el flag es una capacidad portable y que solo, sin
+    # carrito ni pago fallido, alcanza para el destinatario dinamico que exige
+    # el modo directo.
+    settings = _first_contact_settings(instance)
+
+    assert settings.portable_hotmart_recovery_enabled is False
+    assert settings.portable_hotmart_payment_failure_enabled is False
+    assert _first_contact_app(settings) is not None
+
+
+def test_the_first_contact_requires_an_instance_manifest(instance: Path) -> None:
+    johanna = _johanna_settings(portable_precheckout_first_contact_enabled=True)
+    # El binding v1 (COMMERCIAL_ALLY_CONFIG_PATH) tampoco alcanza.
+    binding_v1 = replace(
+        _settings(_att1_manifest(), portable_precheckout_first_contact_enabled=True),
+        instance_manifest=None,
+    )
+
+    for settings in (johanna, binding_v1):
+        with pytest.raises(
+            ValueError, match=f"{_FIRST_CONTACT_FLAG} requires an instance manifest"
+        ):
+            create_app(settings)
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        (
+            {"lead_precheckout_enabled": False},
+            f"{_FIRST_CONTACT_FLAG} requires LEAD_PRECHECKOUT_ENABLED or "
+            "GHL_PRECHECKOUT_ADAPTER_ENABLED",
+        ),
+        (
+            # Con la salida durable prendida, la frontera ya la exige esa guarda.
+            {"pilot_boundary_enabled": False, "dispatcher_outbound_enabled": False},
+            f"{_FIRST_CONTACT_FLAG} requires LANCEMOS_PILOT_BOUNDARY_ENABLED",
+        ),
+        (
+            {"pilot_boundary_enabled": False},
+            "DURABLE_OUTBOUND_ENABLED requires LANCEMOS_PILOT_BOUNDARY_ENABLED",
+        ),
+        (
+            {"dispatcher_enabled": False},
+            f"{_FIRST_CONTACT_FLAG} requires DURABLE_DISPATCHER_ENABLED",
+        ),
+        (
+            {"dispatcher_approved_template_direct_enabled": False},
+            f"{_FIRST_CONTACT_FLAG} requires DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED",
+        ),
+        (
+            {"pilot_precheckout_scope_key": None},
+            "LANCEMOS_PILOT_PRECHECKOUT_SCOPE_KEY is required",
+        ),
+        (
+            {"pilot_precheckout_scope_version": None},
+            "LANCEMOS_PILOT_PRECHECKOUT_SCOPE_VERSION must be positive",
+        ),
+        (
+            {"pilot_precheckout_scope_version": 0},
+            "LANCEMOS_PILOT_PRECHECKOUT_SCOPE_VERSION must be positive",
+        ),
+        (
+            # Un scope publicado tiene una sola fuente: el de recuperacion es
+            # de Hotmart y el del primer contacto es de la landing.
+            {"pilot_precheckout_scope_key": "att1-recuperacion"},
+            "LANCEMOS_PILOT_PRECHECKOUT_SCOPE_KEY must differ from LANCEMOS_PILOT_SCOPE_KEY",
+        ),
+        (
+            {"waba_precheckout_template_name": None},
+            "WABA_PRECHECKOUT_TEMPLATE_NAME is required",
+        ),
+        (
+            {"waba_precheckout_template_name": "att1_carrito_abandonado_01"},
+            "WABA_PRECHECKOUT_TEMPLATE_NAME must match plantillas.precheckout.nombre",
+        ),
+        (
+            {"portable_hotmart_purchase_stop_enabled": False, "hotmart_hottok": None},
+            f"{_FIRST_CONTACT_FLAG} requires PORTABLE_HOTMART_PURCHASE_STOP_ENABLED$",
+        ),
+        (
+            # Con el hottok cargado y sin el freno, el runtime con manifiesto
+            # ya no arrancaba: el hottok solo es portable con el freno.
+            {"portable_hotmart_purchase_stop_enabled": False},
+            "runtime capabilities are not portable: hotmart_hottok$",
+        ),
+        (
+            {"hotmart_hottok": None},
+            f"{_FIRST_CONTACT_FLAG} requires HOTMART_HOTTOK$",
+        ),
+    ],
+)
+def test_the_first_contact_does_not_start_without_what_it_needs(
+    instance: Path, override: dict[str, object], message: str
+) -> None:
+    settings = _first_contact_settings(instance, **override)
+
+    with pytest.raises(ValueError, match=message):
+        _first_contact_app(settings)
+
+
+def test_the_first_contact_requires_the_scoped_inbound(instance: Path) -> None:
+    # Sin el entrante scoped nadie atiende la respuesta ni guarda el «No mas
+    # mensajes». El resto del entrante (Corte B con el remitente fijo, opt-out,
+    # derivacion) sigue prendido: lo que falta es el modo scoped.
+    settings = _first_contact_settings(
+        instance,
+        chatwoot_scoped_inbound_senders_enabled=False,
+        allowed_jid=None,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=f"{_FIRST_CONTACT_FLAG} requires CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED",
+    ):
+        _first_contact_app(settings)
+
+
+def test_the_first_contact_template_reaches_the_config_only_with_the_flag(
+    instance: Path,
+) -> None:
+    manifest = _with_parameters(_first_contact_manifest(), precheckout=("nombre",))
+    on = replace(_first_contact_settings(instance), instance_manifest=manifest)
+    off = replace(on, portable_precheckout_first_contact_enabled=False)
+
+    template = _waba_template_config(on)
+    template_off = _waba_template_config(off)
+
+    assert template is not None and template_off is not None
+    assert template.precheckout_name == _FIRST_CONTACT_TEMPLATE
+    assert template.precheckout_body_parameters == ("nombre",)
+    assert template.params(
+        content="copy", followup=False, buyer_name="Ana", product_name="ATT1",
+        trigger_kind="precheckout_intent",
+    ) == {
+        "name": _FIRST_CONTACT_TEMPLATE,
+        "category": "MARKETING",
+        "language": "es_MX",
+        "processed_params": {"body": {"1": "Ana"}},
+    }
+    # Apagado, el flujo no tiene plantilla: no presta ni el nombre ni las
+    # variables, y nunca sale con la del carrito.
+    assert template_off.precheckout_name is None
+    assert template_off.precheckout_body_parameters is None
+    assert template_off.first_touch_name_for(trigger_kind="precheckout_intent") is None
+    # El carrito y el pago fallido no cambian con el flag.
+    for kind in ("cart_abandonment", "payment_failure"):
+        assert template.first_touch_name_for(
+            trigger_kind=kind
+        ) == template_off.first_touch_name_for(trigger_kind=kind)
+
+
+def test_the_first_contact_template_must_share_the_language(instance: Path) -> None:
+    manifest = _first_contact_manifest()
+    templates = dict(manifest.templates)
+    templates["precheckout"] = Template(name=_FIRST_CONTACT_TEMPLATE, language="es_AR")
+    settings = replace(
+        _first_contact_settings(instance),
+        instance_manifest=replace(manifest, templates=templates),
+    )
+
+    with pytest.raises(ValueError, match="plantillas.precheckout.idioma"):
+        _first_contact_app(settings)
+
+
+def test_the_first_contact_template_requires_an_instance_manifest() -> None:
+    # Johanna corre sin manifiesto: no tiene flujo que mande esa plantilla.
+    settings = replace(
+        Settings(
+            webhook_secret="test-secret",
+            allowed_jid=None,
+            capture_dir=Path("/tmp/instance-wiring-captures"),
+            max_age_seconds=300,
+        ),
+        **{**_WABA_OUTBOUND, "waba_precheckout_template_name": _FIRST_CONTACT_TEMPLATE},
+    )
+
+    with pytest.raises(ValueError, match="WABA_PRECHECKOUT_TEMPLATE_NAME requires an instance manifest"):
+        _waba_template_config(settings)
+
+
+def test_readiness_reports_the_first_contact_scope_only_with_the_flag(
+    instance: Path,
+) -> None:
+    authority = _FirstContactAuthority(runtime_state="armed", reason_code="pilot_runtime_armed")
+    on = _first_contact_settings(instance)
+    # Apagado se saca tambien lo que solo el flag habilita: sin el, el modo
+    # directo no tiene flujo portable y la salida durable pediria a Hermes.
+    off = replace(
+        on,
+        portable_precheckout_first_contact_enabled=False,
+        dispatcher_approved_template_direct_enabled=False,
+        dispatcher_outbound_enabled=False,
+    )
+    off_authority = _FirstContactAuthority()
+
+    ready_on = _get_ready(_first_contact_app(on, authority))
+    ready_off = _get_ready(_first_contact_app(off, off_authority))
+
+    assert ready_on.status_code == 200 and ready_off.status_code == 200
+    assert ready_on.json()["portable_precheckout_first_contact"] == "armed"
+    assert "portable_precheckout_first_contact" not in ready_off.json()
+    assert off_authority.first_contact_boundaries == []
+    # Lo que se consulta es el scope del formulario, con el tenant y el canal
+    # del piloto; el resto del payload no cambia.
+    [boundary] = authority.first_contact_boundaries
+    assert (boundary.scope_key, boundary.scope_version) == (_FIRST_CONTACT_SCOPE, 1)  # type: ignore[attr-defined]
+    assert (
+        boundary.tenant_key, boundary.channel_provider, boundary.channel_account_ref  # type: ignore[attr-defined]
+    ) == ("lancemos", "waba", "chatwoot-inbox:11")
+    assert {
+        key: value
+        for key, value in ready_on.json().items()
+        if key != "portable_precheckout_first_contact"
+    } == ready_off.json()
+    # precheckout_delayed_first_touch es de Johanna y no se toca.
+    assert ready_on.json()["precheckout_delayed_first_touch"] == "disabled"
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["pilot_scope_config_mismatch", "pilot_active_scope_mismatch"],
+)
+def test_readiness_fails_when_the_first_contact_scope_is_not_configured(
+    instance: Path, reason: str
+) -> None:
+    # Un scope sin publicar, de otra fuente, manual_cohort o con otra version
+    # activa: el flujo no puede planificar ni mandar.
+    authority = _FirstContactAuthority(
+        configured=False, runtime_state=None, runtime_generation=None, reason_code=reason
+    )
+
+    response = _get_ready(_first_contact_app(_first_contact_settings(instance), authority))
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == f"portable_precheckout_{reason}"
+
+
+def test_readiness_fails_when_the_first_contact_scope_cannot_be_read(
+    instance: Path,
+) -> None:
+    class _Unavailable(_FirstContactAuthority):
+        async def get_portable_precheckout_pilot_runtime_status(
+            self, *, pilot_boundary: object
+        ) -> object:
+            raise RuntimeError("database down")
+
+    response = _get_ready(
+        _first_contact_app(_first_contact_settings(instance), _Unavailable())
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "portable_precheckout_readiness_unavailable"
+
+
+def test_johanna_readiness_has_no_first_contact_key() -> None:
+    settings = _johanna_settings()
+
+    assert settings.portable_precheckout_first_contact_enabled is False
+    with TestClient(create_app(settings)) as client:
+        response = client.get("/ready")
+
+    assert response.status_code == 200
+    assert "portable_precheckout_first_contact" not in response.json()
+    assert response.json()["precheckout_delayed_first_touch"] == "disabled"
 
 
 # ------------------------------------------------------------------ readiness

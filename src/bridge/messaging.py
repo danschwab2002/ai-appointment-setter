@@ -80,15 +80,29 @@ def first_touch_recipient_matches(
 # (docs/referencia-manifiesto.md, ``parametros``).
 TEMPLATE_BODY_PARAMETERS = ("nombre", "producto")
 
+# The trigger of the first contact after the landing form: the ``anchor_type``
+# of the action planned by ``admit_and_plan_portable_lead_precheckout``.
+PRECHECKOUT_INTENT_TRIGGER = "precheckout_intent"
+# The first contact after the form has its own approved template. Without it
+# nothing is sent: it never goes out with the cart template.
+FIRST_TOUCH_TEMPLATE_NOT_CONFIGURED = "first_touch_template_not_configured"
+
 
 @dataclass(frozen=True)
 class WhatsAppTemplateConfig:
     """Approved Chatwoot WABA templates and their body placeholders.
 
-    ``first_touch_body_parameters`` and ``payment_failure_body_parameters`` are
-    the body variables an instance declares for each template, in placeholder
-    order. ``None`` keeps the ``first_touch_parameter`` behavior, which is what
-    every runtime without an instance manifest uses.
+    ``first_touch_body_parameters``, ``payment_failure_body_parameters`` and
+    ``precheckout_body_parameters`` are the body variables an instance declares
+    for each template, in placeholder order. ``None`` keeps the
+    ``first_touch_parameter`` behavior, which is what every runtime without an
+    instance manifest uses.
+
+    ``precheckout_name`` is the template of the first contact after the landing
+    form (trigger ``precheckout_intent``). Unlike the payment failure, which
+    borrows the cart template when it has none, this trigger has no fallback:
+    without ``precheckout_name`` it has no template at all
+    (``first_touch_name_for`` returns ``None``) and nothing is sent.
 
     ``payment_failure_category`` is the Meta category of the payment failure
     template when it differs from ``category`` (a cart template approved as
@@ -105,11 +119,14 @@ class WhatsAppTemplateConfig:
     first_touch_body_parameters: tuple[str, ...] | None = None
     payment_failure_body_parameters: tuple[str, ...] | None = None
     payment_failure_category: str | None = None
+    precheckout_name: str | None = None
+    precheckout_body_parameters: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         for declared in (
             self.first_touch_body_parameters,
             self.payment_failure_body_parameters,
+            self.precheckout_body_parameters,
         ):
             if declared is None:
                 continue
@@ -125,11 +142,30 @@ class WhatsAppTemplateConfig:
             and self.payment_failure_name is None
         ):
             raise ValueError("payment_failure_body_parameters_without_template")
+        if self.precheckout_name is not None and not self.precheckout_name.strip():
+            raise ValueError("invalid_precheckout_template_name")
+        if (
+            self.precheckout_body_parameters is not None
+            and self.precheckout_name is None
+        ):
+            raise ValueError("precheckout_body_parameters_without_template")
         if self.payment_failure_category is not None:
             if self.payment_failure_name is None:
                 raise ValueError("payment_failure_category_without_template")
             if self.payment_failure_category not in {"MARKETING", "UTILITY"}:
                 raise ValueError("invalid_payment_failure_category")
+
+    def first_touch_name_for(self, *, trigger_kind: str | None) -> str | None:
+        """The first-contact template this trigger sends, or ``None``.
+
+        ``None`` only for the first contact after the form without its own
+        template: the caller fails closed instead of sending another one.
+        """
+        if trigger_kind == PRECHECKOUT_INTENT_TRIGGER:
+            return self.precheckout_name
+        if trigger_kind == "payment_failure" and self.payment_failure_name is not None:
+            return self.payment_failure_name
+        return self.first_touch_name
 
     def category_for(self, *, trigger_kind: str | None) -> str:
         """The Meta category of the first-contact template this trigger uses."""
@@ -145,6 +181,9 @@ class WhatsAppTemplateConfig:
         self, *, trigger_kind: str | None
     ) -> tuple[str, ...] | None:
         """The declared variables of the first-contact template this trigger uses."""
+        if trigger_kind == PRECHECKOUT_INTENT_TRIGGER:
+            # Its own template or nothing: never the variables of the cart one.
+            return self.precheckout_body_parameters
         if trigger_kind == "payment_failure" and self.payment_failure_name is not None:
             return self.payment_failure_body_parameters
         return self.first_touch_body_parameters
@@ -206,13 +245,11 @@ class WhatsAppTemplateConfig:
         product_name: str | None = None,
         trigger_kind: str | None = None,
     ) -> dict[str, object]:
-        name = self.followup_name if followup else self.first_touch_name
-        if (
-            not followup
-            and trigger_kind == "payment_failure"
-            and self.payment_failure_name is not None
-        ):
-            name = self.payment_failure_name
+        name = (
+            self.followup_name
+            if followup
+            else self.first_touch_name_for(trigger_kind=trigger_kind)
+        )
         if name is None:
             raise ValueError("template_disabled")
         body = {"1": content}
@@ -573,6 +610,19 @@ class ChatwootMessageSender:
                 conversation_id=None,
                 message_id=None,
                 reason="target_not_allowed",
+            )
+        if (
+            self._template is not None
+            and self._template.first_touch_name_for(trigger_kind=trigger_kind) is None
+        ):
+            # The first contact after the form without its own template. It is
+            # blocked before any Chatwoot call: no contact, no conversation and
+            # never the cart template.
+            return FirstTouchResult(
+                status="blocked",
+                conversation_id=None,
+                message_id=None,
+                reason=FIRST_TOUCH_TEMPLATE_NOT_CONFIGURED,
             )
         if self._template is not None and self._template.body_parameters_missing(
             trigger_kind=trigger_kind,

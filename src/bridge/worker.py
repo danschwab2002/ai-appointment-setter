@@ -42,6 +42,8 @@ from bridge.hotmart import (
 from bridge.lead_first_name import resolve_greeting_name
 from bridge.messaging import (
     FIRST_TOUCH_RECIPIENT_MISMATCH,
+    FIRST_TOUCH_TEMPLATE_NOT_CONFIGURED,
+    PRECHECKOUT_INTENT_TRIGGER,
     FinalMetaEffect,
     FinalMetaEffectGate,
     FirstTouchRecipient,
@@ -79,13 +81,14 @@ def _first_touch_template_name(
     template: WhatsAppTemplateConfig,
     *,
     anchor_type: str,
-) -> str:
-    if (
-        anchor_type == "payment_failure"
-        and template.payment_failure_name is not None
-    ):
-        return template.payment_failure_name
-    return template.first_touch_name
+) -> str | None:
+    """The approved template the anchor of this first contact sends.
+
+    ``None`` only for the first contact after the form (``precheckout_intent``)
+    without its own template: the dispatcher closes the attempt instead of
+    sending the cart template.
+    """
+    return template.first_touch_name_for(trigger_kind=anchor_type)
 
 
 APPROVED_TEMPLATE_DIRECT_UNSUPPORTED_ACTION = (
@@ -994,6 +997,12 @@ class DurableDispatcher:
         assert self._chatwoot is not None
         assert self._chatwoot_inbox_id is not None
         trigger_kind = action.anchor_type
+        template_name = _first_touch_template_name(template, anchor_type=trigger_kind)
+        if template_name is None:
+            return _ApprovedTemplateComposition(
+                failure_reason=FIRST_TOUCH_TEMPLATE_NOT_CONFIGURED,
+                retryable=False,
+            )
         declared = template.declared_body_parameters(trigger_kind=trigger_kind)
         if declared is None:
             # Without the manifest declaring this template's variables the
@@ -1042,7 +1051,6 @@ class DurableDispatcher:
             product_name=product_name,
         )
         assert values is not None
-        template_name = _first_touch_template_name(template, anchor_type=trigger_kind)
         try:
             inbox = await self._chatwoot.get_inbox(inbox_id=self._chatwoot_inbox_id)
         except (httpx.HTTPError, ChatwootProtocolError) as exc:
@@ -1092,12 +1100,16 @@ class DurableDispatcher:
         decisions: list[ReevaluationDecision] = []
         for action in actions:
             evidence = await self._load_chatwoot_evidence(action=action, now=now)
+            # The anchor picks the reevaluation: the first contact after the
+            # form has its own, which checks its stops (purchase, opt-out,
+            # consent) before the shared guards.
             decision = await self._supabase.reevaluate_followup_action(
                 action_id=action.action_id,
                 worker_id=self._worker_id,
                 lease_generation=action.lease_generation,
                 now=now,
                 chatwoot_evidence=evidence,
+                anchor_type=action.anchor_type,
             )
             if decision.decision == "execute":
                 if action.action_type == "reconcile_delivery":
@@ -1123,6 +1135,35 @@ class DurableDispatcher:
                     action.action_id,
                     attempt.attempt_id,
                 )
+                if (
+                    self._recovery_agent is not None or self._approved_template_direct
+                ) and (
+                    action.anchor_type == PRECHECKOUT_INTENT_TRIGGER
+                    and (
+                        self._waba_template is None
+                        or self._waba_template.precheckout_name is None
+                    )
+                ):
+                    # The first contact after the form only goes out with its
+                    # own approved template. Without it the attempt closes
+                    # here, before Hermes, the final gate and the sender: it
+                    # never falls back to the cart template. It does not
+                    # change by retrying.
+                    logger.warning(
+                        "durable_first_touch_template_not_configured "
+                        "action_id=%s attempt_id=%s anchor=%s",
+                        action.action_id,
+                        attempt.attempt_id,
+                        action.anchor_type,
+                    )
+                    await self._finalize_pre_request_failure(
+                        action=action,
+                        attempt=attempt,
+                        reason_code=FIRST_TOUCH_TEMPLATE_NOT_CONFIGURED,
+                        retryable=False,
+                    )
+                    decisions.append(decision)
+                    continue
                 if self._recovery_agent is not None or self._approved_template_direct:
                     direct_failure: str | None = None
                     direct_retryable = True
@@ -1362,6 +1403,7 @@ class DurableDispatcher:
                                         lease_generation=action.lease_generation,
                                         now=final_now,
                                         chatwoot_evidence=final_evidence,
+                                        anchor_type=action.anchor_type,
                                     )
                                 )
                             except asyncio.CancelledError:

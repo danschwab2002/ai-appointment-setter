@@ -187,6 +187,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # a la misma admision portable que /webhooks/lead; lo especifico (que
     # formularios) sale de [adaptadores.ghl] del manifiesto.
     "ghl_precheckout_adapter_enabled",
+    # El primer contacto tras el formulario solo existe con manifiesto: el
+    # flujo, el evento y la plantilla salen de la instancia, y el scope del
+    # piloto de LANCEMOS_PILOT_PRECHECKOUT_SCOPE_*.
+    "portable_precheckout_first_contact_enabled",
     "worker_enabled",
     "dispatcher_enabled",
     "dispatcher_outbound_enabled",
@@ -514,8 +518,17 @@ class Settings:
     pilot_tenant_key: str | None = None
     pilot_channel_provider: str | None = None
     pilot_channel_account_ref: str | None = None
+    # Primer contacto portable tras el formulario de la landing (migracion
+    # 20261001000200). Apagado, el formulario solo deja la intencion, como
+    # hasta ahora. Prendido, la admision tambien planifica el primer contacto
+    # contra este scope (fuente landing), que es otro que el de recuperacion, y
+    # el dispatcher lo manda con la plantilla de [plantillas.precheckout].
+    portable_precheckout_first_contact_enabled: bool = False
+    pilot_precheckout_scope_key: str | None = None
+    pilot_precheckout_scope_version: int | None = None
     waba_first_touch_template_name: str | None = None
     waba_payment_failure_template_name: str | None = None
+    waba_precheckout_template_name: str | None = None
     waba_followup_template_name: str | None = None
     waba_template_language: str | None = None
     waba_template_category: str | None = None
@@ -748,6 +761,12 @@ class Settings:
         portable_hotmart_payment_failure_enabled = (
             os.getenv(
                 "PORTABLE_HOTMART_PAYMENT_FAILURE_ENABLED", "false"
+            ).lower()
+            == "true"
+        )
+        portable_precheckout_first_contact_enabled = (
+            os.getenv(
+                "PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED", "false"
             ).lower()
             == "true"
         )
@@ -1119,6 +1138,9 @@ class Settings:
         pilot_scope_version_raw = os.getenv(
             "LANCEMOS_PILOT_SCOPE_VERSION", ""
         ).strip()
+        pilot_precheckout_scope_version_raw = os.getenv(
+            "LANCEMOS_PILOT_PRECHECKOUT_SCOPE_VERSION", ""
+        ).strip()
         chatwoot_cut_b_scope_version_raw = os.getenv(
             "CHATWOOT_CUT_B_SCOPE_VERSION", ""
         ).strip()
@@ -1319,6 +1341,9 @@ class Settings:
             portable_hotmart_payment_failure_enabled=(
                 portable_hotmart_payment_failure_enabled
             ),
+            portable_precheckout_first_contact_enabled=(
+                portable_precheckout_first_contact_enabled
+            ),
             hotmart_purchase_worker_enabled=hotmart_purchase_worker_enabled,
             hotmart_abandonment_timer_worker_enabled=(
                 hotmart_abandonment_timer_worker_enabled
@@ -1412,6 +1437,15 @@ class Settings:
             pilot_scope_version=(
                 int(pilot_scope_version_raw) if pilot_scope_version_raw else None
             ),
+            pilot_precheckout_scope_key=(
+                os.getenv("LANCEMOS_PILOT_PRECHECKOUT_SCOPE_KEY", "").strip()
+                or None
+            ),
+            pilot_precheckout_scope_version=(
+                int(pilot_precheckout_scope_version_raw)
+                if pilot_precheckout_scope_version_raw
+                else None
+            ),
             pilot_tenant_key=(
                 os.getenv("LANCEMOS_PILOT_TENANT_KEY", "").strip() or None
             ),
@@ -1426,6 +1460,9 @@ class Settings:
             ),
             waba_payment_failure_template_name=(
                 os.getenv("WABA_PAYMENT_FAILURE_TEMPLATE_NAME", "").strip() or None
+            ),
+            waba_precheckout_template_name=(
+                os.getenv("WABA_PRECHECKOUT_TEMPLATE_NAME", "").strip() or None
             ),
             waba_followup_template_name=(
                 os.getenv("WABA_FOLLOWUP_TEMPLATE_NAME", "").strip() or None
@@ -1913,6 +1950,7 @@ _FLAG_REQUIRED_FLOW = MappingProxyType({
     "payment_link_enabled": "inbound",
     "portable_hotmart_recovery_enabled": "carrito",
     "portable_hotmart_payment_failure_enabled": "pago_fallido",
+    "portable_precheckout_first_contact_enabled": "precheckout",
     "conversation_reactivation_enabled": "reactivacion",
     "chatwoot_post_inbound_discount_planning_enabled": "descuento",
 })
@@ -1971,19 +2009,21 @@ def _validate_instance_manifest_gates(settings: Settings) -> None:
 
 def _manifest_template_parameters(
     settings: Settings,
-) -> tuple[tuple[str, ...] | None, tuple[str, ...] | None]:
-    """The body variables of the carrito and pago_fallido templates.
+) -> tuple[
+    tuple[str, ...] | None, tuple[str, ...] | None, tuple[str, ...] | None
+]:
+    """The body variables of the carrito, pago_fallido and precheckout templates.
 
     Only for a flow the manifest declares on: its ``[plantillas]`` entry is the
     template that flow sends, so ``WABA_*_TEMPLATE_NAME`` and
     ``WABA_TEMPLATE_LANGUAGE`` must name the same template or the bridge does
-    not start. Both share the one ``WABA_TEMPLATE_LANGUAGE``, so two flows
+    not start. All share the one ``WABA_TEMPLATE_LANGUAGE``, so two flows
     with templates in different languages cannot start either. A flow that is
     off keeps ``None``, the behavior of today.
     """
     manifest = settings.instance_manifest
     if manifest is None:
-        return None, None
+        return None, None, None
     slots = (
         ("carrito", settings.waba_first_touch_template_name, "WABA_FIRST_TOUCH_TEMPLATE_NAME"),
         (
@@ -1991,15 +2031,26 @@ def _manifest_template_parameters(
             settings.waba_payment_failure_template_name,
             "WABA_PAYMENT_FAILURE_TEMPLATE_NAME",
         ),
+        (
+            "precheckout",
+            settings.waba_precheckout_template_name,
+            "WABA_PRECHECKOUT_TEMPLATE_NAME",
+        ),
     )
-    parameters: dict[str, tuple[str, ...] | None] = {"carrito": None, "pago_fallido": None}
+    parameters: dict[str, tuple[str, ...] | None] = {
+        "carrito": None,
+        "pago_fallido": None,
+        "precheckout": None,
+    }
     for slot, configured_name, variable in slots:
         if not manifest.flows[slot]:
             continue
         template = manifest.templates[slot]
         if not configured_name:
             # Sin plantilla propia el pago fallido sale con la del carrito; el
-            # arranque ya exige la variable cuando el flag del flujo esta prendido.
+            # arranque ya exige la variable cuando el flag del flujo esta
+            # prendido. El primer contacto del formulario no tiene ese
+            # prestamo: sin su plantilla no sale nada.
             continue
         if configured_name != template.name:
             raise ValueError(
@@ -2011,10 +2062,83 @@ def _manifest_template_parameters(
                 "of the instance manifest"
             )
         parameters[slot] = template.parameters
-    return parameters["carrito"], parameters["pago_fallido"]
+    return parameters["carrito"], parameters["pago_fallido"], parameters["precheckout"]
+
+
+def _validate_precheckout_first_contact(settings: Settings) -> None:
+    """Startup gates of the portable first contact after the landing form.
+
+    The flag makes the form admission also plan a first contact, and the
+    dispatcher send it. It only starts when everything that flow needs to go
+    out, and everything that has to be able to stop it, is on:
+
+    * an instance manifest (through it, ``flujos.precheckout``, the
+      ``intencion`` event and ``[plantillas.precheckout]``) and an entry that
+      admits the form;
+    * the pilot boundary, the dispatcher and the direct mode (the approved
+      template without Hermes), with the scope of this flow, which is another
+      one than the recovery scope: a published scope has a single source;
+    * its own approved template: there is no fallback to the cart one;
+    * what stops it: the purchase from Hotmart (the stop flag and the hottok
+      its webhook needs) and the scoped inbound, which carries the durable
+      opt-out and the handoff.
+    """
+    if not settings.portable_precheckout_first_contact_enabled:
+        return
+    flag = "PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED"
+    if settings.instance_manifest is None:
+        raise ValueError(f"{flag} requires an instance manifest")
+    if not (
+        settings.lead_precheckout_enabled or settings.ghl_precheckout_adapter_enabled
+    ):
+        raise ValueError(
+            f"{flag} requires LEAD_PRECHECKOUT_ENABLED or "
+            "GHL_PRECHECKOUT_ADAPTER_ENABLED"
+        )
+    if not settings.pilot_boundary_enabled:
+        raise ValueError(f"{flag} requires LANCEMOS_PILOT_BOUNDARY_ENABLED")
+    if not settings.dispatcher_enabled:
+        raise ValueError(f"{flag} requires DURABLE_DISPATCHER_ENABLED")
+    if not settings.dispatcher_approved_template_direct_enabled:
+        raise ValueError(
+            f"{flag} requires DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED"
+        )
+    if not settings.pilot_precheckout_scope_key:
+        raise ValueError(f"LANCEMOS_PILOT_PRECHECKOUT_SCOPE_KEY is required for {flag}")
+    if (
+        settings.pilot_precheckout_scope_version is None
+        or settings.pilot_precheckout_scope_version < 1
+    ):
+        raise ValueError("LANCEMOS_PILOT_PRECHECKOUT_SCOPE_VERSION must be positive")
+    if settings.pilot_precheckout_scope_key == settings.pilot_scope_key:
+        raise ValueError(
+            "LANCEMOS_PILOT_PRECHECKOUT_SCOPE_KEY must differ from "
+            "LANCEMOS_PILOT_SCOPE_KEY"
+        )
+    if not settings.waba_precheckout_template_name:
+        raise ValueError(f"WABA_PRECHECKOUT_TEMPLATE_NAME is required for {flag}")
+    if not settings.portable_hotmart_purchase_stop_enabled:
+        raise ValueError(f"{flag} requires PORTABLE_HOTMART_PURCHASE_STOP_ENABLED")
+    if settings.hotmart_hottok is None:
+        # Sin el hottok el webhook de Hotmart responde 503 y ninguna compra
+        # llega a frenar el primer contacto.
+        raise ValueError(f"{flag} requires HOTMART_HOTTOK")
+    if not settings.chatwoot_scoped_inbound_senders_enabled:
+        raise ValueError(
+            f"{flag} requires CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED"
+        )
 
 
 def _waba_template_config(settings: Settings) -> WhatsAppTemplateConfig | None:
+    if (
+        settings.waba_precheckout_template_name is not None
+        and settings.instance_manifest is None
+    ):
+        # Solo con manifiesto, igual que la categoria del pago fallido: sin
+        # manifiesto no hay flujo que la mande.
+        raise ValueError(
+            "WABA_PRECHECKOUT_TEMPLATE_NAME requires an instance manifest"
+        )
     payment_failure_category = settings.waba_payment_failure_template_category
     if payment_failure_category is not None:
         # Solo con manifiesto: Johanna comparte esta configuracion con sus
@@ -2056,8 +2180,18 @@ def _waba_template_config(settings: Settings) -> WhatsAppTemplateConfig | None:
         )
     if settings.waba_template_category not in {"MARKETING", "UTILITY"}:
         raise ValueError("WABA_TEMPLATE_CATEGORY must be MARKETING or UTILITY")
-    first_touch_parameters, payment_failure_parameters = _manifest_template_parameters(
-        settings
+    (
+        first_touch_parameters,
+        payment_failure_parameters,
+        precheckout_parameters,
+    ) = _manifest_template_parameters(settings)
+    # La plantilla del primer contacto del formulario entra solo con su flag.
+    # Apagado, una accion precheckout_intent que hubiera quedado planificada
+    # no encuentra plantilla y cierra sin mandar nada: nunca usa la del carrito.
+    precheckout_name = (
+        settings.waba_precheckout_template_name
+        if settings.portable_precheckout_first_contact_enabled
+        else None
     )
     return WhatsAppTemplateConfig(
         first_touch_name=settings.waba_first_touch_template_name,  # type: ignore[arg-type]
@@ -2069,6 +2203,10 @@ def _waba_template_config(settings: Settings) -> WhatsAppTemplateConfig | None:
         first_touch_body_parameters=first_touch_parameters,
         payment_failure_body_parameters=payment_failure_parameters,
         payment_failure_category=payment_failure_category,
+        precheckout_name=precheckout_name,
+        precheckout_body_parameters=(
+            precheckout_parameters if precheckout_name is not None else None
+        ),
     )
 
 
@@ -2272,6 +2410,10 @@ def create_app(
         and (
             settings.portable_hotmart_recovery_enabled
             or settings.portable_hotmart_payment_failure_enabled
+            # El primer contacto del formulario tambien le escribe a quien
+            # dice la base y no a un JID fijo: sin esto el dispatcher directo
+            # no recibe el binding ni arranca.
+            or settings.portable_precheckout_first_contact_enabled
         )
     )
     portable_runtime = (
@@ -2512,6 +2654,7 @@ def create_app(
         raise ValueError(
             "DURABLE_OUTBOUND_ENABLED requires LANCEMOS_PILOT_BOUNDARY_ENABLED"
         )
+    _validate_precheckout_first_contact(settings)
     waba_template = _waba_template_config(settings)
     _validate_approved_template_direct(
         settings,
@@ -2528,6 +2671,20 @@ def create_app(
             channel_account_ref=settings.pilot_channel_account_ref,  # type: ignore[arg-type]
         )
         if settings.pilot_boundary_enabled
+        else None
+    )
+    # El scope del primer contacto del formulario: otra clave y otra version,
+    # el mismo tenant y el mismo canal que el de recuperacion. Solo lo lee
+    # /ready; el envio resuelve el scope por el binding del caso.
+    precheckout_pilot_boundary = (
+        PilotBoundaryConfig(
+            scope_key=settings.pilot_precheckout_scope_key,  # type: ignore[arg-type]
+            scope_version=settings.pilot_precheckout_scope_version,  # type: ignore[arg-type]
+            tenant_key=settings.pilot_tenant_key,  # type: ignore[arg-type]
+            channel_provider=settings.pilot_channel_provider,  # type: ignore[arg-type]
+            channel_account_ref=settings.pilot_channel_account_ref,  # type: ignore[arg-type]
+        )
+        if settings.portable_precheckout_first_contact_enabled
         else None
     )
     if settings.hotmart_purchase_worker_enabled and not settings.worker_enabled:
@@ -5432,6 +5589,49 @@ def create_app(
                     handoff_status.dead_letter_count
                 ),
             }
+        # El primer contacto del formulario tiene su propio scope del piloto:
+        # se publica su estado (inactive, armed, paused, closed). La clave solo
+        # aparece con el flag, para no cambiarle el payload a quien no lo usa.
+        first_contact_readiness: dict[str, str] = {}
+        if precheckout_pilot_boundary is not None:
+            if shared_supabase is None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="portable_precheckout_readiness_unavailable",
+                )
+            try:
+                first_contact_status = await (
+                    shared_supabase.get_portable_precheckout_pilot_runtime_status(
+                        pilot_boundary=precheckout_pilot_boundary
+                    )
+                )
+            except Exception as exc:
+                logger.warning(
+                    "portable_precheckout_readiness_check_failed error_type=%s",
+                    type(exc).__name__,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="portable_precheckout_readiness_unavailable",
+                ) from exc
+            if (
+                not first_contact_status.configured
+                or first_contact_status.runtime_state is None
+            ):
+                # Scope sin publicar, de otra fuente, manual_cohort o con otra
+                # version activa: el flujo no puede planificar ni mandar.
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=(
+                        "portable_precheckout_"
+                        f"{first_contact_status.reason_code}"
+                    ),
+                )
+            first_contact_readiness = {
+                "portable_precheckout_first_contact": (
+                    first_contact_status.runtime_state
+                ),
+            }
         if pilot_boundary is None:
             return {
                 "status": "ready",
@@ -5440,6 +5640,7 @@ def create_app(
                 "reason_code": "pilot_boundary_disabled",
                 **commercial_ally_readiness,
                 **precheckout_readiness,
+                **first_contact_readiness,
                 **handoff_readiness,
                 **stalled_monitor_readiness,
             }
@@ -5473,6 +5674,7 @@ def create_app(
             "reason_code": pilot_status.reason_code,
             **commercial_ally_readiness,
             **precheckout_readiness,
+            **first_contact_readiness,
             **handoff_readiness,
             **stalled_monitor_readiness,
         }
@@ -5792,6 +5994,52 @@ def create_app(
             "contact_authorized": False,
         }
 
+    async def _admit_portable_lead(
+        submission: LeadPrecheckoutSubmission,
+        raw_payload: dict[str, object],
+    ) -> PrecheckoutAdmissionResult:
+        # La admision portable de lead.precheckout, la misma para /webhooks/lead
+        # con manifiesto y para el adaptador de GHL. Apagado el primer contacto,
+        # es la RPC de siempre. Prendido, la base admite el envio y planifica
+        # el primer contacto en la misma transaccion: la admision no se pierde
+        # si el plan no procede, y la respuesta HTTP es la misma en los dos
+        # casos.
+        assert shared_supabase is not None
+        if not settings.portable_precheckout_first_contact_enabled:
+            return await shared_supabase.admit_portable_observed_lead_precheckout(
+                config=settings.commercial_ally_config,
+                external_submission_id=submission.external_submission_id,
+                raw_payload=raw_payload,
+                canonical_payload=submission.as_canonical_payload(),
+            )
+        # create_app ya no arranca sin el scope con el flag prendido.
+        assert settings.pilot_precheckout_scope_key is not None
+        assert settings.pilot_precheckout_scope_version is not None
+        admission = await shared_supabase.admit_and_plan_portable_lead_precheckout(
+            config=settings.commercial_ally_config,
+            external_submission_id=submission.external_submission_id,
+            raw_payload=raw_payload,
+            canonical_payload=submission.as_canonical_payload(),
+            scope_key=settings.pilot_precheckout_scope_key,
+            scope_version=settings.pilot_precheckout_scope_version,
+        )
+        # Solo ids y codigos: nunca el nombre, el email ni el telefono. Un plan
+        # que fallo sale como warning (bajo uvicorn solo los warnings llegan a
+        # la salida del contenedor); el motivo de cada envio queda ademas en
+        # portable_precheckout_first_contact_plans.
+        logger.log(
+            logging.WARNING
+            if admission.plan_outcome == "plan_failed"
+            else logging.INFO,
+            "portable_precheckout_first_contact admission=%s plan=%s reason=%s "
+            "submission_id=%s",
+            admission.outcome,
+            admission.plan_outcome or "-",
+            admission.plan_reason or "-",
+            admission.submission_id,
+        )
+        return admission
+
     @app.post("/webhooks/lead", status_code=status.HTTP_200_OK)
     async def receive_lead_precheckout_webhook(
         request: Request,
@@ -5877,12 +6125,7 @@ def create_app(
         assert isinstance(payload, dict)
         try:
             admission = (
-                await shared_supabase.admit_portable_observed_lead_precheckout(
-                    config=settings.commercial_ally_config,
-                    external_submission_id=submission.external_submission_id,
-                    raw_payload=payload,
-                    canonical_payload=submission.as_canonical_payload(),
-                )
+                await _admit_portable_lead(submission, payload)
                 if explicit_manifest_runtime
                 else await shared_supabase.admit_observed_lead_precheckout(
                     external_submission_id=submission.external_submission_id,
@@ -6001,12 +6244,7 @@ def create_app(
         try:
             # Siempre la admision portable, con el evento traducido: el cuerpo
             # de GHL no se guarda.
-            admission = await shared_supabase.admit_portable_observed_lead_precheckout(
-                config=settings.commercial_ally_config,
-                external_submission_id=submission.external_submission_id,
-                raw_payload=translation.event,
-                canonical_payload=submission.as_canonical_payload(),
-            )
+            admission = await _admit_portable_lead(submission, translation.event)
         except SupabaseError as exc:
             raise HTTPException(
                 status_code=503, detail="ghl_precheckout_persist_unavailable"

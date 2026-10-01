@@ -1427,3 +1427,208 @@ def test_create_app_turns_the_equivalence_on_only_for_the_portable_sender(
 
     assert _gate_target(tmp_path) == _sha256(f"+{MX_WHATSAPP}")
     assert chatwoot.searches == [f"+{MX_FORM}", f"+{MX_WHATSAPP}"]
+
+
+# ------------------------------------------- primer contacto tras el formulario
+#
+# Una accion de ancla precheckout_intent (la planifica
+# admit_and_plan_portable_lead_precheckout) sale con la plantilla propia del
+# flujo, y sin ella no sale. El catalogo capturado del inbox 9 trae
+# johanna_interes_precheckout_01 (dos variables y tres botones QUICK_REPLY),
+# servida bajo el inbox 11 como el resto del archivo; la captura del catalogo
+# del inbox 11 con att1_interes_precheckout_01 entra con su propio fixture.
+
+FORM_TEMPLATE = "johanna_interes_precheckout_01"
+FORM_ANCHOR = "precheckout_intent"
+WITH_FORM_TEMPLATE = replace(
+    TEMPLATE,
+    precheckout_name=FORM_TEMPLATE,
+    precheckout_body_parameters=("nombre", "producto"),
+)
+
+
+def test_the_form_first_contact_sends_its_own_approved_template(tmp_path: Path) -> None:
+    authority = _Authority(offer_code="gopi6lh7", anchor_type=FORM_ANCHOR)
+    chatwoot = _Chatwoot()
+
+    decisions = _run(
+        _dispatcher(authority, chatwoot, tmp_path, template=WITH_FORM_TEMPLATE)
+    )
+
+    expected = _expected(
+        FORM_TEMPLATE, first="Edith García Pérez", product="Alimenta tu Tiroides"
+    )
+    assert expected != _expected(
+        CART_TEMPLATE, first="Edith García Pérez", product="Alimenta tu Tiroides"
+    )
+    assert decisions[-1].decision == "execute"
+    assert authority.events == [
+        "reevaluate", "reserve", "reevaluate", "request_started", "accepted",
+    ]
+    [message] = chatwoot.posts("/conversations/200/messages")
+    assert message["content"] == expected
+    assert message["template_params"] == {
+        "name": FORM_TEMPLATE,
+        "category": "MARKETING",
+        "language": "es_EC",
+        "processed_params": {
+            "body": {"1": "Edith García Pérez", "2": "Alimenta tu Tiroides"}
+        },
+    }
+    assert authority.acceptances[0]["message_content"] == expected
+    assert authority.finalizations == []
+
+
+def test_the_form_first_contact_final_gate_records_its_own_template(
+    tmp_path: Path,
+) -> None:
+    authority = _Authority(offer_code="gopi6lh7", anchor_type=FORM_ANCHOR)
+    chatwoot = _Chatwoot()
+
+    _run(
+        _dispatcher(
+            authority, chatwoot, tmp_path, gate_open=False, template=WITH_FORM_TEMPLATE
+        )
+    )
+
+    [evidence_file] = list((tmp_path / "meta-effects").glob("*.json"))
+    evidence = json.loads(evidence_file.read_text(encoding="utf-8"))
+    assert evidence["template_name"] == FORM_TEMPLATE
+    assert evidence["content_sha256"] == hashlib.sha256(
+        _expected(
+            FORM_TEMPLATE, first="Edith García Pérez", product="Alimenta tu Tiroides"
+        ).encode("utf-8")
+    ).hexdigest()
+    assert authority.finalizations[-1]["reason_code"] == "final_meta_gate_closed"
+    assert chatwoot.posts("/messages") == []
+
+
+def test_the_form_first_contact_without_its_template_is_never_sent(
+    tmp_path: Path,
+) -> None:
+    # Falla cerrado antes de leer el catalogo: no busca ni crea el contacto, no
+    # pasa por el gate final ni arranca el pedido, y no usa la plantilla del
+    # carrito. Cierra la accion en el primer intento.
+    authority = _Authority(offer_code="gopi6lh7", anchor_type=FORM_ANCHOR)
+    chatwoot = _Chatwoot()
+
+    decisions = _run(_dispatcher(authority, chatwoot, tmp_path))
+
+    assert decisions[-1].decision == "execute"
+    assert authority.events == ["reevaluate", "reserve"]
+    assert chatwoot.requests == []
+    [finalization] = authority.finalizations
+    assert finalization["outcome"] == "failed_before_request"
+    assert finalization["reason_code"] == "first_touch_template_not_configured"
+    assert finalization["next_attempt_at"] is None
+    assert not (tmp_path / "meta-effects").exists()
+
+
+def test_the_composition_refuses_the_form_anchor_without_its_template(
+    tmp_path: Path,
+) -> None:
+    # La segunda barrera, por si la del dispatcher cambia: la composicion del
+    # modo directo tampoco arma nada, con el motivo propio y sin leer el
+    # catalogo.
+    authority = _Authority(offer_code="gopi6lh7", anchor_type=FORM_ANCHOR)
+    chatwoot = _Chatwoot()
+    dispatcher = _dispatcher(authority, chatwoot, tmp_path)
+
+    composition = asyncio.run(
+        dispatcher._compose_approved_template_proposal(  # type: ignore[attr-defined]
+            action=authority.action, execution_context=authority.context
+        )
+    )
+
+    assert composition.proposal is None
+    assert composition.failure_reason == "first_touch_template_not_configured"
+    assert composition.retryable is False
+    assert chatwoot.requests == []
+
+
+class _FirstContactPostgREST(_PostgREST):
+    """El mismo PostgREST, con las RPC propias del ancla precheckout_intent.
+
+    Las dos devuelven la misma tabla que su par: la reevaluacion la de
+    reevaluate_followup_action, y el arranque la de
+    mark_portable_payment_failure_request_started, de la que es copia
+    (migracion 20261001000200).
+    """
+
+    SIBLINGS = {
+        "reevaluate_portable_precheckout_action": "reevaluate_followup_action",
+        "mark_portable_precheckout_request_started": (
+            "mark_portable_payment_failure_request_started"
+        ),
+    }
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        prefix = "/rest/v1/rpc/"
+        operation = request.url.path.removeprefix(prefix)
+        sibling = self.SIBLINGS.get(operation)
+        if sibling is None:
+            return super().handler(request)
+        response = super().handler(
+            httpx.Request(
+                request.method,
+                request.url.copy_with(path=prefix + sibling),
+                content=request.content,
+            )
+        )
+        self.calls[-1] = (operation, self.calls[-1][1])
+        return response
+
+
+def test_the_real_supabase_client_uses_the_first_contact_rpcs_for_its_anchor(
+    tmp_path: Path,
+) -> None:
+    # La reevaluacion compartida sola ejecutaria sin mirar los frenos del
+    # primer contacto (compra, carrito, opt-out, consentimiento), y el arranque
+    # compartido autorizaria contra otro scope: para este ancla el worker y el
+    # cliente usan solo las RPC propias, las dos veces que reevaluan.
+    authority = _Authority(offer_code="gopi6lh7", anchor_type=FORM_ANCHOR)
+    postgrest = _FirstContactPostgREST(authority)
+    chatwoot = _Chatwoot()
+    client = chatwoot.client()
+    dispatcher = DurableDispatcher(
+        supabase=postgrest.client(),
+        worker_id="att1-dispatcher",
+        chatwoot=client,
+        chatwoot_account_id=ACCOUNT_ID,
+        chatwoot_inbox_id=INBOX_ID,
+        sender=ChatwootMessageSender(
+            chatwoot=client,
+            inbox_id=INBOX_ID,
+            allowed_jid=None,
+            dynamic_recipient_enabled=True,
+            template=WITH_FORM_TEMPLATE,
+        ),
+        allowed_jid=None,
+        commercial_ally_config=ALLY,
+        portable_recipient_enabled=True,
+        pilot_boundary=BOUNDARY,
+        clock=lambda: FINAL_NOW,
+        final_meta_effect_gate=FinalMetaEffectGate(
+            enabled=True, evidence_dir=tmp_path / "meta-effects"
+        ),
+        waba_template=WITH_FORM_TEMPLATE,
+        approved_template_direct=True,
+    )
+
+    decisions = _run(dispatcher)
+
+    operations = postgrest.operations()
+    assert decisions[-1].decision == "execute"
+    assert [name for name in operations if name.startswith("reevaluate_")] == [
+        "reevaluate_portable_precheckout_action",
+        "reevaluate_portable_precheckout_action",
+    ]
+    assert [name for name in operations if name.startswith("mark_")] == [
+        "mark_portable_precheckout_request_started"
+    ]
+    assert postgrest.body_of("reserve_followup_delivery_attempt")["p_mode"] == (
+        "approved_template"
+    )
+    assert operations[-1] == "record_and_finalize_followup_acceptance"
+    [message] = chatwoot.posts("/conversations/200/messages")
+    assert message["template_params"]["name"] == FORM_TEMPLATE

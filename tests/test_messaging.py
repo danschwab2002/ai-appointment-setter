@@ -14,6 +14,7 @@ import pytest
 from bridge.chatwoot import ChatwootClient, ChatwootProtocolError
 from bridge.messaging import (
     FIRST_TOUCH_RECIPIENT_MISMATCH,
+    FIRST_TOUCH_TEMPLATE_NOT_CONFIGURED,
     ChatwootMessageSender,
     FirstTouchRecipient,
     WhatsAppTemplateConfig,
@@ -1931,3 +1932,186 @@ def test_a_recipient_is_a_contact_with_its_source_or_neither() -> None:
         FirstTouchRecipient(wa_id=MX_WHATSAPP, contact_id=41)
     with pytest.raises(ValueError, match="invalid_first_touch_recipient"):
         FirstTouchRecipient(wa_id=MX_WHATSAPP, source_id=MX_WHATSAPP)
+
+
+# ── La plantilla del primer contacto tras el formulario ──────────────
+#
+# El ancla precheckout_intent tiene su propia plantilla aprobada
+# (plantillas.precheckout del manifiesto). A diferencia del pago fallido, que
+# sin plantilla propia sale con la del carrito, este disparador no tiene
+# prestamo: sin su plantilla no se manda nada. Los nombres son los del
+# manifiesto de ATT1 (tests/fixtures/instances/att1/instancia.toml); Chatwoot
+# es el emulador de arriba (deuda: no hay captura de sus respuestas al envio).
+
+PRECHECKOUT_TRIGGER = "precheckout_intent"
+
+
+def _att1_templates(**overrides: object) -> WhatsAppTemplateConfig:
+    values: dict[str, object] = {
+        "first_touch_name": "att1_carrito_abandonado_01",
+        "payment_failure_name": "att1_compra_fallida_01",
+        "followup_name": None,
+        "language": "es_MX",
+        "category": "MARKETING",
+        "first_touch_parameter": "buyer_name_and_product",
+        "first_touch_body_parameters": ("nombre", "producto"),
+        "payment_failure_body_parameters": ("nombre", "producto"),
+    }
+    values.update(overrides)
+    return WhatsAppTemplateConfig(**values)  # type: ignore[arg-type]
+
+
+def _templated_sender(
+    inbox: _WhatsAppCloudInbox, template: WhatsAppTemplateConfig
+) -> ChatwootMessageSender:
+    return ChatwootMessageSender(
+        chatwoot=ChatwootClient(
+            base_url="https://chatwoot.test",
+            account_id=1,
+            access_token="test-token",
+            agent_bot_access_token="bot-token",
+            agent_bot_id=99,
+            transport=httpx.MockTransport(inbox.handler),
+        ),
+        inbox_id=1,
+        allowed_jid=None,
+        dynamic_recipient_enabled=True,
+        template=template,
+        whatsapp_equivalence_enabled=True,
+    )
+
+
+def test_the_precheckout_trigger_names_its_own_template() -> None:
+    template = _att1_templates(
+        precheckout_name="att1_interes_precheckout_01",
+        precheckout_body_parameters=("nombre",),
+    )
+
+    assert template.first_touch_name_for(trigger_kind=PRECHECKOUT_TRIGGER) == (
+        "att1_interes_precheckout_01"
+    )
+    assert template.declared_body_parameters(trigger_kind=PRECHECKOUT_TRIGGER) == (
+        "nombre",
+    )
+    assert template.category_for(trigger_kind=PRECHECKOUT_TRIGGER) == "MARKETING"
+    assert template.params(
+        content="copy",
+        followup=False,
+        buyer_name="Ana",
+        product_name="Alimenta tu Tiroides",
+        trigger_kind=PRECHECKOUT_TRIGGER,
+    ) == {
+        "name": "att1_interes_precheckout_01",
+        "category": "MARKETING",
+        "language": "es_MX",
+        "processed_params": {"body": {"1": "Ana"}},
+    }
+    # Los otros disparadores no cambian por declarar la plantilla del formulario.
+    plain = _att1_templates()
+    for trigger_kind in (None, "cart_abandonment", "payment_failure"):
+        assert template.first_touch_name_for(
+            trigger_kind=trigger_kind
+        ) == plain.first_touch_name_for(trigger_kind=trigger_kind)
+        assert template.params(
+            content="copy", followup=False, buyer_name="Ana",
+            product_name="ATT1", trigger_kind=trigger_kind,
+        ) == plain.params(
+            content="copy", followup=False, buyer_name="Ana",
+            product_name="ATT1", trigger_kind=trigger_kind,
+        )
+
+
+def test_the_precheckout_trigger_without_its_template_has_no_template() -> None:
+    # Nunca la del carrito, ni la del pago fallido, ni sus variables.
+    template = _att1_templates()
+
+    assert template.first_touch_name_for(trigger_kind=PRECHECKOUT_TRIGGER) is None
+    assert template.declared_body_parameters(trigger_kind=PRECHECKOUT_TRIGGER) is None
+    with pytest.raises(ValueError, match="template_disabled"):
+        template.params(
+            content="copy",
+            followup=False,
+            buyer_name="Ana",
+            product_name="Alimenta tu Tiroides",
+            trigger_kind=PRECHECKOUT_TRIGGER,
+        )
+    # El prestamo del pago fallido sigue como estaba.
+    assert _att1_templates(
+        payment_failure_name=None, payment_failure_body_parameters=None
+    ).first_touch_name_for(trigger_kind="payment_failure") == "att1_carrito_abandonado_01"
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "error"),
+    [
+        (
+            {"precheckout_body_parameters": ("nombre",)},
+            "precheckout_body_parameters_without_template",
+        ),
+        (
+            {
+                "precheckout_name": "att1_interes_precheckout_01",
+                "precheckout_body_parameters": ("cupon",),
+            },
+            "invalid_template_body_parameters",
+        ),
+        ({"precheckout_name": "  "}, "invalid_precheckout_template_name"),
+    ],
+)
+def test_an_invalid_precheckout_template_is_refused(
+    kwargs: dict[str, object], error: str
+) -> None:
+    with pytest.raises(ValueError, match=error):
+        _att1_templates(**kwargs)
+
+
+def test_the_sender_sends_the_first_contact_of_the_form_with_its_template() -> None:
+    inbox = _WhatsAppCloudInbox()
+    sender = _templated_sender(
+        inbox,
+        _att1_templates(
+            precheckout_name="att1_interes_precheckout_01",
+            precheckout_body_parameters=("nombre", "producto"),
+        ),
+    )
+
+    result = _first_touch(
+        sender, MX_FORM, product_name="Alimenta tu Tiroides",
+        trigger_kind=PRECHECKOUT_TRIGGER,
+    )
+
+    assert result.status == "sent"
+    [message] = inbox.posts("/conversations/200/messages")
+    assert message["template_params"] == {
+        "name": "att1_interes_precheckout_01",
+        "category": "MARKETING",
+        "language": "es_MX",
+        "processed_params": {
+            "body": {"1": "Lead de prueba", "2": "Alimenta tu Tiroides"}
+        },
+    }
+
+
+def test_the_sender_blocks_the_first_contact_of_the_form_without_its_template() -> None:
+    # Falla cerrado antes de tocar Chatwoot: ni busca ni crea el contacto, no
+    # abre la conversacion y no manda la plantilla del carrito.
+    inbox = _WhatsAppCloudInbox()
+    sender = _templated_sender(inbox, _att1_templates())
+
+    result = _first_touch(
+        sender, MX_FORM, product_name="Alimenta tu Tiroides",
+        trigger_kind=PRECHECKOUT_TRIGGER,
+    )
+
+    assert result.status == "blocked"
+    assert result.reason == FIRST_TOUCH_TEMPLATE_NOT_CONFIGURED
+    assert result.reason == "first_touch_template_not_configured"
+    assert inbox.requests == []
+    # El mismo sender sigue mandando el carrito.
+    cart = _first_touch(
+        sender, MX_FORM, product_name="Alimenta tu Tiroides",
+        trigger_kind="cart_abandonment",
+    )
+    assert cart.status == "sent"
+    [message] = inbox.posts("/conversations/200/messages")
+    assert message["template_params"]["name"] == "att1_carrito_abandonado_01"  # type: ignore[index]
