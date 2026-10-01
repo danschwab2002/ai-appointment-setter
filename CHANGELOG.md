@@ -47,6 +47,7 @@ Tres cosas para una instancia con manifiesto: el primer contacto tras el formula
   - Migración `20261001000300_pilot_scope_audience_mode_read.sql`: suma `get_lancemos_pilot_scope_audience_mode(text,integer)`, solo para `service_role`. No reemplaza nada ni toca tablas.
   - Contrato: `docs/contracts/ghl-precheckout-adapter-v1.md`, *La aceptación escrita del riesgo*.
 - **Pruebas de punta a punta de ATT1.** Fixture nuevo `tests/fixtures/chatwoot_inbox_11_message_templates_20261001.json`: el catálogo de plantillas del inbox 11, leído el 2026-10-01. Con él, el modo directo se prueba con las tres plantillas de primer contacto de ATT1 (`att1_carrito_abandonado_01`, `att1_compra_fallida_01` y `att1_interes_precheckout_01`: dos variables, `es_MX`, `MARKETING`, tres botones `QUICK_REPLY`), así que con esa captura ninguna necesita `WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY`. `validate_att1_portable_chain.mjs` suma el primer contacto tras el formulario con el scope y la política de la instancia, y Hotmart en `521`/`549` contra una intención en `52`/`54`. `tests/test_att1_production_settings.py` arranca el bridge desde variables de entorno con el set completo de cada flujo y con los tres juntos. No cambia nada en tiempo de ejecución.
+- **La sonda de Postgres real del primer contacto corre en el CI** (`real_postgres_portable_precheckout_first_contact.py`, paso *Verify portable first contact on PostgreSQL*): aplica la cadena entera en un Postgres 17 con los privilegios por defecto de Supabase, corre el inventario de ACL completo y prueba con sesiones reales lo que PGlite no puede (la reevaluación contra un reenvío del formulario, la compra y el opt-out en vuelo, y el `lock timeout` adentro del plan).
 
 ### Cambiado
 
@@ -75,7 +76,6 @@ Tres cosas para una instancia con manifiesto: el primer contacto tras el formula
 
 - El tope de mensajes proactivos por persona entre flujos: quien recibió el primer contacto del formulario puede recibir después el del carrito. Se decide antes de abrir carrito y primer contacto juntos en `consented_intent`.
 - Quien escribió primero por WhatsApp y después abandona el carrito o falla el pago: ese evento de Hotmart no encuentra el contacto del entrante y falla cerrado (se pierde la recuperación, no se manda nada indebido).
-- El paso de Postgres real del primer contacto (`real_postgres_portable_precheckout_first_contact.py`) corre a mano; todavía no está en el workflow de CI.
 - La verificación fuera de banda de cada envío del adaptador de GHL contra la API de GHL.
 
 ## [1.2.0] - 2026-10-01

@@ -6,13 +6,28 @@ deferred triggers (``set constraints all immediate``). PGlite covers the
 behavior (validate_portable_precheckout_first_contact.mjs); this probe repeats
 the parts that depend on the server: the block and the deferred triggers under
 real subtransactions, the entrypoints called as service_role with
-Supabase-style default privileges, and two real sessions planning the same
-person at once.
+Supabase-style default privileges, and what only two real sessions can show:
+
+* two forms of the same new person at once leave one contact and one case;
+* the reevaluation of a first contact and a resend of the form of the same
+  intent do not wait for each other in a cycle (no 40P01);
+* the reevaluation waits for a purchase that is being correlated to the intent
+  and cancels the first contact instead of sending it;
+* an opt-out in flight from the other form of the phone makes the request start
+  wait for it, and the start is then rejected;
+* a lock timeout inside the plan is raised again: the form is not admitted and
+  the sender retries the whole delivery.
+
+The sessions are ordered with sleeps: the session that holds a lock keeps it
+for HOLD_SECONDS and the other one arrives a second later. Nothing here depends
+on a race being won, only on a lock being held while the other session arrives.
 
 Data: the ATT1 fixture (tests/fixtures/instances/att1) and the two GHL
 translator goldens (tests/fixtures/ghl/expected) with id, date and buyer
 replaced. There is no captured PURCHASE_APPROVED: the purchase uses the inline
 precedent of validate_commercial_ally_multi_offer.mjs. Phones are synthetic.
+The opt-out is the real RPC (apply_chatwoot_inbound_opt_out) with synthetic
+Chatwoot ids: there is no captured "No mas mensajes" payload yet.
 """
 
 from __future__ import annotations
@@ -21,6 +36,7 @@ import copy
 import json
 import os
 import subprocess
+import time
 import tomllib
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -93,6 +109,18 @@ def query(sql: str, *, expect_failure: bool = False) -> str:
     if result.returncode:
         raise RuntimeError(result.stderr.strip())
     return result.stdout.strip()
+
+
+def session(sql: str, *, delay: float = 0.0) -> subprocess.CompletedProcess[str]:
+    """One real session, started after a delay; it never raises."""
+    time.sleep(delay)
+    return subprocess.run(
+        args("-A", "-t", "-F", "|", "-c", sql),
+        env=pg_env(),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
 
 
 def apply(path: Path) -> None:
@@ -197,6 +225,84 @@ def plan_row(submission_id: str) -> list[str]:
         "coalesce(recovery_case_id::text,'') "
         f"from public.portable_precheckout_first_contact_plans where submission_id={submission_id!r}::uuid"
     ).split("|")
+
+
+WORKER = "att1-first-contact-pg"
+# How long a session keeps its lock, and when the next ones arrive. Wide on
+# purpose: the CI runner starts a psql per session.
+HOLD_SECONDS = 4
+SECOND_ARRIVES = 1.0
+THIRD_ARRIVES = 2.2
+
+
+def waiting_on_advisory_lock(fragment: str) -> bool:
+    """True once a session running ``fragment`` waits for an advisory lock."""
+    deadline = time.monotonic() + HOLD_SECONDS - 0.5
+    while time.monotonic() < deadline:
+        waiting = session(
+            "select count(*) from pg_stat_activity "
+            "where pid <> pg_backend_pid() and wait_event_type = 'Lock' "
+            f"and wait_event = 'advisory' and query like '%{fragment}%'"
+        )
+        if waiting.returncode == 0 and waiting.stdout.strip() == "1":
+            return True
+        time.sleep(0.2)
+    return False
+
+
+def claim(action_id: str) -> str:
+    """Claim the due actions and return the lease generation of this one."""
+    claimed = [
+        row.split("|")
+        for row in query(
+            "select id, lease_generation from public.claim_due_followup_actions("
+            f"{literal(WORKER)}, clock_timestamp(), interval '5 minutes', 100)"
+        ).splitlines()
+    ]
+    leases = [lease for claimed_id, lease in claimed if claimed_id == action_id]
+    require(len(leases) == 1, f"the action was not claimed: {claimed}")
+    return leases[0]
+
+
+def reevaluate_sql(action_id: str, lease: str) -> str:
+    return (
+        "select decision, reason_code, case_version, sequence_revision "
+        "from public.reevaluate_portable_precheckout_action("
+        f"{action_id!r}::uuid, {literal(WORKER)}, {lease}, clock_timestamp())"
+    )
+
+
+def action_of(case_id: str) -> str:
+    return query(
+        f"select id from public.scheduled_actions where recovery_case_id={case_id!r}::uuid"
+    )
+
+
+def portable_purchase_sql(lead: dict[str, str], index: int) -> str:
+    """A purchase by the portable admission: it correlates and closes the intent."""
+    approved_at = int((NOW - timedelta(minutes=1)).timestamp() * 1000)
+    payload = {
+        "id": f"att1-first-contact-pg-portable-purchase-{index}",
+        "creation_date": approved_at,
+        "event": "PURCHASE_APPROVED",
+        "version": "2.0.0",
+        "data": {
+            "product": {"id": HOTMART["product_id"], "ucode": "ATT1-FIRST-CONTACT-PG"},
+            "buyer": {"email": lead["email"], "checkout_phone": f"+{lead['whatsapp']}"},
+            "purchase": {
+                "approved_date": approved_at,
+                "status": "APPROVED",
+                "transaction": f"HPATT1PGP{index:04d}",
+                "offer": {"code": lead["offer"]},
+            },
+        },
+    }
+    return (
+        "select outcome from public.admit_portable_hotmart_purchase_approved("
+        f"{literal(INSTANCE['tenant_ref'])},{literal(INSTANCE['funnel_ref'])},"
+        f"{INSTANCE['binding_version']},{literal(payload['id'])},{literal(payload)},"
+        f"{literal(lead['email'])},{literal(lead['whatsapp'])})"
+    )
 
 
 def shared_purchase(lead: dict[str, str], index: int) -> str:
@@ -321,6 +427,11 @@ def seed() -> None:
              {literal(HOTMART['product_id'])},{literal(HOTMART['hotlink'])},offer,
              {literal(PILOT['purchase_intent_scope']['max_lookback'])}::interval,true
       from unnest(array[{literal(default_offer['codigo'])}]::text[] || {offer_codes}) offer;
+      insert into public.commercial_ally_hotmart_purchase_policies
+        (tenant_ref, funnel_ref, binding_version, enabled, max_lookback)
+      values ({literal(INSTANCE['tenant_ref'])},{literal(INSTANCE['funnel_ref'])},
+        {INSTANCE['binding_version']},true,
+        {literal(PILOT['purchase_policy']['max_lookback'])}::interval);
       insert into public.inbound_commercial_scope_versions
         (scope_key, version, status, tenant_key, chatwoot_account_id, chatwoot_inbox_id,
          external_product_id, offer_code, approved_by, approved_at, published_at)
@@ -469,7 +580,222 @@ def main() -> None:
         f"from public.contacts c where c.email={literal(twice['email'])}"
     )
     require(owners == "1|1", f"concurrent forms left more than one contact or case: {owners}")
+    # What serializes these two is the admission of the form itself: it locks
+    # the runtime binding of the instance (for update) until the transaction
+    # ends, so two forms of one instance never plan at once. The advisory locks
+    # of _ensure_portable_precheckout_contact (phone and email) are a second
+    # belt this case does not exercise: without them it gives the same result.
     print("first_contact_concurrent_forms_one_contact=OK")
+
+    # The reevaluation of a first contact and a resend of the form of the same
+    # intent. A third session holds the action row for a moment, only to fix
+    # who arrives first: the reevaluation is already inside (it holds what it
+    # locks before the action) when the resend starts. With the intent locked
+    # after the contact, the two waited for each other and one died with
+    # 40P01; with the order of the admission (intent, then contact) the resend
+    # just waits for the reevaluation to finish.
+    crossed = person(6, "MX")
+    crossed_plan = admit(form(crossed, minutes_ago=61))
+    require(
+        crossed_plan[3:] == ["planned", "first_contact_scheduled"],
+        f"the due form was not planned: {crossed_plan[3:]}",
+    )
+    crossed_action = action_of(plan_row(crossed_plan[1])[4])
+    crossed_lease = claim(crossed_action)
+    resend = form(crossed, minutes_ago=5)
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        gate = pool.submit(
+            session,
+            "begin; select 1 from public.scheduled_actions "
+            f"where id={crossed_action!r}::uuid for update; select pg_sleep({HOLD_SECONDS}); commit;",
+        )
+        reevaluation = pool.submit(
+            session,
+            "set deadlock_timeout='200ms'; set role service_role; "
+            f"{reevaluate_sql(crossed_action, crossed_lease)}; reset role;",
+            delay=SECOND_ARRIVES,
+        )
+        resubmission = pool.submit(
+            session,
+            "set deadlock_timeout='200ms'; set role service_role; "
+            f"{admit_sql(resend)}; reset role;",
+            delay=THIRD_ARRIVES,
+        )
+        gate_result, reevaluated, resent = (
+            gate.result(), reevaluation.result(), resubmission.result()
+        )
+    require(gate_result.returncode == 0, f"the gate session failed: {gate_result.stderr.strip()}")
+    require(
+        "deadlock detected" not in reevaluated.stderr + resent.stderr,
+        "the reevaluation and the resend of the same intent deadlocked",
+    )
+    require(
+        reevaluated.returncode == 0
+        and reevaluated.stdout.strip().splitlines()[-1].split("|")[:2]
+        == ["execute", "eligible_for_execution"],
+        f"the reevaluation did not execute: {reevaluated.stdout.strip()} {reevaluated.stderr.strip()}",
+    )
+    require(
+        resent.returncode == 0
+        and resent.stdout.strip().splitlines()[-1].split("|")[0] == "inserted"
+        and resent.stdout.strip().splitlines()[-1].split("|")[3:]
+        == ["not_planned", "precheckout_contact_already_planned"],
+        f"the resend was not admitted: {resent.stdout.strip()} {resent.stderr.strip()}",
+    )
+    print("first_contact_reevaluation_and_resend_do_not_deadlock=OK")
+
+    # A purchase in flight. The portable admission is correlating the purchase
+    # to the intent in an open transaction when the reevaluation arrives: the
+    # reevaluation waits for it (it locks the intent for share) and reads what
+    # was committed, so the first contact is cancelled, not sent. Without that
+    # lock it would read the intent as still waiting and execute.
+    buying = person(9, "AR")
+    buying_plan = admit(form(buying, minutes_ago=61))
+    require(
+        buying_plan[3:] == ["planned", "first_contact_scheduled"],
+        f"the form of the buyer was not planned: {buying_plan[3:]}",
+    )
+    buying_action = action_of(plan_row(buying_plan[1])[4])
+    buying_lease = claim(buying_action)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        purchase = pool.submit(
+            session,
+            f"begin; {portable_purchase_sql(buying, 9)}; select pg_sleep({HOLD_SECONDS}); commit;",
+        )
+        late_reevaluation = pool.submit(
+            session,
+            f"set role service_role; {reevaluate_sql(buying_action, buying_lease)}; reset role;",
+            delay=SECOND_ARRIVES,
+        )
+        purchased, decided = purchase.result(), late_reevaluation.result()
+    require(
+        purchased.returncode == 0 and purchased.stdout.strip().splitlines()[0] == "inserted",
+        f"the purchase in flight was not admitted: {purchased.stdout.strip()} {purchased.stderr.strip()}",
+    )
+    require(
+        decided.returncode == 0
+        and decided.stdout.strip().splitlines()[-1].split("|")[:2] == ["cancel", "intent_purchased"],
+        f"the reevaluation did not wait for the purchase in flight: {decided.stdout.strip()} {decided.stderr.strip()}",
+    )
+    print("first_contact_reevaluation_waits_for_a_purchase_in_flight=OK")
+
+    # An opt-out in flight from the OTHER form of the phone (the wa_id, 521...,
+    # while the identity of the case is the 52... of the form). The request
+    # start takes the opt-out lock of both forms: it waits for the opt-out to
+    # commit and then sees it. Locking only the form of the identity, it would
+    # not wait and the template would leave while the opt-out is being saved.
+    leaving = person(7, "MX")
+    leaving_plan = admit(form(leaving, minutes_ago=61))
+    require(
+        leaving_plan[3:] == ["planned", "first_contact_scheduled"],
+        f"the form of the person who opts out was not planned: {leaving_plan[3:]}",
+    )
+    leaving_action = action_of(plan_row(leaving_plan[1])[4])
+    leaving_lease = claim(leaving_action)
+    decision = query(
+        f"set role service_role; {reevaluate_sql(leaving_action, leaving_lease)}; reset role;"
+    ).splitlines()[-1].split("|")
+    require(decision[:2] == ["execute", "eligible_for_execution"], f"reevaluation: {decision}")
+    attempt = query(
+        "select id from public.reserve_followup_delivery_attempt("
+        f"{leaving_action!r}::uuid, {literal(WORKER)}, {leaving_lease}, {decision[2]}, "
+        f"{decision[3]}, 'whatsapp', 'approved_template', clock_timestamp())"
+    )
+    starts_before = query(
+        "select count(*) from public.pilot_outbound_request_authorizations "
+        f"where scope_key={literal(SCOPE_KEY)}"
+    )
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        opt_out = pool.submit(
+            session,
+            "begin; select outcome from public.apply_chatwoot_inbound_opt_out("
+            f"{CHATWOOT['account_id']}, {CHATWOOT['inbox_id']}, 991007, 991007, "
+            f"{literal(leaving['whatsapp'])}, clock_timestamp(), 'unsubscribe'); "
+            f"select pg_sleep({HOLD_SECONDS}); commit;",
+        )
+        start = pool.submit(
+            session,
+            "set role service_role; select phase from "
+            "public.mark_portable_precheckout_request_started("
+            f"{leaving_action!r}::uuid, {attempt!r}::uuid, {literal(WORKER)}, "
+            f"{leaving_lease}, clock_timestamp());",
+            delay=SECOND_ARRIVES,
+        )
+        time.sleep(SECOND_ARRIVES)
+        waited = waiting_on_advisory_lock("mark_portable_precheckout_request_started")
+        opted_out, started = opt_out.result(), start.result()
+    require(
+        opted_out.returncode == 0 and "recorded_unmatched" in opted_out.stdout,
+        f"the opt-out from the other form was not recorded: {opted_out.stdout.strip()} {opted_out.stderr.strip()}",
+    )
+    require(waited, "the request start did not wait for the opt-out in flight")
+    require(
+        started.returncode != 0
+        and "pilot_request_start_rejected" in started.stderr
+        and "precheckout_prior_opt_out" in started.stderr,
+        f"the request start was not rejected by the opt-out: {started.stdout.strip()} {started.stderr.strip()}",
+    )
+    require(
+        query(
+            "select count(*) from public.pilot_outbound_request_authorizations "
+            f"where scope_key={literal(SCOPE_KEY)}"
+        )
+        == starts_before,
+        "the rejected start consumed a request start",
+    )
+    print("first_contact_start_waits_for_an_opt_out_in_flight=OK")
+
+    # A transient error inside the plan is raised again. The contact of the
+    # person is locked by another session and the form arrives with a short
+    # lock_timeout: the wait ends in 55P03 inside the protected block. Saved as
+    # plan_failed, the form would stay admitted and without a plan for good;
+    # raised again, nothing is admitted and the sender retries the delivery.
+    busy = person(8, "AR")
+    busy_contact = query(
+        "insert into public.contacts (full_name, email, phone, country_iso) values ("
+        f"'Persona Ocupada', {literal(busy['email'])}, {literal(busy['plain'])}, 'AR') returning id"
+    )
+    query(
+        "insert into public.contact_points (contact_id, type, raw_value, normalized_value, source) "
+        f"values ({busy_contact!r}::uuid, 'email', {literal(busy['email'])}, {literal(busy['email'])}, 'manual'), "
+        f"({busy_contact!r}::uuid, 'phone', {literal(busy['plain'])}, {literal(busy['plain'])}, 'manual')"
+    )
+    busy_form = form(busy)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        holder = pool.submit(
+            session,
+            # The lock an UPDATE of the contact takes. It stops the plan (which
+            # asks for the row for update) but not the foreign key of the plan
+            # row: with a stronger lock the form would fail anyway when the
+            # plan row is written, and this case would prove nothing.
+            f"begin; select 1 from public.contacts where id={busy_contact!r}::uuid "
+            f"for no key update; select pg_sleep({HOLD_SECONDS}); commit;",
+        )
+        timed_out = pool.submit(
+            session,
+            f"set lock_timeout='500ms'; set role service_role; {admit_sql(busy_form)}; reset role;",
+            delay=SECOND_ARRIVES,
+        )
+        held, refused = holder.result(), timed_out.result()
+    require(held.returncode == 0, f"the lock holder failed: {held.stderr.strip()}")
+    require(
+        refused.returncode != 0 and "lock timeout" in refused.stderr,
+        f"the lock timeout was not raised again: {refused.stdout.strip()} {refused.stderr.strip()}",
+    )
+    require(
+        query(
+            "select count(*) from public.precheckout_submissions "
+            f"where external_submission_id={literal(busy_form['id'])}"
+        )
+        == "0",
+        "a form whose plan hit a lock timeout stayed admitted",
+    )
+    retried = admit(busy_form)
+    require(
+        retried[0] == "inserted" and retried[3:] == ["planned", "first_contact_scheduled"],
+        f"the retried delivery was not planned: {retried[0]} {retried[3:]}",
+    )
+    print("first_contact_lock_timeout_is_raised_again=OK")
 
 
 if __name__ == "__main__":
