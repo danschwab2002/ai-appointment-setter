@@ -1,13 +1,14 @@
 # Seguimiento con cupón de Johanna: primer envío real y las conversaciones resueltas
 
 - Fecha: 2026-10-01.
-- Tipo: evidencia operativa. Describe lo medido el 2026-10-01 entre las 12:28 y las 13:10 UTC,
-  en solo lectura. No es contrato ni arquitectura.
+- Tipo: evidencia operativa. Describe lo medido el 2026-10-01 en solo lectura: el estado previo
+  y el primer envío, entre las 12:28 y las 13:10 UTC (§1 a §4), y el deploy del PR #213 con su
+  primer barrido, entre las 14:07 y las 14:24 UTC (§5). No es contrato ni arquitectura.
 - Alcance: el seguimiento con cupón de Johanna (PR #203, contrato
-  `docs/contracts/conversation-followup-discount-v1.md`) tal como corre en el bridge
-  `f7dd227`, y el cambio de la rama `feat/claude-followup-resolved-conversations-v1`, que
-  le suma las conversaciones resueltas.
-- Claim: `claude-followup-resolved-conversations-v1`.
+  `docs/contracts/conversation-followup-discount-v1.md`) tal como corría en el bridge
+  `f7dd227`, y el PR #213 (`d103405`), que le suma las conversaciones resueltas.
+- Claims: `claude-followup-resolved-conversations-v1` (§1 a §4) y
+  `claude-followup-resolved-evidence-v1` (§5).
 
 Este documento no contiene teléfonos, nombres, emails, tokens, `fbclid` ni el valor del cupón.
 
@@ -108,7 +109,59 @@ La captura anonimizada está en
 
 ## 4. El cambio
 
-La rama `feat/claude-followup-resolved-conversations-v1` barre `open` y `resolved` con corte
-por `last_activity_at` (contrato, sección "Como barre"). No cambia la base, las barreras ni la
-plantilla. Al escribir este documento no está desplegada: el efecto se mide después del deploy
-con `conversation_followup_events` y `/ready`.
+El PR #213 barre `open` y `resolved` con corte por `last_activity_at` (contrato, sección
+"Como barre"). No cambia la base, las barreras ni la plantilla. Cuando se escribieron las
+secciones 1 a 4 (13:10 UTC) no estaba desplegado; el deploy y su efecto están en §5.
+
+## 5. Desplegado y E2E con una conversación resuelta
+
+Medido el 2026-10-01 entre las 14:07 y las 14:24 UTC, en solo lectura.
+
+### Lo que corre
+
+- El PR #213 se mergeó a las 13:54:19 UTC con merge commit `d103405`, ancestro de `origin/main`.
+- El bridge se redesplegó a las 14:07:29 UTC. El contenedor quedó `healthy`, sin reinicios, y
+  declara `GIT_SHA=d103405101a1af9093c7fa16677893e8dba520a3`.
+- Los hashes de objeto de `src/bridge/followup_discount.py`, `src/bridge/chatwoot.py` y
+  `src/bridge/app.py` dentro del contenedor son iguales a los de Git en `d103405`.
+- Las variables del seguimiento no cambiaron: `CONVERSATION_FOLLOWUP_ENABLED=true`, la misma
+  plantilla y el mismo idioma. El log no trae advertencias nuevas.
+
+### El primer barrido
+
+`/ready` después del primer barrido:
+`scanned=44 sent=1 never_replied=24 conversation_paused=12 inbound_too_old=3 inbound_too_recent=2 other_reasons=2`.
+Antes del cambio veía 26 conversaciones (§1).
+
+El resumen nombra solo los cuatro motivos más frecuentes, y `other_reasons` cuenta cuántos
+motivos distintos quedaron afuera, no cuántas conversaciones (`_scan_summary` en
+`src/bridge/reactivation.py`). Por eso los números no suman `scanned`.
+
+### El envío a una conversación resuelta
+
+Conversación 201 del inbox 9, que una persona del equipo había resuelto 16 h después del último
+mensaje del lead (§3):
+
+| Hecho | Dónde se leyó |
+|---|---|
+| Fila `sent` en `conversation_followup_events`, creada a las 14:09:30 UTC, régimen `link_sent_no_purchase`, `inbound_age_seconds = 210042` (58,3 h) | Supabase, Management API |
+| Emisión `accepted_by_chatwoot` con `chatwoot_message_id = 2629`; su `checkout_url_final` tiene la forma `https://pay.hotmart.com/F106691755G?off=…&checkoutMode=10&src=hermes&sck=…` | `checkout_link_issuances` |
+| Mensaje 2629: plantilla `johanna_seguimiento_descuento_01`, un botón de URL, `status = delivered` a las 14:24 UTC, sin `external_error` | Base de Chatwoot |
+| La conversación sigue `resolved` después del envío | Base de Chatwoot |
+
+La última fila confirma lo que dice el código de Chatwoot (§3): un saliente no reabre la
+conversación. El equipo la sigue viendo resuelta y el lead recibe el mensaje.
+
+### Releído a las 14:24 UTC
+
+- Último barrido:
+  `scanned=44 sent=0 never_replied=24 conversation_paused=12 inbound_too_old=3 blocked_followup_limit=2 other_reasons=2`.
+  `blocked_followup_limit=2` son la 212 y la 201: la base admite un solo seguimiento por
+  conversación (`20260928000400_conversation_followup_discount_v1.sql`), y son las dos únicas
+  filas de `conversation_followup_events`.
+- El mensaje 2628 de la 212 sigue `read`.
+
+**No medido:**
+
+- qué arma WhatsApp con el sufijo cuando la persona toca el botón (§2);
+- si la 197 y la 214 reciben el suyo al entrar en la ventana, a las 18:03 y 18:35 UTC.
