@@ -1,0 +1,814 @@
+{
+  "_capture": {
+    "origen": "API de Chatwoot de produccion, cuenta 1, inbox 9 (Johanna), 2026-10-01T13:03:17Z, desde el contenedor infra_appointment-bridge con el token de control: GET show + messages de la conversacion 201, y GET /conversations?status=resolved|open&inbox_id=9&page=1&sort_by=last_activity_at_desc",
+    "anonimizacion": "nombre, telefono, mail, identifier y source_id del contacto reemplazados (sinteticos con forma real); atributos del contacto vaciados; contenido de los mensajes del lead redactado; fbclid y sck del anuncio redactados en los links; nombre del lead borrado de todo texto; wamid reemplazados; los items de las paginas reducidos a los campos que usa el barrido",
+    "caso": "201: el agente le mando el link de pago (R1) y la persona se callo; el equipo la marco resuelta 16 h despues sin escribirle (limpieza de bandeja). Antes del cambio el barrido del seguimiento no la veia por no estar abierta.",
+    "forma": "la lista viene ordenada por last_activity_at descendente (tambien con sort_by explicito); resolver actualiza last_activity_at; meta trae mine_count, assigned_count, unassigned_count y all_count, sin current_page; 25 items por pagina"
+  },
+  "conversation": {
+    "conversation": {
+      "meta": {
+        "sender": {
+          "additional_attributes": {},
+          "availability_status": "offline",
+          "email": "lead201@example.com",
+          "id": 201,
+          "name": "lucia herrera",
+          "phone_number": "+593900000201",
+          "blocked": false,
+          "identifier": null,
+          "thumbnail": "",
+          "custom_attributes": {},
+          "last_activity_at": 1790653626,
+          "created_at": 1790471865
+        },
+        "channel": "Channel::Whatsapp",
+        "hmac_verified": false
+      },
+      "id": 201,
+      "messages": [
+        {
+          "id": 2522,
+          "content": "Conversation was marked resolved by Mariana Marín",
+          "account_id": 1,
+          "inbox_id": 9,
+          "conversation_id": 201,
+          "message_type": 2,
+          "created_at": 1790711110,
+          "updated_at": "2026-09-29T19:45:10.607Z",
+          "private": false,
+          "status": "sent",
+          "source_id": null,
+          "content_type": "text",
+          "content_attributes": {},
+          "sender_type": null,
+          "sender_id": null,
+          "external_source_ids": {},
+          "additional_attributes": {},
+          "processed_message_content": "Conversation was marked resolved by Mariana Marín",
+          "sentiment": {},
+          "conversation": {
+            "assignee_id": null,
+            "unread_count": 0,
+            "last_activity_at": 1790711110,
+            "contact_inbox": {
+              "source_id": "REDACTED-source_id"
+            }
+          }
+        }
+      ],
+      "account_id": 1,
+      "uuid": "5b66f13f-b162-4036-97a9-29764c5d4579",
+      "additional_attributes": {},
+      "agent_last_seen_at": 1790711111,
+      "assignee_last_seen_at": 0,
+      "can_reply": false,
+      "contact_last_seen_at": 0,
+      "custom_attributes": {},
+      "inbox_id": 9,
+      "labels": [],
+      "muted": false,
+      "snoozed_until": null,
+      "status": "resolved",
+      "created_at": 1790653619,
+      "updated_at": 1790711110.689285,
+      "timestamp": 1790711110,
+      "first_reply_created_at": 0,
+      "unread_count": 0,
+      "last_non_activity_message": {
+        "id": 2507,
+        "content": "Claro, te envío el enlace para comprar Libre de Ansiedad por USD 49. Si tienes alguna duda antes de pagar, puedes escribirme por aquí.\nhttps://pay.hotmart.com/F106691755G?off=mgbgpp19&checkoutMode=10&src=hermes&sck=fb.paid.REDACTED%7Chermes%7Cv1%7C01M3NMCZR330X22AJT0Z6RW4JA&fbclid=REDACTED",
+        "account_id": 1,
+        "inbox_id": 9,
+        "conversation_id": 201,
+        "message_type": 1,
+        "created_at": 1790653663,
+        "updated_at": "2026-09-29T03:47:53.348Z",
+        "private": false,
+        "status": "read",
+        "source_id": "REDACTED-source_id",
+        "content_type": "text",
+        "content_attributes": {
+          "appointment_setter_reply_hash": "9301202d20e760e697f0c859ea2beb2bfa740b27ea2467d07fc545e448cc126c"
+        },
+        "sender_type": "AgentBot",
+        "sender_id": 1,
+        "external_source_ids": {},
+        "additional_attributes": {},
+        "processed_message_content": "Claro, te envío el enlace para comprar Libre de Ansiedad por USD 49. Si tienes alguna duda antes de pagar, puedes escribirme por aquí.\nhttps://pay.hotmart.com/F106691755G?off=mgbgpp19&checkoutMode=10&src=hermes&sck=fb.paid.REDACTED%7Chermes%7Cv1%7C01M3NMCZR330X22AJT0Z6RW4JA&fbclid=REDACTED",
+        "sentiment": {},
+        "conversation": {
+          "assignee_id": null,
+          "unread_count": 0,
+          "last_activity_at": 1790711110,
+          "contact_inbox": {
+            "source_id": "REDACTED-source_id"
+          }
+        },
+        "sender": {
+          "id": 1,
+          "name": "Appointment Setter",
+          "avatar_url": "",
+          "type": "agent_bot"
+        }
+      },
+      "last_activity_at": 1790711110,
+      "priority": null,
+      "waiting_since": 0,
+      "sla_policy_id": null
+    },
+    "messages": [
+      {
+        "id": 2505,
+        "content": "[mensaje del lead redactado]",
+        "inbox_id": 9,
+        "conversation_id": 201,
+        "message_type": 0,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {
+          "in_reply_to_external_id": null,
+          "in_reply_to": null
+        },
+        "created_at": 1790653619,
+        "private": false,
+        "source_id": "REDACTED-source_id",
+        "sender": {
+          "additional_attributes": {},
+          "custom_attributes": {},
+          "email": "lead201@example.com",
+          "id": 201,
+          "identifier": null,
+          "name": "lucia herrera",
+          "phone_number": "+593900000201",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
+      },
+      {
+        "id": 2506,
+        "content": "[mensaje del lead redactado]",
+        "inbox_id": 9,
+        "conversation_id": 201,
+        "message_type": 0,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {
+          "in_reply_to_external_id": null,
+          "in_reply_to": null
+        },
+        "created_at": 1790653626,
+        "private": false,
+        "source_id": "REDACTED-source_id",
+        "sender": {
+          "additional_attributes": {},
+          "custom_attributes": {},
+          "email": "lead201@example.com",
+          "id": 201,
+          "identifier": null,
+          "name": "lucia herrera",
+          "phone_number": "+593900000201",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
+      },
+      {
+        "id": 2507,
+        "content": "Claro, te envío el enlace para comprar Libre de Ansiedad por USD 49. Si tienes alguna duda antes de pagar, puedes escribirme por aquí.\nhttps://pay.hotmart.com/F106691755G?off=mgbgpp19&checkoutMode=10&src=hermes&sck=fb.paid.REDACTED%7Chermes%7Cv1%7C01M3NMCZR330X22AJT0Z6RW4JA&fbclid=REDACTED",
+        "inbox_id": 9,
+        "conversation_id": 201,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "read",
+        "content_attributes": {
+          "appointment_setter_reply_hash": "9301202d20e760e697f0c859ea2beb2bfa740b27ea2467d07fc545e448cc126c"
+        },
+        "created_at": 1790653663,
+        "private": false,
+        "source_id": "REDACTED-source_id",
+        "sender": {
+          "id": 1,
+          "name": "Appointment Setter",
+          "avatar_url": "",
+          "type": "agent_bot"
+        }
+      },
+      {
+        "id": 2522,
+        "content": "Conversation was marked resolved by Mariana Marín",
+        "inbox_id": 9,
+        "conversation_id": 201,
+        "message_type": 2,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1790711110,
+        "private": false,
+        "source_id": null
+      }
+    ]
+  },
+  "pages": {
+    "resolved": {
+      "meta": {
+        "mine_count": 0,
+        "assigned_count": 0,
+        "unassigned_count": 149,
+        "all_count": 149
+      },
+      "payload": [
+        {
+          "id": 201,
+          "inbox_id": 9,
+          "status": "resolved",
+          "last_activity_at": 1790711110,
+          "timestamp": 1790711110,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 198,
+          "inbox_id": 9,
+          "status": "resolved",
+          "last_activity_at": 1790634762,
+          "timestamp": 1790634762,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 196,
+          "inbox_id": 9,
+          "status": "resolved",
+          "last_activity_at": 1790634758,
+          "timestamp": 1790634758,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 195,
+          "inbox_id": 9,
+          "status": "resolved",
+          "last_activity_at": 1790634753,
+          "timestamp": 1790634753,
+          "labels": [
+            "automation_opted_out",
+            "automation_paused"
+          ],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 193,
+          "inbox_id": 9,
+          "status": "resolved",
+          "last_activity_at": 1790634700,
+          "timestamp": 1790634700,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 192,
+          "inbox_id": 9,
+          "status": "resolved",
+          "last_activity_at": 1790634690,
+          "timestamp": 1790634690,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 191,
+          "inbox_id": 9,
+          "status": "resolved",
+          "last_activity_at": 1790634687,
+          "timestamp": 1790634687,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 190,
+          "inbox_id": 9,
+          "status": "resolved",
+          "last_activity_at": 1790634683,
+          "timestamp": 1790634683,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 189,
+          "inbox_id": 9,
+          "status": "resolved",
+          "last_activity_at": 1790634680,
+          "timestamp": 1790634680,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 188,
+          "inbox_id": 9,
+          "status": "resolved",
+          "last_activity_at": 1790634676,
+          "timestamp": 1790634676,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 187,
+          "inbox_id": 9,
+          "status": "resolved",
+          "last_activity_at": 1790634672,
+          "timestamp": 1790634672,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 184,
+          "inbox_id": 9,
+          "status": "resolved",
+          "last_activity_at": 1790634666,
+          "timestamp": 1790634666,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 182,
+          "inbox_id": 9,
+          "status": "resolved",
+          "last_activity_at": 1790634659,
+          "timestamp": 1790634659,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 183,
+          "inbox_id": 9,
+          "status": "resolved",
+          "last_activity_at": 1790634653,
+          "timestamp": 1790634653,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 181,
+          "inbox_id": 9,
+          "status": "resolved",
+          "last_activity_at": 1790634504,
+          "timestamp": 1790634504,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 143,
+          "inbox_id": 9,
+          "status": "resolved",
+          "last_activity_at": 1790634495,
+          "timestamp": 1790634495,
+          "labels": [
+            "automation_paused"
+          ],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 180,
+          "inbox_id": 9,
+          "status": "resolved",
+          "last_activity_at": 1790634485,
+          "timestamp": 1790634485,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 179,
+          "inbox_id": 9,
+          "status": "resolved",
+          "last_activity_at": 1790634480,
+          "timestamp": 1790634480,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 178,
+          "inbox_id": 9,
+          "status": "resolved",
+          "last_activity_at": 1790634475,
+          "timestamp": 1790634475,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 63,
+          "inbox_id": 9,
+          "status": "resolved",
+          "last_activity_at": 1790634194,
+          "timestamp": 1790634194,
+          "labels": [
+            "automation_paused"
+          ],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 174,
+          "inbox_id": 9,
+          "status": "resolved",
+          "last_activity_at": 1790348404,
+          "timestamp": 1790348404,
+          "labels": [
+            "automation_paused"
+          ],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 176,
+          "inbox_id": 9,
+          "status": "resolved",
+          "last_activity_at": 1790348389,
+          "timestamp": 1790348389,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 175,
+          "inbox_id": 9,
+          "status": "resolved",
+          "last_activity_at": 1790348382,
+          "timestamp": 1790348382,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 171,
+          "inbox_id": 9,
+          "status": "resolved",
+          "last_activity_at": 1790348368,
+          "timestamp": 1790348368,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 170,
+          "inbox_id": 9,
+          "status": "resolved",
+          "last_activity_at": 1790348362,
+          "timestamp": 1790348362,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        }
+      ]
+    },
+    "open": {
+      "meta": {
+        "mine_count": 0,
+        "assigned_count": 0,
+        "unassigned_count": 26,
+        "all_count": 26
+      },
+      "payload": [
+        {
+          "id": 212,
+          "inbox_id": 9,
+          "status": "open",
+          "last_activity_at": 1790854609,
+          "timestamp": 1790854609,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 219,
+          "inbox_id": 9,
+          "status": "open",
+          "last_activity_at": 1790825272,
+          "timestamp": 1790825272,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 218,
+          "inbox_id": 9,
+          "status": "open",
+          "last_activity_at": 1790823224,
+          "timestamp": 1790823224,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 211,
+          "inbox_id": 9,
+          "status": "open",
+          "last_activity_at": 1790813428,
+          "timestamp": 1790813428,
+          "labels": [
+            "automation_paused"
+          ],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": true
+        },
+        {
+          "id": 199,
+          "inbox_id": 9,
+          "status": "open",
+          "last_activity_at": 1790813026,
+          "timestamp": 1790813026,
+          "labels": [
+            "automation_paused"
+          ],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": true
+        },
+        {
+          "id": 217,
+          "inbox_id": 9,
+          "status": "open",
+          "last_activity_at": 1790812794,
+          "timestamp": 1790812794,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 177,
+          "inbox_id": 9,
+          "status": "open",
+          "last_activity_at": 1790812658,
+          "timestamp": 1790812658,
+          "labels": [
+            "automation_paused"
+          ],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": true
+        },
+        {
+          "id": 216,
+          "inbox_id": 9,
+          "status": "open",
+          "last_activity_at": 1790812036,
+          "timestamp": 1790812036,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 213,
+          "inbox_id": 9,
+          "status": "open",
+          "last_activity_at": 1790811892,
+          "timestamp": 1790811892,
+          "labels": [
+            "automation_paused"
+          ],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 208,
+          "inbox_id": 9,
+          "status": "open",
+          "last_activity_at": 1790811608,
+          "timestamp": 1790811608,
+          "labels": [
+            "automation_paused"
+          ],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 215,
+          "inbox_id": 9,
+          "status": "open",
+          "last_activity_at": 1790807426,
+          "timestamp": 1790807426,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 214,
+          "inbox_id": 9,
+          "status": "open",
+          "last_activity_at": 1790793376,
+          "timestamp": 1790793376,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": true
+        },
+        {
+          "id": 197,
+          "inbox_id": 9,
+          "status": "open",
+          "last_activity_at": 1790791479,
+          "timestamp": 1790791479,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": true
+        },
+        {
+          "id": 210,
+          "inbox_id": 9,
+          "status": "open",
+          "last_activity_at": 1790727540,
+          "timestamp": 1790727540,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 209,
+          "inbox_id": 9,
+          "status": "open",
+          "last_activity_at": 1790724948,
+          "timestamp": 1790724948,
+          "labels": [
+            "automation_paused"
+          ],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 203,
+          "inbox_id": 9,
+          "status": "open",
+          "last_activity_at": 1790711263,
+          "timestamp": 1790711263,
+          "labels": [
+            "automation_paused"
+          ],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 207,
+          "inbox_id": 9,
+          "status": "open",
+          "last_activity_at": 1790711241,
+          "timestamp": 1790711241,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 206,
+          "inbox_id": 9,
+          "status": "open",
+          "last_activity_at": 1790701852,
+          "timestamp": 1790701852,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 205,
+          "inbox_id": 9,
+          "status": "open",
+          "last_activity_at": 1790694170,
+          "timestamp": 1790694170,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 204,
+          "inbox_id": 9,
+          "status": "open",
+          "last_activity_at": 1790692654,
+          "timestamp": 1790692654,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 202,
+          "inbox_id": 9,
+          "status": "open",
+          "last_activity_at": 1790688043,
+          "timestamp": 1790688043,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 200,
+          "inbox_id": 9,
+          "status": "open",
+          "last_activity_at": 1790638322,
+          "timestamp": 1790638322,
+          "labels": [
+            "automation_paused"
+          ],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 186,
+          "inbox_id": 9,
+          "status": "open",
+          "last_activity_at": 1790634742,
+          "timestamp": 1790634742,
+          "labels": [
+            "automation_paused"
+          ],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 194,
+          "inbox_id": 9,
+          "status": "open",
+          "last_activity_at": 1790634720,
+          "timestamp": 1790634720,
+          "labels": [
+            "automation_paused"
+          ],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 173,
+          "inbox_id": 9,
+          "status": "open",
+          "last_activity_at": 1790519591,
+          "timestamp": 1790519591,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        }
+      ]
+    }
+  }
+}

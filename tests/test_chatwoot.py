@@ -3435,3 +3435,198 @@ def test_stalled_scan_still_rejects_the_captured_conversation_under_an_exact_sco
     )
 
     assert candidates == []
+
+
+# --- listado de conversaciones recientes (seguimiento con cupon) -------------
+#
+# Paginas y conversacion capturadas de produccion el 2026-10-01 (inbox 9,
+# anonimizadas): la lista viene ordenada por last_activity_at descendente y
+# resolver actualiza esa marca. Ver el `_capture` del fixture.
+
+RECENT_FIXTURE = json.loads(
+    (
+        Path(__file__).parent
+        / "fixtures"
+        / "chatwoot_followup_resolved_conversations_inbox_9_20261001.json"
+    ).read_text(encoding="utf-8")
+)
+# Entre la 201 (resuelta, ultima actividad 1790711110) y la tanda que el equipo
+# resolvio el 28/09 (1790634762 para abajo).
+RECENT_CUTOFF = 1_790_700_000
+
+
+def _recent_handler(pages: dict[str, dict], requests: list[httpx.Request]):
+    captured = RECENT_FIXTURE["conversation"]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        path = request.url.path
+        if path == "/api/v1/accounts/1/conversations":
+            params = request.url.params
+            assert params["inbox_id"] == "9"
+            assert params["sort_by"] == "last_activity_at_desc"
+            if params["page"] != "1":
+                return httpx.Response(
+                    200,
+                    json={"data": {"payload": [], "meta": pages[params["status"]]["meta"]}},
+                )
+            return httpx.Response(200, json={"data": pages[params["status"]]})
+        prefix = "/api/v1/accounts/1/conversations/"
+        if path.startswith(prefix) and path.endswith("/messages"):
+            return httpx.Response(200, json={"payload": captured["messages"]})
+        if path.startswith(prefix):
+            conversation_id = int(path.removeprefix(prefix))
+            return httpx.Response(
+                200, json={**captured["conversation"], "id": conversation_id}
+            )
+        raise AssertionError(f"unexpected path {path}")
+
+    return handler
+
+
+def _recent_pages() -> dict[str, dict]:
+    return json.loads(json.dumps(RECENT_FIXTURE["pages"]))
+
+
+def _detail_ids(requests: list[httpx.Request]) -> list[int]:
+    prefix = "/api/v1/accounts/1/conversations/"
+    return [
+        int(request.url.path.removeprefix(prefix))
+        for request in requests
+        if request.url.path.startswith(prefix)
+        and not request.url.path.endswith("/messages")
+    ]
+
+
+def test_lists_open_and_resolved_conversations_until_the_activity_cutoff(
+    tmp_path: Path,
+) -> None:
+    pages = _recent_pages()
+    requests: list[httpx.Request] = []
+    client = _reactivation_client(_recent_handler(pages, requests), tmp_path)
+    entries = asyncio.run(
+        client.list_recent_conversations_with_messages(
+            expected_inbox_id=9,
+            statuses=("open", "resolved"),
+            active_since_epoch=RECENT_CUTOFF,
+        )
+    )
+
+    expected = [
+        item["id"]
+        for status in ("open", "resolved")
+        for item in pages[status]["payload"]
+        if item["last_activity_at"] >= RECENT_CUTOFF
+    ]
+    # La 201 la resolvio el equipo: el listado de solo abiertas no la veia.
+    assert 201 in expected and expected[-1] == 201
+    assert [entry["conversation"]["id"] for entry in entries] == expected
+    assert _detail_ids(requests) == expected
+    # El corte cae en la pagina 1 de cada estado: no se pide la 2.
+    listings = [
+        (request.url.params["status"], request.url.params["page"])
+        for request in requests
+        if request.url.path == "/api/v1/accounts/1/conversations"
+    ]
+    assert listings == [("open", "1"), ("resolved", "1")]
+
+
+def test_a_scan_that_runs_out_of_pages_before_the_cutoff_fails_closed(
+    tmp_path: Path,
+) -> None:
+    # 149 resueltas, 25 por pagina: con una sola pagina y un corte que no llega,
+    # el barrido no termino y no puede leerse como "no hay a quien".
+    requests: list[httpx.Request] = []
+    client = _reactivation_client(
+        _recent_handler(_recent_pages(), requests), tmp_path
+    )
+    with pytest.raises(ChatwootProtocolError) as error:
+        asyncio.run(
+            client.list_recent_conversations_with_messages(
+                expected_inbox_id=9,
+                statuses=("resolved",),
+                active_since_epoch=1,
+                max_pages=1,
+            )
+        )
+    assert str(error.value) == "conversation_scan_incomplete"
+
+
+def test_the_end_of_the_list_closes_the_scan_without_reaching_the_cutoff(
+    tmp_path: Path,
+) -> None:
+    pages = _recent_pages()
+    pages["resolved"]["payload"] = pages["resolved"]["payload"][:3]
+    pages["resolved"]["meta"]["all_count"] = 3
+    requests: list[httpx.Request] = []
+    client = _reactivation_client(_recent_handler(pages, requests), tmp_path)
+    entries = asyncio.run(
+        client.list_recent_conversations_with_messages(
+            expected_inbox_id=9,
+            statuses=("resolved",),
+            active_since_epoch=1,
+        )
+    )
+    assert [entry["conversation"]["id"] for entry in entries] == [201, 198, 196]
+
+
+@pytest.mark.parametrize(
+    ("mutate", "error"),
+    [
+        (lambda payload: payload[1].pop("last_activity_at"), "invalid_conversation_activity"),
+        (lambda payload: payload[1].update(last_activity_at="1790634762"), "invalid_conversation_activity"),
+        (lambda payload: payload.insert(0, payload.pop(1)), "conversation_order_unexpected"),
+        (lambda payload: payload[0].update(inbox_id=11), "invalid_conversation_scope"),
+    ],
+)
+def test_a_page_the_cutoff_cannot_trust_fails_closed(
+    tmp_path: Path, mutate, error: str
+) -> None:
+    pages = _recent_pages()
+    mutate(pages["resolved"]["payload"])
+    client = _reactivation_client(_recent_handler(pages, []), tmp_path)
+    with pytest.raises(ChatwootProtocolError) as raised:
+        asyncio.run(
+            client.list_recent_conversations_with_messages(
+                expected_inbox_id=9,
+                statuses=("resolved",),
+                active_since_epoch=RECENT_CUTOFF - 100_000,
+            )
+        )
+    assert str(raised.value) == error
+
+
+def test_a_conversation_listed_under_two_statuses_is_read_once(
+    tmp_path: Path,
+) -> None:
+    # Si el equipo la resuelve entre los dos listados, aparece en los dos.
+    pages = _recent_pages()
+    resolved_201 = pages["resolved"]["payload"][0]
+    pages["open"] = {"meta": {**pages["open"]["meta"], "all_count": 1}, "payload": [resolved_201]}
+    requests: list[httpx.Request] = []
+    client = _reactivation_client(_recent_handler(pages, requests), tmp_path)
+    entries = asyncio.run(
+        client.list_recent_conversations_with_messages(
+            expected_inbox_id=9,
+            statuses=("open", "resolved"),
+            active_since_epoch=RECENT_CUTOFF,
+        )
+    )
+    assert [entry["conversation"]["id"] for entry in entries] == [201]
+    assert _detail_ids(requests) == [201]
+
+
+@pytest.mark.parametrize(
+    "statuses",
+    [(), ("open", "open"), ("closed",), ["open", "resolved"]],
+)
+def test_an_invalid_status_list_never_scans(tmp_path: Path, statuses) -> None:
+    client = _reactivation_client(_recent_handler(_recent_pages(), []), tmp_path)
+    with pytest.raises(ValueError):
+        asyncio.run(
+            client.list_recent_conversations_with_messages(
+                expected_inbox_id=9,
+                statuses=statuses,
+                active_since_epoch=RECENT_CUTOFF,
+            )
+        )

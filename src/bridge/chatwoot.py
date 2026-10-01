@@ -28,6 +28,9 @@ from bridge.reply_splitter import reply_batch_hash, reply_part_hash
 # reason codes del contrato de salida del agente.
 _AGENT_DECISION_MARKER_RE = re.compile(r"[a-z][a-z0-9_]{0,63}")
 
+# Los estados de una conversacion en Chatwoot 4.13 (enum ``status``).
+_CONVERSATION_STATUSES = frozenset({"open", "resolved", "pending", "snoozed"})
+
 
 class ChatwootProtocolError(RuntimeError):
     """Raised when Chatwoot returns an unexpected response shape."""
@@ -2294,6 +2297,155 @@ class ChatwootClient:
         ):
             raise ChatwootProtocolError("conversation_scan_incomplete")
         return collected
+
+    async def list_recent_conversations_with_messages(
+        self,
+        *,
+        expected_inbox_id: int,
+        statuses: tuple[str, ...],
+        active_since_epoch: int,
+        max_pages: int = 5,
+        messages_limit: int = 30,
+    ) -> list[dict[str, object]]:
+        """Listar las conversaciones con actividad reciente, con su historial.
+
+        Pide cada estado por separado, ordenado por ``last_activity_at``
+        descendente (explicito: no depende del default de Chatwoot), y corta en
+        la primera conversacion con actividad anterior a
+        ``active_since_epoch``: de ahi para abajo todas son mas viejas. Ningun
+        mensaje es posterior a esa marca y resolver la actualiza (medido el
+        2026-10-01 en el inbox 9), asi que una conversacion con un mensaje
+        dentro de la ventana nunca queda debajo del corte.
+
+        Existe porque el equipo resuelve a mano las conversaciones para ordenar
+        su bandeja, tambien las que atendio solo el agente: un barrido que lee
+        solo ``status=open`` no ve a quien el seguimiento tiene que escribirle.
+
+        Trae los hechos y no aplica ningun criterio. Falla cerrado si se agotan
+        las paginas antes del corte o del final de la lista, si un item no trae
+        ``last_activity_at`` o si el orden no es el pedido: un barrido
+        incompleto se leeria como 'no hay a quien'. Una conversacion que recibe
+        actividad durante el barrido sube al principio de la lista y puede
+        quedar afuera de esta pasada; la toma la siguiente.
+        """
+        if (
+            not isinstance(expected_inbox_id, int)
+            or isinstance(expected_inbox_id, bool)
+            or expected_inbox_id <= 0
+            or not isinstance(statuses, tuple)
+            or not statuses
+            or len(set(statuses)) != len(statuses)
+            or not set(statuses) <= _CONVERSATION_STATUSES
+            or not isinstance(active_since_epoch, int)
+            or isinstance(active_since_epoch, bool)
+            or active_since_epoch <= 0
+            or not 1 <= max_pages <= 20
+            or not isinstance(messages_limit, int)
+            or isinstance(messages_limit, bool)
+            or messages_limit <= 0
+        ):
+            raise ValueError("invalid recent conversation scan configuration")
+        path = f"/api/v1/accounts/{self._account_id}/conversations"
+        collected: list[dict[str, object]] = []
+        seen_conversations: set[int] = set()
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers={"api_access_token": self._access_token},
+            transport=self._transport,
+            timeout=15,
+        ) as client:
+            for status in statuses:
+                listed: set[int] = set()
+                previous_activity: int | None = None
+                reached_end = False
+                for page_number in range(1, max_pages + 1):
+                    response = await client.get(
+                        path,
+                        params={
+                            "status": status,
+                            "inbox_id": str(expected_inbox_id),
+                            "page": str(page_number),
+                            "sort_by": "last_activity_at_desc",
+                        },
+                    )
+                    response.raise_for_status()
+                    conversations, all_count = self._parse_conversation_page(
+                        response,
+                        expected_page=page_number,
+                    )
+                    if not conversations:
+                        reached_end = True
+                        break
+                    for conversation in conversations:
+                        conversation_id = conversation.get("id")
+                        if (
+                            not isinstance(conversation_id, int)
+                            or isinstance(conversation_id, bool)
+                            or conversation_id <= 0
+                            or conversation.get("inbox_id") != expected_inbox_id
+                        ):
+                            raise ChatwootProtocolError("invalid_conversation_scope")
+                        activity = conversation.get("last_activity_at")
+                        if (
+                            not isinstance(activity, int)
+                            or isinstance(activity, bool)
+                            or activity <= 0
+                        ):
+                            raise ChatwootProtocolError(
+                                "invalid_conversation_activity"
+                            )
+                        if previous_activity is not None and activity > previous_activity:
+                            raise ChatwootProtocolError("conversation_order_unexpected")
+                        previous_activity = activity
+                        if activity < active_since_epoch:
+                            reached_end = True
+                            break
+                        listed.add(conversation_id)
+                        if conversation_id in seen_conversations:
+                            continue
+                        seen_conversations.add(conversation_id)
+                        collected.append(
+                            await self._conversation_with_messages(
+                                client,
+                                conversation_id=conversation_id,
+                                expected_inbox_id=expected_inbox_id,
+                                messages_limit=messages_limit,
+                            )
+                        )
+                    if reached_end or len(listed) >= all_count:
+                        reached_end = True
+                        break
+                if not reached_end:
+                    raise ChatwootProtocolError("conversation_scan_incomplete")
+        return collected
+
+    async def _conversation_with_messages(
+        self,
+        client: httpx.AsyncClient,
+        *,
+        conversation_id: int,
+        expected_inbox_id: int,
+        messages_limit: int,
+    ) -> dict[str, object]:
+        details_response = await client.get(
+            f"/api/v1/accounts/{self._account_id}/conversations/{conversation_id}"
+        )
+        details_response.raise_for_status()
+        try:
+            details = details_response.json()
+        except ValueError as exc:
+            raise ChatwootProtocolError("invalid_json") from exc
+        if (
+            not isinstance(details, dict)
+            or details.get("id") != conversation_id
+            or details.get("inbox_id") != expected_inbox_id
+        ):
+            raise ChatwootProtocolError("invalid_conversation_scope")
+        messages = await self.get_conversation_messages(
+            conversation_id=conversation_id,
+            limit=messages_limit,
+        )
+        return {"conversation": dict(details), "messages": messages}
 
     async def send_reactivation_template(
         self,
