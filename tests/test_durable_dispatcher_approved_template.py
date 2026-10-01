@@ -269,7 +269,10 @@ class _Chatwoot:
                 "id": 55,
                 "phone_number": f"+{PHONE}",
                 "blocked": False,
-                "contact_inboxes": [{"source_id": "source-55", "inbox": {"id": INBOX_ID}}],
+                # En un inbox de WhatsApp Cloud el source_id es el wa_id: los
+                # digitos del telefono del contacto (medido el 2026-10-01 sobre
+                # los 170 contactos de los inboxes 9 y 11: 170 de 170).
+                "contact_inboxes": [{"source_id": PHONE, "inbox": {"id": INBOX_ID}}],
             }]})
         if request.method == "POST" and path == f"{prefix}/contacts":
             self._contact_created = True
@@ -1110,3 +1113,317 @@ def test_the_att1_chain_validator_still_declares_its_contract() -> None:
         "mark_portable_payment_failure_request_started",
         "mark_lancemos_pilot_request_started",
     )
+
+
+# ------------------------------ equivalencia de telefonos antes del gate final
+#
+# Con whatsapp_equivalence_enabled el dispatcher resuelve el contacto de
+# Chatwoot ANTES del gate final y del arranque del pedido: el gate hashea el
+# wa_id que Meta va a recibir, no el telefono como lo guarda el contacto de la
+# base. El flag es explicito: no se deduce de portable_recipient_enabled, asi
+# que los tests de arriba (sin el flag) no cambian.
+#
+# Chatwoot: el precedente inline de este archivo (no hay captura de
+# /contacts/search). El source_id de un contacto de WhatsApp Cloud es su wa_id,
+# medido el 2026-10-01. Los telefonos son de prueba.
+
+MX_FORM = "525512345678"  # 52 + 10: lo que guardo el formulario
+MX_WHATSAPP = "5215512345678"  # 521 + 10: el wa_id
+
+
+class _ChatwootWithContacts(_Chatwoot):
+    """El mismo Chatwoot, con los contactos que ya existen en el inbox."""
+
+    def __init__(
+        self,
+        contacts: dict[str, tuple[int, str]] | None = None,
+        *,
+        search_status: int = 200,
+    ) -> None:
+        super().__init__()
+        # telefono E.164 -> (id del contacto, source_id en el inbox)
+        self.contacts = dict(contacts or {})
+        self.search_status = search_status
+        self.searches: list[str] = []
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        prefix = f"/api/v1/accounts/{ACCOUNT_ID}"
+        if request.method == "GET" and path == f"{prefix}/contacts/search":
+            self.requests.append((request.method, path, None))
+            query = request.url.params["q"]
+            self.searches.append(query)
+            if self.search_status != 200:
+                return httpx.Response(self.search_status, json={"error": "unavailable"})
+            found = self.contacts.get(query)
+            if found is None:
+                return httpx.Response(200, json={"payload": []})
+            contact_id, source_id = found
+            return httpx.Response(200, json={"payload": [{
+                "id": contact_id,
+                "phone_number": query,
+                "blocked": False,
+                "contact_inboxes": [{"source_id": source_id, "inbox": {"id": INBOX_ID}}],
+            }]})
+        if request.method == "POST" and path == f"{prefix}/contacts":
+            body = json.loads(request.content)
+            self.requests.append((request.method, path, body))
+            phone = body["phone_number"]
+            self.contacts[phone] = (55, phone.lstrip("+"))
+            return httpx.Response(200, json={"payload": {"id": 55}})
+        return super().handler(request)
+
+
+class _AuthorityWatchingChatwoot(_Authority):
+    """Anota que busquedas de Chatwoot ya habian salido al arrancar el pedido."""
+
+    def __init__(self, chatwoot: _ChatwootWithContacts, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._chatwoot = chatwoot
+        self.searches_before_request_start: list[str] | None = None
+        self.context = replace(self.context, buyer_phone=MX_FORM)
+
+    async def mark_followup_request_started(self, **kwargs: object) -> DeliveryAttempt:
+        self.searches_before_request_start = list(self._chatwoot.searches)
+        return await super().mark_followup_request_started(**kwargs)
+
+
+def _equivalence_dispatcher(
+    authority: _Authority,
+    chatwoot: _Chatwoot,
+    tmp_path: Path,
+    *,
+    gate_open: bool = True,
+) -> DurableDispatcher:
+    client = chatwoot.client()
+    return DurableDispatcher(
+        supabase=authority,  # type: ignore[arg-type]
+        worker_id="att1-dispatcher",
+        chatwoot=client,
+        chatwoot_account_id=ACCOUNT_ID,
+        chatwoot_inbox_id=INBOX_ID,
+        sender=ChatwootMessageSender(
+            chatwoot=client,
+            inbox_id=INBOX_ID,
+            allowed_jid=None,
+            dynamic_recipient_enabled=True,
+            template=TEMPLATE,
+            whatsapp_equivalence_enabled=True,
+        ),
+        allowed_jid=None,
+        commercial_ally_config=ALLY,
+        portable_recipient_enabled=True,
+        pilot_boundary=BOUNDARY,
+        clock=lambda: FINAL_NOW,
+        final_meta_effect_gate=FinalMetaEffectGate(
+            enabled=gate_open, evidence_dir=tmp_path / "meta-effects"
+        ),
+        waba_template=TEMPLATE,
+        approved_template_direct=True,
+        whatsapp_equivalence_enabled=True,
+    )
+
+
+def _gate_target(tmp_path: Path) -> str:
+    [evidence_file] = (tmp_path / "meta-effects").glob("*.json")
+    return json.loads(evidence_file.read_text(encoding="utf-8"))["target_sha256"]
+
+
+def _sha256(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def test_the_gate_records_the_wa_id_of_the_chatwoot_contact_that_exists(
+    tmp_path: Path,
+) -> None:
+    # La base guarda 52 + 10 y la persona ya escribio: su contacto de Chatwoot
+    # es 521 + 10, y ahi es adonde va a entregar Meta.
+    chatwoot = _ChatwootWithContacts({f"+{MX_WHATSAPP}": (41, MX_WHATSAPP)})
+    authority = _AuthorityWatchingChatwoot(chatwoot)
+
+    _run(_equivalence_dispatcher(authority, chatwoot, tmp_path, gate_open=False))
+
+    assert _gate_target(tmp_path) == _sha256(f"+{MX_WHATSAPP}")
+    assert _gate_target(tmp_path) != _sha256(f"+{MX_FORM}")
+    assert authority.finalizations[-1]["reason_code"] == "final_meta_gate_closed"
+    assert "request_started" not in authority.events
+    # Con el gate cerrado no se escribe nada en Chatwoot: solo lecturas.
+    assert chatwoot.posts("/contacts") == []
+    assert chatwoot.posts("/conversations") == []
+
+
+def test_the_send_goes_through_the_resolved_contact_without_searching_again(
+    tmp_path: Path,
+) -> None:
+    chatwoot = _ChatwootWithContacts({f"+{MX_WHATSAPP}": (41, MX_WHATSAPP)})
+    authority = _AuthorityWatchingChatwoot(chatwoot)
+
+    _run(_equivalence_dispatcher(authority, chatwoot, tmp_path))
+
+    assert authority.events == [
+        "reevaluate", "reserve", "reevaluate", "request_started", "accepted",
+    ]
+    # Las dos formas se buscaron antes de arrancar el pedido, y despues nada.
+    assert authority.searches_before_request_start == [
+        f"+{MX_FORM}", f"+{MX_WHATSAPP}",
+    ]
+    assert chatwoot.searches == [f"+{MX_FORM}", f"+{MX_WHATSAPP}"]
+    assert chatwoot.posts("/contacts") == []
+    assert chatwoot.posts("/conversations") == [
+        {"inbox_id": INBOX_ID, "contact_id": 41, "source_id": MX_WHATSAPP}
+    ]
+    assert chatwoot.posts("/conversations/200/messages")
+
+
+def test_without_a_chatwoot_contact_the_gate_records_the_delivery_form(
+    tmp_path: Path,
+) -> None:
+    # Nadie escribio todavia: el contacto nace con la forma de entrega (Mexico
+    # con el 1), y esa es la que hashea el gate.
+    chatwoot = _ChatwootWithContacts()
+    authority = _AuthorityWatchingChatwoot(chatwoot)
+
+    _run(_equivalence_dispatcher(authority, chatwoot, tmp_path, gate_open=False))
+
+    assert _gate_target(tmp_path) == _sha256(f"+{MX_WHATSAPP}")
+    assert chatwoot.posts("/contacts") == []
+
+    opened_chatwoot = _ChatwootWithContacts()
+    opened = _AuthorityWatchingChatwoot(opened_chatwoot)
+    _run(_equivalence_dispatcher(opened, opened_chatwoot, tmp_path / "abierto"))
+
+    assert opened.events[-1] == "accepted"
+    [contact] = opened_chatwoot.posts("/contacts")
+    assert contact["phone_number"] == f"+{MX_WHATSAPP}"
+    assert opened_chatwoot.posts("/conversations") == [
+        {"inbox_id": INBOX_ID, "contact_id": 55, "source_id": MX_WHATSAPP}
+    ]
+
+
+def test_a_chatwoot_contact_of_another_number_fails_closed_for_good(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # El contacto se encuentra por su telefono, pero Chatwoot entregaria a su
+    # source_id y ese no es el movil consentido: no sale y no se reintenta.
+    chatwoot = _ChatwootWithContacts({f"+{MX_WHATSAPP}": (41, "5215599999999")})
+    authority = _AuthorityWatchingChatwoot(chatwoot)
+
+    with caplog.at_level("WARNING"):
+        decisions = _run(_equivalence_dispatcher(authority, chatwoot, tmp_path))
+
+    assert decisions[-1].decision == "execute"
+    [finalization] = authority.finalizations
+    assert finalization["outcome"] == "failed_before_request"
+    assert finalization["reason_code"] == "chatwoot_recipient_phone_mismatch"
+    assert finalization["next_attempt_at"] is None
+    assert "request_started" not in authority.events
+    assert not (tmp_path / "meta-effects").exists()
+    assert chatwoot.posts("/conversations") == []
+    assert "durable_first_touch_recipient_mismatch" in caplog.text
+    assert "region=MX" in caplog.text and "chatwoot_contact_id=41" in caplog.text
+    for number in (MX_FORM, MX_WHATSAPP, "5215599999999"):
+        assert number not in caplog.text
+
+
+def test_a_chatwoot_failure_while_resolving_is_a_retryable_pre_request_failure(
+    tmp_path: Path,
+) -> None:
+    chatwoot = _ChatwootWithContacts(search_status=503)
+    authority = _AuthorityWatchingChatwoot(chatwoot)
+
+    decisions = _run(_equivalence_dispatcher(authority, chatwoot, tmp_path))
+
+    # No levanta: el resto del lote sigue.
+    assert decisions[-1].decision == "execute"
+    [finalization] = authority.finalizations
+    assert finalization["outcome"] == "failed_before_request"
+    assert finalization["reason_code"] == "pre_request_failed"
+    assert finalization["next_attempt_at"] is not None
+    # La busqueda es anterior a la segunda reevaluacion, al gate y al arranque.
+    assert authority.events == ["reevaluate", "reserve"]
+    assert not (tmp_path / "meta-effects").exists()
+
+
+def test_the_equivalence_needs_the_portable_binding() -> None:
+    with pytest.raises(ValueError, match="requires the portable binding"):
+        DurableDispatcher(
+            supabase=_Authority(),  # type: ignore[arg-type]
+            worker_id="johanna-dispatcher",
+            whatsapp_equivalence_enabled=True,
+        )
+    with pytest.raises(ValueError, match="invalid whatsapp equivalence flag"):
+        DurableDispatcher(
+            supabase=_Authority(),  # type: ignore[arg-type]
+            worker_id="johanna-dispatcher",
+            whatsapp_equivalence_enabled=1,  # type: ignore[arg-type]
+        )
+
+
+def test_without_the_flag_the_dispatcher_keeps_the_exact_phone(tmp_path: Path) -> None:
+    # El mismo caso que el primero, sin el flag: el gate hashea el telefono
+    # como lo guarda la base y el sender busca solo esa forma. Es lo que hace
+    # hoy todo runtime sin el flag.
+    chatwoot = _ChatwootWithContacts({f"+{MX_WHATSAPP}": (41, MX_WHATSAPP)})
+    authority = _AuthorityWatchingChatwoot(chatwoot)
+
+    _run(_dispatcher(authority, chatwoot, tmp_path, gate_open=False))
+
+    assert _gate_target(tmp_path) == _sha256(f"+{MX_FORM}")
+    assert chatwoot.searches == []
+
+
+def test_create_app_turns_the_equivalence_on_only_for_the_portable_sender(
+    tmp_path: Path,
+) -> None:
+    # Por create_app, con el carrito portable prendido: el dispatcher y el
+    # sender que arma el bridge comparan por forma equivalente.
+    manifest = replace(
+        MANIFEST,
+        flows={**MANIFEST.flows, "carrito": True},
+        templates={
+            **MANIFEST.templates,
+            "carrito": Template(
+                name=CART_TEMPLATE, language="es_EC", parameters=("nombre", "producto")
+            ),
+        },
+    )
+    settings = Settings(
+        webhook_secret="test-secret",
+        allowed_jid=None,
+        capture_dir=tmp_path / "captures",
+        max_age_seconds=300,
+        commercial_ally_config=manifest.to_commercial_ally_config(),
+        commercial_ally_manifest_path=Path("/instancia/instancia.toml"),
+        instance_manifest=manifest,
+        hermes_model_name=manifest.agent_model_name,
+        chatwoot_account_id=ACCOUNT_ID,
+        chatwoot_inbox_id=INBOX_ID,
+        portable_hotmart_recovery_enabled=True,
+        dispatcher_enabled=True,
+        dispatcher_worker_id="att1-dispatcher",
+        dispatcher_outbound_enabled=True,
+        dispatcher_approved_template_direct_enabled=True,
+        meta_final_effect_enabled=False,
+        meta_final_effect_evidence_dir=tmp_path / "meta-effects",
+        pilot_boundary_enabled=True,
+        pilot_scope_key=BOUNDARY.scope_key,
+        pilot_scope_version=BOUNDARY.scope_version,
+        pilot_tenant_key=BOUNDARY.tenant_key,
+        pilot_channel_provider="waba",
+        pilot_channel_account_ref=BOUNDARY.channel_account_ref,
+        waba_first_touch_template_name=CART_TEMPLATE,
+        waba_template_language="es_EC",
+        waba_template_category="MARKETING",
+    )
+    chatwoot = _ChatwootWithContacts({f"+{MX_WHATSAPP}": (41, MX_WHATSAPP)})
+    authority = _AuthorityWatchingChatwoot(chatwoot)
+
+    app = create_app(
+        settings,
+        supabase_client=authority,  # type: ignore[arg-type]
+        chatwoot_client=chatwoot.client(),
+    )
+    asyncio.run(app.state.durable_dispatcher.dispatch_due(now=NOW))
+
+    assert _gate_target(tmp_path) == _sha256(f"+{MX_WHATSAPP}")
+    assert chatwoot.searches == [f"+{MX_FORM}", f"+{MX_WHATSAPP}"]

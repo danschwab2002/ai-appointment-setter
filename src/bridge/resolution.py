@@ -18,6 +18,7 @@ from bridge.hotmart import (
     parse_hotmart_payment_failure_buyer_payload,
 )
 from bridge.messaging import is_allowed_whatsapp_target
+from bridge.phones import equivalent_whatsapp_phones
 from bridge.supabase import (
     ContactMatch,
     PilotBoundaryConfig,
@@ -105,7 +106,19 @@ async def resolve_event(
 
     if buyer.buyer_phone is not None:
         try:
-            phone_match = await supabase.find_contact_by_phone(buyer.buyer_phone)
+            if commercial_ally_config is not None:
+                # Portable runtime: the contact may only own the other form of
+                # the same mobile (the landing form stores 52 + 10 digits,
+                # Hotmart sends 521 + 10). The lookup compares the equivalent
+                # forms; the contact point and the identity written below stay
+                # raw, because the base validates them against the payload.
+                phone_match = await supabase.find_contact_by_phones(
+                    equivalent_whatsapp_phones(buyer.buyer_phone)
+                )
+            else:
+                phone_match = await supabase.find_contact_by_phone(
+                    buyer.buyer_phone
+                )
         except SupabaseError as exc:
             if str(exc).endswith("_ambiguous"):
                 await supabase.update_event_status(

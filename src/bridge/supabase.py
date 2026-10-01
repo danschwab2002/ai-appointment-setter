@@ -12,7 +12,7 @@ import uuid
 from dataclasses import dataclass, field, fields
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Sequence
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -145,6 +145,9 @@ _PILOT_PLAN_REJECTION_SQLSTATE = "55000"
 # reasons raised by the pilot planners are fixed literals, and anything else
 # (free text, a phone, a quote from the payload) must not reach that column.
 _PILOT_PLAN_REJECTION_TOKEN = re.compile(r"[a-z][a-z_]{0,79}")
+# A phone as the base stores it: digits only, international length. It is the
+# only shape allowed inside a PostgREST ``in.(...)`` filter built from phones.
+_PHONE_DIGITS_RE = re.compile(r"[1-9][0-9]{6,14}")
 
 
 def _pilot_plan_rejection(response: httpx.Response) -> str | None:
@@ -969,6 +972,15 @@ class ChannelIdentitySummary:
     channel: str
     external_user_id: str | None
     identity_status: str
+
+
+@dataclass(frozen=True)
+class WhatsAppIdentityMatch:
+    """An active WhatsApp identity found by one of the forms of a phone."""
+
+    channel_identity_id: str
+    contact_id: str
+    external_user_id: str
 
 
 @dataclass
@@ -6156,6 +6168,79 @@ class SupabaseClient:
             matched_by="phone",
         )
 
+    async def find_contact_by_phones(
+        self, phones: Sequence[str]
+    ) -> ContactMatch | None:
+        """Find one contact by any of the equivalent forms of a phone.
+
+        The portable runtime passes the forms that share one canonical WhatsApp
+        phone (``bridge.phones.equivalent_whatsapp_phones``): the landing form
+        stores ``52`` + 10 digits and Hotmart ``521`` + 10 for the same mobile.
+        One contact can own a point for each form, so the lookup is ambiguous
+        only when the rows belong to different contacts.
+        ``find_contact_by_phone`` stays exact for every other caller.
+        """
+        operation = "find_contact_by_phones"
+        values = tuple(dict.fromkeys(phones))
+        if not values or any(
+            not isinstance(value, str) or _PHONE_DIGITS_RE.fullmatch(value) is None
+            for value in values
+        ):
+            raise SupabaseError(f"{operation}_invalid_input")
+        response = await self._request(
+            "GET",
+            "/rest/v1/contact_points",
+            params={
+                "select": (
+                    "contact_id,"
+                    "normalized_value,"
+                    "type,"
+                    "contacts!inner("
+                    "id,full_name,email,phone,"
+                    "contact_permission,lifecycle_status"
+                    ")"
+                ),
+                "normalized_value": f"in.({','.join(values)})",
+                "type": "eq.phone",
+                # One contact owns at most one point per form; one row more
+                # is enough to see a second owner.
+                "limit": str(len(values) + 1),
+            },
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if not rows:
+            return None
+        contacts: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            contact = row.get("contacts")
+            if not isinstance(contact, dict):
+                raise SupabaseError(f"{operation}_invalid_row")
+            contacts[_required_string(contact, "id", operation=operation)] = contact
+        if len(contacts) != 1:
+            raise SupabaseError(f"{operation}_ambiguous")
+        [(contact_id, contact)] = contacts.items()
+        return ContactMatch(
+            contact_id=contact_id,
+            full_name=_optional_string(contact, "full_name", operation=operation),
+            email=_optional_string(contact, "email", operation=operation),
+            phone=_optional_string(contact, "phone", operation=operation),
+            contact_permission=_required_enum(
+                contact,
+                "contact_permission",
+                _CONTACT_PERMISSIONS,
+                operation=operation,
+            ),
+            lifecycle_status=_required_enum(
+                contact,
+                "lifecycle_status",
+                _LIFECYCLE_STATUSES,
+                operation=operation,
+            ),
+            matched_by="phone",
+        )
+
     # ── Contact creation ──────────────────────────────────────────
 
     async def create_contact(
@@ -6378,6 +6463,81 @@ class SupabaseClient:
                 )
             )
         return summaries
+
+    async def find_active_whatsapp_identities(
+        self,
+        *,
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+        external_user_ids: Sequence[str],
+    ) -> list[WhatsAppIdentityMatch]:
+        """Active WhatsApp identities of one Chatwoot inbox among some ids.
+
+        Read only. The portable inbound path uses it to find the identity a
+        person already has under the other form of the same phone (``52…``
+        saved by the form, ``521…`` reported by WhatsApp). Only an identity
+        bound to this inbox counts, the same condition the durable opt-out and
+        the inbound admission apply (``metadata ->> 'inbox_id'``).
+        """
+        operation = "find_active_whatsapp_identities"
+        values = tuple(dict.fromkeys(external_user_ids))
+        if (
+            not isinstance(chatwoot_account_id, int)
+            or isinstance(chatwoot_account_id, bool)
+            or chatwoot_account_id <= 0
+            or not isinstance(chatwoot_inbox_id, int)
+            or isinstance(chatwoot_inbox_id, bool)
+            or chatwoot_inbox_id <= 0
+            or not values
+            or any(
+                not isinstance(value, str)
+                or _PHONE_DIGITS_RE.fullmatch(value) is None
+                for value in values
+            )
+        ):
+            raise SupabaseError(f"{operation}_invalid_input")
+        response = await self._request(
+            "GET",
+            "/rest/v1/channel_identities",
+            params={
+                "select": "id,contact_id,external_user_id,metadata",
+                "channel": "eq.whatsapp",
+                "account_id": f"eq.chatwoot:{chatwoot_account_id}",
+                "external_user_id": f"in.({','.join(values)})",
+                "identity_status": "eq.active",
+                "order": "created_at.asc",
+            },
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        matches: list[WhatsAppIdentityMatch] = []
+        for row in rows:
+            external_user_id = _required_string(
+                row, "external_user_id", operation=operation
+            )
+            if external_user_id not in values:
+                raise _invalid_row_error(operation)
+            metadata = row.get("metadata")
+            if metadata is not None and not isinstance(metadata, dict):
+                raise _invalid_row_error(operation)
+            inbox = (metadata or {}).get("inbox_id")
+            if isinstance(inbox, bool) or not isinstance(inbox, (int, str)):
+                continue
+            if str(inbox) != str(chatwoot_inbox_id):
+                continue
+            matches.append(
+                WhatsAppIdentityMatch(
+                    channel_identity_id=_required_string(
+                        row, "id", operation=operation
+                    ),
+                    contact_id=_required_string(
+                        row, "contact_id", operation=operation
+                    ),
+                    external_user_id=external_user_id,
+                )
+            )
+        return matches
 
     # ── Recovery case creation ────────────────────────────────────
 

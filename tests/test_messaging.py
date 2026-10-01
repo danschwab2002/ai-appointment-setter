@@ -12,7 +12,13 @@ import httpx
 import pytest
 
 from bridge.chatwoot import ChatwootClient, ChatwootProtocolError
-from bridge.messaging import ChatwootMessageSender, WhatsAppTemplateConfig, _to_e164
+from bridge.messaging import (
+    FIRST_TOUCH_RECIPIENT_MISMATCH,
+    ChatwootMessageSender,
+    FirstTouchRecipient,
+    WhatsAppTemplateConfig,
+    _to_e164,
+)
 
 
 def test_payment_failure_first_touch_uses_dedicated_approved_template() -> None:
@@ -1605,3 +1611,323 @@ def test_chatwoot_sender_blocks_a_missing_declared_variable(
     assert result.status == "blocked"
     assert result.reason == "template_parameters_missing"
     assert transport.requests == []
+
+
+# ── Equivalencia de telefonos de WhatsApp (solo el runtime portable) ─
+#
+# El mismo movil puede estar en Chatwoot con cualquiera de sus dos formas: 52 +
+# 10 digitos (lo creo un envio anterior) o 521 + 10 (lo creo la persona al
+# escribir, que es la forma del wa_id). En Argentina, 54 y 549. Medido el
+# 2026-10-01 sobre el Chatwoot de produccion (decisiones D13 y D14).
+#
+# No hay captura de /contacts/search, /contacts, /conversations ni /messages:
+# sigue el precedente inline de este archivo (deuda de A0). Lo que si esta
+# medido es que en un inbox de WhatsApp Cloud el source_id de un contacto es
+# su wa_id, los digitos de su telefono (170 de 170 contactos de los inboxes 9
+# y 11), y asi lo emula _WhatsAppCloudInbox. Los telefonos son de prueba.
+
+MX_FORM = "525512345678"
+MX_WHATSAPP = "5215512345678"
+AR_FORM = "541112345678"
+AR_WHATSAPP = "5491112345678"
+
+
+class _WhatsAppCloudInbox:
+    """Chatwoot de un inbox de WhatsApp Cloud, con memoria de sus contactos."""
+
+    def __init__(
+        self,
+        contacts: dict[str, int] | None = None,
+        *,
+        created_source_id: str | None = None,
+        blocked: set[int] | None = None,
+    ) -> None:
+        # telefono E.164 -> id del contacto
+        self.contacts = dict(contacts or {})
+        self.created_source_id = created_source_id
+        self.blocked = blocked or set()
+        self.source_ids: dict[int, str] = {
+            contact_id: phone.lstrip("+") for phone, contact_id in self.contacts.items()
+        }
+        self.requests: list[tuple[str, str, dict[str, object] | None]] = []
+        self.searches: list[str] = []
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content) if request.content else None
+        path = request.url.path
+        self.requests.append((request.method, path, body))
+        prefix = "/api/v1/accounts/1"
+        if request.method == "GET" and path == f"{prefix}/contacts/search":
+            query = request.url.params["q"]
+            self.searches.append(query)
+            contact_id = self.contacts.get(query)
+            if contact_id is None:
+                return httpx.Response(200, json={"payload": []})
+            return httpx.Response(200, json={"payload": [{
+                "id": contact_id,
+                "phone_number": query,
+                "blocked": contact_id in self.blocked,
+                "contact_inboxes": [{
+                    "source_id": self.source_ids[contact_id],
+                    "inbox": {"id": 1},
+                }],
+            }]})
+        if request.method == "POST" and path == f"{prefix}/contacts":
+            assert body is not None
+            phone = str(body["phone_number"])
+            contact_id = 500 + len(self.contacts)
+            self.contacts[phone] = contact_id
+            self.source_ids[contact_id] = self.created_source_id or phone.lstrip("+")
+            return httpx.Response(200, json={"payload": {"id": contact_id}})
+        if request.method == "POST" and path == f"{prefix}/conversations":
+            return httpx.Response(200, json={"id": 200})
+        if request.method == "POST" and path == f"{prefix}/conversations/200/messages":
+            assert body is not None
+            return httpx.Response(200, json={
+                "id": 888,
+                "conversation_id": 200,
+                "message_type": 1,
+                "private": False,
+                "content": body["content"],
+                "content_attributes": body["content_attributes"],
+            })
+        return httpx.Response(404, json={"error": "not_emulated"})
+
+    def posts(self, suffix: str) -> list[dict[str, object]]:
+        return [
+            body
+            for method, path, body in self.requests
+            if method == "POST" and path.endswith(suffix) and body is not None
+        ]
+
+    def sender(self, *, equivalence: bool = True) -> ChatwootMessageSender:
+        return ChatwootMessageSender(
+            chatwoot=ChatwootClient(
+                base_url="https://chatwoot.test",
+                account_id=1,
+                access_token="test-token",
+                agent_bot_access_token="bot-token",
+                agent_bot_id=99,
+                transport=httpx.MockTransport(self.handler),
+            ),
+            inbox_id=1,
+            allowed_jid=None,
+            dynamic_recipient_enabled=True,
+            whatsapp_equivalence_enabled=equivalence,
+        )
+
+
+def _first_touch(sender: ChatwootMessageSender, phone: str, **kwargs: object):
+    return _run(sender.send_first_touch(
+        phone=phone,
+        buyer_name="Lead de prueba",
+        buyer_email=None,
+        content="Texto de la plantilla aprobada",
+        delivery_id="evt-equivalence",
+        **kwargs,  # type: ignore[arg-type]
+    ))
+
+
+def test_equivalence_reuses_the_contact_that_exists_under_the_other_form() -> None:
+    # La base tiene 52 + 10 (el formulario) y la persona ya escribio: su
+    # contacto de Chatwoot es 521 + 10. Antes se creaba un segundo contacto
+    # 52… y la respuesta caia en otra conversacion.
+    inbox = _WhatsAppCloudInbox({f"+{MX_WHATSAPP}": 41})
+
+    result = _first_touch(inbox.sender(), MX_FORM)
+
+    assert result.status == "sent"
+    assert inbox.searches == [f"+{MX_FORM}", f"+{MX_WHATSAPP}"]
+    assert inbox.posts("/contacts") == []
+    assert inbox.posts("/conversations") == [
+        {"inbox_id": 1, "contact_id": 41, "source_id": MX_WHATSAPP}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("phone", "created_phone"),
+    [
+        # Mexico: el contacto nace con el 1, que es donde cae la respuesta.
+        (MX_FORM, f"+{MX_WHATSAPP}"),
+        (MX_WHATSAPP, f"+{MX_WHATSAPP}"),
+        # Argentina: sin el 9, la forma que Chatwoot normaliza.
+        (AR_FORM, f"+{AR_FORM}"),
+        (AR_WHATSAPP, f"+{AR_FORM}"),
+        # Cualquier otro pais: tal cual.
+        ("573001234567", "+573001234567"),
+    ],
+)
+def test_equivalence_creates_the_contact_in_the_delivery_form(
+    phone: str, created_phone: str
+) -> None:
+    inbox = _WhatsAppCloudInbox()
+
+    result = _first_touch(inbox.sender(), phone)
+
+    assert result.status == "sent"
+    [contact] = inbox.posts("/contacts")
+    assert contact["phone_number"] == created_phone
+    [conversation] = inbox.posts("/conversations")
+    assert conversation["source_id"] == created_phone.lstrip("+")
+
+
+def test_equivalence_prefers_the_whatsapp_form_when_both_contacts_exist(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # La misma persona dos veces en Chatwoot (medido: 14 pares en el inbox de
+    # Johanna). Se usa el contacto de forma WhatsApp, donde cae la respuesta.
+    inbox = _WhatsAppCloudInbox({f"+{AR_FORM}": 40, f"+{AR_WHATSAPP}": 41})
+
+    with caplog.at_level("WARNING"):
+        recipient = _run(inbox.sender().resolve_first_touch_recipient(phone=AR_FORM))
+
+    assert recipient == FirstTouchRecipient(
+        wa_id=AR_WHATSAPP, contact_id=41, source_id=AR_WHATSAPP
+    )
+    assert "first_touch_recipient_duplicated_in_chatwoot" in caplog.text
+    assert "region=AR" in caplog.text
+    assert "contact_ids=40,41" in caplog.text
+    # El aviso lleva ids de Chatwoot y region, nunca el numero.
+    assert AR_FORM not in caplog.text and AR_WHATSAPP not in caplog.text
+    assert AR_FORM[2:] not in caplog.text
+
+
+def test_a_resolved_recipient_is_not_searched_again() -> None:
+    inbox = _WhatsAppCloudInbox({f"+{MX_WHATSAPP}": 41})
+    sender = inbox.sender()
+    recipient = _run(sender.resolve_first_touch_recipient(phone=MX_FORM))
+    assert recipient == FirstTouchRecipient(
+        wa_id=MX_WHATSAPP, contact_id=41, source_id=MX_WHATSAPP
+    )
+    inbox.searches.clear()
+
+    result = _first_touch(sender, MX_FORM, recipient=recipient)
+
+    assert result.status == "sent"
+    assert inbox.searches == []
+    assert inbox.posts("/conversations") == [
+        {"inbox_id": 1, "contact_id": 41, "source_id": MX_WHATSAPP}
+    ]
+
+
+def test_a_recipient_resolved_without_a_contact_is_created_in_its_form() -> None:
+    inbox = _WhatsAppCloudInbox()
+    sender = inbox.sender()
+    recipient = _run(sender.resolve_first_touch_recipient(phone=MX_FORM))
+    assert recipient == FirstTouchRecipient(wa_id=MX_WHATSAPP)
+    inbox.searches.clear()
+
+    result = _first_touch(sender, MX_FORM, recipient=recipient)
+
+    assert result.status == "sent"
+    # Solo la lectura que confirma el contacto recien creado.
+    assert inbox.searches == [f"+{MX_WHATSAPP}"]
+    assert [c["phone_number"] for c in inbox.posts("/contacts")] == [f"+{MX_WHATSAPP}"]
+
+
+def test_resolving_the_recipient_only_reads() -> None:
+    inbox = _WhatsAppCloudInbox()
+
+    _run(inbox.sender().resolve_first_touch_recipient(phone=MX_FORM))
+
+    assert {method for method, _, _ in inbox.requests} == {"GET"}
+
+
+def test_a_recipient_of_another_phone_is_blocked_before_any_request() -> None:
+    inbox = _WhatsAppCloudInbox()
+    other = FirstTouchRecipient(wa_id="5215512345679", contact_id=77, source_id="5215512345679")
+
+    result = _first_touch(inbox.sender(), MX_FORM, recipient=other)
+
+    assert result.status == "blocked"
+    assert result.reason == FIRST_TOUCH_RECIPIENT_MISMATCH
+    assert inbox.requests == []
+
+
+def test_an_existing_contact_with_a_foreign_source_is_blocked() -> None:
+    # El contacto se encuentra por su telefono, pero Chatwoot entregaria a su
+    # source_id: si no es el mismo movil, no sale nada.
+    inbox = _WhatsAppCloudInbox({f"+{MX_WHATSAPP}": 41})
+    inbox.source_ids[41] = "5215599999999"
+
+    result = _first_touch(inbox.sender(), MX_FORM)
+
+    assert result.status == "blocked"
+    assert result.reason == FIRST_TOUCH_RECIPIENT_MISMATCH
+    assert inbox.posts("/conversations") == []
+    assert inbox.posts("/messages") == []
+
+
+def test_a_new_contact_that_chatwoot_binds_to_another_source_is_blocked() -> None:
+    inbox = _WhatsAppCloudInbox(created_source_id="5215599999999")
+
+    result = _first_touch(inbox.sender(), MX_FORM)
+
+    assert result.status == "blocked"
+    assert result.reason == "contact_inbox_source_mismatch"
+    assert inbox.posts("/conversations") == []
+    assert inbox.posts("/messages") == []
+
+
+def test_a_blocked_contact_under_the_other_form_stops_the_send() -> None:
+    inbox = _WhatsAppCloudInbox({f"+{MX_WHATSAPP}": 41}, blocked={41})
+
+    result = _first_touch(inbox.sender(), MX_FORM)
+
+    assert result.status == "failed"
+    assert result.reason == "contact_blocked"
+    assert inbox.posts("/contacts") == []
+
+
+def test_without_the_equivalence_the_search_stays_exact() -> None:
+    # Un sender sin el flag (todo runtime sin manifiesto) busca y crea con el
+    # telefono exacto, como siempre, aunque exista el contacto de la otra forma.
+    inbox = _WhatsAppCloudInbox({f"+{MX_WHATSAPP}": 41})
+    sender = inbox.sender(equivalence=False)
+
+    result = _first_touch(sender, MX_FORM)
+
+    assert result.status == "sent"
+    assert set(inbox.searches) == {f"+{MX_FORM}"}
+    assert [c["phone_number"] for c in inbox.posts("/contacts")] == [f"+{MX_FORM}"]
+    assert sender.whatsapp_equivalence_enabled is False
+
+
+def test_without_the_equivalence_a_resolved_recipient_is_refused() -> None:
+    inbox = _WhatsAppCloudInbox()
+    sender = inbox.sender(equivalence=False)
+
+    with pytest.raises(ValueError, match="whatsapp_equivalence_disabled"):
+        _run(sender.resolve_first_touch_recipient(phone=MX_FORM))
+    result = _first_touch(
+        sender, MX_FORM, recipient=FirstTouchRecipient(wa_id=MX_WHATSAPP)
+    )
+
+    assert result.status == "blocked"
+    assert result.reason == "recipient_not_supported"
+    assert inbox.requests == []
+
+
+def test_the_equivalence_needs_the_dynamic_recipient() -> None:
+    with pytest.raises(ValueError, match="requires the dynamic recipient"):
+        ChatwootMessageSender(
+            chatwoot=_chatwoot(MockTransport()),
+            inbox_id=1,
+            allowed_jid="5215512345678@s.whatsapp.net",
+            whatsapp_equivalence_enabled=True,
+        )
+    with pytest.raises(ValueError, match="invalid whatsapp equivalence flag"):
+        ChatwootMessageSender(
+            chatwoot=_chatwoot(MockTransport()),
+            inbox_id=1,
+            allowed_jid=None,
+            dynamic_recipient_enabled=True,
+            whatsapp_equivalence_enabled="true",  # type: ignore[arg-type]
+        )
+
+
+def test_a_recipient_is_a_contact_with_its_source_or_neither() -> None:
+    with pytest.raises(ValueError, match="invalid_first_touch_recipient"):
+        FirstTouchRecipient(wa_id=MX_WHATSAPP, contact_id=41)
+    with pytest.raises(ValueError, match="invalid_first_touch_recipient"):
+        FirstTouchRecipient(wa_id=MX_WHATSAPP, source_id=MX_WHATSAPP)

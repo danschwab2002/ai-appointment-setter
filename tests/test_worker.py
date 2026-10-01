@@ -27,6 +27,8 @@ from bridge.supabase import (
     ChatwootAuthorityContext,
     DeliveryAttempt,
     FollowupExecutionContext,
+    HumanHandoffProjectionClaim,
+    HumanHandoffProjectionFinalization,
     OptOutProjectionClaim,
     PilotBoundaryConfig,
     ReevaluationDecision,
@@ -40,6 +42,7 @@ from bridge.commercial_ally import CommercialAllyConfig
 from bridge.worker import (
     DurableDispatcher,
     HotmartAbandonmentTimerWorker,
+    HumanHandoffProjectionWorker,
     OptOutProjectionWorker,
     ResolutionWorker,
     _await_despite_cancellation,
@@ -2163,6 +2166,261 @@ def test_opt_out_projection_worker_records_retryable_chatwoot_failure() -> None:
     assert supabase.finalizations[0]["error_code"] == (
         "chatwoot_ChatwootProtocolError"
     )
+
+
+# ── Proyecciones a Chatwoot con la otra forma del mismo movil ───────
+#
+# Con manifiesto, la fila durable lleva la identidad como la guarda la base
+# (52 + 10 digitos cuando la creo el formulario) y la conversacion de Chatwoot
+# es del wa_id (521 + 10). Sin whatsapp_equivalence_enabled la proyeccion
+# validaba la forma guardada y nunca llegaba a Chatwoot.
+
+_PROJECTION_MX_FORM = "525512345678"
+_PROJECTION_MX_WHATSAPP = "5215512345678"
+
+
+class _EquivalenceChatwoot:
+    """Chatwoot cuya conversacion pertenece a un wa_id concreto."""
+
+    account_id = 1
+
+    def __init__(self, *, conversation_wa_id: str) -> None:
+        self.conversation_jid = f"{conversation_wa_id}@s.whatsapp.net"
+        self.validations: list[str] = []
+        self.macro_calls: list[dict[str, object]] = []
+        self.assignments: list[dict[str, object]] = []
+        self.notes: list[dict[str, object]] = []
+
+    async def validate_conversation_authority(
+        self,
+        *,
+        conversation_id: int,
+        expected_inbox_id: int,
+        expected_jid: str | None = None,
+    ) -> None:
+        assert expected_jid is not None
+        self.validations.append(expected_jid)
+        if expected_jid != self.conversation_jid:
+            raise ChatwootProtocolError("conversation_identity_mismatch")
+
+    async def apply_opt_out_macro(self, **kwargs: object) -> None:
+        await self.validate_conversation_authority(
+            conversation_id=kwargs["conversation_id"],  # type: ignore[arg-type]
+            expected_inbox_id=kwargs["expected_inbox_id"],  # type: ignore[arg-type]
+            expected_jid=kwargs["expected_jid"],  # type: ignore[arg-type]
+        )
+        self.macro_calls.append(kwargs)
+
+    async def ensure_handoff_assignment(self, **kwargs: object) -> str:
+        if kwargs["expected_jid"] != self.conversation_jid:
+            raise ChatwootProtocolError("invalid_conversation_authority")
+        self.assignments.append(kwargs)
+        return "team_assigned"
+
+    async def ensure_private_handoff_note(self, **kwargs: object) -> bool:
+        if kwargs["expected_jid"] != self.conversation_jid:
+            raise ChatwootProtocolError("invalid_conversation_authority")
+        self.notes.append(kwargs)
+        return True
+
+
+class _OptOutClaimSupabase(StubProjectionSupabase):
+    def __init__(self, *, external_user_id: str) -> None:
+        super().__init__()
+        self._external_user_id = external_user_id
+
+    async def claim_chatwoot_opt_out_projections(
+        self, **_: object
+    ) -> list[OptOutProjectionClaim]:
+        return [OptOutProjectionClaim(
+            opt_out_event_id="opt-out-event-1",
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=9,
+            chatwoot_conversation_id=42,
+            external_user_id=self._external_user_id,
+            lease_generation=3,
+        )]
+
+
+@pytest.mark.parametrize(
+    ("stored", "conversation"),
+    [
+        # La identidad guardada por el formulario y el wa_id de la conversacion.
+        (_PROJECTION_MX_FORM, _PROJECTION_MX_WHATSAPP),
+        # Y al reves: la de Hotmart en 549 + 10 y Chatwoot en 54 + 10.
+        ("5491112345678", "541112345678"),
+        # La misma forma de los dos lados: una sola validacion previa.
+        (_PROJECTION_MX_WHATSAPP, _PROJECTION_MX_WHATSAPP),
+    ],
+)
+def test_opt_out_projection_reaches_the_conversation_of_the_other_form(
+    stored: str, conversation: str
+) -> None:
+    supabase = _OptOutClaimSupabase(external_user_id=stored)
+    chatwoot = _EquivalenceChatwoot(conversation_wa_id=conversation)
+    worker = OptOutProjectionWorker(
+        supabase=supabase,  # type: ignore[arg-type]
+        chatwoot=chatwoot,  # type: ignore[arg-type]
+        worker_id="projection-worker-1",
+        whatsapp_equivalence_enabled=True,
+    )
+
+    assert asyncio.run(worker.run_once()) == 1
+
+    [macro] = chatwoot.macro_calls
+    assert macro["expected_jid"] == f"{conversation}@s.whatsapp.net"
+    assert supabase.finalizations[0]["applied"] is True
+    # La forma guardada se prueba primero.
+    assert chatwoot.validations[0] == f"{stored}@s.whatsapp.net"
+
+
+def test_opt_out_projection_of_a_third_number_still_fails_closed() -> None:
+    supabase = _OptOutClaimSupabase(external_user_id=_PROJECTION_MX_FORM)
+    chatwoot = _EquivalenceChatwoot(conversation_wa_id="5215599999999")
+    worker = OptOutProjectionWorker(
+        supabase=supabase,  # type: ignore[arg-type]
+        chatwoot=chatwoot,  # type: ignore[arg-type]
+        worker_id="projection-worker-1",
+        whatsapp_equivalence_enabled=True,
+    )
+
+    assert asyncio.run(worker.run_once()) == 1
+
+    assert chatwoot.macro_calls == []
+    assert supabase.finalizations[0]["applied"] is False
+    assert supabase.finalizations[0]["error_code"] == "chatwoot_ChatwootProtocolError"
+
+
+def test_opt_out_projection_without_the_flag_validates_the_stored_form_only() -> None:
+    # Sin manifiesto (Johanna): la forma guardada, exacta, y ninguna lectura de mas.
+    supabase = _OptOutClaimSupabase(external_user_id=_PROJECTION_MX_FORM)
+    chatwoot = _EquivalenceChatwoot(conversation_wa_id=_PROJECTION_MX_WHATSAPP)
+    worker = OptOutProjectionWorker(
+        supabase=supabase,  # type: ignore[arg-type]
+        chatwoot=chatwoot,  # type: ignore[arg-type]
+        worker_id="projection-worker-1",
+    )
+
+    assert asyncio.run(worker.run_once()) == 1
+
+    assert chatwoot.validations == [f"{_PROJECTION_MX_FORM}@s.whatsapp.net"]
+    assert chatwoot.macro_calls == []
+    assert supabase.finalizations[0]["applied"] is False
+
+
+def test_opt_out_projection_does_not_probe_a_number_with_a_single_form() -> None:
+    supabase = _OptOutClaimSupabase(external_user_id="12025550124")
+    chatwoot = _EquivalenceChatwoot(conversation_wa_id="12025550124")
+    worker = OptOutProjectionWorker(
+        supabase=supabase,  # type: ignore[arg-type]
+        chatwoot=chatwoot,  # type: ignore[arg-type]
+        worker_id="projection-worker-1",
+        whatsapp_equivalence_enabled=True,
+    )
+
+    assert asyncio.run(worker.run_once()) == 1
+
+    # Solo la validacion del propio macro.
+    assert chatwoot.validations == ["12025550124@s.whatsapp.net"]
+    assert len(chatwoot.macro_calls) == 1
+
+
+class _HandoffClaimSupabase:
+    def __init__(self, *, external_user_id: str) -> None:
+        self._external_user_id = external_user_id
+        self.finalizations: list[dict[str, object]] = []
+
+    async def claim_human_handoff_projection_effects(
+        self, **_: object
+    ) -> list[HumanHandoffProjectionClaim]:
+        return [
+            HumanHandoffProjectionClaim(
+                effect_id=f"effect-{effect_kind}",
+                handoff_request_id="handoff-1",
+                effect_kind=effect_kind,
+                current_effect_status="pending",
+                attempt_count=1,
+                lease_generation=2,
+                expected_team_id=17,
+                chatwoot_account_id=1,
+                chatwoot_inbox_id=7,
+                chatwoot_conversation_id=42,
+                external_user_id=self._external_user_id,
+                private_note_body="Revisá la conversación.",
+                idempotency_marker="[supportmagician-handoff:test:v1]",
+            )
+            for effect_kind in ("assignment", "private_note")
+        ]
+
+    async def finalize_human_handoff_projection_effect(
+        self, **kwargs: object
+    ) -> HumanHandoffProjectionFinalization:
+        self.finalizations.append(kwargs)
+        return HumanHandoffProjectionFinalization(
+            effect_status=str(kwargs["outcome"]),
+            handoff_status="projected",
+        )
+
+
+def test_handoff_projection_reaches_the_conversation_of_the_other_form() -> None:
+    # Quien dejo el formulario (52…) contesta la plantilla desde 521…: la
+    # derivacion tiene que llegar a esa conversacion.
+    supabase = _HandoffClaimSupabase(external_user_id=_PROJECTION_MX_FORM)
+    chatwoot = _EquivalenceChatwoot(conversation_wa_id=_PROJECTION_MX_WHATSAPP)
+    worker = HumanHandoffProjectionWorker(
+        supabase=supabase,  # type: ignore[arg-type]
+        chatwoot=chatwoot,  # type: ignore[arg-type]
+        worker_id="handoff-worker",
+        clock=lambda: "2026-10-01T00:00:00+00:00",
+        whatsapp_equivalence_enabled=True,
+    )
+
+    assert asyncio.run(worker.run_once()) == 2
+
+    expected = f"{_PROJECTION_MX_WHATSAPP}@s.whatsapp.net"
+    assert [call["expected_jid"] for call in chatwoot.assignments] == [expected]
+    assert [call["expected_jid"] for call in chatwoot.notes] == [expected]
+    assert [item["outcome"] for item in supabase.finalizations] == [
+        "applied",
+        "applied",
+    ]
+
+
+def test_handoff_projection_without_the_flag_keeps_the_stored_form() -> None:
+    supabase = _HandoffClaimSupabase(external_user_id=_PROJECTION_MX_FORM)
+    chatwoot = _EquivalenceChatwoot(conversation_wa_id=_PROJECTION_MX_WHATSAPP)
+    worker = HumanHandoffProjectionWorker(
+        supabase=supabase,  # type: ignore[arg-type]
+        chatwoot=chatwoot,  # type: ignore[arg-type]
+        worker_id="handoff-worker",
+        clock=lambda: "2026-10-01T00:00:00+00:00",
+    )
+
+    assert asyncio.run(worker.run_once()) == 2
+
+    assert chatwoot.validations == []
+    assert chatwoot.assignments == [] and chatwoot.notes == []
+    assert [item["outcome"] for item in supabase.finalizations] == [
+        "retryable_failed",
+        "retryable_failed",
+    ]
+
+
+def test_projection_workers_refuse_a_non_boolean_equivalence_flag() -> None:
+    with pytest.raises(ValueError, match="invalid whatsapp equivalence flag"):
+        OptOutProjectionWorker(
+            supabase=StubProjectionSupabase(),  # type: ignore[arg-type]
+            chatwoot=StubProjectionChatwoot(),  # type: ignore[arg-type]
+            worker_id="projection-worker-1",
+            whatsapp_equivalence_enabled="true",  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError, match="invalid whatsapp equivalence flag"):
+        HumanHandoffProjectionWorker(
+            supabase=StubProjectionSupabase(),  # type: ignore[arg-type]
+            chatwoot=StubProjectionChatwoot(),  # type: ignore[arg-type]
+            worker_id="handoff-worker",
+            whatsapp_equivalence_enabled=None,  # type: ignore[arg-type]
+        )
 
 
 class StubHotmartTimerSupabase:

@@ -41,13 +41,17 @@ from bridge.hotmart import (
 )
 from bridge.lead_first_name import resolve_greeting_name
 from bridge.messaging import (
+    FIRST_TOUCH_RECIPIENT_MISMATCH,
     FinalMetaEffect,
     FinalMetaEffectGate,
+    FirstTouchRecipient,
     FirstTouchResult,
     MessageSender,
     WhatsAppTemplateConfig,
+    first_touch_recipient_matches,
     is_allowed_whatsapp_target,
 )
+from bridge.phones import equivalent_whatsapp_phones, whatsapp_phone_region
 from bridge.recovery_agent import (
     FollowupHandoffSuggestion,
     FollowupMessageProposal,
@@ -324,6 +328,48 @@ def _validate_started_delivery_attempt(
         raise SupabaseError("started_delivery_attempt_mismatch")
 
 
+async def _equivalent_conversation_jid(
+    chatwoot: ChatwootClient,
+    *,
+    conversation_id: int,
+    expected_inbox_id: int,
+    external_user_id: str,
+) -> str:
+    """The JID Chatwoot holds for a conversation, among the forms of one phone.
+
+    A durable row carries the identity as the base stores it (``52…`` when the
+    landing form created the contact), while the Chatwoot conversation belongs
+    to the ``wa_id`` (``521…``). With the portable inbound equivalence both are
+    the same person, so a projection that validated the stored form exactly
+    would never reach Chatwoot. The stored form is tried first and the other
+    one only on an identity mismatch. The caller's own Chatwoot call validates
+    the returned JID again: a conversation of neither form still fails closed.
+    A number with a single form costs no extra request.
+    """
+    forms = [
+        external_user_id,
+        *(
+            form
+            for form in equivalent_whatsapp_phones(external_user_id)
+            if form != external_user_id
+        ),
+    ]
+    for form in forms[:-1]:
+        jid = f"{form}@s.whatsapp.net"
+        try:
+            await chatwoot.validate_conversation_authority(
+                conversation_id=conversation_id,
+                expected_inbox_id=expected_inbox_id,
+                expected_jid=jid,
+            )
+        except ChatwootProtocolError as exc:
+            if str(exc) != "conversation_identity_mismatch":
+                raise
+            continue
+        return jid
+    return f"{forms[-1]}@s.whatsapp.net"
+
+
 class OptOutProjectionWorker:
     """Durably project authoritative opt-outs into Chatwoot."""
 
@@ -337,7 +383,10 @@ class OptOutProjectionWorker:
         batch_size: int = 10,
         lease_duration: str = "1 minute",
         max_attempts: int = 5,
+        whatsapp_equivalence_enabled: bool = False,
     ) -> None:
+        if type(whatsapp_equivalence_enabled) is not bool:
+            raise ValueError("invalid whatsapp equivalence flag")
         self._supabase = supabase
         self._chatwoot = chatwoot
         self._worker_id = worker_id
@@ -345,6 +394,7 @@ class OptOutProjectionWorker:
         self._batch_size = batch_size
         self._lease_duration = lease_duration
         self._max_attempts = max_attempts
+        self._whatsapp_equivalence_enabled = whatsapp_equivalence_enabled
         self._stopped = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
 
@@ -393,11 +443,19 @@ class OptOutProjectionWorker:
             applied = False
             error_code: str | None = None
             try:
+                expected_jid = f"{claim.external_user_id}@s.whatsapp.net"
+                if self._whatsapp_equivalence_enabled:
+                    expected_jid = await _equivalent_conversation_jid(
+                        self._chatwoot,
+                        conversation_id=claim.chatwoot_conversation_id,
+                        expected_inbox_id=claim.chatwoot_inbox_id,
+                        external_user_id=claim.external_user_id,
+                    )
                 await self._chatwoot.apply_opt_out_macro(
                     conversation_id=claim.chatwoot_conversation_id,
                     expected_account_id=claim.chatwoot_account_id,
                     expected_inbox_id=claim.chatwoot_inbox_id,
-                    expected_jid=f"{claim.external_user_id}@s.whatsapp.net",
+                    expected_jid=expected_jid,
                 )
                 applied = True
             except (httpx.HTTPError, ChatwootProtocolError) as exc:
@@ -434,7 +492,10 @@ class HumanHandoffProjectionWorker:
         max_attempts: int = 8,
         finalization_timeout_seconds: float = 10.0,
         clock: Callable[[], str] | None = None,
+        whatsapp_equivalence_enabled: bool = False,
     ) -> None:
+        if type(whatsapp_equivalence_enabled) is not bool:
+            raise ValueError("invalid whatsapp equivalence flag")
         self._supabase = supabase
         self._chatwoot = chatwoot
         self._worker_id = worker_id
@@ -442,6 +503,7 @@ class HumanHandoffProjectionWorker:
         self._batch_size = batch_size
         self._lease_seconds = lease_seconds
         self._max_attempts = max_attempts
+        self._whatsapp_equivalence_enabled = whatsapp_equivalence_enabled
         self._finalization_timeout = finalization_timeout_seconds
         self._clock = clock or (lambda: datetime.now(UTC).isoformat())
         self._stopped = asyncio.Event()
@@ -492,6 +554,17 @@ class HumanHandoffProjectionWorker:
             except TimeoutError:
                 pass
 
+    async def _conversation_jid(self, claim: Any, stored_jid: str) -> str:
+        """The JID to validate in Chatwoot: the stored one, or its other form."""
+        if not self._whatsapp_equivalence_enabled:
+            return stored_jid
+        return await _equivalent_conversation_jid(
+            self._chatwoot,
+            conversation_id=claim.chatwoot_conversation_id,
+            expected_inbox_id=claim.chatwoot_inbox_id,
+            external_user_id=claim.external_user_id,
+        )
+
     @staticmethod
     def _retry_at(now: str, *, attempt_count: int) -> str:
         retry_minutes = min(max(attempt_count, 1), 10)
@@ -528,13 +601,17 @@ class HumanHandoffProjectionWorker:
                         conversation_id=claim.chatwoot_conversation_id,
                         expected_inbox_id=claim.chatwoot_inbox_id,
                         expected_team_id=claim.expected_team_id,
-                        expected_jid=expected_jid,
+                        expected_jid=await self._conversation_jid(
+                            claim, expected_jid
+                        ),
                     )
                 elif claim.effect_kind == "private_note":
                     applied = await self._chatwoot.ensure_private_handoff_note(
                         conversation_id=claim.chatwoot_conversation_id,
                         expected_inbox_id=claim.chatwoot_inbox_id,
-                        expected_jid=expected_jid,
+                        expected_jid=await self._conversation_jid(
+                            claim, expected_jid
+                        ),
                         note_body=claim.private_note_body,
                         idempotency_marker=claim.idempotency_marker,
                         create_if_missing=(
@@ -638,7 +715,15 @@ class DurableDispatcher:
         waba_template: WhatsAppTemplateConfig | None = None,
         approved_template_direct: bool = False,
         lead_first_name_greeting_enabled: bool = False,
+        whatsapp_equivalence_enabled: bool = False,
     ) -> None:
+        if type(whatsapp_equivalence_enabled) is not bool:
+            raise ValueError("invalid whatsapp equivalence flag")
+        if whatsapp_equivalence_enabled and commercial_ally_config is None:
+            # The equivalent forms of a phone (52/521, 54/549) are compared
+            # only for the portable binding. Without it the dispatcher keeps
+            # sending to the exact phone of the contact.
+            raise ValueError("whatsapp equivalence requires the portable binding")
         if approved_template_direct:
             # The direct mode sends the approved body of the catalog and never
             # asks Hermes for a draft (docs/contracts/
@@ -720,6 +805,7 @@ class DurableDispatcher:
         self._chatwoot_inbox_id = chatwoot_inbox_id
         self._approved_template_direct = approved_template_direct
         self._lead_first_name_greeting_enabled = lead_first_name_greeting_enabled
+        self._whatsapp_equivalence_enabled = whatsapp_equivalence_enabled
         self._delivery_mode = (
             "approved_template"
             if pilot_boundary is not None
@@ -1183,6 +1269,84 @@ class DurableDispatcher:
                                     "followup_recipient_not_allowlisted"
                                 )
                             assert execution_context.buyer_phone is not None
+                            first_touch_recipient: FirstTouchRecipient | None = None
+                            if (
+                                self._whatsapp_equivalence_enabled
+                                and action.action_type != "no_reply_review"
+                            ):
+                                # The Chatwoot contact this first touch goes
+                                # through is resolved now, with reads only and
+                                # before the final gate and the request start:
+                                # the gate hashes the wa_id Meta will receive,
+                                # not the phone as the contact stores it.
+                                try:
+                                    first_touch_recipient = (
+                                        await self._sender.resolve_first_touch_recipient(
+                                            phone=execution_context.buyer_phone,
+                                        )
+                                    )
+                                except asyncio.CancelledError:
+                                    await self._finalize_pre_request_failure(
+                                        action=action,
+                                        attempt=attempt,
+                                        reason_code="pre_request_cancelled",
+                                    )
+                                    raise
+                                except Exception as exc:
+                                    # A ChatwootProtocolError carries a
+                                    # fixed reason code (contact_blocked,
+                                    # ambiguous_contact_match...), never data
+                                    # of the person.
+                                    logger.warning(
+                                        "durable_first_touch_recipient_unresolved "
+                                        "action_id=%s attempt_id=%s error=%s "
+                                        "reason=%s",
+                                        action.action_id,
+                                        attempt.attempt_id,
+                                        type(exc).__name__,
+                                        (
+                                            str(exc)
+                                            if isinstance(exc, ChatwootProtocolError)
+                                            else "unavailable"
+                                        ),
+                                    )
+                                    await self._finalize_pre_request_failure(
+                                        action=action,
+                                        attempt=attempt,
+                                        reason_code="pre_request_failed",
+                                    )
+                                    decisions.append(decision)
+                                    continue
+                                if not isinstance(
+                                    first_touch_recipient, FirstTouchRecipient
+                                ) or not first_touch_recipient_matches(
+                                    first_touch_recipient,
+                                    phone=execution_context.buyer_phone,
+                                ):
+                                    # Fail closed: Chatwoot would deliver to a
+                                    # number that is not the consented one. It
+                                    # does not change by retrying.
+                                    logger.warning(
+                                        "durable_first_touch_recipient_mismatch "
+                                        "action_id=%s attempt_id=%s region=%s "
+                                        "chatwoot_contact_id=%s",
+                                        action.action_id,
+                                        attempt.attempt_id,
+                                        whatsapp_phone_region(
+                                            execution_context.buyer_phone
+                                        ),
+                                        getattr(
+                                            first_touch_recipient, "contact_id", None
+                                        ),
+                                    )
+                                    await self._finalize_pre_request_failure(
+                                        action=action,
+                                        attempt=attempt,
+                                        reason_code=FIRST_TOUCH_RECIPIENT_MISMATCH,
+                                        retryable=False,
+                                    )
+                                    decisions.append(decision)
+                                    continue
                             final_now = self._clock()
                             try:
                                 final_evidence = (
@@ -1272,7 +1436,9 @@ class DurableDispatcher:
                                         action_kind=action_kind,
                                         mode=attempt.mode,
                                         target_phone=(
-                                            "+"
+                                            "+" + first_touch_recipient.wa_id
+                                            if first_touch_recipient is not None
+                                            else "+"
                                             + execution_context.buyer_phone.lstrip("+")
                                         ),
                                         content=proposal.message,
@@ -1411,6 +1577,12 @@ class DurableDispatcher:
                                     if greeting_name is not None:
                                         first_touch_kwargs["greeting_name"] = (
                                             greeting_name
+                                        )
+                                    # The recipient the final gate recorded:
+                                    # the sender does not search it again.
+                                    if first_touch_recipient is not None:
+                                        first_touch_kwargs["recipient"] = (
+                                            first_touch_recipient
                                         )
                                     result = await self._sender.send_first_touch(
                                         **first_touch_kwargs

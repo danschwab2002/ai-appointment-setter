@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import time
+from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 
-from bridge.resolution import resolve_event
+from bridge.instance_manifest import InstanceManifest
+from bridge.resolution import ResolutionError, resolve_event
 from bridge.recovery_agent import required_recovery_decision
+from bridge.supabase import PilotBoundaryConfig, SupabaseClient, SupabaseError
 
 
 # ── Payload fixture ─────────────────────────────────────────────────
@@ -699,3 +703,219 @@ def test_handles_missing_phone(tmp_path) -> None:
 
     assert report.phone_available is False
     assert report.buyer_phone is None
+
+
+# ── Equivalencia de telefonos de WhatsApp (solo el runtime portable) ─
+#
+# El carrito es la captura tests/fixtures/hotmart_cart_abandonment_rejected_v1.json
+# (panel de Hotmart, 2026-09-21): trae un telefono mexicano de 52 + 10 digitos.
+# Se cambian solo producto y oferta por los de ATT1, como
+# tests/test_resolution_pilot_plan_rejection.py:_cart. Las respuestas de
+# PostgREST son la forma que ya usa ese archivo (no son un payload externo).
+
+
+def _captured_att1_cart() -> tuple[dict[str, Any], Any]:
+    root = Path(__file__).resolve().parents[1]
+    captured = json.loads(
+        (root / "tests" / "fixtures" / "hotmart_cart_abandonment_rejected_v1.json")
+        .read_text(encoding="utf-8")
+    )["payload"]
+    config = InstanceManifest.from_toml_file(
+        root / "tests" / "fixtures" / "instances" / "att1" / "instancia.toml"
+    ).to_commercial_ally_config()
+    payload = copy.deepcopy(captured)
+    payload["data"]["product"] = {
+        "id": config.hotmart_product_id,
+        "name": config.product_name,
+    }
+    payload["data"]["offer"] = {"code": config.offer_code}
+    return payload, config
+
+
+class _PhoneLookupRecorder:
+    """PostgREST falso que anota la busqueda por telefono y lo que se planifica."""
+
+    def __init__(self, *, phone_rows: list[dict[str, Any]]) -> None:
+        self.phone_rows = phone_rows
+        self.phone_lookups: list[dict[str, str]] = []
+        self.created_contacts = 0
+        self.contact_points: list[dict[str, Any]] = []
+        self.plans: list[dict[str, Any]] = []
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        params = dict(request.url.params)
+        if request.method == "GET" and path == "/rest/v1/contact_points":
+            if params.get("type") == "eq.phone":
+                self.phone_lookups.append(params)
+                return httpx.Response(200, json=self.phone_rows, request=request)
+            return httpx.Response(200, json=[], request=request)
+        if request.method == "POST" and path == "/rest/v1/contacts":
+            self.created_contacts += 1
+            return httpx.Response(201, json=[{"id": "contact-new"}], request=request)
+        if request.method == "POST" and path == "/rest/v1/contact_points":
+            self.contact_points.append(json.loads(request.content))
+            return httpx.Response(201, request=request)
+        if request.method == "POST" and path.startswith("/rest/v1/rpc/plan_"):
+            self.plans.append(json.loads(request.content))
+            return httpx.Response(
+                200,
+                json=[{
+                    "recovery_case_id": "case-1",
+                    "followup_sequence_id": "sequence-1",
+                    "scheduled_action_id": "action-1",
+                    "created": True,
+                }],
+                request=request,
+            )
+        if request.method == "PATCH" and path == "/rest/v1/webhook_events":
+            return httpx.Response(204, request=request)
+        if request.method == "GET":
+            return httpx.Response(200, json=[], request=request)
+        raise AssertionError(f"unexpected request {request.method} {path}")
+
+    def client(self) -> SupabaseClient:
+        return SupabaseClient(
+            base_url="https://fake.supabase.co",
+            service_role_key="fake-service-role-key",
+            transport=httpx.MockTransport(self.handler),
+        )
+
+
+def _contact_point_row(*, contact_id: str, normalized_value: str) -> dict[str, Any]:
+    return {
+        "contact_id": contact_id,
+        "normalized_value": normalized_value,
+        "type": "phone",
+        "contacts": {
+            "id": contact_id,
+            "full_name": "Contacto del formulario",
+            "email": None,
+            "phone": normalized_value,
+            "contact_permission": "unknown",
+            "lifecycle_status": "lead",
+        },
+    }
+
+
+def _resolve_portable(recorder: _PhoneLookupRecorder, payload: dict[str, Any], config: Any):
+    return _run(resolve_event(
+        webhook_event_id="00000000-0000-4000-8000-000000000001",
+        payload=payload,
+        supabase=recorder.client(),
+        policy_key="att1-recuperacion-un-toque",
+        policy_version=1,
+        allowed_jid=None,
+        chatwoot_account_id=config.chatwoot_account_id,
+        chatwoot_inbox_id=config.chatwoot_inbox_id,
+        pilot_boundary=PilotBoundaryConfig(
+            scope_key="att1-recuperacion",
+            scope_version=1,
+            tenant_key=config.tenant_ref,
+            channel_provider="waba",
+            channel_account_ref=f"chatwoot-inbox:{config.chatwoot_inbox_id}",
+        ),
+        commercial_ally_config=config,
+    ))
+
+
+def test_portable_resolution_finds_the_contact_by_the_other_phone_form() -> None:
+    payload, config = _captured_att1_cart()
+    hotmart_phone = payload["data"]["buyer"]["phone"]
+    assert len(hotmart_phone) == 12 and hotmart_phone.startswith("52")
+    whatsapp_form = "521" + hotmart_phone[2:]
+    # El contacto existe solo con la otra forma del mismo movil (la que trae
+    # el wa_id): una busqueda exacta no lo encontraba y nacia un duplicado.
+    recorder = _PhoneLookupRecorder(
+        phone_rows=[
+            _contact_point_row(contact_id="contact-form", normalized_value=whatsapp_form)
+        ]
+    )
+
+    report = _resolve_portable(recorder, payload, config)
+
+    [lookup] = recorder.phone_lookups
+    assert lookup["normalized_value"] == f"in.({hotmart_phone},{whatsapp_form})"
+    assert lookup["limit"] == "3"
+    assert report.contact_id == "contact-form"
+    assert report.identity_resolution_strategy == "existing_identity_by_phone"
+    assert recorder.created_contacts == 0
+    # Lo guardado sigue crudo: el punto de contacto y la identidad llevan el
+    # telefono tal como lo mando Hotmart, que es contra lo que valida la base.
+    phone_points = [p for p in recorder.contact_points if p["type"] == "phone"]
+    assert [p["normalized_value"] for p in phone_points] == [hotmart_phone]
+    assert phone_points[0]["contact_id"] == "contact-form"
+    [plan] = recorder.plans
+    assert plan["p_contact_id"] == "contact-form"
+    assert plan["p_external_user_id"] == hotmart_phone
+
+
+def test_portable_resolution_accepts_one_contact_owning_both_phone_forms() -> None:
+    payload, config = _captured_att1_cart()
+    hotmart_phone = payload["data"]["buyer"]["phone"]
+    whatsapp_form = "521" + hotmart_phone[2:]
+    recorder = _PhoneLookupRecorder(
+        phone_rows=[
+            _contact_point_row(contact_id="contact-form", normalized_value=hotmart_phone),
+            _contact_point_row(contact_id="contact-form", normalized_value=whatsapp_form),
+        ]
+    )
+
+    report = _resolve_portable(recorder, payload, config)
+
+    assert report.contact_id == "contact-form"
+    assert recorder.created_contacts == 0
+
+
+def test_portable_resolution_fails_closed_when_the_forms_belong_to_two_contacts() -> None:
+    payload, config = _captured_att1_cart()
+    hotmart_phone = payload["data"]["buyer"]["phone"]
+    whatsapp_form = "521" + hotmart_phone[2:]
+    recorder = _PhoneLookupRecorder(
+        phone_rows=[
+            _contact_point_row(contact_id="contact-a", normalized_value=hotmart_phone),
+            _contact_point_row(contact_id="contact-b", normalized_value=whatsapp_form),
+        ]
+    )
+
+    with pytest.raises(ResolutionError, match="identity_ambiguous"):
+        _resolve_portable(recorder, payload, config)
+
+    assert recorder.created_contacts == 0
+    assert recorder.plans == []
+
+
+def test_legacy_resolution_keeps_the_exact_phone_lookup() -> None:
+    # Sin binding portable (Johanna) la busqueda es la de siempre: exacta.
+    payload, _ = _captured_att1_cart()
+    hotmart_phone = payload["data"]["buyer"]["phone"]
+    recorder = _PhoneLookupRecorder(phone_rows=[])
+
+    _run(resolve_event(
+        webhook_event_id="00000000-0000-4000-8000-000000000001",
+        payload=payload,
+        supabase=recorder.client(),
+        policy_key="johanna-cart-recovery",
+        policy_version=1,
+        allowed_jid=None,
+        chatwoot_account_id=1,
+        chatwoot_inbox_id=9,
+    ))
+
+    [lookup] = recorder.phone_lookups
+    assert lookup["normalized_value"] == f"eq.{hotmart_phone}"
+    assert lookup["limit"] == "2"
+    assert recorder.created_contacts == 1
+
+
+@pytest.mark.parametrize(
+    "phones",
+    [(), ("52551234567a",), ("+525512345678",), ("525512345678", "x) or (1")],
+)
+def test_phone_forms_lookup_rejects_anything_but_digits(phones: tuple[str, ...]) -> None:
+    recorder = _PhoneLookupRecorder(phone_rows=[])
+
+    with pytest.raises(SupabaseError, match="find_contact_by_phones_invalid_input"):
+        _run(recorder.client().find_contact_by_phones(phones))
+
+    assert recorder.phone_lookups == []

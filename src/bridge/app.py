@@ -93,6 +93,7 @@ from bridge.messaging import (
     allowed_phone_from_jid,
 )
 from bridge.opt_out import detect_explicit_opt_out
+from bridge.phones import equivalent_whatsapp_phones, whatsapp_phone_region
 from bridge.operator_correlations import (
     InvalidCorrelationEvidence,
     build_unresolved_correlation,
@@ -3275,6 +3276,7 @@ def create_app(
                 allowed_jid=settings.allowed_jid,
                 dynamic_recipient_enabled=portable_dynamic_recipient,
                 template=waba_template,
+                whatsapp_equivalence_enabled=portable_dynamic_recipient,
             )
         resolution_worker = ResolutionWorker(
             supabase=shared_supabase,
@@ -3361,6 +3363,7 @@ def create_app(
                     allowed_jid=settings.allowed_jid,
                     dynamic_recipient_enabled=portable_dynamic_recipient,
                     template=waba_template,
+                    whatsapp_equivalence_enabled=portable_dynamic_recipient,
                 )
             if outbound_sender is None or (
                 outbound_agent is None and not approved_template_direct
@@ -3413,6 +3416,16 @@ def create_app(
                 settings.lead_first_name_greeting_enabled
                 and approved_template_direct
             ),
+            # Solo el runtime portable trata 52/521 y 54/549 como el mismo
+            # telefono, y solo con un sender que sabe resolver el destinatario
+            # en Chatwoot antes del gate final (el que el bridge arma arriba).
+            # Con cualquier otro sender el dispatcher sigue mandando al
+            # telefono exacto del contacto.
+            whatsapp_equivalence_enabled=(
+                portable_dynamic_recipient
+                and isinstance(outbound_sender, ChatwootMessageSender)
+                and outbound_sender.whatsapp_equivalence_enabled
+            ),
         )
 
     opt_out_projection_worker: OptOutProjectionWorker | None = None
@@ -3440,6 +3453,10 @@ def create_app(
             supabase=shared_supabase,
             chatwoot=control_client,  # type: ignore[arg-type]
             worker_id=settings.opt_out_projection_worker_id,
+            # Con manifiesto, el opt-out queda guardado con la identidad que la
+            # base ya tenia (52…) y la conversacion de Chatwoot es del wa_id
+            # (521…): la proyeccion acepta la otra forma del mismo movil.
+            whatsapp_equivalence_enabled=settings.instance_manifest is not None,
         )
     if settings.human_handoff_projection_enabled:
         assert shared_supabase is not None
@@ -3455,6 +3472,7 @@ def create_app(
             batch_size=settings.human_handoff_projection_batch_size,
             lease_seconds=settings.human_handoff_projection_lease_seconds,
             max_attempts=settings.human_handoff_projection_max_attempts,
+            whatsapp_equivalence_enabled=settings.instance_manifest is not None,
         )
 
     chatwoot_worker: ChatwootWorker | None = None
@@ -3554,6 +3572,83 @@ def create_app(
     )
     app.state.conversation_followup_sweeper = conversation_followup_sweeper
 
+    # Con manifiesto, el mismo movil puede estar guardado con la otra forma
+    # (52 + 10 del formulario, 521 + 10 del wa_id; 54 y 549 en Argentina). Sin
+    # manifiesto (Johanna) nada de esto corre: el wa_id se usa textual.
+    whatsapp_inbound_equivalence = settings.instance_manifest is not None
+
+    async def resolve_inbound_external_user_id(
+        wa_id: str,
+        *,
+        conversation_id: object,
+    ) -> str:
+        """El external_user_id con que la base ya conoce a quien escribe.
+
+        Si entre las formas equivalentes del wa_id hay exactamente una
+        identidad activa del inbox y no es la textual, se usa la guardada: asi
+        el opt-out, la admision y el enlace caen en el contacto que ya existe
+        en vez de abrir otro. Con mas de una se usa la textual y queda un
+        warning con ids de Chatwoot y region, nunca el numero. Sin ninguna, la
+        textual.
+        """
+        if (
+            not whatsapp_inbound_equivalence
+            or shared_supabase is None
+            or settings.chatwoot_account_id is None
+            or settings.chatwoot_inbox_id is None
+        ):
+            return wa_id
+        forms = equivalent_whatsapp_phones(wa_id)
+        if len(forms) < 2:
+            return wa_id
+        try:
+            identities = await shared_supabase.find_active_whatsapp_identities(
+                chatwoot_account_id=settings.chatwoot_account_id,
+                chatwoot_inbox_id=settings.chatwoot_inbox_id,
+                external_user_ids=forms,
+            )
+        except SupabaseError as exc:
+            raise RetryableChatwootWorkError(
+                "chatwoot_inbound_identity_lookup_failed"
+            ) from exc
+        stored = sorted({identity.external_user_id for identity in identities})
+        if len(stored) == 1 and stored[0] != wa_id:
+            logger.info(
+                "chatwoot_inbound_identity_equivalent conversation=%s region=%s",
+                conversation_id,
+                whatsapp_phone_region(wa_id),
+            )
+            return stored[0]
+        if len(stored) > 1:
+            logger.warning(
+                "chatwoot_inbound_identity_duplicated account=%s inbox=%s "
+                "conversation=%s region=%s identities=%s",
+                settings.chatwoot_account_id,
+                settings.chatwoot_inbox_id,
+                conversation_id,
+                whatsapp_phone_region(wa_id),
+                len(stored),
+            )
+        return wa_id
+
+    def inbound_opt_out_stop_user_ids(
+        wa_id: str,
+        external_user_id: str,
+    ) -> tuple[str, ...]:
+        """Los ids cuyo opt-out frena a quien escribe.
+
+        Sin manifiesto, el de siempre. Con manifiesto, el resuelto y despues
+        cada forma del wa_id: un opt-out guardado bajo 521… frena igual a
+        quien hoy la base conoce como 52….
+        """
+        if not whatsapp_inbound_equivalence:
+            return (external_user_id,)
+        return tuple(
+            dict.fromkeys(
+                (external_user_id, wa_id, *equivalent_whatsapp_phones(wa_id))
+            )
+        )
+
     async def run_shadow_with_canonical_history(
         *,
         delivery_id: str,
@@ -3631,29 +3726,41 @@ def create_app(
             raise CanonicalHistoryIncompleteError(
                 "canonical_external_user_id_invalid"
             )
+        inbound_wa_id = external_user_id
+        external_user_id = await resolve_inbound_external_user_id(
+            inbound_wa_id,
+            conversation_id=conversation_id,
+        )
         if opt_out_enforcement_enabled:
             assert shared_supabase is not None
             assert settings.chatwoot_account_id is not None
             assert settings.chatwoot_inbox_id is not None
-            try:
-                stopped = await shared_supabase.has_chatwoot_opt_out_stop(
-                    chatwoot_account_id=settings.chatwoot_account_id,
-                    chatwoot_inbox_id=settings.chatwoot_inbox_id,
-                    chatwoot_conversation_id=conversation_id,
-                    external_user_id=external_user_id,
-                )
-            except SupabaseError as exc:
-                raise RetryableChatwootWorkError(
-                    "chatwoot_opt_out_stop_check_failed"
-                ) from exc
-            if stopped:
+            stopped_user_id: str | None = None
+            for stop_user_id in inbound_opt_out_stop_user_ids(
+                inbound_wa_id, external_user_id
+            ):
+                try:
+                    stopped = await shared_supabase.has_chatwoot_opt_out_stop(
+                        chatwoot_account_id=settings.chatwoot_account_id,
+                        chatwoot_inbox_id=settings.chatwoot_inbox_id,
+                        chatwoot_conversation_id=conversation_id,
+                        external_user_id=stop_user_id,
+                    )
+                except SupabaseError as exc:
+                    raise RetryableChatwootWorkError(
+                        "chatwoot_opt_out_stop_check_failed"
+                    ) from exc
+                if stopped:
+                    stopped_user_id = stop_user_id
+                    break
+            if stopped_user_id is not None:
                 try:
                     reconciliation = (
                         await shared_supabase.reconcile_chatwoot_opt_out_stop(
                             chatwoot_account_id=settings.chatwoot_account_id,
                             chatwoot_inbox_id=settings.chatwoot_inbox_id,
                             chatwoot_conversation_id=conversation_id,
-                            external_user_id=external_user_id,
+                            external_user_id=stopped_user_id,
                         )
                     )
                 except SupabaseError as exc:
@@ -3908,25 +4015,37 @@ def create_app(
                 )
                 if not external_user_id.isdigit():
                     raise RuntimeError("chatwoot_reset_external_user_id_invalid")
-                try:
-                    stopped = await shared_supabase.has_chatwoot_opt_out_stop(
-                        chatwoot_account_id=settings.chatwoot_account_id,
-                        chatwoot_inbox_id=settings.chatwoot_inbox_id,
-                        chatwoot_conversation_id=conversation_id,
-                        external_user_id=external_user_id,
-                    )
-                except SupabaseError as exc:
-                    raise RetryableChatwootWorkError(
-                        "chatwoot_reset_opt_out_stop_check_failed"
-                    ) from exc
-                if stopped:
+                reset_wa_id = external_user_id
+                external_user_id = await resolve_inbound_external_user_id(
+                    reset_wa_id,
+                    conversation_id=conversation_id,
+                )
+                reset_stopped_user_id: str | None = None
+                for stop_user_id in inbound_opt_out_stop_user_ids(
+                    reset_wa_id, external_user_id
+                ):
+                    try:
+                        stopped = await shared_supabase.has_chatwoot_opt_out_stop(
+                            chatwoot_account_id=settings.chatwoot_account_id,
+                            chatwoot_inbox_id=settings.chatwoot_inbox_id,
+                            chatwoot_conversation_id=conversation_id,
+                            external_user_id=stop_user_id,
+                        )
+                    except SupabaseError as exc:
+                        raise RetryableChatwootWorkError(
+                            "chatwoot_reset_opt_out_stop_check_failed"
+                        ) from exc
+                    if stopped:
+                        reset_stopped_user_id = stop_user_id
+                        break
+                if reset_stopped_user_id is not None:
                     try:
                         reconciliation = (
                             await shared_supabase.reconcile_chatwoot_opt_out_stop(
                                 chatwoot_account_id=settings.chatwoot_account_id,
                                 chatwoot_inbox_id=settings.chatwoot_inbox_id,
                                 chatwoot_conversation_id=conversation_id,
-                                external_user_id=external_user_id,
+                                external_user_id=reset_stopped_user_id,
                             )
                         )
                     except SupabaseError as exc:
@@ -3978,6 +4097,13 @@ def create_app(
                 or not external_user_id.isdigit()
             ):
                 raise RuntimeError("chatwoot_cut_b_canonical_identity_invalid")
+            # Toda llamada a la base de aca en adelante usa la identidad que ya
+            # existe para este movil. Lo que se valida contra Chatwoot
+            # (scoped_expected_jid) sigue siendo el wa_id textual del webhook.
+            external_user_id = await resolve_inbound_external_user_id(
+                external_user_id,
+                conversation_id=conversation_id,
+            )
             if settings.chatwoot_post_inbound_discount_planning_enabled:
                 assert settings.commercial_ally_discount_policy_key is not None
                 assert settings.commercial_ally_discount_policy_version is not None

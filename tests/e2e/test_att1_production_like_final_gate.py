@@ -114,7 +114,9 @@ class _Authority:
     async def find_contact_by_email(self, _value: str) -> None:
         return None
 
-    async def find_contact_by_phone(self, _value: str) -> None:
+    # The portable resolution looks the contact up by the equivalent forms of
+    # the phone (52/521, 54/549), never by the exact one.
+    async def find_contact_by_phones(self, _values: tuple[str, ...]) -> None:
         return None
 
     async def create_contact(self, **_: object) -> str:

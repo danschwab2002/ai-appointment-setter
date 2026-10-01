@@ -1,0 +1,583 @@
+"""El entrante de WhatsApp cuando la base conoce al movil con la otra forma.
+
+Con manifiesto, quien dejo el formulario queda guardado como 52 + 10 digitos
+(o 54 + 10 en Argentina) y escribe desde 521 + 10 (549 + 10), que es su wa_id.
+El bridge resuelve el ``external_user_id`` entrante contra las identidades
+activas del inbox antes de hablar con la base: si hay exactamente una y no es
+la textual, usa la guardada. Asi un «No mas mensajes» frena al contacto que ya
+existe en vez de abrir otro. Lo que se valida contra Chatwoot sigue siendo el
+wa_id textual del webhook.
+
+Datos:
+
+* ``chatwoot_message_created_audio_inbox_9_conv_200_20260928.json``: el webhook
+  ``message_created`` real de la conversacion 200 del inbox 9 (cuenta 1), de
+  una persona mexicana: su ``source_id`` es 521 + 10 digitos (saneados). Es un
+  audio, con ``content`` nulo.
+* ``tests/fixtures/instances/att1/instancia.toml``: el manifiesto de ATT1. Sus
+  ids de Chatwoot (cuenta 2, inbox 11) se cambian por los de la captura
+  (cuenta 1, inbox 9), porque el modo scoped exige que coincidan. La captura
+  no se toca.
+* Para el opt-out hace falta un texto y la captura es un audio. En esos tests
+  se reemplaza SOLO ``content`` (en el webhook y en el mismo mensaje del
+  historial) por una frase de baja; no hay captura de un «No mas mensajes» ni
+  de la pulsacion del boton QUICK_REPLY (deuda anotada en el commit).
+* Las filas de ``channel_identities`` son la forma con que PostgREST devuelve
+  la tabla (no son un payload externo).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import copy
+import json
+import logging
+import shutil
+from dataclasses import replace
+from pathlib import Path
+from typing import Any
+
+import httpx
+import pytest
+
+from bridge.app import Settings, create_app
+from bridge.commercial_knowledge import CommercialKnowledge
+from bridge.instance_manifest import InstanceManifest
+from bridge.supabase import (
+    InboundOptOutResult,
+    SupabaseClient,
+    SupabaseError,
+    WhatsAppIdentityMatch,
+)
+from test_audio_transcription import _webhook_200
+from test_webhook import (
+    StubChatwootClient,
+    StubInboundCommercialSupabase,
+    StubShadowProcessor,
+    _post,
+    _signed_headers,
+)
+
+ATT1 = Path(__file__).parent / "fixtures" / "instances" / "att1"
+SECRET = "webhook-secret"
+WA_ID = "5210000000200"  # el source_id de la captura: 521 + 10 digitos
+FORM_ID = "520000000200"  # el mismo movil como lo guarda el formulario
+WA_JID = f"{WA_ID}@s.whatsapp.net"
+OPT_OUT_TEXT = "No más mensajes"
+
+
+class _Supabase(StubInboundCommercialSupabase):
+    """La base: identidades activas del inbox, admision y opt-out durable."""
+
+    def __init__(
+        self,
+        *,
+        identities: tuple[str, ...] = (),
+        stopped_user_ids: tuple[str, ...] = (),
+        lookup_error: bool = False,
+    ) -> None:
+        super().__init__()
+        self.identities = identities
+        self.stopped_user_ids = stopped_user_ids
+        self.lookup_error = lookup_error
+        self.identity_lookups: list[dict[str, object]] = []
+        self.stop_checks: list[str] = []
+        self.opt_outs: list[dict[str, object]] = []
+        self.reconciliations: list[dict[str, object]] = []
+
+    async def find_active_whatsapp_identities(
+        self, **kwargs: object
+    ) -> list[WhatsAppIdentityMatch]:
+        self.identity_lookups.append(kwargs)
+        if self.lookup_error:
+            raise SupabaseError("find_active_whatsapp_identities_failed: HTTP 503")
+        return [
+            WhatsAppIdentityMatch(
+                channel_identity_id=f"identity-{external_user_id}",
+                contact_id=f"contact-{external_user_id}",
+                external_user_id=external_user_id,
+            )
+            for external_user_id in self.identities
+        ]
+
+    async def has_chatwoot_opt_out_stop(self, **kwargs: object) -> bool:
+        external_user_id = str(kwargs["external_user_id"])
+        self.stop_checks.append(external_user_id)
+        return external_user_id in self.stopped_user_ids
+
+    async def apply_chatwoot_inbound_opt_out(
+        self, **kwargs: object
+    ) -> InboundOptOutResult:
+        self.opt_outs.append(kwargs)
+        return InboundOptOutResult(
+            outcome="applied",
+            opt_out_event_id="opt-out-event-200",
+            contact_id="contact-form",
+            affected_cases=1,
+            affected_actions=1,
+            affected_attempts=0,
+        )
+
+    async def reconcile_chatwoot_opt_out_stop(
+        self, **kwargs: object
+    ) -> InboundOptOutResult:
+        self.reconciliations.append(kwargs)
+        return InboundOptOutResult(
+            outcome="already_applied",
+            opt_out_event_id="opt-out-event-200",
+            contact_id="contact-form",
+            affected_cases=0,
+            affected_actions=0,
+            affected_attempts=0,
+        )
+
+
+def _manifest_settings(tmp_path: Path) -> Settings:
+    instance = tmp_path / "instancia"
+    shutil.copytree(ATT1, instance)
+    knowledge_path = instance / "conocimiento" / "knowledge-v1.toml"
+    knowledge_path.write_text(
+        knowledge_path.read_text(encoding="utf-8").replace(
+            'estado = "borrador"',
+            'estado = "aprobado"\naprobado_por = "test"\naprobado_el = 2026-09-28',
+        ),
+        encoding="utf-8",
+    )
+    manifest = InstanceManifest.from_toml_file(instance / "instancia.toml")
+    manifest = replace(
+        manifest,
+        flows={**manifest.flows, "inbound": True},
+        chatwoot_account_id=1,
+        chatwoot_inbox_id=9,
+    )
+    config = manifest.to_commercial_ally_config()
+    return Settings(
+        webhook_secret=SECRET,
+        allowed_jid=None,
+        capture_dir=tmp_path / "captures",
+        max_age_seconds=300,
+        commercial_ally_config=config,
+        commercial_ally_manifest_path=instance / "instancia.toml",
+        instance_manifest=manifest,
+        hermes_model_name=manifest.agent_model_name,
+        commercial_knowledge=CommercialKnowledge.from_toml_file(knowledge_path),
+        agent_bot_id=1,
+        chatwoot_account_id=1,
+        chatwoot_inbox_id=9,
+        chatwoot_scoped_inbound_senders_enabled=True,
+        chatwoot_cut_b_admission_enabled=True,
+        chatwoot_cut_b_scope_key=config.inbound_scope_key,
+        chatwoot_cut_b_scope_version=config.inbound_scope_version,
+        chatwoot_cut_b_agent_enabled=True,
+        automated_replies_enabled=True,
+        chatwoot_durable_opt_out_enabled=True,
+        chatwoot_opt_out_macro_id=5,
+        opt_out_projection_worker_id="opt-out-projection-test",
+        chatwoot_human_pause_enabled=True,
+        human_handoff_admission_enabled=True,
+        human_handoff_projection_enabled=True,
+        handoff_projection_policy_key="att1-derivacion",
+        handoff_projection_policy_version=1,
+        human_handoff_projection_worker_id="handoff-projection-test",
+    )
+
+
+def _johanna_settings(tmp_path: Path) -> Settings:
+    # Johanna hoy: sin manifiesto, con su remitente fijo (el mismo armado de
+    # tests/test_app_audio_transcription.py).
+    return Settings(
+        webhook_secret=SECRET,
+        allowed_jid=WA_JID,
+        capture_dir=tmp_path / "captures",
+        max_age_seconds=300,
+        agent_bot_id=1,
+        chatwoot_account_id=1,
+        chatwoot_inbox_id=9,
+        chatwoot_cut_b_admission_enabled=True,
+        chatwoot_cut_b_scope_key="libre-de-ansiedad-inbound",
+        chatwoot_cut_b_scope_version=2,
+        chatwoot_cut_b_agent_enabled=True,
+        automated_replies_enabled=True,
+    )
+
+
+def _text_webhook(text: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """La captura con ``content`` reemplazado, y el mismo mensaje en el historial."""
+    webhook = copy.deepcopy(_webhook_200())
+    webhook["content"] = text
+    webhook["attachments"] = []
+    message = copy.deepcopy(webhook["conversation"]["messages"][0])
+    message["content"] = text
+    message["attachments"] = []
+    webhook["conversation"]["messages"] = [copy.deepcopy(message)]
+    return webhook, [message]
+
+
+def _process(
+    tmp_path: Path,
+    supabase: _Supabase,
+    *,
+    settings: Settings | None = None,
+    webhook: dict[str, Any] | None = None,
+    history: list[dict[str, Any]] | None = None,
+) -> tuple[StubChatwootClient, StubShadowProcessor, Any]:
+    shadow = StubShadowProcessor({"decision": "reply", "reply": "Te leemos."})
+    chatwoot = StubChatwootClient(
+        messages=history
+        if history is not None
+        else [copy.deepcopy(_webhook_200()["conversation"]["messages"][0])]
+    )
+    app = create_app(
+        settings or _manifest_settings(tmp_path),
+        chatwoot_client=chatwoot,
+        shadow_processor=shadow,
+        supabase_client=supabase,  # type: ignore[arg-type]
+    )
+    raw_body = json.dumps(
+        webhook if webhook is not None else _webhook_200(), separators=(",", ":")
+    ).encode("utf-8")
+    response = _post(
+        app, raw_body, _signed_headers(raw_body, secret=SECRET, delivery="inbound-200")
+    )
+    assert response.status_code == 202
+    asyncio.run(app.state.chatwoot_worker.run_once())
+    return chatwoot, shadow, app
+
+
+# ------------------------------------------------------------- la admision
+
+
+def test_the_captured_wa_id_is_the_whatsapp_form_of_a_mexican_mobile() -> None:
+    assert _webhook_200()["conversation"]["contact_inbox"]["source_id"] == WA_ID
+    assert len(WA_ID) == 13 and WA_ID.startswith("521")
+    assert FORM_ID == "52" + WA_ID[3:]
+
+
+def test_inbound_uses_the_identity_the_form_already_stored(tmp_path: Path) -> None:
+    supabase = _Supabase(identities=(FORM_ID,))
+
+    _process(tmp_path, supabase)
+
+    assert supabase.identity_lookups[0] == {
+        "chatwoot_account_id": 1,
+        "chatwoot_inbox_id": 9,
+        "external_user_ids": (FORM_ID, WA_ID),
+    }
+    [admission] = supabase.admission_calls
+    assert admission["external_user_id"] == FORM_ID
+    assert admission["external_conversation_id"] == 200
+
+
+def test_inbound_without_a_stored_identity_keeps_the_textual_wa_id(
+    tmp_path: Path,
+) -> None:
+    supabase = _Supabase(identities=())
+
+    _process(tmp_path, supabase)
+
+    assert supabase.identity_lookups
+    [admission] = supabase.admission_calls
+    assert admission["external_user_id"] == WA_ID
+
+
+def test_inbound_with_its_own_identity_keeps_it(tmp_path: Path) -> None:
+    supabase = _Supabase(identities=(WA_ID,))
+
+    _process(tmp_path, supabase)
+
+    [admission] = supabase.admission_calls
+    assert admission["external_user_id"] == WA_ID
+
+
+def test_inbound_with_both_identities_uses_the_textual_one_and_warns(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # La misma persona con dos identidades (dos contactos): no se elige por
+    # ella. Queda la textual y un aviso con ids de Chatwoot y region.
+    supabase = _Supabase(identities=(FORM_ID, WA_ID))
+
+    with caplog.at_level(logging.WARNING):
+        _process(tmp_path, supabase)
+
+    [admission] = supabase.admission_calls
+    assert admission["external_user_id"] == WA_ID
+    [warning] = [
+        record.getMessage()
+        for record in caplog.records
+        if "chatwoot_inbound_identity_duplicated" in record.getMessage()
+    ]
+    assert "account=1" in warning and "inbox=9" in warning
+    assert "conversation=200" in warning and "region=MX" in warning
+    assert "identities=2" in warning
+    # Nunca el numero, en ninguna de sus formas.
+    assert WA_ID not in caplog.text and FORM_ID not in caplog.text
+    assert WA_ID[3:] not in caplog.text
+
+
+def test_a_failed_identity_lookup_keeps_the_work_for_a_retry(tmp_path: Path) -> None:
+    supabase = _Supabase(lookup_error=True)
+
+    _, _, app = _process(tmp_path, supabase)
+
+    # No se admite con una identidad adivinada: el trabajo queda para reintentar.
+    assert supabase.admission_calls == []
+    [item] = app.state.chatwoot_inbox.admitted_items(include_deferred=True)
+    assert item.delivery_id == "inbound-200"
+
+
+# ---------------------------------------------------------------- el opt-out
+
+
+def test_an_opt_out_from_the_whatsapp_form_stops_the_identity_of_the_form(
+    tmp_path: Path,
+) -> None:
+    supabase = _Supabase(identities=(FORM_ID,))
+    webhook, history = _text_webhook(OPT_OUT_TEXT)
+
+    chatwoot, shadow, _ = _process(
+        tmp_path, supabase, webhook=webhook, history=history
+    )
+
+    [opt_out] = supabase.opt_outs
+    assert opt_out["external_user_id"] == FORM_ID
+    assert opt_out["chatwoot_conversation_id"] == 200
+    assert opt_out["chatwoot_message_id"] == 2472
+    assert opt_out["rule_key"] == "stop_receiving_messages"
+    # El agente no corre ni contesta.
+    assert shadow.calls == []
+    assert chatwoot.reply_calls == []
+    # Contra Chatwoot se valida el wa_id textual del webhook, no el resuelto.
+    assert {call["expected_jid"] for call in chatwoot.authority_calls} == {WA_JID}
+
+
+def test_the_stop_check_looks_at_every_form_of_the_phone(tmp_path: Path) -> None:
+    supabase = _Supabase(identities=(FORM_ID,))
+    webhook, history = _text_webhook("Hola, ¿siguen ahí?")
+
+    chatwoot, shadow, _ = _process(
+        tmp_path, supabase, webhook=webhook, history=history
+    )
+
+    # El resuelto primero y despues la otra forma: ninguna tiene un stop.
+    assert supabase.stop_checks == [FORM_ID, WA_ID]
+    assert supabase.reconciliations == []
+    assert len(shadow.calls) == 1
+    # La admision y su reautorizacion usan la identidad guardada.
+    assert {call["external_user_id"] for call in supabase.admission_calls} == {FORM_ID}
+    [reply] = chatwoot.reply_calls
+    assert reply["expected_jid"] == WA_JID
+
+
+def test_an_opt_out_stored_under_the_other_form_still_stops_the_reply(
+    tmp_path: Path,
+) -> None:
+    # La persona se dio de baja cuando la base todavia no la conocia: el
+    # opt-out quedo bajo el wa_id textual (521…). Despues el formulario creo su
+    # identidad 52…, que es la que hoy resuelve el entrante. El stop vale igual.
+    supabase = _Supabase(identities=(FORM_ID,), stopped_user_ids=(WA_ID,))
+    webhook, history = _text_webhook("Hola, ¿siguen ahí?")
+
+    chatwoot, shadow, _ = _process(
+        tmp_path, supabase, webhook=webhook, history=history
+    )
+
+    assert supabase.stop_checks == [FORM_ID, WA_ID]
+    [reconciliation] = supabase.reconciliations
+    assert reconciliation["external_user_id"] == WA_ID
+    assert shadow.calls == []
+    assert chatwoot.reply_calls == []
+
+
+def test_the_reset_command_respects_a_stop_under_any_form(tmp_path: Path) -> None:
+    # "/nuevo" tiene su propio chequeo de stop antes de confirmar: tambien mira
+    # las dos formas.
+    stopped = _Supabase(identities=(FORM_ID,), stopped_user_ids=(WA_ID,))
+    webhook, history = _text_webhook("/nuevo")
+
+    chatwoot, _, _ = _process(tmp_path, stopped, webhook=webhook, history=history)
+
+    assert stopped.stop_checks == [FORM_ID, WA_ID]
+    assert [call["external_user_id"] for call in stopped.reconciliations] == [WA_ID]
+    assert chatwoot.reply_calls == []
+
+    free = _Supabase(identities=(FORM_ID,))
+    chatwoot, _, _ = _process(
+        tmp_path / "sin-stop", free, webhook=webhook, history=history
+    )
+
+    assert free.stop_checks == [FORM_ID, WA_ID]
+    [reply] = chatwoot.reply_calls
+    assert reply["content"] == "Memoria eliminada."
+    assert reply["expected_jid"] == WA_JID
+
+
+# ------------------------------------------------------------------- Johanna
+
+
+class _JohannaSupabase(_Supabase):
+    async def find_active_whatsapp_identities(self, **_: object) -> list[Any]:
+        raise AssertionError("a runtime without a manifest never resolves forms")
+
+
+def test_without_a_manifest_the_wa_id_is_used_as_it_arrives(tmp_path: Path) -> None:
+    supabase = _JohannaSupabase(identities=(FORM_ID,))
+    webhook, history = _text_webhook("Hola, ¿siguen ahí?")
+
+    chatwoot, shadow, _ = _process(
+        tmp_path,
+        supabase,
+        settings=_johanna_settings(tmp_path),
+        webhook=webhook,
+        history=history,
+    )
+
+    # La admision y su reautorizacion antes de responder, las dos textuales.
+    assert supabase.admission_calls
+    assert {call["external_user_id"] for call in supabase.admission_calls} == {WA_ID}
+    # Un solo chequeo de stop, con el id textual: lo de siempre.
+    assert supabase.stop_checks == [WA_ID]
+    assert len(chatwoot.reply_calls) == 1
+
+
+def test_the_projections_accept_the_other_form_only_with_a_manifest(
+    tmp_path: Path,
+) -> None:
+    # El opt-out y la derivacion quedan guardados con la identidad resuelta
+    # (52…) y la conversacion de Chatwoot es del wa_id (521…): con manifiesto
+    # las proyecciones aceptan la otra forma; sin manifiesto validan exacto.
+    manifest_app = create_app(
+        _manifest_settings(tmp_path),
+        chatwoot_client=StubChatwootClient(),
+        shadow_processor=StubShadowProcessor(),
+        supabase_client=_Supabase(),  # type: ignore[arg-type]
+    )
+    johanna_app = create_app(
+        replace(
+            _johanna_settings(tmp_path),
+            chatwoot_durable_opt_out_enabled=True,
+            chatwoot_opt_out_macro_id=5,
+            opt_out_projection_worker_id="opt-out-projection-test",
+            human_handoff_admission_enabled=True,
+            human_handoff_projection_enabled=True,
+            handoff_projection_policy_key="lancemos-inbound-handoff",
+            handoff_projection_policy_version=1,
+            human_handoff_projection_worker_id="handoff-projection-test",
+        ),
+        chatwoot_client=StubChatwootClient(),
+        shadow_processor=StubShadowProcessor(),
+        supabase_client=_JohannaSupabase(),  # type: ignore[arg-type]
+    )
+
+    for worker in ("opt_out_projection_worker", "human_handoff_projection_worker"):
+        assert getattr(manifest_app.state, worker)._whatsapp_equivalence_enabled is True
+        assert getattr(johanna_app.state, worker)._whatsapp_equivalence_enabled is False
+
+
+# -------------------------------------------- la lectura de channel_identities
+
+
+def _identity_row(external_user_id: str, *, inbox_id: object) -> dict[str, Any]:
+    return {
+        "id": f"identity-{external_user_id}",
+        "contact_id": f"contact-{external_user_id}",
+        "external_user_id": external_user_id,
+        "metadata": {} if inbox_id is None else {"inbox_id": inbox_id},
+    }
+
+
+def _identities(rows: list[dict[str, Any]], seen: list[httpx.Request]) -> SupabaseClient:
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=rows, request=request)
+
+    return SupabaseClient(
+        base_url="https://supabase.example.test",
+        service_role_key="test-key",
+        transport=httpx.MockTransport(handler),
+    )
+
+
+def test_identity_lookup_reads_only_active_whatsapp_identities_of_the_account() -> None:
+    seen: list[httpx.Request] = []
+    client = _identities(
+        [
+            # La base guarda el inbox como numero o como texto segun quien
+            # creo la identidad (el planificador o la admision entrante).
+            _identity_row(FORM_ID, inbox_id=9),
+            _identity_row(WA_ID, inbox_id="9"),
+        ],
+        seen,
+    )
+
+    matches = asyncio.run(client.find_active_whatsapp_identities(
+        chatwoot_account_id=1,
+        chatwoot_inbox_id=9,
+        external_user_ids=(FORM_ID, WA_ID),
+    ))
+
+    [request] = seen
+    assert request.method == "GET"
+    assert request.url.path == "/rest/v1/channel_identities"
+    params = dict(request.url.params)
+    assert params["channel"] == "eq.whatsapp"
+    assert params["account_id"] == "eq.chatwoot:1"
+    assert params["identity_status"] == "eq.active"
+    assert params["external_user_id"] == f"in.({FORM_ID},{WA_ID})"
+    assert [match.external_user_id for match in matches] == [FORM_ID, WA_ID]
+    assert matches[0].contact_id == f"contact-{FORM_ID}"
+
+
+def test_identity_lookup_leaves_out_identities_not_bound_to_the_inbox() -> None:
+    # La misma condicion que aplican el opt-out durable y la admision
+    # entrante: metadata ->> 'inbox_id' tiene que ser el inbox.
+    client = _identities(
+        [
+            _identity_row(FORM_ID, inbox_id=24),
+            _identity_row(WA_ID, inbox_id=None),
+        ],
+        [],
+    )
+
+    matches = asyncio.run(client.find_active_whatsapp_identities(
+        chatwoot_account_id=1,
+        chatwoot_inbox_id=9,
+        external_user_ids=(FORM_ID, WA_ID),
+    ))
+
+    assert matches == []
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"chatwoot_account_id": 0, "chatwoot_inbox_id": 9, "external_user_ids": (WA_ID,)},
+        {"chatwoot_account_id": 1, "chatwoot_inbox_id": True, "external_user_ids": (WA_ID,)},
+        {"chatwoot_account_id": 1, "chatwoot_inbox_id": 9, "external_user_ids": ()},
+        {
+            "chatwoot_account_id": 1,
+            "chatwoot_inbox_id": 9,
+            "external_user_ids": (WA_ID, "1) or (1"),
+        },
+    ],
+)
+def test_identity_lookup_refuses_anything_but_ids_and_digits(
+    kwargs: dict[str, Any],
+) -> None:
+    seen: list[httpx.Request] = []
+    client = _identities([], seen)
+
+    with pytest.raises(SupabaseError, match="find_active_whatsapp_identities_invalid_input"):
+        asyncio.run(client.find_active_whatsapp_identities(**kwargs))
+
+    assert seen == []
+
+
+def test_identity_lookup_refuses_a_row_it_did_not_ask_for() -> None:
+    client = _identities([_identity_row("5215599999999", inbox_id=9)], [])
+
+    with pytest.raises(SupabaseError):
+        asyncio.run(client.find_active_whatsapp_identities(
+            chatwoot_account_id=1,
+            chatwoot_inbox_id=9,
+            external_user_ids=(FORM_ID, WA_ID),
+        ))
