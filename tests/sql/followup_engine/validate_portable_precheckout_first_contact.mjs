@@ -31,6 +31,10 @@
 //   4. opt-out: previo y unmatched en la otra forma, no planifica; entre el
 //      plan y el envio, el arranque lo rechaza; aplicado al contacto, cierra
 //      el caso;
+//  4b. derivacion a una persona: con la conversacion del contacto derivada
+//      (paused_human) el formulario no planifica; derivada entre el plan y el
+//      envio, la reevaluacion cancela; y entre la reevaluacion y el arranque,
+//      el arranque la rechaza sin consumir cupo;
 //   5. compra: resuelta, ambigua antes de la reevaluacion, ambigua entre la
 //      reevaluacion y el arranque, intencion de mas de 7 dias reenviada (el
 //      due_at es el del reenvio) y comprada (frena por identidad), y compra
@@ -78,6 +82,9 @@
 // la compra el de validate_commercial_ally_multi_offer.mjs, con los valores de
 // ATT1. El texto aceptado es un marcador: la base guarda el que le pasa el
 // bridge.
+// Derivacion: la politica de proyeccion att1-derivacion-entrante con el equipo
+// del manifiesto (chatwoot.equipo_derivacion), como la deja aprovisionar-att1
+// (leida en la base de ATT1 el 2026-10-01); el texto de la nota es un marcador.
 import { PGlite } from '@electric-sql/pglite';
 import { randomBytes } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -1352,6 +1359,95 @@ const statusOf = async (scope) => one((await asService(() => db.query(`
     between_plan_and_send: inFlightResult,
     applied_to_the_contact: `case ${appliedCase.status}:${appliedAction.terminal_reason}`,
     form_after_applied: afterAppliedResult,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 4b. Derivacion a una persona. La derivacion del entrante marca la
+//     CONVERSACION del contacto (paused_human, automatizacion en paused,
+//     human_takeover), no el caso de fuente landing, que nace sin
+//     conversacion: la reevaluacion compartida sola no la ve. La frena el
+//     criterio blocked_handoff del primer toque de Johanna, en los tres
+//     puntos: al planificar, al reevaluar y al arrancar.
+// ---------------------------------------------------------------------------
+{
+  const HANDOFF = { policy: 'att1-derivacion-entrante', version: 1 };
+  await db.query(`
+    insert into public.human_handoff_projection_policies (
+      policy_key, policy_version, scope_key, scope_version,
+      inbound_scope_key, inbound_scope_version, expected_team_id,
+      note_template_key, note_template_version, private_note_body, active
+    ) values ($1,$2,null,null,$3,$4,$5,'att1-nota-derivacion',1,
+      'Derivacion automatica de prueba.',true)
+  `, [HANDOFF.policy, HANDOFF.version, ATT1.inboundScope, ATT1.inboundVersion,
+    required(manifest.chatwoot?.equipo_derivacion, 'chatwoot.equipo_derivacion')]);
+  let handoffConversation = 881000;
+  // La persona escribe (la admision entrante, con el id que le pasa el
+  // bridge) y el agente la deriva a una persona del equipo.
+  const handOff = async (lead, externalUserId) => {
+    handoffConversation += 1;
+    const inbound = one((await db.query(`
+      select * from public.admit_inbound_commercial_case_v2($1,$2,$3,$4)
+    `, [ATT1.inboundScope, ATT1.inboundVersion, handoffConversation, externalUserId])).rows,
+    `${lead.label} inbound admission`);
+    const handoff = one((await db.query(`
+      select * from public.request_inbound_human_handoff(
+        $1::uuid, $2, 'explicit_human_request', $3, $4, clock_timestamp(), null)
+    `, [inbound.commercial_case_id, `handoff:first-contact:${handoffConversation}`,
+      HANDOFF.policy, HANDOFF.version])).rows, `${lead.label} handoff`);
+    const conversation = one((await db.query(`
+      select status, automation_status, human_takeover
+      from public.conversations where id = $1
+    `, [inbound.conversation_id])).rows, `${lead.label} conversation`);
+    if (handoff.outcome !== 'requested' || conversation.status !== 'paused_human'
+        || conversation.automation_status !== 'paused' || conversation.human_takeover !== true) {
+      throw new Error(`${lead.label}: the conversation was not handed off: ${JSON.stringify({ handoff: handoff.outcome, conversation })}`);
+    }
+    return inbound;
+  };
+
+  // a. Derivada antes del formulario (escribio desde el wa_id, 521...): no se
+  //    planifica ni se toca nada, y el renglon nombra al contacto encontrado.
+  const before = person('derivado-antes', 'MX');
+  const beforeInbound = await handOff(before, before.whatsapp);
+  const beforeFootprint = await footprint();
+  const beforePlan = await submit(before, OPEN_SCOPE);
+  const beforeResult = expectPlan('form after a handoff', beforePlan,
+    'not_planned', 'precheckout_conversation_handoff');
+  await expectNoFootprint('form after a handoff', beforeFootprint);
+  if (beforePlan.contact !== beforeInbound.contact_id) {
+    throw new Error('the plan row of a handed off person does not name the contact');
+  }
+
+  // b. Formulario primero; la persona escribe y la derivan antes del envio. El
+  //    resolvedor entrante del bridge entrega la identidad que creo el plan
+  //    (52...). La derivacion no toca la accion del caso landing: la cancela
+  //    la reevaluacion del primer contacto.
+  const between = person('derivado-entre-plan-y-envio', 'MX');
+  const betweenPlan = await submit(between, OPEN_SCOPE);
+  expectPlan('plan before a handoff', betweenPlan, 'planned', 'first_contact_scheduled');
+  const betweenInbound = await handOff(between, between.plain);
+  const untouched = await actionOf(betweenPlan.actionId);
+  const betweenResult = await expectCancelled(between, betweenPlan, 'precheckout_conversation_handoff');
+
+  // c. Derivada entre la reevaluacion y el arranque: el arranque la rechaza y
+  //    no consume cupo.
+  const late = person('derivado-en-vuelo', 'AR');
+  const latePlan = await submit(late, OPEN_SCOPE);
+  expectPlan('plan before a late handoff', latePlan, 'planned', 'first_contact_scheduled');
+  const lateReservation = await reserve(late, latePlan);
+  const lateInbound = await handOff(late, late.plain);
+  const lateResult = await expectStartRejected('handoff in flight', latePlan,
+    lateReservation, 'precheckout_conversation_handoff');
+
+  if (betweenInbound.contact_id !== betweenPlan.contact || untouched.status !== 'pending'
+      || lateInbound.contact_id !== latePlan.contact) {
+    throw new Error(`handoff: ${JSON.stringify({ sameContact: betweenInbound.contact_id === betweenPlan.contact, action: untouched.status })}`);
+  }
+  results.handoff = {
+    form_after_a_handoff: beforeResult,
+    between_plan_and_send: betweenResult,
+    between_reevaluation_and_start: lateResult,
   };
 }
 

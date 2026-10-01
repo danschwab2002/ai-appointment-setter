@@ -437,6 +437,7 @@ def test_stop_reason_is_read_only_and_names_every_stop() -> None:
         "purchase_by_identity",
         "superseded_by_provider_event",
         "precheckout_prior_opt_out",
+        "precheckout_conversation_handoff",
     }
     order = [
         new.index("return 'intent_purchased';"),
@@ -444,9 +445,30 @@ def test_stop_reason_is_read_only_and_names_every_stop() -> None:
         new.index("return 'purchase_by_identity';"),
         new.index("return 'superseded_by_provider_event';"),
         new.index("return 'precheckout_prior_opt_out';"),
+        new.index("return 'precheckout_conversation_handoff';"),
         new.index("return null;"),
     ]
     assert order == sorted(order)
+    # La conversacion derivada, pausada, cerrada o bloqueada frena con el
+    # criterio del primer toque de Johanna (blocked_handoff), copiado de las dos
+    # funciones que lo aplican alla: al reservar y al arrancar.
+    criterion = (
+        "conversation.contact_id = {owner} and ( conversation.human_takeover "
+        "or conversation.status in ( 'paused_human', 'closed', 'blocked' ) "
+        "or conversation.automation_status in ( 'paused', 'disabled', 'restricted', 'error' ) )"
+    )
+    for johanna in (
+        "20260829000300_precheckout_delayed_one_shot_reservation.sql",
+        "20260829000400_precheckout_delayed_worker_sender.sql",
+    ):
+        assert criterion.format(owner="contact.id") in _executable(
+            (MIGRATIONS / johanna).read_text(encoding="utf-8")
+        ), johanna
+    assert (
+        "if p_contact_id is not null and exists ( select 1 from public.conversations conversation where "
+        + criterion.format(owner="p_contact_id")
+        + " ) then return 'precheckout_conversation_handoff'; end if;"
+    ) in _executable(new)
     for helper in (STOP, FIND):
         text = _new(helper)
         assert "language plpgsql stable security invoker" in _normalized(text)

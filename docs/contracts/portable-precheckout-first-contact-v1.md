@@ -12,7 +12,7 @@ Hasta esta versión el formulario de una instancia portable solo dejaba la inten
 
 - Un envío nuevo del formulario, con los dos permisos, planifica **un** primer contacto: la acción `first_contact_review` con ancla `precheckout_intent`, sobre un caso de fuente `landing`.
 - Sale después de la demora de la política del scope, contada desde el envío que disparó el plan.
-- Se cancela si antes de salir la persona compra, llega su carrito o su pago fallido, se da de baja o pierde el consentimiento. El caso queda `cancelled`, nunca `won`: la venta de alguien a quien no se le escribió no es de este flujo.
+- Se cancela si antes de salir la persona compra, llega su carrito o su pago fallido, se da de baja, la derivan a una persona del equipo o pierde el consentimiento. El caso queda `cancelled`, nunca `won`: la venta de alguien a quien no se le escribió no es de este flujo.
 - No manda seguimientos. La política de este flujo tiene un solo paso (`first_contact`).
 
 Johanna corre sin manifiesto: el flag no arranca sin él, su `/webhooks/lead` sigue en `admit_observed_lead_precheckout` y ninguna función que ejecuta se redefine.
@@ -126,7 +126,7 @@ Motivos de `not_planned`:
 | `precheckout_submission_expired` | El envío ya pasó su `expires_after` |
 | `precheckout_contact_input_invalid`, `precheckout_contact_ambiguous` | La intención no tiene email o teléfono, o la identidad cae en dos contactos |
 | `pilot_contact_not_in_cohort` | En `consented_intent_in_cohort`, el contacto no existe o no integra la cohorte |
-| `intent_purchase_ambiguous`, `purchase_by_identity`, `superseded_by_provider_event`, `precheckout_prior_opt_out` | Un freno |
+| `intent_purchase_ambiguous`, `purchase_by_identity`, `superseded_by_provider_event`, `precheckout_prior_opt_out`, `precheckout_conversation_handoff` | Un freno |
 | `precheckout_contact_already_planned` | Ya hay un primer contacto vivo de esa persona |
 | `pilot_audience_*` y los demás `detail` de `pilot_scope_rejected` | Un rechazo del scope o de la audiencia al planificar (por ejemplo, el teléfono del contacto no es el consentido) |
 
@@ -144,6 +144,9 @@ Un `plan_failed` o un `not_planned` es definitivo para ese envío: solo un enví
 | `purchase_by_identity` | Hay una compra aprobada admitida del binding con el mismo email, o con el mismo teléfono en cualquiera de sus dos formas, de la intención o de un punto del contacto. **No tiene ventana:** no depende del `max_lookback` de la correlación |
 | `superseded_by_provider_event` | La intención quedó clasificada `confirmed_abandonment` o `payment_failure_supported`, o el contacto tiene un caso de fuente `hotmart` abierto del producto. Ese flujo le escribe; este no |
 | `precheckout_prior_opt_out` | Hay un opt-out de Chatwoot de la cuenta del binding en cualquiera de las dos formas del teléfono |
+| `precheckout_conversation_handoff` | El contacto tiene una conversación derivada a una persona (`human_takeover`), en `paused_human`, `closed` o `blocked`, o con la automatización en `paused`, `disabled`, `restricted` o `error` |
+
+El último es el criterio `blocked_handoff` del primer toque de Johanna (`20260829000300` al reservar y `20260829000400` al arrancar), copiado tal cual. Hace falta acá porque la derivación del entrante marca la **conversación** del contacto, no el caso de fuente `landing` (que nace sin conversación): la reevaluación compartida sola no la vería. Mira el estado de la conversación en ese momento; no guarda historia. Va al final porque un opt-out aplicado también deja la conversación bloqueada y conserva su propio motivo.
 
 Dos frenos más viven fuera de esa función:
 

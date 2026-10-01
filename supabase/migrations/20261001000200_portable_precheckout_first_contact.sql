@@ -19,7 +19,9 @@
 --    no sale. Lo usan el planificador, la reevaluacion y el arranque del envio:
 --    intencion comprada o no viva, compra ambigua, compra admitida del binding
 --    con la misma identidad (sin ventana), carrito o pago fallido que lo
---    reemplazan, y opt-out previo en cualquiera de las dos formas del telefono.
+--    reemplazan, opt-out previo en cualquiera de las dos formas del telefono, y
+--    una conversacion del contacto derivada a una persona, pausada, cerrada o
+--    bloqueada (el criterio blocked_handoff del primer toque de Johanna).
 -- 4. _find_portable_precheckout_contact y _ensure_portable_precheckout_contact:
 --    el contacto se busca por punto de email, punto de telefono (las dos
 --    formas), identidad de WhatsApp de la cuenta (las dos formas) y email del
@@ -285,6 +287,34 @@ begin
           )
     ) then
         return 'precheckout_prior_opt_out';
+    end if;
+
+    -- La conversacion de la persona esta en manos de alguien del equipo, o
+    -- pausada, cerrada o bloqueada: una plantilla automatica no entra ahi. Es
+    -- el criterio blocked_handoff del primer toque de Johanna (20260829000300
+    -- al reservar y 20260829000400 al arrancar): cualquier conversacion del
+    -- contacto con human_takeover, en paused_human, closed o blocked, o con la
+    -- automatizacion en paused, disabled, restricted o error. La derivacion
+    -- del entrante marca la conversacion, no el caso landing (que nace sin
+    -- conversacion), asi que la reevaluacion compartida no la veria. Va al
+    -- final: un opt-out aplicado tambien bloquea la conversacion y conserva
+    -- su propio motivo.
+    if p_contact_id is not null
+       and exists (
+           select 1
+           from public.conversations conversation
+           where conversation.contact_id = p_contact_id
+             and (
+                 conversation.human_takeover
+                 or conversation.status in (
+                     'paused_human', 'closed', 'blocked'
+                 )
+                 or conversation.automation_status in (
+                     'paused', 'disabled', 'restricted', 'error'
+                 )
+             )
+       ) then
+        return 'precheckout_conversation_handoff';
     end if;
 
     return null;
