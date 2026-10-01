@@ -380,15 +380,83 @@ def test_the_request_start_rpc_is_chosen_by_the_anchor(
     }
 
 
-def _admit_inbound(client: SupabaseClient) -> object:
+# La admision de siempre (v2) y la portable (con manifiesto, H7): mismo cuerpo,
+# misma lectura de la respuesta y mismo mapeo de errores; cambia solo la RPC.
+INBOUND_ADMISSIONS = (
+    ("admit_inbound_commercial_case", "admit_inbound_commercial_case_v2"),
+    (
+        "admit_portable_inbound_commercial_case",
+        "admit_portable_inbound_commercial_case_v1",
+    ),
+)
+INBOUND_ADMISSION_METHODS = [method for method, _ in INBOUND_ADMISSIONS]
+
+
+def _admit_inbound(
+    client: SupabaseClient, method: str = "admit_inbound_commercial_case"
+) -> object:
     return asyncio.run(
-        client.admit_inbound_commercial_case(
+        getattr(client, method)(
             scope_key="att1-inbound",
             scope_version=1,
             external_conversation_id=200,
             external_user_id="520000000200",
         )
     )
+
+
+_ADMITTED = {
+    "outcome": "created",
+    "commercial_case_id": "00000000-0000-0000-0000-000000000401",
+    "contact_id": "00000000-0000-0000-0000-000000000402",
+    "channel_identity_id": "00000000-0000-0000-0000-000000000403",
+    "conversation_id": "00000000-0000-0000-0000-000000000404",
+    "automation_status": "draft_only",
+}
+
+
+@pytest.mark.parametrize(("method", "rpc"), INBOUND_ADMISSIONS)
+def test_each_inbound_admission_posts_the_same_body_to_its_own_rpc(
+    method: str, rpc: str
+) -> None:
+    client, requests = _recording_client([_ADMITTED])
+
+    admission = _admit_inbound(client, method)
+
+    [request] = requests
+    assert request.method == "POST"
+    assert request.url.path == f"/rest/v1/rpc/{rpc}"
+    assert json.loads(request.content) == {
+        "p_scope_key": "att1-inbound",
+        "p_scope_version": 1,
+        "p_external_conversation_id": 200,
+        "p_external_user_id": "520000000200",
+    }
+    assert admission.outcome == "created"  # type: ignore[attr-defined]
+    assert admission.commercial_case_id == _ADMITTED["commercial_case_id"]  # type: ignore[attr-defined]
+    assert admission.automation_status == "draft_only"  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize("method", INBOUND_ADMISSION_METHODS)
+@pytest.mark.parametrize(
+    ("row", "error"),
+    [
+        ({**_ADMITTED, "outcome": "adopted"}, "inbound_commercial_case_admission_invalid_outcome"),
+        ({**_ADMITTED, "automation_status": "enabled"}, "inbound_commercial_case_admission_not_draft_only"),
+        ({**_ADMITTED, "outcome": "blocked"}, "inbound_commercial_case_admission_blocked_state_invalid"),
+    ],
+)
+def test_each_inbound_admission_reads_the_answer_the_same_way(
+    method: str, row: dict[str, object], error: str
+) -> None:
+    # La portable no devuelve nada que la v2 no devuelva: una conversacion que
+    # no quedo en draft_only (o un outcome nuevo) no llega al agente.
+    client, _ = _recording_client([row])
+
+    with pytest.raises(SupabaseError) as failed:
+        _admit_inbound(client, method)
+
+    assert str(failed.value) == error
 
 
 @pytest.mark.parametrize(
@@ -402,16 +470,18 @@ def _admit_inbound(client: SupabaseClient) -> object:
         (400, "21000", "inbound_external_conversation_ownership_ambiguous"),
     ],
 )
+@pytest.mark.parametrize("method", INBOUND_ADMISSION_METHODS)
 def test_an_inbound_admission_the_base_rejects_for_good_carries_its_reason(
-    status: int, code: str, message: str
+    status: int, code: str, message: str, method: str
 ) -> None:
     # La forma con que PostgREST devuelve un raise (code/message/details/hint).
+    # La portable que no adopta delega en la v2 y devuelve su mismo rechazo.
     client = _rejecting_client(
         {"code": code, "message": message, "details": None, "hint": None}, status=status
     )
 
     with pytest.raises(SupabasePermanentError) as rejected:
-        _admit_inbound(client)
+        _admit_inbound(client, method)
 
     assert rejected.value.reason == message
     # El texto del error es el de siempre: quien no mira el tipo no nota nada.
@@ -429,15 +499,21 @@ def test_an_inbound_admission_the_base_rejects_for_good_carries_its_reason(
         # Un mensaje que no es un codigo no se copia a ningun lado.
         (400, {"code": "22000", "message": "Compradora 5215555550101"}),
         (502, ["not", "an", "object"]),
+        # La RPC todavia no existe (PostgREST, funcion fuera del cache).
+        (404, {"code": "PGRST202", "message": "Could not find the function"}),
     ],
 )
+@pytest.mark.parametrize("method", INBOUND_ADMISSION_METHODS)
 def test_any_other_failed_inbound_admission_stays_retryable(
-    status: int, body: object
+    status: int, body: object, method: str
 ) -> None:
+    # Incluido el 404 de PostgREST cuando el bridge sale antes que la
+    # migracion 000400: la portable no existe todavia y el entrante se
+    # reintenta hasta que se aplique.
     client = _rejecting_client(body, status=status)
 
     with pytest.raises(SupabaseError) as failed:
-        _admit_inbound(client)
+        _admit_inbound(client, method)
 
     assert not isinstance(failed.value, SupabasePermanentError)
     assert str(failed.value) == f"inbound_commercial_case_admission_failed: HTTP {status}"

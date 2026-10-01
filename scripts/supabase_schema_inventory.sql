@@ -4082,6 +4082,102 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'pilot_scope_audience_mode_read'
+    union all
+    select
+        '20261001000400',
+        '20261001000400_portable_inbound_adopts_template_conversation.sql',
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_portable_inbound_commercial_case_v1(text,integer,bigint,text)')
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+              and position('public.admit_inbound_commercial_case_v2(' in definition) > 0
+              and position('human_handoff' in definition) = 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_portable_inbound_commercial_case_v1(text,integer,bigint,text)')
+              and position('inbound_adopted_template_conversation' in definition) > 0
+              and position('public.pilot_recovery_case_bindings' in definition) > 0
+              and position('''delivery_unknown''' in definition) > 0
+              and position('''do_not_contact''' in definition) > 0
+              and position('public.contact_opt_out_events' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_portable_inbound_commercial_case_v1(text,integer,bigint,text)')
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        3,
+        'portable_inbound_template_adoption'
+    union all
+    select
+        '20261001000500',
+        '20261001000500_commercial_case_lookups_by_inbound_kind.sql',
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.mark_human_handoff_attended(bigint,timestamptz,timestamptz)')
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+              and position('inbound_adopted_template_conversation' in definition) > 0
+              and position('''inbound_sales'' or not v_inbound_only' in definition) > 0
+              and position('mark_human_handoff_attended_ambiguous_case' in definition) > 0
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.claim_conversation_reactivation(bigint,text,text,text,text,bigint,integer,integer,integer,timestamptz)')
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+              and position('inbound_adopted_template_conversation' in definition) > 0
+              and position('''inbound_sales'' or not v_inbound_only' in definition) > 0
+              and position('claim_conversation_reactivation_ambiguous_case' in definition) > 0
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.resume_paused_conversation(bigint,text,text,integer,integer,timestamptz)')
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+              and position('inbound_adopted_template_conversation' in definition) > 0
+              and position('''inbound_sales'' or not v_inbound_only' in definition) > 0
+              and position('resume_paused_conversation_ambiguous_case' in definition) > 0
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.claim_conversation_followup_v1(bigint,bigint,bigint,text,text,text,text,text,text,text,bigint,bigint,integer,text,timestamptz)')
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+              and position('inbound_adopted_template_conversation' in definition) > 0
+              and position('''inbound_sales'' or not v_inbound_only' in definition) > 0
+              and position('claim_conversation_followup_ambiguous_case' in definition) > 0
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        4,
+        'commercial_case_lookups_by_inbound_kind'
 )
 select
     version,

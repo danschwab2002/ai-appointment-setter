@@ -84,3 +84,13 @@ jobs:
         run: >-
           createdb -h 127.0.0.1 -p 5432 portable_precheckout_first_contact_ci
           && uv run python tests/sql/followup_engine/real_postgres_portable_precheckout_first_contact.py
+      - name: Verify portable inbound template adoption on PostgreSQL
+        env:
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          DATABASE_URL: postgresql://postgres@127.0.0.1:5432/portable_inbound_adoption_ci
+          PSQL: /usr/bin/psql
+          ALLOW_DISPOSABLE_DATABASE: portable-inbound-adoption
+        run: >-
+          createdb -h 127.0.0.1 -p 5432 portable_inbound_adoption_ci
+          && uv run python tests/sql/followup_engine/real_postgres_portable_inbound_adoption.py

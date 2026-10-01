@@ -56,8 +56,13 @@ def test_migration_creates_one_new_function_and_replaces_none() -> None:
             earlier[path.name] = path.read_text(encoding="utf-8")
     for filename, text in earlier.items():
         assert NAME not in text, filename
-    # Es la ultima de la cadena: nada posterior la redefine.
-    assert sorted(path.name for path in MIGRATIONS.glob("*.sql"))[-1] == MIGRATION.name
+    # Nada posterior la redefine.
+    for path in sorted(MIGRATIONS.glob("*.sql")):
+        if path.name > MIGRATION.name:
+            assert not re.search(
+                rf"create\s+(?:or\s+replace\s+)?function\s+public\.{NAME}\s*\(",
+                path.read_text(encoding="utf-8"),
+            ), path.name
     executable = re.sub(r"--[^\n]*", "", sql)
     assert "pg_get_functiondef" not in executable
     for forbidden in (
@@ -136,7 +141,7 @@ def test_inventories_and_validators_know_the_read() -> None:
         ROOT / "tests" / "sql" / "followup_engine" / "validate_acl_hardening.mjs"
     ).read_text(encoding="utf-8")
     assert f"('{NAME}{SIGNATURE}')" in hardening
-    assert "result.expected_count !== 118" in hardening
+    assert "result.expected_count !== 119" in hardening
     schema = (ROOT / "scripts" / "supabase_schema_inventory.sql").read_text(encoding="utf-8")
     assert f"'{MIGRATION.name}'" in schema
     assert f"to_regprocedure('public.{NAME}{SIGNATURE}')" in schema

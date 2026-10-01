@@ -231,10 +231,27 @@ class StubInboundCommercialSupabase:
         self.outcome = outcome
         self.outcomes = list(outcomes or ())
         self.admission_calls: list[dict[str, object]] = []
+        # Por cual RPC paso cada admision, en el mismo orden que
+        # admission_calls: "v2" (admit_inbound_commercial_case_v2) o
+        # "portable" (admit_portable_inbound_commercial_case_v1, la del
+        # runtime con manifiesto).
+        self.admission_rpcs: list[str] = []
         self.handoff_calls: list[dict[str, object]] = []
 
     async def admit_inbound_commercial_case(
         self, **kwargs: object
+    ) -> InboundCommercialCaseAdmissionResult:
+        self.admission_rpcs.append("v2")
+        return self._admit(kwargs)
+
+    async def admit_portable_inbound_commercial_case(
+        self, **kwargs: object
+    ) -> InboundCommercialCaseAdmissionResult:
+        self.admission_rpcs.append("portable")
+        return self._admit(kwargs)
+
+    def _admit(
+        self, kwargs: dict[str, object]
     ) -> InboundCommercialCaseAdmissionResult:
         self.admission_calls.append(kwargs)
         outcome = self.outcomes.pop(0) if self.outcomes else self.outcome

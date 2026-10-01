@@ -49,6 +49,15 @@
 //      reevaluacion propia deja ejecutar y llega a la aceptacion; y una
 //      compra de Hotmart en 521 antes del envio (formulario en 52) hace que la
 //      reevaluacion propia cancele el caso sin consumir cupo.
+//  10. la respuesta a la plantilla (H7, 20261001000400 y 20261001000500), en
+//      el primer contacto (identidad 52 del formulario, wa_id 521), el pago
+//      fallido en 521 y el carrito en 549: la admision portable adopta la
+//      conversacion (created/draft_only, un evento, replay already_exists),
+//      el enlace sale por la reserva portable (H8) con la intencion del
+//      formulario, y "Necesito ayuda" con derivacion vuelve al agente
+//      (requested, attended, resumed, readmision already_exists); la baja de
+//      otra persona en su plantilla da applied, y la v2 directa sobre otra
+//      plantilla aceptada sigue dando 22000.
 //
 // Datos:
 //   - Binding, ofertas, landings, producto, Chatwoot y consentimiento salen de
@@ -849,7 +858,12 @@ const dispatch = async (lead, plan, { anchor, stepKey, offer, beforeAcceptance }
   if (later.length !== 0) {
     throw new Error(`${lead.label}: a claim two days later found work: ${JSON.stringify(later)}`);
   }
-  return { decision, context, started, reevaluateOperation, startOperation };
+  // chatwoot: la conversacion de Chatwoot en la que salio la plantilla, la que
+  // registro la aceptacion (el caso 10 responde ahi).
+  return {
+    decision, context, started, reevaluateOperation, startOperation,
+    chatwoot: 900100 + messageNumber, actionId: plan.scheduled_action_id,
+  };
 };
 
 // ---------------------------------------------------------------------------
@@ -886,6 +900,9 @@ if (outsiderEffects.cases !== 0 || outsiderEffects.grants !== 0 || outsiderEffec
 //    fija el riesgo de la politica de dos pasos (punto 0.10 del plan).
 // ---------------------------------------------------------------------------
 const cartResults = [];
+// Las personas de los carritos, con la conversacion de su plantilla: el caso
+// 10 usa dos (la baja y el control de la v2).
+const cartRuns = [];
 for (const [index, offer] of offers.entries()) {
   const lead = person(`carrito-${offer.offer_code}`);
   await admitForm(lead, offer);
@@ -927,6 +944,7 @@ for (const [index, offer] of offers.entries()) {
     anchor: 'cart_abandonment', stepKey: 'first_contact', offer, beforeAcceptance,
   });
   cartResults.push(`${offer.offer_code}:${run.decision.reason_code}`);
+  cartRuns.push({ lead, run });
 }
 
 // ---------------------------------------------------------------------------
@@ -1197,60 +1215,8 @@ if (fcGrants.length !== 1
     || fcControl.audience_precheckout_submission_id !== fcPlan.submission) {
   throw new Error(`the first contact did not record the consent of the form: ${JSON.stringify({ grants: fcGrants.length, mode: fcControl.audience_mode })}`);
 }
-// 9.4b LIMITE CONOCIDO, fijado aca para que no pase inadvertido: quien
-//      responde a la plantilla NO pasa la admision entrante. La aceptacion deja
-//      la conversacion del caso en automation_status = 'enabled'
-//      (record_and_finalize_followup_acceptance) y la admision entrante solo
-//      toma una conversacion 'draft_only': rechaza con 22000
-//      inbound_canonical_conversation_conflict. Vale igual para carrito y pago
-//      fallido. Adoptar esa conversacion para el agente entrante es una
-//      decision de diseno pendiente; el dia que se resuelva, este bloque falla
-//      y hay que cambiarlo por la cadena completa (respuesta, enlace,
-//      derivacion). Lo que SI funciona sobre esa conversacion es el opt-out
-//      durable, que el bridge aplica aunque la admision rechace.
-{
-  await db.query(`
-    insert into public.inbound_commercial_scope_versions
-      (scope_key, version, status, tenant_key, chatwoot_account_id, chatwoot_inbox_id,
-       external_product_id, offer_code, approved_by, approved_at, published_at)
-    values ($1,$2,'published',$3,$4,$5,$6,$7,'operator-test',now(),now())
-  `, [ATT1.inboundScope, ATT1.inboundVersion, ATT1.tenant, ATT1.accountId, ATT1.inboxId,
-    String(ATT1.productId), fcLead.offer.offer_code]);
-  // La conversacion de Chatwoot en la que salio la plantilla (la que registro
-  // la aceptacion) y la identidad que resuelve el entrante del bridge: la que
-  // creo el plan, con el telefono del formulario (52 + 10).
-  const replyConversation = 900100 + messageNumber;
-  const fcConversation = one((await db.query(`
-    select conversation.automation_status, conversation.status, identity.external_user_id
-    from public.recovery_cases recovery
-    join public.conversations conversation on conversation.id = recovery.conversation_id
-    join public.channel_identities identity on identity.id = conversation.channel_identity_id
-    where recovery.id = $1
-      and conversation.commercial_context ->> 'chatwoot_conversation_id' = $2
-  `, [fcPlan.recovery_case_id, String(replyConversation)])).rows, 'first contact conversation');
-  let replyError = null;
-  try {
-    await db.query('select * from public.admit_inbound_commercial_case_v2($1,$2,$3,$4)',
-      [ATT1.inboundScope, ATT1.inboundVersion, replyConversation, fcLead.formPhone]);
-  } catch (caught) {
-    replyError = caught;
-  }
-  const replyOptOut = one((await db.query(`
-    select * from public.apply_chatwoot_inbound_opt_out($1,$2,$3,$4,$5,$6,'stop_receiving_messages')
-  `, [ATT1.accountId, ATT1.inboxId, replyConversation, 990100 + messageNumber,
-    fcLead.formPhone, await dbNow()])).rows, 'opt-out on the template conversation');
-  const fcContactAfter = one((await db.query(`
-    select contact_permission from public.contacts where id = $1
-  `, [fcLead.contact])).rows, 'first contact contact after the opt-out');
-  if (fcConversation.automation_status !== 'enabled'
-      || fcConversation.external_user_id !== fcLead.formPhone
-      || replyError?.code !== '22000'
-      || replyError?.message !== 'inbound_canonical_conversation_conflict'
-      || replyOptOut.outcome !== 'applied'
-      || fcContactAfter.contact_permission !== 'opted_out') {
-    throw new Error(`the reply to the template is no longer what the known limit says: ${JSON.stringify({ conversation: fcConversation.automation_status, reply: [replyError?.code, replyError?.message], optOut: replyOptOut.outcome, permission: fcContactAfter.contact_permission })}`);
-  }
-}
+// 9.4b La respuesta a esta plantilla se prueba en el caso 10, al final: junto
+//      con la del carrito en 549 (8b), que se manda despues.
 // 9.5 La compra antes del envio, con otra persona sembrada e inscripta. El
 //     formulario guardo 52 + 10 y Hotmart manda la compra con 521 + 10: la
 //     intencion queda purchased y la reevaluacion propia cancela el caso
@@ -1571,6 +1537,346 @@ if (cappedDecision.decision !== 'execute'
   throw new Error(`the total cap did not cut the consented audience: ${JSON.stringify({ cappedDecision, code: cappedError?.code, message: cappedError?.message, detail: cappedError?.detail, finalStarts })}`);
 }
 
+// ---------------------------------------------------------------------------
+// 10. La respuesta a la plantilla (H7: migraciones 20261001000400 y
+//     20261001000500), sobre tres plantillas que ya salieron por la cadena
+//     real de arriba y que la aceptacion dejo en 'enabled': el primer
+//     contacto (9.4, identidad 52 del formulario, wa_id 521), el pago fallido
+//     en 521 contra la intencion en 52 (8a, identidad 521) y el carrito en 549
+//     contra la intencion en 54 (8b, identidad 549). Va al final porque el
+//     carrito en 549 sale en la audiencia de produccion.
+//     El bridge con manifiesto resuelve el wa_id a la identidad guardada
+//     (resolve_inbound_external_user_id de src/bridge/app.py, con
+//     equivalent_whatsapp_phones de src/bridge/phones.py; aca, el mismo
+//     criterio sobre channel_identities) y hace sus tres llamadas a la
+//     admision (admision, reautorizacion y readmision tras reanudar) por
+//     admit_portable_inbound_commercial_case_v1, como service_role:
+//     - la respuesta adopta la conversacion: created/draft_only, un solo
+//       evento inbound_adopted_template_conversation (con la plantilla y su
+//       accion) y los casos cart_recovery + inbound_sales; el replay da
+//       already_exists sin otro evento;
+//     - "Enviame el enlace": la reserva portable (H8,
+//       reserve_portable_checkout_issuance_v2) con el id resuelto da el
+//       enlace con la oferta, la intencion y la atribucion del formulario.
+//       Sobre la identidad 521 la compartida daria la oferta por defecto: se
+//       mide como control dentro de una transaccion que se deshace;
+//     - "Necesito ayuda", si el agente deriva: la derivacion da requested y,
+//       mientras la tiene el equipo, la reautorizacion no admite; la persona
+//       del equipo contesta (mark_human_handoff_attended: attended, sobre el
+//       inbound_sales), el macro reanuda (resume_paused_conversation con
+//       operator_request: resumed, sobre el inbound_sales) y la readmision da
+//       already_exists. Sin la 000500 la marca de atencion y la reanudacion
+//       abortan como ambiguas (dos casos en la conversacion);
+//     - "No mas mensajes" de otra persona (un carrito del caso 2): la
+//       respuesta se adopta y la baja da applied.
+//     Control: la v2 directa, sobre la plantilla aceptada de otro carrito del
+//     caso 2, sigue dando 22000 inbound_canonical_conversation_conflict y la
+//     conversacion queda enabled y sin evento.
+//     Datos: el scope entrante y el catalogo de las tres ofertas se siembran
+//     como despliegue/base/aprovisionar-att1.sql de la instancia (el hotlink
+//     como external_product_id y la primera oferta por defecto), igual que
+//     validate_whatsapp_phone_equivalence.mjs; la politica de la nota de
+//     derivacion, con el equipo del manifiesto, como
+//     validate_portable_precheckout_first_contact.mjs. Lo que se simula: la
+//     nota de la derivacion pasa a 'projected' con un update, que es lo que
+//     deja el proyector de notas (como validate_handoff_attendance.mjs).
+// ---------------------------------------------------------------------------
+const ADOPTION_EVENT = 'inbound_adopted_template_conversation';
+const HANDOFF = { policy: 'att1-derivacion-entrante', version: 1 };
+await db.query(`
+  insert into public.inbound_commercial_scope_versions
+    (scope_key, version, status, tenant_key, chatwoot_account_id, chatwoot_inbox_id,
+     external_product_id, offer_code, approved_by, approved_at, published_at)
+  values ($1,$2,'published',$3,$4,$5,$6,$7,'operator-test',now(),now())
+`, [ATT1.inboundScope, ATT1.inboundVersion, ATT1.tenant, ATT1.accountId, ATT1.inboxId,
+  ATT1.hotlink, defaultOffer.offer_code]);
+for (const offer of offers) {
+  await db.query(`
+    insert into public.checkout_offer_catalog
+      (tenant_ref, funnel_ref, scope_key, scope_version, product_ref, landing_ref,
+       offer_code, checkout_base_url, checkout_mode, default_for_inbound, status,
+       version, approved_by, approved_at)
+    values ($1,$2,$3,$4,$5,$6,$7,$8,10,$9,'active',1,'operator-test',now())
+  `, [ATT1.tenant, ATT1.funnel, ATT1.inboundScope, ATT1.inboundVersion, ATT1.hotlink,
+    offer.landing_id, offer.offer_code, `https://pay.hotmart.com/${ATT1.hotlink}`,
+    offer.default]);
+}
+await db.query(`
+  insert into public.human_handoff_projection_policies (
+    policy_key, policy_version, scope_key, scope_version,
+    inbound_scope_key, inbound_scope_version, expected_team_id,
+    note_template_key, note_template_version, private_note_body, active
+  ) values ($1,$2,null,null,$3,$4,$5,'att1-nota-derivacion',1,
+    'Derivacion automatica de prueba.',true)
+`, [HANDOFF.policy, HANDOFF.version, ATT1.inboundScope, ATT1.inboundVersion,
+  required(manifest.chatwoot?.equipo_derivacion, 'chatwoot.equipo_derivacion')]);
+
+const tryRows = async (sql, params) => {
+  try {
+    return { ok: true, rows: (await db.query(sql, params)).rows };
+  } catch (caught) {
+    return { ok: false, code: caught.code, message: caught.message };
+  }
+};
+const asServiceTry = (sql, params) => asService(() => tryRows(sql, params));
+const showResult = (result, field = 'automation_status') => (result.ok
+  ? `${result.rows[0].outcome}:${result.rows[0][field]}`
+  : `${result.code} ${result.message}`);
+const PORTABLE_ADMISSION = 'select * from public.admit_portable_inbound_commercial_case_v1($1,$2,$3,$4)';
+const SHARED_ADMISSION = 'select * from public.admit_inbound_commercial_case_v2($1,$2,$3,$4)';
+
+// El id con que el bridge admite y reserva: entre las formas equivalentes del
+// wa_id, la unica identidad activa del inbox si no es la textual; si no, el
+// wa_id (app.py resolve_inbound_external_user_id).
+const equivalentForms = (waId) => {
+  let canonical = waId;
+  if (/^521[0-9]{10}$/.test(waId)) canonical = `52${waId.slice(3)}`;
+  if (/^549[0-9]{10}$/.test(waId)) canonical = `54${waId.slice(3)}`;
+  if (/^52[0-9]{10}$/.test(canonical)) return [canonical, `521${canonical.slice(2)}`];
+  if (/^54[0-9]{10}$/.test(canonical)) return [canonical, `549${canonical.slice(2)}`];
+  return [canonical];
+};
+const bridgeExternalUserId = async (waId) => {
+  const forms = equivalentForms(waId);
+  if (forms.length < 2) return waId;
+  const stored = [...new Set((await db.query(`
+    select external_user_id from public.channel_identities
+    where channel = 'whatsapp' and account_id = $1 and external_user_id = any($2::text[])
+      and identity_status = 'active' and metadata ->> 'inbox_id' = $3
+  `, [`chatwoot:${ATT1.accountId}`, forms, String(ATT1.inboxId)])).rows
+    .map((row) => row.external_user_id))].sort();
+  return stored.length === 1 && stored[0] !== waId ? stored[0] : waId;
+};
+// La conversacion de la plantilla, con sus casos y sus eventos de adopcion.
+const templateConversation = async (chatwoot) => one((await db.query(`
+  select conversation.id, conversation.status, conversation.automation_status,
+         conversation.human_takeover, conversation.version::text as version,
+         conversation.contact_id, identity.external_user_id,
+         (select string_agg(commercial_case.case_kind, '+' order by commercial_case.case_kind)
+            from public.commercial_cases commercial_case
+           where commercial_case.conversation_id = conversation.id) as kinds,
+         (select count(*)::integer from public.conversation_events event
+           where event.conversation_id = conversation.id and event.event_type = $2) as adoptions
+  from public.conversations conversation
+  join public.channel_identities identity on identity.id = conversation.channel_identity_id
+  where conversation.commercial_context = jsonb_build_object('chatwoot_conversation_id', $1::text)
+`, [String(chatwoot), ADOPTION_EVENT])).rows, `conversation ${chatwoot}`);
+const conversationLine = (state) => (
+  `${state.status}/${state.automation_status}/takeover=${state.human_takeover}`);
+const allAdoptions = async () => one((await db.query(`
+  select count(*)::integer as count from public.conversation_events where event_type = $1
+`, [ADOPTION_EVENT])).rows, 'adoption events').count;
+
+// El enlace como lo pide el bridge con manifiesto: la reserva portable con el
+// id resuelto, y la emision leida con el rol de la sesion.
+let replyMessage = 990500;
+const issuanceOf = async (issuanceId) => (issuanceId === null ? null : one((await db.query(`
+  select issuance.source_kind, issuance.offer_resolution, issuance.attribution_resolution,
+         issuance.purchase_intent_id, issuance.checkout_url_final, offer.offer_code
+  from public.checkout_link_issuances issuance
+  join public.checkout_offer_catalog offer on offer.id = issuance.offer_catalog_id
+  where issuance.id = $1
+`, [issuanceId])).rows, 'issuance'));
+const reserveSql = (rpc) => `select * from public.${rpc}($1,$2,$3,$4,$5,$6,$7,clock_timestamp())`;
+// El reloj de PGlite tiene resolucion de milisegundo y las transiciones del
+// caso exigen updated_at estrictamente mayor que el anterior
+// (protect_inbound_commercial_case): antes de cada una se deja pasar el reloj.
+const tick = () => new Promise((done) => { setTimeout(done, 3); });
+const formSck = GOLDEN.MX.raw.data.attribution.sck;
+const formFbclid = GOLDEN.MX.raw.data.attribution.fbclid;
+
+const REPLIES = [
+  { label: 'primer-contacto', lead: fcLead, run: fcRun, intent: fcPlan.intent, attribution: 'full' },
+  { label: 'pago-fallido-521', lead: mxFailure, run: mxFailureRun, intent: mxFailureIntent, attribution: 'full', sharedControl: true },
+  { label: 'carrito-549', lead: arCart, run: arCartRun, intent: arCartIntent, attribution: 'marker_only' },
+];
+const templateReplies = {};
+for (const reply of REPLIES) {
+  const { label, lead, run, intent, attribution } = reply;
+  const before = await templateConversation(run.chatwoot);
+  const userId = await bridgeExternalUserId(lead.whatsapp);
+  const args = [ATT1.inboundScope, ATT1.inboundVersion, run.chatwoot, userId];
+  const template = one((await db.query(`
+    select accepted_message_id from public.followup_delivery_attempts
+    where action_id = $1 and outcome = 'accepted_by_chatwoot'
+  `, [run.actionId])).rows, `${label} template`).accepted_message_id;
+
+  // La respuesta: adopta; el replay no adopta otra vez.
+  const admitted = await asServiceTry(PORTABLE_ADMISSION, args);
+  const adopted = await templateConversation(run.chatwoot);
+  const events = (await db.query(`
+    select actor_type, related_message_id, related_action_id from public.conversation_events
+    where conversation_id = $1 and event_type = $2
+  `, [before.id, ADOPTION_EVENT])).rows;
+  const event = events[0] ?? {};
+  const replay = await asServiceTry(PORTABLE_ADMISSION, args);
+  const replayed = await templateConversation(run.chatwoot);
+  if (before.automation_status !== 'enabled' || before.adoptions !== 0
+      || before.external_user_id !== userId
+      || showResult(admitted) !== 'created:draft_only'
+      || admitted.rows[0].conversation_id !== before.id
+      || admitted.rows[0].contact_id !== lead.contact
+      || adopted.automation_status !== 'draft_only'
+      || adopted.adoptions !== 1
+      || events.length !== 1
+      || adopted.kinds !== 'cart_recovery+inbound_sales'
+      || event.actor_type !== 'integration'
+      || event.related_message_id !== template
+      || event.related_action_id !== run.actionId
+      || showResult(replay) !== 'already_exists:draft_only'
+      || replay.rows[0].commercial_case_id !== admitted.rows[0].commercial_case_id
+      || replayed.adoptions !== 1
+      || replayed.version !== adopted.version) {
+    throw new Error(`${label}: the reply to the template was not adopted once: ${JSON.stringify({ before: conversationLine(before), user: [before.external_user_id === userId], admitted: showResult(admitted), adopted: [conversationLine(adopted), adopted.kinds, adopted.adoptions], event: [event.actor_type, event.related_message_id === template, event.related_action_id === run.actionId], replay: showResult(replay), replayed: replayed.adoptions })}`);
+  }
+  const caseId = admitted.rows[0].commercial_case_id;
+
+  // "Enviame el enlace": la reserva portable con el id resuelto.
+  replyMessage += 1;
+  const ulid = ulidAt(Date.now());
+  const reserveArgs = [caseId, userId, ATT1.accountId, ATT1.inboxId, run.chatwoot,
+    String(replyMessage), ulid];
+  const reserved = await asServiceTry(reserveSql('reserve_portable_checkout_issuance_v2'), reserveArgs);
+  const link = reserved.ok ? await issuanceOf(reserved.rows[0].issuance_id) : null;
+  const url = link?.checkout_url_final ?? '';
+  const sckInUrl = attribution === 'full'
+    ? `&sck=${formSck}%7Chermes%7Cv1%7C${ulid}`
+    : `&sck=hermes%7Cv1%7C${ulid}`;
+  if (!reserved.ok || reserved.rows[0].outcome !== 'reserved'
+      || link.source_kind !== 'precheckout_request'
+      || link.offer_resolution !== 'lead_intent'
+      || link.offer_code !== lead.offer.offer_code
+      || link.purchase_intent_id !== intent
+      || link.attribution_resolution !== attribution
+      || !url.includes(`?off=${lead.offer.offer_code}&`)
+      || !url.includes(sckInUrl)
+      || (attribution === 'full') !== url.endsWith(`&fbclid=${formFbclid}`)) {
+    throw new Error(`${label}: the link is not the one of the form: ${JSON.stringify({ reserved: reserved.ok ? reserved.rows[0].outcome : `${reserved.code} ${reserved.message}`, ...link, offer: lead.offer.offer_code, intent: link?.purchase_intent_id === intent })}`);
+  }
+  let shared = null;
+  if (reply.sharedControl) {
+    // La compartida (la de Johanna) con el mismo caso y la identidad 521:
+    // busca la intencion por igualdad exacta y no ve la del formulario (52).
+    await db.exec('begin');
+    try {
+      await db.exec('set local role service_role');
+      replyMessage += 1;
+      const row = one((await db.query(reserveSql('reserve_chatwoot_checkout_issuance_v2'), [
+        caseId, userId, ATT1.accountId, ATT1.inboxId, run.chatwoot, String(replyMessage),
+        ulidAt(Date.now()),
+      ])).rows, `${label} shared reserve`);
+      await db.exec('reset role');
+      shared = await issuanceOf(row.issuance_id);
+    } finally {
+      await db.exec('rollback');
+    }
+    if (!/^521[0-9]{10}$/.test(userId)
+        || shared?.offer_resolution !== 'default_no_intent'
+        || shared?.purchase_intent_id === intent) {
+      throw new Error(`${label}: the shared reserve control changed: ${JSON.stringify({ identity521: /^521[0-9]{10}$/.test(userId), ...shared })}`);
+    }
+  }
+
+  // "Necesito ayuda" con derivacion: la persona del equipo contesta, el macro
+  // reanuda y la persona vuelve a escribir.
+  await tick();
+  const handoff = await asServiceTry(`
+    select * from public.request_inbound_human_handoff(
+      $1::uuid, $2, 'explicit_human_request', $3, $4, clock_timestamp(), null)
+  `, [caseId, `handoff:att1-chain:${run.chatwoot}`, HANDOFF.policy, HANDOFF.version]);
+  await db.query(`
+    update public.human_handoff_requests
+    set status = 'projected', projected_at = clock_timestamp(), updated_at = clock_timestamp()
+    where commercial_case_id = $1
+  `, [caseId]);
+  const handedOff = await templateConversation(run.chatwoot);
+  const whileHandedOff = await asServiceTry(PORTABLE_ADMISSION, args);
+  await tick();
+  const attended = await asServiceTry(`
+    select * from public.mark_human_handoff_attended($1::bigint, clock_timestamp(), clock_timestamp())
+  `, [run.chatwoot]);
+  await tick();
+  const resumed = await asServiceTry(`
+    select * from public.resume_paused_conversation(
+      $1::bigint, $2, 'operator_request', null, 3, clock_timestamp())
+  `, [run.chatwoot, `resume:att1-chain:${run.chatwoot}`]);
+  await tick();
+  const readmitted = await asServiceTry(PORTABLE_ADMISSION, args);
+  const after = await templateConversation(run.chatwoot);
+  const help = {
+    handoff: handoff.ok ? handoff.rows[0].outcome : `${handoff.code} ${handoff.message}`,
+    handed_off: conversationLine(handedOff),
+    reply_while_handed_off: showResult(whileHandedOff),
+    attended: attended.ok
+      ? `${attended.rows[0].outcome}:${attended.rows[0].attended_count}:${attended.rows[0].attended_commercial_case_id === caseId ? 'inbound_sales' : 'other'}`
+      : `${attended.code} ${attended.message}`,
+    resumed: resumed.ok
+      ? `${resumed.rows[0].outcome}:${resumed.rows[0].resumed_commercial_case_id === caseId ? 'inbound_sales' : 'other'}`
+      : `${resumed.code} ${resumed.message}`,
+    readmitted: showResult(readmitted),
+    after: conversationLine(after),
+  };
+  const expectedHelp = {
+    handoff: 'requested',
+    handed_off: 'paused_human/paused/takeover=true',
+    reply_while_handed_off: 'blocked:disabled',
+    attended: 'attended:1:inbound_sales',
+    resumed: 'resumed:inbound_sales',
+    readmitted: 'already_exists:draft_only',
+    after: 'active/draft_only/takeover=false',
+  };
+  if (JSON.stringify(help) !== JSON.stringify(expectedHelp)
+      || readmitted.rows[0].commercial_case_id !== caseId
+      || after.adoptions !== 1) {
+    throw new Error(`${label}: "Necesito ayuda" did not go back to the agent: ${JSON.stringify(help)}`);
+  }
+  templateReplies[label] = {
+    identity: `${userId === lead.whatsapp ? 'the wa_id' : 'the form phone'} (${userId.slice(0, userId.length - 10)} + 10)`,
+    reply: `${showResult(admitted)}, adoption events ${adopted.adoptions}, replay ${showResult(replay)}`,
+    link: `${reserved.rows[0].outcome}:${link.offer_resolution}:${link.offer_code}:${link.attribution_resolution}`,
+    ...(shared ? { shared_reserve_control: shared.offer_resolution } : {}),
+    help: `${help.handoff} -> ${help.attended} -> ${help.resumed} -> ${help.readmitted}`,
+  };
+}
+
+// "No mas mensajes" de otra persona (un carrito del caso 2): la respuesta se
+// adopta (una admision por la portable) y la baja va por el camino de siempre.
+const leaving = cartRuns[1];
+const leavingUser = await bridgeExternalUserId(leaving.lead.phone);
+const leavingAdmitted = await asServiceTry(PORTABLE_ADMISSION,
+  [ATT1.inboundScope, ATT1.inboundVersion, leaving.run.chatwoot, leavingUser]);
+replyMessage += 1;
+await tick();
+const leavingOptOut = await asServiceTry(`
+  select * from public.apply_chatwoot_inbound_opt_out($1,$2,$3,$4,$5,clock_timestamp(),'stop_receiving_messages')
+`, [ATT1.accountId, ATT1.inboxId, leaving.run.chatwoot, replyMessage, leavingUser]);
+const leavingAfter = one((await db.query(`
+  select contact_permission from public.contacts where id = $1
+`, [leaving.lead.contact])).rows, 'contact after the opt-out').contact_permission;
+const leavingConversation = await templateConversation(leaving.run.chatwoot);
+if (leavingUser !== leaving.lead.phone
+    || showResult(leavingAdmitted) !== 'created:draft_only'
+    || leavingConversation.adoptions !== 1
+    || !leavingOptOut.ok || leavingOptOut.rows[0].outcome !== 'applied'
+    || leavingOptOut.rows[0].matched_contact_id !== leaving.lead.contact
+    || leavingAfter !== 'opted_out') {
+  throw new Error(`the opt-out on an adopted template conversation: ${JSON.stringify({ admitted: showResult(leavingAdmitted), adoptions: leavingConversation.adoptions, optOut: leavingOptOut.ok ? leavingOptOut.rows[0].outcome : `${leavingOptOut.code} ${leavingOptOut.message}`, permission: leavingAfter })}`);
+}
+
+// Control: la v2 directa, sobre la plantilla aceptada de otro carrito, sigue
+// rechazando y no adopta.
+const control = cartRuns[2];
+const controlResult = await asServiceTry(SHARED_ADMISSION,
+  [ATT1.inboundScope, ATT1.inboundVersion, control.run.chatwoot, control.lead.phone]);
+const controlConversation = await templateConversation(control.run.chatwoot);
+const totalAdoptions = await allAdoptions();
+if (showResult(controlResult) !== '22000 inbound_canonical_conversation_conflict'
+    || controlConversation.automation_status !== 'enabled'
+    || controlConversation.adoptions !== 0
+    || totalAdoptions !== REPLIES.length + 1) {
+  throw new Error(`the shared admission on another template conversation changed: ${JSON.stringify({ result: showResult(controlResult), conversation: conversationLine(controlConversation), adoptions: controlConversation.adoptions, total: totalAdoptions })}`);
+}
+
 console.log(JSON.stringify({
   att1_portable_chain: 'OK',
   empty_cohort: 'pilot_scope_rejected:pilot_contact_not_in_cohort',
@@ -1592,7 +1898,6 @@ console.log(JSON.stringify({
     reevaluation: `${fcRun.reevaluateOperation}:${fcRun.decision.reason_code}`,
     request_start: fcRun.startOperation,
     purchase_before_the_send: `${fcBuyerDecision.decision}:${fcBuyerDecision.reason_code}`,
-    known_limit_reply_to_the_template: 'inbound admission 22000 inbound_canonical_conversation_conflict; opt-out applied',
     pilot_request_starts: await fcStarts(),
   },
   consented_intent: {
@@ -1603,6 +1908,12 @@ console.log(JSON.stringify({
     form_without_opt_in: 'pilot_scope_rejected:pilot_audience_consented_intent_not_authorized',
     cap: `pilot_request_start_rejected:${cappedError.detail}`,
     pilot_request_starts: finalStarts,
+  },
+  template_reply: {
+    ...templateReplies,
+    opt_out_of_another_lead: `${showResult(leavingAdmitted)}, opt-out ${leavingOptOut.rows[0].outcome}`,
+    shared_admission_control: showResult(controlResult),
+    adoption_events: totalAdoptions,
   },
 }));
 await db.close();
