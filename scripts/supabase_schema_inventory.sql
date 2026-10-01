@@ -3857,6 +3857,87 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         10,
         'pilot_scope_audience_mode'
+    union all
+    select
+        '20261001000100',
+        '20261001000100_whatsapp_phone_equivalence.sql',
+        (
+            select count(*) = 2
+            from functions
+            where oid in (
+                to_regprocedure('public._whatsapp_phone_canonical(text)'),
+                to_regprocedure('public._whatsapp_phone_variants(text)')
+            )
+              and not prosecdef
+              and provolatile = 'i'
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._correlate_portable_hotmart_purchase_intent(uuid)')
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+              and position('_whatsapp_phone_variants(v_phone)' in definition) > 0
+              and position('intent.normalized_phone = v_phone' in definition) = 0
+        )::int
+        + coalesce(
+            not has_function_privilege(
+                'service_role',
+                to_regprocedure('public._whatsapp_phone_canonical(text)'),
+                'EXECUTE'
+            )
+            and not has_function_privilege(
+                'service_role',
+                to_regprocedure('public._whatsapp_phone_variants(text)'),
+                'EXECUTE'
+            )
+            and not has_function_privilege(
+                'service_role',
+                to_regprocedure('public._correlate_portable_hotmart_purchase_intent(uuid)'),
+                'EXECUTE'
+            ),
+            false
+        )::int
+        + (
+            select count(*) = 2
+            from functions
+            where oid in (
+                to_regprocedure('public.admit_portable_hotmart_cart_abandonment(text,text,integer,text,jsonb,text,text)'),
+                to_regprocedure('public.admit_portable_hotmart_payment_failure(text,text,integer,text,jsonb,text,text)')
+            )
+              and prosecdef
+              and position('public._correlate_portable_hotmart_purchase_intent(' in definition) > 0
+              and position('public.correlate_hotmart_purchase_intent(' in definition) = 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_portable_hotmart_purchase_approved(text,text,integer,text,jsonb,text,text)')
+              and prosecdef
+              and position('_whatsapp_phone_variants(v_phone)' in definition) > 0
+              and position('intent.normalized_phone = v_phone' in definition) = 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._portable_consented_intent_reason(uuid,uuid,text)')
+              and not prosecdef
+              and provolatile = 's'
+              and position('_whatsapp_phone_canonical(p_destination_phone)' in definition) > 0
+              and position('consented_intent_contact_phone_mismatch' in definition) > 0
+              and position('consented_intent_prior_opt_out' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.plan_portable_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,timestamptz,bigint,bigint,text,text,integer)')
+              and prosecdef
+              and position('_whatsapp_phone_canonical(p_external_user_id)' in definition) > 0
+              and position('whatsapp_equivalent' in definition) > 0
+        )::int,
+        7,
+        'whatsapp_phone_equivalence_portable_runtime'
 )
 select
     version,

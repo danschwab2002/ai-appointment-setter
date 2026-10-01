@@ -176,6 +176,37 @@ def test_precheckout_readiness_fingerprint_binds_timer_to_exact_policy() -> None
     assert "policy.grace_period = interval '60 minutes'" in compact_fingerprint
 
 
+def test_whatsapp_phone_equivalence_fingerprint_checks_the_portable_functions() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    fingerprint = sql.split("'20261001000100'", 1)[1].split(")\nselect", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", fingerprint)
+
+    for signature in (
+        "public._whatsapp_phone_canonical(text)",
+        "public._whatsapp_phone_variants(text)",
+        "public._correlate_portable_hotmart_purchase_intent(uuid)",
+        "public.admit_portable_hotmart_cart_abandonment(text,text,integer,text,jsonb,text,text)",
+        "public.admit_portable_hotmart_payment_failure(text,text,integer,text,jsonb,text,text)",
+        "public.admit_portable_hotmart_purchase_approved(text,text,integer,text,jsonb,text,text)",
+        "public._portable_consented_intent_reason(uuid,uuid,text)",
+        "public.plan_portable_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,"
+        "timestamptz,bigint,bigint,text,text,integer)",
+    ):
+        assert f"to_regprocedure('{signature}')" in compact_fingerprint, signature
+    assert "proname" not in fingerprint
+    # Los tres helpers nuevos no son entrypoints: ni service_role los ejecuta.
+    assert compact_fingerprint.count("nothas_function_privilege('service_role',") == 3
+    # La comparacion exacta del telefono no puede quedar en el correlador
+    # portable ni en la compra, y carrito y pago fallido no pueden volver al
+    # correlador compartido.
+    assert compact_fingerprint.count("position('intent.normalized_phone=v_phone'indefinition)=0") == 2
+    assert "position('public.correlate_hotmart_purchase_intent('indefinition)=0" in compact_fingerprint
+    assert "consented_intent_contact_phone_mismatch" in fingerprint
+    assert "consented_intent_prior_opt_out" in fingerprint
+    assert "whatsapp_equivalent" in fingerprint
+    assert "whatsapp_phone_equivalence_portable_runtime" in fingerprint
+
+
 def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)

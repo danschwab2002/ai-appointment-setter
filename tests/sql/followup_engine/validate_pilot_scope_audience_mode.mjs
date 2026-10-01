@@ -18,9 +18,9 @@
 //     opt-in, de otra oferta, de otro telefono o fuera del mapeo activo, no.
 //     Cada condicion del helper que ata la intencion al scope (tenant,
 //     producto, oferta del scope, oferta del evento) se ejerce sola llamandolo
-//     directo. El opt-out conserva precedencia: previo al evento o aplicado con
-//     el envio en vuelo, no sale, no consume tope y no deja un permiso
-//     allowed activo. La autorizacion del envio re-verifica la intencion antes
+//     directo. El opt-out conserva precedencia: previo al evento (la
+//     planificacion lo rechaza, 20261001000100) o aplicado con el envio en
+//     vuelo, no sale, no consume tope y no deja un permiso allowed activo. La autorizacion del envio re-verifica la intencion antes
 //     del presupuesto: el tope diario corta, y la intencion que entre el plan y
 //     el envio pasa a identity_conflict (un formulario posterior con otro
 //     telefono), se compra (la compra aprobada real) o sale del mapeo activo
@@ -1080,17 +1080,18 @@ const openResults = {};
     await dispatch(failureLead, failurePlan, 'payment_failure'), OPEN, failureEvidence);
   openResults.payment_failure_without_cohort = 'accepted';
 
-  // El opt-out conserva precedencia sin cohorte ni operador. La audiencia no
-  // lo mira: lo frenan la reevaluacion real, el arranque y el permiso activo.
-  // Estos dos casos van con cupo libre (2 de 3): el tercero de abajo sale
-  // igual, asi que ninguno consumio.
+  // El opt-out conserva precedencia sin cohorte ni operador. Desde
+  // 20261001000100 el helper del consentimiento mira el opt-out previo de la
+  // cuenta en las dos formas del telefono; ademas lo frenan el arranque y el
+  // permiso activo. Estos dos casos van con cupo libre (2 de 3): el tercero de
+  // abajo sale igual, asi que ninguno consumio.
   //   a. Previo: la persona se dio de baja en Chatwoot despues del carrito (que
-  //      queda cancelado) y despues llega su pago fallido. Se planifica (la
-  //      intencion sigue consentida), pero no se concede ningun permiso
-  //      allowed y la reevaluacion no lo ejecuta.
+  //      queda cancelado) y despues llega su pago fallido. La intencion sigue
+  //      viva y con sus permisos, pero la planificacion la rechaza: no queda
+  //      caso del pago fallido, ni accion, ni permiso allowed.
   const prior = person('abierto-opt-out-previo');
   const priorOffer = additionalOffers[0];
-  const priorEvidence = await admitForm(prior, priorOffer);
+  await admitForm(prior, priorOffer);
   const priorCart = await admitCart(prior, priorOffer);
   await createContact(prior, priorCart.eventId);
   const priorCartPlan = one((await planCart(prior, priorOffer, priorCart, OPEN)).rows,
@@ -1100,30 +1101,35 @@ const openResults = {};
     select status from public.scheduled_actions where id = $1
   `, [priorCartPlan.scheduled_action_id])).rows, 'opted-out cart action');
   const priorFailure = await admitFailure(prior, priorOffer);
-  const priorFailurePlan = one((await planFailure(prior, priorOffer, priorFailure, OPEN)).rows,
-    'plan after the opt-out');
-  await expectBinding('open after opt-out', priorFailurePlan, OPEN, priorEvidence);
+  await expectError('open payment failure after the opt-out',
+    () => planFailure(prior, priorOffer, priorFailure, OPEN),
+    {
+      code: '55000',
+      message: 'pilot_scope_rejected',
+      detail: 'pilot_audience_consented_intent_prior_opt_out',
+    });
   const priorAllowed = await activeAllowed(prior);
-  const priorWorker = `att1-audience-${prior.label}`;
-  const priorNow = await dbNow();
+  const priorWork = one((await db.query(`
+    select
+      (select count(*)::integer from public.recovery_cases where contact_id = $1) as cases,
+      (select count(*)::integer from public.scheduled_actions action
+        join public.recovery_cases recovery_case on recovery_case.id = action.recovery_case_id
+        where recovery_case.contact_id = $1 and action.anchor_type = 'payment_failure')
+        as payment_failure_actions
+  `, [prior.contact])).rows, 'work after the opt-out');
   const priorClaim = (await db.query(`
     select * from public.claim_due_followup_actions($1,$2,interval '5 minutes',100)
-  `, [priorWorker, priorNow])).rows;
+  `, [`att1-audience-${prior.label}`, await dbNow()])).rows;
   if (priorOptOut.affected_actions !== 1
       || priorCartAction.status !== 'cancelled'
       || priorAllowed !== 0
-      || priorClaim.length !== 1
-      || priorClaim[0].id !== priorFailurePlan.scheduled_action_id) {
-    throw new Error(`the opt-out before the payment failure: ${JSON.stringify({ priorOptOut, priorCartAction, priorAllowed, claimed: priorClaim.map((row) => row.id) })}`);
+      || priorWork.cases !== 1
+      || priorWork.payment_failure_actions !== 0
+      || priorClaim.length !== 0) {
+    throw new Error(`the opt-out before the payment failure: ${JSON.stringify({ priorOptOut, priorCartAction, priorAllowed, priorWork, claimed: priorClaim.map((row) => row.id) })}`);
   }
-  const priorDecision = one((await db.query(`
-    select * from public.reevaluate_followup_action($1,$2,$3,$4)
-  `, [priorFailurePlan.scheduled_action_id, priorWorker, priorClaim[0].lease_generation,
-    priorNow])).rows, 'reevaluation after the opt-out');
-  if (priorDecision.decision === 'execute' || priorDecision.reason_code !== 'contact_blocked') {
-    throw new Error(`the real reevaluation executed an opted-out contact: ${JSON.stringify(priorDecision)}`);
-  }
-  openResults.opt_out_before_the_event = `${priorDecision.decision}:${priorDecision.reason_code}`;
+  openResults.opt_out_before_the_event =
+    'pilot_scope_rejected:pilot_audience_consented_intent_prior_opt_out';
 
   //   b. En vuelo: la baja llega con el intento ya reservado. El opt-out lo
   //      cierra y el arranque se rechaza sin autorizar ni consumir.

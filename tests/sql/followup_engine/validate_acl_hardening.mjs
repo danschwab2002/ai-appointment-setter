@@ -286,6 +286,45 @@ if (audienceHelper.length !== 1
     || audienceHelper[0].service_x !== false) {
   throw new Error(`pilot audience helper ACL failed: ${JSON.stringify(audienceHelper)}`);
 }
+// 20261001000100: la forma canonica del telefono, sus variantes y el correlador
+// portable son privados. Los llaman las RPC security definer del runtime
+// portable; ningun rol de la API, ni service_role, los ejecuta directo. El
+// correlador se crea con execute dinamico desde la definicion del compartido
+// (que si es un entrypoint de service_role): sin el revoke heredaria los
+// privilegios por defecto.
+const phoneHelpers = (await db.query(`
+  select
+    p.oid::regprocedure::text signature,
+    p.prosecdef security_definer,
+    p.provolatile volatility,
+    has_function_privilege('anon', p.oid, 'execute') anon_x,
+    has_function_privilege('authenticated', p.oid, 'execute') auth_x,
+    has_function_privilege('service_role', p.oid, 'execute') service_x
+  from pg_proc p
+  where p.oid in (
+    to_regprocedure('public._whatsapp_phone_canonical(text)'),
+    to_regprocedure('public._whatsapp_phone_variants(text)'),
+    to_regprocedure('public._correlate_portable_hotmart_purchase_intent(uuid)')
+  )
+  order by 1
+`)).rows;
+const expectedPhoneHelpers = {
+  '_correlate_portable_hotmart_purchase_intent(uuid)': { security_definer: true, volatility: 'v' },
+  '_whatsapp_phone_canonical(text)': { security_definer: false, volatility: 'i' },
+  '_whatsapp_phone_variants(text)': { security_definer: false, volatility: 'i' },
+};
+if (phoneHelpers.length !== 3
+    || phoneHelpers.some((helper) => {
+      const expected = expectedPhoneHelpers[helper.signature];
+      return expected === undefined
+        || helper.security_definer !== expected.security_definer
+        || helper.volatility !== expected.volatility
+        || helper.anon_x !== false
+        || helper.auth_x !== false
+        || helper.service_x !== false;
+    })) {
+  throw new Error(`whatsapp phone helpers ACL failed: ${JSON.stringify(phoneHelpers)}`);
+}
 const bindingAcl = await db.query(`
   select
     has_table_privilege(
