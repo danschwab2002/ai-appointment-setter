@@ -198,14 +198,27 @@ def test_the_replaced_texts_are_the_ones_in_force() -> None:
 
 def test_the_portable_derivation_does_not_count_the_marker() -> None:
     # If 20261001000100 runs after this one (Johanna, some day), it derives the
-    # portable from the shared reserve that already writes ~: its exact-count
-    # checks must not look at the marker.
+    # portable from the shared reserve that already writes ~. Its exact-count
+    # checks must not look at the marker, and the replaced block must not carry
+    # any of the texts it counts, or the counts would change. The behaviour on
+    # Johanna's chain is exercised in validate_sck_marker_on_johanna_chain.mjs.
     derivation = _block(
         PORTABLE_DERIVATION.read_text(encoding="utf-8"),
         "do $reserve$",
         "$reserve$;",
     )
     assert "hermes" not in derivation
+    sql = _sql()
+    writer_old = _sql_literals(_block(sql, "v_writer_old constant text :=", ";\n    v_writer_new"))
+    writer_new = _sql_literals(_block(sql, "v_writer_new constant text :=", ";\n    v_target"))
+    for counted in (
+        "reserve_chatwoot_checkout_issuance_v2",
+        "intent.normalized_phone",
+        "has_chatwoot_opt_out_stop",
+        "_whatsapp_phone_",
+    ):
+        assert counted in derivation
+        assert counted not in writer_old and counted not in writer_new
 
 
 def test_the_writer_writes_the_marker_with_tilde() -> None:
@@ -232,8 +245,9 @@ def test_the_value_check_accepts_both_markers() -> None:
         "= '~hermes~v1~' || issuance_ulid",
     ):
         assert clause in block
+    # Both suffix clauses cut the same length: the separator plus "hermes", the
+    # separator, "v1" and the separator again.
     assert block.count("length(issuance_ulid) + 11") == 2
-    assert len("~hermes~v1~") == len("|hermes|v1|") == 11
 
 
 @pytest.mark.parametrize(
@@ -278,6 +292,16 @@ def test_the_url_check_accepts_both_markers_and_nothing_mixed(sck_in_url: str, a
         (f"hermes~v1~{ULID}~tail", False),
         ("hermes~v1~nope", False),
         ("fb~120253261784760514~120253261784680514~paid~120253261784670514", False),
+        # The shapes where the first version of the bridge regex (a search with
+        # any prefix) and the base disagreed: the bridge sent them to the
+        # admission, the base raised 22023 and Hotmart got a 503.
+        (f"~hermes~v1~{ULID}", False),
+        (f"|hermes|v1|{ULID}", False),
+        (f"a b~hermes~v1~{ULID}", False),
+        (f"a b|hermes|v1|{ULID}", False),
+        (f"Niños~hermes~v1~{ULID}", False),
+        (f"x%7Cy~hermes~v1~{ULID}", False),
+        (f"x%7Cy|hermes|v1|{ULID}", False),
     ],
 )
 def test_the_sql_readers_and_the_bridge_agree(sck: str, accepted: bool) -> None:
@@ -288,15 +312,41 @@ def test_the_sql_readers_and_the_bridge_agree(sck: str, accepted: bool) -> None:
     assert sck_carries_hermes_issuance(sck) is accepted
 
 
+def test_the_sql_readers_and_the_bridge_agree_on_generated_shapes() -> None:
+    # Same agreement on 20.000 shapes built from the pieces that matter: the
+    # two separators, the marker's parts, valid and invalid ULIDs, and
+    # characters inside and outside the ad's alphabet. Fixed seed.
+    import random
+
+    rng = random.Random(20261005)
+    pieces = [
+        "hermes", "v1", "~", "|", "%7C", " ", "ñ", "fb", "paid", "120210000000000000",
+        ULID, "01K5ABCDEFX2VYB4M6X9CDPTZU", "", "-", ".", "_",
+    ]
+    tails = [f"hermes~v1~{ULID}", f"hermes|v1|{ULID}", f"hermes~v1|{ULID}", ""]
+    regex = _marker_regex()
+    disagreements = []
+    for _ in range(20_000):
+        head = "".join(rng.choice(pieces) for _ in range(rng.randint(0, 6)))
+        sck = head + rng.choice(["~", "|", ""]) + rng.choice(tails)
+        if (regex.fullmatch(sck) is not None) != sck_carries_hermes_issuance(sck):
+            disagreements.append(sck)
+    assert disagreements == []
+
+
 def test_the_bridge_reads_every_sck_hotmart_really_returned() -> None:
     fixture = _fixture()
     capture = fixture["_capture"]
     assert capture["captured_at"].startswith("2026-10-05")
-    assert capture["conteo"]["con_7C_o_7E"] == 0
     compras = fixture["compras"]
-    assert len(compras) == capture["conteo"]["compras"] == 13
+    scks = [compra["sck"] for compra in compras if compra["sck"]]
+    # The counts in the capture's metadata are derived here, not trusted: what
+    # the fixture proves is that Hotmart returned the ~ and the | literally.
+    assert len(compras) == capture["conteo"]["compras"]
+    assert sum("%7C" in sck or "%7E" in sck for sck in scks) == capture["conteo"]["con_7C_o_7E"] == 0
     ad_scks = _ad_scks()
-    assert len(ad_scks) == capture["conteo"]["sck_del_core_con_tilde"] == 10
+    assert len(ad_scks) == capture["conteo"]["sck_del_core_con_tilde"]
+    assert all(len(sck.split("~")) in (5, 6) for sck in ad_scks)
 
     hermes = [compra["sck"] for compra in compras if compra["sck"] and "hermes" in compra["sck"]]
     assert hermes == ["hermes|v1|01M3R0TZC1E78RR0AS4XQKNCCX"]
@@ -314,9 +364,6 @@ def test_the_bridge_reads_every_sck_hotmart_really_returned() -> None:
             assert sck_carries_hermes_issuance(composed)
             assert _marker_regex().fullmatch(composed)
             assert _sck_carries_hermes_marker(composed, ULID)
-        # The ad's own five or six fields stay readable by splitting on ~.
-        composed = f"{ad_sck}~hermes~v1~{ULID}"
-        assert composed.split("~")[: len(ad_sck.split("~"))] == ad_sck.split("~")
 
 
 def test_the_bridge_validator_rejects_what_the_reserve_never_writes() -> None:
@@ -344,6 +391,10 @@ def test_the_python_builder_writes_the_same_marker_as_the_reserve() -> None:
     )
     assert result.sck_value == f"hermes~v1~{ULID}"
     assert result.final_url.endswith(f"&sck=hermes~v1~{ULID}")
+    # The marker alone is the one the reserve writes when there is no ad sck.
+    writer_new = _sql_literals(_block(_sql(), "v_writer_new constant text :=", ";\n    v_target"))
+    assert "v_sck_value := 'hermes~v1~' || p_issuance_ulid;" in writer_new
+    assert result.sck_value == "hermes~v1~" + ULID
 
 
 def test_the_inventory_fingerprints_the_migration() -> None:

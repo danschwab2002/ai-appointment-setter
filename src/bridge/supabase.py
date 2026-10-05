@@ -77,8 +77,14 @@ _CHECKOUT_SAFE_SCK = re.compile(r"[A-Za-z0-9._|~-]{1,255}")
 # estandar, migracion 20261005000100) y los links anteriores siguen llegando con
 # | (hermes|v1|<ulid>): se aceptan las dos formas, nunca mezcladas, y el
 # separador entre el sck del anuncio y el marcador es el del marcador.
+# Es la MISMA forma que la regex del correlador y de la admision de la compra en
+# la base, prefijo y alfabeto incluidos. Si el bridge reconociera un sck que la
+# base rechaza, la compra iria a la admision, la base daria 22023 y Hotmart
+# recibiria 503 en cada reintento.
 _HERMES_SCK_TAIL = re.compile(
-    r"(?:(?:^|\|)hermes\|v1\||(?:^|~)hermes~v1~)[0-7][0-9A-HJKMNP-TV-Z]{25}\Z"
+    r"(?:(?:[A-Za-z0-9._|~-]+\|)?hermes\|v1\|"
+    r"|(?:[A-Za-z0-9._|~-]+~)?hermes~v1~)"
+    r"[0-7][0-9A-HJKMNP-TV-Z]{25}"
 )
 _HERMES_MARKER_SEPARATORS = ("~", "|")
 
@@ -87,7 +93,7 @@ def sck_carries_hermes_issuance(sck_value: str | None) -> bool:
     """True si el sck termina en un marcador de emision del recuperador."""
     if not sck_value:
         return False
-    return _HERMES_SCK_TAIL.search(sck_value) is not None
+    return _HERMES_SCK_TAIL.fullmatch(sck_value) is not None
 
 
 def _sck_carries_hermes_marker(sck_value: str, issuance_ulid: str) -> bool:

@@ -4208,12 +4208,22 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int
         + (
             -- La portable existe solo donde corrio 20261001000100 (ATT1, no
-            -- Johanna): ausente cuenta como presente.
+            -- Johanna). Ausente cuenta como presente solo si la compartida ya
+            -- escribe ~: antes de aplicar, Johanna tiene que dar absent, no
+            -- partial.
             select count(*) = 1
             from (
                 select to_regprocedure('public.reserve_portable_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamptz)') as oid
             ) portable
-            where portable.oid is null
+            where (
+                    portable.oid is null
+                    and exists (
+                        select 1
+                        from functions
+                        where functions.oid = to_regprocedure('public.reserve_chatwoot_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamptz)')
+                          and position('''~hermes~v1~''' in functions.definition) > 0
+                    )
+               )
                or exists (
                     select 1
                     from functions

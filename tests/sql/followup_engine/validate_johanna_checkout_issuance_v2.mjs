@@ -917,25 +917,34 @@ if (legacyAdmission?.admission_outcome !== 'inserted'
   throw new Error(`legacy composite purchase was not admitted: ${JSON.stringify(legacyAdmission)}`);
 }
 
-// The CHECKs refuse what the reserve never writes: a mixed marker, or a URL
-// that does not carry the row's marker form.
-for (const [label, ulid, trigger, sck, url] of [
-  ['mixed marker', '01K5ABCDEFX2VYB4M6X9CDPTE4', '574', `hermes|v1~01K5ABCDEFX2VYB4M6X9CDPTE4`,
+// The CHECKs refuse what the reserve never writes, each one on its own: a mixed
+// marker with a valid URL can only be refused by the sck CHECK, and a valid
+// marker with a raw "|" in the URL only by the URL CHECK.
+for (const [label, ulid, trigger, sck, url, constraint] of [
+  ['mixed marker', '01K5ABCDEFX2VYB4M6X9CDPTE4', '574', 'hermes|v1~01K5ABCDEFX2VYB4M6X9CDPTE4',
     'https://pay.hotmart.com/F106691755G?off=mgbgpp19&checkoutMode=10&src=hermes'
-      + '&sck=hermes%7Cv1~01K5ABCDEFX2VYB4M6X9CDPTE4'],
-  ['raw bar in the URL', '01K5ABCDEFX2VYB4M6X9CDPTE5', '575', `hermes|v1|01K5ABCDEFX2VYB4M6X9CDPTE5`,
+      + '&sck=hermes~v1~01K5ABCDEFX2VYB4M6X9CDPTE4',
+    'checkout_link_issuances_sck_value_shape'],
+  ['tilde marker after a bar', '01K5ABCDEFX2VYB4M6X9CDPTE6', '576', `${realAdSck}|hermes~v1~01K5ABCDEFX2VYB4M6X9CDPTE6`,
     'https://pay.hotmart.com/F106691755G?off=mgbgpp19&checkoutMode=10&src=hermes'
-      + '&sck=hermes|v1|01K5ABCDEFX2VYB4M6X9CDPTE5'],
+      + `&sck=${realAdSck}~hermes~v1~01K5ABCDEFX2VYB4M6X9CDPTE6`,
+    'checkout_link_issuances_sck_value_shape'],
+  ['raw bar in the URL', '01K5ABCDEFX2VYB4M6X9CDPTE5', '575', 'hermes|v1|01K5ABCDEFX2VYB4M6X9CDPTE5',
+    'https://pay.hotmart.com/F106691755G?off=mgbgpp19&checkoutMode=10&src=hermes'
+      + '&sck=hermes|v1|01K5ABCDEFX2VYB4M6X9CDPTE5',
+    'checkout_link_issuances_url_shape'],
 ]) {
-  let refused = false;
+  let refusedBy = null;
   await db.exec('begin');
   try {
     await insertSibling(legacyTemplate.issuance_id, ulid, trigger, sck, url);
-  } catch {
-    refused = true;
+  } catch (error) {
+    refusedBy = error?.constraint ?? `not a check violation: ${error?.message}`;
   }
   await db.exec('rollback');
-  if (!refused) throw new Error(`issuance CHECKs accepted a ${label}`);
+  if (refusedBy !== constraint) {
+    throw new Error(`issuance CHECKs on a ${label}: expected ${constraint}, got ${refusedBy}`);
+  }
 }
 
 // A mixed sck is refused by the admission before anything is stored, like any

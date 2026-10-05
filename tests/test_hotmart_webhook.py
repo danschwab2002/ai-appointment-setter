@@ -1026,6 +1026,89 @@ def test_purchase_with_the_ad_sck_in_front_still_correlates(
     assert "normalized_phone" not in json.dumps(request_body)
 
 
+# 2026-10-05 (migration 20261005000100, ADR-0022): the marker is written with
+# "~", alone or behind the ad's sck. The ad sck below is one Hotmart really
+# returned on a Johanna purchase (tests/fixtures/hotmart_purchase_sck_shapes_
+# 20261005.json). A shape the base would reject never reaches the issuance
+# admission: there the base raises 22023 and the webhook answers 503 for ever.
+_REAL_AD_SCK = (
+    "fb~120253261784760514~120253261784680514~paid~120253261784670514"
+)
+
+
+@pytest.mark.parametrize(
+    ("sck", "issuance_path"),
+    [
+        ("hermes~v1~01K5ABCDEFX2VYB4M6X9CDPTZR", True),
+        (f"{_REAL_AD_SCK}~hermes~v1~01K5ABCDEFX2VYB4M6X9CDPTZR", True),
+        (f"{_REAL_AD_SCK}|hermes|v1|01K5ABCDEFX2VYB4M6X9CDPTZR", True),
+        ("~hermes~v1~01K5ABCDEFX2VYB4M6X9CDPTZR", False),
+        ("a b~hermes~v1~01K5ABCDEFX2VYB4M6X9CDPTZR", False),
+        ("hermes|v1~01K5ABCDEFX2VYB4M6X9CDPTZR", False),
+    ],
+)
+def test_purchase_with_the_tilde_marker_goes_where_the_base_reads_it(
+    tmp_path, sck: str, issuance_path: bool,
+) -> None:
+    transport = _MockSupabaseTransport(
+        status_code=200,
+        response_body=[{
+            "admission_outcome": "inserted",
+            "webhook_event_id": "00000000-0000-0000-0000-000000000304",
+            "correlation_outcome": "matched",
+            "issuance_id": "00000000-0000-0000-0000-000000000301",
+            "purchase_intent_id": "00000000-0000-0000-0000-000000000302",
+            "commercial_case_id": "00000000-0000-0000-0000-000000000303",
+        }] if issuance_path else [{
+            "outcome": "inserted",
+            "webhook_event_id": "inserted-event",
+        }],
+    )
+    import bridge.supabase as supabase_mod
+
+    original_init = supabase_mod.SupabaseClient.__init__
+
+    def _patched_init(self, **kwargs):
+        kwargs["transport"] = transport
+        original_init(self, **kwargs)
+
+    payload = copy.deepcopy(PURCHASE_APPROVED_PAYLOAD)
+    data = payload["data"]
+    assert isinstance(data, dict)
+    product = data["product"]
+    purchase = data["purchase"]
+    assert isinstance(product, dict)
+    assert isinstance(purchase, dict)
+    product["id"] = 8104005
+    product["ucode"] = "F106691755G"
+    purchase["offer"] = {"code": "bxjge6zq"}
+    purchase["origin"] = {"sck": sck}
+
+    supabase_mod.SupabaseClient.__init__ = _patched_init
+    try:
+        app = create_app(_hotmart_settings(
+            capture_dir=tmp_path,
+            supabase_base_url="https://fake-supabase.supabase.co",
+            supabase_service_role_key="fake-service-role-key",
+        ))
+        response = _post_hotmart(app, json.dumps(payload).encode())
+    finally:
+        supabase_mod.SupabaseClient.__init__ = original_init
+
+    assert response.status_code == 202
+    assert len(transport.requests) == 1
+    request = transport.requests[0]
+    if issuance_path:
+        assert request.url.path == (
+            "/rest/v1/rpc/admit_and_correlate_hotmart_checkout_issuance_v2"
+        )
+        assert json.loads(request.content)["p_sck_value"] == sck
+    else:
+        assert request.url.path == (
+            "/rest/v1/rpc/admit_and_correlate_hotmart_purchase_approved"
+        )
+
+
 def test_hermes_sck_purchase_already_approved_is_durable_conflict(tmp_path) -> None:
     transport = _MockSupabaseTransport(
         status_code=200,

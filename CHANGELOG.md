@@ -42,7 +42,11 @@ El marcador del recuperador en el `sck` se separa con `~`, como el del anuncio: 
    - Modifica cuatro funciones sobre su definición viva, reemplazando un texto exacto. Si alguna no tiene el texto esperado, falla con `55000` y no cambia nada.
    - No depende de las migraciones del 2026-09-29 al 2026-10-01. En Johanna se aplica sola, desde una copia de `supabase/` con las migraciones ya aplicadas más esta. Probado en PGlite con esa cadena parcial.
    - En una instancia con manifiesto, se aplica con `aplicar-migraciones.sh`.
-3. **Se verifica con el próximo link que emita el agente:** `sck_value` tiene que terminar en `~hermes~v1~<ULID>`, y la URL tiene que llevarlo literal.
+3. **Se verifica con el próximo link que emita el agente:** `sck_value` tiene que terminar en `~hermes~v1~<ULID>`, y la URL tiene que llevarlo literal. Hay que tocar el link y ver que el checkout de Hotmart lo recibe entero.
+
+**Sin vuelta atrás del bridge después de la migración.** Con la base escribiendo `~`, un bridge anterior a 1.3.2 rechaza la fila de cada reserva y el link no sale. Las filas ya reservadas con `~` son inmutables, así que tampoco salen por replay. Para volver a un bridge anterior, primero va la migración inversa: el mismo bloque con los textos invertidos, solo para las dos reservas. Antes de la migración, en cambio, volver atrás es solo cambiar de imagen. Por eso conviene dejar correr el bridge 1.3.2 un rato con tráfico real antes de aplicarla.
+
+**Si después se aplican en Johanna las migraciones del 2026-09-29 al 2026-10-01**, `supabase db push` va a pedir `--include-all`, porque son anteriores a esta. Esa combinación está probada en `tests/sql/followup_engine/validate_sck_marker_on_johanna_chain.mjs`.
 
 ## [1.3.1] - 2026-10-01
 

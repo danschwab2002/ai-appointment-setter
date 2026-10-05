@@ -25,3 +25,5 @@ El 2026-10-05 Dan vio el link del E2E del entrante de ATT1 (`sck=hermes%7Cv1%7C<
 - Hotmart devuelve la `~` literal en `data.purchase.origin.sck`. Lo muestran 10 de 10 compras de Johanna con el `sck` del core, entre el 2026-09-26 y el 2026-10-01 (`tests/fixtures/hotmart_purchase_sck_shapes_20261005.json`).
 - Los consumidores fuera de este repo no se re-verificaron. El principal es el tablero de tracking de Lancemos. Dan lo dio por cubierto porque el estándar ya usa `~`.
 - **Orden de despliegue: el bridge va primero.** El bridge `1.3.1` rechaza la fila que devuelve la reserva con `~`, y el link no sale.
+- **Después de la migración no hay vuelta atrás del bridge por debajo de `1.3.2`.** Las filas reservadas con `~` son inmutables. Volver atrás exige antes la migración inversa, que sirve solo para las dos reservas, porque los lectores ya aceptan las dos formas.
+- **La regex del bridge es la misma que la de la base.** Si el bridge reconociera un `sck` que la base rechaza, la compra iría a la admisión, la base daría `22023` y Hotmart recibiría 503 en cada reintento.
