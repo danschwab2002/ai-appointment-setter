@@ -48,7 +48,13 @@ const EMAIL = 'payment-buyer@example.test';
 const PHONE = '12025550124';
 const CONTACT = '50000000-0000-4000-8000-000000000124';
 const OTHER_CONTACT = '50000000-0000-4000-8000-000000000125';
-const FAILED_AT = '2026-09-03T12:00:00Z';
+// La fecha del pago fallido se calcula, no se escribe. Era 2026-09-03 fija, y el
+// claim se pide con la hora real (NOW): desde el 2026-10-03 12:00Z, al vencer los
+// 30 dias de la politica (expires_after), el validador fallaba solo, sin que
+// cambiara el codigo. Ayer, con las mismas horas: las distancias entre la
+// intencion, el carrito y el pago fallido son las de siempre.
+const FAILED_DAY = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+const FAILED_AT = `${FAILED_DAY}T12:00:00Z`;
 const NOW = new Date().toISOString();
 const payload = (id, overrides = {}) => ({
   id,
@@ -97,7 +103,7 @@ await db.exec(`
      whatsapp_contact_authorized, provisional, provider_observed,
      activation_authorized)
   values ('att1','att1-main','main','ATT1HOTLINK','att1offer',
-          '${EMAIL}','${PHONE}','2026-09-03T11:30:00Z','waiting_for_purchase',
+          '${EMAIL}','${PHONE}','${FAILED_DAY}T11:30:00Z','waiting_for_purchase',
           true,false,true,true);
 
   insert into public.followup_policy_versions
@@ -279,7 +285,7 @@ await rejectRolledBack('mismatched payment recipient', () => db.query(`
 await rejectRolledBack('mismatched payment failure timestamp', () => db.query(`
   select * from public.plan_portable_payment_failure_recovery(
     $1,$2,'123456','ATT1 Offer','att1offer',
-    'att1-payment-failure',1,'2026-09-03T10:00:00Z',42,24,'${PHONE}',
+    'att1-payment-failure',1,'${FAILED_DAY}T10:00:00Z',42,24,'${PHONE}',
     'att1-payment-failure',1
   )
 `, [inserted.webhook_event_id, contact.contact_id]));
@@ -438,7 +444,7 @@ const initialMessage = one((await db.query(`
   ) values (
     $1,'8001','outbound','ai_agent','followup','[template]',
     'accepted',jsonb_build_object('action_id',$2::text),
-    '2026-09-03T12:01:00Z','2026-09-03T12:01:00Z'
+    '${FAILED_DAY}T12:01:00Z','${FAILED_DAY}T12:01:00Z'
   ) returning id
 `, [conversation.id, planned.scheduled_action_id])).rows,
 'initial accepted message');
@@ -449,14 +455,14 @@ await db.query(`
 `, [planned.scheduled_action_id, conversation.id]);
 await db.query(`
   update public.followup_sequences
-  set status='completed', completed_at='2026-09-03T12:01:00Z',
+  set status='completed', completed_at='${FAILED_DAY}T12:01:00Z',
       conversation_id=$2, current_step=1
   where id=$1
 `, [recoveryIdentity.initial_sequence_id, conversation.id]);
 await db.query(`
   update public.recovery_cases
   set conversation_id=$2, status='sequence_exhausted',
-      closed_at='2026-09-03T12:01:00Z', version=version+1
+      closed_at='${FAILED_DAY}T12:01:00Z', version=version+1
   where id=$1
 `, [planned.recovery_case_id, conversation.id]);
 

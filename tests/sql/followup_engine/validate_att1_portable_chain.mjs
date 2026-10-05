@@ -1739,9 +1739,10 @@ for (const reply of REPLIES) {
   const reserved = await asServiceTry(reserveSql('reserve_portable_checkout_issuance_v2'), reserveArgs);
   const link = reserved.ok ? await issuanceOf(reserved.rows[0].issuance_id) : null;
   const url = link?.checkout_url_final ?? '';
+  // El marcador se separa con ~ desde 20261005000100; la ~ viaja literal.
   const sckInUrl = attribution === 'full'
-    ? `&sck=${formSck}%7Chermes%7Cv1%7C${ulid}`
-    : `&sck=hermes%7Cv1%7C${ulid}`;
+    ? `&sck=${formSck}~hermes~v1~${ulid}`
+    : `&sck=hermes~v1~${ulid}`;
   if (!reserved.ok || reserved.rows[0].outcome !== 'reserved'
       || link.source_kind !== 'precheckout_request'
       || link.offer_resolution !== 'lead_intent'

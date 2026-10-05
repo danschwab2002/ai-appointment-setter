@@ -1426,9 +1426,10 @@ results.schema_fingerprints = FINGERPRINTS.length;
   // El enlace del formulario: su oferta, su intencion, su sck y su fbclid.
   const expectFormLink = (label, lead, link, { attribution }) => {
     const url = link.issuance?.checkout_url_final ?? '';
+    // El marcador se separa con ~ desde 20261005000100; la ~ viaja literal.
     const sckInUrl = attribution === 'full'
-      ? `&sck=${formSck}%7Chermes%7Cv1%7C${link.ulid}`
-      : `&sck=hermes%7Cv1%7C${link.ulid}`;
+      ? `&sck=${formSck}~hermes~v1~${link.ulid}`
+      : `&sck=hermes~v1~${link.ulid}`;
     if (link.outcome !== 'reserved'
         || link.issuance.source_kind !== 'precheckout_request'
         || link.issuance.offer_resolution !== 'lead_intent'

@@ -103,13 +103,13 @@ const claimed = await claim({
   conversation: 9501, phone: PHONE, key: 'followup:9501:2445', ulid: FOLLOWUP_ULID,
 });
 const expectedUrl = 'https://pay.hotmart.com/F106691755G'
-  + `?off=bxjge6zq&checkoutMode=10&src=hermes&sck=hermes%7Cv1%7C${FOLLOWUP_ULID}`;
+  + `?off=bxjge6zq&checkoutMode=10&src=hermes&sck=hermes~v1~${FOLLOWUP_ULID}`;
 if (claimed?.outcome !== 'claimed'
     || !claimed.followup_event_id
     || !claimed.checkout_issuance_id
     || claimed.checkout_issuance_id === agentLink.issuance_id
     || claimed.checkout_url_final !== expectedUrl
-    || claimed.sck_value !== `hermes|v1|${FOLLOWUP_ULID}`) {
+    || claimed.sck_value !== `hermes~v1~${FOLLOWUP_ULID}`) {
   throw new Error(`followup did not issue its own link: ${JSON.stringify(claimed)}`);
 }
 

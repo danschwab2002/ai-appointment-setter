@@ -1290,6 +1290,45 @@ def test_reserve_accepts_the_ad_sck_composed_with_tilde(ad_sck: str) -> None:
     assert result.sck_value == sck
 
 
+@pytest.mark.parametrize("ad_sck", [None, "meta|legacy|value", *_lancemos_core_tilde_cases()])
+def test_reserve_accepts_the_tilde_marker_from_20261005000100(ad_sck: str | None) -> None:
+    # 2026-10-05 (migration 20261005000100, ADR-0022): the reserve writes the
+    # marker with "~", literal in the URL. This is the row the bridge has to
+    # accept BEFORE the migration is applied, or the link does not go out. The
+    # ad's own "|" (an old lineage) is still encoded as %7C.
+    marker = f"hermes~v1~{_ULID}"
+    sck = f"{ad_sck}~{marker}" if ad_sck else marker
+    url = (
+        "https://pay.hotmart.com/F106691755G?off=mgbgpp19&checkoutMode=10"
+        f"&src=hermes&sck={sck.replace('|', '%7C')}"
+        "&fbclid=IwAR0abcDEF_ghi-JKL.mno"
+    )
+    result = _reserve(_client(_reserved_row(sck, url)))
+    assert result.outcome == "reserved"
+    assert result.checkout_url_final == url
+    assert result.sck_value == sck
+
+
+@pytest.mark.parametrize(
+    "sck",
+    [
+        f"hermes|v1~{_ULID}",
+        f"hermes~v1|{_ULID}",
+        f"fb.paid.1|hermes~v1~{_ULID}",
+        f"fb~paid~hermes|v1|{_ULID}",
+        f"~hermes~v1~{_ULID}",
+        f"hermes~v1~{_ULID}~tampered",
+    ],
+)
+def test_reserve_rejects_a_marker_the_base_never_writes(sck: str) -> None:
+    url = (
+        "https://pay.hotmart.com/F106691755G?off=bxjge6zq&checkoutMode=10"
+        f"&src=hermes&sck={sck.replace('|', '%7C')}"
+    )
+    with pytest.raises(SupabaseCommittedResponseError):
+        _reserve(_client(_reserved_row(sck, url)))
+
+
 def test_reserve_still_rejects_an_ad_sck_outside_the_alphabet() -> None:
     # Widening the alphabet to "~" must not let anything else through: a space
     # or an accent would still break the query string in silence.

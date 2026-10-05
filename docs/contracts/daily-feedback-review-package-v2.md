@@ -79,7 +79,7 @@ Es idempotente. El empaquetador (`_package_items`) y la restriccion `daily_feedb
                      "created_at": "…Z", "first_reply_at": null, "last_activity_at": "…Z", "can_reply": true, "unread_count": 0},
     "origin": "inbound",
     "events": [{"kind": "handoff", "occurred_at": "…Z", "primary_reason_code": "commercial_exception", "detail_reason_code": "explicit_human_request", "requested_by": "agent", "status": "projected"}],
-    "payment_links": [{"occurred_at": "…Z", "status": "accepted_by_chatwoot", "source_kind": "inbound_request", "chatwoot_message_id": 2391, "sck_value": "hermes|v1|…", "attribution": "marker_only", "checkout_url_final": "https://pay.hotmart.com/…", "purchased_at": null, "offer_code": "bxjge6zq", "landing_ref": "…"}],
+    "payment_links": [{"occurred_at": "…Z", "status": "accepted_by_chatwoot", "source_kind": "inbound_request", "chatwoot_message_id": 2391, "sck_value": "hermes~v1~…", "attribution": "marker_only", "checkout_url_final": "https://pay.hotmart.com/…", "purchased_at": null, "offer_code": "bxjge6zq", "landing_ref": "…"}],
     "prior_reviews": [{"local_date": "2026-09-25", "decision": "correct_with_feedback", "verbatim_feedback": "…", "decided_at": "…Z"}],
     "summary": {"prospect_messages": 3, "agent_messages": 3, "team_messages": 0, "agent_replied": true, "payment_link_sent": false, "purchase_recorded": false, "handoff_count": 1, "last_handoff_reason": "explicit_human_request", "reactivation_count": 0, "opt_out": false, "automation_paused": true, "status": "open", "last_actor": "team", "last_message_at": "…Z"}
   }
