@@ -61,6 +61,13 @@ async function derive(detailReasonCode) {
   if (admitted?.outcome !== 'created') {
     throw new Error(`fixture admission failed: ${JSON.stringify(admitted)}`);
   }
+  // El reloj de PGlite tiene resolucion de milisegundo: medido el 2026-10-05,
+  // 40 consultas seguidas dieron 6 clock_timestamp distintos. La pausa del caso
+  // exige new.updated_at > old.updated_at, y el now() de la derivacion caia a
+  // veces en el mismo milisegundo que la admision: inbound_commercial_case_is_
+  // immutable en 2 de cada 10 corridas, sin que cambiara el codigo. Postgres
+  // mide en microsegundos y entre las dos llamadas del bridge hay red.
+  await new Promise((resolve) => setTimeout(resolve, 3));
   const handoff = (await db.query(`
     select * from public.request_inbound_human_handoff(
       $1::uuid, $2, 'commercial_exception', 'detail-reason-handoff', 1, now(), $3
