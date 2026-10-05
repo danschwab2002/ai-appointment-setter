@@ -70,7 +70,8 @@ HOTMART_CHECKOUT_PREFIX = "https://pay.hotmart.com/"
 FOLLOWUP_BUTTON_URL = HOTMART_CHECKOUT_PREFIX + "{{1}}"
 COUPON_CODE_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 # Lo que puede ir despues de pay.hotmart.com/ sin escapar nada: el link que
-# emite la base ya viene con el separador del sck codificado (%7C).
+# emite la base ya viene con la | del sck codificada (%7C) y la ~ literal (el
+# marcador se separa con ~ desde la migracion 20261005000100).
 _BUTTON_SUFFIX_RE = re.compile(r"[A-Za-z0-9_-]+\?[A-Za-z0-9._~%=&-]+")
 MAX_BUTTON_SUFFIX_CHARS = 1_800
 

@@ -8,7 +8,47 @@ Cada versión dice qué cambia y **qué tiene que hacer quien actualiza una inst
 
 Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab2002/setter-bridge`, `setter-slack-connector` y `setter-daily-feedback`. La release de GitHub lleva el digest de cada una. Cómo se pasa un servicio a la imagen y cómo se vuelve atrás: [docs/operations/release-por-imagen-v1.md](docs/operations/release-por-imagen-v1.md).
 
-## [1.3.1] - sin publicar
+## [1.3.2] - sin publicar
+
+El marcador del recuperador en el `sck` se separa con `~`, como el del anuncio: es el estándar de Lancemos (E46) y lo decidió Dan el 2026-10-05 ([ADR-0022](docs/decisions/0022-el-marcador-del-sck-usa-la-tilde.md)). Además, la compra que trae el `sck` del anuncio delante del marcador deja de rechazarse. Trae una migración, que va **después** del bridge. Le cambia algo a Johanna y a ATT1: los links nuevos salen con `~`.
+
+### Cambiado
+
+- **El marcador se escribe con `~`:** queda `hermes~v1~<ULID>` y, con el `sck` del anuncio delante, `<sck del anuncio>~hermes~v1~<ULID>`. Antes se escribía con `|`.
+  - Solo cambia el separador. Los campos, su orden, `src=hermes` y `sck_format_version = 'v1'` quedan igual.
+  - La `~` viaja literal en la URL. La `|` que traiga el `sck` de un anuncio de un linaje viejo se sigue encodeando a `%7C`.
+  - Lo escriben las dos reservas: la compartida y la portable de ATT1.
+- **Los lectores aceptan las dos formas, para siempre.** Los links que ya salieron con `|` siguen llegando, y una reserva que quedó en `reserved` se reusa tal cual. Las dos formas no se mezclan: `hermes|v1~…` se rechaza.
+  - En el bridge: `_HERMES_SCK_TAIL` y `_sck_carries_hermes_marker`.
+  - En la base: los dos `CHECK` de `checkout_link_issuances`, el correlador y la admisión de la compra.
+
+### Arreglado
+
+- **Se rechazaba una compra hecha con un link que llevaba el `sck` del anuncio.** `admit_and_correlate_hotmart_checkout_issuance_v2` aceptaba solo el marcador solo (su única definición es la de `20260914000100`).
+  - El bridge reconoce esa compra como del recuperador y la manda a esa función.
+  - La base lanzaba `22023`, el bridge le contestaba `503` a Hotmart, y la compra no se guardaba ni marcaba la intención como comprada.
+  - Hotmart reintenta y cuenta esas fallas para desactivar el webhook.
+
+  Ahora la función acepta lo mismo que el correlador. Le pasaba a los links `full` y `sck_only`, que existen desde el 2026-09-22. En los logs que quedan del bridge de Johanna (del 2026-09-28 23:57Z al 2026-10-05) no hubo ningún `5xx` a Hotmart. Reproducido en PGlite: sin la migración, `ERROR 22023 hotmart_checkout_issuance_admission_invalid`; con ella, `inserted`.
+
+### Agregado
+
+- **El link de pago en el botón de una plantilla** ([PR #216](https://github.com/danschwab2002/ai-appointment-setter/pull/216)), mergeado después de 1.3.1. Queda apagado: se prende solo con `PAYMENT_LINK_TEMPLATE_NAME` y `PAYMENT_LINK_TEMPLATE_LANGUAGE`, y sin ellas el link sale como antes, en un solo mensaje.
+
+### Qué hace quien actualiza
+
+1. **Primero, el bridge.** El de 1.3.1 rechaza la fila con `~` que devuelve la reserva, y el link no sale. Tampoco reconoce una compra con `~`.
+2. **Después, la migración `20261005000100`.**
+   - Modifica cuatro funciones sobre su definición viva, reemplazando un texto exacto. Si alguna no tiene el texto esperado, falla con `55000` y no cambia nada.
+   - No depende de las migraciones del 2026-09-29 al 2026-10-01. En Johanna se aplica sola, desde una copia de `supabase/` con las migraciones ya aplicadas más esta. Probado en PGlite con esa cadena parcial.
+   - En una instancia con manifiesto, se aplica con `aplicar-migraciones.sh`.
+3. **Se verifica con el próximo link que emita el agente:** `sck_value` tiene que terminar en `~hermes~v1~<ULID>`, y la URL tiene que llevarlo literal. Hay que tocar el link y ver que el checkout de Hotmart lo recibe entero.
+
+**Sin vuelta atrás del bridge después de la migración.** Con la base escribiendo `~`, un bridge anterior a 1.3.2 rechaza la fila de cada reserva y el link no sale. Las filas ya reservadas con `~` son inmutables, así que tampoco salen por replay. Para volver a un bridge anterior, primero va la migración inversa: el mismo bloque con los textos invertidos, solo para las dos reservas. Antes de la migración, en cambio, volver atrás es solo cambiar de imagen. Por eso conviene dejar correr el bridge 1.3.2 un rato con tráfico real antes de aplicarla.
+
+**Si después se aplican en Johanna las migraciones del 2026-09-29 al 2026-10-01**, `supabase db push` va a pedir `--include-all`, porque son anteriores a esta. Esa combinación está probada en `tests/sql/followup_engine/validate_sck_marker_on_johanna_chain.mjs`.
+
+## [1.3.1] - 2026-10-01
 
 Arregla el límite conocido de 1.3.0 que frenaba todo flujo de salida (H7): quien respondía a una plantilla del dispatcher (carrito, pago fallido o primer contacto) no pasaba la admisión entrante. Ahora, en una instancia con manifiesto, la respuesta adopta la conversación que abrió la plantilla y llega al agente. Trae dos migraciones, que van **antes** que el bridge. Johanna no cambia. No tiene E2E real: los tres botones se prueban con un teléfono de prueba en el inbox de la instancia antes de abrir un flujo de salida a personas reales.
 

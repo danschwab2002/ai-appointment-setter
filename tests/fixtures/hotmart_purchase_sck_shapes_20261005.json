@@ -1,0 +1,38 @@
+{
+  "_capture": {
+    "origen": "Supabase de Johanna (el proyecto del bridge infra_appointment-bridge), public.webhook_events con source = 'hotmart', event_type = 'PURCHASE_APPROVED' y received_at >= 2026-09-25. Es el campo data.purchase.origin.sck del webhook 2.0.0 de Hotmart, tal como lo guardo el bridge al recibirlo. Lectura de solo lectura por la Management API, desde infra_hermes.",
+    "captured_at": "2026-10-05T12:34:45Z",
+    "que_trae": "Solo el sck y la hora de recepcion. Sin email, telefono, nombre, documento ni transaccion: el sck son ids de Meta (anuncio, conjunto y campana) y el marcador del recuperador.",
+    "conteo": {
+      "compras": 13,
+      "sck_del_core_con_tilde": 10,
+      "sck_con_punto": 1,
+      "marcador_con_barra": 1,
+      "sin_sck": 1,
+      "con_7C_o_7E": 0
+    },
+    "lo_que_prueba": "Hotmart devuelve la ~ literal en data.purchase.origin.sck (10 de 10, ninguna como %7E) y el marcador con | tambien literal (no como %7C). El cambio del marcador a ~ no depende de que Hotmart haga nada distinto."
+  },
+  "compras": [
+    {"recibido": "2026-09-25T05:14Z", "sck": "ig.paid.120253261872370514"},
+    {"recibido": "2026-09-26T12:46Z", "sck": "fb~120253261944210514~120253261944090514~paid~120253261944050514"},
+    {"recibido": "2026-09-26T12:46Z", "sck": "fb~120253261944200514~120253261944100514~paid~120253261944060514"},
+    {"recibido": "2026-09-26T17:18Z", "sck": "fb~120253261784760514~120253261784680514~paid~120253261784670514"},
+    {"recibido": "2026-09-26T18:33Z", "sck": "ig~120253261784760514~120253261784680514~paid~120253261784670514"},
+    {"recibido": "2026-09-26T22:49Z", "sck": "fb~120253261944240514~120253261944130514~paid~120253261944080514"},
+    {"recibido": "2026-09-28T09:38Z", "sck": "fb~120253261784760514~120253261784690514~paid~120253261784670514~120253261784670514"},
+    {"recibido": "2026-09-28T16:12Z", "sck": "ig~120252593421110514~120252623665610514~paid~120252593421120514~120252593421120514"},
+    {"recibido": "2026-09-29T12:49Z", "sck": "fb~120253018820790514~120253018820670514~paid~120253018820660514~120253018820660514"},
+    {"recibido": "2026-09-29T14:19Z", "sck": "fb~120253261784760514~120253261784690514~paid~120253261784670514~120253261784670514"},
+    {"recibido": "2026-10-01T00:39Z", "sck": "ig~120253261872360514~120253261872380514~paid~120253261872370514~120253261872370514"},
+    {"recibido": "2026-10-01T14:39Z", "sck": null},
+    {"recibido": "2026-10-03T04:12Z", "sck": "hermes|v1|01M3R0TZC1E78RR0AS4XQKNCCX"}
+  ],
+  "emision_att1_20261005": {
+    "origen": "att1-db (stack setter-att1), public.checkout_link_issuances: la emision de la prueba del entrante, 2026-10-05 11:41:57Z, inbox 11, conversacion 1. Es la forma que deja de escribirse con la migracion 20261005000100.",
+    "sck_value": "hermes|v1|01M45XXQRE387T4MYWFK2P6DXA",
+    "attribution_resolution": "marker_only",
+    "checkout_url_sin_query": "https://pay.hotmart.com/D98014973Y",
+    "parametros_de_la_url": ["off", "checkoutMode", "src", "sck"]
+  }
+}

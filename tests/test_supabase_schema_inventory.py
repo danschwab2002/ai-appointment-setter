@@ -335,7 +335,8 @@ def test_portable_inbound_template_adoption_fingerprint_checks_the_function_and_
 
 def test_commercial_case_lookups_by_inbound_kind_fingerprint_checks_the_four_rpcs() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    fingerprint = sql.split("'20261001000500'", 1)[1].split(")\nselect", 1)[0]
+    # Hasta la fila siguiente: las cuentas de abajo son de esta migracion sola.
+    fingerprint = sql.split("'20261001000500'", 1)[1].split("'20261005000100'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", fingerprint)
 
     assert "'20261001000500_commercial_case_lookups_by_inbound_kind.sql'" in fingerprint
@@ -376,7 +377,7 @@ def test_commercial_case_lookups_by_inbound_kind_fingerprint_checks_the_four_rpc
         "nothas_function_privilege('authenticated',oid,'EXECUTE')",
     ):
         assert compact_fingerprint.count(marker) == 4, marker
-    assert compact_fingerprint.endswith(",4,'commercial_case_lookups_by_inbound_kind'")
+    assert compact_fingerprint.endswith(",4,'commercial_case_lookups_by_inbound_kind'unionallselect")
 
 
 def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:

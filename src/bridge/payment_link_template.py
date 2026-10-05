@@ -194,7 +194,8 @@ def payment_link_button_suffix(checkout_url_final: str) -> str:
     """La parte variable del boton: el link emitido sin ``https://pay.hotmart.com/``.
 
     El link no se toca. Ya trae la oferta del lead, ``src=hermes``, el ``sck``
-    con la marca del recuperador (el separador viene codificado como ``%7C``) y,
+    con la marca del recuperador (``~``, literal; la ``|`` de los links
+    anteriores y del sck del anuncio viene codificada como ``%7C``) y,
     si el lead vino de un anuncio, el ``fbclid``.
     """
     if (

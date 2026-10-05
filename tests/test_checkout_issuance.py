@@ -29,18 +29,19 @@ def test_build_checkout_issuance_uses_server_owned_offer_and_opaque_sck() -> Non
         issuance_ulid=ISSUANCE_ULID,
     )
 
-    assert result.sck_value == f"hermes|v1|{ISSUANCE_ULID}"
+    assert result.sck_value == f"hermes~v1~{ISSUANCE_ULID}"
     assert result.source_value == "hermes"
+    # La ~ es unreserved (RFC 3986): viaja literal, sin %7E.
     assert result.final_url == (
         "https://pay.hotmart.com/F106691755G"
-        f"?off=bxjge6zq&checkoutMode=10&src=hermes&sck=hermes%7Cv1%7C{ISSUANCE_ULID}"
+        f"?off=bxjge6zq&checkoutMode=10&src=hermes&sck=hermes~v1~{ISSUANCE_ULID}"
     )
     query = parse_qs(urlsplit(result.final_url).query, strict_parsing=True)
     assert query == {
         "off": ["bxjge6zq"],
         "checkoutMode": ["10"],
         "src": ["hermes"],
-        "sck": [f"hermes|v1|{ISSUANCE_ULID}"],
+        "sck": [f"hermes~v1~{ISSUANCE_ULID}"],
     }
 
 
