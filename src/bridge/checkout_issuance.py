@@ -86,7 +86,8 @@ def build_checkout_issuance(
     if not isinstance(issuance_ulid, str) or _ULID.fullmatch(issuance_ulid) is None:
         raise CheckoutIssuanceUnavailable("invalid_issuance_ulid")
     source_value = "hermes"
-    sck_value = f"hermes|v1|{issuance_ulid}"
+    # Mismo separador que la reserva desde la migracion 20261005000100 (E46).
+    sck_value = f"hermes~v1~{issuance_ulid}"
     query = urlencode(
         (
             ("off", offer.offer_code),

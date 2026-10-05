@@ -62,8 +62,10 @@ Diferidos por Dan: el lead que pidio descuento (hoy se deriva con `commercial_ex
 Lo emite `reserve_chatwoot_checkout_issuance_v2`, la misma RPC del agente, anclada en el ID de **nuestro** ultimo mensaje (`trigger_external_message_id`). Los IDs de Chatwoot son globales, asi que nunca coinciden con el de un mensaje del lead: el seguimiento siempre es una emision nueva, con su propio ULID. Lleva lo mismo que el link del agente:
 
 ```
-https://pay.hotmart.com/<producto>?off=<oferta del lead>&checkoutMode=10&src=hermes&sck=<sck del anuncio>%7Chermes%7Cv1%7C<ULID>[&fbclid=<fbclid>]
+https://pay.hotmart.com/<producto>?off=<oferta del lead>&checkoutMode=10&src=hermes&sck=<sck del anuncio>~hermes~v1~<ULID>[&fbclid=<fbclid>]
 ```
+
+Desde la migracion `20261005000100` (ADR-0022) el marcador se separa con `~`, que viaja literal. Los links emitidos antes llevan `%7Chermes%7Cv1%7C<ULID>`, y una reserva anterior que el seguimiento reusa sale asi: los lectores aceptan las dos formas. La `|` del `sck` de un anuncio de un linaje viejo se sigue encodeando a `%7C`.
 
 - `checkout_url_final` conserva su contrato: la correlacion de la compra, la revision diaria y el recuperador lo leen sin cambios.
 - El cupon **no** entra en esa URL. El bridge arma el boton con todo lo que va despues de `https://pay.hotmart.com/` mas `&offDiscount=<cupon>`.
@@ -126,4 +128,4 @@ Ademas exige el AgentBot, los IDs canonicos de Chatwoot, la admision de Corte B 
 
 - La revision diaria no clasifica todavia la marca `conversation_followup_command_key`: el mensaje aparece como plantilla generica.
 - El fixture de la plantilla con boton es la forma documentada por Meta, no una captura. Meta aprobo la plantilla el 2026-09-28; falta capturarla del catalogo y reemplazar el fixture.
-- Que hace WhatsApp con el sufijo del boton al tocarlo (si conserva `?`, `&` y `%7C`) no esta medido: el primer envio salio y se leyo, pero ningun evento de Hotmart trajo todavia su `sck`.
+- Que hace WhatsApp con el sufijo del boton al tocarlo (si conserva `?`, `&`, `~` y `%7C`) no esta medido: el primer envio salio y se leyo, pero ningun evento de Hotmart trajo todavia su `sck`.

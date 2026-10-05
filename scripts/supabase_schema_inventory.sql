@@ -4178,6 +4178,68 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         4,
         'commercial_case_lookups_by_inbound_kind'
+    union all
+    select
+        '20261005000100',
+        '20261005000100_sck_marker_uses_tilde_v1.sql',
+        exists(
+            select 1
+            from pg_catalog.pg_constraint
+            where conrelid = to_regclass('public.checkout_link_issuances')
+              and conname = 'checkout_link_issuances_sck_value_shape'
+              and position('~hermes~v1~' in pg_get_constraintdef(oid)) > 0
+              and position('|hermes|v1|' in pg_get_constraintdef(oid)) > 0
+        )::int
+        + exists(
+            select 1
+            from pg_catalog.pg_constraint
+            where conrelid = to_regclass('public.checkout_link_issuances')
+              and conname = 'checkout_link_issuances_url_shape'
+              and position('([A-Za-z0-9._%~-]+~)?hermes~v1~' in pg_get_constraintdef(oid)) > 0
+              and position('hermes%7Cv1%7C' in pg_get_constraintdef(oid)) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.reserve_chatwoot_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamptz)')
+              and prosecdef
+              and position('''~hermes~v1~''' in definition) > 0
+              and position('''|hermes|v1|''' in definition) = 0
+        )::int
+        + (
+            -- La portable existe solo donde corrio 20261001000100 (ATT1, no
+            -- Johanna): ausente cuenta como presente.
+            select count(*) = 1
+            from (
+                select to_regprocedure('public.reserve_portable_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamptz)') as oid
+            ) portable
+            where portable.oid is null
+               or exists (
+                    select 1
+                    from functions
+                    where functions.oid = portable.oid
+                      and position('''~hermes~v1~''' in functions.definition) > 0
+                      and position('''|hermes|v1|''' in functions.definition) = 0
+               )
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.correlate_hotmart_checkout_issuance_v2(uuid,text,timestamptz)')
+              and prosecdef
+              and position('([A-Za-z0-9._|~-]+~)?hermes~v1~' in definition) > 0
+              and position('([A-Za-z0-9._|~-]+[|])?hermes[|]v1[|]' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_and_correlate_hotmart_checkout_issuance_v2(text,jsonb,text,timestamptz)')
+              and prosecdef
+              and position('([A-Za-z0-9._|~-]+~)?hermes~v1~' in definition) > 0
+              and position('''^hermes[|]v1[|][0-7]' in definition) = 0
+        )::int,
+        6,
+        'sck_marker_uses_tilde'
 )
 select
     version,

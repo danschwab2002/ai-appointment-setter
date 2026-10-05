@@ -73,9 +73,14 @@ _CHECKOUT_SAFE_SCK = re.compile(r"[A-Za-z0-9._|~-]{1,255}")
 # El sck que Hotmart devuelve en la compra: el marcador cierra el valor, con el
 # del anuncio delante o sin nada. Reemplaza al viejo startswith("hermes|"), que
 # dejaba de reconocer la venta apenas el sck del anuncio viajaba adelante.
+# Desde el 2026-10-05 el marcador se escribe con ~ (hermes~v1~<ulid>, E46 del
+# estandar, migracion 20261005000100) y los links anteriores siguen llegando con
+# | (hermes|v1|<ulid>): se aceptan las dos formas, nunca mezcladas, y el
+# separador entre el sck del anuncio y el marcador es el del marcador.
 _HERMES_SCK_TAIL = re.compile(
-    r"(?:^|\|)hermes\|v1\|[0-7][0-9A-HJKMNP-TV-Z]{25}\Z"
+    r"(?:(?:^|\|)hermes\|v1\||(?:^|~)hermes~v1~)[0-7][0-9A-HJKMNP-TV-Z]{25}\Z"
 )
+_HERMES_MARKER_SEPARATORS = ("~", "|")
 
 
 def sck_carries_hermes_issuance(sck_value: str | None) -> bool:
@@ -88,17 +93,23 @@ def sck_carries_hermes_issuance(sck_value: str | None) -> bool:
 def _sck_carries_hermes_marker(sck_value: str, issuance_ulid: str) -> bool:
     """El sck es el marcador solo, o el del anuncio seguido del marcador.
 
-    El del anuncio se preserva entero y primero para que un parser que corte por
-    "|" lo encuentre en el primer campo. Ver la migracion 20260922000200.
+    El del anuncio se preserva entero y primero (migracion 20260922000200). El
+    marcador se escribe con ~ desde la migracion 20261005000100; una reserva
+    anterior que se reusa por replay o por el seguimiento devuelve el de |, y
+    las dos formas valen.
     """
-    marker = f"hermes|v1|{issuance_ulid}"
-    if sck_value == marker:
-        return True
-    suffix = f"|{marker}"
-    if not sck_value.endswith(suffix):
-        return False
-    original = sck_value[: -len(suffix)]
-    return bool(original) and _CHECKOUT_SAFE_SCK.fullmatch(original) is not None
+    for separator in _HERMES_MARKER_SEPARATORS:
+        marker = f"hermes{separator}v1{separator}{issuance_ulid}"
+        if sck_value == marker:
+            return True
+        suffix = f"{separator}{marker}"
+        if sck_value.endswith(suffix):
+            original = sck_value[: -len(suffix)]
+            return (
+                bool(original)
+                and _CHECKOUT_SAFE_SCK.fullmatch(original) is not None
+            )
+    return False
 
 
 class SupabaseCommittedResponseError(SupabaseError):

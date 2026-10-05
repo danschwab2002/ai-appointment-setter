@@ -82,9 +82,11 @@ const prepared = (await db.query(`
     $1::uuid, '12025550123', 1, 9, 9101, '501', $2, clock_timestamp()
   )
 `, [inbound.commercial_case_id, issuanceUlid])).rows[0];
-const expectedSck = `hermes|v1|${issuanceUlid}`;
+// 2026-10-05 (migration 20261005000100): the marker is separated with "~", like
+// the ad's sck, and travels literally in the URL ("~" is unreserved).
+const expectedSck = `hermes~v1~${issuanceUlid}`;
 const expectedUrl = 'https://pay.hotmart.com/F106691755G'
-  + `?off=bxjge6zq&checkoutMode=10&src=hermes&sck=hermes%7Cv1%7C${issuanceUlid}`;
+  + `?off=bxjge6zq&checkoutMode=10&src=hermes&sck=hermes~v1~${issuanceUlid}`;
 if (prepared?.outcome !== 'reserved'
     || prepared?.source_kind !== 'inbound_request'
     || prepared?.sck_value !== expectedSck
@@ -333,10 +335,11 @@ if (precheckoutPrepared?.outcome !== 'reserved'
     || precheckoutDurable?.source_kind !== 'precheckout_request'
     || precheckoutDurable?.source_submission_id !== precheckoutSubmission.id
     || precheckoutDurable?.original_sck !== 'meta|legacy|value'
+    // The ad's own "|" (an old lineage) is still encoded; the marker's "~" is not.
     || !precheckoutDurable?.checkout_url_final.includes(
-         'sck=meta%7Clegacy%7Cvalue%7Chermes%7Cv1%7C01K5ABCDEFX2VYB4M6X9CDPTS1')
+         'sck=meta%7Clegacy%7Cvalue~hermes~v1~01K5ABCDEFX2VYB4M6X9CDPTS1')
     || precheckoutDurable?.sck_value
-       !== 'meta|legacy|value|hermes|v1|01K5ABCDEFX2VYB4M6X9CDPTS1') {
+       !== 'meta|legacy|value~hermes~v1~01K5ABCDEFX2VYB4M6X9CDPTS1') {
   throw new Error(`precheckout issuance diverged: ${JSON.stringify({
     prepared: precheckoutPrepared, durable: precheckoutDurable,
   })}`);
@@ -351,7 +354,8 @@ const resolutionOf = async (issuanceId) => (await db.query(`
   where id = $1::uuid
 `, [issuanceId])).rows[0];
 const offerUrl = (offer, ulid, originalSck = null, fbclid = null) => {
-  const sck = originalSck ? `${originalSck}|hermes|v1|${ulid}` : `hermes|v1|${ulid}`;
+  // The marker goes with "~" (20261005000100); only an ad's own "|" is encoded.
+  const sck = originalSck ? `${originalSck}~hermes~v1~${ulid}` : `hermes~v1~${ulid}`;
   const base = 'https://pay.hotmart.com/F106691755G'
     + `?off=${offer}&checkoutMode=10&src=hermes&sck=${sck.split('|').join('%7C')}`;
   return fbclid ? `${base}&fbclid=${fbclid}` : base;
@@ -552,7 +556,7 @@ const fullDurable = await attributionOf(fullPrepared.issuance_id);
 if (fullPrepared?.outcome !== 'reserved'
     || fullDurable?.attribution_resolution !== 'full'
     || fullDurable?.dropped_unsafe_fields !== null
-    || fullDurable?.sck_value !== `${fullSck}|hermes|v1|${fullUlid}`
+    || fullDurable?.sck_value !== `${fullSck}~hermes~v1~${fullUlid}`
     || fullDurable?.checkout_url_final !== offerUrl('mgbgpp19', fullUlid, fullSck, fullFbclid)) {
   throw new Error(`full attribution diverged: ${JSON.stringify({
     prepared: fullPrepared, durable: fullDurable,
@@ -571,7 +575,7 @@ await attachSubmission(fbOnlyIntent.id, 'attribution-fbclid-1', 'ads-b', {
 const fbOnlyPrepared = await issueFor(fbOnlyPhone, 9121, '521', fbOnlyUlid);
 const fbOnlyDurable = await attributionOf(fbOnlyPrepared.issuance_id);
 if (fbOnlyDurable?.attribution_resolution !== 'fbclid_only'
-    || fbOnlyDurable?.sck_value !== `hermes|v1|${fbOnlyUlid}`
+    || fbOnlyDurable?.sck_value !== `hermes~v1~${fbOnlyUlid}`
     || fbOnlyDurable?.checkout_url_final
        !== offerUrl('mgbgpp19', fbOnlyUlid, null, 'IwAR1onlyclickid')) {
   throw new Error(`fbclid-only attribution diverged: ${JSON.stringify(fbOnlyDurable)}`);
@@ -591,7 +595,7 @@ const unsafePrepared = await issueFor(unsafePhone, 9122, '522', unsafeUlid);
 const unsafeDurable = await attributionOf(unsafePrepared.issuance_id);
 if (unsafeDurable?.attribution_resolution !== 'marker_only'
     || unsafeDurable?.dropped_unsafe_fields !== 'sck,fbclid'
-    || unsafeDurable?.sck_value !== `hermes|v1|${unsafeUlid}`
+    || unsafeDurable?.sck_value !== `hermes~v1~${unsafeUlid}`
     || unsafeDurable?.checkout_url_final !== offerUrl('mgbgpp19', unsafeUlid)
     || unsafeDurable?.checkout_url_final.includes(' ')) {
   throw new Error(`unsafe attribution was not dropped: ${JSON.stringify(unsafeDurable)}`);
@@ -611,7 +615,7 @@ const compositeMatch = (await db.query(`
   select * from public.correlate_hotmart_checkout_issuance_v2(
     $1::uuid, $2, clock_timestamp()
   )
-`, [compositeEvent.id, `${fullSck}|hermes|v1|${fullUlid}`])).rows[0];
+`, [compositeEvent.id, `${fullSck}~hermes~v1~${fullUlid}`])).rows[0];
 if (compositeMatch?.outcome !== 'matched'
     || compositeMatch?.issuance_id !== fullPrepared.issuance_id) {
   throw new Error(`composite sck correlation diverged: ${JSON.stringify(compositeMatch)}`);
@@ -626,7 +630,13 @@ const strayEvent = (await db.query(`
     '{}'::jsonb, 'received'
   ) returning id
 `)).rows[0];
-for (const stray of [`hermes|v1|${fullUlid}|tail`, 'fb.paid.120210000000000000', 'hermes|v1|nope']) {
+// The two marker forms are never mixed, and nothing may follow the ULID.
+for (const stray of [
+  `hermes|v1|${fullUlid}|tail`, 'fb.paid.120210000000000000', 'hermes|v1|nope',
+  `hermes~v1~${fullUlid}~tail`, 'hermes~v1~nope', `hermes|v1~${fullUlid}`,
+  `hermes~v1|${fullUlid}`, `${fullSck}|hermes~v1~${fullUlid}`,
+  `${fullSck}~hermes|v1|${fullUlid}`, `~hermes~v1~${fullUlid}`,
+]) {
   const rejected = (await db.query(`
     select * from public.correlate_hotmart_checkout_issuance_v2(
       $1::uuid, $2, clock_timestamp()
@@ -665,10 +675,10 @@ for (const caso of tildeFixture.casos) {
   if (tildePrepared?.outcome !== 'reserved'
       || tildeDurable?.attribution_resolution !== 'full'
       || tildeDurable?.dropped_unsafe_fields !== null
-      || tildeDurable?.sck_value !== `${caso.sck}|hermes|v1|${tildeUlid}`
+      || tildeDurable?.sck_value !== `${caso.sck}~hermes~v1~${tildeUlid}`
       || tildeDurable?.checkout_url_final
          !== offerUrl('mgbgpp19', tildeUlid, caso.sck, 'IwAR2tildeclickid')
-      || !tildeDurable?.checkout_url_final.includes(`&sck=${caso.sck}%7Chermes`)) {
+      || !tildeDurable?.checkout_url_final.includes(`&sck=${caso.sck}~hermes~v1~`)) {
     throw new Error(`tilde sck was not preserved (${caso.nombre}): ${JSON.stringify({
       prepared: tildePrepared, durable: tildeDurable,
     })}`);
@@ -685,7 +695,7 @@ for (const caso of tildeFixture.casos) {
     select * from public.correlate_hotmart_checkout_issuance_v2(
       $1::uuid, $2, clock_timestamp()
     )
-  `, [tildeEvent.id, `${caso.sck}|hermes|v1|${tildeUlid}`])).rows[0];
+  `, [tildeEvent.id, `${caso.sck}~hermes~v1~${tildeUlid}`])).rows[0];
   if (tildeMatch?.outcome !== 'matched' || tildeMatch?.issuance_id !== tildePrepared.issuance_id) {
     throw new Error(`tilde sck correlation diverged (${caso.nombre}): ${JSON.stringify(tildeMatch)}`);
   }
@@ -705,7 +715,7 @@ const tildeUnsafePrepared = await issueFor(tildeUnsafePhone, 9139, '539', tildeU
 const tildeUnsafeDurable = await attributionOf(tildeUnsafePrepared.issuance_id);
 if (tildeUnsafeDurable?.attribution_resolution !== 'marker_only'
     || tildeUnsafeDurable?.dropped_unsafe_fields !== 'sck'
-    || tildeUnsafeDurable?.sck_value !== `hermes|v1|${tildeUnsafeUlid}`) {
+    || tildeUnsafeDurable?.sck_value !== `hermes~v1~${tildeUnsafeUlid}`) {
   throw new Error(`unsafe tilde sck was not dropped: ${JSON.stringify(tildeUnsafeDurable)}`);
 }
 
@@ -750,7 +760,7 @@ for (const caso of lengthCases) {
     if (lengthPrepared?.outcome !== 'reserved'
         || lengthDurable?.attribution_resolution !== 'full'
         || lengthDurable?.dropped_unsafe_fields !== null
-        || lengthDurable?.sck_value !== `${caso.sck}|hermes|v1|${lengthUlid}`
+        || lengthDurable?.sck_value !== `${caso.sck}~hermes~v1~${lengthUlid}`
         || lengthDurable?.checkout_url_final
            !== offerUrl('mgbgpp19', lengthUlid, caso.sck, 'IwAR2lengthclickid')) {
       throw new Error(`long sck was not preserved (${caso.nombre}): ${JSON.stringify({
@@ -769,15 +779,207 @@ for (const caso of lengthCases) {
       select * from public.correlate_hotmart_checkout_issuance_v2(
         $1::uuid, $2, clock_timestamp()
       )
-    `, [lengthEvent.id, `${caso.sck}|hermes|v1|${lengthUlid}`])).rows[0];
+    `, [lengthEvent.id, `${caso.sck}~hermes~v1~${lengthUlid}`])).rows[0];
     if (lengthMatch?.outcome !== 'matched' || lengthMatch?.issuance_id !== lengthPrepared.issuance_id) {
       throw new Error(`long sck correlation diverged (${caso.nombre}): ${JSON.stringify(lengthMatch)}`);
     }
   } else if (lengthPrepared?.outcome !== 'reserved'
       || lengthDurable?.attribution_resolution !== 'fbclid_only'
       || lengthDurable?.dropped_unsafe_fields !== 'sck'
-      || lengthDurable?.sck_value !== `hermes|v1|${lengthUlid}`) {
+      || lengthDurable?.sck_value !== `hermes~v1~${lengthUlid}`) {
     throw new Error(`over-long sck was not dropped (${caso.nombre}): ${JSON.stringify(lengthDurable)}`);
+  }
+}
+
+// 2026-10-05 (migration 20261005000100): the purchase admission accepts what the
+// recognizer accepts. Until now it took only the marker alone, so a purchase made
+// with a link that carried the ad's sck raised 22023 and the bridge answered 503
+// to Hotmart; no test had ever called it with a valid sck. The ad's sck below is
+// one Hotmart really returned on a Johanna purchase (fixture of 2026-10-05).
+const shapesFixture = JSON.parse(readFileSync(
+  join(root, 'tests/fixtures/hotmart_purchase_sck_shapes_20261005.json'), 'utf8',
+));
+const realAdSck = shapesFixture.compras.find((compra) => compra.sck?.includes('~'))?.sck;
+const realLegacyMarkers = [
+  shapesFixture.compras.find((compra) => compra.sck?.startsWith('hermes|'))?.sck,
+  shapesFixture.emision_att1_20261005.sck_value,
+];
+if (!realAdSck || realAdSck.includes('hermes') || realLegacyMarkers.some((sck) => !sck)) {
+  throw new Error('sck shapes fixture does not have the expected shapes');
+}
+const purchasePayload = (externalId, transaction, sck) => ({
+  id: externalId,
+  creation_date: 1786147210000,
+  event: 'PURCHASE_APPROVED',
+  version: '2.0.0',
+  data: {
+    buyer: { email: 'schema@example.test', checkout_phone: '12025550123' },
+    product: { id: 123, ucode: 'F106691755G' },
+    purchase: {
+      status: 'APPROVED',
+      transaction,
+      approved_date: 1786147205000,
+      offer: { code: 'mgbgpp19' },
+      origin: { sck },
+    },
+  },
+});
+const admitPurchase = async (externalId, transaction, sck) => (await db.query(`
+  select * from public.admit_and_correlate_hotmart_checkout_issuance_v2(
+    $1, $2::jsonb, $3, clock_timestamp()
+  )
+`, [externalId, JSON.stringify(purchasePayload(externalId, transaction, sck)), sck])).rows[0];
+
+// The new marker alone ("hermes~v1~<ulid>"), through the admission.
+const tildeOnlyAdmission = await admitPurchase(
+  'checkout-tilde-marker-purchase', 'HPTILDEMARKER001', `hermes~v1~${fbOnlyUlid}`,
+);
+if (tildeOnlyAdmission?.admission_outcome !== 'inserted'
+    || tildeOnlyAdmission?.correlation_outcome !== 'matched'
+    || tildeOnlyAdmission?.issuance_id !== fbOnlyPrepared.issuance_id) {
+  throw new Error(`tilde marker purchase was not admitted: ${JSON.stringify(tildeOnlyAdmission)}`);
+}
+
+// A real ad's sck in front of the new marker: written with "~" and literal in the
+// URL, and the purchase that brings it back is admitted and matched.
+const realPhone = '12025550171';
+const realUlid = '01K5ABCDEFX2VYB4M6X9CDPTE1';
+const realIntent = await insertIntent(
+  'ads-b', 'mgbgpp19', realPhone, 'waiting_for_purchase', true, '2026-10-05T10:00:00Z',
+);
+await attachSubmission(realIntent.id, 'attribution-real-tilde', 'ads-b', {
+  sck: realAdSck, fbclid: 'IwAR3realclickid',
+});
+const realPrepared = await issueFor(realPhone, 9171, '571', realUlid);
+const realDurable = await attributionOf(realPrepared.issuance_id);
+if (realPrepared?.outcome !== 'reserved'
+    || realDurable?.attribution_resolution !== 'full'
+    || realDurable?.sck_value !== `${realAdSck}~hermes~v1~${realUlid}`
+    || realDurable?.checkout_url_final
+       !== offerUrl('mgbgpp19', realUlid, realAdSck, 'IwAR3realclickid')
+    || !realDurable?.checkout_url_final.includes(`&sck=${realAdSck}~hermes~v1~${realUlid}&`)
+    || realDurable?.checkout_url_final.includes('%7C')) {
+  throw new Error(`real ad sck with the tilde marker diverged: ${JSON.stringify(realDurable)}`);
+}
+const realAdmission = await admitPurchase(
+  'checkout-tilde-composite-purchase', 'HPTILDECOMPOSITE1', realDurable.sck_value,
+);
+if (realAdmission?.admission_outcome !== 'inserted'
+    || realAdmission?.correlation_outcome !== 'matched'
+    || realAdmission?.issuance_id !== realPrepared.issuance_id) {
+  throw new Error(`composite tilde purchase was not admitted: ${JSON.stringify(realAdmission)}`);
+}
+
+// A link reserved before 20261005000100 keeps its "|": one is inserted as it was
+// written then (the table has no insert trigger), with the ad's sck in front.
+// Both CHECKs keep accepting it, and its purchase, which used to raise 22023,
+// is admitted and matched.
+const legacyPhone = '12025550172';
+const legacyUlid = '01K5ABCDEFX2VYB4M6X9CDPTE3';
+const legacyIntent = await insertIntent(
+  'ads-b', 'mgbgpp19', legacyPhone, 'waiting_for_purchase', true, '2026-09-26T10:00:00Z',
+);
+await attachSubmission(legacyIntent.id, 'attribution-legacy-bar', 'ads-b', {
+  sck: realAdSck, fbclid: 'IwAR3legacyclickid',
+});
+const legacyTemplate = await issueFor(legacyPhone, 9172, '572', '01K5ABCDEFX2VYB4M6X9CDPTE2');
+const insertSibling = (templateId, ulid, trigger, sck, url) => db.query(`
+  insert into public.checkout_link_issuances (
+    issuance_ulid, commercial_case_id, purchase_intent_id, contact_id,
+    channel_identity_id, offer_catalog_id, chatwoot_account_id, chatwoot_inbox_id,
+    chatwoot_conversation_id, trigger_external_message_id, source_kind,
+    source_submission_id, original_sck, source_value, sck_format_version,
+    sck_value, checkout_url_final, offer_resolution, lead_offer_code,
+    attribution_resolution, dropped_unsafe_fields
+  )
+  select $2, commercial_case_id, purchase_intent_id, contact_id,
+         channel_identity_id, offer_catalog_id, chatwoot_account_id, chatwoot_inbox_id,
+         chatwoot_conversation_id, $3, source_kind,
+         source_submission_id, original_sck, source_value, sck_format_version,
+         $4, $5, offer_resolution, lead_offer_code,
+         attribution_resolution, dropped_unsafe_fields
+  from public.checkout_link_issuances
+  where id = $1::uuid
+  returning id
+`, [templateId, ulid, trigger, sck, url]);
+const legacySck = `${realAdSck}|hermes|v1|${legacyUlid}`;
+const legacyRow = (await insertSibling(
+  legacyTemplate.issuance_id, legacyUlid, '573', legacySck,
+  'https://pay.hotmart.com/F106691755G?off=mgbgpp19&checkoutMode=10&src=hermes'
+    + `&sck=${realAdSck}%7Chermes%7Cv1%7C${legacyUlid}&fbclid=IwAR3legacyclickid`,
+)).rows[0];
+const legacyAdmission = await admitPurchase(
+  'checkout-legacy-composite-purchase', 'HPLEGACYCOMPOSITE', legacySck,
+);
+if (legacyAdmission?.admission_outcome !== 'inserted'
+    || legacyAdmission?.correlation_outcome !== 'matched'
+    || legacyAdmission?.issuance_id !== legacyRow.id) {
+  throw new Error(`legacy composite purchase was not admitted: ${JSON.stringify(legacyAdmission)}`);
+}
+
+// The CHECKs refuse what the reserve never writes: a mixed marker, or a URL
+// that does not carry the row's marker form.
+for (const [label, ulid, trigger, sck, url] of [
+  ['mixed marker', '01K5ABCDEFX2VYB4M6X9CDPTE4', '574', `hermes|v1~01K5ABCDEFX2VYB4M6X9CDPTE4`,
+    'https://pay.hotmart.com/F106691755G?off=mgbgpp19&checkoutMode=10&src=hermes'
+      + '&sck=hermes%7Cv1~01K5ABCDEFX2VYB4M6X9CDPTE4'],
+  ['raw bar in the URL', '01K5ABCDEFX2VYB4M6X9CDPTE5', '575', `hermes|v1|01K5ABCDEFX2VYB4M6X9CDPTE5`,
+    'https://pay.hotmart.com/F106691755G?off=mgbgpp19&checkoutMode=10&src=hermes'
+      + '&sck=hermes|v1|01K5ABCDEFX2VYB4M6X9CDPTE5'],
+]) {
+  let refused = false;
+  await db.exec('begin');
+  try {
+    await insertSibling(legacyTemplate.issuance_id, ulid, trigger, sck, url);
+  } catch {
+    refused = true;
+  }
+  await db.exec('rollback');
+  if (!refused) throw new Error(`issuance CHECKs accepted a ${label}`);
+}
+
+// A mixed sck is refused by the admission before anything is stored, like any
+// malformed one.
+for (const [index, mixed] of [
+  `hermes|v1~${realUlid}`, `${realAdSck}|hermes~v1~${realUlid}`, `${realAdSck}~hermes|v1|${realUlid}`,
+].entries()) {
+  const externalId = `checkout-mixed-purchase-${index}`;
+  let blocked = false;
+  try {
+    await admitPurchase(externalId, `HPMIXED00${index}`, mixed);
+  } catch {
+    blocked = true;
+  }
+  const residue = (await db.query(`
+    select count(*)::integer as count
+    from public.webhook_events
+    where source = 'hotmart' and external_event_id = $1
+  `, [externalId])).rows[0]?.count;
+  if (!blocked || residue !== 0) {
+    throw new Error(`mixed sck was admitted: ${JSON.stringify({ mixed, blocked, residue })}`);
+  }
+}
+
+// The real legacy markers (the 2026-10-03 Johanna sale and the 2026-10-05 ATT1
+// emission) still read as ours; a real ad's sck alone does not.
+const shapesEvent = (await db.query(`
+  insert into public.webhook_events (
+    source, external_event_id, event_type, payload, processing_status
+  ) values (
+    'hotmart', 'checkout-real-shapes', 'PURCHASE_APPROVED', '{}'::jsonb, 'received'
+  ) returning id
+`)).rows[0];
+for (const [sck, expected] of [
+  ...realLegacyMarkers.map((marker) => [marker, 'not_found']),
+  [realAdSck, 'invalid_hermes_sck'],
+]) {
+  const read = (await db.query(`
+    select * from public.correlate_hotmart_checkout_issuance_v2(
+      $1::uuid, $2, clock_timestamp()
+    )
+  `, [shapesEvent.id, sck])).rows[0];
+  if (read?.outcome !== expected) {
+    throw new Error(`real sck shape misread: ${JSON.stringify({ sck, expected, read })}`);
   }
 }
 
@@ -907,6 +1109,10 @@ const schema = await db.query(schemaSql);
 const v2 = schema.rows.find((row) => row.version === '20260914000100');
 if (v2?.fingerprint_status !== 'fingerprint_present') {
   throw new Error(`V2 schema fingerprint mismatch: ${JSON.stringify(v2)}`);
+}
+const tildeMarker = schema.rows.find((row) => row.version === '20261005000100');
+if (tildeMarker?.fingerprint_status !== 'fingerprint_present') {
+  throw new Error(`tilde marker schema fingerprint mismatch: ${JSON.stringify(tildeMarker)}`);
 }
 
 console.log('JOHANNA_CHECKOUT_ISSUANCE_V2_SQL_OK');
