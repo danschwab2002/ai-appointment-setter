@@ -16,6 +16,7 @@ from typing import Awaitable, Callable
 
 import httpx
 
+from bridge.audio_transcription import needs_audio_transcription
 from bridge.filtering import (
     classify_chatwoot_event,
     matches_allowed_whatsapp_identity,
@@ -1072,13 +1073,18 @@ class ChatwootClient:
         trigger_message = messages[trigger_index]
         trigger_sender = trigger_message.get("sender")
         trigger_content = trigger_message.get("content")
+        trigger_has_text = isinstance(trigger_content, str) and bool(
+            trigger_content.strip()
+        )
+        # Una nota de voz llega sin texto y con un adjunto de audio: el agente la
+        # leyo transcripta, asi que su respuesta tambien sale. Con el texto como
+        # unica condicion se descartaba sin log (ATT1, conv 1, 05/10/2026).
         if not (
             trigger_message.get("private") is False
             and trigger_message.get("message_type") == 0
             and isinstance(trigger_sender, dict)
             and trigger_sender.get("type") == "contact"
-            and isinstance(trigger_content, str)
-            and bool(trigger_content.strip())
+            and (trigger_has_text or needs_audio_transcription(trigger_message))
         ):
             return {"status": "blocked", "reason": "invalid_trigger_message"}
 

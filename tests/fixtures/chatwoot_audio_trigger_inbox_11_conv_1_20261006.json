@@ -1,0 +1,403 @@
+{
+  "_capture": {
+    "origen": "API de Chatwoot de produccion, cuenta 2, inbox 11 (ATT1), 2026-10-06T00:21:21Z, desde el contenedor del bridge de ATT1 (stack setter-att1) con el token de control: GET show, labels y messages de la conversacion 1; la pagina de mensajes recortada a los mensajes 2668-2682",
+    "anonimizacion": "nombre, telefono, mail e identifier del lead reemplazados (NOMBRE y un telefono sintetico con forma real); nombre del equipo y del agent bot reemplazados (AGENTE); wamid, avatares, la URL firmada de cada audio, el host de Chatwoot, el uuid de la conversacion y el de la derivacion reemplazados; el texto del agent bot en el 2668 redactado",
+    "caso": "2682: nota de voz del lead (content null, un adjunto audio/ogg). El bridge la transcribio, el agente propuso una respuesta y el divisor la termino, pero el control previo al envio (_current_authorization_result) exigia texto en el disparador y la descarto con invalid_trigger_message el 2026-10-05 a las 23:59Z. 2674: el primer audio, derivado a una persona (2675-2677) y devuelto al agente (2678-2681). 2668: una respuesta real del agent bot, que sirve de molde para la respuesta del POST"
+  },
+  "conversation": {
+    "meta": {
+      "sender": {
+        "additional_attributes": {},
+        "availability_status": "offline",
+        "email": null,
+        "id": 73,
+        "name": "NOMBRE",
+        "phone_number": "+5210000000001",
+        "blocked": false,
+        "identifier": null,
+        "thumbnail": "",
+        "custom_attributes": {},
+        "last_activity_at": 1791244741,
+        "created_at": 1788894158
+      },
+      "channel": "Channel::Whatsapp",
+      "hmac_verified": false
+    },
+    "id": 1,
+    "messages": [
+      {
+        "id": 2682,
+        "content": null,
+        "account_id": 2,
+        "inbox_id": 11,
+        "conversation_id": 1,
+        "message_type": 0,
+        "created_at": 1791244739,
+        "updated_at": "2026-10-05T23:58:59.479Z",
+        "private": false,
+        "status": "sent",
+        "source_id": "wamid.REDACTED",
+        "content_type": "text",
+        "content_attributes": {},
+        "sender_type": "Contact",
+        "sender_id": 73,
+        "external_source_ids": {},
+        "additional_attributes": {},
+        "processed_message_content": null,
+        "sentiment": {},
+        "conversation": {
+          "assignee_id": null,
+          "unread_count": 0,
+          "last_activity_at": 1791244739,
+          "contact_inbox": {
+            "source_id": "+5210000000001"
+          }
+        },
+        "attachments": [
+          {
+            "id": 263,
+            "message_id": 2682,
+            "file_type": "audio",
+            "account_id": 2,
+            "extension": "ogg",
+            "content_type": "audio/opus",
+            "data_url": "https://chatwoot.example.test/rails/active_storage/blobs/redirect/REDACTED/audio.ogg",
+            "thumb_url": "",
+            "file_size": 13168,
+            "width": null,
+            "height": null,
+            "transcribed_text": ""
+          }
+        ],
+        "sender": {
+          "additional_attributes": {},
+          "custom_attributes": {},
+          "email": null,
+          "id": 73,
+          "identifier": null,
+          "name": "NOMBRE",
+          "phone_number": "+5210000000001",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
+      }
+    ],
+    "account_id": 2,
+    "uuid": "00000000-0000-4000-8000-000000000001",
+    "additional_attributes": {},
+    "agent_last_seen_at": 1791244740,
+    "assignee_last_seen_at": 1791244703,
+    "can_reply": true,
+    "contact_last_seen_at": 0,
+    "custom_attributes": {},
+    "inbox_id": 11,
+    "labels": [],
+    "muted": false,
+    "snoozed_until": null,
+    "status": "open",
+    "created_at": 1788894159,
+    "updated_at": 1791244739.6732879,
+    "timestamp": 1791244739,
+    "first_reply_created_at": 1791221240,
+    "unread_count": 0,
+    "last_non_activity_message": {
+      "id": 2682,
+      "content": null,
+      "account_id": 2,
+      "inbox_id": 11,
+      "conversation_id": 1,
+      "message_type": 0,
+      "created_at": 1791244739,
+      "updated_at": "2026-10-05T23:58:59.479Z",
+      "private": false,
+      "status": "sent",
+      "source_id": "wamid.REDACTED",
+      "content_type": "text",
+      "content_attributes": {},
+      "sender_type": "Contact",
+      "sender_id": 73,
+      "external_source_ids": {},
+      "additional_attributes": {},
+      "processed_message_content": null,
+      "sentiment": {},
+      "conversation": {
+        "assignee_id": null,
+        "unread_count": 0,
+        "last_activity_at": 1791244739,
+        "contact_inbox": {
+          "source_id": "+5210000000001"
+        }
+      },
+      "attachments": [
+        {
+          "id": 263,
+          "message_id": 2682,
+          "file_type": "audio",
+          "account_id": 2,
+          "extension": "ogg",
+          "content_type": "audio/opus",
+          "data_url": "https://chatwoot.example.test/rails/active_storage/blobs/redirect/REDACTED/audio.ogg",
+          "thumb_url": "",
+          "file_size": 13168,
+          "width": null,
+          "height": null,
+          "transcribed_text": ""
+        }
+      ],
+      "sender": {
+        "additional_attributes": {},
+        "custom_attributes": {},
+        "email": null,
+        "id": 73,
+        "identifier": null,
+        "name": "NOMBRE",
+        "phone_number": "+5210000000001",
+        "thumbnail": "",
+        "blocked": false,
+        "type": "contact"
+      }
+    },
+    "last_activity_at": 1791244739,
+    "priority": null,
+    "waiting_since": 1791244739,
+    "sla_policy_id": null
+  },
+  "labels": {
+    "payload": []
+  },
+  "messages": {
+    "meta": {
+      "labels": [],
+      "additional_attributes": {},
+      "contact": {
+        "additional_attributes": {},
+        "custom_attributes": {},
+        "email": null,
+        "id": 73,
+        "identifier": null,
+        "name": "NOMBRE",
+        "phone_number": "+5210000000001",
+        "thumbnail": "",
+        "blocked": false,
+        "type": "contact"
+      },
+      "agent_last_seen_at": "2026-10-05T23:59:00.549Z",
+      "assignee_last_seen_at": "2026-10-05T23:58:23.831Z"
+    },
+    "payload": [
+      {
+        "id": 2668,
+        "content": "Respuesta del agente (texto omitido en la captura).",
+        "inbox_id": 11,
+        "conversation_id": 1,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "delivered",
+        "content_attributes": {
+          "appointment_setter_reply_hash": "fe66ad3c5795d7ff668850ec8e49701e54df46323fb61080ed027177ebe9728f"
+        },
+        "created_at": 1791221419,
+        "private": false,
+        "source_id": "wamid.REDACTED",
+        "sender": {
+          "id": 2,
+          "name": "AGENTE",
+          "avatar_url": "",
+          "type": "agent_bot"
+        }
+      },
+      {
+        "id": 2674,
+        "content": null,
+        "inbox_id": 11,
+        "conversation_id": 1,
+        "message_type": 0,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1791243900,
+        "private": false,
+        "source_id": "wamid.REDACTED",
+        "sender": {
+          "additional_attributes": {},
+          "custom_attributes": {},
+          "email": null,
+          "id": 73,
+          "identifier": null,
+          "name": "NOMBRE",
+          "phone_number": "+5210000000001",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        },
+        "attachments": [
+          {
+            "id": 262,
+            "message_id": 2674,
+            "file_type": "audio",
+            "account_id": 2,
+            "extension": "ogg",
+            "content_type": "audio/opus",
+            "data_url": "https://chatwoot.example.test/rails/active_storage/blobs/redirect/REDACTED/audio.ogg",
+            "thumb_url": "",
+            "file_size": 9133,
+            "width": null,
+            "height": null,
+            "transcribed_text": ""
+          }
+        ]
+      },
+      {
+        "id": 2675,
+        "content": "AGENTE added automation_paused",
+        "inbox_id": 11,
+        "conversation_id": 1,
+        "message_type": 2,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1791243937,
+        "private": false,
+        "source_id": null
+      },
+      {
+        "id": 2676,
+        "content": "Assigned to AGENTE via att1 - revisión humana by AGENTE",
+        "inbox_id": 11,
+        "conversation_id": 1,
+        "message_type": 2,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1791243939,
+        "private": false,
+        "source_id": null
+      },
+      {
+        "id": 2677,
+        "content": "Derivacion automatica del setter de ATT1: el agente paso esta conversacion a una persona del equipo. Revisa el historial y responde desde el equipo de revision humana.\n\nMotivo: audio_transcription_failed.\n\n[supportmagician-handoff:00000000-0000-4000-8000-000000000002:att1-nota-derivacion:v1]",
+        "inbox_id": 11,
+        "conversation_id": 1,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1791243941,
+        "private": true,
+        "source_id": null,
+        "sender": {
+          "id": 1,
+          "name": "AGENTE",
+          "available_name": "AGENTE",
+          "avatar_url": "",
+          "type": "user",
+          "availability_status": "online",
+          "thumbnail": ""
+        }
+      },
+      {
+        "id": 2678,
+        "content": "Hola\n\n\n\n",
+        "inbox_id": 11,
+        "conversation_id": 1,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "delivered",
+        "content_attributes": {},
+        "created_at": 1791244703,
+        "private": false,
+        "source_id": "wamid.REDACTED",
+        "sender": {
+          "id": 1,
+          "name": "AGENTE",
+          "available_name": "AGENTE",
+          "avatar_url": "",
+          "type": "user",
+          "availability_status": "online",
+          "thumbnail": ""
+        }
+      },
+      {
+        "id": 2679,
+        "content": "Conversation unassigned by AGENTE",
+        "inbox_id": 11,
+        "conversation_id": 1,
+        "message_type": 2,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1791244706,
+        "private": false,
+        "source_id": null
+      },
+      {
+        "id": 2680,
+        "content": "Unassigned from att1 - revisión humana by AGENTE",
+        "inbox_id": 11,
+        "conversation_id": 1,
+        "message_type": 2,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1791244708,
+        "private": false,
+        "source_id": null
+      },
+      {
+        "id": 2681,
+        "content": "AGENTE removed automation_paused",
+        "inbox_id": 11,
+        "conversation_id": 1,
+        "message_type": 2,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1791244709,
+        "private": false,
+        "source_id": null
+      },
+      {
+        "id": 2682,
+        "content": null,
+        "inbox_id": 11,
+        "conversation_id": 1,
+        "message_type": 0,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1791244739,
+        "private": false,
+        "source_id": "wamid.REDACTED",
+        "sender": {
+          "additional_attributes": {},
+          "custom_attributes": {},
+          "email": null,
+          "id": 73,
+          "identifier": null,
+          "name": "NOMBRE",
+          "phone_number": "+5210000000001",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        },
+        "attachments": [
+          {
+            "id": 263,
+            "message_id": 2682,
+            "file_type": "audio",
+            "account_id": 2,
+            "extension": "ogg",
+            "content_type": "audio/opus",
+            "data_url": "https://chatwoot.example.test/rails/active_storage/blobs/redirect/REDACTED/audio.ogg",
+            "thumb_url": "",
+            "file_size": 13168,
+            "width": null,
+            "height": null,
+            "transcribed_text": ""
+          }
+        ]
+      }
+    ]
+  }
+}

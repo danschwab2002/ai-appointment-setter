@@ -8,7 +8,31 @@ Cada versión dice qué cambia y **qué tiene que hacer quien actualiza una inst
 
 Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab2002/setter-bridge`, `setter-slack-connector` y `setter-daily-feedback`. La release de GitHub lleva el digest de cada una. Cómo se pasa un servicio a la imagen y cómo se vuelve atrás: [docs/operations/release-por-imagen-v1.md](docs/operations/release-por-imagen-v1.md).
 
-## [1.3.2] - sin publicar
+## [1.3.3] - sin publicar
+
+Arregla la respuesta a una nota de voz, que no salía nunca. Le cambia algo a toda instancia con la transcripción prendida (`CHATWOOT_AUDIO_TRANSCRIPTION_ENABLED`), que hoy son Johanna y ATT1. No trae migración ni variables nuevas.
+
+### Arreglado
+
+- **La respuesta a un audio se descartaba en el último control antes de salir.** Antes de mandar cada parte, el bridge relee de Chatwoot el mensaje que disparó el turno (`_current_authorization_result`), y ese control exigía texto. Una nota de voz llega con `content: null` y un adjunto de audio, así que devolvía `blocked` / `invalid_trigger_message` y la respuesta se abandonaba sin una línea en el log. Para entonces, la transcripción, la propuesta del agente y el divisor ya habían corrido.
+  - Ahora el control acepta un mensaje del lead que trae texto **o** un audio. El criterio del audio es `needs_audio_transcription`, el mismo que decide transcribirlo.
+  - Un entrante sin texto ni audio (una imagen, un sticker) se sigue bloqueando, como antes.
+  - Pasó en ATT1 el 2026-10-05 a las 23:59Z (conversación 1, mensaje 2682). En Johanna no se perdió ninguna respuesta: al 2026-10-06 no había transcripto ningún audio (su cache de transcripciones no existe).
+  - El test de la app con audio estaba verde porque usa un cliente de Chatwoot falso, que no pasa por este control.
+
+### Pruebas
+
+- `tests/test_chatwoot_audio_trigger.py` corre el cliente real contra la conversación capturada en ATT1 (`tests/fixtures/chatwoot_audio_trigger_inbox_11_conv_1_20261006.json`, anonimizada adentro del contenedor). La respuesta al audio sale, y el mismo mensaje sin el audio, o con una imagen, se sigue bloqueando. Sin el arreglo, la primera prueba da `invalid_trigger_message`, igual que en producción.
+
+### Qué hace quien actualiza
+
+Pasar el bridge a la imagen 1.3.3, y nada más. Volver atrás es volver a la imagen anterior.
+
+### Lo que queda fuera
+
+- **El monitor de conversaciones trabadas no rescata un audio.** Para tomar una conversación pide texto en el último mensaje del lead (`list_stalled_conversations`). Un audio cuyo webhook no llegó al bridge sigue sin respuesta.
+
+## [1.3.2] - 2026-10-05
 
 El marcador del recuperador en el `sck` se separa con `~`, como el del anuncio: es el estándar de Lancemos (E46) y lo decidió Dan el 2026-10-05 ([ADR-0022](docs/decisions/0022-el-marcador-del-sck-usa-la-tilde.md)). Además, la compra que trae el `sck` del anuncio delante del marcador deja de rechazarse. Trae una migración, que va **después** del bridge. Le cambia algo a Johanna y a ATT1: los links nuevos salen con `~`.
 
