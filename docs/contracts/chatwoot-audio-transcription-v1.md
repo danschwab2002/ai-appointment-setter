@@ -81,6 +81,15 @@ en 16 MB de audio (el base64 agrega un tercio).
    historial canonico.
 6. **Transcripcion apagada.** Un entrante sin texto sigue sin llegar al agente,
    pero deja `chatwoot_inbound_without_text_ignored message=<id>` en el log.
+7. **La respuesta sale.** Antes de mandar cada parte, el bridge relee de
+   Chatwoot el mensaje que disparo el turno (`_current_authorization_result`).
+   Lo acepta si es publico, del lead (`message_type: 0`, remitente `contact`) y
+   trae texto o un audio (`needs_audio_transcription`, el mismo criterio que
+   decide transcribirlo). Sin texto ni audio devuelve `invalid_trigger_message`.
+   Hasta 1.3.2 este control exigia texto, y la respuesta a un audio se
+   descartaba sin log (ATT1, conversacion 1, 2026-10-05). El mensaje tal como lo
+   trae la API esta en
+   `tests/fixtures/chatwoot_audio_trigger_inbox_11_conv_1_20261006.json`.
 
 ## Configuracion
 
@@ -104,6 +113,9 @@ en 16 MB de audio (el base64 agrega un tercio).
 ## Fuera de alcance
 
 - Imagenes y stickers: siguen sin llegar al agente (ahora con la linea de log).
+- El monitor de conversaciones trabadas: para tomar una conversacion pide texto
+  en el ultimo mensaje del lead (`list_stalled_conversations`), asi que no
+  rescata un audio cuyo webhook no llego al bridge.
 - La frase en castellano del motivo `audio_transcription_failed` en la nota de
   derivacion: sin migracion, la nota muestra el codigo crudo, que es el
   comportamiento documentado de `inbound_handoff_reason_sentence` para un
