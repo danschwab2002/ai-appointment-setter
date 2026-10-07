@@ -4250,6 +4250,42 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         6,
         'sck_marker_uses_tilde'
+    union all
+    select
+        '20261007000100',
+        '20261007000100_pilot_proactive_contact_cap.sql',
+        coalesce((
+            select relation.relrowsecurity::int
+            from pg_class relation
+            join pg_namespace namespace on namespace.oid = relation.relnamespace
+            where namespace.nspname = 'public'
+              and relation.relname = 'pilot_proactive_contact_caps'
+        ), 0)
+        + case
+            when to_regclass('public.pilot_proactive_contact_caps') is null then 0
+            else (
+                not has_table_privilege('anon', 'public.pilot_proactive_contact_caps', 'select,insert,update,delete')
+                and not has_table_privilege('authenticated', 'public.pilot_proactive_contact_caps', 'select,insert,update,delete')
+                and not has_table_privilege('service_role', 'public.pilot_proactive_contact_caps', 'select,insert,update,delete')
+            )::int
+          end
+        + exists(
+            select 1 from indexes
+            where indexname = 'pilot_outbound_authorizations_contact_time_idx'
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.authorize_lancemos_pilot_request_start(text,integer,text,bigint,bigint,text,text,text,text,text,text,uuid,uuid,uuid,timestamptz)')
+              and prosecdef
+              and position('pilot_proactive_contact_cap: begin' in definition) > 0
+              and position('pilot_contact_proactive_cap_reached' in definition) > 0
+              and position('pg_advisory_xact_lock' in definition) > 0
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        4,
+        'pilot_proactive_contact_cap'
 )
 select
     version,

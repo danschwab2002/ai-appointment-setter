@@ -8,6 +8,44 @@ Cada versión dice qué cambia y **qué tiene que hacer quien actualiza una inst
 
 Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab2002/setter-bridge`, `setter-slack-connector` y `setter-daily-feedback`. La release de GitHub lleva el digest de cada una. Cómo se pasa un servicio a la imagen y cómo se vuelve atrás: [docs/operations/release-por-imagen-v1.md](docs/operations/release-por-imagen-v1.md).
 
+## [1.4.0] - sin publicar
+
+Suma un tope de mensajes proactivos por persona entre flujos, en la puerta común de los tres arranques (primer contacto, carrito y pago fallido). **Apagado por defecto:** sin el renglón del tenant en la tabla nueva no hay tope y todo queda como hoy. Trae una migración y nada más: ni variables ni campos del manifiesto.
+
+### Agregado
+
+- **`pilot_proactive_contact_caps`** (migración `20261007000100`): un renglón por tenant con `max_request_starts` arranques en `request_window`. Lo carga el aprovisionamiento de cada instancia con el valor que decide su dueño; la migración no siembra ninguno.
+- **El bloque en `authorize_lancemos_pilot_request_start`**, la función que llaman `mark_lancemos_pilot_request_started`, `mark_portable_payment_failure_request_started` y `mark_portable_precheckout_request_started`.
+  - Con tope, cuenta los arranques autorizados de la persona en **todos** los scopes del tenant dentro de la ventana. La persona es el contacto y cualquier otro contacto de la misma cuenta con una identidad de WhatsApp en alguna de las dos formas del teléfono (52/521, 54/549).
+  - Llegado el tope devuelve `pilot_contact_proactive_cap_reached`: no autoriza, no consume cupo del scope y no deja evento.
+  - Va después del replay, la cohorte y la audiencia, y antes de los topes del scope. Un `pg_advisory_xact_lock` por tenant y teléfono canónico serializa a dos scopes que arrancan a la vez para la misma persona (el lock del control es por scope).
+  - Un arranque frenado se comporta como uno con el tope del scope agotado: el intento queda reservado, se reintenta en cada lease y sale si la ventana se libera antes de que la acción venza.
+- La migración modifica la función sobre su definición viva, con el texto exacto contado (el método de `20261005000100`). El texto está igual en las cuatro definiciones, así que vale para la base de Johanna, que no tiene las migraciones del 2026-09-29 al 2026-10-01, y para la de ATT1.
+
+### Pruebas
+
+- `tests/sql/followup_engine/validate_pilot_proactive_contact_cap.mjs` (PGlite, en `npm test`), diez casos:
+  - sin renglón no hay tope;
+  - con tope, la persona autorizada en un scope queda frenada en el otro, sin ledger ni evento;
+  - el replay no se frena;
+  - otra persona entra;
+  - otro contacto con la otra forma del teléfono se frena;
+  - otro tenant no se cuenta;
+  - pasada la ventana entra;
+  - con 2 entran dos y el tercero no;
+  - la tabla está cerrada a la API;
+  - el bloque está una vez y antes de los topes del scope.
+- `tests/test_pilot_proactive_contact_cap_migration.py`: el texto del ancla está una sola vez en cada una de las cuatro definiciones de la función, y el inventario de esquema la cubre.
+
+### Qué hace quien actualiza
+
+Correr la migración. Sin renglón en `pilot_proactive_contact_caps` no cambia nada. Para prender el tope en una instancia, su aprovisionamiento carga el renglón del tenant. No hace falta redesplegar el bridge.
+
+### Lo que queda fuera
+
+- **La carrera entre dos scopes no se prueba con dos conexiones:** PGlite es una sola. La cubre el lock por diseño; la prueba con Postgres real queda pendiente.
+- **La reactivación y el seguimiento con cupón no pasan por esta puerta**, así que no cuentan ni se frenan.
+
 ## [1.3.3] - sin publicar
 
 Arregla la respuesta a una nota de voz, que no salía nunca. Le cambia algo a toda instancia con la transcripción prendida (`CHATWOOT_AUDIO_TRANSCRIPTION_ENABLED`), que hoy son Johanna y ATT1. No trae migración ni variables nuevas.
@@ -188,7 +226,7 @@ Tres cosas para una instancia con manifiesto: el primer contacto tras el formula
 ### Lo que queda fuera
 
 - **La respuesta a una plantilla de salida (H7), resuelta en 1.3.1.** En esta versión, quien responde a una plantilla del dispatcher (carrito, pago fallido o primer contacto) no pasa la admisión entrante: la aceptación deja la conversación en `enabled` y la admisión solo toma una `draft_only` (`22000 inbound_canonical_conversation_conflict`). No hay respuesta del agente, ni enlace, ni derivación. Esta versión solo asegura la baja (ver *Cambiado*). Lo arregla 1.3.1, con la adopción de esa conversación y dos migraciones nuevas (ver `[1.3.1]`). **Ningún flujo de salida se abre a personas reales con el bridge 1.3.0.**
-- El tope de mensajes proactivos por persona entre flujos: quien recibió el primer contacto del formulario puede recibir después el del carrito. Se decide antes de abrir carrito y primer contacto juntos en `consented_intent`.
+- El tope de mensajes proactivos por persona entre flujos: quien recibió el primer contacto del formulario puede recibir después el del carrito. Se decide antes de abrir carrito y primer contacto juntos en `consented_intent`. **Resuelto en [1.4.0]**, apagado por defecto.
 - Quien escribió primero por WhatsApp y después abandona el carrito o falla el pago: ese evento de Hotmart no encuentra el contacto del entrante y falla cerrado (se pierde la recuperación, no se manda nada indebido).
 - **El enlace del entrante en Johanna.** Sin manifiesto sigue la reserva compartida: un lead mexicano que dejó el formulario con `52…` y escribe desde `521…` recibe el enlace sin la intención del formulario (oferta por defecto, sin su `sck`), como se midió en sus conversaciones 172, 184 y 211. Cambiarlo cambia el comportamiento de la instancia que factura y queda para una decisión aparte. El enlace del seguimiento con descuento (`claim_conversation_followup_v1`) también sale por la compartida; ATT1 no siembra políticas de descuento.
 - La verificación fuera de banda de cada envío del adaptador de GHL contra la API de GHL.
