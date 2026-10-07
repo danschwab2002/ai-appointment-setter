@@ -648,7 +648,8 @@ const tablePrivileges = await db.query(`
   where table_schema='public'
     and table_name like 'pilot_%'
 `);
-if (tablePrivileges.rows.length !== 6
+// 7 desde 20261007000100 (pilot_proactive_contact_caps, el tope por persona).
+if (tablePrivileges.rows.length !== 7
     || tablePrivileges.rows.some((row) => row.anon_dml
       || row.authenticated_dml || row.service_dml)) {
   throw new Error(`pilot table privilege leak: ${JSON.stringify(tablePrivileges.rows)}`);
