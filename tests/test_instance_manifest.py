@@ -23,7 +23,9 @@ from bridge.instance_manifest import (
     DEFAULT_TEMPLATE_PARAMETERS,
     FLOWS,
     GHL_ADAPTER_RISK_CONTRACT,
+    GHL_FORM_LANDING_MODES,
     GHL_RISK_GATED_FLOWS,
+    GhlFormLandings,
     GhlRiskAcceptance,
     InstanceManifest,
     ManifestError,
@@ -695,3 +697,159 @@ def test_ghl_adapter_risk_with_the_section_does_not_depend_on_the_flows(
 
     assert _load(plain).ghl_adapter_risk == "not_accepted"
     assert _load(accepted).ghl_adapter_risk == "accepted"
+
+
+# ------------------------------------------ adaptador de GHL: landing por formulario
+# GHL manda en attributionSource.url la pagina donde empezo la visita, no siempre
+# la del formulario (medido en ATT1 el 2026-10-08). landing_por_formulario dice en
+# que landing vive cada formulario; landing_por_formulario_modo, si el adaptador ya
+# la usa. En este fixture Om5F vive en la landing -d y EgDq en ads-a.
+
+
+def _with_form_landings(
+    landings: object, mode: object = "sombra", *, forms: object = None
+) -> dict:
+    payload = _with_ghl_adapter(
+        _payload("att1"), forms if forms is not None else [_GHL_ADS_A_FORM, _GHL_LANDING_D_FORM]
+    )
+    payload["adaptadores"]["ghl"]["landing_por_formulario"] = landings
+    payload["adaptadores"]["ghl"]["landing_por_formulario_modo"] = mode
+    return payload
+
+
+def test_the_modes_are_shadow_and_active() -> None:
+    assert GHL_FORM_LANDING_MODES == ("sombra", "activo")
+
+
+@pytest.mark.parametrize("mode", ["sombra", "activo"])
+def test_form_landings_load_with_their_mode(mode: str) -> None:
+    manifest = _load(
+        _with_form_landings({_GHL_LANDING_D_FORM: "alimenta-tu-tiroides-d"}, mode)
+    )
+
+    assert manifest.ghl_form_landings == GhlFormLandings(
+        mode=mode, landing_by_form={_GHL_LANDING_D_FORM: "alimenta-tu-tiroides-d"}
+    )
+    # El resto del adaptador y el binding no cambian.
+    plain = _load(_with_ghl_adapter(_payload("att1"), [_GHL_ADS_A_FORM, _GHL_LANDING_D_FORM]))
+    assert plain.ghl_form_landings is None
+    assert replace(manifest, ghl_form_landings=None) == plain
+    assert manifest.to_commercial_ally_config() == plain.to_commercial_ally_config()
+
+
+def test_the_loaded_form_landings_cannot_be_mutated() -> None:
+    manifest = _load(_with_form_landings({_GHL_LANDING_D_FORM: "alimenta-tu-tiroides-d"}))
+    assert manifest.ghl_form_landings is not None
+
+    with pytest.raises(TypeError):
+        manifest.ghl_form_landings.landing_by_form[_GHL_ADS_A_FORM] = "ads-a"  # type: ignore[index]
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (
+            lambda ghl: ghl.pop("landing_por_formulario_modo"),
+            "landing_por_formulario y landing_por_formulario_modo van juntas",
+        ),
+        (
+            lambda ghl: ghl.pop("landing_por_formulario"),
+            "landing_por_formulario y landing_por_formulario_modo van juntas",
+        ),
+        (
+            lambda ghl: ghl.__setitem__("landing_por_formulario_modo", "prendido"),
+            "landing_por_formulario_modo debe ser uno de sombra, activo",
+        ),
+        (
+            lambda ghl: ghl.__setitem__("landing_por_formulario_modo", " sombra"),
+            "landing_por_formulario_modo debe ser un texto no vacio",
+        ),
+        (
+            lambda ghl: ghl.__setitem__("landing_por_formulario", {}),
+            "landing_por_formulario debe ser una tabla",
+        ),
+        (
+            lambda ghl: ghl.__setitem__("landing_por_formulario", ["alimenta-tu-tiroides-d"]),
+            "landing_por_formulario debe ser una tabla",
+        ),
+        (
+            # Un formulario que el adaptador no admite no puede declarar landing.
+            lambda ghl: ghl.__setitem__(
+                "landing_por_formulario", {"UHTaDn8feKiqALhjGFFF": "alimenta-tu-tiroides-d"}
+            ),
+            "'UHTaDn8feKiqALhjGFFF' no esta en adaptadores.ghl.formularios",
+        ),
+        (
+            lambda ghl: ghl.__setitem__(
+                "landing_por_formulario", {_GHL_LANDING_D_FORM: "alimenta-tu-tiroides"}
+            ),
+            "'alimenta-tu-tiroides' no es el landing_id de ninguna oferta",
+        ),
+        (
+            lambda ghl: ghl.__setitem__("landing_por_formulario", {_GHL_LANDING_D_FORM: 3}),
+            "debe ser el landing_id de una oferta",
+        ),
+    ],
+)
+def test_form_landings_rules(mutate, message: str) -> None:
+    payload = _with_form_landings({_GHL_LANDING_D_FORM: "alimenta-tu-tiroides-d"})
+    mutate(payload["adaptadores"]["ghl"])
+
+    with pytest.raises(ManifestError, match=re.escape(message)):
+        _load(payload)
+
+
+def test_a_landing_id_of_two_offers_is_refused() -> None:
+    # El mismo landing_id en dos sitios: el formulario no dice en cual vive.
+    payload = _with_form_landings({_GHL_LANDING_D_FORM: "alimenta-tu-tiroides-d"})
+    for offer in payload["hotmart"]["ofertas"]:
+        if offer["landing_id"] == "org-a":
+            offer["landing_id"] = "alimenta-tu-tiroides-d"
+
+    with pytest.raises(ManifestError, match="es el landing_id de mas de una oferta"):
+        _load(payload)
+
+
+def test_form_landings_ride_on_the_risk_acceptance_without_changing_it() -> None:
+    payload = _with_ghl_acceptance(_payload("att1"), _test_acceptance())
+    payload["adaptadores"]["ghl"]["formularios"] = [_GHL_ADS_A_FORM, _GHL_LANDING_D_FORM]
+    payload["adaptadores"]["ghl"]["landing_por_formulario"] = {
+        _GHL_LANDING_D_FORM: "alimenta-tu-tiroides-d"
+    }
+    payload["adaptadores"]["ghl"]["landing_por_formulario_modo"] = "activo"
+
+    manifest = _load(payload)
+
+    assert manifest.ghl_risk_acceptance is not None
+    assert manifest.ghl_adapter_risk == "accepted"
+    assert manifest.ghl_form_landings is not None
+    assert manifest.ghl_form_landings.mode == "activo"
+
+
+@pytest.mark.parametrize(
+    "doc",
+    [_DOCS / "contracts" / "ghl-precheckout-adapter-v1.md", _DOCS / "referencia-manifiesto.md"],
+    ids=lambda doc: doc.name,
+)
+def test_the_docs_form_landings_example_loads(doc: Path) -> None:
+    # El bloque TOML entero que trae landing_por_formulario, copiado tal cual sobre
+    # ATT1: eventos y [adaptadores.ghl] completos, no solo las dos lineas. La firma
+    # del riesgo de ejemplo lleva un marcador que no carga a proposito (el test de
+    # arriba): se reemplaza por un nombre, y nada mas.
+    text = doc.read_text(encoding="utf-8")
+    blocks = [
+        block
+        for block in re.findall(r"```toml\n(.*?)```", text, flags=re.DOTALL)
+        if "landing_por_formulario" in block
+    ]
+    assert len(blocks) == 1, f"{doc.name} ya no trae un ejemplo de landing_por_formulario"
+    example = tomllib.loads(re.sub(r'"<[^"]*>"', '"aceptacion de prueba"', blocks[0]))
+    payload = _payload("att1")
+    payload["eventos"] = example["eventos"]
+    payload["adaptadores"] = example["adaptadores"]
+
+    manifest = _load(payload)
+
+    assert manifest.ghl_form_landings is not None
+    assert manifest.ghl_form_landings.mode == "sombra"
+    assert set(manifest.ghl_form_landings.landing_by_form) <= set(manifest.ghl_form_ids)

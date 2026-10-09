@@ -10,7 +10,12 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 ## [1.4.0] - sin publicar
 
-Suma un tope de mensajes proactivos por persona entre flujos, en la puerta común de los tres arranques (primer contacto, carrito y pago fallido). **Apagado por defecto:** sin el renglón del tenant en la tabla nueva no hay tope y todo queda como hoy. Trae una migración y nada más: ni variables ni campos del manifiesto.
+Suma dos cosas, las dos apagadas por defecto:
+
+- un tope de mensajes proactivos por persona entre flujos, en la puerta común de los tres arranques (primer contacto, carrito y pago fallido). Sin el renglón del tenant en la tabla nueva no hay tope y todo queda como hoy. Trae una migración;
+- que el adaptador de GHL tome la landing del formulario y no la de la página donde empezó la visita. Son dos claves opcionales de `[adaptadores.ghl]` en el manifiesto; sin ellas todo queda como hoy.
+
+Ni variables nuevas ni campos obligatorios.
 
 ### Agregado
 
@@ -21,6 +26,12 @@ Suma un tope de mensajes proactivos por persona entre flujos, en la puerta comú
   - Va después del replay, la cohorte y la audiencia, y antes de los topes del scope. Un `pg_advisory_xact_lock` por tenant y teléfono canónico serializa a dos scopes que arrancan a la vez para la misma persona (el lock del control es por scope).
   - Un arranque frenado se comporta como uno con el tope del scope agotado: el intento queda reservado, se reintenta en cada lease y sale si la ventana se libera antes de que la acción venza.
 - La migración modifica la función sobre su definición viva, con el texto exacto contado (el método de `20261005000100`). El texto está igual en las cuatro definiciones, así que vale para la base de Johanna, que no tiene las migraciones del 2026-09-29 al 2026-10-01, y para la de ATT1.
+- **`landing_por_formulario` y `landing_por_formulario_modo` en `[adaptadores.ghl]`**, las dos o ninguna ([contrato](docs/contracts/ghl-precheckout-adapter-v1.md#la-landing-de-un-formulario-declarado-140)). GHL manda en `attributionSource.url` la página donde empezó la visita. Medido en ATT1 el 2026-10-08: de 30 carritos reales desde la conexión del orgánico, los 2 que no se cubrieron llenaron un formulario y los perdió esto. Uno de la landing B quedó con la oferta de la D, y uno de la D quedó en `422 ghl_landing_unknown` porque la visita empezó en otra página.
+  - La tabla va del id del formulario al `landing_id` de una oferta. Un formulario que vive en más de una página no se declara y sigue por la URL.
+  - `sombra`: la landing sigue saliendo de la URL; la línea de log del pedido termina en `form_landing=would_fix:<landing_id>` y sale como warning cuando el formulario la habría cambiado, también en un rechazo por landing desconocida.
+  - `activo`: la landing sale del formulario (`form_landing=fixed:<landing_id>`, warning). La atribución sigue saliendo de la query de la URL, la del anuncio.
+  - El manifiesto no carga si falta una de las dos claves, si el formulario no está en `formularios` o si el `landing_id` no es el de exactamente una oferta.
+  - `/ready` suma `ghl_form_landings: <modo>:<n>` con el adaptador prendido, y `validate` lista los pares.
 
 ### Pruebas
 
@@ -36,10 +47,14 @@ Suma un tope de mensajes proactivos por persona entre flujos, en la puerta comú
   - la tabla está cerrada a la API;
   - el bloque está una vez y antes de los topes del scope.
 - `tests/test_pilot_proactive_contact_cap_migration.py`: el texto del ancla está una sola vez en cada una de las cuatro definiciones de la función, y el inventario de esquema la cubre.
+- La landing por formulario, con variantes derivadas de las dos capturas de GHL del 2026-09-29 (cambiando el `mediumId` o el host y la ruta de la URL): el traductor en los tres modos, una URL que no se parte, un binding sin la landing declarada y un teléfono rechazado (`tests/test_ghl_precheckout_adapter.py`); la ruta, con el nivel y el final de la línea de log (`tests/test_ghl_precheckout_adapter_http.py`); las reglas del manifiesto y que el ejemplo de la documentación carga (`tests/test_instance_manifest.py`); `/ready` (`tests/test_instance_wiring.py`) y `validate` (`tests/test_instance_cli.py`).
+- `tests/sql/followup_engine/validate_ghl_precheckout_adapter_form_landing.mjs` (PGlite, en `npm test`): el golden nuevo del envío de UHTa traducido en `activo` (`ghl_form_webhook_uhta_from_landing_d_active_derived_20260929`) entra por la RPC real con el binding de ATT1 de hoy (`bmaztyhg` en la landing B): intención en `alimenta-tu-tiroides` / `bmaztyhg`, con permiso, `consented_intent_ok` y el `sck` del anuncio de la -d. La misma persona por la -d deja su propia intención.
 
 ### Qué hace quien actualiza
 
-Correr la migración. Sin renglón en `pilot_proactive_contact_caps` no cambia nada. Para prender el tope en una instancia, su aprovisionamiento carga el renglón del tenant. No hace falta redesplegar el bridge.
+Correr la migración. Sin renglón en `pilot_proactive_contact_caps` no cambia nada. Para prender el tope en una instancia, su aprovisionamiento carga el renglón del tenant. El tope no necesita redesplegar el bridge.
+
+La landing por formulario sí: sumar las dos claves al manifiesto de la instancia y redesplegar el bridge, primero con `"sombra"` y, cuando las líneas `would_fix` muestren lo esperado, con `"activo"`. Para volver atrás, sacar las dos claves y redesplegar **antes** de bajar a una versión anterior a la 1.4.0: su parser no conoce las claves y no carga un manifiesto que las tenga.
 
 ### Lo que queda fuera
 

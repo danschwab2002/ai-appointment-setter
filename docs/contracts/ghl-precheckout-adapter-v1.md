@@ -46,15 +46,39 @@ X-Setter-Adapter-Token: <token>        (opcional si el token va en el cuerpo)
   - un token de 32 caracteres o más, distinto de todo otro secreto y valor de texto de la configuración del bridge (`LEAD_PRECHECKOUT_SECRET`, `CHATWOOT_WEBHOOK_SECRET`, el token del primer contacto, los de Hotmart, Slack, Supabase, Hermes, OpenRouter, etc.): lo lee cualquier usuario de la subcuenta de GHL, y repetido le daría esa otra autoridad;
 - Apagado, ninguna de esas condiciones se evalúa: un runtime sin token ni manifiesto arranca igual que hoy.
 - No depende de `LEAD_PRECHECKOUT_ENABLED` ni de su secreto.
-- `/ready` agrega `ghl_precheckout_adapter: enabled:<n>-forms` solo con el flag prendido, y nunca responde `503` por el flag.
+- `/ready` agrega `ghl_precheckout_adapter: enabled:<n>-forms` solo con el flag prendido, y nunca responde `503` por el flag. Con `landing_por_formulario` (abajo) agrega además `ghl_form_landings: <modo>:<n>`, también solo con el flag prendido y sin los ids.
 - La guarda del riesgo no depende del flag: cuelga de que el manifiesto tenga `[adaptadores.ghl]` (abajo).
 
 ```toml
 eventos = ["carrito", "pago_fallido", "compra", "entrante", "intencion"]
 
 [adaptadores.ghl]
-formularios = ["EgDqRl2xWc59YjVW1q8W"]   # attributionSource.mediumId; 20 alfanuméricos
+formularios = ["EgDqRl2xWc59YjVW1q8W", "Om5FpIg5Sr5ce7nSkuPy"]   # attributionSource.mediumId; 20 alfanuméricos
+# Opcionales, las dos o ninguna (1.4.0): en qué landing vive cada formulario.
+landing_por_formulario = { Om5FpIg5Sr5ce7nSkuPy = "alimenta-tu-tiroides-d" }
+landing_por_formulario_modo = "sombra"   # o "activo"
 ```
+
+### La landing de un formulario declarado (1.4.0)
+
+`attributionSource.url` es la página donde **empezó la visita**, no siempre la del formulario. Medido en ATT1 el 2026-10-08, con los envíos de GHL cruzados contra la base por huella:
+
+- dos de los 14 envíos reales del formulario de la landing B (`UHTaDn8feKiqALhjGFFF`) llegaron con la URL de la landing D, donde esa gente había entrado por un anuncio. El adaptador les dio la oferta de la D, y el carrito de la oferta de la B de una de ellas no cruzó;
+- un envío del formulario de la landing D (`Om5FpIg5Sr5ce7nSkuPy`) llegó con la URL de una página que no es landing del manifiesto, y quedó en `422 ghl_landing_unknown`. Su carrito, 41 minutos después, figuró «sin formulario».
+
+El formulario sí dice dónde se llenó. `landing_por_formulario` va del id del formulario al `landing_id` de una oferta de `[[hotmart.ofertas]]`, y `landing_por_formulario_modo` dice qué hace el adaptador con eso:
+
+| Modo | La landing sale de | El log (`form_landing=`) |
+|---|---|---|
+| sin la clave | la URL, como antes | `-` |
+| `sombra` | la URL, como antes: el evento y la respuesta no cambian | `would_fix:<landing_id>` cuando el formulario la habría cambiado, también si la URL sola da `ghl_landing_unknown` o `ghl_landing_ambiguous` |
+| `activo` | el formulario declarado | `fixed:<landing_id>` cuando difiere de la URL o la URL no la resuelve |
+
+- Si las dos coinciden, el log dice `same`. Un formulario que no está declarado sigue por la URL (`-`): así va uno que vive en más de una página, como `EgDqRl2xWc59YjVW1q8W` (en ads-a y en org-a).
+- **La atribución sigue saliendo de la query de `attributionSource.url`**, también cuando la landing sale del formulario: es la del anuncio por el que llegó la visita. Una URL que no se puede partir deja la atribución de la query vacía (el `fbclid` del objeto sigue valiendo) y nunca da `500`.
+- El manifiesto no carga si una de las dos claves falta, si un formulario declarado no está en `formularios`, o si el `landing_id` no es el de exactamente una oferta. Un binding armado de otra forma, al que le falte esa landing, no cae en silencio a la URL: en `activo` da `422 ghl_landing_unknown` y en `sombra` sigue con la URL; en los dos el log dice `form_landing_missing:<landing_id>`.
+- **Cómo se prende:** primero `sombra`. Las líneas `would_fix` (warning) dicen cuántos envíos se habrían corregido y cuáles. Después, `activo`.
+- **Vuelta atrás:** sacar las dos claves y redesplegar. Recién después se puede volver a una versión anterior a la 1.4.0, porque el parser de esa versión no conoce las claves y no carga un manifiesto que las tenga.
 
 ### La aceptación escrita del riesgo
 
@@ -114,7 +138,7 @@ Hay dos capturas del 2026-09-29, anonimizadas, en `tests/fixtures/ghl/`. Cada un
 | `event`, `version` | fijos | `lead.precheckout`, `1.1.0` |
 | `created_at` | reloj del bridge | Momento de la traducción, en UTC con `Z` |
 | `source.system` | fijo | `landing` (lo exigen el parser y la RPC; la procedencia GHL queda solo en el log) |
-| `source.site`, `source.landing_id` | `attributionSource.url` | Host en minúsculas y ruta, sin query ni fragmento, comparados exactos contra `[[hotmart.ofertas]]` con una barra final tolerada de los dos lados (en la URL del envío y en la `url` de la oferta, que el manifiesto acepta con barra). Sin coincidencia: `422 ghl_landing_unknown`; más de una: `422 ghl_landing_ambiguous` |
+| `source.site`, `source.landing_id` | `attributionSource.url`; en modo `activo`, el formulario declarado en `landing_por_formulario` ([arriba](#la-landing-de-un-formulario-declarado-140)) | Host en minúsculas y ruta, sin query ni fragmento, comparados exactos contra `[[hotmart.ofertas]]` con una barra final tolerada de los dos lados (en la URL del envío y en la `url` de la oferta, que el manifiesto acepta con barra). Sin coincidencia: `422 ghl_landing_unknown`; más de una: `422 ghl_landing_ambiguous` |
 | `source.page_url` | la oferta resuelta | `https://<host><ruta>` de la oferta del manifiesto: la query del envío (`?test=yes`, UTM) no pasa |
 | `source.aliado` | manifiesto | `instancia.marca` |
 | `data.buyer.name` | `full_name`, si falta `first_name` + `last_name` | Sin lo que la base no guarda (abajo) y recortado; vacío: `400` |
@@ -183,7 +207,7 @@ El costo es que la base no distingue un reintento de un segundo envío del mismo
 
 ## Logs
 
-Una línea por pedido: resultado, motivo (en un `401` sin header por un cuerpo ilegible, `invalid_adapter_token/<motivo real>`), id del formulario, landing, oferta, `delivery_id`, región del teléfono (también en `ghl_phone_unusable`) y si hubo UTM o fbclid. Un envío que no queda admitido (toda respuesta distinta de `200`, salvo el adaptador apagado) sale como warning: el bridge no configura logging, y bajo uvicorn solo los warnings llegan a la salida del contenedor. La admisión sale como info. Con el primer contacto prendido hay una segunda línea, con el resultado del plan (ids y códigos; warning solo si el plan falló). Nunca el nombre, el email, el teléfono, la IP, el `userAgent`, `contact_id`, el `fbclid`, `fbEventId`, la query, el token ni el cuerpo.
+Una línea por pedido: resultado, motivo (en un `401` sin header por un cuerpo ilegible, `invalid_adapter_token/<motivo real>`), id del formulario, landing, oferta, `delivery_id`, región del teléfono (también en `ghl_phone_unusable`), si hubo UTM o fbclid y, al final, `form_landing=` con lo que hizo la landing declarada del formulario (`-`, `same`, `would_fix:<landing_id>`, `fixed:<landing_id>` o `form_landing_missing:<landing_id>`). Un envío que no queda admitido (toda respuesta distinta de `200`, salvo el adaptador apagado) sale como warning: el bridge no configura logging, y bajo uvicorn solo los warnings llegan a la salida del contenedor. La admisión sale como info, salvo cuando el formulario cambia o habría cambiado la landing (`would_fix`, `fixed`, `form_landing_missing`): esa también sale como warning, porque es lo que se cuenta para decidir si se pasa a `activo` y, después, cuántas veces corrige. Con el primer contacto prendido hay una segunda línea, con el resultado del plan (ids y códigos; warning solo si el plan falló). Nunca el nombre, el email, el teléfono, la IP, el `userAgent`, `contact_id`, el `fbclid`, `fbEventId`, la query, el token ni el cuerpo.
 
 ## Riesgos
 
@@ -204,7 +228,7 @@ Es la condición para prenderlo.
 - **Fixtures.** Cada envío real capturado, anonimizado y con fecha y origen, es un fixture en `tests/fixtures/ghl/`. Las variantes de prueba se derivan de ellos: cambiar `mediumId`, quitar un campo, mover un objeto de atribución real, repetir la entrega, repetir una clave. Nunca un payload de GHL escrito de cero.
 - **Lo que verifica la suite:**
   1. el evento que produce, con el reloj fijo, pasa `parse_lead_precheckout` con el binding de la instancia y, salvo el `id` aleatorio, es igual a su golden (`tests/fixtures/ghl/expected/`);
-  2. la landing y la oferta resueltas son las de la URL;
+  2. la landing y la oferta resueltas son las de la URL o, con `landing_por_formulario` en `activo`, las del formulario declarado; en `sombra` el evento es el mismo que sin la clave;
   3. dos traducciones del mismo cuerpo dan `id` distintos y válidos (ULID de 26 caracteres, Crockford);
   4. un formulario fuera de la lista, una landing desconocida, un teléfono inutilizable o una clave repetida dan `4xx` sin tocar la base;
   5. contra la RPC real (PGlite, `tests/sql/followup_engine/validate_ghl_precheckout_adapter.mjs`): dos entregas del mismo golden producen dos submissions de la misma intención, cero filas en `precheckout_submission_conflicts`, y el envío sigue elegible para el consentimiento (`consented_intent_ok`). Un caso de control con el mismo `id` y otro `created_at` sí deja el conflicto, y documenta por qué el `id` no puede ser determinista.

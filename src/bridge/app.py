@@ -2347,9 +2347,10 @@ class _GhlAdapterTrace:
     """The one log line of a GHL adapter request.
 
     docs/contracts/ghl-precheckout-adapter-v1.md, "Logs": outcome, reason, form
-    id, landing, offer, delivery id, phone region and whether UTM or fbclid
-    came. Never the name, email, phone, IP, userAgent, contact_id, fbclid,
-    fbEventId, the URL query, the token or the body.
+    id, landing, offer, delivery id, phone region, whether UTM or fbclid came
+    and what the form's declared landing did. Never the name, email, phone, IP,
+    userAgent, contact_id, fbclid, fbEventId, the URL query, the token or the
+    body.
     """
 
     form: str = "-"
@@ -2359,6 +2360,9 @@ class _GhlAdapterTrace:
     phone_region: str = "-"
     has_utm: str = "-"
     has_fbclid: str = "-"
+    # landing_por_formulario: "-", "same", "would_fix:<landing_id>",
+    # "fixed:<landing_id>" or "form_landing_missing:<landing_id>".
+    form_landing: str = "-"
     # Por que no se leyo el cuerpo de un pedido sin header, que se responde 401.
     unauthenticated_reason: str | None = None
 
@@ -2378,13 +2382,17 @@ class _GhlAdapterTrace:
         not_admitted = (
             status_code != 200 and reason != "ghl_precheckout_adapter_not_enabled"
         )
+        # Un envio cuya landing cambia (o cambiaria, en sombra) por el
+        # formulario tambien sale como warning: es lo que se cuenta para decidir
+        # si se activa, y despues, cuantas veces corrige.
+        landing_from_form = self.form_landing not in ("-", "same")
         if self.unauthenticated_reason is not None:
             reason = f"{reason}/{self.unauthenticated_reason}"
         logger.log(
-            logging.WARNING if not_admitted else logging.INFO,
+            logging.WARNING if not_admitted or landing_from_form else logging.INFO,
             "ghl_precheckout_adapter outcome=%s status=%s reason=%s form=%s "
             "landing=%s offer=%s delivery_id=%s phone_region=%s has_utm=%s "
-            "has_fbclid=%s",
+            "has_fbclid=%s form_landing=%s",
             outcome,
             status_code,
             reason,
@@ -2395,6 +2403,7 @@ class _GhlAdapterTrace:
             self.phone_region,
             self.has_utm,
             self.has_fbclid,
+            self.form_landing,
         )
 
 
@@ -2539,6 +2548,13 @@ def create_app(
             instance_readiness["ghl_precheckout_adapter"] = (
                 f"enabled:{len(settings.instance_manifest.ghl_form_ids)}-forms"
             )
+            # landing_por_formulario: el modo y cuantos formularios declara.
+            # Sin la clave, el payload de /ready no cambia.
+            form_landings = settings.instance_manifest.ghl_form_landings
+            if form_landings is not None:
+                instance_readiness["ghl_form_landings"] = (
+                    f"{form_landings.mode}:{len(form_landings.landing_by_form)}"
+                )
         # El riesgo del adaptador cuelga de [adaptadores.ghl] y no del flag
         # (las intenciones que admitio siguen en la base con el flag apagado).
         # La clave aparece solo cuando aplica: sin la seccion y sin un flujo
@@ -6481,20 +6497,30 @@ def create_app(
             raise HTTPException(status_code=401, detail="invalid_adapter_token")
 
         trace.note_form(body)
+        form_landings = manifest.ghl_form_landings
         try:
             translation = translate_ghl_form_submission(
                 body,
                 config=settings.commercial_ally_config,
                 allowed_forms=frozenset(manifest.ghl_form_ids),
                 now=datetime.now(UTC),
+                landing_by_form=(
+                    form_landings.landing_by_form if form_landings is not None else None
+                ),
+                form_landing_mode=(
+                    form_landings.mode if form_landings is not None else None
+                ),
             )
         except GhlAdapterRejection as exc:
             if exc.phone_region is not None:
                 trace.phone_region = exc.phone_region
+            if exc.form_landing is not None:
+                trace.form_landing = exc.form_landing
             raise HTTPException(
                 status_code=exc.status_code, detail=f"ghl_{exc.reason}"
             ) from None
         trace.form = translation.form_id
+        trace.form_landing = translation.form_landing
         trace.landing = f"{translation.site}/{translation.landing_id}"
         trace.offer = translation.offer_code
         trace.phone_region = translation.phone_region

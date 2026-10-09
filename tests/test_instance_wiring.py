@@ -31,7 +31,12 @@ from bridge.app import (
 from bridge.chatwoot import ChatwootClient
 from bridge.commercial_knowledge import CommercialKnowledge, KnowledgeError
 from bridge.hermes import HermesShadowProcessor
-from bridge.instance_manifest import GhlRiskAcceptance, InstanceManifest, Template
+from bridge.instance_manifest import (
+    GhlFormLandings,
+    GhlRiskAcceptance,
+    InstanceManifest,
+    Template,
+)
 from bridge.supabase import PilotBoundaryConfig, SupabaseError
 
 ATT1 = Path(__file__).parent / "fixtures" / "instances" / "att1"
@@ -1482,6 +1487,27 @@ def test_readiness_counts_the_ghl_forms_only_with_the_flag_on() -> None:
     # Los ids de los formularios no se publican, y el resto del payload no cambia.
     assert _GHL_FORM not in json.dumps(two)
     assert {key: value for key, value in one.items() if key != "ghl_precheckout_adapter"} == off
+
+
+def test_readiness_reports_the_form_landing_mode_only_when_declared() -> None:
+    # landing_por_formulario (2026-10-09): el modo y cuantos formularios declara,
+    # sin sus ids, y solo con el flag prendido, como el conteo de formularios.
+    forms = (_GHL_FORM, _GHL_LANDING_D_FORM)
+    declared_manifest = replace(
+        _ghl_manifest(forms=forms),
+        ghl_form_landings=GhlFormLandings(
+            mode="sombra", landing_by_form={_GHL_LANDING_D_FORM: "alimenta-tu-tiroides-d"}
+        ),
+    )
+    plain = _ready(_ghl_settings(_ghl_manifest(forms=forms)))
+    declared = _ready(_ghl_settings(declared_manifest))
+    flag_off = _ready(_settings(declared_manifest))
+
+    assert "ghl_form_landings" not in plain
+    assert declared["ghl_form_landings"] == "sombra:1"
+    assert "ghl_form_landings" not in flag_off
+    assert _GHL_LANDING_D_FORM not in json.dumps(declared)
+    assert {key: value for key, value in declared.items() if key != "ghl_form_landings"} == plain
 
 
 def test_readiness_reports_the_adapter_risk_of_the_manifest(

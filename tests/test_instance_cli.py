@@ -92,6 +92,32 @@ _TEST_ACCEPTANCE = (
 )
 
 
+def test_report_lists_the_landing_of_each_form(att1_copy: Path, capsys) -> None:
+    # Las dos lineas tal como van en el manifiesto de una instancia (2026-10-09).
+    _add_ghl_adapter(
+        att1_copy,
+        ["EgDqRl2xWc59YjVW1q8W", "Om5FpIg5Sr5ce7nSkuPy"],
+        acceptance=(
+            'landing_por_formulario = { Om5FpIg5Sr5ce7nSkuPy = "alimenta-tu-tiroides-d" }\n'
+            'landing_por_formulario_modo = "sombra"\n'
+        ),
+    )
+
+    report = validate_instance(att1_copy)
+
+    assert report["valida"] is True
+    assert report["manifiesto"]["adaptadores"]["ghl"]["landing_por_formulario"] == {
+        "modo": "sombra",
+        "formularios": {"Om5FpIg5Sr5ce7nSkuPy": "alimenta-tu-tiroides-d"},
+    }
+    assert main(["validate", str(att1_copy)]) == 0
+    output = capsys.readouterr().out
+    assert (
+        "adaptador ghl, landing por formulario (sombra): "
+        "Om5FpIg5Sr5ce7nSkuPy → alimenta-tu-tiroides-d"
+    ) in output
+
+
 def _add_intent_event(instance: Path) -> None:
     path = instance / "instancia.toml"
     text = path.read_text(encoding="utf-8")

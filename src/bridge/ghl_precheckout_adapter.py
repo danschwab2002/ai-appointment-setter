@@ -87,21 +87,39 @@ class GhlAdapterRejection(ValueError):
     ``str()`` is only the reason: never a value from the body.
     ``phone_region`` is set on ``phone_unusable`` when the country code is
     readable, so the route can log the region without the number.
+    ``form_landing`` is set when the form's declared landing would have saved a
+    submission that the URL could not place (see :func:`_choose_landing`).
     """
 
     def __init__(
-        self, reason: str, status_code: int, *, phone_region: str | None = None
+        self,
+        reason: str,
+        status_code: int,
+        *,
+        phone_region: str | None = None,
+        form_landing: str | None = None,
     ) -> None:
         super().__init__(reason)
         self.reason = reason
         self.status_code = status_code
         self.phone_region = phone_region
+        self.form_landing = form_landing
 
 
-def _reject(reason: str, *, phone_region: str | None = None) -> GhlAdapterRejection:
+def _reject(
+    reason: str, *, phone_region: str | None = None, form_landing: str | None = None
+) -> GhlAdapterRejection:
     return GhlAdapterRejection(
-        reason, REJECTION_STATUS[reason], phone_region=phone_region
+        reason,
+        REJECTION_STATUS[reason],
+        phone_region=phone_region,
+        form_landing=form_landing,
     )
+
+
+# ``[adaptadores.ghl].landing_por_formulario_modo`` of the manifest.
+FORM_LANDING_SHADOW = "sombra"
+FORM_LANDING_ACTIVE = "activo"
 
 
 @dataclass(frozen=True)
@@ -114,6 +132,10 @@ class GhlTranslation:
     phone_region: str
     has_utm: bool
     has_fbclid: bool
+    # What the form's declared landing did (see :func:`_choose_landing`): "-",
+    # "same", "would_fix:<landing_id>", "fixed:<landing_id>" or
+    # "form_landing_missing:<landing_id>".
+    form_landing: str = "-"
 
 
 class _DuplicateKey(ValueError):
@@ -289,6 +311,77 @@ def _offer_landing(url: str, config: CommercialAllyConfig) -> OfferLanding:
     return matches[0]
 
 
+def _declared_landing(landing_id: str, config: CommercialAllyConfig) -> OfferLanding | None:
+    matches = [landing for landing in config.offer_landings if landing.landing_id == landing_id]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _choose_landing(
+    url: str,
+    form_id: str,
+    config: CommercialAllyConfig,
+    *,
+    landing_by_form: Mapping[str, str],
+    form_landing_mode: str | None,
+) -> tuple[OfferLanding, str]:
+    """The landing of the submission and what the form's declared landing did.
+
+    GHL's ``attributionSource.url`` is the page where the visit started, not
+    always the page of the form (measured in ATT1 on 2026-10-08: a lead who came
+    to landing D from an ad and filled the form of landing B arrives with D's
+    URL). ``landing_by_form`` is ``[adaptadores.ghl].landing_por_formulario``:
+    form id -> ``landing_id`` of an offer.
+
+    - Form not declared, or no mode: the landing comes from the URL, as always.
+    - ``sombra``: the landing still comes from the URL; the note says when the
+      form would have changed it (``would_fix:<landing_id>``), also when the
+      URL alone is rejected (the rejection carries the note).
+    - ``activo``: the landing comes from the form; the note says when that
+      differs from the URL (``fixed:<landing_id>``).
+
+    The note is ``same`` when both agree. A declared landing that is not in the
+    binding (the manifest refuses it at load, so only a binding built some other
+    way) is never a silent fallback: ``activo`` rejects ``landing_unknown`` and
+    ``sombra`` keeps the URL, both with ``form_landing_missing:<landing_id>``.
+    """
+
+    declared_id = landing_by_form.get(form_id) if form_landing_mode else None
+    if declared_id is None:
+        return _offer_landing(url, config), "-"
+    declared = _declared_landing(declared_id, config)
+    if declared is None:
+        note = f"form_landing_missing:{declared_id}"
+        if form_landing_mode == FORM_LANDING_ACTIVE:
+            raise _reject("landing_unknown", form_landing=note)
+        try:
+            return _offer_landing(url, config), note
+        except GhlAdapterRejection as exc:
+            raise _reject(exc.reason, form_landing=note) from None
+    by_url: OfferLanding | None = None
+    url_rejection = "landing_unknown"
+    try:
+        by_url = _offer_landing(url, config)
+    except GhlAdapterRejection as exc:
+        url_rejection = exc.reason
+    if by_url == declared:
+        return declared, "same"
+    if form_landing_mode == FORM_LANDING_ACTIVE:
+        return declared, f"fixed:{declared.landing_id}"
+    note = f"would_fix:{declared.landing_id}"
+    if by_url is None:
+        raise _reject(url_rejection, form_landing=note)
+    return by_url, note
+
+
+def _url_query(url: str) -> str:
+    # The landing may come from the form while the URL does not even split: the
+    # attribution is then empty, never a 500 that GHL would retry forever.
+    try:
+        return urlsplit(url).query
+    except ValueError:
+        return ""
+
+
 def _phone(raw: str) -> tuple[str, str, str, str]:
     """``(e164, country_code, national, region)`` the parser and the RPC accept.
 
@@ -338,6 +431,8 @@ def translate_ghl_form_submission(
     config: CommercialAllyConfig,
     allowed_forms: frozenset[str],
     now: datetime,
+    landing_by_form: Mapping[str, str] | None = None,
+    form_landing_mode: str | None = None,
 ) -> GhlTranslation:
     """The ``lead.precheckout`` 1.1.0 event for one GHL form submission.
 
@@ -345,7 +440,9 @@ def translate_ghl_form_submission(
     call (never derived from GHL): a GHL retry is one more submission that the
     admission links to the same live intent, with no conflict row.
     ``created_at`` is ``now`` (GHL sends no submission time). ``allowed_forms``
-    is ``[adaptadores.ghl].formularios`` of the manifest.
+    is ``[adaptadores.ghl].formularios`` of the manifest; ``landing_by_form``
+    and ``form_landing_mode`` are its ``landing_por_formulario`` and
+    ``landing_por_formulario_modo`` (see :func:`_choose_landing`).
     """
 
     instant = _utc_instant(now)
@@ -392,10 +489,17 @@ def translate_ghl_form_submission(
         raise _reject("form_not_allowed")
 
     # 4. The landing and its offer.
-    landing = _offer_landing(url, config)
+    landing, form_landing = _choose_landing(
+        url,
+        form_id,
+        config,
+        landing_by_form=landing_by_form or {},
+        form_landing_mode=form_landing_mode,
+    )
 
-    # 5. Attribution: only from the URL query of that same object.
-    query = urlsplit(url).query
+    # 5. Attribution: only from the URL query of that same object, also when the
+    #    landing came from the form.
+    query = _url_query(url)
     params = _search_params(query)
     object_fbclid = submission.get("fbclid")
     fbclid = _first(params, "fbclid") or (
@@ -410,8 +514,13 @@ def translate_ghl_form_submission(
     # the lead is kept.
     attribution = {field: _storable(value) for field, value in attribution.items()}
 
-    # 6. The phone.
-    phone, country_code, national, region = _phone(phone_raw)
+    # 6. The phone. A rejection here keeps the note of step 4 for the log line.
+    try:
+        phone, country_code, national, region = _phone(phone_raw)
+    except GhlAdapterRejection as exc:
+        if form_landing != "-":
+            exc.form_landing = form_landing
+        raise
 
     # 7-8. The event.
     price = config.product_price
@@ -467,4 +576,5 @@ def translate_ghl_form_submission(
         phone_region=region,
         has_utm=any(_first(params, f"utm_{field}") for field in (*_SCK_FIELDS, "id")),
         has_fbclid=bool(attribution["fbclid"]),
+        form_landing=form_landing,
     )

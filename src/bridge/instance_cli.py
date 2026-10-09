@@ -72,6 +72,13 @@ def validate_instance(directory: Path) -> dict[str, Any]:
                 ),
             }
         }
+        form_landings = manifest.ghl_form_landings
+        if form_landings is not None:
+            # Solo cuando esta: sin la clave, el reporte no cambia.
+            report["manifiesto"]["adaptadores"]["ghl"]["landing_por_formulario"] = {
+                "modo": form_landings.mode,
+                "formularios": dict(form_landings.landing_by_form),
+            }
     flows: dict[str, Any] = {}
     for flow in FLOWS:
         blockers = manifest.flow_blockers(flow)
@@ -168,6 +175,12 @@ def _print_human(report: dict[str, Any]) -> None:
                 )
             else:
                 print("  adaptador ghl, riesgo sin aceptar")
+            by_form = ghl.get("landing_por_formulario")
+            if by_form:
+                pairs = ", ".join(
+                    f"{form} → {landing}" for form, landing in by_form["formularios"].items()
+                )
+                print(f"  adaptador ghl, landing por formulario ({by_form['modo']}): {pairs}")
     for flow, state in report.get("flujos", {}).items():
         status = "prendido" if state["prendido"] else "apagado"
         ready = "" if state["se_puede_prender"] else " — no se puede prender"
