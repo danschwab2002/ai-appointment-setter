@@ -1057,3 +1057,164 @@ def test_the_acceptance_alone_changes_nothing_of_the_admission() -> None:
     for call in (plain_call, accepted_call):
         _assert_admitted_as_golden(call, ADS_A_GOLDEN)
     assert plain_call["config"] == accepted_call["config"]
+
+
+# --------------------------------------- landing_por_formulario (2026-10-09)
+#
+# attributionSource.url es la pagina donde empezo la visita (medido en ATT1 el
+# 2026-10-08). Los envios se derivan de la captura de Om5F cambiando el mediumId
+# o el host y la ruta de su URL; la oferta bmaztyhg se reata a la landing B como
+# en la instancia (instancia#26).
+
+UHTA_FORM = "UHTaDn8feKiqALhjGFFF"
+LANDING_B_URL = "https://site.metodoraizana.com.mx/alimenta-tu-tiroides"
+FORM_LANDINGS = {LANDING_D_FORM: "alimenta-tu-tiroides-d", UHTA_FORM: "alimenta-tu-tiroides"}
+
+
+def _att1_today(mode: str | None = None) -> InstanceManifest:
+    payload = tomllib.loads(ATT1_TOML.read_text(encoding="utf-8"))
+    payload["eventos"] = [*payload["eventos"], "intencion"]
+    for offer in payload["hotmart"]["ofertas"]:
+        if offer["codigo"] == "bmaztyhg":
+            offer.update(
+                site="metodoraizana-mx", landing_id="alimenta-tu-tiroides", url=LANDING_B_URL
+            )
+    ghl: dict = {"formularios": [ADS_A_FORM, LANDING_D_FORM, UHTA_FORM]}
+    if mode is not None:
+        ghl["landing_por_formulario"] = FORM_LANDINGS
+        ghl["landing_por_formulario_modo"] = mode
+    payload["adaptadores"] = {"ghl": ghl}
+    return InstanceManifest.from_mapping(payload)
+
+
+def _uhta_from_landing_d() -> dict:
+    body = _landing_d()
+    body["attributionSource"]["mediumId"] = UHTA_FORM
+    return body
+
+
+def _om5f_from_org_a() -> dict:
+    body = _landing_d()
+    query = body["attributionSource"]["url"].split("?", 1)[1]
+    body["attributionSource"]["url"] = f"https://www.metodoraizana.com/att1/evg/vsl/org-a?{query}"
+    return body
+
+
+def _one_adapter_record(caplog: pytest.LogCaptureFixture) -> logging.LogRecord:
+    (record,) = [
+        r for r in caplog.records if r.getMessage().startswith("ghl_precheckout_adapter ")
+    ]
+    return record
+
+
+def test_shadow_admits_with_the_url_landing_and_logs_the_fix_as_a_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    app, fake = _app(_settings(_att1_today("sombra")))
+
+    with caplog.at_level(logging.INFO, logger="bridge.app"):
+        response = _post(app, _uhta_from_landing_d())
+
+    assert response.status_code == 200
+    assert fake is not None and len(fake.calls) == 1
+    canonical = fake.calls[0]["canonical_payload"]
+    assert canonical["commerce"]["offer_ref"] == "2uafw5bg"  # type: ignore[index]
+    record = _one_adapter_record(caplog)
+    # Admitido, pero warning: bajo uvicorn solo los warnings llegan a la salida
+    # del contenedor, y es lo que se cuenta para decidir si se activa.
+    assert record.levelno == logging.WARNING
+    line = record.getMessage()
+    assert "outcome=received status=200 reason=-" in line
+    assert f"form={UHTA_FORM}" in line
+    assert "landing=metodoraizana-mx/alimenta-tu-tiroides-d offer=2uafw5bg" in line
+    assert line.endswith("form_landing=would_fix:alimenta-tu-tiroides")
+
+
+def test_active_admits_with_the_landing_of_the_form(caplog: pytest.LogCaptureFixture) -> None:
+    app, fake = _app(_settings(_att1_today("activo")))
+
+    with caplog.at_level(logging.INFO, logger="bridge.app"):
+        response = _post(app, _uhta_from_landing_d())
+
+    assert response.status_code == 200
+    assert fake is not None and len(fake.calls) == 1
+    call = fake.calls[0]
+    canonical = call["canonical_payload"]
+    assert canonical["commerce"]["offer_ref"] == "bmaztyhg"  # type: ignore[index]
+    assert canonical["source"]["landing_ref"] == "alimenta-tu-tiroides"  # type: ignore[index]
+    assert call["raw_payload"]["source"]["page_url"] == LANDING_B_URL  # type: ignore[index]
+    # La atribucion es la de la URL de la visita.
+    assert call["raw_payload"]["data"]["attribution"]["sck"] == LANDING_D_SCK  # type: ignore[index]
+    record = _one_adapter_record(caplog)
+    assert record.levelno == logging.WARNING
+    line = record.getMessage()
+    assert "landing=metodoraizana-mx/alimenta-tu-tiroides offer=bmaztyhg" in line
+    assert line.endswith("form_landing=fixed:alimenta-tu-tiroides")
+
+
+@pytest.mark.parametrize(
+    ("mode", "status", "note"),
+    [
+        (None, 422, "-"),
+        ("sombra", 422, "would_fix:alimenta-tu-tiroides-d"),
+        ("activo", 200, "fixed:alimenta-tu-tiroides-d"),
+    ],
+)
+def test_a_visit_started_off_the_manifest(
+    mode: str | None, status: int, note: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    app, fake = _app(_settings(_att1_today(mode)))
+
+    with caplog.at_level(logging.INFO, logger="bridge.app"):
+        response = _post(app, _om5f_from_org_a())
+
+    assert response.status_code == status
+    assert fake is not None and len(fake.calls) == (1 if status == 200 else 0)
+    if status == 422:
+        assert response.json() == {"detail": "ghl_landing_unknown"}
+    record = _one_adapter_record(caplog)
+    assert record.levelno == logging.WARNING
+    assert record.getMessage().endswith(f"form_landing={note}")
+
+
+@pytest.mark.parametrize("mode", ["sombra", "activo"])
+def test_a_form_on_its_own_landing_is_an_info_line(
+    mode: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    app, fake = _app(_settings(_att1_today(mode)))
+
+    with caplog.at_level(logging.INFO, logger="bridge.app"):
+        response = _post(app, _landing_d())
+
+    assert response.status_code == 200
+    record = _one_adapter_record(caplog)
+    assert record.levelno == logging.INFO
+    assert record.getMessage().endswith("form_landing=same")
+
+
+def test_a_declared_landing_missing_from_the_binding_is_a_warning_in_shadow(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Solo con un binding armado a mano (el manifiesto lo rechaza al cargar): en
+    # sombra se admite por la URL, y la linea lo dice como warning.
+    manifest = _att1_today("sombra")
+    config = manifest.to_commercial_ally_config()
+    without_b = replace(
+        config,
+        additional_offer_codes=tuple(c for c in config.additional_offer_codes if c != "bmaztyhg"),
+        additional_offer_landings=tuple(
+            landing
+            for landing in config.additional_offer_landings
+            if landing.landing_id != "alimenta-tu-tiroides"
+        ),
+    )
+    app, fake = _app(_settings(manifest, commercial_ally_config=without_b))
+
+    with caplog.at_level(logging.INFO, logger="bridge.app"):
+        response = _post(app, _uhta_from_landing_d())
+
+    assert response.status_code == 200
+    assert fake is not None and len(fake.calls) == 1
+    record = _one_adapter_record(caplog)
+    assert record.levelno == logging.WARNING
+    assert record.getMessage().endswith("form_landing=form_landing_missing:alimenta-tu-tiroides")

@@ -120,19 +120,20 @@ def _without_id(event: dict) -> dict:
     return {key: value for key, value in event.items() if key != "id"}
 
 
-def _assert_matches_golden(event: dict, golden_name: str) -> None:
+def _assert_matches_golden(event: dict, golden_name: str, *, config=None) -> None:
+    config = config or CONFIG
     golden = _golden(golden_name)
     golden_id = golden["raw_payload"]["id"]
     # Salvo el id aleatorio, el evento es el golden, clave por clave.
     assert {**event, "id": golden_id} == golden["raw_payload"]
-    submission = parse_lead_precheckout(event, config=CONFIG)
+    submission = parse_lead_precheckout(event, config=config)
     assert submission is not None
     assert {
         **submission.as_canonical_payload(),
         "external_submission_id": golden_id,
     } == golden["canonical_payload"]
     # El golden, tal cual, es lo que el parser acepta (C7 lo admite en PGlite).
-    golden_submission = parse_lead_precheckout(golden["raw_payload"], config=CONFIG)
+    golden_submission = parse_lead_precheckout(golden["raw_payload"], config=config)
     assert golden_submission is not None
     assert golden_submission.as_canonical_payload() == golden["canonical_payload"]
 
@@ -1080,3 +1081,322 @@ def test_compose_lancemos_sck_matches_the_core_vectors(search: str, expected: st
 )
 def test_compose_lancemos_sck_follows_the_core_rules(query: str, expected: str) -> None:
     assert compose_lancemos_sck(query) == expected
+
+
+# --------------------------------------- landing_por_formulario (2026-10-09)
+#
+# Medido en ATT1 el 2026-10-08 (bitacora del OS «todos los carritos de ATT1 traen
+# formulario»): attributionSource.url es la pagina donde empezo la visita, no
+# siempre la del formulario. Dos de los 14 envios reales de UHTa (landing B)
+# llegaron con la URL de la landing D, donde esa gente habia entrado por un
+# anuncio, y su carrito de bmaztyhg no cruzo; un envio de Om5F (landing D) llego
+# con una URL que no es landing del manifiesto y quedo en 422 ghl_landing_unknown.
+# Los casos se derivan de la captura de Om5F (`_landing_d`) cambiando el mediumId
+# o el host y la ruta de su URL. La oferta bmaztyhg se reata a la landing B como
+# en la instancia (instancia#26, 2026-10-07).
+
+UHTA_FORM = "UHTaDn8feKiqALhjGFFF"
+LANDING_B = "alimenta-tu-tiroides"
+LANDING_D = "alimenta-tu-tiroides-d"
+LANDING_B_URL = "https://site.metodoraizana.com.mx/alimenta-tu-tiroides"
+ATT1_FORM_LANDINGS = {LANDING_D_FORM: LANDING_D, UHTA_FORM: LANDING_B}
+
+
+def _att1_today(
+    form_landings: dict | None = None, mode: str | None = None
+) -> InstanceManifest:
+    payload = tomllib.loads(ATT1_TOML.read_text(encoding="utf-8"))
+    payload["eventos"] = [*payload["eventos"], "intencion"]
+    for offer in payload["hotmart"]["ofertas"]:
+        if offer["codigo"] == "bmaztyhg":
+            offer.update(site="metodoraizana-mx", landing_id=LANDING_B, url=LANDING_B_URL)
+    ghl: dict = {"formularios": [ADS_A_FORM, LANDING_D_FORM, UHTA_FORM]}
+    if form_landings is not None:
+        ghl["landing_por_formulario"] = form_landings
+        ghl["landing_por_formulario_modo"] = mode
+    payload["adaptadores"] = {"ghl": ghl}
+    return InstanceManifest.from_mapping(payload)
+
+
+ATT1_TODAY = _att1_today()
+ATT1_SHADOW = _att1_today(ATT1_FORM_LANDINGS, "sombra")
+ATT1_ACTIVE = _att1_today(ATT1_FORM_LANDINGS, "activo")
+
+
+def _translate_today(body: dict, manifest: InstanceManifest, *, config=None):
+    landings = manifest.ghl_form_landings
+    return translate_ghl_form_submission(
+        body,
+        config=config or manifest.to_commercial_ally_config(),
+        allowed_forms=frozenset(manifest.ghl_form_ids),
+        now=NOW,
+        landing_by_form=landings.landing_by_form if landings is not None else None,
+        form_landing_mode=landings.mode if landings is not None else None,
+    )
+
+
+def _rejection_today(body: dict, manifest: InstanceManifest, **kwargs) -> GhlAdapterRejection:
+    with pytest.raises(GhlAdapterRejection) as caught:
+        _translate_today(body, manifest, **kwargs)
+    return caught.value
+
+
+def _uhta_from_landing_d() -> dict:
+    """El formulario de la landing B mandado por quien entro por la landing D."""
+
+    body = _landing_d()
+    body["attributionSource"]["mediumId"] = UHTA_FORM
+    return body
+
+
+def _om5f_from(host_and_path: str) -> dict:
+    """El formulario de la landing D con la visita empezada en otra pagina; la
+    query de la URL (la del anuncio) queda igual."""
+
+    body = _landing_d()
+    url = body["attributionSource"]["url"]
+    query = url.split("?", 1)[1]
+    body["attributionSource"]["url"] = f"https://{host_and_path}?{query}"
+    return body
+
+
+def test_without_form_landings_the_url_decides_and_the_landing_b_form_lands_on_d() -> None:
+    # El error medido: el envio de UHTa queda con la oferta de la landing D.
+    translation = _translate_today(_uhta_from_landing_d(), ATT1_TODAY)
+
+    assert (translation.landing_id, translation.offer_code) == (LANDING_D, "2uafw5bg")
+    assert translation.form_landing == "-"
+
+
+def test_shadow_keeps_the_url_landing_and_notes_the_fix() -> None:
+    plain = _translate_today(_uhta_from_landing_d(), ATT1_TODAY)
+    shadow = _translate_today(_uhta_from_landing_d(), ATT1_SHADOW)
+
+    assert shadow.form_landing == f"would_fix:{LANDING_B}"
+    # En sombra el evento es el de siempre.
+    assert (shadow.landing_id, shadow.offer_code) == (LANDING_D, "2uafw5bg")
+    assert {k: v for k, v in shadow.event.items() if k != "id"} == {
+        k: v for k, v in plain.event.items() if k != "id"
+    }
+
+
+def test_active_takes_the_landing_of_the_form_and_keeps_the_attribution_of_the_url() -> None:
+    plain = _translate_today(_uhta_from_landing_d(), ATT1_TODAY)
+    active = _translate_today(_uhta_from_landing_d(), ATT1_ACTIVE)
+    event = active.event
+
+    assert active.form_landing == f"fixed:{LANDING_B}"
+    assert (active.site, active.landing_id, active.offer_code) == (
+        "metodoraizana-mx",
+        LANDING_B,
+        "bmaztyhg",
+    )
+    assert event["source"]["landing_id"] == LANDING_B
+    assert event["source"]["page_url"] == LANDING_B_URL
+    assert event["data"]["offer"] == {"code": "bmaztyhg"}
+    assert event["data"]["checkout_url"] == "https://pay.hotmart.com/D98014973Y?off=bmaztyhg"
+    assert event["dedupe_key"].startswith("metodoraizana-mx:bmaztyhg:")
+    # La atribucion sigue saliendo de la URL de la visita: la del anuncio.
+    assert event["data"]["attribution"] == plain.event["data"]["attribution"]
+    assert event["data"]["attribution"]["sck"] == LANDING_D_SCK
+    assert (active.has_utm, active.has_fbclid) == (True, True)
+
+    config = ATT1_ACTIVE.to_commercial_ally_config()
+    submission = parse_lead_precheckout(event, config=config)
+    assert submission is not None and submission.whatsapp_contact_authorized is True
+    # El golden que validate_ghl_precheckout_adapter.mjs admite con la RPC real.
+    _assert_matches_golden(
+        event,
+        "ghl_form_webhook_uhta_from_landing_d_active_derived_20260929.lead_precheckout.json",
+        config=config,
+    )
+
+
+@pytest.mark.parametrize(
+    "host_and_path",
+    [
+        # org-a: el mismo sitio, una pagina sin oferta en la instancia de hoy.
+        "www.metodoraizana.com/att1/evg/vsl/org-a",
+        "site.metodoraizana.com.mx/gracias",
+    ],
+)
+def test_a_form_whose_visit_started_off_the_manifest(host_and_path: str) -> None:
+    body = _om5f_from(host_and_path)
+
+    plain = _rejection_today(body, ATT1_TODAY)
+    shadow = _rejection_today(body, ATT1_SHADOW)
+    active = _translate_today(body, ATT1_ACTIVE)
+
+    assert (plain.reason, plain.form_landing) == ("landing_unknown", None)
+    # En sombra se sigue rechazando, y el rechazo dice que el formulario lo salvaba.
+    assert (shadow.reason, shadow.status_code) == ("landing_unknown", 422)
+    assert shadow.form_landing == f"would_fix:{LANDING_D}"
+    assert (active.landing_id, active.offer_code) == (LANDING_D, "2uafw5bg")
+    assert active.form_landing == f"fixed:{LANDING_D}"
+    assert active.event["source"]["page_url"] == (
+        "https://site.metodoraizana.com.mx/alimenta-tu-tiroides-d"
+    )
+    assert active.event["data"]["attribution"]["sck"] == LANDING_D_SCK
+
+
+@pytest.mark.parametrize("manifest", [ATT1_SHADOW, ATT1_ACTIVE], ids=["sombra", "activo"])
+def test_a_form_on_its_own_landing_is_the_same_translation(manifest: InstanceManifest) -> None:
+    plain = _translate_today(_landing_d(), ATT1_TODAY)
+    declared = _translate_today(_landing_d(), manifest)
+
+    assert declared.form_landing == "same"
+    assert {k: v for k, v in declared.event.items() if k != "id"} == {
+        k: v for k, v in plain.event.items() if k != "id"
+    }
+
+
+def test_an_undeclared_form_still_follows_the_url() -> None:
+    # EgDq vive en ads-a y en org-a: no se declara y sigue por la URL.
+    translation = _translate_today(_ads_a(), ATT1_ACTIVE)
+
+    assert translation.form_landing == "-"
+    assert (translation.landing_id, translation.offer_code) == ("ads-a", "gopi6lh7")
+
+
+def test_declared_landings_without_a_mode_change_nothing() -> None:
+    translation = translate_ghl_form_submission(
+        _uhta_from_landing_d(),
+        config=ATT1_TODAY.to_commercial_ally_config(),
+        allowed_forms=frozenset(ATT1_TODAY.ghl_form_ids),
+        now=NOW,
+        landing_by_form=ATT1_FORM_LANDINGS,
+        form_landing_mode=None,
+    )
+
+    assert (translation.landing_id, translation.form_landing) == (LANDING_D, "-")
+
+
+def test_active_with_a_url_that_does_not_split_keeps_the_lead_without_attribution() -> None:
+    # urlsplit rechaza un corchete sin cerrar (ValueError): por la URL es
+    # landing_unknown; con el formulario declarado, el envio entra sin atribucion
+    # de la query, nunca un 500 que GHL reintentaria para siempre.
+    body = _landing_d()
+    body["attributionSource"]["url"] = "https://[site.metodoraizana.com.mx/alimenta-tu-tiroides-d"
+    object_fbclid = body["attributionSource"]["fbclid"]
+
+    shadow = _rejection_today(body, ATT1_SHADOW)
+    active = _translate_today(body, ATT1_ACTIVE)
+    attribution = active.event["data"]["attribution"]
+
+    assert (shadow.reason, shadow.form_landing) == ("landing_unknown", f"would_fix:{LANDING_D}")
+    assert active.landing_id == LANDING_D and active.form_landing == f"fixed:{LANDING_D}"
+    assert {field: attribution[field] for field in ("utm_source", "utm_medium", "sck")} == {
+        "utm_source": "",
+        "utm_medium": "",
+        "sck": "",
+    }
+    # El fbclid del objeto sigue valiendo, como cuando la URL no lo trae.
+    assert attribution["fbclid"] == object_fbclid
+    assert active.has_utm is False
+
+
+def test_a_declared_landing_missing_from_the_binding_is_never_silent() -> None:
+    # El manifiesto lo rechaza al cargar; un binding armado de otra forma no
+    # cae en silencio a la URL.
+    config = ATT1_TODAY.to_commercial_ally_config()
+    without_b = replace(
+        config,
+        additional_offer_codes=tuple(c for c in config.additional_offer_codes if c != "bmaztyhg"),
+        additional_offer_landings=tuple(
+            landing for landing in config.additional_offer_landings if landing.landing_id != LANDING_B
+        ),
+    )
+
+    active = _rejection_today(_uhta_from_landing_d(), ATT1_ACTIVE, config=without_b)
+    shadow = _translate_today(_uhta_from_landing_d(), ATT1_SHADOW, config=without_b)
+
+    assert (active.reason, active.form_landing) == (
+        "landing_unknown",
+        f"form_landing_missing:{LANDING_B}",
+    )
+    assert (shadow.landing_id, shadow.form_landing) == (
+        LANDING_D,
+        f"form_landing_missing:{LANDING_B}",
+    )
+
+
+def test_a_phone_rejection_keeps_the_note_of_the_landing() -> None:
+    body = _uhta_from_landing_d()
+    body["phone"] = "+12"
+
+    rejection = _rejection_today(body, ATT1_ACTIVE)
+
+    assert rejection.reason == "phone_unusable"
+    assert rejection.form_landing == f"fixed:{LANDING_B}"
+
+
+def _without_landing_b(config):
+    # El binding sin la landing B: solo armado a mano (el manifiesto lo rechaza).
+    return replace(
+        config,
+        additional_offer_codes=tuple(c for c in config.additional_offer_codes if c != "bmaztyhg"),
+        additional_offer_landings=tuple(
+            landing for landing in config.additional_offer_landings if landing.landing_id != LANDING_B
+        ),
+    )
+
+
+def _twin_on_landing_d(config):
+    # Otra oferta en la misma pagina de la -d, como en
+    # test_two_offers_on_the_same_page_are_ambiguous: la URL de la -d es ambigua.
+    twin = OfferLanding(
+        offer_code="twin1234",
+        site="metodoraizana-mx",
+        landing_id="alimenta-tu-tiroides-d-twin",
+        page_host="site.metodoraizana.com.mx",
+        page_path="/alimenta-tu-tiroides-d",
+    )
+    return replace(
+        config,
+        additional_offer_codes=(*config.additional_offer_codes, twin.offer_code),
+        additional_offer_landings=(*config.additional_offer_landings, twin),
+    )
+
+
+def test_an_ambiguous_url_in_shadow_keeps_its_reason_and_notes_the_fix() -> None:
+    config = _twin_on_landing_d(ATT1_TODAY.to_commercial_ally_config())
+
+    shadow = _rejection_today(_landing_d(), ATT1_SHADOW, config=config)
+    active = _translate_today(_landing_d(), ATT1_ACTIVE, config=config)
+
+    assert (shadow.reason, shadow.form_landing) == ("landing_ambiguous", f"would_fix:{LANDING_D}")
+    assert (active.landing_id, active.form_landing) == (LANDING_D, f"fixed:{LANDING_D}")
+
+
+@pytest.mark.parametrize(
+    ("body", "with_twin", "reason"),
+    [
+        (lambda: _om5f_from("www.metodoraizana.com/att1/evg/vsl/org-a"), False, "landing_unknown"),
+        (_landing_d, True, "landing_ambiguous"),
+    ],
+    ids=["url-fuera-del-manifiesto", "url-ambigua"],
+)
+def test_shadow_with_the_declared_landing_missing_keeps_the_url_reason_and_the_note(
+    body, with_twin: bool, reason: str
+) -> None:
+    payload = body()
+    payload["attributionSource"]["mediumId"] = UHTA_FORM
+    config = _without_landing_b(ATT1_TODAY.to_commercial_ally_config())
+    if with_twin:
+        config = _twin_on_landing_d(config)
+
+    rejection = _rejection_today(payload, ATT1_SHADOW, config=config)
+
+    assert (rejection.reason, rejection.form_landing) == (
+        reason,
+        f"form_landing_missing:{LANDING_B}",
+    )
+
+
+def test_active_off_the_manifest_is_exactly_the_landing_d_golden() -> None:
+    # Om5F con la visita empezada en org-a, en activo: el mismo evento que el
+    # golden de la -d (salvo el id aleatorio), que el validador de PGlite admite.
+    active = _translate_today(_om5f_from("www.metodoraizana.com/att1/evg/vsl/org-a"), ATT1_ACTIVE)
+    golden = _golden("ghl_form_webhook_landing_d_derived_20260929.lead_precheckout.json")
+
+    assert {**active.event, "id": golden["raw_payload"]["id"]} == golden["raw_payload"]

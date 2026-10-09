@@ -51,6 +51,12 @@ _GHL_FORM_ID = re.compile(r"[A-Za-z0-9]{20}")
 # vencida tiene que verse, no degradar en silencio.
 GHL_ADAPTER_RISK_CONTRACT = "ghl-precheckout-adapter-v1"
 _GHL_RISK_KEYS = ("riesgo_aceptado_por", "riesgo_aceptado_el", "riesgo_contrato")
+# En que landing vive cada formulario (``landing_por_formulario``) y que hace el
+# adaptador con eso (``landing_por_formulario_modo``). Van las dos o ninguna.
+_GHL_FORM_LANDING_KEYS = ("landing_por_formulario", "landing_por_formulario_modo")
+# sombra: la landing sigue saliendo de la URL y el log anota cuando el formulario
+# la habria corregido. activo: la landing sale del formulario.
+GHL_FORM_LANDING_MODES = ("sombra", "activo")
 # Los ejemplos de la documentacion firman con un marcador entre < y >: copiado
 # sin editar no es una firma, y no carga.
 _GHL_RISK_PLACEHOLDER_CHARS = ("<", ">")
@@ -152,6 +158,22 @@ class GhlRiskAcceptance:
 
 
 @dataclass(frozen=True)
+class GhlFormLandings:
+    """``landing_por_formulario`` de ``[adaptadores.ghl]``.
+
+    GHL manda en ``attributionSource.url`` la pagina donde empezo la visita, que
+    no siempre es la del formulario: quien entro por la landing D y lleno el
+    formulario de la B llega con la URL de la D (medido en ATT1 el 2026-10-08).
+    El formulario si dice donde se lleno. ``landing_by_form`` va del id del
+    formulario al ``landing_id`` de una oferta; un formulario que vive en mas de
+    una pagina no se declara y sigue por la URL.
+    """
+
+    mode: str
+    landing_by_form: Mapping[str, str]
+
+
+@dataclass(frozen=True)
 class InstanceManifest:
     product_version: str
     tenant_ref: str
@@ -188,6 +210,8 @@ class InstanceManifest:
     # [adaptadores.ghl], precheckout, pago_fallido y una audiencia con
     # consentimiento no arrancan.
     ghl_risk_acceptance: GhlRiskAcceptance | None = None
+    # En que landing vive cada formulario. None = la landing sale de la URL.
+    ghl_form_landings: GhlFormLandings | None = None
 
     @property
     def ghl_adapter_risk(self) -> str | None:
@@ -377,7 +401,9 @@ class InstanceManifest:
             review = _table(payload, "revision_diaria")
             _exact_keys("revision_diaria", review, set(), {"revisores"})
             reviewers = _str_list(review.get("revisores", []), "revision_diaria.revisores")
-        ghl_form_ids, ghl_risk_acceptance = _ghl_adapter(payload, events)
+        ghl_form_ids, ghl_risk_acceptance, ghl_form_landings = _ghl_adapter(
+            payload, events, offers
+        )
 
         manifest = cls(
             product_version=product_version,
@@ -410,6 +436,7 @@ class InstanceManifest:
             daily_review_reviewers=reviewers,
             ghl_form_ids=ghl_form_ids,
             ghl_risk_acceptance=ghl_risk_acceptance,
+            ghl_form_landings=ghl_form_landings,
         )
         for flow, enabled in manifest.flows.items():
             blockers = manifest.flow_blockers(flow)
@@ -492,10 +519,11 @@ def _str_list(value: object, where: str) -> tuple[str, ...]:
 
 
 def _ghl_adapter(
-    payload: Mapping[str, Any], events: frozenset[str]
-) -> tuple[tuple[str, ...], GhlRiskAcceptance | None]:
-    """``[adaptadores.ghl]``: los formularios de GHL que entran como intencion y,
-    si esta, la aceptacion escrita del riesgo del adaptador.
+    payload: Mapping[str, Any], events: frozenset[str], offers: tuple[Offer, ...]
+) -> tuple[tuple[str, ...], GhlRiskAcceptance | None, GhlFormLandings | None]:
+    """``[adaptadores.ghl]``: los formularios de GHL que entran como intencion,
+    si esta, la aceptacion escrita del riesgo del adaptador, y si esta, en que
+    landing vive cada formulario.
 
     Listar un formulario afirma que muestra la aclaracion de
     ``consentimiento.copy_version``: cada envio traducido sale con
@@ -503,15 +531,20 @@ def _ghl_adapter(
     """
 
     if "adaptadores" not in payload:
-        return (), None
+        return (), None, None
     adapters = _table(payload, "adaptadores")
     _exact_keys("adaptadores", adapters, set(), {"ghl"})
     if "ghl" not in adapters:
-        return (), None
+        return (), None, None
     ghl = adapters["ghl"]
     if not isinstance(ghl, dict):
         raise ManifestError("adaptadores.ghl debe ser una tabla")
-    _exact_keys("adaptadores.ghl", ghl, {"formularios"}, set(_GHL_RISK_KEYS))
+    _exact_keys(
+        "adaptadores.ghl",
+        ghl,
+        {"formularios"},
+        set(_GHL_RISK_KEYS) | set(_GHL_FORM_LANDING_KEYS),
+    )
     forms = _str_list(ghl["formularios"], "adaptadores.ghl.formularios")
     if not forms:
         raise ManifestError("adaptadores.ghl.formularios debe tener al menos un formulario")
@@ -523,7 +556,57 @@ def _ghl_adapter(
             )
     if "intencion" not in events:
         raise ManifestError("adaptadores.ghl exige el evento 'intencion' en eventos")
-    return forms, _ghl_risk_acceptance(ghl)
+    return forms, _ghl_risk_acceptance(ghl), _ghl_form_landings(ghl, forms, offers)
+
+
+def _ghl_form_landings(
+    ghl: Mapping[str, Any], forms: tuple[str, ...], offers: tuple[Offer, ...]
+) -> GhlFormLandings | None:
+    """``landing_por_formulario`` y ``landing_por_formulario_modo``, las dos o
+    ninguna.
+
+    Cada formulario tiene que estar en ``formularios`` y cada landing tiene que
+    ser el ``landing_id`` de una sola oferta: un error aca falla al cargar, en voz
+    alta, y no en cada envio.
+    """
+
+    present = [key for key in _GHL_FORM_LANDING_KEYS if key in ghl]
+    if not present:
+        return None
+    if len(present) != len(_GHL_FORM_LANDING_KEYS):
+        raise ManifestError(
+            "adaptadores.ghl: landing_por_formulario y landing_por_formulario_modo "
+            "van juntas"
+        )
+    mode = _str(ghl, "landing_por_formulario_modo", "adaptadores.ghl.landing_por_formulario_modo")
+    if mode not in GHL_FORM_LANDING_MODES:
+        raise ManifestError(
+            "adaptadores.ghl.landing_por_formulario_modo debe ser uno de "
+            + ", ".join(GHL_FORM_LANDING_MODES)
+        )
+    raw = ghl["landing_por_formulario"]
+    where = "adaptadores.ghl.landing_por_formulario"
+    if not isinstance(raw, dict) or not raw:
+        raise ManifestError(f"{where} debe ser una tabla {{ <formulario> = \"<landing_id>\" }} no vacia")
+    landing_by_form = {}
+    for form, landing_id in raw.items():
+        if form not in forms:
+            raise ManifestError(
+                f"{where}: '{form}' no esta en adaptadores.ghl.formularios"
+            )
+        if not isinstance(landing_id, str):
+            raise ManifestError(f"{where}.{form} debe ser el landing_id de una oferta")
+        matches = [offer for offer in offers if offer.landing_id == landing_id]
+        if not matches:
+            raise ManifestError(
+                f"{where}.{form}: '{landing_id}' no es el landing_id de ninguna oferta"
+            )
+        if len(matches) > 1:
+            raise ManifestError(
+                f"{where}.{form}: '{landing_id}' es el landing_id de mas de una oferta"
+            )
+        landing_by_form[form] = landing_id
+    return GhlFormLandings(mode=mode, landing_by_form=MappingProxyType(landing_by_form))
 
 
 def _utc_today() -> date:

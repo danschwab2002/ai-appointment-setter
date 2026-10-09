@@ -143,11 +143,14 @@ Un adaptador traduce lo que manda una fuente externa a un evento canónico, que 
 eventos = ["carrito", "pago_fallido", "compra", "entrante", "intencion"]
 
 [adaptadores.ghl]
-formularios = ["EgDqRl2xWc59YjVW1q8W"]
+formularios = ["EgDqRl2xWc59YjVW1q8W", "Om5FpIg5Sr5ce7nSkuPy"]
 # Opcionales, las tres o ninguna: la aceptación escrita del riesgo del adaptador.
 riesgo_aceptado_por = "<COMPLETAR: nombre de quien decide>"
 riesgo_aceptado_el = 2026-10-01
 riesgo_contrato = "ghl-precheckout-adapter-v1"
+# Opcionales, las dos o ninguna (1.4.0): en qué landing vive cada formulario.
+landing_por_formulario = { Om5FpIg5Sr5ce7nSkuPy = "alimenta-tu-tiroides-d" }
+landing_por_formulario_modo = "sombra"
 ```
 
 El marcador entre `<` y `>` no carga: se reemplaza por el nombre de quien decide.
@@ -158,8 +161,10 @@ El marcador entre `<` y `>` no carga: se reemplaza por el nombre de quien decide
 | `adaptadores.ghl.riesgo_aceptado_por` | Opcional. Quién acepta el riesgo del adaptador: el responsable de la instancia. Texto no vacío, sin `<` ni `>` | No carga. El marcador del ejemplo tampoco |
 | `adaptadores.ghl.riesgo_aceptado_el` | Opcional. Cuándo lo aceptó. Una fecha TOML sin comillas ni hora (`2026-10-01`), no posterior a hoy (un día de margen sobre la fecha UTC) | Un texto, una fecha con hora o una fecha futura no cargan |
 | `adaptadores.ghl.riesgo_contrato` | Opcional. Contra qué contrato lo aceptó. Tiene que ser `"ghl-precheckout-adapter-v1"`, el vigente | Otro valor no carga: la aceptación es de otra versión del contrato |
+| `adaptadores.ghl.landing_por_formulario` | Opcional (1.4.0), con el modo. En qué landing vive cada formulario: `{ <formulario> = "<landing_id>" }`. GHL manda la página donde empezó la visita, que no siempre es la del formulario ([contrato](contracts/ghl-precheckout-adapter-v1.md#la-landing-de-un-formulario-declarado-140)). Un formulario que vive en más de una página no se declara | No carga si un formulario no está en `formularios`, si el `landing_id` no es el de exactamente una oferta, o si la tabla está vacía |
+| `adaptadores.ghl.landing_por_formulario_modo` | Opcional (1.4.0), con la tabla. `"sombra"`: la landing sigue saliendo de la URL y el log anota cuándo el formulario la habría cambiado. `"activo"`: la landing sale del formulario | Otro valor no carga |
 
-Reglas: al menos un formulario, sin repetir, y `intencion` en `eventos`; si no, el manifiesto no carga. La landing y la oferta no se declaran acá: salen de la URL del envío, comparada con las `url` de `[[hotmart.ofertas]]`. Sin la sección, o con `[adaptadores]` vacío, no hay adaptador.
+Reglas: al menos un formulario, sin repetir, y `intencion` en `eventos`; si no, el manifiesto no carga. La landing y la oferta salen de la URL del envío, comparada con las `url` de `[[hotmart.ofertas]]`, salvo para un formulario declarado en `landing_por_formulario` con el modo `"activo"`. Sin la sección, o con `[adaptadores]` vacío, no hay adaptador.
 
 **Listar un formulario es una afirmación.** Cada envío traducido se admite con `whatsapp_contact = true`, así que listar un formulario afirma que muestra la aclaración de `consentimiento.copy_version` y que su envío es el paso previo al checkout de la oferta de su landing. Se suma a la lista solo después de verificar las dos.
 
