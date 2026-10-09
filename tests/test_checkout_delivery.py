@@ -1,5 +1,4 @@
 import asyncio
-import copy
 import json
 import logging
 from pathlib import Path
@@ -156,10 +155,9 @@ def test_live_inbox_mismatch_blocks_before_post_authorization(tmp_path: Path) ->
 
 # --- El link en el boton de una plantilla -------------------------------------
 #
-# El catalogo es el del inbox 9 capturado el 2026-10-01. La plantilla del link
-# todavia no esta aprobada: se arma sobre la del seguimiento capturada, como en
-# ``test_payment_link_template.py``. PENDIENTE: la captura real cuando Meta la
-# apruebe.
+# El catalogo es el del inbox 9 capturado el 2026-10-01 a las 19:58Z, con la
+# plantilla del link tal como la aprobo Meta: se cargo como UTILITY y quedo
+# MARKETING.
 
 CATALOG_FIXTURE = (
     Path(__file__).parent / "fixtures" / "chatwoot_message_templates_inbox_9_20261001.json"
@@ -167,7 +165,7 @@ CATALOG_FIXTURE = (
 LINK_TEMPLATE = "johanna_enlace_pago_01"
 LINK_BODY = (
     "Aquí tienes tu enlace de pago. Toca el botón de abajo para ir directo al "
-    "pago seguro en Hotmart. Si tienes alguna duda antes de pagar, escríbeme "
+    "pago seguro en Hotmart!\nSi tienes alguna duda antes de pagar, escríbeme "
     "por aquí."
 )
 PREAMBLE = "Perfecto. Acá tenés el link:"
@@ -175,28 +173,12 @@ PREAMBLE = "Perfecto. Acá tenés el link:"
 
 def _catalog(*, with_link_template=True, **changes):
     catalog = json.loads(CATALOG_FIXTURE.read_text(encoding="utf-8"))
-    if with_link_template:
-        followup = next(
-            template
-            for template in catalog["message_templates"]
-            if template["name"] == "johanna_seguimiento_descuento_01"
-        )
-        link = copy.deepcopy(followup)
-        link.update({
-            "name": LINK_TEMPLATE,
-            "language": "es_EC",
-            "category": "UTILITY",
-            "components": [
-                {"type": "BODY", "text": LINK_BODY},
-                {"type": "BUTTONS", "buttons": [{
-                    "type": "URL",
-                    "text": "Ir al pago",
-                    "url": "https://pay.hotmart.com/{{1}}",
-                }]},
-            ],
-        })
-        link.update(changes)
-        catalog["message_templates"].append(link)
+    templates = catalog["message_templates"]
+    link = next(template for template in templates if template["name"] == LINK_TEMPLATE)
+    if not with_link_template:
+        # Como antes de que Meta la aprobara: la del link no esta en el catalogo.
+        templates.remove(link)
+    link.update(changes)
     return catalog
 
 
@@ -275,7 +257,7 @@ def test_the_link_goes_in_the_template_button_after_the_agent_text() -> None:
     assert second["prior_parts"] == (PREAMBLE,)
     assert second["template_params"] == {
         "name": LINK_TEMPLATE,
-        "category": "UTILITY",
+        "category": "MARKETING",
         "language": "es_EC",
         "processed_params": {
             "buttons": [{"type": "url", "parameter": URL.removeprefix("https://pay.hotmart.com/")}],
