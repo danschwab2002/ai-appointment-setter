@@ -4286,6 +4286,37 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         4,
         'pilot_proactive_contact_cap'
+    union all
+    select
+        '20261009000200',
+        '20261009000200_portable_inbound_adoption_ignores_stopped_first_contact.sql',
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_portable_inbound_commercial_case_v1(text,integer,bigint,text)')
+              and prosecdef
+              and position('portable_adoption_stopped_first_contact: begin' in definition) > 0
+              and position('portable_adoption_stopped_first_contact: end' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_portable_inbound_commercial_case_v1(text,integer,bigint,text)')
+              and position('public._portable_precheckout_stop_reason(' in definition) > 0
+              and position('''payment_failure_supported''' in definition) > 0
+              and position('''purchase_by_identity''' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_portable_inbound_commercial_case_v1(text,integer,bigint,text)')
+              and position('portable_adoption_stopped_first_contact: begin' in definition) > 0
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        3,
+        'portable_inbound_adoption_ignores_stopped_first_contact'
 )
 select
     version,

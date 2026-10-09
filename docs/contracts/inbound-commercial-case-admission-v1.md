@@ -93,7 +93,17 @@ condiciones:
    lock antes que la identidad.
 3. Ninguna acción de recuperación de esa persona (en esta conversación o sin
    conversación) está en `pending`, `deferred`, `retryable_failed` o
-   `delivery_unknown`.
+   `delivery_unknown`. Desde `20261009000200` no cuenta un primer contacto
+   (`anchor_type = 'precheckout_intent'`) en `pending`, `deferred` o
+   `retryable_failed` que ya no va a salir: su intención tiene la
+   clasificación del carrito o del pago fallido (`confirmed_abandonment`,
+   `payment_failure_supported`) o una compra (`intent_purchased`,
+   `purchase_by_identity`, `intent_purchase_ambiguous` de
+   `_portable_precheckout_stop_reason`). Con cualquiera de esos, la
+   reevaluación lo cancela cuando el despachador lo toma, a su hora; hasta
+   entonces la acción sigue en `pending`, y sin esta excepción la respuesta a
+   la plantilla del carrito o del pago fallido no llegaba al agente (medido en
+   ATT1 el 2026-10-09).
 
 Adoptar es pasar la conversación a `draft_only` (`version + 1`) y escribir un
 `conversation_events` `inbound_adopted_template_conversation` (actor
