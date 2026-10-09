@@ -15,7 +15,16 @@ Suma dos cosas, las dos apagadas por defecto:
 - un tope de mensajes proactivos por persona entre flujos, en la puerta común de los tres arranques (primer contacto, carrito y pago fallido). Sin el renglón del tenant en la tabla nueva no hay tope y todo queda como hoy. Trae una migración;
 - que el adaptador de GHL tome la landing del formulario y no la de la página donde empezó la visita. Son dos claves opcionales de `[adaptadores.ghl]` en el manifiesto; sin ellas todo queda como hoy.
 
+Y arregla la respuesta a la plantilla del carrito o del pago fallido, que no llegaba al agente mientras el primer contacto de esa persona seguía pendiente (ver «Arreglado»).
+
 Ni variables nuevas ni campos obligatorios.
+
+### Arreglado
+
+- **La respuesta a la plantilla del carrito o del pago fallido no llegaba al agente mientras el primer contacto de esa persona seguía pendiente** (migración `20261009000200`, [contrato](docs/contracts/inbound-commercial-case-admission-v1.md)). La adopción de `20261001000400` (H7) no toma la conversación mientras haya un paso pendiente de la persona. El primer contacto queda en `pending` hasta su hora aunque el carrito, el pago fallido o una compra ya lo hayan reemplazado, porque la reevaluación lo cancela recién cuando el despachador lo toma. Medido en ATT1 el 2026-10-09, el día que se armó el primer contacto: una persona tocó «Envíame el enlace» en la plantilla del carrito, la admisión dio `22000 inbound_canonical_conversation_conflict` en los 8 intentos del bridge (unos 5 minutos) y el agente no le contestó; su primer contacto se canceló dos minutos después del último intento.
+  - El freno ya no cuenta un primer contacto en `pending`, `deferred` o `retryable_failed` cuya intención tiene la clasificación del carrito o del pago fallido (`confirmed_abandonment`, `payment_failure_supported`) o una compra (`intent_purchased`, `purchase_by_identity`, `intent_purchase_ambiguous`). Con cualquiera de esos, `_portable_precheckout_stop_reason` da un motivo y la reevaluación lo cancela siempre.
+  - Siguen frenando como antes: el primer contacto que todavía va a salir, el que está en `delivery_unknown`, el que solo frena un caso de Hotmart abierto de otra intención y las acciones de cualquier otro ancla.
+  - Se aplica sobre la definición viva (el método de `20261005000100`) y es idempotente: si el bloque ya está, no cambia nada. En una base sin `20261001000400`, como la de Johanna, avisa y no cambia nada.
 
 ### Agregado
 
@@ -46,13 +55,14 @@ Ni variables nuevas ni campos obligatorios.
   - con 2 entran dos y el tercero no;
   - la tabla está cerrada a la API;
   - el bloque está una vez y antes de los topes del scope.
+- `tests/sql/followup_engine/validate_portable_inbound_template_adoption.mjs` (PGlite, en `npm test`), caso 3b: formulario con el primer contacto planificado, carrito aceptado antes de su hora y la respuesta con el primer contacto en `pending`. Se adopta; sin la clasificación del carrito, dentro de una transacción que se deshace, frena (`22000`); y a su hora la reevaluación real lo cancela (`superseded_by_provider_event`) sin intento, con la conversación en `draft_only`. Sin la migración, el caso falla con el mismo `22000` que dio ATT1. La migración se corrió además dos veces sobre una copia de la base de ATT1 en `v1.3.3` (Postgres 17 local): la segunda no cambia nada, los permisos quedan iguales y el inventario de esquema da `fingerprint_present` con ella y `fingerprint_absent` sin ella.
 - `tests/test_pilot_proactive_contact_cap_migration.py`: el texto del ancla está una sola vez en cada una de las cuatro definiciones de la función, y el inventario de esquema la cubre.
 - La landing por formulario, con variantes derivadas de las dos capturas de GHL del 2026-09-29 (cambiando el `mediumId` o el host y la ruta de la URL): el traductor en los tres modos, una URL que no se parte, un binding sin la landing declarada y un teléfono rechazado (`tests/test_ghl_precheckout_adapter.py`); la ruta, con el nivel y el final de la línea de log (`tests/test_ghl_precheckout_adapter_http.py`); las reglas del manifiesto y que el ejemplo de la documentación carga (`tests/test_instance_manifest.py`); `/ready` (`tests/test_instance_wiring.py`) y `validate` (`tests/test_instance_cli.py`).
 - `tests/sql/followup_engine/validate_ghl_precheckout_adapter_form_landing.mjs` (PGlite, en `npm test`): el golden nuevo del envío de UHTa traducido en `activo` (`ghl_form_webhook_uhta_from_landing_d_active_derived_20260929`) entra por la RPC real con el binding de ATT1 de hoy (`bmaztyhg` en la landing B): intención en `alimenta-tu-tiroides` / `bmaztyhg`, con permiso, `consented_intent_ok` y el `sck` del anuncio de la -d. La misma persona por la -d deja su propia intención.
 
 ### Qué hace quien actualiza
 
-Correr la migración. Sin renglón en `pilot_proactive_contact_caps` no cambia nada. Para prender el tope en una instancia, su aprovisionamiento carga el renglón del tenant. El tope no necesita redesplegar el bridge.
+Correr las migraciones. La de `20261009000200` se puede aplicar antes que el resto, sobre `v1.3.3` (ATT1 lo hace así): cuando la cadena llegue a ella, ve el bloque y no cambia nada. Sin renglón en `pilot_proactive_contact_caps` no cambia nada. Para prender el tope en una instancia, su aprovisionamiento carga el renglón del tenant. El tope no necesita redesplegar el bridge.
 
 La landing por formulario sí: sumar las dos claves al manifiesto de la instancia y redesplegar el bridge, primero con `"sombra"` y, cuando las líneas `would_fix` muestren lo esperado, con `"activo"`. Para volver atrás, sacar las dos claves y redesplegar **antes** de bajar a una versión anterior a la 1.4.0: su parser no conoce las claves y no carga un manifiesto que las tenga.
 

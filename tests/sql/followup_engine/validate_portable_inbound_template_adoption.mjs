@@ -40,6 +40,10 @@
 //      despues en delivery_unknown frenan la adopcion; cuando la reconciliacion
 //      acepta ese intento en la misma conversacion, la respuesta se adopta y
 //      el evento apunta a la plantilla mas nueva (la del pago fallido);
+//   3b. el primer contacto que ya no va a salir (20261009000200): con el
+//      formulario planificado y el carrito aceptado antes de su hora, la
+//      respuesta se adopta; sin la clasificacion del carrito sigue frenando
+//      (decision 6), y a su hora la reevaluacion real lo cancela sin intento;
 //   4. la forma de Johanna, sin fila previa: la portable da created igual que
 //      la v2 y deja las mismas filas, sin evento de adopcion;
 //   5. la respuesta en otra conversacion de Chatwoot: se crea esa conversacion
@@ -1114,6 +1118,100 @@ await expectAdoption('cart_then_reconciled_payment_failure', {
 });
 
 // ---------------------------------------------------------------------------
+// 3b. El primer contacto que ya no va a salir no es un paso pendiente
+//     (20261009000200). El caso de ATT1 del 2026-10-09: el formulario
+//     planifica el primer contacto a los 60 minutos, el carrito llega antes
+//     (a los 15 de la prueba; 41 a 52 en ATT1), su plantilla se acepta y la
+//     persona contesta con el primer contacto todavia en pending. Con la
+//     cadena de 20261001000400 esa respuesta daba el 22000 hasta que el
+//     despachador tomaba el primer contacto a su hora; ahora se adopta. Sin la
+//     clasificacion del carrito (el primer contacto todavia va a salir) sigue
+//     frenando. Y a su hora la reevaluacion real lo cancela igual
+//     (superseded_by_provider_event), sin intento.
+// ---------------------------------------------------------------------------
+const stopLead = mexicanPerson('primer-contacto-reemplazado');
+await seedContact(stopLead);
+await enroll(stopLead, FC_SCOPE, FC_SCOPE_VERSION);
+await enroll(stopLead, SCOPE, SCOPE_VERSION);
+const stopForm = goldenForm(stopLead, SUBMITTED_AT);
+const stopAdmitted = one((await asService(() => db.query(`
+  select * from public.admit_and_plan_portable_lead_precheckout($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8)
+`, [ATT1.tenant, ATT1.funnel, ATT1.bindingVersion, stopForm.id, JSON.stringify(stopForm.raw),
+  JSON.stringify(stopForm.canonical), FC_SCOPE, FC_SCOPE_VERSION]))).rows, 'replaced first contact form');
+const stopLedger = one((await db.query(`
+  select * from public.portable_precheckout_first_contact_plans where submission_id = $1
+`, [stopAdmitted.submission_id])).rows, 'replaced first contact plan row');
+if (stopLedger.outcome !== 'planned' || stopLedger.contact_id !== stopLead.contact) {
+  throw new Error(`the first contact to replace was not planned: ${JSON.stringify({ outcome: stopLedger.outcome, reason: stopLedger.reason_code })}`);
+}
+const stopFirstContactAction = one((await db.query(`
+  select id from public.scheduled_actions where recovery_case_id = $1
+`, [stopLedger.recovery_case_id])).rows, 'replaced first contact action').id;
+const stopCart = await admitCart(stopLead, stopLead.offer);
+const stopCartPlan = await planCart(stopLead, stopLead.offer, stopCart);
+const STOP_CHATWOOT = 910005;
+await dispatch(stopLead, stopCartPlan, {
+  anchor: 'cart_abandonment', stepKey: 'first_contact', offer: stopLead.offer, chatwoot: STOP_CHATWOOT,
+});
+const stopReply = { chatwoot: STOP_CHATWOOT, user: stopLead.phone };
+const firstContactState = async () => one((await db.query(`
+  select action.status, action.terminal_reason, action.due_at, recovery.conversation_id,
+         intent.id as intent_id, intent.current_classification,
+         public._portable_precheckout_stop_reason(intent.id, recovery.contact_id) as stop_reason,
+         (select count(*)::integer from public.followup_delivery_attempts attempt
+           where attempt.action_id = action.id) as attempts
+  from public.scheduled_actions action
+  join public.recovery_cases recovery on recovery.id = action.recovery_case_id
+  join public.pilot_recovery_case_bindings binding on binding.recovery_case_id = recovery.id
+  join public.purchase_intents intent on intent.id = binding.audience_purchase_intent_id
+  where action.id = $1
+`, [stopFirstContactAction])).rows, 'replaced first contact state');
+const replaced = await firstContactState();
+if (replaced.status !== 'pending' || replaced.conversation_id !== null || replaced.attempts !== 0
+    || replaced.current_classification !== 'confirmed_abandonment'
+    || replaced.stop_reason !== 'superseded_by_provider_event'
+    || !(new Date(replaced.due_at) > await dbNow())) {
+  throw new Error(`the first contact is not pending and replaced by the cart: ${JSON.stringify(replaced)}`);
+}
+// Sin la clasificacion (dentro de la transaccion que se deshace) el primer
+// contacto todavia va a salir: el caso del carrito ya esta agotado, asi que
+// ningun freno lo cancela, y la decision 6 sigue frenando la adopcion.
+await expectBrake('first_contact_still_going_out', stopReply, () => db.query(`
+  update public.purchase_intents set current_classification = null where id = $1
+`, [replaced.intent_id]));
+await expectAdoption('cart_with_replaced_first_contact', {
+  chatwoot: STOP_CHATWOOT, user: stopLead.phone,
+  recoveryCaseId: stopCartPlan.recovery_case_id, actionId: stopCartPlan.scheduled_action_id,
+});
+// A su hora, el despachador lo toma y la reevaluacion real lo cancela: la
+// conversacion adoptada no recibe el primer contacto.
+const stopWorker = 'att1-adoption-first-contact-due';
+const dueNow = new Date(new Date(replaced.due_at).getTime() + 60_000);
+const claimedAtDue = (await db.query(`
+  select * from public.claim_due_followup_actions($1,$2,interval '5 minutes',100)
+`, [stopWorker, dueNow])).rows;
+if (claimedAtDue.length !== 1 || claimedAtDue[0].id !== stopFirstContactAction) {
+  throw new Error(`claimed at the first contact hour: ${JSON.stringify(claimedAtDue.map((row) => [row.id, row.anchor_type]))}`);
+}
+const atDue = one((await asService(() => db.query(`
+  select * from public.reevaluate_portable_precheckout_action($1,$2,$3,$4)
+`, [stopFirstContactAction, stopWorker, claimedAtDue[0].lease_generation, dueNow]))).rows,
+'first contact reevaluation at its hour');
+const cancelled = await firstContactState();
+const stillAdopted = await conversationState(STOP_CHATWOOT);
+if (atDue.decision !== 'cancel' || atDue.reason_code !== 'superseded_by_provider_event'
+    || cancelled.status !== 'cancelled' || cancelled.attempts !== 0
+    || stillAdopted.automation_status !== 'draft_only') {
+  throw new Error(`the replaced first contact was not cancelled at its hour: ${JSON.stringify({ atDue, cancelled, conversation: stillAdopted.automation_status })}`);
+}
+const replacedFirstContact = {
+  adopted_with_first_contact: `${replaced.status}/${replaced.stop_reason}`,
+  at_its_hour: `${atDue.decision}/${atDue.reason_code}`,
+  attempts: cancelled.attempts,
+  conversation: stillAdopted.automation_status,
+};
+
+// ---------------------------------------------------------------------------
 // 4. La forma de Johanna, sin fila previa: la portable da created igual que la
 //    v2 y deja las mismas filas, sin evento de adopcion.
 // ---------------------------------------------------------------------------
@@ -1199,11 +1297,12 @@ for (const role of ['anon', 'authenticated']) {
 }
 
 const totalEvents = await allAdoptionEvents();
-if (totalEvents !== 4) throw new Error(`expected four adoption events, got ${totalEvents}`);
+if (totalEvents !== 5) throw new Error(`expected five adoption events, got ${totalEvents}`);
 console.log(JSON.stringify({
   portable_inbound_template_adoption: 'OK',
   adoptions,
   brakes,
+  replaced_first_contact: replacedFirstContact,
   reply_in_another_conversation: `${show(otherByPortable)} (v2 ${show(otherByV2)}), template conversation stays enabled`,
   johanna_shape: `${johannaPortable.result} (v2 ${johannaV2.result}), cross replay ${show(crossReplay)}`,
   acl: { service_role: 'execute', ...denied },
