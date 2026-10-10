@@ -1,6 +1,7 @@
 """Supabase client contract for sanitary Johanna funnel observations.
 
-Y, al final, el de las RPC del primer contacto portable tras el formulario.
+Y, al final, el de las RPC del primer contacto portable tras el formulario y el
+de la reserva del seguimiento con cupon (la compartida y la portable).
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ import pytest
 
 from bridge.instance_manifest import InstanceManifest
 from bridge.supabase import (
+    ConversationFollowupClaim,
     PilotBoundaryConfig,
     PilotRequestStartRejectedError,
     PrecheckoutAdmissionResult,
@@ -781,3 +783,147 @@ def test_an_audience_mode_that_cannot_be_trusted_is_refused(
 
     with pytest.raises(SupabaseError, match=error):
         asyncio.run(client.get_pilot_scope_audience_mode(pilot_boundary=BOUNDARY))
+
+
+# ------------------------------------------ la reserva del seguimiento con cupon
+# La de siempre (Johanna) y la portable (con manifiesto, ATT1): mismo cuerpo,
+# misma lectura de la fila y mismos errores; cambia solo la RPC. Lo que hace la
+# portable en la base (el link con la intencion buscada por las dos formas del
+# telefono y la barrera de la conversacion adoptada) lo prueba
+# tests/sql/followup_engine/validate_portable_conversation_followup.mjs.
+FOLLOWUP_CLAIMS = (
+    ({}, "claim_conversation_followup_v1"),
+    ({"phone_equivalence": False}, "claim_conversation_followup_v1"),
+    ({"phone_equivalence": True}, "claim_portable_conversation_followup_v1"),
+)
+FOLLOWUP_CLAIM_FLAGS = [{}, {"phone_equivalence": True}]
+
+_FOLLOWUP_ULID = "01K3F8QW7N2VYB4M6X9CDPTZRA"
+_FOLLOWUP_CLAIMED = {
+    "outcome": "claimed",
+    "followup_event_id": "00000000-0000-0000-0000-000000000501",
+    "checkout_issuance_id": "00000000-0000-0000-0000-000000000502",
+    "checkout_url_final": (
+        "https://pay.hotmart.com/D98014973Y?off=2uafw5bg&checkoutMode=10"
+        f"&src=hermes&sck=hermes~v1~{_FOLLOWUP_ULID}"
+    ),
+    "sck_value": f"hermes~v1~{_FOLLOWUP_ULID}",
+}
+
+
+def _claim_followup(
+    client: SupabaseClient, **flag: bool
+) -> ConversationFollowupClaim:
+    # La 21 de ATT1, con la identidad ya resuelta como lo hace el entrante: aca
+    # la forma del formulario (52...), aunque Chatwoot guarde el 521...
+    return asyncio.run(
+        client.claim_conversation_followup(
+            external_conversation_id=21,
+            chatwoot_account_id=2,
+            chatwoot_inbox_id=11,
+            external_user_id="525500000021",
+            contact_email="lead21@example.com",
+            command_key="followup:21:2766",
+            regime="link_sent_no_purchase",
+            template_name="att1_seguimiento_descuento_01",
+            template_language="es_MX",
+            coupon_code="TIROIDES10",
+            last_inbound_message_id=2765,
+            last_outbound_message_id=2766,
+            inbound_age_seconds=90_000,
+            issuance_ulid=_FOLLOWUP_ULID,
+            **flag,
+        )
+    )
+
+
+@pytest.mark.parametrize(("flag", "rpc"), FOLLOWUP_CLAIMS)
+def test_each_followup_claim_posts_the_same_body_to_its_own_rpc(
+    flag: dict[str, bool], rpc: str
+) -> None:
+    client, requests = _recording_client([_FOLLOWUP_CLAIMED])
+
+    claim = _claim_followup(client, **flag)
+
+    [request] = requests
+    assert request.method == "POST"
+    assert request.url.path == f"/rest/v1/rpc/{rpc}"
+    # El flag no viaja: la portable tiene la misma firma que la compartida.
+    assert json.loads(request.content) == {
+        "p_external_conversation_id": 21,
+        "p_chatwoot_account_id": 2,
+        "p_chatwoot_inbox_id": 11,
+        "p_external_user_id": "525500000021",
+        "p_contact_email": "lead21@example.com",
+        "p_command_key": "followup:21:2766",
+        "p_regime": "link_sent_no_purchase",
+        "p_template_name": "att1_seguimiento_descuento_01",
+        "p_template_language": "es_MX",
+        "p_coupon_code": "TIROIDES10",
+        "p_last_inbound_message_id": 2765,
+        "p_last_outbound_message_id": 2766,
+        "p_inbound_age_seconds": 90_000,
+        "p_issuance_ulid": _FOLLOWUP_ULID,
+    }
+    assert claim.claimed
+    assert claim.checkout_issuance_id == _FOLLOWUP_CLAIMED["checkout_issuance_id"]
+    assert claim.checkout_url_final == _FOLLOWUP_CLAIMED["checkout_url_final"]
+    assert claim.sck_value == _FOLLOWUP_CLAIMED["sck_value"]
+
+
+def test_the_portable_followup_claim_reads_blocked_not_template_reply() -> None:
+    # Una conversacion que no es la respuesta a una plantilla nuestra (no fue
+    # adoptada): la portable no reserva nada y lo dice. Como en toda barrera,
+    # el resto de las columnas viene en null.
+    client, requests = _recording_client([{
+        "outcome": "blocked_not_template_reply",
+        "followup_event_id": None,
+        "checkout_issuance_id": None,
+        "checkout_url_final": None,
+        "sck_value": None,
+    }])
+
+    claim = _claim_followup(client, phone_equivalence=True)
+
+    assert requests[0].url.path == "/rest/v1/rpc/claim_portable_conversation_followup_v1"
+    assert claim.outcome == "blocked_not_template_reply"
+    assert not claim.claimed
+    assert claim.checkout_url_final is None
+
+
+@pytest.mark.parametrize("flag", FOLLOWUP_CLAIM_FLAGS, ids=["shared", "portable"])
+@pytest.mark.parametrize(
+    ("client", "error"),
+    [
+        # Un veredicto que el bridge no conoce (aca, un nombre parecido al de la
+        # barrera nueva) no se interpreta como barrera: falla cerrado.
+        (
+            lambda: _recording_client(
+                [{**_FOLLOWUP_CLAIMED, "outcome": "blocked_not_adopted"}]
+            )[0],
+            "^conversation_followup_claim_invalid_outcome$",
+        ),
+        # Una reserva tomada sin link no arma el boton.
+        (
+            lambda: _recording_client(
+                [{**_FOLLOWUP_CLAIMED, "checkout_url_final": None}]
+            )[0],
+            "^conversation_followup_claim_incomplete$",
+        ),
+        (lambda: _recording_client([])[0], "^conversation_followup_claim_invalid_shape$"),
+        # El bridge que sale antes que la migracion: PostgREST no encuentra la
+        # funcion y no se reserva nada.
+        (
+            lambda: _rejecting_client(
+                {"code": "PGRST202", "message": "Could not find the function"},
+                status=404,
+            ),
+            "^conversation_followup_claim_failed: HTTP 404$",
+        ),
+    ],
+)
+def test_each_followup_claim_fails_closed_the_same_way(
+    flag: dict[str, bool], client, error: str
+) -> None:
+    with pytest.raises(SupabaseError, match=error):
+        _claim_followup(client(), **flag)

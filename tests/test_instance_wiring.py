@@ -13,11 +13,13 @@ from pathlib import Path
 import re
 import shutil
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from bridge import app as app_module
 from bridge.app import (
     Settings,
     _MEDICATION_GUIDANCE_ACTION_RE,
@@ -30,6 +32,7 @@ from bridge.app import (
 )
 from bridge.chatwoot import ChatwootClient
 from bridge.commercial_knowledge import CommercialKnowledge, KnowledgeError
+from bridge.followup_discount import ConversationFollowupSweeper
 from bridge.hermes import HermesShadowProcessor
 from bridge.instance_manifest import (
     GhlFormLandings,
@@ -37,7 +40,7 @@ from bridge.instance_manifest import (
     InstanceManifest,
     Template,
 )
-from bridge.supabase import PilotBoundaryConfig, SupabaseError
+from bridge.supabase import PilotBoundaryConfig, SupabaseError, WhatsAppIdentityMatch
 
 ATT1 = Path(__file__).parent / "fixtures" / "instances" / "att1"
 
@@ -186,6 +189,8 @@ def test_agent_model_must_match_the_manifest() -> None:
         ("portable_precheckout_first_contact_enabled", "precheckout"),
         ("conversation_reactivation_enabled", "reactivacion"),
         ("chatwoot_post_inbound_discount_planning_enabled", "descuento"),
+        # El seguimiento con cupon comparte el lugar del flujo viejo (1.5.0).
+        ("conversation_followup_enabled", "descuento"),
     ],
 )
 def test_a_flag_cannot_exceed_its_declared_flow(flag: str, flow: str) -> None:
@@ -1447,6 +1452,408 @@ def test_johanna_readiness_has_no_first_contact_key() -> None:
     assert response.status_code == 200
     assert "portable_precheckout_first_contact" not in response.json()
     assert response.json()["precheckout_delayed_first_touch"] == "disabled"
+
+
+# ------------------------------------------------------ seguimiento con cupon
+# El flag cuelga de flujos.descuento y la plantilla es la de
+# [plantillas].descuento (decision D1 del 2026-10-10). El fixture de ATT1 no
+# declara esa plantilla: se arma por mutacion con la del catalogo capturado del
+# inbox 11 por la API el 2026-10-10 (F1). La 21 de ATT1 (F4) da el telefono:
+# sintetico, con la forma del wa_id de Mexico.
+
+_COUPON_CATALOG = json.loads(
+    (
+        Path(__file__).parent
+        / "fixtures"
+        / "chatwoot_inbox_11_message_templates_20261010.json"
+    ).read_text(encoding="utf-8")
+)
+_COUPON_TEMPLATE = next(
+    template
+    for template in _COUPON_CATALOG["message_templates"]
+    if template["name"] == "att1_seguimiento_descuento_01"
+)
+_COUPON_CANDIDATE = json.loads(
+    (
+        Path(__file__).parent
+        / "fixtures"
+        / "chatwoot_followup_candidate_inbox_11_20261010.json"
+    ).read_text(encoding="utf-8")
+)
+# El wa_id de la 21 (521 + 10) y la forma que guarda el formulario (52 + 10).
+_COUPON_WA_ID = _COUPON_CANDIDATE["conversation"]["conversation"]["meta"]["sender"][
+    "phone_number"
+].removeprefix("+")
+_COUPON_STORED_IDENTITY = "52" + _COUPON_WA_ID[3:]
+# El telefono del modo de prueba: sintetico, otro que el de la 21.
+_COUPON_TEST_PHONE = "+5215500000099"
+_COUPON_FLAG = "CONVERSATION_FOLLOWUP_ENABLED"
+
+
+def _coupon_manifest() -> InstanceManifest:
+    manifest = _att1_manifest(descuento=True)
+    templates = dict(manifest.templates)
+    templates["descuento"] = Template(
+        name=_COUPON_TEMPLATE["name"], language=_COUPON_TEMPLATE["language"]
+    )
+    return replace(manifest, templates=templates)
+
+
+def _coupon_settings(**overrides: object) -> Settings:
+    """El set completo con el que arranca el seguimiento con el manifiesto."""
+    manifest = _coupon_manifest()
+    config = manifest.to_commercial_ally_config()
+    values: dict[str, object] = {
+        "conversation_followup_enabled": True,
+        "conversation_followup_template_name": _COUPON_TEMPLATE["name"],
+        "conversation_followup_template_language": _COUPON_TEMPLATE["language"],
+        "conversation_followup_coupon_code": "TIROIDES10",
+        "conversation_followup_product_name": manifest.product_name,
+        "conversation_followup_send_hours": (9, 21),
+        "agent_bot_id": 1,
+        "chatwoot_account_id": config.chatwoot_account_id,
+        "chatwoot_inbox_id": config.chatwoot_inbox_id,
+        "chatwoot_agent_bot_access_token": "test-bot-token",
+        # El link sale del caso comercial que abre la admision de Corte B.
+        "chatwoot_cut_b_admission_enabled": True,
+        "chatwoot_cut_b_scope_key": config.inbound_scope_key,
+        "chatwoot_cut_b_scope_version": config.inbound_scope_version,
+        "allowed_jid": "12025550123@s.whatsapp.net",
+        "supabase_base_url": "https://supabase.example.test",
+        "supabase_service_role_key": "test-service-role",
+    }
+    values.update(overrides)
+    return _settings(manifest, **values)
+
+
+class _CouponAuthority:
+    """La base que consultan /ready y el resolvedor del entrante."""
+
+    def __init__(self, *stored: str) -> None:
+        self.stored = stored
+        self.identity_lookups: list[dict[str, object]] = []
+
+    async def resolve_commercial_ally_runtime_binding(self, config: object) -> object:
+        return config
+
+    async def find_active_whatsapp_identities(self, **kwargs: object) -> list[object]:
+        self.identity_lookups.append(kwargs)
+        forms = kwargs["external_user_ids"]
+        return [
+            WhatsAppIdentityMatch(
+                channel_identity_id=f"identity-{index}",
+                contact_id=f"contact-{index}",
+                external_user_id=value,
+            )
+            for index, value in enumerate(self.stored)
+            if value in forms  # type: ignore[operator]
+        ]
+
+
+def _coupon_app(settings: Settings, authority: _CouponAuthority | None = None) -> object:
+    # El barredor exige un ChatwootClient de verdad; ninguno de estos tests
+    # llega a Chatwoot (sin lifespan el barredor no corre).
+    return create_app(
+        settings,
+        chatwoot_client=ChatwootClient(
+            base_url="https://chatwoot.example.test",
+            account_id=settings.chatwoot_account_id or 0,
+            access_token="test-control-token",
+            agent_bot_access_token="test-bot-token",
+            agent_bot_id=1,
+            transport=httpx.MockTransport(lambda request: httpx.Response(404)),
+        ),
+        supabase_client=authority or _CouponAuthority(),  # type: ignore[arg-type]
+    )
+
+
+def _spy_sweeper(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
+    """Lo que recibe el constructor real del barredor, que igual corre."""
+    built: list[dict[str, object]] = []
+
+    def spy(**kwargs: object) -> ConversationFollowupSweeper:
+        built.append(kwargs)
+        return ConversationFollowupSweeper(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(app_module, "ConversationFollowupSweeper", spy)
+    return built
+
+
+def test_the_captured_coupon_template_is_the_one_the_manifest_declares() -> None:
+    # La guarda del dato: la plantilla del cupon esta aprobada en el inbox 11
+    # (F1), en el idioma que declara el lugar descuento, y sin el codigo en el
+    # texto (va en el boton).
+    assert _COUPON_TEMPLATE["status"] == "APPROVED"
+    assert _COUPON_TEMPLATE["language"] == "es_MX"
+    [body] = [c for c in _COUPON_TEMPLATE["components"] if c["type"] == "BODY"]
+    assert sorted(set(re.findall(r"\{\{(\d+)\}\}", body["text"]))) == ["1", "2"]
+    assert _COUPON_WA_ID.startswith("521") and len(_COUPON_WA_ID) == 13
+
+
+def test_the_coupon_with_its_complete_set_wires_the_portable_sweeper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    built = _spy_sweeper(monkeypatch)
+    authority = _CouponAuthority(_COUPON_STORED_IDENTITY)
+
+    app = _coupon_app(
+        _coupon_settings(conversation_followup_only_phone=_COUPON_TEST_PHONE),
+        authority,
+    )
+
+    [kwargs] = built
+    assert app.state.conversation_followup_sweeper is not None  # type: ignore[attr-defined]
+    assert kwargs["template_name"] == _COUPON_TEMPLATE["name"]
+    assert kwargs["expected_template_language"] == "es_MX"
+    assert kwargs["product_name"] == "Alimenta tu Tiroides"
+    # La reserva portable (solo conversaciones adoptadas) y el filtro del
+    # nombre de las plantillas, como el despachador de ATT1.
+    assert kwargs["phone_equivalence"] is True
+    assert kwargs["refuse_unsafe_greeting"] is True
+    # El horario, en la zona del manifiesto, y el modo de prueba.
+    assert kwargs["send_hours"] == (9, 21)
+    assert kwargs["time_zone"] == ZoneInfo("America/Mexico_City")
+    assert kwargs["only_phone"] == _COUPON_TEST_PHONE
+    # El resolvedor es el del entrante: con el caso guardado como 52... (el
+    # formulario), el wa_id de la 21 (521...) vuelve como la identidad
+    # guardada, buscada en el inbox del manifiesto por las dos formas.
+    resolver = kwargs["external_user_id_resolver"]
+    assert callable(resolver)
+    assert asyncio.run(resolver(_COUPON_WA_ID, conversation_id=21)) == _COUPON_STORED_IDENTITY
+    assert authority.identity_lookups == [
+        {
+            "chatwoot_account_id": 2,
+            "chatwoot_inbox_id": 11,
+            "external_user_ids": (_COUPON_STORED_IDENTITY, _COUPON_WA_ID),
+        }
+    ]
+
+
+def test_the_ready_payload_names_the_audience_and_the_hours_never_the_phone() -> None:
+    # El modo de prueba del E2E: el telefono y 15 minutos de silencio.
+    test_mode = _get_ready(
+        _coupon_app(
+            _coupon_settings(
+                conversation_followup_only_phone=_COUPON_TEST_PHONE,
+                conversation_followup_min_age_seconds=900,
+            )
+        )
+    )
+    opened = _get_ready(
+        _coupon_app(_coupon_settings(conversation_followup_send_hours=(0, 24)))
+    )
+
+    assert test_mode.status_code == 200 and opened.status_code == 200
+    assert test_mode.json()["conversation_followup"] == "never"
+    assert test_mode.json()["conversation_followup_audience"] == "only_phone"
+    assert test_mode.json()["conversation_followup_min_age_seconds"] == "900"
+    assert test_mode.json()["conversation_followup_send_hours"] == "09-21"
+    # Sin el modo de prueba el alcance es el del entrante. Estos Settings
+    # acotan los remitentes con ALLOWED_WHATSAPP_JID, sin scope: el barredor
+    # solo mira ese numero y /ready no dice inbox. Con los remitentes por
+    # scope (ATT1) dice inbox: tests/test_att1_production_settings.py.
+    assert opened.json()["conversation_followup_audience"] == "allowed_jid"
+    assert opened.json()["conversation_followup_min_age_seconds"] == "86400"
+    assert opened.json()["conversation_followup_send_hours"] == "00-24"
+    # Ningun telefono sale en ninguna de sus formas: ni el de prueba ni el del
+    # JID.
+    digits = _COUPON_TEST_PHONE.removeprefix("+")
+    for form in (digits, "52" + digits[3:], digits[-10:]):
+        assert form not in test_mode.text
+    jid_digits = str(_coupon_settings().allowed_jid).split("@")[0]
+    for response in (test_mode, opened):
+        assert jid_digits[-10:] not in response.text
+    # Lo demas del payload es igual en los dos modos.
+    changed = {
+        "conversation_followup_audience",
+        "conversation_followup_min_age_seconds",
+        "conversation_followup_send_hours",
+    }
+    assert {k: v for k, v in test_mode.json().items() if k not in changed} == {
+        k: v for k, v in opened.json().items() if k not in changed
+    }
+
+
+def test_with_the_flag_off_the_ready_payload_has_no_coupon_key() -> None:
+    # El set completo menos el flag: sin barredor, el payload no cambia.
+    off = _coupon_settings(
+        conversation_followup_enabled=False,
+        conversation_followup_only_phone=_COUPON_TEST_PHONE,
+    )
+
+    response = _get_ready(_coupon_app(off))
+
+    assert response.status_code == 200
+    assert not [key for key in response.json() if key.startswith("conversation_followup")]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        (
+            # Otra plantilla aprobada del mismo catalogo (F1).
+            {"conversation_followup_template_name": "att1_reactivacion_01"},
+            "^CONVERSATION_FOLLOWUP_TEMPLATE_NAME must match plantillas.descuento.nombre",
+        ),
+        (
+            # El idioma de la plantilla vieja del descuento.
+            {"conversation_followup_template_language": "en"},
+            "^CONVERSATION_FOLLOWUP_TEMPLATE_LANGUAGE must match plantillas.descuento.idioma",
+        ),
+        (
+            # Johanna lo deja vacio; con manifiesto el idioma es obligatorio.
+            {"conversation_followup_template_language": None},
+            "^CONVERSATION_FOLLOWUP_TEMPLATE_LANGUAGE must match plantillas.descuento.idioma",
+        ),
+        (
+            {"conversation_followup_product_name": "Libérate de la Ansiedad"},
+            "^CONVERSATION_FOLLOWUP_PRODUCT_NAME must match hotmart.product_name",
+        ),
+        (
+            {"conversation_followup_send_hours": None},
+            "^CONVERSATION_FOLLOWUP_SEND_HOURS is required with an instance manifest: .*00-24",
+        ),
+        (
+            # El mensaje nombra la variable y el rango, no el generico.
+            {"conversation_followup_send_hours": (21, 9)},
+            "^CONVERSATION_FOLLOWUP_SEND_HOURS must be HH-HH with 00 <= start < end <= 24 ",
+        ),
+        (
+            {"conversation_followup_only_phone": _COUPON_TEST_PHONE.removeprefix("+")},
+            "^CONVERSATION_FOLLOWUP_ONLY_PHONE must be an E.164 phone$",
+        ),
+    ],
+)
+def test_the_coupon_does_not_start_outside_the_manifest(
+    overrides: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        _coupon_app(_coupon_settings(**overrides))
+
+
+_SHORT_SILENCE_ERROR = (
+    "^CONVERSATION_FOLLOWUP_MIN_AGE_SECONDS below 86400 requires "
+    "CONVERSATION_FOLLOWUP_ONLY_PHONE with an instance manifest"
+)
+
+
+@pytest.mark.parametrize("min_age", [900, 86_399])
+def test_a_short_silence_without_the_test_phone_does_not_start(min_age: int) -> None:
+    # Abrir es sacar el telefono de prueba y los 15 minutos. Si queda solo el
+    # MIN_AGE, el cupon le saldria a todo el alcance dentro de la ventana de
+    # 24 h, contra la regla de 24 h de silencio, y /ready diria igual que esta
+    # abierto: el bridge no arranca.
+    with pytest.raises(ValueError, match=_SHORT_SILENCE_ERROR):
+        _coupon_app(_coupon_settings(conversation_followup_min_age_seconds=min_age))
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        # La prueba: el telefono y 15 minutos.
+        {
+            "conversation_followup_only_phone": _COUPON_TEST_PHONE,
+            "conversation_followup_min_age_seconds": 900,
+        },
+        # Abierto: 24 h justas, o mas.
+        {"conversation_followup_min_age_seconds": 86_400},
+        {"conversation_followup_min_age_seconds": 172_800},
+    ],
+    ids=["test_mode", "24h", "48h"],
+)
+def test_the_coupon_starts_with_a_short_silence_only_with_the_test_phone(
+    overrides: dict[str, object],
+) -> None:
+    app = _coupon_app(_coupon_settings(**overrides))
+
+    sweeper = app.state.conversation_followup_sweeper  # type: ignore[attr-defined]
+    assert isinstance(sweeper, ConversationFollowupSweeper)
+    assert sweeper.min_inbound_age_seconds == overrides["conversation_followup_min_age_seconds"]
+
+
+def test_a_short_silence_with_the_flag_off_starts() -> None:
+    # Con el flag apagado la edad no tiene efecto: la guarda frena al prender.
+    app = _coupon_app(
+        _coupon_settings(
+            conversation_followup_enabled=False,
+            conversation_followup_min_age_seconds=900,
+        )
+    )
+
+    assert app.state.conversation_followup_sweeper is None  # type: ignore[attr-defined]
+
+
+def test_the_coupon_without_the_descuento_template_does_not_start() -> None:
+    # Desde el TOML no carga (flujos.descuento prendido sin la plantilla); un
+    # manifiesto armado a mano tampoco arranca.
+    manifest = _coupon_manifest()
+    templates = {slot: t for slot, t in manifest.templates.items() if slot != "descuento"}
+    settings = replace(
+        _coupon_settings(), instance_manifest=replace(manifest, templates=templates)
+    )
+
+    with pytest.raises(
+        ValueError, match="^CONVERSATION_FOLLOWUP_TEMPLATE_NAME must match plantillas.descuento"
+    ):
+        _coupon_app(settings)
+
+
+def test_from_env_to_ready_with_the_coupon_of_the_instance(
+    monkeypatch: pytest.MonkeyPatch, instance: Path
+) -> None:
+    path = instance / "instancia.toml"
+    text = path.read_text(encoding="utf-8")
+    flow = "\ndescuento = false\n"
+    cart = 'carrito = { nombre = "att1_carrito_abandonado_01", idioma = "es_MX" }\n'
+    assert text.count(flow) == 1 and text.count(cart) == 1
+    path.write_text(
+        text.replace(flow, "\ndescuento = true\n").replace(
+            cart,
+            cart
+            + f'descuento = {{ nombre = "{_COUPON_TEMPLATE["name"]}", '
+            f'idioma = "{_COUPON_TEMPLATE["language"]}" }}\n',
+        ),
+        encoding="utf-8",
+    )
+    manifest = InstanceManifest.from_toml_file(path)
+    _environment(
+        monkeypatch,
+        INSTANCE_MANIFEST_PATH=str(path),
+        HERMES_MODEL_NAME=manifest.agent_model_name,
+        CHATWOOT_AGENT_BOT_ACCESS_TOKEN="test-bot-token",
+        CHATWOOT_CUT_B_ADMISSION_ENABLED="true",
+        CHATWOOT_CUT_B_SCOPE_KEY=manifest.inbound_scope_key,
+        CHATWOOT_CUT_B_SCOPE_VERSION=str(manifest.inbound_scope_version),
+        SUPABASE_BASE_URL="https://supabase.example.test",
+        SUPABASE_SERVICE_ROLE_KEY="test-service-role",
+        **{
+            _COUPON_FLAG: "true",
+            "CONVERSATION_FOLLOWUP_TEMPLATE_NAME": _COUPON_TEMPLATE["name"],
+            "CONVERSATION_FOLLOWUP_TEMPLATE_LANGUAGE": _COUPON_TEMPLATE["language"],
+            "CONVERSATION_FOLLOWUP_COUPON_CODE": "TIROIDES10",
+            "CONVERSATION_FOLLOWUP_PRODUCT_NAME": manifest.product_name,
+            "CONVERSATION_FOLLOWUP_SEND_HOURS": "09-21",
+            "CONVERSATION_FOLLOWUP_ONLY_PHONE": _COUPON_TEST_PHONE,
+        },
+    )
+
+    settings = Settings.from_env()
+
+    assert settings.instance_manifest is not None
+    assert settings.instance_manifest.flows["descuento"] is True
+    assert settings.instance_manifest.templates["descuento"].name == _COUPON_TEMPLATE["name"]
+    assert settings.conversation_followup_send_hours == (9, 21)
+    assert settings.conversation_followup_only_phone == _COUPON_TEST_PHONE
+    # El cliente de Chatwoot lo arma el bridge con las variables.
+    app = create_app(settings, supabase_client=_CouponAuthority())  # type: ignore[arg-type]
+    sweeper = app.state.conversation_followup_sweeper
+    assert isinstance(sweeper, ConversationFollowupSweeper)
+    assert sweeper.send_hours == (9, 21)
+    response = _get_ready(app)
+    assert response.status_code == 200
+    assert response.json()["conversation_followup_audience"] == "only_phone"
+    assert response.json()["conversation_followup_min_age_seconds"] == "86400"
+    assert response.json()["conversation_followup_send_hours"] == "09-21"
 
 
 # ------------------------------------------------------------------ readiness

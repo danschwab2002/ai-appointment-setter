@@ -244,9 +244,12 @@ LEGACY_ONLY_CAPABILITIES = {
     # de estar aca en la 1.5.0: corre tambien despues de un formulario del
     # adaptador de GHL de una instancia, con el profile y la base de la
     # instancia. El saludo habia salido antes, con A4.
-    # El seguimiento con cupon reserva el link con el catalogo de ofertas de
-    # Johanna (20260928000400): en un runtime portable tiene que frenar.
-    "conversation_followup_enabled",
+    # El seguimiento con cupon (conversation_followup_enabled) tambien salio en
+    # la 1.5.0: con manifiesto reserva por claim_portable_conversation_
+    # followup_v1 y resuelve la identidad como el entrante. Con este binding
+    # v1 sigue sin arrancar, pero por su propia guarda (pide
+    # INSTANCE_MANIFEST_PATH, tests/test_followup_discount_wiring.py) y no por
+    # la lista de capacidades: el test generico de abajo lo cubre.
 }
 
 

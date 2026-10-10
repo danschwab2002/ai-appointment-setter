@@ -10,9 +10,9 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 ## [1.5.0] - sin publicar
 
-Suma una cosa, apagada por defecto: la inferencia del primer nombre corre también en una instancia con manifiesto. Y ajusta la validación del nombre inferido para descartar las formas medidas que saludan peor que la regla, también en Johanna.
+Suma dos cosas, apagadas por defecto: la inferencia del primer nombre y el seguimiento con cupón del 10 % corren también en una instancia con manifiesto. Y ajusta la validación del nombre inferido para descartar las formas medidas que saludan peor que la regla, también en Johanna.
 
-Ni variables nuevas ni campos obligatorios ni migraciones.
+Trae una migración, que solo agrega una función: la reserva del seguimiento con cupón para el runtime con manifiesto. Suma dos variables del seguimiento. Ningún campo obligatorio nuevo en el manifiesto.
 
 ### Agregado
 
@@ -24,6 +24,26 @@ Ni variables nuevas ni campos obligatorios ni migraciones.
   - Cada inferencia carga el SOUL del profile. Medido con el profile de ATT1: USD 0,0006 por nombre y ninguna respuesta fuera del contrato ([evidencia](docs/operations/2026-10-10-nombre-de-pila-con-el-profile-de-att1.md)).
   - El nombre de todo formulario nuevo admitido sale al proveedor del modelo, tenga o no permiso de WhatsApp. En ATT1 el adaptador de GHL marca el permiso en todo formulario con un teléfono válido.
 - **El cliente de la inferencia manda de a dos** (`MAX_CONCURRENT_INFERENCES`). El api_server de Hermes es el mismo de los turnos del agente y contesta 429 al pasar su tope de corridas en vuelo: una ráfaga de formularios espera en el bridge.
+- **`CONVERSATION_FOLLOWUP_ENABLED` con manifiesto** ([contrato](docs/contracts/conversation-followup-discount-v1.md), sección *En un runtime con manifiesto*; [ADR-0023](docs/decisions/0023-el-cupon-con-manifiesto-reusa-descuento.md), propuesto). Hasta la 1.4.0, una instancia con el flag no arrancaba (`ATT1 runtime capabilities are not portable`). Sin manifiesto (Johanna) el seguimiento sigue igual: la misma RPC con los mismos argumentos, a cualquier hora y a todo el inbox. Con manifiesto:
+  - el flag cuelga de `[flujos].descuento`, y la plantilla y el producto tienen que ser los de `[plantillas].descuento` y `hotmart.product_name`;
+  - la identidad se resuelve como en el entrante (`52`/`521`) y es la que va a la reserva y a la autorización. Con el `wa_id` textual, un caso guardado en `52` daría `issuance_blocked_identity` y el cupón no saldría nunca. Si la lectura falla, no se reserva nada (`identity_lookup_failed`);
+  - la reserva es `claim_portable_conversation_followup_v1`: el enlace sale de `reserve_portable_checkout_issuance_v2`, con la oferta, el `sck` y el `fbclid` del formulario, como el enlace del agente, y solo en una conversación adoptada, la respuesta a una plantilla nuestra. Si no, `blocked_not_template_reply`: quien nos escribió por su cuenta no recibe el cupón;
+  - el horario es obligatorio. Fuera de él el barrido no lee el catálogo ni Chatwoot y publica `outside_send_hours`;
+  - un nombre que no pasa el filtro de las plantillas (`template_greeting_name_is_safe`) no sale (`greeting_name_refused`). Se reintenta en cada barrido;
+  - con el binding v1 en JSON no arranca: ahí no hay resolvedor ni reserva portable.
+- **La plantilla del seguimiento puede llevar el cupón solo en el botón.** `parse_followup_template` acepta los marcadores `{{1}}` y `{{2}}` (la de ATT1, `att1_seguimiento_descuento_01`) además de `{{1}}`, `{{2}}` y `{{3}}` (la de Johanna). El cuerpo que se manda lleva un parámetro por marcador, porque Meta rechaza otra cantidad con `#132000` después de que Chatwoot aceptó el mensaje. Con la plantilla de Johanna no cambia nada.
+- **`claim_portable_conversation_followup_v1`** (migración `20261010000100`). Se deriva de la definición vigente de `claim_conversation_followup_v1` (la de `20261001000500`) con tres reemplazos: el nombre, la reserva del enlace y la barrera de la conversación adoptada, que va después del límite de uno por conversación y antes del conteo de casos. Es el método de la reserva portable de `20261001000100`: cada texto tiene que estar exactamente una vez, o la migración falla con `55000` y no cambia nada. Solo `service_role` la ejecuta. En una base sin `reserve_portable_checkout_issuance_v2`, como la de Johanna, avisa y no crea nada, y el inventario de esquema da ahí `fingerprint_absent`. Es idempotente y no toca tablas, filas ni otras funciones: `claim_conversation_followup_v1` queda idéntica.
+- **`CONVERSATION_FOLLOWUP_SEND_HOURS` y `CONVERSATION_FOLLOWUP_ONLY_PHONE`.**
+  - `SEND_HOURS` es `HH-HH`, con 0 ≤ inicio < fin ≤ 24, en la zona del manifiesto (`instancia.zona_horaria`): `09-21`, o `00-24` para mandar a cualquier hora, escrito a propósito. Solo existe con manifiesto.
+  - `ONLY_PHONE` es el modo de un solo teléfono, en E.164, para la prueba: solo ese teléfono recibe, comparado en forma canónica (`52…` y `521…` son el mismo). Las demás candidatas se cuentan como `held_only_phone`, que es una cota superior del último barrido: candidatas según Chatwoot, antes de la relectura, del filtro del nombre, del resolvedor y de las barreras de la base. No dice a cuántas personas les habría salido.
+  - Una forma inválida de cualquiera de las dos, o un horario fuera de rango (`21-09`, `09-25`, `00-00`), no arranca aunque el flag esté apagado, con un mensaje que nombra la variable. El horario sin manifiesto tampoco.
+  - Con manifiesto y el flag prendido, un `CONVERSATION_FOLLOWUP_MIN_AGE_SECONDS` menor a `86400` (24 h) no arranca sin `ONLY_PHONE`: menos de 24 h de silencio es solo para la prueba. Así, abrir sacando solo el teléfono no le manda el cupón a todo el inbox a los 15 minutos.
+- **`/ready`, con manifiesto y el seguimiento prendido,** suma tres claves, leídas del barredor que corre y sin ningún número:
+  - `conversation_followup_audience`: `only_phone` en la prueba; sin ella, `inbox` con los remitentes por scope (todo el inbox) o `allowed_jid` con `ALLOWED_WHATSAPP_JID` sin scope (solo ese número);
+  - `conversation_followup_min_age_seconds` (`"86400"` abierto);
+  - `conversation_followup_send_hours` (`09-21`).
+
+  El payload de Johanna no cambia.
 
 ### Arreglado
 
@@ -35,15 +55,49 @@ Ni variables nuevas ni campos obligatorios ni migraciones.
 
   Las partículas cuentan en el tope de tres palabras: «María de los Ángeles» queda `uncertain`, hasta medir esos compuestos con el modelo. La validación no garantiza el saludo correcto: un apellido suelto, por ejemplo, pasa si el modelo lo devuelve.
 
+### Pruebas
+
+Del seguimiento con cupón, sobre dato capturado de ATT1: el catálogo del inbox 11 por la API (`tests/fixtures/chatwoot_inbox_11_message_templates_20261010.json`, con el cupón redactado) y la conversación 21 anonimizada (`tests/fixtures/chatwoot_followup_candidate_inbox_11_20261010.json`: la plantilla del carrito, la respuesta, el enlace del agente y el silencio).
+
+- `tests/test_followup_discount.py`: la plantilla real de ATT1 con el cupón solo en el botón y la de Johanna con el cupón también en el texto; el botón con el enlace que emite la reserva portable para un caso del formulario de la landing -d (el `sck` real del anuncio, con `~` y guiones, que en la captura de la 21 está redactado); el modo de un solo teléfono con las dos formas mexicanas, el horario y sus bordes (`00-24` incluido), el filtro del nombre, la identidad resuelta en la reserva y en la autorización, la falla del resolvedor, y que sin manifiesto la llamada a la reserva es la de siempre.
+- `tests/test_supabase.py`: cada reserva pega en su RPC con el mismo cuerpo, y las dos fallan cerrado igual ante un resultado desconocido, un `claimed` sin enlace, cero filas o un `404 PGRST202` (el bridge desplegado antes que la migración).
+- `tests/test_followup_discount_wiring.py`, `tests/test_instance_wiring.py`, `tests/test_att1_production_settings.py` y `tests/test_commercial_ally_portability.py`: las variables, cada guarda del arranque, el barredor que arma cada runtime y `/ready`. Johanna arma el barredor con los valores por defecto y su `/ready` no cambia.
+- `tests/test_att1_production_settings.py`, además, corre un barrido completo del barredor que arma el set de producción, con el `ChatwootClient` y el `SupabaseClient` reales sobre `httpx.MockTransport` y la conversación 21: la reserva va a `claim_portable_conversation_followup_v1` con la identidad del formulario (`52…`) y la autorización con la misma. Los dobles de los otros tests no pasan por los clientes reales, y renombrar la kwarg del cliente o la del resolvedor los dejaba en verde.
+- `tests/test_portable_conversation_followup_migration.py` y `tests/test_supabase_schema_inventory.py`: los tres textos de la migración contra la definición de `20261001000500`, el aviso sin la reserva portable, los permisos y la huella del inventario.
+- `tests/sql/followup_engine/validate_portable_conversation_followup.mjs` (PGlite, en `npm test`), sobre la cadena completa y con las RPC reales como `service_role`:
+  - la conversación 21, con el caso en `52` y la respuesta desde `521`, reserva con la oferta del formulario (`lead_intent`, `2uafw5bg`), anclada en nuestro último mensaje y con una sola intención viva; la compartida, con el `521`, da `issuance_blocked_identity`;
+  - una conversación orgánica da `blocked_not_template_reply` sin escribir nada;
+  - la compra con el `521` da `purchase_already_approved`, y una baja bajo el `521` en otra conversación da `issuance_blocked_opt_out`;
+  - la migración agrega una sola función y no cambia ninguna otra; sin la reserva portable no crea nada y la huella da `fingerprint_absent`.
+
 ### Qué hace quien actualiza
 
-Nada. Para prender la inferencia en una instancia: `LEAD_FIRST_NAME_INFERENCE_ENABLED=true`, con el saludo prendido, y redesplegar. En una instancia con manifiesto (Johanna no lo necesita):
+Correr la migración `20261010000100`. Solo agrega una función, que nadie llama hasta prender el seguimiento con manifiesto. En una base sin la cadena portable del 2026-09-29 al 2026-10-01, como la de Johanna, avisa y no crea nada. Lo demás es opcional.
+
+**La inferencia del primer nombre.** Para prenderla en una instancia: `LEAD_FIRST_NAME_INFERENCE_ENABLED=true`, con el saludo prendido, y redesplegar. En una instancia con manifiesto (Johanna no lo necesita):
 
 - para volver a una imagen anterior a la 1.5.0, primero hay que sacar el flag: con el flag prendido, esa imagen no arranca;
 - apagar la inferencia no devuelve el saludo a la regla, porque el saludo lee las filas guardadas. Para eso hay que borrar en la base las filas creadas desde la activación (psql, por `created_at`);
 - para cortar el adaptador de GHL con la inferencia prendida, hay que sacar en el mismo redeploy los flags del adaptador, del primer contacto y de la inferencia.
 
-## [1.4.0] - sin publicar
+**El seguimiento con cupón, en una instancia con manifiesto:**
+
+1. La migración aplicada: `scripts/supabase_schema_inventory.sql` da `fingerprint_present` en su fila (`portable_conversation_followup_claim`) y `scripts/supabase_acl_inventory.sql` da `ok`.
+2. En el manifiesto, por PR en el repo de la instancia: la plantilla en `[plantillas].descuento`, con el nombre y el idioma aprobados en Meta, y `descuento = true` en `[flujos]`. El manifiesto solo no manda nada.
+3. En las variables del bridge: `CONVERSATION_FOLLOWUP_TEMPLATE_NAME`, `CONVERSATION_FOLLOWUP_TEMPLATE_LANGUAGE`, `CONVERSATION_FOLLOWUP_COUPON_CODE`, `CONVERSATION_FOLLOWUP_PRODUCT_NAME` y `CONVERSATION_FOLLOWUP_SEND_HOURS`, y para la prueba `CONVERSATION_FOLLOWUP_ONLY_PHONE`. Después, `CONVERSATION_FOLLOWUP_ENABLED=true` y redesplegar. Un valor que no coincide con el manifiesto deja el bridge sin arrancar, y con él el entrante y los demás flujos: conviene probar el arranque con el archivo de variables antes de redesplegar.
+4. Para abrirlo a todo el inbox: sacar `CONVERSATION_FOLLOWUP_ONLY_PHONE` y el `CONVERSATION_FOLLOWUP_MIN_AGE_SECONDS` de prueba si se usó, y redesplegar. Si queda el de prueba sin el teléfono, el bridge no arranca. Abierto, `/ready` lo confirma por presencia: `conversation_followup_audience` en `inbox` y `conversation_followup_min_age_seconds` en `86400`.
+
+Para volver atrás alcanza con sacar `CONVERSATION_FOLLOWUP_ENABLED` y redesplegar. La migración queda, porque solo agrega una función, y el manifiesto no tiene claves nuevas. Para volver a una imagen anterior a la 1.5.0 también hay que sacar antes el flag: con el flag prendido, esa imagen no arranca. Pausar el piloto o apagar `META_FINAL_EFFECT_ENABLED` no frena el seguimiento.
+
+### Lo que queda fuera
+
+- **El seguimiento con cupón no pasa por el piloto:** ni por su pausa, ni por sus topes, ni por el tope de mensajes proactivos por persona de la 1.4.0. Tampoco tiene tope diario: uno por conversación y `CONVERSATION_FOLLOWUP_MAX_SENDS_PER_SCAN` por barrido.
+- **Queda `sent` cuando Chatwoot acepta el mensaje.** Si Meta lo rechaza después, el único envío de esa conversación queda gastado.
+- **El agente no sabe del cupón.** Quien pide el enlace después de recibirlo lo recibe a precio completo, salvo que use el botón o el código, y un pedido de descuento se deriva a una persona.
+- **`validate` no distingue cuál de los dos flags que cuelgan de `descuento` habilita el flujo:** el seguimiento o el descuento posterior a la respuesta, que nació con el binding v1.
+- **Sin prueba de punta a punta en una instancia:** el E2E es con el modo de un solo teléfono, después del despliegue.
+
+## [1.4.0] - 2026-10-10
 
 Suma dos cosas, las dos apagadas por defecto:
 
@@ -106,7 +160,7 @@ La landing por formulario sí: sumar las dos claves al manifiesto de la instanci
 - **La carrera entre dos scopes no se prueba con dos conexiones:** PGlite es una sola. La cubre el lock por diseño; la prueba con Postgres real queda pendiente.
 - **La reactivación y el seguimiento con cupón no pasan por esta puerta**, así que no cuentan ni se frenan.
 
-## [1.3.3] - sin publicar
+## [1.3.3] - 2026-10-06
 
 Arregla la respuesta a una nota de voz, que no salía nunca. Le cambia algo a toda instancia con la transcripción prendida (`CHATWOOT_AUDIO_TRANSCRIPTION_ENABLED`), que hoy son Johanna y ATT1. No trae migración ni variables nuevas.
 

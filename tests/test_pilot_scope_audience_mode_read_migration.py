@@ -141,7 +141,7 @@ def test_inventories_and_validators_know_the_read() -> None:
         ROOT / "tests" / "sql" / "followup_engine" / "validate_acl_hardening.mjs"
     ).read_text(encoding="utf-8")
     assert f"('{NAME}{SIGNATURE}')" in hardening
-    assert "result.expected_count !== 119" in hardening
+    assert "result.expected_count !== 120" in hardening
     schema = (ROOT / "scripts" / "supabase_schema_inventory.sql").read_text(encoding="utf-8")
     assert f"'{MIGRATION.name}'" in schema
     assert f"to_regprocedure('public.{NAME}{SIGNATURE}')" in schema
