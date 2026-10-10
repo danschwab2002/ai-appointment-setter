@@ -37,6 +37,12 @@ import pytest
 import bridge.app as app_module
 from bridge.app import Settings, create_app
 from bridge.instance_manifest import GhlRiskAcceptance, InstanceManifest
+from bridge.lead_first_name import (
+    PROMPT_VERSION,
+    FirstNameInference,
+    FirstNameInferenceClient,
+    lead_name_key,
+)
 from bridge.supabase import SupabaseError
 from test_instance_wiring import (
     ATT1 as ATT1_INSTANCE,
@@ -1040,6 +1046,131 @@ def test_an_unavailable_admit_and_plan_is_a_503_so_ghl_retries(att1_instance: Pa
 
     assert response.status_code == 503
     assert response.json()["detail"] == "ghl_precheckout_persist_unavailable"
+
+
+# ------------------------------------- el primer nombre inferido de una instancia
+
+
+class _InferenceAuthority(_FirstContactAuthority):
+    """La admision que planifica, mas la tabla de inferencias del primer nombre."""
+
+    def __init__(self, outcome: str = "inserted") -> None:
+        super().__init__()
+        self.outcome = outcome
+        self.stored: dict[str, tuple[object, object, object]] = {}
+
+    async def admit_and_plan_portable_lead_precheckout(self, **kwargs: object) -> object:
+        result = await super().admit_and_plan_portable_lead_precheckout(**kwargs)
+        result.outcome = self.outcome
+        return result
+
+    async def get_lead_first_name_inference(self, name_key: str) -> object | None:
+        stored = self.stored.get(name_key)
+        return None if stored is None else stored[0]
+
+    async def record_lead_first_name_inference(self, **kwargs: object) -> str:
+        self.stored[str(kwargs["name_key"])] = (
+            kwargs["inference"],
+            kwargs["model_name"],
+            kwargs["prompt_version"],
+        )
+        return "inserted"
+
+
+def _att1_profile_client(requests: list[httpx.Request]) -> FirstNameInferenceClient:
+    """El profile de ATT1 por el API server de Hermes, con los valores de produccion
+    de la instancia (despliegue/secretos/generar.py). El modelo es un doble que
+    contesta la primera palabra del nombre que recibe."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        sent = json.loads(json.loads(request.content)["messages"][1]["content"])
+        answer = {"result": "confident", "first_name": sent["full_name"].split()[0]}
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": json.dumps(answer)}}]}
+        )
+
+    return FirstNameInferenceClient(
+        base_url="http://hermes:8644/v1",
+        api_key="test-hermes-key",
+        model_name="att1-agente-comercial",
+        transport=httpx.MockTransport(handler),
+    )
+
+
+def test_a_new_ghl_submission_infers_the_first_name_with_the_instance_profile(
+    att1_instance: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    authority = _InferenceAuthority()
+    requests: list[httpx.Request] = []
+    settings = _first_contact_through_ghl(
+        att1_instance,
+        lead_first_name_greeting_enabled=True,
+        lead_first_name_inference_enabled=True,
+    )
+    app = _first_contact_app(
+        settings, authority, lead_first_name_client=_att1_profile_client(requests)
+    )
+    body = _ads_a()
+
+    with caplog.at_level(logging.INFO):
+        response = _post(app, body)
+
+    # GHL recibe la misma respuesta: el modelo corre despues de contestarle.
+    assert response.status_code == 200
+    assert response.json()["status"] == "received"
+    [call] = authority.plan_calls
+    full_name = call["canonical_payload"]["lead"]["full_name"]  # type: ignore[index]
+    # Un solo pedido, al profile de la instancia, con el nombre y nada mas.
+    [request] = requests
+    assert str(request.url) == "http://hermes:8644/v1/chat/completions"
+    sent = json.loads(request.content)
+    assert sent["model"] == "att1-agente-comercial"
+    assert json.loads(sent["messages"][1]["content"]) == {
+        "full_name": " ".join(full_name.split())
+    }
+    assert request.headers["Idempotency-Key"] == (
+        f"{PROMPT_VERSION}:{lead_name_key(full_name)}"
+    )
+    # La clave es la del texto del formulario, el mismo con el que la base crea el
+    # contacto al planificar (20261001000200): el envio la encuentra.
+    [(name_key, (inference, model_name, prompt_version))] = authority.stored.items()
+    assert full_name == "Lead Anonimo"
+    assert name_key == lead_name_key(full_name)
+    assert inference == FirstNameInference("confident", "Lead")
+    assert (model_name, prompt_version) == ("att1-agente-comercial", PROMPT_VERSION)
+    # Los logs dicen el resultado y nada del nombre, ni el inferido.
+    messages = [record.getMessage() for record in caplog.records]
+    assert "lead_first_name_inference_recorded result=confident" in messages
+    everything = "\n".join(messages)
+    for value in (body["email"], body["phone"], body["full_name"], full_name, TOKEN):
+        assert value not in everything
+    assert not any(" Lead" in message or "=Lead" in message for message in messages)
+
+
+@pytest.mark.parametrize(
+    ("outcome", "status"), [("duplicate", "duplicate"), ("semantic_conflict", "conflict")]
+)
+def test_a_ghl_submission_that_is_not_new_does_not_call_the_model(
+    att1_instance: Path, outcome: str, status: str
+) -> None:
+    authority = _InferenceAuthority(outcome)
+    requests: list[httpx.Request] = []
+    settings = _first_contact_through_ghl(
+        att1_instance,
+        lead_first_name_greeting_enabled=True,
+        lead_first_name_inference_enabled=True,
+    )
+    app = _first_contact_app(
+        settings, authority, lead_first_name_client=_att1_profile_client(requests)
+    )
+
+    response = _post(app, _ads_a())
+
+    assert response.status_code == 200
+    assert response.json()["status"] == status
+    assert requests == []
+    assert authority.stored == {}
 
 
 def test_the_acceptance_alone_changes_nothing_of_the_admission() -> None:

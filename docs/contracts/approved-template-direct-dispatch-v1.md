@@ -20,7 +20,7 @@ En el modo directo el dispatcher arma el texto con el cuerpo aprobado del catál
 | Variable | Por defecto | Qué hace |
 |---|---|---|
 | `DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED` | `false` | Prende el modo directo del dispatcher |
-| `LEAD_FIRST_NAME_GREETING_ENABLED` | `false` | Con el modo directo, la variable `nombre` lleva el saludo por primer nombre. En un runtime portable se admite solo con el modo directo: sin él el bridge no arranca |
+| `LEAD_FIRST_NAME_GREETING_ENABLED` | `false` | Con el modo directo, la variable `nombre` lleva el saludo por primer nombre. En un runtime portable se admite solo con el modo directo: sin él el bridge no arranca. Desde la 1.5.0 se admite además `LEAD_FIRST_NAME_INFERENCE_ENABLED` ([contrato](lead-first-name-inference-v1.md)): sin ella, el saludo usa la regla determinística y las inferencias que ya estén guardadas |
 | `WABA_PAYMENT_FAILURE_TEMPLATE_CATEGORY` | vacía | Solo con manifiesto. La categoría de Meta de la plantilla del pago fallido cuando no es la de `WABA_TEMPLATE_CATEGORY` (`MARKETING` o `UTILITY`). Vacía, todas las plantillas usan `WABA_TEMPLATE_CATEGORY`. Exige `WABA_PAYMENT_FAILURE_TEMPLATE_NAME` |
 | `WABA_PRECHECKOUT_TEMPLATE_NAME` | vacía | Solo con manifiesto. La plantilla del primer contacto del formulario; tiene que ser `plantillas.precheckout.nombre`. Entra a la configuración del dispatcher solo con `PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED`. Usa `WABA_TEMPLATE_CATEGORY` y `WABA_TEMPLATE_LANGUAGE` |
 

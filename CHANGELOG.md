@@ -8,6 +8,41 @@ Cada versión dice qué cambia y **qué tiene que hacer quien actualiza una inst
 
 Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab2002/setter-bridge`, `setter-slack-connector` y `setter-daily-feedback`. La release de GitHub lleva el digest de cada una. Cómo se pasa un servicio a la imagen y cómo se vuelve atrás: [docs/operations/release-por-imagen-v1.md](docs/operations/release-por-imagen-v1.md).
 
+## [1.5.0] - sin publicar
+
+Suma una cosa, apagada por defecto: la inferencia del primer nombre corre también en una instancia con manifiesto. Y ajusta la validación del nombre inferido para descartar las formas medidas que saludan peor que la regla, también en Johanna.
+
+Ni variables nuevas ni campos obligatorios ni migraciones.
+
+### Agregado
+
+- **`LEAD_FIRST_NAME_INFERENCE_ENABLED` con manifiesto** ([contrato](docs/contracts/lead-first-name-inference-v1.md)). Hasta la 1.4.0, una instancia con el flag no arrancaba (`ATT1 runtime capabilities are not portable`).
+  - El modelo es el profile de `HERMES_MODEL_NAME` (o `LEAD_FIRST_NAME_MODEL_NAME`) por el API server de Hermes de la instancia, y las filas van a `lead_first_name_inferences` de su base.
+  - Corre después de admitir un formulario nuevo de `/webhooks/lead` o del adaptador de GHL, y la lee el saludo del dispatcher directo.
+  - Exige el saludo (`LEAD_FIRST_NAME_GREETING_ENABLED`, que con manifiesto exige el modo directo), Hermes, Supabase y, con manifiesto, una entrada de formularios (`LEAD_PRECHECKOUT_ENABLED` o `GHL_PRECHECKOUT_ADAPTER_ENABLED`): sin ninguna, nada la dispararía y el bridge no arranca, igual que el saludo sin el modo directo.
+  - En una instancia el envío busca la inferencia por el nombre del contacto. Si el contacto nació con otro texto (el de Hotmart, un contacto anterior, o un formulario cuyo primer contacto no se planificó), el saludo cae a la primera palabra, como sin inferencia.
+  - Cada inferencia carga el SOUL del profile. Medido con el profile de ATT1: USD 0,0006 por nombre y ninguna respuesta fuera del contrato ([evidencia](docs/operations/2026-10-10-nombre-de-pila-con-el-profile-de-att1.md)).
+  - El nombre de todo formulario nuevo admitido sale al proveedor del modelo, tenga o no permiso de WhatsApp. En ATT1 el adaptador de GHL marca el permiso en todo formulario con un teléfono válido.
+- **El cliente de la inferencia manda de a dos** (`MAX_CONCURRENT_INFERENCES`). El api_server de Hermes es el mismo de los turnos del agente y contesta 429 al pasar su tope de corridas en vuelo: una ráfaga de formularios espera en el bridge.
+
+### Arreglado
+
+- **Las partículas de un nombre inferido van en minúscula, salvo al principio:** «María del Carmen», no «María Del Carmen». El modelo devolvía bien el compuesto y el arreglo de mayúsculas capitalizaba `de`, `del`, `la`, `las` y `los`. Vale para las inferencias nuevas; las filas guardadas no se recalculan.
+- **Un nombre inferido de una forma que saluda peor que la regla cuenta como `uncertain`**:
+  - uno que el filtro de plantilla rechaza: más de 60 caracteres, o un carácter numérico como «²». Antes se guardaba, y el modo directo no mandaba la plantilla;
+  - uno de una sola letra (cae a la regla o, si la regla tampoco da nada, al nombre completo);
+  - un compuesto cortado: termina con una partícula («Juan de»), o empieza con una sin que el nombre empiece así («de Dios»).
+
+  Las partículas cuentan en el tope de tres palabras: «María de los Ángeles» queda `uncertain`, hasta medir esos compuestos con el modelo. La validación no garantiza el saludo correcto: un apellido suelto, por ejemplo, pasa si el modelo lo devuelve.
+
+### Qué hace quien actualiza
+
+Nada. Para prender la inferencia en una instancia: `LEAD_FIRST_NAME_INFERENCE_ENABLED=true`, con el saludo prendido, y redesplegar. En una instancia con manifiesto (Johanna no lo necesita):
+
+- para volver a una imagen anterior a la 1.5.0, primero hay que sacar el flag: con el flag prendido, esa imagen no arranca;
+- apagar la inferencia no devuelve el saludo a la regla, porque el saludo lee las filas guardadas. Para eso hay que borrar en la base las filas creadas desde la activación (psql, por `created_at`);
+- para cortar el adaptador de GHL con la inferencia prendida, hay que sacar en el mismo redeploy los flags del adaptador, del primer contacto y de la inferencia.
+
 ## [1.4.0] - sin publicar
 
 Suma dos cosas, las dos apagadas por defecto:

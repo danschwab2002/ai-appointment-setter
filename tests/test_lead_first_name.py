@@ -18,6 +18,7 @@ from bridge.lead_first_name import (
     FirstNameInference,
     FirstNameInferenceClient,
     FirstNameInferenceProviderError,
+    MAX_CONCURRENT_INFERENCES,
     MAX_TEMPLATE_GREETING_CHARS,
     infer_and_record_first_name,
     lead_name_key,
@@ -169,6 +170,153 @@ def test_compound_names_from_the_model_are_accepted(case) -> None:
 )
 def test_the_model_cannot_invent_or_reshape_a_name(full_name, candidate) -> None:
     assert validated_model_first_name(full_name, candidate) is None
+
+
+@pytest.mark.parametrize(
+    ("full_name", "candidate", "expected"),
+    [
+        # Respuestas textuales del modelo del profile de ATT1 (z-ai/glm-5.3-flash,
+        # con y sin el SOUL comun), medidas el 2026-10-10 con nombres inventados
+        # de Mexico: el modelo respeta la particula y el arreglo de mayusculas
+        # la dejaba en "María Del Carmen".
+        ("María del Carmen Ruiz", "María del Carmen", "María del Carmen"),
+        ("José de Jesús Hernández", "José de Jesús", "José de Jesús"),
+        ("Juana de Dios Ramírez", "Juana de Dios", "Juana de Dios"),
+        # Las mismas formas escritas todo en mayusculas o todo en minusculas.
+        ("MARÍA DEL CARMEN SOTO", "MARÍA DEL CARMEN", "María del Carmen"),
+        ("maría de jesús lópez", "maría de jesús", "María de Jesús"),
+        # Si el nombre empieza con la particula, va (la regla 3 del prompt), con
+        # la mayuscula del principio.
+        ("Del Carmen López", "Del Carmen", "Del Carmen"),
+        ("DEL CARMEN LÓPEZ", "del carmen", "Del Carmen"),
+    ],
+)
+def test_particles_inside_a_compound_name_stay_lowercase(
+    full_name, candidate, expected
+) -> None:
+    assert validated_model_first_name(full_name, candidate) == expected
+
+
+@pytest.mark.parametrize(
+    ("full_name", "candidate"),
+    [
+        # Un compuesto cortado saluda peor que la regla ("Juan").
+        ("Juan de Dios Pérez", "Juan de"),
+        ("Juan de Dios Pérez", "de Dios"),
+        ("Juan de Dios Pérez", "de"),
+        # Las particulas cuentan en el tope de tres palabras: los compuestos de
+        # cuatro no se midieron con el modelo, y queda la regla ("María").
+        ("María de la Luz Gómez", "María de la Luz"),
+        ("María de los Ángeles Pérez", "María de los Ángeles"),
+        # _LETTER_WORD_RE deja pasar los numeros Unicode (No, Nl) y el filtro de
+        # la plantilla no: el modo directo no mandaria el mensaje.
+        ("Ana María² López", "Ana María²"),
+        ("Luis Ⅱ Pérez", "Luis Ⅱ"),
+    ],
+)
+def test_a_cut_compound_or_a_name_the_template_refuses_is_uncertain(
+    full_name, candidate
+) -> None:
+    assert validated_model_first_name(full_name, candidate) is None
+
+
+ATT1_PROFILE = json.loads(
+    (
+        Path(__file__).parent
+        / "fixtures"
+        / "lead_first_name_att1_profile_answers_20261010.json"
+    ).read_text(encoding="utf-8")
+)
+
+
+def test_the_att1_profile_answers_inside_the_contract_with_the_soul_on_top() -> None:
+    # Hermes le apila el SOUL comun al prompt de la inferencia: el riesgo era que
+    # el modelo contestara con la forma de la propuesta del agente y todo quedara
+    # uncertain para siempre. Medido: ninguna respuesta fuera del contrato.
+    with_soul = [a for a in ATT1_PROFILE["answers"] if a["variant"] == "with_soul"]
+    assert len(with_soul) == 76
+    for answer in with_soul:
+        assert set(json.loads(answer["content"])) == {"result", "first_name"}
+
+
+@pytest.mark.parametrize(
+    "answer",
+    ATT1_PROFILE["answers"],
+    ids=[
+        f"{a['variant']}:{a['full_name']}:{index}"
+        for index, a in enumerate(ATT1_PROFILE["answers"])
+    ],
+)
+def test_a_captured_att1_profile_answer_never_greets_worse_than_the_rule(answer) -> None:
+    # La respuesta real pasa por el cliente de verdad y despues por la cadena,
+    # como en un envio: el saludo nunca puede quedar peor que la regla sola.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": answer["content"]}}]}
+        )
+
+    inference = asyncio.run(_client(handler).infer(answer["full_name"]))
+    store = _Store({lead_name_key(answer["full_name"]): inference})
+    greeting = asyncio.run(resolve_greeting_name(answer["full_name"], store=store))
+    rule = asyncio.run(resolve_greeting_name(answer["full_name"], store=None))
+
+    acceptable = answer["acceptable"]
+    if not acceptable:
+        # Emoji, una letra o una orden: no hay nombre que inferir.
+        assert greeting.source != "inferred"
+    elif rule.name in acceptable:
+        assert greeting.name in acceptable
+    if greeting.source == "inferred":
+        assert template_greeting_name_is_safe(greeting.name)
+    # Y la mejora: si el modelo contesto, seguro, uno de los saludos correctos, es
+    # el que sale ("Laura" y no el apellido "Martínez", "San Juana" y no "San").
+    proposal = json.loads(answer["content"])
+    if proposal["result"] == "confident" and isinstance(proposal["first_name"], str):
+        if proposal["first_name"].casefold() in {name.casefold() for name in acceptable}:
+            assert greeting.source == "inferred"
+            assert greeting.name in acceptable
+
+
+def test_no_more_than_two_inferences_wait_on_hermes_at_once() -> None:
+    # El api_server de Hermes es el mismo de los turnos del agente: una rafaga de
+    # formularios no puede ocupar sus lugares.
+    in_flight = 0
+    peak = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0.01)
+        in_flight -= 1
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"result":"uncertain","first_name":null}'}}]},
+        )
+
+    client = _client(handler)
+
+    async def burst() -> list[FirstNameInference]:
+        return await asyncio.gather(
+            *(client.infer(f"Persona {letter} Pérez") for letter in "ABCDEF")
+        )
+
+    answers = asyncio.run(burst())
+
+    assert answers == [FirstNameInference("uncertain", None)] * 6
+    assert peak == MAX_CONCURRENT_INFERENCES == 2
+
+
+def test_an_inferred_name_a_template_would_refuse_is_not_kept() -> None:
+    # Tres palabras de letras, 65 caracteres: el filtro de la plantilla (60) la
+    # rechazaria y la persona quedaria sin mensaje, donde la regla saluda.
+    word = "Abcdefghijklmnopqrstu"
+    long_name = f"{word} {word} {word}"
+    assert len(long_name) > MAX_TEMPLATE_GREETING_CHARS
+
+    assert validated_model_first_name(f"{long_name} Pérez", long_name) is None
+    assert validated_model_first_name("J Pérez", "J") is None
+    assert validated_model_first_name("Jo Pérez", "Jo") == "Jo"
 
 
 def test_the_client_sends_only_the_name_and_keeps_a_confident_answer() -> None:

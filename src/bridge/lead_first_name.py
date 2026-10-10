@@ -22,11 +22,14 @@ solo lee lo que quedo guardado y nunca espera al modelo.
 El tercer nivel es texto de quien lleno el formulario, sin verificar.
 ``template_greeting_name_is_safe`` es el filtro que el modo directo del
 dispatcher le aplica a lo que va a ir en ``{{1}}``; la cadena no lo aplica,
-porque sus otros consumidores (los one-shots de Johanna) no cambian.
+porque sus otros consumidores (los one-shots de Johanna) no cambian. El primer
+nivel ya sale filtrado: ``validated_model_first_name`` descarta un nombre
+inferido que ese filtro rechazaria.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -44,8 +47,22 @@ from bridge.reactivation import reactivation_first_name
 logger = logging.getLogger(__name__)
 
 PROMPT_VERSION = "lead-first-name-v2"
-MAX_FIRST_NAME_CHARS = 80
 MAX_FIRST_NAME_WORDS = 3
+# Menos de dos letras no es un nombre con el que saludar: la regla
+# deterministica pide lo mismo (reactivation.MIN_FIRST_NAME_CHARS).
+MIN_FIRST_NAME_CHARS = 2
+# Las particulas de un nombre compuesto van en minuscula salvo al principio:
+# "María del Carmen", "José de Jesús". Medido el 2026-10-10 con el modelo del
+# profile de ATT1 y nombres de Mexico, donde son comunes: el modelo devolvia
+# bien el compuesto y el arreglo de mayusculas lo dejaba en "María Del Carmen".
+# Cuentan en MAX_FIRST_NAME_WORDS: "María de los Ángeles" (cuatro palabras)
+# queda uncertain y saluda la regla, hasta medir esos compuestos.
+_NAME_PARTICLES = frozenset({"de", "del", "la", "las", "los"})
+# Las inferencias usan el mismo api_server de Hermes que los turnos del agente,
+# con un tope de corridas en vuelo (gateway.api_server.max_concurrent_runs, 10
+# por defecto) que contesta 429 al pasarlo. Una rafaga de formularios no puede
+# ocuparlo: el cliente manda de a dos.
+MAX_CONCURRENT_INFERENCES = 2
 _TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)
 _LETTER_WORD_RE = re.compile(r"^[^\W\d_](?:[^\W\d_]|['’-])*$", re.UNICODE)
 
@@ -149,16 +166,37 @@ def validated_model_first_name(full_name: str, candidate: object) -> str | None:
     proposed = candidate.split()
     if not 1 <= len(proposed) <= MAX_FIRST_NAME_WORDS:
         return None
+    # "Juan de" es un compuesto cortado: saluda peor que la regla, y la primera
+    # respuesta queda fija para ese nombre.
+    if proposed[-1].casefold() in _NAME_PARTICLES:
+        return None
     original = collapsed.split(" ")
     wanted = [word.casefold() for word in proposed]
     for start in range(len(original) - len(wanted) + 1):
         window = original[start : start + len(wanted)]
         if [word.casefold() for word in window] != wanted:
             continue
+        # Una particula adelante vale solo si el nombre empieza asi ("Del Carmen
+        # López", la regla 3 del prompt). "de Dios", de "Juan de Dios Pérez", es
+        # un corte.
+        if start > 0 and window[0].casefold() in _NAME_PARTICLES:
+            return None
         if not all(_LETTER_WORD_RE.match(word) for word in window):
             return None
-        name = " ".join(_fix_case(word) for word in window)
-        if len(name) > MAX_FIRST_NAME_CHARS:
+        name = " ".join(
+            word.lower()
+            if position > 0 and word.casefold() in _NAME_PARTICLES
+            else _fix_case(word)
+            for position, word in enumerate(window)
+        )
+        # El modo directo del dispatcher no manda una plantilla cuyo nombre no
+        # pasa template_greeting_name_is_safe: un nombre inferido que el filtro
+        # rechaza (mas de MAX_TEMPLATE_GREETING_CHARS, o un caracter numerico
+        # como "²" o "½", que _LETTER_WORD_RE deja pasar) dejaria a la persona
+        # sin mensaje, donde la regla si saluda. Uno de una letra saluda peor
+        # que la regla. Todos cuentan como no estar seguro. La tabla acepta
+        # hasta 80.
+        if len(name) < MIN_FIRST_NAME_CHARS or not template_greeting_name_is_safe(name):
             return None
         return name
     return None
@@ -246,6 +284,7 @@ class FirstNameInferenceClient:
         self._api_key = api_key
         self._model_name = model_name
         self._transport = transport
+        self._in_flight = asyncio.Semaphore(MAX_CONCURRENT_INFERENCES)
 
     @property
     def model_name(self) -> str:
@@ -261,7 +300,7 @@ class FirstNameInferenceClient:
                 transport=self._transport,
                 timeout=_TIMEOUT,
                 follow_redirects=False,
-            ) as client:
+            ) as client, self._in_flight:
                 response = await client.post(
                     f"{self._base_url}/chat/completions",
                     headers={
