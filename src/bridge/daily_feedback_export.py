@@ -16,6 +16,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -48,7 +49,13 @@ _PAYMENT_LINK_RE = re.compile(
 )
 _LABEL_ACTIVITY_RE = re.compile(r"^(?P<who>.+?) (?P<verb>added|removed) (?P<label>\S+)$")
 _ASSIGNED_ACTIVITY_RE = re.compile(r"^Assigned to (?P<assignee>.+?) by (?P<who>.+)$")
-_UNASSIGNED_ACTIVITY_RE = re.compile(r"^Unassigned by (?P<who>.+)$")
+# "Conversation unassigned by X" es el texto real de Chatwoot 4.13 cuando se saca al
+# agente asignado (capturado en el inbox 11 de ATT1, mensaje 2679); "Unassigned by X"
+# es la forma que ya se reconocia.
+_UNASSIGNED_ACTIVITY_RE = re.compile(r"^(?:Conversation unassigned|Unassigned) by (?P<who>.+)$")
+# Sacar el equipo: "Unassigned from <equipo> by X" (inbox 11 de ATT1, mensaje 2680).
+# El equipo es un nombre libre; quien lo hizo es lo que sigue al ultimo " by ".
+_TEAM_UNASSIGNED_ACTIVITY_RE = re.compile(r"^Unassigned from (?P<team>.+) by (?P<who>.+)$")
 _STATUS_ACTIVITY_RE = re.compile(
     r"^Conversation was (?:marked )?(?P<state>resolved|reopened|open|pending|snoozed)"
     r"(?: by (?P<who>.+))?$"
@@ -67,6 +74,127 @@ class RealConversationSecurityPolicy:
     storage_encryption_verified: bool
     retention_hours: int
     deletion_owner: str
+    # La excepcion storage_unencrypted_risk_accepted: el permalink https de la
+    # aceptacion escrita del riesgo de guardar la revision en un disco sin cifrar.
+    # Solo cuenta con storage_encryption_verified=False, y nunca hace que el paquete
+    # se declare cifrado. Vacia es el comportamiento de siempre: cifrado verificado.
+    storage_risk_acceptance_ref: str = ""
+
+
+def validate_storage_risk_acceptance_ref(value: object) -> str:
+    """La referencia de la aceptacion escrita del riesgo de un disco sin cifrar.
+
+    Una URL https con host y sin usuario ni contrasena (el permalink del documento
+    que acepta el riesgo), escrita sin espacios ni caracteres de control: urlsplit los
+    borra en silencio, y la referencia que se declara tiene que ser la que se lee. Es
+    publica para que la lectura de DAILY_FEEDBACK_STORAGE_RISK_ACCEPTANCE_REF aplique
+    la misma regla que ChatwootDailyCollector. Devuelve la referencia; si no cumple,
+    ValueError('invalid_storage_risk_acceptance_ref').
+    """
+    error = "invalid_storage_risk_acceptance_ref"
+    if (
+        type(value) is not str
+        or not value.isprintable()
+        or any(character.isspace() for character in value)
+    ):
+        raise ValueError(error)
+    # urlsplit tambien levanta su propio ValueError: con un host entre corchetes que
+    # no es una IP, o un corchete sin cerrar. Va dentro del try para que salga el
+    # codigo de la regla y no el texto de urlsplit.
+    try:
+        parsed = urlsplit(value)
+        parsed.port
+    except ValueError as exc:
+        raise ValueError(error) from exc
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise ValueError(error)
+    return value
+
+
+def _storage_protection_declared(policy: RealConversationSecurityPolicy) -> bool:
+    """Cifrado verificado, o el riesgo de no tenerlo aceptado por escrito. Nunca las
+    dos cosas: una politica que dice cifrado y trae una aceptacion de riesgo es ambigua
+    (la lectura del entorno lo rechaza como ambiguous_storage_protection)."""
+    reference = policy.storage_risk_acceptance_ref
+    if type(reference) is not str:
+        return False
+    if policy.storage_encryption_verified is True:
+        return reference == ""
+    try:
+        validate_storage_risk_acceptance_ref(reference)
+    except ValueError:
+        return False
+    return True
+
+
+# Como se verifica el AgentBot al arrancar (ChatwootDailyCollector.verify_access).
+# inbox: el bot configurado es el que Chatwoot devuelve para el inbox; es el
+# comportamiento de siempre (Johanna). unlinked: el inbox NO tiene bot y el bot
+# configurado es de la cuenta; es la excepcion chatwoot_agent_bot_unlinked, la de una
+# instancia que deja el bot sin vincular a proposito (ATT1). Con el vinculo activo,
+# Chatwoot deja pending las conversaciones nuevas y el bridge, que solo trabaja las
+# open, se calla sin error (docs/operations/2026-09-23-chatwoot-agent-bot-inbox-unlink.md).
+AGENT_BOT_BINDING_INBOX = "inbox"
+AGENT_BOT_BINDING_UNLINKED = "unlinked"
+AGENT_BOT_BINDINGS = frozenset({AGENT_BOT_BINDING_INBOX, AGENT_BOT_BINDING_UNLINKED})
+
+
+def validate_agent_bot_binding(value: object) -> str:
+    """inbox o unlinked, escrito exacto. Es publica para que la lectura de
+    DAILY_FEEDBACK_CHATWOOT_AGENT_BOT_BINDING aplique la misma regla que
+    ChatwootDailyCollector; si no cumple,
+    ValueError('invalid_daily_feedback_chatwoot_agent_bot_binding').
+    """
+    if type(value) is not str or value not in AGENT_BOT_BINDINGS:
+        raise ValueError("invalid_daily_feedback_chatwoot_agent_bot_binding")
+    return value
+
+
+def _require_inbox_without_agent_bot(payload: object) -> None:
+    """La respuesta de GET /inboxes/{i}/agent_bot tiene que probar que no hay bot.
+
+    Capturado el 10/10/2026 en el inbox 11 de ATT1: 200 con un objeto vacio, {}. Se
+    acepta tambien agent_bot null o vacio. Con un bot vinculado Chatwoot devuelve
+    {"agent_bot": {"id": ...}}: capturado el mismo dia en el inbox 9 de Johanna, cuyo
+    vinculo se paso a inactive el 23/09, segun
+    docs/operations/2026-09-23-chatwoot-agent-bot-inbox-unlink.md. La respuesta no
+    dice si el vinculo esta activo, asi que cualquier vinculo falla:
+    chatwoot_agent_bot_unexpectedly_linked. Una forma que no prueba nada (otra clave,
+    un bot sin id entero) falla cerrada.
+    """
+    if not isinstance(payload, dict) or not set(payload) <= {"agent_bot"}:
+        raise ConversationCollectionError("chatwoot_scope_verification_failed")
+    bot = payload.get("agent_bot")
+    if bot is None or (isinstance(bot, dict) and not bot):
+        return
+    if isinstance(bot, dict) and type(bot.get("id")) is int:
+        raise ConversationCollectionError("chatwoot_agent_bot_unexpectedly_linked")
+    raise ConversationCollectionError("chatwoot_scope_verification_failed")
+
+
+# El tope de paginas del listado de conversaciones del inbox (status=all, la cuenta
+# se prueba contra all_count); si no alcanza, chatwoot_conversation_page_limit_reached.
+# 20 es el valor de siempre. Ademas, el listado entero, los mensajes, el contexto y la
+# procedencia tienen que entrar en la lease de la recoleccion
+# (DEFAULT_COLLECTION_LEASE_SECONDS en daily_feedback_service): con un tope alto, el
+# limite de un inbox grande pasa a ser ese tiempo.
+DEFAULT_MAX_CONVERSATION_PAGES = 20
+
+
+def validate_max_conversation_pages(value: object) -> int:
+    """Un int de 1 a 400. Es publica para que la lectura de
+    DAILY_FEEDBACK_MAX_CONVERSATION_PAGES aplique la misma regla que
+    ChatwootDailyCollector; si no cumple,
+    ValueError('invalid_daily_feedback_max_conversation_pages').
+    """
+    if type(value) is not int or not 1 <= value <= 400:
+        raise ValueError("invalid_daily_feedback_max_conversation_pages")
+    return value
 
 
 @dataclass(frozen=True)
@@ -233,9 +361,10 @@ class ChatwootDailyCollector:
         pseudonymization_key: bytes,
         security_policy: RealConversationSecurityPolicy,
         transport: httpx.BaseTransport | None = None,
-        max_conversation_pages: int = 20,
+        max_conversation_pages: int = DEFAULT_MAX_CONVERSATION_PAGES,
         max_message_pages: int = 20,
         package_version: int = 1,
+        agent_bot_binding: str = AGENT_BOT_BINDING_INBOX,
     ) -> None:
         if package_version not in {1, 2}:
             raise ValueError("unsupported_daily_feedback_package_version")
@@ -253,15 +382,20 @@ class ChatwootDailyCollector:
             raise ConversationCollectionError("chatwoot_https_origin_required")
         if any(type(value) is not int or value <= 0 for value in (account_id, inbox_id, agent_bot_id)):
             raise ValueError("chatwoot_ids_must_be_positive_integers")
+        self._agent_bot_binding = validate_agent_bot_binding(agent_bot_binding)
         if not access_token:
             raise ValueError("chatwoot_access_token_required")
         if len(pseudonymization_key) < 32:
             raise ValueError("pseudonymization_key_too_short")
+        # El almacenamiento tiene que estar cifrado y verificado o, sin cifrar, con
+        # la aceptacion escrita del riesgo (storage_unencrypted_risk_accepted). El
+        # paquete lleva storage_encryption_verified tal cual: nunca dice cifrado lo
+        # que no lo esta.
         if (
             type(security_policy.real_collection_enabled) is not bool
             or type(security_policy.storage_encryption_verified) is not bool
             or security_policy.real_collection_enabled is not True
-            or security_policy.storage_encryption_verified is not True
+            or not _storage_protection_declared(security_policy)
             or type(security_policy.retention_hours) is not int
             or not 1 <= security_policy.retention_hours <= 168
             or not security_policy.deletion_owner.strip()
@@ -269,7 +403,10 @@ class ChatwootDailyCollector:
             raise ConversationCollectionError(
                 "real_conversation_collection_not_authorized"
             )
-        if max_conversation_pages < 1 or max_message_pages < 1:
+        self._max_conversation_pages = validate_max_conversation_pages(
+            max_conversation_pages
+        )
+        if type(max_message_pages) is not int or max_message_pages < 1:
             raise ValueError("page_limits_must_be_positive")
         self._base_url = base_url.rstrip("/")
         self._account_id = account_id
@@ -279,11 +416,34 @@ class ChatwootDailyCollector:
         self._key = pseudonymization_key
         self._security_policy = security_policy
         self._transport = transport
-        self._max_conversation_pages = max_conversation_pages
         self._max_message_pages = max_message_pages
 
+    # Solo lectura: con esto se verifica, sin red, el cableado desde el entorno.
+    @property
+    def agent_bot_binding(self) -> str:
+        return self._agent_bot_binding
+
+    @property
+    def max_conversation_pages(self) -> int:
+        return self._max_conversation_pages
+
+    @property
+    def security_policy(self) -> RealConversationSecurityPolicy:
+        return self._security_policy
+
     def verify_access(self) -> None:
-        """Verify the configured inbox and bot without reading conversations."""
+        """Verifica el inbox y el AgentBot configurados sin leer conversaciones.
+
+        En el servicio corre una vez, en el preflight del arranque. Con inbox (Johanna,
+        el de siempre) son dos pedidos: el inbox y su bot, que tiene que ser el
+        configurado. Con unlinked (la excepcion chatwoot_agent_bot_unlinked, ATT1)
+        son tres, en orden: el inbox, con los mismos chequeos; su bot, que NO tiene que
+        existir; y el bot configurado en la cuenta, que tiene que ser de la cuenta.
+
+        Es un chequeo del arranque, no un control continuo: si despues alguien vincula
+        un bot al inbox, esto no se entera hasta el proximo arranque. El control
+        permanente del vinculo es otro (recuperador_estado.py, en el OS).
+        """
         with httpx.Client(
             base_url=self._base_url,
             headers={"api_access_token": self._access_token},
@@ -302,29 +462,74 @@ class ChatwootDailyCollector:
                 )
                 bot_response.raise_for_status()
                 bot_payload = bot_response.json()
-                bot = (
-                    bot_payload.get("agent_bot")
-                    if isinstance(bot_payload, dict)
-                    else None
-                )
             except (httpx.HTTPError, ValueError) as exc:
                 raise ConversationCollectionError(
                     "chatwoot_scope_verification_failed"
                 ) from exc
+            if self._agent_bot_binding == AGENT_BOT_BINDING_UNLINKED:
+                if not self._is_configured_inbox(inbox):
+                    raise ConversationCollectionError(
+                        "chatwoot_scope_verification_failed"
+                    )
+                _require_inbox_without_agent_bot(bot_payload)
+                self._verify_account_agent_bot(client)
+                return
+        bot = bot_payload.get("agent_bot") if isinstance(bot_payload, dict) else None
         if (
-            not isinstance(inbox, dict)
-            or type(inbox.get("id")) is not int
-            or inbox["id"] != self._inbox_id
-            or (
-                "account_id" in inbox
-                and (
-                    type(inbox.get("account_id")) is not int
-                    or inbox["account_id"] != self._account_id
-                )
-            )
+            not self._is_configured_inbox(inbox)
             or not isinstance(bot, dict)
             or type(bot.get("id")) is not int
             or bot["id"] != self._agent_bot_id
+        ):
+            raise ConversationCollectionError("chatwoot_scope_verification_failed")
+
+    def _is_configured_inbox(self, inbox: object) -> bool:
+        # La respuesta real no trae account_id (capturado el 10/10 en el inbox 11 de
+        # ATT1); el pedido ya va por la cuenta. Si lo trae, tiene que coincidir.
+        return (
+            isinstance(inbox, dict)
+            and type(inbox.get("id")) is int
+            and inbox["id"] == self._inbox_id
+            and (
+                "account_id" not in inbox
+                or (
+                    type(inbox.get("account_id")) is int
+                    and inbox["account_id"] == self._account_id
+                )
+            )
+        )
+
+    def _verify_account_agent_bot(self, client: httpx.Client) -> None:
+        """El bot configurado existe y es de la cuenta (modo unlinked).
+
+        Sin vinculo con el inbox, la unica via por la que Chatwoot deja escribir al bot
+        en la cuenta es que el bot sea de la cuenta (account_id; ver
+        docs/operations/2026-09-23-chatwoot-agent-bot-inbox-unlink.md), y un bot de
+        sistema viene sin cuenta. La respuesta trae el access_token y el secret del
+        bot: de ella se leen solo el id y la cuenta, y el cuerpo no se loguea, no se
+        guarda y no viaja en la excepcion (un JSON roto no se encadena, porque el error
+        lleva el texto entero).
+        """
+        try:
+            response = client.get(
+                f"/api/v1/accounts/{self._account_id}/agent_bots/{self._agent_bot_id}"
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise ConversationCollectionError(
+                "chatwoot_scope_verification_failed"
+            ) from exc
+        try:
+            body = response.json()
+        except ValueError:
+            body = None
+        bot_id = body.get("id") if isinstance(body, dict) else None
+        bot_account_id = body.get("account_id") if isinstance(body, dict) else None
+        if (
+            type(bot_id) is not int
+            or bot_id != self._agent_bot_id
+            or type(bot_account_id) is not int
+            or bot_account_id != self._account_id
         ):
             raise ConversationCollectionError("chatwoot_scope_verification_failed")
 
@@ -834,6 +1039,15 @@ def _classify_activity(content: str) -> tuple[str, dict[str, object]]:
     unassigned = _UNASSIGNED_ACTIVITY_RE.match(text)
     if unassigned is not None:
         return ("unassigned", {"actor_name": unassigned.group("who")})
+    team_unassigned = _TEAM_UNASSIGNED_ACTIVITY_RE.match(text)
+    if team_unassigned is not None:
+        return (
+            "unassigned",
+            {
+                "team": team_unassigned.group("team"),
+                "actor_name": team_unassigned.group("who"),
+            },
+        )
     status = _STATUS_ACTIVITY_RE.match(text)
     if status is not None:
         meta = {"actor_name": status.group("who")} if status.group("who") else {}

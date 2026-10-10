@@ -86,6 +86,27 @@ class SlackOpenIdError(ValueError):
         self.reference = canonical
 
 
+# La marca de la barra de la pagina de revision. Sin DAILY_FEEDBACK_BRAND_NAME es la
+# de siempre, asi que la pagina de Johanna queda identica byte por byte.
+DEFAULT_REVIEW_BRAND_NAME = "Johanna"
+
+
+def validate_review_brand_name(value: object) -> str:
+    """La marca de la pagina de revision: de 1 a 60 caracteres imprimibles, con algo
+    visible (no solo espacios). No se filtran < > & ni comillas: la pagina la muestra
+    escapada. Es publica para que la lectura de DAILY_FEEDBACK_BRAND_NAME aplique la
+    misma regla que DailyFeedbackWebSettings.
+    """
+    if (
+        type(value) is not str
+        or not 1 <= len(value) <= 60
+        or not value.isprintable()
+        or not value.strip()
+    ):
+        raise ValueError("invalid_daily_feedback_brand_name")
+    return value
+
+
 @dataclass(frozen=True)
 class DailyFeedbackWebSettings:
     public_origin: str
@@ -97,6 +118,9 @@ class DailyFeedbackWebSettings:
     # Zona horaria en la que se muestran las horas de los mensajes (la de los
     # revisores, no UTC). Los datos se guardan siempre en UTC.
     display_timezone: str = "UTC"
+    # La marca del agente de la instancia (Johanna, Dra. Nina Garza). Solo la muestra
+    # la pagina de revision; login, error y lote completado no llevan marca.
+    brand_name: str = DEFAULT_REVIEW_BRAND_NAME
 
     def __post_init__(self) -> None:
         try:
@@ -121,6 +145,7 @@ class DailyFeedbackWebSettings:
             raise ValueError("invalid_daily_feedback_slack_team")
         if not 1 <= self.session_hours <= 8:
             raise ValueError("invalid_daily_feedback_session_lifetime")
+        validate_review_brand_name(self.brand_name)
 
 
 class DailyFeedbackService:
@@ -179,6 +204,25 @@ class DailyFeedbackNotificationProducer(Protocol):
     async def admit(self, command: NotificationCommand) -> object: ...
 
 
+# La lease de la recoleccion. Todo tiene que entrar en ese tiempo, contado desde el
+# `now` de run_once: listar las conversaciones de Chatwoot, bajar los mensajes de las
+# que tuvieron actividad, el contexto y la procedencia. Si vence, el commit falla con
+# stale_collection_lease y la recoleccion se reintenta a los 60 s. Por eso el limite
+# de un inbox grande es este tiempo, no el tope de paginas. La SQL acepta de 30 a 900 s
+# (claim_daily_feedback_collection_v1); 120 es el valor de siempre.
+DEFAULT_COLLECTION_LEASE_SECONDS = 120
+
+
+def validate_collection_lease_seconds(value: object) -> int:
+    """Segundos enteros de 30 a 900, el rango que acepta la SQL. Es publica para que
+    la lectura de DAILY_FEEDBACK_COLLECTION_LEASE_SECONDS aplique la misma regla que
+    DailyFeedbackSchedulerSettings.
+    """
+    if type(value) is not int or not 30 <= value <= 900:
+        raise ValueError("invalid_daily_feedback_collection_lease_seconds")
+    return value
+
+
 @dataclass(frozen=True)
 class DailyFeedbackSchedulerSettings:
     worker_id: str
@@ -189,6 +233,7 @@ class DailyFeedbackSchedulerSettings:
     chatwoot_agent_bot_id: int
     deletion_owner: str
     poll_interval_seconds: float = 30.0
+    collection_lease_seconds: int = DEFAULT_COLLECTION_LEASE_SECONDS
 
     def __post_init__(self) -> None:
         if not all((self.worker_id, self.tenant_ref, self.scope_ref, self.deletion_owner)):
@@ -201,6 +246,7 @@ class DailyFeedbackSchedulerSettings:
             raise ValueError("daily_feedback_scheduler_chatwoot_authority_required")
         if not 5 <= self.poll_interval_seconds <= 300:
             raise ValueError("invalid_daily_feedback_poll_interval")
+        validate_collection_lease_seconds(self.collection_lease_seconds)
 
 
 class DailyFeedbackScheduler:
@@ -277,6 +323,13 @@ class DailyFeedbackScheduler:
                 pass
 
     async def run_once(self, *, force_collection: bool = False) -> dict[str, object]:
+        # Un solo `now` para purga, recoleccion y notificacion. Contra la SQL real, el
+        # lote que se commitea en esta corrida nace con notification_next_attempt_at =
+        # clock_timestamp(), posterior a este `now`, y el claim de la notificacion pide
+        # <= p_now: la corrida que recolecta da collected:true y notified:false, y la
+        # tarjeta REV-001 sale en la siguiente (un segundo run-now da collected:false y
+        # notified:true; con el scheduler prendido, una vuelta despues). Los tests con
+        # un repositorio falso que contesta claimed sin mirar la hora no lo muestran.
         now = self.now()
         purge = await self._repository.rpc(
             "purge_expired_daily_feedback_v2",
@@ -316,7 +369,7 @@ class DailyFeedbackScheduler:
                 "p_scope_ref": self.settings.scope_ref,
                 "p_now": _utc_text(now),
                 "p_force": force,
-                "p_lease_seconds": 120,
+                "p_lease_seconds": self.settings.collection_lease_seconds,
             },
         )
         if claim.get("status") == "idle":
@@ -612,6 +665,7 @@ def create_daily_feedback_review_app(service: DailyFeedbackService) -> FastAPI:
                 csrf_token=service.csrf_token(session_secret),
                 command_id=str(uuid4()),
                 display_timezone=service.settings.display_timezone,
+                brand_name=service.settings.brand_name,
             )
         )
 
@@ -892,6 +946,66 @@ class SlackOpenIdClient:
         )
 
 
+# El host de un origen interno es un nombre de servicio de Docker: UNA etiqueta, sin
+# puntos. Un host con punto (un dominio o una IP) sigue exigiendo https.
+_INTERNAL_HTTP_HOST_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,62}")
+# Una etiqueta sola tambien puede ser una IP escrita como numero: getaddrinfo, que es
+# lo que usa httpx para conectar, resuelve 167772165 y 0xa000005 como 10.0.0.5.
+_NUMERIC_IPV4_LABEL_RE = re.compile(r"[0-9]+|0x[0-9a-f]*")
+
+
+def validate_internal_http_origin(value: object) -> str:
+    """La regla unica del origen interno (la excepcion authority_internal_http).
+
+    Acepta solo http://<servicio>:<puerto>, con o sin la barra final:
+    - esquema http;
+    - host de una sola etiqueta (^[a-z0-9][a-z0-9_-]{0,62}$) que no sea una IP
+      escrita como numero;
+    - puerto explicito, de 1 a 65535;
+    - sin usuario ni contrasena;
+    - ruta vacia o /, sin query ni fragmento;
+    - escrito en su forma canonica: urlsplit pasa a minusculas, quita ceros a la
+      izquierda del puerto y borra en silencio un salto de linea o un tab, asi que el
+      texto tiene que ser exactamente el origen que se reconstruye.
+    Rechaza http://10.0.0.5:8080, http://x.host:8080 y http://att1-gateway.
+
+    Es un control compensatorio, no la prueba de que el trafico no sale del host: el
+    nombre lo resuelve el DNS del contenedor. Es la regla de los dos lados: la usa
+    SupabaseDailyFeedbackRepository(allow_internal_http=True) y es publica para que
+    la lectura de SUPABASE_BASE_URL con DAILY_FEEDBACK_SUPABASE_INTERNAL_HTTP=true no
+    tenga otra. Devuelve el origen sin la barra final; si no cumple,
+    ValueError('invalid_supabase_internal_origin').
+    """
+    error = "invalid_supabase_internal_origin"
+    if type(value) is not str:
+        raise ValueError(error)
+    # urlsplit tambien levanta su propio ValueError: con un host entre corchetes que
+    # no es una IP (http://[att1-gateway]:8080) o un corchete sin cerrar. Va dentro
+    # del try para que salga el codigo de la regla y no el texto de urlsplit.
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError(error) from exc
+    host = parsed.hostname
+    if (
+        parsed.scheme != "http"
+        or host is None
+        or not _INTERNAL_HTTP_HOST_RE.fullmatch(host)
+        or _NUMERIC_IPV4_LABEL_RE.fullmatch(host)
+        or port is None
+        or not 1 <= port <= 65535
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+        or value not in {f"http://{host}:{port}", f"http://{host}:{port}/"}
+    ):
+        raise ValueError(error)
+    return value.rstrip("/")
+
+
 class SupabaseDailyFeedbackRepository:
     _ALLOWED_RPCS = frozenset(
         {
@@ -920,9 +1034,28 @@ class SupabaseDailyFeedbackRepository:
         base_url: str,
         service_role_key: str,
         transport: httpx.AsyncBaseTransport | None = None,
+        allow_internal_http: bool = False,
     ) -> None:
-        parsed = urlsplit(base_url)
-        if (
+        if type(allow_internal_http) is not bool:
+            raise ValueError("invalid_daily_feedback_supabase_internal_http")
+        try:
+            parsed = urlsplit(base_url)
+        except ValueError as exc:
+            # Un origen que urlsplit no puede leer (un host entre corchetes que no es
+            # una IP, un corchete sin cerrar). Con el permiso sale el codigo de la regla
+            # del origen interno, como en la lectura del entorno; sin el permiso queda
+            # como siempre.
+            if allow_internal_http:
+                raise ValueError("invalid_supabase_internal_origin") from exc
+            raise
+        if allow_internal_http and parsed.scheme == "http":
+            # La base propia de una instancia autohospedada (ATT1:
+            # http://att1-gateway:8080) por la red interna del stack. Solo con el
+            # permiso explicito y con la regla del origen interno. El permiso no
+            # obliga: https se sigue aceptando como siempre; la que exige el origen
+            # interno cuando se declara la excepcion es la lectura del entorno.
+            base_url = validate_internal_http_origin(base_url)
+        elif (
             parsed.scheme != "https"
             or not parsed.hostname
             or parsed.username
@@ -1208,7 +1341,7 @@ async def _bounded_form(request: Request) -> dict[str, str]:
     return {key: values[0] for key, values in parsed.items()}
 
 
-def _review_page_shell(title: str, body: str) -> str:
+def _review_page_shell(title: str, body: str, brand_name: str) -> str:
     return f'''<!doctype html>
 <html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{html.escape(title)}</title><style>
@@ -1229,7 +1362,7 @@ main.app-frame{{width:min(1240px,calc(100% - 40px));margin:0 auto;padding:28px 0
 .note{{align-self:stretch;border:1px dashed #4a4c58;border-radius:var(--cw-radius-sm);padding:10px 12px;color:#c9cad0;font-size:13px;background:#1a1b20;white-space:pre-wrap;overflow-wrap:anywhere}}.note-head{{color:var(--cw-subtle);font-size:11px;font-weight:650;margin-bottom:4px;white-space:normal}}.event{{align-self:center;color:var(--cw-muted);font-size:12px;text-align:center;padding:2px 10px;border-radius:999px;background:#1a1b20;border:1px solid var(--cw-border-soft)}}.gap{{align-self:center;color:var(--cw-subtle);font-size:11px}}
 .context-lists{{display:grid;gap:12px;padding:16px 18px;border-top:1px solid var(--cw-border-soft);background:var(--cw-sidebar)}}.context-lists h3{{margin:0 0 6px;font-size:12px;color:var(--cw-subtle);letter-spacing:.06em;text-transform:uppercase}}.context-lists ul{{margin:0;padding-left:18px;font-size:13px;color:var(--cw-muted)}}.context-lists li{{margin:2px 0;overflow-wrap:anywhere}}
 @media(max-width:880px){{.review-layout{{grid-template-columns:1fr}}.review-panel{{position:static}}.chat-thread{{min-height:380px}}.progress{{width:min(250px,42vw)}}}}@media(max-width:620px){{.topbar{{height:58px;padding:0 16px}}.brand-name,.secure-badge{{display:none}}main.app-frame{{width:min(100% - 24px,1240px);padding-top:18px}}.review-header{{align-items:flex-start;flex-direction:column;gap:14px}}.progress{{width:100%}}.conversation-summary{{grid-template-columns:1fr}}.summary-item+ .summary-item{{border-left:0;border-top:1px solid var(--cw-border-soft)}}.chat-thread{{padding:18px 12px;min-height:320px}}.message{{max-width:94%}}}}
-</style></head><body class="app-shell"><div class="topbar"><div class="brand"><div class="workspace-mark" aria-hidden="true"></div><span class="brand-name">Johanna</span><span class="brand-divider" aria-hidden="true"></span><span class="brand-section">Revisión diaria</span></div><span class="secure-badge">Revisión supervisada</span></div><main class="app-frame">{body}</main></body></html>'''
+</style></head><body class="app-shell"><div class="topbar"><div class="brand"><div class="workspace-mark" aria-hidden="true"></div><span class="brand-name">{html.escape(brand_name)}</span><span class="brand-divider" aria-hidden="true"></span><span class="brand-section">Revisión diaria</span></div><span class="secure-badge">Revisión supervisada</span></div><main class="app-frame">{body}</main></body></html>'''
 
 
 def _page_shell(title: str, body: str) -> str:
@@ -1552,6 +1685,7 @@ def _review_page(
     csrf_token: str,
     command_id: str,
     display_timezone: str = "UTC",
+    brand_name: str = DEFAULT_REVIEW_BRAND_NAME,
 ) -> str:
     item = page["item"]
     assert isinstance(item, dict)
@@ -1593,7 +1727,7 @@ def _review_page(
 <button class="primary save-correction" type="submit" name="decision" value="correct_with_feedback" disabled>Guardar corrección</button></div>
 <noscript><p class="label-note">Para registrar una corrección, habilitá JavaScript en este sitio.</p></noscript>
 </form></aside></div><script>{_REVIEW_INTERACTION_SCRIPT}</script>'''
-    return _review_page_shell("Revisión diaria", body)
+    return _review_page_shell("Revisión diaria", body, brand_name)
 
 
 def _complete_page(page: dict[str, object]) -> str:

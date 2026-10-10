@@ -1,0 +1,41 @@
+{
+  "_capture": {
+    "origen": "GET /api/v1/accounts/1/inboxes/9/agent_bot en el Chatwoot de produccion (4.13), desde infra_appointment-bridge (Johanna); el inbox 9 tiene vinculado el bot 1; shape documenta la forma completa sin valores",
+    "capturado": "2026-10-10T01:41:46Z",
+    "anonimizacion": "Solo lectura, con el token de control del bridge, adentro de su contenedor (captura_vinculo_agent_bot.py del OS). Se guarda una lista blanca de campos: nunca access_token, secret, outgoing_url, thumbnail ni bot_config."
+  },
+  "status": 200,
+  "body": {
+    "agent_bot": {
+      "id": 1,
+      "account_id": 1,
+      "name": "Appointment Setter",
+      "bot_type": "webhook",
+      "system_bot": false
+    }
+  },
+  "keys": [
+    "agent_bot"
+  ],
+  "shape": {
+    "agent_bot": {
+      "id": "int",
+      "name": "str",
+      "description": "str",
+      "thumbnail": "str",
+      "outgoing_url": "NoneType",
+      "bot_type": "str",
+      "bot_config": {},
+      "account_id": "int",
+      "access_token": {
+        "id": "int",
+        "owner_type": "str",
+        "owner_id": "int",
+        "token": "str",
+        "created_at": "str",
+        "updated_at": "str"
+      },
+      "system_bot": "bool"
+    }
+  }
+}
