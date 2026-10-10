@@ -222,6 +222,13 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # deterministica y las inferencias guardadas son del producto. En un
     # runtime portable solo lo usa el dispatcher en modo plantilla directa.
     "lead_first_name_greeting_enabled",
+    # Inferir el primer nombre tampoco depende del aliado: el modelo es el
+    # profile de HERMES_MODEL_NAME (o LEAD_FIRST_NAME_MODEL_NAME) por el API
+    # server de Hermes de la instancia, y las filas van a
+    # lead_first_name_inferences de su propia base. Corre despues de admitir un
+    # formulario nuevo de /webhooks/lead o del adaptador de GHL
+    # (_lead_admission_response), y la lee el saludo del dispatcher directo.
+    "lead_first_name_inference_enabled",
 })
 
 DEFAULT_SENSITIVE_SUBJECTS = (
@@ -2263,7 +2270,10 @@ def _validate_approved_template_direct(
     In a portable runtime the first-name greeting only reaches the direct
     dispatcher (Johanna's one-shots, its other consumer, are not portable), so
     without the direct mode the flag would be accepted and do nothing. It is
-    refused instead, the same way the dispatcher constructor refuses it.
+    refused instead, the same way the dispatcher constructor refuses it. The
+    first-name inference only runs after admitting a new form, from
+    /webhooks/lead or from the GHL adapter: without either entry it is refused
+    for the same reason.
     """
     if (
         portable_runtime
@@ -2273,6 +2283,18 @@ def _validate_approved_template_direct(
         raise ValueError(
             "LEAD_FIRST_NAME_GREETING_ENABLED in a portable runtime requires "
             "DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED"
+        )
+    if (
+        portable_runtime
+        and settings.lead_first_name_inference_enabled
+        and not (
+            settings.lead_precheckout_enabled
+            or settings.ghl_precheckout_adapter_enabled
+        )
+    ):
+        raise ValueError(
+            "LEAD_FIRST_NAME_INFERENCE_ENABLED in a portable runtime requires "
+            "LEAD_PRECHECKOUT_ENABLED or GHL_PRECHECKOUT_ADAPTER_ENABLED"
         )
     if settings.dispatcher_approved_template_direct_enabled:
         if settings.instance_manifest is None:

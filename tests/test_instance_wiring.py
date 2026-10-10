@@ -1116,7 +1116,10 @@ class _ShadowProcessor:
 
 
 def _first_contact_app(
-    settings: Settings, authority: _FirstContactAuthority | None = None
+    settings: Settings,
+    authority: _FirstContactAuthority | None = None,
+    *,
+    lead_first_name_client: object | None = None,
 ) -> object:
     # El dispatcher exige un ChatwootClient de verdad; ninguno de estos tests
     # llega a Chatwoot.
@@ -1132,6 +1135,7 @@ def _first_contact_app(
         ),
         shadow_processor=_ShadowProcessor(),  # type: ignore[arg-type]
         supabase_client=authority or _FirstContactAuthority(),  # type: ignore[arg-type]
+        lead_first_name_client=lead_first_name_client,  # type: ignore[arg-type]
     )
 
 

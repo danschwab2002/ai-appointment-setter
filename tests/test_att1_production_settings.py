@@ -127,7 +127,8 @@ def _base_env(instance: Path) -> dict[str, str]:
         "INSTANCE_MANIFEST_PATH": str(instance / "instancia.toml"),
         "COMMERCIAL_KNOWLEDGE_ENABLED": "true",
         "HERMES_MODEL_NAME": "att1-agente-comercial",
-        "HERMES_API_BASE_URL": "http://hermes:8644",
+        # El valor de produccion (despliegue/secretos/generar.py de la instancia).
+        "HERMES_API_BASE_URL": "http://hermes:8644/v1",
         "HERMES_API_KEY": "test-hermes-key",
         "SUPABASE_BASE_URL": "http://att1-gateway.test",
         "SUPABASE_SERVICE_ROLE_KEY": "test-service-role-key",
@@ -392,6 +393,72 @@ def test_each_flow_starts_with_its_production_set(
     if "carrito" in flows:
         assert template.first_touch_name_for(trigger_kind="cart_abandonment") == (
             CART_TEMPLATE
+        )
+
+
+def test_the_first_name_inference_starts_with_the_production_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # El constructor real corre (es el que valida la URL): el espia solo lo mira.
+    built: list[dict[str, object]] = []
+    real_client = app_module.FirstNameInferenceClient
+
+    def spy(**kwargs: object) -> object:
+        client = real_client(**kwargs)  # type: ignore[arg-type]
+        built.append(kwargs)
+        return client
+
+    monkeypatch.setattr(app_module, "FirstNameInferenceClient", spy)
+
+    settings, app = _start(
+        monkeypatch,
+        tmp_path,
+        *OUTBOUND_FLOWS,
+        extra={"LEAD_FIRST_NAME_INFERENCE_ENABLED": "true"},
+    )
+
+    assert app is not None
+    assert settings.lead_first_name_inference_enabled is True
+    # Sin LEAD_FIRST_NAME_MODEL_NAME, el modelo es el profile del agente de ATT1,
+    # por el API server de Hermes de la instancia, con el valor de produccion.
+    assert settings.lead_first_name_model_name == "att1-agente-comercial"
+    [kwargs] = built
+    assert kwargs["base_url"] == "http://hermes:8644/v1"
+    assert kwargs["model_name"] == "att1-agente-comercial"
+
+
+def test_the_first_name_inference_does_not_start_without_a_form_entry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Sin /webhooks/lead ni el adaptador de GHL nada la dispara: se rechaza, igual
+    # que el saludo sin el modo directo. Con el carrito solo, porque el primer
+    # contacto ya exige una de las dos entradas.
+    with pytest.raises(
+        ValueError,
+        match=(
+            "LEAD_FIRST_NAME_INFERENCE_ENABLED in a portable runtime requires "
+            "LEAD_PRECHECKOUT_ENABLED or GHL_PRECHECKOUT_ADAPTER_ENABLED"
+        ),
+    ):
+        _start(
+            monkeypatch,
+            tmp_path,
+            "carrito",
+            drop=("GHL_PRECHECKOUT_ADAPTER_ENABLED", "GHL_PRECHECKOUT_ADAPTER_TOKEN"),
+            extra={"LEAD_FIRST_NAME_INFERENCE_ENABLED": "true"},
+        )
+
+
+def test_the_first_name_inference_does_not_start_without_the_greeting(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    with pytest.raises(ValueError, match="lead_first_name_configuration_incomplete"):
+        _start(
+            monkeypatch,
+            tmp_path,
+            *OUTBOUND_FLOWS,
+            drop=("LEAD_FIRST_NAME_GREETING_ENABLED",),
+            extra={"LEAD_FIRST_NAME_INFERENCE_ENABLED": "true"},
         )
 
 

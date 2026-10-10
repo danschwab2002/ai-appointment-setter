@@ -240,10 +240,10 @@ LEGACY_ONLY_CAPABILITIES = {
     "johanna_abandonment_hotmart_auto_enabled",
     "johanna_payment_failure_hotmart_enabled",
     "johanna_payment_failure_outbound_enabled",
-    # La inferencia del primer nombre corre al admitir el formulario de Johanna.
-    # El saludo (lead_first_name_greeting_enabled) dejo de estar aca con A4: en
-    # un runtime portable lo usa el dispatcher en modo plantilla directa.
-    "lead_first_name_inference_enabled",
+    # La inferencia del primer nombre (lead_first_name_inference_enabled) dejo
+    # de estar aca en la 1.5.0: corre tambien despues de un formulario del
+    # adaptador de GHL de una instancia, con el profile y la base de la
+    # instancia. El saludo habia salido antes, con A4.
     # El seguimiento con cupon reserva el link con el catalogo de ofertas de
     # Johanna (20260928000400): en un runtime portable tiene que frenar.
     "conversation_followup_enabled",
