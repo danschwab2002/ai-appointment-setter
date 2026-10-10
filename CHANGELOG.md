@@ -10,9 +10,9 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 ## [1.5.0] - sin publicar
 
-Suma dos cosas, apagadas por defecto: la inferencia del primer nombre y el seguimiento con cupón del 10 % corren también en una instancia con manifiesto. Y ajusta la validación del nombre inferido para descartar las formas medidas que saludan peor que la regla, también en Johanna.
+Suma dos cosas, apagadas por defecto: la inferencia del primer nombre y el seguimiento con cupón del 10 % corren también en una instancia con manifiesto. Y ajusta la validación del nombre inferido para descartar las formas medidas que saludan peor que la regla, también en Johanna. Y que la revisión diaria corra en una instancia autohospedada como ATT1, con tres excepciones que se declaran por variable y que `/ready` muestra. Johanna no cambia.
 
-Trae una migración, que solo agrega una función: la reserva del seguimiento con cupón para el runtime con manifiesto. Suma dos variables del seguimiento. Ningún campo obligatorio nuevo en el manifiesto.
+Trae una migración, que solo agrega una función: la reserva del seguimiento con cupón para el runtime con manifiesto. Suma dos variables del seguimiento y seis del servicio de la revisión diaria, todas opcionales. Ningún campo obligatorio nuevo en el manifiesto.
 
 ### Agregado
 
@@ -44,6 +44,14 @@ Trae una migración, que solo agrega una función: la reserva del seguimiento co
   - `conversation_followup_send_hours` (`09-21`).
 
   El payload de Johanna no cambia.
+- **La revisión diaria corre en una instancia autohospedada** ([ADR-0024](docs/decisions/0024-la-revision-diaria-en-una-instancia-autohospedada.md), [contrato](docs/contracts/daily-feedback-production-v1.md)). Hasta la 1.4.0, `setter-daily-feedback` no arrancaba sin la base por https, sin la evidencia de cifrado y sin el AgentBot vinculado al inbox, y ATT1 no cumple ninguna de las tres. Ahora son tres excepciones explícitas, cada una con su variable y su control compensatorio. El 200 de `/ready` las lista en `"exceptions"`, solo si hay alguna y siempre en este orden:
+  - `authority_internal_http` (`DAILY_FEEDBACK_SUPABASE_INTERNAL_HTTP=true`): la base por http, solo hacia un servicio del stack. `SUPABASE_BASE_URL` tiene que llevar un host de una sola etiqueta, con puerto, sin credenciales ni ruta; una IP, un host con punto o un host sin puerto dan `invalid_supabase_internal_origin`.
+  - `storage_unencrypted_risk_accepted` (`DAILY_FEEDBACK_STORAGE_ENCRYPTION_VERIFIED=false` más `DAILY_FEEDBACK_STORAGE_RISK_ACCEPTANCE_REF`, el permalink https de la aceptación escrita del riesgo): el disco sin cifrar. Nunca se declara cifrado lo que no lo está, y las dos referencias a la vez dan `ambiguous_storage_protection`.
+  - `chatwoot_agent_bot_unlinked` (`DAILY_FEEDBACK_CHATWOOT_AGENT_BOT_BINDING=unlinked`): el arranque exige que el inbox no tenga bot (si tiene, `chatwoot_agent_bot_unexpectedly_linked`) y que el bot configurado sea de la cuenta. Es un chequeo del arranque, no un control continuo.
+- **Tres ajustes de la revisión, sin excepción:**
+  - `DAILY_FEEDBACK_BRAND_NAME`: la marca de la página de revisión, de 1 a 60 caracteres imprimibles; por defecto «Johanna».
+  - `DAILY_FEEDBACK_MAX_CONVERSATION_PAGES`: el tope de páginas del listado de Chatwoot, de 1 a 400; por defecto 20.
+  - `DAILY_FEEDBACK_COLLECTION_LEASE_SECONDS`: la lease de la recolección, de 30 a 900 segundos; por defecto 120. Es el límite real de un lote grande: el listado, los mensajes y el contexto tienen que entrar en ella, o el lote no se confirma (`stale_collection_lease`) y la recolección se reintenta.
 
 ### Arreglado
 
@@ -54,6 +62,7 @@ Trae una migración, que solo agrega una función: la reserva del seguimiento co
   - un compuesto cortado: termina con una partícula («Juan de»), o empieza con una sin que el nombre empiece así («de Dios»).
 
   Las partículas cuentan en el tope de tres palabras: «María de los Ángeles» queda `uncertain`, hasta medir esos compuestos con el modelo. La validación no garantiza el saludo correcto: un apellido suelto, por ejemplo, pasa si el modelo lo devuelve.
+- **Dos actividades de Chatwoot salían como «Actividad» en la página de revisión:** «Conversation unassigned by X» y «Unassigned from <equipo> by X», las dos capturadas en el inbox de ATT1 el 2026-10-06. Ahora salen como «Sin asignar», con quién lo hizo. «Unassigned by X» sigue como antes.
 
 ### Pruebas
 
@@ -88,6 +97,14 @@ Correr la migración `20261010000100`. Solo agrega una función, que nadie llama
 4. Para abrirlo a todo el inbox: sacar `CONVERSATION_FOLLOWUP_ONLY_PHONE` y el `CONVERSATION_FOLLOWUP_MIN_AGE_SECONDS` de prueba si se usó, y redesplegar. Si queda el de prueba sin el teléfono, el bridge no arranca. Abierto, `/ready` lo confirma por presencia: `conversation_followup_audience` en `inbox` y `conversation_followup_min_age_seconds` en `86400`.
 
 Para volver atrás alcanza con sacar `CONVERSATION_FOLLOWUP_ENABLED` y redesplegar. La migración queda, porque solo agrega una función, y el manifiesto no tiene claves nuevas. Para volver a una imagen anterior a la 1.5.0 también hay que sacar antes el flag: con el flag prendido, esa imagen no arranca. Pausar el piloto o apagar `META_FINAL_EFFECT_ENABLED` no frena el seguimiento.
+
+**La revisión diaria.** Nada: cada variable nueva es opcional, vacía cuenta como ausente y su valor por defecto es el comportamiento de la 1.4.0. Johanna no carga ninguna, y su `/ready` devuelve el mismo JSON. `deploy/daily-feedback-compose.yaml` las pasa con `${VAR:-}` y `deploy/daily-feedback.env.example` las trae comentadas, con la excepción que declara cada una. Para una instancia autohospedada:
+
+- `deploy/daily-feedback-compose.yaml` sigue exigiendo la evidencia de cifrado, así que no sirve con `storage_unencrypted_risk_accepted`: con la evidencia y la aceptación a la vez, el servicio no arranca. Esa instancia define su propio servicio;
+- el valor de ejemplo de `DAILY_FEEDBACK_STORAGE_RISK_ACCEPTANCE_REF` en el env.example no es una URL: copiado sin reemplazar, el servicio no arranca (`invalid_storage_risk_acceptance_ref`). Con `VERIFIED=false` y sin la aceptación, el error es `storage_encryption_not_verified`, como hasta la 1.4.0: lo que falta es la aceptación;
+- sin `DAILY_FEEDBACK_CHATWOOT_AGENT_BOT_BINDING`, el modo es el de siempre, y un inbox sin bot no arranca, con `chatwoot_scope_verification_failed`;
+- con alguna excepción, una imagen anterior a la 1.5.0 no arranca. Volver atrás es sacar el servicio, después de que se purgue el último lote;
+- la prueba con el run-now son dos llamadas: la primera confirma el lote (`collected: true`, `notified: false`) y la segunda manda la tarjeta (`collected: false`, `notified: true`). No es nuevo, también pasa en Johanna: ahora está escrito en el contrato.
 
 ### Lo que queda fuera
 
