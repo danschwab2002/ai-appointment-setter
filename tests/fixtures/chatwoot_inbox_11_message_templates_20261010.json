@@ -1,0 +1,206 @@
+{
+  "_capture": {
+    "source": "GET /api/v1/accounts/<cuenta>/inboxes/11 (Chatwoot 4.13, produccion)",
+    "captured_at": "2026-10-10T00:34:31Z",
+    "kept_fields": [
+      "id",
+      "channel_type",
+      "message_templates"
+    ],
+    "redactions": [
+      "cupon configurado y todo valor de offDiscount -> CUPON_REDACTADO"
+    ]
+  },
+  "id": 11,
+  "channel_type": "Channel::Whatsapp",
+  "message_templates": [
+    {
+      "id": "1761004688444999",
+      "name": "att1_seguimiento_descuento_01",
+      "status": "APPROVED",
+      "category": "MARKETING",
+      "language": "es_MX",
+      "components": [
+        {
+          "text": "Hola, {{1}}. Soy el asistente virtual del equipo de Dra. Nina.\n\nQuería retomar nuestra conversación sobre {{2}}.\n\nPara ayudarte a dar ese paso, te reservamos un *10 % de descuento*. Toca el botón de abajo y tu descuento queda activado al instante.\n\nSi todavía tienes alguna duda, responde a este mensaje y te ayudamos.",
+          "type": "BODY",
+          "example": {
+            "body_text": [
+              [
+                "María",
+                "Alimenta tu Tiroides"
+              ]
+            ]
+          }
+        },
+        {
+          "type": "BUTTONS",
+          "buttons": [
+            {
+              "url": "https://pay.hotmart.com/{{1}}",
+              "text": "Usar mi descuento",
+              "type": "URL",
+              "example": [
+                "https://pay.hotmart.com/D98014973Y?off=gopi6lh7&checkoutMode=10&offDiscount=CUPON_REDACTADO"
+              ]
+            }
+          ]
+        }
+      ],
+      "sub_category": "CUSTOM",
+      "parameter_format": "POSITIONAL",
+      "disable_ios_autofill": false,
+      "is_primary_device_delivery_only": false
+    },
+    {
+      "id": "2193118654604596",
+      "name": "att1_reactivacion_01",
+      "status": "APPROVED",
+      "category": "MARKETING",
+      "language": "es_MX",
+      "components": [
+        {
+          "text": "Hola, {{1}}. Soy el asistente virtual del equipo de Dra. Nina.\n\nQuedó una conversación pendiente entre nosotros y quiero retomarla. Si todavía necesitas ayuda, escríbeme por aquí y dime qué necesitas para continuar.",
+          "type": "BODY",
+          "example": {
+            "body_text": [
+              [
+                "María"
+              ]
+            ]
+          }
+        }
+      ],
+      "sub_category": "CUSTOM",
+      "parameter_format": "POSITIONAL",
+      "disable_ios_autofill": false,
+      "is_primary_device_delivery_only": false
+    },
+    {
+      "id": "2572970813214416",
+      "name": "att1_carrito_abandonado_01",
+      "status": "APPROVED",
+      "category": "MARKETING",
+      "language": "es_MX",
+      "components": [
+        {
+          "text": "Hola, {{1}}. Soy el asistente virtual del equipo de Dra. Nina.\n\nTu proceso para acceder a {{2}} quedó incompleto. Si tuviste alguna duda o dificultad, puedo ayudarte. También puedo enviarte el enlace para que lo retomes cuando quieras.",
+          "type": "BODY",
+          "example": {
+            "body_text": [
+              [
+                "María",
+                "Alimenta tu Tiroides"
+              ]
+            ]
+          }
+        },
+        {
+          "type": "BUTTONS",
+          "buttons": [
+            {
+              "text": "Envíame el enlace",
+              "type": "QUICK_REPLY"
+            },
+            {
+              "text": "Necesito ayuda",
+              "type": "QUICK_REPLY"
+            },
+            {
+              "text": "No más mensajes",
+              "type": "QUICK_REPLY"
+            }
+          ]
+        }
+      ],
+      "sub_category": "CUSTOM",
+      "parameter_format": "POSITIONAL",
+      "disable_ios_autofill": false,
+      "is_primary_device_delivery_only": false
+    },
+    {
+      "id": "1697917048575160",
+      "name": "att1_compra_fallida_01",
+      "status": "APPROVED",
+      "category": "MARKETING",
+      "language": "es_MX",
+      "components": [
+        {
+          "text": "Hola, {{1}}. Soy el asistente virtual del equipo de Dra. Nina.\n\nTu compra de {{2}} no pudo completarse. Si quieres intentarlo nuevamente, puedo enviarte el enlace o ayudarte con los próximos pasos.\n\nPor seguridad, no compartas datos de tu tarjeta por WhatsApp.",
+          "type": "BODY",
+          "example": {
+            "body_text": [
+              [
+                "María",
+                "Alimenta tu Tiroides"
+              ]
+            ]
+          }
+        },
+        {
+          "type": "BUTTONS",
+          "buttons": [
+            {
+              "text": "Envíame el enlace",
+              "type": "QUICK_REPLY"
+            },
+            {
+              "text": "Necesito ayuda",
+              "type": "QUICK_REPLY"
+            },
+            {
+              "text": "No más mensajes",
+              "type": "QUICK_REPLY"
+            }
+          ]
+        }
+      ],
+      "sub_category": "CUSTOM",
+      "parameter_format": "POSITIONAL",
+      "disable_ios_autofill": false,
+      "is_primary_device_delivery_only": false
+    },
+    {
+      "id": "1160485406304049",
+      "name": "att1_interes_precheckout_01",
+      "status": "APPROVED",
+      "category": "MARKETING",
+      "language": "es_MX",
+      "components": [
+        {
+          "text": "Hola, {{1}}. Soy del equipo de Dra. Nina.\n\nCompletaste el formulario para recibir información sobre {{2}}. Si tienes alguna duda, puedo ayudarte. También puedo enviarte el enlace para que continúes cuando quieras.",
+          "type": "BODY",
+          "example": {
+            "body_text": [
+              [
+                "María",
+                "Alimenta Tu Tiroides"
+              ]
+            ]
+          }
+        },
+        {
+          "type": "BUTTONS",
+          "buttons": [
+            {
+              "text": "Envíame el enlace",
+              "type": "QUICK_REPLY"
+            },
+            {
+              "text": "Necesito ayuda",
+              "type": "QUICK_REPLY"
+            },
+            {
+              "text": "No más mensajes",
+              "type": "QUICK_REPLY"
+            }
+          ]
+        }
+      ],
+      "sub_category": "CUSTOM",
+      "parameter_format": "POSITIONAL",
+      "disable_ios_autofill": false,
+      "is_primary_device_delivery_only": false
+    }
+  ]
+}

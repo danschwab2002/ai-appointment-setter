@@ -206,7 +206,7 @@ def test_the_inventory_cascade_knows_the_three_new_entrypoints() -> None:
     ):
         assert nombre in acl
         assert nombre in validador
-    assert "expected_count !== 119" in validador
+    assert "expected_count !== 120" in validador
     assert "agent_prompt_provenance_per_turn" in huella
     assert "'20260928000100'" in huella
 

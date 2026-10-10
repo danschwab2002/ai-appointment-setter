@@ -31,6 +31,7 @@ expected_service_role(signature) as (
         ('public.record_lead_first_name_inference_v1(text, text, text, text, text)'),
         ('public.get_lead_first_name_inference_v1(text)'),
         ('public.claim_conversation_followup_v1(bigint, bigint, bigint, text, text, text, text, text, text, text, bigint, bigint, integer, text, timestamp with time zone)'),
+        ('public.claim_portable_conversation_followup_v1(bigint, bigint, bigint, text, text, text, text, text, text, text, bigint, bigint, integer, text, timestamp with time zone)'),
         ('public.settle_conversation_followup_v1(text, text, bigint, text, timestamp with time zone)'),
         ('public.settle_conversation_reactivation(text, text, bigint, text, timestamp with time zone)'),
         ('public.apply_chatwoot_inbound_opt_out(bigint, bigint, bigint, bigint, text, timestamp with time zone, text)'),

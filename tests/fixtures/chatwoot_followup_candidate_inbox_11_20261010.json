@@ -1,0 +1,508 @@
+{
+  "_capture": {
+    "origen": "API de Chatwoot de produccion, cuenta 2, inbox 11 (ATT1), 2026-10-10T01:21:31Z, desde el contenedor del bridge de ATT1 con su token de control: GET show + messages de la conversacion 21, y GET /conversations?status=resolved|open&inbox_id=11&page=1&sort_by=last_activity_at_desc",
+    "anonimizacion": "nombre, telefono, mail, identifier y source_id del contacto reemplazados (sinteticos con forma real); atributos del contacto vaciados; contenido de los mensajes del lead redactado; fbclid y sck del anuncio redactados en los links (el sck como SCK_ANUNCIO_REDACTADO, igual que en la captura de Johanna, y el marcador ~hermes~v1~<ULID> del recuperador como estaba; el sck se completo en la revision del 2026-10-10, la captura lo habia dejado); nombre del lead borrado de todo texto; wamid reemplazados; los items de las paginas reducidos a los campos que usa el barrido",
+    "caso": "21: conversacion adoptada de ATT1. La plantilla del carrito (att1_carrito_abandonado_01) sale el 2026-10-09 a las 16:08Z, la persona contesta a las 16:15Z, el agente le manda el link a las 16:30Z (oferta 2uafw5bg, lead_intent) y no vuelve a escribir. Es la forma de una candidata del seguimiento con cupon: desde el 2026-10-10 16:15Z, 24 h despues del ultimo mensaje de la persona. La adopcion esta en conversation_events (inbound_adopted_template_conversation) de la base de ATT1.",
+    "forma": "la lista viene ordenada por last_activity_at descendente (tambien con sort_by explicito); resolver actualiza last_activity_at; meta trae mine_count, assigned_count, unassigned_count y all_count, sin current_page; 25 items por pagina",
+    "telefono": "sintetico con la forma del destino de Mexico (521...), la que guarda Chatwoot; la identidad del caso puede estar en 52... (canonical_whatsapp_phone)"
+  },
+  "conversation": {
+    "conversation": {
+      "meta": {
+        "sender": {
+          "additional_attributes": {},
+          "availability_status": "offline",
+          "email": "lead21@example.com",
+          "id": 249,
+          "name": "lucia herrera",
+          "phone_number": "+5215500000021",
+          "blocked": false,
+          "identifier": null,
+          "thumbnail": "",
+          "custom_attributes": {},
+          "last_activity_at": 1791562556,
+          "created_at": 1791562137
+        },
+        "channel": "Channel::Whatsapp",
+        "hmac_verified": false
+      },
+      "id": 21,
+      "messages": [
+        {
+          "id": 2766,
+          "content": "Con gusto, NOMBRE. Aquí te envío el enlace de Alimenta Tu Tiroides (USD 47) para que retomes tu inscripción:\nhttps://pay.hotmart.com/D98014973Y?off=2uafw5bg&checkoutMode=10&src=hermes&sck=SCK_ANUNCIO_REDACTADO~hermes~v1~01M4GR1RSK8DJY4XVHMCY30KKF&fbclid=REDACTED",
+          "account_id": 2,
+          "inbox_id": 11,
+          "conversation_id": 21,
+          "message_type": 1,
+          "created_at": 1791563458,
+          "updated_at": "2026-10-09T16:31:03.883Z",
+          "private": false,
+          "status": "delivered",
+          "source_id": "REDACTED-source_id",
+          "content_type": "text",
+          "content_attributes": {
+            "appointment_setter_reply_hash": "3b61b3174032c3d5ba6bda19c4bfdbb8d6b3f3365257e1a67363afed3b8a073e"
+          },
+          "sender_type": "AgentBot",
+          "sender_id": 2,
+          "external_source_ids": {},
+          "additional_attributes": {},
+          "processed_message_content": "Con gusto, NOMBRE. Aquí te envío el enlace de Alimenta Tu Tiroides (USD 47) para que retomes tu inscripción:\nhttps://pay.hotmart.com/D98014973Y?off=2uafw5bg&checkoutMode=10&src=hermes&sck=SCK_ANUNCIO_REDACTADO~hermes~v1~01M4GR1RSK8DJY4XVHMCY30KKF&fbclid=REDACTED",
+          "sentiment": {},
+          "conversation": {
+            "assignee_id": null,
+            "unread_count": 0,
+            "last_activity_at": 1791563458,
+            "contact_inbox": {
+              "source_id": "REDACTED-source_id"
+            }
+          },
+          "sender": {
+            "id": 2,
+            "name": "att1-setter",
+            "avatar_url": "",
+            "type": "agent_bot"
+          }
+        }
+      ],
+      "account_id": 2,
+      "uuid": "8ae93b5d-7849-4455-be51-2bbbe8659aa0",
+      "additional_attributes": {},
+      "agent_last_seen_at": 1791592530,
+      "assignee_last_seen_at": 0,
+      "can_reply": true,
+      "contact_last_seen_at": 0,
+      "custom_attributes": {},
+      "inbox_id": 11,
+      "labels": [],
+      "muted": false,
+      "snoozed_until": null,
+      "status": "open",
+      "created_at": 1791562138,
+      "updated_at": 1791563458.812543,
+      "timestamp": 1791563458,
+      "first_reply_created_at": 0,
+      "unread_count": 0,
+      "last_non_activity_message": {
+        "id": 2766,
+        "content": "Con gusto, NOMBRE. Aquí te envío el enlace de Alimenta Tu Tiroides (USD 47) para que retomes tu inscripción:\nhttps://pay.hotmart.com/D98014973Y?off=2uafw5bg&checkoutMode=10&src=hermes&sck=SCK_ANUNCIO_REDACTADO~hermes~v1~01M4GR1RSK8DJY4XVHMCY30KKF&fbclid=REDACTED",
+        "account_id": 2,
+        "inbox_id": 11,
+        "conversation_id": 21,
+        "message_type": 1,
+        "created_at": 1791563458,
+        "updated_at": "2026-10-09T16:31:03.883Z",
+        "private": false,
+        "status": "delivered",
+        "source_id": "REDACTED-source_id",
+        "content_type": "text",
+        "content_attributes": {
+          "appointment_setter_reply_hash": "3b61b3174032c3d5ba6bda19c4bfdbb8d6b3f3365257e1a67363afed3b8a073e"
+        },
+        "sender_type": "AgentBot",
+        "sender_id": 2,
+        "external_source_ids": {},
+        "additional_attributes": {},
+        "processed_message_content": "Con gusto, NOMBRE. Aquí te envío el enlace de Alimenta Tu Tiroides (USD 47) para que retomes tu inscripción:\nhttps://pay.hotmart.com/D98014973Y?off=2uafw5bg&checkoutMode=10&src=hermes&sck=SCK_ANUNCIO_REDACTADO~hermes~v1~01M4GR1RSK8DJY4XVHMCY30KKF&fbclid=REDACTED",
+        "sentiment": {},
+        "conversation": {
+          "assignee_id": null,
+          "unread_count": 0,
+          "last_activity_at": 1791563458,
+          "contact_inbox": {
+            "source_id": "REDACTED-source_id"
+          }
+        },
+        "sender": {
+          "id": 2,
+          "name": "att1-setter",
+          "avatar_url": "",
+          "type": "agent_bot"
+        }
+      },
+      "last_activity_at": 1791563458,
+      "priority": null,
+      "waiting_since": 0,
+      "sla_policy_id": null
+    },
+    "messages": [
+      {
+        "id": 2763,
+        "content": "Hola, NOMBRE. Soy el asistente virtual del equipo de Dra. Nina.\n\nTu proceso para acceder a Alimenta tu Tiroides quedó incompleto. Si tuviste alguna duda o dificultad, puedo ayudarte. También puedo enviarte el enlace para que lo retomes cuando quieras.",
+        "inbox_id": 11,
+        "conversation_id": 21,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "read",
+        "content_attributes": {
+          "recovery_first_touch_hash": "a21561f46dddfc0976b527c72f2f3673d777e4d6a0e93049bc78f2a21b9d220d"
+        },
+        "created_at": 1791562138,
+        "private": false,
+        "source_id": "REDACTED-source_id",
+        "sender": {
+          "id": 2,
+          "name": "att1-setter",
+          "avatar_url": "",
+          "type": "agent_bot"
+        }
+      },
+      {
+        "id": 2765,
+        "content": "[mensaje del lead redactado]",
+        "inbox_id": 11,
+        "conversation_id": 21,
+        "message_type": 0,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {
+          "in_reply_to_external_id": "wamid.REDACTED",
+          "in_reply_to": 2763
+        },
+        "created_at": 1791562556,
+        "private": false,
+        "source_id": "REDACTED-source_id",
+        "sender": {
+          "additional_attributes": {},
+          "custom_attributes": {},
+          "email": "lead21@example.com",
+          "id": 249,
+          "identifier": null,
+          "name": "lucia herrera",
+          "phone_number": "+5215500000021",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
+      },
+      {
+        "id": 2766,
+        "content": "Con gusto, NOMBRE. Aquí te envío el enlace de Alimenta Tu Tiroides (USD 47) para que retomes tu inscripción:\nhttps://pay.hotmart.com/D98014973Y?off=2uafw5bg&checkoutMode=10&src=hermes&sck=SCK_ANUNCIO_REDACTADO~hermes~v1~01M4GR1RSK8DJY4XVHMCY30KKF&fbclid=REDACTED",
+        "inbox_id": 11,
+        "conversation_id": 21,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "delivered",
+        "content_attributes": {
+          "appointment_setter_reply_hash": "3b61b3174032c3d5ba6bda19c4bfdbb8d6b3f3365257e1a67363afed3b8a073e"
+        },
+        "created_at": 1791563458,
+        "private": false,
+        "source_id": "REDACTED-source_id",
+        "sender": {
+          "id": 2,
+          "name": "att1-setter",
+          "avatar_url": "",
+          "type": "agent_bot"
+        }
+      }
+    ]
+  },
+  "pages": {
+    "resolved": {
+      "meta": {
+        "mine_count": 0,
+        "assigned_count": 0,
+        "unassigned_count": 0,
+        "all_count": 0
+      },
+      "payload": []
+    },
+    "open": {
+      "meta": {
+        "mine_count": 1,
+        "assigned_count": 1,
+        "unassigned_count": 31,
+        "all_count": 32
+      },
+      "payload": [
+        {
+          "id": 32,
+          "inbox_id": 11,
+          "status": "open",
+          "last_activity_at": 1791592400,
+          "timestamp": 1791592400,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 31,
+          "inbox_id": 11,
+          "status": "open",
+          "last_activity_at": 1791591328,
+          "timestamp": 1791591328,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 30,
+          "inbox_id": 11,
+          "status": "open",
+          "last_activity_at": 1791588393,
+          "timestamp": 1791588393,
+          "labels": [
+            "automation_opted_out",
+            "automation_paused"
+          ],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": true
+        },
+        {
+          "id": 29,
+          "inbox_id": 11,
+          "status": "open",
+          "last_activity_at": 1791582843,
+          "timestamp": 1791582843,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 28,
+          "inbox_id": 11,
+          "status": "open",
+          "last_activity_at": 1791576993,
+          "timestamp": 1791576993,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 27,
+          "inbox_id": 11,
+          "status": "open",
+          "last_activity_at": 1791576319,
+          "timestamp": 1791576319,
+          "labels": [
+            "automation_paused"
+          ],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": true
+        },
+        {
+          "id": 17,
+          "inbox_id": 11,
+          "status": "open",
+          "last_activity_at": 1791575373,
+          "timestamp": 1791575373,
+          "labels": [
+            "automation_paused"
+          ],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": true
+        },
+        {
+          "id": 26,
+          "inbox_id": 11,
+          "status": "open",
+          "last_activity_at": 1791570462,
+          "timestamp": 1791570462,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 25,
+          "inbox_id": 11,
+          "status": "open",
+          "last_activity_at": 1791568904,
+          "timestamp": 1791568904,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 24,
+          "inbox_id": 11,
+          "status": "open",
+          "last_activity_at": 1791566088,
+          "timestamp": 1791566088,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 23,
+          "inbox_id": 11,
+          "status": "open",
+          "last_activity_at": 1791563980,
+          "timestamp": 1791563980,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 21,
+          "inbox_id": 11,
+          "status": "open",
+          "last_activity_at": 1791563458,
+          "timestamp": 1791563458,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": true
+        },
+        {
+          "id": 22,
+          "inbox_id": 11,
+          "status": "open",
+          "last_activity_at": 1791562499,
+          "timestamp": 1791562499,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 20,
+          "inbox_id": 11,
+          "status": "open",
+          "last_activity_at": 1791562131,
+          "timestamp": 1791562131,
+          "labels": [
+            "automation_opted_out",
+            "automation_paused"
+          ],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": true
+        },
+        {
+          "id": 18,
+          "inbox_id": 11,
+          "status": "open",
+          "last_activity_at": 1791561743,
+          "timestamp": 1791561743,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": true
+        },
+        {
+          "id": 10,
+          "inbox_id": 11,
+          "status": "open",
+          "last_activity_at": 1791560680,
+          "timestamp": 1791560680,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": true
+        },
+        {
+          "id": 11,
+          "inbox_id": 11,
+          "status": "open",
+          "last_activity_at": 1791558280,
+          "timestamp": 1791558280,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": true
+        },
+        {
+          "id": 19,
+          "inbox_id": 11,
+          "status": "open",
+          "last_activity_at": 1791558036,
+          "timestamp": 1791558036,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 16,
+          "inbox_id": 11,
+          "status": "open",
+          "last_activity_at": 1791558028,
+          "timestamp": 1791558028,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 15,
+          "inbox_id": 11,
+          "status": "open",
+          "last_activity_at": 1791558025,
+          "timestamp": 1791558025,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 14,
+          "inbox_id": 11,
+          "status": "open",
+          "last_activity_at": 1791558022,
+          "timestamp": 1791558022,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 13,
+          "inbox_id": 11,
+          "status": "open",
+          "last_activity_at": 1791558018,
+          "timestamp": 1791558018,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 12,
+          "inbox_id": 11,
+          "status": "open",
+          "last_activity_at": 1791558013,
+          "timestamp": 1791558013,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 9,
+          "inbox_id": 11,
+          "status": "open",
+          "last_activity_at": 1791513909,
+          "timestamp": 1791513909,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        },
+        {
+          "id": 8,
+          "inbox_id": 11,
+          "status": "open",
+          "last_activity_at": 1791513257,
+          "timestamp": 1791513257,
+          "labels": [],
+          "muted": false,
+          "snoozed_until": null,
+          "can_reply": false
+        }
+      ]
+    }
+  }
+}

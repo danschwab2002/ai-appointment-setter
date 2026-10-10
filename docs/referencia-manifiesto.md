@@ -91,7 +91,7 @@ carrito = { nombre = "att1_carrito_abandonado_01", idioma = "es_MX", parametros 
 - La lista tiene que coincidir con el cuerpo aprobado en Meta: si la plantilla tiene una sola variable y se le mandan dos, Meta puede rechazar el envío. El bridge no lo verifica contra el catálogo al arrancar. Con `DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED=true` el dispatcher lo verifica en cada envío: lee el catálogo del inbox y, si los marcadores del cuerpo no son exactamente los declarados, no manda y deja `approved_template_mismatch` ([approved-template-direct-dispatch-v1.md](contracts/approved-template-direct-dispatch-v1.md)).
 - Si una variable declarada llega vacía (un carrito sin nombre), el envío se bloquea con `template_parameters_missing`. Una variable que la plantilla no declara no se exige.
 - El bridge usa las de `carrito`, las de `pago_fallido` y, con `PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED`, las de `precheckout` (el primer contacto del formulario).
-- `reactivacion` y `descuento` arman sus variables en su propio código: `parametros` ahí no carga.
+- `reactivacion` y `descuento` arman sus variables en su propio código: `parametros` ahí no carga. La de `descuento` es la plantilla del seguimiento con cupón (1.5.0): `{{1}}` es el nombre, `{{2}}` el producto y, si el texto también lleva el código, `{{3}}` el cupón. El cupón va siempre en el botón de URL, que es uno solo y apunta a `https://pay.hotmart.com/{{1}}`.
 
 Con `carrito` o `pago_fallido` en `true` y la salida por WABA, el bridge no arranca si las variables del servicio no nombran la misma plantilla que el manifiesto: `WABA_FIRST_TOUCH_TEMPLATE_NAME` tiene que ser `carrito.nombre`, `WABA_PAYMENT_FAILURE_TEMPLATE_NAME` tiene que ser `pago_fallido.nombre` (si está definida) y `WABA_TEMPLATE_LANGUAGE` tiene que ser el `idioma` de las dos. Por eso `carrito` y `pago_fallido` prendidos a la vez tienen que estar aprobadas en el mismo idioma. Con el flujo en `false`, sus `parametros` no se usan.
 
@@ -118,6 +118,14 @@ Los seis flujos, cada uno `true` o `false`: `inbound`, `precheckout`, `carrito`,
 | `descuento` | `entrante` | `descuento` |
 
 El flujo declarado es el techo: el mensaje sale recién cuando además está prendido el flag del servicio ([instance-runtime-v2.md](contracts/instance-runtime-v2.md)). Para `precheckout` ese flag es `PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED`: el envío del formulario con consentimiento planifica un único primer contacto, demorado, con la plantilla `precheckout`. Con `[adaptadores.ghl]` en el manifiesto, `precheckout` y `pago_fallido` en `true` exigen además la aceptación escrita del riesgo del adaptador (abajo): sin ella el bridge no arranca y `validate` da error.
+
+**`descuento` es el seguimiento con cupón** (desde la 1.5.0, [ADR-0023](decisions/0023-el-cupon-con-manifiesto-reusa-descuento.md)). A quien contestó una plantilla nuestra, recibió la respuesta del agente y se quedó callado entre 24 y 72 h sin comprar, le manda una vez la plantilla de `[plantillas].descuento`, con el cupón en el botón. Su flag es `CONVERSATION_FOLLOWUP_ENABLED`, y con él el bridge exige:
+
+- que `CONVERSATION_FOLLOWUP_TEMPLATE_NAME` y `CONVERSATION_FOLLOWUP_TEMPLATE_LANGUAGE` nombren la plantilla de `[plantillas].descuento`, y que `CONVERSATION_FOLLOWUP_PRODUCT_NAME` sea `hotmart.product_name`;
+- un horario en `CONVERSATION_FOLLOWUP_SEND_HOURS`, `HH-HH` en la hora de `instancia.zona_horaria` (`09-21`). `00-24` manda a cualquier hora, y hay que escribirlo;
+- 24 h de silencio o más en `CONVERSATION_FOLLOWUP_MIN_AGE_SECONDS`, salvo en la prueba con `CONVERSATION_FOLLOWUP_ONLY_PHONE`.
+
+El mismo flujo es el techo del descuento posterior a la respuesta (`CHATWOOT_POST_INBOUND_DISCOUNT_PLANNING_ENABLED`), que nació con el binding v1: no corre junto al agente de Corte B y no manda mensajes, porque deja la acción diferida. `validate` informa el flujo, no cuál de los dos flags lo usa. Contrato: [conversation-followup-discount-v1.md](contracts/conversation-followup-discount-v1.md), sección *En un runtime con manifiesto*.
 
 ## `[guardas]`
 

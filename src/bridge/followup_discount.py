@@ -9,8 +9,9 @@ quien no interactua degradan la cuenta de Meta.
 Cuatro piezas, separadas a proposito, con la misma forma que la reactivacion:
 
 * ``parse_followup_template`` valida la plantilla del catalogo que publica
-  Chatwoot: aprobada, tres marcadores y exactamente un boton de URL dinamica
-  sobre ``https://pay.hotmart.com/``.
+  Chatwoot: aprobada, con dos o tres marcadores (nombre y producto, y el cupon
+  si tambien va en el texto) y exactamente un boton de URL dinamica sobre
+  ``https://pay.hotmart.com/``, que es el que siempre lleva el cupon.
 * ``followup_button_suffix`` arma la parte variable del boton desde el link que
   emitio la base, sumandole ``offDiscount``. El link ya trae la oferta del lead,
   ``src=hermes``, el ``sck`` con la marca del recuperador y el ``fbclid``.
@@ -21,7 +22,9 @@ Cuatro piezas, separadas a proposito, con la misma forma que la reactivacion:
   conversaciones abiertas y las resueltas con actividad dentro de la ventana,
   reserva en Supabase (donde viven las barreras de compra, derivacion y
   opt-out), autoriza el link, manda la plantilla y cierra las dos filas con lo
-  que Chatwoot responda.
+  que Chatwoot responda. Con manifiesto (ATT1) suma la identidad resuelta, la
+  reserva portable, el horario de envio, el filtro del nombre y el modo de un
+  solo telefono; sin manifiesto (Johanna) es el de siempre (ver la clase).
 
 No se pisa con la reactivacion: la reactivacion exige que el ultimo mensaje sea
 del lead y el seguimiento que sea nuestro. Ver
@@ -36,13 +39,15 @@ import math
 import re
 import time
 from collections import Counter
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 from bridge.chatwoot import ChatwootProtocolError
 from bridge.checkout_issuance import generate_issuance_ulid
-from bridge.lead_first_name import resolve_greeting_name
+from bridge.lead_first_name import resolve_greeting_name, template_greeting_name_is_safe
+from bridge.phones import equivalent_whatsapp_phones, same_whatsapp_phone
 from bridge.reactivation import _last_conversational_message, _scan_summary
 
 
@@ -85,24 +90,41 @@ REGIME_LINK_SENT = "link_sent_no_purchase"
 REGIME_WENT_QUIET = "went_quiet"
 REGIME_PAYMENT_FAILED = "payment_failed"
 
+# El modo de un solo telefono: las candidatas de otro telefono no se releen ni
+# se reservan, solo se cuentan con este motivo.
+HELD_ONLY_PHONE = "held_only_phone"
+# El resumen de un barrido que cayo fuera del horario de envio: no leyo el
+# catalogo ni Chatwoot.
+OUTSIDE_SEND_HOURS = "outside_send_hours"
+# Cuantos motivos muestra el resumen (el default de reactivation._scan_summary).
+_SUMMARY_TOP_REASONS = 4
+
 
 @dataclass(frozen=True)
 class FollowupTemplate:
-    """La plantilla aprobada: nombre, producto y cupon, mas un boton de URL."""
+    """La plantilla aprobada: nombre y producto, mas un boton de URL.
+
+    El cupon va siempre en el boton (``offDiscount``). ``carries_coupon`` dice
+    si ademas va en el texto como ``{{3}}``: la de Johanna lo lleva; la de ATT1
+    no (decision de Dan del 2026-10-01: el codigo va solo en el boton).
+    """
 
     name: str
     language: str
     category: str
     body: str
+    carries_coupon: bool = True
 
     def render(self, *, first_name: str, product_name: str, coupon_code: str) -> str:
-        """El texto que se ve en Chatwoot, con los marcadores reemplazados."""
+        """El texto que se ve en Chatwoot, con los marcadores reemplazados.
+
+        Sin ``{{3}}`` el codigo no aparece en el texto: va solo en el boton.
+        """
         _require_parameters(first_name, product_name, coupon_code)
-        return (
-            self.body.replace("{{1}}", first_name)
-            .replace("{{2}}", product_name)
-            .replace("{{3}}", coupon_code)
-        )
+        text = self.body.replace("{{1}}", first_name).replace("{{2}}", product_name)
+        if self.carries_coupon:
+            text = text.replace("{{3}}", coupon_code)
+        return text
 
     def params(
         self,
@@ -120,16 +142,26 @@ class FollowupTemplate:
         manda como ``sub_type: url`` con el ``parameter`` como texto, y el
         indice es la posicion en la lista. La plantilla tiene un solo boton,
         asi que va en el indice 0.
+
+        El cuerpo lleva el ``"3"`` solo si la plantilla tiene ``{{3}}``. Meta
+        rechaza con #132000 un cuerpo con otra cantidad de parametros que la
+        plantilla, y lo hace despues de que Chatwoot acepto el mensaje (medido
+        con uno de menos el 2026-08-31,
+        ``docs/operations/2026-08-31-precheckout-production-activation.md``):
+        el seguimiento quedaria gastado sin haber llegado.
         """
         _require_parameters(first_name, product_name, coupon_code)
         if not isinstance(button_suffix, str) or not button_suffix:
             raise ValueError("followup_button_suffix_empty")
+        body: dict[str, str] = {"1": first_name, "2": product_name}
+        if self.carries_coupon:
+            body["3"] = coupon_code
         return {
             "name": self.name,
             "category": self.category,
             "language": self.language,
             "processed_params": {
-                "body": {"1": first_name, "2": product_name, "3": coupon_code},
+                "body": body,
                 "buttons": [{"type": "url", "parameter": button_suffix}],
             },
         }
@@ -153,6 +185,10 @@ def parse_followup_template(
 
     Falla cerrado ante cualquier duda, igual que la reactivacion: se lee del
     inbox en cada barrido para que una baja en Meta corte el envio.
+
+    Acepta dos formas del cuerpo, y ``carries_coupon`` dice cual leyo: con el
+    cupon en el texto (``{{1}}``, ``{{2}}`` y ``{{3}}``, la de Johanna) o con
+    el cupon solo en el boton (``{{1}}`` y ``{{2}}``, la de ATT1).
     """
     if not isinstance(template_name, str) or not template_name.strip():
         raise ValueError("followup_template_name_missing")
@@ -202,14 +238,22 @@ def parse_followup_template(
     body = bodies[0].get("text")
     if not isinstance(body, str) or not body.strip():
         raise ChatwootProtocolError("followup_template_invalid_body")
-    # Nombre, producto y cupon: ni uno mas ni uno menos. Con un marcador de mas
-    # Meta rechaza el envio por falta de parametros.
-    if sorted(set(_PLACEHOLDER_RE.findall(body))) != ["1", "2", "3"]:
+    # Nombre y producto, y el cupon como tercero o en ningun marcador (va solo
+    # en el boton): ni uno mas ni uno menos. El bridge manda un parametro por
+    # marcador conocido, y con uno de mas o de menos Meta rechaza el envio
+    # (#132000, ver FollowupTemplate.params).
+    placeholders = sorted(set(_PLACEHOLDER_RE.findall(body)))
+    if placeholders == ["1", "2", "3"]:
+        carries_coupon = True
+    elif placeholders == ["1", "2"]:
+        carries_coupon = False
+    else:
         raise ChatwootProtocolError("followup_template_unexpected_placeholders")
 
     # Exactamente un boton, y tiene que ser de URL dinamica sobre el checkout
     # de Hotmart. Sin el boton, el cupon queda en un texto que hay que copiar a
-    # mano, que es justo lo que el seguimiento viene a evitar.
+    # mano (o, sin {{3}}, en ningun lado), que es justo lo que el seguimiento
+    # viene a evitar.
     button_groups = [
         component
         for component in components
@@ -233,6 +277,7 @@ def parse_followup_template(
         language=language.strip(),
         category=category.strip(),
         body=body,
+        carries_coupon=carries_coupon,
     )
 
 
@@ -488,8 +533,80 @@ def evaluate_followup_candidate(
     )
 
 
+def _valid_send_hours(value: object) -> bool:
+    """``(inicio, fin)`` en horas enteras, con 0 <= inicio < fin <= 24.
+
+    ``(0, 24)`` es a cualquier hora, escrito a proposito.
+    """
+    if not isinstance(value, tuple) or len(value) != 2:
+        return False
+    if not all(
+        isinstance(hour, int) and not isinstance(hour, bool) for hour in value
+    ):
+        return False
+    start, end = value
+    return 0 <= start < end <= 24
+
+
+def _followup_scan_summary(
+    *, scanned: int, sent: int, motivos: Counter[str]
+) -> str:
+    """El resumen del barrido, con ``held_only_phone`` siempre a la vista.
+
+    Es el formato de la reactivacion: ``_scan_summary`` muestra los motivos mas
+    frecuentes y cuenta el resto como ``other_reasons``. En el modo de un solo
+    telefono las candidatas retenidas son lo que se mira en ``/ready`` antes de
+    abrir: si quedan fuera de los primeros, van al final y ``other_reasons`` no
+    las cuenta.
+    """
+    held = motivos[HELD_ONLY_PHONE]
+    shown = {motivo for motivo, _ in motivos.most_common(_SUMMARY_TOP_REASONS)}
+    if held == 0 or HELD_ONLY_PHONE in shown:
+        return _scan_summary(
+            scanned=scanned, sent=sent, motivos=motivos, top=_SUMMARY_TOP_REASONS
+        )
+    rest = Counter(
+        {
+            motivo: cuenta
+            for motivo, cuenta in motivos.items()
+            if motivo != HELD_ONLY_PHONE
+        }
+    )
+    return (
+        _scan_summary(
+            scanned=scanned, sent=sent, motivos=rest, top=_SUMMARY_TOP_REASONS
+        )
+        + f" {HELD_ONLY_PHONE}={held}"
+    )
+
+
 class ConversationFollowupSweeper:
-    """Barrer el inbox y mandar el seguimiento con cupon a quien corresponde."""
+    """Barrer el inbox y mandar el seguimiento con cupon a quien corresponde.
+
+    Seis parametros existen para el runtime con manifiesto (ATT1). Sus
+    defaults dejan el barredor de Johanna como estaba: la misma RPC, con los
+    mismos argumentos y la identidad textual, a cualquier hora y a todo el
+    inbox.
+
+    * ``external_user_id_resolver``: la identidad con que la base ya conoce al
+      movil (52... del formulario o 521... del wa_id). Es el mismo resolvedor
+      del entrante, y su resultado va a la reserva y a la autorizacion, que
+      exigen la identidad exacta.
+    * ``phone_equivalence``: la reserva va por
+      claim_portable_conversation_followup_v1, que emite el link con la
+      reserva portable y solo deja pasar una conversacion adoptada (la
+      respuesta a una plantilla nuestra).
+    * ``refuse_unsafe_greeting``: un nombre que no pasa
+      ``template_greeting_name_is_safe`` no se manda, igual que en el
+      despachador. Se reintenta en cada barrido y se cuenta.
+    * ``send_hours`` y ``time_zone``, los dos o ninguno: fuera de
+      [inicio, fin), en la hora local, el barrido no lee nada. ``(0, 24)`` es a
+      cualquier hora.
+    * ``only_phone``: el modo de prueba. Solo ese telefono recibe (comparado en
+      forma canonica, asi que 52... y 521... son el mismo), y el resto de las
+      candidatas se cuenta como ``held_only_phone``: una cota superior, ver
+      ``run_once``.
+    """
 
     def __init__(
         self,
@@ -508,6 +625,12 @@ class ConversationFollowupSweeper:
         max_sends_per_scan: int = 10,
         max_pages: int = 5,
         allowed_phone: str | None = None,
+        only_phone: str | None = None,
+        send_hours: tuple[int, int] | None = None,
+        time_zone: ZoneInfo | None = None,
+        refuse_unsafe_greeting: bool = False,
+        phone_equivalence: bool = False,
+        external_user_id_resolver: Callable[..., Awaitable[str]] | None = None,
         clock: Callable[[], float] = time.time,
         ulid_factory: Callable[[], str] = generate_issuance_ulid,
     ) -> None:
@@ -532,6 +655,24 @@ class ConversationFollowupSweeper:
             or isinstance(max_sends_per_scan, bool)
             or max_sends_per_scan < 1
             or not 1 <= max_pages <= 20
+            or (
+                only_phone is not None
+                and (
+                    not isinstance(only_phone, str)
+                    or not _E164_RE.fullmatch(only_phone)
+                )
+            )
+            # El horario sin zona no dice que hora es, y la zona sin horario
+            # no frena nada: van los dos o ninguno.
+            or (send_hours is None) != (time_zone is None)
+            or (send_hours is not None and not _valid_send_hours(send_hours))
+            or (time_zone is not None and not isinstance(time_zone, ZoneInfo))
+            or not isinstance(refuse_unsafe_greeting, bool)
+            or not isinstance(phone_equivalence, bool)
+            or (
+                external_user_id_resolver is not None
+                and not callable(external_user_id_resolver)
+            )
         ):
             raise ValueError("invalid conversation followup configuration")
         self._chatwoot = chatwoot
@@ -548,6 +689,12 @@ class ConversationFollowupSweeper:
         self._max_sends_per_scan = max_sends_per_scan
         self._max_pages = max_pages
         self._allowed_phone = allowed_phone
+        self._only_phone = only_phone
+        self._send_hours = send_hours
+        self._time_zone = time_zone
+        self._refuse_unsafe_greeting = refuse_unsafe_greeting
+        self._phone_equivalence = phone_equivalence
+        self._external_user_id_resolver = external_user_id_resolver
         self._clock = clock
         self._ulid_factory = ulid_factory
         self._task: asyncio.Task[None] | None = None
@@ -572,6 +719,39 @@ class ConversationFollowupSweeper:
     def last_sent_count(self) -> int:
         return self._last_sent_count
 
+    @property
+    def only_phone(self) -> str | None:
+        """El unico telefono que recibe en el modo de prueba, o ``None``.
+
+        ``/ready`` publica si el modo esta prendido, nunca el numero.
+        """
+        return self._only_phone
+
+    @property
+    def send_hours(self) -> tuple[int, int] | None:
+        """``(inicio, fin)`` en horas locales de la zona del barredor, o ``None``."""
+        return self._send_hours
+
+    @property
+    def min_inbound_age_seconds(self) -> int:
+        """Cuanto tiene que llevar callado el lead para recibir el cupon.
+
+        ``/ready`` lo publica con manifiesto: abrir el seguimiento despues de la
+        prueba se verifica por presencia (86400, 24 h), no por la ausencia del
+        modo de un solo telefono.
+        """
+        return self._min_inbound_age_seconds
+
+    @property
+    def allowed_phone(self) -> str | None:
+        """El telefono al que esta acotado el entrante sin scope, o ``None``.
+
+        Con los remitentes por ``ALLOWED_WHATSAPP_JID`` (sin scope) el barredor
+        solo mira ese telefono, igual que el resto del entrante. ``/ready``
+        publica que el alcance esta acotado, nunca el numero.
+        """
+        return self._allowed_phone
+
     async def start(self) -> None:
         if self._task is None or self._task.done():
             self._stopping.clear()
@@ -594,6 +774,18 @@ class ConversationFollowupSweeper:
 
     async def run_once(self) -> int:
         """Un barrido completo. Devuelve cuantos seguimientos salieron."""
+        if self._send_hours is not None and not self._inside_send_hours():
+            # Fuera del horario no se lee nada, ni el catalogo ni Chatwoot: el
+            # barrido no falla, espera. Con la ventana por defecto (de 24 a
+            # 72 h) toda candidata cruza al menos un horario abierto. Lo que se
+            # pierde de noche: una plantilla que Meta pauso recien se ve en el
+            # primer barrido del horario.
+            self._last_sent_count = 0
+            self._has_completed_scan = True
+            self._last_scan_state = "healthy"
+            self._last_scan_summary = OUTSIDE_SEND_HOURS
+            logger.info("conversation_followup_scan %s", self._last_scan_summary)
+            return 0
         inbox_payload = await self._chatwoot.get_inbox(inbox_id=self._inbox_id)
         template = parse_followup_template(
             inbox_payload,
@@ -634,6 +826,18 @@ class ConversationFollowupSweeper:
             if decision.candidate is None:
                 motivos[decision.skip_reason or "unknown"] += 1
                 continue
+            if self._only_phone is not None and not same_whatsapp_phone(
+                decision.candidate.phone, self._only_phone
+            ):
+                # Modo de un solo telefono: la candidata no se relee ni se
+                # reserva, solo se cuenta. Es una cota superior: candidatas
+                # segun Chatwoot en este barrido, antes de la relectura, del
+                # filtro del nombre, del resolvedor y de toda barrera de la
+                # base (compra, derivacion, opt-out, conversacion no adoptada,
+                # una por conversacion). No dice a cuantas personas les habria
+                # salido.
+                motivos[HELD_ONLY_PHONE] += 1
+                continue
             if await self._follow_up(decision.candidate, template):
                 sent += 1
             else:
@@ -642,11 +846,18 @@ class ConversationFollowupSweeper:
         self._last_sent_count = sent
         self._has_completed_scan = True
         self._last_scan_state = "error" if failed else "healthy"
-        self._last_scan_summary = _scan_summary(
+        self._last_scan_summary = _followup_scan_summary(
             scanned=len(conversations), sent=sent, motivos=motivos
         )
         logger.info("conversation_followup_scan %s", self._last_scan_summary)
         return sent
+
+    def _inside_send_hours(self) -> bool:
+        """Si la hora local del reloj del barredor cae en [inicio, fin)."""
+        assert self._send_hours is not None and self._time_zone is not None
+        start, end = self._send_hours
+        hour = datetime.fromtimestamp(self._clock(), self._time_zone).hour
+        return start <= hour < end
 
     async def _still_waiting(self, candidate: FollowupCandidate) -> bool:
         """Releer la conversacion justo antes de reservar.
@@ -690,13 +901,48 @@ class ConversationFollowupSweeper:
         greeting = await resolve_greeting_name(
             candidate.contact_name, store=self._supabase  # type: ignore[arg-type]
         )
+        if self._refuse_unsafe_greeting and not template_greeting_name_is_safe(
+            greeting.name
+        ):
+            # El mismo criterio que el despachador de ATT1 (worker.py): el
+            # nombre de contacto de Chatwoot es el push name de WhatsApp, que
+            # puede ser un telefono, y cuando no hay primer nombre el saludo
+            # cae al nombre completo. No se reserva nada, asi que el proximo
+            # barrido lo vuelve a contar. El log nunca lleva el nombre.
+            self._last_outcome = "greeting_name_refused"
+            logger.warning(
+                "conversation_followup_name_refused conversation=%s source=%s",
+                candidate.conversation_id,
+                greeting.source,
+            )
+            return False
+
+        external_user_id = candidate.external_user_id
+        if self._external_user_id_resolver is not None:
+            try:
+                resolved = await self._external_user_id_resolver(
+                    candidate.external_user_id,
+                    conversation_id=candidate.conversation_id,
+                )
+            except Exception as exc:
+                return self._identity_lookup_failed(candidate, type(exc).__name__)
+            # El resolvedor del entrante solo devuelve una forma del mismo
+            # movil (52/521, 54/549). Cualquier otra cosa es un error suyo, y
+            # reservar con ella buscaria la compra, el opt-out y el link de
+            # otra persona.
+            if resolved not in equivalent_whatsapp_phones(candidate.external_user_id):
+                return self._identity_lookup_failed(
+                    candidate, "identity_not_equivalent"
+                )
+            external_user_id = resolved
+
         command_key = candidate.command_key
         try:
             claim = await self._supabase.claim_conversation_followup(
                 external_conversation_id=candidate.conversation_id,
                 chatwoot_account_id=self._account_id,
                 chatwoot_inbox_id=self._inbox_id,
-                external_user_id=candidate.external_user_id,
+                external_user_id=external_user_id,
                 contact_email=candidate.email,
                 command_key=command_key,
                 regime=candidate.regime,
@@ -707,6 +953,9 @@ class ConversationFollowupSweeper:
                 last_outbound_message_id=candidate.last_outbound_message_id,
                 inbound_age_seconds=candidate.inbound_age_seconds,
                 issuance_ulid=self._ulid_factory(),
+                # Sin manifiesto la kwarg no va: la llamada de Johanna queda
+                # identica.
+                **({"phone_equivalence": True} if self._phone_equivalence else {}),
             )
         except Exception as exc:
             self._last_attempt_failed = True
@@ -747,8 +996,9 @@ class ConversationFollowupSweeper:
             await self._settle(command_key, status="failed", failure_reason=str(exc))
             return False
 
+        # La autorizacion exige la misma identidad con que se reservo.
         issuance_context = {
-            "external_user_id": candidate.external_user_id,
+            "external_user_id": external_user_id,
             "chatwoot_account_id": self._account_id,
             "chatwoot_inbox_id": self._inbox_id,
             "chatwoot_conversation_id": candidate.conversation_id,
@@ -839,6 +1089,20 @@ class ConversationFollowupSweeper:
             greeting.source,
         )
         return True
+
+    def _identity_lookup_failed(
+        self, candidate: FollowupCandidate, error_type: str
+    ) -> bool:
+        """Sin identidad no hay reserva: el intento cuenta como fallido."""
+        self._last_attempt_failed = True
+        self._last_outcome = "identity_lookup_failed"
+        logger.warning(
+            "conversation_followup_identity_lookup_failed conversation=%s "
+            "error_type=%s",
+            candidate.conversation_id,
+            error_type,
+        )
+        return False
 
     async def _finalize_issuance(
         self,

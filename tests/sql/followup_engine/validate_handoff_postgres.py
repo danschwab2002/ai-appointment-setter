@@ -496,6 +496,10 @@ def verify_effective_acls(harness: PostgresHarness) -> None:
                      -- ninguna persona atendio (migracion
                      -- 20260928000400); solo lee esa tabla.
                      'claim_conversation_followup_v1',
+                     -- Su derivada para el runtime con manifiesto (migracion
+                     -- 20261010000100): el mismo predicado sobre
+                     -- human_handoff_requests; solo lee esa tabla.
+                     'claim_portable_conversation_followup_v1',
                      -- Marca human_handoff_requests.attended_at cuando
                      -- una persona del equipo escribe (migracion
                      -- 20260927000300). Es la unica funcion de esta
