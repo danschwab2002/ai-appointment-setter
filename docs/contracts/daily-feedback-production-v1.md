@@ -71,6 +71,14 @@ El proceso debe verificar antes de leer contenido:
 - política de eliminación no vacía y los cuatro reviewers marcados como responsables;
 - conjunto exacto de cuatro reviewer bindings activo y estable durante claim y commit.
 
+> **Enmienda 2026-10-10 ([ADR-0024](../decisions/0024-la-revision-diaria-en-una-instancia-autohospedada.md)):** en una instancia autohospedada, y solo si se declara por variable, se admiten tres excepciones a esta lista. El estado vive entonces en la base propia de la instancia, no en Supabase Cloud. Sin ninguna de esas variables, la lista rige igual que antes.
+>
+> - **`authority_internal_http`:** la base por http interno en lugar de HTTPS, con `DAILY_FEEDBACK_SUPABASE_INTERNAL_HTTP=true`. Vale solo hacia un origen interno: host de una sola etiqueta, puerto explícito, sin credenciales, ruta vacía o `/`, sin query ni fragmento (si no, `invalid_supabase_internal_origin`). Chatwoot, el conector de Slack y el origen público siguen en HTTPS.
+> - **`storage_unencrypted_risk_accepted`:** la aceptación escrita del riesgo en lugar de la evidencia de cifrado de Supabase Cloud, con `DAILY_FEEDBACK_STORAGE_ENCRYPTION_VERIFIED=false` más `DAILY_FEEDBACK_STORAGE_RISK_ACCEPTANCE_REF`, el permalink https y sin credenciales de esa aceptación. Nunca se declara cifrado lo que no lo está, y las dos referencias a la vez se rechazan (`ambiguous_storage_protection`).
+> - **`chatwoot_agent_bot_unlinked`:** el modo sin vincular en lugar del binding exacto al inbox, con `DAILY_FEEDBACK_CHATWOOT_AGENT_BOT_BINDING=unlinked`. El endpoint inbox-scoped tiene que devolver el inbox sin bot (si trae uno, `chatwoot_agent_bot_unexpectedly_linked`), y el bot configurado tiene que ser de la cuenta: `GET /api/v1/accounts/{account}/agent_bots/{id}` con `id` y `account_id` iguales (si no, `chatwoot_scope_verification_failed`). Es un chequeo del arranque, no un control continuo.
+>
+> `/ready` las declara: su 200 suma `"exceptions"` con las activas, en el orden de esta lista.
+
 Sólo entran mensajes públicos de prospecto y del agent bot configurado, con salidas en estado `sent`, `delivered` o `read`. Notas privadas, adjuntos, mensajes humanos, fallos de entrega y otros autores quedan fuera. Chatwoot conserva contenido y orden canónicos; el batch guarda únicamente el snapshot minimizado.
 
 ## Persistencia
@@ -131,6 +139,10 @@ y no puede reclamarlo.
    explícita, sin un segundo post ciego.
 
 No se repite una recolección ya confirmada. Un crash después de confirmar el batch no pierde el envío porque la notificación se reclama desde el lote durable. Un timeout del conector no autoriza un comando diferente: se reintenta el mismo `event_id` y `dedupe_key`.
+
+> **Enmienda 2026-10-10 (ADR-0024): la corrida que confirma un lote no lo notifica.** `run_once()` toma un solo `now`, antes de purgar y de recolectar. El lote que confirma nace con `notification_next_attempt_at = clock_timestamp()`, la hora del commit, posterior a ese `now`, y el claim de la notificación (paso 5) pide `notification_next_attempt_at <= p_now`. Por eso la corrida que recolecta da `collected: true` y `notified: false`, y la tarjeta `REV-001` sale en la siguiente: un segundo run-now, que da `collected: false` y `notified: true`, o la vuelta siguiente del scheduler, un intervalo de polling después. Un E2E con el run-now son dos llamadas, y la tarjeta se mira después de la segunda.
+>
+> La lease de la recolección (pasos 2 a 4) se configura con `DAILY_FEEDBACK_COLLECTION_LEASE_SECONDS`, de 30 a 900 segundos, por defecto 120. Todo lo que va del claim al commit tiene que entrar en ella: el listado de Chatwoot, los mensajes, el contexto y la procedencia. Si no entra, el commit falla con `stale_collection_lease` y la recolección se reintenta. El tope de páginas del listado se configura con `DAILY_FEEDBACK_MAX_CONVERSATION_PAGES`, de 1 a 400, por defecto 20.
 
 ## Slack
 
@@ -204,6 +216,8 @@ No se incluyen PII, secrets, tokens, URLs originales, adjuntos, analytics, third
 - Slack connector producer;
 - conjunto de bindings activos comprobable y consistente con el snapshot del lote;
 - scheduler sano y sin un `delivery_unknown` vencido sin resolución.
+
+> **Enmienda 2026-10-10 (ADR-0024):** con `storage_unencrypted_risk_accepted` declarada, la aceptación escrita del riesgo ocupa el lugar de la evidencia de cifrado. El 200 de `/ready` suma `"exceptions": [...]` solo si hay alguna declarada, siempre en el orden `authority_internal_http`, `storage_unencrypted_risk_accepted`, `chatwoot_agent_bot_unlinked`. Sin excepciones, el 200 es el de siempre, y los 503 no cambian.
 
 ## Fuera de alcance V1
 

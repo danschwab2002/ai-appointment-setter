@@ -33,6 +33,19 @@ services:
       DAILY_FEEDBACK_DAILY_AT: ${DAILY_FEEDBACK_DAILY_AT:?required}
       DAILY_FEEDBACK_SCHEDULER_ENABLED: ${DAILY_FEEDBACK_SCHEDULER_ENABLED:-false}
       DAILY_FEEDBACK_POLL_INTERVAL_SECONDS: ${DAILY_FEEDBACK_POLL_INTERVAL_SECONDS:-30}
+      # Opcionales de una instancia autohospedada (docs/decisions/0024; que hace
+      # cada una, en el env.example). Vacias cuentan como ausentes: todo queda como
+      # hasta la 1.4.0 y /ready no lista excepciones. Este compose sigue exigiendo
+      # la evidencia de cifrado, asi que no admite storage_unencrypted_risk_accepted:
+      # con la evidencia y la aceptacion del riesgo a la vez, el servicio no arranca
+      # (ambiguous_storage_protection). Esa excepcion va en el servicio propio de la
+      # instancia.
+      DAILY_FEEDBACK_SUPABASE_INTERNAL_HTTP: ${DAILY_FEEDBACK_SUPABASE_INTERNAL_HTTP:-}
+      DAILY_FEEDBACK_STORAGE_RISK_ACCEPTANCE_REF: ${DAILY_FEEDBACK_STORAGE_RISK_ACCEPTANCE_REF:-}
+      DAILY_FEEDBACK_CHATWOOT_AGENT_BOT_BINDING: ${DAILY_FEEDBACK_CHATWOOT_AGENT_BOT_BINDING:-}
+      DAILY_FEEDBACK_BRAND_NAME: ${DAILY_FEEDBACK_BRAND_NAME:-}
+      DAILY_FEEDBACK_MAX_CONVERSATION_PAGES: ${DAILY_FEEDBACK_MAX_CONVERSATION_PAGES:-}
+      DAILY_FEEDBACK_COLLECTION_LEASE_SECONDS: ${DAILY_FEEDBACK_COLLECTION_LEASE_SECONDS:-}
     deploy:
       replicas: 1
       update_config:

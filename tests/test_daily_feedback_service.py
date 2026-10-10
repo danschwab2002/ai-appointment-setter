@@ -20,7 +20,11 @@ from bridge.daily_feedback_service import (
     SlackIdentity,
     SlackOpenIdError,
     SlackOidcProvider,
+    SupabaseDailyFeedbackRepository,
+    _review_page,
     create_daily_feedback_review_app,
+    validate_collection_lease_seconds,
+    validate_internal_http_origin,
 )
 from bridge.daily_feedback_export import (
     DailyReviewPackage,
@@ -106,8 +110,13 @@ class Clock:
         return self.now
 
 
-def _client(*, oidc_client: SlackOidcProvider | None = None) -> tuple[TestClient, FakeRepository]:
+def _client(
+    *,
+    oidc_client: SlackOidcProvider | None = None,
+    brand_name: str | None = None,
+) -> tuple[TestClient, FakeRepository]:
     repository = FakeRepository()
+    brand = {} if brand_name is None else {"brand_name": brand_name}
     service = DailyFeedbackService(
         repository=repository,
         oidc_client=oidc_client or FakeOidc(),
@@ -115,6 +124,7 @@ def _client(*, oidc_client: SlackOidcProvider | None = None) -> tuple[TestClient
             public_origin="https://reviews.example.test",
             session_hmac_key=b"s" * 32,
             slack_team_id="T12345678",
+            **brand,
         ),
         clock=Clock(datetime(2026, 9, 10, 23, 0, tzinfo=UTC)),
     )
@@ -1144,3 +1154,329 @@ def test_scheduler_closes_the_owned_notification_client() -> None:
     __import__("asyncio").run(scheduler.stop())
 
     assert producer.closed == 1
+
+
+# --- La revision en una instancia autohospedada (ATT1) ------------------------------
+# La parte del servicio: el origen interno de la base, la marca de la pagina y la
+# lease de la recoleccion. Sin los parametros nuevos, todo queda como hoy (Johanna).
+
+
+@pytest.mark.parametrize(
+    ("origin", "expected"),
+    [
+        ("http://att1-gateway:8080", "http://att1-gateway:8080"),
+        ("http://att1-gateway:8080/", "http://att1-gateway:8080"),
+        # el nombre completo de un servicio de Swarm (<stack>_<servicio>) lleva guion bajo
+        ("http://setter-att1_att1-gateway:8080", "http://setter-att1_att1-gateway:8080"),
+        ("http://" + "a" * 63 + ":1", "http://" + "a" * 63 + ":1"),
+        ("http://db:65535", "http://db:65535"),
+    ],
+)
+def test_internal_http_origin_accepts_a_single_label_service_with_port(
+    origin: str, expected: str
+) -> None:
+    assert validate_internal_http_origin(origin) == expected
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://10.0.0.5:8080",  # una IP
+        "http://x.host:8080",  # un dominio
+        "http://att1-gateway",  # sin puerto
+        "http://att1-gateway:",  # con el puerto vacio
+        "http://att1-gateway.:8080",  # un nombre absoluto, con el punto final
+        "http://[::1]:8080",  # IPv6
+        "http://167772165:8080",  # 10.0.0.5 escrita como numero decimal
+        "http://0xa000005:8080",  # 10.0.0.5 en hexadecimal
+        "http://-gateway:8080",  # empieza con guion
+        "http://" + "a" * 64 + ":8080",  # una etiqueta de mas de 63 caracteres
+        "https://att1-gateway:8080",  # https no es el origen interno
+        "ftp://att1-gateway:8080",
+        "http://user:pass@att1-gateway:8080",  # credenciales
+        "http://user@att1-gateway:8080",
+        "http://@att1-gateway:8080",
+        "http://att1-gateway:8080/rest",  # ruta
+        "http://att1-gateway:8080//",
+        "http://att1-gateway:8080?x=1",  # query
+        "http://att1-gateway:8080?",
+        "http://att1-gateway:8080#f",  # fragmento
+        "http://att1-gateway:8080#",
+        "http://att1-gateway:0",  # puerto fuera de rango
+        "http://att1-gateway:65536",
+        "http://att1-gateway:08080",  # no canonico: urlsplit lo lee como 8080
+        "http://att1-gateway:+80",
+        "HTTP://att1-gateway:8080",  # urlsplit lo pasa a minusculas
+        "http://ATT1-gateway:8080",
+        "http://att1-\ngateway:8080",  # urlsplit borra el salto de linea en silencio
+        "http://att1-gateway:8080\t",
+        " http://att1-gateway:8080",
+        # urlsplit levanta su propio error con estos: sale igual el codigo de la regla
+        "http://[att1-gateway]:8080",  # entre corchetes, y no es una IP
+        "http://[::1:8080",  # un corchete sin cerrar
+        "http://att1-gateway]:8080",
+        "",
+        None,
+        b"http://att1-gateway:8080",
+    ],
+)
+def test_internal_http_origin_rejects_everything_else(origin: object) -> None:
+    with pytest.raises(ValueError, match="^invalid_supabase_internal_origin$"):
+        validate_internal_http_origin(origin)
+
+
+_ATT1_READINESS = {
+    "p_tenant_ref": "lancemos",
+    "p_scope_ref": "att1-agent-bot",
+    "p_now": "2026-10-10T03:00:00Z",
+}
+
+
+def test_supabase_repository_accepts_internal_http_only_when_explicit() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"status": "ok", "delivery_unknown_count": 0})
+
+    # Sin el permiso, igual que hoy: el http interno de ATT1 no pasa.
+    with pytest.raises(ValueError, match="^invalid_supabase_origin$"):
+        SupabaseDailyFeedbackRepository(
+            base_url="http://att1-gateway:8080",
+            service_role_key="secret",
+            transport=httpx.MockTransport(handler),
+        )
+
+    repository = SupabaseDailyFeedbackRepository(
+        base_url="http://att1-gateway:8080/",
+        service_role_key="secret",
+        transport=httpx.MockTransport(handler),
+        allow_internal_http=True,
+    )
+    result = __import__("asyncio").run(
+        repository.rpc("get_daily_feedback_readiness_v1", _ATT1_READINESS)
+    )
+
+    assert result == {"status": "ok", "delivery_unknown_count": 0}
+    assert [str(request.url) for request in requests] == [
+        "http://att1-gateway:8080/rest/v1/rpc/get_daily_feedback_readiness_v1"
+    ]
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://x.host:8080",
+        "http://10.0.0.5:8080",
+        "http://att1-gateway",
+        "http://user:pass@att1-gateway:8080",
+        "http://att1-gateway:8080/rest/v1",
+        # el repositorio lee el origen con urlsplit antes de la regla
+        "http://[att1-gateway]:8080",
+        "http://[::1:8080",
+    ],
+)
+def test_supabase_repository_internal_http_still_requires_the_internal_origin(
+    base_url: str,
+) -> None:
+    with pytest.raises(ValueError, match="^invalid_supabase_internal_origin$"):
+        SupabaseDailyFeedbackRepository(
+            base_url=base_url,
+            service_role_key="secret",
+            allow_internal_http=True,
+        )
+
+
+def test_supabase_repository_internal_http_permission_keeps_https_and_needs_a_bool() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"status": "ok", "delivery_unknown_count": 0})
+
+    # El permiso no obliga: con https el repositorio sigue como siempre.
+    repository = SupabaseDailyFeedbackRepository(
+        base_url="https://project.supabase.co",
+        service_role_key="secret",
+        transport=httpx.MockTransport(handler),
+        allow_internal_http=True,
+    )
+    __import__("asyncio").run(
+        repository.rpc("get_daily_feedback_readiness_v1", _ATT1_READINESS)
+    )
+    assert [str(request.url) for request in requests] == [
+        "https://project.supabase.co/rest/v1/rpc/get_daily_feedback_readiness_v1"
+    ]
+
+    # Un texto como "false" no es el permiso: tiene que ser un bool.
+    with pytest.raises(ValueError, match="^invalid_daily_feedback_supabase_internal_http$"):
+        SupabaseDailyFeedbackRepository(
+            base_url="http://att1-gateway:8080",
+            service_role_key="secret",
+            allow_internal_http="false",  # type: ignore[arg-type]
+        )
+
+
+def _captured_review_page(position: int) -> dict[str, object]:
+    """La pagina v2 armada con las capturas reales del inbox 9 de Johanna, como en
+    test_daily_feedback_review_context. Se importa aca adentro porque ese modulo
+    importa este.
+    """
+    from bridge.daily_feedback_export import apply_conversation_context
+    from bridge.daily_feedback_service import _package_items
+    from test_daily_feedback_review_context import (
+        _claim_v2,
+        _collect_v2,
+        _supabase_contexts,
+    )
+
+    package = apply_conversation_context(_collect_v2(), _supabase_contexts())
+    items, _ = _package_items(package, _claim_v2())
+    return {
+        "status": "item",
+        "local_date": "2026-09-26",
+        "item_count": len(items),
+        "decided_count": 0,
+        "item": {
+            **items[position],
+            "item_id": "33333333-3333-4333-8333-333333333333",
+            "position": position + 1,
+        },
+    }
+
+
+def test_review_page_renders_the_configured_brand_escaped() -> None:
+    page = _captured_review_page(0)
+    common = {
+        "public_ref": "22222222-2222-4222-8222-222222222222",
+        "csrf_token": "csrf",
+        "command_id": "44444444-4444-4444-8444-444444444444",
+        "display_timezone": "America/Mexico_City",
+    }
+
+    nina = _review_page(page, **common, brand_name="Dra. Nina Garza")
+    assert '<span class="brand-name">Dra. Nina Garza</span>' in nina
+    # La conversacion capturada nombra a Johanna en su contenido; lo que no puede
+    # quedar es la marca de Johanna en la barra.
+    assert '<span class="brand-name">Johanna</span>' not in nina
+    assert nina.count('class="brand-name"') == 1
+
+    hostile = _review_page(page, **common, brand_name="<b>x</b>")
+    assert '<span class="brand-name">&lt;b&gt;x&lt;/b&gt;</span>' in hostile
+    assert "<b>x</b>" not in hostile
+
+    assert '<span class="brand-name">Johanna</span>' in _review_page(page, **common)
+
+
+def test_review_route_shows_the_instance_brand_only_on_the_review_page() -> None:
+    client, _ = _client(brand_name="Dra. Nina Garza")
+    batch_ref = "22222222-2222-4222-8222-222222222222"
+
+    login = client.get(f"/review/{batch_ref}", follow_redirects=False)
+    assert login.status_code == 401
+    assert "Dra. Nina Garza" not in login.text
+    assert "Johanna" not in login.text
+
+    started = client.get(f"/auth/slack/start?batch_ref={batch_ref}", follow_redirects=False)
+    state = parse_qs(urlsplit(started.headers["location"]).query)["state"][0]
+    client.get(f"/auth/slack/callback?code=authorization-code&state={state}", follow_redirects=False)
+    response = client.get(f"/review/{batch_ref}")
+
+    assert response.status_code == 200
+    assert '<span class="brand-name">Dra. Nina Garza</span>' in response.text
+    assert "Johanna" not in response.text
+
+
+def _web_settings(**overrides: object) -> DailyFeedbackWebSettings:
+    values: dict[str, object] = {
+        "public_origin": "https://reviews.example.test",
+        "session_hmac_key": b"s" * 32,
+        "slack_team_id": "T12345678",
+    }
+    values.update(overrides)
+    return DailyFeedbackWebSettings(**values)  # type: ignore[arg-type]
+
+
+def test_web_settings_default_to_the_johanna_brand() -> None:
+    assert _web_settings().brand_name == "Johanna"
+
+
+@pytest.mark.parametrize(
+    "brand_name",
+    ["J", "x" * 60, "Dra. Nina Garza", "<b>x</b>", "Psicóloga Johanna"],
+)
+def test_web_settings_accept_a_printable_brand_of_1_to_60_characters(
+    brand_name: str,
+) -> None:
+    assert _web_settings(brand_name=brand_name).brand_name == brand_name
+
+
+@pytest.mark.parametrize(
+    "brand_name",
+    [
+        "",
+        "x" * 61,
+        "   ",
+        "Dra.\nNina",
+        "\tJohanna",
+        "Jo\x00hanna",
+        "Jo\x7fhanna",
+        "Jo\u202ehanna",  # el control que da vuelta el texto
+        None,
+        7,
+        b"Johanna",
+    ],
+)
+def test_web_settings_reject_an_empty_long_or_control_brand(brand_name: object) -> None:
+    with pytest.raises(ValueError, match="^invalid_daily_feedback_brand_name$"):
+        _web_settings(brand_name=brand_name)
+
+
+def _scheduler_settings(**overrides: object) -> DailyFeedbackSchedulerSettings:
+    values: dict[str, object] = {
+        "worker_id": "daily-feedback-worker-1",
+        "tenant_ref": "lancemos",
+        "scope_ref": "psicologajohanna-agent-bot-19",
+        "chatwoot_account_id": 1,
+        "chatwoot_inbox_id": 2,
+        "chatwoot_agent_bot_id": 19,
+        "deletion_owner": "juan",
+    }
+    values.update(overrides)
+    return DailyFeedbackSchedulerSettings(**values)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(("lease", "expected"), [(None, 120), (30, 30), (900, 900)])
+def test_scheduler_sends_the_configured_collection_lease_to_the_claim(
+    lease: int | None, expected: int
+) -> None:
+    repository = WorkflowRepository()
+    overrides = {} if lease is None else {"collection_lease_seconds": lease}
+    scheduler = DailyFeedbackScheduler(
+        repository=repository,
+        collector=FakeCollector(),
+        producer=FakeProducer(),
+        settings=_scheduler_settings(**overrides),
+        clock=Clock(datetime(2026, 9, 10, 23, 0, tzinfo=UTC)),
+    )
+
+    __import__("asyncio").run(scheduler.run_once(force_collection=True))
+
+    payloads = dict(repository.calls)
+    assert payloads["claim_daily_feedback_collection_v1"]["p_lease_seconds"] == expected
+    # La de la notificacion es otro tiempo (la admision en Slack) y no cambia.
+    assert payloads["claim_daily_feedback_notification_v1"]["p_lease_seconds"] == 120
+
+
+@pytest.mark.parametrize("lease", [29, 901, 0, -120, 120.0, True, "120", None])
+def test_scheduler_settings_reject_a_collection_lease_the_sql_would_refuse(
+    lease: object,
+) -> None:
+    with pytest.raises(
+        ValueError, match="^invalid_daily_feedback_collection_lease_seconds$"
+    ):
+        _scheduler_settings(collection_lease_seconds=lease)
+    with pytest.raises(
+        ValueError, match="^invalid_daily_feedback_collection_lease_seconds$"
+    ):
+        validate_collection_lease_seconds(lease)

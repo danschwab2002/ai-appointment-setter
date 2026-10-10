@@ -19,15 +19,23 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from bridge.daily_feedback_export import (
+    AGENT_BOT_BINDING_INBOX,
+    AGENT_BOT_BINDING_UNLINKED,
+    DEFAULT_MAX_CONVERSATION_PAGES,
     SANITIZER_VERSION_V2,
     SELECTION_VERSION_V2,
     ChatwootDailyCollector,
     RealConversationSecurityPolicy,
+    validate_agent_bot_binding,
+    validate_max_conversation_pages,
+    validate_storage_risk_acceptance_ref,
 )
 
 # Version del render de la pagina de revision (la app HTTPS, no el HTML local).
 RENDERER_VERSION_V2 = "daily-feedback-web-v2"
 from bridge.daily_feedback_service import (
+    DEFAULT_COLLECTION_LEASE_SECONDS,
+    DEFAULT_REVIEW_BRAND_NAME,
     DailyFeedbackRepository,
     DailyFeedbackScheduler,
     DailyFeedbackSchedulerSettings,
@@ -36,8 +44,32 @@ from bridge.daily_feedback_service import (
     SlackOpenIdClient,
     SupabaseDailyFeedbackRepository,
     create_daily_feedback_review_app,
+    validate_collection_lease_seconds,
+    validate_internal_http_origin,
+    validate_review_brand_name,
 )
 from slack_correlation.producer import SlackConnectorProducer
+
+# Las excepciones que puede declarar una instancia autohospedada (ATT1) frente a los
+# controles de siempre (Johanna). Cada una se activa solo por variable, con su control
+# compensatorio, y /ready la lista en este orden:
+# - authority_internal_http: la base por http interno, a un servicio del stack
+#   (DAILY_FEEDBACK_SUPABASE_INTERNAL_HTTP=true, host de una etiqueta y con puerto);
+# - storage_unencrypted_risk_accepted: el disco sin cifrar, con la aceptacion escrita
+#   del riesgo (DAILY_FEEDBACK_STORAGE_ENCRYPTION_VERIFIED=false mas
+#   DAILY_FEEDBACK_STORAGE_RISK_ACCEPTANCE_REF);
+# - chatwoot_agent_bot_unlinked: el AgentBot sin vincular al inbox, a proposito
+#   (DAILY_FEEDBACK_CHATWOOT_AGENT_BOT_BINDING=unlinked). El arranque verifica que el
+#   inbox no tenga bot y que el bot sea de la cuenta; es un chequeo del arranque, no un
+#   control continuo.
+EXCEPTION_AUTHORITY_INTERNAL_HTTP = "authority_internal_http"
+EXCEPTION_STORAGE_UNENCRYPTED_RISK_ACCEPTED = "storage_unencrypted_risk_accepted"
+EXCEPTION_CHATWOOT_AGENT_BOT_UNLINKED = "chatwoot_agent_bot_unlinked"
+DAILY_FEEDBACK_EXCEPTIONS = (
+    EXCEPTION_AUTHORITY_INTERNAL_HTTP,
+    EXCEPTION_STORAGE_UNENCRYPTED_RISK_ACCEPTED,
+    EXCEPTION_CHATWOOT_AGENT_BOT_UNLINKED,
+)
 
 
 class DailyFeedbackSchedulerRuntime(Protocol):
@@ -189,6 +221,51 @@ class DailyFeedbackRuntimeSettings:
     pseudonymization_key: str = field(default="", repr=False)
     storage_encryption_evidence_ref: str = ""
     poll_interval_seconds: float = 30.0
+    # Lo de una instancia autohospedada. Los valores por defecto son el comportamiento
+    # de siempre (Johanna): sin excepciones, la marca Johanna, 20 paginas y 120 s.
+    supabase_internal_http: bool = False
+    storage_encryption_verified: bool = True
+    storage_risk_acceptance_ref: str = ""
+    chatwoot_agent_bot_binding: str = AGENT_BOT_BINDING_INBOX
+    brand_name: str = DEFAULT_REVIEW_BRAND_NAME
+    max_conversation_pages: int = DEFAULT_MAX_CONVERSATION_PAGES
+    collection_lease_seconds: int = DEFAULT_COLLECTION_LEASE_SECONDS
+
+    def __post_init__(self) -> None:
+        # Las mismas reglas que aplican el repositorio, el colector, la pagina y el
+        # scheduler, para que exceptions (lo que declara /ready) nunca diga algo que la
+        # configuracion no es: http interno solo hacia un origen interno, y el
+        # almacenamiento cifrado o sin cifrar con su aceptacion, nunca las dos cosas.
+        if type(self.supabase_internal_http) is not bool:
+            raise ValueError("invalid_daily_feedback_supabase_internal_http")
+        if self.supabase_internal_http:
+            validate_internal_http_origin(self.supabase_base_url)
+        if type(self.storage_encryption_verified) is not bool:
+            raise ValueError("storage_encryption_not_verified")
+        if self.storage_encryption_verified:
+            if self.storage_risk_acceptance_ref != "":
+                raise ValueError("ambiguous_storage_protection")
+        else:
+            if self.storage_encryption_evidence_ref != "":
+                raise ValueError("ambiguous_storage_protection")
+            validate_storage_risk_acceptance_ref(self.storage_risk_acceptance_ref)
+        validate_agent_bot_binding(self.chatwoot_agent_bot_binding)
+        validate_review_brand_name(self.brand_name)
+        validate_max_conversation_pages(self.max_conversation_pages)
+        validate_collection_lease_seconds(self.collection_lease_seconds)
+
+    @property
+    def exceptions(self) -> tuple[str, ...]:
+        """Las excepciones activas, en el orden de DAILY_FEEDBACK_EXCEPTIONS. Vacia es
+        Johanna: ningun control aflojado."""
+        active = (
+            self.supabase_internal_http,
+            not self.storage_encryption_verified,
+            self.chatwoot_agent_bot_binding == AGENT_BOT_BINDING_UNLINKED,
+        )
+        return tuple(
+            name for name, is_active in zip(DAILY_FEEDBACK_EXCEPTIONS, active) if is_active
+        )
 
     @classmethod
     def from_env(
@@ -201,19 +278,54 @@ class DailyFeedbackRuntimeSettings:
                 raise ValueError(f"{name}_required")
             return value
 
+        def optional(name: str) -> str:
+            # Vacia, o solo espacios, cuenta como ausente: el compose pasa las
+            # variables opcionales con ${VAR:-}.
+            return environment.get(name, "").strip()
+
         if environment.get("DAILY_FEEDBACK_REAL_CONVERSATIONS_ENABLED", "").lower() != "true":
             raise ValueError("real_conversations_not_enabled")
-        if environment.get("DAILY_FEEDBACK_STORAGE_ENCRYPTION_VERIFIED", "").lower() != "true":
+        # El almacenamiento: cifrado y verificado, con la evidencia (lo de siempre), o
+        # sin cifrar, con VERIFIED=false y la aceptacion escrita del riesgo (la excepcion
+        # storage_unencrypted_risk_accepted). Las dos referencias a la vez, o la
+        # aceptacion con VERIFIED=true, son ambiguas. Sin una de las dos formas
+        # completas, el error de siempre. Nunca se declara cifrado lo que no lo esta.
+        storage_verified_text = environment.get(
+            "DAILY_FEEDBACK_STORAGE_ENCRYPTION_VERIFIED", ""
+        ).lower()
+        risk_acceptance_ref = optional("DAILY_FEEDBACK_STORAGE_RISK_ACCEPTANCE_REF")
+        if risk_acceptance_ref and (
+            storage_verified_text == "true"
+            or optional("DAILY_FEEDBACK_STORAGE_ENCRYPTION_EVIDENCE_REF")
+        ):
+            raise ValueError("ambiguous_storage_protection")
+        storage_encryption_verified = storage_verified_text == "true"
+        if not storage_encryption_verified and not (
+            storage_verified_text == "false" and risk_acceptance_ref
+        ):
             raise ValueError("storage_encryption_not_verified")
 
         public_origin = _validated_https_origin(
             required("DAILY_FEEDBACK_PUBLIC_ORIGIN"),
             "invalid_daily_feedback_public_origin",
         )
-        supabase_base_url = _validated_https_origin(
-            required("SUPABASE_BASE_URL"),
-            "invalid_supabase_origin",
+        # La base por http interno (la excepcion authority_internal_http): solo con el
+        # permiso explicito, y entonces SUPABASE_BASE_URL tiene que ser un origen
+        # interno, con la misma regla que aplica el repositorio. Sin el permiso, https
+        # como siempre.
+        supabase_internal_http_text = (
+            optional("DAILY_FEEDBACK_SUPABASE_INTERNAL_HTTP").lower() or "false"
         )
+        if supabase_internal_http_text not in {"true", "false"}:
+            raise ValueError("invalid_daily_feedback_supabase_internal_http")
+        supabase_internal_http = supabase_internal_http_text == "true"
+        if supabase_internal_http:
+            supabase_base_url = validate_internal_http_origin(required("SUPABASE_BASE_URL"))
+        else:
+            supabase_base_url = _validated_https_origin(
+                required("SUPABASE_BASE_URL"),
+                "invalid_supabase_origin",
+            )
         slack_connector_base_url = _validated_https_origin(
             required("SLACK_CONNECTOR_BASE_URL"),
             "invalid_slack_connector_origin",
@@ -222,10 +334,14 @@ class DailyFeedbackRuntimeSettings:
             required("CHATWOOT_BASE_URL"),
             "invalid_chatwoot_origin",
         )
-        evidence_ref = required("DAILY_FEEDBACK_STORAGE_ENCRYPTION_EVIDENCE_REF")
-        evidence = urlsplit(evidence_ref)
-        if evidence.scheme != "https" or not evidence.hostname or evidence.username or evidence.password:
-            raise ValueError("invalid_storage_encryption_evidence_ref")
+        if storage_encryption_verified:
+            evidence_ref = required("DAILY_FEEDBACK_STORAGE_ENCRYPTION_EVIDENCE_REF")
+            evidence = urlsplit(evidence_ref)
+            if evidence.scheme != "https" or not evidence.hostname or evidence.username or evidence.password:
+                raise ValueError("invalid_storage_encryption_evidence_ref")
+        else:
+            evidence_ref = ""
+            validate_storage_risk_acceptance_ref(risk_acceptance_ref)
 
         def positive_int(name: str) -> int:
             try:
@@ -288,6 +404,34 @@ class DailyFeedbackRuntimeSettings:
         pseudonymization_key = required("DAILY_FEEDBACK_PSEUDONYMIZATION_KEY")
         if len(pseudonymization_key.encode("utf-8")) < 32:
             raise ValueError("daily_feedback_pseudonymization_key_too_short")
+
+        def optional_int(name: str, default: int) -> int:
+            # Solo digitos ASCII: int() aceptaria tambien '+20', '2_0' o digitos de
+            # otros alfabetos. El rango lo valida __post_init__ con la regla del modulo
+            # que usa el valor, y con el mismo codigo.
+            text = optional(name)
+            if not text:
+                return default
+            if not re.fullmatch(r"[0-9]{1,9}", text):
+                raise ValueError(f"invalid_{name.lower()}")
+            return int(text)
+
+        # Los ajustes opcionales; ausentes, el valor de siempre. Los valida
+        # __post_init__ con las reglas de los modulos que los usan:
+        # DAILY_FEEDBACK_CHATWOOT_AGENT_BOT_BINDING (inbox o unlinked),
+        # DAILY_FEEDBACK_BRAND_NAME (de 1 a 60 caracteres imprimibles),
+        # DAILY_FEEDBACK_MAX_CONVERSATION_PAGES (de 1 a 400) y
+        # DAILY_FEEDBACK_COLLECTION_LEASE_SECONDS (de 30 a 900, el rango de la SQL).
+        chatwoot_agent_bot_binding = (
+            optional("DAILY_FEEDBACK_CHATWOOT_AGENT_BOT_BINDING") or AGENT_BOT_BINDING_INBOX
+        )
+        brand_name = optional("DAILY_FEEDBACK_BRAND_NAME") or DEFAULT_REVIEW_BRAND_NAME
+        max_conversation_pages = optional_int(
+            "DAILY_FEEDBACK_MAX_CONVERSATION_PAGES", DEFAULT_MAX_CONVERSATION_PAGES
+        )
+        collection_lease_seconds = optional_int(
+            "DAILY_FEEDBACK_COLLECTION_LEASE_SECONDS", DEFAULT_COLLECTION_LEASE_SECONDS
+        )
         return cls(
             application=application,
             public_origin=public_origin,
@@ -307,6 +451,13 @@ class DailyFeedbackRuntimeSettings:
             pseudonymization_key=pseudonymization_key,
             storage_encryption_evidence_ref=evidence_ref,
             poll_interval_seconds=float(environment.get("DAILY_FEEDBACK_POLL_INTERVAL_SECONDS", "30")),
+            supabase_internal_http=supabase_internal_http,
+            storage_encryption_verified=storage_encryption_verified,
+            storage_risk_acceptance_ref=risk_acceptance_ref,
+            chatwoot_agent_bot_binding=chatwoot_agent_bot_binding,
+            brand_name=brand_name,
+            max_conversation_pages=max_conversation_pages,
+            collection_lease_seconds=collection_lease_seconds,
         )
 
 
@@ -335,7 +486,21 @@ def create_daily_feedback_application(
     repository: DailyFeedbackRepository,
     scheduler: DailyFeedbackSchedulerRuntime,
     review_app: FastAPI,
+    exceptions: tuple[str, ...] = (),
 ) -> FastAPI:
+    # Las excepciones declaradas (DailyFeedbackRuntimeSettings.exceptions). El 200 de
+    # /ready las lista, siempre en el orden de DAILY_FEEDBACK_EXCEPTIONS, y solo si hay
+    # alguna: sin excepciones, el JSON es el de siempre. Los 503 no las llevan.
+    if (
+        type(exceptions) is not tuple
+        or not all(name in DAILY_FEEDBACK_EXCEPTIONS for name in exceptions)
+        or len(set(exceptions)) != len(exceptions)
+    ):
+        raise ValueError("invalid_daily_feedback_exceptions")
+    declared_exceptions = [
+        name for name in DAILY_FEEDBACK_EXCEPTIONS if name in exceptions
+    ]
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.ready = False
@@ -401,7 +566,10 @@ def create_daily_feedback_application(
                 status_code=503,
             )
         mode = "operational" if settings.scheduler_enabled else "staged"
-        return JSONResponse({"status": "ready", "daily_feedback": mode})
+        body: dict[str, object] = {"status": "ready", "daily_feedback": mode}
+        if declared_exceptions:
+            body["exceptions"] = list(declared_exceptions)
+        return JSONResponse(body)
 
     @app.post("/internal/v1/daily-feedback/run")
     async def run_now(request: Request) -> JSONResponse:
@@ -413,6 +581,9 @@ def create_daily_feedback_application(
                 status_code=401,
                 headers={"Cache-Control": "no-store"},
             )
+        # La corrida manual del E2E. Contra la base real, la que recolecta da
+        # collected:true y notified:false, y la tarjeta sale en la siguiente
+        # (collected:false, notified:true); ver DailyFeedbackScheduler.run_once.
         result = await scheduler.run_once(force_collection=True)
         return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
@@ -426,6 +597,7 @@ def create_application_from_env(
     repository = SupabaseDailyFeedbackRepository(
         base_url=runtime.supabase_base_url,
         service_role_key=runtime.supabase_service_role_key,
+        allow_internal_http=runtime.supabase_internal_http,
     )
     oidc = SlackOpenIdClient(
         client_id=runtime.slack_oidc_client_id,
@@ -443,6 +615,7 @@ def create_application_from_env(
             session_hmac_key=session_hmac_key,
             slack_team_id=runtime.application.slack_team_id,
             display_timezone=runtime.application.timezone,
+            brand_name=runtime.brand_name,
         ),
     )
     collector = ChatwootDailyCollector(
@@ -454,11 +627,15 @@ def create_application_from_env(
         pseudonymization_key=runtime.pseudonymization_key.encode("utf-8"),
         security_policy=RealConversationSecurityPolicy(
             real_collection_enabled=True,
-            storage_encryption_verified=True,
+            # Lo que se declaro, tal cual: sin cifrar, el paquete no dice cifrado.
+            storage_encryption_verified=runtime.storage_encryption_verified,
             retention_hours=runtime.application.retention_hours,
             deletion_owner=runtime.application.deletion_policy_ref,
+            storage_risk_acceptance_ref=runtime.storage_risk_acceptance_ref,
         ),
+        max_conversation_pages=runtime.max_conversation_pages,
         package_version=2,
+        agent_bot_binding=runtime.chatwoot_agent_bot_binding,
     )
     producer = SlackConnectorProducer(
         base_url=runtime.slack_connector_base_url,
@@ -478,6 +655,7 @@ def create_application_from_env(
             chatwoot_agent_bot_id=runtime.application.chatwoot_agent_bot_id,
             deletion_owner=runtime.application.deletion_policy_ref,
             poll_interval_seconds=runtime.poll_interval_seconds,
+            collection_lease_seconds=runtime.collection_lease_seconds,
         ),
     )
     app = create_daily_feedback_application(
@@ -485,6 +663,7 @@ def create_application_from_env(
         repository=repository,
         scheduler=scheduler,
         review_app=create_daily_feedback_review_app(service),
+        exceptions=runtime.exceptions,
     )
     app.state.daily_feedback_runtime_settings = runtime
     return app

@@ -1,0 +1,11 @@
+{
+  "_capture": {
+    "origen": "GET /api/v1/accounts/2/inboxes/11/agent_bot en el Chatwoot de produccion (4.13), desde setter-att1_att1-bridge (ATT1); el inbox 11 no tiene bot vinculado a proposito y la respuesta es un objeto vacio",
+    "capturado": "2026-10-10T01:41:42Z",
+    "anonimizacion": "Solo lectura, con el token de control del bridge, adentro de su contenedor (captura_vinculo_agent_bot.py del OS). Se guarda una lista blanca de campos: nunca access_token, secret, outgoing_url, thumbnail ni bot_config."
+  },
+  "status": 200,
+  "body": {},
+  "keys": [],
+  "shape": {}
+}
