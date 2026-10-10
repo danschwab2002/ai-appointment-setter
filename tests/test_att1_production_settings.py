@@ -6,7 +6,9 @@ del contenedor: variables de entorno -> ``build_app()`` (``Settings.from_env()``
 el manifiesto de ATT1 escrito en disco. Cubre lo que ninguna otra suite
 prueba junto: que el set de variables con el que la instancia va a prender cada
 flujo (pago fallido, carrito y primer contacto tras el formulario), y los tres a
-la vez, pasa todas las validaciones de arranque y arma los workers.
+la vez, pasa todas las validaciones de arranque y arma los workers. Desde la
+1.5.0, tambien el seguimiento con cupon (el lugar ``descuento``) junto a los
+tres.
 
 Datos:
 
@@ -21,6 +23,12 @@ Datos:
   escribe a mano quien firma (cabo LAN-054).
 * Los nombres de las plantillas, su idioma y su categoria son los del catalogo
   capturado del inbox 11 (``chatwoot_inbox_11_message_templates_20261001.json``).
+  La del cupon no estaba ahi: sale de la captura por la API del 2026-10-10
+  (``chatwoot_inbox_11_message_templates_20261010.json``), con el horario que
+  decidio Dan ese dia (09-21 de CDMX).
+* El barrido del cupon con los clientes reales lee la 21 de ATT1 capturada y
+  anonimizada (``chatwoot_followup_candidate_inbox_11_20261010.json``), sobre
+  ``httpx.MockTransport``: nada sale a la red.
 * El scope y la politica son los que publica la instancia
   (``tests/fixtures/instances/att1/politica-piloto.json``).
 * Los valores de las variables secretas son de prueba. La lista de variables es
@@ -36,13 +44,16 @@ import os
 import re
 import shutil
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
 
 import bridge.app as app_module
 from bridge.app import Settings
+from bridge.chatwoot import ChatwootClient
 from bridge.instance_manifest import GHL_ADAPTER_RISK_CONTRACT
+from bridge.supabase import SupabaseClient
 from test_instance_wiring import _FirstContactAuthority
 
 ROOT = Path(__file__).parent.parent
@@ -61,6 +72,25 @@ TEST_ACCEPTED_BY = "aceptacion de prueba (tests)"
 CART_TEMPLATE = "att1_carrito_abandonado_01"
 PAYMENT_FAILURE_TEMPLATE = "att1_compra_fallida_01"
 FORM_TEMPLATE = "att1_interes_precheckout_01"
+# El catalogo del inbox 11 capturado por la API el 2026-10-10 (F1), con la
+# plantilla del cupon.
+INBOX_11_COUPON = json.loads(
+    (FIXTURES / "chatwoot_inbox_11_message_templates_20261010.json").read_text(
+        encoding="utf-8"
+    )
+)
+COUPON_TEMPLATE = "att1_seguimiento_descuento_01"
+# La 21 de ATT1 capturada el 2026-10-10 y anonimizada (F4): respondio la
+# plantilla del carrito, recibio el link del agente y se callo. Su telefono es
+# sintetico, con la forma del wa_id de Mexico (521...).
+COUPON_CANDIDATE = json.loads(
+    (FIXTURES / "chatwoot_followup_candidate_inbox_11_20261010.json").read_text(
+        encoding="utf-8"
+    )
+)
+COUPON_WA_ID = COUPON_CANDIDATE["conversation"]["conversation"]["meta"]["sender"][
+    "phone_number"
+].removeprefix("+")
 
 OUTBOUND_FLOWS = ("pago_fallido", "carrito", "precheckout")
 
@@ -93,6 +123,14 @@ def _write_instance(
         off = f"\n{flow} = false\n"
         assert text.count(off) == 1, flow
         text = text.replace(off, f"\n{flow} = true\n")
+    if "descuento" in flows:
+        # El lugar descuento con la plantilla del cupon: sin ella, un manifiesto
+        # con flujos.descuento prendido no carga.
+        cart = f'carrito = {{ nombre = "{CART_TEMPLATE}", idioma = "es_MX" }}\n'
+        assert text.count(cart) == 1
+        text = text.replace(
+            cart, cart + f'descuento = {{ nombre = "{COUPON_TEMPLATE}", idioma = "es_MX" }}\n'
+        )
     if adapter:
         text += "\n[adaptadores.ghl]\nformularios = [{}]\n".format(
             ", ".join(f'"{form}"' for form in GHL_FORMS)
@@ -231,6 +269,21 @@ _FLOW_ENV: dict[str, dict[str, str]] = {
         ),
         "WABA_PRECHECKOUT_TEMPLATE_NAME": FORM_TEMPLATE,
     },
+    # El seguimiento con cupon no pasa por el dispatcher ni por el piloto: le
+    # alcanzan el entrante scoped (Corte B, el AgentBot y Supabase) y sus
+    # variables. El horario es el de las otras plantillas de ATT1; las paginas
+    # y el intervalo, los que la spec del cupon le suma a la instancia (sin
+    # ellas arranca con los defaults, ver abajo).
+    "descuento": {
+        "CONVERSATION_FOLLOWUP_ENABLED": "true",
+        "CONVERSATION_FOLLOWUP_TEMPLATE_NAME": COUPON_TEMPLATE,
+        "CONVERSATION_FOLLOWUP_TEMPLATE_LANGUAGE": "es_MX",
+        "CONVERSATION_FOLLOWUP_COUPON_CODE": "TIROIDES10",
+        "CONVERSATION_FOLLOWUP_PRODUCT_NAME": "Alimenta tu Tiroides",
+        "CONVERSATION_FOLLOWUP_SEND_HOURS": "09-21",
+        "CONVERSATION_FOLLOWUP_MAX_PAGES": "10",
+        "CONVERSATION_FOLLOWUP_INTERVAL_SECONDS": "600",
+    },
 }
 
 
@@ -298,9 +351,24 @@ def test_the_variable_list_of_the_bridge_is_read_from_its_source() -> None:
 
 def test_the_set_names_only_variables_the_bridge_reads(tmp_path: Path) -> None:
     instance = tmp_path / "instancia"
-    env = _production_env(instance, *OUTBOUND_FLOWS)
+    env = _production_env(instance, *OUTBOUND_FLOWS, "descuento")
 
     assert sorted(set(env) - set(_BRIDGE_VARIABLES)) == []
+
+
+def test_the_coupon_variables_are_the_ones_of_the_captured_catalog() -> None:
+    by_name = {template["name"]: template for template in INBOX_11_COUPON["message_templates"]}
+    env = _FLOW_ENV["descuento"]
+
+    captured = by_name[env["CONVERSATION_FOLLOWUP_TEMPLATE_NAME"]]
+    assert captured["status"] == "APPROVED"
+    assert captured["language"] == env["CONVERSATION_FOLLOWUP_TEMPLATE_LANGUAGE"]
+    # El producto es el {{2}} del ejemplo que aprobo Meta, y el de la instancia.
+    [body] = [c for c in captured["components"] if c["type"] == "BODY"]
+    assert body["example"]["body_text"][0][1] == env["CONVERSATION_FOLLOWUP_PRODUCT_NAME"]
+    assert f'product_name = "{env["CONVERSATION_FOLLOWUP_PRODUCT_NAME"]}"' in (
+        ATT1 / "instancia.toml"
+    ).read_text(encoding="utf-8")
 
 
 def test_the_template_variables_are_the_ones_of_the_captured_inbox_11_catalog() -> None:
@@ -485,6 +553,403 @@ def test_the_three_flows_wire_the_whatsapp_equivalence(
     assert dispatcher._sender._whatsapp_equivalence_enabled is True
 
 
+# ------------------------------------------------- el seguimiento con cupon
+
+
+def _spy_followup_sweeper(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
+    # El constructor real corre: el espia solo mira lo que recibe.
+    built: list[dict[str, object]] = []
+    real_sweeper = app_module.ConversationFollowupSweeper
+
+    def spy(**kwargs: object) -> object:
+        built.append(kwargs)
+        return real_sweeper(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(app_module, "ConversationFollowupSweeper", spy)
+    return built
+
+
+def test_the_coupon_starts_with_the_three_flows_and_its_production_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    built = _spy_followup_sweeper(monkeypatch)
+
+    settings, app = _start(monkeypatch, tmp_path, *OUTBOUND_FLOWS, "descuento")
+
+    manifest = settings.instance_manifest
+    assert manifest is not None
+    assert {flow for flow, on in manifest.flows.items() if on} == {
+        "inbound",
+        *OUTBOUND_FLOWS,
+        "descuento",
+    }
+    assert app.state.conversation_followup_sweeper is not None  # type: ignore[attr-defined]
+    [kwargs] = built
+    assert kwargs["template_name"] == COUPON_TEMPLATE
+    assert kwargs["coupon_code"] == "TIROIDES10"
+    assert (kwargs["max_pages"], kwargs["scan_interval_seconds"]) == (10, 600.0)
+    # La identidad como el entrante, la reserva portable y el filtro del nombre.
+    assert callable(kwargs["external_user_id_resolver"])
+    assert kwargs["phone_equivalence"] is True
+    assert kwargs["refuse_unsafe_greeting"] is True
+    # De 09 a 21 de CDMX, la zona del manifiesto, y a todo el inbox: con los
+    # remitentes acotados por scope no hay un JID que lo limite.
+    assert kwargs["send_hours"] == (9, 21)
+    assert kwargs["time_zone"] == ZoneInfo(manifest.time_zone) == ZoneInfo("America/Mexico_City")
+    assert kwargs["only_phone"] is None
+    assert kwargs["allowed_phone"] is None
+
+
+def test_the_coupon_without_its_pages_and_interval_starts_with_the_defaults(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Fija lo que hace hoy el arranque, no lo que conviene: las paginas y el
+    # intervalo tienen default (5 paginas de 25 por estado, 300 s), asi que
+    # sacarlas no frena el bridge. Si el arranque pasa a exigirlas con el
+    # manifiesto, este test se invierte.
+    built = _spy_followup_sweeper(monkeypatch)
+
+    _start(
+        monkeypatch,
+        tmp_path,
+        *OUTBOUND_FLOWS,
+        "descuento",
+        drop=("CONVERSATION_FOLLOWUP_MAX_PAGES", "CONVERSATION_FOLLOWUP_INTERVAL_SECONDS"),
+    )
+
+    [kwargs] = built
+    assert (kwargs["max_pages"], kwargs["scan_interval_seconds"]) == (5, 300.0)
+
+
+@pytest.mark.parametrize(
+    ("drop", "message"),
+    [
+        (
+            "CONVERSATION_FOLLOWUP_TEMPLATE_NAME",
+            "CONVERSATION_FOLLOWUP_TEMPLATE_NAME must match plantillas.descuento.nombre",
+        ),
+        (
+            "CONVERSATION_FOLLOWUP_TEMPLATE_LANGUAGE",
+            "CONVERSATION_FOLLOWUP_TEMPLATE_LANGUAGE must match plantillas.descuento.idioma",
+        ),
+        (
+            "CONVERSATION_FOLLOWUP_COUPON_CODE",
+            "CONVERSATION_FOLLOWUP_ENABLED requires .*CONVERSATION_FOLLOWUP_COUPON_CODE",
+        ),
+        (
+            "CONVERSATION_FOLLOWUP_PRODUCT_NAME",
+            "CONVERSATION_FOLLOWUP_PRODUCT_NAME must match hotmart.product_name",
+        ),
+        (
+            "CONVERSATION_FOLLOWUP_SEND_HOURS",
+            "CONVERSATION_FOLLOWUP_SEND_HOURS is required with an instance manifest",
+        ),
+    ],
+)
+def test_a_missing_coupon_variable_does_not_start(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, drop: str, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        _start(monkeypatch, tmp_path, *OUTBOUND_FLOWS, "descuento", drop=(drop,))
+
+
+def test_the_coupon_variables_without_its_flow_in_the_manifest_do_not_start(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Las variables del cupon cargadas antes de mergear el manifiesto con
+    # flujos.descuento = true.
+    instance = _write_instance(tmp_path, "inbound", *OUTBOUND_FLOWS)
+    _load(monkeypatch, _production_env(instance, *OUTBOUND_FLOWS, "descuento"))
+
+    with pytest.raises(ValueError, match="conversation_followup_enabled->descuento"):
+        _build_app()
+
+
+# ------------------------------- un barrido del cupon con los clientes reales
+#
+# Los dobles de tests/test_followup_discount.py no pasan por los clientes
+# reales, y lo que manda ATT1 a la reserva portable es justo una costura entre
+# los dos lados: la kwarg phone_equivalence de SupabaseClient y la firma del
+# resolvedor del entrante (wa_id, conversation_id=...). Aca corre un barrido
+# completo del barredor que arma build_app() con el set de produccion, contra
+# el ChatwootClient y el SupabaseClient de verdad sobre httpx.MockTransport.
+# Chatwoot sirve lo capturado: el catalogo del inbox 11 (F1) y la 21 con su
+# pagina (F4), reducida a la 21 porque las otras 24 conversaciones no estan
+# capturadas. PostgREST contesta con la forma de las filas de nuestras RPC, que
+# no son un borde externo. Lo unico fijo del barredor son el reloj y el ULID.
+
+# 30 h despues de que la persona de la 21 contesto: el 10/10 a las 16:15 de
+# CDMX, adentro de 09-21.
+_COUPON_NOW = (
+    max(
+        message["created_at"]
+        for message in COUPON_CANDIDATE["conversation"]["messages"]
+        if message["message_type"] == 0
+    )
+    + 30 * 3_600
+)
+_COUPON_ULID = "01K5ABCDEFX2VYB4M6X9CDPTF1"
+_COUPON_EVENT_ID = "00000000-0000-0000-0000-000000000601"
+_COUPON_ISSUANCE_ID = "00000000-0000-0000-0000-000000000602"
+# El link que emite la reserva: el del agente en la 21, con el ULID nuevo.
+_COUPON_AGENT_LINK = next(
+    word
+    for word in COUPON_CANDIDATE["conversation"]["messages"][-1]["content"].split()
+    if word.startswith("https://pay.hotmart.com/")
+)
+_COUPON_ISSUED_LINK = re.sub(
+    r"~hermes~v1~[0-9A-Z]{26}", f"~hermes~v1~{_COUPON_ULID}", _COUPON_AGENT_LINK
+)
+_COUPON_SENT_MESSAGE_ID = 2_800
+
+
+def _coupon_chatwoot(seen: list[httpx.Request], unexpected: list[str]):
+    """Chatwoot de la cuenta 2, inbox 11, con lo capturado en F1 y F4."""
+    captured = COUPON_CANDIDATE["conversation"]
+    pages = json.loads(json.dumps(COUPON_CANDIDATE["pages"]))
+    pages["open"]["payload"] = [
+        item for item in pages["open"]["payload"] if item["id"] == 21
+    ]
+    pages["open"]["meta"]["all_count"] = 1
+    prefix = "/api/v1/accounts/2"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        path = request.url.path
+        if request.method == "GET" and path == f"{prefix}/inboxes/11":
+            return httpx.Response(200, json=INBOX_11_COUPON)
+        if request.method == "GET" and path == f"{prefix}/conversations":
+            params = request.url.params
+            page = pages[params["status"]]
+            if params["page"] != "1":
+                return httpx.Response(
+                    200, json={"data": {"payload": [], "meta": page["meta"]}}
+                )
+            return httpx.Response(200, json={"data": page})
+        if request.method == "GET" and path == f"{prefix}/conversations/21":
+            return httpx.Response(200, json=captured["conversation"])
+        if request.method == "GET" and path == f"{prefix}/conversations/21/messages":
+            return httpx.Response(200, json={"payload": captured["messages"]})
+        if request.method == "POST" and path == f"{prefix}/conversations/21/messages":
+            # Lo que devuelve Chatwoot al aceptar un mensaje del AgentBot: el
+            # cliente real lo valida antes de dar el envio por hecho.
+            body = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={
+                    "id": _COUPON_SENT_MESSAGE_ID,
+                    "conversation_id": 21,
+                    "message_type": 1,
+                    "private": False,
+                    "content_attributes": body["content_attributes"],
+                    "sender": {"type": "agent_bot", "id": 7},
+                },
+            )
+        unexpected.append(f"{request.method} {path}")
+        return httpx.Response(599)
+
+    return handler
+
+
+def _coupon_postgrest(seen: list[httpx.Request], unexpected: list[str]):
+    """La base de ATT1: el caso de la 21 nacio del formulario, con 52..."""
+    stored = "52" + COUPON_WA_ID[3:]
+    rows: dict[tuple[str, str], list[dict[str, object]]] = {
+        ("GET", "/rest/v1/channel_identities"): [
+            {
+                "id": f"identity-{stored}",
+                "contact_id": f"contact-{stored}",
+                "external_user_id": stored,
+                "metadata": {"inbox_id": 11},
+            }
+        ],
+        # Sin inferencia guardada para ese nombre: el saludo es la regla.
+        ("POST", "/rest/v1/rpc/get_lead_first_name_inference_v1"): [],
+        ("POST", "/rest/v1/rpc/claim_portable_conversation_followup_v1"): [
+            {
+                "outcome": "claimed",
+                "followup_event_id": _COUPON_EVENT_ID,
+                "checkout_issuance_id": _COUPON_ISSUANCE_ID,
+                "checkout_url_final": _COUPON_ISSUED_LINK,
+                "sck_value": f"SCK_ANUNCIO_REDACTADO~hermes~v1~{_COUPON_ULID}",
+            }
+        ],
+        ("POST", "/rest/v1/rpc/authorize_chatwoot_checkout_issuance_v2"): [
+            {
+                "outcome": "request_started",
+                "issuance_id": _COUPON_ISSUANCE_ID,
+                "status": "request_started",
+            }
+        ],
+        ("POST", "/rest/v1/rpc/finalize_chatwoot_checkout_issuance_v2"): [
+            {
+                "outcome": "finalized",
+                "issuance_id": _COUPON_ISSUANCE_ID,
+                "status": "accepted_by_chatwoot",
+            }
+        ],
+        ("POST", "/rest/v1/rpc/settle_conversation_followup_v1"): [
+            {"outcome": "settled", "followup_event_id": _COUPON_EVENT_ID}
+        ],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        key = (request.method, request.url.path)
+        if key not in rows:
+            unexpected.append(f"{request.method} {request.url.path}")
+            return httpx.Response(599)
+        return httpx.Response(200, json=rows[key])
+
+    return handler
+
+
+def test_a_coupon_sweep_through_the_real_clients_claims_with_the_portable_rpc(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    chatwoot_seen: list[httpx.Request] = []
+    postgrest_seen: list[httpx.Request] = []
+    unexpected: list[str] = []
+    real_create_app = app_module.create_app
+    real_sweeper = app_module.ConversationFollowupSweeper
+
+    def create_app_on_mock_transports(settings: Settings, **kwargs: object) -> object:
+        # Los clientes que arma create_app con estas variables, con el
+        # transporte reemplazado: nada sale a la red.
+        chatwoot = ChatwootClient(
+            base_url=str(settings.chatwoot_base_url),
+            account_id=int(settings.chatwoot_account_id or 0),
+            access_token=str(settings.chatwoot_control_api_access_token),
+            allowed_jid=settings.allowed_jid,
+            agent_bot_access_token=settings.chatwoot_agent_bot_access_token,
+            agent_bot_id=settings.agent_bot_id,
+            reply_dir=settings.reply_dir,
+            pause_macro_id=settings.chatwoot_pause_macro_id,
+            resume_macro_id=settings.chatwoot_resume_macro_id,
+            opt_out_macro_id=settings.chatwoot_opt_out_macro_id,
+            transport=httpx.MockTransport(_coupon_chatwoot(chatwoot_seen, unexpected)),
+        )
+        supabase = SupabaseClient(
+            base_url=str(settings.supabase_base_url),
+            service_role_key=str(settings.supabase_service_role_key),
+            transport=httpx.MockTransport(_coupon_postgrest(postgrest_seen, unexpected)),
+        )
+        return real_create_app(
+            settings, chatwoot_client=chatwoot, supabase_client=supabase, **kwargs
+        )
+
+    def sweeper_with_a_fixed_clock(**kwargs: object) -> object:
+        return real_sweeper(
+            **kwargs, clock=lambda: _COUPON_NOW, ulid_factory=lambda: _COUPON_ULID
+        )
+
+    monkeypatch.setattr(app_module, "create_app", create_app_on_mock_transports)
+    monkeypatch.setattr(
+        app_module, "ConversationFollowupSweeper", sweeper_with_a_fixed_clock
+    )
+
+    _, app = _start(monkeypatch, tmp_path, *OUTBOUND_FLOWS, "descuento")
+    sweeper = app.state.conversation_followup_sweeper  # type: ignore[attr-defined]
+
+    assert asyncio.run(sweeper.run_once()) == 1
+    assert unexpected == []
+    assert (sweeper.last_scan_state, sweeper.last_scan_summary) == (
+        "healthy",
+        "scanned=1 sent=1",
+    )
+
+    # La base: el saludo, la identidad, la reserva portable, la autorizacion,
+    # el cierre de la emision y el del seguimiento, en ese orden.
+    assert [request.url.path for request in postgrest_seen] == [
+        "/rest/v1/rpc/get_lead_first_name_inference_v1",
+        "/rest/v1/channel_identities",
+        "/rest/v1/rpc/claim_portable_conversation_followup_v1",
+        "/rest/v1/rpc/authorize_chatwoot_checkout_issuance_v2",
+        "/rest/v1/rpc/finalize_chatwoot_checkout_issuance_v2",
+        "/rest/v1/rpc/settle_conversation_followup_v1",
+    ]
+    lookup, claim, authorize, finalize, settle = (
+        postgrest_seen[1],
+        *[json.loads(request.content) for request in postgrest_seen[2:]],
+    )
+    # El resolvedor del entrante busca las dos formas del wa_id de la 21 en la
+    # cuenta del manifiesto, y devuelve la guardada (52...).
+    assert lookup.url.params["account_id"] == "eq.chatwoot:2"
+    assert lookup.url.params["external_user_id"] == (
+        f"in.(52{COUPON_WA_ID[3:]},{COUPON_WA_ID})"
+    )
+    # La reserva portable, con la identidad resuelta: con el wa_id textual
+    # (521...) la base no encuentra el caso del formulario y el cupon no sale.
+    assert claim == {
+        "p_external_conversation_id": 21,
+        "p_chatwoot_account_id": 2,
+        "p_chatwoot_inbox_id": 11,
+        "p_external_user_id": "525500000021",
+        "p_contact_email": "lead21@example.com",
+        "p_command_key": "followup:21:2766",
+        "p_regime": "link_sent_no_purchase",
+        "p_template_name": COUPON_TEMPLATE,
+        "p_template_language": "es_MX",
+        "p_coupon_code": "TIROIDES10",
+        "p_last_inbound_message_id": 2765,
+        "p_last_outbound_message_id": 2766,
+        "p_inbound_age_seconds": 30 * 3_600,
+        "p_issuance_ulid": _COUPON_ULID,
+    }
+    # La autorizacion, con la misma identidad y el mismo ancla.
+    assert {
+        key: authorize[key]
+        for key in ("p_issuance_id", "p_external_user_id", "p_trigger_external_message_id")
+    } == {
+        "p_issuance_id": _COUPON_ISSUANCE_ID,
+        "p_external_user_id": "525500000021",
+        "p_trigger_external_message_id": "2766",
+    }
+    assert (finalize["p_status"], finalize["p_chatwoot_message_id"]) == (
+        "accepted_by_chatwoot",
+        _COUPON_SENT_MESSAGE_ID,
+    )
+    assert (settle["p_status"], settle["p_provider_message_id"]) == (
+        "sent",
+        _COUPON_SENT_MESSAGE_ID,
+    )
+
+    # Chatwoot: abiertas y resueltas del inbox 11, y la 21 leida dos veces (en
+    # el listado y justo antes de reservar).
+    assert [
+        (request.url.params["status"], request.url.params["inbox_id"], request.url.params["page"])
+        for request in chatwoot_seen
+        if request.url.path == "/api/v1/accounts/2/conversations"
+    ] == [("open", "11", "1"), ("resolved", "11", "1")]
+    assert [
+        request.method
+        for request in chatwoot_seen
+        if request.url.path == "/api/v1/accounts/2/conversations/21/messages"
+    ] == ["GET", "GET", "POST"]
+    # La plantilla de ATT1 sale como el AgentBot, con dos parametros en el
+    # cuerpo y el cupon solo en el boton, sobre el link emitido.
+    [sent] = [request for request in chatwoot_seen if request.method == "POST"]
+    assert sent.headers["api_access_token"] == "test-agent-bot-token"
+    body = json.loads(sent.content)
+    assert body["content_attributes"] == {
+        "conversation_followup_command_key": "followup:21:2766"
+    }
+    assert body["template_params"]["name"] == COUPON_TEMPLATE
+    assert body["template_params"]["language"] == "es_MX"
+    assert body["template_params"]["processed_params"] == {
+        "body": {"1": "Lucia", "2": "Alimenta tu Tiroides"},
+        "buttons": [
+            {
+                "type": "url",
+                "parameter": _COUPON_ISSUED_LINK.removeprefix("https://pay.hotmart.com/")
+                + "&offDiscount=TIROIDES10",
+            }
+        ],
+    }
+    assert body["content"].startswith("Hola, Lucia. ")
+    assert "TIROIDES10" not in body["content"]
+
+
 # -------------------------------------------------------------- /ready
 
 
@@ -550,6 +1015,82 @@ def test_ready_reports_the_three_flows_and_the_accepted_risk(
     )
     # Con la aceptacion escrita no hace falta leer la audiencia del scope.
     assert authority.audience_reads == []
+
+
+# El modo de prueba del E2E (paso 9 de Dan): el flag, su telefono y 15 minutos
+# en vez de 24 h. Sintetico, con la forma del wa_id de Mexico.
+_COUPON_TEST_MODE = {
+    "CONVERSATION_FOLLOWUP_ONLY_PHONE": "+5215500000099",
+    "CONVERSATION_FOLLOWUP_MIN_AGE_SECONDS": "900",
+}
+
+
+@pytest.mark.parametrize(
+    ("extra", "audience", "min_age"),
+    [(_COUPON_TEST_MODE, "only_phone", "900"), ({}, "inbox", "86400")],
+    ids=["test mode", "opened"],
+)
+def test_ready_reports_the_coupon_audience_and_hours(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    extra: dict[str, str],
+    audience: str,
+    min_age: str,
+) -> None:
+    instance = _write_instance(tmp_path, "inbound", *OUTBOUND_FLOWS, "descuento")
+    _load(monkeypatch, {**_production_env(instance, *OUTBOUND_FLOWS, "descuento"), **extra})
+    authority = _ReadyAuthority()
+    real_create_app = app_module.create_app
+    monkeypatch.setattr(
+        app_module,
+        "create_app",
+        lambda settings, **kwargs: real_create_app(
+            settings, supabase_client=authority, **kwargs  # type: ignore[arg-type]
+        ),
+    )
+
+    response = _ready(_build_app())
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    # Sin lifespan el barredor no corrio: el estado es el inicial.
+    assert body["conversation_followup"] == "never"
+    # Con los remitentes por scope, sin el modo de prueba es todo el inbox.
+    assert body["conversation_followup_audience"] == audience
+    # Abrir se verifica por presencia: 86400, no solo la ausencia del modo.
+    assert body["conversation_followup_min_age_seconds"] == min_age
+    assert body["conversation_followup_send_hours"] == "09-21"
+    assert body["portable_precheckout_first_contact"] == "armed"
+    # El telefono de prueba no sale en ninguna forma.
+    assert "5500000099" not in response.text
+
+
+def test_opening_with_the_test_silence_left_does_not_start(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # El paso de abrir a medias: se saca CONVERSATION_FOLLOWUP_ONLY_PHONE y
+    # queda CONVERSATION_FOLLOWUP_MIN_AGE_SECONDS=900 (por ejemplo, por borrar
+    # una sola linea). Arrancado, mandaria la plantilla MARKETING con el 10 % a
+    # todo el inbox a los 15 minutos, dentro de la ventana de 24 h, y /ready
+    # diria inbox. No arranca, y el mensaje nombra las dos variables.
+    with pytest.raises(
+        ValueError,
+        match=(
+            "^CONVERSATION_FOLLOWUP_MIN_AGE_SECONDS below 86400 requires "
+            "CONVERSATION_FOLLOWUP_ONLY_PHONE with an instance manifest"
+        ),
+    ):
+        _start(
+            monkeypatch,
+            tmp_path,
+            *OUTBOUND_FLOWS,
+            "descuento",
+            extra={
+                "CONVERSATION_FOLLOWUP_MIN_AGE_SECONDS": (
+                    _COUPON_TEST_MODE["CONVERSATION_FOLLOWUP_MIN_AGE_SECONDS"]
+                )
+            },
+        )
 
 
 # ------------------------------------------------- lo que no tiene que arrancar

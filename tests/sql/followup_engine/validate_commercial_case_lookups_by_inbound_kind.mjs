@@ -10,11 +10,13 @@
 // casos y abortaban con P0001 *_ambiguous_case.
 //
 // El validador arma DOS bases con la cadena completa de migraciones: una sin
-// la 000500 (lo de hoy) y otra con ella. En las dos corre exactamente la misma
-// secuencia, con las RPC reales de ATT1, y compara lo que devuelve cada una de
-// las cuatro funciones en cinco estados de conversacion. Cada llamada corre
-// como service_role (el rol del bridge) dentro de un savepoint que se deshace,
-// asi que ninguna sonda cambia el estado de la siguiente.
+// la 000500 (lo de hoy) y otra con ella. La base sin la 000500 tampoco lleva
+// lo que se deriva de lo que ella deja (DERIVED_FROM_MIGRATION): sin ella esas
+// migraciones fallan cerrado, que es su trabajo. En las dos corre exactamente
+// la misma secuencia, con las RPC reales de ATT1, y compara lo que devuelve
+// cada una de las cuatro funciones en cinco estados de conversacion. Cada
+// llamada corre como service_role (el rol del bridge) dentro de un savepoint
+// que se deshace, asi que ninguna sonda cambia el estado de la siguiente.
 //
 //   A. adoptada, con el cart_recovery al lado del inbound_sales (la cadena del
 //      dispatcher hasta la aceptacion del carrito y la respuesta por la
@@ -67,6 +69,19 @@ if (!existsSync(join(root, 'supabase/migrations', MIGRATION))) {
 const MIGRATIONS = readdirSync(join(root, 'supabase/migrations'))
   .filter((name) => name.endsWith('.sql'))
   .sort();
+// Las migraciones que derivan de una definicion que deja la 000500:
+// 20261010000100 copia su claim_conversation_followup_v1 para la reserva
+// portable del seguimiento y, sin ella, falla con 55000
+// unexpected_conversation_followup_claim_definition. En una base real la
+// cadena es lineal: sin la 000500 no hay ninguna de estas.
+const DERIVED_FROM_MIGRATION = [
+  '20261010000100_portable_conversation_followup_claim.sql',
+];
+for (const name of DERIVED_FROM_MIGRATION) {
+  if (!MIGRATIONS.includes(name) || name <= MIGRATION) {
+    throw new Error(`${name} is not a migration after ${MIGRATION}`);
+  }
+}
 const ADOPTION_EVENT = 'inbound_adopted_template_conversation';
 const RPCS = {
   mark_human_handoff_attended: 'public.mark_human_handoff_attended(bigint,timestamptz,timestamptz)',
@@ -777,7 +792,9 @@ const runOn = async (db) => {
   return { shapes, probes, help, functions };
 };
 
-const before = await openDatabase(MIGRATIONS.filter((name) => name !== MIGRATION));
+const before = await openDatabase(MIGRATIONS.filter(
+  (name) => name !== MIGRATION && !DERIVED_FROM_MIGRATION.includes(name),
+));
 const without = await runOn(before);
 await before.close();
 const after = await openDatabase(MIGRATIONS);
@@ -826,8 +843,10 @@ if (Object.values(A).some((result) => typeof result === 'string')
     // El seguimiento pasa sus barreras y llega a la reserva del link, que solo
     // acepta un inbound_sales activo (con el cart_recovery daria
     // issuance_blocked_case). Ahi frena porque ATT1 no tiene catalogo de
-    // ofertas de Johanna: su link sale por la reserva portable, y el
-    // seguimiento con cupon todavia no la usa.
+    // ofertas de Johanna. Con manifiesto el bridge no llama a esta funcion
+    // sino a claim_portable_conversation_followup_v1 (20261010000100), que
+    // emite el link con la reserva portable; la compartida, la que se prueba
+    // aca, sigue frenando en la reserva compartida.
     || A.claim_conversation_followup_v1.outcome !== 'issuance_missing_default_offer'
     || A.claim_conversation_followup_v1.followup_event_id !== null) {
   fail('A with the migration', A);

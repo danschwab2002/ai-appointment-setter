@@ -380,14 +380,72 @@ def test_commercial_case_lookups_by_inbound_kind_fingerprint_checks_the_four_rpc
     assert compact_fingerprint.endswith(",4,'commercial_case_lookups_by_inbound_kind'unionallselect")
 
 
+def test_portable_conversation_followup_claim_fingerprint_checks_the_derivation_and_its_acl() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La ultima fila: hasta el cierre de la lista de huellas.
+    fingerprint = sql.split("'20261010000100'", 1)[1].split(")\nselect", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", fingerprint)
+    portable = (
+        "public.claim_portable_conversation_followup_v1(bigint,bigint,bigint,text,text,text,"
+        "text,text,text,text,bigint,bigint,integer,text,timestamptz)"
+    )
+    shared = (
+        "public.claim_conversation_followup_v1(bigint,bigint,bigint,text,text,text,text,text,"
+        "text,text,bigint,bigint,integer,text,timestamptz)"
+    )
+
+    assert "'20261010000100_portable_conversation_followup_claim.sql'" in fingerprint
+    assert "proname" not in fingerprint
+    # Los cuatro marcadores dependen de la portable, por su firma exacta: en la
+    # base de Johanna (sin la reserva portable no se crea nada) da absent, no
+    # partial.
+    assert compact_fingerprint.count(f"to_regprocedure('{portable}')") == 4
+    assert f"to_regprocedure('{portable}')isnotnull" in compact_fingerprint
+    assert compact_fingerprint.count(f"to_regprocedure('{shared}')") == 1
+    # Definer con search_path fijo, y el link sale de la reserva portable.
+    assert "andprosecdef" in compact_fingerprint
+    assert "array_to_string(proconfig,',')='search_path=pg_catalog,public,pg_temp'" in compact_fingerprint
+    assert (
+        "position('frompublic.reserve_portable_checkout_issuance_v2('indefinition)>0"
+        in compact_fingerprint
+    )
+    assert "position('reserve_chatwoot_checkout_issuance_v2'indefinition)=0" in compact_fingerprint
+    # La barrera de la conversacion adoptada, con el evento que escribe la 000400.
+    for marker in (
+        "position('portable_followup_template_reply:begin'indefinition)>0",
+        "position('portable_followup_template_reply:end'indefinition)>0",
+        "position('ifnotv_inbound_onlythen'indefinition)>0",
+        "position('''blocked_not_template_reply'''indefinition)>0",
+        "position('inbound_adopted_template_conversation'indefinition)>0",
+    ):
+        assert marker in compact_fingerprint, marker
+    # Es un entrypoint del bridge: solo service_role.
+    assert "has_function_privilege('service_role',oid,'EXECUTE')" in compact_fingerprint
+    assert "nothas_function_privilege('anon',oid,'EXECUTE')" in compact_fingerprint
+    assert "nothas_function_privilege('authenticated',oid,'EXECUTE')" in compact_fingerprint
+    # La compartida queda como estaba: la reserva compartida y sin la barrera.
+    for marker in (
+        "position('frompublic.reserve_chatwoot_checkout_issuance_v2('inshared.definition)>0",
+        "position('reserve_portable_checkout_issuance_v2'inshared.definition)=0",
+        "position('blocked_not_template_reply'inshared.definition)=0",
+    ):
+        assert marker in compact_fingerprint, marker
+    assert compact_fingerprint.endswith(",4,'portable_conversation_followup_claim'")
+
+
 def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
 
-    assert len(allowlisted) == 119
+    assert len(allowlisted) == 120
     assert (
         "claim_conversation_followup_v1(bigint, bigint, bigint, text, text, text, text, text, "
         "text, text, bigint, bigint, integer, text, timestamp with time zone)"
+        in allowlisted
+    )
+    assert (
+        "claim_portable_conversation_followup_v1(bigint, bigint, bigint, text, text, text, "
+        "text, text, text, text, bigint, bigint, integer, text, timestamp with time zone)"
         in allowlisted
     )
     assert (

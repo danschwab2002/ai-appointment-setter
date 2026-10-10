@@ -632,9 +632,13 @@ class ConversationReactivationSettlement:
     reactivation_event_id: str | None
 
 
-# Los veredictos que puede devolver claim_conversation_followup_v1. Los
-# 'issuance_*' repiten el de reserve_chatwoot_checkout_issuance_v2 cuando la
-# emision del link no quedo en 'reserved'.
+# Los veredictos que pueden devolver claim_conversation_followup_v1 y su
+# derivada portable, claim_portable_conversation_followup_v1 (el runtime con
+# manifiesto). Los 'issuance_*' repiten el de la reserva del link
+# (reserve_chatwoot_checkout_issuance_v2, o reserve_portable_checkout_issuance_v2
+# en la portable) cuando la emision no quedo en 'reserved'.
+# 'blocked_not_template_reply' lo devuelve solo la portable: la conversacion no
+# es la respuesta a una plantilla nuestra (no fue adoptada) y el cupon no sale.
 FOLLOWUP_CLAIM_OUTCOMES = frozenset(
     {
         "claimed",
@@ -644,6 +648,7 @@ FOLLOWUP_CLAIM_OUTCOMES = frozenset(
         "blocked_pending_handoff",
         "blocked_conversation",
         "blocked_contact",
+        "blocked_not_template_reply",
         "purchase_already_approved",
         "issuance_invalid_request",
         "issuance_replay_conflict",
@@ -4075,17 +4080,33 @@ class SupabaseClient:
         last_outbound_message_id: int,
         inbound_age_seconds: int,
         issuance_ulid: str,
+        phone_equivalence: bool = False,
     ) -> ConversationFollowupClaim:
         """Reservar el seguimiento con cupon y emitir su link de pago.
 
         Las barreras durables (compra por telefono o mail, derivacion sin
         atender, pausa, opt-out, uno solo por conversacion) viven en la RPC.
         Una reserva 'claimed' siempre trae el link: sin link no hay boton.
+
+        Con ``phone_equivalence`` (solo el runtime con manifiesto) pega en
+        claim_portable_conversation_followup_v1: la misma reserva, con el link
+        emitido por reserve_portable_checkout_issuance_v2 (la intencion del
+        movil y el opt-out buscados por las dos formas del telefono, 52/521 y
+        54/549) y solo para una conversacion adoptada; si no lo es, devuelve
+        'blocked_not_template_reply'. Mismo payload, misma lectura de la fila y
+        mismos errores: cambia la RPC, y la operacion que nombra el error de
+        una respuesta que no es una lista de filas. Sin el flag, la compartida
+        de siempre.
         """
-        operation = "conversation_followup_claim"
+        if phone_equivalence:
+            operation = "portable_conversation_followup_claim"
+            path = "/rest/v1/rpc/claim_portable_conversation_followup_v1"
+        else:
+            operation = "conversation_followup_claim"
+            path = "/rest/v1/rpc/claim_conversation_followup_v1"
         response = await self._request(
             "POST",
-            "/rest/v1/rpc/claim_conversation_followup_v1",
+            path,
             content=json.dumps(
                 {
                     "p_external_conversation_id": external_conversation_id,

@@ -4317,6 +4317,57 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'portable_inbound_adoption_ignores_stopped_first_contact'
+    union all
+    select
+        '20261010000100',
+        '20261010000100_portable_conversation_followup_claim.sql',
+        -- La reserva portable del seguimiento con cupon: definer, con el
+        -- search_path fijo y el link emitido por la reserva portable.
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.claim_portable_conversation_followup_v1(bigint,bigint,bigint,text,text,text,text,text,text,text,bigint,bigint,integer,text,timestamptz)')
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+              and position('from public.reserve_portable_checkout_issuance_v2(' in definition) > 0
+              and position('reserve_chatwoot_checkout_issuance_v2' in definition) = 0
+        )::int
+        -- La barrera: solo una conversacion adoptada (respuesta a una
+        -- plantilla nuestra) llega a la reserva.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.claim_portable_conversation_followup_v1(bigint,bigint,bigint,text,text,text,text,text,text,text,bigint,bigint,integer,text,timestamptz)')
+              and position('portable_followup_template_reply: begin' in definition) > 0
+              and position('portable_followup_template_reply: end' in definition) > 0
+              and position('if not v_inbound_only then' in definition) > 0
+              and position('''blocked_not_template_reply''' in definition) > 0
+              and position('inbound_adopted_template_conversation' in definition) > 0
+        )::int
+        -- Es un entrypoint del bridge: solo service_role.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.claim_portable_conversation_followup_v1(bigint,bigint,bigint,text,text,text,text,text,text,text,bigint,bigint,integer,text,timestamptz)')
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- La compartida queda como estaba. Cuenta solo donde existe la
+        -- portable: en la base de Johanna, sin 20261001000100, la migracion
+        -- no crea nada y la huella tiene que dar absent, no partial.
+        + (
+            select count(*) = 1
+            from functions shared
+            where shared.oid = to_regprocedure('public.claim_conversation_followup_v1(bigint,bigint,bigint,text,text,text,text,text,text,text,bigint,bigint,integer,text,timestamptz)')
+              and to_regprocedure('public.claim_portable_conversation_followup_v1(bigint,bigint,bigint,text,text,text,text,text,text,text,bigint,bigint,integer,text,timestamptz)') is not null
+              and position('from public.reserve_chatwoot_checkout_issuance_v2(' in shared.definition) > 0
+              and position('reserve_portable_checkout_issuance_v2' in shared.definition) = 0
+              and position('blocked_not_template_reply' in shared.definition) = 0
+        )::int,
+        4,
+        'portable_conversation_followup_claim'
 )
 select
     version,

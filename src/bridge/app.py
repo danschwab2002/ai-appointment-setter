@@ -21,6 +21,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import AsyncGenerator, Awaitable, Callable, Protocol
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import (
@@ -56,6 +57,7 @@ from bridge.chatwoot_inbox import (
 )
 from bridge.followup_discount import (
     COUPON_CODE_RE,
+    DEFAULT_MIN_INBOUND_AGE_SECONDS,
     ConversationFollowupSweeper,
 )
 from bridge.reactivation import ConversationReactivationSweeper
@@ -177,6 +179,13 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # Reactivar tampoco depende del aliado: lo especifico es el nombre de la
     # plantilla aprobada, que ya es configuracion por runtime.
     "conversation_reactivation_enabled",
+    # El seguimiento con cupon: con manifiesto, el barredor reserva con
+    # claim_portable_conversation_followup_v1 (el link sale de la reserva
+    # portable, y solo en una conversacion adoptada) y resuelve la identidad
+    # como el entrante (52/521). La plantilla y el producto tienen que ser los
+    # de [plantillas].descuento y [hotmart] del manifiesto. Con el binding v1
+    # (COMMERCIAL_ALLY_CONFIG_PATH) no arranca: _validate_conversation_followup.
+    "conversation_followup_enabled",
     "hermes_shadow_enabled",
     "automated_replies_enabled",
     "reply_splitter_enabled",
@@ -391,6 +400,65 @@ class ReplySplitter(Protocol):
     ) -> tuple[str, ...]: ...
 
 
+# CONVERSATION_FOLLOWUP_SEND_HOURS: dos horas enteras de dos digitos, HH-HH.
+_FOLLOWUP_SEND_HOURS_RE = re.compile(r"([0-9]{2})-([0-9]{2})")
+# Un CONVERSATION_FOLLOWUP_SEND_HOURS que no se puede usar, por la forma o por
+# el rango: el mensaje nombra la variable y lo que espera, para que un bridge
+# que no arranca no obligue a adivinar cual de las variables del seguimiento
+# esta mal.
+_FOLLOWUP_SEND_HOURS_ERROR = (
+    "CONVERSATION_FOLLOWUP_SEND_HOURS must be HH-HH with 00 <= start < end <= 24 "
+    "in the time zone of the instance manifest, for example 09-21, or 00-24 to "
+    "send at any hour"
+)
+# CONVERSATION_FOLLOWUP_ONLY_PHONE: E.164, el + y de 7 a 15 digitos sin 0
+# adelante (la forma que exige el barredor), solo con digitos ASCII.
+_FOLLOWUP_ONLY_PHONE_RE = re.compile(r"\+[1-9][0-9]{6,14}")
+
+
+def _parse_followup_send_hours(raw: str) -> tuple[int, int] | None:
+    """``CONVERSATION_FOLLOWUP_SEND_HOURS`` (``HH-HH``) como ``(inicio, fin)``.
+
+    Vacio es ``None``: sin horario. Otra forma, o un rango fuera de
+    0 <= inicio < fin <= 24 (``21-09``, ``09-25``, ``00-00``), no arranca al
+    leer. ``create_app`` vuelve a mirar el rango, porque tambien recibe
+    ``Settings`` armados sin pasar por aca.
+    """
+    text = raw.strip()
+    if not text:
+        return None
+    match = _FOLLOWUP_SEND_HOURS_RE.fullmatch(text)
+    if match is None:
+        raise ValueError(_FOLLOWUP_SEND_HOURS_ERROR)
+    send_hours = (int(match.group(1)), int(match.group(2)))
+    if not _followup_send_hours_in_range(send_hours):
+        raise ValueError(_FOLLOWUP_SEND_HOURS_ERROR)
+    return send_hours
+
+
+def _followup_send_hours_in_range(send_hours: object) -> bool:
+    """``(inicio, fin)`` en horas enteras, con 0 <= inicio < fin <= 24.
+
+    La misma regla que el constructor del barredor: aca corre al leer la
+    variable y en el arranque, con el flag prendido o apagado, para que un
+    valor imposible no espere a que alguien prenda el seguimiento para frenar.
+    """
+    if not isinstance(send_hours, tuple) or len(send_hours) != 2:
+        return False
+    if not all(
+        isinstance(hour, int) and not isinstance(hour, bool) for hour in send_hours
+    ):
+        return False
+    start, end = send_hours
+    return 0 <= start < end <= 24
+
+
+def _followup_send_hours_text(send_hours: tuple[int, int]) -> str:
+    """El horario como se escribe en la variable: ``(9, 21)`` es ``09-21``."""
+    start, end = send_hours
+    return f"{start:02d}-{end:02d}"
+
+
 @dataclass(frozen=True)
 class Settings:
     webhook_secret: str
@@ -435,6 +503,16 @@ class Settings:
     conversation_followup_max_age_seconds: int = 259_200
     conversation_followup_max_sends_per_scan: int = 10
     conversation_followup_max_pages: int = 5
+    # El modo de prueba del seguimiento (CONVERSATION_FOLLOWUP_ONLY_PHONE, en
+    # E.164): solo ese telefono lo recibe y el resto de las candidatas se
+    # cuenta como held_only_phone. None = el alcance del entrante: todo el
+    # inbox con los remitentes por scope, solo ALLOWED_WHATSAPP_JID sin el.
+    conversation_followup_only_phone: str | None = None
+    # (inicio, fin) en horas enteras de la zona del manifiesto, de
+    # CONVERSATION_FOLLOWUP_SEND_HOURS=HH-HH. Solo con manifiesto, y con el
+    # flag prendido es obligatorio: (0, 24) es a cualquier hora, escrito a
+    # proposito. None = sin horario (Johanna).
+    conversation_followup_send_hours: tuple[int, int] | None = None
     hermes_shadow_enabled: bool = False
     hermes_api_base_url: str | None = None
     hermes_api_key: str | None = None
@@ -1131,6 +1209,12 @@ class Settings:
         conversation_followup_max_pages = int(
             os.environ.get("CONVERSATION_FOLLOWUP_MAX_PAGES", "5")
         )
+        conversation_followup_only_phone = (
+            os.environ.get("CONVERSATION_FOLLOWUP_ONLY_PHONE", "").strip() or None
+        )
+        conversation_followup_send_hours = _parse_followup_send_hours(
+            os.environ.get("CONVERSATION_FOLLOWUP_SEND_HOURS", "")
+        )
         opt_out_projection_worker_id = (
             os.getenv("CHATWOOT_OPT_OUT_PROJECTION_WORKER_ID", "").strip() or None
         )
@@ -1325,6 +1409,8 @@ class Settings:
                 conversation_followup_max_sends_per_scan
             ),
             conversation_followup_max_pages=conversation_followup_max_pages,
+            conversation_followup_only_phone=conversation_followup_only_phone,
+            conversation_followup_send_hours=conversation_followup_send_hours,
             hermes_shadow_enabled=shadow_enabled,
             hermes_api_base_url=hermes_api_base_url,
             hermes_api_key=hermes_api_key,
@@ -1982,6 +2068,12 @@ _FLAG_REQUIRED_FLOW = MappingProxyType({
     "portable_precheckout_first_contact_enabled": "precheckout",
     "conversation_reactivation_enabled": "reactivacion",
     "chatwoot_post_inbound_discount_planning_enabled": "descuento",
+    # El seguimiento con cupon comparte el lugar del flujo viejo de descuento
+    # posterior a la respuesta (nacio con el binding v1 y no corre junto al
+    # agente de Corte B): su plantilla es la de [plantillas].descuento
+    # (_validate_conversation_followup). validate no distingue cual de los dos
+    # usa el flujo (docs/decisions/0023-el-cupon-con-manifiesto-reusa-descuento.md).
+    "conversation_followup_enabled": "descuento",
 })
 _OUTBOUND_FLOWS = ("precheckout", "carrito", "pago_fallido", "reactivacion", "descuento")
 
@@ -2167,6 +2259,106 @@ def _validate_precheckout_first_contact(settings: Settings) -> None:
     if not settings.chatwoot_scoped_inbound_senders_enabled:
         raise ValueError(
             f"{flag} requires CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED"
+        )
+
+
+def _validate_conversation_followup(
+    settings: Settings, *, explicit_manifest_runtime: bool
+) -> None:
+    """Las guardas de arranque del seguimiento con cupon que dependen del runtime.
+
+    Sin manifiesto (Johanna) el seguimiento es el de siempre: el telefono de
+    prueba es opcional y no hay horario, porque no hay zona en la que leerlo.
+
+    Con el binding v1 (COMMERCIAL_ALLY_CONFIG_PATH sin INSTANCE_MANIFEST_PATH)
+    no arranca: sin manifiesto no hay resolvedor ni reserva portable, asi que
+    el barredor reservaria por la RPC compartida con el wa_id textual
+    (521...), que la base exige identico al del caso (si el caso es del
+    formulario, 52..., el cupon no sale nunca), y sin la barrera de la
+    conversacion adoptada.
+
+    Con manifiesto, el manifiesto es el techo, como en los otros flujos: la
+    plantilla es la de [plantillas].descuento (nombre e idioma), el producto
+    el de hotmart.product_name, y el horario tiene que estar escrito (00-24
+    tambien es una eleccion). El flujo declarado lo exige
+    _validate_instance_manifest_gates (conversation_followup_enabled->
+    descuento). Y menos de 24 h de silencio (MIN_AGE) es solo para la prueba:
+    sin el telefono de prueba no arranca.
+
+    El telefono de prueba con otra forma, el horario fuera de rango y el
+    horario sin manifiesto no arrancan aunque el flag este apagado: un valor
+    que no puede tener efecto no espera a que alguien prenda el seguimiento
+    para frenar.
+    """
+    only_phone = settings.conversation_followup_only_phone
+    if only_phone is not None and (
+        not isinstance(only_phone, str)
+        or _FOLLOWUP_ONLY_PHONE_RE.fullmatch(only_phone) is None
+    ):
+        raise ValueError("CONVERSATION_FOLLOWUP_ONLY_PHONE must be an E.164 phone")
+    send_hours = settings.conversation_followup_send_hours
+    if send_hours is not None and not _followup_send_hours_in_range(send_hours):
+        # Los Settings leidos del entorno ya frenaron al leer; estos son los
+        # armados a mano, con el mismo mensaje.
+        raise ValueError(_FOLLOWUP_SEND_HOURS_ERROR)
+    manifest = settings.instance_manifest
+    if send_hours is not None and manifest is None:
+        raise ValueError(
+            "CONVERSATION_FOLLOWUP_SEND_HOURS requires an instance manifest: the "
+            "hours are read in its time zone (instancia.zona_horaria)"
+        )
+    if not settings.conversation_followup_enabled:
+        return
+    if manifest is None:
+        if explicit_manifest_runtime:
+            raise ValueError(
+                "CONVERSATION_FOLLOWUP_ENABLED in a portable runtime requires "
+                "INSTANCE_MANIFEST_PATH"
+            )
+        return
+    template = manifest.templates.get("descuento")
+    if (
+        template is None
+        or settings.conversation_followup_template_name != template.name
+    ):
+        raise ValueError(
+            "CONVERSATION_FOLLOWUP_TEMPLATE_NAME must match "
+            "plantillas.descuento.nombre of the instance manifest"
+        )
+    if (
+        settings.conversation_followup_template_language is None
+        or settings.conversation_followup_template_language != template.language
+    ):
+        raise ValueError(
+            "CONVERSATION_FOLLOWUP_TEMPLATE_LANGUAGE must match "
+            "plantillas.descuento.idioma of the instance manifest"
+        )
+    if settings.conversation_followup_product_name != manifest.product_name:
+        raise ValueError(
+            "CONVERSATION_FOLLOWUP_PRODUCT_NAME must match hotmart.product_name "
+            "of the instance manifest"
+        )
+    if send_hours is None:
+        raise ValueError(
+            "CONVERSATION_FOLLOWUP_SEND_HOURS is required with an instance "
+            "manifest: HH-HH in instancia.zona_horaria, for example 09-21, or "
+            "00-24 to send at any hour"
+        )
+    if (
+        settings.conversation_followup_min_age_seconds
+        < DEFAULT_MIN_INBOUND_AGE_SECONDS
+        and only_phone is None
+    ):
+        # La prueba corre con MIN_AGE=900 y el telefono de prueba. Abrir es
+        # sacar los dos: si queda solo el MIN_AGE, el cupon le llegaria a todo
+        # el inbox a los 15 minutos, dentro de la ventana de 24 h y contra la
+        # regla de 24 h de silencio (decision de Dan del 2026-09-28). Son
+        # envios irreversibles, y /ready diria inbox igual.
+        raise ValueError(
+            "CONVERSATION_FOLLOWUP_MIN_AGE_SECONDS below "
+            f"{DEFAULT_MIN_INBOUND_AGE_SECONDS} requires "
+            "CONVERSATION_FOLLOWUP_ONLY_PHONE with an instance manifest: less "
+            "than 24 h of silence is only for the test phone"
         )
 
 
@@ -2953,6 +3145,10 @@ def create_app(
         or not 1 <= settings.conversation_followup_max_pages <= 20
     ):
         raise ValueError("invalid conversation followup configuration")
+    # El horario tiene su propio mensaje, que nombra la variable.
+    _validate_conversation_followup(
+        settings, explicit_manifest_runtime=explicit_manifest_runtime
+    )
     # Mandar un cupon es un efecto externo irreversible: sin plantilla, sin
     # cupon, sin producto, sin el AgentBot que la emite y sin la admision de
     # Corte B (el link sale del caso comercial que abre esa admision), el
@@ -5421,6 +5617,29 @@ def create_app(
                     if settings.chatwoot_scoped_inbound_senders_enabled
                     else allowed_phone_from_jid(settings.allowed_jid)
                 ),
+                # El modo de prueba y el horario, ya validados en el arranque
+                # (_validate_conversation_followup). El horario se lee en la
+                # zona del manifiesto; sin manifiesto no hay horario.
+                only_phone=settings.conversation_followup_only_phone,
+                send_hours=settings.conversation_followup_send_hours,
+                time_zone=(
+                    ZoneInfo(settings.instance_manifest.time_zone)
+                    if settings.instance_manifest is not None
+                    else None
+                ),
+                # Con manifiesto, lo mismo que el entrante: la identidad que la
+                # base ya tiene para ese movil (52... del formulario o 521...
+                # del wa_id) va a la reserva y a la autorizacion, la reserva es
+                # la portable (solo conversaciones adoptadas) y un nombre que
+                # no pasa el filtro de las plantillas no sale. Sin manifiesto
+                # (Johanna) quedan los defaults: el barredor de siempre.
+                refuse_unsafe_greeting=whatsapp_inbound_equivalence,
+                phone_equivalence=whatsapp_inbound_equivalence,
+                external_user_id_resolver=(
+                    resolve_inbound_external_user_id
+                    if whatsapp_inbound_equivalence
+                    else None
+                ),
             )
             app.state.conversation_followup_sweeper = (
                 conversation_followup_sweeper
@@ -5760,6 +5979,38 @@ def create_app(
                     conversation_followup_sweeper.last_scan_summary
                 ),
             }
+            if settings.instance_manifest is not None:
+                # Solo con manifiesto, asi el payload de Johanna no cambia. Se
+                # lee del barredor que corre y ningun numero sale:
+                # - a quien le puede escribir: only_phone (el modo de prueba),
+                #   allowed_jid (remitentes por ALLOWED_WHATSAPP_JID, sin
+                #   scope: solo ese numero, como el resto del entrante) o
+                #   inbox (todo el inbox);
+                # - cuanto tiene que llevar callado el lead: abrir despues de
+                #   la prueba se verifica por presencia con 86400, no por la
+                #   ausencia del modo de prueba;
+                # - el horario, en la zona del manifiesto.
+                if conversation_followup_sweeper.only_phone is not None:
+                    followup_audience = "only_phone"
+                elif conversation_followup_sweeper.allowed_phone is not None:
+                    followup_audience = "allowed_jid"
+                else:
+                    followup_audience = "inbox"
+                stalled_monitor_readiness = {
+                    **stalled_monitor_readiness,
+                    "conversation_followup_audience": followup_audience,
+                    "conversation_followup_min_age_seconds": str(
+                        conversation_followup_sweeper.min_inbound_age_seconds
+                    ),
+                }
+                followup_send_hours = conversation_followup_sweeper.send_hours
+                if followup_send_hours is not None:
+                    stalled_monitor_readiness = {
+                        **stalled_monitor_readiness,
+                        "conversation_followup_send_hours": (
+                            _followup_send_hours_text(followup_send_hours)
+                        ),
+                    }
         if (
             correlation_preresolution_worker is not None
             and not correlation_preresolution_worker.healthy
