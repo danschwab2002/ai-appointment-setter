@@ -308,6 +308,29 @@ class PortablePaymentFailureAdmissionResult:
 
 
 @dataclass(frozen=True)
+class RecentPaymentFailure:
+    """El ultimo PURCHASE_CANCELED de un movil en la ultima semana (1.6.0).
+
+    Solo lo que usa el agente: nada de email, nombre, documento ni transaccion.
+    """
+
+    failed_at: datetime
+    offer_code: str | None
+    payment_type: str | None
+    installments_number: int | None
+    refusal_reason: str | None
+    checkout_country_iso: str | None
+
+
+@dataclass(frozen=True)
+class PaymentSlipAdmissionResult:
+    """Admision de un evento de la ficha (PURCHASE_BILLET_PRINTED o PURCHASE_EXPIRED)."""
+
+    outcome: str
+    webhook_event_id: str | None
+
+
+@dataclass(frozen=True)
 class CommercialAllyPostInboundDiscountPlan:
     """Durable outcome for one canonical post-inbound discount plan."""
 
@@ -1977,6 +2000,116 @@ class SupabaseClient:
             row, "webhook_event_id", operation=operation
         )
         return PortablePaymentFailureAdmissionResult(outcome, webhook_event_id)
+
+    async def get_portable_recent_payment_failure(
+        self,
+        *,
+        config: CommercialAllyConfig,
+        whatsapp_phone: str,
+    ) -> RecentPaymentFailure | None:
+        """El ultimo pago rechazado de este movil, por sus dos formas (52/521)."""
+        operation = "portable_recent_payment_failure_get"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_portable_recent_payment_failure_v1",
+            content=json.dumps(
+                {
+                    "p_tenant_ref": config.tenant_ref,
+                    "p_funnel_ref": config.funnel_ref,
+                    "p_whatsapp_phone": whatsapp_phone,
+                }
+            ),
+        )
+        rejection = _deterministic_rejection(response)
+        if rejection is not None:
+            raise SupabasePermanentError(
+                f"{operation}_rejected: {rejection}", reason=rejection
+            )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if not rows:
+            return None
+        row = rows[0]
+        if len(rows) != 1 or set(row) != {
+            "failed_at",
+            "offer_code",
+            "payment_type",
+            "installments_number",
+            "refusal_reason",
+            "checkout_country_iso",
+        }:
+            raise _invalid_row_error(operation)
+        failed_at = row.get("failed_at")
+        installments = row.get("installments_number")
+        texts = {
+            key: row.get(key)
+            for key in ("offer_code", "payment_type", "refusal_reason", "checkout_country_iso")
+        }
+        if (
+            not isinstance(failed_at, str)
+            or not (installments is None or (isinstance(installments, int) and not isinstance(installments, bool)))
+            or not all(value is None or isinstance(value, str) for value in texts.values())
+        ):
+            raise _invalid_row_error(operation)
+        try:
+            parsed_at = datetime.fromisoformat(failed_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise _invalid_row_error(operation) from exc
+        return RecentPaymentFailure(
+            failed_at=parsed_at,
+            offer_code=texts["offer_code"],
+            payment_type=texts["payment_type"],
+            installments_number=installments,
+            refusal_reason=texts["refusal_reason"],
+            checkout_country_iso=texts["checkout_country_iso"],
+        )
+
+    async def admit_portable_hotmart_payment_slip_event(
+        self,
+        *,
+        config: CommercialAllyConfig,
+        external_event_id: str,
+        payload: dict[str, Any],
+    ) -> PaymentSlipAdmissionResult:
+        """Guarda un evento de la ficha contra el binding de la aliada."""
+        operation = "portable_payment_slip_admission"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/admit_portable_hotmart_payment_slip_event_v1",
+            content=json.dumps(
+                {
+                    "p_tenant_ref": config.tenant_ref,
+                    "p_funnel_ref": config.funnel_ref,
+                    "p_binding_version": config.binding_version,
+                    "p_external_event_id": external_event_id,
+                    "p_payload": payload,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        rejection = _deterministic_rejection(response)
+        if rejection is not None:
+            raise SupabasePermanentError(
+                f"{operation}_rejected: {rejection}", reason=rejection
+            )
+        rows = _response_rows(response, operation=operation)
+        if response.status_code != 200 or len(rows) != 1:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        row = rows[0]
+        if set(row) != {"outcome", "webhook_event_id"}:
+            raise _invalid_row_error(operation)
+        outcome = row.get("outcome")
+        if outcome == "ignored_binding_mismatch":
+            if row.get("webhook_event_id") is not None:
+                raise _invalid_row_error(operation)
+            return PaymentSlipAdmissionResult(outcome, None)
+        if outcome not in {"inserted", "duplicate", "semantic_conflict"}:
+            raise SupabaseError(f"{operation}_invalid_outcome")
+        webhook_event_id = _required_uuid(
+            row, "webhook_event_id", operation=operation
+        )
+        return PaymentSlipAdmissionResult(outcome, webhook_event_id)
 
     async def admit_precheckout_form_submission(
         self,

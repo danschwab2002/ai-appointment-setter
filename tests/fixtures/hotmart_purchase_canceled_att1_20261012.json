@@ -1,0 +1,402 @@
+{
+  "_capture": {
+    "origen": "Base de ATT1 (servicio setter-att1_att1-db, autohospedada), public.webhook_events con source = 'hotmart', tal como lo guardo el bridge al recibirlo. Lectura de solo lectura por psql dentro del contenedor, el 2026-10-12 ~15:40Z. event_type = 'PURCHASE_CANCELED': son todos los que hay, desde que el pago fallido portable se prendio el 2026-10-11.",
+    "captured_at": "2026-10-12T15:40:00Z",
+    "anonimizado": "Sustituidos adentro de la base antes de salir, con un chequeo que abortaba si quedaba algun valor real: el id del evento, todo data.buyer (nombre, email, ucode, documento, telefono con el mismo largo y el mismo prefijo de pais, direccion salvo el pais), data.purchase.transaction, buyer_ip, los valores de origin (sck y xcod), la URL y el codigo de barras de la ficha, data.producer, data.affiliates (vaciado) y el email de soporte del producto. Lo demas es tal cual llego: el producto, la oferta, los precios, las comisiones, data.purchase.payment y data.purchase.checkout_country.",
+    "lo_que_prueba": "La forma real del rechazo en Hotmart 2.0.0 para ATT1: data.purchase.payment trae type, installments_number y refusal_reason; el pais esta en data.purchase.checkout_country.iso; el telefono llega sin el 1 de Mexico (52 + 10 digitos). refusal_reason no es un codigo: 3 de 4 dicen «Transaction refused» y el cuarto viene en portugues («Saldo insuficiente para o cartão informado...»), de una compra desde Panama."
+  },
+  "eventos": [
+    {
+      "recibido": "2026-10-11T15:07Z",
+      "payload": {
+        "id": "00000000-0000-4000-8000-000000000003",
+        "data": {
+          "buyer": {
+            "name": "Persona Prueba 3",
+            "email": "persona.prueba3@example.com",
+            "ucode": "00000000-0000-4000-9000-000000000003",
+            "address": {
+              "country": "Mexico",
+              "country_iso": "MX"
+            },
+            "document": "00000000",
+            "last_name": "Prueba 3",
+            "first_name": "Persona",
+            "checkout_phone": "525500000003"
+          },
+          "product": {
+            "id": 5071808,
+            "name": "Alimenta tu Tiroides",
+            "ucode": "384858a0-bdc4-4b9a-a479-9eeff9ed8893",
+            "support_email": "soporte@example.com",
+            "has_co_production": true,
+            "product_format_id": 8,
+            "is_physical_product": false
+          },
+          "producer": {
+            "name": "Productora Prueba",
+            "document": "00000000",
+            "legal_nature": "Pessoa Física"
+          },
+          "purchase": {
+            "offer": {
+              "code": "2uafw5bg",
+              "name": "VSL | PAUTA | D | 47USD | HISTORICO🔴",
+              "description": "Alimenta tu Tiroides"
+            },
+            "price": {
+              "value": 914,
+              "currency_value": "MXN"
+            },
+            "origin": {
+              "sck": "fixture",
+              "xcod": "fixture"
+            },
+            "status": "CANCELED",
+            "payment": {
+              "type": "CREDIT_CARD",
+              "refusal_reason": "Transaction refused",
+              "installments_number": 3
+            },
+            "buyer_ip": "192.0.2.3",
+            "is_funnel": false,
+            "full_price": {
+              "value": 1124.25,
+              "currency_value": "MXN"
+            },
+            "invoice_by": "HOTMART",
+            "order_bump": {
+              "is_order_bump": true
+            },
+            "order_date": 1791731249000,
+            "transaction": "HP000000000003",
+            "business_model": "R",
+            "checkout_country": {
+              "iso": "MX",
+              "name": "Mexico"
+            },
+            "original_offer_price": {
+              "value": 49.64,
+              "currency_value": "USD"
+            },
+            "subscription_anticipation_purchase": false
+          },
+          "affiliates": [],
+          "commissions": [
+            {
+              "value": 3.23,
+              "source": "MARKETPLACE",
+              "currency_value": "USD"
+            },
+            {
+              "value": 39.44,
+              "source": "PRODUCER",
+              "currency_value": "USD",
+              "currency_conversion": {
+                "conversion_rate": 18.414104,
+                "converted_value": 726.25,
+                "converted_to_currency": "MXN"
+              }
+            }
+          ]
+        },
+        "event": "PURCHASE_CANCELED",
+        "version": "2.0.0",
+        "creation_date": 1791731263329
+      }
+    },
+    {
+      "recibido": "2026-10-11T22:03Z",
+      "payload": {
+        "id": "00000000-0000-4000-8000-000000000004",
+        "data": {
+          "buyer": {
+            "name": "Persona Prueba 4",
+            "email": "persona.prueba4@example.com",
+            "ucode": "00000000-0000-4000-9000-000000000004",
+            "address": {
+              "country": "Mexico",
+              "country_iso": "MX"
+            },
+            "document": "00000000",
+            "last_name": "Prueba 4",
+            "first_name": "Persona",
+            "checkout_phone": "525500000004"
+          },
+          "product": {
+            "id": 5071808,
+            "name": "Alimenta tu Tiroides",
+            "ucode": "384858a0-bdc4-4b9a-a479-9eeff9ed8893",
+            "support_email": "soporte@example.com",
+            "has_co_production": true,
+            "product_format_id": 8,
+            "is_physical_product": false
+          },
+          "producer": {
+            "name": "Productora Prueba",
+            "document": "00000000",
+            "legal_nature": "Pessoa Física"
+          },
+          "purchase": {
+            "offer": {
+              "code": "bmaztyhg",
+              "name": "VSL | ORG | A | 47USD 🟢"
+            },
+            "price": {
+              "value": 905.13,
+              "currency_value": "MXN"
+            },
+            "origin": {
+              "xcod": "fixture"
+            },
+            "status": "CANCELED",
+            "payment": {
+              "type": "CREDIT_CARD",
+              "refusal_reason": "Transaction refused",
+              "installments_number": 1
+            },
+            "buyer_ip": "192.0.2.4",
+            "is_funnel": false,
+            "full_price": {
+              "value": 1060.24,
+              "currency_value": "MXN"
+            },
+            "invoice_by": "HOTMART",
+            "order_bump": {
+              "is_order_bump": false
+            },
+            "order_date": 1791756204000,
+            "transaction": "HP000000000004",
+            "business_model": "R",
+            "checkout_country": {
+              "iso": "MX",
+              "name": "Mexico"
+            },
+            "original_offer_price": {
+              "value": 49.11,
+              "currency_value": "USD"
+            },
+            "subscription_anticipation_purchase": false
+          },
+          "affiliates": [],
+          "commissions": [
+            {
+              "value": 3.2,
+              "source": "MARKETPLACE",
+              "currency_value": "USD"
+            },
+            {
+              "value": 39.01,
+              "source": "PRODUCER",
+              "currency_value": "USD",
+              "currency_conversion": {
+                "conversion_rate": 18.432503,
+                "converted_value": 719.05,
+                "converted_to_currency": "MXN"
+              }
+            }
+          ]
+        },
+        "event": "PURCHASE_CANCELED",
+        "version": "2.0.0",
+        "creation_date": 1791756215415
+      }
+    },
+    {
+      "recibido": "2026-10-11T22:04Z",
+      "payload": {
+        "id": "00000000-0000-4000-8000-000000000005",
+        "data": {
+          "buyer": {
+            "name": "Persona Prueba 5",
+            "email": "persona.prueba5@example.com",
+            "ucode": "00000000-0000-4000-9000-000000000005",
+            "address": {
+              "country": "Mexico",
+              "country_iso": "MX"
+            },
+            "document": "00000000",
+            "last_name": "Prueba 5",
+            "first_name": "Persona",
+            "checkout_phone": "525500000005"
+          },
+          "product": {
+            "id": 5071808,
+            "name": "Alimenta tu Tiroides",
+            "ucode": "384858a0-bdc4-4b9a-a479-9eeff9ed8893",
+            "support_email": "soporte@example.com",
+            "has_co_production": true,
+            "product_format_id": 8,
+            "is_physical_product": false
+          },
+          "producer": {
+            "name": "Productora Prueba",
+            "document": "00000000",
+            "legal_nature": "Pessoa Física"
+          },
+          "purchase": {
+            "offer": {
+              "code": "bmaztyhg",
+              "name": "VSL | ORG | A | 47USD 🟢"
+            },
+            "price": {
+              "value": 905.13,
+              "currency_value": "MXN"
+            },
+            "origin": {
+              "xcod": "fixture"
+            },
+            "status": "CANCELED",
+            "payment": {
+              "type": "CREDIT_CARD",
+              "refusal_reason": "Transaction refused",
+              "installments_number": 1
+            },
+            "buyer_ip": "192.0.2.5",
+            "is_funnel": false,
+            "full_price": {
+              "value": 1060.24,
+              "currency_value": "MXN"
+            },
+            "invoice_by": "HOTMART",
+            "order_bump": {
+              "is_order_bump": false
+            },
+            "order_date": 1791756280000,
+            "transaction": "HP000000000005",
+            "business_model": "R",
+            "checkout_country": {
+              "iso": "MX",
+              "name": "Mexico"
+            },
+            "original_offer_price": {
+              "value": 49.11,
+              "currency_value": "USD"
+            },
+            "subscription_anticipation_purchase": false
+          },
+          "affiliates": [],
+          "commissions": [
+            {
+              "value": 3.2,
+              "source": "MARKETPLACE",
+              "currency_value": "USD"
+            },
+            {
+              "value": 39.01,
+              "source": "PRODUCER",
+              "currency_value": "USD",
+              "currency_conversion": {
+                "conversion_rate": 18.432503,
+                "converted_value": 719.05,
+                "converted_to_currency": "MXN"
+              }
+            }
+          ]
+        },
+        "event": "PURCHASE_CANCELED",
+        "version": "2.0.0",
+        "creation_date": 1791756291827
+      }
+    },
+    {
+      "recibido": "2026-10-11T23:50Z",
+      "payload": {
+        "id": "00000000-0000-4000-8000-000000000006",
+        "data": {
+          "buyer": {
+            "name": "Persona Prueba 6",
+            "email": "persona.prueba6@example.com",
+            "ucode": "00000000-0000-4000-9000-000000000006",
+            "address": {
+              "country": "Panama",
+              "country_iso": "PA"
+            },
+            "document": "00000000",
+            "last_name": "Prueba 6",
+            "first_name": "Persona",
+            "checkout_phone": "50760000006"
+          },
+          "product": {
+            "id": 5071808,
+            "name": "Alimenta tu Tiroides",
+            "ucode": "384858a0-bdc4-4b9a-a479-9eeff9ed8893",
+            "support_email": "soporte@example.com",
+            "has_co_production": true,
+            "product_format_id": 8,
+            "is_physical_product": false
+          },
+          "producer": {
+            "name": "Productora Prueba",
+            "document": "00000000",
+            "legal_nature": "Pessoa Física"
+          },
+          "purchase": {
+            "offer": {
+              "code": "2uafw5bg",
+              "name": "VSL | PAUTA | D | 47USD | HISTORICO🔴",
+              "description": "Alimenta tu Tiroides"
+            },
+            "price": {
+              "value": 49.52,
+              "currency_value": "PAB"
+            },
+            "origin": {
+              "sck": "fixture",
+              "xcod": "fixture"
+            },
+            "status": "CANCELED",
+            "payment": {
+              "type": "CREDIT_CARD",
+              "refusal_reason": "Saldo insuficiente para o cartão informado. Entre em contato com a operadora.",
+              "installments_number": 1
+            },
+            "buyer_ip": "192.0.2.6",
+            "is_funnel": false,
+            "full_price": {
+              "value": 50,
+              "currency_value": "PAB"
+            },
+            "invoice_by": "SELLER",
+            "order_bump": {
+              "is_order_bump": false
+            },
+            "order_date": 1791762585000,
+            "transaction": "HP000000000006",
+            "business_model": "A",
+            "checkout_country": {
+              "iso": "PA",
+              "name": "Panama"
+            },
+            "original_offer_price": {
+              "value": 49.52,
+              "currency_value": "USD"
+            },
+            "subscription_anticipation_purchase": false
+          },
+          "affiliates": [],
+          "commissions": [
+            {
+              "value": 3.22,
+              "source": "MARKETPLACE",
+              "currency_value": "USD"
+            },
+            {
+              "value": 39.35,
+              "source": "PRODUCER",
+              "currency_value": "USD",
+              "currency_conversion": {
+                "conversion_rate": 18.432503,
+                "converted_value": 725.32,
+                "converted_to_currency": "MXN"
+              }
+            }
+          ]
+        },
+        "event": "PURCHASE_CANCELED",
+        "version": "2.0.0",
+        "creation_date": 1791762601389
+      }
+    }
+  ]
+}

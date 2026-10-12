@@ -29,6 +29,15 @@ SUPPORTED_EVENT_TYPES = frozenset({
     EVENT_PURCHASE_APPROVED,
     EVENT_PURCHASE_CANCELED,
 })
+# La ficha de pago (OXXO y parecidos): se genero, o vencio sin pagarse. Desde la
+# 1.6.0 el runtime con manifiesto los guarda tal cual llegan, para el
+# seguimiento de la ficha sin pagar; no disparan nada.
+EVENT_PURCHASE_BILLET_PRINTED = "PURCHASE_BILLET_PRINTED"
+EVENT_PURCHASE_EXPIRED = "PURCHASE_EXPIRED"
+PAYMENT_SLIP_EVENT_TYPES = frozenset({
+    EVENT_PURCHASE_BILLET_PRINTED,
+    EVENT_PURCHASE_EXPIRED,
+})
 
 
 # ── Parsed buyer data ────────────────────────────────────────────────
@@ -407,8 +416,14 @@ def _json_object(value: object) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def classify_hotmart_event(payload: object) -> HotmartDecision:
+def classify_hotmart_event(
+    payload: object, *, payment_slip_events: bool = False
+) -> HotmartDecision:
     """Classify a Hotmart webhook payload before any persistence.
+
+    ``payment_slip_events`` also accepts the payment-slip events
+    (``PAYMENT_SLIP_EVENT_TYPES``); without it they stay unsupported, as before
+    1.6.0.
 
     The payload shape (v2.0.0)::
 
@@ -428,7 +443,12 @@ def classify_hotmart_event(payload: object) -> HotmartDecision:
         )
 
     event_type = event.get("event")
-    if not isinstance(event_type, str) or event_type not in SUPPORTED_EVENT_TYPES:
+    supported = (
+        SUPPORTED_EVENT_TYPES | PAYMENT_SLIP_EVENT_TYPES
+        if payment_slip_events
+        else SUPPORTED_EVENT_TYPES
+    )
+    if not isinstance(event_type, str) or event_type not in supported:
         return HotmartDecision(
             False, "unsupported_event_type", "ignore", event_id, event_type
         )

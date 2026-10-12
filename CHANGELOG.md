@@ -8,6 +8,24 @@ Cada versión dice qué cambia y **qué tiene que hacer quien actualiza una inst
 
 Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab2002/setter-bridge`, `setter-slack-connector` y `setter-daily-feedback`. La release de GitHub lleva el digest de cada una. Cómo se pasa un servicio a la imagen y cómo se vuelve atrás: [docs/operations/release-por-imagen-v1.md](docs/operations/release-por-imagen-v1.md).
 
+## [1.6.0] - sin publicar
+
+El agente de una instancia con manifiesto intenta resolver un pago rechazado antes de derivarlo. Para eso suma tres piezas: una sección de pagos opcional en el conocimiento, el último rechazo de quien escribe en la entrada del agente y la ruta «Compra fallida» del SOUL común, que usa las dos. Además, el bridge guarda los eventos de la ficha de pago (OXXO y parecidos) para el seguimiento de la ficha sin pagar. Johanna no cambia.
+
+Trae una migración, que solo agrega dos funciones. Ninguna variable ni campo obligatorio nuevo en el manifiesto. Para aprovecharla, la instancia publica un conocimiento nuevo con la sección `[pagos]` y suscribe `PURCHASE_BILLET_PRINTED` y `PURCHASE_EXPIRED` en el webhook de Hotmart.
+
+### Agregado
+
+- **La sección `[pagos]` del conocimiento** ([contrato](docs/contracts/commercial-knowledge-v1.md), opcional). La declara la instancia entera: país principal, medios activos (exactamente los que tienen prendidos sus ofertas), el nombre de la transferencia y del efectivo según el país, el paso a paso de cada medio y qué hacer ante cada motivo de rechazo, con los textos con que llega. El producto no nombra ningún medio local: SPEI, OXXO o PSE cambian con el país. Un conocimiento sin la sección se renderiza igual que en la 1.5.0.
+- **`recent_payment_failure` en la entrada del agente**, con `PORTABLE_HOTMART_PAYMENT_FAILURE_ENABLED` ([contrato](docs/contracts/commercial-ally-runtime-v1.md), *El último rechazo en la entrada del agente*). El último `PURCHASE_CANCELED` de ese móvil en la última semana, por sus dos formas (`52`/`521`), si no compró después: medio, cuotas, motivo tal como llegó y país. Si la lectura falla, el agente contesta igual, sin el dato. La forma del rechazo está medida con los cuatro de ATT1 del 11/10 (`tests/fixtures/hotmart_purchase_canceled_att1_20261012.json`): tres dicen «Transaction refused» y uno llega en portugués.
+- **Los eventos de la ficha se guardan**, con el mismo flag: `PURCHASE_BILLET_PRINTED` y `PURCHASE_EXPIRED` van a `webhook_events` con su procedencia y no disparan nada. Hasta la 1.5.0 el bridge los contestaba con 200 sin guardarlos. Su forma todavía no está medida en ATT1: la admisión solo mira el sobre común y guarda el payload entero.
+
+### Cambiado
+
+- **La ruta «Compra fallida» del SOUL común** resuelve con la sección `[pagos]` antes de derivar: dice qué hacer según el motivo, ofrece otro medio activo con el nombre de su país y, si la persona quiere reintentar, pide el enlace. Deriva si le cobraron, si su caso no está en la guía, si ya probó lo que indica o si el conocimiento no trae la sección. Antes derivaba siempre que no hubiera «una resolución confirmada». El SOUL de Johanna no cambia, y `tests/test_common_soul.py` declara las diferencias texto por texto.
+- **El bloque de conocimiento renderizado puede pesar hasta 20.000 bytes** (16 KB hasta la 1.5.0): en bytes queda debajo de los 20.000 caracteres que Hermes deja del SOUL.
+- **`CONTEXT_BUILDER_VERSION` pasa a `shadow-context-v2`**: la entrada puede traer una clave nueva.
+
 ## [1.5.0] - sin publicar
 
 Suma dos cosas, apagadas por defecto: la inferencia del primer nombre y el seguimiento con cupón del 10 % corren también en una instancia con manifiesto. Y ajusta la validación del nombre inferido para descartar las formas medidas que saludan peor que la regla, también en Johanna. Y que la revisión diaria corra en una instancia autohospedada como ATT1, con tres excepciones que se declaran por variable y que `/ready` muestra. Johanna no cambia.

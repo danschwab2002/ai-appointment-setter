@@ -46,9 +46,10 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
     versions = sorted(path.name.split("_", 1)[0] for path in MIGRATIONS.glob("*.sql"))
     position = versions.index("20261007000100")
     assert versions[position - 1] == "20261005000100"
-    # Despues van el arreglo de la adopcion (20261009000200) y la reserva
-    # portable del seguimiento con cupon (20261010000100).
-    assert versions[position + 1:] == ["20261009000200", "20261010000100"]
+    # Despues van el arreglo de la adopcion (20261009000200), la reserva
+    # portable del seguimiento con cupon (20261010000100) y el ultimo pago
+    # rechazado con los eventos de la ficha (20261012000100).
+    assert versions[position + 1:] == ["20261009000200", "20261010000100", "20261012000100"]
 
     sql = _sql()
     assert sql.lstrip().startswith("-- Migration:")

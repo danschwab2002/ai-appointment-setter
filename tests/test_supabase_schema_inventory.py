@@ -382,8 +382,8 @@ def test_commercial_case_lookups_by_inbound_kind_fingerprint_checks_the_four_rpc
 
 def test_portable_conversation_followup_claim_fingerprint_checks_the_derivation_and_its_acl() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La ultima fila: hasta el cierre de la lista de huellas.
-    fingerprint = sql.split("'20261010000100'", 1)[1].split(")\nselect", 1)[0]
+    # La fila de 20261010000100: hasta la fila siguiente.
+    fingerprint = sql.split("'20261010000100'", 1)[1].split("'20261012000100'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", fingerprint)
     portable = (
         "public.claim_portable_conversation_followup_v1(bigint,bigint,bigint,text,text,text,"
@@ -430,14 +430,19 @@ def test_portable_conversation_followup_claim_fingerprint_checks_the_derivation_
         "position('blocked_not_template_reply'inshared.definition)=0",
     ):
         assert marker in compact_fingerprint, marker
-    assert compact_fingerprint.endswith(",4,'portable_conversation_followup_claim'")
+    assert compact_fingerprint.endswith(",4,'portable_conversation_followup_claim'unionallselect")
 
 
 def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
 
-    assert len(allowlisted) == 120
+    assert len(allowlisted) == 122
+    assert "get_portable_recent_payment_failure_v1(text, text, text)" in allowlisted
+    assert (
+        "admit_portable_hotmart_payment_slip_event_v1(text, text, integer, text, jsonb)"
+        in allowlisted
+    )
     assert (
         "claim_conversation_followup_v1(bigint, bigint, bigint, text, text, text, text, text, "
         "text, text, bigint, bigint, integer, text, timestamp with time zone)"

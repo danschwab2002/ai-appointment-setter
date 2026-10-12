@@ -72,6 +72,7 @@ from bridge.hotmart import (
     EVENT_CART_ABANDONMENT,
     EVENT_PURCHASE_APPROVED,
     EVENT_PURCHASE_CANCELED,
+    PAYMENT_SLIP_EVENT_TYPES,
     classify_hotmart_event,
     is_stale_event,
     parse_hotmart_purchase_payload,
@@ -142,6 +143,7 @@ from bridge.supabase import (
     OperatorCorrelationResolutionError,
     PilotBoundaryConfig,
     PrecheckoutAdmissionResult,
+    RecentPaymentFailure,
     SupabaseClient,
     SupabaseError,
     SupabasePermanentError,
@@ -1785,6 +1787,30 @@ def _capture_payload(
             os.close(temporary_fd)
         os.close(directory_fd)
         os.unlink(temporary_name)
+
+
+def _whatsapp_digits(sender_jid: object) -> str | None:
+    """El wa_id de un JID de WhatsApp, o None si no es un movil."""
+    if not isinstance(sender_jid, str) or not sender_jid.endswith("@s.whatsapp.net"):
+        return None
+    digits = sender_jid.removesuffix("@s.whatsapp.net")
+    return digits if digits.isdigit() else None
+
+
+def recent_payment_failure_context(failure: RecentPaymentFailure) -> dict[str, object]:
+    """Lo que recibe el agente del ultimo pago rechazado (SOUL comun, «Entrada»).
+
+    Las claves sin valor no van: el agente lee la ausencia como «no se sabe».
+    """
+    failed_at = failure.failed_at.astimezone(UTC).replace(microsecond=0)
+    context: dict[str, object] = {
+        "failed_at": failed_at.isoformat().replace("+00:00", "Z"),
+        "payment_method": failure.payment_type,
+        "installments": failure.installments_number,
+        "refusal_reason": failure.refusal_reason,
+        "checkout_country": failure.checkout_country_iso,
+    }
+    return {key: value for key, value in context.items() if value is not None}
 
 
 def _shadow_context(payload: dict[str, object]) -> dict[str, object] | None:
@@ -4173,6 +4199,37 @@ def create_app(
             external_user_id=external_user_id,
         )
 
+    async def _recent_payment_failure_context(
+        wa_id: str | None,
+    ) -> dict[str, object] | None:
+        """El ultimo pago rechazado de este movil, para la entrada del agente.
+
+        Solo con el pago fallido portable, que es lo que guarda los rechazos con
+        su aliada. Si la lectura falla el agente contesta igual, sin el dato: no
+        tenerlo es lo mismo que hasta la 1.5.0.
+        """
+        if shared_supabase is None or not wa_id:
+            return None
+        try:
+            failure = await shared_supabase.get_portable_recent_payment_failure(
+                config=settings.commercial_ally_config,
+                whatsapp_phone=wa_id,
+            )
+        except SupabaseError as exc:
+            logger.warning(
+                "recent_payment_failure_lookup_failed error=%s",
+                type(exc).__name__,
+            )
+            return None
+        if failure is None:
+            return None
+        logger.info(
+            "recent_payment_failure_context method=%s country=%s",
+            failure.payment_type,
+            failure.checkout_country_iso,
+        )
+        return recent_payment_failure_context(failure)
+
     async def resolve_inbound_external_user_id(
         wa_id: str,
         *,
@@ -4956,6 +5013,14 @@ def create_app(
                     "bridge_injects_exact_url": True,
                     "agent_must_not_include_url": True,
                 }
+            if settings.portable_hotmart_payment_failure_enabled:
+                recent_failure = await _recent_payment_failure_context(
+                    external_user_id
+                    if external_user_id.isdigit()
+                    else _whatsapp_digits(decision.sender_jid)
+                )
+                if recent_failure is not None:
+                    context["recent_payment_failure"] = recent_failure
             completed_proposal = (
                 shadow_processor.get_completed_proposal(delivery_id=delivery_id)
                 if shadow_processor is not None
@@ -7587,7 +7652,10 @@ def create_app(
                 status_code=400, detail="invalid_json"
             ) from exc
 
-        decision = classify_hotmart_event(payload)
+        decision = classify_hotmart_event(
+            payload,
+            payment_slip_events=settings.portable_hotmart_payment_failure_enabled,
+        )
         if not decision.accepted:
             response.status_code = status.HTTP_200_OK
             return {
@@ -7607,7 +7675,10 @@ def create_app(
             )
             and not (
                 settings.portable_hotmart_payment_failure_enabled
-                and decision.event_type == EVENT_PURCHASE_CANCELED
+                and (
+                    decision.event_type == EVENT_PURCHASE_CANCELED
+                    or decision.event_type in PAYMENT_SLIP_EVENT_TYPES
+                )
             )
         ):
             response.status_code = status.HTTP_200_OK
@@ -7637,6 +7708,41 @@ def create_app(
             raise HTTPException(
                 status_code=503, detail="supabase_not_configured"
             )
+        if event_type in PAYMENT_SLIP_EVENT_TYPES:
+            # La ficha se guarda tal cual llego y no dispara nada (1.6.0). Solo
+            # llega aca con el pago fallido portable: sin el, la clasificacion
+            # la deja como antes, unsupported_event_type.
+            try:
+                slip = await shared_supabase.admit_portable_hotmart_payment_slip_event(
+                    config=settings.commercial_ally_config,
+                    external_event_id=event_id,
+                    payload=payload,
+                )
+            except SupabasePermanentError as exc:
+                logger.warning(
+                    "hotmart_payment_slip_rejected event_type=%s reason=%s",
+                    event_type,
+                    exc.reason,
+                )
+                response.status_code = status.HTTP_200_OK
+                return {"status": "ignored", "reason": "invalid_payment_slip_payload"}
+            except SupabaseError as exc:
+                raise HTTPException(
+                    status_code=503, detail="payment_slip_admission_failed"
+                ) from exc
+            logger.info(
+                "hotmart_payment_slip_admitted event_type=%s outcome=%s",
+                event_type,
+                slip.outcome,
+            )
+            if slip.outcome == "inserted":
+                return {"status": "received", "event_id": event_id}
+            # Otra oferta, un replay o un replay distinto: nada que reintentar.
+            # Un 4xx lo contaria Hotmart como falla del webhook entero.
+            response.status_code = status.HTTP_200_OK
+            if slip.outcome == "ignored_binding_mismatch":
+                return {"status": "ignored", "reason": "payment_slip_binding_mismatch"}
+            return {"status": slip.outcome, "event_id": event_id}
         try:
             if event_type == EVENT_PURCHASE_CANCELED:
                 if not (

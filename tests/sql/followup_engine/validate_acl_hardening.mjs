@@ -104,6 +104,8 @@ const rows = await db.query(`
       ('get_lead_first_name_inference_v1(text)'),
       ('claim_conversation_followup_v1(bigint,bigint,bigint,text,text,text,text,text,text,text,bigint,bigint,integer,text,timestamp with time zone)'),
       ('claim_portable_conversation_followup_v1(bigint,bigint,bigint,text,text,text,text,text,text,text,bigint,bigint,integer,text,timestamp with time zone)'),
+      ('get_portable_recent_payment_failure_v1(text,text,text)'),
+      ('admit_portable_hotmart_payment_slip_event_v1(text,text,integer,text,jsonb)'),
       ('settle_conversation_followup_v1(text,text,bigint,text,timestamp with time zone)'),
       ('settle_conversation_reactivation(text,text,bigint,text,timestamp with time zone)'),
       ('apply_chatwoot_inbound_opt_out(bigint,bigint,bigint,bigint,text,timestamp with time zone,text)'),
@@ -231,9 +233,10 @@ const result = rows.rows[0];
 // portable reserve of the inbound payment link (20261001000100) adds one, and
 // the portable inbound admission that adopts the conversation of a pilot
 // template (20261001000400) adds one, and the portable claim of the discount
-// follow-up (20261010000100) adds one.
+// follow-up (20261010000100) adds one, and the last payment failure for the
+// agent input plus the payment slip events (20261012000100) add two.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 120) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 122) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

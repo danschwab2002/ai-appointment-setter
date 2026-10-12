@@ -1,0 +1,211 @@
+{
+  "_capture": {
+    "origen": "Base de ATT1 (servicio setter-att1_att1-db, autohospedada), public.webhook_events con source = 'hotmart', tal como lo guardo el bridge al recibirlo. Lectura de solo lectura por psql dentro del contenedor, el 2026-10-12 ~15:40Z. event_type = 'PURCHASE_APPROVED' con data.purchase.payment.type = 'CASHPAYMENT': las dos compras pagadas en OXXO.",
+    "captured_at": "2026-10-12T15:40:00Z",
+    "anonimizado": "Sustituidos adentro de la base antes de salir, con un chequeo que abortaba si quedaba algun valor real: el id del evento, todo data.buyer (nombre, email, ucode, documento, telefono con el mismo largo y el mismo prefijo de pais, direccion salvo el pais), data.purchase.transaction, buyer_ip, los valores de origin (sck y xcod), la URL y el codigo de barras de la ficha, data.producer, data.affiliates (vaciado) y el email de soporte del producto. Lo demas es tal cual llego: el producto, la oferta, los precios, las comisiones, data.purchase.payment y data.purchase.checkout_country.",
+    "lo_que_prueba": "El sobre de un pago en efectivo de ATT1: Hotmart lo llama CASHPAYMENT (no BILLET) y trae billet_url y billet_barcode en data.purchase.payment. Es la referencia de los eventos de la ficha (PURCHASE_BILLET_PRINTED y PURCHASE_EXPIRED), que ATT1 todavia no tenia suscriptos: los tests que los necesitan los derivan de estos, cambiando solo event y data.purchase.status, y lo dicen."
+  },
+  "eventos": [
+    {
+      "recibido": "2026-10-06T17:04Z",
+      "payload": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "data": {
+          "buyer": {
+            "name": "Persona Prueba 1",
+            "email": "persona.prueba1@example.com",
+            "ucode": "00000000-0000-4000-9000-000000000001",
+            "address": {
+              "country": "Mexico",
+              "country_iso": "MX"
+            },
+            "document": "00000000",
+            "last_name": "Prueba 1",
+            "first_name": "Persona",
+            "checkout_phone": "525500000001"
+          },
+          "product": {
+            "id": 5071808,
+            "name": "Alimenta tu Tiroides",
+            "ucode": "384858a0-bdc4-4b9a-a479-9eeff9ed8893",
+            "support_email": "soporte@example.com",
+            "warranty_date": "2026-10-13T00:00:00Z",
+            "has_co_production": true,
+            "product_format_id": 8,
+            "is_physical_product": false
+          },
+          "producer": {
+            "name": "Productora Prueba",
+            "document": "00000000",
+            "legal_nature": "Pessoa Física"
+          },
+          "purchase": {
+            "offer": {
+              "code": "bmaztyhg",
+              "name": "VSL | ORG | A | 47USD 🟢"
+            },
+            "price": {
+              "value": 898.2,
+              "currency_value": "MXN"
+            },
+            "origin": {
+              "sck": "fixture"
+            },
+            "status": "APPROVED",
+            "payment": {
+              "type": "CASHPAYMENT",
+              "billet_url": "https://example.com/ficha/1",
+              "billet_barcode": "0000000000",
+              "installments_number": 1
+            },
+            "buyer_ip": "192.0.2.1",
+            "is_funnel": false,
+            "full_price": {
+              "value": 1052.12,
+              "currency_value": "MXN"
+            },
+            "invoice_by": "HOTMART",
+            "order_bump": {
+              "is_order_bump": true
+            },
+            "order_date": 1790943520000,
+            "transaction": "HP000000000001",
+            "approved_date": 1791306253000,
+            "business_model": "R",
+            "checkout_country": {
+              "iso": "MX",
+              "name": "Mexico"
+            },
+            "original_offer_price": {
+              "value": 49.11,
+              "currency_value": "USD"
+            },
+            "subscription_anticipation_purchase": false
+          },
+          "affiliates": [],
+          "commissions": [
+            {
+              "value": 3.2,
+              "source": "MARKETPLACE",
+              "currency_value": "USD"
+            },
+            {
+              "value": 39.01,
+              "source": "PRODUCER",
+              "currency_value": "USD",
+              "currency_conversion": {
+                "conversion_rate": 18.29055,
+                "converted_value": 713.51,
+                "converted_to_currency": "MXN"
+              }
+            }
+          ]
+        },
+        "event": "PURCHASE_APPROVED",
+        "version": "2.0.0",
+        "creation_date": 1791306263524
+      }
+    },
+    {
+      "recibido": "2026-10-07T17:03Z",
+      "payload": {
+        "id": "00000000-0000-4000-8000-000000000002",
+        "data": {
+          "buyer": {
+            "name": "Persona Prueba 2",
+            "email": "persona.prueba2@example.com",
+            "ucode": "00000000-0000-4000-9000-000000000002",
+            "address": {
+              "country": "Mexico",
+              "country_iso": "MX"
+            },
+            "document": "00000000",
+            "last_name": "Prueba 2",
+            "first_name": "Persona",
+            "checkout_phone": "525500000002"
+          },
+          "product": {
+            "id": 5071808,
+            "name": "Alimenta tu Tiroides",
+            "ucode": "384858a0-bdc4-4b9a-a479-9eeff9ed8893",
+            "support_email": "soporte@example.com",
+            "warranty_date": "2026-10-14T00:00:00Z",
+            "has_co_production": true,
+            "product_format_id": 8,
+            "is_physical_product": false
+          },
+          "producer": {
+            "name": "Productora Prueba",
+            "document": "00000000",
+            "legal_nature": "Pessoa Física"
+          },
+          "purchase": {
+            "offer": {
+              "code": "2uafw5bg",
+              "name": "VSL | PAUTA | D | 47USD | HISTORICO🔴",
+              "description": "Alimenta tu Tiroides"
+            },
+            "price": {
+              "value": 893.25,
+              "currency_value": "MXN"
+            },
+            "origin": {
+              "sck": "fixture"
+            },
+            "status": "APPROVED",
+            "payment": {
+              "type": "CASHPAYMENT",
+              "billet_url": "https://example.com/ficha/2",
+              "billet_barcode": "0000000000",
+              "installments_number": 1
+            },
+            "buyer_ip": "192.0.2.2",
+            "is_funnel": false,
+            "full_price": {
+              "value": 1046.32,
+              "currency_value": "MXN"
+            },
+            "invoice_by": "HOTMART",
+            "order_bump": {
+              "is_order_bump": false
+            },
+            "order_date": 1791047094000,
+            "transaction": "HP000000000002",
+            "approved_date": 1791392608000,
+            "business_model": "R",
+            "checkout_country": {
+              "iso": "MX",
+              "name": "Mexico"
+            },
+            "original_offer_price": {
+              "value": 49.18,
+              "currency_value": "USD"
+            },
+            "subscription_anticipation_purchase": false
+          },
+          "affiliates": [],
+          "commissions": [
+            {
+              "value": 3.2,
+              "source": "MARKETPLACE",
+              "currency_value": "USD"
+            },
+            {
+              "value": 39.08,
+              "source": "PRODUCER",
+              "currency_value": "USD",
+              "currency_conversion": {
+                "conversion_rate": 18.16172,
+                "converted_value": 709.76,
+                "converted_to_currency": "MXN"
+              }
+            }
+          ]
+        },
+        "event": "PURCHASE_APPROVED",
+        "version": "2.0.0",
+        "creation_date": 1791392619249
+      }
+    }
+  ]
+}
