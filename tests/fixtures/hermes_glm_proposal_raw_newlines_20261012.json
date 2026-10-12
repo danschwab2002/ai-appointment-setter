@@ -1,0 +1,12 @@
+{
+  "_capture": {
+    "origin": "Respuesta de z-ai/glm-5.3-flash por OpenRouter con el SOUL comun de la 1.6.0 y el conocimiento v3 de ATT1, pedida por el arnes de la instancia (conocimiento/prueba/probar.py de setter-instancia-att1) con el contexto que arma el bridge.",
+    "captured_at": "2026-10-12, corrida 1 del arnes (antes de las 17:11Z)",
+    "case": "Caso 29-rechazo-transaccion del arnes: conversacion de prueba que abre la plantilla att1_compra_fallida_01 y trae recent_payment_failure con el motivo 'Transaction refused'. Sin datos de leads.",
+    "observed_effect": "_parse_agent_proposal usa json.loads estricto: el reply trae saltos de linea literales (sin escapar) entre parrafos y la propuesta entera se descarta. En produccion el bridge reintenta una vez con otra Idempotency-Key; si el segundo intento vuelve igual, persiste invalid_agent_output y el lead se queda sin respuesta.",
+    "rate": "1 de 222 respuestas en las dos corridas del arnes del 12/10. En produccion, ATT1 tuvo 7 turnos con reintento en 57 (05/10 al 12/10); el bridge no guarda por que fallo el primer intento, asi que no se sabe cuantos fueron por esto.",
+    "defect": "Caracteres de control (\\n) literales dentro de un string JSON. El resto de la propuesta es valido: con json.loads(strict=False) da los seis campos y _is_valid_proposal la acepta.",
+    "verbatim": "content es el texto tal como lo devolvio el modelo (choices[0].message.content)."
+  },
+  "content": "{\"decision\": \"ask_question\", \"qualification_status\": \"in_progress\", \"reason_code\": \"commercial_response\", \"reply\": \"Claro que sí, te ayudo con gusto. Veo que intentaste pagar con tarjeta de crédito y el banco no aprobó la compra; no indicó un motivo específico.\n\nTe sugiero revisar que los datos de la tarjeta estén correctos y volver a intentarlo. Si se rechaza otra vez, puedes habilitar las compras en línea en la app de tu banco o llamarlo directamente.\n\nTambién puedes pagar con otra tarjeta u otro medio, como PayPal o efectivo en OXXO. ¿Quieres que te envíe el enlace para intentar de nuevo?\", \"captured_fields\": {\"person_name\": null, \"location\": null, \"role\": null, \"company_name\": null, \"company_size\": null, \"business_model\": null, \"company_operational\": null, \"can_invest_in_education\": null}, \"missing_fields\": [\"person_name\", \"location\", \"role\", \"company_name\", \"company_size\", \"business_model\", \"company_operational\", \"can_invest_in_education\"]}"
+}

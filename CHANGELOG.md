@@ -8,6 +8,18 @@ Cada versión dice qué cambia y **qué tiene que hacer quien actualiza una inst
 
 Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab2002/setter-bridge`, `setter-slack-connector` y `setter-daily-feedback`. La release de GitHub lleva el digest de cada una. Cómo se pasa un servicio a la imagen y cómo se vuelve atrás: [docs/operations/release-por-imagen-v1.md](docs/operations/release-por-imagen-v1.md).
 
+## [1.6.1] - sin publicar
+
+Arregla una propuesta del agente que el bridge descartaba entera por un detalle de formato.
+
+### Arreglado
+
+- **La propuesta del agente con saltos de línea literales en el `reply` se acepta** (`src/bridge/hermes.py`, `_parse_agent_proposal`). GLM 5.3 Flash a veces separa los párrafos de la respuesta con saltos de línea sin escapar dentro del string JSON. `json.loads` estricto rechazaba la propuesta entera aunque los seis campos fueran válidos: el bridge reintentaba una vez y, si volvía igual, guardaba `invalid_agent_output` y el lead se quedaba sin respuesta. Ahora se parsea con `strict=False`, que acepta caracteres de control dentro de los strings, y el `reply` llega con sus párrafos. El fixture es la respuesta real del 2026-10-12 (`tests/fixtures/hermes_glm_proposal_raw_newlines_20261012.json`): 1 de 222 en el arnés del conocimiento v3 de ATT1, con las respuestas de pagos, más largas que las de antes.
+
+### Qué hace quien actualiza
+
+Nada: ni migración, ni variables, ni campos del manifiesto. Se sube la imagen y se redespliega el bridge.
+
 ## [1.6.0] - sin publicar
 
 El agente de una instancia con manifiesto intenta resolver un pago rechazado antes de derivarlo. Para eso suma tres piezas: una sección de pagos opcional en el conocimiento, el último rechazo de quien escribe en la entrada del agente y la ruta «Compra fallida» del SOUL común, que usa las dos. Además, el bridge guarda los eventos de la ficha de pago (OXXO y parecidos) para el seguimiento de la ficha sin pagar. Johanna no cambia.
