@@ -92,7 +92,11 @@ def _parse_agent_proposal(content: object) -> dict[str, object] | None:
 
     for candidate in candidates:
         try:
-            proposal = json.loads(candidate)
+            # strict=False deja pasar saltos de linea literales dentro de un
+            # string: GLM 5.3 Flash a veces separa los parrafos del reply asi
+            # (fixture hermes_glm_proposal_raw_newlines_20261012.json), y el
+            # resto de la propuesta es valido.
+            proposal = json.loads(candidate, strict=False)
         except json.JSONDecodeError:
             continue
         if isinstance(proposal, dict):

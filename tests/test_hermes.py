@@ -571,6 +571,79 @@ def test_retries_once_when_the_agent_returns_a_malformed_proposal(
     assert keys == [digest, f"{digest}-retry-2"]
 
 
+def _raw_newlines_content() -> str:
+    fixture = json.loads(
+        (
+            Path(__file__).parent
+            / "fixtures"
+            / "hermes_glm_proposal_raw_newlines_20261012.json"
+        ).read_text(encoding="utf-8")
+    )
+    return fixture["content"]
+
+
+def test_parses_a_proposal_with_raw_newlines_inside_the_reply() -> None:
+    """El caso real: GLM 5.3 Flash separo los parrafos del reply con saltos
+    de linea sin escapar.
+
+    El contenido es el que devolvio z-ai/glm-5.3-flash el 2026-10-12 con el
+    SOUL comun de la 1.6.0 y el conocimiento v3 de ATT1 (fixture
+    hermes_glm_proposal_raw_newlines_20261012.json). Con json.loads estricto
+    la propuesta entera se descartaba aunque los seis campos eran validos.
+    """
+    content = _raw_newlines_content()
+    with pytest.raises(json.JSONDecodeError, match="Invalid control character"):
+        json.loads(content)
+
+    proposal = _parse_agent_proposal(content)
+
+    assert proposal is not None
+    assert _is_valid_proposal(proposal)
+    assert proposal["decision"] == "ask_question"
+    assert proposal["reply"].count("\n\n") == 2
+    assert _parse_agent_proposal(f"```json\n{content}\n```") == proposal
+
+
+def test_raw_newlines_proposal_completes_on_the_first_attempt(
+    tmp_path: Path,
+) -> None:
+    """Sin reintento: el primer intento ya sirve, y el lead recibe ese reply."""
+    content = _raw_newlines_content()
+    delivery_id = "glm-raw-newlines"
+    digest = hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
+    keys: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        keys.append(request.headers["Idempotency-Key"])
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": content}}]}
+        )
+
+    processor = HermesShadowProcessor(
+        base_url="https://hermes.example.test/v1",
+        api_key="test-hermes-key",
+        model_name="agente-comercial",
+        shadow_dir=tmp_path,
+        transport=httpx.MockTransport(handler),
+    )
+
+    asyncio.run(
+        processor.run(
+            delivery_id=delivery_id,
+            context={"conversation_ref": "prueba-29", "messages": []},
+        )
+    )
+
+    expected = json.loads(content, strict=False)
+    assert json.loads((tmp_path / f"{digest}.json").read_text()) == {
+        "status": "completed",
+        "delivery_id_hash": digest,
+        "proposal": expected,
+    }
+    assert processor.get_completed_proposal(delivery_id=delivery_id) == expected
+    assert keys == [digest]
+
+
 def test_retry_does_not_reuse_the_first_idempotency_key(tmp_path: Path) -> None:
     """El api_server replica la respuesta de una Idempotency-Key ya vista.
 
