@@ -153,3 +153,91 @@ def test_faq_entries_need_source_and_date() -> None:
 
     with pytest.raises(KnowledgeError, match="fuente"):
         CommercialKnowledge.from_mapping(payload)
+
+
+# La seccion [pagos] (1.6.0). Los valores son los que Dan miro en el panel de
+# Hotmart del producto 5071808 el 2026-10-12 (decision «como se resuelve cada
+# pago que no se completa»), y el motivo con el texto con que llego en el
+# PURCHASE_CANCELED del 2026-10-11 23:50Z de ATT1.
+def _with_payments(payload: dict) -> dict:
+    payload = _approved(payload)
+    payload["pagos"] = {
+        "pais_principal": "México",
+        "medios": ["tarjeta de crédito", "PayPal", "transferencia bancaria", "efectivo en tienda"],
+        "por_pais": [
+            {"pais": "México", "transferencia": "SPEI", "efectivo": "OXXO"},
+            {"pais": "Chile", "efectivo": "Sencillito"},
+        ],
+        "pasos": [{"medio": "SPEI", "pasos": ["Elige transferencia en la página de pago.", "Confirma la compra."]}],
+        "rechazos": [
+            {
+                "motivo": "Saldo insuficiente",
+                "como_llega": ["Saldo insuficiente para o cartão informado. Entre em contato com a operadora."],
+                "que_hacer": "Sugiere otra tarjeta u otro medio de la lista.",
+            },
+            {"motivo": "Rechazo sin detalle", "que_hacer": "Sugiere otro medio de la lista."},
+        ],
+        "reglas": ["Si la compra quedó en análisis, no la intentes de nuevo."],
+    }
+    return payload
+
+
+def test_payments_section_renders_after_the_offer() -> None:
+    rendered = CommercialKnowledge.from_mapping(_with_payments(_payload())).render()
+
+    headings = [line for line in rendered.splitlines() if line.startswith("## ")]
+    assert headings[2:5] == ["## Oferta", "## Pagos", "## Contenido del programa"]
+    assert "Pais principal del negocio: México." in rendered
+    assert "- México: transferencia SPEI; efectivo OXXO." in rendered
+    assert "- Chile: efectivo Sencillito." in rendered
+    assert "Paso a paso para pagar con SPEI:\n\n1. Elige transferencia en la página de pago.\n2. Confirma la compra." in rendered
+    assert (
+        "- Saldo insuficiente (llega como «Saldo insuficiente para o cartão informado. "
+        "Entre em contato com a operadora.»): Sugiere otra tarjeta u otro medio de la lista."
+    ) in rendered
+    assert "- Rechazo sin detalle: Sugiere otro medio de la lista." in rendered
+    assert "- Si la compra quedó en análisis, no la intentes de nuevo." in rendered
+
+
+def test_knowledge_without_payments_renders_as_before() -> None:
+    rendered = CommercialKnowledge.from_mapping(_approved(_payload())).render()
+
+    assert "## Pagos" not in rendered
+    assert CommercialKnowledge.from_mapping(_approved(_payload())).payments is None
+
+
+def test_payments_need_the_active_methods() -> None:
+    payload = _with_payments(_payload())
+    payload["pagos"]["medios"] = []
+
+    with pytest.raises(KnowledgeError, match="pagos.medios"):
+        CommercialKnowledge.from_mapping(payload)
+
+
+def test_a_country_entry_names_at_least_one_local_method() -> None:
+    payload = _with_payments(_payload())
+    payload["pagos"]["por_pais"].append({"pais": "Panamá"})
+
+    with pytest.raises(KnowledgeError, match="transferencia, efectivo o los dos"):
+        CommercialKnowledge.from_mapping(payload)
+
+
+def test_unknown_payment_key_is_rejected() -> None:
+    payload = _with_payments(_payload())
+    payload["pagos"]["cuotas"] = ["3 cuotas"]
+
+    with pytest.raises(KnowledgeError, match="cuotas"):
+        CommercialKnowledge.from_mapping(payload)
+
+
+def test_refusal_entries_need_what_to_do() -> None:
+    payload = _with_payments(_payload())
+    del payload["pagos"]["rechazos"][0]["que_hacer"]
+
+    with pytest.raises(KnowledgeError, match="que_hacer"):
+        CommercialKnowledge.from_mapping(payload)
+
+
+def test_rendered_limit_stays_under_the_soul_truncation_of_hermes() -> None:
+    # Hermes deja 20.000 caracteres del SOUL; en bytes el bloque nunca pasa eso.
+    assert MAX_RENDERED_BYTES <= 20_000
