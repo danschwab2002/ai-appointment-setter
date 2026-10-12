@@ -4368,6 +4368,49 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         4,
         'portable_conversation_followup_claim'
+    union all
+    select
+        '20261012000100',
+        '20261012000100_portable_payment_failure_context_and_slip_events.sql',
+        -- El ultimo pago rechazado para la entrada del agente: definer, con el
+        -- search_path fijo, las dos formas del movil y sin quien compro despues.
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_portable_recent_payment_failure_v1(text,text,text)')
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+              and position('recent_payment_failure: begin' in definition) > 0
+              and position('public._whatsapp_phone_variants(p_whatsapp_phone)' in definition) > 0
+              and position('''PURCHASE_APPROVED''' in definition) > 0
+        )::int
+        -- Los eventos de la ficha: definer, solo de la oferta del binding.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_portable_hotmart_payment_slip_event_v1(text,text,integer,text,jsonb)')
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+              and position('payment_slip_binding: begin' in definition) > 0
+              and position('''PURCHASE_BILLET_PRINTED''' in definition) > 0
+              and position('''PURCHASE_EXPIRED''' in definition) > 0
+        )::int
+        -- Las dos son entrypoints del bridge: solo service_role.
+        + (
+            select count(*) = 2
+            from functions
+            where oid in (
+                to_regprocedure('public.get_portable_recent_payment_failure_v1(text,text,text)'),
+                to_regprocedure('public.admit_portable_hotmart_payment_slip_event_v1(text,text,integer,text,jsonb)')
+            )
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        3,
+        'portable_payment_failure_context_and_slip_events'
 )
 select
     version,

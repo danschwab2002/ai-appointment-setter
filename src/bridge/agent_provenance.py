@@ -26,7 +26,8 @@ from dataclasses import dataclass
 # Se sube cuando cambia la FORMA del contexto que se le manda al agente, o sea
 # cuando `_shadow_context` o el enriquecido de `app.py` dejan de producir el
 # mismo conjunto de claves. Un turno viejo con otra version no es comparable.
-CONTEXT_BUILDER_VERSION = "shadow-context-v1"
+# v2 (1.6.0): el runtime con manifiesto puede sumar `recent_payment_failure`.
+CONTEXT_BUILDER_VERSION = "shadow-context-v2"
 
 _ACTORES = ("prospect", "agent", "team", "system")
 

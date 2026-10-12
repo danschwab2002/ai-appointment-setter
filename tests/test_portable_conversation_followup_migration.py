@@ -318,7 +318,7 @@ def test_only_service_role_executes_and_every_grant_is_guarded() -> None:
 
 def test_the_inventories_and_the_sql_suite_know_the_function() -> None:
     inventory = SCHEMA_INVENTORY.read_text(encoding="utf-8")
-    row = inventory.split("'20261010000100',", 1)[1].split(")\nselect", 1)[0]
+    row = inventory.split("'20261010000100',", 1)[1].split("'20261012000100'", 1)[0]
     assert "'20261010000100_portable_conversation_followup_claim.sql'" in row
     for marker in (
         f"to_regprocedure('public.{PORTABLE}({ARGS})')",
@@ -330,13 +330,13 @@ def test_the_inventories_and_the_sql_suite_know_the_function() -> None:
     ):
         assert marker in row, marker
     # Cuatro marcadores, todos atados a la portable (absent en Johanna).
-    assert re.sub(r"\s+", "", row).endswith(",4,'portable_conversation_followup_claim'")
+    assert re.sub(r"\s+", "", row).endswith(",4,'portable_conversation_followup_claim'unionallselect")
 
     signature = f"public.{PORTABLE}({ARGS_CATALOG.replace(',', ', ')})"
     assert f"('{signature}')" in ACL_INVENTORY.read_text(encoding="utf-8")
     acl_validator = (SQL_SUITE / "validate_acl_hardening.mjs").read_text(encoding="utf-8")
     assert f"('{PORTABLE}({ARGS_CATALOG})')" in acl_validator
-    assert "result.expected_count !== 120" in acl_validator
+    assert "result.expected_count !== 122" in acl_validator
     # Lee human_handoff_requests: el validador de Postgres real la permite.
     handoff = (SQL_SUITE / "validate_handoff_postgres.py").read_text(encoding="utf-8")
     assert f"'{PORTABLE}'," in handoff

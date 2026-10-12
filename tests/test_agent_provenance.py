@@ -183,4 +183,4 @@ def test_the_context_builder_version_is_declared() -> None:
     Un turno viejo con otra version no es comparable con uno nuevo, y sin el
     campo no habria forma de saberlo.
     """
-    assert CONTEXT_BUILDER_VERSION == "shadow-context-v1"
+    assert CONTEXT_BUILDER_VERSION == "shadow-context-v2"

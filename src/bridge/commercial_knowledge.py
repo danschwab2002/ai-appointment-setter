@@ -24,7 +24,11 @@ import tomllib
 from pathlib import Path
 from typing import Any, Mapping
 
-MAX_RENDERED_BYTES = 16 * 1024
+# Por debajo de los 20.000 caracteres que Hermes deja del SOUL (medido el
+# 2026-10-01): en bytes, un caracter con tilde pesa dos, asi que 20.000 bytes son
+# menos de 20.000 caracteres. Hasta la 1.5.0 eran 16 KB; la seccion de pagos de la
+# 1.6.0 suma la guia de los rechazos.
+MAX_RENDERED_BYTES = 20_000
 
 STATUSES = ("borrador", "aprobado")
 
@@ -49,7 +53,7 @@ _TOP_KEYS = {
     "promesas_prohibidas",
     "limites_sensibles",
 }
-_TOP_OPTIONAL = {"faq"}
+_TOP_OPTIONAL = {"faq", "pagos"}
 
 
 class KnowledgeError(ValueError):
@@ -62,6 +66,47 @@ class FaqEntry:
     answer: str
     source: str
     valid_from: str
+
+
+@dataclass(frozen=True)
+class CountryPaymentNames:
+    """Como se llaman la transferencia y el efectivo en un pais."""
+
+    country: str
+    transfer: str | None
+    cash: str | None
+
+
+@dataclass(frozen=True)
+class PaymentSteps:
+    method: str
+    steps: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RefusalGuide:
+    """Que hacer cuando el medio de pago rechaza por un motivo."""
+
+    reason: str
+    arrives_as: tuple[str, ...]
+    what_to_do: str
+
+
+@dataclass(frozen=True)
+class PaymentGuide:
+    """La seccion [pagos]: lo que el agente usa ante una compra fallida.
+
+    Todo lo declara la instancia. El producto no nombra ningun medio local
+    (SPEI, OXXO, PSE): cambian con el pais y con lo que tiene prendido cada
+    oferta en la plataforma de pago.
+    """
+
+    main_country: str
+    methods: tuple[str, ...]
+    by_country: tuple[CountryPaymentNames, ...]
+    steps: tuple[PaymentSteps, ...]
+    refusals: tuple[RefusalGuide, ...]
+    rules: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -95,6 +140,7 @@ class CommercialKnowledge:
     sensitive_vertical: str
     sensitive_rules: tuple[str, ...]
     faq: tuple[FaqEntry, ...]
+    payments: PaymentGuide | None = None
 
     @property
     def approved(self) -> bool:
@@ -138,6 +184,8 @@ class CommercialKnowledge:
             + (self.offer_guarantee if self.offer_guarantee else "no confirmada.")
         ]
         lines += _bullets(self.offer_notes)
+        if self.payments is not None:
+            lines += _render_payments(self.payments)
         lines += ["", "## Contenido del programa", ""]
         if self.content_components:
             lines += ["Lista cerrada de componentes:", ""] + _bullets(self.content_components)
@@ -241,6 +289,8 @@ class CommercialKnowledge:
                 )
             )
 
+        payments = _payments(payload["pagos"]) if "pagos" in payload else None
+
         knowledge = cls(
             version=version,
             status=status,
@@ -271,6 +321,7 @@ class CommercialKnowledge:
             sensitive_vertical=_text(sensitive, "vertical", "limites_sensibles.vertical"),
             sensitive_rules=_list(sensitive, "reglas", "limites_sensibles.reglas", allow_empty=False),
             faq=tuple(faq),
+            payments=payments,
         )
         rendered = knowledge.render()
         size = len(rendered.encode("utf-8"))
@@ -285,6 +336,104 @@ class CommercialKnowledge:
                     "los secretos no van en este archivo"
                 )
         return knowledge
+
+
+def _payments(raw: object) -> PaymentGuide:
+    if not isinstance(raw, dict):
+        raise KnowledgeError("pagos debe ser una tabla")
+    _exact("pagos", raw, {"pais_principal", "medios"}, {"por_pais", "pasos", "rechazos", "reglas"})
+
+    by_country = []
+    for index, entry in enumerate(_tables(raw, "por_pais", "pagos.por_pais")):
+        where = f"pagos.por_pais[{index}]"
+        _exact(where, entry, {"pais"}, {"transferencia", "efectivo"})
+        transfer = _optional_text(entry, "transferencia", f"{where}.transferencia")
+        cash = _optional_text(entry, "efectivo", f"{where}.efectivo")
+        if transfer is None and cash is None:
+            raise KnowledgeError(f"{where} lleva transferencia, efectivo o los dos")
+        by_country.append(
+            CountryPaymentNames(country=_text(entry, "pais", f"{where}.pais"), transfer=transfer, cash=cash)
+        )
+
+    steps = []
+    for index, entry in enumerate(_tables(raw, "pasos", "pagos.pasos")):
+        where = f"pagos.pasos[{index}]"
+        _exact(where, entry, {"medio", "pasos"})
+        steps.append(
+            PaymentSteps(
+                method=_text(entry, "medio", f"{where}.medio"),
+                steps=_list(entry, "pasos", f"{where}.pasos", allow_empty=False),
+            )
+        )
+
+    refusals = []
+    for index, entry in enumerate(_tables(raw, "rechazos", "pagos.rechazos")):
+        where = f"pagos.rechazos[{index}]"
+        _exact(where, entry, {"motivo", "que_hacer"}, {"como_llega"})
+        refusals.append(
+            RefusalGuide(
+                reason=_text(entry, "motivo", f"{where}.motivo"),
+                arrives_as=_list(entry, "como_llega", f"{where}.como_llega"),
+                what_to_do=_text(entry, "que_hacer", f"{where}.que_hacer"),
+            )
+        )
+
+    return PaymentGuide(
+        main_country=_text(raw, "pais_principal", "pagos.pais_principal"),
+        methods=_list(raw, "medios", "pagos.medios", allow_empty=False),
+        by_country=tuple(by_country),
+        steps=tuple(steps),
+        refusals=tuple(refusals),
+        rules=_list(raw, "reglas", "pagos.reglas"),
+    )
+
+
+def _render_payments(guide: PaymentGuide) -> list[str]:
+    lines = [
+        "",
+        "## Pagos",
+        "",
+        f"Pais principal del negocio: {guide.main_country}.",
+        "",
+        "Medios de pago activos, los unicos que puedes ofrecer:",
+        "",
+    ]
+    lines += _bullets(guide.methods)
+    if guide.by_country:
+        lines += [
+            "",
+            "Como se llaman la transferencia y el efectivo segun el pais de quien paga:",
+            "",
+        ]
+        for entry in guide.by_country:
+            names = []
+            if entry.transfer:
+                names.append(f"transferencia {entry.transfer}")
+            if entry.cash:
+                names.append(f"efectivo {entry.cash}")
+            lines.append(f"- {entry.country}: {'; '.join(names)}.")
+    for entry in guide.steps:
+        lines += ["", f"Paso a paso para pagar con {entry.method}:", ""]
+        lines += _numbered(entry.steps)
+    if guide.refusals:
+        lines += ["", "Pago rechazado, que hacer segun el motivo:", ""]
+        for entry in guide.refusals:
+            arrives = (
+                " (llega como " + ", ".join(f"«{text}»" for text in entry.arrives_as) + ")"
+                if entry.arrives_as
+                else ""
+            )
+            lines.append(f"- {entry.reason}{arrives}: {entry.what_to_do}")
+    if guide.rules:
+        lines += ["", "Reglas de pagos:", ""] + _bullets(guide.rules)
+    return lines
+
+
+def _tables(raw: Mapping[str, Any], key: str, where: str) -> list[Mapping[str, Any]]:
+    value = raw.get(key, [])
+    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+        raise KnowledgeError(f"{where} debe ser una lista de tablas [[{where}]]")
+    return value
 
 
 def _numbered(items: tuple[str, ...]) -> list[str]:

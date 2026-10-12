@@ -156,6 +156,34 @@ identidad propia en todo el recorrido: `event_role=payment_failure`,
 `trigger_kind=payment_failure` y `anchor_type=payment_failure`; no reutiliza la
 semántica de abandono confirmado.
 
+#### El último rechazo en la entrada del agente (desde la 1.6.0)
+
+Con el mismo flag, cada turno del agente lleva `recent_payment_failure` si el
+móvil de quien escribe tiene un `PURCHASE_CANCELED` de la aliada en la última
+semana y no compró el producto después. Lo devuelve
+`get_portable_recent_payment_failure_v1(tenant, funnel, teléfono)`, que compara
+las dos formas del móvil (`52`/`521`, `54`/`549`) y solo trae lo que usa el
+agente: `failed_at`, `payment_method` (`data.purchase.payment.type`),
+`installments`, `refusal_reason` (el texto tal como llega, sin normalizar) y
+`checkout_country` (`data.purchase.checkout_country.iso`). Las claves sin valor no
+van. Si la lectura falla, el turno sigue sin el dato
+(`recent_payment_failure_lookup_failed` en el log, sin el número). La ruta
+«Compra fallida» del SOUL común lo usa con la sección `[pagos]` del conocimiento
+([commercial-knowledge-v1](commercial-knowledge-v1.md)). `CONTEXT_BUILDER_VERSION`
+pasa a `shadow-context-v2`.
+
+#### Los eventos de la ficha (desde la 1.6.0)
+
+Con el mismo flag, `PURCHASE_BILLET_PRINTED` y `PURCHASE_EXPIRED` versión
+`2.0.0` se guardan en `webhook_events` con su procedencia
+(`admit_portable_hotmart_payment_slip_event_v1`) y no disparan nada: los usa el
+seguimiento de la ficha sin pagar. La admisión solo mira el sobre común (id,
+evento, versión, producto y oferta del binding) y guarda el payload entero. Otra
+oferta u otro producto vuelve `ignored_binding_mismatch` y el bridge contesta
+200, igual que un duplicado o un conflicto semántico: Hotmart cuenta un 4xx como
+falla del webhook entero. Sin el flag siguen como antes:
+`unsupported_event_type`. Hay que suscribirlos en el webhook de Hotmart.
+
 `plan_portable_payment_failure_recovery` crea o reutiliza atómicamente el caso,
 la secuencia y la primera acción. Una vez que existe
 `payment_failure_first_contact`, cualquier pago fallido posterior del mismo caso
