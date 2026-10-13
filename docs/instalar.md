@@ -104,7 +104,7 @@ server {
 
 ## 8. El agente en Hermes
 
-> Pendiente. Un profile por instancia (`agente.modelo` del manifiesto) con el SOUL común del producto (`profiles/agente-comercial-comun/SOUL.md`). El conocimiento no va en el profile: lo manda el bridge.
+> Pendiente. Un Hermes propio por instancia, adentro de su stack, como el servicio `hermes`, con los profiles que declara el producto y nada más ([ADR-0025](decisions/0025-cada-instancia-tiene-su-hermes-declarado-por-el-producto.md)). Lo deja así el instalador del producto, y el chequeo de deriva lo verifica. El agente comercial usa el SOUL común del producto (`profiles/agente-comercial-comun/SOUL.md`). El conocimiento no va en el profile: lo manda el bridge. Los nombres siguen [`referencia-nombres.md`](referencia-nombres.md).
 
 ## 9. Levantar el bridge desde la imagen
 
