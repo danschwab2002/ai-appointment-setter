@@ -4,16 +4,13 @@
 
 El bridge dispone de un monitor Chatwoot default-off que consulta conversaciones abiertas dentro de la cuenta/inbox configurados, valida el historial remoto canónico y readmite el último inbound público sin respuesta en el mismo `DurableChatwootInbox` usado por webhooks. La identidad `stalled-chatwoot:<conversation_id>:<message_id>` hace idempotentes los reinicios y scans repetidos; las readmisiones terminales tienen cooldown y límite. El monitor falla cerrado ante paginación incompleta, conversación asignada/pausada, identidad fuera de scope o cualquier outbound posterior. `/ready` sólo lo declara sano después de un scan completo. Contrato: `docs/contracts/chatwoot-stalled-conversation-monitor-v1.md`.
 
-## Paquete candidato de agente comercial ATT1
+## El Hermes de una instancia
 
-El repositorio contiene una distribución versionada y create-only en
-`profiles/att1/agente-comercial/`. Es un candidato inerte: usa un fallback neutro,
-no incorpora Brand Voice ni facts comerciales pendientes, no tiene toolsets,
-memoria, credenciales, runtime binding ni capacidad de efectos. Su manifiesto y
-bundle fijan hashes verificables y `scripts/install_att1_product_profiles.py` sólo
-puede instalarlo en un home nuevo; nunca reemplaza el profile operativo de otro
-cliente. Una instalación aislada no equivale a una Conversation Release aprobada,
-conexión con el bridge ni activación comercial.
+El paquete candidato `profiles/att1/` y su instalador salieron del repositorio con el
+ADR-0025. En su lugar, `hermes/declaracion.toml` declara cómo queda el Hermes de una
+instancia: la imagen fija y los profiles que trae esta versión, con su distribución
+nativa de Hermes (hoy `profiles/agente-comercial-comun/`). `scripts/hermes_instancia.py`
+lo instala y chequea su deriva; el formato y el uso están en `hermes/README.md`.
 
 ## Flujo del primer hito
 

@@ -8,6 +8,25 @@ Cada versión dice qué cambia y **qué tiene que hacer quien actualiza una inst
 
 Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab2002/setter-bridge`, `setter-slack-connector` y `setter-daily-feedback`. La release de GitHub lleva el digest de cada una. Cómo se pasa un servicio a la imagen y cómo se vuelve atrás: [docs/operations/release-por-imagen-v1.md](docs/operations/release-por-imagen-v1.md).
 
+## [1.7.0] - sin publicar
+
+El producto declara cómo queda el Hermes de una instancia, y trae el instalador y el chequeo de deriva ([ADR-0025](docs/decisions/0025-cada-instancia-tiene-su-hermes-declarado-por-el-producto.md)). No cambia el bridge.
+
+### Agregado
+
+- **`hermes/declaracion.toml`:** la imagen de Hermes fija (`v2026.8.31`, por digest) y los profiles que trae esta versión: el agente comercial.
+- **`profiles/agente-comercial-comun/` es una distribución nativa de Hermes:** `distribution.yaml` y el molde de `config.yaml`, copiado del agente que atendía en ATT1 el 2026-10-14 (diez claves, sin herramientas). El `SOUL.md` no cambia.
+- **`scripts/hermes_instancia.py`** con `plan`, `aplicar` y `chequear`, contra el `hermes.toml` de la instancia. Frena ante un contenedor de otro stack, otra imagen o un Hermes ajeno, y nunca imprime una key. Formato y uso en `hermes/README.md`.
+- **El workflow `hermes`:** la prueba de punta a punta contra la imagen declarada, con un modelo de mentira, cuando cambia algo de Hermes.
+
+### Quitado
+
+- `profiles/att1/`, `scripts/install_att1_product_profiles.py` y su test: el paquete candidato inerte del 2026-09-07, que nunca se activó.
+
+### Qué hace quien actualiza
+
+Nada: el bridge no cambia, y el instalador no corre solo. Pasar una instancia a su propio Hermes es un paso aparte, con su `hermes.toml`.
+
 ## [1.6.1] - sin publicar
 
 Arregla una propuesta del agente que el bridge descartaba entera por un detalle de formato.

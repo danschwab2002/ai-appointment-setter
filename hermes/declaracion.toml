@@ -1,0 +1,19 @@
+# Como queda el Hermes de una instancia con esta version del producto (ADR-0025).
+#
+# La lee scripts/hermes_instancia.py, que instala y chequea. El formato esta en hermes/README.md.
+# Lista solo los profiles que esta version trae: el Automation Expert y el copiloto entran con la
+# version que los construye. Lo que queda apagado (el panel, el profile default, el multiplex) no
+# se declara: el chequeo lo exige siempre.
+schema = 1
+
+[imagen]
+# La oficial, con la version fija, hasta que el primer plugin nuestro pida la imagen derivada.
+nombre = "nousresearch/hermes-agent"
+etiqueta = "v2026.8.31"
+digest = "sha256:64923faeae267792bf9bf87fe3b4c4869e35004e360c7df01730ad801b74d524"
+version_hermes = "0.21.0"
+
+[profiles.agente-comercial]
+distribucion = "profiles/agente-comercial-comun"
+puerto = 8642
+le_habla = "bridge"

@@ -1,0 +1,16 @@
+# El hermes.toml de una instancia de prueba (ADR-0025). Lo usa hermes/prueba/probar_en_contenedor.sh
+# en el CI y en los descartables, y los tests de scripts/hermes_instancia.py.
+#
+# El modelo es el de mentira (hermes/prueba/modelo_de_mentira.py), que corre adentro del mismo
+# contenedor: proveedor custom, sin key y sin red. La ruta de los secretos es relativa a este
+# archivo; en una instancia de verdad es absoluta (por ejemplo /opt/setter-att1/secretos/bridge.env).
+schema = 1
+stack = "prueba"
+
+[profiles.agente-comercial]
+modelo = "prueba/modelo"
+proveedor = "custom"
+base_url = "http://127.0.0.1:9999/v1"
+
+[profiles.agente-comercial.variables]
+API_SERVER_KEY = { archivo = "secretos/bridge.env", variable = "HERMES_API_KEY" }

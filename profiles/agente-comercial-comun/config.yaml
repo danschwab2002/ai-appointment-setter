@@ -1,0 +1,34 @@
+# Molde del config.yaml del agente comercial (ADR-0025).
+#
+# Es el que corria en ATT1 el 2026-10-14, medido clave por clave sin imprimir valores: diez claves,
+# iguales a las del agente de Johanna salvo el puerto. Todo lo demas queda en los valores por
+# defecto de Hermes, igual que en produccion. Endurecerlo (turnos, memoria, aprobaciones) es otro
+# cambio, que se mide aparte: este molde no cambia el comportamiento del agente.
+#
+# Lo completa scripts/hermes_instancia.py: el modelo, el proveedor y el respaldo salen del
+# hermes.toml de la instancia; el puerto, de hermes/declaracion.toml. Los null de abajo los pisa el
+# instalador, y el instalador frena si alguno queda sin valor.
+#
+# - _config_version: el vivo tenia 33. Las migraciones de Hermes de la 34 a la 39 tocan claves que
+#   este archivo no tiene (personalidad, delegacion, plugins), asi que 39 no cambia nada en tiempo
+#   de ejecucion y evita que Hermes reescriba el archivo al actualizarse.
+# - platform_toolsets.api_server vacio: el agente no tiene herramientas.
+# - known_plugin_toolsets: un toolset de plugin que no figura aca arranca prendido
+#   (hermes_cli/tools_config.py). Se copia del vivo, y el chequeo de deriva exige cero herramientas
+#   efectivas calculadas con la funcion de Hermes.
+# - host 0.0.0.0: el bridge le habla por la red del stack. El puerto no se publica.
+_config_version: 39
+model:
+  default: null
+  provider: null
+fallback_providers: []
+platform_toolsets:
+  api_server: []
+known_plugin_toolsets:
+  api_server:
+    - spotify
+platforms:
+  api_server:
+    enabled: true
+    host: 0.0.0.0
+    port: null
