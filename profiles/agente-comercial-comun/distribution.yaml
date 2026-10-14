@@ -1,0 +1,19 @@
+# Distribucion nativa de Hermes del agente comercial (ADR-0025).
+# La instala scripts/hermes_instancia.py con `hermes profile install`; a mano no se instala.
+# Hermes copia solo lo que esta en distribution_owned: las memorias, las sesiones, los registros y
+# el archivo de variables del profile no se tocan nunca.
+name: agente-comercial
+version: 1.0.0
+description: "Agente comercial del setter. Propone la respuesta; el bridge decide y envia."
+author: ai-appointment-setter
+hermes_requires: ">=0.21.0"
+env_requires:
+  - name: API_SERVER_KEY
+    description: "La clave con la que el bridge le habla a este profile: la HERMES_API_KEY del bridge."
+    required: true
+  - name: OPENROUTER_API_KEY
+    description: "La key de OpenRouter de la instancia, cuando el modelo va por OpenRouter."
+    required: false
+distribution_owned:
+  - SOUL.md
+  - config.yaml

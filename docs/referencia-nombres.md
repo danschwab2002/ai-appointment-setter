@@ -25,6 +25,7 @@ Cómo se llama cada cosa que se despliega para una instancia. La regla la fija e
 | Hermes | `hermes` | todavía en el Hermes compartido |
 | Volumen de un servicio | `<servicio>-data` (Swarm lo muestra `<instancia>_<servicio>-data`) | `setter-att1_att1-db-data`, `setter-att1_att1-bridge-data` |
 | Profiles de Hermes | `agente-comercial`, `automation-expert`, `client-copilot` | `att1-agente-comercial` en el Hermes compartido |
+| Declaración de Hermes de la instancia | `hermes.toml`, en la raíz del repo de la instancia | todavía no existe |
 | Dominio | `<instancia>.<dominio del servidor>` | `setter-att1.u5iqmf.easypanel.host` |
 | Rutas de Traefik (archivo y router) | `<instancia>-<servicio>` | `setter-att1.yaml` y `setter-att1-revision.yaml` |
 | Timers del servidor | `<instancia>-alertas`, `<instancia>-respaldo` | `att1-alertas`, `att1-respaldo` (siguen la regla) |

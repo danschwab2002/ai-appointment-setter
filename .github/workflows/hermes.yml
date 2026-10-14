@@ -1,0 +1,38 @@
+name: hermes
+
+# Prueba de punta a punta del instalador del Hermes de una instancia (ADR-0025) contra la imagen que
+# declara el producto: instala, le habla al comercial con un modelo de mentira, chequea y pone en
+# rojo a proposito. Corre solo cuando cambia algo de Hermes, porque baja la imagen (~950 MB).
+on:
+  pull_request:
+    paths:
+      - "hermes/**"
+      - "profiles/**"
+      - "scripts/hermes_instancia.py"
+      - "tests/fixtures/hermes/**"
+      - ".github/workflows/hermes.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "hermes/**"
+      - "profiles/**"
+      - "scripts/hermes_instancia.py"
+      - "tests/fixtures/hermes/**"
+      - ".github/workflows/hermes.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hermes-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  instalador:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Instalar, hablarle y chequear un Hermes descartable
+        run: sh hermes/prueba/probar_en_contenedor.sh

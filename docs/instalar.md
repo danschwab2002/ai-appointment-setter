@@ -104,7 +104,7 @@ server {
 
 ## 8. El agente en Hermes
 
-> Pendiente. Un Hermes propio por instancia, adentro de su stack, como el servicio `hermes`, con los profiles que declara el producto y nada más ([ADR-0025](decisions/0025-cada-instancia-tiene-su-hermes-declarado-por-el-producto.md)). Lo deja así el instalador del producto, y el chequeo de deriva lo verifica. El agente comercial usa el SOUL común del producto (`profiles/agente-comercial-comun/SOUL.md`). El conocimiento no va en el profile: lo manda el bridge. Los nombres siguen [`referencia-nombres.md`](referencia-nombres.md).
+> Pendiente. Un Hermes propio por instancia, adentro de su stack, como el servicio `hermes`, con los profiles que declara el producto y nada más ([ADR-0025](decisions/0025-cada-instancia-tiene-su-hermes-declarado-por-el-producto.md)). Lo deja así `scripts/hermes_instancia.py aplicar`, con el `hermes.toml` de la instancia (el modelo de cada profile y de dónde salen sus keys), y `chequear` verifica que siga igual. El formato y el uso están en [`hermes/README.md`](../hermes/README.md). El agente comercial usa el SOUL común del producto (`profiles/agente-comercial-comun/SOUL.md`). El conocimiento no va en el profile: lo manda el bridge. Los nombres siguen [`referencia-nombres.md`](referencia-nombres.md).
 
 ## 9. Levantar el bridge desde la imagen
 

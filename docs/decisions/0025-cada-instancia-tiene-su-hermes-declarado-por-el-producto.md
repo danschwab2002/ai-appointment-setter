@@ -6,6 +6,7 @@
 - Afina: [ADR-0005](0005-reproducible-client-deployments.md) §1 y §5, y [ADR-0021](0021-setter-producto-instalable.md) §7
 - Concreta: [ADR-0006](0006-three-agent-product-surface.md) §1 y §3
 - Nombres: [`docs/referencia-nombres.md`](../referencia-nombres.md)
+- Corregida: 2026-10-14, con el PR que escribe el instalador: dónde pone la instancia el modelo (§2 y §4) y de dónde sale la configuración del comercial (Consecuencias)
 
 ## Contexto
 
@@ -44,14 +45,14 @@ El Automation Expert del ADR-0006 §3 «diseña y explica; la aplicación valida
    - Subir Hermes de versión es un PR en el producto, con una prueba en el CI que instale los profiles y les hable.
    - Como el bridge, una versión nueva llega a cada instancia por un PR en su repo, primero a la de menor facturación (ADR-0021 §3).
 
-2. **El producto declara cómo queda el Hermes de una instancia,** en un archivo versionado. El formato se define en el PR que escribe el instalador.
+2. **El producto declara cómo queda el Hermes de una instancia,** en un archivo versionado: `hermes/declaracion.toml`. El formato está en `hermes/README.md`.
    - **Qué declara:**
      - qué profiles existen, y nada más;
      - el molde de cada uno: SOUL, configuración, herramientas, plugins y skills;
      - quién le habla: el bridge por la red interna, o Slack con su lista de usuarios.
    - **La declaración de cada versión lista los profiles que esa versión trae.** Primero el agente comercial; el Automation Expert y el copiloto se suman con la versión que los construye.
    - **Qué queda apagado:** el panel de control, la terminal, los archivos y el profile `default`. Si Hermes no deja borrar el `default` porque es su carpeta raíz, queda sin canal, sin modelo y sin herramientas.
-   - **Lo que pone la instancia:** el modelo de cada profile, en el manifiesto, y sus keys, en los secretos.
+   - **Lo que pone la instancia:** el modelo de cada profile, en su `hermes.toml`, y sus keys, en los secretos. No va en el manifiesto: su lector rechaza las secciones que no conoce, y un bridge anterior se caería al reiniciar con una sección nueva (corregido el 2026-10-14).
    - **Un instalador** deja el Hermes de la instancia igual a la declaración, y correrlo dos veces da lo mismo. Verifica los archivos por hash antes de escribir, como el instalador candidato de `profiles/att1/`.
    - **Un chequeo de deriva** compara lo que corre con lo declarado: lo que sobra, lo que falta y lo que difiere de Git. Sale con error ante cualquier diferencia.
 
@@ -72,7 +73,7 @@ El Automation Expert del ADR-0006 §3 «diseña y explica; la aplicación valida
 4. **Tres profiles por instancia, los del ADR-0006:** `agente-comercial`, `automation-expert` y `client-copilot`.
    - El agente comercial se queda en Hermes y se aliviana, en vez de salir. Así el diseño es más predecible y más simple de entender, y lo que se ahorraría sacándolo se gastaría en construirlo en el bridge.
    - Los pedidos auxiliares del bridge no suman profiles. El nombre de pila y la ayuda para correlacionar usan el profile del comercial. Partir la respuesta llega por la misma dirección con un modelo propio: antes de apagar el `default`, la prueba en seco confirma que lo atiende el profile del comercial.
-   - Adentro del Hermes de una instancia, los profiles van sin prefijo. La declaración es la misma en todas, y lo que cambia es el modelo de cada uno en el manifiesto.
+   - Adentro del Hermes de una instancia, los profiles van sin prefijo. La declaración es la misma en todas, y lo que cambia es el modelo de cada uno en el `hermes.toml` de la instancia.
 
 5. **El Hermes de una instancia se mantiene liviano:**
    - sin panel de control ni `default`;
@@ -102,7 +103,7 @@ El Automation Expert del ADR-0006 §3 «diseña y explica; la aplicación valida
 - **Capacidad estimada.** Con tres profiles, el Hermes de una instancia ronda 1 GB y la instancia entera 1,5 GB (el stack de ATT1 sin Hermes ocupaba 0,5 GB el 2026-10-13). En un VPS con 18 GB libres entran unas diez instancias con margen.
 - **Hermes se sube de a una instancia,** igual que el bridge, y una caída de Hermes afecta a una sola instancia.
 - **El Automation Expert nace con las herramientas al lado de las keys de su propia instancia,** no de las de otros clientes.
-- **`profiles/att1/` y su instalador salen del producto.** De ahí pasan al molde genérico la configuración con todo apagado y la verificación por hash. El claim `att1-product-hermes-runtime`, que reserva esos archivos desde el 2026-09-07, se cierra antes de sacarlos.
+- **`profiles/att1/` y su instalador salen del producto.** De ahí pasa al instalador nuevo la verificación por hash. La configuración «con todo apagado» del candidato no pasa: tenía 61 claves y el API server apagado, contra las 10 del agente que atendía en ATT1, así que habría cambiado al agente. El molde copia la configuración del agente vivo, y endurecerla es un cambio aparte, medido (corregido el 2026-10-14). El claim `att1-product-hermes-runtime`, que reserva esos archivos desde el 2026-09-07, se cierra antes de sacarlos.
 - **`profiles/agente-comercial/SOUL.md`, el SOUL de Johanna, queda** hasta que Johanna se mude al manifiesto.
 - **`profiles/client-copilot/` entra a la declaración cuando se construya el copiloto.** Su plugin de revisión de correlación sigue congelado.
 - **Hasta que existan los flujos como definiciones, el Automation Expert solo lee y explica.**
