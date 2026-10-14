@@ -599,6 +599,18 @@ def verificar_duenio(stack: str, marca: dict | None, presentes: list[str], decla
             )
 
 
+def leer_s6(estado: str) -> tuple[int | None, bool, str | None]:
+    """De una linea de s6-svstat: el pid si el servicio esta arriba, si quedo abajo sin que s6 lo
+    vaya a levantar, y como salio el ultimo proceso ("exitcode 0", "signal SIGKILL") si salio."""
+    arriba = re.match(r"up \(pid (\d+)", estado)
+    salida = re.match(r"down \(((?:exitcode|signal) [^)]+)\)", estado)
+    return (
+        int(arriba.group(1)) if arriba else None,
+        estado.startswith("down") and "want up" not in estado,
+        salida.group(1) if salida else None,
+    )
+
+
 # --------------------------------------------------------------------------------------------
 # Lo que corre adentro del contenedor, como hermes, con el python de Hermes
 # --------------------------------------------------------------------------------------------
@@ -654,8 +666,7 @@ class Dentro:
         return (r.stdout or r.stderr).strip()
 
     def _pid_s6(self, servicio: str) -> int | None:
-        m = re.search(r"^up \(pid (\d+)", self._estado_s6(servicio))
-        return int(m.group(1)) if m else None
+        return leer_s6(self._estado_s6(servicio))[0]
 
     def _estado_gateway(self, carpeta: Path) -> dict:
         ruta = carpeta / "gateway_state.json"
@@ -800,13 +811,27 @@ class Dentro:
         limite = time.monotonic() + segundos
         codigos: tuple[int, int] | None = None
         estado: dict = {}
+        arrancado_de_nuevo = False
         while time.monotonic() < limite:
-            pid = self._pid_s6(servicio)
+            s6 = self._estado_s6(servicio)
+            pid, abajo_sin_volver, salida = leer_s6(s6)
             if pid is not None and pid != pid_anterior:
                 estado = self._estado_gateway(PROFILES / nombre)
                 codigos = self._probar_api(puerto, self._variables(nombre).get("API_SERVER_KEY", ""))
                 if codigos == (200, 401) and estado.get("pid") == pid and estado.get("gateway_state") == "running":
                     return
+            elif abajo_sin_volver and salida is not None:
+                # El script finish de Hermes le pide a s6 que no levante un gateway que salio con 0 o
+                # con 78. Con 0 sale si el SIGTERM de un reinicio le llega mientras todavia termina de
+                # arrancar (medido en el CI el 2026-10-14): ahi se arranca una vez. Con 78, el error es
+                # de configuracion, y arrancarlo de nuevo no lo arregla.
+                if salida != "exitcode 0" or arrancado_de_nuevo:
+                    raise Freno(f"el gateway de {nombre} quedo apagado y s6 no lo vuelve a levantar (s6: {s6})")
+                self.reporte.acciones.append(
+                    f"arrancar de nuevo el gateway de {nombre}: salio con 0 y s6 no lo levanto ({s6.split(',')[0]})"
+                )
+                self._hermes("--profile", nombre, "gateway", "start")
+                arrancado_de_nuevo = True
             time.sleep(2)
         estado = estado or self._estado_gateway(PROFILES / nombre)
         api = ((estado.get("platforms") or {}).get("api_server") or {}).get("state")

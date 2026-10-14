@@ -293,6 +293,104 @@ def test_verificar_duenio_deja_pasar_un_hermes_propio(marca, presentes, distribu
     hi.verificar_duenio("setter-x", marca, presentes, ["agente-comercial"], distribuciones)
 
 
+# --- esperar al gateway despues de arrancarlo o reiniciarlo ------------------------------------
+
+# Lineas reales de s6-svstat. Las dos primeras, de un reinicio del gateway en el VPS el 2026-10-14
+# (hermes/prueba, modelo de mentira). La tercera, del CI del PR #231 (run 38577495522): el SIGTERM
+# del reinicio le llego al gateway mientras terminaba de arrancar, salio con 0 y s6 lo dejo abajo.
+S6_ARRIBA = "up (pid 712 pgid 712) 1 seconds, normally down"
+S6_REINICIANDO = "down (exitcode 1) 0 seconds, want up, ready 0 seconds"
+S6_ABAJO_CON_0 = "down (exitcode 0) 143 seconds, ready 143 seconds"
+
+
+def test_leer_s6_con_las_lineas_medidas():
+    assert hi.leer_s6(S6_ARRIBA) == (712, False, None)
+    assert hi.leer_s6(S6_REINICIANDO) == (None, False, "exitcode 1")
+    assert hi.leer_s6(S6_ABAJO_CON_0) == (None, True, "exitcode 0")
+    assert hi.leer_s6("down (exitcode 78) 2 seconds, ready 2 seconds") == (None, True, "exitcode 78")
+    assert hi.leer_s6("") == (None, False, None)
+
+
+class RelojDeMentira:
+    def __init__(self):
+        self.ahora = 0.0
+
+    def monotonic(self) -> float:
+        return self.ahora
+
+    def sleep(self, segundos: float) -> None:
+        self.ahora += segundos
+
+
+def _gateway_de_mentira(monkeypatch, lineas_s6: list[str], estados: list[dict] | None = None, api=(200, 401)):
+    """Un Dentro que ve, en orden, las lineas de s6 y los gateway_state.json dados (el ultimo se repite)."""
+    monkeypatch.setattr(hi, "time", RelojDeMentira())
+    d = hi.Dentro({"modo": "aplicar", "profiles": {}}, {})
+    d.esperado = {"agente-comercial": {"platforms": {"api_server": {"port": 8642}}}}
+    lineas, pendientes, llamadas = list(lineas_s6), list(estados or [{}]), []
+
+    def siguiente(lista: list):
+        return lista.pop(0) if len(lista) > 1 else lista[0]
+
+    d._estado_s6 = lambda servicio: siguiente(lineas)
+    d._estado_gateway = lambda carpeta: siguiente(pendientes)
+    d._probar_api = lambda puerto, clave: api
+    d._variables = lambda nombre: {"API_SERVER_KEY": "clave-de-prueba"}
+    d._hermes = lambda *args: llamadas.append(args)
+    return d, llamadas
+
+
+def test_la_espera_no_se_fia_del_estado_que_dejo_el_proceso_anterior(monkeypatch):
+    d, llamadas = _gateway_de_mentira(
+        monkeypatch,
+        ["up (pid 251 pgid 251) 30 seconds, normally down", S6_REINICIANDO, S6_ARRIBA],
+        [
+            {"pid": 251, "gateway_state": "running"},  # lo que escribio el proceso anterior
+            {"pid": 712, "gateway_state": "starting"},  # el nuevo ya atiende, pero no termino de arrancar
+            {"pid": 712, "gateway_state": "running"},
+        ],
+    )
+    d._esperar_gateway("agente-comercial", pid_anterior=251)
+    # Cuatro esperas de 2 s: el proceso viejo, el reinicio, el estado que dejo el viejo y el "starting".
+    assert hi.time.ahora == 8
+    assert llamadas == [] and d.reporte.acciones == []
+
+
+def test_si_sale_con_0_y_s6_no_lo_levanta_lo_arranca_una_vez(monkeypatch):
+    d, llamadas = _gateway_de_mentira(
+        monkeypatch,
+        ["up (pid 251 pgid 251) 18 seconds, normally down", S6_ABAJO_CON_0, S6_ARRIBA],
+        [{"pid": 712, "gateway_state": "running"}],
+    )
+    d._esperar_gateway("agente-comercial", pid_anterior=251)
+    assert llamadas == [("--profile", "agente-comercial", "gateway", "start")]
+    assert d.reporte.acciones == [
+        "arrancar de nuevo el gateway de agente-comercial: salio con 0 y s6 no lo levanto (down (exitcode 0) 143 seconds)"
+    ]
+
+
+def test_si_vuelve_a_salir_con_0_frena_sin_insistir(monkeypatch):
+    d, llamadas = _gateway_de_mentira(monkeypatch, ["up (pid 251 pgid 251) 18 seconds, normally down", S6_ABAJO_CON_0])
+    with pytest.raises(hi.Freno, match="quedo apagado y s6 no lo vuelve a levantar"):
+        d._esperar_gateway("agente-comercial", pid_anterior=251)
+    assert len(llamadas) == 1
+
+
+def test_un_error_de_configuracion_frena_enseguida_sin_arrancarlo(monkeypatch):
+    d, llamadas = _gateway_de_mentira(monkeypatch, ["down (exitcode 78) 1 seconds, ready 1 seconds"])
+    with pytest.raises(hi.Freno, match=r"exitcode 78"):
+        d._esperar_gateway("agente-comercial")
+    assert llamadas == [] and hi.time.ahora == 0
+
+
+def test_si_se_vence_el_tiempo_el_freno_dice_lo_que_vio(monkeypatch):
+    d, _ = _gateway_de_mentira(monkeypatch, ["up (pid 251 pgid 251) 300 seconds, normally down"], [{"pid": 251, "gateway_state": "running"}])
+    with pytest.raises(hi.Freno) as freno:
+        d._esperar_gateway("agente-comercial", pid_anterior=251, segundos=10)
+    assert "s6: up (pid 251" in str(freno.value)
+    assert "sin probar, s6 no mostro un proceso nuevo" in str(freno.value)
+
+
 # --- afuera: el contenedor y la corrida --------------------------------------------------------
 
 

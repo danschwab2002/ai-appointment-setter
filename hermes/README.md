@@ -117,6 +117,11 @@ Medido el 2026-10-14 en un Hermes descartable con la imagen declarada, salvo don
   `API_SERVER_KEY` también exige reiniciar el bridge, que lee `HERMES_API_KEY` al arrancar.
 - **El reinicio corta el API entre 15 y 25 s** (medido en el VPS, cuatro veces): el proceso viejo
   sale enseguida y el nuevo tarda en cargar. En ese rato el bridge no tiene a quién hablarle.
+- **Un reinicio que llega mientras el gateway todavía termina de arrancar lo deja apagado.** Hermes
+  sale con 0, y su script `finish` le pide a s6 que no lo vuelva a levantar (medido en el CI el
+  2026-10-14: el SIGTERM llegó 18 s después del arranque). `aplicar --reiniciar` lo detecta y lo
+  arranca una vez. Si vuelve a pasar, o si el gateway salió por un error de configuración (78), frena.
+  Lo mismo vale para un `hermes gateway restart` a mano: después, mirar que haya quedado arriba.
 
 ## El contenedor
 

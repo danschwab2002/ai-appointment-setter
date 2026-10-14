@@ -163,6 +163,12 @@ contiene rota-key "poner API_SERVER_KEY en las variables de agente-comercial"
 contiene rota-key "sigue con el puerto o la clave de antes: reiniciarlo con aplicar --reiniciar"
 instalador rota-key-reinicia 0 aplicar --instancia "$TMP/hermes.toml" --reiniciar
 contiene rota-key-reinicia "reiniciar el gateway de agente-comercial: no respondia con el puerto y la clave actuales"
+# Otra rotacion enseguida: el SIGTERM le llega al gateway nuevo mientras todavia termina de arrancar.
+# Ahi Hermes sale con 0, y su script finish le pide a s6 que no lo levante (medido en el CI el
+# 2026-10-14). aplicar --reiniciar lo tiene que dejar atendiendo igual.
+cp "$TMP/secretos/bridge.env" "$TMP/clave-intermedia.env"
+python3 -c 'import secrets; print("HERMES_API_KEY=" + secrets.token_hex(24))' > "$TMP/secretos/bridge.env"
+instalador rota-key-enseguida 0 aplicar --instancia "$TMP/hermes.toml" --reiniciar
 instalador verde-key 0 chequear --instancia "$TMP/hermes.toml"
 
 paso "8. rojo a proposito: un profile de mas (aplicar no lo borra)"
@@ -194,12 +200,12 @@ contiene ajeno-profile "el profile agente-comercial ya existe, no lo instalo est
 docker exec "$AJENO" test ! -e /opt/data/.setter-instancia.json || fallar "marco el Hermes ajeno"
 
 paso "11. la key de prueba no aparece en ninguna salida"
-for archivo in "$TMP/clave-vieja.env" "$TMP/secretos/bridge.env"; do
+for archivo in "$TMP/clave-vieja.env" "$TMP/clave-intermedia.env" "$TMP/secretos/bridge.env"; do
   CLAVE=$(sed -n 's/^HERMES_API_KEY=//p' "$archivo")
   [ -n "$CLAVE" ] || fallar "no hay key de prueba en $archivo"
   if grep -rqF -- "$CLAVE" "$SALIDAS"; then fallar "una key de prueba aparecio en una salida"; fi
 done
-echo "ninguna de las $(ls "$SALIDAS" | wc -l | tr -d ' ') salidas tiene alguna de las dos keys de prueba"
+echo "ninguna de las $(ls "$SALIDAS" | wc -l | tr -d ' ') salidas tiene alguna de las tres keys de prueba"
 
 echo
 echo "TODO OK"
