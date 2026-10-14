@@ -30,7 +30,24 @@ limpiar() {
 }
 trap limpiar EXIT INT TERM
 
-fallar() { echo "FALLA: $*"; exit 1; }
+# Lo que deja ver por que fallo: el contenedor se borra al salir, y en el CI no queda otra cosa.
+# Es el Hermes descartable, con keys de prueba; igual se tapa todo hexadecimal largo.
+diagnostico() {
+  docker inspect "$C" >/dev/null 2>&1 || return 0
+  echo "--- diagnostico de $C"
+  docker exec "$C" /command/s6-svstat /run/service/gateway-agente-comercial 2>&1 || true
+  docker exec "$C" /opt/hermes/.venv/bin/python -c '
+import json
+d = json.load(open("/opt/data/profiles/agente-comercial/gateway_state.json"))
+a = (d.get("platforms") or {}).get("api_server") or {}
+print("gateway_state.json:", {k: d.get(k) for k in ("gateway_state", "desired_state", "pid", "exit_reason", "updated_at")},
+      "api_server:", {k: a.get(k) for k in ("state", "writer_pid", "error_message")})
+' 2>&1 || true
+  docker exec "$C" sh -c 'tail -n 80 /opt/data/profiles/agente-comercial/logs/gateway.log; echo "--- s6-log"; tail -n 40 /opt/data/logs/gateways/agente-comercial/current' 2>&1 \
+    | grep -v "rejected invalid API key" | sed 's/[0-9a-f]\{40,\}/***/g' || true
+}
+
+fallar() { echo "FALLA: $*"; diagnostico; exit 1; }
 paso() { echo; echo "=== $*"; }
 
 # instalador <nombre de la salida> <codigo esperado> <argumentos...>

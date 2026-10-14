@@ -111,9 +111,12 @@ Medido el 2026-10-14 en un Hermes descartable con la imagen declarada, salvo don
   (`agent/credential_pool.py` la relee del archivo en cada turno), que es lo que ya usa
   `cargar-key-openrouter.py` de ATT1; no se midió acá.
 - **Reiniciando el gateway:** el puerto y la clave del API server (`API_SERVER_KEY`), que se leen
-  solo al arrancar (medido: después de rotar la clave, el gateway seguía aceptando solo la vieja). Si cambian con el gateway andando, `aplicar` lo deja como diferencia; con
-  `aplicar --reiniciar` reinicia solo ese gateway. Rotar `API_SERVER_KEY` también exige reiniciar
-  el bridge, que lee `HERMES_API_KEY` al arrancar.
+  solo al arrancar (medido: después de rotar la clave, el gateway seguía aceptando solo la vieja).
+  Si cambian con el gateway andando, `aplicar` lo deja como diferencia; con `aplicar --reiniciar`
+  reinicia solo ese gateway y espera a que el proceso nuevo responda con la clave actual. Rotar
+  `API_SERVER_KEY` también exige reiniciar el bridge, que lee `HERMES_API_KEY` al arrancar.
+- **El reinicio corta el API entre 15 y 25 s** (medido en el VPS, cuatro veces): el proceso viejo
+  sale enseguida y el nuevo tarda en cargar. En ese rato el bridge no tiene a quién hablarle.
 
 ## El contenedor
 

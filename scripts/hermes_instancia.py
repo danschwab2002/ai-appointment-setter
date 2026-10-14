@@ -653,6 +653,10 @@ class Dentro:
         r = subprocess.run([S6_SVSTAT, str(SERVICIOS / servicio)], capture_output=True, text=True)
         return (r.stdout or r.stderr).strip()
 
+    def _pid_s6(self, servicio: str) -> int | None:
+        m = re.search(r"^up \(pid (\d+)", self._estado_s6(servicio))
+        return int(m.group(1)) if m else None
+
     def _estado_gateway(self, carpeta: Path) -> dict:
         ruta = carpeta / "gateway_state.json"
         try:
@@ -777,23 +781,40 @@ class Dentro:
             return
         if self.plan.get("reiniciar"):
             acciones.append(f"reiniciar el gateway de {nombre}: no respondia con el puerto y la clave actuales ({con} y {sin})")
+            pid_anterior = self._pid_s6(servicio)
             self._hermes("--profile", nombre, "gateway", "restart")
-            self._esperar_gateway(nombre)
+            self._esperar_gateway(nombre, pid_anterior)
         else:
             self.reporte.diferencia(
                 f"el gateway de {nombre} sigue con el puerto o la clave de antes: reiniciarlo con aplicar --reiniciar"
             )
 
-    def _esperar_gateway(self, nombre: str, segundos: int = 150) -> None:
-        carpeta = PROFILES / nombre
+    def _esperar_gateway(self, nombre: str, pid_anterior: int | None = None, segundos: int = 150) -> None:
+        # Se prueba por presencia: s6 tiene arriba un proceso que no es el de antes, ese proceso
+        # escribio "running" en gateway_state.json, y el API server responde 200 con la clave y 401
+        # sin ella. El archivo solo no alcanza: despues de un reinicio conserva lo que escribio el
+        # proceso anterior. El API solo tampoco: atiende antes de que el gateway pase de "starting"
+        # a "running" (las dos cosas medidas el 2026-10-14).
+        servicio = f"gateway-{nombre}"
+        puerto = self.esperado[nombre]["platforms"]["api_server"]["port"]
         limite = time.monotonic() + segundos
+        codigos: tuple[int, int] | None = None
+        estado: dict = {}
         while time.monotonic() < limite:
-            estado = self._estado_gateway(carpeta)
-            api = (estado.get("platforms") or {}).get("api_server") or {}
-            if estado.get("gateway_state") == "running" and api.get("state") == "connected":
-                return
+            pid = self._pid_s6(servicio)
+            if pid is not None and pid != pid_anterior:
+                estado = self._estado_gateway(PROFILES / nombre)
+                codigos = self._probar_api(puerto, self._variables(nombre).get("API_SERVER_KEY", ""))
+                if codigos == (200, 401) and estado.get("pid") == pid and estado.get("gateway_state") == "running":
+                    return
             time.sleep(2)
-        raise Freno(f"el gateway de {nombre} no quedo atendiendo en {segundos} s")
+        estado = estado or self._estado_gateway(PROFILES / nombre)
+        api = ((estado.get("platforms") or {}).get("api_server") or {}).get("state")
+        sonda = f"{codigos[0]} con la clave y {codigos[1]} sin ella" if codigos else "sin probar, s6 no mostro un proceso nuevo"
+        raise Freno(
+            f"el gateway de {nombre} no quedo atendiendo en {segundos} s (s6: {self._estado_s6(servicio) or 'sin servicio'}; "
+            f"gateway_state.json: {estado.get('gateway_state')} del pid {estado.get('pid')}, api_server {api}; API: {sonda})"
+        )
 
     # --- chequear ------------------------------------------------------------------------
 
