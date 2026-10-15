@@ -202,7 +202,10 @@ const rows = await db.query(`
       ('purge_expired_daily_feedback_v2(timestamp with time zone,text,text,text,integer)'),
       ('get_daily_feedback_conversation_context_v1(text,text,bigint,bigint,bigint[])'),
       ('get_daily_feedback_review_page_v2(text,uuid,text[])'),
-      ('close_daily_feedback_batch_v1(uuid,text,text,uuid,text)')
+      ('close_daily_feedback_batch_v1(uuid,text,text,uuid,text)'),
+      ('read_automation_expert_flows_v1(jsonb)'),
+      ('find_automation_expert_lead_v1(jsonb,bigint,text,text)'),
+      ('read_automation_expert_lead_history_v1(jsonb,uuid)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -238,9 +241,10 @@ const result = rows.rows[0];
 // follow-up (20261010000100) adds one, and the last payment failure for the
 // agent input plus the payment slip events (20261012000100) add two, and the
 // filtered review page and the batch closure of the daily feedback
-// (20261015000100) add two.
+// (20261015000100) add two, and the three reads of the Automation Expert
+// (20261015000200) add three.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 124) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 127) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

@@ -4473,6 +4473,48 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         6,
         'daily_feedback_review_filters_and_batch_closure'
+    union all
+    select
+        '20261015000200',
+        '20261015000200_automation_expert_read_v1.sql',
+        -- Las tres lecturas del Automation Expert: STABLE, security definer y
+        -- con search_path fijo.
+        (
+            select count(*) = 3
+            from functions
+            where oid in (
+                to_regprocedure('public.read_automation_expert_flows_v1(jsonb)'),
+                to_regprocedure('public.find_automation_expert_lead_v1(jsonb,bigint,text,text)'),
+                to_regprocedure('public.read_automation_expert_lead_history_v1(jsonb,uuid)')
+            )
+              and prosecdef
+              and provolatile = 's'
+              and array_to_string(proconfig, ',') = 'search_path=pg_catalog, public, pg_temp'
+        )::int
+        -- La historia ata los eventos de Hotmart sin caso por identidad y
+        -- saca los codigos de texto libre por la forma de los motivos.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.read_automation_expert_lead_history_v1(jsonb,uuid)')
+              and position('contacts_matched' in definition) > 0
+              and position('reason_code_rejected' in definition) > 0
+        )::int
+        -- Solo service_role las ejecuta.
+        + (
+            select count(*) = 3
+            from functions
+            where oid in (
+                to_regprocedure('public.read_automation_expert_flows_v1(jsonb)'),
+                to_regprocedure('public.find_automation_expert_lead_v1(jsonb,bigint,text,text)'),
+                to_regprocedure('public.read_automation_expert_lead_history_v1(jsonb,uuid)')
+            )
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        3,
+        'automation_expert_read'
 )
 select
     version,

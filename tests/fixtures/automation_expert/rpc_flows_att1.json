@@ -1,0 +1,191 @@
+{
+ "_captured": {
+  "origin": "tests/sql/followup_engine/validate_automation_expert_read.mjs, sobre la cadena completa de migraciones",
+  "captured_at": "2026-10-15T21:14:42.144Z"
+ },
+ "result": {
+  "scopes": [
+   {
+    "status": "published",
+    "version": 2,
+    "timezone": "America/Mexico_City",
+    "scope_key": "att1-primer-contacto",
+    "flow_group": "precheckout",
+    "policy_key": "att1-primer-contacto-formulario",
+    "published_at": "2026-10-15T18:14:42.145-03:00",
+    "starts_today": 0,
+    "starts_total": 0,
+    "audience_mode": "consented_intent",
+    "runtime_state": "armed",
+    "policy_version": 1,
+    "bound_to_instance": true,
+    "local_budget_date": "2026-10-15",
+    "source_event_type": "PRECHECKOUT_FORM_SUBMITTED",
+    "runtime_changed_at": "2026-10-06T18:14:42.144-03:00",
+    "version_activated_at": null,
+    "additional_source_event_types": [],
+    "max_outbound_request_starts_total": 150,
+    "max_outbound_request_starts_per_day": 10
+   },
+   {
+    "status": "published",
+    "version": 5,
+    "timezone": "America/Mexico_City",
+    "scope_key": "att1-recuperacion",
+    "flow_group": "recuperacion",
+    "policy_key": "att1-recuperacion-un-toque",
+    "published_at": "2026-10-15T18:14:42.145-03:00",
+    "starts_today": 0,
+    "starts_total": 1,
+    "audience_mode": "consented_intent",
+    "runtime_state": "armed",
+    "policy_version": 1,
+    "bound_to_instance": true,
+    "local_budget_date": "2026-10-15",
+    "source_event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+    "runtime_changed_at": "2026-10-07T18:14:42.144-03:00",
+    "version_activated_at": "2026-10-10T18:14:42.144-03:00",
+    "additional_source_event_types": [
+     "PURCHASE_CANCELED"
+    ],
+    "max_outbound_request_starts_total": 1000,
+    "max_outbound_request_starts_per_day": 80
+   }
+  ],
+  "observed": {
+   "flows": {
+    "carrito": {
+     "starts": 1,
+     "stopped": {},
+     "triggers": 6,
+     "superseded": null,
+     "cases_opened": 2,
+     "deferred_by_hours": 1,
+     "rejected_on_entry": {
+      "invalid_reason_code": 1,
+      "pilot_scope_rejected:pilot_runtime_not_armed": 3
+     },
+     "first_contact_plans": null,
+     "accepted_by_chatwoot": 1,
+     "median_trigger_to_accept_seconds": 300,
+     "median_form_to_winning_event_seconds": null
+    },
+    "precheckout": {
+     "starts": 0,
+     "stopped": {
+      "superseded_by_provider_event": 1
+     },
+     "triggers": 1,
+     "superseded": 1,
+     "cases_opened": 1,
+     "deferred_by_hours": 0,
+     "rejected_on_entry": {},
+     "first_contact_plans": {
+      "planned:first_contact_scheduled": 1
+     },
+     "accepted_by_chatwoot": 0,
+     "median_trigger_to_accept_seconds": null,
+     "median_form_to_winning_event_seconds": 2460
+    },
+    "pago_fallido": {
+     "starts": 0,
+     "stopped": {},
+     "triggers": 0,
+     "superseded": null,
+     "cases_opened": 0,
+     "deferred_by_hours": 0,
+     "rejected_on_entry": {},
+     "first_contact_plans": null,
+     "accepted_by_chatwoot": 0,
+     "median_trigger_to_accept_seconds": null,
+     "median_form_to_winning_event_seconds": null
+    }
+   },
+   "descuento": {
+    "sent": 1,
+    "failed": 0,
+    "claimed": 0
+   },
+   "window_to": "2026-10-15T03:00:00-03:00",
+   "window_days": 7,
+   "window_from": "2026-10-08T03:00:00-03:00",
+   "reactivacion": {
+    "sent": 1,
+    "failed": 0,
+    "claimed": 0
+   }
+  },
+  "policies": [
+   {
+    "status": "published",
+    "version": 1,
+    "timezone": "America/Mexico_City",
+    "step_keys": [
+     "first_contact"
+    ],
+    "policy_key": "att1-primer-contacto-formulario",
+    "business_windows": [
+     {
+      "end": "21:00",
+      "days": [
+       1,
+       2,
+       3,
+       4,
+       5,
+       6,
+       7
+      ],
+      "start": "09:00"
+     }
+    ],
+    "grace_period_seconds": 3600,
+    "expires_after_seconds": 86400,
+    "max_automatic_messages": 1
+   },
+   {
+    "status": "published",
+    "version": 1,
+    "timezone": "America/Mexico_City",
+    "step_keys": [
+     "first_contact",
+     "payment_failure_first_contact"
+    ],
+    "policy_key": "att1-recuperacion-un-toque",
+    "business_windows": [
+     {
+      "end": "21:00",
+      "days": [
+       1,
+       2,
+       3,
+       4,
+       5,
+       6,
+       7
+      ],
+      "start": "09:00"
+     }
+    ],
+    "grace_period_seconds": 0,
+    "expires_after_seconds": 86400,
+    "max_automatic_messages": 1
+   }
+  ],
+  "local_date": "2026-10-15",
+  "database_at": "2026-10-15T18:14:42.182-03:00",
+  "events_without_flow": [
+   {
+    "event_type": "PURCHASE_BILLET_PRINTED",
+    "count_window": 1,
+    "last_received_at": "2026-10-12T18:28:42.144-03:00",
+    "processing_error": "unsupported_persisted_event_type"
+   }
+  ],
+  "proactive_contact_cap": {
+   "configured": false,
+   "max_request_starts": null,
+   "request_window_seconds": null
+  }
+ }
+}

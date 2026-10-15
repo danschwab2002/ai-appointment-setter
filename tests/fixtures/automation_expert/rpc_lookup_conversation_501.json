@@ -1,0 +1,20 @@
+{
+ "_captured": {
+  "origin": "tests/sql/followup_engine/validate_automation_expert_read.mjs, sobre la cadena completa de migraciones",
+  "captured_at": "2026-10-15T21:14:42.144Z"
+ },
+ "result": {
+  "result": "found",
+  "candidates": [
+   {
+    "lead_ref": "a61c5051-1495-45fe-bdb0-3079805134e4",
+    "conversations": [
+     501
+    ],
+    "last_activity_at": "2026-10-15T18:14:42.145-03:00",
+    "first_name_fallback": "Ana",
+    "first_name_inferred": "Ana"
+   }
+  ]
+ }
+}

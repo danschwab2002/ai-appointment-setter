@@ -96,6 +96,29 @@ from bridge.messaging import (
     allowed_phone_from_jid,
 )
 from bridge.opt_out import detect_explicit_opt_out
+from bridge.automation_expert_read import (
+    CHATWOOT_MAX_MESSAGES_PER_CONVERSATION,
+    CHATWOOT_READ_TIMEOUT_SECONDS,
+    MAX_FLOWS_BODY_BYTES,
+    MAX_HISTORY_BODY_BYTES,
+    ChatwootRead,
+    InstanceMark,
+    InvalidReadEvidence,
+    LookupRejected,
+    ResponseTooLarge,
+    ScopeRef,
+    build_flows,
+    build_history,
+    build_lookup,
+    checked_size,
+    decode_cursor,
+    envelope as automation_expert_envelope,
+    flow_settings_from,
+    parse_flow_key,
+    parse_lead_ref,
+    parse_limit,
+    parse_lookup,
+)
 from bridge.phones import equivalent_whatsapp_phones, whatsapp_phone_region
 from bridge.operator_correlations import (
     InvalidCorrelationEvidence,
@@ -138,6 +161,7 @@ from bridge.slack_handoff_projection import SlackHandoffProjectionWorker
 from bridge.slack_projection import SlackCorrelationProjectionWorker
 from bridge.slack_runtime import SlackBridgeRuntime, create_slack_bridge_runtime
 from bridge.supabase import (
+    AutomationExpertResponseTooLarge as SupabaseResponseTooLarge,
     PILOT_SCOPE_CONSENTED_AUDIENCE_MODES,
     InboundCommercialCaseAdmissionResult,
     OperatorCorrelationResolutionError,
@@ -224,6 +248,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     "chatwoot_stalled_monitor_enabled",
     "operator_correlation_read_enabled",
     "operator_correlation_write_enabled",
+    # Las lecturas del Automation Expert (automation-expert-read-v1) solo
+    # existen con manifiesto: la marca de instancia sale de el y nunca del
+    # pedido.
+    "automation_expert_read_enabled",
     "slack_connector_projection_enabled",
     "correlation_preresolution_enabled",
     # Transcribir un audio no depende del aliado: la key y el host de Chatwoot
@@ -326,6 +354,7 @@ class ChatwootControl(Protocol):
         conversation_id: int,
         limit: int = 20,
         required_message_ids: tuple[int, ...] = (),
+        require_history_boundary: bool = False,
     ) -> list[dict[str, object]]: ...
 
     async def ensure_conversation_label(
@@ -656,6 +685,8 @@ class Settings:
     operator_correlation_write_token: str | None = None
     operator_correlation_actor_ref: str | None = None
     operator_correlation_actor_prefix: str | None = None
+    automation_expert_read_enabled: bool = False
+    automation_expert_read_token: str | None = None
     slack_connector_projection_enabled: bool = False
     slack_connector_base_url: str | None = None
     slack_connector_bearer_token: str | None = None
@@ -1717,6 +1748,13 @@ class Settings:
             ),
             operator_correlation_actor_prefix=(
                 os.getenv("OPERATOR_CORRELATION_ACTOR_PREFIX", "").strip() or None
+            ),
+            automation_expert_read_enabled=(
+                os.getenv("AUTOMATION_EXPERT_READ_ENABLED", "false").lower()
+                == "true"
+            ),
+            automation_expert_read_token=(
+                os.getenv("AUTOMATION_EXPERT_READ_TOKEN", "").strip() or None
             ),
         )
 
@@ -2799,6 +2837,9 @@ def create_app(
         # (las intenciones que admitio siguen en la base con el flag apagado).
         # La clave aparece solo cuando aplica: sin la seccion y sin un flujo
         # que use intenciones, el payload de /ready no cambia.
+        if settings.automation_expert_read_enabled:
+            # La activacion se verifica por presencia, sin token y sin datos.
+            instance_readiness["automation_expert_read"] = "enabled"
         ghl_adapter_risk = _ghl_adapter_risk_readiness(settings.instance_manifest)
         if ghl_adapter_risk is not None:
             instance_readiness["ghl_adapter_risk"] = ghl_adapter_risk
@@ -3039,6 +3080,43 @@ def create_app(
                 "GHL_PRECHECKOUT_ADAPTER_TOKEN must differ from every other secret "
                 "and value of the bridge configuration; it equals "
                 + ", ".join(clashing)
+            )
+    if settings.automation_expert_read_enabled:
+        # automation-expert-read-v1, «Clave propia» y «El flag»: la marca de
+        # instancia sale del manifiesto, y el token es distinto de todo otro
+        # valor de la configuracion. Igual a otro secreto, quien tiene ese
+        # secreto (Hotmart, por ejemplo) leeria la historia de cualquier lead.
+        if settings.instance_manifest is None:
+            raise ValueError(
+                "AUTOMATION_EXPERT_READ_ENABLED requires an instance manifest"
+            )
+        expert_token = settings.automation_expert_read_token
+        if expert_token is None or len(expert_token) < 32:
+            raise ValueError(
+                "AUTOMATION_EXPERT_READ_TOKEN must contain at least 32 characters"
+            )
+        expert_clashing = sorted(
+            field.name
+            for field in dataclass_fields(settings)
+            if field.name != "automation_expert_read_token"
+            and isinstance(value := getattr(settings, field.name), str)
+            and hmac.compare_digest(
+                expert_token.encode("utf-8", "surrogatepass"),
+                value.encode("utf-8", "surrogatepass"),
+            )
+        )
+        if expert_clashing:
+            raise ValueError(
+                "AUTOMATION_EXPERT_READ_TOKEN must differ from every other secret "
+                "and value of the bridge configuration; it equals "
+                + ", ".join(expert_clashing)
+            )
+        if not re.fullmatch(
+            r"[a-z0-9][a-z0-9-]{0,127}", settings.agent_provenance_scope_ref
+        ):
+            raise ValueError(
+                "AGENT_PROVENANCE_SCOPE_REF must be a slug for the automation "
+                "expert read"
             )
     pilot_fields = (
         (settings.pilot_scope_key, "LANCEMOS_PILOT_SCOPE_KEY"),
@@ -3359,6 +3437,8 @@ def create_app(
         or settings.operator_correlation_write_enabled
     ) and shared_supabase is None:
         raise ValueError("operator correlation access requires Supabase")
+    if settings.automation_expert_read_enabled and shared_supabase is None:
+        raise ValueError("automation expert read requires Supabase")
     if not settings.chatwoot_audio_transcription_enabled:
         audio_transcriber = None
     elif audio_transcriber is None:
@@ -5989,6 +6069,341 @@ def create_app(
                     detail="operator_correlation_write_unavailable",
                 ) from exc
             return {"resolution": resolution}
+
+    if settings.automation_expert_read_enabled:
+        # automation-expert-read-v1: las lecturas del Automation Expert. Solo
+        # leen. Con el flag apagado las rutas no existen y dan 404. Van bajo un
+        # prefijo que ningun router de Traefik publica: adentro del servidor,
+        # el token es la unica barrera.
+        assert settings.automation_expert_read_token is not None
+        assert settings.instance_manifest is not None
+        assert shared_supabase is not None
+        expert_token = settings.automation_expert_read_token
+        expert_manifest = settings.instance_manifest
+        expert_reader = shared_supabase
+        expert_chatwoot = control_client
+        expert_instance = InstanceMark(
+            tenant_ref=expert_manifest.tenant_ref,
+            ally_ref=expert_manifest.ally_ref,
+            funnel_ref=expert_manifest.funnel_ref,
+            chatwoot_account_id=expert_manifest.chatwoot_account_id,
+            chatwoot_inbox_id=expert_manifest.chatwoot_inbox_id,
+            hotmart_product_id=str(expert_manifest.hotmart_product_id),
+            inbound_scope_key=expert_manifest.inbound_scope_key,
+            agent_scope_ref=settings.agent_provenance_scope_ref,
+            time_zone=expert_manifest.time_zone,
+            product_version=expert_manifest.product_version,
+            recovery_scope=(
+                ScopeRef(settings.pilot_scope_key, settings.pilot_scope_version)
+                if settings.pilot_scope_key and settings.pilot_scope_version
+                else None
+            ),
+            precheckout_scope=(
+                ScopeRef(
+                    settings.pilot_precheckout_scope_key,
+                    settings.pilot_precheckout_scope_version,
+                )
+                if settings.pilot_precheckout_scope_key
+                and settings.pilot_precheckout_scope_version
+                else None
+            ),
+        )
+        expert_flow_settings = flow_settings_from(
+            manifest_flows=expert_manifest.flows,
+            templates=expert_manifest.templates,
+            time_zone=expert_manifest.time_zone,
+            settings=settings,
+        )
+        # Hasta dos pedidos a la vez: un token filtrado no puede ocupar las
+        # conexiones de PostgREST que comparte todo el bridge.
+        expert_slots = asyncio.Semaphore(2)
+
+        def require_automation_expert_token(authorization: str | None) -> None:
+            expected = f"Bearer {expert_token}"
+            if authorization is None or not hmac.compare_digest(
+                authorization.encode("utf-8"), expected.encode("utf-8")
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="automation_expert_authentication_required",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
+        def automation_expert_failure(exc: Exception) -> HTTPException:
+            if isinstance(exc, LookupRejected):
+                return HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=exc.code
+                )
+            if isinstance(exc, (ResponseTooLarge, SupabaseResponseTooLarge)):
+                return HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="automation_expert_response_too_large",
+                )
+            return HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="automation_expert_read_unavailable",
+            )
+
+        def automation_expert_busy() -> None:
+            if expert_slots.locked():
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="automation_expert_busy",
+                )
+
+        async def automation_expert_flows_body(
+            flow_key: str | None,
+        ) -> dict[str, object]:
+            raw = await expert_reader.read_automation_expert_flows_v1(
+                instance=expert_instance.to_rpc()
+            )
+            data, gaps = build_flows(
+                raw, instance=expert_instance, settings=expert_flow_settings
+            )
+            if flow_key is not None:
+                flows = [
+                    flow for flow in data["flows"] if flow["flow_key"] == flow_key  # type: ignore[index]
+                ]
+                if not flows:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND, detail="flow_not_found"
+                    )
+                data = {**data, "flows": flows}
+                gaps = [
+                    gap for gap in gaps
+                    if gap["scope"] in ("instance", f"flow:{flow_key}")
+                ]
+            body = automation_expert_envelope(
+                expert_instance,
+                data=data,
+                gaps=gaps,
+                generated_at=datetime.now(UTC),
+                database_at=raw.get("database_at"),
+                bridge_git_sha=settings.bridge_release,
+            )
+            return checked_size(body, limit=MAX_FLOWS_BODY_BYTES)
+
+        async def read_automation_expert_conversations(
+            numbers: list[int],
+        ) -> list[ChatwootRead]:
+            if expert_chatwoot is None:
+                return [
+                    ChatwootRead(number, None, "el bridge no tiene cliente de Chatwoot")
+                    for number in numbers
+                ]
+            chatwoot = expert_chatwoot
+
+            async def one(number: int) -> ChatwootRead:
+                try:
+                    messages = await chatwoot.get_conversation_messages(
+                        conversation_id=number,
+                        limit=CHATWOOT_MAX_MESSAGES_PER_CONVERSATION,
+                        require_history_boundary=True,
+                    )
+                except ChatwootHistoryScanLimitError:
+                    return ChatwootRead(number, None, "la conversación pasa el tope de páginas")
+                except (httpx.HTTPError, ChatwootProtocolError):
+                    return ChatwootRead(number, None, "Chatwoot contestó con error")
+                return ChatwootRead(number, messages)
+
+            try:
+                return list(await asyncio.wait_for(
+                    asyncio.gather(*(one(number) for number in numbers)),
+                    timeout=CHATWOOT_READ_TIMEOUT_SECONDS,
+                ))
+            except TimeoutError:
+                return [
+                    ChatwootRead(number, None, "Chatwoot tardó más que el tope")
+                    for number in numbers
+                ]
+
+        @app.get("/internal/automation-expert/v1/flows")
+        async def automation_expert_flows(
+            authorization: str | None = Header(default=None, alias="Authorization"),
+        ) -> dict[str, object]:
+            require_automation_expert_token(authorization)
+            automation_expert_busy()
+            async with expert_slots:
+                try:
+                    body = await automation_expert_flows_body(None)
+                except HTTPException:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - el log lleva solo el tipo
+                    logger.warning(
+                        "automation_expert_read_failed route=flows error_type=%s",
+                        type(exc).__name__,
+                    )
+                    raise automation_expert_failure(exc) from None
+            logger.info("automation_expert_access route=flows status=200")
+            return body
+
+        @app.get("/internal/automation-expert/v1/flows/{flow_key}")
+        async def automation_expert_flow(
+            flow_key: str,
+            authorization: str | None = Header(default=None, alias="Authorization"),
+        ) -> dict[str, object]:
+            require_automation_expert_token(authorization)
+            try:
+                checked_key = parse_flow_key(flow_key)
+            except LookupRejected as exc:
+                raise automation_expert_failure(exc) from exc
+            automation_expert_busy()
+            async with expert_slots:
+                try:
+                    body = await automation_expert_flows_body(checked_key)
+                except HTTPException:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - el log lleva solo el tipo
+                    logger.warning(
+                        "automation_expert_read_failed route=flow error_type=%s",
+                        type(exc).__name__,
+                    )
+                    raise automation_expert_failure(exc) from None
+            logger.info("automation_expert_access route=flow status=200")
+            return body
+
+        @app.post("/internal/automation-expert/v1/leads/lookup")
+        async def automation_expert_lookup(
+            request: Request,
+            authorization: str | None = Header(default=None, alias="Authorization"),
+        ) -> dict[str, object]:
+            require_automation_expert_token(authorization)
+            declared = request.headers.get("content-length")
+            if declared is not None and (not declared.isdigit() or int(declared) > 4096):
+                raise automation_expert_failure(LookupRejected("invalid_lookup"))
+            raw_body = b""
+            async for chunk in request.stream():
+                raw_body += chunk
+                if len(raw_body) > 4096:
+                    raise automation_expert_failure(LookupRejected("invalid_lookup"))
+            try:
+                payload = json.loads(raw_body or b"null")
+            except ValueError:
+                raise automation_expert_failure(LookupRejected("invalid_lookup")) from None
+            try:
+                lookup = parse_lookup(payload)
+            except LookupRejected as exc:
+                raise automation_expert_failure(exc) from exc
+            automation_expert_busy()
+            async with expert_slots:
+                try:
+                    raw = await expert_reader.find_automation_expert_lead_v1(
+                        instance=expert_instance.to_rpc(),
+                        conversation=lookup.conversation,
+                        issuance_ulid=lookup.issuance,
+                        name=lookup.name,
+                    )
+                    data = build_lookup(
+                        raw,
+                        chatwoot_public_url=settings.chatwoot_base_url,
+                        account_id=expert_instance.chatwoot_account_id,
+                    )
+                except Exception as exc:  # noqa: BLE001 - el log lleva solo el tipo
+                    logger.warning(
+                        "automation_expert_read_failed route=lookup error_type=%s",
+                        type(exc).__name__,
+                    )
+                    raise automation_expert_failure(exc) from None
+            if data is None:
+                logger.info("automation_expert_access route=lookup status=404")
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="lead_not_found"
+                )
+            logger.info(
+                "automation_expert_access route=lookup lead_ref=%s candidates=%s status=200",
+                data["lead_ref"],
+                len(data["candidates"]),  # type: ignore[arg-type]
+            )
+            return automation_expert_envelope(
+                expert_instance,
+                data=data,
+                gaps=[],
+                generated_at=datetime.now(UTC),
+                database_at=None,
+                bridge_git_sha=settings.bridge_release,
+            )
+
+        @app.get("/internal/automation-expert/v1/leads/{lead_ref}/history")
+        async def automation_expert_history(
+            lead_ref: str,
+            request: Request,
+            authorization: str | None = Header(default=None, alias="Authorization"),
+        ) -> dict[str, object]:
+            require_automation_expert_token(authorization)
+            try:
+                checked_ref = parse_lead_ref(lead_ref)
+                limit = parse_limit(request.query_params.get("limit"))
+                cursor = decode_cursor(request.query_params.get("cursor"))
+            except LookupRejected as exc:
+                raise automation_expert_failure(exc) from exc
+            automation_expert_busy()
+            async with expert_slots:
+                try:
+                    raw = await expert_reader.read_automation_expert_lead_history_v1(
+                        instance=expert_instance.to_rpc(), lead_ref=checked_ref
+                    )
+                    if raw is None:
+                        logger.info(
+                            "automation_expert_access route=history lead_ref=%s status=404",
+                            checked_ref,
+                        )
+                        raise HTTPException(
+                            status_code=status.HTTP_404_NOT_FOUND, detail="lead_not_found"
+                        )
+                    lead = raw.get("lead")
+                    numbers = (
+                        lead.get("conversations") if isinstance(lead, dict) else None
+                    )
+                    if not isinstance(numbers, list) or not all(
+                        isinstance(number, int) and not isinstance(number, bool)
+                        for number in numbers
+                    ):
+                        raise InvalidReadEvidence("invalid_conversations")
+                    ordered = sorted(set(numbers))
+                    reads = await read_automation_expert_conversations(ordered[-5:])
+                    reads += [
+                        ChatwootRead(
+                            number, None, "solo se leen las cinco conversaciones más recientes"
+                        )
+                        for number in ordered[:-5]
+                    ]
+                    data, gaps, next_cursor = build_history(
+                        raw,
+                        reads=reads,
+                        instance=expert_instance,
+                        settings=expert_flow_settings,
+                        agent_bot_id=settings.agent_bot_id or 0,
+                        chatwoot_public_url=settings.chatwoot_base_url,
+                        now=datetime.now(UTC),
+                        limit=limit,
+                        cursor=cursor,
+                    )
+                    body = checked_size(
+                        automation_expert_envelope(
+                            expert_instance,
+                            data=data,
+                            gaps=gaps,
+                            generated_at=datetime.now(UTC),
+                            database_at=raw.get("database_at"),
+                            bridge_git_sha=settings.bridge_release,
+                            page={"limit": limit, "next_cursor": next_cursor},
+                        ),
+                        limit=MAX_HISTORY_BODY_BYTES,
+                    )
+                except HTTPException:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - el log lleva solo el tipo
+                    logger.warning(
+                        "automation_expert_read_failed route=history error_type=%s",
+                        type(exc).__name__,
+                    )
+                    raise automation_expert_failure(exc) from None
+            logger.info(
+                "automation_expert_access route=history lead_ref=%s moments=%s status=200",
+                checked_ref,
+                len(data["past"]),  # type: ignore[arg-type]
+            )
+            return body
 
     @app.get("/health")
     async def health() -> dict[str, str]:

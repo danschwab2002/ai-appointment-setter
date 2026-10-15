@@ -1,0 +1,594 @@
+{
+ "_captured": {
+  "origin": "GET /api/v1/accounts/2/conversations/{n}/messages de Chatwoot (ATT1, bandeja 11), el mismo pedido que ChatwootClient.get_conversation_messages, hecho desde el contenedor del bridge de ATT1 con su token de control, solo lectura",
+  "captured_at": "2026-10-15T20:05Z",
+  "why": "automation-expert-read-v1, pruebas 13 y 14: la proyección de Chatwoot (plantilla del motor leída y fallida, mensaje del equipo fallido, audio de la persona, nota de derivación, actividad)",
+  "redacted": "Se conservan todas las claves. Solo quedan los valores de id, inbox_id, conversation_id, account_id, message_type, status, private, created_at, updated_at, content_type, file_type, file_size, type, sender_type, sender_id, message_id, width, height, blocked y las horas de lectura de meta; todo otro valor hoja es <tapado>. La nota de la derivación conserva solo el prefijo de su marca.",
+  "agent_bot_id": "2",
+  "control_token_user_id": 1,
+  "conversations": {
+   "50": "plantilla del motor (AgentBot) leída, entrantes, actividad, nota de la derivación del usuario del token de control, mensajes del equipo (usuario 4) leídos y uno fallido con external_error",
+   "17": "plantilla del motor leída, respuesta del agente leída, audio de la persona (attachments con transcribed_text), actividad, nota de la derivación y dos mensajes del equipo leídos",
+   "52": "plantilla del motor (AgentBot) fallida con external_error, y actividad"
+  }
+ },
+ "conversations": {
+  "50": {
+   "meta": {
+    "labels": [
+     "<tapado>"
+    ],
+    "additional_attributes": {},
+    "contact": {
+     "additional_attributes": {
+      "avatar_url_hash": "<tapado>",
+      "last_avatar_sync_at": "<tapado>"
+     },
+     "custom_attributes": {},
+     "email": "<tapado>",
+     "id": 278,
+     "identifier": null,
+     "name": "<tapado>",
+     "phone_number": "<tapado>",
+     "thumbnail": "<tapado>",
+     "blocked": false,
+     "type": "contact"
+    },
+    "agent_last_seen_at": "2026-10-14T20:09:54.902Z",
+    "assignee_last_seen_at": null
+   },
+   "payload": [
+    {
+     "id": 2820,
+     "content": "<tapado>",
+     "inbox_id": 11,
+     "conversation_id": 50,
+     "message_type": 1,
+     "content_type": "text",
+     "status": "read",
+     "content_attributes": {
+      "recovery_first_touch_hash": "<tapado>"
+     },
+     "created_at": 1791652647,
+     "private": false,
+     "source_id": "<tapado>",
+     "sender": {
+      "id": 2,
+      "name": "<tapado>",
+      "avatar_url": "<tapado>",
+      "type": "agent_bot"
+     }
+    },
+    {
+     "id": 2836,
+     "content": "<tapado>",
+     "inbox_id": 11,
+     "conversation_id": 50,
+     "message_type": 0,
+     "content_type": "text",
+     "status": "sent",
+     "content_attributes": {},
+     "created_at": 1791668934,
+     "private": false,
+     "source_id": "<tapado>",
+     "sender": {
+      "additional_attributes": {
+       "avatar_url_hash": "<tapado>",
+       "last_avatar_sync_at": "<tapado>"
+      },
+      "custom_attributes": {},
+      "email": "<tapado>",
+      "id": 278,
+      "identifier": null,
+      "name": "<tapado>",
+      "phone_number": "<tapado>",
+      "thumbnail": "<tapado>",
+      "blocked": false,
+      "type": "contact"
+     }
+    },
+    {
+     "id": 2837,
+     "content": "<tapado>",
+     "inbox_id": 11,
+     "conversation_id": 50,
+     "message_type": 2,
+     "content_type": "text",
+     "status": "sent",
+     "content_attributes": {},
+     "created_at": 1791668969,
+     "private": false,
+     "source_id": null
+    },
+    {
+     "id": 2838,
+     "content": "<tapado>",
+     "inbox_id": 11,
+     "conversation_id": 50,
+     "message_type": 2,
+     "content_type": "text",
+     "status": "sent",
+     "content_attributes": {},
+     "created_at": 1791668974,
+     "private": false,
+     "source_id": null
+    },
+    {
+     "id": 2839,
+     "content": "<tapado> [supportmagician-handoff:<tapado>]",
+     "inbox_id": 11,
+     "conversation_id": 50,
+     "message_type": 1,
+     "content_type": "text",
+     "status": "sent",
+     "content_attributes": {},
+     "created_at": 1791668975,
+     "private": true,
+     "source_id": null,
+     "sender": {
+      "id": 1,
+      "name": "<tapado>",
+      "available_name": "<tapado>",
+      "avatar_url": "<tapado>",
+      "type": "user",
+      "availability_status": "<tapado>",
+      "thumbnail": "<tapado>"
+     }
+    },
+    {
+     "id": 3037,
+     "content": "<tapado>",
+     "inbox_id": 11,
+     "conversation_id": 50,
+     "message_type": 1,
+     "content_type": "text",
+     "status": "read",
+     "content_attributes": {},
+     "created_at": 1791822108,
+     "private": false,
+     "source_id": "<tapado>",
+     "sender": {
+      "id": 4,
+      "name": "<tapado>",
+      "available_name": "<tapado>",
+      "avatar_url": "<tapado>",
+      "type": "user",
+      "availability_status": "<tapado>",
+      "thumbnail": "<tapado>"
+     }
+    },
+    {
+     "id": 3107,
+     "content": "<tapado>",
+     "inbox_id": 11,
+     "conversation_id": 50,
+     "message_type": 0,
+     "content_type": "text",
+     "status": "sent",
+     "content_attributes": {},
+     "created_at": 1791827336,
+     "private": false,
+     "source_id": "<tapado>",
+     "sender": {
+      "additional_attributes": {
+       "avatar_url_hash": "<tapado>",
+       "last_avatar_sync_at": "<tapado>"
+      },
+      "custom_attributes": {},
+      "email": "<tapado>",
+      "id": 278,
+      "identifier": null,
+      "name": "<tapado>",
+      "phone_number": "<tapado>",
+      "thumbnail": "<tapado>",
+      "blocked": false,
+      "type": "contact"
+     }
+    },
+    {
+     "id": 3108,
+     "content": "<tapado>",
+     "inbox_id": 11,
+     "conversation_id": 50,
+     "message_type": 0,
+     "content_type": "text",
+     "status": "sent",
+     "content_attributes": {
+      "in_reply_to_external_id": "<tapado>",
+      "in_reply_to": "<tapado>"
+     },
+     "created_at": 1791827337,
+     "private": false,
+     "source_id": "<tapado>",
+     "sender": {
+      "additional_attributes": {
+       "avatar_url_hash": "<tapado>",
+       "last_avatar_sync_at": "<tapado>"
+      },
+      "custom_attributes": {},
+      "email": "<tapado>",
+      "id": 278,
+      "identifier": null,
+      "name": "<tapado>",
+      "phone_number": "<tapado>",
+      "thumbnail": "<tapado>",
+      "blocked": false,
+      "type": "contact"
+     }
+    },
+    {
+     "id": 3242,
+     "content": "<tapado>",
+     "inbox_id": 11,
+     "conversation_id": 50,
+     "message_type": 1,
+     "content_type": "text",
+     "status": "read",
+     "content_attributes": {},
+     "created_at": 1791922006,
+     "private": false,
+     "source_id": "<tapado>",
+     "sender": {
+      "id": 4,
+      "name": "<tapado>",
+      "available_name": "<tapado>",
+      "avatar_url": "<tapado>",
+      "type": "user",
+      "availability_status": "<tapado>",
+      "thumbnail": "<tapado>"
+     }
+    },
+    {
+     "id": 3247,
+     "content": "<tapado>",
+     "inbox_id": 11,
+     "conversation_id": 50,
+     "message_type": 0,
+     "content_type": "text",
+     "status": "sent",
+     "content_attributes": {},
+     "created_at": 1791922078,
+     "private": false,
+     "source_id": "<tapado>",
+     "sender": {
+      "additional_attributes": {
+       "avatar_url_hash": "<tapado>",
+       "last_avatar_sync_at": "<tapado>"
+      },
+      "custom_attributes": {},
+      "email": "<tapado>",
+      "id": 278,
+      "identifier": null,
+      "name": "<tapado>",
+      "phone_number": "<tapado>",
+      "thumbnail": "<tapado>",
+      "blocked": false,
+      "type": "contact"
+     }
+    },
+    {
+     "id": 3329,
+     "content": "<tapado>",
+     "inbox_id": 11,
+     "conversation_id": 50,
+     "message_type": 1,
+     "content_type": "text",
+     "status": "failed",
+     "content_attributes": {
+      "external_error": "<tapado>"
+     },
+     "created_at": 1792008592,
+     "private": false,
+     "source_id": null,
+     "sender": {
+      "id": 4,
+      "name": "<tapado>",
+      "available_name": "<tapado>",
+      "avatar_url": "<tapado>",
+      "type": "user",
+      "availability_status": "<tapado>",
+      "thumbnail": "<tapado>"
+     }
+    }
+   ]
+  },
+  "17": {
+   "meta": {
+    "labels": [
+     "<tapado>"
+    ],
+    "additional_attributes": {},
+    "contact": {
+     "additional_attributes": {
+      "avatar_url_hash": "<tapado>",
+      "last_avatar_sync_at": "<tapado>"
+     },
+     "custom_attributes": {},
+     "email": "<tapado>",
+     "id": 245,
+     "identifier": null,
+     "name": "<tapado>",
+     "phone_number": "<tapado>",
+     "thumbnail": "<tapado>",
+     "blocked": false,
+     "type": "contact"
+    },
+    "agent_last_seen_at": "2026-10-13T20:07:08.522Z",
+    "assignee_last_seen_at": null
+   },
+   "payload": [
+    {
+     "id": 2737,
+     "content": "<tapado>",
+     "inbox_id": 11,
+     "conversation_id": 17,
+     "message_type": 1,
+     "content_type": "text",
+     "status": "read",
+     "content_attributes": {
+      "recovery_first_touch_hash": "<tapado>"
+     },
+     "created_at": 1791558031,
+     "private": false,
+     "source_id": "<tapado>",
+     "sender": {
+      "id": 2,
+      "name": "<tapado>",
+      "avatar_url": "<tapado>",
+      "type": "agent_bot"
+     }
+    },
+    {
+     "id": 2767,
+     "content": "<tapado>",
+     "inbox_id": 11,
+     "conversation_id": 17,
+     "message_type": 0,
+     "content_type": "text",
+     "status": "sent",
+     "content_attributes": {
+      "in_reply_to_external_id": "<tapado>",
+      "in_reply_to": "<tapado>"
+     },
+     "created_at": 1791563963,
+     "private": false,
+     "source_id": "<tapado>",
+     "sender": {
+      "additional_attributes": {
+       "avatar_url_hash": "<tapado>",
+       "last_avatar_sync_at": "<tapado>"
+      },
+      "custom_attributes": {},
+      "email": "<tapado>",
+      "id": 245,
+      "identifier": null,
+      "name": "<tapado>",
+      "phone_number": "<tapado>",
+      "thumbnail": "<tapado>",
+      "blocked": false,
+      "type": "contact"
+     }
+    },
+    {
+     "id": 2769,
+     "content": "<tapado>",
+     "inbox_id": 11,
+     "conversation_id": 17,
+     "message_type": 1,
+     "content_type": "text",
+     "status": "read",
+     "content_attributes": {
+      "appointment_setter_reply_hash": "<tapado>",
+      "appointment_setter_decision": "<tapado>",
+      "appointment_setter_reason_code": "<tapado>"
+     },
+     "created_at": 1791564005,
+     "private": false,
+     "source_id": "<tapado>",
+     "sender": {
+      "id": 2,
+      "name": "<tapado>",
+      "avatar_url": "<tapado>",
+      "type": "agent_bot"
+     }
+    },
+    {
+     "id": 2770,
+     "content": null,
+     "inbox_id": 11,
+     "conversation_id": 17,
+     "message_type": 0,
+     "content_type": "text",
+     "status": "sent",
+     "content_attributes": {},
+     "created_at": 1791564102,
+     "private": false,
+     "source_id": "<tapado>",
+     "sender": {
+      "additional_attributes": {
+       "avatar_url_hash": "<tapado>",
+       "last_avatar_sync_at": "<tapado>"
+      },
+      "custom_attributes": {},
+      "email": "<tapado>",
+      "id": 245,
+      "identifier": null,
+      "name": "<tapado>",
+      "phone_number": "<tapado>",
+      "thumbnail": "<tapado>",
+      "blocked": false,
+      "type": "contact"
+     },
+     "attachments": [
+      {
+       "id": 264,
+       "message_id": 2770,
+       "file_type": "audio",
+       "account_id": 2,
+       "extension": "<tapado>",
+       "content_type": "audio/opus",
+       "data_url": "<tapado>",
+       "thumb_url": "<tapado>",
+       "file_size": 41639,
+       "width": null,
+       "height": null,
+       "transcribed_text": "<tapado>"
+      }
+     ]
+    },
+    {
+     "id": 2771,
+     "content": "<tapado>",
+     "inbox_id": 11,
+     "conversation_id": 17,
+     "message_type": 2,
+     "content_type": "text",
+     "status": "sent",
+     "content_attributes": {},
+     "created_at": 1791564142,
+     "private": false,
+     "source_id": null
+    },
+    {
+     "id": 2772,
+     "content": "<tapado>",
+     "inbox_id": 11,
+     "conversation_id": 17,
+     "message_type": 2,
+     "content_type": "text",
+     "status": "sent",
+     "content_attributes": {},
+     "created_at": 1791564143,
+     "private": false,
+     "source_id": null
+    },
+    {
+     "id": 2773,
+     "content": "<tapado> [supportmagician-handoff:<tapado>]",
+     "inbox_id": 11,
+     "conversation_id": 17,
+     "message_type": 1,
+     "content_type": "text",
+     "status": "sent",
+     "content_attributes": {},
+     "created_at": 1791564144,
+     "private": true,
+     "source_id": null,
+     "sender": {
+      "id": 1,
+      "name": "<tapado>",
+      "available_name": "<tapado>",
+      "avatar_url": "<tapado>",
+      "type": "user",
+      "availability_status": "<tapado>",
+      "thumbnail": "<tapado>"
+     }
+    },
+    {
+     "id": 2782,
+     "content": "<tapado>",
+     "inbox_id": 11,
+     "conversation_id": 17,
+     "message_type": 1,
+     "content_type": "text",
+     "status": "read",
+     "content_attributes": {},
+     "created_at": 1791575334,
+     "private": false,
+     "source_id": "<tapado>",
+     "sender": {
+      "id": 4,
+      "name": "<tapado>",
+      "available_name": "<tapado>",
+      "avatar_url": "<tapado>",
+      "type": "user",
+      "availability_status": "<tapado>",
+      "thumbnail": "<tapado>"
+     }
+    },
+    {
+     "id": 2783,
+     "content": "<tapado>",
+     "inbox_id": 11,
+     "conversation_id": 17,
+     "message_type": 1,
+     "content_type": "text",
+     "status": "read",
+     "content_attributes": {},
+     "created_at": 1791575373,
+     "private": false,
+     "source_id": "<tapado>",
+     "sender": {
+      "id": 4,
+      "name": "<tapado>",
+      "available_name": "<tapado>",
+      "avatar_url": "<tapado>",
+      "type": "user",
+      "availability_status": "<tapado>",
+      "thumbnail": "<tapado>"
+     }
+    }
+   ]
+  },
+  "52": {
+   "meta": {
+    "labels": [],
+    "additional_attributes": {},
+    "contact": {
+     "additional_attributes": {
+      "avatar_url_hash": "<tapado>",
+      "last_avatar_sync_at": "<tapado>"
+     },
+     "custom_attributes": {},
+     "email": "<tapado>",
+     "id": 280,
+     "identifier": null,
+     "name": "<tapado>",
+     "phone_number": "<tapado>",
+     "thumbnail": "<tapado>",
+     "blocked": false,
+     "type": "contact"
+    },
+    "agent_last_seen_at": "2026-10-12T16:26:43.970Z",
+    "assignee_last_seen_at": null
+   },
+   "payload": [
+    {
+     "id": 2831,
+     "content": "<tapado>",
+     "inbox_id": 11,
+     "conversation_id": 52,
+     "message_type": 1,
+     "content_type": "text",
+     "status": "failed",
+     "content_attributes": {
+      "recovery_first_touch_hash": "<tapado>",
+      "external_error": "<tapado>"
+     },
+     "created_at": 1791661900,
+     "private": false,
+     "source_id": "<tapado>",
+     "sender": {
+      "id": 2,
+      "name": "<tapado>",
+      "avatar_url": "<tapado>",
+      "type": "agent_bot"
+     }
+    },
+    {
+     "id": 3054,
+     "content": "<tapado>",
+     "inbox_id": 11,
+     "conversation_id": 52,
+     "message_type": 2,
+     "content_type": "text",
+     "status": "sent",
+     "content_attributes": {},
+     "created_at": 1791822403,
+     "private": false,
+     "source_id": null
+    }
+   ]
+  }
+ }
+}

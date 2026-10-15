@@ -128,7 +128,10 @@ expected_service_role(signature) as (
         ('public.purge_expired_daily_feedback_v2(timestamp with time zone, text, text, text, integer)'),
         ('public.get_daily_feedback_conversation_context_v1(text, text, bigint, bigint, bigint[])'),
         ('public.get_daily_feedback_review_page_v2(text, uuid, text[])'),
-        ('public.close_daily_feedback_batch_v1(uuid, text, text, uuid, text)')
+        ('public.close_daily_feedback_batch_v1(uuid, text, text, uuid, text)'),
+        ('public.read_automation_expert_flows_v1(jsonb)'),
+        ('public.find_automation_expert_lead_v1(jsonb, bigint, text, text)'),
+        ('public.read_automation_expert_lead_history_v1(jsonb, uuid)')
 ),
 functions as (
     select
