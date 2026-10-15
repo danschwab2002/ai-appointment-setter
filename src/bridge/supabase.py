@@ -1397,6 +1397,35 @@ def _inbound_commercial_case_admission_result(
     )
 
 
+class AutomationExpertResponseTooLarge(SupabaseError):
+    """Una lectura del Automation Expert paso su tope (54000 en la funcion)."""
+
+
+def _automation_expert_value(response: httpx.Response, *, operation: str) -> Any:
+    """El valor suelto que devuelve una lectura del Automation Expert (returns jsonb).
+
+    PostgREST devuelve el valor de una funcion escalar tal cual. Otro estado u
+    otra forma falla cerrado, y el error dice solo la operacion y el codigo
+    HTTP, nunca el cuerpo.
+    """
+    if response.status_code != 200:
+        # Del cuerpo de error solo se mira el SQLSTATE, que es un codigo fijo.
+        try:
+            error_code = response.json().get("code")
+        except (ValueError, AttributeError):
+            error_code = None
+        if error_code == "54000":
+            raise AutomationExpertResponseTooLarge(f"{operation}_too_large")
+        raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise SupabaseError(f"{operation}_invalid_json") from exc
+    if payload is not None and not isinstance(payload, dict):
+        raise SupabaseError(f"{operation}_invalid_shape")
+    return payload
+
+
 def _response_rows(
     response: httpx.Response,
     *,
@@ -3710,6 +3739,68 @@ class SupabaseClient:
                 raise SupabaseError(f"{operation}_invalid_shape")
             result.append(case_data)
         return result
+
+    # automation-expert-read-v1. Las dos lecturas que no reciben datos de una
+    # persona van por GET, que PostgREST corre en una transaccion de solo
+    # lectura; la busqueda va por POST para que el nombre viaje en el cuerpo y
+    # nunca en una URL. La marca de instancia la arma el bridge.
+    async def read_automation_expert_flows_v1(
+        self, *, instance: dict[str, object]
+    ) -> dict[str, Any]:
+        operation = "automation_expert_flows"
+        response = await self._request(
+            "GET",
+            "/rest/v1/rpc/read_automation_expert_flows_v1",
+            params={"p_instance": json.dumps(instance, separators=(",", ":"))},
+        )
+        value = _automation_expert_value(response, operation=operation)
+        if not isinstance(value, dict):
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return value
+
+    async def find_automation_expert_lead_v1(
+        self,
+        *,
+        instance: dict[str, object],
+        conversation: int | None,
+        issuance_ulid: str | None,
+        name: str | None,
+    ) -> dict[str, Any]:
+        operation = "automation_expert_lookup"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/find_automation_expert_lead_v1",
+            content=json.dumps(
+                {
+                    "p_instance": instance,
+                    "p_conversation": conversation,
+                    "p_issuance_ulid": issuance_ulid,
+                    "p_name": name,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        value = _automation_expert_value(response, operation=operation)
+        if not isinstance(value, dict):
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return value
+
+    async def read_automation_expert_lead_history_v1(
+        self, *, instance: dict[str, object], lead_ref: str
+    ) -> dict[str, Any] | None:
+        operation = "automation_expert_history"
+        response = await self._request(
+            "GET",
+            "/rest/v1/rpc/read_automation_expert_lead_history_v1",
+            params={
+                "p_instance": json.dumps(instance, separators=(",", ":")),
+                "p_lead_ref": str(uuid.UUID(lead_ref)),
+            },
+        )
+        value = _automation_expert_value(response, operation=operation)
+        if value is not None and not isinstance(value, dict):
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return value
 
     async def list_due_hotmart_abandonment_reevaluations(
         self,

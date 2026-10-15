@@ -1,0 +1,144 @@
+{
+ "_captured": {
+  "origin": "tests/sql/followup_engine/validate_automation_expert_read.mjs, sobre la cadena completa de migraciones",
+  "captured_at": "2026-10-15T21:14:42.144Z"
+ },
+ "result": {
+  "now": {
+   "opted_out": true,
+   "purchased": true,
+   "live_actions": 0,
+   "human_takeover": false,
+   "pending_handoff": false
+  },
+  "lead": {
+   "identity": {
+    "has_email": true,
+    "has_phone": true,
+    "opted_out": true,
+    "whatsapp_authorized": false
+   },
+   "lead_ref": "653b7e71-e99d-4d63-ac7a-99fa6db34a3f",
+   "conversations": [
+    503
+   ],
+   "first_name_fallback": "Ceci",
+   "first_name_inferred": null
+  },
+  "moments": [
+   {
+    "at": "2026-10-10T18:15:12.144-03:00",
+    "kind": "rejected_on_entry",
+    "extra": {
+     "event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+     "link_source": null,
+     "control_state": "inactive",
+     "processing_status": "failed"
+    },
+    "decision": null,
+    "evidence": {
+     "id": "6b82f2c9-6441-4f78-b62a-8096bd233e7d",
+     "table": "webhook_events"
+    },
+    "flow_key": "carrito",
+    "certainty": "inferred",
+    "attached_by": "identity",
+    "reason_code": "pilot_runtime_not_armed",
+    "flow_version": null,
+    "reason_code_rejected": false
+   },
+   {
+    "at": "2026-10-12T18:24:42.144-03:00",
+    "kind": "rejected_on_entry",
+    "extra": {
+     "event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+     "link_source": null,
+     "control_state": "paused",
+     "processing_status": "failed"
+    },
+    "decision": null,
+    "evidence": {
+     "id": "a4973d7f-3185-42c1-a3d3-400972ce27c9",
+     "table": "webhook_events"
+    },
+    "flow_key": "carrito",
+    "certainty": "inferred",
+    "attached_by": "identity",
+    "reason_code": "pilot_runtime_not_armed",
+    "flow_version": null,
+    "reason_code_rejected": false
+   },
+   {
+    "at": "2026-10-12T18:25:42.144-03:00",
+    "kind": "hotmart_event",
+    "extra": {
+     "event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+     "link_source": null,
+     "control_state": null,
+     "processing_status": "failed"
+    },
+    "decision": null,
+    "evidence": {
+     "id": "92c107ce-c442-4072-b369-412f0490e35c",
+     "table": "webhook_events"
+    },
+    "flow_key": "carrito",
+    "certainty": "inferred",
+    "attached_by": "identity",
+    "reason_code": null,
+    "flow_version": null,
+    "reason_code_rejected": true
+   },
+   {
+    "at": "2026-10-12T18:34:42.144-03:00",
+    "kind": "purchased",
+    "extra": {
+     "event_type": "PURCHASE_APPROVED",
+     "link_source": null,
+     "control_state": null,
+     "processing_status": "failed"
+    },
+    "decision": null,
+    "evidence": {
+     "id": "d3500f4f-bb74-402e-8c01-ac5ed48487ea",
+     "table": "webhook_events"
+    },
+    "flow_key": null,
+    "certainty": "inferred",
+    "attached_by": "identity",
+    "reason_code": null,
+    "flow_version": null,
+    "reason_code_rejected": false
+   },
+   {
+    "at": "2026-10-12T18:44:42.144-03:00",
+    "kind": "opted_out",
+    "extra": {
+     "conversation": 503
+    },
+    "decision": null,
+    "evidence": {
+     "id": "6ef8fab7-89cf-4af4-9236-daf2ef097b8f",
+     "table": "contact_opt_out_events"
+    },
+    "flow_key": null,
+    "certainty": "stored",
+    "attached_by": "opt_out",
+    "reason_code": "stop_receiving_messages",
+    "flow_version": null,
+    "reason_code_rejected": false
+   }
+  ],
+  "upcoming": [],
+  "gap_counts": {
+   "unattached_hotmart_event": 1,
+   "agent_release_not_persisted": 0,
+   "start_rejection_not_persisted": 0,
+   "purchase_channel_not_persisted": 1,
+   "case_creation_failure_not_persisted": 0
+  },
+  "database_at": "2026-10-15T18:14:42.224-03:00",
+  "moment_count": 5,
+  "adopted_conversations": []
+ }
+}

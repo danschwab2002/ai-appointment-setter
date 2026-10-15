@@ -173,9 +173,13 @@ def test_the_event_is_the_one_the_portable_admission_writes() -> None:
     assert re.search(
         rf"insert into public\.conversation_events \(.*?'{EVENT}'", adoption, re.DOTALL
     )
-    # Nadie mas escribe ese evento.
+    # Nadie mas escribe ese evento. Las lecturas del Automation Expert
+    # (20261015000200) solo lo leen, para mostrar en la historia de un lead
+    # que contesto a una plantilla; validate_automation_expert_read.mjs lo
+    # prueba adentro de una transaccion de solo lectura.
+    readers = (MIGRATIONS / "20261015000200_automation_expert_read_v1.sql",)
     for path in sorted(MIGRATIONS.glob("*.sql")):
-        if path not in (ADOPTION, MIGRATION):
+        if path not in (ADOPTION, MIGRATION, *readers):
             assert EVENT not in path.read_text(encoding="utf-8"), path.name
 
 

@@ -578,6 +578,30 @@ def test_deployment_declares_ghl_precheckout_adapter_default_off(
     assert settings.ghl_precheckout_adapter_token is None
 
 
+def test_deployment_declares_automation_expert_read_default_off(tmp_path: Path) -> None:
+    # automation-expert-read-v1, «El flag»: el flag y el token llegan al
+    # contenedor por compose.yaml, apagados por defecto.
+    env_example = (PROJECT_ROOT / ".env.example").read_text()
+    compose = (PROJECT_ROOT / "compose.yaml").read_text()
+
+    env_lines = env_example.splitlines()
+    assert "AUTOMATION_EXPERT_READ_ENABLED=false" in env_lines
+    assert "AUTOMATION_EXPERT_READ_TOKEN=" in env_lines
+    assert (
+        "AUTOMATION_EXPERT_READ_ENABLED: ${AUTOMATION_EXPERT_READ_ENABLED:-false}"
+        in compose
+    )
+    assert "AUTOMATION_EXPERT_READ_TOKEN: ${AUTOMATION_EXPERT_READ_TOKEN:-}" in compose
+    settings = Settings(
+        webhook_secret="test-secret",
+        allowed_jid="12025550123@s.whatsapp.net",
+        capture_dir=tmp_path,
+        max_age_seconds=300,
+    )
+    assert settings.automation_expert_read_enabled is False
+    assert settings.automation_expert_read_token is None
+
+
 def test_deployment_declares_portable_precheckout_first_contact_default_off(
     tmp_path: Path,
 ) -> None:

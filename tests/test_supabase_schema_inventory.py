@@ -437,7 +437,7 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
 
-    assert len(allowlisted) == 124
+    assert len(allowlisted) == 127
     assert "get_daily_feedback_review_page_v2(text, uuid, text[])" in allowlisted
     assert "close_daily_feedback_batch_v1(uuid, text, text, uuid, text)" in allowlisted
     assert "get_portable_recent_payment_failure_v1(text, text, text)" in allowlisted
@@ -601,8 +601,10 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
 
 def test_daily_feedback_review_filters_fingerprint_checks_the_closure_and_both_pages() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261015000100 es la ultima del inventario.
-    fingerprint = sql.split("'20261015000100'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261015000100 va antes de la de 20261015000200.
+    fingerprint = sql.split("'20261015000100'", 1)[1].split(
+        "\n    union all\n    select\n        '20261015000200'", 1
+    )[0]
     compact_fingerprint = re.sub(r"\s+", "", fingerprint)
 
     assert "'20261015000100_daily_feedback_review_filters_v1.sql'" in fingerprint
@@ -618,4 +620,25 @@ def test_daily_feedback_review_filters_fingerprint_checks_the_closure_and_both_p
         "selectcount(*)=2",
     ):
         assert marker in compact_fingerprint, marker
-    assert compact_fingerprint.endswith(",6,'daily_feedback_review_filters_and_batch_closure')")
+    assert compact_fingerprint.endswith(",6,'daily_feedback_review_filters_and_batch_closure'")
+
+
+def test_automation_expert_read_fingerprint_checks_the_three_reads() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261015000200 es la ultima del inventario.
+    fingerprint = sql.split("'20261015000200'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", fingerprint)
+
+    assert "'20261015000200_automation_expert_read_v1.sql'" in fingerprint
+    for marker in (
+        "to_regprocedure('public.read_automation_expert_flows_v1(jsonb)')",
+        "to_regprocedure('public.find_automation_expert_lead_v1(jsonb,bigint,text,text)')",
+        "to_regprocedure('public.read_automation_expert_lead_history_v1(jsonb,uuid)')",
+        "andprovolatile='s'",
+        "array_to_string(proconfig,',')='search_path=pg_catalog,public,pg_temp'",
+        "position('contacts_matched'indefinition)>0",
+        "position('reason_code_rejected'indefinition)>0",
+        "andnothas_function_privilege('anon',oid,'EXECUTE')",
+    ):
+        assert marker in compact_fingerprint, marker
+    assert compact_fingerprint.endswith(",3,'automation_expert_read')")
