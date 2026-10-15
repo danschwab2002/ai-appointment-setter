@@ -12,7 +12,7 @@ import html
 import json
 import re
 import secrets
-from typing import Any, Awaitable, Callable, Protocol
+from typing import Any, Awaitable, Callable, Iterable, Protocol
 from urllib.parse import parse_qs, urlencode, urlsplit
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -24,6 +24,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from bridge.daily_feedback import minimize_review_text_v2, sanitize_review_text
 from bridge.daily_feedback_export import (
     PACKAGE_SCHEMA_V2,
+    REVIEW_FACETS,
     DailyReviewPackage,
     apply_agent_provenance,
     apply_conversation_context,
@@ -644,18 +645,44 @@ def create_daily_feedback_review_app(service: DailyFeedbackService) -> FastAPI:
         session_secret = request.cookies.get(service.settings.session_cookie_name)
         if not _valid_browser_secret(session_secret):
             return HTMLResponse(_login_page(public_ref), status_code=401)
+        facets = parse_review_filter(request.query_params.multi_items())
+        session_hash = service.hash_secret(session_secret)
         try:
             page = await service.repository.rpc(
-                "get_daily_feedback_review_page_v1",
+                "get_daily_feedback_review_page_v2",
                 {
-                    "p_session_hash": service.hash_secret(session_secret),
+                    "p_session_hash": session_hash,
                     "p_public_ref": public_ref,
+                    "p_facets": list(facets) if facets else None,
                 },
             )
+        except httpx.HTTPStatusError as exc:
+            # 404: la base todavia no tiene 20261015000100. La pagina sigue
+            # andando sin filtros hasta que se corra la migracion.
+            if exc.response.status_code != 404:
+                return HTMLResponse(_login_page(public_ref), status_code=401)
+            try:
+                page = await service.repository.rpc(
+                    "get_daily_feedback_review_page_v1",
+                    {"p_session_hash": session_hash, "p_public_ref": public_ref},
+                )
+            except Exception:
+                return HTMLResponse(_login_page(public_ref), status_code=401)
         except Exception:
             return HTMLResponse(_login_page(public_ref), status_code=401)
         if page.get("status") == "complete":
             return HTMLResponse(_complete_page(page))
+        if page.get("status") == "filtered_out":
+            return HTMLResponse(
+                _filtered_out_page(
+                    page,
+                    public_ref=public_ref,
+                    facets=facets,
+                    csrf_token=service.csrf_token(session_secret),
+                    command_id=str(uuid4()),
+                    brand_name=service.settings.brand_name,
+                )
+            )
         if page.get("status") != "item" or not isinstance(page.get("item"), dict):
             return HTMLResponse(_error_page("El lote ya no está disponible."), status_code=410)
         return HTMLResponse(
@@ -666,6 +693,8 @@ def create_daily_feedback_review_app(service: DailyFeedbackService) -> FastAPI:
                 command_id=str(uuid4()),
                 display_timezone=service.settings.display_timezone,
                 brand_name=service.settings.brand_name,
+                facets=facets,
+                close_command_id=str(uuid4()),
             )
         )
 
@@ -834,10 +863,53 @@ def create_daily_feedback_review_app(service: DailyFeedbackService) -> FastAPI:
             )
         except Exception:
             return HTMLResponse(_error_page("No se pudo registrar la decisión."), status_code=409)
+        facets = parse_review_filter(request.query_params.multi_items())
         return RedirectResponse(
-            f"/daily-feedback/review/{public_ref}",
+            f"/daily-feedback/review/{public_ref}{review_filter_suffix(facets)}",
             status_code=303,
         )
+
+    @app.post("/review/{public_ref}/close")
+    async def close_batch(public_ref: str, request: Request) -> Response:
+        if not _canonical_uuid(public_ref):
+            return _not_found()
+        if not _authorized_decision_origin(request, service.settings.public_origin):
+            return HTMLResponse(_error_page("Origen no autorizado."), status_code=403)
+        session_secret = request.cookies.get(service.settings.session_cookie_name)
+        if not _valid_browser_secret(session_secret):
+            return HTMLResponse(_login_page(public_ref), status_code=401)
+        try:
+            form = await _bounded_form(request)
+        except ValueError:
+            return HTMLResponse(_error_page("Formulario inválido."), status_code=422)
+        if set(form) != {"csrf_token", "command_id", "acknowledgement"}:
+            # Sin la casilla marcada el navegador no manda el campo: no hay cierre.
+            return HTMLResponse(
+                _error_page("Para cerrar el reporte hay que marcar la aprobación."),
+                status_code=422,
+            )
+        if not hmac.compare_digest(form["csrf_token"], service.csrf_token(session_secret)):
+            return HTMLResponse(_error_page("Formulario inválido."), status_code=403)
+        command_id = form["command_id"]
+        if not _canonical_uuid(command_id) or form["acknowledgement"] != "acepto":
+            return HTMLResponse(_error_page("Formulario inválido."), status_code=422)
+        semantic = "\0".join((command_id, public_ref, REVIEW_CLOSURE_ACKNOWLEDGEMENT))
+        try:
+            await service.repository.rpc(
+                "close_daily_feedback_batch_v1",
+                {
+                    "p_command_id": command_id,
+                    "p_semantic_fingerprint": hashlib.sha256(
+                        semantic.encode("utf-8")
+                    ).hexdigest(),
+                    "p_session_hash": service.hash_secret(session_secret),
+                    "p_public_ref": public_ref,
+                    "p_acknowledgement": REVIEW_CLOSURE_ACKNOWLEDGEMENT,
+                },
+            )
+        except Exception:
+            return HTMLResponse(_error_page("No se pudo cerrar el reporte."), status_code=409)
+        return RedirectResponse(f"/daily-feedback/review/{public_ref}", status_code=303)
 
     return app
 
@@ -1020,9 +1092,11 @@ class SupabaseDailyFeedbackRepository:
             "begin_daily_feedback_oidc_v1",
             "complete_daily_feedback_oidc_v1",
             "get_daily_feedback_review_page_v1",
+            "get_daily_feedback_review_page_v2",
             "get_daily_feedback_readiness_v1",
             "get_daily_feedback_conversation_context_v1",
             "record_daily_feedback_decision_v1",
+            "close_daily_feedback_batch_v1",
             "purge_expired_daily_feedback_v2",
             "get_agent_turn_provenance_v1",
         }
@@ -1361,6 +1435,7 @@ main.app-frame{{width:min(1240px,calc(100% - 40px));margin:0 auto;padding:28px 0
 .message--team{{align-self:flex-start}}.message--team .avatar{{background:#1f4d3a;color:#9fe3c0}}.message--team .bubble{{background:#1c2a22;border-color:#264a38}}.kind-tag{{display:inline-block;padding:0 6px;border-radius:6px;background:#2e3040;color:#c9cad0;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}}.kind-tag--template{{background:#4a3a12;color:#f0c27b}}.kind-tag--link{{background:#123f2c;color:#9fe3c0}}.message-foot{{color:var(--cw-subtle);font-size:11px;margin:4px 3px 0}}.message--agent .message-foot{{text-align:right}}
 .note{{align-self:stretch;border:1px dashed #4a4c58;border-radius:var(--cw-radius-sm);padding:10px 12px;color:#c9cad0;font-size:13px;background:#1a1b20;white-space:pre-wrap;overflow-wrap:anywhere}}.note-head{{color:var(--cw-subtle);font-size:11px;font-weight:650;margin-bottom:4px;white-space:normal}}.event{{align-self:center;color:var(--cw-muted);font-size:12px;text-align:center;padding:2px 10px;border-radius:999px;background:#1a1b20;border:1px solid var(--cw-border-soft)}}.gap{{align-self:center;color:var(--cw-subtle);font-size:11px}}
 .context-lists{{display:grid;gap:12px;padding:16px 18px;border-top:1px solid var(--cw-border-soft);background:var(--cw-sidebar)}}.context-lists h3{{margin:0 0 6px;font-size:12px;color:var(--cw-subtle);letter-spacing:.06em;text-transform:uppercase}}.context-lists ul{{margin:0;padding-left:18px;font-size:13px;color:var(--cw-muted)}}.context-lists li{{margin:2px 0;overflow-wrap:anywhere}}
+.filter-bar{{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin:0 0 16px}}.filter-menu{{position:relative}}.filter-menu>summary{{list-style:none;cursor:pointer;display:inline-flex;align-items:center;gap:8px;min-height:36px;padding:6px 12px;border:1px solid var(--cw-border);border-radius:var(--cw-radius-sm);background:var(--cw-surface-raised);color:var(--cw-text);font-size:13px;font-weight:600}}.filter-menu>summary::-webkit-details-marker{{display:none}}.filter-menu>summary::after{{content:"\\25BE";color:var(--cw-muted)}}.filter-menu[open]>summary::after{{content:"\\25B4"}}.filter-options{{position:absolute;z-index:5;top:calc(100% + 6px);left:0;width:min(340px,calc(100vw - 32px));display:grid;gap:4px;padding:12px;background:var(--cw-surface);border:1px solid var(--cw-border);border-radius:var(--cw-radius);box-shadow:0 12px 32px rgba(0,0,0,.45)}}.filter-option{{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:var(--cw-radius-sm);font-size:13px;cursor:pointer}}.filter-option:hover{{background:var(--cw-hover)}}.filter-option input,.ack input{{accent-color:var(--cw-accent);width:16px;height:16px;flex:none}}.filter-count{{margin-left:auto;color:var(--cw-subtle);font-variant-numeric:tabular-nums}}.filter-actions{{display:flex;gap:8px;justify-content:space-between;align-items:center;border-top:1px solid var(--cw-border-soft);margin-top:6px;padding-top:10px}}.filter-link{{color:#64a8f0;font-size:13px}}.filter-summary{{color:var(--cw-muted);font-size:13px}}.close-batch{{border-top:1px solid var(--cw-border-soft);padding:14px 18px}}.close-batch>summary{{cursor:pointer;color:var(--cw-muted);font-size:13px}}.close-form{{display:grid;gap:12px;margin-top:12px}}.ack{{display:flex;gap:10px;align-items:flex-start;font-size:13px;line-height:1.45}}.ack input{{margin-top:2px}}.done-panel{{max-width:640px;background:var(--cw-surface);border:1px solid var(--cw-border-soft);border-radius:var(--cw-radius);padding:20px;display:grid;gap:14px}}
 @media(max-width:880px){{.review-layout{{grid-template-columns:1fr}}.review-panel{{position:static}}.chat-thread{{min-height:380px}}.progress{{width:min(250px,42vw)}}}}@media(max-width:620px){{.topbar{{height:58px;padding:0 16px}}.brand-name,.secure-badge{{display:none}}main.app-frame{{width:min(100% - 24px,1240px);padding-top:18px}}.review-header{{align-items:flex-start;flex-direction:column;gap:14px}}.progress{{width:100%}}.conversation-summary{{grid-template-columns:1fr}}.summary-item+ .summary-item{{border-left:0;border-top:1px solid var(--cw-border-soft)}}.chat-thread{{padding:18px 12px;min-height:320px}}.message{{max-width:94%}}}}
 </style></head><body class="app-shell"><div class="topbar"><div class="brand"><div class="workspace-mark" aria-hidden="true"></div><span class="brand-name">{html.escape(brand_name)}</span><span class="brand-divider" aria-hidden="true"></span><span class="brand-section">Revisión diaria</span></div><span class="secure-badge">Revisión supervisada</span></div><main class="app-frame">{body}</main></body></html>'''
 
@@ -1400,6 +1475,7 @@ _KIND_LABELS = {
     "reactivation_template": "Plantilla · reactivación",
     "first_touch_template": "Plantilla · primer toque",
     "followup_template": "Plantilla · seguimiento",
+    "discount_followup_template": "Plantilla · seguimiento con cupón",
     "template_message": "Plantilla",
     "team_message": "Equipo",
     "handoff_note": "Nota de derivación",
@@ -1419,7 +1495,13 @@ _KIND_LABELS = {
     "message": "Agente",
 }
 _TEMPLATE_KINDS = frozenset(
-    {"reactivation_template", "first_touch_template", "followup_template", "template_message"}
+    {
+        "reactivation_template",
+        "first_touch_template",
+        "followup_template",
+        "discount_followup_template",
+        "template_message",
+    }
 )
 _STATUS_LABELS = {
     "sent": "enviado",
@@ -1445,6 +1527,53 @@ _EVENT_LABELS = {
     "opt_out": "Opt-out",
 }
 _STATUS_ES = {"open": "abierta", "pending": "pendiente", "resolved": "resuelta", "snoozed": "pospuesta"}
+
+# Los filtros de la pagina: el codigo es la etiqueta que arma el colector en
+# context.summary.review_facets. Al abrir, la pagina muestra derivacion,
+# respuesta de la IA e inbound; el link de pago solo y el opt-out se suman a mano.
+_REVIEW_FACET_LABELS: dict[str, tuple[str, str]] = {
+    "handoff": ("Con derivación", "derivación"),
+    "model_reply": ("Con respuesta de la IA (más que el link)", "respuesta de la IA"),
+    "payment_link": ("Con link de pago de la IA", "link de pago"),
+    "inbound": ("Inbound: la abrió el lead", "inbound"),
+    "opt_out": ("Opt-out", "opt-out"),
+}
+assert tuple(_REVIEW_FACET_LABELS) == REVIEW_FACETS
+DEFAULT_REVIEW_FACETS: tuple[str, ...] = ("handoff", "model_reply", "inbound")
+# La frase que aprueba quien cierra el reporte; la SQL exige esta misma.
+REVIEW_CLOSURE_ACKNOWLEDGEMENT = (
+    "Apruebo que este reporte se cierre sin completar el feedback de todas las conversaciones."
+)
+
+
+def parse_review_filter(params: Iterable[tuple[str, str]]) -> tuple[str, ...] | None:
+    """Que etiquetas pidio la revisora en la URL; ``None`` es ver todas.
+
+    Sin parametros, el filtro por defecto. ``ver=todas`` o el formulario con
+    todas las casillas desmarcadas (``filtro=1`` sin ``ver``) es ver todas. Un
+    valor desconocido se ignora.
+    """
+    pairs = list(params)
+    values = {value for key, value in pairs if key == "ver"}
+    if "todas" in values:
+        return None
+    chosen = tuple(code for code in REVIEW_FACETS if code in values)
+    if chosen:
+        return chosen
+    if any(key == "filtro" for key, _ in pairs):
+        return None
+    return DEFAULT_REVIEW_FACETS
+
+
+def review_filter_query(facets: tuple[str, ...] | None) -> str:
+    if not facets:
+        return "ver=todas"
+    return urlencode([("ver", code) for code in facets])
+
+
+def review_filter_suffix(facets: tuple[str, ...] | None) -> str:
+    """Lo que se le agrega a una URL para conservar el filtro; nada con el de defecto."""
+    return "" if facets == DEFAULT_REVIEW_FACETS else f"?{review_filter_query(facets)}"
 
 
 def _esc(value: object) -> str:
@@ -1686,6 +1815,8 @@ def _review_page(
     command_id: str,
     display_timezone: str = "UTC",
     brand_name: str = DEFAULT_REVIEW_BRAND_NAME,
+    facets: tuple[str, ...] | None = DEFAULT_REVIEW_FACETS,
+    close_command_id: str | None = None,
 ) -> str:
     item = page["item"]
     assert isinstance(item, dict)
@@ -1707,14 +1838,29 @@ def _review_page(
     position = int(item.get("position", 0))
     total = int(page.get("item_count", 0))
     progress = round(position / total * 100) if total > 0 else 0
+    filter_bar = _render_filter_bar(page, public_ref=public_ref, facets=facets)
+    filter_suffix = review_filter_suffix(facets)
+    close_section = ""
+    queue = page.get("queue")
+    if isinstance(queue, dict) and close_command_id is not None:
+        close_section = (
+            '<details class="close-batch"><summary>Cerrar el reporte sin revisar las que quedan</summary>'
+            + _render_close_form(
+                public_ref=public_ref,
+                csrf_token=csrf_token,
+                command_id=close_command_id,
+                pending=_count(queue.get("pending")),
+            )
+            + "</details>"
+        )
     body = f'''<header class="review-header"><div class="review-title-group"><p class="meta">{html.escape(str(page.get("local_date", "")))}</p><h1>{html.escape(str(item.get("display_label", "")))}</h1><p class="muted">Revisión de conversación · horas en {html.escape(display_timezone)}</p></div>
 <div class="progress" role="progressbar" aria-label="Progreso diario" aria-valuemin="1" aria-valuemax="{total}" aria-valuenow="{position}"><div class="progress-copy"><span>Progreso diario</span><span>{position} de {total}</span></div><div class="progress-track"><div class="progress-fill" style="width:{progress}%"></div></div></div></header>
-<div class="review-layout"><section class="conversation" aria-label="Conversación actual">{lead_card}<div class="conversation-summary">
+{filter_bar}<div class="review-layout"><section class="conversation" aria-label="Conversación actual">{lead_card}<div class="conversation-summary">
 <div class="summary-item"><span class="summary-label">Objetivo aparente</span><span class="summary-value">{html.escape(str(item.get("apparent_objective", "")))}</span></div>
 <div class="summary-item"><span class="summary-label">Resultado observado</span><span class="summary-value">{html.escape(str(item.get("observed_outcome", "")))}</span></div></div>
 <div class="chat-thread">{transcript}</div>{context_lists}</section>
 <aside class="review-panel"><div class="panel-heading"><h2>Evaluar conversación</h2><p class="muted">Elegí si está correcta o necesita una corrección.</p></div>
-<form class="actions" data-decision-form method="post" action="/daily-feedback/review/{html.escape(public_ref)}/decisions">
+<form class="actions" data-decision-form method="post" action="/daily-feedback/review/{html.escape(public_ref)}/decisions{html.escape(filter_suffix)}">
 <input type="hidden" name="csrf_token" value="{html.escape(csrf_token)}">
 <input type="hidden" name="command_id" value="{html.escape(command_id)}">
 <input type="hidden" name="item_id" value="{html.escape(str(item.get("item_id", "")))}">
@@ -1726,7 +1872,83 @@ def _review_page(
 <textarea id="feedback" name="verbatim_feedback" maxlength="4000" required disabled placeholder="Describí el problema y la respuesta esperada…"></textarea>
 <button class="primary save-correction" type="submit" name="decision" value="correct_with_feedback" disabled>Guardar corrección</button></div>
 <noscript><p class="label-note">Para registrar una corrección, habilitá JavaScript en este sitio.</p></noscript>
-</form></aside></div><script>{_REVIEW_INTERACTION_SCRIPT}</script>'''
+</form>{close_section}</aside></div><script>{_REVIEW_INTERACTION_SCRIPT}</script>'''
+    return _review_page_shell("Revisión diaria", body, brand_name)
+
+
+def _count(value: object) -> int:
+    return value if type(value) is int and value >= 0 else 0
+
+
+def _render_filter_bar(
+    page: dict[str, object], *, public_ref: str, facets: tuple[str, ...] | None
+) -> str:
+    """El desplegable de filtros. Sin ``queue`` (la base sin 20261015000100) no hay."""
+    queue = page.get("queue")
+    if not isinstance(queue, dict):
+        return ""
+    if queue.get("faceted") is not True:
+        return (
+            '<div class="filter-bar"><span class="filter-summary">Este lote se armó antes de los '
+            "filtros: se ven todas las conversaciones.</span></div>"
+        )
+    base = f"/daily-feedback/review/{html.escape(public_ref)}"
+    counts_raw = queue.get("facets")
+    counts = counts_raw if isinstance(counts_raw, dict) else {}
+    active = set(facets or ())
+    options = "".join(
+        f'<label class="filter-option"><input type="checkbox" name="ver" value="{code}"'
+        f'{" checked" if code in active else ""}><span>{html.escape(label)}</span>'
+        f'<span class="filter-count">{_count(counts.get(code))}</span></label>'
+        for code, (label, _) in _REVIEW_FACET_LABELS.items()
+    )
+    shown = (
+        ", ".join(_REVIEW_FACET_LABELS[code][1] for code in facets) if facets else "todas"
+    )
+    pending = _count(queue.get("pending"))
+    summary = (
+        f"{_count(queue.get('matching'))} de {pending} pendientes con este filtro"
+        if facets
+        else f"{pending} pendientes"
+    )
+    return f'''<div class="filter-bar"><details class="filter-menu"><summary>Ver: {html.escape(shown)}</summary>
+<form class="filter-options" method="get" action="{base}"><input type="hidden" name="filtro" value="1">{options}
+<div class="filter-actions"><a class="filter-link" href="{base}?ver=todas">Ver todas</a><button class="primary" type="submit">Aplicar</button></div></form></details>
+<span class="filter-summary">{html.escape(summary)}</span></div>'''
+
+
+def _render_close_form(
+    *, public_ref: str, csrf_token: str, command_id: str, pending: int, primary: bool = False
+) -> str:
+    """El cierre no se deshace: en el panel de la conversacion va como boton
+    secundario, y solo es el principal cuando ya no quedan con el filtro."""
+    left = "Queda 1 sin revisar" if pending == 1 else f"Quedan {pending} sin revisar"
+    button_class = ' class="primary"' if primary else ""
+    return f'''<form class="close-form" method="post" action="/daily-feedback/review/{html.escape(public_ref)}/close">
+<input type="hidden" name="csrf_token" value="{html.escape(csrf_token)}">
+<input type="hidden" name="command_id" value="{html.escape(command_id)}">
+<label class="ack"><input type="checkbox" name="acknowledgement" value="acepto" required><span>{html.escape(REVIEW_CLOSURE_ACKNOWLEDGEMENT)}<span class="label-note">{left}: se cierran sin feedback y ya no se pueden revisar.</span></span></label>
+<button{button_class} type="submit">Cerrar el reporte</button></form>'''
+
+
+def _filtered_out_page(
+    page: dict[str, object],
+    *,
+    public_ref: str,
+    facets: tuple[str, ...] | None,
+    csrf_token: str,
+    command_id: str,
+    brand_name: str = DEFAULT_REVIEW_BRAND_NAME,
+) -> str:
+    queue_raw = page.get("queue")
+    queue = queue_raw if isinstance(queue_raw, dict) else {}
+    pending = _count(queue.get("pending"))
+    base = f"/daily-feedback/review/{html.escape(public_ref)}"
+    rest = "la que queda" if pending == 1 else f"las {pending} que quedan"
+    left = "Queda 1" if pending == 1 else f"Quedan {pending}"
+    body = f'''<header class="review-header"><div class="review-title-group"><p class="meta">{html.escape(str(page.get("local_date", "")))}</p><h1>No quedan conversaciones con este filtro</h1><p class="muted">Ya revisaste las que coinciden. {left} de otros tipos.</p></div></header>
+{_render_filter_bar(page, public_ref=public_ref, facets=facets)}<section class="done-panel"><p>Podés <a class="filter-link" href="{base}?ver=todas">ver {rest}</a> o cerrar el reporte.</p>
+{_render_close_form(public_ref=public_ref, csrf_token=csrf_token, command_id=command_id, pending=pending, primary=True)}</section>'''
     return _review_page_shell("Revisión diaria", body, brand_name)
 
 
@@ -1734,8 +1956,16 @@ def _complete_page(page: dict[str, object]) -> str:
     return _page_shell(
         "Revisión completada",
         f'''<header><p class="meta">{html.escape(str(page.get("local_date", "")))}</p><h1>Revisión completada</h1></header>
-<p>Se registraron {int(page.get("decided_count", 0))} decisiones.</p>''',
+<p>Se registraron {int(page.get("decided_count", 0))} decisiones.</p>{_closure_note(page)}''',
     )
+
+
+def _closure_note(page: dict[str, object]) -> str:
+    unreviewed = _count(page.get("closed_unreviewed_count"))
+    if not unreviewed:
+        return ""
+    rest = "La otra se cerró" if unreviewed == 1 else f"Las otras {unreviewed} se cerraron"
+    return f"<p>{rest} sin feedback, con la aprobación de quien cerró el reporte.</p>"
 
 
 def _error_page(message: str) -> str:

@@ -1,0 +1,475 @@
+{
+  "_capture": {
+    "origen": "API de Chatwoot de produccion, cuenta 2, inbox 11 (ATT1), 2026-10-15T00:39Z, desde el contenedor del bridge de ATT1 con su token de control (.claude/scripts/setter_sandbox/captura_fixture_chatwoot.py del OS): GET show + messages de las conversaciones 120 y 163.",
+    "anonimizacion": "lo del script de captura (nombre, telefono, mail, identifier y source_id del contacto sinteticos; mensajes del lead redactados; nombre del lead borrado de todo texto; wamid reemplazados) y, al armar este archivo, el sck del anuncio de los links reemplazado y el nombre de quien resolvio la conversacion cambiado por 'Equipo Revision'. Se sacaron las paginas del listado, que no usa este fixture.",
+    "caso": "120: plantilla del carrito (recovery_first_touch_hash), dos respuestas del lead (la segunda, 2969, con in_reply_to = 2962, la plantilla), el link de pago escrito por el modelo (appointment_setter_reply_hash, sin appointment_setter_decision) y, un dia despues, el seguimiento con cupon (conversation_followup_command_key), sin la URL en el texto: el link va en el boton. 163: la abre el lead desde la landing (in_reply_to e in_reply_to_external_id en null) y el modelo le manda el link.",
+    "lote": "Las dos entraron al lote de la revision diaria de ATT1 del 2026-10-13 (items 6 y 23)."
+  },
+  "conversations": {
+    "120": {
+      "conversation": {
+        "meta": {
+          "sender": {
+            "additional_attributes": {},
+            "availability_status": "offline",
+            "email": "lead120@example.com",
+            "id": 346,
+            "name": "lucia herrera",
+            "phone_number": "+52155000120",
+            "blocked": false,
+            "identifier": null,
+            "thumbnail": "",
+            "custom_attributes": {},
+            "last_activity_at": 1791817442,
+            "created_at": 1791817341
+          },
+          "channel": "Channel::Whatsapp",
+          "hmac_verified": false
+        },
+        "id": 120,
+        "messages": [
+          {
+            "id": 3159,
+            "content": "Hola, NOMBRE. Soy el asistente virtual del equipo de Dra. Nina.\n\nQuería retomar nuestra conversación sobre Alimenta tu Tiroides.\n\nPara ayudarte a dar ese paso, te reservamos un *10 % de descuento*. Toca el botón de abajo y tu descuento queda activado al instante.\n\nSi todavía tienes alguna duda, responde a este mensaje y te ayudamos.",
+            "account_id": 2,
+            "inbox_id": 11,
+            "conversation_id": 120,
+            "message_type": 1,
+            "created_at": 1791904251,
+            "updated_at": "2026-10-13T15:10:55.966Z",
+            "private": false,
+            "status": "delivered",
+            "source_id": "REDACTED-source_id",
+            "content_type": "text",
+            "content_attributes": {
+              "conversation_followup_command_key": "followup:120:2971"
+            },
+            "sender_type": "AgentBot",
+            "sender_id": 2,
+            "external_source_ids": {},
+            "additional_attributes": {
+              "template_params": {
+                "name": "att1_seguimiento_descuento_01",
+                "category": "MARKETING",
+                "language": "es_MX",
+                "processed_params": {
+                  "body": {
+                    "1": "NOMBRE",
+                    "2": "Alimenta tu Tiroides"
+                  },
+                  "buttons": [
+                    {
+                      "type": "url",
+                      "parameter": "D98014973Y?off=2uafw5bg&checkoutMode=10&src=hermes&sck=meta-ads~fb~anuncio-redactado&fbclid=REDACTED&offDiscount=TIROIDES10"
+                    }
+                  ]
+                }
+              }
+            },
+            "processed_message_content": "Hola, NOMBRE. Soy el asistente virtual del equipo de Dra. Nina.\n\nQuería retomar nuestra conversación sobre Alimenta tu Tiroides.\n\nPara ayudarte a dar ese paso, te reservamos un *10 % de descuento*. Toca el botón de abajo y tu descuento queda activado al instante.\n\nSi todavía tienes alguna duda, responde a este mensaje y te ayudamos.",
+            "sentiment": {},
+            "conversation": {
+              "assignee_id": null,
+              "unread_count": 0,
+              "last_activity_at": 1791904251,
+              "contact_inbox": {
+                "source_id": "REDACTED-source_id"
+              }
+            },
+            "sender": {
+              "id": 2,
+              "name": "att1-setter",
+              "avatar_url": "",
+              "type": "agent_bot"
+            }
+          }
+        ],
+        "account_id": 2,
+        "uuid": "ea4cf448-5c01-4e4c-a9d2-7bb7bc159550",
+        "additional_attributes": {},
+        "agent_last_seen_at": 1791821372,
+        "assignee_last_seen_at": 0,
+        "can_reply": false,
+        "contact_last_seen_at": 0,
+        "custom_attributes": {},
+        "inbox_id": 11,
+        "labels": [],
+        "muted": false,
+        "snoozed_until": null,
+        "status": "resolved",
+        "created_at": 1791817342,
+        "updated_at": 1791904251.40162,
+        "timestamp": 1791904251,
+        "first_reply_created_at": 0,
+        "unread_count": 0,
+        "last_non_activity_message": {
+          "id": 3159,
+          "content": "Hola, NOMBRE. Soy el asistente virtual del equipo de Dra. Nina.\n\nQuería retomar nuestra conversación sobre Alimenta tu Tiroides.\n\nPara ayudarte a dar ese paso, te reservamos un *10 % de descuento*. Toca el botón de abajo y tu descuento queda activado al instante.\n\nSi todavía tienes alguna duda, responde a este mensaje y te ayudamos.",
+          "account_id": 2,
+          "inbox_id": 11,
+          "conversation_id": 120,
+          "message_type": 1,
+          "created_at": 1791904251,
+          "updated_at": "2026-10-13T15:10:55.966Z",
+          "private": false,
+          "status": "delivered",
+          "source_id": "REDACTED-source_id",
+          "content_type": "text",
+          "content_attributes": {
+            "conversation_followup_command_key": "followup:120:2971"
+          },
+          "sender_type": "AgentBot",
+          "sender_id": 2,
+          "external_source_ids": {},
+          "additional_attributes": {
+            "template_params": {
+              "name": "att1_seguimiento_descuento_01",
+              "category": "MARKETING",
+              "language": "es_MX",
+              "processed_params": {
+                "body": {
+                  "1": "NOMBRE",
+                  "2": "Alimenta tu Tiroides"
+                },
+                "buttons": [
+                  {
+                    "type": "url",
+                    "parameter": "D98014973Y?off=2uafw5bg&checkoutMode=10&src=hermes&sck=meta-ads~fb~anuncio-redactado&fbclid=REDACTED&offDiscount=TIROIDES10"
+                  }
+                ]
+              }
+            }
+          },
+          "processed_message_content": "Hola, NOMBRE. Soy el asistente virtual del equipo de Dra. Nina.\n\nQuería retomar nuestra conversación sobre Alimenta tu Tiroides.\n\nPara ayudarte a dar ese paso, te reservamos un *10 % de descuento*. Toca el botón de abajo y tu descuento queda activado al instante.\n\nSi todavía tienes alguna duda, responde a este mensaje y te ayudamos.",
+          "sentiment": {},
+          "conversation": {
+            "assignee_id": null,
+            "unread_count": 0,
+            "last_activity_at": 1791904251,
+            "contact_inbox": {
+              "source_id": "REDACTED-source_id"
+            }
+          },
+          "sender": {
+            "id": 2,
+            "name": "att1-setter",
+            "avatar_url": "",
+            "type": "agent_bot"
+          }
+        },
+        "last_activity_at": 1791904251,
+        "priority": null,
+        "waiting_since": 0,
+        "sla_policy_id": null
+      },
+      "messages": [
+        {
+          "id": 2962,
+          "content": "Hola, NOMBRE. Soy el asistente virtual del equipo de Dra. Nina.\n\nTu proceso para acceder a Alimenta tu Tiroides quedó incompleto. Si tuviste alguna duda o dificultad, puedo ayudarte. También puedo enviarte el enlace para que lo retomes cuando quieras.",
+          "inbox_id": 11,
+          "conversation_id": 120,
+          "message_type": 1,
+          "content_type": "text",
+          "status": "delivered",
+          "content_attributes": {
+            "recovery_first_touch_hash": "414183714852d5a391ca9bce1f6a1c8ebfb7af7af06cbbe69e0a79608ca03a30"
+          },
+          "created_at": 1791817342,
+          "private": false,
+          "source_id": "REDACTED-source_id",
+          "sender": {
+            "id": 2,
+            "name": "att1-setter",
+            "avatar_url": "",
+            "type": "agent_bot"
+          }
+        },
+        {
+          "id": 2968,
+          "content": "[mensaje del lead redactado]",
+          "inbox_id": 11,
+          "conversation_id": 120,
+          "message_type": 0,
+          "content_type": "text",
+          "status": "sent",
+          "content_attributes": {},
+          "created_at": 1791817434,
+          "private": false,
+          "source_id": "REDACTED-source_id",
+          "sender": {
+            "additional_attributes": {},
+            "custom_attributes": {},
+            "email": "lead120@example.com",
+            "id": 346,
+            "identifier": null,
+            "name": "lucia herrera",
+            "phone_number": "+52155000120",
+            "thumbnail": "",
+            "blocked": false,
+            "type": "contact"
+          }
+        },
+        {
+          "id": 2969,
+          "content": "[mensaje del lead redactado]",
+          "inbox_id": 11,
+          "conversation_id": 120,
+          "message_type": 0,
+          "content_type": "text",
+          "status": "sent",
+          "content_attributes": {
+            "in_reply_to_external_id": "wamid.REDACTED",
+            "in_reply_to": 2962
+          },
+          "created_at": 1791817441,
+          "private": false,
+          "source_id": "REDACTED-source_id",
+          "sender": {
+            "additional_attributes": {},
+            "custom_attributes": {},
+            "email": "lead120@example.com",
+            "id": 346,
+            "identifier": null,
+            "name": "lucia herrera",
+            "phone_number": "+52155000120",
+            "thumbnail": "",
+            "blocked": false,
+            "type": "contact"
+          }
+        },
+        {
+          "id": 2971,
+          "content": "Con gusto, NOMBRE. Aquí te envío el enlace de Alimenta Tu Tiroides, con precio de USD 47:\nhttps://pay.hotmart.com/D98014973Y?off=2uafw5bg&checkoutMode=10&src=hermes&sck=meta-ads~fb~anuncio-redactado&fbclid=REDACTED",
+          "inbox_id": 11,
+          "conversation_id": 120,
+          "message_type": 1,
+          "content_type": "text",
+          "status": "delivered",
+          "content_attributes": {
+            "appointment_setter_reply_hash": "bcf851badde169b48cf3d05492576cbce3c8f828da0eaef813f5236be4d97ccb"
+          },
+          "created_at": 1791817482,
+          "private": false,
+          "source_id": "REDACTED-source_id",
+          "sender": {
+            "id": 2,
+            "name": "att1-setter",
+            "avatar_url": "",
+            "type": "agent_bot"
+          }
+        },
+        {
+          "id": 3024,
+          "content": "Conversation was marked resolved by Equipo Revision",
+          "inbox_id": 11,
+          "conversation_id": 120,
+          "message_type": 2,
+          "content_type": "text",
+          "status": "sent",
+          "content_attributes": {},
+          "created_at": 1791821372,
+          "private": false,
+          "source_id": null
+        },
+        {
+          "id": 3159,
+          "content": "Hola, NOMBRE. Soy el asistente virtual del equipo de Dra. Nina.\n\nQuería retomar nuestra conversación sobre Alimenta tu Tiroides.\n\nPara ayudarte a dar ese paso, te reservamos un *10 % de descuento*. Toca el botón de abajo y tu descuento queda activado al instante.\n\nSi todavía tienes alguna duda, responde a este mensaje y te ayudamos.",
+          "inbox_id": 11,
+          "conversation_id": 120,
+          "message_type": 1,
+          "content_type": "text",
+          "status": "delivered",
+          "content_attributes": {
+            "conversation_followup_command_key": "followup:120:2971"
+          },
+          "created_at": 1791904251,
+          "private": false,
+          "source_id": "REDACTED-source_id",
+          "sender": {
+            "id": 2,
+            "name": "att1-setter",
+            "avatar_url": "",
+            "type": "agent_bot"
+          }
+        }
+      ]
+    },
+    "163": {
+      "conversation": {
+        "meta": {
+          "sender": {
+            "additional_attributes": {},
+            "availability_status": "offline",
+            "email": "lead163@example.com",
+            "id": 336,
+            "name": "lucia herrera",
+            "phone_number": "+52155000163",
+            "blocked": false,
+            "identifier": null,
+            "thumbnail": "",
+            "custom_attributes": {},
+            "last_activity_at": 1791915729,
+            "created_at": 1791817302
+          },
+          "channel": "Channel::Whatsapp",
+          "hmac_verified": false
+        },
+        "id": 163,
+        "messages": [
+          {
+            "id": 3339,
+            "content": "Conversation was marked resolved by Equipo Revision",
+            "account_id": 2,
+            "inbox_id": 11,
+            "conversation_id": 163,
+            "message_type": 2,
+            "created_at": 1792008988,
+            "updated_at": "2026-10-14T20:16:28.475Z",
+            "private": false,
+            "status": "sent",
+            "source_id": null,
+            "content_type": "text",
+            "content_attributes": {},
+            "sender_type": null,
+            "sender_id": null,
+            "external_source_ids": {},
+            "additional_attributes": {},
+            "processed_message_content": "Conversation was marked resolved by Equipo Revision",
+            "sentiment": {},
+            "conversation": {
+              "assignee_id": null,
+              "unread_count": 0,
+              "last_activity_at": 1792008988,
+              "contact_inbox": {
+                "source_id": "REDACTED-source_id"
+              }
+            }
+          }
+        ],
+        "account_id": 2,
+        "uuid": "3a189f65-9db4-4f1b-a6b4-fcc026ca2c0e",
+        "additional_attributes": {},
+        "agent_last_seen_at": 1792013976,
+        "assignee_last_seen_at": 0,
+        "can_reply": false,
+        "contact_last_seen_at": 0,
+        "custom_attributes": {},
+        "inbox_id": 11,
+        "labels": [],
+        "muted": false,
+        "snoozed_until": null,
+        "status": "resolved",
+        "created_at": 1791915729,
+        "updated_at": 1792008988.552017,
+        "timestamp": 1792008988,
+        "first_reply_created_at": 0,
+        "unread_count": 0,
+        "last_non_activity_message": {
+          "id": 3207,
+          "content": "Con gusto. Aquí tienes el enlace de Alimenta Tu Tiroides, el protocolo de alimentación para la tiroides de la Dra. Nina Garza, por USD 47:\nhttps://pay.hotmart.com/D98014973Y?off=2uafw5bg&checkoutMode=10&src=hermes&sck=meta-ads~fb~anuncio-redactado",
+          "account_id": 2,
+          "inbox_id": 11,
+          "conversation_id": 163,
+          "message_type": 1,
+          "created_at": 1791915765,
+          "updated_at": "2026-10-13T18:30:36.107Z",
+          "private": false,
+          "status": "read",
+          "source_id": "REDACTED-source_id",
+          "content_type": "text",
+          "content_attributes": {
+            "appointment_setter_reply_hash": "6911c96d500417436e62d5d8215e0d8d1f4f99dce70cd4382be98879e17a6a0d"
+          },
+          "sender_type": "AgentBot",
+          "sender_id": 2,
+          "external_source_ids": {},
+          "additional_attributes": {},
+          "processed_message_content": "Con gusto. Aquí tienes el enlace de Alimenta Tu Tiroides, el protocolo de alimentación para la tiroides de la Dra. Nina Garza, por USD 47:\nhttps://pay.hotmart.com/D98014973Y?off=2uafw5bg&checkoutMode=10&src=hermes&sck=meta-ads~fb~anuncio-redactado",
+          "sentiment": {},
+          "conversation": {
+            "assignee_id": null,
+            "unread_count": 0,
+            "last_activity_at": 1792008988,
+            "contact_inbox": {
+              "source_id": "REDACTED-source_id"
+            }
+          },
+          "sender": {
+            "id": 2,
+            "name": "att1-setter",
+            "avatar_url": "",
+            "type": "agent_bot"
+          }
+        },
+        "last_activity_at": 1792008988,
+        "priority": null,
+        "waiting_since": 0,
+        "sla_policy_id": null
+      },
+      "messages": [
+        {
+          "id": 3206,
+          "content": "[mensaje del lead redactado]",
+          "inbox_id": 11,
+          "conversation_id": 163,
+          "message_type": 0,
+          "content_type": "text",
+          "status": "sent",
+          "content_attributes": {
+            "in_reply_to_external_id": null,
+            "in_reply_to": null
+          },
+          "created_at": 1791915729,
+          "private": false,
+          "source_id": "REDACTED-source_id",
+          "sender": {
+            "additional_attributes": {},
+            "custom_attributes": {},
+            "email": "lead163@example.com",
+            "id": 336,
+            "identifier": null,
+            "name": "lucia herrera",
+            "phone_number": "+52155000163",
+            "thumbnail": "",
+            "blocked": false,
+            "type": "contact"
+          }
+        },
+        {
+          "id": 3207,
+          "content": "Con gusto. Aquí tienes el enlace de Alimenta Tu Tiroides, el protocolo de alimentación para la tiroides de la Dra. Nina Garza, por USD 47:\nhttps://pay.hotmart.com/D98014973Y?off=2uafw5bg&checkoutMode=10&src=hermes&sck=meta-ads~fb~anuncio-redactado",
+          "inbox_id": 11,
+          "conversation_id": 163,
+          "message_type": 1,
+          "content_type": "text",
+          "status": "read",
+          "content_attributes": {
+            "appointment_setter_reply_hash": "6911c96d500417436e62d5d8215e0d8d1f4f99dce70cd4382be98879e17a6a0d"
+          },
+          "created_at": 1791915765,
+          "private": false,
+          "source_id": "REDACTED-source_id",
+          "sender": {
+            "id": 2,
+            "name": "att1-setter",
+            "avatar_url": "",
+            "type": "agent_bot"
+          }
+        },
+        {
+          "id": 3339,
+          "content": "Conversation was marked resolved by Equipo Revision",
+          "inbox_id": 11,
+          "conversation_id": 163,
+          "message_type": 2,
+          "content_type": "text",
+          "status": "sent",
+          "content_attributes": {},
+          "created_at": 1792008988,
+          "private": false,
+          "source_id": null
+        }
+      ]
+    }
+  }
+}

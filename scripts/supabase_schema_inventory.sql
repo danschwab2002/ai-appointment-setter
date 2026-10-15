@@ -4411,6 +4411,68 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'portable_payment_failure_context_and_slip_events'
+    union all
+    select
+        '20261015000100',
+        '20261015000100_daily_feedback_review_filters_v1.sql',
+        -- El cierre del lote: tabla propia, con RLS y sin permisos de la API.
+        (
+            select count(*) = 1
+            from pg_class
+            where oid = to_regclass('public.daily_feedback_batch_closures')
+              and relrowsecurity
+              and not has_table_privilege('service_role', oid, 'SELECT')
+              and not has_table_privilege('anon', oid, 'SELECT')
+        )::int
+        -- La pagina v1 da por completo un lote cerrado.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_daily_feedback_review_page_v1(text,uuid)')
+              and position('''closed_unreviewed_count''' in definition) > 0
+              and position('''context'',v_item.context' in definition) > 0
+        )::int
+        -- La pagina v2 filtra por las etiquetas del colector.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_daily_feedback_review_page_v2(text,uuid,text[])')
+              and prosecdef
+              and proconfig @> array['search_path=""']
+              and position('review_facets' in definition) > 0
+              and position('''filtered_out''' in definition) > 0
+        )::int
+        -- La decision acepta cualquier conversacion pendiente del lote.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.record_daily_feedback_decision_v1(uuid,text,text,uuid,uuid,text,text)')
+              and prosecdef
+              and position('where d.item_id=v_item.id) then' in definition) > 0
+        )::int
+        -- El cierre exige la frase exacta.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.close_daily_feedback_batch_v1(uuid,text,text,uuid,text)')
+              and prosecdef
+              and proconfig @> array['search_path=""']
+              and position('review_closure_not_acknowledged' in definition) > 0
+        )::int
+        -- Las dos funciones nuevas son entrypoints del servicio: solo service_role.
+        + (
+            select count(*) = 2
+            from functions
+            where oid in (
+                to_regprocedure('public.get_daily_feedback_review_page_v2(text,uuid,text[])'),
+                to_regprocedure('public.close_daily_feedback_batch_v1(uuid,text,text,uuid,text)')
+            )
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        6,
+        'daily_feedback_review_filters_and_batch_closure'
 )
 select
     version,

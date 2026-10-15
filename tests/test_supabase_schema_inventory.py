@@ -437,7 +437,9 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
 
-    assert len(allowlisted) == 122
+    assert len(allowlisted) == 124
+    assert "get_daily_feedback_review_page_v2(text, uuid, text[])" in allowlisted
+    assert "close_daily_feedback_batch_v1(uuid, text, text, uuid, text)" in allowlisted
     assert "get_portable_recent_payment_failure_v1(text, text, text)" in allowlisted
     assert (
         "admit_portable_hotmart_payment_slip_event_v1(text, text, integer, text, jsonb)"
@@ -595,3 +597,25 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     assert "result_type = 'trigger'" in sql
     assert "service_role_allowlist_mismatch" in sql
     assert "security_definer_search_path_missing" in sql
+
+
+def test_daily_feedback_review_filters_fingerprint_checks_the_closure_and_both_pages() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261015000100 es la ultima del inventario.
+    fingerprint = sql.split("'20261015000100'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", fingerprint)
+
+    assert "'20261015000100_daily_feedback_review_filters_v1.sql'" in fingerprint
+    for marker in (
+        "to_regclass('public.daily_feedback_batch_closures')",
+        "andrelrowsecurity",
+        "position('''closed_unreviewed_count'''indefinition)>0",
+        "position('''context'',v_item.context'indefinition)>0",
+        "to_regprocedure('public.get_daily_feedback_review_page_v2(text,uuid,text[])')",
+        "position('''filtered_out'''indefinition)>0",
+        "position('whered.item_id=v_item.id)then'indefinition)>0",
+        "position('review_closure_not_acknowledged'indefinition)>0",
+        "selectcount(*)=2",
+    ):
+        assert marker in compact_fingerprint, marker
+    assert compact_fingerprint.endswith(",6,'daily_feedback_review_filters_and_batch_closure')")

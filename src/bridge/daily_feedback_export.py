@@ -15,7 +15,7 @@ import tempfile
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Callable, Mapping, Sequence
+from typing import Callable, Iterable, Mapping, Sequence
 from urllib.parse import urlsplit
 
 import httpx
@@ -578,7 +578,7 @@ class ChatwootDailyCollector:
                 names = self._conversation_names(conversation)
                 context: dict[str, object] = {}
                 if self._package_version == 2:
-                    messages = self._collect_messages_v2(
+                    messages, opened_by = self._collect_messages_v2(
                         client,
                         conversation_id=conversation_id,
                         window_start=start,
@@ -591,6 +591,9 @@ class ChatwootDailyCollector:
                     context = self._conversation_context(
                         conversation, conversation_id=conversation_id
                     )
+                    conversation_state = context["conversation"]
+                    assert isinstance(conversation_state, dict)
+                    conversation_state["opened_by"] = opened_by
                 else:
                     messages = self._collect_messages(
                         client,
@@ -789,10 +792,25 @@ class ChatwootDailyCollector:
         window_start: datetime,
     ) -> dict[int, dict[str, object]]:
         """Pagina hacia atras hasta probar que se cruzo el inicio de la ventana."""
+        by_id, _ = self._fetch_message_history(
+            client, conversation_id=conversation_id, window_start=window_start
+        )
+        return by_id
+
+    def _fetch_message_history(
+        self,
+        client: httpx.Client,
+        *,
+        conversation_id: int,
+        window_start: datetime,
+    ) -> tuple[dict[int, dict[str, object]], bool]:
+        """Los mensajes desde el inicio de la ventana, y si ya se llego al primero
+        de la conversacion (la pagina vacia)."""
         path = f"/api/v1/accounts/{self._account_id}/conversations/{conversation_id}/messages"
         before: int | None = None
         by_id: dict[int, dict[str, object]] = {}
         boundary_proven = False
+        reached_start = False
         for _ in range(self._max_message_pages):
             response = client.get(path, params={"before": before} if before is not None else None)
             response.raise_for_status()
@@ -802,6 +820,7 @@ class ChatwootDailyCollector:
                 raise ConversationCollectionError("invalid_chatwoot_message_list")
             if not payload:
                 boundary_proven = True
+                reached_start = True
                 break
             page_ids: list[int] = []
             page_times: list[int] = []
@@ -822,7 +841,45 @@ class ChatwootDailyCollector:
             before = next_before
         if not boundary_proven:
             raise ConversationCollectionError("chatwoot_message_page_limit_reached")
-        return by_id
+        return by_id, reached_start
+
+    def _page_to_history_start(
+        self,
+        client: httpx.Client,
+        *,
+        conversation_id: int,
+        by_id: dict[int, dict[str, object]],
+    ) -> bool:
+        """Sigue paginando desde lo ya bajado hasta el primer mensaje, para saber
+        quien abrio la conversacion. Suma lo que encuentra a ``by_id``. Tiene su
+        propio tope de paginas y, si lo alcanza o la pagina no avanza, devuelve
+        ``False`` en vez de fallar: no saber quien la abrio no frena el lote."""
+        if not by_id:
+            return True
+        path = f"/api/v1/accounts/{self._account_id}/conversations/{conversation_id}/messages"
+        before = min(by_id)
+        for _ in range(self._max_message_pages):
+            response = client.get(path, params={"before": before})
+            response.raise_for_status()
+            body = _json_object(response, "invalid_chatwoot_message_list")
+            payload = body.get("payload")
+            if not isinstance(payload, list) or not all(isinstance(item, dict) for item in payload):
+                raise ConversationCollectionError("invalid_chatwoot_message_list")
+            if not payload:
+                return True
+            page_ids: list[int] = []
+            for message in payload:
+                message_id = message.get("id")
+                created_at = message.get("created_at")
+                if type(message_id) is not int or message_id <= 0 or type(created_at) is not int or created_at <= 0:
+                    raise ConversationCollectionError("invalid_chatwoot_message")
+                page_ids.append(message_id)
+                by_id[message_id] = message
+            next_before = min(page_ids)
+            if next_before >= before:
+                return False
+            before = next_before
+        return False
 
     def _collect_messages_v2(
         self,
@@ -831,14 +888,15 @@ class ChatwootDailyCollector:
         conversation_id: int,
         window_start: datetime,
         window_end: datetime,
-    ) -> tuple[ReviewMessage, ...]:
-        """Todo lo que paso en la conversacion dentro de la ventana, clasificado.
+    ) -> tuple[tuple[ReviewMessage, ...], str | None]:
+        """Todo lo que paso en la conversacion dentro de la ventana, clasificado,
+        y quien la abrio (``conversation_opener``).
 
         A diferencia de v1 entran los mensajes del equipo, las notas privadas,
         las actividades (etiquetas, asignacion, resolucion) y los envios
         fallidos: el revisor tiene que ver lo mismo que veria en Chatwoot.
         """
-        by_id = self._fetch_messages_by_id(
+        by_id, reached_start = self._fetch_message_history(
             client, conversation_id=conversation_id, window_start=window_start
         )
         selected: list[ReviewMessage] = []
@@ -874,7 +932,19 @@ class ChatwootDailyCollector:
                     meta=meta,
                 )
             )
-        return tuple(selected)
+        messages = tuple(selected)
+        # Quien la abrio importa solo si entra al lote (el lead escribio en la
+        # ventana): paginar de mas por cada conversacion del inbox alarga la
+        # recoleccion, que tiene que entrar en la lease.
+        opened_by: str | None = None
+        if any(message.actor == "prospect" for message in messages):
+            if not reached_start:
+                reached_start = self._page_to_history_start(
+                    client, conversation_id=conversation_id, by_id=by_id
+                )
+            if reached_start:
+                opened_by = conversation_opener(by_id.values())
+        return messages, opened_by
 
     def _conversation_context(
         self, conversation: dict[str, object], *, conversation_id: int
@@ -998,12 +1068,22 @@ def classify_chatwoot_message(
             kind = "first_touch_template"
         elif "recovery_followup_hash" in attributes:
             kind = "followup_template"
+        elif "conversation_followup_command_key" in attributes:
+            # El seguimiento con cupon (send_followup_template) trae el link en
+            # el texto, pero es una plantilla fija, no una respuesta del agente.
+            # Capturado en el inbox 11 de ATT1 el 2026-10-15 (conversacion 120).
+            kind = "discount_followup_template"
         elif _PAYMENT_LINK_RE.search(content):
             kind = "payment_link"
         elif "appointment_setter_reply_hash" in attributes:
             kind = "agent_reply"
         else:
             kind = "agent_message"
+        if kind in {"payment_link", "agent_reply"} and "appointment_setter_reply_hash" in attributes:
+            # Lo escribio el modelo: send_agent_bot_reply estampa el hash en la
+            # respuesta y en el link de pago (el texto es del agente con la URL
+            # inyectada). Las plantillas no lo llevan.
+            meta["model_authored"] = True
         return ClassifiedMessage(actor="agent", kind=kind, status=status, meta=meta)
     if message_type == 1 and sender_type == "user":
         if sender_name:
@@ -1014,6 +1094,44 @@ def classify_chatwoot_message(
             meta["author"] = sender_name
         actor = "agent" if sender_type == "agent_bot" else "team"
         return ClassifiedMessage(actor=actor, kind="template_message", status=status, meta=meta)
+    return None
+
+
+def conversation_opener(messages: Iterable[Mapping[str, object]]) -> str | None:
+    """Quien abrio la conversacion, mirando su primer mensaje publico.
+
+    ``prospect``: el lead escribio primero sin responder a un mensaje anterior
+    (inbound; en el inbox 11 de ATT1, capturado el 2026-10-15, la conversacion
+    163 trae ``in_reply_to`` e ``in_reply_to_external_id`` en null).
+    ``prospect_reply``: escribio primero, pero respondiendo a un mensaje que se
+    le habia mandado antes, que en Chatwoot puede estar en otra conversacion ya
+    resuelta (la respuesta 2969 de la conversacion 120 trae ``in_reply_to`` con
+    el id de la plantilla).
+    ``agent``: una plantilla o un mensaje del bot. ``team``: un humano.
+    Las actividades y las notas privadas no abren una conversacion.
+    """
+    ordered = sorted(
+        (message for message in messages if type(message.get("created_at")) is int),
+        key=lambda message: (int(message["created_at"]), int(message.get("id") or 0)),
+    )
+    for message in ordered:
+        message_type = message.get("message_type")
+        if message_type not in (0, 1, 3) or message.get("private") is True:
+            continue
+        sender_raw = message.get("sender")
+        sender_type = sender_raw.get("type") if isinstance(sender_raw, dict) else None
+        if message_type == 0:
+            if sender_type != "contact":
+                return None
+            attributes_raw = message.get("content_attributes")
+            attributes = attributes_raw if isinstance(attributes_raw, dict) else {}
+            replying = any(attributes.get(key) for key in ("in_reply_to", "in_reply_to_external_id"))
+            return "prospect_reply" if replying else "prospect"
+        if sender_type == "agent_bot":
+            return "agent"
+        if sender_type == "user":
+            return "team"
+        return None
     return None
 
 
@@ -1256,8 +1374,21 @@ def _annotate_payment_links(
         meta["purchased"] = link.get("purchased_at") is not None
         if link.get("offer_code"):
             meta["offer_code"] = link.get("offer_code")
-        annotated.append(replace(message, kind="payment_link", meta=meta))
+        # El cupon emite su propio link: sigue siendo la plantilla, con los
+        # datos del link al lado.
+        kind = message.kind if message.kind in _LINK_CARRYING_TEMPLATE_KINDS else "payment_link"
+        annotated.append(replace(message, kind=kind, meta=meta))
     return tuple(annotated)
+
+
+_LINK_CARRYING_TEMPLATE_KINDS = frozenset({"discount_followup_template"})
+
+# Los filtros de la pagina de revision. Se calculan al armar el lote y viajan en
+# context.summary.review_facets; la pagina y la SQL solo comparan etiquetas.
+# ``model_reply``: el modelo escribio algo mas que el link; ``payment_link``: el
+# modelo mando el link. Medido en el lote de ATT1 del 2026-10-13: 8 de las 28
+# conversaciones eran plantilla, pedido del link y el link, nada mas.
+REVIEW_FACETS = ("handoff", "model_reply", "payment_link", "inbound", "opt_out")
 
 
 def summarize_conversation(
@@ -1274,6 +1405,19 @@ def summarize_conversation(
     handoffs = [event for event in events if event.get("kind") == "handoff"]
     reactivations = [event for event in events if event.get("kind") == "reactivation"]
     agent_messages = [message for message in messages if message.actor == "agent"]
+    model_kinds = [message.kind for message in agent_messages if message.meta.get("model_authored") is True]
+    opt_out = any(event.get("kind") == "opt_out" for event in events)
+    facets: list[str] = []
+    if handoffs:
+        facets.append("handoff")
+    if any(kind != "payment_link" for kind in model_kinds):
+        facets.append("model_reply")
+    if "payment_link" in model_kinds:
+        facets.append("payment_link")
+    if conversation.get("opened_by") == "prospect":
+        facets.append("inbound")
+    if opt_out:
+        facets.append("opt_out")
     last = messages[-1] if messages else None
     return {
         "prospect_messages": sum(1 for message in messages if message.actor == "prospect"),
@@ -1289,11 +1433,13 @@ def summarize_conversation(
             else None
         ),
         "reactivation_count": len(reactivations),
-        "opt_out": any(event.get("kind") == "opt_out" for event in events),
+        "opt_out": opt_out,
         "automation_paused": "automation_paused" in labels,
         "status": conversation.get("status"),
         "last_actor": last.actor if last is not None else None,
         "last_message_at": _iso(last.occurred_at) if last is not None else None,
+        "model_messages": len(model_kinds),
+        "review_facets": facets,
     }
 
 

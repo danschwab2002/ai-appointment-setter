@@ -1032,7 +1032,8 @@ class InstanceNetwork:
             }
         if name == "get_daily_feedback_readiness_v1":
             return {"status": "ok", "delivery_unknown_count": 0, "checked_at": payload["p_now"]}
-        if name == "get_daily_feedback_review_page_v1":
+        if name == "get_daily_feedback_review_page_v2":
+            assert payload["p_facets"] == ["handoff", "model_reply", "inbound"]
             return REVIEW_PAGE
         if name == "purge_expired_daily_feedback_v2":
             return {"status": "purged", "count": 0}
@@ -1133,7 +1134,7 @@ def test_att1_set_starts_the_real_factory_and_ready_lists_the_three_exceptions(
     assert network.rpc_names() == [
         "configure_daily_feedback_scope_v2",
         "get_daily_feedback_readiness_v1",
-        "get_daily_feedback_review_page_v1",
+        "get_daily_feedback_review_page_v2",
         "purge_expired_daily_feedback_v2",
         "claim_daily_feedback_collection_v1",
         "claim_daily_feedback_notification_v1",

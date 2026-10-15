@@ -8,6 +8,40 @@ Cada versión dice qué cambia y **qué tiene que hacer quien actualiza una inst
 
 Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab2002/setter-bridge`, `setter-slack-connector` y `setter-daily-feedback`. La release de GitHub lleva el digest de cada una. Cómo se pasa un servicio a la imagen y cómo se vuelve atrás: [docs/operations/release-por-imagen-v1.md](docs/operations/release-por-imagen-v1.md).
 
+## [1.8.0] - sin publicar
+
+La página de la revisión diaria se puede filtrar por tipo de conversación, y quien revisa puede cerrar el lote sin revisarlo entero, con una aprobación escrita. Pedido de Dan del 2026-10-14, después de la reunión con Mariana: el lote de ATT1 del 2026-10-13 traía 28 conversaciones y en la mayoría no había nada que revisar ([contrato](docs/contracts/daily-feedback-review-package-v2.md), sección 11).
+
+Trae una migración, que agrega una tabla y dos funciones y reemplaza otras dos. Ninguna variable ni campo del manifiesto. Le cambia algo a toda instancia con la revisión diaria, que hoy son Johanna y ATT1.
+
+### Agregado
+
+- **Las etiquetas de filtro, calculadas al armar el lote** (`context.summary.review_facets`): derivación, respuesta de la IA (el modelo escribió algo más que el link), link de pago de la IA, inbound (la abrió el lead sin responder a un mensaje nuestro) y opt-out. Para saber quién abrió la conversación, el colector pagina más allá de la ventana solo en las conversaciones que entran al lote (`context.conversation.opened_by`).
+- **El desplegable de la página**, con el conteo de pendientes de cada etiqueta. Arranca con derivación, respuesta de la IA e inbound, y se puede ver todo.
+- **El cierre del lote con aprobación escrita** (`close_daily_feedback_batch_v1`, tabla `daily_feedback_batch_closures`): una casilla obligatoria con la frase *«Apruebo que este reporte se cierre sin completar el feedback de todas las conversaciones.»*. El lote queda completo y las conversaciones sin revisar no reciben decisión, así que no figuran como revisadas al día siguiente ni en el feedback.
+- **`get_daily_feedback_review_page_v2`**: la cola filtrada y sus conteos.
+
+### Cambiado
+
+- **`record_daily_feedback_decision_v1` acepta cualquier conversación pendiente del lote**, no solo la primera por índice: con un filtro, la que se ve no es la primera.
+- **`get_daily_feedback_review_page_v1` da por completo un lote cerrado.**
+
+### Arreglado
+
+- **El seguimiento con cupón figuraba como un link de pago del agente.** La anotación de links le cambiaba el tipo porque el cupón emite su propio link. Ahora es `discount_followup_template` («Plantilla · seguimiento con cupón») y conserva los datos del link.
+
+### Qué hace quien actualiza
+
+1. Correr la migración `20261015000100` **antes** de subir la imagen de la revisión. Si la imagen llega primero, la página sigue andando como antes, sin filtros ni cierre, hasta que se corra.
+2. Subir `setter-daily-feedback` a la 1.8.0 y redesplegar el servicio de la revisión. El bridge no cambia.
+
+Los lotes armados antes de la 1.8.0 no traen etiquetas: la página los muestra enteros, con un aviso.
+
+### Verificado antes de publicar
+
+- La migración, sobre PGlite (`tests/sql/followup_engine/validate_daily_feedback_review_filters.mjs`, en `npm test`): el filtro, la decisión fuera de orden, el cierre con y sin la frase, un lote anterior a los filtros, los permisos y la purga. Con la regla vieja de la decisión, el validador falla con `review_item_not_current`.
+- El colector nuevo, contra el Chatwoot de ATT1 en solo lectura, sobre la ventana del lote del 2026-10-13: las mismas 28 conversaciones; con el filtro por defecto se ven 14 (22 sumando el link de pago). La paginación extra sumó 3 pedidos a Chatwoot (260 contra 257).
+
 ## [1.7.0] - sin publicar
 
 El producto declara cómo queda el Hermes de una instancia, y trae el instalador y el chequeo de deriva ([ADR-0025](docs/decisions/0025-cada-instancia-tiene-su-hermes-declarado-por-el-producto.md)). No cambia el bridge.
