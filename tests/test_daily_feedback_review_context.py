@@ -294,6 +294,7 @@ def test_classify_ignores_other_bots_and_keeps_the_agent_decision() -> None:
         "chatwoot_message_id": 77,
         "decision": "handoff",
         "reason_code": "commercial_exception",
+        "model_authored": True,
     }
     # un marcador con forma rara no entra (no rompe)
     odd = classify_chatwoot_message(

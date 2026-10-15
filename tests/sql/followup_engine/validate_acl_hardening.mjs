@@ -200,7 +200,9 @@ const rows = await db.query(`
       ('record_daily_feedback_decision_v1(uuid,text,text,uuid,uuid,text,text)'),
       ('get_daily_feedback_readiness_v1(text,text,timestamp with time zone)'),
       ('purge_expired_daily_feedback_v2(timestamp with time zone,text,text,text,integer)'),
-      ('get_daily_feedback_conversation_context_v1(text,text,bigint,bigint,bigint[])')
+      ('get_daily_feedback_conversation_context_v1(text,text,bigint,bigint,bigint[])'),
+      ('get_daily_feedback_review_page_v2(text,uuid,text[])'),
+      ('close_daily_feedback_batch_v1(uuid,text,text,uuid,text)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -234,9 +236,11 @@ const result = rows.rows[0];
 // the portable inbound admission that adopts the conversation of a pilot
 // template (20261001000400) adds one, and the portable claim of the discount
 // follow-up (20261010000100) adds one, and the last payment failure for the
-// agent input plus the payment slip events (20261012000100) add two.
+// agent input plus the payment slip events (20261012000100) add two, and the
+// filtered review page and the batch closure of the daily feedback
+// (20261015000100) add two.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 122) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 124) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

@@ -27,6 +27,7 @@ Por conversacion del inbox configurado, actualizada dentro de la ventana, entran
 | `message_type 1`, sender `agent_bot` con el id configurado, `content_attributes.reactivation_command_key` | `agent` | `reactivation_template` |
 | idem con `recovery_first_touch_hash` | `agent` | `first_touch_template` |
 | idem con `recovery_followup_hash` | `agent` | `followup_template` |
+| idem con `conversation_followup_command_key` (seguimiento con cupon, desde 2026-10-15) | `agent` | `discount_followup_template` |
 | idem con una URL de `hotmart.com` en el texto | `agent` | `payment_link` |
 | idem con `appointment_setter_reply_hash` | `agent` | `agent_reply` |
 | idem sin marcador | `agent` | `agent_message` |
@@ -184,3 +185,90 @@ El texto del SOUL **no** entra al paquete: son 19 KB por release y vive en
 
 Una conversacion sin turno registrado se queda con el marcador, no con el release
 de otra: la lectura falla blando y el informe sale igual.
+
+## 11. Filtros de la pagina y cierre del lote (desde 2026-10-15)
+
+Pedido de Dan del 2026-10-14, tras la reunion con Mariana: el lote de ATT1 del
+2026-10-13 traia 28 conversaciones y en la mayoria no habia nada que revisar.
+Migracion `20261015000100_daily_feedback_review_filters_v1.sql`.
+
+### 11.1 Lo que suma el colector
+
+- **`meta.model_authored = true`** en los mensajes del bot que llevan
+  `appointment_setter_reply_hash` y no son plantilla: la respuesta del agente y el
+  link de pago (el texto es del modelo con la URL inyectada). No depende de
+  `appointment_setter_decision`, que el link de ATT1 no trae (capturado el
+  2026-10-15, `tests/fixtures/chatwoot_daily_feedback_att1_conversations_20261015.json`).
+- **`discount_followup_template`**: el seguimiento con cupon. Lleva el link en el
+  boton de la plantilla, no en el texto, y emite su propio link; la anotacion de
+  links le suma la atribucion pero no le cambia el tipo.
+- **`context.conversation.opened_by`**: quien abrio la conversacion, por su primer
+  mensaje publico. `prospect` (el lead escribio primero sin responder a nada),
+  `prospect_reply` (escribio primero respondiendo a un mensaje anterior:
+  `in_reply_to` o `in_reply_to_external_id` con valor), `agent`, `team` o `null`.
+  Para saberlo, el colector sigue paginando mas alla de la ventana, solo en las
+  conversaciones que entran al lote y con su propio tope de paginas; si no llega
+  al primer mensaje, queda `null` y el lote sale igual.
+- **`context.summary.model_messages`** y **`context.summary.review_facets`**: las
+  etiquetas de filtro, en este orden:
+
+| Etiqueta | Cuando |
+|---|---|
+| `handoff` | hubo al menos una derivacion |
+| `model_reply` | el modelo escribio algo mas que el link |
+| `payment_link` | el modelo mando el link de pago |
+| `inbound` | `opened_by = prospect` |
+| `opt_out` | hubo un opt-out |
+
+Un lote armado antes de este cambio no trae `review_facets` y la pagina lo
+muestra entero.
+
+### 11.2 `get_daily_feedback_review_page_v2(p_session_hash, p_public_ref, p_facets text[])`
+
+Autentica con la v1. Sin etiquetas (`null` o arreglo vacio), o en un lote sin
+`review_facets`, devuelve lo mismo que la v1. Con etiquetas, la primera
+conversacion pendiente que tenga alguna (`?|`). Agrega siempre `queue`:
+`pending`, `matching`, `faceted`, `filtering` y `facets` (conteo por etiqueta de
+lo pendiente). Si quedan pendientes pero ninguna coincide: `status =
+filtered_out`, sin `item`. Etiquetas con otra forma, mas de 8 o nulas:
+`invalid_review_facets`.
+
+`record_daily_feedback_decision_v1` acepta cualquier conversacion pendiente del
+lote, no solo la primera por indice (con un filtro, la que se ve no es la
+primera). Sigue rechazando con `review_item_not_current` una conversacion de
+otro lote, ya decidida o de un lote cerrado.
+
+### 11.3 `close_daily_feedback_batch_v1(p_command_id, p_semantic_fingerprint, p_session_hash, p_public_ref, p_acknowledgement)`
+
+Cierra el lote si queda al menos una pendiente y la frase es exactamente
+`Apruebo que este reporte se cierre sin completar el feedback de todas las
+conversaciones.` (si no, `review_closure_not_acknowledged`; sin pendientes o ya
+cerrado, `review_batch_not_open`). Guarda un renglon en
+`daily_feedback_batch_closures` (quien, la frase, cuantas decididas y cuantas sin
+revisar), inmutable, y pasa el lote a `completed`. Las conversaciones sin
+revisar **no reciben decision**: no aparecen como revision previa ni en el
+feedback que baja al vault. Despues, las dos paginas devuelven `complete` con
+`closed_unreviewed_count` y `closed_at`. La purga borra items y decisiones; el
+lote y su cierre quedan, como el tombstone.
+
+### 11.4 La pagina
+
+- `GET /review/{ref}` lee el filtro de la URL: sin parametros, `handoff`,
+  `model_reply` e `inbound`; `?ver=<etiqueta>` (repetible) o `?ver=todas`; el
+  formulario del desplegable manda `filtro=1` y las casillas marcadas (ninguna =
+  todas). Un valor desconocido se ignora.
+- Si la base todavia no tiene la migracion (la v2 da 404), la pagina usa la v1 y
+  se ve como antes, sin filtros ni cierre.
+- El desplegable muestra cada etiqueta con su conteo de pendientes y "N de M
+  pendientes con este filtro". La decision conserva el filtro en la redireccion
+  (sin parametros si es el de por defecto).
+- `POST /review/{ref}/close` exige el mismo origen y el CSRF de la decision, mas
+  la casilla `acknowledgement=acepto`; sin la casilla, 422 y no llama a nada. En
+  el panel de la conversacion el cierre va plegado y como boton secundario; en
+  la pagina de "no quedan con este filtro", como el principal.
+
+Medido antes del deploy, con el colector nuevo sobre la ventana del lote de ATT1
+del 2026-10-13 (solo lectura contra su Chatwoot, 2026-10-15 ≈01:30Z): las mismas
+28 conversaciones; con el filtro por defecto se ven 14, y 22 si se suma el link
+de pago. La paginacion extra agrego 3 pedidos a Chatwoot (260 contra 257).
+

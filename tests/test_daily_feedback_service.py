@@ -75,8 +75,10 @@ class FakeRepository:
                 "return_path": "/daily-feedback/review/22222222-2222-4222-8222-222222222222",
                 "public_ref": "22222222-2222-4222-8222-222222222222",
             }
-        if name == "get_daily_feedback_review_page_v1":
+        if name in {"get_daily_feedback_review_page_v1", "get_daily_feedback_review_page_v2"}:
             return self.page
+        if name == "close_daily_feedback_batch_v1":
+            return {"status": "closed", "decided_count": 1, "unreviewed_count": 1, "item_count": 2}
         if name == "record_daily_feedback_decision_v1":
             return {
                 "status": "recorded",
@@ -412,9 +414,11 @@ def test_review_renders_only_the_current_escaped_conversation() -> None:
     assert "<script>alert(1)</script>" not in response.text
     assert "correct_with_feedback" in response.text
     rpc_name, rpc_payload = repository.calls[-1]
-    assert rpc_name == "get_daily_feedback_review_page_v1"
+    assert rpc_name == "get_daily_feedback_review_page_v2"
     assert rpc_payload["p_public_ref"] == batch_ref
     assert isinstance(rpc_payload["p_session_hash"], str)
+    # Sin parametros, el filtro por defecto: derivacion, respuesta de la IA e inbound.
+    assert rpc_payload["p_facets"] == ["handoff", "model_reply", "inbound"]
 
 
 def test_review_uses_chatwoot_inspired_operational_visual_system() -> None:
@@ -1480,3 +1484,330 @@ def test_scheduler_settings_reject_a_collection_lease_the_sql_would_refuse(
         ValueError, match="^invalid_daily_feedback_collection_lease_seconds$"
     ):
         validate_collection_lease_seconds(lease)
+
+
+# --- Filtros de la revision y cierre del lote (2026-10-15) --------------------
+
+from bridge.daily_feedback_service import (  # noqa: E402
+    DEFAULT_REVIEW_FACETS,
+    REVIEW_CLOSURE_ACKNOWLEDGEMENT,
+    parse_review_filter,
+    review_filter_suffix,
+)
+
+BATCH_REF = "22222222-2222-4222-8222-222222222222"
+# La cola que devuelve get_daily_feedback_review_page_v2 (migracion 20261015000100),
+# con la mezcla del lote de ATT1 del 2026-10-13: 28 conversaciones, 7 opt-outs.
+QUEUE = {
+    "pending": 24,
+    "matching": 18,
+    "faceted": True,
+    "filtering": True,
+    "facets": {"handoff": 10, "model_reply": 9, "payment_link": 17, "inbound": 3, "opt_out": 7},
+}
+
+
+def _logged_in(page: dict[str, object] | None = None) -> tuple[TestClient, FakeRepository]:
+    client, repository = _client()
+    if page is not None:
+        repository.page = page
+    started = client.get(f"/auth/slack/start?batch_ref={BATCH_REF}", follow_redirects=False)
+    state = parse_qs(urlsplit(started.headers["location"]).query)["state"][0]
+    client.get(f"/auth/slack/callback?code=authorization-code&state={state}", follow_redirects=False)
+    return client, repository
+
+
+def _page_with_queue(**queue: object) -> dict[str, object]:
+    page = dict(FakeRepository().page)
+    page["queue"] = {**QUEUE, **queue}
+    return page
+
+
+def test_parse_review_filter_defaults_all_and_ignores_unknown_values() -> None:
+    assert parse_review_filter([]) == DEFAULT_REVIEW_FACETS == ("handoff", "model_reply", "inbound")
+    assert parse_review_filter([("ver", "opt_out")]) == ("opt_out",)
+    # El orden es el canonico y no se repite.
+    assert parse_review_filter([("ver", "inbound"), ("ver", "handoff"), ("ver", "handoff")]) == ("handoff", "inbound")
+    assert parse_review_filter([("ver", "todas")]) is None
+    assert parse_review_filter([("ver", "opt_out"), ("ver", "todas")]) is None
+    # El formulario con todas las casillas desmarcadas es ver todas.
+    assert parse_review_filter([("filtro", "1")]) is None
+    assert parse_review_filter([("ver", "<script>")]) == DEFAULT_REVIEW_FACETS
+    assert review_filter_suffix(DEFAULT_REVIEW_FACETS) == ""
+    assert review_filter_suffix(("opt_out",)) == "?ver=opt_out"
+    assert review_filter_suffix(None) == "?ver=todas"
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("", ["handoff", "model_reply", "inbound"]),
+        ("?ver=opt_out", ["opt_out"]),
+        ("?filtro=1&ver=handoff&ver=opt_out", ["handoff", "opt_out"]),
+        ("?ver=todas", None),
+        ("?filtro=1", None),
+    ],
+)
+def test_review_asks_the_filtered_page_with_the_chosen_facets(query: str, expected: list[str] | None) -> None:
+    client, repository = _logged_in(_page_with_queue())
+
+    response = client.get(f"/review/{BATCH_REF}{query}")
+
+    assert response.status_code == 200
+    name, payload = repository.calls[-1]
+    assert name == "get_daily_feedback_review_page_v2"
+    assert payload["p_facets"] == expected
+
+
+def test_review_renders_the_filter_menu_with_counts_and_keeps_the_filter_in_the_decision() -> None:
+    client, _ = _logged_in(_page_with_queue(matching=6))
+
+    response = client.get(f"/review/{BATCH_REF}?ver=opt_out")
+
+    assert response.status_code == 200
+    text = response.text
+    assert '<details class="filter-menu"><summary>Ver: opt-out</summary>' in text
+    assert '<input type="checkbox" name="ver" value="opt_out" checked>' in text
+    assert '<input type="checkbox" name="ver" value="handoff">' in text
+    assert '<span>Con derivación</span><span class="filter-count">10</span>' in text
+    assert '<span>Opt-out</span><span class="filter-count">7</span>' in text
+    assert '<span>Con link de pago de la IA</span><span class="filter-count">17</span>' in text
+    assert "6 de 24 pendientes con este filtro" in text
+    assert f'href="/daily-feedback/review/{BATCH_REF}?ver=todas">Ver todas</a>' in text
+    assert f'action="/daily-feedback/review/{BATCH_REF}/decisions?ver=opt_out"' in text
+    # El cierre esta en el panel, plegado, con la casilla obligatoria.
+    assert '<details class="close-batch"><summary>Cerrar el reporte sin revisar las que quedan</summary>' in text
+    assert '<input type="checkbox" name="acknowledgement" value="acepto" required>' in text
+    assert REVIEW_CLOSURE_ACKNOWLEDGEMENT in text
+    assert "Quedan 24 sin revisar" in text
+    assert f'action="/daily-feedback/review/{BATCH_REF}/close"' in text
+    # Las dos formas llevan su propio comando.
+    assert text.count('name="command_id"') == 2
+
+
+def test_review_with_the_default_filter_keeps_clean_urls() -> None:
+    client, _ = _logged_in(_page_with_queue())
+
+    text = client.get(f"/review/{BATCH_REF}").text
+
+    assert '<summary>Ver: derivación, respuesta de la IA, inbound</summary>' in text
+    assert f'action="/daily-feedback/review/{BATCH_REF}/decisions"' in text
+    assert '<input type="checkbox" name="ver" value="opt_out">' in text
+
+
+def test_review_of_a_batch_built_before_the_filters_says_it_shows_everything() -> None:
+    client, _ = _logged_in(_page_with_queue(faceted=False, filtering=False, facets={}))
+
+    text = client.get(f"/review/{BATCH_REF}").text
+
+    assert "Este lote se armó antes de los filtros: se ven todas las conversaciones." in text
+    assert 'class="filter-menu"' not in text
+
+
+def test_review_falls_back_to_the_first_page_when_the_base_lacks_the_migration() -> None:
+    client, repository = _logged_in()
+    original = repository.rpc
+
+    async def rpc(name: str, payload: dict[str, object]) -> dict[str, object]:
+        if name == "get_daily_feedback_review_page_v2":
+            repository.calls.append((name, payload))
+            request = httpx.Request("POST", "https://supabase.example.test/rest/v1/rpc/" + name)
+            raise httpx.HTTPStatusError(
+                "not found", request=request, response=httpx.Response(404, request=request)
+            )
+        return await original(name, payload)
+
+    repository.rpc = rpc  # type: ignore[method-assign]
+
+    response = client.get(f"/review/{BATCH_REF}")
+
+    assert response.status_code == 200
+    assert [name for name, _ in repository.calls[-2:]] == [
+        "get_daily_feedback_review_page_v2",
+        "get_daily_feedback_review_page_v1",
+    ]
+    # Sin la migracion no hay filtros ni cierre: la pagina es la de siempre.
+    assert 'class="filter-bar"' not in response.text
+    assert 'class="close-batch"' not in response.text
+    assert ">Está correcta</button>" in response.text
+
+
+def test_review_turns_any_other_page_error_into_the_login_page() -> None:
+    client, repository = _logged_in()
+
+    async def rpc(name: str, payload: dict[str, object]) -> dict[str, object]:
+        request = httpx.Request("POST", "https://supabase.example.test/rest/v1/rpc/" + name)
+        raise httpx.HTTPStatusError("bad", request=request, response=httpx.Response(400, request=request))
+
+    repository.rpc = rpc  # type: ignore[method-assign]
+
+    assert client.get(f"/review/{BATCH_REF}").status_code == 401
+
+
+def test_filtered_out_page_offers_the_rest_and_the_closure() -> None:
+    page = {
+        "status": "filtered_out",
+        "local_date": "2026-10-13",
+        "item_count": 28,
+        "decided_count": 18,
+        "retention_expires_at": "2026-10-17T00:00:00Z",
+        "queue": {**QUEUE, "pending": 10, "matching": 0, "facets": {"opt_out": 6}},
+    }
+    client, _ = _logged_in(page)
+
+    response = client.get(f"/review/{BATCH_REF}")
+
+    assert response.status_code == 200
+    text = response.text
+    assert "<h1>No quedan conversaciones con este filtro</h1>" in text
+    assert "Quedan 10 de otros tipos." in text
+    assert f'<a class="filter-link" href="/daily-feedback/review/{BATCH_REF}?ver=todas">ver las 10 que quedan</a>' in text
+    assert '<input type="checkbox" name="acknowledgement" value="acepto" required>' in text
+    assert "Quedan 10 sin revisar: se cierran sin feedback y ya no se pueden revisar." in text
+    assert 'class="conversation"' not in text
+
+
+def _close_form(client: TestClient) -> tuple[str, str]:
+    text = client.get(f"/review/{BATCH_REF}").text
+    form = text.split('class="close-form"', 1)[1]
+    csrf = form.split('name="csrf_token" value="', 1)[1].split('"', 1)[0]
+    command_id = form.split('name="command_id" value="', 1)[1].split('"', 1)[0]
+    return csrf, command_id
+
+
+def test_closing_the_batch_requires_the_checked_approval_origin_and_csrf() -> None:
+    client, repository = _logged_in(_page_with_queue())
+    csrf, command_id = _close_form(client)
+    same_origin = {"Origin": "https://reviews.example.test"}
+    calls_before = len(repository.calls)
+
+    unchecked = client.post(
+        f"/review/{BATCH_REF}/close",
+        data={"csrf_token": csrf, "command_id": command_id},
+        headers=same_origin,
+        follow_redirects=False,
+    )
+    wrong_value = client.post(
+        f"/review/{BATCH_REF}/close",
+        data={"csrf_token": csrf, "command_id": command_id, "acknowledgement": "si"},
+        headers=same_origin,
+        follow_redirects=False,
+    )
+    bad_csrf = client.post(
+        f"/review/{BATCH_REF}/close",
+        data={"csrf_token": "x" * 43, "command_id": command_id, "acknowledgement": "acepto"},
+        headers=same_origin,
+        follow_redirects=False,
+    )
+    foreign = client.post(
+        f"/review/{BATCH_REF}/close",
+        data={"csrf_token": csrf, "command_id": command_id, "acknowledgement": "acepto"},
+        headers={"Origin": "https://attacker.example"},
+        follow_redirects=False,
+    )
+
+    assert unchecked.status_code == 422
+    assert "Para cerrar el reporte hay que marcar la aprobación." in unchecked.text
+    assert wrong_value.status_code == 422
+    assert bad_csrf.status_code == 403
+    assert foreign.status_code == 403
+    assert all(name != "close_daily_feedback_batch_v1" for name, _ in repository.calls[calls_before:])
+
+    closed = client.post(
+        f"/review/{BATCH_REF}/close",
+        data={"csrf_token": csrf, "command_id": command_id, "acknowledgement": "acepto"},
+        headers=same_origin,
+        follow_redirects=False,
+    )
+
+    assert closed.status_code == 303
+    assert closed.headers["location"] == f"/daily-feedback/review/{BATCH_REF}"
+    name, payload = repository.calls[-1]
+    assert name == "close_daily_feedback_batch_v1"
+    assert payload["p_acknowledgement"] == REVIEW_CLOSURE_ACKNOWLEDGEMENT
+    assert payload["p_command_id"] == command_id
+    assert payload["p_public_ref"] == BATCH_REF
+    assert payload["p_semantic_fingerprint"] == hashlib.sha256(
+        "\0".join((command_id, BATCH_REF, REVIEW_CLOSURE_ACKNOWLEDGEMENT)).encode("utf-8")
+    ).hexdigest()
+
+
+def test_a_failed_closure_says_so() -> None:
+    client, repository = _logged_in(_page_with_queue())
+    csrf, command_id = _close_form(client)
+    original = repository.rpc
+
+    async def rpc(name: str, payload: dict[str, object]) -> dict[str, object]:
+        if name == "close_daily_feedback_batch_v1":
+            raise RuntimeError("review_batch_not_open")
+        return await original(name, payload)
+
+    repository.rpc = rpc  # type: ignore[method-assign]
+    response = client.post(
+        f"/review/{BATCH_REF}/close",
+        data={"csrf_token": csrf, "command_id": command_id, "acknowledgement": "acepto"},
+        headers={"Origin": "https://reviews.example.test"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 409
+    assert "No se pudo cerrar el reporte." in response.text
+
+
+def test_decision_redirect_keeps_a_chosen_filter() -> None:
+    client, _ = _logged_in(_page_with_queue())
+    page = client.get(f"/review/{BATCH_REF}?ver=opt_out").text
+    csrf = page.split('name="csrf_token" value="', 1)[1].split('"', 1)[0]
+    command_id = page.split('name="command_id" value="', 1)[1].split('"', 1)[0]
+
+    accepted = client.post(
+        f"/review/{BATCH_REF}/decisions?ver=opt_out",
+        data={
+            "csrf_token": csrf,
+            "command_id": command_id,
+            "item_id": "33333333-3333-4333-8333-333333333333",
+            "decision": "skip",
+            "verbatim_feedback": "",
+        },
+        headers={"Origin": "https://reviews.example.test"},
+        follow_redirects=False,
+    )
+
+    assert accepted.status_code == 303
+    assert accepted.headers["location"] == f"/daily-feedback/review/{BATCH_REF}?ver=opt_out"
+
+
+def test_complete_page_says_how_many_were_closed_without_review() -> None:
+    client, _ = _logged_in(
+        {
+            "status": "complete",
+            "local_date": "2026-10-13",
+            "item_count": 28,
+            "decided_count": 18,
+            "retention_expires_at": "2026-10-17T00:00:00Z",
+            "closed_unreviewed_count": 10,
+            "closed_at": "2026-10-14T21:00:00Z",
+        }
+    )
+
+    text = client.get(f"/review/{BATCH_REF}").text
+
+    assert "Se registraron 18 decisiones." in text
+    assert "Las otras 10 se cerraron sin feedback, con la aprobación de quien cerró el reporte." in text
+
+
+def test_review_labels_the_discount_followup_as_a_template() -> None:
+    page = _page_with_queue()
+    item = dict(page["item"])  # type: ignore[arg-type]
+    item["messages"] = [
+        {"actor": "prospect", "kind": "prospect_message", "occurred_at": "2026-10-13T15:03:00Z",
+         "status": "sent", "text": "Envíame el enlace", "meta": {}},
+        {"actor": "agent", "kind": "discount_followup_template", "occurred_at": "2026-10-13T15:10:00Z",
+         "status": "read", "text": "Te reservamos un 10 % de descuento", "meta": {"attribution": "full"}},
+    ]
+    page["item"] = item
+    client, _ = _logged_in(page)
+
+    text = client.get(f"/review/{BATCH_REF}").text
+
+    assert '<span class="kind-tag kind-tag--template">Plantilla · seguimiento con cupón</span>' in text

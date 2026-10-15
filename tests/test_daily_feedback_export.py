@@ -28,8 +28,10 @@ from bridge.daily_feedback_export import (
     RealConversationSecurityPolicy,
     ReviewConversation,
     ReviewMessage,
+    REVIEW_FACETS,
     apply_conversation_context,
     classify_chatwoot_message,
+    conversation_opener,
     materialize_daily_review_package,
     purge_expired_review_bundle,
     render_review_html,
@@ -1985,7 +1987,7 @@ def test_v2_collects_a_captured_att1_conversation() -> None:
     ]
     assert [(message.actor, message.kind) for message in collected.messages] == expected_kinds
     # La respuesta es del bot 2, el de ATT1, y los audios del lead salen sin texto.
-    assert collected.messages[0].meta == {"chatwoot_message_id": 2668}
+    assert collected.messages[0].meta == {"chatwoot_message_id": 2668, "model_authored": True}
     assert collected.messages[1].meta == {"empty": True}
     assert collected.messages[7].meta == {
         "team": "att1 - revisión humana",
@@ -2021,3 +2023,259 @@ def test_v2_collects_a_captured_att1_conversation() -> None:
         "/api/v1/accounts/2/conversations/1/messages",
         "/api/v1/accounts/2/conversations/1/messages",
     ]
+
+
+# --- Filtros de la revision (2026-10-15) -------------------------------------
+# Dato real: las conversaciones 120 y 163 del inbox 11 de ATT1, capturadas el
+# 2026-10-15 (las dos entraron al lote del 2026-10-13). Ver el _capture del fixture.
+
+ATT1_FILTER_CAPTURE = _capture("chatwoot_daily_feedback_att1_conversations_20261015.json")
+
+
+def _att1_filter_messages(conversation_id: str) -> dict[int, dict[str, object]]:
+    conversation = ATT1_FILTER_CAPTURE["conversations"][conversation_id]
+    return {message["id"]: message for message in conversation["messages"]}
+
+
+def test_classifies_the_discount_followup_as_a_template_and_marks_what_the_model_wrote() -> None:
+    messages = _att1_filter_messages("120")
+
+    template = classify_chatwoot_message(messages[2962], agent_bot_id=2)
+    link = classify_chatwoot_message(messages[2971], agent_bot_id=2)
+    discount = classify_chatwoot_message(messages[3159], agent_bot_id=2)
+
+    assert template is not None and template.kind == "first_touch_template"
+    assert "model_authored" not in template.meta
+    # El link lo escribio el modelo: lleva appointment_setter_reply_hash. En ATT1
+    # sale sin appointment_setter_decision, asi que la marca no puede depender de eso.
+    assert "appointment_setter_decision" not in messages[2971]["content_attributes"]
+    assert link is not None and link.kind == "payment_link" and link.meta["model_authored"] is True
+    # El cupon lleva el link en el boton de la plantilla, no en el texto. En el lote
+    # del 2026-10-13 igual salia como payment_link: lo pisaba la anotacion de links,
+    # porque el cupon emite su propio link (ver el test de _annotate_payment_links).
+    assert "pay.hotmart.com" not in messages[3159]["content"]
+    assert messages[3159]["content_attributes"] == {"conversation_followup_command_key": "followup:120:2971"}
+    assert discount is not None and discount.kind == "discount_followup_template"
+    assert "model_authored" not in discount.meta
+    # Una respuesta comun del modelo tambien queda marcada.
+    reply = classify_chatwoot_message(
+        {"message_type": 1, "private": False, "content": "Claro, te cuento",
+         "content_attributes": {"appointment_setter_reply_hash": "h"},
+         "sender": {"type": "agent_bot", "id": 2}},
+        agent_bot_id=2,
+    )
+    assert reply is not None and reply.kind == "agent_reply" and reply.meta["model_authored"] is True
+
+
+def test_conversation_opener_reads_the_first_public_message() -> None:
+    assert conversation_opener(_att1_filter_messages("120").values()) == "agent"
+    # 163 la abrio el lead: in_reply_to viene, pero en null.
+    first = _att1_filter_messages("163")[3206]
+    assert first["content_attributes"] == {"in_reply_to_external_id": None, "in_reply_to": None}
+    assert conversation_opener(_att1_filter_messages("163").values()) == "prospect"
+    # 2969 es la respuesta del lead a la plantilla 2962. Si la plantilla quedo en
+    # otra conversacion ya resuelta, esta empieza con esa respuesta: no es inbound.
+    reply = _att1_filter_messages("120")[2969]
+    assert reply["content_attributes"]["in_reply_to"] == 2962
+    assert conversation_opener([reply]) == "prospect_reply"
+
+    contact = {"id": 10, "created_at": 100, "message_type": 0, "private": False,
+               "sender": {"type": "contact"}, "content_attributes": {}}
+    activity = {"id": 9, "created_at": 99, "message_type": 2, "private": False, "sender": None}
+    note = {"id": 8, "created_at": 98, "message_type": 1, "private": True, "sender": {"type": "user"}}
+    team = {"id": 11, "created_at": 101, "message_type": 1, "private": False, "sender": {"type": "user"}}
+    # Las actividades y las notas no abren la conversacion.
+    assert conversation_opener([team, contact, activity, note]) == "prospect"
+    assert conversation_opener([team, activity]) == "team"
+    assert conversation_opener([activity, note]) is None
+    assert conversation_opener([]) is None
+
+
+def _paged_chatwoot(conversation: dict[str, object], messages: list[dict[str, object]], *, page_size: int):
+    """Chatwoot como lo pagina: los mas nuevos primero, ``before`` por id."""
+    requests: list[object] = []
+    conversation_id = conversation["id"]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/accounts/2/conversations":
+            return httpx.Response(
+                200, json={"data": {"meta": {"all_count": 1}, "payload": [conversation]}}
+            )
+        if request.url.path == f"/api/v1/accounts/2/conversations/{conversation_id}/messages":
+            before = request.url.params.get("before")
+            requests.append(before)
+            older = [m for m in messages if before is None or m["id"] < int(before)]
+            page = sorted(older, key=lambda m: m["id"], reverse=True)[:page_size]
+            return httpx.Response(200, json={"payload": page})
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    return handler, requests
+
+
+def test_v2_pages_past_the_window_to_learn_who_opened_the_conversation() -> None:
+    # La ventana arranca entre las dos respuestas del lead: la plantilla del carrito
+    # (2962) y la primera respuesta (2968) quedan antes, asi que para saber quien la
+    # abrio hay que paginar mas alla del borde de la ventana.
+    captured = ATT1_FILTER_CAPTURE["conversations"]["120"]
+    handler, requests = _paged_chatwoot(
+        captured["conversation"], captured["messages"], page_size=2
+    )
+    package = _att1_collector(httpx.MockTransport(handler)).collect(
+        tenant_ref="lancemos",
+        scope_ref="att1-agent-bot",
+        window_start=datetime.fromtimestamp(1791817438, tz=UTC),
+        window_end=datetime(2026, 10, 14, tzinfo=UTC),
+    )
+
+    collected = package.conversations[0]
+    assert [message.kind for message in collected.messages] == [
+        "prospect_message",
+        "payment_link",
+        "conversation_resolved",
+        "discount_followup_template",
+    ]
+    assert collected.context["conversation"]["opened_by"] == "agent"
+    # Tres paginas hasta cruzar la ventana y una mas, vacia, para probar el comienzo.
+    assert requests == [None, "3024", "2969", "2962"]
+
+    enriched = apply_conversation_context(package, {})
+    summary = enriched.conversations[0].context["summary"]
+    # El unico mensaje del modelo es el link: el cupon es plantilla.
+    assert summary["model_messages"] == 1
+    assert summary["review_facets"] == ["payment_link"]
+
+
+def test_v2_marks_inbound_only_when_the_lead_opened_without_replying() -> None:
+    captured = ATT1_FILTER_CAPTURE["conversations"]["163"]
+    handler, _ = _paged_chatwoot(captured["conversation"], captured["messages"], page_size=20)
+    window = {
+        "tenant_ref": "lancemos",
+        "scope_ref": "att1-agent-bot",
+        "window_start": datetime(2026, 10, 13, 18, tzinfo=UTC),
+        "window_end": datetime(2026, 10, 14, tzinfo=UTC),
+    }
+    package = _att1_collector(httpx.MockTransport(handler)).collect(**window)
+    collected = package.conversations[0]
+    assert collected.context["conversation"]["opened_by"] == "prospect"
+    summary = apply_conversation_context(package, {}).conversations[0].context["summary"]
+    assert summary["review_facets"] == ["payment_link", "inbound"]
+
+    # El mismo primer mensaje respondiendo a una plantilla nuestra (los atributos
+    # reales de 2969): ya no es inbound.
+    replying = [dict(message) for message in captured["messages"]]
+    assert replying[0]["id"] == 3206
+    replying[0] = {
+        **replying[0],
+        "content_attributes": dict(_att1_filter_messages("120")[2969]["content_attributes"]),
+    }
+    handler, _ = _paged_chatwoot(captured["conversation"], replying, page_size=20)
+    package = _att1_collector(httpx.MockTransport(handler)).collect(**window)
+    summary = apply_conversation_context(package, {}).conversations[0].context["summary"]
+    assert package.conversations[0].context["conversation"]["opened_by"] == "prospect_reply"
+    assert summary["review_facets"] == ["payment_link"]
+
+
+def test_v2_history_past_the_window_has_its_own_page_limit_and_does_not_fail() -> None:
+    captured = ATT1_FILTER_CAPTURE["conversations"]["120"]
+    conversation = captured["conversation"]
+    template = _att1_filter_messages("120")[2962]
+    in_window = [m for m in captured["messages"] if m["id"] >= 2969]
+    # Antes de la plantilla, un historial que nunca termina: siempre otro mensaje
+    # mas viejo (una actividad), como si la conversacion tuviera miles.
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/accounts/2/conversations":
+            return httpx.Response(
+                200, json={"data": {"meta": {"all_count": 1}, "payload": [conversation]}}
+            )
+        before = request.url.params.get("before")
+        if before is None:
+            return httpx.Response(200, json={"payload": sorted(in_window, key=lambda m: -m["id"])})
+        older_id = int(before) - 1
+        if older_id == 2962:
+            return httpx.Response(200, json={"payload": [template]})
+        return httpx.Response(200, json={"payload": [
+            {"id": older_id, "created_at": 1791817000, "message_type": 2, "content": "x", "sender": None}
+        ]})
+
+    package = ChatwootDailyCollector(
+        base_url="https://chatwoot.example.test",
+        account_id=2,
+        inbox_id=11,
+        agent_bot_id=2,
+        access_token="not-a-real-token",
+        pseudonymization_key=b"k" * 32,
+        security_policy=_att1_security_policy(),
+        transport=httpx.MockTransport(handler),
+        package_version=2,
+        agent_bot_binding="unlinked",
+        max_message_pages=3,
+    ).collect(
+        tenant_ref="lancemos",
+        scope_ref="att1-agent-bot",
+        window_start=datetime.fromtimestamp(1791817438, tz=UTC),
+        window_end=datetime(2026, 10, 14, tzinfo=UTC),
+    )
+    # La ventana se junto entera; quien la abrio queda sin saberse.
+    assert len(package.conversations) == 1
+    assert package.conversations[0].context["conversation"]["opened_by"] is None
+    summary = apply_conversation_context(package, {}).conversations[0].context["summary"]
+    assert "inbound" not in summary["review_facets"]
+
+
+def test_review_facets_follow_handoff_model_reply_link_inbound_and_opt_out() -> None:
+    from bridge.daily_feedback_export import summarize_conversation
+
+    def message(kind: str, actor: str = "agent", **meta: object) -> ReviewMessage:
+        return ReviewMessage(
+            message_ref="msg_" + kind,
+            actor=actor,
+            text="x",
+            occurred_at=datetime(2026, 10, 13, tzinfo=UTC),
+            kind=kind,
+            status="read",
+            meta=dict(meta),
+        )
+
+    template_only = (message("first_touch_template"), message("prospect_message", "prospect"))
+    link_only = template_only + (message("payment_link", model_authored=True),)
+    with_model = link_only + (message("agent_reply", model_authored=True),)
+    assert summarize_conversation(template_only, {"conversation": {"opened_by": "agent"}})["review_facets"] == []
+    # Plantilla, pedido y link: solo la etiqueta del link, no la de la respuesta.
+    assert summarize_conversation(link_only, {})["review_facets"] == ["payment_link"]
+    summary = summarize_conversation(
+        with_model,
+        {
+            "conversation": {"opened_by": "prospect"},
+            "events": [{"kind": "handoff"}, {"kind": "opt_out"}],
+        },
+    )
+    assert summary["review_facets"] == list(REVIEW_FACETS)
+    assert summary["model_messages"] == 2
+    # El link de una plantilla (cupon) no cuenta como respuesta del modelo.
+    discount = template_only + (message("discount_followup_template", attribution="full"),)
+    assert summarize_conversation(discount, {})["review_facets"] == []
+
+
+def test_annotating_payment_links_keeps_the_discount_template() -> None:
+    from bridge.daily_feedback_export import _annotate_payment_links
+
+    def agent(kind: str, message_id: int) -> ReviewMessage:
+        return ReviewMessage(
+            message_ref=f"msg_{message_id}",
+            actor="agent",
+            text="https://pay.hotmart.com/X",
+            occurred_at=datetime(2026, 10, 13, tzinfo=UTC),
+            kind=kind,
+            status="read",
+            meta={"chatwoot_message_id": message_id},
+        )
+
+    links = [
+        {"chatwoot_message_id": 2971, "attribution": "full", "purchased_at": None, "offer_code": "2uafw5bg"},
+        {"chatwoot_message_id": 3159, "attribution": "full", "purchased_at": None, "offer_code": "2uafw5bg"},
+    ]
+    annotated = _annotate_payment_links(
+        (agent("agent_reply", 2971), agent("discount_followup_template", 3159)), links
+    )
+    assert [message.kind for message in annotated] == ["payment_link", "discount_followup_template"]
+    assert annotated[1].meta["attribution"] == "full" and annotated[1].meta["offer_code"] == "2uafw5bg"
