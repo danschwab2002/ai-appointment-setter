@@ -1,0 +1,481 @@
+{
+ "_captured": {
+  "origin": "tests/sql/followup_engine/validate_automation_expert_read.mjs, sobre la cadena completa de migraciones",
+  "captured_at": "2026-10-15T21:14:42.144Z"
+ },
+ "result": {
+  "now": {
+   "opted_out": false,
+   "purchased": true,
+   "live_actions": 0,
+   "human_takeover": false,
+   "pending_handoff": false
+  },
+  "lead": {
+   "identity": {
+    "has_email": true,
+    "has_phone": true,
+    "opted_out": false,
+    "whatsapp_authorized": false
+   },
+   "lead_ref": "a61c5051-1495-45fe-bdb0-3079805134e4",
+   "conversations": [
+    501
+   ],
+   "first_name_fallback": "Ana",
+   "first_name_inferred": "Ana"
+  },
+  "moments": [
+   {
+    "at": "2026-10-12T18:14:42.144-03:00",
+    "kind": "form_received",
+    "extra": {
+     "offer_ref": "2uafw5bg",
+     "landing_ref": "alimenta-tu-tiroides-d",
+     "lifecycle_state": "purchased",
+     "whatsapp_contact_authorized": true
+    },
+    "decision": null,
+    "evidence": {
+     "id": "b77727ca-8ea4-4f8b-bbe4-66f5a4ce43c1",
+     "table": "purchase_intents"
+    },
+    "flow_key": "precheckout",
+    "certainty": "stored",
+    "attached_by": "case",
+    "reason_code": null,
+    "flow_version": null,
+    "reason_code_rejected": false
+   },
+   {
+    "at": "2026-10-12T18:14:48.144-03:00",
+    "kind": "entered_flow",
+    "extra": {
+     "audience_mode": "consented_intent"
+    },
+    "decision": null,
+    "evidence": {
+     "id": "3c67393e-d1bb-4f2a-a18f-be6640f04115",
+     "table": "recovery_cases"
+    },
+    "flow_key": "precheckout",
+    "certainty": "stored",
+    "attached_by": "case",
+    "reason_code": null,
+    "flow_version": {
+     "scope": "att1-primer-contacto v2",
+     "policy": "att1-primer-contacto-formulario v1"
+    },
+    "reason_code_rejected": false
+   },
+   {
+    "at": "2026-10-12T18:14:48.144-03:00",
+    "kind": "first_contact_planned",
+    "extra": {
+     "winner_at": null,
+     "winner_flow_key": null
+    },
+    "decision": null,
+    "evidence": {
+     "id": "0ded8b81-730b-4658-9e95-97f611312b59",
+     "table": "portable_precheckout_first_contact_plans"
+    },
+    "flow_key": "precheckout",
+    "certainty": "stored",
+    "attached_by": "first_contact_plan",
+    "reason_code": "first_contact_scheduled",
+    "flow_version": {
+     "scope": "att1-primer-contacto v2",
+     "policy": "att1-primer-contacto-formulario v1"
+    },
+    "reason_code_rejected": false
+   },
+   {
+    "at": "2026-10-12T18:14:48.144-03:00",
+    "kind": "scheduled",
+    "extra": {
+     "due_at": "2026-10-12T19:14:42.144-03:00",
+     "status": "cancelled",
+     "step_key": "first_contact",
+     "expires_at": "2026-10-13T18:14:42.144-03:00",
+     "anchor_type": "precheckout_intent"
+    },
+    "decision": null,
+    "evidence": {
+     "id": "d851af25-def6-441c-a099-b87c98d54adf",
+     "table": "scheduled_actions"
+    },
+    "flow_key": "precheckout",
+    "certainty": "stored",
+    "attached_by": "case",
+    "reason_code": null,
+    "flow_version": {
+     "scope": "att1-primer-contacto v2",
+     "policy": "att1-primer-contacto-formulario v1"
+    },
+    "reason_code_rejected": false
+   },
+   {
+    "at": "2026-10-12T18:55:42.144-03:00",
+    "kind": "hotmart_event",
+    "extra": {
+     "event_role": "cart_abandonment",
+     "event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+     "matched_by": "email_and_phone",
+     "processing_status": "processed",
+     "correlation_outcome": "resolved"
+    },
+    "decision": null,
+    "evidence": {
+     "id": "c83b2486-aca3-4b07-afa1-67e7f2b4c6e5",
+     "table": "webhook_events"
+    },
+    "flow_key": "carrito",
+    "certainty": "stored",
+    "attached_by": "case",
+    "reason_code": null,
+    "flow_version": {
+     "scope": "att1-recuperacion v5",
+     "policy": "att1-recuperacion-un-toque v1"
+    },
+    "reason_code_rejected": false
+   },
+   {
+    "at": "2026-10-12T18:56:12.144-03:00",
+    "kind": "entered_flow",
+    "extra": {
+     "audience_mode": "consented_intent"
+    },
+    "decision": null,
+    "evidence": {
+     "id": "693934be-2bf7-4d75-a147-e54061a299e7",
+     "table": "recovery_cases"
+    },
+    "flow_key": "carrito",
+    "certainty": "stored",
+    "attached_by": "case",
+    "reason_code": null,
+    "flow_version": {
+     "scope": "att1-recuperacion v5",
+     "policy": "att1-recuperacion-un-toque v1"
+    },
+    "reason_code_rejected": false
+   },
+   {
+    "at": "2026-10-12T18:56:12.144-03:00",
+    "kind": "scheduled",
+    "extra": {
+     "due_at": "2026-10-12T18:56:12.144-03:00",
+     "status": "accepted_by_chatwoot",
+     "step_key": "first_contact",
+     "expires_at": "2026-10-13T18:14:42.144-03:00",
+     "anchor_type": "cart_abandonment"
+    },
+    "decision": null,
+    "evidence": {
+     "id": "169a0cee-a747-468d-ae62-38afd70006ce",
+     "table": "scheduled_actions"
+    },
+    "flow_key": "carrito",
+    "certainty": "stored",
+    "attached_by": "case",
+    "reason_code": null,
+    "flow_version": {
+     "scope": "att1-recuperacion v5",
+     "policy": "att1-recuperacion-un-toque v1"
+    },
+    "reason_code_rejected": false
+   },
+   {
+    "at": "2026-10-12T18:56:24.144-03:00",
+    "kind": "deferred_by_hours",
+    "extra": {
+     "count": 2,
+     "last_at": "2026-10-12T18:57:42.144-03:00",
+     "first_at": "2026-10-12T18:56:24.144-03:00"
+    },
+    "decision": "defer",
+    "evidence": {
+     "id": "169a0cee-a747-468d-ae62-38afd70006ce",
+     "table": "scheduled_actions"
+    },
+    "flow_key": "carrito",
+    "certainty": "stored",
+    "attached_by": "case",
+    "reason_code": "business_window_closed",
+    "flow_version": {
+     "scope": "att1-recuperacion v5",
+     "policy": "att1-recuperacion-un-toque v1"
+    },
+    "reason_code_rejected": false
+   },
+   {
+    "at": "2026-10-12T19:00:42.144-03:00",
+    "kind": "accepted_by_chatwoot",
+    "extra": {
+     "chatwoot_message_id": 3001
+    },
+    "decision": null,
+    "evidence": {
+     "id": "d5b37f00-d159-45a0-b12d-64192ef31967",
+     "table": "followup_delivery_attempts"
+    },
+    "flow_key": "carrito",
+    "certainty": "stored",
+    "attached_by": "case",
+    "reason_code": "accepted_by_chatwoot",
+    "flow_version": {
+     "scope": "att1-recuperacion v5",
+     "policy": "att1-recuperacion-un-toque v1"
+    },
+    "reason_code_rejected": false
+   },
+   {
+    "at": "2026-10-12T19:00:42.144-03:00",
+    "kind": "closed",
+    "extra": {
+     "case_status": "sequence_exhausted"
+    },
+    "decision": null,
+    "evidence": {
+     "id": "693934be-2bf7-4d75-a147-e54061a299e7",
+     "table": "recovery_cases"
+    },
+    "flow_key": "carrito",
+    "certainty": "stored",
+    "attached_by": "case",
+    "reason_code": null,
+    "flow_version": {
+     "scope": "att1-recuperacion v5",
+     "policy": "att1-recuperacion-un-toque v1"
+    },
+    "reason_code_rejected": false
+   },
+   {
+    "at": "2026-10-12T19:00:42.144-03:00",
+    "kind": "start_authorized",
+    "extra": {
+     "local_budget_date": "2026-10-12"
+    },
+    "decision": null,
+    "evidence": {
+     "id": "95f9eaa1-4700-4916-b296-c13b74129dc5",
+     "table": "pilot_outbound_request_authorizations"
+    },
+    "flow_key": "carrito",
+    "certainty": "stored",
+    "attached_by": "case",
+    "reason_code": "pilot_request_start_authorized",
+    "flow_version": {
+     "scope": "att1-recuperacion v5",
+     "policy": "att1-recuperacion-un-toque v1"
+    },
+    "reason_code_rejected": false
+   },
+   {
+    "at": "2026-10-12T19:14:42.144-03:00",
+    "kind": "stopped",
+    "extra": {
+     "winner_at": "2026-10-12T18:55:42.144-03:00",
+     "winner_flow_key": "carrito"
+    },
+    "decision": "cancel",
+    "evidence": {
+     "id": "3a2731ab-575d-4caf-a736-655da2663489",
+     "table": "conversation_events"
+    },
+    "flow_key": "precheckout",
+    "certainty": "stored",
+    "attached_by": "case",
+    "reason_code": "superseded_by_provider_event",
+    "flow_version": {
+     "scope": "att1-primer-contacto v2",
+     "policy": "att1-primer-contacto-formulario v1"
+    },
+    "reason_code_rejected": false
+   },
+   {
+    "at": "2026-10-12T19:46:42.144-03:00",
+    "kind": "replied_and_adopted",
+    "extra": {
+     "conversation": 501
+    },
+    "decision": null,
+    "evidence": {
+     "id": "5cbecf56-0ccc-4807-9890-2e9706bc0611",
+     "table": "conversation_events"
+    },
+    "flow_key": "carrito",
+    "certainty": "stored",
+    "attached_by": "case",
+    "reason_code": null,
+    "flow_version": {
+     "scope": "att1-recuperacion v5",
+     "policy": "att1-recuperacion-un-toque v1"
+    },
+    "reason_code_rejected": false
+   },
+   {
+    "at": "2026-10-12T19:47:12.144-03:00",
+    "kind": "agent_replied",
+    "extra": {
+     "model": "att1-agente-comercial",
+     "outcome": "completed",
+     "conversation": 501,
+     "bridge_release": "abcdef1234567",
+     "release_recorded": false
+    },
+    "decision": null,
+    "evidence": {
+     "id": "7c40a1ee-dd5f-4853-b44e-3b9a52a12615",
+     "table": "agent_turn_provenance"
+    },
+    "flow_key": null,
+    "certainty": "stored",
+    "attached_by": "conversation",
+    "reason_code": null,
+    "flow_version": null,
+    "reason_code_rejected": false
+   },
+   {
+    "at": "2026-10-13T19:44:42.144-03:00",
+    "kind": "agent_replied",
+    "extra": {
+     "model": "att1-agente-comercial",
+     "outcome": "completed",
+     "conversation": 501,
+     "bridge_release": "abcdef1234567",
+     "release_recorded": false
+    },
+    "decision": null,
+    "evidence": {
+     "id": "0df950b8-274d-4913-b749-2ddf515e16e0",
+     "table": "agent_turn_provenance"
+    },
+    "flow_key": null,
+    "certainty": "stored",
+    "attached_by": "conversation",
+    "reason_code": null,
+    "flow_version": null,
+    "reason_code_rejected": false
+   },
+   {
+    "at": "2026-10-13T19:52:42.144-03:00",
+    "kind": "coupon_sent",
+    "extra": {
+     "status": "sent",
+     "conversation": 501,
+     "with_checkout_link": true,
+     "chatwoot_message_id": 3101,
+     "inbound_age_seconds": 90000
+    },
+    "decision": null,
+    "evidence": {
+     "id": "06f24bd4-9079-4939-9e6f-8160aed76ccc",
+     "table": "conversation_followup_events"
+    },
+    "flow_key": "descuento",
+    "certainty": "stored",
+    "attached_by": "conversation",
+    "reason_code": "link_sent_no_purchase",
+    "flow_version": null,
+    "reason_code_rejected": false
+   },
+   {
+    "at": "2026-10-13T19:52:42.144-03:00",
+    "kind": "link_issued",
+    "extra": {
+     "status": "purchase_matched",
+     "source_kind": "inbound_request",
+     "conversation": 501,
+     "offer_resolution": "lead_intent",
+     "attribution_resolution": "full"
+    },
+    "decision": null,
+    "evidence": {
+     "id": "a8207b1d-0ae1-4ac0-af8a-7e97b0a6b55e",
+     "table": "checkout_link_issuances"
+    },
+    "flow_key": "descuento",
+    "certainty": "stored",
+    "attached_by": "link",
+    "reason_code": null,
+    "flow_version": null,
+    "reason_code_rejected": false
+   },
+   {
+    "at": "2026-10-13T19:54:42.144-03:00",
+    "kind": "handed_off",
+    "extra": {
+     "status": "projected",
+     "conversation": 501,
+     "detail_reason_code": "pricing_question"
+    },
+    "decision": null,
+    "evidence": {
+     "id": "dc5a955c-b1d0-4ce6-994e-023c7468156d",
+     "table": "human_handoff_requests"
+    },
+    "flow_key": null,
+    "certainty": "stored",
+    "attached_by": "conversation",
+    "reason_code": "policy_requires_human",
+    "flow_version": null,
+    "reason_code_rejected": false
+   },
+   {
+    "at": "2026-10-13T21:54:42.144-03:00",
+    "kind": "handoff_attended",
+    "extra": {
+     "conversation": 501
+    },
+    "decision": null,
+    "evidence": {
+     "id": "dc5a955c-b1d0-4ce6-994e-023c7468156d",
+     "table": "human_handoff_requests"
+    },
+    "flow_key": null,
+    "certainty": "stored",
+    "attached_by": "conversation",
+    "reason_code": null,
+    "flow_version": null,
+    "reason_code_rejected": false
+   },
+   {
+    "at": "2026-10-14T23:14:42.144-03:00",
+    "kind": "purchased",
+    "extra": {
+     "link_source": "coupon"
+    },
+    "decision": null,
+    "evidence": {
+     "id": "a8207b1d-0ae1-4ac0-af8a-7e97b0a6b55e",
+     "table": "checkout_link_issuances"
+    },
+    "flow_key": "descuento",
+    "certainty": "stored",
+    "attached_by": "link",
+    "reason_code": null,
+    "flow_version": null,
+    "reason_code_rejected": false
+   }
+  ],
+  "upcoming": [],
+  "gap_counts": {
+   "unattached_hotmart_event": 0,
+   "agent_release_not_persisted": 2,
+   "start_rejection_not_persisted": 0,
+   "purchase_channel_not_persisted": 0,
+   "case_creation_failure_not_persisted": 0
+  },
+  "database_at": "2026-10-15T18:14:42.212-03:00",
+  "moment_count": 20,
+  "adopted_conversations": [
+   {
+    "coupon_sent": true,
+    "conversation": 501,
+    "last_agent_turn_at": "2026-10-13T19:44:42.144-03:00"
+   }
+  ]
+ }
+}

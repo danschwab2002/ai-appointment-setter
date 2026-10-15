@@ -1,0 +1,10 @@
+{
+ "_captured": {
+  "origin": "tests/sql/followup_engine/validate_automation_expert_read.mjs, sobre la cadena completa de migraciones",
+  "captured_at": "2026-10-15T21:14:42.144Z"
+ },
+ "result": {
+  "result": "too_many_candidates",
+  "candidates": []
+ }
+}

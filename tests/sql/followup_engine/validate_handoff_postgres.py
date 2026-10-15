@@ -500,6 +500,12 @@ def verify_effective_acls(harness: PostgresHarness) -> None:
                      -- 20261010000100): el mismo predicado sobre
                      -- human_handoff_requests; solo lee esa tabla.
                      'claim_portable_conversation_followup_v1',
+                     -- Las lecturas del Automation Expert (migracion
+                     -- 20261015000200): atan un lead a la instancia por la
+                     -- bandeja de su derivacion y muestran cuando se derivo
+                     -- y cuando se atendio, sin la nota; solo leen esa tabla.
+                     'find_automation_expert_lead_v1',
+                     'read_automation_expert_lead_history_v1',
                      -- Marca human_handoff_requests.attended_at cuando
                      -- una persona del equipo escribe (migracion
                      -- 20260927000300). Es la unica funcion de esta
