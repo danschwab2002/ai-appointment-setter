@@ -129,6 +129,37 @@ def test_strict_json_keeps_integers_booleans_and_text() -> None:
     assert type(value["por_dia"]) is int and type(value["flag"]) is bool
 
 
+@pytest.mark.parametrize(
+    "raw",
+    [
+        # json.dumps escribe el sustituto suelto como un escape JSON, y json.loads lo decodifica.
+        pytest.param(json.dumps({"nombre": "Carrito \ud83d"}), id="escapado-en-un-valor"),
+        pytest.param(json.dumps({"topes": {"max\udfff": 1}}), id="escapado-en-una-clave"),
+        pytest.param(json.dumps({"pasos": [{"derivar": ["x", "\udc00"]}]}), id="escapado-en-una-lista"),
+        pytest.param('{"nombre": "Carrito \ud83d"}', id="crudo-en-el-texto"),
+        pytest.param('{"a": 1, "a": 2, "b": "\ud83d"}', id="antes-que-una-clave-repetida"),
+    ],
+)
+def test_a_lone_surrogate_is_invalid_json(raw: str) -> None:
+    with pytest.raises(StrictJSONError) as caught:
+        fd.loads_strict(raw)
+    assert caught.value.code == "invalid_json"
+    assert caught.value.finding is None
+
+
+def test_a_surrogate_pair_is_one_character_and_passes() -> None:
+    raw = json.dumps({"nombre": "Carrito \U0001f600"})
+    assert "\\ud83d\\ude00" in raw
+    assert fd.loads_strict(raw) == {"nombre": "Carrito \U0001f600"}
+
+
+def test_the_size_of_a_value_that_is_not_utf8_json_is_none() -> None:
+    assert fd.json_size({"nombre": "Carrito \ud83d"}) is None
+    assert fd.json_size({"max\udfff": 1}) is None
+    assert fd.json_size({"por_dia": float("nan")}) is None
+    assert fd.json_size({"nombre": "Carrito"}) == len('{"nombre": "Carrito"}')
+
+
 # ---------------------------------------------------------------------------
 # Las duraciones y las horas.
 # ---------------------------------------------------------------------------
@@ -160,7 +191,9 @@ def test_a_malformed_hour_is_none(text: object) -> None:
 
 
 # ---------------------------------------------------------------------------
-# El texto: sin controles ni bidi (Cc y Cf), en cualquier cadena del item.
+# El texto: sin controles ni bidi (Cc y Cf), sin un sustituto UTF-16 suelto
+# (Cs) y sin separadores de linea ni de parrafo (Zl y Zp), en cualquier cadena
+# del item.
 # ---------------------------------------------------------------------------
 
 CONTROL_AND_FORMAT = [
@@ -175,6 +208,12 @@ CONTROL_AND_FORMAT = [
     pytest.param("\n", id="LF"),
     pytest.param("\t", id="TAB"),
     pytest.param("\U000e0041", id="TAG"),
+    # Un sustituto suelto: json.loads lo decodifica de un escape JSON, y no se
+    # puede escribir en UTF-8 (validate explotaba con UnicodeEncodeError).
+    pytest.param("\ud83d", id="SUSTITUTO-ALTO"),
+    pytest.param("\udc00", id="SUSTITUTO-BAJO"),
+    pytest.param("\u2028", id="LS"),
+    pytest.param("\u2029", id="PS"),
 ]
 
 
@@ -213,6 +252,26 @@ def test_accents_ene_punctuation_and_a_simple_emoji_pass() -> None:
     # El selector de variante U+FE0F es Mn: pasa. El ZWJ de un emoji compuesto es Cf: no.
     assert not fd.has_control_or_format("\u2764\ufe0f")
     assert fd.has_control_or_format("\U0001f469\u200d\U0001f4bb")
+
+
+@pytest.mark.parametrize(
+    "character",
+    ["\u2028", "\u2029", "\ud800", "\udbff", "\udc00", "\udfff"],
+    ids=["LS", "PS", "D800", "DBFF", "DC00", "DFFF"],
+)
+def test_a_line_separator_or_a_lone_surrogate_is_not_text(character: str) -> None:
+    assert fd.has_control_or_format(f"a{character}b")
+    assert not fd.is_clean_text(f"a{character}b", 300)
+    # El espacio que no corta (Zs) si es texto.
+    assert not fd.has_control_or_format("a\u00a0b")
+
+
+@pytest.mark.parametrize("character", ["\u2028", "\ud83d", "\udfff"], ids=["LS", "D83D", "DFFF"])
+def test_a_separator_or_a_lone_surrogate_in_an_unknown_key_moves_the_path_to_its_parent(character: str) -> None:
+    definition = block("1")
+    definition["topes"][f"max{character}"] = 5
+    found = codes(normalize(definition).findings)
+    assert (1, "unknown_key", "/0/definicion/topes") in found
 
 
 def test_a_control_character_in_an_unknown_key_moves_the_path_to_its_parent() -> None:
@@ -612,6 +671,28 @@ def test_a_definition_over_32_kib_is_invalid_value_at_its_root() -> None:
     assert (1, "invalid_value", "/0/definicion") in codes(normalize(definition).findings)
 
 
+def test_an_oversized_definition_is_not_checked_string_by_string() -> None:
+    # El tamano se mide primero: lo que pasa de 32 KiB da ese hallazgo, en la raiz
+    # y primero, y no corre los chequeos por cadena (los identificadores de la 1a
+    # son cuadraticos en un tramo sin @).
+    definition = block("5b")
+    definition["pasos"][0]["entonces"] = [{"derivar": "Llamar al 5512345678\u202e " + "nota " * 7000}]
+    assert codes(normalize(definition).findings) == [(1, "invalid_value", "/0/definicion")]
+    # El mismo texto, corto: los dos chequeos por cadena corren.
+    definition["pasos"][0]["entonces"] = [{"derivar": "Llamar al 5512345678\u202e"}]
+    assert codes(normalize(definition).findings) == [
+        (1, "invalid_value", "/0/definicion/pasos/0/entonces/0/derivar"),
+        (None, "identifier_not_allowed", "/0/definicion/pasos/0/entonces/0/derivar"),
+    ]
+
+
+def test_a_definition_with_a_lone_surrogate_is_not_json_and_says_where() -> None:
+    definition = block("1")
+    definition["nombre"] = "Carrito \ud83d"
+    assert codes(normalize(definition).findings) == [
+        (1, "invalid_value", "/0/definicion"), (1, "invalid_value", "/0/definicion/nombre")]
+
+
 def test_a_definition_that_is_not_an_object_is_invalid_value() -> None:
     assert codes(fd.normalize_definition(["x"], new_flow=True, instance=INSTANCE).findings) == [
         (1, "invalid_value", "")]
@@ -798,6 +879,16 @@ def test_the_catalog_reads_the_inbox_and_has_its_fingerprint() -> None:
     for payload in (None, [], {"message_templates": {}}):
         with pytest.raises(ValueError):
             TemplateCatalog.from_inbox_payload(payload)
+
+
+def test_a_catalog_that_cannot_be_written_in_utf8_is_unavailable() -> None:
+    payload = copy.deepcopy(INBOX_11)
+    payload["message_templates"][0]["nota"] = "Hola \ud83d"
+    with pytest.raises(ValueError) as caught:
+        TemplateCatalog.from_inbox_payload(payload)
+    # El codigo de siempre, y no un UnicodeEncodeError (que tambien es un ValueError).
+    assert type(caught.value) is ValueError
+    assert str(caught.value) == "template_catalog_unavailable"
 
 
 # ---------------------------------------------------------------------------

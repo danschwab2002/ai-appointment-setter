@@ -290,13 +290,20 @@ def parse_hour(value: object) -> int | None:
     return int(match.group(1)) * 60 + int(match.group(2))
 
 
+# Lo que no entra en ninguna cadena de un item: los controles (Cc), los de
+# formato y direccion (Cf), un sustituto UTF-16 suelto (Cs, de U+D800 a U+DFFF:
+# no se puede escribir en UTF-8 ni guardar en un jsonb) y los separadores de
+# linea y de parrafo (Zl y Zp, U+2028 y U+2029: el texto es de una linea).
+_FORBIDDEN_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
+
+
 def has_control_or_format(text: str) -> bool:
-    """Si el texto tiene un caracter de categoria Unicode Cc o Cf.
+    """Si el texto tiene un caracter de categoria Unicode Cc, Cf, Cs, Zl o Zp.
 
     Es mas amplio que la clase de la base (``_flow_store_free_text_is_valid``),
     a proposito: incluye U+200D, asi que un emoji compuesto no entra.
     """
-    return any(unicodedata.category(character) in ("Cc", "Cf") for character in text)
+    return any(unicodedata.category(character) in _FORBIDDEN_CATEGORIES for character in text)
 
 
 def is_clean_text(text: object, max_chars: int) -> bool:
@@ -399,13 +406,14 @@ def depth_of(value: object) -> int:
 def json_size(value: object) -> int | None:
     """Los bytes del texto de un ``jsonb`` de Postgres (separadores con espacio, UTF-8).
 
-    None si el valor no es JSON (un ``NaN``, un objeto de Python).
+    None si el valor no es JSON: un ``NaN``, un objeto de Python o un sustituto
+    UTF-16 suelto, que no se puede escribir en UTF-8 (``UnicodeEncodeError``).
     """
     try:
         text = json.dumps(value, ensure_ascii=False, separators=(", ", ": "), allow_nan=False)
+        return len(text.encode("utf-8"))
     except (TypeError, ValueError, RecursionError):
         return None
-    return len(text.encode("utf-8"))
 
 
 # ---------------------------------------------------------------------------
@@ -549,12 +557,41 @@ def _finite_float(text: str) -> float:
     return value
 
 
+def _is_utf8_text(text: str) -> bool:
+    """Si el texto se puede escribir en UTF-8: no tiene un sustituto UTF-16 suelto."""
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _has_lone_surrogate(value: object) -> bool:
+    """Si alguna clave o cadena del valor JSON tiene un sustituto UTF-16 suelto."""
+    stack: list[object] = [value]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, str):
+            if not _is_utf8_text(current):
+                return True
+        elif isinstance(current, dict):
+            if not all(_is_utf8_text(key) for key in current):
+                return True
+            stack.extend(current.values())
+        elif isinstance(current, list):
+            stack.extend(current)
+    return False
+
+
 def loads_strict(text: str | bytes) -> Any:
     """Lee JSON sin perdonar: una clave repetida es ``duplicate_key``, con su ruta.
 
     ``NaN``, ``Infinity`` y un numero que no entra en un float son
-    ``invalid_json``. Los enteros quedan ``int``; que un valor sea entero y no
-    ``bool`` ni ``float`` lo mira la regla de cada clave.
+    ``invalid_json``, y tambien un sustituto UTF-16 suelto en una clave o en
+    una cadena (``\\ud83d`` sin su pareja): ``json.loads`` lo decodifica, pero
+    no es texto, no se escribe en UTF-8 y un ``jsonb`` no lo guarda. Los
+    enteros quedan ``int``; que un valor sea entero y no ``bool`` ni ``float``
+    lo mira la regla de cada clave.
     """
     if isinstance(text, (bytes, bytearray)):
         try:
@@ -570,6 +607,10 @@ def loads_strict(text: str | bytes) -> Any:
         )
     except (ValueError, RecursionError) as error:
         raise StrictJSONError("invalid_json") from error
+    # Un documento con un sustituto suelto no es texto: se rechaza entero, antes
+    # que una clave repetida.
+    if _has_lone_surrogate(value):
+        raise StrictJSONError("invalid_json")
     # La primera clave repetida, en el orden del documento.
     stack: list[tuple[tuple[Segment, ...], object]] = [((), value)]
     while stack:
@@ -632,16 +673,25 @@ class TemplateCatalog:
 
     @classmethod
     def from_inbox_payload(cls, payload: object) -> TemplateCatalog:
-        """Lee ``GET /inboxes/<id>`` de Chatwoot. Sin ``message_templates``, ValueError."""
+        """Lee ``GET /inboxes/<id>`` de Chatwoot.
+
+        Sin ``message_templates``, o con algo que no se puede escribir como JSON
+        en UTF-8 (un sustituto UTF-16 suelto, un valor que no es JSON), no hay
+        huella de lo que se miro: ``ValueError("template_catalog_unavailable")``.
+        """
         if not isinstance(payload, Mapping):
             raise ValueError("template_catalog_unavailable")
         templates = payload.get("message_templates")
         if not isinstance(templates, list):
             raise ValueError("template_catalog_unavailable")
-        canonical = json.dumps(templates, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        try:
+            canonical = json.dumps(templates, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            fingerprint = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        except (TypeError, ValueError, RecursionError) as error:
+            raise ValueError("template_catalog_unavailable") from error
         return cls(
             templates=tuple(template for template in templates if isinstance(template, Mapping)),
-            catalog_sha256=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+            catalog_sha256=fingerprint,
         )
 
     def named(self, name: str) -> tuple[Mapping[str, Any], ...]:
@@ -1014,6 +1064,16 @@ def check_definition(definition: object, *, published: bool = False,
     if depth_of(definition) > MAX_DEPTH:
         out.add(INVALID_VALUE, (), reason="La definición tiene más niveles de los que admite el esquema.")
         return tuple(out.findings)
+    # El tamano se mide primero. Lo que pasa de los 32 KiB no corre los chequeos
+    # por cadena: el de identificadores de la 1a (looks_like_identifier) es
+    # cuadratico en un tramo largo sin @ (63 s con 250 000 caracteres). Sin
+    # tamano (no es JSON, por ejemplo con un sustituto suelto) se mira cada
+    # cadena, que es lineal, para dar su ruta, pero no los identificadores.
+    size = json_size(definition)
+    if size is None:
+        out.add(INVALID_VALUE, (), reason="La definición no es JSON.")
+    elif size > DEFINITION_MAX_BYTES:
+        out.add(INVALID_VALUE, (), reason=f"La definición pasa de {DEFINITION_MAX_BYTES} bytes.")
 
     _check_keys(out, definition, (), _TOP_KEYS)
     for key in ("flujo", "nombre", "dispara", "pasos"):
@@ -1063,13 +1123,10 @@ def check_definition(definition: object, *, published: bool = False,
     if "prioridad" in definition:
         _check_priority(out, definition["prioridad"])
 
-    _check_strings(out, definition, ())
-    _check_identifiers(out, definition)
-    size = json_size(definition)
-    if size is None:
-        out.add(INVALID_VALUE, (), reason="La definición no es JSON.")
-    elif size > DEFINITION_MAX_BYTES:
-        out.add(INVALID_VALUE, (), reason=f"La definición pasa de {DEFINITION_MAX_BYTES} bytes.")
+    if size is None or size <= DEFINITION_MAX_BYTES:
+        _check_strings(out, definition, ())
+    if size is not None and size <= DEFINITION_MAX_BYTES:
+        _check_identifiers(out, definition)
     return tuple(out.findings)
 
 
@@ -1274,13 +1331,13 @@ def _check_priority(out: _Collector, priority: object) -> None:
 
 
 def _check_strings(out: _Collector, value: object, segments: tuple[Segment, ...]) -> None:
-    """Toda cadena con un caracter Cc o Cf es ``invalid_value``, con su ruta."""
+    """Toda cadena con un caracter Cc, Cf, Cs, Zl o Zp es ``invalid_value``, con su ruta."""
     stack: list[tuple[tuple[Segment, ...], object]] = [(segments, value)]
     while stack:
         at, current = stack.pop()
         if isinstance(current, str):
             if has_control_or_format(current):
-                out.add(INVALID_VALUE, at, reason="El texto tiene un carácter de control, de formato o de dirección (categorías Cc y Cf).")
+                out.add(INVALID_VALUE, at, reason="El texto tiene un carácter de control, de formato o de dirección, un separador de línea o un sustituto suelto (categorías Cc, Cf, Zl, Zp y Cs).")
         elif isinstance(current, Mapping):
             stack.extend((at + (key,), child) for key, child in reversed(list(current.items())))
         elif isinstance(current, list):

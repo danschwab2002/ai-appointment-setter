@@ -9,7 +9,9 @@ mira lo que el motor ejecuta ni el manifiesto.
 Corre una sola vez, aca, en Python. La base no lo repite: se queda con sus
 cuatro invariantes y con la regla de que nadie publica sin una revalidacion
 fresca. ``ValidationResult.to_json()`` da lo que acepta
-``_flow_change_result_is_valid``; ``FlowWorld.base_for`` da lo mismo que
+``_flow_change_result_is_valid``; ``ValidationResult.validator_json()``, la
+parte de ``p_validator`` que sabe el validador (el contrato, la version de las
+reglas, la fase y el actor); ``FlowWorld.base_for`` da lo mismo que
 ``_flow_store_base``; ``ProposalItem.to_json()`` da lo que acepta
 ``_flow_change_items_are_valid``.
 
@@ -93,8 +95,12 @@ PHASES = ("draft", "publish")
 # Hotmart (followup_discount.FOLLOWUP_BUTTON_URL; una prueba fija que son la
 # misma). Se escribe aca para no importar el modulo del barrido.
 CHECKOUT_BUTTON_URL = "https://pay.hotmart.com/{{1}}"
-# El resultado que acepta la base: hasta 200 hallazgos entre los dos.
+# El resultado que acepta la base: hasta 200 hallazgos entre los dos, y hasta
+# 61440 bytes de texto jsonb (_flow_change_result_is_valid; con la vista previa
+# entra en la columna validation). Con los textos de la regla 13, 200 hallazgos
+# llegan a 91 KB.
 MAX_FINDINGS = 200
+MAX_RESULT_BYTES = 61440
 
 _PLACEHOLDER = re.compile(r"\{\{([0-9]+)\}\}")
 _STATIC_COMPONENTS = ("HEADER", "FOOTER")
@@ -332,7 +338,7 @@ CLIENT_PURCHASE_OK_MISSING = _spec(
 
 ALWAYS_WITH_MARKETING = _spec(
     "always_with_marketing", None, KIND_WARNING,
-    "Sin horario, una plantilla de marketing puede salir de noche.",
+    "Sin horario, una plantilla que no es de utilidad, como una de marketing, puede salir de noche.",
 )
 RECOVERY_WITHOUT_CAP = _spec(
     "recovery_without_cap", None, KIND_WARNING,
@@ -410,16 +416,42 @@ class ValidationResult:
     """Lo que devuelve una validacion: bloqueos, advertencias y los items normalizados.
 
     Lo que se guarda en el borrador son ``normalized_items``. ``to_json`` es
-    el ``p_result`` que acepta la base.
+    el ``p_result`` que acepta la base, y ``validator_json`` dice con que
+    reglas, en que fase y con que actor corrio.
     """
 
     blocks: tuple[Finding, ...]
     warnings: tuple[Finding, ...]
     normalized_items: tuple[ProposalItem, ...]
+    phase: str
+    actor: str
+
+    def __post_init__(self) -> None:
+        if self.phase not in PHASES:
+            raise ValueError("validator_phase_invalid")
+        if self.actor not in ACTORS:
+            raise ValueError("validator_actor_invalid")
 
     @property
     def ok(self) -> bool:
         return not self.blocks
+
+    def validator_json(self) -> dict[str, object]:
+        """Con que corrio la validacion: ``{contract, rules_version, phase, actor}``, exactamente.
+
+        ``phase`` es la fase con la que se llamo a ``validate`` (``draft`` o
+        ``publish``) y ``actor``, la clase de quien propone
+        (``automation_expert`` u ``operador``). La base exige esas cuatro claves
+        en ``p_validator``, con ``phase: publish`` y el ``actor`` de la
+        propuesta, al congelar la validacion y al revalidar antes de publicar:
+        una validacion de borrador, o con el actor de otra clase, no publica.
+        ``product_version`` y ``git_sha`` no los sabe un modulo puro: los suma
+        quien llama.
+        """
+        return {
+            "contract": VALIDATOR_CONTRACT, "rules_version": RULES_VERSION,
+            "phase": self.phase, "actor": self.actor,
+        }
 
     def to_json(self) -> dict[str, list[dict[str, object]]]:
         return {
@@ -718,16 +750,25 @@ class _Run:
             self._subject(subject)
         total = json_size([item.to_json() for item in self.normalized])
         if total is None or total > ITEMS_MAX_BYTES:
-            self.blocks.append(INVALID_VALUE.at(
-                "", reason=f"Los ítems de la propuesta pasan de {ITEMS_MAX_BYTES} bytes."))
+            self.blocks.append(INVALID_VALUE.at("", reason=(
+                "Los ítems de la propuesta no se pueden escribir como JSON." if total is None
+                else f"Los ítems de la propuesta pasan de {ITEMS_MAX_BYTES} bytes.")))
         blocks = dedupe_findings(self.blocks)
         warnings = dedupe_findings(self.warnings) if self.publish else []
         if len(blocks) + len(warnings) > MAX_FINDINGS:
             # Lo que importa del resultado es que bloquea: se quedan los primeros bloqueos.
             warnings = warnings[: max(0, MAX_FINDINGS - len(blocks))]
             blocks = blocks[:MAX_FINDINGS]
+        # Lo mismo con los bytes: primero salen las advertencias y despues los
+        # ultimos bloqueos, y siempre queda al menos uno.
+        while (warnings or len(blocks) > 1) and _result_bytes(blocks, warnings) > MAX_RESULT_BYTES:
+            if warnings:
+                warnings.pop()
+            else:
+                blocks.pop()
         return ValidationResult(
             blocks=tuple(blocks), warnings=tuple(warnings), normalized_items=tuple(self.normalized),
+            phase=self.phase, actor=self.actor,
         )
 
     def _normalize(self) -> None:
@@ -1123,13 +1164,19 @@ class _Run:
         if deadline is not None and waits is not None and deadline <= waits:
             emitter.add(VENCE_NOT_AFTER_WAITS, ("termina", "vence"))
 
-    def _rule13(self, emitter: _Emitter, definition: Mapping[str, Any]) -> dict[tuple[Segment, ...], str]:
-        """Las plantillas contra el catalogo. Devuelve la categoria de cada paso que se pudo leer.
+    def _rule13(self, emitter: _Emitter, definition: Mapping[str, Any]) -> dict[tuple[Segment, ...], object]:
+        """Las plantillas contra el catalogo. Devuelve la categoria de cada paso resuelto.
+
+        Un paso resuelto es el que encontro en el catalogo una sola plantilla
+        con su nombre y su idioma. Su categoria va tal cual la trae el
+        catalogo, ``None`` si falta: la 17 y las advertencias la comparan con
+        ``UTILITY`` en forma positiva, y una categoria nula, vacia o que no es
+        un texto cuenta como que no es de utilidad.
 
         No mira una plantilla ``{a_crear: ...}``: no esta en el catalogo por
         definicion, y la bloquea la regla 11 con un mensaje mas claro.
         """
-        categories: dict[tuple[Segment, ...], str] = {}
+        categories: dict[tuple[Segment, ...], object] = {}
         for step, at, _, _, _, _ in _iter_steps(definition.get("pasos"), ("pasos",)):
             if step_type(step) != "plantilla":
                 continue
@@ -1157,9 +1204,7 @@ class _Run:
                             reason="Hay más de una plantilla con ese nombre y ese idioma en el catálogo.")
                 continue
             template = same[0]
-            category = template.get("category")
-            if isinstance(category, str) and category.strip():
-                categories[at] = category.strip()
+            categories[at] = template.get("category")
             if template.get("status") != "APPROVED":
                 emitter.add(TEMPLATE_NOT_APPROVED, at + ("plantilla",))
                 continue
@@ -1233,7 +1278,14 @@ class _Run:
         emitter.add(COUPON_CHANGE_NOT_SUPPORTED, ("pasos",))
 
     def _rule17(self, emitter: _Emitter, definition: Mapping[str, Any],
-                categories: Mapping[tuple[Segment, ...], str]) -> None:
+                categories: Mapping[tuple[Segment, ...], object]) -> None:
+        """Con ``permiso: compra``, un solo envio por camino y solo plantillas de utilidad.
+
+        En forma positiva: cada paso ``plantilla`` resuelto bloquea salvo que
+        su categoria sea exactamente ``UTILITY``, tambien si falta, es nula,
+        vacia o no es un texto. Uno que no se resolvio ya lo bloquea la 13 (o
+        la 11, si es ``a_crear``).
+        """
         if _get(definition, "entra", "permiso") != "compra":
             return
         steps = definition.get("pasos")
@@ -1244,8 +1296,7 @@ class _Run:
             if kind == "conversar":
                 emitter.add(PURCHASE_PERMISSION_REQUIRES_SINGLE_UTILITY_SEND, at + ("conversar",))
             elif kind == "plantilla":
-                category = categories.get(at)
-                if category is not None and category != "UTILITY":
+                if at in categories and categories[at] != "UTILITY":
                     emitter.add(PURCHASE_PERMISSION_REQUIRES_SINGLE_UTILITY_SEND, at + ("plantilla",))
 
     def _client_ok(self, subject: _Subject, active: Mapping[str, Any] | None) -> None:
@@ -1260,7 +1311,7 @@ class _Run:
 
     # -- Las advertencias ----------------------------------------------------
 
-    def _warnings(self, subject: _Subject, categories: Mapping[tuple[Segment, ...], str]) -> None:
+    def _warnings(self, subject: _Subject, categories: Mapping[tuple[Segment, ...], object]) -> None:
         definition = subject.definition
         base = subject.emitter.base if subject.emitter.collapse is None else None
         collapse = subject.emitter.collapse
@@ -1269,7 +1320,8 @@ class _Run:
         schedule = definition.get("horario")
         reasons = _resolved_list(_get(definition, "termina", "si"))
 
-        if schedule == ALWAYS and any(category == "MARKETING" for category in categories.values()):
+        # En forma positiva: toda plantilla resuelta que no es exactamente UTILITY.
+        if schedule == ALWAYS and any(category != "UTILITY" for category in categories.values()):
             warn.add(ALWAYS_WITH_MARKETING, ("horario",))
         caps = _mapping(definition.get("topes"))
         if trigger is not None and trigger.is_recovery and caps is not None and (
@@ -1324,6 +1376,15 @@ class _Run:
         # La franja abierta cuenta el minuto de cierre, como el motor.
         closed = 24 * 60 - (closes - opens + 1)
         return until - since < closed
+
+
+def _result_bytes(blocks: Sequence[Finding], warnings: Sequence[Finding]) -> int:
+    """Los bytes del resultado como texto jsonb, los que mide la base."""
+    size = json_size({"blocks": [finding.to_json() for finding in blocks],
+                      "warnings": [finding.to_json() for finding in warnings]})
+    # Los textos de un hallazgo son limpios y cortos: siempre es JSON.
+    assert size is not None
+    return size
 
 
 def _trigger_identity(definition: Mapping[str, Any]) -> tuple[str, object] | None:

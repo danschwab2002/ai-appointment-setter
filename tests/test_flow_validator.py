@@ -12,16 +12,17 @@ Fixtures:
 * ``chatwoot_inbox_11_message_templates_20261010.json``: el catalogo de la
   bandeja 11 de ATT1, capturado de Chatwoot el 2026-10-10 (las cinco
   plantillas, APPROVED, MARKETING, es_MX).
+* ``chatwoot_message_templates_inbox_9_20261001.json``: de la bandeja 9,
+  capturada el 2026-10-01, sale ``hello_world``, la unica plantilla UTILITY
+  capturada (en_US, con un HEADER de texto, un BODY sin marcadores y un
+  FOOTER). Se suma al catalogo de la bandeja 11 donde la regla 17 y el OK del
+  cliente necesitan una plantilla de utilidad: el payload es el de Chatwoot, no
+  uno inventado.
 * ``flow_store/invariant_cases.json``: los siete casos de los invariantes 3 y
   4 que comparten la base y el validador, con el formato fijo de la parte de
   la base (``validate_flow_store.mjs``, commit 1).
 * ``flow_store/base_example.json``: el mundo de prueba y las bases que dio
   ``_flow_store_base`` en PGlite (``validate_flow_store.mjs``, paso 9).
-
-Las funciones ``*_are_valid`` de abajo son las de la migracion del almacen,
-escritas en Python con sus mismas formas.
-
-Los caracteres de control se escriben con escapes ``\\u``.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -67,6 +69,12 @@ IDS = {key: f"{index:08x}-0000-4000-8000-{index:012x}" for index, key in enumera
 CDMX = {"zona": "America/Mexico_City", "desde": "09:00", "hasta": "21:00"}
 TEMPLATE_STEP = {"plantilla": "att1_carrito_abandonado_01", "idioma": "es_MX", "variables": ["nombre", "producto"]}
 CLIENT_OK = {"quien": "Juan", "medio": "WhatsApp", "fecha": "2026-10-15"}
+INBOX_9: dict[str, Any] = json.loads(
+    (FIXTURES / "chatwoot_message_templates_inbox_9_20261001.json").read_text(encoding="utf-8")
+)
+HELLO_WORLD: dict[str, Any] = next(t for t in INBOX_9["message_templates"] if t["name"] == "hello_world")
+# El BODY de hello_world no tiene marcadores: el paso no manda variables.
+HELLO_WORLD_STEP = {"plantilla": "hello_world", "idioma": "en_US", "variables": []}
 
 
 # ---------------------------------------------------------------------------
@@ -160,17 +168,24 @@ def catalog_with(change: Callable[[dict[str, Any]], None]) -> TemplateCatalog:
     return TemplateCatalog.from_inbox_payload(payload)
 
 
-def utility_template(payload: dict[str, Any]) -> None:
-    payload["message_templates"].append({
-        "name": "att1_bienvenida_01", "status": "APPROVED", "category": "UTILITY", "language": "es_MX",
-        "components": [{"type": "BODY", "text": "Hola, {{1}}. Tu compra de {{2}} está confirmada."}],
-    })
+def with_hello_world(payload: dict[str, Any]) -> None:
+    """Suma al catalogo la plantilla UTILITY capturada, tal cual."""
+    payload["message_templates"].append(copy.deepcopy(HELLO_WORLD))
+
+
+def hello_world_catalog(change: Callable[[dict[str, Any]], None] | None = None) -> TemplateCatalog:
+    """El catalogo de la bandeja 11 con hello_world, y ``change`` aplicado a hello_world."""
+    def build(payload: dict[str, Any]) -> None:
+        with_hello_world(payload)
+        if change is not None:
+            change(payload["message_templates"][-1])
+    return catalog_with(build)
 
 
 def purchase_flow(**changes: Any) -> dict[str, Any]:
     definition = block("7")
     definition["entra"]["permiso"] = "compra"
-    definition["pasos"][0]["plantilla"] = "att1_bienvenida_01"
+    definition["pasos"][0] = copy.deepcopy(HELLO_WORLD_STEP)
     definition["termina"]["vence"] = "1d"
     definition.update(changes)
     return definition
@@ -179,6 +194,18 @@ def purchase_flow(**changes: Any) -> dict[str, Any]:
 def with_(definition: dict[str, Any], change: Callable[[dict[str, Any]], None]) -> dict[str, Any]:
     change(definition)
     return definition
+
+
+def template_of(payload: dict[str, Any], name: str) -> dict[str, Any]:
+    return next(template for template in payload["message_templates"] if template["name"] == name)
+
+
+def blocks_at(result: ValidationResult) -> list[tuple[str, str]]:
+    return [(finding.code, finding.path) for finding in result.blocks]
+
+
+def warnings_at(result: ValidationResult) -> list[tuple[str, str]]:
+    return [(finding.code, finding.path) for finding in result.warnings]
 
 
 # ---------------------------------------------------------------------------
@@ -427,10 +454,9 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
     ),
     # Regla 17.
     "purchase_permission_requires_single_utility_send": (
-        lambda: check([version_item(with_(purchase_flow(), lambda d: d["pasos"][0].update(
-            plantilla="att1_carrito_abandonado_01")), "activacion", ok=CLIENT_OK)]).blocks,
+        lambda: check([version_item(purchase_flow(pasos=[dict(TEMPLATE_STEP)]), "activacion", ok=CLIENT_OK)]).blocks,
         lambda: check([version_item(purchase_flow(), "activacion", ok=CLIENT_OK)],
-                      catalog=catalog_with(utility_template)).blocks,
+                      catalog=hello_world_catalog()).blocks,
     ),
     # El ciclo.
     "flow_creation_not_enabled": (
@@ -468,9 +494,9 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
         lambda: run(flow_def("carrito")),
     ),
     "client_purchase_ok_missing": (
-        lambda: check([version_item(purchase_flow(), "activacion")], catalog=catalog_with(utility_template)).blocks,
+        lambda: check([version_item(purchase_flow(), "activacion")], catalog=hello_world_catalog()).blocks,
         lambda: check([version_item(purchase_flow(), "activacion", ok=CLIENT_OK)],
-                      catalog=catalog_with(utility_template)).blocks,
+                      catalog=hello_world_catalog()).blocks,
     ),
     # Las advertencias.
     "always_with_marketing": (
@@ -826,9 +852,11 @@ def test_switching_on_revalidates_the_active_definition_with_rules_13_and_17() -
     assert check([state_item("prender")], in_world=world(off)).blocks == ()
     # La 17 depende de la categoria viva: una plantilla que paso a MARKETING frena el prender.
     purchase = live("activacion", purchase_flow(), state="apagado")
-    marketing = catalog_with(lambda p: (utility_template(p), p["message_templates"][-1].update(category="MARKETING")))
+    marketing = hello_world_catalog(lambda template: template.update(category="MARKETING"))
     blocked = check([state_item("prender", "activacion")], in_world=world(purchase), catalog=marketing)
     assert [f.code for f in blocked.blocks] == ["purchase_permission_requires_single_utility_send"]
+    assert check([state_item("prender", "activacion")], in_world=world(purchase),
+                 catalog=hello_world_catalog()).blocks == ()
 
 
 def test_switching_off_only_looks_at_the_transition() -> None:
@@ -868,7 +896,7 @@ def test_only_seguir_is_accepted_for_what_is_in_flight() -> None:
 
 
 def test_the_client_ok_is_needed_only_when_the_permission_becomes_purchase() -> None:
-    utility = catalog_with(utility_template)
+    utility = hello_world_catalog()
     already = live("activacion", purchase_flow())
     draft = fd.as_draft(published(purchase_flow()))
     assert check([version_item(draft, "activacion")], in_world=world(already), catalog=utility).blocks == ()
@@ -879,7 +907,7 @@ def test_the_client_ok_is_needed_only_when_the_permission_becomes_purchase() -> 
 
 def test_a_malformed_client_ok_is_rule_1() -> None:
     result = check([version_item(purchase_flow(), "activacion", ok={"quien": "Juan\u202e", "medio": "x"})],
-                   catalog=catalog_with(utility_template), phase="draft")
+                   catalog=hello_world_catalog(), phase="draft")
     assert {(f.code, f.path) for f in result.blocks} == {
         ("invalid_value", "/0/ok_del_cliente/quien"), ("required_key_missing", "/0/ok_del_cliente/fecha")}
 
@@ -889,20 +917,20 @@ def test_a_malformed_client_ok_is_rule_1() -> None:
 # ---------------------------------------------------------------------------
 
 def test_rule_17_counts_sends_per_path() -> None:
-    utility = catalog_with(utility_template)
+    utility = hello_world_catalog()
     one_per_branch = purchase_flow(pasos=[{
         "condicion": {"dato": "ventana", "es": ["abierta"]},
-        "entonces": [{"plantilla": "att1_bienvenida_01", "idioma": "es_MX"}],
-        "si_no": [{"plantilla": "att1_bienvenida_01", "idioma": "es_MX"}]}])
+        "entonces": [copy.deepcopy(HELLO_WORLD_STEP)],
+        "si_no": [copy.deepcopy(HELLO_WORLD_STEP)]}])
     assert check([version_item(one_per_branch, "activacion", ok=CLIENT_OK)], catalog=utility).blocks == ()
-    two_in_a_row = purchase_flow(pasos=[{"plantilla": "att1_bienvenida_01", "idioma": "es_MX"},
-                                        {"esperar": "1h"}, {"plantilla": "att1_bienvenida_01", "idioma": "es_MX"}])
+    two_in_a_row = purchase_flow(pasos=[copy.deepcopy(HELLO_WORLD_STEP), {"esperar": "1h"},
+                                        copy.deepcopy(HELLO_WORLD_STEP)])
     result = check([version_item(two_in_a_row, "activacion", ok=CLIENT_OK)], catalog=utility)
     assert [(f.code, f.path) for f in result.blocks] == [
         ("purchase_permission_requires_single_utility_send", "/0/definicion/pasos")]
-    above_and_below = purchase_flow(pasos=[{"plantilla": "att1_bienvenida_01", "idioma": "es_MX"}, {
+    above_and_below = purchase_flow(pasos=[copy.deepcopy(HELLO_WORLD_STEP), {
         "condicion": {"dato": "ventana", "es": ["abierta"]},
-        "entonces": [], "si_no": [{"plantilla": "att1_bienvenida_01", "idioma": "es_MX"}]}])
+        "entonces": [], "si_no": [copy.deepcopy(HELLO_WORLD_STEP)]}])
     assert "purchase_permission_requires_single_utility_send" in found(
         check([version_item(above_and_below, "activacion", ok=CLIENT_OK)], catalog=utility))
 
@@ -997,11 +1025,96 @@ def test_a_named_placeholder_is_a_variable_count_mismatch() -> None:
 
 
 # ---------------------------------------------------------------------------
+# La regla 17 y la advertencia del horario, en forma positiva: lo unico que
+# pasa es una plantilla resuelta cuya categoria es exactamente UTILITY.
+# ---------------------------------------------------------------------------
+
+NOT_UTILITY = [
+    pytest.param(lambda template: template.pop("category"), id="sin-categoria"),
+    pytest.param(lambda template: template.update(category=None), id="nula"),
+    pytest.param(lambda template: template.update(category=""), id="vacia"),
+    pytest.param(lambda template: template.update(category=" "), id="en-blanco"),
+    pytest.param(lambda template: template.update(category=7), id="no-es-texto"),
+    pytest.param(lambda template: template.update(category="utility"), id="en-minusculas"),
+    pytest.param(lambda template: template.update(category="UTILITY "), id="con-un-espacio"),
+    pytest.param(lambda template: template.update(category="AUTHENTICATION"), id="autenticacion"),
+    pytest.param(lambda template: template.update(category="MARKETING"), id="marketing"),
+]
+
+
+@pytest.mark.parametrize("change", NOT_UTILITY)
+def test_rule_17_blocks_a_template_that_is_not_exactly_utility(change: Callable[[dict[str, Any]], None]) -> None:
+    # «algo que no es una plantilla de utilidad» (flow-definition-v1.md:997): sin
+    # categoria, no se sabe que lo sea.
+    result = check([version_item(purchase_flow(), "activacion", ok=CLIENT_OK)], catalog=hello_world_catalog(change))
+    assert blocks_at(result) == [
+        ("purchase_permission_requires_single_utility_send", "/0/definicion/pasos/0/plantilla")]
+
+
+@pytest.mark.parametrize("change", NOT_UTILITY)
+def test_switching_on_blocks_a_purchase_flow_whose_template_is_not_exactly_utility(
+    change: Callable[[dict[str, Any]], None],
+) -> None:
+    purchase = live("activacion", purchase_flow(), state="apagado")
+    result = check([state_item("prender", "activacion")], in_world=world(purchase),
+                   catalog=hello_world_catalog(change))
+    assert blocks_at(result) == [("purchase_permission_requires_single_utility_send", "/0")]
+
+
+def test_the_captured_utility_template_publishes_and_switches_on_a_purchase_flow() -> None:
+    utility = hello_world_catalog()
+    assert check([version_item(purchase_flow(), "activacion", ok=CLIENT_OK)], catalog=utility).blocks == ()
+    purchase = live("activacion", purchase_flow(), state="apagado")
+    assert check([state_item("prender", "activacion")], in_world=world(purchase), catalog=utility).blocks == ()
+
+
+@pytest.mark.parametrize("change", NOT_UTILITY)
+def test_always_warns_with_a_template_that_is_not_exactly_utility(change: Callable[[dict[str, Any]], None]) -> None:
+    catalog = catalog_with(lambda p: change(template_of(p, "att1_reactivacion_01")))
+    result = check([version_item(block("5a"), "reactivacion")], catalog=catalog)
+    assert result.blocks == ()
+    assert warnings_at(result) == [
+        ("always_with_marketing", "/0/definicion/horario"),
+        ("silence_without_purchase_exit", "/0/definicion/termina/si"),
+    ]
+
+
+def test_always_does_not_warn_with_a_utility_template() -> None:
+    catalog = catalog_with(lambda p: template_of(p, "att1_reactivacion_01").update(category="UTILITY"))
+    result = check([version_item(block("5a"), "reactivacion")], catalog=catalog)
+    assert warnings_at(result) == [("silence_without_purchase_exit", "/0/definicion/termina/si")]
+
+
+# ---------------------------------------------------------------------------
+# El tamano se mide primero (C#4): un texto largo sin @ no dispara el chequeo
+# cuadratico de identificadores de la 1a.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("where", ["nombre", "conversar", "derivar"])
+def test_a_long_text_without_an_at_is_rejected_in_bounded_time(where: str) -> None:
+    # Medido antes de la correccion: 63,7 s con 250 000 caracteres en un derivar.
+    text = "a" * 250_000
+    definition = block("5b")
+    if where == "nombre":
+        definition["nombre"] = text
+    elif where == "conversar":
+        definition["pasos"][0]["entonces"][0]["conversar"] = text
+    else:
+        definition["pasos"][0]["entonces"] = [{"derivar": text}]
+    started = time.perf_counter()
+    result = check([version_item(definition, "reactivacion")])
+    elapsed = time.perf_counter() - started
+    assert elapsed < 5, f"{elapsed:.1f} s"
+    assert ("invalid_value", "/0/definicion") in blocks_at(result)
+    assert "identifier_not_allowed" not in found(result)
+
+
+# ---------------------------------------------------------------------------
 # La forma de lo que cruza a la base (§5.2), con la logica de sus helpers.
 # ---------------------------------------------------------------------------
 
 _FREE_TEXT_BAD = re.compile(
-    "[\u0001-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]")
+    "[\u0001-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u206f\ufeff\ufff9-\ufffb\U000e0000-\U000e007f]")
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
@@ -1043,6 +1156,10 @@ def result_is_valid(result: object) -> bool:
     return (
         isinstance(result, dict) and set(result) == {"blocks", "warnings"}
         and findings_are_valid(result["blocks"]) and findings_are_valid(result["warnings"])
+        # En forma positiva: toda advertencia es advertencia y sin regla, y ningun bloqueo lo es.
+        and all(f["kind"] == "advertencia" and f["rule"] is None for f in result["warnings"])
+        and all(f["kind"] != "advertencia" for f in result["blocks"])
+        and (fd.json_size(result) or 10**9) <= 61440
         and len(result["blocks"]) + len(result["warnings"]) <= 200
     )
 
@@ -1119,7 +1236,7 @@ def test_items_of_every_kind_have_the_minimal_form() -> None:
     two = flow("carrito", versions={1: published(flow_def("carrito")), 2: published(flow_def("carrito"), 2)})
     items = [state_item("volver", version=1), state_item("apagar"),
              version_item(purchase_flow(), "activacion", ok=CLIENT_OK), state_item("prender", "activacion")]
-    result = check(items, in_world=world(two), catalog=catalog_with(utility_template))
+    result = check(items, in_world=world(two), catalog=hello_world_catalog())
     assert result.blocks == ()
     assert items_are_valid(result.items_json())
 
@@ -1137,6 +1254,13 @@ def test_items_of_every_kind_have_the_minimal_form() -> None:
         lambda d: d.update(horario={"zona": ["America/Mexico_City"], "desde": {}, "hasta": None}),
         lambda d: d.update(dispara={"evento": "carrito", "silencio": {}}),
         lambda d: d["termina"].update(si={"compra": True}),
+        # Un sustituto UTF-16 suelto en un valor, en una clave y adentro de una
+        # lista (antes, UnicodeEncodeError), y los separadores de linea y de parrafo.
+        lambda d: d.update(nombre="Carrito \ud83d"),
+        lambda d: d["topes"].update({"max\udfff": 1}),
+        lambda d: d.update(extra=[{"x": "a\udc00"}]),
+        lambda d: d["pasos"][0].update(plantilla="att1\u2028carrito"),
+        lambda d: d.update(nombre="Carrito\u2029abandonado"),
     ],
 )
 def test_hostile_values_give_findings_and_never_an_exception(change: Callable[[dict[str, Any]], None]) -> None:
@@ -1147,14 +1271,70 @@ def test_hostile_values_give_findings_and_never_an_exception(change: Callable[[d
             result = check([version_item(definition)], phase=phase, actor=actor)
             assert result.blocks
             assert result_is_valid(result.to_json())
+            # El resultado se puede escribir como JSON en UTF-8: ninguna ruta se
+            # lleva el caracter, se poda al padre.
+            assert fd.json_size(result.to_json()) is not None
 
 
-def test_the_result_is_capped_at_200_findings() -> None:
+def test_items_with_a_lone_surrogate_say_that_they_are_not_json() -> None:
+    result = check([version_item(with_(flow_def("carrito"), lambda d: d.update(nombre="Carrito \ud83d")))])
+    assert blocks_at(result) == [
+        ("invalid_value", "/0/definicion"), ("invalid_value", "/0/definicion/nombre"), ("invalid_value", "")]
+    assert result.blocks[0].reason == "La definición no es JSON."
+    assert result.blocks[2].reason == "Los ítems de la propuesta no se pueden escribir como JSON."
+
+
+# ---------------------------------------------------------------------------
+# Con que reglas, en que fase y con que actor corrio (C#8): la base lo exige
+# en p_validator, con phase publish y el actor de la propuesta.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("phase", fv.PHASES)
+@pytest.mark.parametrize("actor", fv.ACTORS)
+def test_the_validator_json_says_the_rules_the_phase_and_the_actor(phase: str, actor: str) -> None:
+    result = check([state_item("apagar")], in_world=world(live("carrito")), phase=phase, actor=actor)
+    assert result.validator_json() == {
+        "contract": "setter-flujo/v1", "rules_version": 1, "phase": phase, "actor": actor}
+
+
+@pytest.mark.parametrize(("phase", "actor"), [("preview", "operador"), ("publish", "slack")])
+def test_a_result_with_another_phase_or_actor_is_an_error_of_the_caller(phase: str, actor: str) -> None:
+    with pytest.raises(ValueError):
+        ValidationResult(blocks=(), warnings=(), normalized_items=(), phase=phase, actor=actor)
+
+
+def _many_unknown_keys() -> dict[str, Any]:
     definition = flow_def("carrito")
     for index in range(260):
         definition[f"clave_{index}"] = index
-    result = check([version_item(definition)])
+    return definition
+
+
+def _many_templates_not_in_the_catalog() -> dict[str, Any]:
+    # 210 pasos con una plantilla que no esta: cada hallazgo de la 13 lleva limite,
+    # razon y alternativa, y 200 de ellos pasan de 61440 bytes.
+    return with_(flow_def("carrito"), lambda d: d.update(pasos=[
+        {"plantilla": f"att1_no_existe_{index:03d}", "idioma": "es_MX", "variables": ["nombre", "producto"]}
+        for index in range(210)]))
+
+
+def test_the_result_is_capped_at_200_findings() -> None:
+    result = check([version_item(_many_unknown_keys())])
     assert len(result.blocks) == 200 and result.warnings == ()
+    assert result_is_valid(result.to_json())
+
+
+def test_the_result_is_capped_at_the_bytes_the_base_accepts() -> None:
+    # La base rechaza un resultado de mas de 61440 bytes (flow_change_result_too_large):
+    # se quedan los primeros bloqueos que entran.
+    definition = _many_templates_not_in_the_catalog()
+    assert fd.json_size(definition) <= fd.DEFINITION_MAX_BYTES
+    result = check([version_item(definition)])
+    size = fd.json_size(result.to_json())
+    assert size is not None and 61440 - 500 < size <= 61440
+    assert 100 < len(result.blocks) < 200 and result.warnings == ()
+    assert blocks_at(result) == [("template_not_in_catalog", f"/0/definicion/pasos/{index}/plantilla")
+                                 for index in range(len(result.blocks))]
     assert result_is_valid(result.to_json())
 
 
