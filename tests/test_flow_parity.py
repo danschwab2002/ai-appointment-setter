@@ -436,7 +436,7 @@ def test_never_before_allows_the_second_between_the_clocks_and_nothing_more() ->
 def test_a_send_before_e_cannot_be_named() -> None:
     capture, _ = one_cart("2026-10-10T05:00:00.000000Z", sent_at="2026-10-10T05:00:10.000000Z")
     named = [{"disparo": uid(1), "diferencia": "envio_antes_de_E", "clase": "C", "nombre": "de_noche",
-              "cita": "src/bridge/worker.py:705"}]
+              "cita": "src/bridge/worker.py:706"}]
     report = parity_report(capture, named)
     assert report.never_before_violations == (uid(1),)
     kinds = {item["diferencia"] for item in report.unexplained}
@@ -468,7 +468,7 @@ def _retried_capture(tramos: list[dict[str, Any]], sent_at: str, *,
 
 
 def _failure(number: int, started_at: str) -> dict[str, Any]:
-    """Un fallo antes del pedido, con su reintento a un minuto (worker.py:896)."""
+    """Un fallo antes del pedido, con su reintento a un minuto (worker.py:897)."""
     return {"attempt_number": number, "mode": "approved_template", "phase": "completed",
             "outcome": "failed_before_request", "reason_code": "chatwoot_unavailable",
             "started_at": started_at, "finalized_next_attempt_at": shifted(started_at, minutes=1)}
@@ -569,7 +569,7 @@ def test_a_cart_cut_before_e_is_not_a_p3_difference() -> None:
 
 @pytest.mark.parametrize(("change", "reason"), [
     ({"caso": None}, "sin_caso_ni_cita"),
-    ({"cita": "src/bridge/worker.py:1054-1070"}, "caso_y_cita"),
+    ({"cita": "src/bridge/worker.py:1055-1071"}, "caso_y_cita"),
     ({"caso": "G26"}, "caso_invalido"),
     ({"caso": None, "cita": "worker.py"}, "cita_invalida"),
     ({"clase": "—"}, "clase_invalida"),

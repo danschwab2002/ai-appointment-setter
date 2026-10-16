@@ -7,18 +7,18 @@ en Python y no lo ve ninguna base. Estas pruebas no prueban el motor: fijan lo
 que hace hoy el despachador, que el motor reusa entero (la capa ``despacho`` de
 §2.8), para que T2 se mida contra esto. Las lineas son de ``7c0a61b``.
 
-* **D1.** El nombre rechazado cierra sin reintento (``worker.py:1054-1070``). Es
+* **D1.** El nombre rechazado cierra sin reintento (``worker.py:1055-1071``). Es
   la excepcion 5 de §1.7 (``nombre_inseguro_cierra``) y la entrada de la 5b: sin
   proximo intento, la base deja la accion ``permanent_failed`` y el caso abierto
   para siempre (eso lo fija G14 en PGlite).
 * **D2.** El arranque rechazado (``PilotRequestStartRejectedError``) deja el
-  intento reservado y sigue con el resto del lote (``:1540-1562``).
+  intento reservado y sigue con el resto del lote (``:1541-1563``).
 * **D3.** El fallo antes del pedido se reintenta a un minuto de la hora del fallo
-  (``:894-899``).
+  (``:895-900``).
 * **D4.** El incierto no se repite: ``delivery_unknown``, sin proximo intento y
-  con 15 minutos para conciliar (``:1563-1587``, ``:1789-1816`` y
-  ``:1843-1882``).
-* **D5.** El lease de 5 minutos (``:705``), que el bridge de ATT1 no cambia.
+  con 15 minutos para conciliar (``:1564-1588``, ``:1790-1817`` y
+  ``:1844-1883``).
+* **D5.** El lease de 5 minutos (``:706``), que el bridge de ATT1 no cambia.
 
 Datos:
 
@@ -93,7 +93,7 @@ EXCEPTION_5_TRIGGERS = [
 RETRY_AT = "2026-09-30T15:02:00+00:00"
 RECONCILE_BY = "2026-09-30T15:16:00+00:00"
 
-# El RPC de arranque de cada ancla (supabase.py:6510-6524), para el mensaje
+# El RPC de arranque de cada ancla (supabase.py:6525-6539), para el mensaje
 # exacto del error que levanta el cliente real.
 START_RPC = {
     "cart_abandonment": "mark_lancemos_pilot_request_started",
@@ -211,7 +211,7 @@ def test_d2_a_rejected_start_leaves_the_attempt_reserved_and_goes_on_with_the_ba
 @pytest.mark.parametrize(
     ("offer_override", "inbox_status", "gate_open", "reason", "raises"),
     [
-        # :1079-1087, el catalogo lo puede arreglar Chatwoot.
+        # :1080-1088, el catalogo lo puede arreglar Chatwoot.
         pytest.param(
             None, 503, True, "approved_template_unavailable", None, id="catalogo ilegible"
         ),
@@ -282,7 +282,7 @@ class _ChatwootMessageUnavailable(_Chatwoot):
 class _StartAnsweredWithoutRequestStarted(_Authority):
     """El arranque se confirmo en la base pero la fila no dice request_started.
 
-    Es lo que levanta el cliente real (supabase.py:6558 y :6599): el RPC
+    Es lo que levanta el cliente real (supabase.py:6573 y :6614): el RPC
     respondio 200, el arranque pudo haber quedado, y no se sabe.
     """
 
@@ -295,7 +295,7 @@ class _StartAnsweredWithoutRequestStarted(_Authority):
 class _AcceptanceNotRecorded(_Authority):
     """Chatwoot acepto el mensaje y la base no pudo guardar la aceptacion.
 
-    El error tiene la forma del cliente real (supabase.py:6699).
+    El error tiene la forma del cliente real (supabase.py:6714).
     """
 
     async def record_and_finalize_followup_acceptance(self, **kwargs: object) -> object:
@@ -306,7 +306,7 @@ class _AcceptanceNotRecorded(_Authority):
 @pytest.mark.parametrize(
     ("authority_type", "chatwoot_type", "reason", "posted", "remote_message_id", "raises"),
     [
-        # :1563-1587: nada salio, pero el arranque pudo haber quedado.
+        # :1564-1588: nada salio, pero el arranque pudo haber quedado.
         pytest.param(
             _StartAnsweredWithoutRequestStarted,
             _Chatwoot,

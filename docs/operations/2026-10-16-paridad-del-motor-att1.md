@@ -93,7 +93,7 @@ E es el primer instante en que la puerta dice «mandar» con los hechos observad
 
 - **E coincide exacto con el `due_at` que dejó la base** en los 208. 89 envíos llegaron con la franja cerrada, y su E es las 09:00 de `America/Mexico_City`.
 - **Los 7 envíos más lentos**, de 120 a 145 s, son todos de la tanda de las 09:00 del 12/10: los carritos de la noche salieron juntos.
-- **Con una tolerancia de 2 minutos, esos 7 quedan afuera.** La tolerancia de 5 tiene dientes, y es el lease del despachador (`src/bridge/worker.py:705`). Lo fija `test_p3_the_tolerance_has_teeth`.
+- **Con una tolerancia de 2 minutos, esos 7 quedan afuera.** La tolerancia de 5 tiene dientes, y es el lease del despachador (`src/bridge/worker.py:706`). Lo fija `test_p3_the_tolerance_has_teeth`.
 - **Sobre este dato, P3 ejercita solo la franja.** El control y la bolsa no corren el E de ningún envío: en los 208, E es el ancla o la próxima apertura de la franja (`test_p3_on_the_real_data_only_the_window_moves_e`). Que el control y la bolsa estén bien lo fijan las líneas de tiempo escritas a mano (`tests/test_flow_parity.py`) y el E de los 5 de `lo_en_curso_sigue`.
 - **Un hecho observado explica solo su propia demora.** Un fallo antes del pedido, un incierto o un rechazo de Meta explican hasta el reintento que pidieron; un arranque rechazado (un intento `reserved` sin resultado), hasta que vence su lease de 5 minutos. R tiene que quedar a lo sumo 5 minutos después de eso. En este dato ningún envío tuvo un intento anterior, así que no cambia nada; cambia con la primera pausa de un flujo o con un tope que se libera dentro de la franja.
 
