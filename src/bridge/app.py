@@ -19,7 +19,7 @@ from dataclasses import dataclass, fields as dataclass_fields
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import MappingProxyType
-from typing import AsyncGenerator, Awaitable, Callable, Mapping, Protocol
+from typing import AsyncGenerator, Awaitable, Callable, Iterable, Mapping, Protocol
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -64,7 +64,6 @@ from bridge.reactivation import ConversationReactivationSweeper
 from bridge.commercial_ally import CommercialAllyConfig, JOHANNA_COMMERCIAL_ALLY
 from bridge.commercial_knowledge import CommercialKnowledge
 from bridge.instance_manifest import GHL_RISK_GATED_FLOWS, InstanceManifest
-from bridge import product_routes
 from bridge.product_label import ProductLabeler
 from bridge.product_routes import HotmartUnrouted, ProductRoute, ProductRoutes
 from bridge.checkout_delivery import CheckoutDeliveryError, deliver_checkout_issuance_v2
@@ -1856,6 +1855,11 @@ def recent_payment_failure_context(failure: RecentPaymentFailure) -> dict[str, o
     return {key: value for key, value in context.items() if value is not None}
 
 
+# Cuantas cosas de lo que hizo la persona recibe el agente: el mismo tope que
+# pone la lectura de cada funnel (get_portable_person_activity_v1).
+PERSON_ACTIVITY_CONTEXT_LIMIT = 20
+
+
 def person_activity_context(
     activities: tuple[PersonActivity, ...], *, product: str
 ) -> list[dict[str, str]]:
@@ -1864,6 +1868,19 @@ def person_activity_context(
     El funnel es el producto: cada cosa lleva la clave del producto del funnel
     que se leyo. En orden, de la mas vieja a la mas nueva.
     """
+    return products_activity_context((product, item) for item in activities)
+
+
+def products_activity_context(
+    items: Iterable[tuple[str, PersonActivity]],
+) -> list[dict[str, str]]:
+    """Lo que hizo la persona en el funnel de cada producto, todo junto (2c-3b).
+
+    Cada cosa con la clave del producto de su funnel, de la mas vieja a la mas
+    nueva, y solo las 20 mas nuevas: con varios productos, la suma de las
+    lecturas puede pasar el tope de una.
+    """
+    ordered = sorted(items, key=lambda pair: pair[1].occurred_at)
     return [
         {
             "activity": item.activity,
@@ -1873,7 +1890,7 @@ def person_activity_context(
             .isoformat()
             .replace("+00:00", "Z"),
         }
-        for item in sorted(activities, key=lambda item: item.occurred_at)
+        for product, item in ordered[-PERSON_ACTIVITY_CONTEXT_LIMIT:]
     ]
 
 
@@ -2210,13 +2227,6 @@ def _validate_instance_manifest_gates(settings: Settings) -> None:
         )
         if products_error is not None:
             raise ValueError(f"instance products: {products_error}")
-    if len(manifest.products) > 1 and not product_routes.ROUTING_COMPLETE:
-        # Los productos que no son el principal ya cargan y validan (2c-1), pero
-        # el bridge todavia no enruta sus eventos, formularios ni links.
-        raise ValueError(
-            "instance products: con mas de un producto el bridge espera el ruteo "
-            "por producto (pasos 2c-2 y 2c-3)"
-        )
     blocked = sorted(
         f"{flag}->{flow}"
         for flag, flow in _FLAG_REQUIRED_FLOW.items()
@@ -3451,16 +3461,18 @@ def create_app(
             resume_macro_id=settings.chatwoot_resume_macro_id,
             opt_out_macro_id=settings.chatwoot_opt_out_macro_id,
         )
-    # La etiqueta de producto (varios productos por aliada, paso 2a): solo con un
-    # producto de [[productos]] que la declare. Sin eso no se crea y nada cambia.
-    product_labeler: ProductLabeler | None = None
-    labeled_product = (
-        settings.instance_manifest.labeled_product
+    # La etiqueta de producto (varios productos por aliada, pasos 2a y 2c-3b): un
+    # etiquetador por producto de [[productos]] que la declare. Sin ninguno no se
+    # crea nada y nada cambia.
+    product_labelers: dict[str, ProductLabeler] = {}
+    several_products = len(commercial_ally_routes) > 1
+    for labeled_product in (
+        settings.instance_manifest.products
         if settings.instance_manifest is not None
-        else None
-    )
-    if labeled_product is not None:
-        assert labeled_product.chatwoot_label is not None
+        else ()
+    ):
+        if labeled_product.chatwoot_label is None:
+            continue
         assert labeled_product.chatwoot_label_macro_id is not None
         if control_client is None:
             raise ValueError("the product label requires Chatwoot control")
@@ -3474,18 +3486,33 @@ def create_app(
             raise ValueError(
                 "the product label macro cannot be a pause, resume or opt-out macro"
             )
-        product_labeler = ProductLabeler(
+        product_labelers[labeled_product.key] = ProductLabeler(
             client=control_client,
             label=labeled_product.chatwoot_label,
             macro_id=labeled_product.chatwoot_label_macro_id,
         )
 
+    async def label_products(
+        conversation_id: int, keys: Iterable[str | None], *, source: str
+    ) -> None:
+        """Suma la etiqueta de cada producto que la declara. Nunca lanza."""
+        for product_key in dict.fromkeys(keys):
+            labeler = product_labelers.get(product_key) if product_key is not None else None
+            if labeler is not None:
+                await labeler.ensure(conversation_id, source=source)
+
     async def label_opened_conversation(conversation_id: int) -> None:
-        if product_labeler is not None:
-            await product_labeler.ensure(conversation_id, source="plantilla")
+        # Las plantillas salen de los flujos, y hoy solo el principal tiene
+        # flujos (los demas llegan con el motor de la 1b, decision de Dan del
+        # 2026-10-16): la plantilla lleva la etiqueta del principal.
+        await label_products(
+            conversation_id, (commercial_ally_routes.principal.key,), source="plantilla"
+        )
 
     conversation_opened_hook = (
-        label_opened_conversation if product_labeler is not None else None
+        label_opened_conversation
+        if commercial_ally_routes.principal.key in product_labelers
+        else None
     )
     # Lo que ve el agente de los productos (paso 2b): la lista de productos y lo
     # que hizo la persona, solo con [[productos]]. Sin eso la entrada no cambia.
@@ -4415,56 +4442,112 @@ def create_app(
         """
         if shared_supabase is None or not wa_id:
             return None
-        try:
-            failure = await shared_supabase.get_portable_recent_payment_failure(
-                config=settings.commercial_ally_config,
-                whatsapp_phone=wa_id,
-            )
-        except SupabaseError as exc:
-            logger.warning(
-                "recent_payment_failure_lookup_failed error=%s",
-                type(exc).__name__,
-            )
+        # Con varios productos, una lectura por funnel y el mas reciente de
+        # todos, con la clave de su producto (2c-3b). Con uno, como siempre.
+        lookups: list[tuple[str | None, CommercialAllyConfig]] = (
+            [(route.key, route.config) for route in commercial_ally_routes]
+            if several_products
+            else [(None, settings.commercial_ally_config)]
+        )
+        failures: list[tuple[str | None, RecentPaymentFailure]] = []
+        for failure_product, failure_config in lookups:
+            try:
+                failure = await shared_supabase.get_portable_recent_payment_failure(
+                    config=failure_config,
+                    whatsapp_phone=wa_id,
+                )
+            except SupabaseError as exc:
+                if failure_product is None:
+                    logger.warning(
+                        "recent_payment_failure_lookup_failed error=%s",
+                        type(exc).__name__,
+                    )
+                else:
+                    logger.warning(
+                        "recent_payment_failure_lookup_failed error=%s product=%s",
+                        type(exc).__name__,
+                        failure_product,
+                    )
+                continue
+            if failure is not None:
+                failures.append((failure_product, failure))
+        if not failures:
             return None
-        if failure is None:
-            return None
+        failure_product, failure = max(failures, key=lambda pair: pair[1].failed_at)
         logger.info(
             "recent_payment_failure_context method=%s country=%s",
             failure.payment_type,
             failure.checkout_country_iso,
         )
-        return recent_payment_failure_context(failure)
+        context = recent_payment_failure_context(failure)
+        if failure_product is not None:
+            context["product"] = failure_product
+        return context
+
+    async def _read_person_activity(
+        wa_id: str | None,
+    ) -> tuple[tuple[str, PersonActivity], ...] | None:
+        """Lo que hizo este movil en el funnel de cada producto (2b y 2c-3b).
+
+        Con un producto, el funnel del binding; con varios, una lectura por
+        funnel. Cada cosa va con la clave de su producto. None sin productos o
+        sin movil, o si falla la unica lectura. Con varios, el funnel que falla
+        queda afuera y el resto sigue: el agente contesta igual.
+        """
+        if shared_supabase is None or not wa_id:
+            return None
+        if several_products:
+            lookups = [
+                (route.key, route.config)
+                for route in commercial_ally_routes
+                if route.key is not None
+            ]
+        elif len(agent_product_keys) == 1 and settings.commercial_ally_config is not None:
+            lookups = [(agent_product_keys[0], settings.commercial_ally_config)]
+        else:
+            return None
+        items: list[tuple[str, PersonActivity]] = []
+        for activity_product, activity_config in lookups:
+            try:
+                activities = await shared_supabase.get_portable_person_activity(
+                    config=activity_config,
+                    whatsapp_phone=wa_id,
+                )
+            except SupabaseError as exc:
+                if not several_products:
+                    logger.warning(
+                        "person_activity_lookup_failed error=%s",
+                        type(exc).__name__,
+                    )
+                    return None
+                logger.warning(
+                    "person_activity_lookup_failed error=%s product=%s",
+                    type(exc).__name__,
+                    activity_product,
+                )
+                continue
+            items.extend((activity_product, activity) for activity in activities)
+        logger.info("person_activity_context items=%s", len(items))
+        return tuple(items)
 
     async def _person_activity_context(
         wa_id: str | None,
+        *,
+        already_read: tuple[tuple[str, PersonActivity], ...] | None = None,
     ) -> list[dict[str, str]] | None:
-        """Lo que hizo este movil en el funnel, para la entrada del agente (2b).
+        """Lo que hizo la persona, para la entrada del agente (2b y 2c-3b).
 
-        El funnel del binding es el del unico producto de [[productos]]. Si la
-        lectura falla, el agente contesta igual, sin el dato.
+        Con varios productos se lee al entrar el mensaje, para las etiquetas, y
+        se reusa aca. Si la lectura falla, el agente contesta igual, sin el dato.
         """
-        if (
-            shared_supabase is None
-            or settings.commercial_ally_config is None
-            or not wa_id
-            or len(agent_product_keys) != 1
-        ):
+        items = (
+            already_read
+            if already_read is not None
+            else await _read_person_activity(wa_id)
+        )
+        if not items:
             return None
-        try:
-            activities = await shared_supabase.get_portable_person_activity(
-                config=settings.commercial_ally_config,
-                whatsapp_phone=wa_id,
-            )
-        except SupabaseError as exc:
-            logger.warning(
-                "person_activity_lookup_failed error=%s",
-                type(exc).__name__,
-            )
-            return None
-        logger.info("person_activity_context items=%s", len(activities))
-        if not activities:
-            return None
-        return person_activity_context(activities, product=agent_product_keys[0])
+        return products_activity_context(items)
 
     async def resolve_inbound_external_user_id(
         wa_id: str,
@@ -4837,7 +4920,10 @@ def create_app(
             raise RuntimeError("chatwoot_invalid_message_id")
         if not decision.accepted:
             return
-        if product_labeler is not None:
+        # Con varios productos, lo que hizo la persona se lee una vez, aca: da las
+        # etiquetas y lo reusa la entrada del agente.
+        inbound_person_activity: tuple[tuple[str, PersonActivity], ...] | None = None
+        if product_labelers:
             # Antes de la admision y de la pausa, a proposito: la etiqueta dice de
             # que producto es la conversacion, la atienda el agente o una persona.
             # Es de falla blanda: ensure no lanza.
@@ -4848,9 +4934,24 @@ def create_app(
                 else None
             )
             if isinstance(labeled_conversation_id, int):
-                await product_labeler.ensure(
-                    labeled_conversation_id, source="entrante"
-                )
+                if several_products:
+                    # La de cada producto que aparece en lo que hizo la persona.
+                    # Sin nada, ninguna: no se adivina el producto.
+                    inbound_person_activity = await _read_person_activity(
+                        _whatsapp_digits(decision.sender_jid)
+                    )
+                    await label_products(
+                        labeled_conversation_id,
+                        (
+                            activity_product
+                            for activity_product, _ in inbound_person_activity or ()
+                        ),
+                        source="entrante",
+                    )
+                else:
+                    await label_products(
+                        labeled_conversation_id, product_labelers, source="entrante"
+                    )
         scoped_expected_jid = (
             decision.sender_jid
             if settings.chatwoot_scoped_inbound_senders_enabled
@@ -5276,7 +5377,9 @@ def create_app(
                     context["recent_payment_failure"] = recent_failure
             if agent_products:
                 context["products"] = agent_products
-                person_activity = await _person_activity_context(person_wa_id)
+                person_activity = await _person_activity_context(
+                    person_wa_id, already_read=inbound_person_activity
+                )
                 if person_activity is not None:
                     context["person_activity"] = person_activity
             completed_proposal = (
@@ -5490,6 +5593,10 @@ def create_app(
                 delivery.outcome,
                 delivery.issuance_id,
             )
+            if several_products:
+                # Con varios productos, la conversacion lleva la etiqueta del
+                # producto del link que salio. Con uno ya la tiene.
+                await label_products(conversation_id, (link_product,), source="link")
             return
         # V1 remains as rollback-only code during the V2 rolling transition.
         if False and completed_proposal.get("decision") == "send_payment_link":
@@ -6755,12 +6862,20 @@ def create_app(
             **commercial_ally_readiness,
             **instance_readiness,
         }
-        if product_labeler is not None:
+        if product_labelers:
             # La etiqueta de producto no responde 503: no atiende a nadie, y un
-            # macro que no sirve apaga solo el etiquetado. Se publica y se ve.
+            # macro que no sirve apaga solo el etiquetado. Se publica y se ve:
+            # con un producto, product_label; con varios, una por producto.
             commercial_ally_readiness = {
                 **commercial_ally_readiness,
-                "product_label": product_labeler.state,
+                **(
+                    {
+                        f"product_label_{label_product}": labeler.state
+                        for label_product, labeler in product_labelers.items()
+                    }
+                    if several_products
+                    else {"product_label": next(iter(product_labelers.values())).state}
+                ),
             }
         precheckout_readiness: dict[str, str] = {
             "precheckout_delayed_first_touch": "disabled",

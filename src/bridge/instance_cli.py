@@ -16,7 +16,6 @@ import sys
 from pathlib import Path
 from typing import Any, Sequence
 
-from . import product_routes
 from .commercial_knowledge import CommercialKnowledge, KnowledgeError
 from .instance_manifest import (
     FLOWS,
@@ -86,11 +85,6 @@ def validate_instance(directory: Path) -> dict[str, Any]:
             }
             for product in manifest.products
         ]
-        if len(manifest.products) > 1 and not product_routes.ROUTING_COMPLETE:
-            report["errores"].append(
-                "con mas de un producto el bridge espera el ruteo por producto "
-                "(pasos 2c-2 y 2c-3): el bridge no arranca"
-            )
     if manifest.ghl_form_ids:
         acceptance = manifest.ghl_risk_acceptance
         report["manifiesto"]["adaptadores"] = {

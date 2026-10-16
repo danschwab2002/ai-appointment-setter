@@ -3,8 +3,11 @@
 El bridge le suma a cada conversacion la etiqueta del producto que declara
 ``[[productos]]`` en el manifiesto, para que el equipo vea en el inbox de que
 producto es cada conversacion: cuando la aliada tenga dos productos, el mismo
-numero de WhatsApp atiende a los dos. Se pone cuando la persona escribe y cuando
-una plantilla abre la conversacion.
+numero de WhatsApp atiende a los dos. Con un producto, se pone cuando la persona
+escribe y cuando una plantilla abre la conversacion. Con varios (2c-3b), cada
+producto tiene su etiquetador y se pone la de cada producto que aparece en lo
+que hizo la persona cuando escribe, la del principal con una plantilla (hoy solo
+el principal tiene flujos) y la del producto del link que sale.
 
 La etiqueta se suma ejecutando un macro que solo hace ``add_label`` con ella. El
 endpoint de etiquetas de la conversacion reemplaza la lista entera y podria borrar

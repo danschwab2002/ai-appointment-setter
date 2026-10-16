@@ -24,7 +24,6 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from bridge import product_routes
 from bridge.app import Settings, create_app
 from bridge.commercial_ally import CommercialAllyConfig
 from bridge.instance_cli import validate_instance
@@ -357,12 +356,10 @@ def _settings(manifest: InstanceManifest, tmp_path: Path) -> Settings:
     )
 
 
-def test_the_bridge_does_not_start_with_two_products_until_the_routing_is_complete(
-    tmp_path: Path,
-) -> None:
-    assert product_routes.ROUTING_COMPLETE is False
-    with pytest.raises(ValueError, match="espera el ruteo por producto"):
-        create_app(_settings(_two_unlabeled(), tmp_path))
+def test_the_bridge_starts_with_two_products(tmp_path: Path) -> None:
+    # Desde la 2c-3b el ruteo por producto esta completo: los eventos, los
+    # formularios, el link, la etiqueta y lo que hizo la persona.
+    assert create_app(_settings(_two_unlabeled(), tmp_path)) is not None
 
 
 class _Bindings:
@@ -382,9 +379,8 @@ class _Bindings:
 
 
 def test_ready_checks_the_binding_of_every_product(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(product_routes, "ROUTING_COMPLETE", True)
     bindings = _Bindings()
     app = create_app(_settings(_two_unlabeled(), tmp_path), supabase_client=bindings)  # type: ignore[arg-type]
 
@@ -398,9 +394,8 @@ def test_ready_checks_the_binding_of_every_product(
 
 
 def test_ready_fails_when_the_binding_of_another_product_is_missing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(product_routes, "ROUTING_COMPLETE", True)
     app = create_app(
         _settings(_two_unlabeled(), tmp_path),
         supabase_client=_Bindings(failing_funnel="att2"),  # type: ignore[arg-type]
@@ -429,7 +424,7 @@ def test_ready_with_one_product_does_not_change(tmp_path: Path) -> None:
 # --------------------------------------------------------------------- el CLI
 
 
-def test_validate_shows_the_funnel_and_hotmart_of_each_product_and_refuses_to_start(
+def test_validate_shows_the_funnel_and_hotmart_of_each_product(
     tmp_path: Path,
 ) -> None:
     instance = tmp_path / "setter-instancia-att1"
@@ -483,5 +478,4 @@ por_defecto = true
             {"codigo": "prueba2a", "landing": "metodoraizana/att2-prueba-a", "por_defecto": True}
         ],
     }
-    assert report["valida"] is False
-    assert any("espera el ruteo por producto" in error for error in report["errores"])
+    assert not any("ruteo por producto" in error for error in report["errores"])
