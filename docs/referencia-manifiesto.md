@@ -191,6 +191,32 @@ El token del adaptador es su única barrera y lo lee cualquier usuario de la sub
 
 La guarda completa, con lo que responde `/ready` en cada caso, está en [ghl-precheckout-adapter-v1.md](contracts/ghl-precheckout-adapter-v1.md), *La aceptación escrita del riesgo*.
 
+## `[[productos]]`, opcional
+
+Los productos de la aliada, el primer paso de varios productos por aliada. Hoy hace dos cosas: ata cada producto con su sección del conocimiento y le pone a cada conversación la etiqueta del producto en Chatwoot, para que el equipo vea en el inbox de qué producto es. El producto que se vende sigue saliendo de `[hotmart]`.
+
+```toml
+[[productos]]
+clave = "att1"
+etiqueta = "att1"
+macro_etiqueta = 12
+```
+
+| Campo | Qué es | Si está mal |
+|---|---|---|
+| `clave` | La misma `clave` que la sección del producto en el conocimiento (`[[productos]]` del archivo de `agente.conocimiento`). Un slug en minúsculas | No carga |
+| `etiqueta` | Opcional, con el macro. La etiqueta de Chatwoot del producto: minúsculas, números, guiones y guiones bajos. No puede ser `automation_paused` ni `automation_opted_out` | No carga |
+| `macro_etiqueta` | Opcional, con la etiqueta. El id del macro de Chatwoot que suma esa etiqueta | No carga si no es un entero positivo. El bridge no arranca si es el macro de pausa, de reanudar o de baja |
+
+Reglas:
+
+- **Un solo producto, por ahora.** Con dos, la etiqueta de cada conversación la decide el ruteo por producto, que todavía no existe: el manifiesto no carga.
+- **El conocimiento separa los mismos productos.** Con `[[productos]]`, el conocimiento tiene que tener una sección por producto con las mismas claves. Si no, `validate` lo marca como error y el bridge no arranca. Sin la sección no se ata nada, y el conocimiento puede tener una sección o varias.
+- **La etiqueta va por un macro, nunca por el endpoint de etiquetas.** `POST /conversations/{id}/labels` reemplaza la lista entera y puede borrar `automation_paused`; la acción `add_label` de un macro solo suma. El macro se crea en la cuenta de la aliada, **global** y con **una sola acción**: `add_label` con la etiqueta del producto. Antes de usarlo, el bridge lo lee. Si hace cualquier otra cosa, o no existe, no lo ejecuta nunca y el etiquetado queda apagado hasta el próximo arranque, con `product_label_macro_invalid` en el log.
+- **Cuándo se pone.** Cuando la persona escribe (antes de la admisión y de la pausa: la etiqueta dice de qué producto es la conversación, la atienda el agente o una persona) y cuando una plantilla de primer contacto sale. Las conversaciones que ya existían se etiquetan la próxima vez que la persona escribe.
+- **Falla blanda.** Una etiqueta que no sale no frena la respuesta ni la plantilla: queda `product_label_failed` en el log y se reintenta en el próximo mensaje. `/ready` publica `product_label`: `unverified` (todavía no se leyó el macro), `ready` o `disabled:<motivo>`, sin responder 503.
+- **Orden al actualizar.** Un bridge sin `[[productos]]` (hasta 1.9.0) no carga un manifiesto con esta sección: primero la imagen nueva, después el manifiesto.
+
 ## Relación con el binding v1
 
 Mientras los caminos del bridge lean el binding de una aliada (`CommercialAllyConfig`, `docs/contracts/commercial-ally-runtime-v1.md`), el manifiesto v2 se traduce a él: la oferta por defecto es la del binding, y las demás landings van en `additional_offer_codes`, así un carrito o un pago fallido que entra por cualquier landing de la instancia se admite. El sitio, la landing y la URL de cada una van en `additional_offer_landings`, así también se admite el formulario del precheckout de cada landing (migración `20260930000200`); la fila del binding en la base tiene que declarar las mismas, o el bridge ve drift. El test `test_johanna_manifest_produces_the_binding_in_code_plus_its_other_landing_offers` prueba que el manifiesto de Johanna produce el binding que hoy está en el código, y que lo único que suma son sus otras cinco landings.

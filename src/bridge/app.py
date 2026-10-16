@@ -64,6 +64,7 @@ from bridge.reactivation import ConversationReactivationSweeper
 from bridge.commercial_ally import CommercialAllyConfig, JOHANNA_COMMERCIAL_ALLY
 from bridge.commercial_knowledge import CommercialKnowledge
 from bridge.instance_manifest import GHL_RISK_GATED_FLOWS, InstanceManifest
+from bridge.product_label import ProductLabeler
 from bridge.checkout_delivery import CheckoutDeliveryError, deliver_checkout_issuance_v2
 from bridge.filtering import EventDecision, classify_chatwoot_event
 from bridge.agent_provenance import AgentTurn, CONTEXT_BUILDER_VERSION
@@ -2152,6 +2153,14 @@ def _validate_instance_manifest_gates(settings: Settings) -> None:
     knowledge = settings.commercial_knowledge
     if knowledge is not None and knowledge.ally_ref != manifest.ally_ref:
         raise ValueError("commercial knowledge belongs to another ally")
+    if knowledge is not None:
+        # [[productos]] y las secciones del conocimiento se atan por la clave: con
+        # productos en el manifiesto, el conocimiento separa los mismos.
+        products_error = manifest.knowledge_products_error(
+            tuple(product.key for product in knowledge.products)
+        )
+        if products_error is not None:
+            raise ValueError(f"instance products: {products_error}")
     blocked = sorted(
         f"{flag}->{flow}"
         for flag, flow in _FLAG_REQUIRED_FLOW.items()
@@ -3374,6 +3383,42 @@ def create_app(
             resume_macro_id=settings.chatwoot_resume_macro_id,
             opt_out_macro_id=settings.chatwoot_opt_out_macro_id,
         )
+    # La etiqueta de producto (varios productos por aliada, paso 2a): solo con un
+    # producto de [[productos]] que la declare. Sin eso no se crea y nada cambia.
+    product_labeler: ProductLabeler | None = None
+    labeled_product = (
+        settings.instance_manifest.labeled_product
+        if settings.instance_manifest is not None
+        else None
+    )
+    if labeled_product is not None:
+        assert labeled_product.chatwoot_label is not None
+        assert labeled_product.chatwoot_label_macro_id is not None
+        if control_client is None:
+            raise ValueError("the product label requires Chatwoot control")
+        if labeled_product.chatwoot_label_macro_id in {
+            settings.chatwoot_pause_macro_id,
+            settings.chatwoot_resume_macro_id,
+            settings.chatwoot_opt_out_macro_id,
+        }:
+            # Ejecutado sobre cada conversacion, el macro de pausa pausaria el
+            # inbox entero.
+            raise ValueError(
+                "the product label macro cannot be a pause, resume or opt-out macro"
+            )
+        product_labeler = ProductLabeler(
+            client=control_client,
+            label=labeled_product.chatwoot_label,
+            macro_id=labeled_product.chatwoot_label_macro_id,
+        )
+
+    async def label_opened_conversation(conversation_id: int) -> None:
+        if product_labeler is not None:
+            await product_labeler.ensure(conversation_id, source="plantilla")
+
+    conversation_opened_hook = (
+        label_opened_conversation if product_labeler is not None else None
+    )
     configured_reply_splitter = reply_splitter
     reply_manifest_reader = HermesReplySplitter(
         base_url="",
@@ -3931,6 +3976,7 @@ def create_app(
                 dynamic_recipient_enabled=portable_dynamic_recipient,
                 template=waba_template,
                 whatsapp_equivalence_enabled=portable_dynamic_recipient,
+                on_conversation_opened=conversation_opened_hook,
             )
         resolution_worker = ResolutionWorker(
             supabase=shared_supabase,
@@ -4018,6 +4064,7 @@ def create_app(
                     dynamic_recipient_enabled=portable_dynamic_recipient,
                     template=waba_template,
                     whatsapp_equivalence_enabled=portable_dynamic_recipient,
+                    on_conversation_opened=conversation_opened_hook,
                 )
             if outbound_sender is None or (
                 outbound_agent is None and not approved_template_direct
@@ -4681,6 +4728,20 @@ def create_app(
             raise RuntimeError("chatwoot_invalid_message_id")
         if not decision.accepted:
             return
+        if product_labeler is not None:
+            # Antes de la admision y de la pausa, a proposito: la etiqueta dice de
+            # que producto es la conversacion, la atienda el agente o una persona.
+            # Es de falla blanda: ensure no lanza.
+            labeled_conversation = payload.get("conversation")
+            labeled_conversation_id = (
+                labeled_conversation.get("id")
+                if isinstance(labeled_conversation, dict)
+                else None
+            )
+            if isinstance(labeled_conversation_id, int):
+                await product_labeler.ensure(
+                    labeled_conversation_id, source="entrante"
+                )
         scoped_expected_jid = (
             decision.sender_jid
             if settings.chatwoot_scoped_inbound_senders_enabled
@@ -6536,6 +6597,13 @@ def create_app(
             **commercial_ally_readiness,
             **instance_readiness,
         }
+        if product_labeler is not None:
+            # La etiqueta de producto no responde 503: no atiende a nadie, y un
+            # macro que no sirve apaga solo el etiquetado. Se publica y se ve.
+            commercial_ally_readiness = {
+                **commercial_ally_readiness,
+                "product_label": product_labeler.state,
+            }
         precheckout_readiness: dict[str, str] = {
             "precheckout_delayed_first_touch": "disabled",
         }

@@ -1778,6 +1778,70 @@ class ChatwootClient:
                     return
         raise ChatwootProtocolError("opt_out_macro_postconditions_not_confirmed")
 
+    async def get_conversation_labels(self, *, conversation_id: int) -> list[str]:
+        """Las etiquetas de una conversacion. Solo lee."""
+        path = (
+            f"/api/v1/accounts/{self._account_id}"
+            f"/conversations/{conversation_id}/labels"
+        )
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers={"api_access_token": self._access_token},
+            transport=self._transport,
+            timeout=15,
+        ) as client:
+            response = await client.get(path)
+            response.raise_for_status()
+            return self._parse_labels(response)
+
+    async def get_macro_actions(self, *, macro_id: int) -> list[dict[str, object]]:
+        """Las acciones de un macro de la cuenta. Solo lee.
+
+        Chatwoot responde ``{"payload": {..., "actions": [{"action_name": ...,
+        "action_params": [...]}]}}`` (leido en el codigo de la instancia del VPS
+        el 2026-10-16: ``macros/show.json.jbuilder`` y ``models/_macro``). Un
+        macro de otra cuenta, o personal de otro usuario, da 404.
+        """
+        path = f"/api/v1/accounts/{self._account_id}/macros/{macro_id}"
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers={"api_access_token": self._access_token},
+            transport=self._transport,
+            timeout=15,
+        ) as client:
+            response = await client.get(path)
+            response.raise_for_status()
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                raise ChatwootProtocolError("invalid_json") from exc
+        macro = payload.get("payload") if isinstance(payload, dict) else None
+        actions = macro.get("actions") if isinstance(macro, dict) else None
+        if not isinstance(actions, list) or not all(
+            isinstance(action, dict) for action in actions
+        ):
+            raise ChatwootProtocolError("invalid_macro_payload")
+        return actions
+
+    async def execute_macro(self, *, macro_id: int, conversation_id: int) -> None:
+        """Ejecuta un macro sobre una conversacion.
+
+        Chatwoot lo encola en un job y responde 200 antes de aplicarlo: volver de
+        aca no prueba que ya este aplicado.
+        """
+        path = f"/api/v1/accounts/{self._account_id}/macros/{macro_id}/execute"
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers={"api_access_token": self._access_token},
+            transport=self._transport,
+            timeout=15,
+        ) as client:
+            response = await client.post(
+                path,
+                json={"conversation_ids": [conversation_id]},
+            )
+            response.raise_for_status()
+
     @staticmethod
     def _parse_labels(response: httpx.Response) -> list[str]:
         try:
