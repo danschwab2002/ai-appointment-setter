@@ -51,7 +51,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
     # rechazado con los eventos de la ficha (20261012000100), los filtros de la
     # revision diaria (20261015000100), las lecturas del Automation Expert
     # (20261015000200), el almacen de las definiciones de flujo
-    # (20261016000100) y lo que hizo la persona (20261016000200).
+    # (20261016000100) y lo que hizo la persona (20261016000200), con la
+    # compra hecha con nuestro link (20261016000300).
     assert versions[position + 1:] == [
         "20261009000200",
         "20261010000100",
@@ -60,6 +61,7 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261015000200",
         "20261016000100",
         "20261016000200",
+        "20261016000300",
     ]
 
     sql = _sql()
