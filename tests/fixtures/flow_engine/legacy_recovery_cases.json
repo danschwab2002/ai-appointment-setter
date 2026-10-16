@@ -1,0 +1,4125 @@
+{
+  "_formato": {
+    "que_es": "Lo que hace hoy el legado (el carrito y el pago fallido del recuperador de ATT1) en 24 casos, G1 a G24 (diseno del motor de flujos, §3.2). Lo genera tests/sql/followup_engine/validate_flow_engine_legacy.mjs con la cadena real de migraciones en PGlite; nadie lo escribe a mano. Con --check, la CI falla si regenerarlo da otra cosa.",
+    "como_se_genera": "Una sola base con la cadena aplicada una vez; un scope y una politica por caso (copias de la v5 de att1-recuperacion y de att1-recuperacion-un-toque v1 de la captura de ATT1, con la zona, la ventana y los topes del caso). Los disparos entran por las admisiones portables y los planificadores del piloto, como los llama el bridge; el despacho, por la toma, la reevaluacion, la reserva y el arranque de la base. La cabecera del script dice que hace cada paso y de donde sale.",
+    "tiempos": "Toda hora es un entero de segundos desde el disparo del caso, que es T0 - 600 s. T0 (t = 600) es la primera toma: el minuto en curso al empezar el caso mas 2 minutos, para que los planes corran antes en el reloj real (el permiso del carrito nace con el reloj) y los arranques queden a menos de 5 minutos de el. Lo que pasa despues de un envio va en T0 + 60 s (t = 660). En los reintentos, la toma es con un lease de 1 minuto (paso toma, campo lease) y la segunda va en T0 + 61 s (t = 661). \"reloj\" es una hora que pone el reloj de la base (request_started_at, authorized_at, el now() de un plan): solo se verifica que caiga dentro de la corrida.",
+    "dias": "Un dia local es \"corrida\" (el de T0 en la zona del caso) o \"anterior\".",
+    "zona": "Cada caso corre en Etc/GMT+-N, elegida para que la hora local de T0 caiga entre las 11:30 y las 12:30: ninguna ventana cruza la medianoche.",
+    "config": "La configuracion del caso: la ventana (relativa a la hora local de T0), el vencimiento, la gracia, los pasos de la politica, la audiencia del scope y sus topes.",
+    "pasos": "Lo que paso, en orden. formulario (persona, t, admision, otro_telefono, misma_intencion); disparo (evento, tipo, persona, t, admision); plan (evento, arranco, motivo = el processing_error que deja el ResolutionWorker, contacto_existia, y si arranco caso, accion y creado; con create_recovery_case_failed, error_de_la_base es lo que contesto la base, que el bridge deja solo en el log); compra_aplicada (resultado de apply_hotmart_purchase_approved); baja (forma: identidad_guardada o wa_id, resultado, acciones_tocadas); operador (que, version, estado); toma (accion, t, tomada, y lease si no es el de 5 minutos); reevaluacion (accion, t, decision, motivo); reserva (accion, t, intento); cierre_sin_pedido (motivo, estado, terminal_reason); arranque (accion, t, resultado = request_started, rechazado o error, motivo = el detail de pilot_request_start_rejected o el mensaje del error, dia_local, autorizada, request_started_at); aceptacion (estado); autorizacion_sembrada (G5); due_at (G11: el que deja el plan del pago fallido repetido); barrido (la toma despues de vencer: estado y terminal_reason).",
+    "final": "El estado al terminar el caso. eventos: tipo, estado (processing_status) y error (processing_error). casos: estado, etapa, compra, correlacion_de_compra, con_conversacion, eventos del caso, scope_version y audiencia del binding, y las secuencias (estado, cierre, aceptados). acciones: caso, tipo, paso, ancla, estado, terminal_reason, due_at, expires_at e intentos (numero, fase, resultado, motivo, autorizado). personas: si tiene contacto, su intencion (estado, clasificacion, permisos del formulario) y sus permisos de contacto (estado, fuente, razon). autorizaciones_del_scope: los arranques autorizados del scope del caso, por dia local.",
+    "referencias": "e1, c1, a1...: el evento, el caso y la accion en el orden en que aparecen en el caso. \"otro\" es uno que no es del caso."
+  },
+  "casos": [
+    {
+      "id": "G1",
+      "que": "Un carrito de dia: el plan, la reevaluacion, la autorizacion y el request_started.",
+      "fija": "el camino feliz",
+      "config": {
+        "zona": "Etc/GMT+-N, con la hora local de T0 entre las 11:30 y las 12:30",
+        "ventana": "abierta: de -3 h a +3 h de la hora local de T0",
+        "vence": "1 day",
+        "gracia": "00:00:00",
+        "pasos_de_la_politica": [
+          "first_contact",
+          "payment_failure_first_contact"
+        ],
+        "audiencia": "consented_intent",
+        "tope_diario": 80,
+        "tope_total": 1000,
+        "disparo": "T0 - 600 s"
+      },
+      "pasos": [
+        {
+          "paso": "formulario",
+          "persona": "A",
+          "t": -1200,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e1",
+          "tipo": "carrito",
+          "persona": "A",
+          "t": 0,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e1",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": false,
+          "caso": "c1",
+          "accion": "a1",
+          "creado": true
+        },
+        {
+          "paso": "toma",
+          "accion": "a1",
+          "t": 600,
+          "tomada": true
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 600,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "reserva",
+          "accion": "a1",
+          "t": 600,
+          "intento": 1
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 600,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "arranque",
+          "accion": "a1",
+          "t": 600,
+          "resultado": "request_started",
+          "motivo": "pilot_request_start_authorized",
+          "dia_local": "corrida",
+          "autorizada": "reloj",
+          "request_started_at": "reloj"
+        }
+      ],
+      "final": {
+        "eventos": {
+          "e1": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "processed",
+            "error": null
+          }
+        },
+        "casos": {
+          "c1": {
+            "estado": "grace_period",
+            "etapa": "new",
+            "compra": null,
+            "correlacion_de_compra": null,
+            "con_conversacion": false,
+            "eventos": [
+              "e1"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "active",
+                "cierre": null,
+                "aceptados": 0
+              }
+            ]
+          }
+        },
+        "acciones": {
+          "a1": {
+            "caso": "c1",
+            "tipo": "first_contact_review",
+            "paso": "first_contact",
+            "ancla": "cart_abandonment",
+            "estado": "pending",
+            "terminal_reason": null,
+            "due_at": 0,
+            "expires_at": 86400,
+            "intentos": [
+              {
+                "numero": 1,
+                "fase": "request_started",
+                "resultado": null,
+                "motivo": null,
+                "autorizado": true
+              }
+            ]
+          }
+        },
+        "personas": {
+          "A": {
+            "contacto": true,
+            "intencion": {
+              "estado": "waiting_for_purchase",
+              "clasificacion": "confirmed_abandonment",
+              "permisos": true
+            },
+            "permisos": [
+              {
+                "estado": "allowed",
+                "fuente": "hotmart",
+                "razon": "cart_abandonment"
+              }
+            ]
+          }
+        },
+        "autorizaciones_del_scope": {
+          "corrida": 1
+        }
+      }
+    },
+    {
+      "id": "G2",
+      "que": "Un carrito con la ventana cerrada: la reevaluacion difiere al proximo inicio (T0 + 4 h).",
+      "fija": "fuera_de_horario",
+      "config": {
+        "zona": "Etc/GMT+-N, con la hora local de T0 entre las 11:30 y las 12:30",
+        "ventana": "cerrada: de +4 h a +6 h de la hora local de T0",
+        "vence": "1 day",
+        "gracia": "00:00:00",
+        "pasos_de_la_politica": [
+          "first_contact",
+          "payment_failure_first_contact"
+        ],
+        "audiencia": "consented_intent",
+        "tope_diario": 80,
+        "tope_total": 1000,
+        "disparo": "T0 - 600 s"
+      },
+      "pasos": [
+        {
+          "paso": "formulario",
+          "persona": "A",
+          "t": -1200,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e1",
+          "tipo": "carrito",
+          "persona": "A",
+          "t": 0,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e1",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": false,
+          "caso": "c1",
+          "accion": "a1",
+          "creado": true
+        },
+        {
+          "paso": "toma",
+          "accion": "a1",
+          "t": 600,
+          "tomada": true
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 600,
+          "decision": "defer",
+          "motivo": "business_window_closed"
+        }
+      ],
+      "final": {
+        "eventos": {
+          "e1": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "processed",
+            "error": null
+          }
+        },
+        "casos": {
+          "c1": {
+            "estado": "grace_period",
+            "etapa": "new",
+            "compra": null,
+            "correlacion_de_compra": null,
+            "con_conversacion": false,
+            "eventos": [
+              "e1"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "active",
+                "cierre": null,
+                "aceptados": 0
+              }
+            ]
+          }
+        },
+        "acciones": {
+          "a1": {
+            "caso": "c1",
+            "tipo": "first_contact_review",
+            "paso": "first_contact",
+            "ancla": "cart_abandonment",
+            "estado": "deferred",
+            "terminal_reason": null,
+            "due_at": 15000,
+            "expires_at": 86400,
+            "intentos": []
+          }
+        },
+        "personas": {
+          "A": {
+            "contacto": true,
+            "intencion": {
+              "estado": "waiting_for_purchase",
+              "clasificacion": "confirmed_abandonment",
+              "permisos": true
+            },
+            "permisos": [
+              {
+                "estado": "allowed",
+                "fuente": "hotmart",
+                "razon": "cart_abandonment"
+              }
+            ]
+          }
+        },
+        "autorizaciones_del_scope": {}
+      }
+    },
+    {
+      "id": "G3",
+      "que": "Sin horario antes de vencer (vence a las 2 h y la ventana abre a las 4 h): escala.",
+      "fija": "la 3 (sin_horario_escala)",
+      "config": {
+        "zona": "Etc/GMT+-N, con la hora local de T0 entre las 11:30 y las 12:30",
+        "ventana": "cerrada: de +4 h a +6 h de la hora local de T0",
+        "vence": "02:00:00",
+        "gracia": "00:00:00",
+        "pasos_de_la_politica": [
+          "first_contact",
+          "payment_failure_first_contact"
+        ],
+        "audiencia": "consented_intent",
+        "tope_diario": 80,
+        "tope_total": 1000,
+        "disparo": "T0 - 600 s"
+      },
+      "pasos": [
+        {
+          "paso": "formulario",
+          "persona": "A",
+          "t": -1200,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e1",
+          "tipo": "carrito",
+          "persona": "A",
+          "t": 0,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e1",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": false,
+          "caso": "c1",
+          "accion": "a1",
+          "creado": true
+        },
+        {
+          "paso": "toma",
+          "accion": "a1",
+          "t": 600,
+          "tomada": true
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 600,
+          "decision": "escalate",
+          "motivo": "no_business_window_before_expiry"
+        }
+      ],
+      "final": {
+        "eventos": {
+          "e1": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "processed",
+            "error": null
+          }
+        },
+        "casos": {
+          "c1": {
+            "estado": "escalated",
+            "etapa": "new",
+            "compra": null,
+            "correlacion_de_compra": null,
+            "con_conversacion": false,
+            "eventos": [
+              "e1"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "paused",
+                "cierre": null,
+                "aceptados": 0
+              }
+            ]
+          }
+        },
+        "acciones": {
+          "a1": {
+            "caso": "c1",
+            "tipo": "first_contact_review",
+            "paso": "first_contact",
+            "ancla": "cart_abandonment",
+            "estado": "cancelled",
+            "terminal_reason": "no_business_window_before_expiry",
+            "due_at": 0,
+            "expires_at": 7200,
+            "intentos": []
+          }
+        },
+        "personas": {
+          "A": {
+            "contacto": true,
+            "intencion": {
+              "estado": "waiting_for_purchase",
+              "clasificacion": "confirmed_abandonment",
+              "permisos": true
+            },
+            "permisos": [
+              {
+                "estado": "allowed",
+                "fuente": "hotmart",
+                "razon": "cart_abandonment"
+              }
+            ]
+          }
+        },
+        "autorizaciones_del_scope": {}
+      }
+    },
+    {
+      "id": "G4",
+      "que": "El tope del dia agotado hoy: A sale y a B se le rechaza el arranque; su intento queda reservado.",
+      "fija": "tope_del_flujo (P4), el diario",
+      "config": {
+        "zona": "Etc/GMT+-N, con la hora local de T0 entre las 11:30 y las 12:30",
+        "ventana": "abierta: de -3 h a +3 h de la hora local de T0",
+        "vence": "1 day",
+        "gracia": "00:00:00",
+        "pasos_de_la_politica": [
+          "first_contact",
+          "payment_failure_first_contact"
+        ],
+        "audiencia": "consented_intent",
+        "tope_diario": 1,
+        "tope_total": 10,
+        "disparo": "T0 - 600 s"
+      },
+      "pasos": [
+        {
+          "paso": "formulario",
+          "persona": "A",
+          "t": -1200,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "formulario",
+          "persona": "B",
+          "t": -1140,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e1",
+          "tipo": "carrito",
+          "persona": "A",
+          "t": 0,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e1",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": false,
+          "caso": "c1",
+          "accion": "a1",
+          "creado": true
+        },
+        {
+          "paso": "toma",
+          "accion": "a1",
+          "t": 600,
+          "tomada": true
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 600,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "reserva",
+          "accion": "a1",
+          "t": 600,
+          "intento": 1
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 600,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "arranque",
+          "accion": "a1",
+          "t": 600,
+          "resultado": "request_started",
+          "motivo": "pilot_request_start_authorized",
+          "dia_local": "corrida",
+          "autorizada": "reloj",
+          "request_started_at": "reloj"
+        },
+        {
+          "paso": "disparo",
+          "evento": "e2",
+          "tipo": "carrito",
+          "persona": "B",
+          "t": 60,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e2",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": false,
+          "caso": "c2",
+          "accion": "a2",
+          "creado": true
+        },
+        {
+          "paso": "toma",
+          "accion": "a2",
+          "t": 600,
+          "tomada": true
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a2",
+          "t": 600,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "reserva",
+          "accion": "a2",
+          "t": 600,
+          "intento": 1
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a2",
+          "t": 600,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "arranque",
+          "accion": "a2",
+          "t": 600,
+          "resultado": "rechazado",
+          "motivo": "pilot_daily_budget_exhausted"
+        }
+      ],
+      "final": {
+        "eventos": {
+          "e1": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "processed",
+            "error": null
+          },
+          "e2": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "processed",
+            "error": null
+          }
+        },
+        "casos": {
+          "c1": {
+            "estado": "grace_period",
+            "etapa": "new",
+            "compra": null,
+            "correlacion_de_compra": null,
+            "con_conversacion": false,
+            "eventos": [
+              "e1"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "active",
+                "cierre": null,
+                "aceptados": 0
+              }
+            ]
+          },
+          "c2": {
+            "estado": "grace_period",
+            "etapa": "new",
+            "compra": null,
+            "correlacion_de_compra": null,
+            "con_conversacion": false,
+            "eventos": [
+              "e2"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "active",
+                "cierre": null,
+                "aceptados": 0
+              }
+            ]
+          }
+        },
+        "acciones": {
+          "a1": {
+            "caso": "c1",
+            "tipo": "first_contact_review",
+            "paso": "first_contact",
+            "ancla": "cart_abandonment",
+            "estado": "pending",
+            "terminal_reason": null,
+            "due_at": 0,
+            "expires_at": 86400,
+            "intentos": [
+              {
+                "numero": 1,
+                "fase": "request_started",
+                "resultado": null,
+                "motivo": null,
+                "autorizado": true
+              }
+            ]
+          },
+          "a2": {
+            "caso": "c2",
+            "tipo": "first_contact_review",
+            "paso": "first_contact",
+            "ancla": "cart_abandonment",
+            "estado": "pending",
+            "terminal_reason": null,
+            "due_at": 60,
+            "expires_at": 86460,
+            "intentos": [
+              {
+                "numero": 1,
+                "fase": "reserved",
+                "resultado": null,
+                "motivo": null,
+                "autorizado": false
+              }
+            ]
+          }
+        },
+        "personas": {
+          "A": {
+            "contacto": true,
+            "intencion": {
+              "estado": "waiting_for_purchase",
+              "clasificacion": "confirmed_abandonment",
+              "permisos": true
+            },
+            "permisos": [
+              {
+                "estado": "allowed",
+                "fuente": "hotmart",
+                "razon": "cart_abandonment"
+              }
+            ]
+          },
+          "B": {
+            "contacto": true,
+            "intencion": {
+              "estado": "waiting_for_purchase",
+              "clasificacion": "confirmed_abandonment",
+              "permisos": true
+            },
+            "permisos": [
+              {
+                "estado": "allowed",
+                "fuente": "hotmart",
+                "razon": "cart_abandonment"
+              }
+            ]
+          }
+        },
+        "autorizaciones_del_scope": {
+          "corrida": 1
+        }
+      }
+    },
+    {
+      "id": "G5",
+      "que": "El tope del dia gastado ayer (una autorizacion sembrada con el dia local anterior) no frena hoy: A sale.",
+      "fija": "el dia local",
+      "config": {
+        "zona": "Etc/GMT+-N, con la hora local de T0 entre las 11:30 y las 12:30",
+        "ventana": "abierta: de -3 h a +3 h de la hora local de T0",
+        "vence": "1 day",
+        "gracia": "00:00:00",
+        "pasos_de_la_politica": [
+          "first_contact",
+          "payment_failure_first_contact"
+        ],
+        "audiencia": "consented_intent",
+        "tope_diario": 1,
+        "tope_total": 10,
+        "disparo": "T0 - 600 s"
+      },
+      "pasos": [
+        {
+          "paso": "formulario",
+          "persona": "Y",
+          "t": -1200,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "formulario",
+          "persona": "A",
+          "t": -1140,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e1",
+          "tipo": "carrito",
+          "persona": "Y",
+          "t": 0,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e1",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": false,
+          "caso": "c1",
+          "accion": "a1",
+          "creado": true
+        },
+        {
+          "paso": "autorizacion_sembrada",
+          "accion": "a1",
+          "persona": "Y",
+          "dia_local": "anterior"
+        },
+        {
+          "paso": "disparo",
+          "evento": "e2",
+          "tipo": "carrito",
+          "persona": "A",
+          "t": 60,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e2",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": false,
+          "caso": "c2",
+          "accion": "a2",
+          "creado": true
+        },
+        {
+          "paso": "toma",
+          "accion": "a2",
+          "t": 600,
+          "tomada": true
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a2",
+          "t": 600,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "reserva",
+          "accion": "a2",
+          "t": 600,
+          "intento": 1
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a2",
+          "t": 600,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "arranque",
+          "accion": "a2",
+          "t": 600,
+          "resultado": "request_started",
+          "motivo": "pilot_request_start_authorized",
+          "dia_local": "corrida",
+          "autorizada": "reloj",
+          "request_started_at": "reloj"
+        }
+      ],
+      "final": {
+        "eventos": {
+          "e1": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "processed",
+            "error": null
+          },
+          "e2": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "processed",
+            "error": null
+          }
+        },
+        "casos": {
+          "c1": {
+            "estado": "grace_period",
+            "etapa": "new",
+            "compra": null,
+            "correlacion_de_compra": null,
+            "con_conversacion": false,
+            "eventos": [
+              "e1"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "active",
+                "cierre": null,
+                "aceptados": 0
+              }
+            ]
+          },
+          "c2": {
+            "estado": "grace_period",
+            "etapa": "new",
+            "compra": null,
+            "correlacion_de_compra": null,
+            "con_conversacion": false,
+            "eventos": [
+              "e2"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "active",
+                "cierre": null,
+                "aceptados": 0
+              }
+            ]
+          }
+        },
+        "acciones": {
+          "a1": {
+            "caso": "c1",
+            "tipo": "first_contact_review",
+            "paso": "first_contact",
+            "ancla": "cart_abandonment",
+            "estado": "pending",
+            "terminal_reason": null,
+            "due_at": 0,
+            "expires_at": 86400,
+            "intentos": [
+              {
+                "numero": 1,
+                "fase": "reserved",
+                "resultado": null,
+                "motivo": null,
+                "autorizado": true
+              }
+            ]
+          },
+          "a2": {
+            "caso": "c2",
+            "tipo": "first_contact_review",
+            "paso": "first_contact",
+            "ancla": "cart_abandonment",
+            "estado": "pending",
+            "terminal_reason": null,
+            "due_at": 60,
+            "expires_at": 86460,
+            "intentos": [
+              {
+                "numero": 1,
+                "fase": "request_started",
+                "resultado": null,
+                "motivo": null,
+                "autorizado": true
+              }
+            ]
+          }
+        },
+        "personas": {
+          "Y": {
+            "contacto": true,
+            "intencion": {
+              "estado": "waiting_for_purchase",
+              "clasificacion": "confirmed_abandonment",
+              "permisos": true
+            },
+            "permisos": [
+              {
+                "estado": "allowed",
+                "fuente": "hotmart",
+                "razon": "cart_abandonment"
+              }
+            ]
+          },
+          "A": {
+            "contacto": true,
+            "intencion": {
+              "estado": "waiting_for_purchase",
+              "clasificacion": "confirmed_abandonment",
+              "permisos": true
+            },
+            "permisos": [
+              {
+                "estado": "allowed",
+                "fuente": "hotmart",
+                "razon": "cart_abandonment"
+              }
+            ]
+          }
+        },
+        "autorizaciones_del_scope": {
+          "anterior": 1,
+          "corrida": 1
+        }
+      }
+    },
+    {
+      "id": "G6",
+      "que": "El tope total agotado: A sale y a B se le rechaza el arranque por el total (que se mira antes que el del dia).",
+      "fija": "tope_del_flujo, el total",
+      "config": {
+        "zona": "Etc/GMT+-N, con la hora local de T0 entre las 11:30 y las 12:30",
+        "ventana": "abierta: de -3 h a +3 h de la hora local de T0",
+        "vence": "1 day",
+        "gracia": "00:00:00",
+        "pasos_de_la_politica": [
+          "first_contact",
+          "payment_failure_first_contact"
+        ],
+        "audiencia": "consented_intent",
+        "tope_diario": 1,
+        "tope_total": 1,
+        "disparo": "T0 - 600 s"
+      },
+      "pasos": [
+        {
+          "paso": "formulario",
+          "persona": "A",
+          "t": -1200,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "formulario",
+          "persona": "B",
+          "t": -1140,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e1",
+          "tipo": "carrito",
+          "persona": "A",
+          "t": 0,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e1",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": false,
+          "caso": "c1",
+          "accion": "a1",
+          "creado": true
+        },
+        {
+          "paso": "toma",
+          "accion": "a1",
+          "t": 600,
+          "tomada": true
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 600,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "reserva",
+          "accion": "a1",
+          "t": 600,
+          "intento": 1
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 600,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "arranque",
+          "accion": "a1",
+          "t": 600,
+          "resultado": "request_started",
+          "motivo": "pilot_request_start_authorized",
+          "dia_local": "corrida",
+          "autorizada": "reloj",
+          "request_started_at": "reloj"
+        },
+        {
+          "paso": "disparo",
+          "evento": "e2",
+          "tipo": "carrito",
+          "persona": "B",
+          "t": 60,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e2",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": false,
+          "caso": "c2",
+          "accion": "a2",
+          "creado": true
+        },
+        {
+          "paso": "toma",
+          "accion": "a2",
+          "t": 600,
+          "tomada": true
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a2",
+          "t": 600,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "reserva",
+          "accion": "a2",
+          "t": 600,
+          "intento": 1
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a2",
+          "t": 600,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "arranque",
+          "accion": "a2",
+          "t": 600,
+          "resultado": "rechazado",
+          "motivo": "pilot_total_budget_exhausted"
+        }
+      ],
+      "final": {
+        "eventos": {
+          "e1": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "processed",
+            "error": null
+          },
+          "e2": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "processed",
+            "error": null
+          }
+        },
+        "casos": {
+          "c1": {
+            "estado": "grace_period",
+            "etapa": "new",
+            "compra": null,
+            "correlacion_de_compra": null,
+            "con_conversacion": false,
+            "eventos": [
+              "e1"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "active",
+                "cierre": null,
+                "aceptados": 0
+              }
+            ]
+          },
+          "c2": {
+            "estado": "grace_period",
+            "etapa": "new",
+            "compra": null,
+            "correlacion_de_compra": null,
+            "con_conversacion": false,
+            "eventos": [
+              "e2"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "active",
+                "cierre": null,
+                "aceptados": 0
+              }
+            ]
+          }
+        },
+        "acciones": {
+          "a1": {
+            "caso": "c1",
+            "tipo": "first_contact_review",
+            "paso": "first_contact",
+            "ancla": "cart_abandonment",
+            "estado": "pending",
+            "terminal_reason": null,
+            "due_at": 0,
+            "expires_at": 86400,
+            "intentos": [
+              {
+                "numero": 1,
+                "fase": "request_started",
+                "resultado": null,
+                "motivo": null,
+                "autorizado": true
+              }
+            ]
+          },
+          "a2": {
+            "caso": "c2",
+            "tipo": "first_contact_review",
+            "paso": "first_contact",
+            "ancla": "cart_abandonment",
+            "estado": "pending",
+            "terminal_reason": null,
+            "due_at": 60,
+            "expires_at": 86460,
+            "intentos": [
+              {
+                "numero": 1,
+                "fase": "reserved",
+                "resultado": null,
+                "motivo": null,
+                "autorizado": false
+              }
+            ]
+          }
+        },
+        "personas": {
+          "A": {
+            "contacto": true,
+            "intencion": {
+              "estado": "waiting_for_purchase",
+              "clasificacion": "confirmed_abandonment",
+              "permisos": true
+            },
+            "permisos": [
+              {
+                "estado": "allowed",
+                "fuente": "hotmart",
+                "razon": "cart_abandonment"
+              }
+            ]
+          },
+          "B": {
+            "contacto": true,
+            "intencion": {
+              "estado": "waiting_for_purchase",
+              "clasificacion": "confirmed_abandonment",
+              "permisos": true
+            },
+            "permisos": [
+              {
+                "estado": "allowed",
+                "fuente": "hotmart",
+                "razon": "cart_abandonment"
+              }
+            ]
+          }
+        },
+        "autorizaciones_del_scope": {
+          "corrida": 1
+        }
+      }
+    },
+    {
+      "id": "G7",
+      "que": "Un carrito con un pago fallido abierto (diferido a la apertura): el carrito no arranca, y el due_at del pago fallido no se mueve.",
+      "fija": "7 (M, no_arranca_mientras:pago_fallido) y el rollback del least(due_at, now())",
+      "config": {
+        "zona": "Etc/GMT+-N, con la hora local de T0 entre las 11:30 y las 12:30",
+        "ventana": "cerrada: de +4 h a +6 h de la hora local de T0",
+        "vence": "1 day",
+        "gracia": "00:00:00",
+        "pasos_de_la_politica": [
+          "first_contact",
+          "payment_failure_first_contact"
+        ],
+        "audiencia": "consented_intent",
+        "tope_diario": 80,
+        "tope_total": 1000,
+        "disparo": "T0 - 600 s"
+      },
+      "pasos": [
+        {
+          "paso": "formulario",
+          "persona": "A",
+          "t": -1200,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e1",
+          "tipo": "pago_fallido",
+          "persona": "A",
+          "t": 0,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e1",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": false,
+          "caso": "c1",
+          "accion": "a1",
+          "creado": true
+        },
+        {
+          "paso": "toma",
+          "accion": "a1",
+          "t": 600,
+          "tomada": true
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 600,
+          "decision": "defer",
+          "motivo": "business_window_closed"
+        },
+        {
+          "paso": "disparo",
+          "evento": "e2",
+          "tipo": "carrito",
+          "persona": "A",
+          "t": 660,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e2",
+          "arranco": false,
+          "motivo": "pilot_case_binding_conflict",
+          "contacto_existia": true
+        }
+      ],
+      "final": {
+        "eventos": {
+          "e1": {
+            "tipo": "PURCHASE_CANCELED",
+            "estado": "processed",
+            "error": null
+          },
+          "e2": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "failed",
+            "error": "pilot_case_binding_conflict"
+          }
+        },
+        "casos": {
+          "c1": {
+            "estado": "grace_period",
+            "etapa": "new",
+            "compra": null,
+            "correlacion_de_compra": null,
+            "con_conversacion": false,
+            "eventos": [
+              "e1"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "active",
+                "cierre": null,
+                "aceptados": 0
+              }
+            ]
+          }
+        },
+        "acciones": {
+          "a1": {
+            "caso": "c1",
+            "tipo": "first_contact_review",
+            "paso": "payment_failure_first_contact",
+            "ancla": "payment_failure",
+            "estado": "deferred",
+            "terminal_reason": null,
+            "due_at": 15000,
+            "expires_at": 86400,
+            "intentos": []
+          }
+        },
+        "personas": {
+          "A": {
+            "contacto": true,
+            "intencion": {
+              "estado": "waiting_for_purchase",
+              "clasificacion": "confirmed_abandonment",
+              "permisos": true
+            },
+            "permisos": [
+              {
+                "estado": "allowed",
+                "fuente": "system",
+                "razon": "precheckout_whatsapp_consent"
+              }
+            ]
+          }
+        },
+        "autorizaciones_del_scope": {}
+      }
+    },
+    {
+      "id": "G8",
+      "que": "Un pago fallido con un carrito abierto: abre su propio caso.",
+      "fija": "el punto 4 de la convivencia",
+      "config": {
+        "zona": "Etc/GMT+-N, con la hora local de T0 entre las 11:30 y las 12:30",
+        "ventana": "abierta: de -3 h a +3 h de la hora local de T0",
+        "vence": "1 day",
+        "gracia": "00:00:00",
+        "pasos_de_la_politica": [
+          "first_contact",
+          "payment_failure_first_contact"
+        ],
+        "audiencia": "consented_intent",
+        "tope_diario": 80,
+        "tope_total": 1000,
+        "disparo": "T0 - 600 s"
+      },
+      "pasos": [
+        {
+          "paso": "formulario",
+          "persona": "A",
+          "t": -1200,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e1",
+          "tipo": "carrito",
+          "persona": "A",
+          "t": 0,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e1",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": false,
+          "caso": "c1",
+          "accion": "a1",
+          "creado": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e2",
+          "tipo": "pago_fallido",
+          "persona": "A",
+          "t": 60,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e2",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": true,
+          "caso": "c2",
+          "accion": "a2",
+          "creado": true
+        }
+      ],
+      "final": {
+        "eventos": {
+          "e1": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "processed",
+            "error": null
+          },
+          "e2": {
+            "tipo": "PURCHASE_CANCELED",
+            "estado": "processed",
+            "error": null
+          }
+        },
+        "casos": {
+          "c1": {
+            "estado": "grace_period",
+            "etapa": "new",
+            "compra": null,
+            "correlacion_de_compra": null,
+            "con_conversacion": false,
+            "eventos": [
+              "e1"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "active",
+                "cierre": null,
+                "aceptados": 0
+              }
+            ]
+          },
+          "c2": {
+            "estado": "grace_period",
+            "etapa": "new",
+            "compra": null,
+            "correlacion_de_compra": null,
+            "con_conversacion": false,
+            "eventos": [
+              "e2"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "active",
+                "cierre": null,
+                "aceptados": 0
+              }
+            ]
+          }
+        },
+        "acciones": {
+          "a1": {
+            "caso": "c1",
+            "tipo": "first_contact_review",
+            "paso": "first_contact",
+            "ancla": "cart_abandonment",
+            "estado": "pending",
+            "terminal_reason": null,
+            "due_at": 0,
+            "expires_at": 86400,
+            "intentos": []
+          },
+          "a2": {
+            "caso": "c2",
+            "tipo": "first_contact_review",
+            "paso": "payment_failure_first_contact",
+            "ancla": "payment_failure",
+            "estado": "pending",
+            "terminal_reason": null,
+            "due_at": 60,
+            "expires_at": 86460,
+            "intentos": []
+          }
+        },
+        "personas": {
+          "A": {
+            "contacto": true,
+            "intencion": {
+              "estado": "waiting_for_purchase",
+              "clasificacion": "payment_failure_supported",
+              "permisos": true
+            },
+            "permisos": [
+              {
+                "estado": "allowed",
+                "fuente": "hotmart",
+                "razon": "cart_abandonment"
+              }
+            ]
+          }
+        },
+        "autorizaciones_del_scope": {}
+      }
+    },
+    {
+      "id": "G9",
+      "que": "Un segundo carrito mientras el primero espera: no arranca.",
+      "fija": "7 (M, ya_en_curso)",
+      "config": {
+        "zona": "Etc/GMT+-N, con la hora local de T0 entre las 11:30 y las 12:30",
+        "ventana": "abierta: de -3 h a +3 h de la hora local de T0",
+        "vence": "1 day",
+        "gracia": "00:00:00",
+        "pasos_de_la_politica": [
+          "first_contact",
+          "payment_failure_first_contact"
+        ],
+        "audiencia": "consented_intent",
+        "tope_diario": 80,
+        "tope_total": 1000,
+        "disparo": "T0 - 600 s"
+      },
+      "pasos": [
+        {
+          "paso": "formulario",
+          "persona": "A",
+          "t": -1200,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e1",
+          "tipo": "carrito",
+          "persona": "A",
+          "t": 0,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e1",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": false,
+          "caso": "c1",
+          "accion": "a1",
+          "creado": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e2",
+          "tipo": "carrito",
+          "persona": "A",
+          "t": 120,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e2",
+          "arranco": false,
+          "motivo": "pilot_case_binding_conflict",
+          "contacto_existia": true
+        }
+      ],
+      "final": {
+        "eventos": {
+          "e1": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "processed",
+            "error": null
+          },
+          "e2": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "failed",
+            "error": "pilot_case_binding_conflict"
+          }
+        },
+        "casos": {
+          "c1": {
+            "estado": "grace_period",
+            "etapa": "new",
+            "compra": null,
+            "correlacion_de_compra": null,
+            "con_conversacion": false,
+            "eventos": [
+              "e1"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "active",
+                "cierre": null,
+                "aceptados": 0
+              }
+            ]
+          }
+        },
+        "acciones": {
+          "a1": {
+            "caso": "c1",
+            "tipo": "first_contact_review",
+            "paso": "first_contact",
+            "ancla": "cart_abandonment",
+            "estado": "pending",
+            "terminal_reason": null,
+            "due_at": 0,
+            "expires_at": 86400,
+            "intentos": []
+          }
+        },
+        "personas": {
+          "A": {
+            "contacto": true,
+            "intencion": {
+              "estado": "waiting_for_purchase",
+              "clasificacion": "confirmed_abandonment",
+              "permisos": true
+            },
+            "permisos": [
+              {
+                "estado": "allowed",
+                "fuente": "hotmart",
+                "razon": "cart_abandonment"
+              }
+            ]
+          }
+        },
+        "autorizaciones_del_scope": {}
+      }
+    },
+    {
+      "id": "G10",
+      "que": "Un carrito despues de que el anterior salio y se acepto: arranca otro caso.",
+      "fija": "la repeticion despues del envio",
+      "config": {
+        "zona": "Etc/GMT+-N, con la hora local de T0 entre las 11:30 y las 12:30",
+        "ventana": "abierta: de -3 h a +3 h de la hora local de T0",
+        "vence": "1 day",
+        "gracia": "00:00:00",
+        "pasos_de_la_politica": [
+          "first_contact",
+          "payment_failure_first_contact"
+        ],
+        "audiencia": "consented_intent",
+        "tope_diario": 80,
+        "tope_total": 1000,
+        "disparo": "T0 - 600 s"
+      },
+      "pasos": [
+        {
+          "paso": "formulario",
+          "persona": "A",
+          "t": -1200,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e1",
+          "tipo": "carrito",
+          "persona": "A",
+          "t": 0,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e1",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": false,
+          "caso": "c1",
+          "accion": "a1",
+          "creado": true
+        },
+        {
+          "paso": "toma",
+          "accion": "a1",
+          "t": 600,
+          "tomada": true
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 600,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "reserva",
+          "accion": "a1",
+          "t": 600,
+          "intento": 1
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 600,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "arranque",
+          "accion": "a1",
+          "t": 600,
+          "resultado": "request_started",
+          "motivo": "pilot_request_start_authorized",
+          "dia_local": "corrida",
+          "autorizada": "reloj",
+          "request_started_at": "reloj"
+        },
+        {
+          "paso": "aceptacion",
+          "accion": "a1",
+          "t": 600,
+          "estado": "accepted_by_chatwoot"
+        },
+        {
+          "paso": "disparo",
+          "evento": "e2",
+          "tipo": "carrito",
+          "persona": "A",
+          "t": 660,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e2",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": true,
+          "caso": "c2",
+          "accion": "a2",
+          "creado": true
+        }
+      ],
+      "final": {
+        "eventos": {
+          "e1": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "processed",
+            "error": null
+          },
+          "e2": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "processed",
+            "error": null
+          }
+        },
+        "casos": {
+          "c1": {
+            "estado": "sequence_exhausted",
+            "etapa": "new",
+            "compra": null,
+            "correlacion_de_compra": null,
+            "con_conversacion": true,
+            "eventos": [
+              "e1"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "completed",
+                "cierre": "policy_exhausted",
+                "aceptados": 1
+              }
+            ]
+          },
+          "c2": {
+            "estado": "grace_period",
+            "etapa": "new",
+            "compra": null,
+            "correlacion_de_compra": null,
+            "con_conversacion": false,
+            "eventos": [
+              "e2"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "active",
+                "cierre": null,
+                "aceptados": 0
+              }
+            ]
+          }
+        },
+        "acciones": {
+          "a1": {
+            "caso": "c1",
+            "tipo": "first_contact_review",
+            "paso": "first_contact",
+            "ancla": "cart_abandonment",
+            "estado": "accepted_by_chatwoot",
+            "terminal_reason": "accepted_by_chatwoot",
+            "due_at": 0,
+            "expires_at": 86400,
+            "intentos": [
+              {
+                "numero": 1,
+                "fase": "completed",
+                "resultado": "accepted_by_chatwoot",
+                "motivo": "accepted_by_chatwoot",
+                "autorizado": true
+              }
+            ]
+          },
+          "a2": {
+            "caso": "c2",
+            "tipo": "first_contact_review",
+            "paso": "first_contact",
+            "ancla": "cart_abandonment",
+            "estado": "pending",
+            "terminal_reason": null,
+            "due_at": 660,
+            "expires_at": 87060,
+            "intentos": []
+          }
+        },
+        "personas": {
+          "A": {
+            "contacto": true,
+            "intencion": {
+              "estado": "waiting_for_purchase",
+              "clasificacion": "confirmed_abandonment",
+              "permisos": true
+            },
+            "permisos": [
+              {
+                "estado": "allowed",
+                "fuente": "hotmart",
+                "razon": "cart_abandonment"
+              }
+            ]
+          }
+        },
+        "autorizaciones_del_scope": {
+          "corrida": 1
+        }
+      }
+    },
+    {
+      "id": "G11",
+      "que": "Un pago fallido repetido antes del envio: queda como evidencia del mismo caso y su due_at se adelanta a now(); la reevaluacion siguiente lo vuelve a diferir.",
+      "fija": "8 (D, F#11)",
+      "config": {
+        "zona": "Etc/GMT+-N, con la hora local de T0 entre las 11:30 y las 12:30",
+        "ventana": "cerrada: de +4 h a +6 h de la hora local de T0",
+        "vence": "1 day",
+        "gracia": "00:00:00",
+        "pasos_de_la_politica": [
+          "first_contact",
+          "payment_failure_first_contact"
+        ],
+        "audiencia": "consented_intent",
+        "tope_diario": 80,
+        "tope_total": 1000,
+        "disparo": "T0 - 600 s"
+      },
+      "pasos": [
+        {
+          "paso": "formulario",
+          "persona": "A",
+          "t": -1200,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e1",
+          "tipo": "pago_fallido",
+          "persona": "A",
+          "t": 0,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e1",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": false,
+          "caso": "c1",
+          "accion": "a1",
+          "creado": true
+        },
+        {
+          "paso": "toma",
+          "accion": "a1",
+          "t": 600,
+          "tomada": true
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 600,
+          "decision": "defer",
+          "motivo": "business_window_closed"
+        },
+        {
+          "paso": "disparo",
+          "evento": "e2",
+          "tipo": "pago_fallido",
+          "persona": "A",
+          "t": 660,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e2",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": true,
+          "caso": "c1",
+          "accion": "a1",
+          "creado": false
+        },
+        {
+          "paso": "due_at",
+          "accion": "a1",
+          "due_at": "reloj"
+        },
+        {
+          "paso": "toma",
+          "accion": "a1",
+          "t": 661,
+          "tomada": true
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 661,
+          "decision": "defer",
+          "motivo": "business_window_closed"
+        }
+      ],
+      "final": {
+        "eventos": {
+          "e1": {
+            "tipo": "PURCHASE_CANCELED",
+            "estado": "processed",
+            "error": null
+          },
+          "e2": {
+            "tipo": "PURCHASE_CANCELED",
+            "estado": "processed",
+            "error": null
+          }
+        },
+        "casos": {
+          "c1": {
+            "estado": "grace_period",
+            "etapa": "new",
+            "compra": null,
+            "correlacion_de_compra": null,
+            "con_conversacion": false,
+            "eventos": [
+              "e1",
+              "e2"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "active",
+                "cierre": null,
+                "aceptados": 0
+              }
+            ]
+          }
+        },
+        "acciones": {
+          "a1": {
+            "caso": "c1",
+            "tipo": "first_contact_review",
+            "paso": "payment_failure_first_contact",
+            "ancla": "payment_failure",
+            "estado": "deferred",
+            "terminal_reason": null,
+            "due_at": 15000,
+            "expires_at": 86400,
+            "intentos": []
+          }
+        },
+        "personas": {
+          "A": {
+            "contacto": true,
+            "intencion": {
+              "estado": "waiting_for_purchase",
+              "clasificacion": "payment_failure_supported",
+              "permisos": true
+            },
+            "permisos": [
+              {
+                "estado": "allowed",
+                "fuente": "system",
+                "razon": "precheckout_whatsapp_consent"
+              }
+            ]
+          }
+        },
+        "autorizaciones_del_scope": {}
+      }
+    },
+    {
+      "id": "G12",
+      "que": "Un pago fallido repetido despues del envio (aceptado): abre otro recorrido.",
+      "fija": "8",
+      "config": {
+        "zona": "Etc/GMT+-N, con la hora local de T0 entre las 11:30 y las 12:30",
+        "ventana": "abierta: de -3 h a +3 h de la hora local de T0",
+        "vence": "1 day",
+        "gracia": "00:00:00",
+        "pasos_de_la_politica": [
+          "first_contact",
+          "payment_failure_first_contact"
+        ],
+        "audiencia": "consented_intent",
+        "tope_diario": 80,
+        "tope_total": 1000,
+        "disparo": "T0 - 600 s"
+      },
+      "pasos": [
+        {
+          "paso": "formulario",
+          "persona": "A",
+          "t": -1200,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e1",
+          "tipo": "pago_fallido",
+          "persona": "A",
+          "t": 0,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e1",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": false,
+          "caso": "c1",
+          "accion": "a1",
+          "creado": true
+        },
+        {
+          "paso": "toma",
+          "accion": "a1",
+          "t": 600,
+          "tomada": true
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 600,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "reserva",
+          "accion": "a1",
+          "t": 600,
+          "intento": 1
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 600,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "arranque",
+          "accion": "a1",
+          "t": 600,
+          "resultado": "request_started",
+          "motivo": "pilot_request_start_authorized",
+          "dia_local": "corrida",
+          "autorizada": "reloj",
+          "request_started_at": "reloj"
+        },
+        {
+          "paso": "aceptacion",
+          "accion": "a1",
+          "t": 600,
+          "estado": "accepted_by_chatwoot"
+        },
+        {
+          "paso": "disparo",
+          "evento": "e2",
+          "tipo": "pago_fallido",
+          "persona": "A",
+          "t": 660,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e2",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": true,
+          "caso": "c2",
+          "accion": "a2",
+          "creado": true
+        }
+      ],
+      "final": {
+        "eventos": {
+          "e1": {
+            "tipo": "PURCHASE_CANCELED",
+            "estado": "processed",
+            "error": null
+          },
+          "e2": {
+            "tipo": "PURCHASE_CANCELED",
+            "estado": "processed",
+            "error": null
+          }
+        },
+        "casos": {
+          "c1": {
+            "estado": "sequence_exhausted",
+            "etapa": "new",
+            "compra": null,
+            "correlacion_de_compra": null,
+            "con_conversacion": true,
+            "eventos": [
+              "e1"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "completed",
+                "cierre": "policy_exhausted",
+                "aceptados": 1
+              }
+            ]
+          },
+          "c2": {
+            "estado": "grace_period",
+            "etapa": "new",
+            "compra": null,
+            "correlacion_de_compra": null,
+            "con_conversacion": false,
+            "eventos": [
+              "e2"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "active",
+                "cierre": null,
+                "aceptados": 0
+              }
+            ]
+          }
+        },
+        "acciones": {
+          "a1": {
+            "caso": "c1",
+            "tipo": "first_contact_review",
+            "paso": "payment_failure_first_contact",
+            "ancla": "payment_failure",
+            "estado": "accepted_by_chatwoot",
+            "terminal_reason": "accepted_by_chatwoot",
+            "due_at": 0,
+            "expires_at": 86400,
+            "intentos": [
+              {
+                "numero": 1,
+                "fase": "completed",
+                "resultado": "accepted_by_chatwoot",
+                "motivo": "accepted_by_chatwoot",
+                "autorizado": true
+              }
+            ]
+          },
+          "a2": {
+            "caso": "c2",
+            "tipo": "first_contact_review",
+            "paso": "payment_failure_first_contact",
+            "ancla": "payment_failure",
+            "estado": "pending",
+            "terminal_reason": null,
+            "due_at": 660,
+            "expires_at": 87060,
+            "intentos": []
+          }
+        },
+        "personas": {
+          "A": {
+            "contacto": true,
+            "intencion": {
+              "estado": "waiting_for_purchase",
+              "clasificacion": "payment_failure_supported",
+              "permisos": true
+            },
+            "permisos": [
+              {
+                "estado": "allowed",
+                "fuente": "system",
+                "razon": "precheckout_whatsapp_consent"
+              }
+            ]
+          }
+        },
+        "autorizaciones_del_scope": {
+          "corrida": 1
+        }
+      }
+    },
+    {
+      "id": "G13",
+      "que": "Una compra ambigua conocida antes del plan (el email de A y el telefono de B, que ya es contacto): la accion se cancela y el caso queda paused; despues, otro carrito de A de la misma oferta no arranca.",
+      "fija": "2 y 2b (F#6)",
+      "config": {
+        "zona": "Etc/GMT+-N, con la hora local de T0 entre las 11:30 y las 12:30",
+        "ventana": "abierta: de -3 h a +3 h de la hora local de T0",
+        "vence": "1 day",
+        "gracia": "00:00:00",
+        "pasos_de_la_politica": [
+          "first_contact",
+          "payment_failure_first_contact"
+        ],
+        "audiencia": "consented_intent",
+        "tope_diario": 80,
+        "tope_total": 1000,
+        "disparo": "T0 - 600 s"
+      },
+      "pasos": [
+        {
+          "paso": "disparo",
+          "evento": "e1",
+          "tipo": "carrito",
+          "persona": "B",
+          "t": -300,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e1",
+          "arranco": false,
+          "motivo": "pilot_scope_rejected:pilot_audience_intent_unresolved",
+          "contacto_existia": false
+        },
+        {
+          "paso": "formulario",
+          "persona": "A",
+          "t": -1200,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e2",
+          "tipo": "carrito",
+          "persona": "A",
+          "t": 0,
+          "admision": "inserted"
+        },
+        {
+          "paso": "disparo",
+          "evento": "e3",
+          "tipo": "compra",
+          "persona": "A",
+          "t": 30,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e2",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": false,
+          "caso": "c1",
+          "accion": "a1",
+          "creado": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e4",
+          "tipo": "carrito",
+          "persona": "A",
+          "t": 120,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e4",
+          "arranco": false,
+          "motivo": "pilot_case_binding_conflict",
+          "contacto_existia": true
+        }
+      ],
+      "final": {
+        "eventos": {
+          "e1": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "failed",
+            "error": "pilot_scope_rejected:pilot_audience_intent_unresolved"
+          },
+          "e2": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "processed",
+            "error": null
+          },
+          "e3": {
+            "tipo": "PURCHASE_APPROVED",
+            "estado": "failed",
+            "error": "purchase_correlation_contact_ambiguous"
+          },
+          "e4": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "failed",
+            "error": "pilot_case_binding_conflict"
+          }
+        },
+        "casos": {
+          "c1": {
+            "estado": "paused",
+            "etapa": "new",
+            "compra": null,
+            "correlacion_de_compra": null,
+            "con_conversacion": false,
+            "eventos": [
+              "e2"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "paused",
+                "cierre": null,
+                "aceptados": 0
+              }
+            ]
+          }
+        },
+        "acciones": {
+          "a1": {
+            "caso": "c1",
+            "tipo": "first_contact_review",
+            "paso": "first_contact",
+            "ancla": "cart_abandonment",
+            "estado": "cancelled",
+            "terminal_reason": "purchase_correlation_ambiguous",
+            "due_at": 0,
+            "expires_at": 86400,
+            "intentos": []
+          }
+        },
+        "personas": {
+          "A": {
+            "contacto": true,
+            "intencion": {
+              "estado": "waiting_for_purchase",
+              "clasificacion": "confirmed_abandonment",
+              "permisos": true
+            },
+            "permisos": [
+              {
+                "estado": "allowed",
+                "fuente": "hotmart",
+                "razon": "cart_abandonment"
+              }
+            ]
+          },
+          "B": {
+            "contacto": true,
+            "intencion": null,
+            "permisos": []
+          }
+        },
+        "autorizaciones_del_scope": {}
+      }
+    },
+    {
+      "id": "G14",
+      "que": "El cierre que llama el despachador con un nombre rechazado (failed_before_request, template_parameters_missing, sin reintento): la accion queda permanent_failed y el caso abierto, con su secuencia activa; despues, otro carrito de la misma oferta no arranca. No es el binding: plan_cart_recovery intenta abrir otra secuencia en el caso, la base da 23505 (followup_sequences_one_active_per_case_idx) y el adaptador deja el evento con create_recovery_case_failed.",
+      "fija": "5b (F#7)",
+      "config": {
+        "zona": "Etc/GMT+-N, con la hora local de T0 entre las 11:30 y las 12:30",
+        "ventana": "abierta: de -3 h a +3 h de la hora local de T0",
+        "vence": "1 day",
+        "gracia": "00:00:00",
+        "pasos_de_la_politica": [
+          "first_contact",
+          "payment_failure_first_contact"
+        ],
+        "audiencia": "consented_intent",
+        "tope_diario": 80,
+        "tope_total": 1000,
+        "disparo": "T0 - 600 s"
+      },
+      "pasos": [
+        {
+          "paso": "formulario",
+          "persona": "A",
+          "t": -1200,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e1",
+          "tipo": "carrito",
+          "persona": "A",
+          "t": 0,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e1",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": false,
+          "caso": "c1",
+          "accion": "a1",
+          "creado": true
+        },
+        {
+          "paso": "toma",
+          "accion": "a1",
+          "t": 600,
+          "tomada": true
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 600,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "reserva",
+          "accion": "a1",
+          "t": 600,
+          "intento": 1
+        },
+        {
+          "paso": "cierre_sin_pedido",
+          "accion": "a1",
+          "t": 600,
+          "motivo": "template_parameters_missing",
+          "estado": "permanent_failed",
+          "terminal_reason": "template_parameters_missing"
+        },
+        {
+          "paso": "disparo",
+          "evento": "e2",
+          "tipo": "carrito",
+          "persona": "A",
+          "t": 660,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e2",
+          "arranco": false,
+          "motivo": "create_recovery_case_failed",
+          "contacto_existia": true,
+          "error_de_la_base": "23505 duplicate key value violates unique constraint \"followup_sequences_one_active_per_case_idx\""
+        }
+      ],
+      "final": {
+        "eventos": {
+          "e1": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "processed",
+            "error": null
+          },
+          "e2": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "failed",
+            "error": "create_recovery_case_failed"
+          }
+        },
+        "casos": {
+          "c1": {
+            "estado": "grace_period",
+            "etapa": "new",
+            "compra": null,
+            "correlacion_de_compra": null,
+            "con_conversacion": false,
+            "eventos": [
+              "e1"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "active",
+                "cierre": null,
+                "aceptados": 0
+              }
+            ]
+          }
+        },
+        "acciones": {
+          "a1": {
+            "caso": "c1",
+            "tipo": "first_contact_review",
+            "paso": "first_contact",
+            "ancla": "cart_abandonment",
+            "estado": "permanent_failed",
+            "terminal_reason": "template_parameters_missing",
+            "due_at": 0,
+            "expires_at": 86400,
+            "intentos": [
+              {
+                "numero": 1,
+                "fase": "completed",
+                "resultado": "failed_before_request",
+                "motivo": "template_parameters_missing",
+                "autorizado": false
+              }
+            ]
+          }
+        },
+        "personas": {
+          "A": {
+            "contacto": true,
+            "intencion": {
+              "estado": "waiting_for_purchase",
+              "clasificacion": "confirmed_abandonment",
+              "permisos": true
+            },
+            "permisos": [
+              {
+                "estado": "allowed",
+                "fuente": "hotmart",
+                "razon": "cart_abandonment"
+              }
+            ]
+          }
+        },
+        "autorizaciones_del_scope": {}
+      }
+    },
+    {
+      "id": "G15",
+      "que": "La compra antes del envio, aplicada por el worker de compras: el caso queda won.",
+      "fija": "compro",
+      "config": {
+        "zona": "Etc/GMT+-N, con la hora local de T0 entre las 11:30 y las 12:30",
+        "ventana": "abierta: de -3 h a +3 h de la hora local de T0",
+        "vence": "1 day",
+        "gracia": "00:00:00",
+        "pasos_de_la_politica": [
+          "first_contact",
+          "payment_failure_first_contact"
+        ],
+        "audiencia": "consented_intent",
+        "tope_diario": 80,
+        "tope_total": 1000,
+        "disparo": "T0 - 600 s"
+      },
+      "pasos": [
+        {
+          "paso": "formulario",
+          "persona": "A",
+          "t": -1200,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e1",
+          "tipo": "carrito",
+          "persona": "A",
+          "t": 0,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e1",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": false,
+          "caso": "c1",
+          "accion": "a1",
+          "creado": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e2",
+          "tipo": "compra",
+          "persona": "A",
+          "t": 570,
+          "admision": "inserted"
+        },
+        {
+          "paso": "compra_aplicada",
+          "evento": "e2",
+          "resultado": "applied",
+          "caso": "c1",
+          "por": "email_and_phone"
+        },
+        {
+          "paso": "toma",
+          "accion": "a1",
+          "t": 600,
+          "tomada": false
+        }
+      ],
+      "final": {
+        "eventos": {
+          "e1": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "processed",
+            "error": null
+          },
+          "e2": {
+            "tipo": "PURCHASE_APPROVED",
+            "estado": "processed",
+            "error": null
+          }
+        },
+        "casos": {
+          "c1": {
+            "estado": "won",
+            "etapa": "won",
+            "compra": "e2",
+            "correlacion_de_compra": null,
+            "con_conversacion": false,
+            "eventos": [
+              "e1"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "completed",
+                "cierre": "purchase_detected",
+                "aceptados": 0
+              }
+            ]
+          }
+        },
+        "acciones": {
+          "a1": {
+            "caso": "c1",
+            "tipo": "first_contact_review",
+            "paso": "first_contact",
+            "ancla": "cart_abandonment",
+            "estado": "cancelled",
+            "terminal_reason": "purchase_detected",
+            "due_at": 0,
+            "expires_at": 86400,
+            "intentos": []
+          }
+        },
+        "personas": {
+          "A": {
+            "contacto": true,
+            "intencion": {
+              "estado": "purchased",
+              "clasificacion": null,
+              "permisos": false
+            },
+            "permisos": [
+              {
+                "estado": "allowed",
+                "fuente": "hotmart",
+                "razon": "cart_abandonment"
+              }
+            ]
+          }
+        },
+        "autorizaciones_del_scope": {}
+      }
+    },
+    {
+      "id": "G16",
+      "que": "La compra conocida antes del plan. A paga con otro telefono: la compra no cierra su intencion, y el plan nace won por el disparador. B paga con su telefono: la compra cierra la intencion y el plan se rechaza por la audiencia, antes de llegar al disparador.",
+      "fija": "4b (F#3); y, con la intencion cerrada, no_entra",
+      "config": {
+        "zona": "Etc/GMT+-N, con la hora local de T0 entre las 11:30 y las 12:30",
+        "ventana": "abierta: de -3 h a +3 h de la hora local de T0",
+        "vence": "1 day",
+        "gracia": "00:00:00",
+        "pasos_de_la_politica": [
+          "first_contact",
+          "payment_failure_first_contact"
+        ],
+        "audiencia": "consented_intent",
+        "tope_diario": 80,
+        "tope_total": 1000,
+        "disparo": "T0 - 600 s"
+      },
+      "pasos": [
+        {
+          "paso": "formulario",
+          "persona": "A",
+          "t": -1200,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e1",
+          "tipo": "carrito",
+          "persona": "A",
+          "t": 0,
+          "admision": "inserted"
+        },
+        {
+          "paso": "disparo",
+          "evento": "e2",
+          "tipo": "compra",
+          "persona": "A",
+          "t": 60,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e1",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": false,
+          "caso": "c1",
+          "accion": "a1",
+          "creado": true
+        },
+        {
+          "paso": "formulario",
+          "persona": "B",
+          "t": -1140,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e3",
+          "tipo": "carrito",
+          "persona": "B",
+          "t": 120,
+          "admision": "inserted"
+        },
+        {
+          "paso": "disparo",
+          "evento": "e4",
+          "tipo": "compra",
+          "persona": "B",
+          "t": 180,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e3",
+          "arranco": false,
+          "motivo": "pilot_scope_rejected:pilot_audience_consented_intent_not_live",
+          "contacto_existia": false
+        },
+        {
+          "paso": "compra_aplicada",
+          "evento": "e4",
+          "resultado": "not_found",
+          "caso": null,
+          "por": null
+        }
+      ],
+      "final": {
+        "eventos": {
+          "e1": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "processed",
+            "error": null
+          },
+          "e2": {
+            "tipo": "PURCHASE_APPROVED",
+            "estado": "processed",
+            "error": null
+          },
+          "e3": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "failed",
+            "error": "pilot_scope_rejected:pilot_audience_consented_intent_not_live"
+          },
+          "e4": {
+            "tipo": "PURCHASE_APPROVED",
+            "estado": "failed",
+            "error": "purchase_correlation_case_not_found"
+          }
+        },
+        "casos": {
+          "c1": {
+            "estado": "won",
+            "etapa": "won",
+            "compra": "e2",
+            "correlacion_de_compra": "known_purchase_before_recovery_plan",
+            "con_conversacion": false,
+            "eventos": [
+              "e1"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "completed",
+                "cierre": "purchase_detected",
+                "aceptados": 0
+              }
+            ]
+          }
+        },
+        "acciones": {
+          "a1": {
+            "caso": "c1",
+            "tipo": "first_contact_review",
+            "paso": "first_contact",
+            "ancla": "cart_abandonment",
+            "estado": "cancelled",
+            "terminal_reason": "purchase_detected",
+            "due_at": 0,
+            "expires_at": 86400,
+            "intentos": []
+          }
+        },
+        "personas": {
+          "A": {
+            "contacto": true,
+            "intencion": {
+              "estado": "waiting_for_purchase",
+              "clasificacion": "confirmed_abandonment",
+              "permisos": true
+            },
+            "permisos": [
+              {
+                "estado": "allowed",
+                "fuente": "hotmart",
+                "razon": "cart_abandonment"
+              }
+            ]
+          },
+          "B": {
+            "contacto": true,
+            "intencion": {
+              "estado": "purchased",
+              "clasificacion": null,
+              "permisos": false
+            },
+            "permisos": []
+          }
+        },
+        "autorizaciones_del_scope": {}
+      }
+    },
+    {
+      "id": "G17",
+      "que": "Un conflicto semantico de compra sin resolver (la compra de otra persona reenviada con otro email): el arranque de A falla. Corre ultimo: el conflicto frena todo arranque de la base.",
+      "fija": "4c (F#3)",
+      "config": {
+        "zona": "Etc/GMT+-N, con la hora local de T0 entre las 11:30 y las 12:30",
+        "ventana": "abierta: de -3 h a +3 h de la hora local de T0",
+        "vence": "1 day",
+        "gracia": "00:00:00",
+        "pasos_de_la_politica": [
+          "first_contact",
+          "payment_failure_first_contact"
+        ],
+        "audiencia": "consented_intent",
+        "tope_diario": 80,
+        "tope_total": 1000,
+        "disparo": "T0 - 600 s"
+      },
+      "pasos": [
+        {
+          "paso": "formulario",
+          "persona": "A",
+          "t": -1200,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e1",
+          "tipo": "carrito",
+          "persona": "A",
+          "t": 0,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e1",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": false,
+          "caso": "c1",
+          "accion": "a1",
+          "creado": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e2",
+          "tipo": "compra",
+          "persona": "B",
+          "t": 60,
+          "admision": "inserted"
+        },
+        {
+          "paso": "compra_aplicada",
+          "evento": "e2",
+          "resultado": "not_found",
+          "caso": null,
+          "por": null
+        },
+        {
+          "paso": "disparo",
+          "evento": "e2",
+          "tipo": "compra",
+          "persona": "B",
+          "t": 60,
+          "admision": "semantic_conflict"
+        },
+        {
+          "paso": "toma",
+          "accion": "a1",
+          "t": 600,
+          "tomada": true
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 600,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "reserva",
+          "accion": "a1",
+          "t": 600,
+          "intento": 1
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 600,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "arranque",
+          "accion": "a1",
+          "t": 600,
+          "resultado": "error",
+          "motivo": "unresolved_purchase_semantic_conflict",
+          "codigo": "P0001"
+        }
+      ],
+      "final": {
+        "eventos": {
+          "e1": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "processed",
+            "error": null
+          },
+          "e2": {
+            "tipo": "PURCHASE_APPROVED",
+            "estado": "failed",
+            "error": "purchase_semantic_conflict"
+          }
+        },
+        "casos": {
+          "c1": {
+            "estado": "grace_period",
+            "etapa": "new",
+            "compra": null,
+            "correlacion_de_compra": null,
+            "con_conversacion": false,
+            "eventos": [
+              "e1"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "active",
+                "cierre": null,
+                "aceptados": 0
+              }
+            ]
+          }
+        },
+        "acciones": {
+          "a1": {
+            "caso": "c1",
+            "tipo": "first_contact_review",
+            "paso": "first_contact",
+            "ancla": "cart_abandonment",
+            "estado": "pending",
+            "terminal_reason": null,
+            "due_at": 0,
+            "expires_at": 86400,
+            "intentos": [
+              {
+                "numero": 1,
+                "fase": "reserved",
+                "resultado": null,
+                "motivo": null,
+                "autorizado": false
+              }
+            ]
+          }
+        },
+        "personas": {
+          "A": {
+            "contacto": true,
+            "intencion": {
+              "estado": "waiting_for_purchase",
+              "clasificacion": "confirmed_abandonment",
+              "permisos": true
+            },
+            "permisos": [
+              {
+                "estado": "allowed",
+                "fuente": "hotmart",
+                "razon": "cart_abandonment"
+              }
+            ]
+          },
+          "B": {
+            "contacto": false,
+            "intencion": null,
+            "permisos": []
+          }
+        },
+        "autorizaciones_del_scope": {}
+      }
+    },
+    {
+      "id": "G18",
+      "que": "La intencion pasa a identity_conflict (un formulario posterior con otro telefono): el arranque se rechaza, se reintenta en el lease siguiente, y la accion vence.",
+      "fija": "4 (F#9, intencion_viva)",
+      "config": {
+        "zona": "Etc/GMT+-N, con la hora local de T0 entre las 11:30 y las 12:30",
+        "ventana": "abierta: de -3 h a +3 h de la hora local de T0",
+        "vence": "1 day",
+        "gracia": "00:00:00",
+        "pasos_de_la_politica": [
+          "first_contact",
+          "payment_failure_first_contact"
+        ],
+        "audiencia": "consented_intent",
+        "tope_diario": 80,
+        "tope_total": 1000,
+        "disparo": "T0 - 600 s"
+      },
+      "pasos": [
+        {
+          "paso": "formulario",
+          "persona": "A",
+          "t": -1200,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e1",
+          "tipo": "carrito",
+          "persona": "A",
+          "t": 0,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e1",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": false,
+          "caso": "c1",
+          "accion": "a1",
+          "creado": true
+        },
+        {
+          "paso": "formulario",
+          "persona": "A",
+          "t": 60,
+          "otro_telefono": true,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "toma",
+          "accion": "a1",
+          "t": 600,
+          "tomada": true,
+          "lease": "1 minute"
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 600,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "reserva",
+          "accion": "a1",
+          "t": 600,
+          "intento": 1
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 600,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "arranque",
+          "accion": "a1",
+          "t": 600,
+          "resultado": "rechazado",
+          "motivo": "pilot_audience_consented_intent_not_live"
+        },
+        {
+          "paso": "toma",
+          "accion": "a1",
+          "t": 661,
+          "tomada": true,
+          "lease": "1 minute"
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 661,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "reserva",
+          "accion": "a1",
+          "t": 661,
+          "intento": 2
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 661,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "arranque",
+          "accion": "a1",
+          "t": 661,
+          "resultado": "rechazado",
+          "motivo": "pilot_audience_consented_intent_not_live"
+        },
+        {
+          "paso": "barrido",
+          "accion": "a1",
+          "t": 86401,
+          "estado": "expired",
+          "terminal_reason": "expired_after_worker_crash"
+        }
+      ],
+      "final": {
+        "eventos": {
+          "e1": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "processed",
+            "error": null
+          }
+        },
+        "casos": {
+          "c1": {
+            "estado": "expired",
+            "etapa": "new",
+            "compra": null,
+            "correlacion_de_compra": null,
+            "con_conversacion": false,
+            "eventos": [
+              "e1"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "completed",
+                "cierre": "expired",
+                "aceptados": 0
+              }
+            ]
+          }
+        },
+        "acciones": {
+          "a1": {
+            "caso": "c1",
+            "tipo": "first_contact_review",
+            "paso": "first_contact",
+            "ancla": "cart_abandonment",
+            "estado": "expired",
+            "terminal_reason": "expired_after_worker_crash",
+            "due_at": 0,
+            "expires_at": 86400,
+            "intentos": [
+              {
+                "numero": 1,
+                "fase": "reserved",
+                "resultado": null,
+                "motivo": null,
+                "autorizado": false
+              },
+              {
+                "numero": 2,
+                "fase": "reserved",
+                "resultado": null,
+                "motivo": null,
+                "autorizado": false
+              }
+            ]
+          }
+        },
+        "personas": {
+          "A": {
+            "contacto": true,
+            "intencion": {
+              "estado": "waiting_for_purchase",
+              "clasificacion": "identity_conflict",
+              "permisos": false
+            },
+            "permisos": [
+              {
+                "estado": "allowed",
+                "fuente": "hotmart",
+                "razon": "cart_abandonment"
+              }
+            ]
+          }
+        },
+        "autorizaciones_del_scope": {}
+      }
+    },
+    {
+      "id": "G19",
+      "que": "La baja antes del envio (el bridge la pasa con la identidad guardada): cancela.",
+      "fija": "baja",
+      "config": {
+        "zona": "Etc/GMT+-N, con la hora local de T0 entre las 11:30 y las 12:30",
+        "ventana": "abierta: de -3 h a +3 h de la hora local de T0",
+        "vence": "1 day",
+        "gracia": "00:00:00",
+        "pasos_de_la_politica": [
+          "first_contact",
+          "payment_failure_first_contact"
+        ],
+        "audiencia": "consented_intent",
+        "tope_diario": 80,
+        "tope_total": 1000,
+        "disparo": "T0 - 600 s"
+      },
+      "pasos": [
+        {
+          "paso": "formulario",
+          "persona": "A",
+          "t": -1200,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e1",
+          "tipo": "carrito",
+          "persona": "A",
+          "t": 0,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e1",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": false,
+          "caso": "c1",
+          "accion": "a1",
+          "creado": true
+        },
+        {
+          "paso": "baja",
+          "persona": "A",
+          "t": 300,
+          "forma": "identidad_guardada",
+          "resultado": "applied",
+          "acciones_tocadas": 1
+        },
+        {
+          "paso": "toma",
+          "accion": "a1",
+          "t": 600,
+          "tomada": false
+        }
+      ],
+      "final": {
+        "eventos": {
+          "e1": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "processed",
+            "error": null
+          }
+        },
+        "casos": {
+          "c1": {
+            "estado": "cancelled",
+            "etapa": "new",
+            "compra": null,
+            "correlacion_de_compra": null,
+            "con_conversacion": false,
+            "eventos": [
+              "e1"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "cancelled",
+                "cierre": null,
+                "aceptados": 0
+              }
+            ]
+          }
+        },
+        "acciones": {
+          "a1": {
+            "caso": "c1",
+            "tipo": "first_contact_review",
+            "paso": "first_contact",
+            "ancla": "cart_abandonment",
+            "estado": "cancelled",
+            "terminal_reason": "contact_opted_out",
+            "due_at": 0,
+            "expires_at": 86400,
+            "intentos": []
+          }
+        },
+        "personas": {
+          "A": {
+            "contacto": true,
+            "intencion": {
+              "estado": "waiting_for_purchase",
+              "clasificacion": "confirmed_abandonment",
+              "permisos": true
+            },
+            "permisos": [
+              {
+                "estado": "allowed",
+                "fuente": "hotmart",
+                "razon": "cart_abandonment"
+              },
+              {
+                "estado": "denied",
+                "fuente": "crm",
+                "razon": null
+              }
+            ]
+          }
+        },
+        "autorizaciones_del_scope": {}
+      }
+    },
+    {
+      "id": "G20",
+      "que": "La baja previa al entrar (llega con el wa_id, sin contacto todavia): el carrito no arranca.",
+      "fija": "11b (baja)",
+      "config": {
+        "zona": "Etc/GMT+-N, con la hora local de T0 entre las 11:30 y las 12:30",
+        "ventana": "abierta: de -3 h a +3 h de la hora local de T0",
+        "vence": "1 day",
+        "gracia": "00:00:00",
+        "pasos_de_la_politica": [
+          "first_contact",
+          "payment_failure_first_contact"
+        ],
+        "audiencia": "consented_intent",
+        "tope_diario": 80,
+        "tope_total": 1000,
+        "disparo": "T0 - 600 s"
+      },
+      "pasos": [
+        {
+          "paso": "formulario",
+          "persona": "A",
+          "t": -1200,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "baja",
+          "persona": "A",
+          "t": -600,
+          "forma": "wa_id",
+          "resultado": "recorded_unmatched",
+          "acciones_tocadas": 0
+        },
+        {
+          "paso": "disparo",
+          "evento": "e1",
+          "tipo": "carrito",
+          "persona": "A",
+          "t": 0,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e1",
+          "arranco": false,
+          "motivo": "pilot_scope_rejected:pilot_audience_consented_intent_prior_opt_out",
+          "contacto_existia": false
+        }
+      ],
+      "final": {
+        "eventos": {
+          "e1": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "failed",
+            "error": "pilot_scope_rejected:pilot_audience_consented_intent_prior_opt_out"
+          }
+        },
+        "casos": {},
+        "acciones": {},
+        "personas": {
+          "A": {
+            "contacto": true,
+            "intencion": {
+              "estado": "waiting_for_purchase",
+              "clasificacion": "confirmed_abandonment",
+              "permisos": true
+            },
+            "permisos": []
+          }
+        },
+        "autorizaciones_del_scope": {}
+      }
+    },
+    {
+      "id": "G21",
+      "que": "El cambio de version con un carrito esperando (pausa la v1, publica y activa la v2, arma): el arranque se rechaza en cada lease hasta vencer.",
+      "fija": "10 (C, lo_en_curso_sigue)",
+      "config": {
+        "zona": "Etc/GMT+-N, con la hora local de T0 entre las 11:30 y las 12:30",
+        "ventana": "abierta: de -3 h a +3 h de la hora local de T0",
+        "vence": "1 day",
+        "gracia": "00:00:00",
+        "pasos_de_la_politica": [
+          "first_contact",
+          "payment_failure_first_contact"
+        ],
+        "audiencia": "consented_intent",
+        "tope_diario": 80,
+        "tope_total": 1000,
+        "disparo": "T0 - 600 s"
+      },
+      "pasos": [
+        {
+          "paso": "formulario",
+          "persona": "A",
+          "t": -1200,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e1",
+          "tipo": "carrito",
+          "persona": "A",
+          "t": 0,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e1",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": false,
+          "caso": "c1",
+          "accion": "a1",
+          "creado": true
+        },
+        {
+          "paso": "operador",
+          "que": "pausa",
+          "version": 1,
+          "estado": "paused"
+        },
+        {
+          "paso": "operador",
+          "que": "publica",
+          "version": 2,
+          "estado": "published"
+        },
+        {
+          "paso": "operador",
+          "que": "activa",
+          "version": 2,
+          "estado": "inactive"
+        },
+        {
+          "paso": "operador",
+          "que": "arma",
+          "version": 2,
+          "estado": "armed"
+        },
+        {
+          "paso": "toma",
+          "accion": "a1",
+          "t": 600,
+          "tomada": true,
+          "lease": "1 minute"
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 600,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "reserva",
+          "accion": "a1",
+          "t": 600,
+          "intento": 1
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 600,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "arranque",
+          "accion": "a1",
+          "t": 600,
+          "resultado": "rechazado",
+          "motivo": "pilot_scope_version_mismatch"
+        },
+        {
+          "paso": "toma",
+          "accion": "a1",
+          "t": 661,
+          "tomada": true,
+          "lease": "1 minute"
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 661,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "reserva",
+          "accion": "a1",
+          "t": 661,
+          "intento": 2
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 661,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "arranque",
+          "accion": "a1",
+          "t": 661,
+          "resultado": "rechazado",
+          "motivo": "pilot_scope_version_mismatch"
+        },
+        {
+          "paso": "barrido",
+          "accion": "a1",
+          "t": 86401,
+          "estado": "expired",
+          "terminal_reason": "expired_after_worker_crash"
+        }
+      ],
+      "final": {
+        "eventos": {
+          "e1": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "processed",
+            "error": null
+          }
+        },
+        "casos": {
+          "c1": {
+            "estado": "expired",
+            "etapa": "new",
+            "compra": null,
+            "correlacion_de_compra": null,
+            "con_conversacion": false,
+            "eventos": [
+              "e1"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "completed",
+                "cierre": "expired",
+                "aceptados": 0
+              }
+            ]
+          }
+        },
+        "acciones": {
+          "a1": {
+            "caso": "c1",
+            "tipo": "first_contact_review",
+            "paso": "first_contact",
+            "ancla": "cart_abandonment",
+            "estado": "expired",
+            "terminal_reason": "expired_after_worker_crash",
+            "due_at": 0,
+            "expires_at": 86400,
+            "intentos": [
+              {
+                "numero": 1,
+                "fase": "reserved",
+                "resultado": null,
+                "motivo": null,
+                "autorizado": false
+              },
+              {
+                "numero": 2,
+                "fase": "reserved",
+                "resultado": null,
+                "motivo": null,
+                "autorizado": false
+              }
+            ]
+          }
+        },
+        "personas": {
+          "A": {
+            "contacto": true,
+            "intencion": {
+              "estado": "waiting_for_purchase",
+              "clasificacion": "confirmed_abandonment",
+              "permisos": true
+            },
+            "permisos": [
+              {
+                "estado": "allowed",
+                "fuente": "hotmart",
+                "razon": "cart_abandonment"
+              }
+            ]
+          }
+        },
+        "autorizaciones_del_scope": {}
+      }
+    },
+    {
+      "id": "G22",
+      "que": "La version que el bridge pasa por variable (la v1) no es la activa (la v2): el plan se rechaza.",
+      "fija": "10b (C, F#4)",
+      "config": {
+        "zona": "Etc/GMT+-N, con la hora local de T0 entre las 11:30 y las 12:30",
+        "ventana": "abierta: de -3 h a +3 h de la hora local de T0",
+        "vence": "1 day",
+        "gracia": "00:00:00",
+        "pasos_de_la_politica": [
+          "first_contact",
+          "payment_failure_first_contact"
+        ],
+        "audiencia": "consented_intent",
+        "tope_diario": 80,
+        "tope_total": 1000,
+        "disparo": "T0 - 600 s"
+      },
+      "pasos": [
+        {
+          "paso": "operador",
+          "que": "pausa",
+          "version": 1,
+          "estado": "paused"
+        },
+        {
+          "paso": "operador",
+          "que": "publica",
+          "version": 2,
+          "estado": "published"
+        },
+        {
+          "paso": "operador",
+          "que": "activa",
+          "version": 2,
+          "estado": "inactive"
+        },
+        {
+          "paso": "operador",
+          "que": "arma",
+          "version": 2,
+          "estado": "armed"
+        },
+        {
+          "paso": "formulario",
+          "persona": "A",
+          "t": -1200,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e1",
+          "tipo": "carrito",
+          "persona": "A",
+          "t": 0,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e1",
+          "arranco": false,
+          "motivo": "pilot_scope_rejected:pilot_scope_version_mismatch",
+          "contacto_existia": false
+        }
+      ],
+      "final": {
+        "eventos": {
+          "e1": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "failed",
+            "error": "pilot_scope_rejected:pilot_scope_version_mismatch"
+          }
+        },
+        "casos": {},
+        "acciones": {},
+        "personas": {
+          "A": {
+            "contacto": true,
+            "intencion": {
+              "estado": "waiting_for_purchase",
+              "clasificacion": "confirmed_abandonment",
+              "permisos": true
+            },
+            "permisos": []
+          }
+        },
+        "autorizaciones_del_scope": {}
+      }
+    },
+    {
+      "id": "G23",
+      "que": "El scope pausado con un carrito esperando: el arranque se rechaza; rearmado antes de vencer, en el lease siguiente sale.",
+      "fija": "flujo_pausado",
+      "config": {
+        "zona": "Etc/GMT+-N, con la hora local de T0 entre las 11:30 y las 12:30",
+        "ventana": "abierta: de -3 h a +3 h de la hora local de T0",
+        "vence": "1 day",
+        "gracia": "00:00:00",
+        "pasos_de_la_politica": [
+          "first_contact",
+          "payment_failure_first_contact"
+        ],
+        "audiencia": "consented_intent",
+        "tope_diario": 80,
+        "tope_total": 1000,
+        "disparo": "T0 - 600 s"
+      },
+      "pasos": [
+        {
+          "paso": "formulario",
+          "persona": "A",
+          "t": -1200,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e1",
+          "tipo": "carrito",
+          "persona": "A",
+          "t": 0,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e1",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": false,
+          "caso": "c1",
+          "accion": "a1",
+          "creado": true
+        },
+        {
+          "paso": "operador",
+          "que": "pausa",
+          "version": 1,
+          "estado": "paused"
+        },
+        {
+          "paso": "toma",
+          "accion": "a1",
+          "t": 600,
+          "tomada": true,
+          "lease": "1 minute"
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 600,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "reserva",
+          "accion": "a1",
+          "t": 600,
+          "intento": 1
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 600,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "arranque",
+          "accion": "a1",
+          "t": 600,
+          "resultado": "rechazado",
+          "motivo": "pilot_runtime_not_armed"
+        },
+        {
+          "paso": "operador",
+          "que": "arma",
+          "version": 1,
+          "estado": "armed"
+        },
+        {
+          "paso": "toma",
+          "accion": "a1",
+          "t": 661,
+          "tomada": true,
+          "lease": "1 minute"
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 661,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "reserva",
+          "accion": "a1",
+          "t": 661,
+          "intento": 2
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 661,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "arranque",
+          "accion": "a1",
+          "t": 661,
+          "resultado": "request_started",
+          "motivo": "pilot_request_start_authorized",
+          "dia_local": "corrida",
+          "autorizada": "reloj",
+          "request_started_at": "reloj"
+        }
+      ],
+      "final": {
+        "eventos": {
+          "e1": {
+            "tipo": "PURCHASE_OUT_OF_SHOPPING_CART",
+            "estado": "processed",
+            "error": null
+          }
+        },
+        "casos": {
+          "c1": {
+            "estado": "grace_period",
+            "etapa": "new",
+            "compra": null,
+            "correlacion_de_compra": null,
+            "con_conversacion": false,
+            "eventos": [
+              "e1"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "active",
+                "cierre": null,
+                "aceptados": 0
+              }
+            ]
+          }
+        },
+        "acciones": {
+          "a1": {
+            "caso": "c1",
+            "tipo": "first_contact_review",
+            "paso": "first_contact",
+            "ancla": "cart_abandonment",
+            "estado": "pending",
+            "terminal_reason": null,
+            "due_at": 0,
+            "expires_at": 86400,
+            "intentos": [
+              {
+                "numero": 1,
+                "fase": "reserved",
+                "resultado": null,
+                "motivo": null,
+                "autorizado": false
+              },
+              {
+                "numero": 2,
+                "fase": "request_started",
+                "resultado": null,
+                "motivo": null,
+                "autorizado": true
+              }
+            ]
+          }
+        },
+        "personas": {
+          "A": {
+            "contacto": true,
+            "intencion": {
+              "estado": "waiting_for_purchase",
+              "clasificacion": "confirmed_abandonment",
+              "permisos": true
+            },
+            "permisos": [
+              {
+                "estado": "allowed",
+                "fuente": "hotmart",
+                "razon": "cart_abandonment"
+              }
+            ]
+          }
+        },
+        "autorizaciones_del_scope": {
+          "corrida": 1
+        }
+      }
+    },
+    {
+      "id": "G24",
+      "que": "Un pago fallido sin carrito previo: el permiso lo concede la intencion con consentimiento, y llega a request_started.",
+      "fija": "el principio 6",
+      "config": {
+        "zona": "Etc/GMT+-N, con la hora local de T0 entre las 11:30 y las 12:30",
+        "ventana": "abierta: de -3 h a +3 h de la hora local de T0",
+        "vence": "1 day",
+        "gracia": "00:00:00",
+        "pasos_de_la_politica": [
+          "first_contact",
+          "payment_failure_first_contact"
+        ],
+        "audiencia": "consented_intent",
+        "tope_diario": 80,
+        "tope_total": 1000,
+        "disparo": "T0 - 600 s"
+      },
+      "pasos": [
+        {
+          "paso": "formulario",
+          "persona": "A",
+          "t": -1200,
+          "otro_telefono": false,
+          "admision": "inserted",
+          "misma_intencion": true
+        },
+        {
+          "paso": "disparo",
+          "evento": "e1",
+          "tipo": "pago_fallido",
+          "persona": "A",
+          "t": 0,
+          "admision": "inserted"
+        },
+        {
+          "paso": "plan",
+          "evento": "e1",
+          "arranco": true,
+          "motivo": null,
+          "contacto_existia": false,
+          "caso": "c1",
+          "accion": "a1",
+          "creado": true
+        },
+        {
+          "paso": "toma",
+          "accion": "a1",
+          "t": 600,
+          "tomada": true
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 600,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "reserva",
+          "accion": "a1",
+          "t": 600,
+          "intento": 1
+        },
+        {
+          "paso": "reevaluacion",
+          "accion": "a1",
+          "t": 600,
+          "decision": "execute",
+          "motivo": "eligible_for_execution"
+        },
+        {
+          "paso": "arranque",
+          "accion": "a1",
+          "t": 600,
+          "resultado": "request_started",
+          "motivo": "pilot_request_start_authorized",
+          "dia_local": "corrida",
+          "autorizada": "reloj",
+          "request_started_at": "reloj"
+        }
+      ],
+      "final": {
+        "eventos": {
+          "e1": {
+            "tipo": "PURCHASE_CANCELED",
+            "estado": "processed",
+            "error": null
+          }
+        },
+        "casos": {
+          "c1": {
+            "estado": "grace_period",
+            "etapa": "new",
+            "compra": null,
+            "correlacion_de_compra": null,
+            "con_conversacion": false,
+            "eventos": [
+              "e1"
+            ],
+            "scope_version": 1,
+            "audiencia": "consented_intent",
+            "secuencias": [
+              {
+                "estado": "active",
+                "cierre": null,
+                "aceptados": 0
+              }
+            ]
+          }
+        },
+        "acciones": {
+          "a1": {
+            "caso": "c1",
+            "tipo": "first_contact_review",
+            "paso": "payment_failure_first_contact",
+            "ancla": "payment_failure",
+            "estado": "pending",
+            "terminal_reason": null,
+            "due_at": 0,
+            "expires_at": 86400,
+            "intentos": [
+              {
+                "numero": 1,
+                "fase": "request_started",
+                "resultado": null,
+                "motivo": null,
+                "autorizado": true
+              }
+            ]
+          }
+        },
+        "personas": {
+          "A": {
+            "contacto": true,
+            "intencion": {
+              "estado": "waiting_for_purchase",
+              "clasificacion": "payment_failure_supported",
+              "permisos": true
+            },
+            "permisos": [
+              {
+                "estado": "allowed",
+                "fuente": "system",
+                "razon": "precheckout_whatsapp_consent"
+              }
+            ]
+          }
+        },
+        "autorizaciones_del_scope": {
+          "corrida": 1
+        }
+      }
+    }
+  ]
+}
