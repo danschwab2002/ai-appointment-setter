@@ -18,12 +18,6 @@ from .commercial_ally import CommercialAllyConfig
 from .hotmart import EVENT_CART_ABANDONMENT, EVENT_PURCHASE_APPROVED
 from .instance_manifest import InstanceManifest
 
-# Con mas de un producto el bridge no arranca hasta que el ruteo este completo:
-# los eventos de Hotmart y los formularios (2c-2) y el link, la etiqueta y lo
-# que hizo la persona (2c-3). Asi ningun manifiesto con dos productos corre con
-# el ruteo a medias. La 2c-3 lo prende.
-ROUTING_COMPLETE = False
-
 
 # Por que un evento de Hotmart no tiene producto en la instancia.
 HOTMART_PRODUCT_NOT_DECLARED = "product_not_declared"

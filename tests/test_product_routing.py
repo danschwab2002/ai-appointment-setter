@@ -29,7 +29,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from bridge import product_routes, worker as worker_module
+from bridge import worker as worker_module
 from bridge.app import Settings, create_app
 from bridge.instance_manifest import InstanceManifest
 from bridge.product_routes import (
@@ -239,13 +239,8 @@ def _post_hotmart(app: object, payload: dict) -> object:
         )
 
 
-@pytest.fixture
-def routing_complete(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(product_routes, "ROUTING_COMPLETE", True)
-
-
 def test_the_webhook_admits_each_cart_in_the_funnel_of_its_product(
-    tmp_path: Path, routing_complete: None
+    tmp_path: Path
 ) -> None:
     supabase = _Admissions()
     app = create_app(_settings(_manifest(carrito=True), tmp_path), supabase_client=supabase)  # type: ignore[arg-type]
@@ -260,7 +255,7 @@ def test_the_webhook_admits_each_cart_in_the_funnel_of_its_product(
 
 
 def test_the_webhook_stops_with_a_purchase_of_any_offer_of_the_product(
-    tmp_path: Path, routing_complete: None
+    tmp_path: Path
 ) -> None:
     supabase = _Admissions()
     app = create_app(_settings(_manifest(carrito=True), tmp_path), supabase_client=supabase)  # type: ignore[arg-type]
@@ -272,7 +267,7 @@ def test_the_webhook_stops_with_a_purchase_of_any_offer_of_the_product(
 
 
 def test_an_event_of_no_product_is_ignored_and_leaves_its_line(
-    tmp_path: Path, routing_complete: None, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     supabase = _Admissions()
     app = create_app(_settings(_manifest(carrito=True), tmp_path), supabase_client=supabase)  # type: ignore[arg-type]
@@ -409,7 +404,6 @@ def _ads_a_url() -> str:
 
 
 def test_ghl_admits_each_real_submission_in_the_funnel_of_its_landing(
-    routing_complete: None,
 ) -> None:
     app, fake = _ghl_app(_ghl_manifest())
 
@@ -421,7 +415,7 @@ def test_ghl_admits_each_real_submission_in_the_funnel_of_its_landing(
     assert fake.calls[1]["canonical_payload"]["commerce"]["offer_ref"] == "prueba2a"
 
 
-def test_ghl_in_active_mode_follows_the_landing_of_the_form(routing_complete: None) -> None:
+def test_ghl_in_active_mode_follows_the_landing_of_the_form() -> None:
     # El formulario de la landing D llega con la URL de ads-a (pasa: GHL manda la
     # pagina donde empezo la visita). En activo manda el formulario.
     body = _landing_d()
@@ -438,7 +432,6 @@ def test_ghl_in_active_mode_follows_the_landing_of_the_form(routing_complete: No
 
 
 def test_ghl_with_a_url_of_no_product_is_the_rejection_of_the_principal(
-    routing_complete: None,
 ) -> None:
     app, fake = _ghl_app(_ghl_manifest())
     body = _ads_a()

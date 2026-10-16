@@ -28,7 +28,6 @@ from pathlib import Path
 import httpx
 import pytest
 
-from bridge import product_routes
 from bridge.instance_manifest import InstanceManifest
 from bridge.supabase import SupabaseClient, SupabaseCommittedResponseError
 from test_agent_link_product import _LinkSupabase, _link_turn
@@ -146,11 +145,6 @@ def test_a_funnel_reserve_without_the_portable_never_reaches_the_base() -> None:
 # --------------------------------------------------------- el bridge
 
 
-@pytest.fixture
-def routing_complete(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(product_routes, "ROUTING_COMPLETE", True)
-
-
 def _two_products_settings(tmp_path: Path):
     """El manifiesto de prueba de ATT1 con el segundo producto de prueba."""
 
@@ -171,7 +165,7 @@ def _two_products_settings(tmp_path: Path):
 
 
 def test_with_two_products_the_link_is_the_one_of_the_product_the_agent_named(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture, routing_complete: None
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     with caplog.at_level(logging.INFO):
         chatwoot, supabase = _link_turn(
@@ -189,7 +183,7 @@ def test_with_two_products_the_link_is_the_one_of_the_product_the_agent_named(
 
 
 def test_with_two_products_the_principal_also_goes_by_its_funnel(
-    tmp_path: Path, routing_complete: None
+    tmp_path: Path
 ) -> None:
     _, supabase = _link_turn(
         tmp_path,
@@ -202,7 +196,7 @@ def test_with_two_products_the_principal_also_goes_by_its_funnel(
 
 
 def test_a_funnel_without_binding_in_the_inbox_goes_to_a_person(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture, routing_complete: None
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     # La base contesta blocked_funnel: el binding del segundo producto no esta
     # activo en el inbox de la instancia.
