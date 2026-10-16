@@ -214,3 +214,9 @@ def test_the_script_prints_the_report_and_exits_zero(capsys: pytest.CaptureFixtu
     assert script.main(["--capture", str(FIXTURE), "--named", str(NAMED_FILE), "--json"]) == 0
     printed = json.loads(capsys.readouterr().out)
     assert printed["ok"] is True and printed["named_total"] == 5 and printed["sends"] == 208
+
+
+def test_the_sql_suite_checks_the_generated_legacy_cases() -> None:
+    # Sin --check en npm test, los 24 casos de hoy podrian quedar viejos sin que la CI lo vea.
+    package = json.loads((ROOT / "tests" / "sql" / "followup_engine" / "package.json").read_text(encoding="utf-8"))
+    assert "node validate_flow_engine_legacy.mjs --check" in package["scripts"]["test"].split(" && ")
