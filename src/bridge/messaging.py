@@ -15,7 +15,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Awaitable, Callable, Protocol
 
 from bridge.chatwoot import ChatwootClient, ChatwootProtocolError
 from bridge.hotmart import normalize_phone
@@ -482,7 +482,11 @@ class ChatwootMessageSender:
         dynamic_recipient_enabled: bool = False,
         template: WhatsAppTemplateConfig | None = None,
         whatsapp_equivalence_enabled: bool = False,
+        on_conversation_opened: Callable[[int], Awaitable[object]] | None = None,
     ) -> None:
+        """``on_conversation_opened`` corre despues de cada plantilla de primer
+        contacto que salio, con la conversacion; hoy, la etiqueta de producto.
+        Es de falla blanda: si lanza, el envio sigue contando como enviado."""
         if (allowed_jid is None and not dynamic_recipient_enabled) or (
             allowed_jid is not None and dynamic_recipient_enabled
         ):
@@ -499,6 +503,7 @@ class ChatwootMessageSender:
         self._dynamic_recipient_enabled = dynamic_recipient_enabled
         self._template = template
         self._whatsapp_equivalence_enabled = whatsapp_equivalence_enabled
+        self._on_conversation_opened = on_conversation_opened
 
     @property
     def whatsapp_equivalence_enabled(self) -> bool:
@@ -757,11 +762,23 @@ class ChatwootMessageSender:
             and not isinstance(message_id_raw, bool)
             else None
         )
+        await self._conversation_opened(conversation_id)
         return FirstTouchResult(
             status="sent",
             conversation_id=conversation_id,
             message_id=message_id,
         )
+
+    async def _conversation_opened(self, conversation_id: int) -> None:
+        if self._on_conversation_opened is None:
+            return
+        try:
+            await self._on_conversation_opened(conversation_id)
+        except Exception:
+            # La plantilla ya salio: lo que cuelga de aca no la deshace.
+            logger.warning(
+                "conversation_opened_hook_failed conversation=%s", conversation_id
+            )
 
     async def send_first_touch_to_conversation(
         self,
@@ -808,6 +825,7 @@ class ChatwootMessageSender:
         message_id = result.get("message_id")
         if not isinstance(message_id, int) or isinstance(message_id, bool):
             message_id = None
+        await self._conversation_opened(conversation_id)
         return FirstTouchResult("sent", conversation_id, message_id)
 
     async def send_followup(

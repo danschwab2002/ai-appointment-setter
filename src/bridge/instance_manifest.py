@@ -102,7 +102,17 @@ _TOP_KEYS_REQUIRED = {
     "flujos",
     "guardas",
 }
-_TOP_KEYS_OPTIONAL = {"slack", "revision_diaria", "adaptadores"}
+_TOP_KEYS_OPTIONAL = {"slack", "revision_diaria", "adaptadores", "productos"}
+
+# La etiqueta de Chatwoot de un producto. Chatwoot pasa el titulo a minusculas y
+# acepta letras, numeros, guiones y guiones bajos.
+_CHATWOOT_LABEL = re.compile(r"[a-z0-9][a-z0-9_-]{0,254}")
+# Las etiquetas de la automatizacion. Un producto no puede llamarse igual: su
+# macro pondria la pausa o la baja en cada conversacion del producto.
+RESERVED_CHATWOOT_LABELS = ("automation_paused", "automation_opted_out")
+# Esta version etiqueta con un solo producto. Con dos, la etiqueta de cada
+# conversacion la decide el ruteo por producto, que llega despues.
+MAX_PRODUCTS = 1
 
 
 class ManifestError(ValueError):
@@ -174,6 +184,27 @@ class GhlFormLandings:
 
 
 @dataclass(frozen=True)
+class Product:
+    """Un producto de la aliada (``[[productos]]``).
+
+    ``key`` es la misma ``clave`` que la seccion del producto en el conocimiento:
+    con productos en el manifiesto, el bridge no arranca si el conocimiento no
+    separa los mismos (``knowledge_products_error``).
+
+    ``chatwoot_label`` es la etiqueta que el bridge le suma a cada conversacion del
+    producto, ejecutando el macro ``chatwoot_label_macro_id``. Va por un macro y no
+    por el endpoint de etiquetas de la conversacion, porque ese endpoint reemplaza
+    la lista entera y podria borrar ``automation_paused``; la accion ``add_label``
+    de un macro solo suma. Las dos van juntas, o ninguna: sin etiqueta, el
+    producto no se marca en Chatwoot.
+    """
+
+    key: str
+    chatwoot_label: str | None = None
+    chatwoot_label_macro_id: int | None = None
+
+
+@dataclass(frozen=True)
 class InstanceManifest:
     product_version: str
     tenant_ref: str
@@ -212,6 +243,43 @@ class InstanceManifest:
     ghl_risk_acceptance: GhlRiskAcceptance | None = None
     # En que landing vive cada formulario. None = la landing sale de la URL.
     ghl_form_landings: GhlFormLandings | None = None
+    # Los productos de la aliada ([[productos]]). Vacio = la instancia no declara
+    # productos: el bridge no etiqueta nada y el conocimiento puede tener una capa
+    # o varias.
+    products: tuple[Product, ...] = ()
+
+    @property
+    def labeled_product(self) -> Product | None:
+        """El producto cuya etiqueta pone el bridge, o None si ninguno tiene."""
+
+        return next(
+            (product for product in self.products if product.chatwoot_label is not None),
+            None,
+        )
+
+    def knowledge_products_error(self, knowledge_keys: tuple[str | None, ...]) -> str | None:
+        """Por que el conocimiento no separa los productos del manifiesto, o None.
+
+        ``knowledge_keys`` son las claves de las secciones de producto del
+        conocimiento (``None`` en uno de una sola capa). Sin ``[[productos]]`` no
+        hay nada que atar.
+        """
+
+        if not self.products:
+            return None
+        declared = sorted(product.key for product in self.products)
+        if any(key is None for key in knowledge_keys):
+            return (
+                "el manifiesto declara [[productos]] y el conocimiento no tiene "
+                "secciones por producto"
+            )
+        found = sorted(key for key in knowledge_keys if key is not None)
+        if found != declared:
+            return (
+                f"los productos del manifiesto ({', '.join(declared)}) no son los "
+                f"del conocimiento ({', '.join(found)})"
+            )
+        return None
 
     @property
     def ghl_adapter_risk(self) -> str | None:
@@ -404,6 +472,7 @@ class InstanceManifest:
         ghl_form_ids, ghl_risk_acceptance, ghl_form_landings = _ghl_adapter(
             payload, events, offers
         )
+        products = _products(payload.get("productos"))
 
         manifest = cls(
             product_version=product_version,
@@ -437,6 +506,7 @@ class InstanceManifest:
             ghl_form_ids=ghl_form_ids,
             ghl_risk_acceptance=ghl_risk_acceptance,
             ghl_form_landings=ghl_form_landings,
+            products=products,
         )
         for flow, enabled in manifest.flows.items():
             blockers = manifest.flow_blockers(flow)
@@ -451,6 +521,48 @@ class InstanceManifest:
         except ValueError as exc:
             raise ManifestError(f"el manifiesto no produce un binding valido: {exc}") from exc
         return manifest
+
+
+def _products(raw: object) -> tuple[Product, ...]:
+    if raw is None:
+        return ()
+    if (
+        not isinstance(raw, list)
+        or not raw
+        or not all(isinstance(entry, dict) for entry in raw)
+    ):
+        raise ManifestError("productos debe ser una lista de tablas ([[productos]])")
+    if len(raw) > MAX_PRODUCTS:
+        raise ManifestError(
+            f"productos: esta version admite {MAX_PRODUCTS} producto; con varios, la "
+            "etiqueta de cada conversacion la decide el ruteo por producto, que "
+            "todavia no existe"
+        )
+    products = []
+    for index, entry in enumerate(raw):
+        where = f"productos[{index}]"
+        _exact_keys(where, entry, {"clave"}, {"etiqueta", "macro_etiqueta"})
+        product_ref = _ref(entry, "clave", f"{where}.clave")
+        if ("etiqueta" in entry) != ("macro_etiqueta" in entry):
+            raise ManifestError(f"{where}: etiqueta y macro_etiqueta van juntas")
+        label = None
+        macro_id = None
+        if "etiqueta" in entry:
+            label = _str(entry, "etiqueta", f"{where}.etiqueta")
+            if _CHATWOOT_LABEL.fullmatch(label) is None:
+                raise ManifestError(
+                    f"{where}.etiqueta debe ser una etiqueta de Chatwoot en minusculas "
+                    "(a-z, 0-9, guiones y guiones bajos)"
+                )
+            if label in RESERVED_CHATWOOT_LABELS:
+                raise ManifestError(
+                    f"{where}.etiqueta '{label}' es una etiqueta de la automatizacion"
+                )
+            macro_id = _positive_int(entry, "macro_etiqueta", f"{where}.macro_etiqueta")
+        products.append(
+            Product(key=product_ref, chatwoot_label=label, chatwoot_label_macro_id=macro_id)
+        )
+    return tuple(products)
 
 
 def _exact_keys(
