@@ -8,19 +8,25 @@
 // Los pasos, en este orden:
 //   1. dos instancias y dos productos de la misma aliada: una instancia no ve
 //      ni toca lo de otra (es la primera que corre);
-//   2. nada de lo que existia cambia: la foto de funciones, disparadores,
-//      relaciones, ACL del esquema, roles y membresias antes y despues de la
-//      migracion; lo nuevo es exactamente la lista cerrada; la huella del
-//      inventario de esquema ausente antes y presente despues; el inventario
-//      de permisos todo ok; ningun privilegio de la API sobre las tablas;
+//   2. nada de lo que existia cambia: la foto de funciones (de todos los
+//      esquemas que no son del sistema), disparadores, relaciones, ACL del
+//      esquema, duenios, roles, membresias (con quien las concedio, inherit y
+//      set), permisos de columna, disparadores de eventos y publicaciones,
+//      antes y despues de la migracion; lo nuevo es exactamente la lista
+//      cerrada; la huella del inventario de esquema ausente antes y presente
+//      despues, mirando solo las filas hasta esta migracion (las de las
+//      posteriores no se aplicaron todavia); el inventario de permisos todo
+//      ok; ningun privilegio de la API sobre las tablas;
 //   3. el ciclo entero por las funciones del operador;
 //   4. los casos negativos (las guardas con NULL, el resultado y el validador
-//      con claves y tipos exactos, la base de toda la instancia, la base de
-//      quien propone, el texto libre, lo inmutable, el vencimiento, lo que
-//      publicar vuelve a mirar, los disparadores), y en 4v y 4w el tope de
-//      la columna validation y el CHECK de coherencia sin huecos con NULL;
-//   5. el actor: Automation Expert, operador y slack, llamando a los helpers
-//      como duenio, y la validacion de la clase de quien propone;
+//      con claves, tipos y bordes exactos, la base de toda la instancia, la
+//      base de quien propone, el texto libre, lo inmutable, el vencimiento, lo
+//      que publicar vuelve a mirar, los disparadores), y desde 4q: el
+//      borrador escrito sobre una version vieja, publicar sin aprobar,
+//      apagar, cada invariante ante el DML directo del duenio, lo que dejan
+//      los eventos y el tope de la columna validation;
+//   5. el actor: Automation Expert, operador, slack y sistema, llamando a los
+//      helpers como duenio, y la validacion de la clase de quien propone;
 //   6. los casos compartidos con el validador (tests/fixtures/flow_store/
 //      invariant_cases.json);
 //   7. las definiciones de ATT1 del dato real (att1_definitions_20261016.json),
@@ -150,13 +156,17 @@ const resultOfSize = (target) => {
 };
 
 // ---------------------------------------------------------------------------
-// La foto de lo que existe en public (y de los roles del cluster).
+// La foto de lo que existe (las funciones de todos los esquemas que no son del
+// sistema, lo demas de public) y de los roles del cluster: con los duenios, las
+// membresias con quien las concedio, inherit y set, los permisos de columna,
+// los disparadores de eventos y las publicaciones.
 // ---------------------------------------------------------------------------
 const PHOTO = `
   select 'fn:' || p.oid::regprocedure::text k,
-         md5(pg_get_functiondef(p.oid)) || '|' || coalesce(p.proacl::text, '') v
+         md5(pg_get_functiondef(p.oid)) || '|' || coalesce(p.proacl::text, '') || '|' || p.proowner::regrole::text v
     from pg_proc p
-   where p.pronamespace = 'public'::regnamespace and p.prokind in ('f', 'p')
+   where p.pronamespace not in ('pg_catalog'::regnamespace, 'information_schema'::regnamespace)
+     and p.prokind in ('f', 'p')
   union all
   select 'tg:' || c.relname || '.' || t.tgname, md5(pg_get_triggerdef(t.oid)) || '|' || t.tgenabled::text
     from pg_trigger t join pg_class c on c.oid = t.tgrelid
@@ -164,7 +174,19 @@ const PHOTO = `
   union all
   select 'rel:' || c.relname,
          c.relkind::text || '|' || coalesce(c.relacl::text, '') || '|' || c.relrowsecurity || '|' || c.relforcerowsecurity
+         || '|' || c.relowner::regrole::text
     from pg_class c where c.relnamespace = 'public'::regnamespace
+  union all
+  select 'att:' || c.oid::regclass::text || '.' || a.attname, a.attacl::text
+    from pg_attribute a join pg_class c on c.oid = a.attrelid
+   where a.attacl is not null and not a.attisdropped
+  union all
+  select 'evt:' || e.evtname, concat_ws('|', e.evtevent, e.evtfoid::regproc::text, e.evtenabled, e.evttags::text)
+    from pg_event_trigger e
+  union all
+  select 'pub:' || p.pubname, concat_ws('|', p.pubowner::regrole::text, p.puballtables, p.pubinsert, p.pubupdate,
+         p.pubdelete, p.pubtruncate)
+    from pg_publication p
   union all
   select 'con:' || r.relname || '.' || c.conname,
          md5(pg_get_constraintdef(c.oid)) || '|' || case when c.contype = 'f' then c.confrelid::regclass::text else '' end
@@ -180,14 +202,16 @@ const PHOTO = `
   select 'nsp:' || n.nspname, n.nspowner::regrole::text || '|' || coalesce(n.nspacl::text, '')
     from pg_namespace n
   union all
-  select 'ext:' || e.extname, e.extversion from pg_extension e
+  select 'ext:' || e.extname, concat_ws('|', e.extversion, e.extowner::regrole::text, e.extnamespace::regnamespace::text)
+    from pg_extension e
   union all
   select 'role:' || r.rolname,
          concat_ws('|', r.rolsuper, r.rolinherit, r.rolcreaterole, r.rolcreatedb, r.rolcanlogin,
                    r.rolreplication, r.rolbypassrls, r.rolconnlimit, r.rolvaliduntil)
     from pg_roles r
   union all
-  select 'member:' || m.roleid::regrole::text || '>' || m.member::regrole::text, m.admin_option::text
+  select 'member:' || m.roleid::regrole::text || '>' || m.member::regrole::text || '>' || m.grantor::regrole::text,
+         concat_ws('|', m.admin_option, m.inherit_option, m.set_option)
     from pg_auth_members m
   union all
   select 'setting:' || s.setdatabase || ':' || s.setrole, array_to_string(s.setconfig, ';')
@@ -495,6 +519,16 @@ error = await attempt(`select public.operator_register_flow_v1($1::jsonb, 'att1'
 check(error?.message === 'flow_store_product_not_bound', '1: la otra instancia no registra en un producto de ATT1', error);
 check(await countRows('flow_change_events', `event_type = 'flow_control_changed' and reason_code = 'registrado'`) === 4,
   '1: el disparador deja un evento por cada alta');
+// La forma del producto y de la clave la mira la funcion, con su codigo, antes
+// que el CHECK de la columna.
+for (const [label, product, flowKey] of [
+  ['una clave con mayusculas', 'att1', 'Carrito'],
+  ['una clave de una letra', 'att1', 'c'],
+  ['un producto con mayusculas', 'Att1', 'carrito'],
+]) {
+  error = await attempt(`select public.operator_register_flow_v1($1::jsonb, $2, $3, 'dan', 'alta')`, [json(ATT1), product, flowKey]);
+  check(error?.code === '22023' && error.message === 'flow_store_flow_invalid', `1: registrar ${label}: flow_store_flow_invalid`, error);
+}
 
 const att1Base = await instanceBase(ATT1, [carrito]);
 check(carrito in att1Base && pagoFallido in att1Base && carritoAtt2 in att1Base && !(carritoOtra in att1Base),
@@ -565,13 +599,13 @@ for (const [label, instance, message] of [
 // 2. Nada de lo que existia cambia, y lo nuevo es la lista cerrada.
 // ===========================================================================
 const changed = [...photoBefore].filter(([key, value]) => photoAfter.get(key) !== value).map(([key]) => key);
-check(changed.length === 0, '2: nada de lo que existia cambia (funciones, disparadores, relaciones, ACL, roles, membresias)', changed);
+check(changed.length === 0, '2: nada de lo que existia cambia (funciones, disparadores, relaciones, ACL, duenios, roles, membresias)', changed);
 const added = [...photoAfter.keys()].filter((key) => !photoBefore.has(key));
 const addedOf = (prefix) => added.filter((key) => key.startsWith(prefix)).map((key) => key.slice(prefix.length)).sort();
 check(sameJson(addedOf('fn:'), [...NEW_FUNCTIONS].sort()), '2: las funciones nuevas son exactamente las 31', addedOf('fn:'));
 check(sameJson(addedOf('tg:'), [...NEW_TRIGGERS].sort()), '2: los disparadores nuevos son exactamente los 14', addedOf('tg:'));
 check(sameJson(addedOf('rel:'), [...NEW_RELATIONS].sort()), '2: las relaciones nuevas son las cuatro tablas y sus indices', addedOf('rel:'));
-for (const prefix of ['pol:', 'nsp:', 'ext:', 'role:', 'member:', 'setting:', 'defacl:']) {
+for (const prefix of ['pol:', 'nsp:', 'ext:', 'role:', 'member:', 'setting:', 'defacl:', 'att:', 'evt:', 'pub:']) {
   check(addedOf(prefix).length === 0, `2: no agrega nada en ${prefix}`, addedOf(prefix));
 }
 const newConstraints = addedOf('con:');
@@ -588,10 +622,20 @@ const rowOf = (rows) => rows.find((row) => row.version === MIGRATION_VERSION);
 check(rowOf(inventoryBefore)?.fingerprint_status === 'fingerprint_absent', '2: la huella da fingerprint_absent antes de aplicar', rowOf(inventoryBefore));
 check(rowOf(inventoryAfter)?.fingerprint_status === 'fingerprint_present' && rowOf(inventoryAfter)?.total_markers === 5,
   '2: la huella da fingerprint_present (5 de 5) despues', rowOf(inventoryAfter));
-check(inventoryBefore.filter((row) => row.version !== MIGRATION_VERSION).every((row) => row.fingerprint_status === 'fingerprint_present'),
-  '2: antes de aplicar, las demas huellas estan presentes');
-check(inventoryAfter.every((row) => row.fingerprint_status === 'fingerprint_present'), '2: despues, todas las huellas estan presentes',
-  inventoryAfter.filter((row) => row.fingerprint_status !== 'fingerprint_present').map((row) => row.version));
+// Las filas de las migraciones posteriores (de otra linea, que en estas dos
+// fotos todavia no se aplicaron) no cuentan: antes, las anteriores; despues,
+// hasta esta.
+const earlier = (rows) => rows.filter((row) => row.version < MIGRATION_VERSION);
+const throughThis = (rows) => rows.filter((row) => row.version <= MIGRATION_VERSION);
+const notPresent = (rows) => rows.filter((row) => row.fingerprint_status !== 'fingerprint_present').map((row) => row.version);
+check(earlier(inventoryBefore).length > 0 && earlier(inventoryBefore).length === earlier(inventoryAfter).length
+    && throughThis(inventoryAfter).length === earlier(inventoryAfter).length + 1,
+  '2: las dos fotos tienen las mismas filas anteriores, y despues una mas',
+  { before: earlier(inventoryBefore).length, after: throughThis(inventoryAfter).length });
+check(notPresent(earlier(inventoryBefore)).length === 0, '2: antes de aplicar, las huellas de las anteriores estan presentes',
+  notPresent(earlier(inventoryBefore)));
+check(notPresent(throughThis(inventoryAfter)).length === 0, '2: despues, las huellas hasta esta estan presentes',
+  notPresent(throughThis(inventoryAfter)));
 check(aclAfter.length === aclBefore.length + 31 && aclAfter.every((row) => row.acl_status === 'ok'),
   `2: el inventario de permisos: ${aclAfter.length} funciones, todas ok (31 nuevas)`,
   { before: aclBefore.length, after: aclAfter.length, bad: aclAfter.filter((row) => row.acl_status !== 'ok') });
@@ -740,6 +784,13 @@ for (const [label, result] of [
   ['un hallazgo de forma en warnings', { blocks: [], warnings: [finding()] }],
   ['una advertencia con regla', { blocks: [], warnings: [{ ...warning(), rule: 13 }] }],
   ['una advertencia en blocks', { blocks: [warning()], warnings: [] }],
+  ['la regla 0', { blocks: [finding({ rule: 0 })], warnings: [] }],
+  ['un limite con RLO', { blocks: [finding({ limit: `a${String.fromCodePoint(0x202e)}b` })], warnings: [] }],
+  ['un limite de mas de 300', { blocks: [finding({ limit: 'x'.repeat(301) })], warnings: [] }],
+  ['una alternativa con un salto de linea', { blocks: [finding({ alternative: 'a\nb' })], warnings: [] }],
+  ['una alternativa de mas de 300', { blocks: [finding({ alternative: 'x'.repeat(301) })], warnings: [] }],
+  ['201 hallazgos entre bloqueos y advertencias', {
+    blocks: Array.from({ length: 100 }, () => finding()), warnings: Array.from({ length: 101 }, () => warning()) }],
   ['{}', {}],
   ['una clave de mas', { blocks: [], warnings: [], x: 1 }],
   ['blocks que no es lista', { blocks: {}, warnings: [] }],
@@ -771,6 +822,8 @@ for (const [label, validator] of [
   ['una phase que no existe', { ...VALIDATOR, phase: 'revisar' }],
   ['el actor slack', { ...VALIDATOR, actor: 'slack' }],
   ['el actor como lista', { ...VALIDATOR, actor: ['operador'] }],
+  ['product_version latest', { ...VALIDATOR, product_version: 'latest' }],
+  ['product_version sin el parche', { ...VALIDATOR, product_version: 'v1.9' }],
 ]) {
   error = await recordError({ validator });
   check(error?.code === '22023' && error.message === 'flow_change_validator_invalid', `4b: validar con el validador ${label}: flow_change_validator_invalid`, error);
@@ -809,12 +862,17 @@ check(row.status === 'borrador' && row.validation?.result?.blocks?.length === 2 
   '4b: con bloqueos, guarda la validacion con la base', row);
 let blockedEvent = (await eventsOf(draft.proposal_id)).find((event) => event.event_type === 'flow_change_validation_blocked');
 check(sameJson(blockedEvent?.data?.codes, ['unknown_key', 'flow_change_stale_base']), '4b: el evento lleva los codigos', blockedEvent?.data);
-// El borde que pasa: un resultado de exactamente 60 KiB.
+// Los bordes que pasan: un resultado de exactamente 60 KiB, y un hallazgo con
+// una ruta de 512 y los tres textos de 300.
 const largest = resultOfSize(61440);
 check(await textBytes(largest) === 61440, '4b: (el resultado mide 60 KiB en la base)');
 recorded = await settle(record(ATT1, draft.proposal_id, draft.revision, good, { result: largest }));
 check(recorded.ok && recorded.status === 'borrador' && recorded.blocks === largest.blocks.length,
   '4b: un resultado de exactamente 60 KiB se registra', recorded);
+const edgeFinding = finding({ path: `/${'x'.repeat(511)}`, reason: 'r'.repeat(300), alternative: 'a'.repeat(300), limit: 'l'.repeat(300) });
+recorded = await settle(record(ATT1, draft.proposal_id, draft.revision, good, { result: { blocks: [edgeFinding], warnings: [] } }));
+check(edgeFinding.path.length === 512 && recorded.ok && recorded.blocks === 1,
+  '4b: una ruta de 512 y los tres textos de 300 pasan', recorded);
 
 // Rehacer: sube la revision y borra la validacion; la revision vieja no valida.
 let redone = await saveDraft(ATT1, [versionItem(carrito, 'att1', 'carrito', { nombre: 'Guardas 2' })], await draftBase([carrito]),
@@ -836,9 +894,19 @@ check(recorded.ok && recorded.status === 'validada' && /^[0-9a-f]{64}$/.test(rec
 row = await proposal(draft.proposal_id);
 check(sameJson(row.base, good) && row.fingerprint === recorded.fingerprint && row.validation.base === undefined,
   '4b: la base congelada es la de la base', row);
-const fingerprintText = (await one(`select public._flow_change_fingerprint(id, revision, items, draft_base, base, purpose) f
-  from public.flow_change_proposals where id = $1`, [draft.proposal_id])).f;
-check(fingerprintText === recorded.fingerprint, '4b: la huella es la de la funcion, sobre el contenido, las dos bases y el para que');
+// La huella, sin llamar a la funcion que la calcula: la prueba arma el jsonb
+// de las siete claves del contrato con lo guardado, su texto (jsonbText) y su
+// sha256 en JS.
+const frozen = await one(`select id, revision, items, draft_base, base, purpose, items::text items_text, base::text base_text
+  from public.flow_change_proposals where id = $1`, [draft.proposal_id]);
+check(jsonbText(frozen.items) === frozen.items_text && jsonbText(frozen.base) === frozen.base_text,
+  '4b: (el texto de un jsonb armado en JS es el de Postgres)');
+const expectedFingerprint = sha256(jsonbText({
+  contract: 'flow-change-cycle-v1', proposal_id: frozen.id, revision: frozen.revision, items: frozen.items,
+  draft_base: frozen.draft_base, base: frozen.base, purpose: frozen.purpose,
+}));
+check(expectedFingerprint === recorded.fingerprint,
+  '4b: la huella cubre el contenido, las dos bases y el para que (calculada en JS)', { expectedFingerprint, recorded: recorded.fingerprint });
 const validatedEvent = (await eventsOf(draft.proposal_id)).find((event) => event.event_type === 'flow_change_validated');
 check(validatedEvent?.data?.fingerprint === recorded.fingerprint && sameJson(validatedEvent.data.warnings, [])
     && validatedEvent.data.revision === 2, '4b: flow_change_validated lleva la huella, la revision y las advertencias', validatedEvent?.data);
@@ -986,6 +1054,13 @@ for (const [label, items] of [
   ['un ok_del_cliente con otra forma', [{ ...carritoItem, ok_del_cliente: { quien: 'Juan', medio: 'WhatsApp' } }]],
   ['un ok_del_cliente con una fecha imposible', [{ ...carritoItem, ok_del_cliente: { quien: 'Juan', medio: 'WhatsApp', fecha: '2026-13-01' } }]],
   ['un ok_del_cliente con RLO', [{ ...carritoItem, ok_del_cliente: { quien: `Ju${String.fromCodePoint(0x202e)}an`, medio: 'WhatsApp', fecha: '2026-10-15' } }]],
+  ['un ok_del_cliente con quien de 121', [{ ...carritoItem, ok_del_cliente: { quien: 'q'.repeat(121), medio: 'WhatsApp', fecha: '2026-10-15' } }]],
+  ['un ok_del_cliente con medio de 121', [{ ...carritoItem, ok_del_cliente: { quien: 'Juan', medio: 'm'.repeat(121), fecha: '2026-10-15' } }]],
+  ['un ok_del_cliente con el dia 32', [{ ...carritoItem, ok_del_cliente: { quien: 'Juan', medio: 'WhatsApp', fecha: '2026-10-32' } }]],
+  ['un ok_del_cliente con el dia 00', [{ ...carritoItem, ok_del_cliente: { quien: 'Juan', medio: 'WhatsApp', fecha: '2026-10-00' } }]],
+  ['un volver a la version 0', [backItem(carrito, 'att1', 'carrito', 0)]],
+  ['un volver a una version negativa', [backItem(carrito, 'att1', 'carrito', -1)]],
+  ['un volver a una version con decimales', [backItem(carrito, 'att1', 'carrito', 1.5)]],
 ]) {
   error = await attempt(SAVE_SQL, [json(ATT1), null, null, json(items), json(await draftBase([carrito])), PURPOSE]);
   check(error?.code === '22023' && error.message === 'flow_change_items_invalid', `4h: ${label}: flow_change_items_invalid`, error);
@@ -993,8 +1068,18 @@ for (const [label, items] of [
 saved = await saveDraft(ATT1, [{ ...carritoItem, ok_del_cliente: { quien: 'Juan', medio: 'WhatsApp', fecha: '2026-10-15' } },
   stateItem(carrito, 'att1', 'carrito', 'apagar')], await draftBase([carrito]));
 check(saved.ok, '4h: una version con el OK del cliente y un apagar del mismo flujo se guardan', saved);
+const clientOkEdge = await saveDraft(ATT1, [{ ...carritoItem, ok_del_cliente: { quien: 'q'.repeat(120), medio: 'm'.repeat(120), fecha: '2026-10-31' } }],
+  await draftBase([carrito]));
+check(clientOkEdge.ok, '4h: un OK del cliente con quien y medio de 120 y el dia 31 se guarda', clientOkEdge);
 error = await attempt(SAVE_SQL, [json(ATT1), null, null, json([{ ...carritoItem, flujo: 'no_existe', definicion: { ...carritoItem.definicion, flujo: 'no_existe' } }]), '{}', PURPOSE]);
 check(error?.code === 'P0002' && error.message === 'flow_not_found', '4h: un item cuyo flujo no es el del control: P0002 flow_not_found', error);
+// El producto del item tiene que ser el del control: se rechaza al guardar,
+// no recien al publicar con flow_definition_identity_mismatch.
+const proposalsBeforeForeign = await countRows('flow_change_proposals');
+error = await attempt(SAVE_SQL, [json(ATT1), null, null, json([{ ...versionItem(carrito, 'att2', 'carrito'), flow_id: carrito }]),
+  json(await draftBase([carrito])), PURPOSE]);
+check(error?.code === 'P0002' && error.message === 'flow_not_found' && await countRows('flow_change_proposals') === proposalsBeforeForeign,
+  '4h: un item con el producto de otro flujo: P0002 flow_not_found al guardar, y no guarda nada', error);
 
 // 4i. El texto libre: una linea, sin controles ni bidi.
 const codepoint = (value) => String.fromCodePoint(value);
@@ -1010,10 +1095,13 @@ for (const [label, text] of [
   ['LRI', `a${codepoint(0x2066)}b`],
   ['solo espacios', '   '],
   ['501 caracteres', 'x'.repeat(501)],
-  // El separador de linea y el de parrafo (purpose es una linea), los
-  // formatos viejos, las anclas de anotacion y las etiquetas (texto invisible).
+  // El separador de linea y el de parrafo (purpose es una linea), WJ y el
+  // ultimo invisible de su rango, los formatos viejos, las anclas de anotacion
+  // y las etiquetas (texto invisible).
   ['LS U+2028', `a${codepoint(0x2028)}b`],
   ['PS U+2029', `a${codepoint(0x2029)}b`],
+  ['WJ U+2060', `a${codepoint(0x2060)}b`],
+  ['U+2064', `a${codepoint(0x2064)}b`],
   ['U+206A', `a${codepoint(0x206a)}b`],
   ['U+206F', `a${codepoint(0x206f)}b`],
   ['U+FFF9', `a${codepoint(0xfff9)}b`],
@@ -1098,6 +1186,9 @@ for (const [label, sql, params, code, message] of [
   ['un control que no nace apagado', `insert into public.flow_controls (tenant_ref, ally_ref, product_ref, flow_key, state, generation,
     change_kind, changed_by_kind, changed_by_ref, change_reason) values ('lancemos', 'att1', 'att1', 'nace_prendido', 'prendido', 0,
     'registrado', 'operador', 'dan', 'alta')`, [], '23514', 'flow_control_must_start_off'],
+  ['un control que nace apagado con otra generacion', `insert into public.flow_controls (tenant_ref, ally_ref, product_ref, flow_key, state,
+    generation, change_kind, changed_by_kind, changed_by_ref, change_reason) values ('lancemos', 'att1', 'att1', 'nace_con_generacion',
+    'apagado', 5, 'registrado', 'operador', 'dan', 'alta')`, [], '23514', 'flow_control_must_start_off'],
   ['un UPDATE que no sube la generacion', `update public.flow_controls set change_kind = 'publicado', changed_by_proposal_id = $2::uuid
     where flow_id = $1`, [pagoFallido, guards.id], '23514', 'flow_control_generation_must_increment'],
   ['un UPDATE que sube la generacion en 2', `update public.flow_controls set generation = generation + 2, change_kind = 'publicado',
@@ -1172,6 +1263,11 @@ await expectExpired(expiring.id, 'validada', '4m: aprobar una vencida la deja ve
 result = await approve(ATT1, expiring.id, expiring.fingerprint);
 check(result.ok === false && result.reason_code === 'flow_change_not_validated' && result.status === 'vencida',
   '4m: vencida es final', result);
+const alreadyExpired = expiring.id;
+result = await settle(discard(ATT1, alreadyExpired));
+check(result.ok === false && result.reason_code === 'flow_change_final' && result.status === 'vencida'
+    && (await proposal(alreadyExpired)).status === 'vencida',
+  '4m: descartar una que ya estaba vencida: flow_change_final, y sigue vencida', result);
 expiring = await prepare(ATT1, [versionItem(carrito, 'att1', 'carrito', { nombre: 'Vence al publicar' })]);
 check(expiring.approved?.ok, '4m: una aprobada', expiring.approved);
 await age(expiring.id);
@@ -1185,6 +1281,19 @@ result = await discard(ATT1, expiring.id);
 check(result.ok === false && result.reason_code === 'flow_change_final' && result.status === 'vencida',
   '4m: descartar una vencida: flow_change_final', result);
 await expectExpired(expiring.id, 'validada', '4m: descartar una vencida la deja vencida con su evento');
+// El plazo es de 24 horas justas: con 24 h y un minuto vence, con 23 h y 59
+// minutos todavia no.
+const ageBy = async (proposalId, interval) => replica(`update public.flow_change_proposals
+  set validated_at = validated_at - $2::interval, expires_at = expires_at - $2::interval where id = $1`, [proposalId, interval]);
+expiring = await prepare(ATT1, [versionItem(carrito, 'att1', 'carrito', { nombre: 'Vence por un minuto' })], { approveIt: false });
+await ageBy(expiring.id, '24 hours 1 minute');
+result = await approve(ATT1, expiring.id, expiring.fingerprint);
+check(result.ok === false && result.reason_code === 'flow_change_proposal_expired', '4m: aprobar a las 24 h y 1 min: vencida', result);
+await expectExpired(expiring.id, 'validada', '4m: a las 24 h y 1 min queda vencida con su evento');
+expiring = await prepare(ATT1, [versionItem(carrito, 'att1', 'carrito', { nombre: 'Todavia no vence' })], { approveIt: false });
+await ageBy(expiring.id, '23 hours 59 minutes');
+result = await approve(ATT1, expiring.id, expiring.fingerprint);
+check(result.ok && result.status === 'aprobada', '4m: aprobar a las 23 h y 59 min: todavia no vence', result);
 
 // 4n. Lo que publicar vuelve a mirar, por si la base cambio por otro camino: un
 // error de programa aborta la transaccion entera y no escribe nada.
@@ -1256,6 +1365,112 @@ error = await attempt(`select public.operator_discard_flow_change_v1($1::jsonb, 
 check(error?.message === 'flow_store_text_invalid', '4p: descartar con un salto de linea en el motivo: 22023', error);
 result = await discard(ATT1, pending.id, 'la base cambio');
 check(result.ok && (await proposal(pending.id)).status === 'descartada', '4p: descartar una aprobada', result);
+
+// 4q. El borrador escrito sobre una version no se valida encima de la
+// siguiente: aunque la foto del validador sea la de hoy, la base de quien
+// propone quedo vieja (el lost update).
+const onOld = await saveDraft(ATT1, [versionItem(carrito, 'att1', 'carrito', { nombre: 'Escrito sobre la vieja' })],
+  await draftBase([carrito]));
+const oldVersion = (await control(carrito)).active_version;
+await cycle(ATT1, [versionItem(carrito, 'att1', 'carrito', { nombre: 'La siguiente' })], '4q: otra propuesta publica la version siguiente');
+const freshBase = await instanceBase(ATT1, [carrito]);
+check(freshBase[carrito]?.active_version === oldVersion + 1, '4q: (la activa es la siguiente)', freshBase[carrito]);
+result = await record(ATT1, onOld.proposal_id, onOld.revision, freshBase);
+check(result.ok === false && result.reason_code === 'flow_change_stale_base' && sameJson(result.base, freshBase),
+  '4q: validar con la base fresca un borrador escrito sobre la vieja: stale_base', result);
+const onOldRow = await proposal(onOld.proposal_id);
+const onOldEvents = await eventsOf(onOld.proposal_id);
+check(onOldRow.status === 'borrador' && onOldRow.fingerprint === null && onOldRow.validation === null
+    && onOldEvents.filter((event) => event.event_type === 'flow_change_validation_rejected'
+      && event.reason_code === 'flow_change_stale_base').length === 1
+    && !onOldEvents.some((event) => event.event_type === 'flow_change_validated'),
+  '4q: sigue en borrador, sin huella ni validacion, con su evento', { onOldRow, onOldEvents });
+
+// 4r. Publicar una validada que nadie aprobo: flow_change_not_approved, sin
+// versiones nuevas y con los controles iguales.
+const unapproved = await prepare(ATT1, [versionItem(carrito, 'att1', 'carrito', { nombre: 'Sin aprobar' })], { approveIt: false });
+check(unapproved.validated?.status === 'validada', '4r: (una validada sin aprobar)', unapproved.validated);
+const beforeUnapproved = await snapshot();
+const unapprovedResult = await settle(publish(ATT1, unapproved.id, unapproved.fingerprint, revalidation(unapproved.fingerprint)));
+check(unapprovedResult.ok === false && unapprovedResult.reason_code === 'flow_change_not_approved'
+    && unapprovedResult.status === 'validada' && sameJson(await snapshot(), beforeUnapproved)
+    && (await proposal(unapproved.id)).status === 'validada',
+  '4r: publicar una validada que nadie aprobo: flow_change_not_approved y no escribe nada', unapprovedResult);
+
+// 4s. Apagar desde prendido y desde pausado.
+const offFromOn = (await register(ATT1, 'att1', 'apaga_prendido')).flow_id;
+const offFromPaused = (await register(ATT1, 'att1', 'apaga_pausado')).flow_id;
+await cycle(ATT1, [versionItem(offFromOn, 'att1', 'apaga_prendido'), stateItem(offFromOn, 'att1', 'apaga_prendido', 'prender')],
+  '4s: un flujo prendido');
+await cycle(ATT1, [versionItem(offFromPaused, 'att1', 'apaga_pausado'), stateItem(offFromPaused, 'att1', 'apaga_pausado', 'prender')],
+  '4s: otro flujo prendido');
+paused = await pause(ATT1, 'att1', 'apaga_pausado', (await control(offFromPaused)).generation);
+check(paused.ok && paused.changed, '4s: (el segundo, pausado)', paused);
+for (const [flowId, flowKey, fromState] of [[offFromOn, 'apaga_prendido', 'prendido'], [offFromPaused, 'apaga_pausado', 'pausado']]) {
+  const before = await control(flowId);
+  check(before.state === fromState, `4s: (${flowKey} esta ${fromState})`, before);
+  const turnedOff = await cycle(ATT1, [stateItem(flowId, 'att1', flowKey, 'apagar')], `4s: apagar desde ${fromState}`);
+  const after = await control(flowId);
+  const event = turnedOff.id
+    ? (await eventsOf(turnedOff.id)).find((item) => item.event_type === 'flow_control_changed')
+    : undefined;
+  check(after.state === 'apagado' && after.active_version === before.active_version && after.generation === before.generation + 1
+      && event?.data?.from_state === fromState && event.data.to_state === 'apagado' && event.generation === before.generation + 1
+      && sameJson(turnedOff.published?.published, [{
+        producto: 'att1', flujo: flowKey, version: before.active_version, state: 'apagado', generation: before.generation + 1,
+      }]),
+    `4s: apagar desde ${fromState}: apagado, la generacion + 1 y el evento con from_state`, { before, after, event });
+}
+
+// 4t. Los invariantes ante el DML directo del duenio, uno por uno.
+const dml = (await register(ATT1, 'att1', 'dml')).flow_id;
+await cycle(ATT1, [versionItem(dml, 'att1', 'dml', { nombre: 'dml v1' })], '4t: la v1');
+await cycle(ATT1, [versionItem(dml, 'att1', 'dml', { nombre: 'dml v2' }), stateItem(dml, 'att1', 'dml', 'prender')], '4t: la v2, prendido');
+const dmlBefore = await control(dml);
+error = await attempt(`update public.flow_controls set state = 'pausado', active_version = 1, generation = generation + 1,
+  change_kind = 'pausado', changed_by_proposal_id = null where flow_id = $1`, [dml]);
+check(error?.code === '23514' && error.message === 'flow_control_change_kind_invalid' && sameJson(await control(dml), dmlBefore),
+  '4t: una pausa que cambia la version activa: flow_control_change_kind_invalid', error);
+const bare = (await register(ATT1, 'att1', 'sin_version')).flow_id;
+const bareBefore = await control(bare);
+error = await attempt(`update public.flow_controls set state = 'prendido', generation = generation + 1, change_kind = 'publicado',
+  changed_by_proposal_id = $2::uuid where flow_id = $1`, [bare, guards.id]);
+check(error?.code === '23514' && /violates check constraint "flow_controls_on_needs_version"/.test(error.message),
+  '4t: prender un control sin version: el CHECK flow_controls_on_needs_version', error);
+error = await attempt(`update public.flow_controls set generation = generation + 1, change_kind = 'publicado',
+  changed_by_proposal_id = null where flow_id = $1`, [bare]);
+check(error?.code === '23514' && /violates check constraint "flow_controls_publish_has_proposal"/.test(error.message),
+  '4t: un cambio publicado sin propuesta: el CHECK flow_controls_publish_has_proposal', error);
+check(sameJson(await control(bare), bareBefore), '4t: el control sin version no cambio');
+for (const [label, proposalId, status] of [['descartada', toDiscard.proposal_id, 'descartada'], ['vencida', alreadyExpired, 'vencida']]) {
+  error = await attempt(`update public.flow_change_proposals set close_reason = 'otro motivo' where id = $1`, [proposalId]);
+  check(error?.code === '55000' && error.message === 'flow_change_proposal_frozen' && (await proposal(proposalId)).status === status,
+    `4t: una ${label} no acepta un UPDATE: flow_change_proposal_frozen`, error);
+}
+const directDraft = await saveDraft(ATT1, [versionItem(carrito, 'att1', 'carrito', { nombre: 'Para el UPDATE directo' })],
+  await draftBase([carrito]));
+error = await attempt(`update public.flow_change_proposals set status = 'validada', items = $2::jsonb, base = '{}'::jsonb,
+  fingerprint = repeat('a', 64), validation = '{}'::jsonb, validated_at = now(), expires_at = now() + interval '24 hours'
+  where id = $1`, [directDraft.proposal_id, json([versionItem(carrito, 'att1', 'carrito', { nombre: 'Otro contenido' })])]);
+check(error?.code === '55000' && error.message === 'flow_change_proposal_frozen'
+    && (await proposal(directDraft.proposal_id)).status === 'borrador',
+  '4t: pasar a validada cambiando los items: flow_change_proposal_frozen', error);
+
+// 4u. Lo que dejan los eventos de validar y de publicar.
+const withWarnings = { blocks: [], warnings: [warning('wait_without_contesta', '/0/definicion/pasos'), warning()] };
+const warned = await saveDraft(ATT1, [versionItem(carrito, 'att1', 'carrito', { nombre: 'Con advertencias' })], await draftBase([carrito]));
+const warnedRecorded = await record(ATT1, warned.proposal_id, warned.revision, await instanceBase(ATT1, [carrito]), { result: withWarnings });
+const warnedEvent = (await eventsOf(warned.proposal_id)).find((event) => event.event_type === 'flow_change_validated');
+check(warnedRecorded.status === 'validada' && sameJson(warnedEvent?.data?.warnings, ['wait_without_contesta', 'always_with_marketing'])
+    && sameJson(warnedEvent.data.validator, VALIDATOR),
+  '4u: flow_change_validated lleva los codigos de las advertencias y el validador', warnedEvent?.data);
+approved = await approve(ATT1, warned.proposal_id, warnedRecorded.fingerprint);
+const warnedRevalidation = revalidation(warnedRecorded.fingerprint, { result: withWarnings, catalog_sha256: 'b'.repeat(64) });
+result = await publish(ATT1, warned.proposal_id, warnedRecorded.fingerprint, warnedRevalidation);
+const publishedEvent = (await eventsOf(warned.proposal_id)).find((event) => event.event_type === 'flow_change_published');
+check(approved.ok && result.ok && result.replayed === false && sameJson(publishedEvent?.data?.revalidation, {
+  validator: VALIDATOR, catalog_sha256: 'b'.repeat(64), validated_at: warnedRevalidation.validated_at,
+}), '4u: flow_change_published lleva el validador, el catalogo y validated_at de la revalidacion', publishedEvent?.data);
 
 // 4v. Lo que se guarda en validation entra en la columna: con bloqueos lleva
 // la base, que crece con los flujos de la instancia. Una instancia de 120
@@ -1355,6 +1570,22 @@ check(error === null, '5: los CHECK aceptan la clase slack con un ID de Slack', 
 error = await attempt(`insert into public.flow_change_events (tenant_ref, ally_ref, proposal_id, event_type, actor_kind, actor_ref, reason_code)
   values ('lancemos', 'att1', $1::uuid, 'flow_change_approved', 'slack', 'dan', 'x')`, [opDraft.proposal_id]);
 check(error?.code === '23514', '5: un nombre escrito no pasa como ID de Slack', error);
+// La forma de cada clase, en los CHECK.
+for (const [kind, ref, accepted] of [
+  ['automation_expert', AE, true], ['automation_expert', 'dan', false],
+  ['sistema', 'vencimiento', true], ['sistema', 'U0123ABCD9', false], ['sistema', 'Vencimiento', false],
+  ['operador', 'dan', true], ['operador', 'U0123ABCD9', false],
+]) {
+  error = await attempt(`insert into public.flow_change_events (tenant_ref, ally_ref, proposal_id, event_type, actor_kind, actor_ref, reason_code)
+    values ('lancemos', 'att1', $1::uuid, 'flow_change_approved', $2, $3, 'x')`, [opDraft.proposal_id, kind, ref]);
+  check(accepted ? error === null : (error?.code === '23514' && /flow_change_events_actor/.test(error.message)),
+    `5: un evento con ${kind}/${ref}: ${accepted ? 'entra' : 'el CHECK lo frena'}`, error);
+}
+// Y en las funciones: el Automation Expert con un nombre escrito no propone.
+error = await attempt(`select public._flow_change_save_draft('lancemos', 'att1', null, null, $1::jsonb, $2::jsonb, 'p',
+  'automation_expert', 'dan')`, [json([versionItem(carrito, 'att1', 'carrito', { nombre: 'Sin ID' })]), json(await draftBase([carrito]))]);
+check(error?.code === '22023' && error.message === 'flow_store_actor_invalid',
+  '5: el Automation Expert con un nombre escrito en vez de un ID de Slack: flow_store_actor_invalid', error);
 // Aprobar con slack, y la version publicada lo guarda (la tabla inmutable ya
 // acepta slack: la pieza 4 no tiene que alterarla).
 const slackValidated = await record(ATT1, opDraft.proposal_id, opDraft.revision, await instanceBase(ATT1, [carrito]));
@@ -1372,6 +1603,13 @@ const aePause = await control(carrito);
 check(paused.ok && paused.changed && aePause.changed_by_kind === 'automation_expert' && aePause.changed_by_ref === AE,
   '5: la pausa del Automation Expert queda con su clase y su ID', { paused, aePause });
 await cycle(ATT1, [stateItem(carrito, 'att1', 'carrito', 'prender')], '5: sacar la pausa del agente');
+// Slack pausa (el boton firmado de la pieza 4), y queda con su clase.
+paused = await settle((async () => (await one(`select public._flow_change_pause('lancemos', 'att1', 'att1', 'carrito', $1::bigint,
+  'slack', 'U0123ABCD9', 'pausa desde Slack') r`, [(await control(carrito)).generation])).r)());
+const slackPause = await control(carrito);
+check(paused.ok && paused.changed && slackPause.state === 'pausado' && slackPause.changed_by_kind === 'slack'
+    && slackPause.changed_by_ref === 'U0123ABCD9', '5: Slack pausa, y queda con su clase y su ID', { paused, slackPause });
+await cycle(ATT1, [stateItem(carrito, 'att1', 'carrito', 'prender')], '5: sacar la pausa de Slack');
 // Una propuesta del Automation Expert se publica con la revalidacion de su
 // clase, no con la del operador que la aprueba.
 const aeThird = (await one(`select public._flow_change_save_draft('lancemos', 'att1', null, null, $1::jsonb, $2::jsonb,

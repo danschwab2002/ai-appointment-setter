@@ -158,10 +158,15 @@ def _acl_block(sql: str) -> str:
     return sql[start : sql.index("$acl$;", start + len("do $acl$"))]
 
 
-def test_the_migration_is_the_tail_of_the_chain() -> None:
+def test_the_migration_comes_right_after_the_automation_expert_reads() -> None:
+    # Adjacency, not "the last one": the next migration of another line does
+    # not break this test (the ones that pin the tail of the chain on purpose
+    # are the release readiness, the proactive contact cap and the schema
+    # inventory ones).
     versions = sorted(path.name.split("_", 1)[0] for path in MIGRATIONS.glob("*.sql"))
-    assert versions[-1] == "20261016000100"
-    assert versions[-2] == "20261015000200"
+    position = versions.index("20261016000100")
+    assert versions.count("20261016000100") == 1
+    assert versions[position - 1] == "20261015000200"
 
 
 def test_no_role_no_grant_no_redefinition_and_no_definer() -> None:

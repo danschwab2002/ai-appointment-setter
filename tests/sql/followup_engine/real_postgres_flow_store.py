@@ -11,7 +11,22 @@ PostgreSQL of the CI:
 2. two publications of the same proposal: one publishes and the other returns
    replayed, without a second version;
 3. two approvals of the same proposal: one approves and the other returns
-   replayed.
+   replayed;
+4. two publications over different flows of the same instance: publishing
+   locks every control of the instance, so the second waits even though its
+   flow is another one, and returns flow_change_stale_base (rules 8 and 10
+   read the other flows); a lock on its own flows only would not wait;
+5. a pause of the cart holds its control while a publication of the cart
+   competes: the publication waits for the controls, sees the generation
+   moved and returns flow_change_stale_base, and the flow stays paused;
+6. a publication of the cart holds the controls while a pause with the
+   generation it read competes: the pause waits for the control and returns
+   flow_control_generation_mismatch (the CAS); without the lock it would land
+   on a version it never saw;
+7. two redos of the same draft with the same expected revision: the lock of
+   the proposal puts them in line and the second returns
+   flow_change_revision_mismatch; without it, the second would overwrite the
+   items of the first.
 
 The races use a barrier, not a fixed wait: the session that holds the lock is a
 psql with its standard input open. It receives "begin;" and the call, and the
@@ -21,8 +36,10 @@ starts, and the probe waits until it shows up waiting on a lock. Only then the
 first one commits. No race depends on who wins, and none takes longer than the
 two functions. There is no loop of rounds and no pg_sleep.
 
-The pause against a publication of the same flow goes in sequence in PGlite
-(step 4): it is the case that turns red without the generation in the base.
+The pause against a publication of the same flow also goes in sequence in
+PGlite (step 4): it is the case that turns red without the generation in the
+base. Here, races 5 and 6 are the two orders of the same pair with the locks
+really held.
 """
 
 from __future__ import annotations
@@ -443,6 +460,138 @@ def race_two_approvals(carrito: str) -> dict:
     return {"approved": 1, "replayed": 1, **timing}
 
 
+def state_item(flow_id: str, flow_key: str, tipo: str) -> dict:
+    return {"producto": "att1", "flujo": flow_key, "flow_id": flow_id, "tipo": tipo}
+
+
+def publish_now(items: list[dict]) -> dict:
+    """The whole cycle, in sequence: saved, validated, approved and published."""
+    proposal_id, fingerprint = approved(items)
+    result = call("operator_publish_flow_change_v1", INSTANCE, proposal_id, fingerprint, revalidation(fingerprint))
+    require(result.get("ok") is True and result.get("replayed") is False, f"publish failed: {result}")
+    return result
+
+
+def stale_event(proposal_id: str) -> int:
+    return count(
+        "select 1 from public.flow_change_events "
+        f"where proposal_id = '{proposal_id}' and event_type = 'flow_change_publish_rejected' "
+        "and reason_code = 'flow_change_stale_base'"
+    )
+
+
+def race_two_proposals_other_flows(carrito: str, pago: str) -> dict:
+    holder_id, holder_fp = approved([version_item(carrito, "carrito", "Carrera E")])
+    competitor_id, competitor_fp = approved([version_item(pago, "pago_fallido", "Carrera F")])
+    pago_before = control(pago)
+    pago_versions = count(f"select 1 from public.flow_definitions where flow_id = '{pago}'")
+    first, second, timing = race(
+        "other_flows",
+        call_sql("operator_publish_flow_change_v1", INSTANCE, holder_id, holder_fp, revalidation(holder_fp)),
+        call_sql("operator_publish_flow_change_v1", INSTANCE, competitor_id, competitor_fp, revalidation(competitor_fp)),
+        "operator_publish_flow_change_v1",
+    )
+    require(first.get("ok") is True and first.get("replayed") is False, f"other flows: the holder publishes: {first}")
+    require(
+        second == {"ok": False, "reason_code": "flow_change_stale_base"},
+        f"other flows: the competitor waited and saw the cart move: {second}",
+    )
+    require(stale_event(competitor_id) == 1, "other flows: the rejected publication leaves its event")
+    require(control(pago) == pago_before, "other flows: the payment flow did not move")
+    require(
+        count(f"select 1 from public.flow_definitions where flow_id = '{pago}'") == pago_versions,
+        "other flows: no version of the payment flow",
+    )
+    status = query(f"select status from public.flow_change_proposals where id = '{competitor_id}'")
+    require(status == "aprobada", f"other flows: the competitor stays aprobada: {status}")
+    return {"published": 1, "stale_base": 1, **timing}
+
+
+def race_pause_against_publication(carrito: str) -> dict:
+    publish_now([state_item(carrito, "carrito", "prender")])
+    proposal_id, fingerprint = approved([version_item(carrito, "carrito", "Carrera G")])
+    state, generation, version = control(carrito)
+    require(state == "prendido", f"pause against publication: the cart is on: {state}")
+    versions_before = count(f"select 1 from public.flow_definitions where flow_id = '{carrito}'")
+    first, second, timing = race(
+        "pause_then_publish",
+        call_sql("operator_pause_flow_v1", INSTANCE, "att1", "carrito", generation, "dan", "pausa en la carrera"),
+        call_sql("operator_publish_flow_change_v1", INSTANCE, proposal_id, fingerprint, revalidation(fingerprint)),
+        "operator_pause_flow_v1",
+    )
+    require(
+        first == {"ok": True, "changed": True, "generation": generation + 1},
+        f"pause against publication: the holder pauses: {first}",
+    )
+    require(
+        second == {"ok": False, "reason_code": "flow_change_stale_base"},
+        f"pause against publication: the publication sees the generation moved: {second}",
+    )
+    require(stale_event(proposal_id) == 1, "pause against publication: the rejected publication leaves its event")
+    require(
+        control(carrito) == ("pausado", generation + 1, version),
+        f"pause against publication: the flow stays paused with its version: {control(carrito)}",
+    )
+    require(
+        count(f"select 1 from public.flow_definitions where flow_id = '{carrito}'") == versions_before,
+        "pause against publication: no new version",
+    )
+    return {"paused": 1, "stale_base": 1, **timing}
+
+
+def race_publication_against_stale_pause(carrito: str) -> dict:
+    publish_now([state_item(carrito, "carrito", "prender")])
+    proposal_id, fingerprint = approved([version_item(carrito, "carrito", "Carrera H")])
+    state, generation, version = control(carrito)
+    require(state == "prendido", f"publication against pause: the cart is on: {state}")
+    first, second, timing = race(
+        "publish_then_pause",
+        call_sql("operator_publish_flow_change_v1", INSTANCE, proposal_id, fingerprint, revalidation(fingerprint)),
+        call_sql("operator_pause_flow_v1", INSTANCE, "att1", "carrito", generation, "dan", "pausa con la generacion vieja"),
+        "operator_publish_flow_change_v1",
+    )
+    require(first.get("ok") is True and first.get("replayed") is False, f"publication against pause: the holder publishes: {first}")
+    new_version = first["published"][0]["version"]
+    require(new_version == int(version) + 1, f"publication against pause: the next version: {first}")
+    require(
+        second == {"ok": False, "reason_code": "flow_control_generation_mismatch", "generation": generation + 1},
+        f"publication against pause: the pause waited and saw the generation moved: {second}",
+    )
+    require(
+        control(carrito) == ("prendido", generation + 1, str(new_version)),
+        f"publication against pause: the flow stays on with the new version: {control(carrito)}",
+    )
+    return {"published": 1, "generation_mismatch": 1, **timing}
+
+
+def race_two_redos(carrito: str) -> dict:
+    base = draft_base([carrito])
+    saved = call("operator_save_flow_change_draft_v1", INSTANCE, None, None, [version_item(carrito, "carrito", "Rehacer 0")],
+                 base, "un borrador para rehacer", "dan")
+    require(saved.get("ok") is True and saved.get("revision") == 1, f"two redos: the draft: {saved}")
+    proposal_id = saved["proposal_id"]
+    redo = {
+        name: call_sql("operator_save_flow_change_draft_v1", INSTANCE, proposal_id, 1,
+                       [version_item(carrito, "carrito", f"Rehacer {name}")], base, f"rehacer {name}", "dan")
+        for name in ("A", "B")
+    }
+    first, second, timing = race("two_redos", redo["A"], redo["B"], "operator_save_flow_change_draft_v1")
+    require(
+        first == {"ok": True, "proposal_id": proposal_id, "revision": 2, "status": "borrador"},
+        f"two redos: the holder redoes: {first}",
+    )
+    require(
+        second == {"ok": False, "reason_code": "flow_change_revision_mismatch", "revision": 2},
+        f"two redos: the second sees the revision moved: {second}",
+    )
+    stored = query(
+        "select revision || '|' || (items -> 0 -> 'definicion' ->> 'nombre') || '|' || purpose "
+        f"from public.flow_change_proposals where id = '{proposal_id}'"
+    )
+    require(stored == "2|Rehacer A|rehacer A", f"two redos: the draft is the first redo: {stored}")
+    return {"redone": 1, "revision_mismatch": 1, **timing}
+
+
 def probe_permissions() -> None:
     """The owner path only: as PostgREST would, service_role cannot run or write."""
     for role in ("service_role", "anon"):
@@ -470,6 +619,10 @@ def main() -> None:
         "two_proposals_same_base": race_two_proposals_same_base(carrito),
         "same_proposal_twice": race_same_proposal_twice(carrito),
         "two_approvals": race_two_approvals(carrito),
+        "two_proposals_other_flows": race_two_proposals_other_flows(carrito, flows["pago_fallido"]),
+        "pause_against_publication": race_pause_against_publication(carrito),
+        "publication_against_stale_pause": race_publication_against_stale_pause(carrito),
+        "two_redos": race_two_redos(carrito),
     }
     deadlocks = query("select deadlocks from pg_stat_database where datname = current_database()")
     finished = time.monotonic()
