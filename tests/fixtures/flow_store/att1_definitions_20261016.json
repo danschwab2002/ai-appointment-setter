@@ -1,0 +1,282 @@
+{
+ "_generated": {
+  "generator": "tests/test_flow_validator_att1.py (test_the_json_shared_with_pglite_is_the_one_in_the_repo), con tests/flow_store_translator.py, bridge.flow_definition y bridge.flow_validator",
+  "date": "2026-10-16",
+  "from": "tests/flow_store_translator.py sobre att1_flow_config_20261016.json (att1-db, 2026-10-16T13:15:51Z), att1_instancia_f01fbcc.toml y schema_examples_v1.json, normalizado con bridge.flow_definition",
+  "regenerate": "FLOW_STORE_FIXTURE_DIR=tests/fixtures/flow_store uv run pytest tests/test_flow_validator_att1.py"
+ },
+ "instance": {
+  "tenant_ref": "lancemos",
+  "ally_ref": "att1",
+  "products": [
+   "att1"
+  ],
+  "time_zone": "America/Mexico_City"
+ },
+ "definitions": [
+  {
+   "esquema": "setter-flujo/v1",
+   "flujo": "carrito",
+   "producto": "att1",
+   "nombre": "Carrito abandonado",
+   "estado": "borrador",
+   "dispara": {
+    "evento": "carrito"
+   },
+   "entra": {
+    "permiso": "formulario",
+    "contesto_a": []
+   },
+   "pasos": [
+    {
+     "plantilla": "att1_carrito_abandonado_01",
+     "idioma": "es_MX",
+     "variables": [
+      "nombre",
+      "producto"
+     ]
+    }
+   ],
+   "termina": {
+    "si": [
+     "compra"
+    ],
+    "vence": "1d"
+   },
+   "horario": {
+    "zona": "America/Mexico_City",
+    "desde": "09:00",
+    "hasta": "21:00"
+   },
+   "topes": {
+    "bolsa": "att1-recuperacion",
+    "por_dia": 80,
+    "total": 1000,
+    "repeticion": {
+     "una_por": "persona_y_oferta",
+     "otra_despues_de": "0m"
+    }
+   },
+   "prioridad": {
+    "le_gana_a": [
+     "precheckout"
+    ],
+    "no_arranca_mientras": [
+     "pago_fallido"
+    ]
+   }
+  },
+  {
+   "esquema": "setter-flujo/v1",
+   "flujo": "pago_fallido",
+   "producto": "att1",
+   "nombre": "Pago fallido",
+   "estado": "borrador",
+   "dispara": {
+    "evento": "pago_fallido"
+   },
+   "entra": {
+    "permiso": "formulario",
+    "contesto_a": []
+   },
+   "pasos": [
+    {
+     "plantilla": "att1_compra_fallida_01",
+     "idioma": "es_MX",
+     "variables": [
+      "nombre",
+      "producto"
+     ]
+    }
+   ],
+   "termina": {
+    "si": [
+     "compra"
+    ],
+    "vence": "1d"
+   },
+   "horario": {
+    "zona": "America/Mexico_City",
+    "desde": "09:00",
+    "hasta": "21:00"
+   },
+   "topes": {
+    "bolsa": "att1-recuperacion",
+    "por_dia": 80,
+    "total": 1000,
+    "repeticion": {
+     "una_por": "persona_y_oferta",
+     "otra_despues_de": "0m"
+    }
+   },
+   "prioridad": {
+    "le_gana_a": [
+     "precheckout"
+    ],
+    "no_arranca_mientras": []
+   }
+  },
+  {
+   "esquema": "setter-flujo/v1",
+   "flujo": "precheckout",
+   "producto": "att1",
+   "nombre": "Primer contacto tras el formulario",
+   "estado": "borrador",
+   "dispara": {
+    "evento": "intencion"
+   },
+   "entra": {
+    "permiso": "formulario",
+    "contesto_a": []
+   },
+   "pasos": [
+    {
+     "esperar": "60m"
+    },
+    {
+     "plantilla": "att1_interes_precheckout_01",
+     "idioma": "es_MX",
+     "variables": [
+      "nombre",
+      "producto"
+     ]
+    }
+   ],
+   "termina": {
+    "si": [
+     "compra"
+    ],
+    "vence": "1d"
+   },
+   "horario": {
+    "zona": "America/Mexico_City",
+    "desde": "09:00",
+    "hasta": "21:00"
+   },
+   "topes": {
+    "bolsa": "att1-primer-contacto",
+    "por_dia": 10,
+    "total": 150,
+    "repeticion": {
+     "una_por": "persona",
+     "otra_despues_de": "24h"
+    }
+   },
+   "prioridad": {
+    "le_gana_a": [],
+    "no_arranca_mientras": []
+   }
+  },
+  {
+   "esquema": "setter-flujo/v1",
+   "flujo": "descuento",
+   "producto": "att1",
+   "nombre": "Seguimiento con cupón",
+   "estado": "borrador",
+   "dispara": {
+    "silencio": {
+     "lo_ultimo": "agente",
+     "desde": "24h",
+     "hasta": "72h",
+     "conversaciones": [
+      "abierta",
+      "resuelta"
+     ]
+    }
+   },
+   "entra": {
+    "permiso": "conversacion",
+    "contesto_a": [
+     "carrito",
+     "pago_fallido",
+     "precheckout"
+    ]
+   },
+   "pasos": [
+    {
+     "plantilla": "att1_seguimiento_descuento_01",
+     "idioma": "es_MX",
+     "variables": [
+      "nombre",
+      "producto"
+     ],
+     "boton": {
+      "link": "checkout",
+      "cupon": "TIROIDES10"
+     }
+    }
+   ],
+   "termina": {
+    "si": [
+     "compra",
+     "contesta"
+    ]
+   },
+   "horario": {
+    "zona": "America/Mexico_City",
+    "desde": "09:00",
+    "hasta": "20:59"
+   },
+   "topes": {
+    "bolsa": "att1-descuento",
+    "por_dia": "sin_tope",
+    "total": "sin_tope",
+    "repeticion": {
+     "una_por": "conversacion",
+     "otra_despues_de": "nunca"
+    }
+   },
+   "prioridad": {
+    "le_gana_a": [],
+    "no_arranca_mientras": []
+   }
+  },
+  {
+   "esquema": "setter-flujo/v1",
+   "flujo": "reactivacion",
+   "producto": "att1",
+   "nombre": "Reactivación de quien quedó esperando",
+   "estado": "borrador",
+   "dispara": {
+    "silencio": {
+     "lo_ultimo": "persona",
+     "desde": "24h",
+     "hasta": "30d",
+     "conversaciones": [
+      "abierta"
+     ]
+    }
+   },
+   "entra": {
+    "permiso": "conversacion",
+    "contesto_a": []
+   },
+   "pasos": [
+    {
+     "plantilla": "att1_reactivacion_01",
+     "idioma": "es_MX",
+     "variables": [
+      "nombre"
+     ]
+    }
+   ],
+   "termina": {
+    "si": []
+   },
+   "horario": "siempre",
+   "topes": {
+    "bolsa": "att1-reactivacion",
+    "por_dia": "sin_tope",
+    "total": "sin_tope",
+    "repeticion": {
+     "una_por": "conversacion",
+     "otra_despues_de": "nunca"
+    }
+   },
+   "prioridad": {
+    "le_gana_a": [],
+    "no_arranca_mientras": []
+   }
+  }
+ ]
+}

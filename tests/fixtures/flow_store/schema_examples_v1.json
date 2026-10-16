@@ -1,0 +1,462 @@
+{
+  "_captured": {
+    "origin": "docs/contracts/flow-definition-v1.md, «Los siete flujos de validación», en 9183c67",
+    "captured_at": "2026-10-16",
+    "why": "Los ocho bloques de flujo del contrato (la reactivación tiene dos), para validarlos uno por uno como operador en un mundo con los siete flujos registrados y sin versión.",
+    "removed": "version y estado de cada bloque: en un borrador darían version_set_by_cycle. Lo demás va tal como está en el YAML, sin esquema ni producto, que completa la normalización."
+  },
+  "blocks": [
+    {
+      "block": "1",
+      "title": "El carrito abandonado (ATT1, hoy)",
+      "contract_line": 484,
+      "contract_lines": "484-508",
+      "flujo": "carrito",
+      "definition": {
+        "flujo": "carrito",
+        "nombre": "Carrito abandonado",
+        "dispara": {
+          "evento": "carrito"
+        },
+        "entra": {
+          "permiso": "formulario"
+        },
+        "pasos": [
+          {
+            "plantilla": "att1_carrito_abandonado_01",
+            "idioma": "es_MX",
+            "variables": [
+              "nombre",
+              "producto"
+            ]
+          }
+        ],
+        "termina": {
+          "si": [
+            "compra"
+          ],
+          "vence": "1d"
+        },
+        "horario": {
+          "zona": "America/Mexico_City",
+          "desde": "09:00",
+          "hasta": "21:00"
+        },
+        "topes": {
+          "bolsa": "att1-recuperacion",
+          "por_dia": 80,
+          "total": 1000,
+          "repeticion": {
+            "una_por": "persona_y_oferta",
+            "otra_despues_de": "0m"
+          }
+        },
+        "prioridad": {
+          "le_gana_a": [
+            "precheckout"
+          ],
+          "no_arranca_mientras": [
+            "pago_fallido"
+          ]
+        }
+      }
+    },
+    {
+      "block": "2",
+      "title": "El pago fallido, la compra cancelada (ATT1, hoy)",
+      "contract_line": 521,
+      "contract_lines": "521-544",
+      "flujo": "pago_fallido",
+      "definition": {
+        "flujo": "pago_fallido",
+        "nombre": "Pago fallido",
+        "dispara": {
+          "evento": "pago_fallido"
+        },
+        "entra": {
+          "permiso": "formulario"
+        },
+        "pasos": [
+          {
+            "plantilla": "att1_compra_fallida_01",
+            "idioma": "es_MX",
+            "variables": [
+              "nombre",
+              "producto"
+            ]
+          }
+        ],
+        "termina": {
+          "si": [
+            "compra"
+          ],
+          "vence": "1d"
+        },
+        "horario": {
+          "zona": "America/Mexico_City",
+          "desde": "09:00",
+          "hasta": "21:00"
+        },
+        "topes": {
+          "bolsa": "att1-recuperacion",
+          "por_dia": 80,
+          "total": 1000,
+          "repeticion": {
+            "una_por": "persona_y_oferta",
+            "otra_despues_de": "0m"
+          }
+        },
+        "prioridad": {
+          "le_gana_a": [
+            "precheckout"
+          ]
+        }
+      }
+    },
+    {
+      "block": "3",
+      "title": "El primer contacto: formulario sin compra (ATT1, hoy)",
+      "contract_line": 559,
+      "contract_lines": "559-582",
+      "flujo": "precheckout",
+      "definition": {
+        "flujo": "precheckout",
+        "nombre": "Primer contacto tras el formulario",
+        "dispara": {
+          "evento": "intencion"
+        },
+        "entra": {
+          "permiso": "formulario"
+        },
+        "pasos": [
+          {
+            "esperar": "60m"
+          },
+          {
+            "plantilla": "att1_interes_precheckout_01",
+            "idioma": "es_MX",
+            "variables": [
+              "nombre",
+              "producto"
+            ]
+          }
+        ],
+        "termina": {
+          "si": [
+            "compra"
+          ],
+          "vence": "1d"
+        },
+        "horario": {
+          "zona": "America/Mexico_City",
+          "desde": "09:00",
+          "hasta": "21:00"
+        },
+        "topes": {
+          "bolsa": "att1-primer-contacto",
+          "por_dia": 10,
+          "total": 150,
+          "repeticion": {
+            "una_por": "persona",
+            "otra_despues_de": "24h"
+          }
+        }
+      }
+    },
+    {
+      "block": "4",
+      "title": "El seguimiento con cupón (ATT1, hoy)",
+      "contract_line": 595,
+      "contract_lines": "595-620",
+      "flujo": "descuento",
+      "definition": {
+        "flujo": "descuento",
+        "nombre": "Seguimiento con cupón",
+        "dispara": {
+          "silencio": {
+            "lo_ultimo": "agente",
+            "desde": "24h",
+            "hasta": "72h",
+            "conversaciones": [
+              "abierta",
+              "resuelta"
+            ]
+          }
+        },
+        "entra": {
+          "permiso": "conversacion",
+          "contesto_a": [
+            "carrito",
+            "pago_fallido",
+            "precheckout"
+          ]
+        },
+        "pasos": [
+          {
+            "plantilla": "att1_seguimiento_descuento_01",
+            "idioma": "es_MX",
+            "variables": [
+              "nombre",
+              "producto"
+            ],
+            "boton": {
+              "link": "checkout",
+              "cupon": "TIROIDES10"
+            }
+          }
+        ],
+        "termina": {
+          "si": [
+            "compra",
+            "contesta"
+          ]
+        },
+        "horario": {
+          "zona": "America/Mexico_City",
+          "desde": "09:00",
+          "hasta": "20:59"
+        },
+        "topes": {
+          "por_dia": "sin_tope",
+          "total": "sin_tope",
+          "repeticion": {
+            "una_por": "conversacion",
+            "otra_despues_de": "nunca"
+          }
+        }
+      }
+    },
+    {
+      "block": "5a",
+      "title": "La reactivación como está construida (apagada en ATT1)",
+      "contract_line": 638,
+      "contract_lines": "638-661",
+      "flujo": "reactivacion",
+      "definition": {
+        "flujo": "reactivacion",
+        "nombre": "Reactivación de quien quedó esperando",
+        "dispara": {
+          "silencio": {
+            "lo_ultimo": "persona",
+            "desde": "24h",
+            "hasta": "30d",
+            "conversaciones": [
+              "abierta"
+            ]
+          }
+        },
+        "entra": {
+          "permiso": "conversacion"
+        },
+        "pasos": [
+          {
+            "plantilla": "att1_reactivacion_01",
+            "idioma": "es_MX",
+            "variables": [
+              "nombre"
+            ]
+          }
+        ],
+        "termina": {
+          "si": []
+        },
+        "horario": "siempre",
+        "topes": {
+          "por_dia": "sin_tope",
+          "total": "sin_tope",
+          "repeticion": {
+            "una_por": "conversacion",
+            "otra_despues_de": "nunca"
+          }
+        }
+      }
+    },
+    {
+      "block": "5b",
+      "title": "La reactivación dentro de la ventana, como se propuso el 2026-09-23 (sin construir)",
+      "contract_line": 674,
+      "contract_lines": "674-700",
+      "flujo": "reactivacion",
+      "definition": {
+        "flujo": "reactivacion",
+        "nombre": "Reactivación de quien quedó esperando",
+        "dispara": {
+          "silencio": {
+            "lo_ultimo": "persona",
+            "desde": "0m",
+            "hasta": "30d",
+            "conversaciones": [
+              "abierta"
+            ]
+          }
+        },
+        "entra": {
+          "permiso": "conversacion"
+        },
+        "pasos": [
+          {
+            "condicion": {
+              "dato": "ventana",
+              "es": [
+                "abierta"
+              ]
+            },
+            "entonces": [
+              {
+                "conversar": "Retomar la conversación donde quedó y contestar lo último que escribió la persona."
+              }
+            ],
+            "si_no": [
+              {
+                "plantilla": "att1_reactivacion_01",
+                "idioma": "es_MX",
+                "variables": [
+                  "nombre"
+                ]
+              }
+            ]
+          }
+        ],
+        "termina": {
+          "si": []
+        },
+        "horario": "siempre",
+        "topes": {
+          "por_dia": "sin_tope",
+          "total": "sin_tope",
+          "repeticion": {
+            "una_por": "conversacion",
+            "otra_despues_de": "nunca"
+          }
+        }
+      }
+    },
+    {
+      "block": "6",
+      "title": "La ficha de OXXO sin pagar (1c, pedida el 2026-10-12)",
+      "contract_line": 713,
+      "contract_lines": "713-744",
+      "flujo": "ficha",
+      "definition": {
+        "flujo": "ficha",
+        "nombre": "Ficha impresa sin pagar",
+        "dispara": {
+          "evento": "ficha_impresa"
+        },
+        "entra": {
+          "permiso": "formulario"
+        },
+        "pasos": [
+          {
+            "esperar": "a_medir"
+          },
+          {
+            "condicion": {
+              "dato": "medio_de_pago",
+              "es": [
+                "CASHPAYMENT"
+              ]
+            },
+            "entonces": [
+              {
+                "plantilla": {
+                  "a_crear": "att1_ficha_oxxo_01"
+                },
+                "idioma": "es_MX",
+                "variables": [
+                  "nombre",
+                  "producto"
+                ],
+                "boton": {
+                  "link": "ficha"
+                }
+              }
+            ],
+            "si_no": [
+              {
+                "plantilla": {
+                  "a_crear": "att1_ficha_otros_medios_01"
+                },
+                "idioma": "es_MX",
+                "variables": [
+                  "nombre",
+                  "medio_de_pago",
+                  "producto"
+                ]
+              }
+            ]
+          }
+        ],
+        "termina": {
+          "si": [
+            "compra",
+            "contesta",
+            "ficha_vencida"
+          ],
+          "vence": "a_medir"
+        },
+        "horario": {
+          "zona": "America/Mexico_City",
+          "desde": "09:00",
+          "hasta": "21:00"
+        },
+        "topes": {
+          "bolsa": "ficha",
+          "por_dia": 10,
+          "total": 150,
+          "repeticion": {
+            "una_por": "persona_y_oferta",
+            "otra_despues_de": "0m"
+          }
+        },
+        "prioridad": {
+          "le_gana_a": [
+            "precheckout"
+          ]
+        }
+      }
+    },
+    {
+      "block": "7",
+      "title": "La activación después de la compra (1c)",
+      "contract_line": 766,
+      "contract_lines": "766-786",
+      "flujo": "activacion",
+      "definition": {
+        "flujo": "activacion",
+        "nombre": "Bienvenida después de la compra",
+        "dispara": {
+          "evento": "compra"
+        },
+        "entra": {
+          "permiso": "formulario"
+        },
+        "pasos": [
+          {
+            "plantilla": {
+              "a_crear": "att1_bienvenida_01"
+            },
+            "idioma": "es_MX",
+            "variables": [
+              "nombre",
+              "producto"
+            ]
+          }
+        ],
+        "termina": {
+          "si": [],
+          "vence": "a_decidir"
+        },
+        "horario": "siempre",
+        "topes": {
+          "por_dia": "sin_tope",
+          "total": "sin_tope",
+          "repeticion": {
+            "una_por": "persona",
+            "otra_despues_de": "nunca"
+          }
+        }
+      }
+    }
+  ]
+}

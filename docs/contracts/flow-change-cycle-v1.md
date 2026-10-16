@@ -3,7 +3,7 @@
 - **Estado:** aceptado como contrato conceptual el 2026-10-15; sin implementación (lo construye la 1b). El contrato no describe nada desplegado ni activado. Lo que dice de ATT1 es lo que pasó, con su fecha y de dónde sale.
 - **Fecha:** 2026-10-15
 - **ADR:** [ADR-0025](../decisions/0025-cada-instancia-tiene-su-hermes-declarado-por-el-producto.md) §7, [ADR-0007](../decisions/0007-durable-next-action-engine.md) §5 y [ADR-0017](../decisions/0017-central-slack-operations-connector.md)
-- **Contrato:** `flow-change-cycle-v1`, versión `1.0.0`
+- **Contrato:** `flow-change-cycle-v1`, versión `1.1.0`. La 1.1.0 suma «Lo que fijó la implementación (1.1.0)»: lo que decidió la construcción del almacén (#243) y que este contrato dejaba abierto. No cambia ninguna decisión de Dan.
 - **Alcance:** cómo se cambia un flujo que ya está escrito como dato. Fija:
   - quién lo propone;
   - qué lleva la propuesta y cómo se valida;
@@ -345,6 +345,75 @@ Dan no las decidió: son los valores por defecto con los que se construye. Se ca
 - **Las herramientas de cambio van en su propio plugin y toolset** (`automation-expert-change` y `automation_expert_change`), apartados de los de lectura. Las de lectura siguen sin escribir nada.
   - El plugin tiene su clave en una variable propia del profile, distinta de la de lectura y de todos los secretos del bridge, con las mismas reglas que la de lectura (contrato de lectura, «Clave propia»).
   - La prueba del profile que hoy exige solo `automation_expert_read` se actualiza con esa pieza.
+
+## Lo que fijó la implementación (1.1.0)
+
+El almacén es la primera pieza de la 1b: `supabase/migrations/20261016000100_flow_change_store_v1.sql`, `src/bridge/flow_definition.py` y `src/bridge/flow_validator.py` (#243). Esta sección dice qué quedó fijo. Escrita el 2026-10-16, antes del merge; no afirma que nada esté desplegado ni activado.
+
+**Qué trae y qué no.**
+- **Las cuatro tablas:**
+  - `flow_controls`: un control por flujo, con el estado `apagado`, `prendido` o `pausado` y una generación;
+  - `flow_definitions`: las versiones publicadas, que no se pueden cambiar;
+  - `flow_change_proposals`: la propuesta, en `borrador`, `validada`, `aprobada`, `publicada`, `descartada` o `vencida`;
+  - `flow_change_events`: el registro, que solo suma.
+- **Siete funciones que ejecuta solo el dueño de la base:** `operator_register_flow_v1`, `operator_save_flow_change_draft_v1`, `operator_record_flow_change_validation_v1`, `operator_approve_flow_change_v1`, `operator_publish_flow_change_v1`, `operator_pause_flow_v1` y `operator_discard_flow_change_v1`.
+  - Son `security invoker`.
+  - Ningún rol de la API (`anon`, `authenticated`, `service_role`) las ejecuta ni tiene permisos sobre las tablas, así que un `grant execute` equivocado tampoco alcanza para escribir.
+  - Las garantías de inmutabilidad y de registro valen contra todos menos contra el dueño.
+- **Lo que queda para otras piezas:**
+  - el rol propio del Automation Expert, sus rutas y su clave van con las herramientas del Automation Expert;
+  - el comando del operador y la vista previa van con el canal de aprobación;
+  - las reglas 14 y 16, la simulación y aplicar `cancelar` van con el motor.
+  - Nada lee el almacén para mandar un mensaje: publicar o pausar en el almacén no cambia ningún envío hasta que exista el motor.
+
+**Las clases de quien actúa.**
+- Proponen `automation_expert` u `operador`.
+- Aprueban `operador` o `slack`, este último con el formato de un ID de Slack. Las tablas ya aceptan `slack`, así que el botón firmado se suma sin cambiar la tabla de versiones.
+- Rehacer, congelar y descartar exigen que actúe quien pidió la propuesta. Descartar lo puede hacer también un aprobador.
+- El Automation Expert no puede descartar lo que pidió el operador.
+
+**Las dos bases.**
+- La del borrador (`draft_base`) es la versión de cada flujo que leyó quien propone. Si al guardar ya no es la activa, da `flow_change_stale_base`.
+- La de la validación la arma la base, con las filas bloqueadas: la versión activa de **todos** los flujos de la instancia, y la generación de los flujos de la propuesta. Se compara con igualdad de `jsonb`. Las reglas 8 (la bolsa) y 10 (las relaciones) miran otros flujos, y por eso la base cubre la instancia entera.
+- **Consecuencias:**
+  - publicar una versión de cualquier flujo de la instancia invalida las otras propuestas validadas de esa instancia;
+  - una pausa del mismo flujo entre la validación y la publicación también la invalida;
+  - una pausa de otro flujo no la invalida.
+
+**La huella.** La calcula solo la base: un sha256 sobre el `jsonb` canónico de la propuesta, que incluye el contenido, las dos bases, el «para qué» y el id de la propuesta. Una validación de otra propuesta no sirve para esta.
+
+**El plazo y la revalidación.**
+- Una propuesta validada vence a las 24 horas. Se marca vencida cuando alguien la toca, sin barrido.
+- Publicar bloquea la propuesta y después todos los controles de la instancia, en orden. Recién entonces mira:
+  - el plazo;
+  - la base;
+  - una revalidación de la misma huella hecha en los últimos 10 minutos.
+- La revalidación tiene que ser de fase `publish` y del actor que pidió la propuesta.
+- `validated_at` va en ISO 8601 con zona.
+- Las funciones que esperan locks llevan `lock_timeout`.
+
+**El validador** (`p_validator`) lleva seis claves exactas: `contract`, `rules_version`, `phase`, `actor`, `product_version` y `git_sha`. El resultado:
+- separa `blocks` de `warnings` en forma positiva: una advertencia nunca bloquea y un bloqueo nunca entra como advertencia;
+- tiene un tope de 200 hallazgos y de 60 KiB, y si se pasa, se cortan primero las advertencias;
+- con la vista previa, tiene que entrar en la columna de 192 KiB.
+
+**Lo que está en curso.** Hasta el motor, una propuesta acepta solo `en_curso: seguir`. `cancelar` da `en_curso_not_supported`.
+
+**Aprobar** registra `simulation: not_built` mientras no exista la simulación.
+
+**Lo que fijó el validador sobre el esquema:**
+- **La identidad del disparador** es la clase más el evento (`dispara.evento`), o la clase más `dispara.silencio.lo_ultimo`.
+  - Cambiar eso es otro flujo: `trigger_change_is_another_flow`.
+  - `desde` y `hasta` de un silencio son una versión nueva del mismo flujo. El Automation Expert los puede cambiar, porque son «las esperas y el plazo» de la decisión 4 (esquema, «Qué lo dispara», y `hasta` que «hace de vencimiento»).
+  - `conversaciones` cambia quién entra: para el Automation Expert es `change_outside_1b_scope`.
+- **La regla 8 y la zona.** La zona se elige al crear el flujo y no cambia nunca, ni después de una versión con `horario: siempre`. Así se leyó la redacción de la regla 8 («distinta de la de la versión anterior»), siguiendo «Cuándo puede escribir» del esquema. Con `horario: siempre` no hay zona que mirar, y la base no la exige.
+- **La regla 17, en forma positiva.** Con `permiso: compra`, todo paso con plantilla bloquea salvo que su categoría en el catálogo sea exactamente `UTILITY`, incluida una categoría faltante o vacía. Al prender se vuelve a mirar.
+- **Los textos** de la definición y de la propuesta rechazan los caracteres de control, de formato, los bidi, los separadores de línea y los sustitutos sueltos.
+
+**Riesgos que este contrato todavía no resuelve:**
+- **La bolsa por defecto.** `<producto>-<flujo>` puede no entrar en la forma de una bolsa, que llega hasta 40 caracteres. Si no entra, el validador bloquea con `default_pool_invalid` y pide una bolsa explícita.
+- **La ruta de pausa del Automation Expert** (`POST /flows/{flow_key}/pause`, en «Las rutas y las herramientas») no lleva el producto. Desde que la clave de un flujo es única solo dentro de su producto, la va a tener que llevar.
+- **La identidad del flujo no lleva la aliada.** La clave única es (`tenant_ref`, `product_ref`, `flow_key`). Si un producto pasa de una aliada a otra, la nueva no puede registrar sus flujos. Queda para la Etapa 2.
 
 ## Lo que se confirma al construir
 
