@@ -1,0 +1,40 @@
+# Distribucion nativa de Hermes del Automation Expert (ADR-0025 §4).
+#
+# Todavia no se instala: hermes/declaracion.toml no lo lista, y el instalador
+# (scripts/hermes_instancia.py) tiene que aprender a completar lo que config.yaml deja en null (el
+# modelo y quien administra los comandos) y a copiar plugins/. Eso se acuerda con la Etapa 0 bis.
+#
+# Hermes copia solo lo que esta en distribution_owned: con la lista explicita, plugins/ tiene que
+# estar (hermes_cli/profile_distribution.py:84-91 y :601-625). Las sesiones, la memoria y el .env
+# del profile no se tocan nunca.
+name: automation-expert
+version: 0.1.0
+description: "Automation Expert: lee y explica los flujos y la historia de un lead. Solo lee."
+author: ai-appointment-setter
+hermes_requires: ">=0.21.0"
+env_requires:
+  - name: SLACK_BOT_TOKEN
+    description: "El bot token de la app de Slack propia del Automation Expert."
+    required: true
+  - name: SLACK_APP_TOKEN
+    description: "El app token (Socket Mode) de esa misma app."
+    required: true
+  - name: SLACK_ALLOWED_USERS
+    description: "Los IDs de Slack de las personas que pueden hablarle, separados por coma."
+    required: true
+  - name: AUTOMATION_EXPERT_API_URL
+    description: "La URL del bridge de la instancia, sin ruta. En ATT1, http://att1-bridge:8000."
+    required: true
+  - name: AUTOMATION_EXPERT_API_TOKEN
+    description: "El AUTOMATION_EXPERT_READ_TOKEN del bridge: 32 caracteres o mas, distinto de todo otro secreto."
+    required: true
+  - name: AUTOMATION_EXPERT_INTERNAL_HOST
+    description: "El host:puerto exacto del bridge, el unico al que el plugin le habla por http. En ATT1, att1-bridge:8000."
+    required: false
+  - name: OPENROUTER_API_KEY
+    description: "La key con tope propia del Automation Expert, cuando el modelo va por OpenRouter."
+    required: false
+distribution_owned:
+  - SOUL.md
+  - config.yaml
+  - plugins

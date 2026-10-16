@@ -1,0 +1,107 @@
+# Molde del config.yaml del Automation Expert (ADR-0025 §4; docs/contracts/automation-expert-read-v1.md,
+# «El flag» y «Dónde queda lo que devuelve el bridge»).
+#
+# Las claves salen de la fuente de Hermes 0.21.0 (NousResearch/hermes-agent 29112be), leída el
+# 2026-10-15. Lo que es de cada instancia va en null, y lo completa el instalador: el modelo y su
+# proveedor, y quién administra los comandos. Hasta que el instalador lo sepa hacer, este profile no
+# se instala (lo dice distribution.yaml).
+#
+# - Solo mensaje directo 1:1 con las personas de SLACK_ALLOWED_USERS (el .env del profile):
+#   * allowed_channels con un centinela que no es un canal real deja afuera los canales y los
+#     mensajes directos de grupo; vacio querria decir «todos» (adapter.py:9194-9209);
+#   * los slash commands nativos no pasan por allowed_channels: los frena el hook
+#     pre_gateway_dispatch del plugin, que deja pasar solo los canales D;
+#   * unauthorized_dm_behavior: ignore, explicito (el default automatico mira solo el entorno).
+# - Las herramientas: solo automation_expert_read, en Slack y en la terminal. no_mcp apaga los
+#   servidores MCP, que sin lista entran todos. disabled_toolsets resta todo lo demas al final.
+# - Lo que devuelve el bridge vive solo en la charla: sin memoria, sin skills, sin la revision en
+#   segundo plano y con las sesiones podadas a los 7 dias.
+_config_version: 39
+
+model:
+  default: null
+  provider: null
+fallback_providers: []
+
+slack:
+  enabled: true
+  allowed_channels:
+    - CNONE000000
+  unauthorized_dm_behavior: ignore
+  allow_bots: none
+  # Solo quien administra corre /model, /yolo o /restart, en los dos alcances: un comando que llega
+  # de un canal entra con el alcance de grupo, y sin admins de grupo ahi no hay control
+  # (gateway/slash_access.py:18-21 y :163-188). Lo completa el instalador.
+  allow_admin_from: null
+  group_allow_admin_from: null
+  user_allowed_commands:
+    - new
+    - stop
+    - status
+
+platform_toolsets:
+  slack:
+    - automation_expert_read
+    - no_mcp
+  cli:
+    - automation_expert_read
+    - no_mcp
+
+agent:
+  max_turns: 20
+  disabled_toolsets:
+    - terminal
+    - file
+    - code_execution
+    - coding
+    - web
+    - search
+    - browser
+    - computer_use
+    - vision
+    - image_gen
+    - video
+    - video_gen
+    - tts
+    - memory
+    - session_search
+    - skills
+    - delegation
+    - cronjob
+    - project
+    - debugging
+    - kanban
+    - todo
+    - clarify
+
+memory:
+  memory_enabled: false
+  user_profile_enabled: false
+  nudge_interval: 0
+  provider: ""
+
+skills:
+  creation_nudge_interval: 0
+
+curator:
+  enabled: false
+
+auxiliary:
+  background_review:
+    enabled: false
+
+sessions:
+  auto_prune: true
+  retention_days: 7
+  min_interval_hours: 24
+
+plugins:
+  enabled:
+    - automation-expert-read
+
+security:
+  redact_secrets: true
+
+approvals:
+  mode: manual
+  cron_mode: deny
