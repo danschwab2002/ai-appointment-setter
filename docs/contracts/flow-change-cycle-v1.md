@@ -341,13 +341,10 @@ Dan no las decidió: son los valores por defecto con los que se construye. Se ca
   - Si alguno no está, el agente no pausa: le pide a esa persona que lo haga un aprobador.
 - **El OK del cliente para `permiso: compra`,** que el esquema le dejó a este contrato. Va en la propuesta que publica por primera vez un flujo con ese permiso: quién del cliente lo dio, por qué medio y la fecha. La vista previa lo muestra, y sin ese dato la validación bloquea.
   - En ATT1, el OK de Juan o Marce ya está dado (decisión de Dan del 2026-10-15).
+  - Con ese permiso sale un solo envío por camino (esquema, regla 17; decisión de Dan del 2026-10-15).
 - **Las herramientas de cambio van en su propio plugin y toolset** (`automation-expert-change` y `automation_expert_change`), apartados de los de lectura. Las de lectura siguen sin escribir nada.
   - El plugin tiene su clave en una variable propia del profile, distinta de la de lectura y de todos los secretos del bridge, con las mismas reglas que la de lectura (contrato de lectura, «Clave propia»).
   - La prueba del profile que hoy exige solo `automation_expert_read` se actualiza con esa pieza.
-
-## Lo que queda abierto
-
-- Del esquema: si «un mensaje de utilidad», en `permiso: compra`, quiere decir también un solo envío (regla 17). Mientras tanto, la regla 14 ya frena más de un envío por camino.
 
 ## Lo que se confirma al construir
 

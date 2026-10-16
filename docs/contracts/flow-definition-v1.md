@@ -92,7 +92,7 @@ El disparo es el momento del evento, o el del barrido que encontró el silencio.
     - Con la compra, el cruce existe solo para frenar intenciones y cerrar casos, con 7 días hacia atrás (`aprovisionar-att1.sql:250-253`). Usarlo como permiso es parte de la 1c.
     - Un flujo que usa una intención como permiso entra en la guarda del riesgo de GHL, como hoy el primer contacto y el pago fallido (`GHL_RISK_GATED_FLOWS`, `instance_manifest.py:63-65`). La ficha tiene que sumarse ahí.
   - `conversacion`: la persona nos escribió al menos una vez en esa conversación. Va solo con un silencio. Es la base del cupón y de la reactivación.
-  - `compra`: la persona compró el producto, aunque nunca haya dado permiso de WhatsApp. Va solo con el disparador `compra`, y solo para un mensaje de utilidad que confirma la compra. Nunca es el valor por defecto. Una instancia lo usa recién con el OK de su cliente, porque la base de contacto es responsabilidad del cliente: «el cliente es responsable de configurar una base válida para su operación y jurisdicción» (ADR-0007 §8). El mismo apartado dice que «la ausencia de opt-out no autoriza por sí sola un mensaje proactivo». Cómo se registra ese OK lo decide el contrato del ciclo. Sin ese OK, un flujo disparado por la compra entra con `permiso: formulario`: la bienvenida le llega solo a quien dejó el formulario con el permiso de WhatsApp.
+  - `compra`: la persona compró el producto, aunque nunca haya dado permiso de WhatsApp. Va solo con el disparador `compra`, y solo para un mensaje de utilidad que confirma la compra, y uno solo: un envío por camino (regla 17). Nunca es el valor por defecto. Una instancia lo usa recién con el OK de su cliente, porque la base de contacto es responsabilidad del cliente: «el cliente es responsable de configurar una base válida para su operación y jurisdicción» (ADR-0007 §8). El mismo apartado dice que «la ausencia de opt-out no autoriza por sí sola un mensaje proactivo». Cómo se registra ese OK lo decide el contrato del ciclo. Sin ese OK, un flujo disparado por la compra entra con `permiso: formulario`: la bienvenida le llega solo a quien dejó el formulario con el permiso de WhatsApp.
 - `contesto_a` es una lista de flujos. Con `permiso: conversacion`, el flujo entra solo donde la persona contestó una plantilla de esos flujos y el agente tomó la respuesta. Es la conversación adoptada que hoy exige el cupón (`20261010000100:22-32`).
 
 «No haber comprado» se escribe con la salida `compra`, que se revisa al entrar y antes de cada envío. «Haber comprado» se escribe con el disparador `compra`.
@@ -966,7 +966,7 @@ Son código y corren en dos momentos. Un bloqueo no se puede confirmar; una adve
 14. Algo que el motor de la instancia todavía no ejecuta o no trae. Hoy: más de un envío por camino, un paso `conversar` o `derivar`, los disparadores de la ficha y de la compra, `medio_de_pago`, y el `nombre` con la compra.
 15. Un código de cupón distinto del de la versión publicada: en la v1 no se cambia conversando.
 16. En los flujos de hoy, mientras `[flujos]` y `[plantillas]` del manifiesto sigan siendo el techo, una plantilla distinta de la que nombra `[plantillas]`. Prender uno de esos flujos exige, además, que esté en `true` en `[flujos]`.
-17. Un flujo con `permiso: compra` que manda algo que no es una plantilla de utilidad.
+17. Un flujo con `permiso: compra` que manda algo que no es una plantilla de utilidad, o más de un envío por camino. A diferencia de la regla 14, esta no se levanta cuando el motor mande más de un mensaje por camino.
 
 Los bloqueos 14 y 15 son del tipo «todavía no». Los demás son protecciones, o errores de forma que el agente corrige antes de mostrar nada.
 
@@ -1047,7 +1047,7 @@ La migración los actualiza. Qué cambia en la base no se aprueba con este esque
 - Los ocho bloques de flujo se probaron con un validador de prueba que aplica las reglas de este documento.
 
 **Las decisiones y las mediciones.** Salvo el ADR-0025, están registradas fuera de este repo, y se citan por su fecha:
-- Decisión de Dan del 2026-10-15: aprueba este esquema, y la compra como permiso para la bienvenida, solo para un mensaje de utilidad y con el OK del cliente.
+- Decisión de Dan del 2026-10-15: aprueba este esquema, y la compra como permiso para la bienvenida, solo para un mensaje de utilidad y con el OK del cliente. El mismo día aclaró que ese mensaje es uno solo (la regla 17).
 - Decisión de Dan del 2026-10-14: las cinco piezas, lo que se cambia conversando y lo que queda en código, la puerta única con el tope por persona, que no hay palabras clave como disparador y que las diferencias de hoy se deciden en el contrato del ciclo.
 - Decisiones de Dan del 2026-10-13: la Etapa 1 partida en tres, con los flujos como datos en el centro, y que cada instancia tiene su Hermes. Esa segunda está en este repo, como el [ADR-0025](../decisions/0025-cada-instancia-tiene-su-hermes-declarado-por-el-producto.md), con su §7.
 - El análisis de la Etapa 1 del 2026-10-14: el esquema, el contrato de lectura, los casos de prueba, el dibujo, por qué el esquema va antes que el lector de la 1a, y sus recomendaciones sobre la propuesta del tope por persona, los rechazos al arrancar, el alcance de la 1b y la puerta común.
