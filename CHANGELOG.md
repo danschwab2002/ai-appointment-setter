@@ -8,9 +8,20 @@ Cada versión dice qué cambia y **qué tiene que hacer quien actualiza una inst
 
 Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab2002/setter-bridge`, `setter-slack-connector` y `setter-daily-feedback`. La release de GitHub lleva el digest de cada una. Cómo se pasa un servicio a la imagen y cómo se vuelve atrás: [docs/operations/release-por-imagen-v1.md](docs/operations/release-por-imagen-v1.md).
 
-## [Sin publicar]
+## [1.9.0] - sin publicar
 
-Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar. Ojo: `main` también trae la lectura del Automation Expert (#236 y #237, con la migración `20261015000200`), que todavía no tiene entrada.
+Trae tres cosas: la lectura del Automation Expert (la 1a de la Etapa 1), apagada; el conocimiento comercial en dos capas, lo común y una sección por producto (el paso 1 de varios productos por aliada); y el arreglo de los comentarios de más de un renglón en la revisión diaria. Con el flag de la 1a apagado y el conocimiento de un solo producto, una instancia que sube desde la 1.8.0 se comporta igual, salvo por ese arreglo.
+
+### Agregado
+
+- **Los lectores del Automation Expert en el bridge** ([automation-expert-read-v1](docs/contracts/automation-expert-read-v1.md), #236): tres rutas de solo lectura, `GET /internal/automation-expert/v1/flows[/{flow_key}]`, `POST /internal/automation-expert/v1/leads/lookup` y `GET /internal/automation-expert/v1/leads/{lead_ref}/history`. Están **apagadas por defecto** (`AUTOMATION_EXPERT_READ_ENABLED=false`): con el flag apagado, el bridge no crea las rutas ni llama a las funciones nuevas. Prendidas, exigen el manifiesto de la instancia y un `AUTOMATION_EXPERT_READ_TOKEN` propio, de 32 caracteres o más y distinto de todo otro secreto del bridge. La migración `20261015000200` suma las tres funciones que leen (`STABLE SECURITY DEFINER`, solo `service_role`), sin tablas nuevas ni permisos sobre tablas.
+- **El profile `automation-expert` y su plugin de lectura** (`profiles/automation-expert/`, #237). Ningún Hermes lo instala todavía: `hermes/declaracion.toml` no lo lista.
+- **Los contratos de la 1b**, solo como documentos: [flow-definition-v1](docs/contracts/flow-definition-v1.md) (con el producto de cada flujo y la regla 17) y [flow-change-cycle-v1](docs/contracts/flow-change-cycle-v1.md).
+
+### Cambiado
+
+- **El conocimiento comercial admite una segunda forma, en dos capas** ([commercial-knowledge-v1](docs/contracts/commercial-knowledge-v1.md), #241): arriba va lo común a la aliada, y cada producto va en `[[productos]]`, con `clave`, `oferta`, `contenido` y, si los tiene, su no confirmado, sus promesas y sus preguntas. El render pone lo común primero y después `# Producto: <nombre>` por producto. **La forma de un solo producto se renderiza igual, byte a byte:** el test fija el hash del v7 de ATT1 (`ac5cc64fbcad`).
+- **El tope del conocimiento renderizado pasa de 20.000 a 32.000 bytes** (`MAX_RENDERED_BYTES`). El de 20.000 suponía que Hermes cortaba el `system` del pedido como corta el SOUL, y no lo corta (leído en `nousresearch/hermes-agent:v2026.8.31`).
 
 ### Arreglado
 
@@ -18,7 +29,15 @@ Lo que ya está en `main` y todavía no tiene versión. El número se elige al p
 
 ### Qué hace quien actualiza
 
-Subir `setter-daily-feedback` y redesplegar el servicio de la revisión. No hay migración ni variables nuevas, y el bridge no cambia.
+1. Subir las imágenes a la 1.9.0 y redesplegar el bridge y el servicio de la revisión. No hace falta ninguna variable ni ningún campo nuevo del manifiesto: sin `AUTOMATION_EXPERT_READ_ENABLED`, la 1a queda apagada.
+2. **La migración `20261015000200` hace falta recién para prender el Automation Expert.** Se puede correr antes, porque solo suma funciones que nadie llama con el flag apagado.
+3. **El conocimiento no cambia:** un archivo de un solo producto da el mismo render y el mismo hash. La forma en dos capas se usa apuntando el manifiesto a un archivo nuevo, con su aprobación.
+
+### Verificado antes de publicar
+
+- La 1a: `validate_automation_expert_read.mjs` (PGlite, todas las migraciones, lectura en `begin transaction read only` como `service_role`, `anon` y `authenticated` sin permiso, canarios que no salen), `tests/test_automation_expert_read*.py` y `tests/test_automation_expert_profile_package.py`. Detalle en #236 y #237.
+- El conocimiento: `tests/test_commercial_knowledge.py`, con los siete conocimientos de ATT1 dando el mismo hash que antes. Detalle en #241.
+- El arreglo: el test manda el cuerpo capturado de Chrome; en rojo sin el arreglo y en verde con él. Detalle en #242.
 
 ## [1.8.0] - sin publicar
 
