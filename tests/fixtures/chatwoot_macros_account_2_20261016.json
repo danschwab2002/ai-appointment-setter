@@ -1,0 +1,72 @@
+{
+  "_fixture": {
+    "captured_at": "2026-10-16T18:23Z",
+    "source": "Chatwoot del VPS, cuenta 2 (ATT1), en produccion y solo lectura. get_macro_4 y get_missing_macro: GET /api/v1/accounts/2/macros/4 y GET /api/v1/accounts/2/macros/999999, desde el contenedor setter-att1_att1-bridge con su token de control (2026-10-16 ~18:23Z). Del primero se sacaron created_by y updated_by, que traen el nombre y el email de una persona; el resto es tal cual. macros_account_2: id, nombre, visibilidad y acciones de la tabla macros de la cuenta 2, leidas con psql en sesion de solo lectura (~18:17Z): las acciones son el mismo jsonb que devuelve la API.",
+    "why": "La etiqueta de producto (varios productos por aliada, paso 2a) se suma con un macro que solo hace add_label, y el bridge lee el macro antes de ejecutarlo: si hace algo mas, no lo usa. Estas son la forma real de la respuesta del GET de un macro, el 404 de uno que no existe, y los macros que ya tiene la cuenta (pausa, reanudar, baja), que el de la etiqueta no puede ser."
+  },
+  "get_macro_4": {
+    "status": 200,
+    "body": {
+      "payload": {
+        "id": 4,
+        "name": "Pausar",
+        "visibility": "global",
+        "account_id": 2,
+        "actions": [
+          {
+            "action_name": "add_label",
+            "action_params": [
+              "automation_paused"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "get_missing_macro": {
+    "status": 404,
+    "body": ""
+  },
+  "macros_account_2": [
+    {
+      "id": 4,
+      "name": "Pausar",
+      "visibility": 1,
+      "actions": [
+        {
+          "action_name": "add_label",
+          "action_params": [
+            "automation_paused"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "name": "Reanudar",
+      "visibility": 1,
+      "actions": [
+        {
+          "action_name": "remove_label",
+          "action_params": [
+            "automation_paused"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "name": "No más mensajes",
+      "visibility": 1,
+      "actions": [
+        {
+          "action_name": "add_label",
+          "action_params": [
+            "automation_opted_out",
+            "automation_paused"
+          ]
+        }
+      ]
+    }
+  ]
+}
