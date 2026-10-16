@@ -58,6 +58,11 @@
 //      (requested, attended, resumed, readmision already_exists); la baja de
 //      otra persona en su plantilla da applied, y la v2 directa sobre otra
 //      plantilla aceptada sigue dando 22000.
+//  11. la compra hecha con nuestro link, en lo que hizo la persona
+//      (20261016000300).
+//  12. el link del producto que nombra el agente (20261016000400): con un
+//      segundo producto en el mismo inbox, la reserva por funnel da la oferta
+//      de ese producto, y frena un funnel sin binding en el inbox.
 //
 // Datos:
 //   - Binding, ofertas, landings, producto, Chatwoot y consentimiento salen de
@@ -1756,7 +1761,9 @@ for (const reply of REPLIES) {
       || (attribution === 'full') !== url.endsWith(`&fbclid=${formFbclid}`)) {
     throw new Error(`${label}: the link is not the one of the form: ${JSON.stringify({ reserved: reserved.ok ? reserved.rows[0].outcome : `${reserved.code} ${reserved.message}`, ...link, offer: lead.offer.offer_code, intent: link?.purchase_intent_id === intent })}`);
   }
-  reservedLinks[label] = { issuanceId: reserved.rows[0].issuance_id, lead, userId, intent };
+  reservedLinks[label] = {
+    issuanceId: reserved.rows[0].issuance_id, lead, userId, intent, caseId, chatwoot: run.chatwoot,
+  };
   let shared = null;
   if (reply.sharedControl) {
     // La compartida (la de Johanna) con el mismo caso y la identidad 521:
@@ -1949,6 +1956,146 @@ if (!linkPurchase.ok
   })}`);
 }
 
+// 12. El link del producto que nombra el agente (20261016000400). Con dos
+//     productos en la instancia, el agente dice de cual es el link y el
+//     bridge reserva con reserve_portable_checkout_issuance_for_funnel_v1 y
+//     el funnel de ese producto. Se siembra un segundo producto como lo deja
+//     el manifiesto (2c-1): su binding en la misma cuenta y el mismo inbox, y
+//     su catalogo dentro del scope entrante del principal, con su hotlink y
+//     sus ofertas (el producto de prueba de tests/test_multi_product_manifest.py).
+//     Un tercer binding activo vive en otro inbox. Sobre la conversacion del
+//     primer contacto (caso 10) y la de quien compro con nuestro link (caso 11):
+//     - con el funnel del principal, el link es el mismo que da la portable:
+//       la oferta y la intencion del formulario;
+//     - con el del segundo producto, sale su oferta por defecto y su hotlink,
+//       con una intencion nueva de ese funnel, sin la del formulario;
+//     - el replay del mismo mensaje con el mismo funnel devuelve la misma
+//       emision; con otro funnel, replay_conflict;
+//     - un funnel sin binding, o con el binding en otro inbox, da
+//       blocked_funnel y no deja emision; uno que no es un slug,
+//       invalid_request;
+//     - quien compro el principal no recibe otro link del principal
+//       (purchase_already_approved) y si el del segundo producto.
+const SECOND_PRODUCT = {
+  funnel: 'att2',
+  productId: 8437428,
+  hotlink: 'P8437428PRUEBA',
+  offers: [
+    { offer_code: 'prueba2a', landing_id: 'att2-prueba-a', default: true },
+    { offer_code: 'prueba2b', landing_id: 'att2-prueba-b', default: false },
+  ],
+};
+const OTHER_INBOX_FUNNEL = 'att3';
+for (const [funnel, productId, hotlink, offer, inboxId] of [
+  [SECOND_PRODUCT.funnel, SECOND_PRODUCT.productId, SECOND_PRODUCT.hotlink,
+    SECOND_PRODUCT.offers[0], ATT1.inboxId],
+  [OTHER_INBOX_FUNNEL, 8437429, 'P8437429OTRO',
+    { offer_code: 'prueba3a', landing_id: 'att3-prueba-a' }, ATT1.inboxId + 1],
+]) {
+  await db.query(`
+    insert into public.commercial_ally_runtime_bindings
+      (tenant_ref, funnel_ref, binding_version, status, ally_ref, lead_ally_name,
+       lead_site, lead_landing_id, lead_page_host, lead_page_path, product_hotlink,
+       product_name, product_price, currency, offer_code, consent_copy_version,
+       hotmart_product_id, chatwoot_account_id, chatwoot_inbox_id,
+       inbound_scope_key, inbound_scope_version, additional_offer_codes,
+       additional_offer_landings)
+    values ($1,$2,1,'active',$3,$4,'metodoraizana',$5,'www.metodoraizana.com',$6,$7,
+            'Producto de prueba','67'::numeric,'USD',$8,$9,$10,$11,$12,$13,$14,
+            '{}'::text[],'[]'::jsonb)
+  `, [ATT1.tenant, funnel, ATT1.ally, ATT1.brand, offer.landing_id,
+    `/${funnel}/prueba-a`, hotlink, offer.offer_code, ATT1.copyVersion, productId,
+    ATT1.accountId, inboxId, ATT1.inboundScope, ATT1.inboundVersion]);
+}
+for (const offer of SECOND_PRODUCT.offers) {
+  await db.query(`
+    insert into public.checkout_offer_catalog
+      (tenant_ref, funnel_ref, scope_key, scope_version, product_ref, landing_ref,
+       offer_code, checkout_base_url, checkout_mode, default_for_inbound, status,
+       version, approved_by, approved_at)
+    values ($1,$2,$3,$4,$5,$6,$7,$8,10,$9,'active',1,'operator-test',now())
+  `, [ATT1.tenant, SECOND_PRODUCT.funnel, ATT1.inboundScope, ATT1.inboundVersion,
+    SECOND_PRODUCT.hotlink, offer.landing_id, offer.offer_code,
+    `https://pay.hotmart.com/${SECOND_PRODUCT.hotlink}`, offer.default]);
+}
+
+const FUNNEL_RESERVE = 'select * from public.reserve_portable_checkout_issuance_for_funnel_v1($1,$2,$3,$4,$5,$6,$7,$8,clock_timestamp())';
+const reserveForFunnel = async (reply, funnel, message, ulid) => {
+  const result = await asServiceTry(FUNNEL_RESERVE, [reply.caseId, reply.userId,
+    ATT1.accountId, ATT1.inboxId, reply.chatwoot, String(message), ulid, funnel]);
+  const row = result.ok ? result.rows[0] : null;
+  const link = row?.issuance_id ? await issuanceOf(row.issuance_id) : null;
+  const intentFunnel = row?.purchase_intent_id ? one((await db.query(`
+    select funnel_ref from public.purchase_intents where id = $1
+  `, [row.purchase_intent_id])).rows, 'funnel reserve intent').funnel_ref : null;
+  return { result, row, link, intentFunnel };
+};
+const outcomeOf = ({ result }) => (result.ok
+  ? result.rows[0].outcome : `${result.code} ${result.message}`);
+const issuancesOfMessage = async (reply, message) => one((await db.query(`
+  select count(*)::integer as count from public.checkout_link_issuances
+  where chatwoot_conversation_id = $1 and trigger_external_message_id = $2
+`, [reply.chatwoot, String(message)])).rows, 'issuances of a message').count;
+
+const asker = reservedLinks['primer-contacto'];
+const buyer = reservedLinks['pago-fallido-521'];
+
+// El principal, por funnel: lo mismo que dio la portable en el caso 10.
+replyMessage += 1;
+const principalLink = await reserveForFunnel(asker, ATT1.funnel, replyMessage, ulidAt(Date.now()));
+// El segundo producto, y el replay de ese mismo mensaje.
+replyMessage += 1;
+const secondMessage = replyMessage;
+const secondUlid = ulidAt(Date.now());
+const secondLink = await reserveForFunnel(asker, SECOND_PRODUCT.funnel, secondMessage, secondUlid);
+const secondReplay = await reserveForFunnel(asker, SECOND_PRODUCT.funnel, secondMessage, secondUlid);
+const secondReplayOtherFunnel = await reserveForFunnel(asker, ATT1.funnel, secondMessage, secondUlid);
+// Sin binding, con el binding en otro inbox, y un funnel que no es un slug.
+replyMessage += 1;
+const unboundMessage = replyMessage;
+const unbound = await reserveForFunnel(asker, 'att9', unboundMessage, ulidAt(Date.now()));
+replyMessage += 1;
+const otherInboxMessage = replyMessage;
+const otherInbox = await reserveForFunnel(asker, OTHER_INBOX_FUNNEL, otherInboxMessage, ulidAt(Date.now()));
+replyMessage += 1;
+const notASlug = await reserveForFunnel(asker, 'ATT2', replyMessage, ulidAt(Date.now()));
+// Quien compro el principal con nuestro link (caso 11).
+replyMessage += 1;
+const buyerPrincipal = await reserveForFunnel(buyer, ATT1.funnel, replyMessage, ulidAt(Date.now()));
+replyMessage += 1;
+const buyerSecond = await reserveForFunnel(buyer, SECOND_PRODUCT.funnel, replyMessage, ulidAt(Date.now()));
+
+const secondUrl = secondLink.link?.checkout_url_final ?? '';
+const funnelLinks = {
+  principal: `${outcomeOf(principalLink)}:${principalLink.link?.offer_resolution}:${principalLink.link?.offer_code}:${principalLink.intentFunnel}`,
+  second_product: `${outcomeOf(secondLink)}:${secondLink.link?.offer_resolution}:${secondLink.link?.offer_code}:${secondLink.intentFunnel}:${secondLink.link?.attribution_resolution}`,
+  second_product_replay: `${outcomeOf(secondReplay)}:${secondReplay.row?.issuance_id === secondLink.row?.issuance_id ? 'same_issuance' : 'other'}`,
+  replay_with_another_funnel: outcomeOf(secondReplayOtherFunnel),
+  funnel_without_binding: `${outcomeOf(unbound)}:${await issuancesOfMessage(asker, unboundMessage)}`,
+  binding_in_another_inbox: `${outcomeOf(otherInbox)}:${await issuancesOfMessage(asker, otherInboxMessage)}`,
+  funnel_not_a_slug: outcomeOf(notASlug),
+  buyer_of_the_principal: outcomeOf(buyerPrincipal),
+  buyer_asks_the_second_product: `${outcomeOf(buyerSecond)}:${buyerSecond.link?.offer_code}`,
+};
+const expectedFunnelLinks = {
+  principal: `reserved:lead_intent:${asker.lead.offer.offer_code}:${ATT1.funnel}`,
+  second_product: `reserved:default_no_intent:prueba2a:${SECOND_PRODUCT.funnel}:marker_only`,
+  second_product_replay: 'reserved:same_issuance',
+  replay_with_another_funnel: 'replay_conflict',
+  funnel_without_binding: 'blocked_funnel:0',
+  binding_in_another_inbox: 'blocked_funnel:0',
+  funnel_not_a_slug: 'invalid_request',
+  buyer_of_the_principal: 'purchase_already_approved',
+  buyer_asks_the_second_product: 'reserved:prueba2a',
+};
+if (JSON.stringify(funnelLinks) !== JSON.stringify(expectedFunnelLinks)
+    || principalLink.row.purchase_intent_id !== asker.intent
+    || !secondUrl.startsWith(`https://pay.hotmart.com/${SECOND_PRODUCT.hotlink}?off=prueba2a&`)
+    || !secondUrl.includes(`&sck=hermes~v1~${secondUlid}`)
+    || secondLink.row.purchase_intent_id === asker.intent) {
+  throw new Error(`the link of the product the agent names: ${JSON.stringify({ ...funnelLinks, principalIntent: principalLink.row?.purchase_intent_id === asker.intent, secondUrl: secondUrl.split('?')[0] })}`);
+}
+
 console.log(JSON.stringify({
   att1_portable_chain: 'OK',
   empty_cohort: 'pilot_scope_rejected:pilot_contact_not_in_cohort',
@@ -1992,5 +2139,6 @@ console.log(JSON.stringify({
     portable_correlation_rows: linkPortableRows,
     activity: linkActivity.rows.map((row) => row.activity).join(','),
   },
+  link_for_funnel: funnelLinks,
 }));
 await db.close();
