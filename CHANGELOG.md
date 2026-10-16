@@ -8,6 +8,18 @@ Cada versión dice qué cambia y **qué tiene que hacer quien actualiza una inst
 
 Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab2002/setter-bridge`, `setter-slack-connector` y `setter-daily-feedback`. La release de GitHub lleva el digest de cada una. Cómo se pasa un servicio a la imagen y cómo se vuelve atrás: [docs/operations/release-por-imagen-v1.md](docs/operations/release-por-imagen-v1.md).
 
+## [Sin publicar]
+
+Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar. Ojo: `main` también trae la lectura del Automation Expert (#236 y #237, con la migración `20261015000200`), que todavía no tiene entrada.
+
+### Arreglado
+
+- **La revisión diaria rechazaba todo comentario de más de un renglón.** El navegador manda los saltos de línea de un textarea como `\r\n`, y la página contestaba «Decisión inválida» porque solo aceptaba `\n` y `\t` como caracteres de control. Ahora pasa `\r\n` y `\r` a `\n` antes de validar, y guarda el comentario con `\n`. El resto de los caracteres de control se sigue rechazando. Lo encontró Mariana en ATT1 el 2026-10-16, al escribir un link en otro renglón; el test usa el cuerpo que mandó Chrome 155 con un Enter (`tests/fixtures/daily_feedback_review_form_chrome_crlf_20261016.json`).
+
+### Qué hace quien actualiza
+
+Subir `setter-daily-feedback` y redesplegar el servicio de la revisión. No hay migración ni variables nuevas, y el bridge no cambia.
+
 ## [1.8.0] - sin publicar
 
 La página de la revisión diaria se puede filtrar por tipo de conversación, y quien revisa puede cerrar el lote sin revisarlo entero, con una aprobación escrita. Pedido de Dan del 2026-10-14, después de la reunión con Mariana: el lote de ATT1 del 2026-10-13 traía 28 conversaciones y en la mayoría no había nada que revisar ([contrato](docs/contracts/daily-feedback-review-package-v2.md), sección 11).
