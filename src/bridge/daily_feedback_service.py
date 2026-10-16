@@ -831,7 +831,12 @@ def create_daily_feedback_review_app(service: DailyFeedbackService) -> FastAPI:
         command_id = form["command_id"]
         item_id = form["item_id"]
         decision = form["decision"]
-        feedback = form["verbatim_feedback"]
+        # El navegador manda los saltos de linea de un textarea como \r\n (lo exige
+        # HTML al enviar un formulario). Se pasan a \n antes de validar: \n y \t son
+        # los unicos controles que aceptan esta validacion y la de
+        # record_daily_feedback_decision_v1. Sin esto, un comentario de dos renglones
+        # daba "Decision invalida" (ATT1, 2026-10-16).
+        feedback = form["verbatim_feedback"].replace("\r\n", "\n").replace("\r", "\n")
         if (
             not _canonical_uuid(command_id)
             or not _canonical_uuid(item_id)

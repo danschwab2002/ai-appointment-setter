@@ -4,8 +4,9 @@ import base64
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import hashlib
+import json
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -649,6 +650,96 @@ def test_decision_rejects_missing_origin_without_same_origin_fetch_metadata() ->
     )
 
     assert rejected.status_code == 403
+
+
+# Cuerpo crudo que mando Chrome 155 con un Enter en el comentario (ver _capture).
+CHROME_CRLF_FORM = json.loads(
+    (
+        Path(__file__).parent / "fixtures" / "daily_feedback_review_form_chrome_crlf_20261016.json"
+    ).read_text(encoding="utf-8")
+)
+
+
+def test_decision_accepts_the_browser_line_break_and_stores_it_as_lf() -> None:
+    client, repository = _client()
+    batch_ref = "22222222-2222-4222-8222-222222222222"
+    item_id = "33333333-3333-4333-8333-333333333333"
+    started = client.get(f"/auth/slack/start?batch_ref={batch_ref}", follow_redirects=False)
+    state = parse_qs(urlsplit(started.headers["location"]).query)["state"][0]
+    client.get(f"/auth/slack/callback?code=authorization-code&state={state}", follow_redirects=False)
+    page = client.get(f"/review/{batch_ref}")
+    csrf = page.text.split('name="csrf_token" value="', 1)[1].split('"', 1)[0]
+    command_id = page.text.split('name="command_id" value="', 1)[1].split('"', 1)[0]
+    body = (
+        CHROME_CRLF_FORM["body"]
+        .replace("csrf_token=CSRF", f"csrf_token={quote(csrf, safe='')}")
+        .replace("command_id=CMD", f"command_id={command_id}")
+        .replace("item_id=ITEM", f"item_id={item_id}")
+    )
+    assert "%0D%0A" in body
+
+    accepted = client.post(
+        f"/review/{batch_ref}/decisions",
+        content=body.encode("ascii"),
+        headers={
+            "Content-Type": CHROME_CRLF_FORM["content_type"],
+            "Origin": "https://reviews.example.test",
+        },
+        follow_redirects=False,
+    )
+
+    assert accepted.status_code == 303
+    feedback = "faltó compartir el enlace que es este:\nhttps://pay.hotmart.com/X00000000Y?off=2uafw5bg"
+    name, payload = repository.calls[-1]
+    assert name == "record_daily_feedback_decision_v1"
+    assert payload["p_verbatim_feedback"] == feedback
+    assert payload["p_semantic_fingerprint"] == hashlib.sha256(
+        (command_id + "\0" + batch_ref + "\0" + item_id + "\0" + "correct_with_feedback" + "\0" + feedback).encode()
+    ).hexdigest()
+
+
+@pytest.mark.parametrize(
+    ("feedback", "status", "stored"),
+    [
+        ("Primer renglon\rsegundo", 303, "Primer renglon\nsegundo"),
+        ("Con\ttabulador", 303, "Con\ttabulador"),
+        ("Nulo\x00adentro", 422, None),
+        ("Tab vertical\x0b", 422, None),
+        ("Escape\x1b[0m", 422, None),
+    ],
+)
+def test_decision_keeps_rejecting_control_characters_other_than_line_breaks(
+    feedback: str, status: int, stored: str | None
+) -> None:
+    client, repository = _client()
+    batch_ref = "22222222-2222-4222-8222-222222222222"
+    started = client.get(f"/auth/slack/start?batch_ref={batch_ref}", follow_redirects=False)
+    state = parse_qs(urlsplit(started.headers["location"]).query)["state"][0]
+    client.get(f"/auth/slack/callback?code=authorization-code&state={state}", follow_redirects=False)
+    page = client.get(f"/review/{batch_ref}")
+    csrf = page.text.split('name="csrf_token" value="', 1)[1].split('"', 1)[0]
+    command_id = page.text.split('name="command_id" value="', 1)[1].split('"', 1)[0]
+
+    response = client.post(
+        f"/review/{batch_ref}/decisions",
+        data={
+            "csrf_token": csrf,
+            "command_id": command_id,
+            "item_id": "33333333-3333-4333-8333-333333333333",
+            "decision": "correct_with_feedback",
+            "verbatim_feedback": feedback,
+        },
+        headers={"Origin": "https://reviews.example.test"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == status
+    decisions = [p for n, p in repository.calls if n == "record_daily_feedback_decision_v1"]
+    if stored is None:
+        assert "Decisión inválida." in response.text
+        assert decisions == []
+    else:
+        assert decisions[-1]["p_verbatim_feedback"] == stored
 
 
 class WorkflowRepository:
