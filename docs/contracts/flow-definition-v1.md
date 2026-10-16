@@ -1,12 +1,12 @@
 # Contrato: la definición de un flujo (v1)
 
-- **Estado:** aceptado como contrato conceptual el 2026-10-15; sin implementación (lo construye la Etapa 1b). El esquema no describe nada desplegado ni activado. Lo que dice de ATT1 es la línea de base de la migración, con su fecha y su evidencia.
+- **Estado:** aceptado como contrato conceptual el 2026-10-15; sin implementación (lo construye la Etapa 1b). El esquema no describe nada desplegado ni activado. Lo que dice de ATT1 es la línea de base de la migración, con su fecha y su evidencia. Enmendado el mismo día, antes de construir nada: cada flujo es de un producto de la instancia (ver «El producto de un flujo»).
 - **Fecha:** 2026-10-15
 - **ADR:** [ADR-0007](../decisions/0007-durable-next-action-engine.md) y [ADR-0025](../decisions/0025-cada-instancia-tiene-su-hermes-declarado-por-el-producto.md) §7
 - **Esquema:** `setter-flujo/v1`
 - **Alcance:** la forma fija con la que se escribe un flujo de una instancia como dato: sus cinco piezas, la prioridad frente a los otros flujos, la puerta común que revisa cada envío y las reglas del validador. El ciclo de una versión, el contrato de lectura y el dibujo de un flujo van en sus propias piezas (ver «Lo que no entra en la v1, y dónde va»).
 - **Etapas:** las del roadmap macro del producto, que lleva Dan fuera de este repo. No son las etapas del onboarding de [first-infoproducer-onboarding-v1.md](../design/first-infoproducer-onboarding-v1.md). La Etapa 1 se parte en tres (decisión de Dan del 2026-10-13): la 1a, el Automation Expert que lee y explica los flujos; la 1b, los flujos como datos, con su motor y su ciclo de versiones; y la 1c, los flujos nuevos, primero la ficha sin pagar y después la activación. La Etapa 2 es el producto instalable, con varios productos por instancia, y la Etapa 4, el catálogo de Lancemos, que trae los lanzamientos.
-- **Citas:** las citas de código son de `origin/main` en `1b83191` (1.8.0). El 2026-10-14, ATT1 corría la v1.6.1 (`5723806`; `instancia.toml:21`). Entre la v1.6.1 y `1b83191`, en `src/` y `supabase/` solo cambiaron tres archivos de la revisión diaria, y ninguno de los que cita este contrato. Las migraciones de `supabase/migrations/` se citan por su prefijo. `instancia.toml`, `aprovisionar-att1.sql`, `publicar-recuperacion-v5.sql`, `publicar-primer-contacto-v2.sql` y `generar.py` son de la instancia ATT1 (`setter-instancia-att1`), en `b1cdefe`. En este contrato, «hoy» es ese código y la instancia ATT1 al 2026-10-14.
+- **Citas:** las citas de código son de `origin/main` en `1b83191` (1.8.0). El 2026-10-14, ATT1 corría la v1.6.1 (`5723806`; `instancia.toml:21`). Entre la v1.6.1 y `1b83191`, en `src/` y `supabase/` solo cambiaron tres archivos de la revisión diaria, y ninguno de los que cita este contrato. Las migraciones de `supabase/migrations/` se citan por su prefijo. `instancia.toml`, `aprovisionar-att1.sql`, `publicar-recuperacion-v5.sql`, `publicar-primer-contacto-v2.sql` y `generar.py` son de la instancia ATT1 (`setter-instancia-att1`), en `b1cdefe`. En este contrato, «hoy» es ese código y la instancia ATT1 al 2026-10-14. Lo que cita «El producto de un flujo» no cambió hasta `c3a61b2`.
 - **Relacionados:** [followup-engine-v1.md](followup-engine-v1.md), [lancemos-pilot-boundary-runtime-v1.md](lancemos-pilot-boundary-runtime-v1.md), [approved-template-direct-dispatch-v1.md](approved-template-direct-dispatch-v1.md), [portable-precheckout-first-contact-v1.md](portable-precheckout-first-contact-v1.md), [conversation-followup-discount-v1.md](conversation-followup-discount-v1.md), [conversation-reactivation-v1.md](conversation-reactivation-v1.md), [resume-paused-conversation-v1.md](resume-paused-conversation-v1.md), [instance-runtime-v2.md](instance-runtime-v2.md), [commercial-ally-runtime-v1.md](commercial-ally-runtime-v1.md), [executable-human-handoff-v1.md](executable-human-handoff-v1.md), [lead-precheckout-v1.md](lead-precheckout-v1.md), [hotmart-cart-abandonment-v1.md](hotmart-cart-abandonment-v1.md), [hotmart-purchase-approved-v1.md](hotmart-purchase-approved-v1.md), [referencia-manifiesto.md](../referencia-manifiesto.md) y el diseño [automation-expert-configuration-experience.md](../design/automation-expert-configuration-experience.md).
 
 ## Para qué
@@ -22,6 +22,7 @@ Una versión publicada no se modifica. El YAML sirve solo para leerla y para com
 
 - Un flujo se arma y se cambia solo conversando con el Automation Expert. No hay formulario.
 - Tiene cinco piezas: qué lo dispara, quién entra, los pasos, cuándo termina, y el horario con los topes. También lleva su prioridad frente a los otros flujos y su versión.
+- Cada flujo es de un producto de la instancia, y solo lo disparan los eventos de ese producto. Con un solo producto no hace falta escribirlo. La puerta y el tope por persona son de la instancia y suman todos los productos.
 - Lo dispara un aviso de Hotmart, el formulario de la landing o una conversación que se calló. No hay otros disparadores.
 - Hay cinco tipos de paso: esperar, mandar una plantilla, que el agente converse con un objetivo, una condición con dos ramas y pasarle la conversación a una persona. Mientras el motor no cambie, sale un solo mensaje por camino, y conversar y derivar se pueden escribir pero no publicar.
 - El flujo termina si la persona compra, si contesta (ahí sigue el agente) o si vence. La baja y que una persona tome la conversación lo cortan siempre, desde el código.
@@ -75,7 +76,7 @@ El disparo es el momento del evento, o el del barrido que encontró el silencio.
 **Qué pregunta el agente.** «¿Qué tiene que pasar para que arranque?» Traduce la respuesta a un disparador del catálogo y la confirma con su frase y con un número medido en la semana. Si es un silencio, pregunta además: «¿lo último lo dijimos nosotros o la persona?» y «¿desde cuántas horas, y hasta cuándo?». Si alguien sube el `hasta`, avisa que el primer barrido toma de una vez las conversaciones que ya habían pasado el límite viejo sin recibir nada: el techo de 72 h del cupón está para no escribirle a todo el histórico (`followup_discount.py:56-58`).
 
 **Qué queda en código.**
-- Los adaptadores de Hotmart y de la landing deciden qué llega y con qué datos. Un evento de otro producto o de otra oferta no entra.
+- Los adaptadores de Hotmart y de la landing deciden qué llega, con qué datos y de qué producto es. Un evento de un producto o de una oferta que la instancia no declara no entra, y a cada flujo le llegan solo los de su producto (ver «El producto de un flujo»).
 - Hoy los eventos de la ficha entran solo con el flag del pago fallido (`app.py:7655-7658` y `:7676-7682`). Con el esquema, cada flujo se prende con su control, y los adaptadores dejan de atar la ficha a ese flag.
 - El barrido de los silencios: cada cuánto corre, cuántas conversaciones lee y cuántos envíos hace como máximo por barrido (por defecto, 10: `followup_discount.py:625` y `reactivation.py:454`). Una conversación silenciada o pospuesta no entra.
 - Qué eventos recibe la instancia. Hoy es la lista cerrada del manifiesto (`EVENTS`, `instance_manifest.py:67`). Ver «El techo de la instancia», más abajo.
@@ -105,7 +106,7 @@ El disparo es el momento del evento, o el del barrido que encontró el silencio.
 - Que el teléfono se pueda leer.
 - Que la persona esté resuelta en las dos formas del móvil.
 - Que no esté dada de baja ni bloqueada.
-- El producto y las ofertas, que salen del manifiesto.
+- Los productos de la instancia y sus ofertas, que salen del manifiesto.
 - Qué evidencia vale para cada permiso. Un permiso desconocido no habilita el envío (ADR-0007 §8).
 - Con el formulario, que la intención siga viva y que el envío traiga los dos consentimientos (`20261001000200:211-229`).
 
@@ -153,7 +154,7 @@ Mientras la plantilla no esté aprobada, el flujo queda en borrador. «¿Y si no
 **Qué es.** Las salidas del flujo. Cuando se cumple una, el recorrido termina y no manda lo que le faltaba.
 
 **Qué admite en la v1.** En `termina.si` hay tres salidas posibles:
-- `compra`: una compra aprobada de la persona en el producto, o una compra que podría ser suya y no se pudo atribuir.
+- `compra`: una compra aprobada de la persona en el producto del flujo, o una compra que podría ser suya y no se pudo atribuir.
 - `contesta`: la persona escribe en el inbox después del disparo y antes del primer envío. El recorrido se corta en el momento en que llega el mensaje, antes de que la admisión decida si el agente la toma, y la conversación sigue con el agente.
 - `ficha_vencida`: llegó el vencimiento de la ficha. Solo vale si el disparador es `ficha_impresa`.
 
@@ -192,9 +193,9 @@ También quedan en código cómo se detecta la compra y si el recorrido queda ga
 - `topes` tiene cuatro campos:
   - `bolsa`: el nombre con el que se cuentan los envíos. Los flujos de una misma bolsa los cuentan juntos, sumando todas sus versiones. Hoy ese papel lo cumple el `scope_key`.
   - `por_dia` y `total`: el límite de este flujo sobre la cuenta de su bolsa, o `sin_tope`. Así, subir el diario del carrito es una sola versión, y el pago fallido sigue frenando en su propio número.
-  - `repeticion`: cuántas veces le puede tocar este flujo a la misma persona. Siempre hay un solo recorrido en curso a la vez. `una_por` dice qué cuenta como «la misma»: la persona, la persona y la oferta, o la conversación. `otra_despues_de` dice cuándo puede arrancar otro recorrido después del último envío aceptado o incierto: una duración, o `nunca`. Así cuenta hoy el primer contacto (`20261001000200:836-862`). Un recorrido con un envío incierto sigue en curso hasta que se reconcilia o vence, y mientras tanto no arranca otro (ADR-0007, «Estados y resultados mínimos»).
+  - `repeticion`: cuántas veces le puede tocar este flujo a la misma persona. Siempre hay un solo recorrido en curso a la vez. `una_por` dice qué cuenta como «la misma»: la persona, la persona y la oferta, o la conversación. Como cada flujo es de un producto, la persona se cuenta dentro de ese producto. `otra_despues_de` dice cuándo puede arrancar otro recorrido después del último envío aceptado o incierto: una duración, o `nunca`. Así cuenta hoy el primer contacto (`20261001000200:836-862`). Un recorrido con un envío incierto sigue en curso hasta que se reconcilia o vence, y mientras tanto no arranca otro (ADR-0007, «Estados y resultados mínimos»).
 
-Hay dos topes por persona, y son distintos. La repetición vale para un solo flujo. El tope por persona de la puerta cuenta los envíos de todos los flujos, cupón y reactivación incluidos (decisión de Dan del 2026-10-14).
+Hay dos topes por persona, y son distintos. La repetición vale para un solo flujo. El tope por persona de la puerta cuenta los envíos de todos los flujos de todos los productos de la instancia, cupón y reactivación incluidos (decisión de Dan del 2026-10-14).
 
 **Por defecto.**
 - El horario: el de los otros flujos de la instancia. En ATT1, de 09 a 21 de CDMX.
@@ -218,6 +219,24 @@ Hay dos topes por persona, y son distintos. La repetición vale para un solo flu
 - Los máximos de frecuencia.
 - Que el diario no supere el total (`20260810000100:49-52`).
 - Que la zona sea válida (`20260810000100:79-85`).
+
+### El producto de un flujo
+
+**Qué es.** El producto de la instancia al que pertenece el flujo. Una instancia es una aliada con un número de WhatsApp, y puede tener varios productos: ATT2 es el segundo producto de la aliada de ATT1 (decisión de Dan del 2026-10-11). Cada flujo es de uno solo. El carrito de ATT1 y el de ATT2 son dos flujos, aunque se escriban igual.
+
+**Qué cambia en cada pieza.**
+- **Qué lo dispara.** Con un evento, solo lo disparan los eventos de su producto. De qué producto es un evento lo deciden los adaptadores, por el producto y la oferta de Hotmart, o por el formulario y la landing. El producto de Hotmart solo no alcanza: hasta el 2026-09-04, ATT2 se vendía con ofertas del producto de ATT1 (medido en el catálogo de Hotmart el 2026-10-08). Con un silencio, entra la conversación de su producto.
+- **Las variables.** `producto` es el nombre de su producto.
+- **Cuándo termina.** La salida `compra` es una compra de su producto.
+- **Los topes.** La bolsa puede ser de un producto o compartida entre varios. La repetición cuenta dentro del flujo, así que ya es por producto: no hace falta otro valor de `una_por`.
+- **La prioridad.** `le_gana_a`, `no_arranca_mientras` y `contesto_a` nombran flujos de su mismo producto. Uno de otro producto se nombra `<producto>/<flujo>`.
+- **La puerta.** Es una por instancia y no cambia. El tope por persona suma los envíos de todos los flujos de todos los productos, porque la persona y el número son los mismos.
+
+**Por defecto.** Con un solo producto, ese. Con más de uno no hay valor por defecto, y el agente pregunta «¿de qué producto?».
+
+**Qué queda en código.** Los productos de la instancia y sus ofertas, que salen del manifiesto. De qué producto es cada evento, y de qué producto es una conversación.
+
+**Hoy.** Una instancia tiene un solo producto: el de `[hotmart]` en el manifiesto (`instance_manifest.py:185`), que se repite en cada scope (`external_product_id`, `20260810000100:20`). Los flujos de hoy son todos de ese producto, y esta parte del esquema no les cambia nada. El manifiesto con varios productos, de qué producto es una conversación y si la compra de un producto corta los flujos de otro van al diseño de varios productos, en la Etapa 2 (ver «Lo que no entra en la v1, y dónde va»).
 
 ### La versión, el control y el techo
 
@@ -267,7 +286,7 @@ Hoy no hay ninguna columna de prioridad. La convivencia sale de reglas repartida
 - **`le_gana_a`** se escribe en el flujo que gana. Es la frase de quien opera: «el carrito le gana al primer contacto».
   - Los flujos de la lista no arrancan, y el que estaba esperando termina con el motivo `le_gano:<flujo>`, si para la misma persona pasa una de dos cosas:
     - el disparo del que gana llegó para la misma intención de compra, aunque no mande nada (porque está pausado, sin cupo o fuera de horario);
-    - el que gana tiene un recorrido en curso en el mismo producto.
+    - el que gana tiene un recorrido en curso. Sin otra indicación, el que gana es del mismo producto (ver «El producto de un flujo»).
   - Un flujo apagado no le gana a nadie, porque su disparo ni se registra.
   - Es lo que hace hoy el primer contacto (`20261001000200:293-313`).
   - Se revisa al planificar, al reevaluar y al arrancar.
@@ -286,7 +305,7 @@ Dos palabras se usan siempre con el mismo sentido:
 
 Hay dos cosas que no hace falta modelar:
 - El cupón y la reactivación no pueden elegir la misma conversación. El cupón exige que lo último lo diga el agente, y la reactivación, que lo diga la persona (`conversation-followup-discount-v1.md:103-112`).
-- La compra corta toda la recuperación, por la salida `compra` de cada flujo.
+- La compra corta toda la recuperación de su producto, por la salida `compra` de cada flujo.
 
 ### Lo que pasa hoy en ATT1, y el campo que lo escribe
 
@@ -386,7 +405,7 @@ El orden de los chequeos decide qué motivo queda registrado. Una guarda que fre
     - Hoy: `approved_template_mismatch` (`referencia-manifiesto.md:91`) y el chequeo final de Meta.
     - Conversando: qué plantilla aprobada sale.
 11. **Los topes.**
-    - Qué revisa: los máximos de frecuencia y el límite del flujo sobre su bolsa. En la v1, los máximos son el tope por persona de la instancia, que suma los envíos de todos los flujos, cupón y reactivación incluidos (de 1 a 20 envíos en una ventana de 1 h a 30 días), y un envío por camino, que asegura el validador.
+    - Qué revisa: los máximos de frecuencia y el límite del flujo sobre su bolsa. En la v1, los máximos son el tope por persona de la instancia, que suma los envíos de todos los flujos de todos sus productos, cupón y reactivación incluidos (de 1 a 20 envíos en una ventana de 1 h a 30 días), y un envío por camino, que asegura el validador.
     - Resultado: el envío espera sin gastar cupo y se reintenta hasta que se libere el tope o venza el plazo. Una propuesta del 2026-10-09, todavía sin decidir ni publicar, propone cancelar el envío que supera el tope por persona.
     - En este chequeo se gasta el cupo.
     - Hoy: `authorize_lancemos_pilot_request_start` (`20261007000100:22-30`; `20260930000300:620-639`).
@@ -443,7 +462,7 @@ Cómo pasa cada diferencia lo decide el contrato del ciclo, como decidió Dan el
 
 Son ejemplos para validar el esquema, escritos con los valores de la instancia ATT1 al 2026-10-14. No son valores por defecto del producto: los valores por defecto son los de cada pieza, más arriba.
 
-Cada bloque lleva además `esquema: setter-flujo/v1`.
+Cada bloque lleva además `esquema: setter-flujo/v1`. Ninguno escribe `producto`: ATT1 tiene uno solo, y es el valor por defecto.
 
 Los cuatro flujos que corren hoy en ATT1 van tal como corren. La línea de base es la del 2026-10-14:
 - el código del producto en `origin/main` (`1b83191`, 1.8.0), que en los flujos es igual a la v1.6.1 que corría ATT1 (ver «Citas», arriba);
@@ -785,15 +804,18 @@ topes:
 
 ```yaml
 # ═══ setter-flujo/v1 · la definición de un flujo ═══
-# Una definición es UNA versión de UN flujo de una instancia. La completa el Automation
-# Expert conversando y la aprueba una persona (contrato del ciclo, 1b). Se guarda en la
-# base; este YAML es la forma de leerla y de comparar dos versiones.
+# Una definición es UNA versión de UN flujo de un producto de una instancia. La completa
+# el Automation Expert conversando y la aprueba una persona (contrato del ciclo, 1b). Se
+# guarda en la base; este YAML es la forma de leerla y de comparar dos versiones.
 #
 # Tipos
 #   duración   entero + unidad: m, h o d ("0m", "60m", "24h", "1d", "30d"). Nunca negativa.
 #   hora       "HH:MM", de "00:00" a "23:59". Quien escribe el YAML la pone entre comillas:
 #              en YAML 1.1, 21:00 sin comillas se lee como un número.
-#   flujo      la clave de otro flujo de la misma instancia.
+#   flujo      la clave de otro flujo del mismo producto, o <producto>/<flujo> para uno de
+#              otro producto de la instancia (att2/carrito).
+#   producto   la clave con la que el manifiesto declara un producto de la instancia. Mientras
+#              la instancia tenga uno solo, es el funnel_ref de [instancia] (en ATT1, att1).
 #   a_medir · a_decidir · a_crear
 #              un valor que todavía no se sabe. Se acepta en un borrador; una versión con uno
 #              de estos no se publica. Una plantilla que no existe se escribe {a_crear: <nombre>}.
@@ -804,10 +826,14 @@ topes:
 
 esquema: setter-flujo/v1          # fijo
 
-flujo: carrito                    # ^[a-z][a-z0-9_]{1,39}$. Única en la instancia e igual en
+flujo: carrito                    # ^[a-z][a-z0-9_]{1,39}$. Única en su producto e igual en
                                   #   todas las versiones. Los flujos de hoy usan su nombre de
                                   #   [flujos] del manifiesto. [existe: FLOWS, instance_manifest.py:68]
                                   #   No es el scope_key: a ese se parece la bolsa.
+producto: att1                    # producto. Default: el único de la instancia; con más de uno,
+                                  #   obligatorio. Solo lo disparan los eventos de ese producto.
+                                  #   [existe: un solo producto por instancia ([hotmart] del
+                                  #   manifiesto) y external_product_id por scope] [NUEVO: el campo]
 nombre: Carrito abandonado        # texto, hasta 60 caracteres, como lo llama la persona. [NUEVO]
 version: 1                        # entero > 0. La pone el ciclo al publicar, nunca la conversación.
                                   #   [existe: version en pilot_scope_versions y followup_policy_versions]
@@ -903,9 +929,10 @@ horario:                          # el objeto, o la palabra siempre.
   desde: "09:00"                  # [existe: business_windows, con los días 1 a 7]
   hasta: "21:00"                  #   incluye ese minuto, como el motor de hoy
 topes:
-  bolsa: att1-recuperacion        # ^[a-z][a-z0-9_-]{1,39}$. Default: la clave del flujo. Los
-                                  #   flujos de una bolsa cuentan juntos sus envíos, de todas sus
-                                  #   versiones. [existe: hoy lo hace el scope_key]
+  bolsa: att1-recuperacion        # ^[a-z][a-z0-9_-]{1,39}$. Default: <producto>-<flujo>
+                                  #   (att1-carrito). Los flujos de una bolsa cuentan juntos sus
+                                  #   envíos, de todas sus versiones, y pueden ser de productos
+                                  #   distintos. [existe: hoy lo hace el scope_key]
   por_dia: 80                     # entero > 0 | sin_tope. Día de la zona. Es el límite de ESTE
   total: 1000                     #   flujo sobre la cuenta de su bolsa; por_dia ≤ total.
                                   #   Default: 10 y 150 con un evento de recuperación; sin_tope
@@ -939,7 +966,8 @@ prioridad:                        # Default: sin relaciones; los flujos conviven
 #                                 #   nace apagado.
 # puerta:                         # uno por instancia.
 #   tope_por_persona: sin_tope    # o {maximo: 2, cada: 24h}: de 1 a 20 envíos en una ventana de
-#                                 #   1 h a 30 días, sumando los envíos de todos los flujos.
+#                                 #   1 h a 30 días, sumando los envíos de todos los flujos de
+#                                 #   todos los productos de la instancia.
 #                                 #   [existe: pilot_proactive_contact_caps, un renglón por tenant]
 ```
 
@@ -957,7 +985,7 @@ Son código y corren en dos momentos. Un bloqueo no se puede confirmar; una adve
 7. Un `conversar` fuera de la rama `entonces` de una condición con la ventana abierta. Un `conversar` o un `derivar` que no es el último paso de su rama. Una condición dentro de otra.
 8. Horas mal escritas, o un `desde` que no es menor que `hasta`. Una zona que no es IANA, o distinta de la de la versión anterior. Flujos de una misma bolsa con zonas distintas.
 9. Topes que no son enteros positivos ni `sin_tope`. Un `por_dia` mayor que el `total`.
-10. Un `le_gana_a`, `no_arranca_mientras` o `contesto_a` que nombra un flujo que no existe. Dos flujos que se ganan uno al otro.
+10. Un `le_gana_a`, `no_arranca_mientras` o `contesto_a` que nombra un flujo que no existe. Dos flujos que se ganan uno al otro. Un `producto` que la instancia no declara, o que falta cuando la instancia tiene más de uno. Dos flujos con la misma clave en el mismo producto.
 
 **Al publicar.** Las anteriores, y además:
 11. Un valor `a_medir`, `a_decidir` o `a_crear`.
@@ -982,7 +1010,7 @@ Los bloqueos 14 y 15 son del tipo «todavía no». Los demás son protecciones, 
 ### Dónde vive hoy cada campo
 
 Hoy un flujo del motor vive en dos filas que no se modifican y que están atadas entre sí:
-- el scope (`pilot_scope_versions`): el disparador, la audiencia, las ofertas, los topes y la zona;
+- el scope (`pilot_scope_versions`): el disparador, el producto, la audiencia, las ofertas, los topes y la zona;
 - la política (`followup_policy_versions`): los pasos, el horario, la gracia y el vencimiento.
 
 El carrito y el pago fallido comparten las dos filas y el control. El cupón y la reactivación no tienen filas: viven en variables y en el manifiesto. Para el lector de la 1a, cada flujo de hoy tiene arriba su línea «Fuente hoy».
@@ -1024,7 +1052,8 @@ La migración los actualiza. Qué cambia en la base no se aprueba con este esque
 - **El mail de bienvenida.** El producto no manda mails. Es una decisión aparte.
 - **Las fechas fijas, las listas y los lanzamientos, con su pausa de grupo.** Van a la Etapa 4.
 - **Una prioridad numérica, o un arbitraje global entre casos.** El ADR-0007 §12 lo deja para más adelante, y las dos relaciones cubren lo que existe hoy.
-- **Más de un producto o de un disparador por flujo, y la elección de ofertas.** Van a la Etapa 2, con varios productos por instancia.
+- **Un flujo para varios productos a la vez, o con más de un disparador.** Cada flujo es de un producto y tiene un disparador. Varios productos pueden compartir una bolsa.
+- **Lo demás de varios productos por instancia.** Va al diseño de la Etapa 2: el manifiesto con varios productos, de qué producto es una conversación (de eso dependen el silencio y el entrante sin formulario), la elección de ofertas y si la compra de un producto corta los flujos de otro. Si hace falta lo último, se suma a `termina` sin cambiar el resto.
 - **Los días de la semana y más de una franja por día.** La base ya los soporta (`business_windows`, `20260803000100:1000-1012`), pero ningún flujo los usa. Si alguien pide «que no salga los domingos», el agente contesta con la frase de «todavía no».
 - **Filtrar quién entra por el medio de pago** («solo OXXO»). Ningún flujo lo usa: la ficha le escribe a todos los medios, con el botón solo para OXXO. Entra cuando alguien lo pida.
 - **La familia como campo.** Se deduce del disparador: Hotmart y el formulario son recuperación, el silencio es seguimiento y la compra es activación.
@@ -1048,6 +1077,7 @@ La migración los actualiza. Qué cambia en la base no se aprueba con este esque
 
 **Las decisiones y las mediciones.** Salvo el ADR-0025, están registradas fuera de este repo, y se citan por su fecha:
 - Decisión de Dan del 2026-10-15: aprueba este esquema, y la compra como permiso para la bienvenida, solo para un mensaje de utilidad y con el OK del cliente. El mismo día aclaró que ese mensaje es uno solo (la regla 17).
+- Decisión de Dan del 2026-10-15, por la noche: el diseño de varios productos por instancia va en paralelo con la Etapa 1, y este esquema se enmienda antes de que la 1b construya el motor, para que cada flujo nazca sabiendo de qué producto es. Sale del relevamiento de ese día del código en `448a252`: el manifiesto, el binding, los scopes y la clave de un flujo asumen un solo producto.
 - Decisión de Dan del 2026-10-14: las cinco piezas, lo que se cambia conversando y lo que queda en código, la puerta única con el tope por persona, que no hay palabras clave como disparador y que las diferencias de hoy se deciden en el contrato del ciclo.
 - Decisiones de Dan del 2026-10-13: la Etapa 1 partida en tres, con los flujos como datos en el centro, y que cada instancia tiene su Hermes. Esa segunda está en este repo, como el [ADR-0025](../decisions/0025-cada-instancia-tiene-su-hermes-declarado-por-el-producto.md), con su §7.
 - El análisis de la Etapa 1 del 2026-10-14: el esquema, el contrato de lectura, los casos de prueba, el dibujo, por qué el esquema va antes que el lector de la 1a, y sus recomendaciones sobre la propuesta del tope por persona, los rechazos al arrancar, el alcance de la 1b y la puerta común.
@@ -1089,7 +1119,7 @@ La migración los actualiza. Qué cambia en la base no se aprueba con este esque
   - `followup_discount.py`: :54-76, :464-517, :625, :855-860 y :901-906;
   - `reactivation.py`: :321-327, :363-365 y :454;
   - `messaging.py`: :79-81 y :186-214;
-  - `instance_manifest.py`: :55-89;
+  - `instance_manifest.py`: :55-89 y :185;
   - `hotmart.py`: :32-77;
   - `resolution.py`: :277-345;
   - `app.py`: :1083, :3864 y :7645-7692;
