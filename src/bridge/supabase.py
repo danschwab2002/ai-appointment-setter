@@ -4568,6 +4568,7 @@ class SupabaseClient:
         issuance_ulid: str,
         now: str,
         phone_equivalence: bool = False,
+        funnel_ref: str | None = None,
     ) -> CheckoutIssuanceReservation:
         """Atomically persist one V2 checkout issuance before Chatwoot.
 
@@ -4576,9 +4577,30 @@ class SupabaseClient:
         intencion del movil y el opt-out buscados por las dos formas del
         telefono (52/521, 54/549). Mismo payload y misma respuesta. Sin el
         flag, la compartida de siempre.
+
+        Con ``funnel_ref`` (varios productos, 2c-3a) pega en
+        reserve_portable_checkout_issuance_for_funnel_v1: la portable, con la
+        oferta del producto de ese funnel. Exige un binding activo del funnel
+        en el mismo inbox; si no, ``blocked_funnel``.
         """
 
-        if phone_equivalence:
+        payload: dict[str, object] = {
+            "p_commercial_case_id": commercial_case_id,
+            "p_external_user_id": external_user_id,
+            "p_chatwoot_account_id": chatwoot_account_id,
+            "p_chatwoot_inbox_id": chatwoot_inbox_id,
+            "p_chatwoot_conversation_id": chatwoot_conversation_id,
+            "p_trigger_external_message_id": trigger_external_message_id,
+            "p_issuance_ulid": issuance_ulid,
+            "p_now": now,
+        }
+        if funnel_ref is not None:
+            if not phone_equivalence:
+                raise ValueError("a funnel reserve is portable: it needs phone_equivalence")
+            operation = "portable_checkout_issuance_for_funnel_reserve"
+            path = "/rest/v1/rpc/reserve_portable_checkout_issuance_for_funnel_v1"
+            payload["p_funnel_ref"] = funnel_ref
+        elif phone_equivalence:
             operation = "portable_checkout_issuance_v2_reserve"
             path = "/rest/v1/rpc/reserve_portable_checkout_issuance_v2"
         else:
@@ -4587,16 +4609,7 @@ class SupabaseClient:
         response = await self._request(
             "POST",
             path,
-            content=json.dumps({
-                "p_commercial_case_id": commercial_case_id,
-                "p_external_user_id": external_user_id,
-                "p_chatwoot_account_id": chatwoot_account_id,
-                "p_chatwoot_inbox_id": chatwoot_inbox_id,
-                "p_chatwoot_conversation_id": chatwoot_conversation_id,
-                "p_trigger_external_message_id": trigger_external_message_id,
-                "p_issuance_ulid": issuance_ulid,
-                "p_now": now,
-            }, ensure_ascii=False),
+            content=json.dumps(payload, ensure_ascii=False),
         )
         if response.status_code != 200:
             raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
@@ -4616,6 +4629,8 @@ class SupabaseClient:
             "blocked_opt_out", "blocked_conversation", "blocked_identity",
             "purchase_already_approved", "replay_conflict",
         }
+        if funnel_ref is not None:
+            allowed.add("blocked_funnel")
         if outcome not in allowed:
             raise SupabaseCommittedResponseError(operation)
         values = {

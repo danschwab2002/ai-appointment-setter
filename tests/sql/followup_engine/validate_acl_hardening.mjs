@@ -172,6 +172,7 @@ const rows = await db.query(`
       ('finalize_chatwoot_payment_link_send(uuid,text,bigint,text,timestamp with time zone)'),
       ('reserve_chatwoot_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamp with time zone)'),
       ('reserve_portable_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,text,timestamp with time zone)'),
+      ('reserve_portable_checkout_issuance_for_funnel_v1(uuid,text,bigint,bigint,bigint,text,text,text,timestamp with time zone)'),
       ('authorize_chatwoot_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,timestamp with time zone)'),
       ('finalize_chatwoot_checkout_issuance_v2(uuid,text,bigint,text,timestamp with time zone)'),
       ('admit_and_correlate_hotmart_checkout_issuance_v2(text,jsonb,text,timestamp with time zone)'),
@@ -244,9 +245,10 @@ const result = rows.rows[0];
 // filtered review page and the batch closure of the daily feedback
 // (20261015000100) add two, and the three reads of the Automation Expert
 // (20261015000200) add three, and what the person did for the agent input
-// (20261016000200) adds one.
+// (20261016000200) adds one, and the reserve of the link of the product the
+// agent names (20261016000400) adds one.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 128) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 129) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

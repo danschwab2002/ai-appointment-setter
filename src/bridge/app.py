@@ -2660,12 +2660,19 @@ class _PhoneEquivalentCheckoutIssuance:
     trabajan por issuance_id y no cambian. Sin manifiesto (Johanna) el
     bridge le pasa el cliente tal cual y la reserva sigue siendo la
     compartida.
+
+    Con ``funnel_ref`` (varios productos, 2c-3a) la reserva es la del funnel del
+    producto que nombro el agente: su oferta, su hotlink y su intencion. Con un
+    solo producto no se pasa y la reserva es la de siempre.
     """
 
-    def __init__(self, client: object) -> None:
+    def __init__(self, client: object, funnel_ref: str | None = None) -> None:
         self._client = client
+        self._funnel_ref = funnel_ref
 
     async def reserve_chatwoot_checkout_issuance_v2(self, **kwargs: object) -> object:
+        if self._funnel_ref is not None:
+            kwargs["funnel_ref"] = self._funnel_ref
         return await self._client.reserve_chatwoot_checkout_issuance_v2(  # type: ignore[attr-defined]
             phone_equivalence=True, **kwargs
         )
@@ -5404,8 +5411,8 @@ def create_app(
                 completed_proposal, agent_product_keys
             )
             if link_product is not None:
-                # Con un solo producto el link es el de siempre; con la 2c, el
-                # producto elige la ficha.
+                # Con un solo producto el link es el de siempre; con mas de uno,
+                # el producto elige la ficha (2c-3a).
                 logger.info(
                     "payment_link_product product=%s source=%s",
                     link_product,
@@ -5413,6 +5420,25 @@ def create_app(
                     if isinstance(completed_proposal.get("product"), str)
                     else "single_product",
                 )
+            # Con mas de un producto, la reserva va por el funnel del producto
+            # que nombro el agente. Con uno solo, la de siempre.
+            link_funnel_ref: str | None = None
+            if len(commercial_ally_routes) > 1:
+                link_route = (
+                    commercial_ally_routes.by_key(link_product)
+                    if link_product is not None
+                    else None
+                )
+                if link_route is None:
+                    logger.info("payment_link_handoff reason=product_unrouted")
+                    await request_current_inbound_handoff({
+                        **completed_proposal,
+                        "decision": "handoff",
+                        "qualification_status": "needs_human",
+                        "reason_code": "payment_link_product_unrouted",
+                    })
+                    return
+                link_funnel_ref = link_route.config.funnel_ref
             assert shared_supabase is not None
             assert admission is not None
             assert settings.chatwoot_account_id is not None
@@ -5423,7 +5449,9 @@ def create_app(
                     # Con manifiesto, la reserva busca la intencion por las
                     # dos formas del movil. Sin manifiesto, como siempre.
                     supabase=(
-                        _PhoneEquivalentCheckoutIssuance(shared_supabase)
+                        _PhoneEquivalentCheckoutIssuance(
+                            shared_supabase, funnel_ref=link_funnel_ref
+                        )
                         if whatsapp_inbound_equivalence
                         else shared_supabase
                     ),

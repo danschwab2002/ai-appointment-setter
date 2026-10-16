@@ -4638,6 +4638,41 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         1,
         'portable_person_activity_link_purchase'
+    union all
+    select
+        '20261016000400',
+        '20261016000400_portable_checkout_issuance_for_funnel_v1.sql',
+        -- El link del producto que nombra el agente: la reserva portable con el
+        -- funnel, que exige el binding del funnel en el inbox y elige la oferta
+        -- por funnel. Definer, con el search_path fijo.
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure(
+                'public.reserve_portable_checkout_issuance_for_funnel_v1(uuid,text,bigint,bigint,bigint,text,text,text,timestamptz)'
+            )
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+              and position('for_funnel: el funnel del producto pedido' in definition) > 0
+              and position('public.commercial_ally_runtime_bindings' in definition) > 0
+              and position('''blocked_funnel''' in definition) > 0
+              and position('offer.funnel_ref = p_funnel_ref' in definition) > 0
+              and position('replay_offer.funnel_ref = p_funnel_ref' in definition) > 0
+        )::int
+        -- Es un entrypoint del bridge: solo service_role.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure(
+                'public.reserve_portable_checkout_issuance_for_funnel_v1(uuid,text,bigint,bigint,bigint,text,text,text,timestamptz)'
+            )
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        2,
+        'portable_checkout_issuance_for_funnel'
 )
 select
     version,
