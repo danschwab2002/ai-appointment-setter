@@ -68,7 +68,7 @@ from bridge.product_label import ProductLabeler
 from bridge.checkout_delivery import CheckoutDeliveryError, deliver_checkout_issuance_v2
 from bridge.filtering import EventDecision, classify_chatwoot_event
 from bridge.agent_provenance import AgentTurn, CONTEXT_BUILDER_VERSION
-from bridge.hermes import HermesShadowProcessor
+from bridge.hermes import HermesShadowProcessor, payment_link_product
 from bridge.hotmart import (
     EVENT_CART_ABANDONMENT,
     EVENT_PURCHASE_APPROVED,
@@ -167,6 +167,7 @@ from bridge.supabase import (
     InboundCommercialCaseAdmissionResult,
     OperatorCorrelationResolutionError,
     PilotBoundaryConfig,
+    PersonActivity,
     PrecheckoutAdmissionResult,
     RecentPaymentFailure,
     SupabaseClient,
@@ -1852,6 +1853,46 @@ def recent_payment_failure_context(failure: RecentPaymentFailure) -> dict[str, o
     return {key: value for key, value in context.items() if value is not None}
 
 
+def person_activity_context(
+    activities: tuple[PersonActivity, ...], *, product: str
+) -> list[dict[str, str]]:
+    """Lo que hizo la persona, para la entrada del agente (SOUL comun, «Entrada»).
+
+    El funnel es el producto: cada cosa lleva la clave del producto del funnel
+    que se leyo. En orden, de la mas vieja a la mas nueva.
+    """
+    return [
+        {
+            "activity": item.activity,
+            "product": product,
+            "at": item.occurred_at.astimezone(UTC)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z"),
+        }
+        for item in sorted(activities, key=lambda item: item.occurred_at)
+    ]
+
+
+def agent_products_context(settings: "Settings") -> list[dict[str, str]]:
+    """Los productos de la aliada, para la entrada del agente (2b).
+
+    La clave de [[productos]] del manifiesto y el nombre con el que el producto
+    aparece en el conocimiento («# Producto: ...»). Vacio sin productos
+    declarados: la entrada es la de siempre.
+    """
+    manifest = settings.instance_manifest
+    knowledge = settings.commercial_knowledge
+    if manifest is None or not manifest.products or knowledge is None:
+        return []
+    names = {product.key: product.offer_name for product in knowledge.products}
+    return [
+        {"key": product.key, "name": names[product.key]}
+        for product in manifest.products
+        if product.key in names
+    ]
+
+
 def _shadow_context(payload: dict[str, object]) -> dict[str, object] | None:
     conversation = payload.get("conversation")
     content = payload.get("content")
@@ -3419,6 +3460,14 @@ def create_app(
     conversation_opened_hook = (
         label_opened_conversation if product_labeler is not None else None
     )
+    # Lo que ve el agente de los productos (paso 2b): la lista de productos y lo
+    # que hizo la persona, solo con [[productos]]. Sin eso la entrada no cambia.
+    agent_products = agent_products_context(settings)
+    agent_product_keys = (
+        tuple(product.key for product in settings.instance_manifest.products)
+        if settings.instance_manifest is not None
+        else ()
+    )
     configured_reply_splitter = reply_splitter
     reply_manifest_reader = HermesReplySplitter(
         base_url="",
@@ -4357,6 +4406,37 @@ def create_app(
         )
         return recent_payment_failure_context(failure)
 
+    async def _person_activity_context(
+        wa_id: str | None,
+    ) -> list[dict[str, str]] | None:
+        """Lo que hizo este movil en el funnel, para la entrada del agente (2b).
+
+        El funnel del binding es el del unico producto de [[productos]]. Si la
+        lectura falla, el agente contesta igual, sin el dato.
+        """
+        if (
+            shared_supabase is None
+            or settings.commercial_ally_config is None
+            or not wa_id
+            or len(agent_product_keys) != 1
+        ):
+            return None
+        try:
+            activities = await shared_supabase.get_portable_person_activity(
+                config=settings.commercial_ally_config,
+                whatsapp_phone=wa_id,
+            )
+        except SupabaseError as exc:
+            logger.warning(
+                "person_activity_lookup_failed error=%s",
+                type(exc).__name__,
+            )
+            return None
+        logger.info("person_activity_context items=%s", len(activities))
+        if not activities:
+            return None
+        return person_activity_context(activities, product=agent_product_keys[0])
+
     async def resolve_inbound_external_user_id(
         wa_id: str,
         *,
@@ -5154,14 +5234,22 @@ def create_app(
                     "bridge_injects_exact_url": True,
                     "agent_must_not_include_url": True,
                 }
+            person_wa_id = (
+                external_user_id
+                if external_user_id.isdigit()
+                else _whatsapp_digits(decision.sender_jid)
+            )
             if settings.portable_hotmart_payment_failure_enabled:
                 recent_failure = await _recent_payment_failure_context(
-                    external_user_id
-                    if external_user_id.isdigit()
-                    else _whatsapp_digits(decision.sender_jid)
+                    person_wa_id
                 )
                 if recent_failure is not None:
                     context["recent_payment_failure"] = recent_failure
+            if agent_products:
+                context["products"] = agent_products
+                person_activity = await _person_activity_context(person_wa_id)
+                if person_activity is not None:
+                    context["person_activity"] = person_activity
             completed_proposal = (
                 shadow_processor.get_completed_proposal(delivery_id=delivery_id)
                 if shadow_processor is not None
@@ -5290,6 +5378,19 @@ def create_app(
                     "reason_code": "payment_link_disabled",
                 })
                 return
+            link_product = payment_link_product(
+                completed_proposal, agent_product_keys
+            )
+            if link_product is not None:
+                # Con un solo producto el link es el de siempre; con la 2c, el
+                # producto elige la ficha.
+                logger.info(
+                    "payment_link_product product=%s source=%s",
+                    link_product,
+                    "agent"
+                    if isinstance(completed_proposal.get("product"), str)
+                    else "single_product",
+                )
             assert shared_supabase is not None
             assert admission is not None
             assert settings.chatwoot_account_id is not None
@@ -8596,11 +8697,23 @@ def build_app() -> FastAPI:
             if settings.commercial_knowledge is not None
             else {}
         )
+        # Con [[productos]], la propuesta acepta `product` de esos productos (2b).
+        product_kwargs = (
+            {
+                "product_keys": tuple(
+                    product.key for product in settings.instance_manifest.products
+                )
+            }
+            if settings.instance_manifest is not None
+            and settings.instance_manifest.products
+            else {}
+        )
         shadow_processor = HermesShadowProcessor(
             base_url=settings.hermes_api_base_url,
             api_key=settings.hermes_api_key,
             model_name=settings.hermes_model_name,
             shadow_dir=settings.shadow_dir,
             **knowledge_kwargs,
+            **product_kwargs,
         )
     return create_app(settings, shadow_processor=shadow_processor)

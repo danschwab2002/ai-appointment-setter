@@ -4593,6 +4593,34 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         5,
         'flow_change_store'
+    union all
+    select
+        '20261016000200',
+        '20261016000200_portable_person_activity_v1.sql',
+        -- Lo que hizo la persona, para la entrada del agente: definer, con el
+        -- search_path fijo, las dos formas del movil y las fichas.
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_portable_person_activity_v1(text,text,text)')
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+              and position('person_activity: begin' in definition) > 0
+              and position('public._whatsapp_phone_variants(p_whatsapp_phone)' in definition) > 0
+              and position('''PURCHASE_EXPIRED''' in definition) > 0
+        )::int
+        -- Es un entrypoint del bridge: solo service_role.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_portable_person_activity_v1(text,text,text)')
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        2,
+        'portable_person_activity'
 )
 select
     version,

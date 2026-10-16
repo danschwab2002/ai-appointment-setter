@@ -106,6 +106,7 @@ const rows = await db.query(`
       ('claim_portable_conversation_followup_v1(bigint,bigint,bigint,text,text,text,text,text,text,text,bigint,bigint,integer,text,timestamp with time zone)'),
       ('get_portable_recent_payment_failure_v1(text,text,text)'),
       ('admit_portable_hotmart_payment_slip_event_v1(text,text,integer,text,jsonb)'),
+      ('get_portable_person_activity_v1(text,text,text)'),
       ('settle_conversation_followup_v1(text,text,bigint,text,timestamp with time zone)'),
       ('settle_conversation_reactivation(text,text,bigint,text,timestamp with time zone)'),
       ('apply_chatwoot_inbound_opt_out(bigint,bigint,bigint,bigint,text,timestamp with time zone,text)'),
@@ -242,9 +243,10 @@ const result = rows.rows[0];
 // agent input plus the payment slip events (20261012000100) add two, and the
 // filtered review page and the batch closure of the daily feedback
 // (20261015000100) add two, and the three reads of the Automation Expert
-// (20261015000200) add three.
+// (20261015000200) add three, and what the person did for the agent input
+// (20261016000200) adds one.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 127) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 128) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

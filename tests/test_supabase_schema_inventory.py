@@ -437,8 +437,9 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
 
-    assert len(allowlisted) == 127
+    assert len(allowlisted) == 128
     assert "get_daily_feedback_review_page_v2(text, uuid, text[])" in allowlisted
+    assert "get_portable_person_activity_v1(text, text, text)" in allowlisted
     assert "close_daily_feedback_batch_v1(uuid, text, text, uuid, text)" in allowlisted
     assert "get_portable_recent_payment_failure_v1(text, text, text)" in allowlisted
     assert (
@@ -646,15 +647,17 @@ def test_automation_expert_read_fingerprint_checks_the_three_reads() -> None:
     assert compact_fingerprint.endswith(",3,'automation_expert_read'")
 
 
-def test_flow_change_store_fingerprint_is_last_and_never_reads_the_publish_body() -> None:
+def test_flow_change_store_fingerprint_never_reads_the_publish_body() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261016000100 es la ultima del inventario.
-    fingerprint = sql.split("'20261016000100'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261016000100 va justo antes de la de 20261016000200 (lo que
+    # hizo la persona, 2b).
+    fingerprint = sql.split("'20261016000100'", 1)[1].split("'20261016000200'", 1)[0]
+    fingerprint = fingerprint.rsplit("union all", 1)[0]
     executable = re.sub(r"--[^\n]*", "", fingerprint)
     compact_fingerprint = re.sub(r"\s+", "", executable)
 
     assert "'20261016000100_flow_change_store_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",5,'flow_change_store')")
+    assert compact_fingerprint.endswith(",5,'flow_change_store'")
     # Sin rol propio en esta pieza: la fila no nombra el rol de las
     # herramientas del Automation Expert.
     assert "automation_expert_change" not in fingerprint
@@ -695,3 +698,23 @@ def test_flow_change_store_fingerprint_is_last_and_never_reads_the_publish_body(
                 "flow_definition_zone_must_remain_constant",
             ):
                 assert f"position('{invariant}' in definition) > 0" in chunk, invariant
+
+
+def test_person_activity_fingerprint_is_last_and_service_role_only() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261016000200 es la ultima del inventario.
+    fingerprint = sql.split("'20261016000200'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261016000200_portable_person_activity_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",2,'portable_person_activity')")
+    for marker in (
+        "to_regprocedure('public.get_portable_person_activity_v1(text,text,text)')",
+        "andprosecdef",
+        "position('person_activity:begin'indefinition)>0",
+        "position('public._whatsapp_phone_variants(p_whatsapp_phone)'indefinition)>0",
+        "andhas_function_privilege('service_role',oid,'EXECUTE')",
+        "andnothas_function_privilege('anon',oid,'EXECUTE')",
+        "andnothas_function_privilege('authenticated',oid,'EXECUTE')",
+    ):
+        assert marker in compact_fingerprint, marker
