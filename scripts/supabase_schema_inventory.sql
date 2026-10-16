@@ -4515,6 +4515,84 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'automation_expert_read'
+    union all
+    select
+        '20261016000100',
+        '20261016000100_flow_change_store_v1.sql',
+        -- Las cuatro tablas del almacen, con RLS y sin permisos para anon ni
+        -- authenticated. Todos los marcadores son de presencia: antes de
+        -- aplicar, la fila da fingerprint_absent.
+        (
+            select count(*) = 4
+            from pg_class
+            where oid in (
+                to_regclass('public.flow_controls'),
+                to_regclass('public.flow_definitions'),
+                to_regclass('public.flow_change_proposals'),
+                to_regclass('public.flow_change_events')
+            )
+              and relrowsecurity
+              and not has_table_privilege('anon', oid, 'SELECT')
+              and not has_table_privilege('authenticated', oid, 'SELECT')
+        )::int
+        -- La inmutabilidad y el registro: los disparadores por nombre.
+        + (
+            select count(*) = 6
+            from triggers
+            where tgname in (
+                'flow_definitions_immutable', 'flow_definitions_no_truncate',
+                'flow_change_events_append_only', 'flow_change_events_no_truncate',
+                'flow_controls_record_change', 'flow_change_proposals_validate'
+            )
+        )::int
+        -- Los cuatro invariantes del almacen, en la funcion del disparador. Es
+        -- el unico cuerpo que se lee: el de publicar lo reescribe el motor.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.validate_flow_definition_insert()')
+              and position('flow_definition_identity_mismatch' in definition) > 0
+              and position('flow_definition_version_not_next' in definition) > 0
+              and position('flow_definition_unresolved_value' in definition) > 0
+              and position('flow_definition_zone_must_remain_constant' in definition) > 0
+        )::int
+        -- Las siete del operador: existen con su firma, security invoker y
+        -- search_path fijo (con @>: las que esperan locks llevan ademas
+        -- lock_timeout).
+        + (
+            select count(*) = 7
+            from functions
+            where oid in (
+                to_regprocedure('public.operator_register_flow_v1(jsonb,text,text,text,text)'),
+                to_regprocedure('public.operator_save_flow_change_draft_v1(jsonb,uuid,integer,jsonb,jsonb,text,text)'),
+                to_regprocedure('public.operator_record_flow_change_validation_v1(jsonb,uuid,integer,jsonb,jsonb,jsonb,jsonb,text)'),
+                to_regprocedure('public.operator_approve_flow_change_v1(jsonb,uuid,text,text)'),
+                to_regprocedure('public.operator_publish_flow_change_v1(jsonb,uuid,text,jsonb)'),
+                to_regprocedure('public.operator_pause_flow_v1(jsonb,text,text,bigint,text,text)'),
+                to_regprocedure('public.operator_discard_flow_change_v1(jsonb,uuid,text,text)')
+            )
+              and not prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+        )::int
+        -- Ninguna de las siete la ejecuta un rol de la API.
+        + (
+            select count(*) = 7
+            from functions
+            where oid in (
+                to_regprocedure('public.operator_register_flow_v1(jsonb,text,text,text,text)'),
+                to_regprocedure('public.operator_save_flow_change_draft_v1(jsonb,uuid,integer,jsonb,jsonb,text,text)'),
+                to_regprocedure('public.operator_record_flow_change_validation_v1(jsonb,uuid,integer,jsonb,jsonb,jsonb,jsonb,text)'),
+                to_regprocedure('public.operator_approve_flow_change_v1(jsonb,uuid,text,text)'),
+                to_regprocedure('public.operator_publish_flow_change_v1(jsonb,uuid,text,jsonb)'),
+                to_regprocedure('public.operator_pause_flow_v1(jsonb,text,text,bigint,text,text)'),
+                to_regprocedure('public.operator_discard_flow_change_v1(jsonb,uuid,text,text)')
+            )
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+        )::int,
+        5,
+        'flow_change_store'
 )
 select
     version,

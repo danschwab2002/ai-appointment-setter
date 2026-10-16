@@ -1,0 +1,721 @@
+{
+ "_captured": {
+  "origin": "att1-db (stack setter-att1), psql con default_transaction_read_only, solo filas de configuracion",
+  "captured_at": "2026-10-16T13:15:51Z",
+  "redactions": [
+   "pilot_scope_versions: sin channel_account_ref; queda solo channel_account_ref_present (si estaba o no)",
+   "pilot_control_events_control_level: solo las filas sin contact_id, action_id ni attempt_id, y sin esas tres claves"
+  ],
+  "query": "tests/fixtures/flow_store/att1_flow_config_query.sql",
+  "copied_from": "att1-config-20261016-1315.json, anexo del diseno del almacen (2026-10-16), igual a la captura de las 02:55:50Z del mismo dia salvo _captured; escaneado: sin mails ni telefonos"
+ },
+ "pilot_scope_versions": [
+  {
+   "source": "landing",
+   "status": "published",
+   "channel": "whatsapp",
+   "purpose": "cart_recovery",
+   "version": 1,
+   "timezone": "America/Mexico_City",
+   "scope_key": "att1-primer-contacto",
+   "created_at": "2026-10-01T16:34:14.413972+00:00",
+   "offer_code": "gopi6lh7",
+   "policy_key": "att1-primer-contacto-formulario",
+   "tenant_key": "lancemos",
+   "updated_at": "2026-10-01T16:34:14.413973+00:00",
+   "approved_at": "2026-10-01T16:34:10.760886+00:00",
+   "approved_by": "aprovisionar-att1-v1",
+   "published_at": "2026-10-01T16:34:10.760886+00:00",
+   "audience_mode": "consented_intent_in_cohort",
+   "policy_version": 1,
+   "channel_provider": "waba",
+   "chatwoot_inbox_id": 11,
+   "source_event_type": "PRECHECKOUT_FORM_SUBMITTED",
+   "chatwoot_account_id": 2,
+   "external_product_id": "5071808",
+   "max_cohort_contacts": 2,
+   "additional_offer_codes": [
+    "bmaztyhg",
+    "2uafw5bg"
+   ],
+   "channel_account_ref_present": true,
+   "additional_source_event_types": [],
+   "max_outbound_request_starts_total": 3,
+   "max_outbound_request_starts_per_day": 3
+  },
+  {
+   "source": "landing",
+   "status": "published",
+   "channel": "whatsapp",
+   "purpose": "cart_recovery",
+   "version": 2,
+   "timezone": "America/Mexico_City",
+   "scope_key": "att1-primer-contacto",
+   "created_at": "2026-10-09T14:57:56.979894+00:00",
+   "offer_code": "gopi6lh7",
+   "policy_key": "att1-primer-contacto-formulario",
+   "tenant_key": "lancemos",
+   "updated_at": "2026-10-09T14:57:56.979894+00:00",
+   "approved_at": "2026-10-09T14:57:56.966215+00:00",
+   "approved_by": "dan",
+   "published_at": "2026-10-09T14:57:56.966215+00:00",
+   "audience_mode": "consented_intent",
+   "policy_version": 1,
+   "channel_provider": "waba",
+   "chatwoot_inbox_id": 11,
+   "source_event_type": "PRECHECKOUT_FORM_SUBMITTED",
+   "chatwoot_account_id": 2,
+   "external_product_id": "5071808",
+   "max_cohort_contacts": 2,
+   "additional_offer_codes": [
+    "bmaztyhg",
+    "2uafw5bg"
+   ],
+   "channel_account_ref_present": true,
+   "additional_source_event_types": [],
+   "max_outbound_request_starts_total": 150,
+   "max_outbound_request_starts_per_day": 10
+  },
+  {
+   "source": "hotmart",
+   "status": "published",
+   "channel": "whatsapp",
+   "purpose": "cart_recovery",
+   "version": 1,
+   "timezone": "America/Mexico_City",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-09-30T05:04:07.401708+00:00",
+   "offer_code": "gopi6lh7",
+   "policy_key": "att1-recuperacion-un-toque",
+   "tenant_key": "lancemos",
+   "updated_at": "2026-09-30T05:04:07.401708+00:00",
+   "approved_at": "2026-09-30T05:04:07.373528+00:00",
+   "approved_by": "aprovisionar-att1-v1",
+   "published_at": "2026-09-30T05:04:07.373528+00:00",
+   "audience_mode": "manual_cohort",
+   "policy_version": 1,
+   "channel_provider": "waba",
+   "chatwoot_inbox_id": 11,
+   "source_event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+   "chatwoot_account_id": 2,
+   "external_product_id": "5071808",
+   "max_cohort_contacts": 20,
+   "additional_offer_codes": [
+    "bmaztyhg",
+    "2uafw5bg"
+   ],
+   "channel_account_ref_present": true,
+   "additional_source_event_types": [
+    "PURCHASE_CANCELED"
+   ],
+   "max_outbound_request_starts_total": 20,
+   "max_outbound_request_starts_per_day": 20
+  },
+  {
+   "source": "hotmart",
+   "status": "published",
+   "channel": "whatsapp",
+   "purpose": "cart_recovery",
+   "version": 2,
+   "timezone": "America/Mexico_City",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-01T16:34:15.363156+00:00",
+   "offer_code": "gopi6lh7",
+   "policy_key": "att1-recuperacion-un-toque",
+   "tenant_key": "lancemos",
+   "updated_at": "2026-10-01T16:34:15.363156+00:00",
+   "approved_at": "2026-10-01T16:34:15.311987+00:00",
+   "approved_by": "publicar-scope-v2",
+   "published_at": "2026-10-01T16:34:15.311987+00:00",
+   "audience_mode": "consented_intent_in_cohort",
+   "policy_version": 1,
+   "channel_provider": "waba",
+   "chatwoot_inbox_id": 11,
+   "source_event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+   "chatwoot_account_id": 2,
+   "external_product_id": "5071808",
+   "max_cohort_contacts": 2,
+   "additional_offer_codes": [
+    "bmaztyhg",
+    "2uafw5bg"
+   ],
+   "channel_account_ref_present": true,
+   "additional_source_event_types": [
+    "PURCHASE_CANCELED"
+   ],
+   "max_outbound_request_starts_total": 4,
+   "max_outbound_request_starts_per_day": 4
+  },
+  {
+   "source": "hotmart",
+   "status": "published",
+   "channel": "whatsapp",
+   "purpose": "cart_recovery",
+   "version": 3,
+   "timezone": "America/Mexico_City",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-08T22:41:50.39929+00:00",
+   "offer_code": "gopi6lh7",
+   "policy_key": "att1-recuperacion-un-toque",
+   "tenant_key": "lancemos",
+   "updated_at": "2026-10-08T22:41:50.39929+00:00",
+   "approved_at": "2026-10-08T22:41:50.369473+00:00",
+   "approved_by": "dan",
+   "published_at": "2026-10-08T22:41:50.369473+00:00",
+   "audience_mode": "consented_intent",
+   "policy_version": 1,
+   "channel_provider": "waba",
+   "chatwoot_inbox_id": 11,
+   "source_event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+   "chatwoot_account_id": 2,
+   "external_product_id": "5071808",
+   "max_cohort_contacts": 2,
+   "additional_offer_codes": [
+    "bmaztyhg",
+    "2uafw5bg"
+   ],
+   "channel_account_ref_present": true,
+   "additional_source_event_types": [
+    "PURCHASE_CANCELED"
+   ],
+   "max_outbound_request_starts_total": 400,
+   "max_outbound_request_starts_per_day": 40
+  },
+  {
+   "source": "hotmart",
+   "status": "published",
+   "channel": "whatsapp",
+   "purpose": "cart_recovery",
+   "version": 4,
+   "timezone": "America/Mexico_City",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-09T18:50:38.318555+00:00",
+   "offer_code": "gopi6lh7",
+   "policy_key": "att1-recuperacion-un-toque",
+   "tenant_key": "lancemos",
+   "updated_at": "2026-10-09T18:50:38.318555+00:00",
+   "approved_at": "2026-10-09T18:50:38.310292+00:00",
+   "approved_by": "dan",
+   "published_at": "2026-10-09T18:50:38.310292+00:00",
+   "audience_mode": "consented_intent",
+   "policy_version": 1,
+   "channel_provider": "waba",
+   "chatwoot_inbox_id": 11,
+   "source_event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+   "chatwoot_account_id": 2,
+   "external_product_id": "5071808",
+   "max_cohort_contacts": 2,
+   "additional_offer_codes": [
+    "bmaztyhg",
+    "2uafw5bg"
+   ],
+   "channel_account_ref_present": true,
+   "additional_source_event_types": [
+    "PURCHASE_CANCELED"
+   ],
+   "max_outbound_request_starts_total": 1000,
+   "max_outbound_request_starts_per_day": 40
+  },
+  {
+   "source": "hotmart",
+   "status": "published",
+   "channel": "whatsapp",
+   "purpose": "cart_recovery",
+   "version": 5,
+   "timezone": "America/Mexico_City",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-13T00:17:41.719545+00:00",
+   "offer_code": "gopi6lh7",
+   "policy_key": "att1-recuperacion-un-toque",
+   "tenant_key": "lancemos",
+   "updated_at": "2026-10-13T00:17:41.719545+00:00",
+   "approved_at": "2026-10-13T00:17:41.705304+00:00",
+   "approved_by": "dan",
+   "published_at": "2026-10-13T00:17:41.705304+00:00",
+   "audience_mode": "consented_intent",
+   "policy_version": 1,
+   "channel_provider": "waba",
+   "chatwoot_inbox_id": 11,
+   "source_event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+   "chatwoot_account_id": 2,
+   "external_product_id": "5071808",
+   "max_cohort_contacts": 2,
+   "additional_offer_codes": [
+    "bmaztyhg",
+    "2uafw5bg"
+   ],
+   "channel_account_ref_present": true,
+   "additional_source_event_types": [
+    "PURCHASE_CANCELED"
+   ],
+   "max_outbound_request_starts_total": 1000,
+   "max_outbound_request_starts_per_day": 80
+  }
+ ],
+ "followup_policy_versions": [
+  {
+   "steps": [
+    {
+     "mode": "freeform",
+     "step_key": "first_contact"
+    }
+   ],
+   "status": "published",
+   "purpose": "cart_recovery",
+   "version": 1,
+   "timezone": "America/Mexico_City",
+   "created_at": "2026-10-01T16:34:10.760886+00:00",
+   "policy_key": "att1-primer-contacto-formulario",
+   "updated_at": "2026-10-01T16:34:10.760886+00:00",
+   "approved_at": "2026-10-01T16:34:10.760886+00:00",
+   "approved_by": "aprovisionar-att1-v1",
+   "grace_period": "01:00:00",
+   "published_at": "2026-10-01T16:34:10.760886+00:00",
+   "expires_after": "1 day",
+   "business_windows": [
+    {
+     "end": "21:00",
+     "days": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+     ],
+     "start": "09:00"
+    }
+   ],
+   "max_automatic_messages": 1
+  },
+  {
+   "steps": [
+    {
+     "mode": "freeform",
+     "step_key": "first_contact"
+    },
+    {
+     "mode": "freeform",
+     "step_key": "payment_failure_first_contact"
+    }
+   ],
+   "status": "published",
+   "purpose": "cart_recovery",
+   "version": 1,
+   "timezone": "America/Mexico_City",
+   "created_at": "2026-09-30T05:04:07.373528+00:00",
+   "policy_key": "att1-recuperacion-un-toque",
+   "updated_at": "2026-09-30T05:04:07.373528+00:00",
+   "approved_at": "2026-09-30T05:04:07.373528+00:00",
+   "approved_by": "aprovisionar-att1-v1",
+   "grace_period": "00:00:00",
+   "published_at": "2026-09-30T05:04:07.373528+00:00",
+   "expires_after": "1 day",
+   "business_windows": [
+    {
+     "end": "21:00",
+     "days": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+     ],
+     "start": "09:00"
+    }
+   ],
+   "max_automatic_messages": 1
+  }
+ ],
+ "pilot_runtime_controls": [
+  {
+   "scope_key": "att1-primer-contacto",
+   "changed_at": "2026-10-09T18:47:05.833032+00:00",
+   "changed_by": "dan",
+   "created_at": "2026-10-01T16:34:14.524295+00:00",
+   "generation": 6,
+   "updated_at": "2026-10-09T18:47:05.825622+00:00",
+   "change_reason": "la adopcion ya no se frena por un primer contacto reemplazado (20261009000200)",
+   "runtime_state": "armed",
+   "scope_version": 2
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "changed_at": "2026-10-13T00:20:37.507277+00:00",
+   "changed_by": "dan",
+   "created_at": "2026-09-30T05:04:07.530828+00:00",
+   "generation": 14,
+   "updated_at": "2026-10-13T00:20:37.500082+00:00",
+   "change_reason": "carrito con 80 por dia",
+   "runtime_state": "armed",
+   "scope_version": 5
+  }
+ ],
+ "pilot_proactive_contact_caps": null,
+ "pilot_control_events_control_level": [
+  {
+   "id": "778529af-0363-4b45-98ca-b7a3c1b0b1af",
+   "data": {
+    "to_version": 2,
+    "from_version": 1,
+    "runtime_state": "inactive"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-06T18:42:27.024406+00:00",
+   "event_type": "pilot_scope_version_activated",
+   "reason_code": "pilot_scope_version_activated",
+   "scope_version": 2,
+   "runtime_generation": 1
+  },
+  {
+   "id": "83f0ec61-e5f0-4119-9a25-2fa19016824c",
+   "data": {
+    "to_state": "armed"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-06T19:46:13.373045+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 2,
+   "runtime_generation": 3
+  },
+  {
+   "id": "ca3530d9-a315-4864-8f4a-2c03b75b9800",
+   "data": {
+    "to_state": "paused"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-06T20:40:33.756912+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 2,
+   "runtime_generation": 4
+  },
+  {
+   "id": "792b7d81-b937-45fd-b3ff-da8ce8aee806",
+   "data": {
+    "to_state": "armed"
+   },
+   "actor": "dan",
+   "scope_key": "att1-primer-contacto",
+   "created_at": "2026-10-08T14:09:15.12573+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 1,
+   "runtime_generation": 1
+  },
+  {
+   "id": "c7128621-d262-4f9a-90c9-55e2e09f95f7",
+   "data": {
+    "to_state": "paused"
+   },
+   "actor": "dan",
+   "scope_key": "att1-primer-contacto",
+   "created_at": "2026-10-08T14:11:35.995103+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 1,
+   "runtime_generation": 2
+  },
+  {
+   "id": "d5a117f0-e29e-42ce-a6c8-695fe72906e9",
+   "data": {
+    "to_state": "armed"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-08T14:11:42.306361+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 2,
+   "runtime_generation": 5
+  },
+  {
+   "id": "decb802b-7095-4c70-8711-1235ec16c2dc",
+   "data": {
+    "to_state": "paused"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-08T22:41:43.848667+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 2,
+   "runtime_generation": 6
+  },
+  {
+   "id": "972ab022-77f3-4185-a4e5-fc4063d2dc93",
+   "data": {
+    "to_version": 3,
+    "from_version": 2,
+    "runtime_state": "inactive"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-08T22:42:19.893671+00:00",
+   "event_type": "pilot_scope_version_activated",
+   "reason_code": "pilot_scope_version_activated",
+   "scope_version": 3,
+   "runtime_generation": 7
+  },
+  {
+   "id": "c6cfd6fb-021c-429a-b07b-ea9270cf3e1f",
+   "data": {
+    "to_state": "armed"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-08T22:51:47.638382+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 3,
+   "runtime_generation": 8
+  },
+  {
+   "id": "a52b8e62-176a-4881-bc57-320f2484cada",
+   "data": {
+    "to_version": 2,
+    "from_version": 1,
+    "runtime_state": "inactive"
+   },
+   "actor": "dan",
+   "scope_key": "att1-primer-contacto",
+   "created_at": "2026-10-09T14:58:21.131019+00:00",
+   "event_type": "pilot_scope_version_activated",
+   "reason_code": "pilot_scope_version_activated",
+   "scope_version": 2,
+   "runtime_generation": 3
+  },
+  {
+   "id": "42fda3e4-51a4-486a-bcc3-91da259161a7",
+   "data": {
+    "to_state": "armed"
+   },
+   "actor": "dan",
+   "scope_key": "att1-primer-contacto",
+   "created_at": "2026-10-09T15:06:44.45426+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 2,
+   "runtime_generation": 4
+  },
+  {
+   "id": "1583baa3-a2cd-450b-9e97-5c15acbd3d08",
+   "data": {
+    "to_state": "paused"
+   },
+   "actor": "dan",
+   "scope_key": "att1-primer-contacto",
+   "created_at": "2026-10-09T16:56:00.74414+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 2,
+   "runtime_generation": 5
+  },
+  {
+   "id": "158d57e5-110f-4ae9-8df2-2dbbc9abbc6d",
+   "data": {
+    "to_state": "armed"
+   },
+   "actor": "dan",
+   "scope_key": "att1-primer-contacto",
+   "created_at": "2026-10-09T18:47:05.836065+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 2,
+   "runtime_generation": 6
+  },
+  {
+   "id": "cfdb220c-ec2e-4c04-bbed-acdb4adcb2b4",
+   "data": {
+    "to_state": "paused"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-09T18:53:31.570724+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 3,
+   "runtime_generation": 9
+  },
+  {
+   "id": "23cb638a-c708-47a0-af08-8a9c2a6e07db",
+   "data": {
+    "to_version": 4,
+    "from_version": 3,
+    "runtime_state": "inactive"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-09T18:53:32.649507+00:00",
+   "event_type": "pilot_scope_version_activated",
+   "reason_code": "pilot_scope_version_activated",
+   "scope_version": 4,
+   "runtime_generation": 10
+  },
+  {
+   "id": "95ff0a60-5c16-4cd7-8554-1223b7600f86",
+   "data": {
+    "to_state": "armed"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-09T18:53:34.094666+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 4,
+   "runtime_generation": 11
+  },
+  {
+   "id": "cada83a6-78da-4ba6-a0bc-39afa316eba8",
+   "data": {
+    "to_state": "paused"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-13T00:20:23.133037+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 4,
+   "runtime_generation": 12
+  },
+  {
+   "id": "43778089-2058-4d04-8160-c586bc2d6ef5",
+   "data": {
+    "to_version": 5,
+    "from_version": 4,
+    "runtime_state": "inactive"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-13T00:20:27.855185+00:00",
+   "event_type": "pilot_scope_version_activated",
+   "reason_code": "pilot_scope_version_activated",
+   "scope_version": 5,
+   "runtime_generation": 13
+  },
+  {
+   "id": "d9ab798a-246d-4548-99ec-8df07e95a00b",
+   "data": {
+    "to_state": "armed"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-13T00:20:37.508913+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 5,
+   "runtime_generation": 14
+  }
+ ],
+ "pilot_control_events_counts": [
+  {
+   "scope_key": "att1-primer-contacto",
+   "scope_version": 1,
+   "event_type": "pilot_runtime_state_changed",
+   "n": 2
+  },
+  {
+   "scope_key": "att1-primer-contacto",
+   "scope_version": 2,
+   "event_type": "pilot_outbound_request_authorized",
+   "n": 15
+  },
+  {
+   "scope_key": "att1-primer-contacto",
+   "scope_version": 2,
+   "event_type": "pilot_runtime_state_changed",
+   "n": 3
+  },
+  {
+   "scope_key": "att1-primer-contacto",
+   "scope_version": 2,
+   "event_type": "pilot_scope_version_activated",
+   "n": 1
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 2,
+   "event_type": "pilot_cohort_member_enrolled",
+   "n": 1
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 2,
+   "event_type": "pilot_outbound_request_authorized",
+   "n": 2
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 2,
+   "event_type": "pilot_runtime_state_changed",
+   "n": 4
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 2,
+   "event_type": "pilot_scope_version_activated",
+   "n": 1
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 3,
+   "event_type": "pilot_outbound_request_authorized",
+   "n": 22
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 3,
+   "event_type": "pilot_runtime_state_changed",
+   "n": 2
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 3,
+   "event_type": "pilot_scope_version_activated",
+   "n": 1
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 4,
+   "event_type": "pilot_outbound_request_authorized",
+   "n": 102
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 4,
+   "event_type": "pilot_runtime_state_changed",
+   "n": 2
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 4,
+   "event_type": "pilot_scope_version_activated",
+   "n": 1
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 5,
+   "event_type": "pilot_outbound_request_authorized",
+   "n": 66
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 5,
+   "event_type": "pilot_runtime_state_changed",
+   "n": 1
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 5,
+   "event_type": "pilot_scope_version_activated",
+   "n": 1
+  }
+ ]
+}

@@ -94,3 +94,13 @@ jobs:
         run: >-
           createdb -h 127.0.0.1 -p 5432 portable_inbound_adoption_ci
           && uv run python tests/sql/followup_engine/real_postgres_portable_inbound_adoption.py
+      - name: Verify flow store races on PostgreSQL
+        env:
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          DATABASE_URL: postgresql://postgres@127.0.0.1:5432/flow_store_ci
+          PSQL: /usr/bin/psql
+          ALLOW_DISPOSABLE_DATABASE: flow-store
+        run: >-
+          createdb -h 127.0.0.1 -p 5432 flow_store_ci
+          && uv run python tests/sql/followup_engine/real_postgres_flow_store.py
