@@ -1,0 +1,10 @@
+{
+  "_capture": {
+    "origen": "Google Chrome 155.0.8059.80 para macOS (el navegador instalado, no el de puppeteer), en modo headless con puppeteer, 2026-10-16 a las ~15:36Z. Un formulario local con los mismos campos que la pagina de la revision diaria (csrf_token, command_id e item_id ocultos, verbatim_feedback como textarea y decision en el boton Guardar correccion). El comentario se tipeo con el teclado, con un Enter entre la frase y el link, y se guardo el cuerpo crudo del POST que llego al servidor.",
+    "caso": "ATT1, 2026-10-16T01:19Z: Mariana quiso corregir la conversacion 198 del lote del 2026-10-14 escribiendo el link del programa en otro renglon, y la pagina contesto 422 Decision invalida. El navegador manda el salto de linea de un textarea como CRLF (%0D%0A) y el handler rechazaba el \\r como caracter de control. Lo reescribio en una sola linea y entro.",
+    "anonimizacion": "los tres campos ocultos son marcadores (CSRF, CMD, ITEM) que el test reemplaza por los de su sesion; el producto del link de Hotmart es sintetico (X00000000Y) y la oferta es la publica de ATT1.",
+    "uso": "tests/test_daily_feedback_service.py manda el cuerpo tal cual, cambiando solo los marcadores."
+  },
+  "content_type": "application/x-www-form-urlencoded",
+  "body": "csrf_token=CSRF&command_id=CMD&item_id=ITEM&verbatim_feedback=falt%C3%B3+compartir+el+enlace+que+es+este%3A%0D%0Ahttps%3A%2F%2Fpay.hotmart.com%2FX00000000Y%3Foff%3D2uafw5bg&decision=correct_with_feedback"
+}

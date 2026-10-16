@@ -238,6 +238,187 @@ def test_refusal_entries_need_what_to_do() -> None:
         CommercialKnowledge.from_mapping(payload)
 
 
-def test_rendered_limit_stays_under_the_soul_truncation_of_hermes() -> None:
-    # Hermes deja 20.000 caracteres del SOUL; en bytes el bloque nunca pasa eso.
-    assert MAX_RENDERED_BYTES <= 20_000
+def test_rendered_limit_is_a_cost_guard_that_fits_two_products() -> None:
+    # Hasta la 1.8.0 eran 20.000 bytes, porque se suponia que Hermes cortaba el
+    # system del pedido como corta el SOUL. El 2026-10-16 se leyo en la imagen de
+    # produccion (v2026.8.31) que no lo corta. El tope es por costo y tiene que
+    # alcanzar para dos productos de ATT1: unos 26 KB, estimados sobre el v7.
+    assert 26_000 < MAX_RENDERED_BYTES <= 32_000
+
+
+# La forma de un solo producto no cambia: el v7 de ATT1, el que corre desde el
+# 2026-10-15 20:07:28Z, da el mismo hash que su /ready (setter-instancia-att1 48d77f4).
+ATT1_V7 = Path(__file__).parent / "fixtures" / "commercial_knowledge" / "att1-knowledge-v7.toml"
+ATT1_V7_SHA256 = "ac5cc64fbcadb1b1602b8d76e524d74b1bcc86425e44c9b56b48e77ad420d565"
+
+
+def test_single_product_form_keeps_the_hash_that_runs_in_att1() -> None:
+    knowledge = CommercialKnowledge.from_toml_file(ATT1_V7)
+
+    assert knowledge.by_product is False
+    assert len(knowledge.render().encode("utf-8")) == 19_992
+    assert knowledge.rendered_sha256 == ATT1_V7_SHA256
+
+
+# La forma de varios productos (2026-10-16, decision de Dan: el agente recibe todo
+# el conocimiento de la aliada, lo comun una vez y una seccion por producto, y
+# deduce de que producto se habla). El segundo producto es inventado.
+def _by_product(payload: dict, *more: dict) -> dict:
+    payload = _approved(payload)
+    first = {"clave": "att1", "oferta": payload.pop("oferta"), "contenido": payload.pop("contenido")}
+    payload["productos"] = [first, *more]
+    return payload
+
+
+def _second_product() -> dict:
+    return {
+        "clave": "att2",
+        "oferta": {
+            "nombre": "Producto de prueba",
+            "descripcion": "Un segundo producto, inventado para la prueba.",
+            "precio": "27",
+            "moneda": "USD",
+        },
+        "contenido": {"componentes": ["Una guía de prueba."]},
+        "no_confirmado": {"items": ["cuántas guías trae"]},
+        "promesas_prohibidas": {"items": ["Precios distintos de USD 27."]},
+        "faq": [
+            {"pregunta": "¿Cuánto cuesta?", "respuesta": "Cuesta USD 27.", "fuente": "prueba", "vigencia": "2026-10-16"}
+        ],
+    }
+
+
+def test_by_product_form_puts_the_common_part_first_and_one_section_per_product() -> None:
+    knowledge = CommercialKnowledge.from_mapping(_by_product(_payload(), _second_product()))
+    rendered = knowledge.render()
+    first_name = knowledge.products[0].offer_name
+
+    assert knowledge.by_product is True
+    assert [product.key for product in knowledge.products] == ["att1", "att2"]
+    assert [line for line in rendered.splitlines() if line.startswith("# ")] == [
+        f"# Conocimiento aprobado: {knowledge.brand}",
+        f"# Producto: {first_name}",
+        "# Producto: Producto de prueba",
+    ]
+    common, first, second = rendered.split("\n# Producto: ")
+    assert f"sus 2 productos ({first_name} y Producto de prueba)" in common
+    assert "## Oferta" not in common
+    assert "## No confirmado" in common
+    assert "## Limites sensibles" in common
+    assert "## Oferta" in first and "## Contenido del programa" in first
+    assert "- Precio: USD 27." in second
+    assert "- cuántas guías trae" in second and "cuántas guías trae" not in first
+    assert "- Precios distintos de USD 27." in second
+    assert "- P: ¿Cuánto cuesta?\n  R: Cuesta USD 27." in second
+
+
+def test_by_product_form_keeps_the_section_names_the_common_soul_reads() -> None:
+    knowledge = CommercialKnowledge.from_mapping(_by_product(_with_payments(_payload())))
+    rendered = knowledge.render()
+    headings = [line for line in rendered.splitlines() if line.startswith("## ")]
+
+    assert f"la seccion de su producto, {knowledge.products[0].offer_name}," in rendered
+    # El SOUL comun nombra estas secciones (profiles/agente-comercial-comun/SOUL.md).
+    for heading in (
+        "## Voz",
+        "## Pagos",
+        "## No confirmado",
+        "## Promesas prohibidas",
+        "## Oferta",
+        "## Contenido del programa",
+        "## Preguntas frecuentes aprobadas",
+    ):
+        assert heading in headings
+    assert rendered.count("## Pagos") == 1
+    assert rendered.index("## Pagos") < rendered.index("# Producto:")
+
+
+def test_by_product_form_renders_the_common_statements_in_the_common_part() -> None:
+    payload = _by_product(_payload())
+    payload["se_puede_decir"] = {"items": ["La doctora es médica cirujana."]}
+    rendered = CommercialKnowledge.from_mapping(payload).render()
+
+    common = rendered.split("\n# Producto: ")[0]
+    assert "## Lo que si se puede decir\n\n- La doctora es médica cirujana." in common
+
+
+def test_by_product_render_is_deterministic() -> None:
+    first = CommercialKnowledge.from_mapping(_by_product(_payload(), _second_product()))
+    second = CommercialKnowledge.from_mapping(_by_product(_payload(), _second_product()))
+
+    assert first.render() == second.render()
+    assert first.rendered_sha256 == second.rendered_sha256
+
+
+def test_single_product_form_refuses_common_statements_on_top() -> None:
+    payload = _approved(_payload())
+    payload["se_puede_decir"] = {"items": ["x"]}
+
+    with pytest.raises(KnowledgeError, match="se_puede_decir"):
+        CommercialKnowledge.from_mapping(payload)
+
+
+def test_by_product_form_refuses_an_offer_on_top() -> None:
+    payload = _by_product(_payload())
+    payload["oferta"] = payload["productos"][0]["oferta"]
+
+    with pytest.raises(KnowledgeError, match="adentro de cada producto"):
+        CommercialKnowledge.from_mapping(payload)
+
+
+def test_by_product_form_still_requires_the_common_guardrails() -> None:
+    payload = _by_product(_payload())
+    del payload["no_confirmado"]
+
+    with pytest.raises(KnowledgeError, match="faltan no_confirmado"):
+        CommercialKnowledge.from_mapping(payload)
+
+
+def test_products_cannot_be_empty() -> None:
+    payload = _by_product(_payload())
+    payload["productos"] = []
+
+    with pytest.raises(KnowledgeError, match="lista no vacia"):
+        CommercialKnowledge.from_mapping(payload)
+
+
+@pytest.mark.parametrize("key", ["ATT1", "att 1", "-att1", ""])
+def test_product_key_is_a_lowercase_slug(key) -> None:
+    payload = _by_product(_payload())
+    payload["productos"][0]["clave"] = key
+
+    with pytest.raises(KnowledgeError, match=r"productos\[0\]\.clave"):
+        CommercialKnowledge.from_mapping(payload)
+
+
+def test_two_products_cannot_share_a_key() -> None:
+    second = _second_product()
+    second["clave"] = "att1"
+
+    with pytest.raises(KnowledgeError, match="ya la usa otro producto"):
+        CommercialKnowledge.from_mapping(_by_product(_payload(), second))
+
+
+def test_two_products_cannot_share_a_name() -> None:
+    payload = _by_product(_payload(), _second_product())
+    payload["productos"][1]["oferta"]["nombre"] = payload["productos"][0]["oferta"]["nombre"]
+
+    with pytest.raises(KnowledgeError, match="oferta.nombre ya lo usa otro producto"):
+        CommercialKnowledge.from_mapping(payload)
+
+
+def test_unknown_product_key_is_rejected() -> None:
+    second = _second_product()
+    second["bonos"] = {"items": ["x"]}
+
+    with pytest.raises(KnowledgeError, match="bonos"):
+        CommercialKnowledge.from_mapping(_by_product(_payload(), second))
+
+
+@pytest.mark.parametrize("section", ["no_confirmado", "promesas_prohibidas"])
+def test_own_guardrail_lists_cannot_be_empty(section) -> None:
+    second = _second_product()
+    second[section]["items"] = []
+
+    with pytest.raises(KnowledgeError, match="vacia"):
+        CommercialKnowledge.from_mapping(_by_product(_payload(), second))
