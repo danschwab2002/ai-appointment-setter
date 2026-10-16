@@ -19,7 +19,7 @@ from dataclasses import dataclass, fields as dataclass_fields
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import MappingProxyType
-from typing import AsyncGenerator, Awaitable, Callable, Protocol
+from typing import AsyncGenerator, Awaitable, Callable, Mapping, Protocol
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -66,7 +66,7 @@ from bridge.commercial_knowledge import CommercialKnowledge
 from bridge.instance_manifest import GHL_RISK_GATED_FLOWS, InstanceManifest
 from bridge import product_routes
 from bridge.product_label import ProductLabeler
-from bridge.product_routes import ProductRoutes
+from bridge.product_routes import HotmartUnrouted, ProductRoute, ProductRoutes
 from bridge.checkout_delivery import CheckoutDeliveryError, deliver_checkout_issuance_v2
 from bridge.filtering import EventDecision, classify_chatwoot_event
 from bridge.agent_provenance import AgentTurn, CONTEXT_BUILDER_VERSION
@@ -85,6 +85,7 @@ from bridge.hotmart import (
 )
 from bridge.inbound_handoff import request_handoff_for_inbound_proposal
 from bridge.ghl_precheckout_adapter import (
+    FORM_LANDING_ACTIVE,
     GhlAdapterRejection,
     ghl_body_token,
     parse_ghl_body,
@@ -2186,6 +2187,11 @@ _FLAG_REQUIRED_FLOW = MappingProxyType({
 _OUTBOUND_FLOWS = ("precheckout", "carrito", "pago_fallido", "reactivacion", "descuento")
 
 
+# Los rechazos del adaptador de GHL que dependen del producto con que se
+# tradujo: con otro producto, la misma URL puede ser de una landing suya.
+_GHL_LANDING_REJECTIONS = frozenset({"landing_unknown", "landing_ambiguous"})
+
+
 def _validate_instance_manifest_gates(settings: Settings) -> None:
     manifest = settings.instance_manifest
     assert manifest is not None
@@ -4057,6 +4063,7 @@ def create_app(
                 settings.portable_hotmart_payment_failure_enabled
             ),
             pilot_boundary=pilot_boundary,
+            product_routes=commercial_ally_routes,
             commercial_ally_config=(
                 settings.commercial_ally_config
                 if portable_dynamic_recipient
@@ -7231,6 +7238,7 @@ def create_app(
     async def _admit_portable_lead(
         submission: LeadPrecheckoutSubmission,
         raw_payload: dict[str, object],
+        route: ProductRoute,
     ) -> PrecheckoutAdmissionResult:
         # La admision portable de lead.precheckout, la misma para /webhooks/lead
         # con manifiesto y para el adaptador de GHL. Apagado el primer contacto,
@@ -7239,9 +7247,27 @@ def create_app(
         # si el plan no procede, y la respuesta HTTP es la misma en los dos
         # casos.
         assert shared_supabase is not None
+        if not route.principal:
+            # Un producto que no es el principal todavia no tiene primer
+            # contacto (paso 2c-2): el envio se admite en su funnel, que es lo
+            # que lee la historia de la persona, y no se planifica nada.
+            admission = await shared_supabase.admit_portable_observed_lead_precheckout(
+                config=route.config,
+                external_submission_id=submission.external_submission_id,
+                raw_payload=raw_payload,
+                canonical_payload=submission.as_canonical_payload(),
+            )
+            logger.info(
+                "portable_precheckout_admitted_without_flows product=%s admission=%s "
+                "submission_id=%s",
+                route.key,
+                admission.outcome,
+                admission.submission_id,
+            )
+            return admission
         if not settings.portable_precheckout_first_contact_enabled:
             return await shared_supabase.admit_portable_observed_lead_precheckout(
-                config=settings.commercial_ally_config,
+                config=route.config,
                 external_submission_id=submission.external_submission_id,
                 raw_payload=raw_payload,
                 canonical_payload=submission.as_canonical_payload(),
@@ -7250,7 +7276,7 @@ def create_app(
         assert settings.pilot_precheckout_scope_key is not None
         assert settings.pilot_precheckout_scope_version is not None
         admission = await shared_supabase.admit_and_plan_portable_lead_precheckout(
-            config=settings.commercial_ally_config,
+            config=route.config,
             external_submission_id=submission.external_submission_id,
             raw_payload=raw_payload,
             canonical_payload=submission.as_canonical_payload(),
@@ -7320,9 +7346,19 @@ def create_app(
             payload = json.loads(raw_body)
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise HTTPException(status_code=400, detail="invalid_json") from exc
+        # El producto del envio, por su landing (paso 2c-2). Con un solo
+        # producto, o una landing que no es de ninguno, el principal, y el
+        # parser rechaza como antes.
+        lead_route = commercial_ally_routes.principal
+        source = payload.get("source") if isinstance(payload, dict) else None
+        if len(commercial_ally_routes) > 1 and isinstance(source, dict):
+            lead_route = (
+                commercial_ally_routes.for_landing(source.get("site"), source.get("landing_id"))
+                or lead_route
+            )
         submission = parse_lead_precheckout(
             payload,
-            config=settings.commercial_ally_config,
+            config=lead_route.config,
         )
         if submission is None:
             raise HTTPException(status_code=400, detail="invalid_lead_precheckout_payload")
@@ -7340,7 +7376,7 @@ def create_app(
             # oferta) de cualquier landing declarada en el binding. La por
             # defecto es la de LEAD_PRECHECKOUT_* (create_app exige que
             # coincidan); las demas salen de additional_offer_landings.
-            offer_landing = settings.commercial_ally_config.offer_landing(
+            offer_landing = lead_route.config.offer_landing(
                 submission.site, submission.landing_id
             )
             outside_scope = (
@@ -7359,7 +7395,7 @@ def create_app(
         assert isinstance(payload, dict)
         try:
             admission = (
-                await _admit_portable_lead(submission, payload)
+                await _admit_portable_lead(submission, payload, lead_route)
                 if explicit_manifest_runtime
                 else await shared_supabase.admit_observed_lead_precheckout(
                     external_submission_id=submission.external_submission_id,
@@ -7392,6 +7428,44 @@ def create_app(
             raise HTTPException(
                 status_code=exc.status_code, detail=f"ghl_{exc.reason}"
             ) from None
+
+    def _ghl_candidate_routes(
+        body: dict[str, object], form_landings: object
+    ) -> tuple[ProductRoute, ...]:
+        # En que orden se prueba cada producto para un envio de GHL (paso
+        # 2c-2). En modo activo, el formulario con landing declarada va al
+        # producto de esa landing; si no, la URL, probando cada producto con el
+        # principal primero. Con un solo producto, solo el principal.
+        routes = tuple(commercial_ally_routes)
+        if (
+            len(routes) == 1
+            or form_landings is None
+            or getattr(form_landings, "mode", None) != FORM_LANDING_ACTIVE
+        ):
+            return routes
+        source = body.get("attributionSource")
+        form_id = source.get("mediumId") if isinstance(source, dict) else None
+        declared = (
+            form_landings.landing_by_form.get(form_id)  # type: ignore[attr-defined]
+            if isinstance(form_id, str)
+            else None
+        )
+        owner = (
+            commercial_ally_routes.owner_of_landing_id(declared)
+            if declared is not None
+            else None
+        )
+        return (owner,) if owner is not None else routes
+
+    def _landing_by_form_of(
+        route: ProductRoute, landing_by_form: Mapping[str, str] | None
+    ) -> Mapping[str, str] | None:
+        # landing_por_formulario de toda la instancia, reducido a las landings
+        # de un producto. Con uno solo, entero, como antes.
+        if landing_by_form is None or len(commercial_ally_routes) == 1:
+            return landing_by_form
+        own = {landing.landing_id for landing in route.config.offer_landings}
+        return {form: landing for form, landing in landing_by_form.items() if landing in own}
 
     async def _admit_ghl_form_submission(
         request: Request,
@@ -7442,20 +7516,36 @@ def create_app(
 
         trace.note_form(body)
         form_landings = manifest.ghl_form_landings
-        try:
-            translation = translate_ghl_form_submission(
-                body,
-                config=settings.commercial_ally_config,
-                allowed_forms=frozenset(manifest.ghl_form_ids),
-                now=datetime.now(UTC),
-                landing_by_form=(
-                    form_landings.landing_by_form if form_landings is not None else None
-                ),
-                form_landing_mode=(
-                    form_landings.mode if form_landings is not None else None
-                ),
-            )
-        except GhlAdapterRejection as exc:
+        landing_by_form = form_landings.landing_by_form if form_landings is not None else None
+        translation = None
+        ghl_route = commercial_ally_routes.principal
+        rejection: GhlAdapterRejection | None = None
+        for candidate in _ghl_candidate_routes(body, form_landings):
+            try:
+                translation = translate_ghl_form_submission(
+                    body,
+                    config=candidate.config,
+                    allowed_forms=frozenset(manifest.ghl_form_ids),
+                    now=datetime.now(UTC),
+                    landing_by_form=_landing_by_form_of(candidate, landing_by_form),
+                    form_landing_mode=(
+                        form_landings.mode if form_landings is not None else None
+                    ),
+                )
+            except GhlAdapterRejection as exc:
+                if exc.reason not in _GHL_LANDING_REJECTIONS:
+                    # No es la landing: es igual para cualquier producto.
+                    rejection = exc
+                    break
+                # La landing no es de este producto: se prueba el siguiente, y
+                # si no es de ninguno queda el rechazo del primero.
+                rejection = rejection or exc
+                continue
+            ghl_route = candidate
+            break
+        if translation is None:
+            assert rejection is not None
+            exc = rejection
             if exc.phone_region is not None:
                 trace.phone_region = exc.phone_region
             if exc.form_landing is not None:
@@ -7472,7 +7562,7 @@ def create_app(
         trace.has_fbclid = str(translation.has_fbclid).lower()
 
         submission = parse_lead_precheckout(
-            translation.event, config=settings.commercial_ally_config
+            translation.event, config=ghl_route.config
         )
         if submission is None:
             # Un error del traductor: reintentar no lo arregla, asi que no es
@@ -7488,7 +7578,7 @@ def create_app(
         try:
             # Siempre la admision portable, con el evento traducido: el cuerpo
             # de GHL no se guarda.
-            admission = await _admit_portable_lead(submission, translation.event)
+            admission = await _admit_portable_lead(submission, translation.event, ghl_route)
         except SupabaseError as exc:
             raise HTTPException(
                 status_code=503, detail="ghl_precheckout_persist_unavailable"
@@ -8314,13 +8404,31 @@ def create_app(
             raise HTTPException(
                 status_code=503, detail="supabase_not_configured"
             )
+        # El producto del evento, por producto y oferta (paso 2c-2). Con un solo
+        # producto es siempre el principal y todo sigue como antes.
+        hotmart_route = commercial_ally_routes.for_hotmart(payload)
+        if isinstance(hotmart_route, HotmartUnrouted):
+            # Un evento que no es de ningun producto de la instancia. Antes salia
+            # con 200 y sin rastro; ahora deja la linea (sin datos personales).
+            logger.info(
+                "hotmart_event_unrouted event_id=%s event_type=%s product_id=%s "
+                "offer=%s reason=%s",
+                event_id,
+                event_type,
+                hotmart_route.product_id,
+                hotmart_route.offer_code or "-",
+                hotmart_route.reason,
+            )
+            response.status_code = status.HTTP_200_OK
+            return {"status": "ignored", "reason": "hotmart_event_unrouted"}
+        event_config = hotmart_route.config
         if event_type in PAYMENT_SLIP_EVENT_TYPES:
             # La ficha se guarda tal cual llego y no dispara nada (1.6.0). Solo
             # llega aca con el pago fallido portable: sin el, la clasificacion
             # la deja como antes, unsupported_event_type.
             try:
                 slip = await shared_supabase.admit_portable_hotmart_payment_slip_event(
-                    config=settings.commercial_ally_config,
+                    config=event_config,
                     external_event_id=event_id,
                     payload=payload,
                 )
@@ -8362,7 +8470,7 @@ def create_app(
                     }
                 parsed_failure = parse_hotmart_payment_failure_payload(
                     payload,
-                    config=settings.commercial_ally_config,
+                    config=event_config,
                 )
                 if parsed_failure is None:
                     # Igual que el carrito y la compra: un evento que este runtime no
@@ -8377,7 +8485,7 @@ def create_app(
                 if settings.portable_hotmart_payment_failure_enabled:
                     portable_failure_admission = (
                         await shared_supabase.admit_portable_hotmart_payment_failure(
-                            config=settings.commercial_ally_config,
+                            config=event_config,
                             external_event_id=event_id,
                             payload=payload,
                             normalized_email=parsed_failure.buyer_email,
@@ -8485,7 +8593,7 @@ def create_app(
                 parsed_purchase = parse_hotmart_purchase_payload(
                     payload,
                     config=(
-                        settings.commercial_ally_config
+                        event_config
                         if settings.portable_hotmart_purchase_stop_enabled
                         else None
                     ),
@@ -8537,7 +8645,7 @@ def create_app(
                     }
                 purchase_admission = (
                     await shared_supabase.admit_portable_hotmart_purchase_approved(
-                        config=settings.commercial_ally_config,
+                        config=event_config,
                         external_event_id=event_id,
                         payload=payload,
                         normalized_email=parsed_purchase.buyer_email,
@@ -8570,7 +8678,7 @@ def create_app(
             parsed_abandonment = parse_hotmart_payload(
                 payload,
                 config=(
-                    settings.commercial_ally_config
+                    event_config
                     if settings.portable_hotmart_recovery_enabled
                     else None
                 ),
@@ -8583,7 +8691,7 @@ def create_app(
                 }
             abandonment_admission = (
                 await shared_supabase.admit_portable_hotmart_cart_abandonment(
-                    config=settings.commercial_ally_config,
+                    config=event_config,
                     external_event_id=event_id,
                     payload=payload,
                     normalized_email=parsed_abandonment.buyer_email,
