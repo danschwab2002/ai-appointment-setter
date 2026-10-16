@@ -1,7 +1,7 @@
 """Lo que decide hoy el despachador, con dobles: la vara del motor (T1, D1 a D5).
 
 Diseno del motor de flujos (pieza 2 de la 1b), §3.2 («Lo que no se genera en
-PGlite: el despachador») y §5.3. La cadena de PGlite genera los 24 casos de hoy
+PGlite: el despachador») y §5.3. La cadena de PGlite genera los 25 casos de hoy
 (``legacy_recovery_cases.json``), pero lo que decide ``DurableDispatcher`` vive
 en Python y no lo ve ninguna base. Estas pruebas no prueban el motor: fijan lo
 que hace hoy el despachador, que el motor reusa entero (la capa ``despacho`` de

@@ -206,6 +206,22 @@ INJECTIONS = [
      "reevaluaciones[0].data.note", "clave fuera de la lista de datos_de_la_reevaluacion"),
     ("texto libre como motivo", _set(("eventos", 0, "processing_error"), "Lo llame al 55 1234 5678"),
      "eventos[0].processing_error", "no tiene la forma motivo"),
+    # Los bordes de la primera red (§5.3: ningun texto con 9 digitos seguidos).
+    # Nueve cifras: un movil de Chile, Espana o Peru, o uno local cortado.
+    ("telefono de 9 cifras", _set(("eventos", 0, "offer_code"), "912345678"),
+     "eventos[0].offer_code", "tiene nueve o mas digitos seguidos"),
+    ("telefono con guiones en un texto de la consulta", _set(("_captured", "redactions", 0), "55-1234-5678"),
+     "_captured.redactions[0]", "tiene nueve o mas digitos seguidos"),
+    # En minuscula y con espacios: lo frena el espacio, no la mayuscula.
+    ("texto libre en minuscula como motivo", _set(("eventos", 0, "processing_error"), "lo llame ayer"),
+     "eventos[0].processing_error", "no tiene la forma motivo"),
+    # Un nombre con tilde en un texto de la consulta: solo ASCII imprimible.
+    ("nombre con tilde en un texto de la consulta", _set(("_captured", "redactions", 0), "Ramón"),
+     "_captured.redactions[0]", "no tiene la forma texto_de_la_consulta"),
+    ("un nulo en una lista de claves", _set(("contactos", 0, "person_keys"), [None]),
+     "contactos[0].person_keys[0]", "un nulo dentro de una lista"),
+    ("una hora con forma que no existe", _set(("eventos", 0, "received_at"), "2026-02-30T10:00:00.000000Z"),
+     "eventos[0].received_at", "hora_utc no es una hora que exista"),
     ("una seccion que no existe", _set(("secuencias",), []), "secuencias", "clave fuera de la lista de captura"),
 ]
 

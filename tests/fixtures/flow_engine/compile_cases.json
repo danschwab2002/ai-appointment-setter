@@ -1443,6 +1443,35 @@
         "fixed_zone": null
       },
       "error": "compile_policy_vence_invalid"
+    },
+    {
+      "id": "pasos_y_vence_invalidos",
+      "que": "Un paso que la v1 no ejecuta y un vence a_decidir: gana el paso, que se mira antes.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "conversar": "x"
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "a_decidir"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "error": "compile_policy_step_not_supported:conversar"
     }
   ]
 }

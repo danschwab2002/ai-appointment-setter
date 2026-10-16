@@ -13,9 +13,12 @@ el primer instante en que la puerta dice «mandar» con los hechos observados y
 R es el ``request_started_at`` observado. Nunca antes (R >= E - 1 s, siempre:
 el segundo es el reloj de Hotmart contra el de la base, porque el ancla es el
 ``creation_date`` del evento) y a lo sumo ``TOLERANCE`` despues, salvo un hecho
-observado que lo explique (un intento anterior que fallo antes del pedido, un
-incierto o un rechazo de Meta). La puerta que modela ``eligible_at`` es la del
-motor, no la del legado:
+observado que lo explique: un intento anterior que fallo antes del pedido, un
+incierto o un rechazo de Meta, o un arranque rechazado (un intento que quedo
+``reserved`` sin resultado). El hecho explica solo su propia demora: R tiene que
+quedar a lo sumo ``TOLERANCE`` despues del reintento que pidio (o, con un
+arranque rechazado, del vencimiento de su lease, ``LEASE``). La puerta que
+modela ``eligible_at`` es la del motor, no la del legado:
 
 * la franja y la gracia, de la politica del caso
   (``flow_schedule.franja_of_policy``);
@@ -44,15 +47,28 @@ escribe ``le_gana_a`` (flow-definition-v1.md, «Como conviven los flujos»):
   de compra, aunque haya llegado desde otro telefono o sin telefono (la
   intencion queda clasificada, ``:297-299``).
 
-Se prueba primero la persona y despues la intencion (``MATCH_ORDER``).
+Se prueba primero la persona y despues la intencion (``MATCH_ORDER``). El
+reparto por ruta que no depende de ese orden (las dos, solo persona, solo
+intencion) va en ``ParityReport.supersessions_by_routes``.
+
+**Llego al flujo** (§5.2): el disparo tiene caso, o la planificacion lo rechazo
+(``pilot_scope_rejected:*``, ``pilot_case_binding_conflict``,
+``payment_failure_correlation_unresolved``). ``create_recovery_case_failed`` es
+del adaptador, salvo cuando la persona del disparo tenia un caso del producto en
+curso: el plan intento abrir otra secuencia en ese caso y la base contesto
+23505 (G14, la 5b de §1.7). Ese llego, frenado, y sale como
+``create_recovery_case_failed:caso_en_curso``.
 
 **Las diferencias.** Lo que la paridad observa fuera de P3 y P6 es una
 diferencia, con su disparo (el uuid interno del evento; en P6, el del plan).
 Las acepta solo una diferencia con nombre de
 ``tests/fixtures/flow_engine/att1_parity_named_differences.json``, con la clase
-de §1.7 y el caso generado que la reproduce (G1 a G24) o la cita de un hecho
+de §1.7 y el caso generado que la reproduce (G1 a G25) o la cita de un hecho
 del legado (``archivo:linea``). Lo demas queda sin explicar, y el reporte no
 esta en verde. Un envio antes de E no se acepta nunca.
+
+La captura tiene una accion por caso (el carrito y el pago fallido de hoy
+mandan uno); con mas, ``Capture`` falla en voz alta en vez de elegir una.
 
 Es puro: no lee el entorno, no hace red ni toca bases.
 """
@@ -85,7 +101,7 @@ from .flow_policy import interval_of
 from .flow_schedule import LAST_MINUTE, Franja, franja_of_policy, is_open, local_day, next_open
 
 __all__ = [
-    "DIFFERENCE_KINDS", "EXCEPTIONS_V1", "MATCH_ORDER", "NAMED_CLASSES", "NEVER_BEFORE_SLACK",
+    "DIFFERENCE_KINDS", "EXCEPTIONS_V1", "LEASE", "MATCH_ORDER", "NAMED_CLASSES", "NEVER_BEFORE_SLACK",
     "TOLERANCE", "Capture", "CaptureError", "FlowException", "ParityReport", "SendTiming",
     "Supersession", "control_state_at", "eligible_at", "parity_report", "send_timings",
     "supersessions", "winners_without_cancel",
@@ -94,6 +110,10 @@ __all__ = [
 # R - E <= 5 minutos (P#2): un lease del despachador (worker.py:705). Con 15, un
 # error de hasta 12 pasaba sin verse.
 TOLERANCE = timedelta(minutes=5)
+# El lease del despachador (worker.py:705). Una accion con un arranque rechazado
+# se vuelve a tomar recien cuando vence su lease (claim_due_followup_actions,
+# 20260803000100_followup_engine_v1.sql:2614).
+LEASE = timedelta(minutes=5)
 # Nunca antes: R >= E - 1 s. El ancla es el reloj de Hotmart y R el de la base.
 NEVER_BEFORE_SLACK = timedelta(seconds=1)
 # El orden en que P6 busca al ganador.
@@ -105,9 +125,12 @@ FIRING_KIND: Mapping[str, str] = MappingProxyType({
     "PURCHASE_CANCELED": "pago_fallido",
 })
 # «Llego al flujo» (§5.2): el evento tiene caso, o un processing_error de la
-# planificacion. create_recovery_case_failed es del adaptador: no llego.
+# planificacion. create_recovery_case_failed es del adaptador, salvo con un caso
+# de la persona en curso (G14): ver el docstring.
 PLANNING_REJECTION_PREFIX = "pilot_scope_rejected:"
 PLANNING_ERRORS = frozenset({"pilot_case_binding_conflict", "payment_failure_correlation_unresolved"})
+CASE_FAILED = "create_recovery_case_failed"
+CASE_FAILED_RUNNING = f"{CASE_FAILED}:caso_en_curso"
 # El evento del primer contacto, para saber de que producto es (§5.2).
 PRECHECKOUT_EVENT_TYPE = "PRECHECKOUT_FORM_SUBMITTED"
 SUPERSEDED = "superseded_by_provider_event"
@@ -126,6 +149,13 @@ EXPLAINING_OUTCOMES: Mapping[str, str] = MappingProxyType({
     "rejected": "rechazo_de_meta",
     "delivery_unknown": "envio_incierto",
 })
+# Un intento reservado sin resultado: el arranque se rechazo (el control, la
+# bolsa, la version), como los 720 del 13/10. La fase es la de la tabla
+# (20260803000100:308-309).
+RESERVED_PHASE = "reserved"
+REJECTED_START = "arranque_rechazado"
+# Las rutas de P6, en el reparto que no depende del orden.
+ROUTE_GROUPS = ("las_dos", "solo_persona", "solo_intencion")
 
 # Las diferencias que la paridad observa. Todas salvo la primera se aceptan con
 # una diferencia con nombre.
@@ -145,8 +175,8 @@ NAMED_CLASSES = ("E", "D", "C", "M")
 NAMED_KEYS = frozenset({"disparo", "diferencia", "clase", "nombre", "caso", "cita", "descripcion"})
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _NAME = re.compile(r"[a-z][a-z0-9_]{2,59}")
-# Los 24 casos que la cadena genera (§3.2, legacy_recovery_cases.json).
-_GENERATED_CASE = re.compile(r"G(?:[1-9]|1[0-9]|2[0-4])")
+# Los 25 casos que la cadena genera (§3.2, legacy_recovery_cases.json).
+_GENERATED_CASE = re.compile(r"G(?:[1-9]|1[0-9]|2[0-5])")
 # archivo:linea o archivo:inicio-fin, con la ruta desde la raiz del repo.
 _CITATION = re.compile(r"[A-Za-z0-9_.][A-Za-z0-9_./-]*\.[a-z]{1,5}:[1-9][0-9]*(?:-[1-9][0-9]*)?")
 _MAX_STEPS = 10_000
@@ -388,10 +418,26 @@ def _build_index(capture: Capture) -> dict[str, Any]:
         for item in case.get("eventos") or ():
             case_by_event.setdefault(_need(item, "webhook_event_id", f"casos[{i}].eventos"), case)
     index["case_by_event"] = case_by_event
-    index["action_by_case"] = {
-        _need(row, "recovery_case_id", f"acciones[{i}]"): row for i, row in enumerate(capture.actions)
-    }
+    action_by_case: dict[str, Mapping[str, Any]] = {}
+    for i, row in enumerate(capture.actions):
+        case_id = _need(row, "recovery_case_id", f"acciones[{i}]")
+        if case_id in action_by_case:
+            # P3 mira la accion del disparo: con dos (un segundo paso, el cupon,
+            # la reactivacion) no se elige una en silencio.
+            raise CaptureError(f"acciones[{i}]: su caso ya tiene otra accion, y la paridad mira una por caso")
+        action_by_case[case_id] = row
+    index["action_by_case"] = action_by_case
     index["contacts"] = {_need(row, "id", f"contactos[{i}]"): row for i, row in enumerate(capture.contacts)}
+    contacts_by_person: dict[str, set[str]] = {}
+    for contact_id, contact in index["contacts"].items():
+        for key in contact.get("person_keys") or ():
+            contacts_by_person.setdefault(key, set()).add(contact_id)
+    index["contacts_by_person"] = {key: frozenset(value) for key, value in contacts_by_person.items()}
+    cases_by_contact: dict[str, list[Mapping[str, Any]]] = {}
+    for case in capture.cases:
+        if case.get("contact_id") is not None:
+            cases_by_contact.setdefault(case["contact_id"], []).append(case)
+    index["cases_by_contact"] = {key: tuple(value) for key, value in cases_by_contact.items()}
     index["scopes"] = {
         (row["scope_key"], row["version"]): row for row in capture.config["pilot_scope_versions"]
     }
@@ -574,6 +620,10 @@ class SendTiming:
     request_started_at: datetime
     delay_seconds: float | None         # R - E; None si la puerta no dice «mandar» nunca
     explained_by: str | None            # un hecho observado que explica pasar los 5 minutos
+    # Desde cuando explica el hecho: el reintento que pidio el fallo, o el
+    # vencimiento del lease del arranque rechazado. R tiene que quedar a lo sumo
+    # la tolerancia despues de max(E, esto).
+    explained_since: datetime | None = None
 
 
 def _window_actions(capture: Capture) -> Iterator[tuple[Mapping[str, Any], Mapping[str, Any]]]:
@@ -591,25 +641,53 @@ def _attempts(action: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return sorted(action.get("intentos") or (), key=lambda tramo: tramo["primero"]["attempt_number"])
 
 
-def _request_started(action: Mapping[str, Any]) -> tuple[datetime | None, str | None]:
-    """El ``request_started_at`` del primer tramo que lo tiene, y el hecho que explica la demora."""
-    explained: str | None = None
+def _fact_of(last: Mapping[str, Any], where: str) -> tuple[str, datetime] | None:
+    """El hecho que deja el ultimo intento de un tramo sin pedido, y desde cuando explica la demora.
+
+    Un fallo, un incierto o un rechazo explican hasta el reintento que pidieron
+    (``finalized_next_attempt_at``; el de un fallo es a 1 minuto, worker.py:896)
+    o, sin el, hasta el comienzo del intento. Un arranque rechazado (reservado,
+    sin resultado) explica hasta que vence su lease: recien ahi se vuelve a tomar
+    la accion.
+    """
+    outcome = last.get("outcome")
+    fact = EXPLAINING_OUTCOMES.get(outcome or "")
+    if fact is not None:
+        since = _optional_instant(last, "finalized_next_attempt_at", where)
+        if since is None:
+            since = _optional_instant(last, "started_at", where)
+        return None if since is None else (fact, since)
+    if outcome is None and last.get("phase") == RESERVED_PHASE:
+        started = _optional_instant(last, "started_at", where)
+        return None if started is None else (REJECTED_START, started + LEASE)
+    return None
+
+
+def _request_started(action: Mapping[str, Any]) -> tuple[datetime | None, str | None, datetime | None]:
+    """El ``request_started_at`` del primer tramo que lo tiene, y el ultimo hecho anterior que explica la demora.
+
+    Devuelve (R, el hecho, desde cuando explica). El hecho sale del ultimo
+    intento de cada tramo (``ultimo``, o ``primero`` si el tramo tiene uno).
+    """
+    where = f"accion {action['id']}"
+    explained: tuple[str, datetime] | None = None
     for tramo in _attempts(action):
         first = tramo["primero"]
         if first.get("request_started_at") is not None:
-            return _instant(first, "request_started_at", f"accion {action['id']}"), explained
+            fact, since = explained if explained is not None else (None, None)
+            return _instant(first, "request_started_at", where), fact, since
         last = tramo.get("ultimo") or first
-        fact = EXPLAINING_OUTCOMES.get(last.get("outcome") or "")
-        if fact is not None:
-            explained = fact
-    return None, None
+        found = _fact_of(last, where)
+        if found is not None:
+            explained = found
+    return None, None, None
 
 
 def send_timings(capture: Capture) -> tuple[SendTiming, ...]:
     """Cada envio de un disparo desde «desde», con su E y su R, en el orden de los disparos."""
     out: list[SendTiming] = []
     for event, action in _window_actions(capture):
-        started, explained = _request_started(action)
+        started, explained, since = _request_started(action)
         if started is None:
             continue
         eligible = eligible_at(capture, action)
@@ -617,9 +695,16 @@ def send_timings(capture: Capture) -> tuple[SendTiming, ...]:
             action_id=action["id"], firing_ref=event["id"], eligible_at=eligible,
             request_started_at=started,
             delay_seconds=None if eligible is None else (started - eligible).total_seconds(),
-            explained_by=explained,
+            explained_by=explained, explained_since=since,
         ))
     return tuple(out)
+
+
+def _explains(timing: SendTiming, tolerance: timedelta) -> bool:
+    """Si el hecho observado explica la demora: R a lo sumo la tolerancia despues de max(E, el hecho)."""
+    if timing.explained_by is None or timing.explained_since is None or timing.eligible_at is None:
+        return False
+    return timing.request_started_at - max(timing.eligible_at, timing.explained_since) <= tolerance
 
 
 def _unsent_differences(capture: Capture, tolerance: timedelta) -> Iterator[dict[str, str]]:
@@ -630,7 +715,7 @@ def _unsent_differences(capture: Capture, tolerance: timedelta) -> Iterator[dict
     captura.
     """
     for event, action in _window_actions(capture):
-        started, _ = _request_started(action)
+        started, _, _ = _request_started(action)
         if started is not None:
             continue
         eligible = eligible_at(capture, action)
@@ -662,7 +747,8 @@ class Supersession:
     plan_ref: str                       # el uuid interno del plan o de su caso
     stopped_at: datetime
     winner_ref: str | None              # el disparo que le gano, por intencion o por persona
-    matched_by: str | None              # "intencion" | "persona"
+    matched_by: str | None              # "intencion" | "persona": la primera ruta de MATCH_ORDER
+    routes: frozenset[str] = frozenset()  # todas las rutas por las que hay un ganador
 
 
 def _precheckout_product(capture: Capture) -> str:
@@ -763,13 +849,25 @@ def supersessions(capture: Capture) -> tuple[Supersession, ...]:
         before = [event for received, event in events if received <= stopped]
         winner: str | None = None
         matched: str | None = None
+        routes: set[str] = set()
         for route in MATCH_ORDER:
             found = [event for event in before if _wins(capture, event, plan, route, product, stopped)]
             if found:
-                winner, matched = found[-1]["id"], route
-                break
-        out.append(Supersession(_plan_ref(plan), stopped, winner, matched))
+                routes.add(route)
+                if winner is None:
+                    winner, matched = found[-1]["id"], route
+        out.append(Supersession(_plan_ref(plan), stopped, winner, matched, frozenset(routes)))
     return tuple(out)
+
+
+def _route_group(routes: frozenset[str]) -> str | None:
+    if {"persona", "intencion"} <= routes:
+        return "las_dos"
+    if "persona" in routes:
+        return "solo_persona"
+    if "intencion" in routes:
+        return "solo_intencion"
+    return None
 
 
 def winners_without_cancel(capture: Capture) -> tuple[tuple[str, str], ...]:
@@ -842,8 +940,14 @@ class ParityReport:
     named_total: int
     unexplained: tuple[Mapping[str, Any], ...]
     # Lo que suma esta implementacion a la firma de §5.2: P6 por ruta, que el
-    # documento de docs/operations/ pide (§5.5).
+    # documento de docs/operations/ pide (§5.5). supersessions_by depende de
+    # MATCH_ORDER (la primera ruta que encuentra); supersessions_by_routes no
+    # (las dos, solo persona, solo intencion).
     supersessions_by: Mapping[str, int] = field(default_factory=dict)
+    supersessions_by_routes: Mapping[str, int] = field(default_factory=dict)
+    # Los primeros contactos que cedieron ante un disparo sin caso (que no
+    # mando nada), por el resultado del disparo.
+    ceded_to_a_firing_without_case: Mapping[str, int] = field(default_factory=dict)
 
     def ok(self) -> bool:
         return not self.unexplained and not self.never_before_violations
@@ -859,6 +963,8 @@ class ParityReport:
             "over_tolerance": list(self.over_tolerance),
             "supersessions": self.supersessions,
             "supersessions_by": dict(self.supersessions_by),
+            "supersessions_by_routes": dict(self.supersessions_by_routes),
+            "ceded_to_a_firing_without_case": dict(self.ceded_to_a_firing_without_case),
             "supersessions_without_winner": list(self.supersessions_without_winner),
             "winners_without_cancel": list(self.winners_without_cancel),
             "named": dict(self.named),
@@ -871,19 +977,37 @@ def _text(at: datetime | None) -> str:
     return "-" if at is None else at.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _case_running_for(capture: Capture, event: Mapping[str, Any]) -> bool:
+    """Si la persona del disparo tenia un caso del producto en curso cuando llego (la 5b, G14)."""
+    person = event.get("person_key")
+    if person is None:
+        return False
+    arrived = _instant(event, "received_at", f"evento {event['id']}")
+    for contact_id in capture._index["contacts_by_person"].get(person, ()):
+        for case in capture._index["cases_by_contact"].get(contact_id, ()):
+            if case.get("external_product_id") == event.get("product_id") and _case_open_at(case, arrived):
+                return True
+    return False
+
+
 def _firing_result(capture: Capture, event: Mapping[str, Any]) -> str:
     if event.get("processing_status") == "processed":
         case = capture._index["case_by_event"].get(event["id"])
         if case is None:
             return "processed:sin_caso"
         return "processed" if case["abandonment_event_id"] == event["id"] else "processed:evidencia"
-    return event.get("processing_error") or event.get("processing_status") or "sin_estado"
+    error = event.get("processing_error")
+    if error == CASE_FAILED and _case_running_for(capture, event):
+        return CASE_FAILED_RUNNING
+    return error or event.get("processing_status") or "sin_estado"
 
 
 def _reached_flow(capture: Capture, event: Mapping[str, Any]) -> bool:
     if capture._index["case_by_event"].get(event["id"]) is not None:
         return True
     error = event.get("processing_error") or ""
+    if error == CASE_FAILED:
+        return _case_running_for(capture, event)
     return error.startswith(PLANNING_REJECTION_PREFIX) or error in PLANNING_ERRORS
 
 
@@ -961,7 +1085,10 @@ def parity_report(capture: Capture, named: Sequence[Mapping[str, Any]], *,
                                 "accion": timing.action_id, "detalle": detail})
         elif timing.delay_seconds > tolerance.total_seconds():
             over.append(timing.firing_ref)
-            if timing.explained_by is None:
+            if not _explains(timing, tolerance):
+                if timing.explained_by is not None:
+                    detail += (f"; {timing.explained_by} explica hasta"
+                               f" {_text(timing.explained_since)} y no alcanza")
                 differences.append({"ref": timing.firing_ref, "diferencia": "envio_fuera_de_tolerancia",
                                     "accion": timing.action_id, "detalle": detail})
     differences.extend(_unsent_differences(capture, tolerance))
@@ -1010,6 +1137,11 @@ def parity_report(capture: Capture, named: Sequence[Mapping[str, Any]], *,
         delay = {"min": min(delays), "mediana": statistics.median(delays),
                  "p95": _percentile(delays, 0.95), "max": max(delays)}
     by_route = Counter(item.matched_by for item in ceded if item.matched_by is not None)
+    by_routes = Counter(_route_group(item.routes) for item in ceded)
+    without_case: Counter[str] = Counter()
+    for item in ceded:
+        if item.winner_ref is not None and capture._index["case_by_event"].get(item.winner_ref) is None:
+            without_case[_firing_result(capture, capture._index["events"][item.winner_ref])] += 1
     return ParityReport(
         firings=MappingProxyType(dict(sorted(firing_counts.items()))),
         reached_flow=reached,
@@ -1024,4 +1156,6 @@ def parity_report(capture: Capture, named: Sequence[Mapping[str, Any]], *,
         named_total=sum(named_counts.values()),
         unexplained=tuple(MappingProxyType(item) for item in unexplained),
         supersessions_by=MappingProxyType({route: by_route.get(route, 0) for route in MATCH_ORDER}),
+        supersessions_by_routes=MappingProxyType({group: by_routes.get(group, 0) for group in ROUTE_GROUPS}),
+        ceded_to_a_firing_without_case=MappingProxyType(dict(sorted(without_case.items()))),
     )

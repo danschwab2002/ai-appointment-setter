@@ -28,8 +28,8 @@ Los campos:
 
 La politica de ATT1 la comparten el carrito y el pago fallido, y tiene los dos
 pasos (diferencia 9 de §1.7, clase C: dos flujos con los mismos valores). Por
-eso ``differences_from_row`` no mira la clave ni la version, y pide el unico
-paso compilado entre los pasos de la fila.
+eso ``differences_from_row`` no mira la clave ni la version, y pide que el
+primer paso de la fila con el ``step_key`` compilado sea el compilado.
 
 Lo que la v1 del motor no ejecuta (otro tipo de paso, mas de un envio, una
 espera despues del envio, un flujo sin ``vence``) no se compila:
@@ -65,10 +65,14 @@ STEP_KEY_BY_LEGACY_KIND: Mapping[str, str] = MappingProxyType({
 })
 
 # Los campos que compara differences_from_row, en el orden en que los devuelve.
+# status no es de la compilada: la fila tiene que estar publicada, porque con
+# otro estado la reevaluacion escala con policy_step_invalid
+# (20260805000300_per_case_conversation_anchor.sql:339-341).
 COMPARED_FIELDS = (
-    "purpose", "timezone", "business_windows", "grace_period", "expires_after",
+    "status", "purpose", "timezone", "business_windows", "grace_period", "expires_after",
     "max_automatic_messages", "steps",
 )
+ROW_STATUS = "published"
 
 # Un intervalo como lo escribe Postgres con IntervalStyle = postgres: «1 day»,
 # «2 days», «01:00:00», «1 day 02:00:00», con signo y fraccion. Meses y anios
@@ -231,8 +235,23 @@ def differences_from_row(compiled: CompiledPolicy, row: Mapping[str, Any]) -> tu
     Un campo de la fila que no se puede leer (un intervalo con meses, un numero
     que no es entero) cuenta como distinto. Con mas o menos de un paso
     compilado, ``steps`` difiere siempre: la compilada tiene uno.
+
+    Mira lo que mira la base, no la forma:
+
+    * ``status``: la fila tiene que estar ``published``;
+    * ``steps``: el paso que usa la reevaluacion es el **primero** de la fila con
+      ese ``step_key`` (``select ... where step_key = ... limit 1``,
+      ``20260805000300_per_case_conversation_anchor.sql:214-217``; la tabla no
+      impide dos pasos con la misma clave), y ese tiene que ser el compilado;
+    * los intervalos se comparan como ``timedelta``, asi que ``'24:00:00'`` y
+      ``'1 day'`` son iguales. En la base lo son para el vencimiento solo con la
+      ``TimeZone`` de la sesion en UTC (la de Supabase): con otra,
+      ``timestamptz + '1 day'`` sigue el dia civil y da 23 o 25 horas en un
+      cambio de horario. La gemela de T2 lo tiene que comparar igual.
     """
     found: list[str] = []
+    if row.get("status") != ROW_STATUS:
+        found.append("status")
     if row.get("purpose") != compiled.purpose:
         found.append("purpose")
     if row.get("timezone") != compiled.timezone:
@@ -246,11 +265,17 @@ def differences_from_row(compiled: CompiledPolicy, row: Mapping[str, Any]) -> tu
     maximum = row.get("max_automatic_messages")
     if not _is_int(maximum) or maximum != compiled.max_automatic_messages:
         found.append("max_automatic_messages")
-    row_steps = row.get("steps")
-    if not (
-        len(compiled.steps) == 1
-        and isinstance(row_steps, (list, tuple))
-        and _plain(compiled.steps[0]) in [_plain(step) for step in row_steps]
-    ):
+    if _step_in_use(row.get("steps"), compiled) is None:
         found.append("steps")
     return tuple(found)
+
+
+def _step_in_use(row_steps: object, compiled: CompiledPolicy) -> Mapping[str, Any] | None:
+    """El paso de la fila que usaria la base para el compilado, si es igual al compilado; si no, None."""
+    if len(compiled.steps) != 1 or not isinstance(row_steps, (list, tuple)):
+        return None
+    wanted = _plain(compiled.steps[0])
+    for step in row_steps:
+        if isinstance(step, Mapping) and step.get("step_key") == wanted["step_key"]:
+            return step if _plain(step) == wanted else None
+    return None

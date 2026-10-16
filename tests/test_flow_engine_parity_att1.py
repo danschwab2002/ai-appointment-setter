@@ -10,7 +10,7 @@ Diseno del motor de flujos, §3.1, §3.2 y §5.3. Fixtures
   anexos del vault; el script de la paridad da lo mismo sobre las dos;
 * ``att1_parity_named_differences.json``: las diferencias con nombre, cada una
   con su caso generado o su cita;
-* ``legacy_recovery_cases.json``: los 24 casos que genera la cadena real en
+* ``legacy_recovery_cases.json``: los 25 casos que genera la cadena real en
   PGlite (``tests/sql/followup_engine/validate_flow_engine_legacy.mjs``); de
   ahi sale que el caso que cita una diferencia existe.
 
@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +37,7 @@ from bridge.flow_parity import (
     send_timings,
     supersessions,
 )
+from bridge.flow_schedule import franja_of_policy, is_open, next_open
 
 ROOT = Path(__file__).resolve().parents[1]
 FLOW_ENGINE = ROOT / "tests" / "fixtures" / "flow_engine"
@@ -82,7 +83,8 @@ def test_the_firings_since_desde_by_kind_and_result() -> None:
     by_kind = {kind: sum(n for key, n in REPORT.firings.items() if key.startswith(f"{kind}/"))
                for kind in ("carrito", "pago_fallido")}
     assert by_kind == {"carrito": 239, "pago_fallido": 13}
-    # Llegaron al flujo todos menos los 4 create_recovery_case_failed, que son del adaptador.
+    # Llegaron al flujo todos menos los 4 create_recovery_case_failed, que son del adaptador:
+    # no tienen clave de persona, asi que no es un caso de la persona en curso (la 5b, G14).
     assert REPORT.reached_flow == 248
     # 203 carritos y 5 pagos fallidos; los otros 2 envios de la captura son de casos de la v2.
     assert REPORT.sends == 208
@@ -112,13 +114,40 @@ def test_p3_e_is_the_due_at_that_the_legacy_wrote_and_the_night_waits_for_nine()
     assert deferred == 89
 
 
+def test_p3_on_the_real_data_only_the_window_moves_e() -> None:
+    # Sobre el dato de ATT1, el control y la bolsa no corren el E de ningun envio: E es el ancla
+    # o la proxima apertura de la franja (la gracia es 0). Que el control y la bolsa esten bien
+    # lo fijan las lineas de tiempo de test_flow_parity.py y los 5 sin envio.
+    [policy] = [row for row in restore_fixture(RAW)["config"]["followup_policy_versions"]
+                if row["policy_key"] == "att1-recuperacion-un-toque"]
+    assert policy["grace_period"] == "00:00:00"
+    franja = franja_of_policy(policy)
+    for timing in send_timings(CAPTURE):
+        anchor = _instant(ACTIONS[timing.action_id]["anchor_observed_at"])
+        assert timing.eligible_at == (anchor if is_open(franja, anchor) else next_open(franja, anchor))
+
+
+def test_p3_the_tolerance_has_teeth() -> None:
+    # Con 2 minutos quedan afuera los 7 envios mas lentos, todos de la tanda de las 09:00 de
+    # CDMX del 12/10.
+    report = parity_report(CAPTURE, NAMED, tolerance=timedelta(minutes=2))
+    assert len(report.over_tolerance) == 7
+    slow = {timing.firing_ref: timing for timing in send_timings(CAPTURE)}
+    assert {slow[ref].eligible_at for ref in report.over_tolerance} == {_instant("2026-10-12T15:00:00Z")}
+
+
 def test_p6_every_first_contact_that_ceded_has_its_winner() -> None:
     assert REPORT.supersessions == 192
+    # Con MATCH_ORDER (primero la persona): 79 y 113. Sin depender del orden: 78 por las dos
+    # rutas, 1 solo por persona y 113 solo por intencion.
     assert dict(REPORT.supersessions_by) == {"persona": 79, "intencion": 113}
+    assert dict(REPORT.supersessions_by_routes) == {"las_dos": 78, "solo_persona": 1, "solo_intencion": 113}
     assert REPORT.supersessions_without_winner == ()
     assert REPORT.winners_without_cancel == ()
-    # Los que solo cede la intencion y no la persona: 4 son carritos sin
-    # telefono (sin clave de persona), que no llegaron al flujo.
+    # 5 cedieron ante un disparo sin caso, que no mando nada: 4 carritos sin telefono (sin
+    # clave de persona) y 1 de la siembra rechazado con el control sin armar.
+    assert dict(REPORT.ceded_to_a_firing_without_case) == {
+        "create_recovery_case_failed": 4, "pilot_scope_rejected:pilot_runtime_not_armed": 1}
     no_phone = [item for item in supersessions(CAPTURE)
                 if item.matched_by == "intencion" and EVENTS[item.winner_ref].get("person_key") is None]
     assert len(no_phone) == 4
@@ -201,7 +230,8 @@ def test_each_case_is_its_contacts_person() -> None:
         assert EVENTS[case["abandonment_event_id"]]["person_key"] in contacts[case["contact_id"]], case["id"]
 
 
-def test_the_script_prints_the_report_and_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:
+def test_the_script_prints_the_report_and_exits_zero_in_green_and_one_in_red(
+        capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
     import importlib.util
 
     spec = importlib.util.spec_from_file_location("flow_engine_parity", ROOT / "scripts" / "flow_engine_parity.py")
@@ -211,12 +241,20 @@ def test_the_script_prints_the_report_and_exits_zero(capsys: pytest.CaptureFixtu
     assert script.main(["--capture", str(FIXTURE), "--named", str(NAMED_FILE)]) == 0
     out = capsys.readouterr().out
     assert "Sin explicar: 0" in out and "Resultado: verde" in out
+    assert "sin depender del orden: 78 por las dos rutas, 1 solo por persona, 113 solo por intencion" in out
     assert script.main(["--capture", str(FIXTURE), "--named", str(NAMED_FILE), "--json"]) == 0
     printed = json.loads(capsys.readouterr().out)
     assert printed["ok"] is True and printed["named_total"] == 5 and printed["sends"] == 208
+    # Sin las diferencias con nombre, los 5 de lo_en_curso_sigue quedan sin explicar: sale con 1.
+    # La paridad continua de T3 (§3.4) decide por este codigo de salida.
+    empty = tmp_path / "sin_nombre.json"
+    empty.write_text('{"diferencias": []}', encoding="utf-8")
+    assert script.main(["--capture", str(FIXTURE), "--named", str(empty)]) == 1
+    out = capsys.readouterr().out
+    assert "Sin explicar: 5" in out and "Resultado: rojo" in out
 
 
 def test_the_sql_suite_checks_the_generated_legacy_cases() -> None:
-    # Sin --check en npm test, los 24 casos de hoy podrian quedar viejos sin que la CI lo vea.
+    # Sin --check en npm test, los 25 casos de hoy podrian quedar viejos sin que la CI lo vea.
     package = json.loads((ROOT / "tests" / "sql" / "followup_engine" / "package.json").read_text(encoding="utf-8"))
     assert "node validate_flow_engine_legacy.mjs --check" in package["scripts"]["test"].split(" && ")

@@ -163,8 +163,9 @@ def test_the_shared_policy_of_att1_has_both_steps() -> None:
     cart, _ = _att1("carrito", TRANSLATED["carrito"].definition)
     failure, _ = _att1("pago_fallido", TRANSLATED["pago_fallido"].definition)
     assert cart.steps != failure.steps
-    assert {field: getattr(cart, field) for field in COMPARED_FIELDS if field != "steps"} == {
-        field: getattr(failure, field) for field in COMPARED_FIELDS if field != "steps"}
+    # status es de la fila, no de la compilada.
+    same = [field for field in COMPARED_FIELDS if field not in ("steps", "status")]
+    assert {field: getattr(cart, field) for field in same} == {field: getattr(failure, field) for field in same}
 
 
 # ---------------------------------------------------------------------------
@@ -193,6 +194,14 @@ def _changed(row: dict[str, Any], field: str, value: object) -> dict[str, Any]:
     ("steps", [{"mode": "template", "step_key": "first_contact"}], ("steps",)),
     ("steps", [{"mode": "freeform", "step_key": "first_contact", "delay": "0 seconds"}], ("steps",)),
     ("steps", None, ("steps",)),
+    # La reevaluacion usa el primer paso con ese step_key (20260805000300:214-217): con uno
+    # approved_template antes, escala con channel_mode_unsupported aunque el freeform este despues.
+    ("steps", [{"mode": "approved_template", "step_key": "first_contact"},
+               {"mode": "freeform", "step_key": "first_contact"},
+               {"mode": "freeform", "step_key": "payment_failure_first_contact"}], ("steps",)),
+    # Una fila retirada escala con policy_step_invalid (20260805000300:339-341).
+    ("status", "retired", ("status",)),
+    ("status", None, ("status",)),
     # La clave y la version no se miran: la de hoy es otra clave, y la del motor es flujo:<flow_id>.
     ("policy_key", "otra", ()),
     ("version", 7, ()),
@@ -200,6 +209,9 @@ def _changed(row: dict[str, Any], field: str, value: object) -> dict[str, Any]:
     ("expires_after", "24:00:00", ()),
     ("expires_after", timedelta(days=1), ()),
     ("business_windows", [{"start": "09:00", "end": "21:00", "days": [1, 2, 3, 4, 5, 6, 7]}], ()),
+    # El paso del pago fallido antes que el del carrito: el primero con first_contact es el compilado.
+    ("steps", [{"mode": "freeform", "step_key": "payment_failure_first_contact"},
+               {"mode": "freeform", "step_key": "first_contact"}], ()),
 ])
 def test_differences_from_row_sees_each_field(field: str, value: object, expected: tuple[str, ...]) -> None:
     compiled, row = _att1("carrito", TRANSLATED["carrito"].definition)

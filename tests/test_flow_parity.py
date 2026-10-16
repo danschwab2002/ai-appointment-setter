@@ -4,14 +4,16 @@ Diseno del motor de flujos, §3.1 y §5.3. Cada prueba arma una captura minima
 con la forma de ``captura-paridad-recuperacion-v2`` (la misma que valida
 ``Capture.from_json``) y mira una cosa:
 
-* ``eligible_at``: un carrito de dia, uno de noche, el control pausado, el
-  tope del dia agotado (con las autorizaciones observadas antes del instante),
-  el tope total, y la version del recorrido (lo en curso sigue con la suya);
+* ``eligible_at``: un carrito de dia, uno de noche, la gracia, el control
+  pausado o inactivo, el tope del dia agotado (con las autorizaciones
+  observadas antes del instante), el tope total, la version del recorrido (lo
+  en curso sigue con la suya), y que E sale del ancla y no del ``due_at``;
 * P6: un primer contacto que cede por la intencion desde otro telefono, uno
-  que cede por la persona con su caso en curso, uno sin ganador, y un ganador
-  sin cancelacion;
-* el reporte: nunca antes, la tolerancia y lo que la explica, y las
-  diferencias con nombre.
+  que cede por la persona con su caso en curso, uno por las dos rutas, uno sin
+  ganador, uno que cede ante un disparo sin caso, y un ganador sin
+  cancelacion;
+* el reporte: nunca antes, la tolerancia y lo que la explica (con su cota),
+  «llego al flujo» con un caso trabado (G14), y las diferencias con nombre.
 
 Los datos son inventados y no copian a nadie: uuid de la forma
 ``00000000-0000-4000-8000-<n>``, claves de persona que son el numero en hex y
@@ -152,7 +154,8 @@ def case_of(event: dict[str, Any], *, who: int, version: int = 4, closed_at: str
 
 
 def action_of(case: dict[str, Any], *, sent_at: str | None = None, status: str | None = None,
-              tramos: list[dict[str, Any]] | None = None, updated_at: str | None = None) -> dict[str, Any]:
+              tramos: list[dict[str, Any]] | None = None, updated_at: str | None = None,
+              due_at: str | None = None) -> dict[str, Any]:
     anchor = case["grace_expires_at"]
     if tramos is None:
         tramos = []
@@ -166,7 +169,7 @@ def action_of(case: dict[str, Any], *, sent_at: str | None = None, status: str |
         status = "accepted_by_chatwoot" if sent_at is not None else "pending"
     return {
         "id": uid(2000 + int(case["id"][-6:]) - 1000), "recovery_case_id": case["id"],
-        "action_type": "first_contact_review", "status": status, "due_at": anchor,
+        "action_type": "first_contact_review", "status": status, "due_at": due_at or anchor,
         "expires_at": shifted(anchor, days=1), "step_key": "first_contact",
         "anchor_type": "cart_abandonment", "anchor_observed_at": anchor,
         "execution_attempt_count": sum(tramo["n"] for tramo in tramos),
@@ -186,13 +189,14 @@ def build(*, events: list[dict[str, Any]] = (), cases: list[dict[str, Any]] = ()
           actions: list[dict[str, Any]] = (), authorizations: list[dict[str, Any]] = (),
           first_contacts: list[dict[str, Any]] = (), contacts: list[dict[str, Any]] = (),
           control: list[dict[str, Any]] | None = None,
-          scopes: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+          scopes: list[dict[str, Any]] | None = None,
+          policies: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Una captura minima con la forma de la v2, y sus conteos recontados."""
     data: dict[str, Any] = {
         "_captured": {"query": QUERY_NAME, "desde": DESDE, "captured_at": CAPTURED_AT, "conteos": {}},
         "config": {
             "pilot_scope_versions": (scopes or [scope_row(4)]) + [PRECHECKOUT_SCOPE],
-            "followup_policy_versions": [POLICY_ROW],
+            "followup_policy_versions": policies or [POLICY_ROW],
             "pilot_runtime_controls": [],
             "pilot_proactive_contact_caps": [],
             "pilot_control_events_control_level": control or ARMED_V4,
@@ -206,10 +210,11 @@ def build(*, events: list[dict[str, Any]] = (), cases: list[dict[str, Any]] = ()
     return data
 
 
-def one_cart(anchor: str, *, version: int = 4, sent_at: str | None = None, **extra: Any) -> tuple[Capture, dict]:
+def one_cart(anchor: str, *, version: int = 4, sent_at: str | None = None, due_at: str | None = None,
+             **extra: Any) -> tuple[Capture, dict]:
     event = cart(1, anchor, who=1, intent=101)
     case = case_of(event, who=1, version=version, closed_at=sent_at)
-    action = action_of(case, sent_at=sent_at)
+    action = action_of(case, sent_at=sent_at, due_at=due_at)
     capture = Capture.from_json(build(events=[event], cases=[case], actions=[action],
                                       contacts=[contact(1)], **extra))
     return capture, capture.actions[0]
@@ -231,6 +236,16 @@ def test_the_loader_rejects_a_key_outside_the_closed_list() -> None:
     data["eventos"] = [{**cart(1, "2026-10-10T18:00:00.000000Z", who=1), "phone": "x"}]
     with pytest.raises(CaptureError, match="clave fuera de la lista"):
         Capture.from_json(data)
+
+
+def test_the_loader_rejects_two_actions_of_one_case() -> None:
+    # P3 mira la accion del disparo: con dos (un segundo paso, el cupon) no elige una en silencio.
+    event = cart(1, "2026-10-10T18:00:00.000000Z", who=1, intent=101)
+    case = case_of(event, who=1)
+    first = action_of(case)
+    second = {**action_of(case), "id": uid(2999), "step_key": "no_reply"}
+    with pytest.raises(CaptureError, match="acciones\\[1\\]: su caso ya tiene otra accion"):
+        Capture.from_json(build(events=[event], cases=[case], actions=[first, second], contacts=[contact(1)]))
 
 
 def test_the_control_follows_the_events_and_an_activation_leaves_it_inactive() -> None:
@@ -269,6 +284,46 @@ def test_the_end_minute_of_the_window_is_still_open() -> None:
     # 21:00:30 en CDMX: el minuto de fin entra entero (to_char HH24:MI).
     capture, action = one_cart("2026-10-11T03:00:30.000000Z")
     assert eligible_at(capture, action) == at("2026-10-11T03:00:30Z")
+
+
+def test_e_starts_at_the_anchor_and_not_at_the_due_at_the_legacy_wrote() -> None:
+    # El legado reescribe el due_at (F#11): E no lo mira. Un carrito de las 12:00 de CDMX con
+    # el due_at corrido a las 20:00Z sale a las 20:00:05: E sigue siendo el ancla, y la demora
+    # de dos horas es una diferencia.
+    capture, action = one_cart("2026-10-10T18:00:00.000000Z", due_at="2026-10-10T20:00:00.000000Z",
+                               sent_at="2026-10-10T20:00:05.000000Z")
+    assert eligible_at(capture, action) == at("2026-10-10T18:00:00Z")
+    report = parity_report(capture, [])
+    assert report.over_tolerance == (uid(1),)
+    assert [item["diferencia"] for item in report.unexplained] == ["envio_fuera_de_tolerancia"]
+
+
+GRACE_30 = {**POLICY_ROW, "grace_period": "00:30:00"}
+
+
+def test_the_grace_moves_e_from_the_anchor() -> None:
+    # 18:00Z son las 12:00 en CDMX: con 30 minutos de gracia, E es las 12:30.
+    capture, action = one_cart("2026-10-10T18:00:00.000000Z", policies=[GRACE_30])
+    assert eligible_at(capture, action) == at("2026-10-10T18:30:00Z")
+
+
+def test_a_grace_that_crosses_the_end_of_the_window_waits_for_the_next_day() -> None:
+    # 02:45Z son las 20:45 en CDMX: la gracia termina a las 21:15, con la franja cerrada.
+    capture, action = one_cart("2026-10-11T02:45:00.000000Z", policies=[GRACE_30])
+    assert eligible_at(capture, action) == at("2026-10-11T15:00:00Z")
+
+
+def test_an_inactive_control_between_activation_and_arming_waits_for_the_arming() -> None:
+    # La activacion de la v5 deja el control inactive hasta que se arma, 10 s despues.
+    control = ARMED_V4 + [
+        control_event("2026-10-11T00:20:23.000000Z", 4, 3, "paused"),
+        control_event("2026-10-11T00:20:27.000000Z", 5, 4, None),
+        control_event("2026-10-11T00:20:37.000000Z", 5, 5, "armed"),
+    ]
+    capture, action = one_cart("2026-10-11T00:20:30.000000Z", control=control,
+                               scopes=[scope_row(4), scope_row(5)])
+    assert control_state_at(capture, SCOPE, at("2026-10-11T00:20:30Z")) == (5, "inactive")
+    assert eligible_at(capture, action) == at("2026-10-11T00:20:37Z")
 
 
 def test_a_paused_control_waits_for_the_next_armed() -> None:
@@ -397,27 +452,90 @@ def test_the_tolerance_is_five_minutes() -> None:
     assert [item["diferencia"] for item in report.unexplained] == ["envio_fuera_de_tolerancia"]
 
 
-def test_a_failure_before_the_request_explains_the_delay() -> None:
+def _retried_capture(tramos: list[dict[str, Any]], sent_at: str, *,
+                     control: list[dict[str, Any]] | None = None) -> Capture:
+    """Un carrito de las 12:00 de CDMX (18:00Z) con intentos previos y el envio en ``sent_at``."""
     event = cart(1, "2026-10-10T18:00:00.000000Z", who=1, intent=101)
-    case = case_of(event, who=1, closed_at="2026-10-10T18:07:00.000000Z")
-    tramos = [
-        {"n": 1, "primero": {"attempt_number": 1, "mode": "approved_template", "phase": "finalized",
-                             "outcome": "failed_before_request", "reason_code": "chatwoot_unavailable",
-                             "started_at": "2026-10-10T18:00:05.000000Z",
-                             "finalized_next_attempt_at": "2026-10-10T18:01:05.000000Z"}},
-        {"n": 1, "primero": {"attempt_number": 2, "mode": "approved_template", "phase": "completed",
-                             "outcome": "accepted_by_chatwoot", "reason_code": "accepted_by_chatwoot",
-                             "started_at": "2026-10-10T18:06:59.000000Z",
-                             "request_started_at": "2026-10-10T18:07:00.000000Z"}},
-    ]
-    action = action_of(case, tramos=tramos, status="accepted_by_chatwoot",
-                       updated_at="2026-10-10T18:07:01.000000Z")
-    capture = Capture.from_json(build(events=[event], cases=[case], actions=[action], contacts=[contact(1)]))
+    case = case_of(event, who=1, closed_at=sent_at)
+    sent = {"n": 1, "primero": {
+        "attempt_number": sum(tramo["n"] for tramo in tramos) + 1, "mode": "approved_template",
+        "phase": "completed", "outcome": "accepted_by_chatwoot", "reason_code": "accepted_by_chatwoot",
+        "started_at": shifted(sent_at, seconds=-1), "request_started_at": sent_at}}
+    action = action_of(case, tramos=[*tramos, sent], status="accepted_by_chatwoot",
+                       updated_at=shifted(sent_at, seconds=1))
+    return Capture.from_json(build(events=[event], cases=[case], actions=[action], contacts=[contact(1)],
+                                   control=control))
+
+
+def _failure(number: int, started_at: str) -> dict[str, Any]:
+    """Un fallo antes del pedido, con su reintento a un minuto (worker.py:896)."""
+    return {"attempt_number": number, "mode": "approved_template", "phase": "completed",
+            "outcome": "failed_before_request", "reason_code": "chatwoot_unavailable",
+            "started_at": started_at, "finalized_next_attempt_at": shifted(started_at, minutes=1)}
+
+
+# Cuatro fallos seguidos, a un minuto: el ultimo empieza a las 18:03:06 y pide el reintento a las 18:04:06.
+FOUR_FAILURES = [{"n": 4, "primero": _failure(1, "2026-10-10T18:00:05.000000Z"),
+                  "ultimo": _failure(4, "2026-10-10T18:03:06.000000Z")}]
+
+
+def test_a_failure_before_the_request_explains_the_delay_up_to_its_retry() -> None:
+    # R - E = 390 s, pero R queda a 144 s del ultimo reintento pedido: lo explica. Con el
+    # reintento del primer intento del tramo (18:01:05) serian 325 s: el que cuenta es el ultimo.
+    capture = _retried_capture(FOUR_FAILURES, "2026-10-10T18:06:30.000000Z")
     [timing] = send_timings(capture)
     assert timing.explained_by == "reintento_tras_fallo_antes_del_pedido"
+    assert timing.explained_since == at("2026-10-10T18:04:06Z")
     report = parity_report(capture, [])
     assert report.over_tolerance == (uid(1),)
     assert report.ok()
+
+
+@pytest.mark.parametrize("sent_at", [
+    # Seis minutos despues del ultimo reintento.
+    "2026-10-10T18:10:07.000000Z",
+    # Veinte horas despues: el fallo explica su minuto, no un dia entero.
+    "2026-10-11T14:00:00.000000Z",
+])
+def test_a_failure_before_the_request_does_not_explain_any_delay(sent_at: str) -> None:
+    capture = _retried_capture(FOUR_FAILURES, sent_at)
+    report = parity_report(capture, [])
+    assert report.over_tolerance == (uid(1),)
+    [difference] = report.unexplained
+    assert difference["diferencia"] == "envio_fuera_de_tolerancia"
+    assert "reintento_tras_fallo_antes_del_pedido explica hasta 2026-10-10T18:04:06Z" in difference["detalle"]
+
+
+def _reserved(number: int, started_at: str) -> dict[str, Any]:
+    """Un intento reservado sin resultado: el arranque se rechazo."""
+    return {"attempt_number": number, "mode": "approved_template", "phase": "reserved",
+            "started_at": started_at}
+
+
+# El control pausado rechaza el arranque en los leases de las 18:00:05 y 18:05:05, y se rearma a
+# las 18:05:06. El legado vuelve a tomar la accion cuando vence el lease (18:10:05).
+PAUSED_UNTIL_180506 = ARMED_V4 + [
+    control_event("2026-10-10T17:00:00.000000Z", 4, 3, "paused"),
+    control_event("2026-10-10T18:05:06.000000Z", 4, 4, "armed"),
+]
+TWO_REJECTED_STARTS = [{"n": 2, "primero": _reserved(1, "2026-10-10T18:00:05.000000Z"),
+                        "ultimo": _reserved(2, "2026-10-10T18:05:05.000000Z")}]
+
+
+def test_a_rejected_start_explains_the_delay_up_to_the_end_of_its_lease() -> None:
+    capture = _retried_capture(TWO_REJECTED_STARTS, "2026-10-10T18:10:12.000000Z", control=PAUSED_UNTIL_180506)
+    [timing] = send_timings(capture)
+    assert timing.eligible_at == at("2026-10-10T18:05:06Z") and timing.delay_seconds == 306
+    assert (timing.explained_by, timing.explained_since) == ("arranque_rechazado", at("2026-10-10T18:10:05Z"))
+    report = parity_report(capture, [])
+    assert report.over_tolerance == (uid(1),)
+    assert report.ok()
+
+
+def test_a_rejected_start_does_not_explain_a_send_past_its_lease_and_the_tolerance() -> None:
+    capture = _retried_capture(TWO_REJECTED_STARTS, "2026-10-10T18:16:00.000000Z", control=PAUSED_UNTIL_180506)
+    report = parity_report(capture, [])
+    assert [item["diferencia"] for item in report.unexplained] == ["envio_fuera_de_tolerancia"]
 
 
 def _expired_cart_capture() -> Capture:
@@ -452,7 +570,7 @@ def test_a_cart_cut_before_e_is_not_a_p3_difference() -> None:
 @pytest.mark.parametrize(("change", "reason"), [
     ({"caso": None}, "sin_caso_ni_cita"),
     ({"cita": "src/bridge/worker.py:1054-1070"}, "caso_y_cita"),
-    ({"caso": "G25"}, "caso_invalido"),
+    ({"caso": "G26"}, "caso_invalido"),
     ({"caso": None, "cita": "worker.py"}, "cita_invalida"),
     ({"clase": "—"}, "clase_invalida"),
     ({"nombre": "Lo-En-Curso"}, "nombre_invalido"),
@@ -526,6 +644,8 @@ def test_a_first_contact_cedes_to_a_cart_of_its_intent_from_another_phone() -> N
     report = parity_report(capture, [])
     assert report.ok() and report.supersessions == 1
     assert report.supersessions_by == {"persona": 0, "intencion": 1}
+    assert report.supersessions_by_routes == {"las_dos": 0, "solo_persona": 0, "solo_intencion": 1}
+    assert report.ceded_to_a_firing_without_case == {}
 
 
 def test_matching_only_by_person_misses_the_cart_from_another_phone(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -553,6 +673,42 @@ def test_a_first_contact_cedes_to_its_persons_cart_while_the_cart_is_running() -
                                       contacts=[contact(1)], first_contacts=[first]))
     [ceded] = supersessions(capture)
     assert (ceded.plan_ref, ceded.winner_ref, ceded.matched_by) == (uid(101), uid(1), "persona")
+    assert ceded.routes == {"persona"}
+    assert parity_report(capture, []).supersessions_by_routes == {
+        "las_dos": 0, "solo_persona": 1, "solo_intencion": 0}
+
+
+def test_a_first_contact_that_cedes_by_both_routes_counts_once_in_las_dos(monkeypatch: pytest.MonkeyPatch) -> None:
+    # El carrito es de la misma persona y de la misma intencion, con su caso en curso.
+    event = cart(1, "2026-10-10T05:00:00.000000Z", who=1, intent=101)
+    case = case_of(event, who=1, closed_at="2026-10-10T15:00:10.000000Z")
+    action = action_of(case, sent_at="2026-10-10T15:00:10.000000Z")
+    first = {"purchase_intent_id": uid(101), "contact_id": uid(9001), "outcome": "not_planned",
+             "reason_code": "superseded_by_provider_event", "created_at": "2026-10-10T06:00:00.000000Z"}
+    capture = Capture.from_json(build(events=[event], cases=[case], actions=[action],
+                                      contacts=[contact(1)], first_contacts=[first]))
+    expected = {"las_dos": 1, "solo_persona": 0, "solo_intencion": 0}
+    assert parity_report(capture, []).supersessions_by_routes == expected
+    # El reparto por ruta no depende del orden en que se busca.
+    monkeypatch.setattr(flow_parity, "MATCH_ORDER", ("intencion", "persona"))
+    report = parity_report(capture, [])
+    assert report.supersessions_by_routes == expected
+    assert report.supersessions_by == {"intencion": 1, "persona": 0}
+
+
+def test_a_first_contact_that_cedes_to_a_firing_without_case_is_counted_apart() -> None:
+    # Un carrito sin telefono (sin clave de persona) que no llego al flujo, con la correlacion
+    # resuelta a la intencion: le gana igual al primer contacto, y no mando nada.
+    event = {**cart(1, "2026-10-10T17:30:00.000000Z", who=2, intent=101), "processing_status": "failed",
+             "processing_error": "create_recovery_case_failed"}
+    del event["person_key"]
+    first = plan(101, 1, "2026-10-10T17:00:00.000000Z", status="cancelled", reason="superseded_by_provider_event",
+                 closed_at="2026-10-10T18:00:00.000000Z")
+    capture = Capture.from_json(build(events=[event], contacts=[contact(1)], first_contacts=[first]))
+    report = parity_report(capture, [])
+    assert report.ok() and report.reached_flow == 0
+    assert report.supersessions_by_routes == {"las_dos": 0, "solo_persona": 0, "solo_intencion": 1}
+    assert report.ceded_to_a_firing_without_case == {"create_recovery_case_failed": 1}
 
 
 def test_a_persons_cart_already_sent_does_not_win_without_the_intent() -> None:
@@ -609,3 +765,43 @@ def test_a_case_whose_event_is_not_its_contacts_person_is_a_finding() -> None:
     capture = Capture.from_json(build(events=[event], cases=[case], actions=[action], contacts=[contact(1)]))
     report = parity_report(capture, [])
     assert [item["diferencia"] for item in report.unexplained] == ["persona_no_coincide"]
+
+
+# ---------------------------------------------------------------------------
+# «Llego al flujo» con un caso trabado (la 5b, G14).
+# ---------------------------------------------------------------------------
+
+def _stuck_case_capture(*, second_person: int | None = 1, closed_at: str | None = None,
+                        second_product: str = PRODUCT) -> Capture:
+    # El primer carrito de la persona 1 queda permanent_failed (el nombre rechazado) y su caso
+    # abierto. El segundo, del mismo producto, choca con la secuencia activa del caso
+    # (23505, followup_sequences_one_active_per_case_idx) y queda create_recovery_case_failed.
+    first = cart(1, "2026-10-10T18:00:00.000000Z", who=1, intent=101)
+    case = case_of(first, who=1, status="expired" if closed_at else "active", closed_at=closed_at)
+    action = action_of(case, status="permanent_failed", updated_at="2026-10-10T18:00:05.000000Z")
+    second = {**cart(2, "2026-10-10T19:00:00.000000Z", who=second_person or 1, intent=101),
+              "processing_status": "failed", "processing_error": "create_recovery_case_failed",
+              "product_id": second_product}
+    if second_person is None:
+        del second["person_key"]
+    return Capture.from_json(build(events=[first, second], cases=[case], actions=[action],
+                                   contacts=[contact(1), contact(2)]))
+
+
+def test_a_case_failure_behind_a_running_case_reached_the_flow() -> None:
+    report = parity_report(_stuck_case_capture(), [])
+    assert report.reached_flow == 2
+    assert report.firings == {"carrito/create_recovery_case_failed:caso_en_curso": 1, "carrito/processed": 1}
+
+
+@pytest.mark.parametrize(("change", "why"), [
+    ({"second_person": None}, "sin clave de persona"),
+    ({"second_person": 2}, "otra persona"),
+    ({"closed_at": "2026-10-10T18:30:00.000000Z"}, "el caso ya habia cerrado"),
+    ({"second_product": "5071809"}, "el caso es de otro producto"),
+])
+def test_a_case_failure_without_a_running_case_of_its_person_did_not_reach_the_flow(
+        change: dict[str, Any], why: str) -> None:
+    report = parity_report(_stuck_case_capture(**change), [])
+    assert report.reached_flow == 1, why
+    assert report.firings["carrito/create_recovery_case_failed"] == 1, why

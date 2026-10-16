@@ -21,7 +21,8 @@
 //      siembra antes del plan (y el plan ya no siembra otro). La reevaluacion
 //      es pura en p_now: no la compara con el reloj.
 //
-//   2. Los 24 casos de hoy (G1 a G24, la tabla de §3.2). Lo que hace hoy cada
+//   2. Los 25 casos de hoy (G1 a G24, la tabla de §3.2, y G25, el vencimiento
+//      de la reevaluacion, que pidio la revision de T1). Lo que hace hoy cada
 //      caso no lo escribe nadie: lo genera esta cadena y queda en
 //      tests/fixtures/flow_engine/legacy_recovery_cases.json. Con --check, la
 //      corrida tiene que dar exactamente ese archivo; con --write, lo
@@ -869,10 +870,13 @@ const sqlErrorOf = (error) => ({
 
 // Un lease del despachador sobre la accion `actionId`, todo en el instante
 // simulado `now` (la toma, las dos reevaluaciones, la reserva y el arranque).
+// Con `reevaluateAt`, la reevaluacion va en ese instante (dentro del lease) y
+// el lease termina ahi: es lo que hace G25 para reevaluar justo al vencer, que
+// la toma no deja (claim_due_followup_actions pide expires_at > p_now).
 // Devuelve lo que paso; el detalle queda en los pasos del caso.
 let acceptanceSerial = 0;
 const lease = async (ctx, actionId, now, {
-  accept = false, closeBeforeRequest = null, duration = WORKER_LEASE,
+  accept = false, closeBeforeRequest = null, duration = WORKER_LEASE, reevaluateAt = null,
 } = {}) => {
   const label = ctx.label('a', actionId);
   const t = ctx.rel(now);
@@ -886,15 +890,16 @@ const lease = async (ctx, actionId, now, {
   });
   if (claimed === undefined) return { claimed: false };
   const generation = claimed.lease_generation;
-  const reevaluate = async () => {
+  const reevaluate = async (at = now) => {
     const decision = one(await query(`
       select * from public.reevaluate_followup_action($1,$2,$3,$4::timestamptz)
-    `, [actionId, ctx.worker, generation, now.toISOString()]), `${ctx.spec.id} reevaluacion`);
+    `, [actionId, ctx.worker, generation, at.toISOString()]), `${ctx.spec.id} reevaluacion`);
     ctx.step({
-      paso: 'reevaluacion', accion: label, t, decision: decision.decision, motivo: decision.reason_code,
+      paso: 'reevaluacion', accion: label, t: ctx.rel(at), decision: decision.decision, motivo: decision.reason_code,
     });
     return decision;
   };
+  if (reevaluateAt !== null) return { claimed: true, decision: await reevaluate(reevaluateAt) };
   const decision = await reevaluate();
   if (decision.decision !== 'execute') return { claimed: true, decision };
   const attempt = one(await query(`
@@ -1132,7 +1137,7 @@ const snapshot = async (ctx) => {
 };
 
 // ---------------------------------------------------------------------------
-// Los 24 casos. `fija` es la fila de §3.2; `check` mira, al generar, que el
+// Los 25 casos. `fija` es la fila de §3.2; `check` mira, al generar, que el
 // caso fije de verdad lo que dice (un caso que no lo fija no se escribe).
 // ---------------------------------------------------------------------------
 const stepsOf = (record, paso) => record.pasos.filter((entry) => entry.paso === paso);
@@ -1569,6 +1574,24 @@ const CASES = [
     check: (record) => stepsOf(record, 'arranque')[0]?.resultado === 'request_started'
       && record.final.personas.A.permisos[0]?.razon === 'precheckout_whatsapp_consent',
   },
+  {
+    id: 'G25', ventana: 'abierta', vence: '00:10:00',
+    que: 'La reevaluacion en el instante exacto del vencimiento (vence a los 10 minutos del disparo, en T0): la toma va un segundo antes, con el lease vigente, y la reevaluacion con p_now = expires_at vence la accion y el caso, con la ventana abierta.',
+    fija: 'P4, el vencimiento de la reevaluacion (expires_at <= p_now)',
+    run: async (ctx) => {
+      const lead = personOf(ctx, 'A');
+      await admitForm(ctx, lead, ctx.at(-1800));
+      const cart = await admitEvent(ctx, 'carrito', lead, ctx.disparo);
+      const plan = await resolveAndPlan(ctx, cart);
+      await lease(ctx, plan.scheduled_action_id, ctx.at(-1), { reevaluateAt: ctx.T0 });
+    },
+    check: (record) => record.final.acciones.a1.expires_at === 600
+      && stepsOf(record, 'reevaluacion')[0]?.t === 600
+      && stepsOf(record, 'reevaluacion')[0]?.decision === 'expire'
+      && record.final.acciones.a1.estado === 'expired'
+      && record.final.acciones.a1.terminal_reason === 'reevaluation_expired'
+      && record.final.casos.c1.estado === 'expired',
+  },
 ];
 
 const casesStarted = Date.now();
@@ -1594,13 +1617,13 @@ for (const spec of order) {
 tick('casos', casesStarted);
 
 const FORMAT = {
-  que_es: 'Lo que hace hoy el legado (el carrito y el pago fallido del recuperador de ATT1) en 24 casos, G1 a G24 (diseno del motor de flujos, §3.2). Lo genera tests/sql/followup_engine/validate_flow_engine_legacy.mjs con la cadena real de migraciones en PGlite; nadie lo escribe a mano. Con --check, la CI falla si regenerarlo da otra cosa.',
+  que_es: 'Lo que hace hoy el legado (el carrito y el pago fallido del recuperador de ATT1) en 25 casos, G1 a G25 (diseno del motor de flujos, §3.2; G25, el vencimiento de la reevaluacion, lo pidio la revision de T1). Lo genera tests/sql/followup_engine/validate_flow_engine_legacy.mjs con la cadena real de migraciones en PGlite; nadie lo escribe a mano. Con --check, la CI falla si regenerarlo da otra cosa.',
   como_se_genera: 'Una sola base con la cadena aplicada una vez; un scope y una politica por caso (copias de la v5 de att1-recuperacion y de att1-recuperacion-un-toque v1 de la captura de ATT1, con la zona, la ventana y los topes del caso). Los disparos entran por las admisiones portables y los planificadores del piloto, como los llama el bridge; el despacho, por la toma, la reevaluacion, la reserva y el arranque de la base. La cabecera del script dice que hace cada paso y de donde sale.',
   tiempos: 'Toda hora es un entero de segundos desde el disparo del caso, que es T0 - 600 s. T0 (t = 600) es la primera toma: el minuto en curso al empezar el caso mas 2 minutos, para que los planes corran antes en el reloj real (el permiso del carrito nace con el reloj) y los arranques queden a menos de 5 minutos de el. Lo que pasa despues de un envio va en T0 + 60 s (t = 660). En los reintentos, la toma es con un lease de 1 minuto (paso toma, campo lease) y la segunda va en T0 + 61 s (t = 661). "reloj" es una hora que pone el reloj de la base (request_started_at, authorized_at, el now() de un plan): solo se verifica que caiga dentro de la corrida.',
   dias: 'Un dia local es "corrida" (el de T0 en la zona del caso) o "anterior".',
   zona: 'Cada caso corre en Etc/GMT+-N, elegida para que la hora local de T0 caiga entre las 11:30 y las 12:30: ninguna ventana cruza la medianoche.',
   config: 'La configuracion del caso: la ventana (relativa a la hora local de T0), el vencimiento, la gracia, los pasos de la politica, la audiencia del scope y sus topes.',
-  pasos: 'Lo que paso, en orden. formulario (persona, t, admision, otro_telefono, misma_intencion); disparo (evento, tipo, persona, t, admision); plan (evento, arranco, motivo = el processing_error que deja el ResolutionWorker, contacto_existia, y si arranco caso, accion y creado; con create_recovery_case_failed, error_de_la_base es lo que contesto la base, que el bridge deja solo en el log); compra_aplicada (resultado de apply_hotmart_purchase_approved); baja (forma: identidad_guardada o wa_id, resultado, acciones_tocadas); operador (que, version, estado); toma (accion, t, tomada, y lease si no es el de 5 minutos); reevaluacion (accion, t, decision, motivo); reserva (accion, t, intento); cierre_sin_pedido (motivo, estado, terminal_reason); arranque (accion, t, resultado = request_started, rechazado o error, motivo = el detail de pilot_request_start_rejected o el mensaje del error, dia_local, autorizada, request_started_at); aceptacion (estado); autorizacion_sembrada (G5); due_at (G11: el que deja el plan del pago fallido repetido); barrido (la toma despues de vencer: estado y terminal_reason).',
+  pasos: 'Lo que paso, en orden. formulario (persona, t, admision, otro_telefono, misma_intencion); disparo (evento, tipo, persona, t, admision); plan (evento, arranco, motivo = el processing_error que deja el ResolutionWorker, contacto_existia, y si arranco caso, accion y creado; con create_recovery_case_failed, error_de_la_base es lo que contesto la base, que el bridge deja solo en el log); compra_aplicada (resultado de apply_hotmart_purchase_approved); baja (forma: identidad_guardada o wa_id, resultado, acciones_tocadas); operador (que, version, estado); toma (accion, t, tomada, y lease si no es el de 5 minutos); reevaluacion (accion, t, decision, motivo; va en el t de la toma salvo en G25, que reevalua dentro del lease en otro instante); reserva (accion, t, intento); cierre_sin_pedido (motivo, estado, terminal_reason); arranque (accion, t, resultado = request_started, rechazado o error, motivo = el detail de pilot_request_start_rejected o el mensaje del error, dia_local, autorizada, request_started_at); aceptacion (estado); autorizacion_sembrada (G5); due_at (G11: el que deja el plan del pago fallido repetido); barrido (la toma despues de vencer: estado y terminal_reason).',
   final: 'El estado al terminar el caso. eventos: tipo, estado (processing_status) y error (processing_error). casos: estado, etapa, compra, correlacion_de_compra, con_conversacion, eventos del caso, scope_version y audiencia del binding, y las secuencias (estado, cierre, aceptados). acciones: caso, tipo, paso, ancla, estado, terminal_reason, due_at, expires_at e intentos (numero, fase, resultado, motivo, autorizado). personas: si tiene contacto, su intencion (estado, clasificacion, permisos del formulario) y sus permisos de contacto (estado, fuente, razon). autorizaciones_del_scope: los arranques autorizados del scope del caso, por dia local.',
   referencias: 'e1, c1, a1...: el evento, el caso y la accion en el orden en que aparecen en el caso. "otro" es uno que no es del caso.',
 };

@@ -70,6 +70,16 @@ def render(report: ParityReport, capture: Capture) -> str:
          f" ({by.get('persona', 0)} por persona, {by.get('intencion', 0)} por intencion);"
          f" sin ganador: {len(report.supersessions_without_winner)};"
          f" ganadores sin cancelacion: {len(report.winners_without_cancel)}"),
+    ]
+    routes = report.supersessions_by_routes
+    without_case = report.ceded_to_a_firing_without_case
+    lines += [
+        (f"  sin depender del orden: {routes.get('las_dos', 0)} por las dos rutas,"
+         f" {routes.get('solo_persona', 0)} solo por persona, {routes.get('solo_intencion', 0)} solo por intencion"),
+        f"  ante un disparo sin caso (no mando nada): {sum(without_case.values())}",
+    ]
+    lines += [f"    {result}: {count}" for result, count in without_case.items()]
+    lines += [
         f"Diferencias con nombre: {report.named_total}",
     ]
     lines += [f"  {name}: {count}" for name, count in report.named.items()]

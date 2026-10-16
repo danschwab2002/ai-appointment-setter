@@ -286,6 +286,25 @@ def _capture() -> dict[str, Any]:
     }
 
 
+# Las claves que deja el recorte (§6.4, paso 2), escritas aca y no tomadas de
+# flow_capture: si el modulo pierde una, el esperado no la pierde con el.
+TRIMMED_PLAN_KEYS = (
+    "purchase_intent_id", "contact_id", "recovery_case_id", "outcome", "reason_code",
+    "created_at", "accion_status", "accion_terminal_reason", "accion_due_at",
+    "accion_cerrada_at", "request_started_at",
+)
+TRIMMED_INTENT_KEYS = (
+    "id", "product_ref", "offer_ref", "submitted_at", "lifecycle_state",
+    "current_classification", "person_key",
+)
+# Las claves del primer contacto que lee la paridad (flow_parity: _superseded,
+# supersessions, winners_without_cancel, _wins y _plan_ref).
+PARITY_PLAN_KEYS = (
+    "purchase_intent_id", "contact_id", "recovery_case_id", "outcome", "reason_code",
+    "created_at", "accion_status", "accion_terminal_reason", "accion_cerrada_at",
+    "request_started_at",
+)
+
 # Lo que el fixture tiene que devolver, escrito sin el constructor: las horas a
 # Z con seis cifras, sin nulos y con el recorte a mano.
 _HOUR = re.compile(r"([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\.([0-9]{1,6}))?\+00:00")
@@ -305,13 +324,13 @@ def _by_hand(value: Any) -> Any:
 def _expected() -> dict[str, Any]:
     capture = _capture()
     capture["primer_contacto"] = [
-        {key: plan[key] for key in fc.FIRST_CONTACT_KEYS} for plan in capture["primer_contacto"][1:]]
+        {key: plan[key] for key in TRIMMED_PLAN_KEYS} for plan in capture["primer_contacto"][1:]]
     # El carrito y el pago fallido desde «desde» (por su correlacion) y los dos
     # planes desde «desde». Afuera: la del pago fallido de la siembra, la del
     # plan de la siembra y la que nadie toca.
     kept = {I_CART, I_CANCEL, I_PLAN, I_NOT_PLANNED}
     capture["intenciones"] = [
-        {key: intent[key] for key in fc.INTENT_KEYS} for intent in capture["intenciones"] if intent["id"] in kept]
+        {key: intent[key] for key in TRIMMED_INTENT_KEYS} for intent in capture["intenciones"] if intent["id"] in kept]
     return _by_hand(capture)
 
 
@@ -336,14 +355,22 @@ def test_the_hand_written_capture_has_the_shape_of_the_query() -> None:
     assert fc.count_sections(_capture()) == _capture()["_captured"]["conteos"]
 
 
+def test_the_trim_keeps_the_keys_of_the_design_and_the_ones_the_parity_reads() -> None:
+    assert fc.FIRST_CONTACT_KEYS == TRIMMED_PLAN_KEYS
+    assert fc.INTENT_KEYS == TRIMMED_INTENT_KEYS
+    # Sin request_started_at, winners_without_cancel deja de ver los primeros contactos que
+    # salieron aunque un disparo les ganaba.
+    assert set(PARITY_PLAN_KEYS) <= set(fc.FIRST_CONTACT_KEYS)
+
+
 def test_the_builder_trims_the_seed() -> None:
     fixture = _build()
     plans = fixture["primer_contacto"]
     assert [plan["purchase_intent_id"] for plan in plans] == [I_PLAN, I_NOT_PLANNED]
-    assert all(set(plan) <= set(fc.FIRST_CONTACT_KEYS) for plan in plans)
+    assert all(set(plan) <= set(TRIMMED_PLAN_KEYS) for plan in plans)
     assert "scope_key" not in json.dumps(plans) and "caso_status" not in json.dumps(plans)
     assert [intent["id"] for intent in fixture["intenciones"]] == [I_CART, I_CANCEL, I_PLAN, I_NOT_PLANNED]
-    assert all(set(intent) <= set(fc.INTENT_KEYS) for intent in fixture["intenciones"])
+    assert all(set(intent) <= set(TRIMMED_INTENT_KEYS) for intent in fixture["intenciones"])
     assert fixture["_captured"]["fixture"]["recortes"] == {
         "primer_contacto": {"captura": 3, "fixture": 2},
         "intenciones": {"captura": 7, "fixture": 4},
