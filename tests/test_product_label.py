@@ -121,7 +121,15 @@ def test_a_product_without_a_label_labels_nothing() -> None:
         ([{"clave": "att1", "etiqueta": "att1", "macro_etiqueta": "7"}], "entero positivo"),
         ([{"clave": "ATT1"}], "slug"),
         ([{"clave": "att1", "precio": "47"}], "claves no soportadas precio"),
-        ([{"clave": "att1"}, {"clave": "att2"}], "admite 1 producto"),
+        # Desde el segundo, cada producto trae su funnel y su Hotmart (2c).
+        (
+            [{"clave": "att1"}, {"clave": "att2"}],
+            "faltan binding_version, funnel_ref, hotmart",
+        ),
+        (
+            [{"clave": "att1", "funnel_ref": "att1"}],
+            "es el producto principal",
+        ),
         ([], "lista de tablas"),
     ],
 )
@@ -151,7 +159,8 @@ def test_the_reserved_labels_are_the_ones_the_bridge_writes() -> None:
         for label in action["action_params"]
     }
     assert set(RESERVED_CHATWOOT_LABELS) == written
-    assert MAX_PRODUCTS == 1
+    # Varios productos desde la 2c: el principal y hasta siete mas.
+    assert MAX_PRODUCTS == 8
 
 
 def _by_product(*keys: str) -> CommercialKnowledge:

@@ -64,7 +64,9 @@ from bridge.reactivation import ConversationReactivationSweeper
 from bridge.commercial_ally import CommercialAllyConfig, JOHANNA_COMMERCIAL_ALLY
 from bridge.commercial_knowledge import CommercialKnowledge
 from bridge.instance_manifest import GHL_RISK_GATED_FLOWS, InstanceManifest
+from bridge import product_routes
 from bridge.product_label import ProductLabeler
+from bridge.product_routes import ProductRoutes
 from bridge.checkout_delivery import CheckoutDeliveryError, deliver_checkout_issuance_v2
 from bridge.filtering import EventDecision, classify_chatwoot_event
 from bridge.agent_provenance import AgentTurn, CONTEXT_BUILDER_VERSION
@@ -2202,6 +2204,13 @@ def _validate_instance_manifest_gates(settings: Settings) -> None:
         )
         if products_error is not None:
             raise ValueError(f"instance products: {products_error}")
+    if len(manifest.products) > 1 and not product_routes.ROUTING_COMPLETE:
+        # Los productos que no son el principal ya cargan y validan (2c-1), pero
+        # el bridge todavia no enruta sus eventos, formularios ni links.
+        raise ValueError(
+            "instance products: con mas de un producto el bridge espera el ruteo "
+            "por producto (pasos 2c-2 y 2c-3)"
+        )
     blocked = sorted(
         f"{flag}->{flow}"
         for flag, flow in _FLAG_REQUIRED_FLOW.items()
@@ -2913,6 +2922,11 @@ def create_app(
     portable_runtime = (
         explicit_manifest_runtime
         or settings.commercial_ally_config != JOHANNA_COMMERCIAL_ALLY
+    )
+    # Un binding por producto (paso 2c): el principal es el que ya carga el
+    # bridge; con un solo producto es la unica ruta.
+    commercial_ally_routes = ProductRoutes.build(
+        settings.commercial_ally_config, settings.instance_manifest
     )
     # Candado del binding v1 de ATT1 (COMMERCIAL_ALLY_CONFIG_PATH con
     # tenant_ref "att1", 2026-09-04). Con el manifiesto v2 no dispara: ahi
@@ -4265,9 +4279,10 @@ def create_app(
             if slack_projection_worker is not None:
                 if portable_runtime:
                     assert shared_supabase is not None
-                    await shared_supabase.resolve_commercial_ally_runtime_binding(
-                        settings.commercial_ally_config
-                    )
+                    for route in commercial_ally_routes:
+                        await shared_supabase.resolve_commercial_ally_runtime_binding(
+                            route.config
+                        )
                 await slack_projection_worker.start()
             if slack_handoff_projection_worker is not None:
                 await slack_handoff_projection_worker.start()
@@ -6678,22 +6693,29 @@ def create_app(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail="commercial_ally_binding_unavailable",
                 )
-            try:
-                await shared_supabase.resolve_commercial_ally_runtime_binding(
-                    settings.commercial_ally_config
-                )
-            except Exception as exc:
-                logger.warning(
-                    "commercial_ally_binding_check_failed error_type=%s",
-                    type(exc).__name__,
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="commercial_ally_binding_unavailable",
-                ) from exc
+            for route in commercial_ally_routes:
+                try:
+                    await shared_supabase.resolve_commercial_ally_runtime_binding(
+                        route.config
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "commercial_ally_binding_check_failed error_type=%s funnel_ref=%s",
+                        type(exc).__name__,
+                        route.config.funnel_ref,
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="commercial_ally_binding_unavailable",
+                    ) from exc
             commercial_ally_readiness = {
                 "commercial_ally_binding": "active",
             }
+            if len(commercial_ally_routes) > 1:
+                # Solo con varios productos: con uno, /ready no cambia.
+                commercial_ally_readiness["commercial_ally_bindings"] = str(
+                    len(commercial_ally_routes)
+                )
         commercial_ally_readiness = {
             **commercial_ally_readiness,
             **instance_readiness,
