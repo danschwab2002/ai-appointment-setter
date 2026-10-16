@@ -202,7 +202,8 @@ en el log. Con un solo producto el link es el de siempre; con más de uno, la
 reserva va por el funnel de ese producto (paso 2c-3a, abajo). Sin productos
 declarados, `product` invalida la propuesta como cualquier clave de más, y la
 salida de Johanna no cambia.
-`CONTEXT_BUILDER_VERSION` pasa a `shadow-context-v3`.
+`CONTEXT_BUILDER_VERSION` pasa a `shadow-context-v3` (y a `shadow-context-v4`
+con la 2c-3b, abajo).
 
 #### Un binding por producto (paso 2c-1)
 
@@ -213,9 +214,8 @@ comparten lo que es de la instancia: la aliada, Chatwoot, el scope entrante y el
 consentimiento. El bridge arma una ruta por producto (`ProductRoutes`), y el
 arranque y `/ready` resuelven el binding de cada una contra la base. Con más de
 uno, `/ready` publica `commercial_ally_bindings`; si falta uno o no coincide,
-responde 503 `commercial_ally_binding_unavailable`, como con uno solo. Mientras
-falten la etiqueta y lo que hizo la persona de cada producto (2c-3b), el bridge
-no arranca con más de un producto.
+responde 503 `commercial_ally_binding_unavailable`, como con uno solo. Desde la
+2c-3b el ruteo por producto está completo y el bridge arranca con más de uno.
 
 #### El ruteo de Hotmart y de los formularios (paso 2c-2)
 
@@ -281,6 +281,27 @@ Límite aceptado: el catálogo admite un solo default activo por scope, versión
 producto de Hotmart (`20260914000100`). Dos productos con el mismo hotlink en el
 mismo scope entrante no pueden tener cada uno su default: el segundo da
 `missing_default_offer`.
+
+#### La etiqueta y lo que hizo la persona de cada producto (paso 2c-3b)
+
+Con más de un producto (con uno solo, todo como en la 2a y la 2b):
+- **Lo que hizo la persona** (`person_activity`) se lee en el funnel de cada
+  producto (`get_portable_person_activity_v1`, una lectura por funnel) y llega
+  junto: cada cosa con la clave de su producto, de la más vieja a la más nueva y
+  solo las 20 más nuevas, el mismo tope que la lectura de un funnel. Si falla la
+  de un funnel, queda afuera solo ese
+  (`person_activity_lookup_failed error=… product=…`). Se lee una vez, cuando
+  entra el mensaje: da las etiquetas y la reusa la entrada del agente.
+- **El último pago rechazado** (`recent_payment_failure`) se lee en cada funnel
+  y es el más reciente de todos, con una clave más, `product`.
+- **La etiqueta.** Un etiquetador por producto que la declara; el chequeo de que
+  el macro no sea el de pausa, reanudar o baja recorre todos. Cuando la persona
+  escribe, la de cada producto que aparece en lo que hizo; sin nada, ninguna.
+  Cuando sale un link, la del producto del link (`source=link`). Con una
+  plantilla, la del principal: hoy solo el principal tiene flujos, los demás
+  llegan con el motor de la 1b. `/ready` publica `product_label_<clave>` por
+  producto.
+- `CONTEXT_BUILDER_VERSION` pasa a `shadow-context-v4`.
 
 #### Los eventos de la ficha (desde la 1.6.0)
 

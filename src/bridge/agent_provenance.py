@@ -29,7 +29,9 @@ from dataclasses import dataclass
 # v2 (1.6.0): el runtime con manifiesto puede sumar `recent_payment_failure`.
 # v3 (2b): con [[productos]] en el manifiesto suma `products` y puede sumar
 # `person_activity`.
-CONTEXT_BUILDER_VERSION = "shadow-context-v3"
+# v4 (2c-3b): con varios productos, `person_activity` junta la de cada funnel y
+# `recent_payment_failure` suma `product`.
+CONTEXT_BUILDER_VERSION = "shadow-context-v4"
 
 _ACTORES = ("prospect", "agent", "team", "system")
 
