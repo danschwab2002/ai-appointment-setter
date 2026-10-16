@@ -295,3 +295,25 @@ def test_the_time_goes_in_utc_whatever_zone_it_came_in() -> None:
 
     assert item["at"] == "2026-10-16T15:51:01Z"
     assert datetime.fromisoformat(item["at"].replace("Z", "+00:00")).tzinfo == UTC
+
+
+def test_the_link_purchase_migration_keeps_the_shape_the_bridge_reads() -> None:
+    # 20261016000300 cambia solo el cuerpo: la misma firma, las mismas dos
+    # columnas que valida get_portable_person_activity y ninguna funcion nueva.
+    migrations = Path(__file__).parents[1] / "supabase" / "migrations"
+    sql = (migrations / "20261016000300_portable_person_activity_link_purchase_v1.sql").read_text(
+        encoding="utf-8"
+    )
+
+    assert "create function" not in sql
+    assert sql.count("create or replace function public.get_portable_person_activity_v1(") == 1
+    assert (
+        "    p_tenant_ref text,\n    p_funnel_ref text,\n    p_whatsapp_phone text\n"
+        ") returns table (\n    activity text,\n    occurred_at timestamptz\n)"
+    ) in sql
+    assert "-- person_activity: link purchase" in sql
+    assert "where issuance.status = 'purchase_matched'" in sql
+    assert "and intent.funnel_ref = p_funnel_ref" in sql
+    # La compra que tambien paso por el correlador portable no se cuenta dos veces.
+    assert "from public.portable_hotmart_purchase_correlations correlation\n" in sql
+    assert "where correlation.webhook_event_id = event.id" in sql

@@ -1691,6 +1691,8 @@ const REPLIES = [
   { label: 'carrito-549', lead: arCart, run: arCartRun, intent: arCartIntent, attribution: 'marker_only' },
 ];
 const templateReplies = {};
+// Las emisiones de cada respuesta, para la compra con nuestro link del final.
+const reservedLinks = {};
 for (const reply of REPLIES) {
   const { label, lead, run, intent, attribution } = reply;
   const before = await templateConversation(run.chatwoot);
@@ -1754,6 +1756,7 @@ for (const reply of REPLIES) {
       || (attribution === 'full') !== url.endsWith(`&fbclid=${formFbclid}`)) {
     throw new Error(`${label}: the link is not the one of the form: ${JSON.stringify({ reserved: reserved.ok ? reserved.rows[0].outcome : `${reserved.code} ${reserved.message}`, ...link, offer: lead.offer.offer_code, intent: link?.purchase_intent_id === intent })}`);
   }
+  reservedLinks[label] = { issuanceId: reserved.rows[0].issuance_id, lead, userId, intent };
   let shared = null;
   if (reply.sharedControl) {
     // La compartida (la de Johanna) con el mismo caso y la identidad 521:
@@ -1878,6 +1881,74 @@ if (showResult(controlResult) !== '22000 inbound_canonical_conversation_conflict
   throw new Error(`the shared admission on another template conversation changed: ${JSON.stringify({ result: showResult(controlResult), conversation: conversationLine(controlConversation), adoptions: controlConversation.adoptions, total: totalAdoptions })}`);
 }
 
+// 11. La compra hecha con nuestro link, en lo que hizo la persona
+//     (20261016000300). El bridge manda la compra con el marcador de Hermes en
+//     el sck a admit_and_correlate_hotmart_checkout_issuance_v2 (app.py), que
+//     marca la emision purchase_matched y no escribe la correlacion portable:
+//     medido en att1-db el 2026-10-16, las 2 compras con nuestro link son las
+//     unicas sin esa fila. Se compra el link del pago fallido en 521 (el
+//     formulario lo guardo en 52): la lectura con el wa_id tiene que traer la
+//     compra una sola vez, con la hora del evento.
+const linkBuyer = reservedLinks['pago-fallido-521'];
+const linkIssuance = one((await db.query(`
+  select sck_value from public.checkout_link_issuances where id = $1
+`, [linkBuyer.issuanceId])).rows, 'link purchase issuance');
+const linkPurchaseId = `att1-chain-link-purchase-${linkBuyer.lead.email}`;
+const linkPurchasePayload = {
+  id: linkPurchaseId,
+  creation_date: Date.now(),
+  event: 'PURCHASE_APPROVED',
+  version: '2.0.0',
+  data: {
+    product: { id: ATT1.productId, ucode: 'ATT1-CHAIN-UCODE' },
+    buyer: { email: linkBuyer.lead.email, checkout_phone: `+${linkBuyer.lead.whatsapp}` },
+    purchase: {
+      approved_date: Date.now(),
+      status: 'APPROVED',
+      transaction: 'HPATT1CHAINLINK1',
+      offer: { code: linkBuyer.lead.offer.offer_code },
+      origin: { sck: linkIssuance.sck_value },
+    },
+  },
+};
+const linkPurchase = await asServiceTry(`
+  select * from public.admit_and_correlate_hotmart_checkout_issuance_v2(
+    $1, $2::jsonb, $3, clock_timestamp()
+  )
+`, [linkPurchaseId, JSON.stringify(linkPurchasePayload), linkIssuance.sck_value]);
+const linkEvent = linkPurchase.ok ? linkPurchase.rows[0].webhook_event_id : null;
+const linkPortableRows = one((await db.query(`
+  select count(*)::integer as count from public.portable_hotmart_purchase_correlations
+  where webhook_event_id = $1
+`, [linkEvent])).rows, 'link purchase portable correlation').count;
+const linkEventAt = linkEvent === null ? null : one((await db.query(`
+  select received_at from public.webhook_events where id = $1
+`, [linkEvent])).rows, 'link purchase event').received_at;
+const linkActivity = await asServiceTry(`
+  select activity, occurred_at
+  from public.get_portable_person_activity_v1($1, $2, $3)
+`, [ATT1.tenant, ATT1.funnel, linkBuyer.lead.whatsapp]);
+const linkPurchases = linkActivity.ok
+  ? linkActivity.rows.filter((row) => row.activity === 'purchase')
+  : [];
+if (!linkPurchase.ok
+    || linkPurchase.rows[0].admission_outcome !== 'inserted'
+    || linkPurchase.rows[0].correlation_outcome !== 'matched'
+    || linkPurchase.rows[0].issuance_id !== linkBuyer.issuanceId
+    || linkPurchase.rows[0].purchase_intent_id !== linkBuyer.intent
+    || linkPortableRows !== 0
+    || linkPurchases.length !== 1
+    || linkPurchases[0].occurred_at.getTime() !== linkEventAt.getTime()
+    || linkActivity.rows.at(-1).activity !== 'purchase') {
+  throw new Error(`the purchase with our link is not in what the person did: ${JSON.stringify({
+    purchase: linkPurchase.ok
+      ? `${linkPurchase.rows[0].admission_outcome}:${linkPurchase.rows[0].correlation_outcome}`
+      : `${linkPurchase.code} ${linkPurchase.message}`,
+    portableRows: linkPortableRows,
+    activity: linkActivity.ok ? linkActivity.rows.map((row) => row.activity) : `${linkActivity.code} ${linkActivity.message}`,
+  })}`);
+}
+
 console.log(JSON.stringify({
   att1_portable_chain: 'OK',
   empty_cohort: 'pilot_scope_rejected:pilot_contact_not_in_cohort',
@@ -1915,6 +1986,11 @@ console.log(JSON.stringify({
     opt_out_of_another_lead: `${showResult(leavingAdmitted)}, opt-out ${leavingOptOut.rows[0].outcome}`,
     shared_admission_control: showResult(controlResult),
     adoption_events: totalAdoptions,
+  },
+  link_purchase_in_person_activity: {
+    purchase: `${linkPurchase.rows[0].admission_outcome}:${linkPurchase.rows[0].correlation_outcome}`,
+    portable_correlation_rows: linkPortableRows,
+    activity: linkActivity.rows.map((row) => row.activity).join(','),
   },
 }));
 await db.close();

@@ -700,14 +700,16 @@ def test_flow_change_store_fingerprint_never_reads_the_publish_body() -> None:
                 assert f"position('{invariant}' in definition) > 0" in chunk, invariant
 
 
-def test_person_activity_fingerprint_is_last_and_service_role_only() -> None:
+def test_person_activity_fingerprint_is_service_role_only() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261016000200 es la ultima del inventario.
-    fingerprint = sql.split("'20261016000200'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261016000200 va justo antes de la de 20261016000300 (la
+    # compra con nuestro link).
+    fingerprint = sql.split("'20261016000200'", 1)[1].split("'20261016000300'", 1)[0]
+    fingerprint = fingerprint.rsplit("union all", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261016000200_portable_person_activity_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",2,'portable_person_activity')")
+    assert compact_fingerprint.endswith(",2,'portable_person_activity'")
     for marker in (
         "to_regprocedure('public.get_portable_person_activity_v1(text,text,text)')",
         "andprosecdef",
@@ -716,5 +718,23 @@ def test_person_activity_fingerprint_is_last_and_service_role_only() -> None:
         "andhas_function_privilege('service_role',oid,'EXECUTE')",
         "andnothas_function_privilege('anon',oid,'EXECUTE')",
         "andnothas_function_privilege('authenticated',oid,'EXECUTE')",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_person_activity_link_purchase_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261016000300 es la ultima del inventario.
+    fingerprint = sql.split("'20261016000300'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261016000300_portable_person_activity_link_purchase_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",1,'portable_person_activity_link_purchase')")
+    for marker in (
+        "to_regprocedure('public.get_portable_person_activity_v1(text,text,text)')",
+        "andprosecdef",
+        "position('person_activity:linkpurchase'indefinition)>0",
+        "position('public.checkout_link_issuances'indefinition)>0",
+        "position('purchase_matched'indefinition)>0",
     ):
         assert marker in compact_fingerprint, marker

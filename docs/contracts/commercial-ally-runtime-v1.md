@@ -185,8 +185,12 @@ formulario), `cart`, `payment_rejected`, `payment_slip_printed`,
 leído; `at`, ISO 8601 en UTC. Lo devuelve
 `get_portable_person_activity_v1(tenant, funnel, teléfono)` (migración
 `20261016000200`), que compara las dos formas del móvil y trae las 20 más
-recientes, sin email, nombre, transacción ni payload. Sin actividad la clave no
-va. Si la lectura falla, el turno sigue sin el dato
+recientes, sin email, nombre, transacción ni payload. `purchase` cuenta también
+la compra hecha con el link del agente (migración `20261016000300`, paso 2c-0):
+esa compra pasa por el correlador de la emisión y no por el portable, así que se
+lee de la emisión `purchase_matched` cuya intención es del funnel, por la
+identidad a la que se mandó el link o el teléfono del evento. Sin actividad la
+clave no va. Si la lectura falla, el turno sigue sin el dato
 (`person_activity_lookup_failed` en el log, sin el número).
 
 La salida del agente admite entonces una séptima clave, `product`: `null` o la
