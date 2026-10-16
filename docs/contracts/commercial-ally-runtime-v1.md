@@ -203,6 +203,19 @@ producto es la 2c. Sin productos declarados, `product` invalida la propuesta com
 cualquier clave de más, y la salida de Johanna no cambia.
 `CONTEXT_BUILDER_VERSION` pasa a `shadow-context-v3`.
 
+#### Un binding por producto (paso 2c-1)
+
+Cada producto de `[[productos]]` es su propio binding, con su `funnel_ref`
+([referencia](../referencia-manifiesto.md)). El principal, el primero, es el de
+siempre (`[hotmart]` y `[instancia]`); los demás traen su funnel y su Hotmart, y
+comparten lo que es de la instancia: la aliada, Chatwoot, el scope entrante y el
+consentimiento. El bridge arma una ruta por producto (`ProductRoutes`), y el
+arranque y `/ready` resuelven el binding de cada una contra la base. Con más de
+uno, `/ready` publica `commercial_ally_bindings`; si falta uno o no coincide,
+responde 503 `commercial_ally_binding_unavailable`, como con uno solo. Mientras
+falte el ruteo de los eventos, los formularios y el link (2c-2 y 2c-3), el bridge
+no arranca con más de un producto.
+
 #### Los eventos de la ficha (desde la 1.6.0)
 
 Con el mismo flag, `PURCHASE_BILLET_PRINTED` y `PURCHASE_EXPIRED` versión

@@ -110,9 +110,12 @@ _CHATWOOT_LABEL = re.compile(r"[a-z0-9][a-z0-9_-]{0,254}")
 # Las etiquetas de la automatizacion. Un producto no puede llamarse igual: su
 # macro pondria la pausa o la baja en cada conversacion del producto.
 RESERVED_CHATWOOT_LABELS = ("automation_paused", "automation_opted_out")
-# Esta version etiqueta con un solo producto. Con dos, la etiqueta de cada
-# conversacion la decide el ruteo por producto, que llega despues.
-MAX_PRODUCTS = 1
+# Los productos de una aliada. El primero es el principal: lo suyo sale de
+# [hotmart] y del funnel de [instancia]. Desde el segundo, cada uno trae su
+# funnel y su Hotmart (paso 2c de varios productos por aliada).
+MAX_PRODUCTS = 8
+# Lo que el principal no puede traer en [[productos]]: ya esta arriba.
+_PRINCIPAL_ONLY_ABOVE = ("funnel_ref", "binding_version", "hotmart")
 
 
 class ManifestError(ValueError):
@@ -184,6 +187,25 @@ class GhlFormLandings:
 
 
 @dataclass(frozen=True)
+class ProductCommerce:
+    """El funnel y el Hotmart de un producto que no es el principal (paso 2c).
+
+    El principal no lo lleva: lo suyo sale de ``[hotmart]`` y de ``[instancia]``,
+    como antes de varios productos. Cada producto es su propio binding en la base,
+    con su ``funnel_ref`` (decision de Dan del 2026-10-16).
+    """
+
+    funnel_ref: str
+    binding_version: int
+    hotmart_product_id: int
+    hotlink: str
+    product_name: str
+    currency: str
+    price: Decimal
+    offers: tuple[Offer, ...]
+
+
+@dataclass(frozen=True)
 class Product:
     """Un producto de la aliada (``[[productos]]``).
 
@@ -197,11 +219,15 @@ class Product:
     la lista entera y podria borrar ``automation_paused``; la accion ``add_label``
     de un macro solo suma. Las dos van juntas, o ninguna: sin etiqueta, el
     producto no se marca en Chatwoot.
+
+    ``commerce`` es el funnel y el Hotmart de un producto que no es el principal;
+    ``None`` en el principal, el primero de la lista.
     """
 
     key: str
     chatwoot_label: str | None = None
     chatwoot_label_macro_id: int | None = None
+    commerce: ProductCommerce | None = None
 
 
 @dataclass(frozen=True)
@@ -328,7 +354,7 @@ class InstanceManifest:
         return tuple(missing)
 
     def to_commercial_ally_config(self) -> CommercialAllyConfig:
-        """El binding v1 que leen hoy los caminos del bridge.
+        """El binding v1 que leen hoy los caminos del bridge: el del principal.
 
         La oferta por defecto es la del binding; las demas landings van en
         ``additional_offer_codes`` (F2c), asi un carrito o un pago fallido que
@@ -337,22 +363,68 @@ class InstanceManifest:
         formulario del precheckout de cada landing.
         """
 
-        offer = self.default_offer
-        others = tuple(other for other in self.offers if other is not offer)
-        return CommercialAllyConfig(
-            tenant_ref=self.tenant_ref,
+        return self._binding(
             funnel_ref=self.funnel_ref,
             binding_version=self.binding_version,
+            hotmart_product_id=self.hotmart_product_id,
+            hotlink=self.hotlink,
+            product_name=self.product_name,
+            currency=self.currency,
+            price=self.price,
+            offers=self.offers,
+        )
+
+    def to_commercial_ally_configs(self) -> tuple[CommercialAllyConfig, ...]:
+        """Un binding por producto: el del principal primero, despues los demas
+        en el orden de ``[[productos]]`` (paso 2c).
+
+        Lo que es de la instancia (la aliada, Chatwoot, el scope entrante y el
+        consentimiento) es el mismo en todos; cambia lo del producto.
+        """
+
+        return (self.to_commercial_ally_config(),) + tuple(
+            self._binding(
+                funnel_ref=product.commerce.funnel_ref,
+                binding_version=product.commerce.binding_version,
+                hotmart_product_id=product.commerce.hotmart_product_id,
+                hotlink=product.commerce.hotlink,
+                product_name=product.commerce.product_name,
+                currency=product.commerce.currency,
+                price=product.commerce.price,
+                offers=product.commerce.offers,
+            )
+            for product in self.products
+            if product.commerce is not None
+        )
+
+    def _binding(
+        self,
+        *,
+        funnel_ref: str,
+        binding_version: int,
+        hotmart_product_id: int,
+        hotlink: str,
+        product_name: str,
+        currency: str,
+        price: Decimal,
+        offers: tuple[Offer, ...],
+    ) -> CommercialAllyConfig:
+        offer = next(candidate for candidate in offers if candidate.default)
+        others = tuple(other for other in offers if other is not offer)
+        return CommercialAllyConfig(
+            tenant_ref=self.tenant_ref,
+            funnel_ref=funnel_ref,
+            binding_version=binding_version,
             ally_ref=self.ally_ref,
             lead_ally_name=self.brand,
             lead_site=offer.site,
             lead_landing_id=offer.landing_id,
             lead_page_host=offer.page_host,
             lead_page_path=offer.page_path,
-            product_hotlink=self.hotlink,
-            product_name=self.product_name,
-            product_price=self.price,
-            currency=self.currency,
+            product_hotlink=hotlink,
+            product_name=product_name,
+            product_price=price,
+            currency=currency,
             offer_code=offer.code,
             additional_offer_codes=tuple(other.code for other in others),
             additional_offer_landings=tuple(
@@ -366,7 +438,7 @@ class InstanceManifest:
                 for other in others
             ),
             consent_copy_version=self.consent_copy_version,
-            hotmart_product_id=self.hotmart_product_id,
+            hotmart_product_id=hotmart_product_id,
             chatwoot_account_id=self.chatwoot_account_id,
             chatwoot_inbox_id=self.chatwoot_inbox_id,
             inbound_scope_key=self.inbound_scope_key,
@@ -409,22 +481,14 @@ class InstanceManifest:
         except (ZoneInfoNotFoundError, ValueError) as exc:
             raise ManifestError(f"instancia.zona_horaria '{time_zone}' no es una zona IANA") from exc
 
-        hotmart = _table(payload, "hotmart")
-        _exact_keys(
-            "hotmart",
-            hotmart,
-            {"product_id", "hotlink", "product_name", "moneda", "precio", "ofertas"},
-        )
-        hotmart_product_id = _positive_int(hotmart, "product_id", "hotmart.product_id")
-        hotlink = _str(hotmart, "hotlink", "hotmart.hotlink")
-        if _HOTLINK.fullmatch(hotlink) is None:
-            raise ManifestError("hotmart.hotlink debe ser alfanumerico")
-        product_name = _str(hotmart, "product_name", "hotmart.product_name")
-        currency = _str(hotmart, "moneda", "hotmart.moneda")
-        if _CURRENCY.fullmatch(currency) is None:
-            raise ManifestError("hotmart.moneda debe ser un codigo de tres letras mayusculas")
-        price = _price(hotmart.get("precio"))
-        offers = _offers(hotmart.get("ofertas"))
+        (
+            hotmart_product_id,
+            hotlink,
+            product_name,
+            currency,
+            price,
+            offers,
+        ) = _hotmart(_table(payload, "hotmart"), "hotmart")
 
         chatwoot = _table(payload, "chatwoot")
         _exact_keys("chatwoot", chatwoot, {"account_id", "inbox_id"}, {"equipo_derivacion"})
@@ -469,10 +533,17 @@ class InstanceManifest:
             review = _table(payload, "revision_diaria")
             _exact_keys("revision_diaria", review, set(), {"revisores"})
             reviewers = _str_list(review.get("revisores", []), "revision_diaria.revisores")
-        ghl_form_ids, ghl_risk_acceptance, ghl_form_landings = _ghl_adapter(
-            payload, events, offers
-        )
         products = _products(payload.get("productos"))
+        # landing_por_formulario puede apuntar a la landing de cualquier producto.
+        all_offers = offers + tuple(
+            offer
+            for product in products
+            if product.commerce is not None
+            for offer in product.commerce.offers
+        )
+        ghl_form_ids, ghl_risk_acceptance, ghl_form_landings = _ghl_adapter(
+            payload, events, all_offers
+        )
 
         manifest = cls(
             product_version=product_version,
@@ -514,13 +585,66 @@ class InstanceManifest:
                 raise ManifestError(
                     f"flujos.{flow} esta prendido pero " + "; ".join(blockers)
                 )
+        _validate_products_apart(manifest)
         # El binding v1 valida hosts, rutas y slugs con sus propias reglas: si el v2
         # no se puede traducir, el manifiesto no sirve para los caminos de hoy.
         try:
-            manifest.to_commercial_ally_config()
+            manifest.to_commercial_ally_configs()
         except ValueError as exc:
             raise ManifestError(f"el manifiesto no produce un binding valido: {exc}") from exc
         return manifest
+
+
+def _validate_products_apart(manifest: InstanceManifest) -> None:
+    """Que el ruteo pueda separar los productos (paso 2c).
+
+    Un evento de Hotmart se rutea por (producto, oferta), un formulario por su
+    landing y por su pagina, y la base guarda un binding por funnel: nada de eso
+    puede estar en dos productos. Dos productos con el mismo producto de Hotmart
+    (ATT2 se vendio con ofertas del de ATT1) comparten hotlink y nombre, porque
+    son los de Hotmart.
+    """
+
+    entries = [
+        (
+            manifest.funnel_ref,
+            manifest.hotmart_product_id,
+            manifest.hotlink,
+            manifest.product_name,
+            manifest.offers,
+        )
+    ] + [
+        (
+            product.commerce.funnel_ref,
+            product.commerce.hotmart_product_id,
+            product.commerce.hotlink,
+            product.commerce.product_name,
+            product.commerce.offers,
+        )
+        for product in manifest.products
+        if product.commerce is not None
+    ]
+    if len(entries) == 1:
+        return
+    funnels = [entry[0] for entry in entries]
+    if len(set(funnels)) != len(funnels):
+        raise ManifestError("productos: dos productos con el mismo funnel_ref")
+    hotmart_of: dict[int, tuple[str, str]] = {}
+    owner: dict[tuple[object, ...], int] = {}
+    for index, (_, product_id, hotlink, product_name, offers) in enumerate(entries):
+        if hotmart_of.setdefault(product_id, (hotlink, product_name)) != (hotlink, product_name):
+            raise ManifestError(
+                f"productos: dos productos con el producto de Hotmart {product_id} y "
+                "distinto hotlink o product_name (son los de Hotmart, iguales en los dos)"
+            )
+        for offer in offers:
+            for key, what in (
+                (("oferta", product_id, offer.code), f"la oferta {offer.code} de {product_id}"),
+                (("landing", offer.site, offer.landing_id), f"la landing {offer.site}/{offer.landing_id}"),
+                (("pagina", offer.page_host, offer.page_path), f"la pagina {offer.page_host}{offer.page_path}"),
+            ):
+                if owner.setdefault(key, index) != index:
+                    raise ManifestError(f"productos: {what} esta en dos productos")
 
 
 def _products(raw: object) -> tuple[Product, ...]:
@@ -533,15 +657,25 @@ def _products(raw: object) -> tuple[Product, ...]:
     ):
         raise ManifestError("productos debe ser una lista de tablas ([[productos]])")
     if len(raw) > MAX_PRODUCTS:
-        raise ManifestError(
-            f"productos: esta version admite {MAX_PRODUCTS} producto; con varios, la "
-            "etiqueta de cada conversacion la decide el ruteo por producto, que "
-            "todavia no existe"
-        )
+        raise ManifestError(f"productos: admite hasta {MAX_PRODUCTS} productos")
     products = []
     for index, entry in enumerate(raw):
         where = f"productos[{index}]"
-        _exact_keys(where, entry, {"clave"}, {"etiqueta", "macro_etiqueta"})
+        if index == 0:
+            above = [key for key in _PRINCIPAL_ONLY_ABOVE if key in entry]
+            if above:
+                raise ManifestError(
+                    f"{where} es el producto principal: su {', '.join(above)} es el de "
+                    "[instancia] y [hotmart]"
+                )
+            _exact_keys(where, entry, {"clave"}, {"etiqueta", "macro_etiqueta"})
+        else:
+            _exact_keys(
+                where,
+                entry,
+                {"clave", *_PRINCIPAL_ONLY_ABOVE},
+                {"etiqueta", "macro_etiqueta"},
+            )
         product_ref = _ref(entry, "clave", f"{where}.clave")
         if ("etiqueta" in entry) != ("macro_etiqueta" in entry):
             raise ManifestError(f"{where}: etiqueta y macro_etiqueta van juntas")
@@ -559,10 +693,72 @@ def _products(raw: object) -> tuple[Product, ...]:
                     f"{where}.etiqueta '{label}' es una etiqueta de la automatizacion"
                 )
             macro_id = _positive_int(entry, "macro_etiqueta", f"{where}.macro_etiqueta")
+        commerce = None
+        if index:
+            hotmart = entry["hotmart"]
+            if not isinstance(hotmart, dict):
+                raise ManifestError(f"{where}.hotmart debe ser una tabla")
+            product_id, hotlink, product_name, currency, price, offers = _hotmart(
+                hotmart, f"{where}.hotmart"
+            )
+            commerce = ProductCommerce(
+                funnel_ref=_ref(entry, "funnel_ref", f"{where}.funnel_ref"),
+                binding_version=_positive_int(
+                    entry, "binding_version", f"{where}.binding_version"
+                ),
+                hotmart_product_id=product_id,
+                hotlink=hotlink,
+                product_name=product_name,
+                currency=currency,
+                price=price,
+                offers=offers,
+            )
         products.append(
-            Product(key=product_ref, chatwoot_label=label, chatwoot_label_macro_id=macro_id)
+            Product(
+                key=product_ref,
+                chatwoot_label=label,
+                chatwoot_label_macro_id=macro_id,
+                commerce=commerce,
+            )
         )
+    for what, values in (
+        ("clave", [product.key for product in products]),
+        ("etiqueta", [product.chatwoot_label for product in products if product.chatwoot_label]),
+        (
+            "macro_etiqueta",
+            [
+                product.chatwoot_label_macro_id
+                for product in products
+                if product.chatwoot_label_macro_id is not None
+            ],
+        ),
+    ):
+        if len(set(values)) != len(values):
+            raise ManifestError(f"productos: dos productos con la misma {what}")
     return tuple(products)
+
+
+def _hotmart(
+    table: Mapping[str, Any], where: str
+) -> tuple[int, str, str, str, Decimal, tuple[Offer, ...]]:
+    """``[hotmart]`` del principal o ``[productos.hotmart]`` de otro producto."""
+
+    _exact_keys(
+        where,
+        table,
+        {"product_id", "hotlink", "product_name", "moneda", "precio", "ofertas"},
+    )
+    product_id = _positive_int(table, "product_id", f"{where}.product_id")
+    hotlink = _str(table, "hotlink", f"{where}.hotlink")
+    if _HOTLINK.fullmatch(hotlink) is None:
+        raise ManifestError(f"{where}.hotlink debe ser alfanumerico")
+    product_name = _str(table, "product_name", f"{where}.product_name")
+    currency = _str(table, "moneda", f"{where}.moneda")
+    if _CURRENCY.fullmatch(currency) is None:
+        raise ManifestError(f"{where}.moneda debe ser un codigo de tres letras mayusculas")
+    price = _price(table.get("precio"), f"{where}.precio")
+    offers = _offers(table.get("ofertas"), f"{where}.ofertas")
+    return product_id, hotlink, product_name, currency, price, offers
 
 
 def _exact_keys(
@@ -608,15 +804,15 @@ def _positive_int(table: Mapping[str, Any], key: str, where: str) -> int:
     return value
 
 
-def _price(value: object) -> Decimal:
+def _price(value: object, where: str = "hotmart.precio") -> Decimal:
     if isinstance(value, bool) or not isinstance(value, (str, int)):
-        raise ManifestError("hotmart.precio debe ser un texto decimal (\"47\") o un entero")
+        raise ManifestError(f"{where} debe ser un texto decimal (\"47\") o un entero")
     try:
         price = Decimal(str(value))
     except InvalidOperation as exc:
-        raise ManifestError("hotmart.precio no es un decimal") from exc
+        raise ManifestError(f"{where} no es un decimal") from exc
     if not price.is_finite() or price <= 0:
-        raise ManifestError("hotmart.precio debe ser positivo")
+        raise ManifestError(f"{where} debe ser positivo")
     return price
 
 
@@ -768,12 +964,12 @@ def _ghl_risk_acceptance(ghl: Mapping[str, Any]) -> GhlRiskAcceptance | None:
     return GhlRiskAcceptance(accepted_by=accepted_by, accepted_on=accepted_on, contract=contract)
 
 
-def _offers(value: object) -> tuple[Offer, ...]:
+def _offers(value: object, field: str = "hotmart.ofertas") -> tuple[Offer, ...]:
     if not isinstance(value, list) or not value:
-        raise ManifestError("hotmart.ofertas debe tener al menos una oferta")
+        raise ManifestError(f"{field} debe tener al menos una oferta")
     offers = []
     for index, raw in enumerate(value):
-        where = f"hotmart.ofertas[{index}]"
+        where = f"{field}[{index}]"
         if not isinstance(raw, dict):
             raise ManifestError(f"{where} debe ser una tabla")
         _exact_keys(where, raw, {"codigo", "site", "landing_id", "url", "origen"}, {"por_defecto"})
@@ -810,13 +1006,13 @@ def _offers(value: object) -> tuple[Offer, ...]:
             )
         )
     if sum(offer.default for offer in offers) != 1:
-        raise ManifestError("hotmart.ofertas debe tener exactamente una oferta con por_defecto = true")
+        raise ManifestError(f"{field} debe tener exactamente una oferta con por_defecto = true")
     codes = [offer.code for offer in offers]
     if len(set(codes)) != len(codes):
-        raise ManifestError("hotmart.ofertas tiene codigos repetidos")
+        raise ManifestError(f"{field} tiene codigos repetidos")
     landings = [(offer.site, offer.landing_id) for offer in offers]
     if len(set(landings)) != len(landings):
-        raise ManifestError("hotmart.ofertas tiene dos ofertas para la misma landing")
+        raise ManifestError(f"{field} tiene dos ofertas para la misma landing")
     return tuple(offers)
 
 
