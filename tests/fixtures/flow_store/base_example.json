@@ -1,0 +1,404 @@
+{
+ "_captured": {
+  "origin": "tests/sql/followup_engine/validate_flow_store.mjs, paso 9: _flow_store_base sobre la cadena completa de migraciones",
+  "captured_at": "2026-10-16"
+ },
+ "instance": {
+  "tenant_ref": "lancemos",
+  "ally_ref": "mundo",
+  "products": [
+   "mundo",
+   "mundo-dos"
+  ]
+ },
+ "flows": [
+  {
+   "state": "prendido",
+   "flow_id": "10000000-0000-4000-8000-000000000001",
+   "ally_ref": "mundo",
+   "flow_key": "carrito",
+   "versions": [
+    {
+     "version": 1,
+     "definition": {
+      "entra": {
+       "permiso": "formulario",
+       "contesto_a": []
+      },
+      "flujo": "carrito",
+      "pasos": [
+       {
+        "idioma": "es_MX",
+        "plantilla": "att1_carrito_abandonado_01",
+        "variables": [
+         "nombre",
+         "producto"
+        ]
+       }
+      ],
+      "topes": {
+       "bolsa": "mundo-carrito",
+       "total": 1000,
+       "por_dia": 80,
+       "repeticion": {
+        "una_por": "persona_y_oferta",
+        "otra_despues_de": "0m"
+       }
+      },
+      "estado": "publicada",
+      "nombre": "Carrito abandonado",
+      "dispara": {
+       "evento": "carrito"
+      },
+      "esquema": "setter-flujo/v1",
+      "horario": {
+       "zona": "America/Mexico_City",
+       "desde": "09:00",
+       "hasta": "21:00"
+      },
+      "termina": {
+       "si": [
+        "compra"
+       ],
+       "vence": "1d"
+      },
+      "version": 1,
+      "producto": "mundo",
+      "prioridad": {
+       "le_gana_a": [],
+       "no_arranca_mientras": []
+      }
+     }
+    },
+    {
+     "version": 2,
+     "definition": {
+      "entra": {
+       "permiso": "formulario",
+       "contesto_a": []
+      },
+      "flujo": "carrito",
+      "pasos": [
+       {
+        "idioma": "es_MX",
+        "plantilla": "att1_carrito_abandonado_01",
+        "variables": [
+         "nombre",
+         "producto"
+        ]
+       }
+      ],
+      "topes": {
+       "bolsa": "mundo-carrito",
+       "total": 1000,
+       "por_dia": 90,
+       "repeticion": {
+        "una_por": "persona_y_oferta",
+        "otra_despues_de": "0m"
+       }
+      },
+      "estado": "publicada",
+      "nombre": "Carrito abandonado",
+      "dispara": {
+       "evento": "carrito"
+      },
+      "esquema": "setter-flujo/v1",
+      "horario": {
+       "zona": "America/Mexico_City",
+       "desde": "09:00",
+       "hasta": "21:00"
+      },
+      "termina": {
+       "si": [
+        "compra"
+       ],
+       "vence": "1d"
+      },
+      "version": 2,
+      "producto": "mundo",
+      "prioridad": {
+       "le_gana_a": [],
+       "no_arranca_mientras": []
+      }
+     }
+    }
+   ],
+   "generation": 2,
+   "tenant_ref": "lancemos",
+   "product_ref": "mundo",
+   "active_version": 2
+  },
+  {
+   "state": "apagado",
+   "flow_id": "10000000-0000-4000-8000-000000000002",
+   "ally_ref": "mundo",
+   "flow_key": "pago_fallido",
+   "versions": [
+    {
+     "version": 1,
+     "definition": {
+      "entra": {
+       "permiso": "formulario",
+       "contesto_a": []
+      },
+      "flujo": "pago_fallido",
+      "pasos": [
+       {
+        "idioma": "es_MX",
+        "plantilla": "att1_carrito_abandonado_01",
+        "variables": [
+         "nombre",
+         "producto"
+        ]
+       }
+      ],
+      "topes": {
+       "bolsa": "mundo-pago_fallido",
+       "total": 1000,
+       "por_dia": 80,
+       "repeticion": {
+        "una_por": "persona_y_oferta",
+        "otra_despues_de": "0m"
+       }
+      },
+      "estado": "publicada",
+      "nombre": "Pago fallido",
+      "dispara": {
+       "evento": "pago_fallido"
+      },
+      "esquema": "setter-flujo/v1",
+      "horario": {
+       "zona": "America/Mexico_City",
+       "desde": "09:00",
+       "hasta": "21:00"
+      },
+      "termina": {
+       "si": [
+        "compra"
+       ],
+       "vence": "1d"
+      },
+      "version": 1,
+      "producto": "mundo",
+      "prioridad": {
+       "le_gana_a": [],
+       "no_arranca_mientras": []
+      }
+     }
+    }
+   ],
+   "generation": 1,
+   "tenant_ref": "lancemos",
+   "product_ref": "mundo",
+   "active_version": 1
+  },
+  {
+   "state": "apagado",
+   "flow_id": "10000000-0000-4000-8000-000000000003",
+   "ally_ref": "mundo",
+   "flow_key": "reactivacion",
+   "versions": [],
+   "generation": 0,
+   "tenant_ref": "lancemos",
+   "product_ref": "mundo",
+   "active_version": null
+  },
+  {
+   "state": "pausado",
+   "flow_id": "10000000-0000-4000-8000-000000000004",
+   "ally_ref": "mundo",
+   "flow_key": "carrito",
+   "versions": [
+    {
+     "version": 1,
+     "definition": {
+      "entra": {
+       "permiso": "formulario",
+       "contesto_a": []
+      },
+      "flujo": "carrito",
+      "pasos": [
+       {
+        "idioma": "es_MX",
+        "plantilla": "att1_carrito_abandonado_01",
+        "variables": [
+         "nombre",
+         "producto"
+        ]
+       }
+      ],
+      "topes": {
+       "bolsa": "mundo-dos-carrito",
+       "total": 1000,
+       "por_dia": 80,
+       "repeticion": {
+        "una_por": "persona_y_oferta",
+        "otra_despues_de": "0m"
+       }
+      },
+      "estado": "publicada",
+      "nombre": "Carrito abandonado",
+      "dispara": {
+       "evento": "carrito"
+      },
+      "esquema": "setter-flujo/v1",
+      "horario": {
+       "zona": "America/Mexico_City",
+       "desde": "09:00",
+       "hasta": "21:00"
+      },
+      "termina": {
+       "si": [
+        "compra"
+       ],
+       "vence": "1d"
+      },
+      "version": 1,
+      "producto": "mundo-dos",
+      "prioridad": {
+       "le_gana_a": [],
+       "no_arranca_mientras": []
+      }
+     }
+    }
+   ],
+   "generation": 2,
+   "tenant_ref": "lancemos",
+   "product_ref": "mundo-dos",
+   "active_version": 1
+  }
+ ],
+ "flows_of_other_instances": [
+  {
+   "state": "apagado",
+   "flow_id": "20000000-0000-4000-8000-000000000001",
+   "ally_ref": "vecina",
+   "flow_key": "carrito",
+   "versions": [
+    {
+     "version": 1,
+     "definition": {
+      "entra": {
+       "permiso": "formulario",
+       "contesto_a": []
+      },
+      "flujo": "carrito",
+      "pasos": [
+       {
+        "idioma": "es_MX",
+        "plantilla": "att1_carrito_abandonado_01",
+        "variables": [
+         "nombre",
+         "producto"
+        ]
+       }
+      ],
+      "topes": {
+       "bolsa": "vecina-carrito",
+       "total": 1000,
+       "por_dia": 80,
+       "repeticion": {
+        "una_por": "persona_y_oferta",
+        "otra_despues_de": "0m"
+       }
+      },
+      "estado": "publicada",
+      "nombre": "Carrito abandonado",
+      "dispara": {
+       "evento": "carrito"
+      },
+      "esquema": "setter-flujo/v1",
+      "horario": {
+       "zona": "America/Mexico_City",
+       "desde": "09:00",
+       "hasta": "21:00"
+      },
+      "termina": {
+       "si": [
+        "compra"
+       ],
+       "vence": "1d"
+      },
+      "version": 1,
+      "producto": "vecina",
+      "prioridad": {
+       "le_gana_a": [],
+       "no_arranca_mientras": []
+      }
+     }
+    }
+   ],
+   "generation": 1,
+   "tenant_ref": "lancemos",
+   "product_ref": "vecina",
+   "active_version": 1
+  }
+ ],
+ "bases": [
+  {
+   "description": "una propuesta sobre el carrito",
+   "item_flow_ids": [
+    "10000000-0000-4000-8000-000000000001"
+   ],
+   "base": {
+    "10000000-0000-4000-8000-000000000001": {
+     "generation": 2,
+     "active_version": 2
+    },
+    "10000000-0000-4000-8000-000000000002": {
+     "active_version": 1
+    },
+    "10000000-0000-4000-8000-000000000003": {
+     "active_version": null
+    },
+    "10000000-0000-4000-8000-000000000004": {
+     "active_version": 1
+    }
+   }
+  },
+  {
+   "description": "una propuesta sobre el carrito y un flujo sin version",
+   "item_flow_ids": [
+    "10000000-0000-4000-8000-000000000001",
+    "10000000-0000-4000-8000-000000000003"
+   ],
+   "base": {
+    "10000000-0000-4000-8000-000000000001": {
+     "generation": 2,
+     "active_version": 2
+    },
+    "10000000-0000-4000-8000-000000000002": {
+     "active_version": 1
+    },
+    "10000000-0000-4000-8000-000000000003": {
+     "generation": 0,
+     "active_version": null
+    },
+    "10000000-0000-4000-8000-000000000004": {
+     "active_version": 1
+    }
+   }
+  },
+  {
+   "description": "una propuesta sobre el carrito del segundo producto",
+   "item_flow_ids": [
+    "10000000-0000-4000-8000-000000000004"
+   ],
+   "base": {
+    "10000000-0000-4000-8000-000000000001": {
+     "active_version": 2
+    },
+    "10000000-0000-4000-8000-000000000002": {
+     "active_version": 1
+    },
+    "10000000-0000-4000-8000-000000000003": {
+     "active_version": null
+    },
+    "10000000-0000-4000-8000-000000000004": {
+     "generation": 2,
+     "active_version": 1
+    }
+   }
+  }
+ ]
+}
