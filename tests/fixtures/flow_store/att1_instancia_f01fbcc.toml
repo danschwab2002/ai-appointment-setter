@@ -1,0 +1,32 @@
+# Copia parcial de instancia.toml del repo de la instancia ATT1 (setter-instancia-att1),
+# commit f01fbcc7eb4731e61e6f5e0659c283b5caa86e1b (2026-10-15 17:06 -0300), copiada el
+# 2026-10-16 con: git show f01fbcc:instancia.toml
+#
+# Van solo las secciones que usan el traductor y sus pruebas, tal cual: [instancia] (el
+# producto y la zona de la instancia) y [plantillas] (la plantilla y el idioma de cada
+# flujo). El archivo entero tiene un numero de telefono en un comentario, y no entra.
+
+[instancia]
+tenant_ref = "lancemos"
+ally_ref = "att1"
+funnel_ref = "att1"
+binding_version = 1
+marca = "Dra. Nina Garza"
+zona_horaria = "America/Mexico_City"   # 60 % del publico es de Mexico (intake-v1.json)
+
+[plantillas]
+precheckout = { nombre = "att1_interes_precheckout_01", idioma = "es_MX" }
+carrito = { nombre = "att1_carrito_abandonado_01", idioma = "es_MX" }
+pago_fallido = { nombre = "att1_compra_fallida_01", idioma = "es_MX" }
+reactivacion = { nombre = "att1_reactivacion_01", idioma = "es_MX" }
+descuento = { nombre = "att1_seguimiento_descuento_01", idioma = "es_MX" }
+# reactivacion: APPROVED el 2026-10-01, una variable ({{1}} = nombre), sin botones. Pasa
+#   parse_reactivation_template del producto v1.2.0. Declararla no prende nada: [flujos].reactivacion
+#   sigue en false, y el barredor toma la plantilla de WABA_REACTIVATION_TEMPLATE_NAME, no de aca.
+# descuento: desde el producto v1.5.0 este lugar es el del seguimiento con cupon
+#   (CONVERSATION_FOLLOWUP_ENABLED). APPROVED el 2026-10-01 y releida APPROVED el 2026-10-10 00:34Z.
+#   Dos variables ({{1}} nombre, {{2}} producto) y un boton de URL dinamica: el cupon va solo en el
+#   boton (offDiscount), no en el texto. Con el flag prendido, el bridge no arranca si
+#   CONVERSATION_FOLLOWUP_TEMPLATE_NAME y _TEMPLATE_LANGUAGE no son estos (los escribe
+#   despliegue/secretos/generar.py). Reemplaza a att1_descuento_10_post_respuesta_01, que estaba en
+#   "en" y se borro. Detalle en plantillas-pendientes.md.

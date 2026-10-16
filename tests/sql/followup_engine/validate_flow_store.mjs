@@ -21,7 +21,9 @@
 //      como duenio;
 //   6. los casos compartidos con el validador (tests/fixtures/flow_store/
 //      invariant_cases.json);
-//   7. las definiciones de ATT1: llegan con el commit del dato real;
+//   7. las definiciones de ATT1 del dato real (att1_definitions_20261016.json),
+//      publicadas en una base limpia con el resultado del validador de
+//      Python (att1_validation_result_20261016.json);
 //   8. los permisos como los usaria PostgREST, y un EXECUTE concedido por
 //      error en una segunda base;
 //   9. la base de un mundo de prueba (tests/fixtures/flow_store/
@@ -1219,10 +1221,104 @@ for (const item of shared.cases) {
 }
 
 // ===========================================================================
-// 7. Las definiciones de ATT1 (el dato real del 2026-10-16): llegan con el
-//    commit 5, que publica aca att1_definitions_20261016.json con el
-//    resultado de att1_validation_result_20261016.json.
+// 7. Las definiciones de ATT1 (el dato real del 2026-10-16). pytest las
+//    traduce y las valida (tests/test_flow_validator_att1.py) y escribe
+//    att1_definitions_20261016.json y att1_validation_result_20261016.json.
+//    Aca se publican en una base limpia, con solo el binding de ATT1 (en la
+//    principal ATT1 ya tiene carrito y pago fallido publicados): los cinco
+//    flujos como primeras versiones de una sola propuesta, validada con el
+//    resultado del validador de Python. La reactivacion, con horario:
+//    siempre, se publica. Despues, una v2 del carrito con otra zona hace
+//    fallar la publicacion entera.
 // ===========================================================================
+const att1Definitions = JSON.parse(readFileSync(join(FIXTURES, 'att1_definitions_20261016.json'), 'utf8'));
+const att1Validation = JSON.parse(readFileSync(join(FIXTURES, 'att1_validation_result_20261016.json'), 'utf8'));
+check(att1Validation.validator.contract === VALIDATOR.contract && att1Validation.validator.rules_version === VALIDATOR.rules_version
+    && att1Validation.result.blocks.length === 0 && att1Validation.result.warnings.length === 3,
+  '7: el resultado del validador de Python, sin bloqueos y con las tres advertencias', att1Validation);
+const real = await newDatabase({ through: MIGRATIONS.length });
+await seedBinding(real, BINDINGS[0]);
+const REAL = { tenant_ref: att1Definitions.instance.tenant_ref, ally_ref: att1Definitions.instance.ally_ref };
+const realOne = async (sql, params = []) => one(sql, params, real);
+const realIds = [];
+for (const definitionOf of att1Definitions.definitions) {
+  const registered = await register(REAL, definitionOf.producto, definitionOf.flujo, real);
+  check(registered?.ok, `7: se registra ${definitionOf.producto}/${definitionOf.flujo}`, registered);
+  realIds.push(registered?.flow_id);
+}
+const realItem = (index, definicion) => ({
+  producto: definicion.producto, flujo: definicion.flujo, flow_id: realIds[index], tipo: 'version', definicion, en_curso: 'seguir',
+});
+const realPrepare = async (items, result) => {
+  try {
+    return await realPrepareOrThrow(items, result);
+  } catch (caught) {
+    return { error: { code: caught.code, message: caught.message } };
+  }
+};
+const realPrepareOrThrow = async (items, result) => {
+  const flowIds = [...new Set(items.map((item) => item.flow_id))];
+  const draft = (await realOne(`
+    select coalesce(jsonb_object_agg(flow_id::text, jsonb_build_object('active_version', active_version)), '{}'::jsonb) b
+      from public.flow_controls where flow_id = any($1::uuid[])`, [flowIds])).b;
+  const saved = (await realOne(
+    `select public.operator_save_flow_change_draft_v1($1::jsonb, null::uuid, null::int, $2::jsonb, $3::jsonb, $4, 'dan') r`,
+    [json(REAL), json(items), json(draft), 'las definiciones de ATT1 del 16/10'])).r;
+  if (!saved?.ok) return { saved };
+  const base = (await realOne('select public._flow_store_base($1, $2, $3::uuid[]) b', [REAL.tenant_ref, REAL.ally_ref, flowIds])).b;
+  const validated = (await realOne(RECORD_SQL,
+    [json(REAL), saved.proposal_id, saved.revision, json(base), json(VALIDATOR), json(result), '{}'])).r;
+  const approved = validated?.status === 'validada'
+    ? (await realOne(`select public.operator_approve_flow_change_v1($1::jsonb, $2::uuid, $3, 'dan') r`,
+      [json(REAL), saved.proposal_id, validated.fingerprint])).r
+    : null;
+  return { id: saved.proposal_id, saved, validated, approved, fingerprint: validated?.fingerprint };
+};
+const realPrepared = await realPrepare(att1Definitions.definitions.map((definicion, index) => realItem(index, definicion)),
+  att1Validation.result);
+check(realPrepared.saved?.ok && realPrepared.validated?.status === 'validada' && realPrepared.approved?.ok,
+  '7: la propuesta de las cinco primeras versiones se guarda, se valida con el resultado de Python y se aprueba', realPrepared);
+let realPublished = null;
+try {
+  realPublished = (await realOne(PUBLISH_SQL, [json(REAL), realPrepared.id, realPrepared.fingerprint,
+    json(revalidation(realPrepared.fingerprint, { result: att1Validation.result, catalog_sha256: att1Validation.catalog_sha256 }))])).r;
+} catch (caught) {
+  realPublished = { error: { code: caught.code, message: caught.message } };
+}
+check(realPublished?.ok && realPublished.replayed === false && realPublished.published?.length === 5,
+  '7: la base publica las cinco', realPublished);
+const realStored = await query(`
+  select c.flow_key, c.state, c.active_version, d.version, d.definition
+    from public.flow_controls c join public.flow_definitions d on d.flow_id = c.flow_id
+   order by c.flow_key`, [], real);
+check(realStored.length === 5 && realStored.every((row) => row.version === 1 && row.active_version === 1 && row.state === 'apagado'),
+  '7: cinco v1 activas, y los flujos siguen apagados', realStored.map((row) => [row.flow_key, row.state, row.active_version, row.version]));
+for (const definitionOf of att1Definitions.definitions) {
+  const stored = realStored.find((row) => row.flow_key === definitionOf.flujo);
+  check(stored && sameJson(stored.definition, { ...definitionOf, version: 1, estado: 'publicada' }),
+    `7: ${definitionOf.flujo}: lo publicado es la definicion de pytest, con version 1 y estado publicada`, stored?.definition);
+}
+check(realStored.find((row) => row.flow_key === 'reactivacion')?.definition.horario === 'siempre',
+  '7: la reactivacion, con horario: siempre, se publica (correccion 1)');
+// Una v2 del carrito con otra zona, junto con una v2 del pago fallido: la base
+// la rechaza entera aunque el resultado diga que no hay bloqueos.
+const realIndex = (flowKey) => att1Definitions.definitions.findIndex((definitionOf) => definitionOf.flujo === flowKey);
+const realCart = att1Definitions.definitions[realIndex('carrito')];
+const realPayment = att1Definitions.definitions[realIndex('pago_fallido')];
+const zonePrepared = await realPrepare([
+  realItem(realIndex('carrito'), { ...realCart, horario: { ...realCart.horario, zona: 'America/Bogota' } }),
+  realItem(realIndex('pago_fallido'), { ...realPayment, topes: { ...realPayment.topes, por_dia: 90 } }),
+], CLEAN);
+check(zonePrepared.approved?.ok, '7: la v2 del carrito con otra zona se guarda, se valida y se aprueba', zonePrepared);
+const realControlsBefore = await query('select flow_key, active_version, generation::int generation from public.flow_controls order by flow_key', [], real);
+error = await attempt(PUBLISH_SQL, [json(REAL), zonePrepared.id, zonePrepared.fingerprint, json(revalidation(zonePrepared.fingerprint))], real);
+const realControlsAfter = await query('select flow_key, active_version, generation::int generation from public.flow_controls order by flow_key', [], real);
+const realVersions = (await realOne('select count(*)::int n from public.flow_definitions')).n;
+check(error?.code === '23514' && error.message === 'flow_definition_zone_must_remain_constant'
+    && realVersions === 5 && sameJson(realControlsBefore, realControlsAfter),
+  '7: la v2 del carrito con otra zona hace fallar la publicacion entera, y no queda ninguna version nueva',
+  { error, realVersions });
+await real.close();
 
 // ===========================================================================
 // 8. Los permisos, como los usaria PostgREST.
@@ -1372,6 +1468,7 @@ console.log(JSON.stringify({
   triggers: NEW_TRIGGERS.length,
   acl_inventory_functions: aclAfter.length,
   shared_cases: shared.cases.length,
+  att1_definitions: att1Definitions.definitions.length,
 }));
 if (failures.length) {
   console.log(`FLOW_STORE=FAIL (${failures.length})`);

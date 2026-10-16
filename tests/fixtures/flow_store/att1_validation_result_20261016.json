@@ -1,0 +1,40 @@
+{
+ "_captured": {
+  "origin": "tests/test_flow_validator_att1.py, prueba 2: las cinco definiciones de att1_definitions_20261016.json como una propuesta de primeras versiones, en ese orden, con el catalogo de la bandeja 11 del 2026-10-10",
+  "regenerate": "FLOW_STORE_FIXTURE_DIR=tests/fixtures/flow_store uv run pytest tests/test_flow_validator_att1.py"
+ },
+ "validator": {
+  "contract": "setter-flujo/v1",
+  "rules_version": 1
+ },
+ "actor": "operador",
+ "phase": "publish",
+ "catalog_sha256": "36e50b1b41a59f051df62e98b7be106e6536263898463e6edf675cb093332e4b",
+ "result": {
+  "blocks": [],
+  "warnings": [
+   {
+    "rule": null,
+    "code": "wait_without_contesta",
+    "kind": "advertencia",
+    "path": "/2/definicion/pasos",
+    "reason": "Mientras espera, si la persona contesta otra plantilla nuestra, el agente no le responde hasta que este mensaje salga o venza.",
+    "alternative": "Sumar contesta a termina.si."
+   },
+   {
+    "rule": null,
+    "code": "always_with_marketing",
+    "kind": "advertencia",
+    "path": "/4/definicion/horario",
+    "reason": "Sin horario, una plantilla de marketing puede salir de noche."
+   },
+   {
+    "rule": null,
+    "code": "silence_without_purchase_exit",
+    "kind": "advertencia",
+    "path": "/4/definicion/termina/si",
+    "reason": "Un silencio sin la salida compra le puede llegar a quien ya compró."
+   }
+  ]
+ }
+}
