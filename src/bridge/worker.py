@@ -57,6 +57,7 @@ from bridge.messaging import (
     is_allowed_whatsapp_target,
 )
 from bridge.phones import equivalent_whatsapp_phones, whatsapp_phone_region
+from bridge.product_routes import HotmartUnrouted, ProductRoutes
 from bridge.recovery_agent import (
     FollowupHandoffSuggestion,
     FollowupMessageProposal,
@@ -2273,6 +2274,7 @@ class ResolutionWorker:
         pilot_boundary: PilotBoundaryConfig | None = None,
         commercial_ally_config: CommercialAllyConfig | None = None,
         payment_failure_enabled: bool = False,
+        product_routes: ProductRoutes | None = None,
     ) -> None:
         self._supabase = supabase
         self._poll_interval = poll_interval_seconds
@@ -2288,6 +2290,9 @@ class ResolutionWorker:
         self._pilot_boundary = pilot_boundary
         self._commercial_ally_config = commercial_ally_config
         self._payment_failure_enabled = payment_failure_enabled
+        # Con varios productos, solo el principal tiene flujos de recuperacion
+        # (paso 2c-2): los de los demas llegan con el motor de flujos.
+        self._product_routes = product_routes
         self._stopped = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
 
@@ -2400,6 +2405,28 @@ class ResolutionWorker:
                 error="unsupported_persisted_event_type",
             )
             return
+        if self._product_routes is not None and len(self._product_routes) > 1:
+            route = self._product_routes.for_hotmart(payload)
+            if isinstance(route, HotmartUnrouted) or not route.principal:
+                # El evento ya quedo admitido en el funnel de su producto (la
+                # historia de la persona, la correlacion y los frenos lo ven).
+                # Ese producto no tiene flujos todavia: nada se planifica y no
+                # se crea el contacto. Queda ignored con el motivo, no failed.
+                reason = (
+                    route.reason
+                    if isinstance(route, HotmartUnrouted)
+                    else "product_without_recovery_flows"
+                )
+                await self._supabase.update_event_status(
+                    event_id=event_id, status="ignored", error=reason
+                )
+                logger.info(
+                    "hotmart_event_not_planned event_id=%s product=%s reason=%s",
+                    event_id,
+                    "-" if isinstance(route, HotmartUnrouted) else route.key,
+                    reason,
+                )
+                return
         try:
             resolver_kwargs: dict[str, Any] = {}
             if self._commercial_ally_config is not None:
