@@ -2,7 +2,7 @@
  "_about": [
   "Los casos compartidos de los invariantes 3 (nada sin resolver) y 4 (la zona) entre la base y el validador.",
   "La base: tests/sql/followup_engine/validate_flow_store.mjs registra el flujo de cada caso en la instancia, publica sus previous_versions en orden (v1, v2...) por las funciones del operador y despues publica definition; base es el error que tiene que dar esa publicacion (sqlstate y mensaje) o null si publica.",
-  "El validador: con el actor y la fase de abajo, en un mundo donde el flujo del caso tiene publicadas sus previous_versions (con version y estado: publicada), validar un item version con definition tiene que dar el bloqueo de validator (regla y codigo), o ningun bloqueo si es null.",
+  "El validador: con el actor y la fase de abajo, en un mundo donde el flujo del caso tiene publicadas sus previous_versions (con version y estado: publicada), validar un item version con definition tiene que dar el bloqueo de validator (regla, codigo y path, la ruta del hallazgo adentro de definition como JSON Pointer), y ese solo, o ningun bloqueo si es null.",
   "Las definiciones van como en un borrador: completas, normalizadas, con estado: borrador y sin version. Cada flujo tiene su propia bolsa y ninguna relacion, para que los casos no se crucen.",
   "Un caso que una capa rechaza y la otra no hace fallar la suite."
  ],
@@ -100,7 +100,8 @@
    },
    "validator": {
     "rule": 11,
-    "code": "unresolved_value"
+    "code": "unresolved_value",
+    "path": "/pasos/0/entonces/0/esperar"
    }
   },
   {
@@ -164,7 +165,8 @@
    },
    "validator": {
     "rule": 11,
-    "code": "unresolved_value"
+    "code": "unresolved_value",
+    "path": "/pasos/0/plantilla"
    }
   },
   {
@@ -226,7 +228,8 @@
    },
    "validator": {
     "rule": 11,
-    "code": "unresolved_value"
+    "code": "unresolved_value",
+    "path": "/termina/vence"
    }
   },
   {
@@ -288,7 +291,8 @@
    },
    "validator": {
     "rule": 8,
-    "code": "zone_invalid"
+    "code": "zone_invalid",
+    "path": "/horario/zona"
    }
   },
   {
@@ -443,7 +447,8 @@
    },
    "validator": {
     "rule": 8,
-    "code": "zone_changed"
+    "code": "zone_changed",
+    "path": "/horario/zona"
    }
   },
   {

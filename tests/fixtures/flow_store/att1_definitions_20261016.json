@@ -1,6 +1,8 @@
 {
- "_captured": {
-  "origin": "tests/test_flow_validator_att1.py: tests/flow_store_translator.py sobre att1_flow_config_20261016.json (att1-db, 2026-10-16T13:15:51Z), att1_instancia_f01fbcc.toml y schema_examples_v1.json, normalizado con bridge.flow_definition",
+ "_generated": {
+  "generator": "tests/test_flow_validator_att1.py (test_the_json_shared_with_pglite_is_the_one_in_the_repo), con tests/flow_store_translator.py, bridge.flow_definition y bridge.flow_validator",
+  "date": "2026-10-16",
+  "from": "tests/flow_store_translator.py sobre att1_flow_config_20261016.json (att1-db, 2026-10-16T13:15:51Z), att1_instancia_f01fbcc.toml y schema_examples_v1.json, normalizado con bridge.flow_definition",
   "regenerate": "FLOW_STORE_FIXTURE_DIR=tests/fixtures/flow_store uv run pytest tests/test_flow_validator_att1.py"
  },
  "instance": {

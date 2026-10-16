@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from bridge import flow_definition as fd
 from bridge.flow_definition import (
@@ -944,3 +945,43 @@ def test_the_texts_of_the_codes_are_clean_single_lines() -> None:
     for spec in fd.DEFINITION_CODES:
         for text in (spec.reason, spec.limit, spec.alternative):
             assert text is None or fd.is_clean_text(text, 300), spec.code
+
+
+# ---------------------------------------------------------------------------
+# schema_examples_v1.json son los bloques del contrato, sin version ni estado.
+# ---------------------------------------------------------------------------
+
+CONTRACT = Path(__file__).resolve().parents[1] / "docs" / "contracts" / "flow-definition-v1.md"
+
+
+def _contract_yaml_blocks() -> list[tuple[int, int, dict[str, Any]]]:
+    """Los bloques yaml de «Los siete flujos de validación»: su primera y su última línea, y el YAML leído."""
+    lines = CONTRACT.read_text(encoding="utf-8").splitlines()
+    start = lines.index("## Los siete flujos de validación")
+    end = lines.index("## La definición formal")
+    found: list[tuple[int, int, dict[str, Any]]] = []
+    index = start
+    while index < end:
+        if lines[index] == "```yaml":
+            close = lines.index("```", index + 1)
+            found.append((index + 2, close, yaml.safe_load("\n".join(lines[index + 1:close]))))
+            index = close
+        index += 1
+    return found
+
+
+def test_the_schema_examples_are_the_blocks_of_the_contract() -> None:
+    # Sin esta prueba el fixture se aparta del contrato en silencio. Lo leen el
+    # validador, el traductor de ATT1 (el cupon y la reactivacion salen enteros de
+    # sus bloques) y la fuente que cita el traductor (contract_lines).
+    blocks = json.loads((FIXTURES / "flow_store" / "schema_examples_v1.json").read_text(encoding="utf-8"))["blocks"]
+    contract = _contract_yaml_blocks()
+    assert len(blocks) == len(contract) == 8
+    for fixture, (first, last, parsed) in zip(blocks, contract):
+        assert (fixture["contract_line"], fixture["contract_lines"]) == (first, f"{first}-{last}"), (
+            f"bloque {fixture['block']}: en el contrato esta en las lineas {first}-{last}")
+        assert set(parsed) - set(fixture["definition"]) == {"version", "estado"}, fixture["block"]
+        expected = {key: value for key, value in parsed.items() if key not in ("version", "estado")}
+        assert fd.json_equal(fixture["definition"], expected), fixture["block"]
+        assert list(fixture["definition"]) == list(expected), fixture["block"]
+        assert fixture["flujo"] == parsed["flujo"], fixture["block"]

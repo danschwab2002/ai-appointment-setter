@@ -23,15 +23,26 @@ Fixtures:
   la base (``validate_flow_store.mjs``, commit 1).
 * ``flow_store/base_example.json``: el mundo de prueba y las bases que dio
   ``_flow_store_base`` en PGlite (``validate_flow_store.mjs``, paso 9).
+* ``flow_store/validator_results_cases.json``: lo genera esta prueba (el
+  puente con la base): los resultados de ``CASES`` y de dos bordes, con su
+  ``to_json()`` y su ``validator_json()``, que PGlite pasa por las funciones de
+  la migracion (``validate_flow_store.mjs``, paso 10).
+
+Las funciones ``*_are_valid`` de abajo son las de la migracion del almacen,
+escritas en Python con sus mismas formas.
+
+Los caracteres de control se escriben con escapes ``\\u``.
 """
 
 from __future__ import annotations
 
 import copy
 import json
+import os
 import re
 import time
 from collections.abc import Callable
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -800,24 +811,35 @@ def test_who_enters_a_silence_is_outside_the_1b_scope_for_the_agent() -> None:
     assert check([version_item(draft, "descuento")], actor="operador", in_world=in_world).blocks == ()
 
 
+_ANOTHER_FLOW = [("trigger_change_is_another_flow", "/dispara")]
+# Del evento a un silencio cambia tambien quien entra (conversaciones), y el
+# permiso y el plazo dejan de corresponder.
+_TO_A_SILENCE = [("permission_trigger_mismatch", "/entra/permiso"), ("silence_forbids_vence", "/termina/vence")]
+
+
 @pytest.mark.parametrize("actor", fv.ACTORS)
 @pytest.mark.parametrize(
-    ("key", "change"),
+    ("key", "change", "for_the_operator", "for_the_agent"),
     [
-        ("descuento", lambda d: d["dispara"]["silencio"].update(lo_ultimo="persona")),
-        ("carrito", lambda d: d["dispara"].update(evento="pago_fallido")),
+        ("descuento", lambda d: d["dispara"]["silencio"].update(lo_ultimo="persona"), _ANOTHER_FLOW, _ANOTHER_FLOW),
+        ("carrito", lambda d: d["dispara"].update(evento="pago_fallido"), _ANOTHER_FLOW, _ANOTHER_FLOW),
         ("carrito", lambda d: d.update(dispara={"silencio": {
-            "lo_ultimo": "agente", "desde": "24h", "hasta": "72h", "conversaciones": ["abierta"]}})),
+            "lo_ultimo": "agente", "desde": "24h", "hasta": "72h", "conversaciones": ["abierta"]}}),
+         _ANOTHER_FLOW + _TO_A_SILENCE,
+         _ANOTHER_FLOW + [("change_outside_1b_scope", "/dispara/silencio")] + _TO_A_SILENCE),
     ],
     ids=["otro-lo_ultimo", "otro-evento", "evento-a-silencio"],
 )
 def test_another_event_or_another_last_speaker_is_another_flow(
-    key: str, change: Callable[[dict[str, Any]], None], actor: str,
+    key: str, change: Callable[[dict[str, Any]], None], for_the_operator: list[tuple[str, str]],
+    for_the_agent: list[tuple[str, str]], actor: str,
 ) -> None:
     result = check([version_item(draft_of(key, change), key)], actor=actor, in_world=world(live(key)),
                    phase="draft")
-    assert ("trigger_change_is_another_flow", "/dispara") in {
-        (f.code, f.definition_path) for f in result.blocks}
+    # La lista entera, no la pertenencia a un conjunto: un hallazgo de mas o
+    # repetido (el evento que el alcance de la 1b no saca, V16) falla.
+    expected = for_the_agent if actor == "automation_expert" else for_the_operator
+    assert [(f.code, f.definition_path) for f in result.blocks] == expected
 
 
 def test_a_rollback_is_not_looked_at_by_the_scope_of_decision_4() -> None:
@@ -1025,6 +1047,139 @@ def test_a_named_placeholder_is_a_variable_count_mismatch() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Un negativo por rama, no uno por codigo: un codigo con varios caminos tiene
+# una prueba por camino, con su ruta. Cada una cae con su mutacion (V06, V07,
+# V09 a V15 y V26 a V29 de la revision de las pruebas del PR #243).
+# ---------------------------------------------------------------------------
+
+def coupon_button_url(url: str) -> TemplateCatalog:
+    """El catalogo con el boton de URL de la plantilla del cupon apuntando a ``url``."""
+    def change(payload: dict[str, Any]) -> None:
+        for component in template_of(payload, "att1_seguimiento_descuento_01")["components"]:
+            if component.get("type") == "BUTTONS":
+                for button in component["buttons"]:
+                    button["url"] = url
+    return catalog_with(change)
+
+
+def test_rule_13_two_entries_with_the_same_name_and_language_are_not_in_the_catalog() -> None:
+    twice = catalog_with(lambda p: p["message_templates"].append(
+        copy.deepcopy(template_of(p, "att1_carrito_abandonado_01"))))
+    assert blocks_at(check([version_item(flow_def("carrito"))], catalog=twice)) == [
+        ("template_not_in_catalog", "/0/definicion/pasos/0/plantilla")]
+
+
+@pytest.mark.parametrize(
+    "component",
+    [{"type": "HEADER", "format": "TEXT", "text": "Hola {{1}}"}, {"type": "FOOTER", "text": "Hasta {{1}}"}],
+    ids=["encabezado", "pie"],
+)
+def test_rule_13_a_text_header_or_footer_with_a_placeholder_is_a_variable_count_mismatch(
+    component: dict[str, Any],
+) -> None:
+    with_placeholder = catalog_with(lambda p: template_of(p, "att1_carrito_abandonado_01")["components"].insert(
+        0, dict(component)))
+    assert blocks_at(check([version_item(flow_def("carrito"))], catalog=with_placeholder)) == [
+        ("template_variable_count_mismatch", "/0/definicion/pasos/0/plantilla")]
+    # Sin marcadores pasa, como el HEADER y el FOOTER de hello_world.
+    plain = catalog_with(lambda p: template_of(p, "att1_carrito_abandonado_01")["components"].insert(
+        0, {**component, "text": "Hola"}))
+    assert check([version_item(flow_def("carrito"))], catalog=plain).blocks == ()
+
+
+def test_rule_13_a_component_the_flow_cannot_fill_is_a_variable_count_mismatch() -> None:
+    carousel = catalog_with(lambda p: template_of(p, "att1_carrito_abandonado_01")["components"].append(
+        {"type": "CAROUSEL"}))
+    assert blocks_at(check([version_item(flow_def("carrito"))], catalog=carousel)) == [
+        ("template_variable_count_mismatch", "/0/definicion/pasos/0/plantilla")]
+
+
+def test_rule_13_the_checkout_button_is_the_hotmart_checkout() -> None:
+    elsewhere = coupon_button_url("https://otro-sitio.example/{{1}}")
+    assert blocks_at(check([version_item(flow_def("descuento"), "descuento")], catalog=elsewhere)) == [
+        ("template_button_mismatch", "/0/definicion/pasos/0/boton")]
+
+
+def test_rule_13_a_step_without_a_button_cannot_send_a_template_with_a_url_button() -> None:
+    without_button = with_(flow_def("descuento"), lambda d: d["pasos"][0].pop("boton"))
+    assert blocks_at(check([version_item(without_button, "descuento")])) == [
+        ("template_button_mismatch", "/0/definicion/pasos/0/plantilla")]
+
+
+def test_rule_13_the_ficha_button_is_a_dynamic_url() -> None:
+    ficha = with_(flow_def("ficha"), lambda d: (
+        d.update(pasos=[{"plantilla": "att1_seguimiento_descuento_01", "idioma": "es_MX",
+                         "variables": ["nombre", "producto"], "boton": {"link": "ficha"}}]),
+        d["termina"].update(vence="1d")))
+    static = check([version_item(ficha, "ficha")], catalog=coupon_button_url("https://pay.hotmart.com/checkout"))
+    assert blocks_at(static) == [("template_button_mismatch", "/0/definicion/pasos/0/boton")]
+    dynamic = check([version_item(ficha, "ficha")], catalog=coupon_button_url("https://pay.hotmart.com/{{1}}"))
+    assert dynamic.blocks == ()
+
+
+def test_rule_3_the_purchase_permission_goes_only_with_the_purchase_trigger() -> None:
+    on_the_cart = with_(flow_def("carrito"), lambda d: d["entra"].update(permiso="compra"))
+    assert blocks_at(check([version_item(on_the_cart)], phase="draft")) == [
+        ("permission_trigger_mismatch", "/0/definicion/entra/permiso")]
+
+
+def test_rule_7_a_condition_with_an_open_and_a_closed_window_is_not_the_open_window() -> None:
+    mixed = with_(block("5b"), lambda d: d["pasos"][0]["condicion"].update(es=["abierta", "cerrada"]))
+    assert blocks_at(check([version_item(mixed, "reactivacion")], phase="draft")) == [
+        ("conversar_outside_open_window_branch", "/0/definicion/pasos/0/entonces/0/conversar")]
+
+
+def test_rule_17_a_conversar_with_the_purchase_permission_blocks() -> None:
+    talk = purchase_flow(pasos=[{"condicion": {"dato": "ventana", "es": ["abierta"]},
+                                 "entonces": [{"conversar": "Confirmar la compra."}], "si_no": []}])
+    result = check([version_item(talk, "activacion", ok=CLIENT_OK)], catalog=hello_world_catalog())
+    assert blocks_at(result) == [
+        ("purchase_permission_requires_single_utility_send", "/0/definicion/pasos/0/entonces/0/conversar")]
+
+
+def test_rule_2_a_silence_whose_from_equals_its_until_is_invalid() -> None:
+    flat = with_(flow_def("descuento"), lambda d: d["dispara"]["silencio"].update(desde="24h", hasta="24h"))
+    assert blocks_at(check([version_item(flat, "descuento")], phase="draft")) == [
+        ("silence_window_invalid", "/0/definicion/dispara/silencio/desde")]
+
+
+def test_rule_8_a_schedule_whose_from_equals_its_until_is_not_increasing() -> None:
+    empty = with_(flow_def("carrito"), lambda d: d["horario"].update(desde="09:00", hasta="09:00"))
+    assert blocks_at(check([version_item(empty)], phase="draft")) == [
+        ("window_not_increasing", "/0/definicion/horario/hasta")]
+
+
+def test_rule_9_a_daily_cap_equal_to_the_total_passes() -> None:
+    # El contrato bloquea un por_dia mayor que el total (flow-definition-v1.md:987), no uno igual.
+    equal = with_(flow_def("carrito"), lambda d: d["topes"].update(por_dia=1000, total=1000))
+    assert check([version_item(equal)]).blocks == ()
+    over = with_(flow_def("carrito"), lambda d: d["topes"].update(por_dia=1001, total=1000))
+    assert blocks_at(check([version_item(over)])) == [("daily_cap_exceeds_total", "/0/definicion/topes/por_dia")]
+
+
+@pytest.mark.parametrize("actor", fv.ACTORS)
+def test_rule_15_taking_the_coupon_out_is_also_a_coupon_change(actor: str) -> None:
+    without_coupon = draft_of("descuento", lambda d: d["pasos"][0]["boton"].pop("cupon"))
+    result = check([version_item(without_coupon, "descuento")], actor=actor, in_world=world(live("descuento")))
+    assert blocks_at(result) == [("coupon_change_not_supported", "/0/definicion/pasos")]
+
+
+def test_a_new_form_flow_gets_the_recovery_caps_and_their_warning() -> None:
+    # El formulario (intencion) es un evento de recuperacion (flow-definition-v1.md:204):
+    # sin topes recibe 10 por dia y 150 en total, y con sin_tope avisa.
+    minimal = {"flujo": "precheckout", "nombre": "Primer contacto", "dispara": {"evento": "intencion"},
+               "pasos": [dict(TEMPLATE_STEP)], "horario": dict(CDMX)}
+    result = check([version_item(minimal, "precheckout")])
+    assert result.blocks == () and result.warnings == ()
+    [item] = result.normalized_items
+    assert item.definicion["topes"] == {"bolsa": "att1-precheckout", "por_dia": 10, "total": 150,
+                                        "repeticion": {"una_por": "persona_y_oferta", "otra_despues_de": "0m"}}
+    without_cap = {**minimal, "topes": {"por_dia": "sin_tope"}}
+    assert warnings_at(check([version_item(without_cap, "precheckout")])) == [
+        ("recovery_without_cap", "/0/definicion/topes")]
+
+
+# ---------------------------------------------------------------------------
 # La regla 17 y la advertencia del horario, en forma positiva: lo unico que
 # pasa es una plantilla resuelta cuya categoria es exactamente UTILITY.
 # ---------------------------------------------------------------------------
@@ -1083,6 +1238,85 @@ def test_always_does_not_warn_with_a_utility_template() -> None:
     catalog = catalog_with(lambda p: template_of(p, "att1_reactivacion_01").update(category="UTILITY"))
     result = check([version_item(block("5a"), "reactivacion")], catalog=catalog)
     assert warnings_at(result) == [("silence_without_purchase_exit", "/0/definicion/termina/si")]
+
+
+# ---------------------------------------------------------------------------
+# Las advertencias, rama por rama, y la ruta de cada una escrita a mano (V01 a
+# V05, V08, V17, V18 y V21).
+# ---------------------------------------------------------------------------
+
+WARNING_PATHS = {
+    "always_with_marketing": "/0/definicion/horario",
+    "empty_branch_with_le_gana_a": "/0/definicion/pasos/0",
+    "recovery_without_cap": "/0/definicion/topes",
+    "same_trigger_unrelated": "/0/definicion/dispara",
+    "silence_window_shorter_than_closed_gap": "/0/definicion/dispara/silencio",
+    "silence_without_purchase_exit": "/0/definicion/termina/si",
+    "wait_without_contesta": "/0/definicion/pasos",
+}
+
+
+def test_the_hand_written_warning_paths_are_the_seven_warnings() -> None:
+    assert set(WARNING_PATHS) == fv.WARNING_CODES
+
+
+@pytest.mark.parametrize("code", sorted(WARNING_PATHS))
+def test_each_warning_points_where_it_has_to(code: str) -> None:
+    negative, _ = CASES[code]
+    assert [finding.path for finding in negative() if finding.code == code] == [WARNING_PATHS[code]]
+
+
+def test_recovery_without_cap_also_with_only_the_total_without_cap() -> None:
+    total_free = with_(flow_def("carrito"), lambda d: d["topes"].update(por_dia=80, total="sin_tope"))
+    result = check([version_item(total_free)])
+    assert result.blocks == ()
+    assert warnings_at(result) == [("recovery_without_cap", "/0/definicion/topes")]
+
+
+def test_the_same_trigger_in_another_product_is_not_a_warning() -> None:
+    # Con ATT1 y ATT2 en la misma instancia, el carrito de cada producto es su propio flujo.
+    two = InstanceView("lancemos", "att1", frozenset({"att1", "att2"}), "America/Mexico_City")
+    other_cart = flow("carrito", product="att2", flow_id="0000000b-0000-4000-8000-00000000000b",
+                      versions={1: published(with_(flow_def("carrito"), lambda d: d.update(producto="att2")))})
+    cart = with_(flow_def("carrito"), lambda d: d.update(producto="att1"))
+    result = check([version_item(cart)], instance=two, in_world=FlowWorld([*world().flows, other_cart]))
+    assert result.blocks == () and result.warnings == ()
+
+
+@pytest.mark.parametrize(("until", "warns"), [("720m", False), ("719m", True)])
+def test_the_closed_stretch_counts_the_closing_minute(until: str, warns: bool) -> None:
+    # De 09:00 a 20:59 con el minuto de cierre: 720 minutos abiertos y 720 cerrados.
+    silence = with_(flow_def("descuento"), lambda d: d["dispara"]["silencio"].update(desde="0m", hasta=until))
+    result = check([version_item(silence, "descuento")])
+    assert result.blocks == ()
+    assert warnings_at(result) == (
+        [("silence_window_shorter_than_closed_gap", "/0/definicion/dispara/silencio")] if warns else [])
+
+
+def test_a_flow_that_names_itself_in_le_gana_a_is_not_a_mutual_win() -> None:
+    # La regla 10 habla de dos flujos; la autorreferencia no se marca (notas de la implementacion).
+    selfish = with_(flow_def("carrito"), lambda d: d["prioridad"].update(le_gana_a=["carrito"]))
+    result = check([version_item(selfish)])
+    assert "mutual_le_gana_a" not in found(result)
+    assert result.blocks == () and result.warnings == ()
+
+
+def test_a_coupon_without_a_link_is_also_a_coupon_without_the_checkout() -> None:
+    no_link = with_(flow_def("descuento"), lambda d: d["pasos"][0].update(boton={"cupon": "TIROIDES10"}))
+    assert blocks_at(check([version_item(no_link, "descuento")], phase="draft")) == [
+        ("required_key_missing", "/0/definicion/pasos/0/boton/link"),
+        ("coupon_requires_checkout_link", "/0/definicion/pasos/0/boton/cupon"),
+    ]
+
+
+def test_a_key_with_a_tilde_and_a_one_keeps_its_pointer_in_the_scope_of_the_agent() -> None:
+    # RFC 6901: al leer un puntero, ~1 se decodifica antes que ~0. La clave a~1b va como /a~01b.
+    draft = draft_of("carrito", lambda d: d["topes"].update({"a~1b": 1}))
+    result = check([version_item(draft)], actor="automation_expert", in_world=world(live("carrito")), phase="draft")
+    assert blocks_at(result) == [
+        ("unknown_key", "/0/definicion/topes/a~01b"),
+        ("change_outside_1b_scope", "/0/definicion/topes/a~01b"),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -1152,7 +1386,12 @@ def findings_are_valid(findings: object) -> bool:
 
 
 def result_is_valid(result: object) -> bool:
-    """``_flow_change_result_is_valid``, en Python."""
+    """``_flow_change_result_is_valid``, en Python: un aviso rapido.
+
+    La prueba contra la base es el puente (``validator_results_cases.json``, que
+    PGlite pasa por la funcion de la migracion en el paso 10 de
+    ``validate_flow_store.mjs``).
+    """
     return (
         isinstance(result, dict) and set(result) == {"blocks", "warnings"}
         and findings_are_valid(result["blocks"]) and findings_are_valid(result["warnings"])
@@ -1284,6 +1523,30 @@ def test_items_with_a_lone_surrogate_say_that_they_are_not_json() -> None:
     assert result.blocks[2].reason == "Los ítems de la propuesta no se pueden escribir como JSON."
 
 
+def _many_flows(count: int) -> tuple[FlowWorld, dict[str, str]]:
+    keys = [f"flujo_{index:02d}" for index in range(count)]
+    ids = {key: f"{index:08x}-0000-4000-8000-0000000000ff" for index, key in enumerate(keys, start=1)}
+    return FlowWorld(WorldFlow(flow_id=ids[key], product_ref="att1", flow_key=key) for key in keys), ids
+
+
+def test_items_over_256_kib_are_invalid_value_at_the_root() -> None:
+    many, ids = _many_flows(9)
+
+    def heavy(key: str) -> ProposalItem:
+        # Cada definicion queda debajo de 32 KiB, y las nueve pasan de 256 KiB.
+        definition = with_(flow_def("carrito"), lambda d: (
+            d.update(flujo=key, prioridad={"le_gana_a": [], "no_arranca_mientras": []}),
+            d["topes"].update(bolsa=f"bolsa-{key}"), d["pasos"].append({"derivar": "nota " * 5800})))
+        return ProposalItem(producto="att1", flujo=key, flow_id=ids[key], tipo="version", definicion=definition,
+                            en_curso="seguir")
+
+    items = [heavy(key) for key in ids]
+    assert all(fd.json_size(item.definicion) <= fd.DEFINITION_MAX_BYTES for item in items)
+    result = validate(items, actor="operador", world=many, instance=INSTANCE, catalog=CATALOG, phase="draft")
+    assert [(f.code, f.path, f.reason) for f in result.blocks] == [
+        ("invalid_value", "", "Los ítems de la propuesta pasan de 262144 bytes.")]
+
+
 # ---------------------------------------------------------------------------
 # Con que reglas, en que fase y con que actor corrio (C#8): la base lo exige
 # en p_validator, con phase publish y el actor de la propuesta.
@@ -1338,6 +1601,89 @@ def test_the_result_is_capped_at_the_bytes_the_base_accepts() -> None:
     assert result_is_valid(result.to_json())
 
 
+# ---------------------------------------------------------------------------
+# El puente con la base (T#11): los resultados de CASES, con su to_json() y su
+# validator_json(), van a validator_results_cases.json, y PGlite los pasa por
+# _flow_change_result_is_valid y _flow_change_validator_is_valid de la
+# migracion (validate_flow_store.mjs, paso 10). Con FLOW_STORE_FIXTURE_DIR se
+# escribe; sin la variable, el del repo tiene que ser el de hoy.
+# ---------------------------------------------------------------------------
+
+BRIDGE_FILE = "validator_results_cases.json"
+
+
+def _bridge_document() -> dict[str, Any]:
+    recorded: list[ValidationResult] = []
+    module = globals()
+    plain_check = module["check"]
+
+    def recording_check(*args: Any, **kwargs: Any) -> ValidationResult:
+        result = plain_check(*args, **kwargs)
+        recorded.append(result)
+        return result
+
+    cases: list[dict[str, Any]] = []
+    module["check"] = recording_check
+    try:
+        for code in sorted(CASES):
+            for case, build in zip(("negativo", "positivo"), CASES[code]):
+                recorded.clear()
+                findings = build()
+                if recorded:
+                    # Lo que dio validate, tal cual: el resultado y con que corrio.
+                    [result] = recorded
+                    entry = {"result": result.to_json(), "validator": result.validator_json()}
+                else:
+                    # duplicate_key sale de loads_strict, no de validate: un resultado con ese bloqueo.
+                    entry = {"result": {"blocks": [f.to_json() for f in findings], "warnings": []}, "validator": None}
+                cases.append({"code": code, "case": case, **entry})
+    finally:
+        module["check"] = plain_check
+    edges = []
+    for description, definition in (("200 hallazgos (el tope de cantidad)", _many_unknown_keys()),
+                                    ("el tope de bytes, con los hallazgos largos de la 13",
+                                     _many_templates_not_in_the_catalog())):
+        result = check([version_item(definition)])
+        edges.append({"description": description, "result": result.to_json(), "validator": result.validator_json()})
+    validators = []
+    for phase in fv.PHASES:
+        for actor in fv.ACTORS:
+            result = check([state_item("apagar")], in_world=world(live("carrito")), phase=phase, actor=actor)
+            validators.append(result.validator_json())
+    return {
+        "_generated": {
+            "generator": "tests/test_flow_validator.py (test_the_bridge_json_with_the_base_is_the_one_in_the_repo)",
+            "date": datetime.now(timezone.utc).date().isoformat(),
+            "from": "los casos negativo y positivo de cada codigo de CASES, dos bordes del resultado y "
+                    "validator_json() con las dos fases y los dos actores",
+            "regenerate": "FLOW_STORE_FIXTURE_DIR=tests/fixtures/flow_store uv run pytest tests/test_flow_validator.py",
+        },
+        "validators": validators,
+        "cases": cases,
+        "edges": edges,
+    }
+
+
+def test_the_bridge_json_with_the_base_is_the_one_in_the_repo() -> None:
+    document = _bridge_document()
+    assert len(document["cases"]) == 2 * len(CASES)
+    assert sum(entry["validator"] is None for entry in document["cases"]) == 1
+    for entry in document["cases"]:
+        if entry["case"] == "negativo":
+            produced = {f["code"] for f in [*entry["result"]["blocks"], *entry["result"]["warnings"]]}
+            assert entry["code"] in produced, entry["code"]
+    target = os.environ.get("FLOW_STORE_FIXTURE_DIR")
+    if target:
+        (Path(target) / BRIDGE_FILE).write_text(json.dumps(document, ensure_ascii=False, indent=1) + "\n",
+                                                encoding="utf-8")
+        return
+    in_repo = json.loads((FLOW_STORE / BRIDGE_FILE).read_text(encoding="utf-8"))
+    generated_on = in_repo.get("_generated", {}).pop("date", None)
+    assert isinstance(generated_on, str) and date.fromisoformat(generated_on) >= date(2026, 10, 16)
+    document["_generated"].pop("date")
+    assert in_repo == document, f"{BRIDGE_FILE} no es el de hoy: regenerarlo con FLOW_STORE_FIXTURE_DIR"
+
+
 def test_validating_the_normalized_items_gives_the_same_items() -> None:
     keys = ("carrito", "pago_fallido", "precheckout", "descuento", "reactivacion")
     first = check([version_item(flow_def(key), key) for key in keys], in_world=world(keys=keys))
@@ -1380,26 +1726,47 @@ def test_the_items_are_one_to_ten_with_one_content_and_one_state_per_flow() -> N
         check([state_item("prender"), state_item("apagar")])
 
 
+def test_eleven_items_are_too_many() -> None:
+    many, ids = _many_flows(11)
+    items = [ProposalItem(producto="att1", flujo=key, flow_id=flow_id, tipo="prender") for key, flow_id in ids.items()]
+    with pytest.raises(ProposalItemsInvalid) as caught:
+        validate(items, actor="operador", world=many, instance=INSTANCE, catalog=CATALOG, phase="draft")
+    assert caught.value.detail == "items_count_invalid"
+    ten = validate(items[:10], actor="operador", world=many, instance=INSTANCE, catalog=CATALOG, phase="draft")
+    assert {f.code for f in ten.blocks} == {"flow_has_no_version"}
+
+
 # ---------------------------------------------------------------------------
 # Los casos compartidos con la base: los invariantes 3 y 4 (§5.8).
 #
 # invariant_cases.json tiene el formato fijo de la parte de la base (commit 1,
 # validate_flow_store.mjs): instance, catalog_fixture, actor y phase arriba, y
 # cada caso con id, description, flujo, previous_versions, definition, base y
-# validator. Las definiciones vienen completas y normalizadas, en borrador.
+# validator (rule, code y path, la ruta adentro de definition). Las
+# definiciones vienen completas y normalizadas, en borrador.
 # ---------------------------------------------------------------------------
 
 SHARED = json.loads((FLOW_STORE / "invariant_cases.json").read_text(encoding="utf-8"))
-# Los siete casos de la tabla del diseno, con el bloqueo del validador que pide cada uno.
+# Los siete casos de la tabla del diseno, con el bloqueo del validador que pide
+# cada uno: la regla, el codigo y la ruta adentro de la definicion.
 SHARED_EXPECTED = {
-    "a_medir_en_una_rama": (11, "unresolved_value"),
-    "a_crear_en_un_paso": (11, "unresolved_value"),
-    "a_decidir_en_vence": (11, "unresolved_value"),
-    "zona_inexistente": (8, "zone_invalid"),
-    "zona_cambia_despues_de_siempre": (8, "zone_changed"),
+    "a_medir_en_una_rama": (11, "unresolved_value", "/pasos/0/entonces/0/esperar"),
+    "a_crear_en_un_paso": (11, "unresolved_value", "/pasos/0/plantilla"),
+    "a_decidir_en_vence": (11, "unresolved_value", "/termina/vence"),
+    "zona_inexistente": (8, "zone_invalid", "/horario/zona"),
+    "zona_cambia_despues_de_siempre": (8, "zone_changed", "/horario/zona"),
     "horario_siempre": None,
     "misma_zona": None,
 }
+
+
+def _value_at(document: object, pointer: str) -> object:
+    """El valor de un JSON Pointer (RFC 6901: ~1 se decodifica antes que ~0)."""
+    current = document
+    for part in pointer.split("/")[1:]:
+        key = part.replace("~1", "/").replace("~0", "~")
+        current = current[int(key)] if isinstance(current, list) else current[key]  # type: ignore[index]
+    return current
 
 
 def _shared_result(case: dict[str, Any]) -> ValidationResult:
@@ -1425,10 +1792,20 @@ def _shared_result(case: dict[str, Any]) -> ValidationResult:
 def test_the_shared_file_is_the_seven_cases_of_the_design() -> None:
     assert (SHARED["actor"], SHARED["phase"]) == ("operador", "publish")
     expected = {
-        case["id"]: (case["validator"]["rule"], case["validator"]["code"]) if case["validator"] else None
+        case["id"]: (case["validator"]["rule"], case["validator"]["code"], case["validator"]["path"])
+        if case["validator"] else None
         for case in SHARED["cases"]
     }
     assert expected == SHARED_EXPECTED
+    # La ruta apunta, en la definicion del caso, a lo que se bloquea.
+    for case in SHARED["cases"]:
+        if case["validator"] is None:
+            continue
+        value = _value_at(case["definition"], case["validator"]["path"])
+        if case["validator"]["code"] == "unresolved_value":
+            assert fd.is_unresolved(value) or (isinstance(value, dict) and "a_crear" in value), case["id"]
+        else:
+            assert value == case["definition"]["horario"]["zona"], case["id"]
 
 
 @pytest.mark.parametrize("case", SHARED["cases"], ids=lambda case: case["id"])
@@ -1438,8 +1815,8 @@ def test_a_shared_case_is_judged_the_same_by_the_base_and_the_validator(case: di
         # Ningun bloqueo: la base lo publica.
         assert result.blocks == ()
     else:
-        expected = (case["validator"]["rule"], case["validator"]["code"])
-        assert {(f.rule, f.code) for f in result.blocks} == {expected}
+        expected = (case["validator"]["rule"], case["validator"]["code"], case["validator"]["path"])
+        assert [(f.rule, f.code, f.definition_path) for f in result.blocks] == [expected]
     # Una capa que rechaza y la otra que no hace fallar la suite.
     assert (case["base"] is None) == (case["validator"] is None)
     assert result_is_valid(result.to_json())

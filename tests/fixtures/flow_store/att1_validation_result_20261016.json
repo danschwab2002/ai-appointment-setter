@@ -1,11 +1,15 @@
 {
- "_captured": {
-  "origin": "tests/test_flow_validator_att1.py, prueba 2: las cinco definiciones de att1_definitions_20261016.json como una propuesta de primeras versiones, en ese orden, con el catalogo de la bandeja 11 del 2026-10-10",
+ "_generated": {
+  "generator": "tests/test_flow_validator_att1.py (test_the_json_shared_with_pglite_is_the_one_in_the_repo), con tests/flow_store_translator.py, bridge.flow_definition y bridge.flow_validator",
+  "date": "2026-10-16",
+  "from": "la prueba 2: las cinco definiciones de att1_definitions_20261016.json como una propuesta de primeras versiones del operador, en ese orden, con el catalogo de la bandeja 11 del 2026-10-10",
   "regenerate": "FLOW_STORE_FIXTURE_DIR=tests/fixtures/flow_store uv run pytest tests/test_flow_validator_att1.py"
  },
  "validator": {
   "contract": "setter-flujo/v1",
-  "rules_version": 1
+  "rules_version": 1,
+  "phase": "publish",
+  "actor": "operador"
  },
  "actor": "operador",
  "phase": "publish",

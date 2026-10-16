@@ -37,7 +37,10 @@
 //   9. la base de un mundo de prueba (tests/fixtures/flow_store/
 //      base_example.json), que pytest usa para probar FlowWorld.base_for. Con
 //      FLOW_STORE_FIXTURE_DIR la escribe; sin la variable, exige que la del
-//      repo sea identica.
+//      repo sea identica;
+//  10. el puente con el validador de Python: los resultados y los
+//      validator_json() que escribe pytest (validator_results_cases.json),
+//      por _flow_change_result_is_valid y _flow_change_validator_is_valid.
 //
 // Las horas son siempre relativas al reloj de la base; PGlite tiene
 // resolucion de milisegundo y las comparaciones de hora usan margenes.
@@ -1894,6 +1897,71 @@ if (fixtureDir) {
     '9: tests/fixtures/flow_store/base_example.json es identico a la base de hoy (regenerarlo con FLOW_STORE_FIXTURE_DIR)');
 }
 
+// ===========================================================================
+// 10. El puente con el validador de Python: cada resultado de CASES de
+//     tests/test_flow_validator.py (el negativo y el positivo de cada codigo)
+//     y dos bordes (200 hallazgos y el tope de bytes), con su to_json() y su
+//     validator_json(), por las funciones de la migracion y no por una copia
+//     de su logica. validator_json() trae contract, rules_version, phase y
+//     actor; product_version y git_sha los suma quien llama, como aca. pytest
+//     escribe validator_results_cases.json; si falta o viene vacio, falla.
+// ===========================================================================
+const BRIDGE_FILE = 'validator_results_cases.json';
+let bridge = null;
+try {
+  bridge = JSON.parse(readFileSync(join(FIXTURES, BRIDGE_FILE), 'utf8'));
+} catch (caught) {
+  bridge = { error: String(caught?.message ?? caught) };
+}
+const bridgeCases = Array.isArray(bridge?.cases) ? bridge.cases : [];
+const bridgeEdges = Array.isArray(bridge?.edges) ? bridge.edges : [];
+const bridgeValidators = Array.isArray(bridge?.validators) ? bridge.validators : [];
+check(bridgeCases.length >= 100 && bridgeEdges.length === 2 && bridgeValidators.length === 4,
+  `10: ${BRIDGE_FILE} esta, con los casos, los dos bordes y los cuatro validadores`,
+  { error: bridge?.error, cases: bridgeCases.length, edges: bridgeEdges.length, validators: bridgeValidators.length });
+const bridgeFindingsOf = (entry) => [...(entry?.result?.blocks ?? []), ...(entry?.result?.warnings ?? [])];
+const bridgeNegatives = bridgeCases.filter((entry) => entry.case === 'negativo');
+check(bridgeNegatives.length > 0 && bridgeNegatives.length * 2 === bridgeCases.length
+    && bridgeNegatives.every((entry) => bridgeFindingsOf(entry).some((finding) => finding.code === entry.code)),
+  '10: cada codigo tiene su negativo y su positivo, y el negativo trae su codigo', bridgeNegatives.length);
+const BRIDGE_IMAGE = { product_version: VALIDATOR.product_version, git_sha: VALIDATOR.git_sha };
+const bridgeResultIsValid = async (result) => (await one('select public._flow_change_result_is_valid($1::jsonb) ok',
+  [json(result)])).ok;
+const bridgeValidatorIsValid = async (validator) => (await one('select public._flow_change_validator_is_valid($1::jsonb) ok',
+  [json(validator)])).ok;
+for (const entry of [...bridgeCases, ...bridgeEdges]) {
+  const label = entry.code ? `${entry.code}, ${entry.case}` : entry.description;
+  check(await bridgeResultIsValid(entry.result) === true, `10: ${label}: la base acepta el resultado de Python`,
+    { blocks: entry.result?.blocks?.length, warnings: entry.result?.warnings?.length });
+  if (entry.validator !== null) {
+    check(await bridgeValidatorIsValid({ ...entry.validator, ...BRIDGE_IMAGE }) === true,
+      `10: ${label}: la base acepta su validator_json() con la imagen`, entry.validator);
+  }
+}
+check(sameJson(bridgeValidators.map((validator) => `${validator.phase}/${validator.actor}`).sort(),
+  ['draft/automation_expert', 'draft/operador', 'publish/automation_expert', 'publish/operador']),
+'10: validator_json() con las dos fases y los dos actores', bridgeValidators);
+for (const validator of bridgeValidators) {
+  check(await bridgeValidatorIsValid({ ...validator, ...BRIDGE_IMAGE }) === true,
+    `10: validator_json() ${validator.phase}/${validator.actor}, con la imagen: la base lo acepta`, validator);
+  check(await bridgeValidatorIsValid(validator) === false,
+    `10: validator_json() ${validator.phase}/${validator.actor}, sin la imagen: la base exige las seis claves`, validator);
+}
+check(await bridgeValidatorIsValid({ ...att1Validation.validator, ...BRIDGE_IMAGE }) === true,
+  '10: el validator_json() de las definiciones de ATT1, con la imagen: la base lo acepta', att1Validation.validator);
+// Las guardas de la base distinguen: un bloqueo en warnings, o una advertencia
+// en blocks, no pasa.
+const bridgeWithBlocks = bridgeNegatives.find((entry) => (entry.result?.blocks ?? []).length > 0);
+const [bridgeMovedBlock, ...bridgeRestOfBlocks] = bridgeWithBlocks?.result?.blocks ?? [];
+check(bridgeWithBlocks !== undefined && await bridgeResultIsValid({
+  blocks: bridgeRestOfBlocks, warnings: [...(bridgeWithBlocks?.result?.warnings ?? []), bridgeMovedBlock] }) === false,
+'10: un bloqueo de Python puesto en warnings: la base lo rechaza', bridgeWithBlocks?.code);
+const bridgeWithWarnings = bridgeCases.find((entry) => (entry.result?.warnings ?? []).length > 0);
+const [bridgeMovedWarning, ...bridgeRestOfWarnings] = bridgeWithWarnings?.result?.warnings ?? [];
+check(bridgeWithWarnings !== undefined && await bridgeResultIsValid({
+  blocks: [...(bridgeWithWarnings?.result?.blocks ?? []), bridgeMovedWarning], warnings: bridgeRestOfWarnings }) === false,
+'10: una advertencia de Python puesta en blocks: la base la rechaza', bridgeWithWarnings?.code);
+
 await db.close();
 console.log(JSON.stringify({
   checks,
@@ -1903,6 +1971,7 @@ console.log(JSON.stringify({
   acl_inventory_functions: aclAfter.length,
   shared_cases: shared.cases.length,
   att1_definitions: att1Definitions.definitions.length,
+  validator_results: bridgeCases.length + bridgeEdges.length,
 }));
 if (failures.length) {
   console.log(`FLOW_STORE=FAIL (${failures.length})`);

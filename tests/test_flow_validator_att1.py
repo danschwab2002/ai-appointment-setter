@@ -15,8 +15,10 @@ Diseno del almacen, §7.5. Fixtures (``tests/fixtures/flow_store/``):
   bandeja 11 de ATT1, capturado de Chatwoot el 2026-10-10.
 * ``schema_examples_v1.json``: los bloques del esquema.
 * ``att1_definitions_20261016.json`` y ``att1_validation_result_20261016.json``:
-  los escribe esta prueba (la 4) y los publica PGlite
-  (``validate_flow_store.mjs``, paso 7). Para regenerarlos:
+  los genera esta prueba (la 4) y los publica PGlite
+  (``validate_flow_store.mjs``, paso 7). No son capturas: ``_generated`` dice
+  el generador, el dia en que se escribieron y de que salen. Para
+  regenerarlos:
   ``FLOW_STORE_FIXTURE_DIR=tests/fixtures/flow_store uv run pytest tests/test_flow_validator_att1.py``.
 """
 
@@ -29,6 +31,7 @@ import os
 import sys
 import tomllib
 from collections.abc import Callable, Iterator
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -181,6 +184,32 @@ def _active(config: dict[str, Any], scope_key: str) -> dict[str, Any]:
     return scope
 
 
+def test_the_translation_follows_the_data_when_the_data_changes() -> None:
+    # Las constantes de la prueba de arriba coinciden hoy con el dato; esta mueve
+    # el dato y exige que la salida lo siga, flujo por flujo.
+    config = copy.deepcopy(CONFIG)
+    recovery = _policy(config, "att1-recuperacion-un-toque")
+    recovery["business_windows"][0].update(start="10:00", end="18:00")
+    recovery["expires_after"] = "2 days"
+    _active(config, "att1-recuperacion")["max_outbound_request_starts_per_day"] = 81
+    first_contact = _policy(config, "att1-primer-contacto-formulario")
+    first_contact["business_windows"][0].update(start="08:00", end="20:00")
+    first_contact["expires_after"] = "3 days"
+    first_contact["grace_period"] = "00:30:00"
+    _active(config, "att1-primer-contacto")["max_outbound_request_starts_total"] = 151
+    translated = translate(config)
+    for flow_key in ("carrito", "pago_fallido"):
+        definition = translated[flow_key].definition
+        assert definition["horario"] == {"zona": "America/Mexico_City", "desde": "10:00", "hasta": "18:00"}
+        assert definition["termina"]["vence"] == "2d"
+        assert (definition["topes"]["por_dia"], definition["topes"]["total"]) == (81, 1000)
+    precheckout = translated["precheckout"].definition
+    assert precheckout["horario"] == {"zona": "America/Mexico_City", "desde": "08:00", "hasta": "20:00"}
+    assert precheckout["termina"]["vence"] == "3d"
+    assert precheckout["pasos"][0] == {"esperar": "30m"}
+    assert (precheckout["topes"]["por_dia"], precheckout["topes"]["total"]) == (10, 151)
+
+
 @pytest.mark.parametrize(
     ("change", "error"),
     [
@@ -235,10 +264,13 @@ def test_the_five_flows_publish_together_with_the_three_warnings_of_the_contract
     # Las que el contrato dice que dio su validador de prueba (flow-definition-v1.md:476-479):
     # hasta esta prueba, una prediccion sin medir. La reactivacion es el quinto bloque, apagada.
     assert FIRST_VERSIONS.blocks == ()
-    assert [(f.code, ORDER[f.item_index or 0]) for f in FIRST_VERSIONS.warnings] == [
-        ("wait_without_contesta", "precheckout"),
-        ("always_with_marketing", "reactivacion"),
-        ("silence_without_purchase_exit", "reactivacion"),
+    # Las rutas, escritas a mano: el golden de abajo las escribe el mismo
+    # codigo, y no puede ser la unica defensa.
+    assert (ORDER[2], ORDER[4]) == ("precheckout", "reactivacion")
+    assert [(f.code, f.path) for f in FIRST_VERSIONS.warnings] == [
+        ("wait_without_contesta", "/2/definicion/pasos"),
+        ("always_with_marketing", "/4/definicion/horario"),
+        ("silence_without_purchase_exit", "/4/definicion/termina/si"),
     ]
     assert [item.definicion for item in FIRST_VERSIONS.normalized_items] == [DEFINITIONS[key] for key in ORDER]
 
@@ -316,16 +348,29 @@ def test_the_payment_failure_template_on_the_cart_passes_in_this_piece() -> None
 # 4. El JSON que comparte con PGlite (validate_flow_store.mjs, paso 7).
 # ---------------------------------------------------------------------------
 
+def _generated(source: str) -> dict[str, str]:
+    """De donde sale un JSON que escribe esta prueba: lo genera el codigo, no es una captura.
+
+    ``date`` es el dia (UTC) en que se escribio; la comparacion con el del repo
+    mira que sea una fecha, no que sea hoy.
+    """
+    return {
+        "generator": (
+            "tests/test_flow_validator_att1.py (test_the_json_shared_with_pglite_is_the_one_in_the_repo), "
+            "con tests/flow_store_translator.py, bridge.flow_definition y bridge.flow_validator"
+        ),
+        "date": datetime.now(timezone.utc).date().isoformat(),
+        "from": source,
+        "regenerate": "FLOW_STORE_FIXTURE_DIR=tests/fixtures/flow_store uv run pytest tests/test_flow_validator_att1.py",
+    }
+
+
 def _definitions_document() -> dict[str, Any]:
     return {
-        "_captured": {
-            "origin": (
-                "tests/test_flow_validator_att1.py: tests/flow_store_translator.py sobre "
-                "att1_flow_config_20261016.json (att1-db, 2026-10-16T13:15:51Z), att1_instancia_f01fbcc.toml "
-                "y schema_examples_v1.json, normalizado con bridge.flow_definition"
-            ),
-            "regenerate": "FLOW_STORE_FIXTURE_DIR=tests/fixtures/flow_store uv run pytest tests/test_flow_validator_att1.py",
-        },
+        "_generated": _generated(
+            "tests/flow_store_translator.py sobre att1_flow_config_20261016.json (att1-db, 2026-10-16T13:15:51Z), "
+            "att1_instancia_f01fbcc.toml y schema_examples_v1.json, normalizado con bridge.flow_definition"
+        ),
         "instance": {"tenant_ref": INSTANCE.tenant_ref, "ally_ref": INSTANCE.ally_ref,
                      "products": sorted(INSTANCE.products), "time_zone": INSTANCE.time_zone},
         "definitions": [item.definicion for item in FIRST_VERSIONS.normalized_items],
@@ -334,17 +379,14 @@ def _definitions_document() -> dict[str, Any]:
 
 def _validation_document() -> dict[str, Any]:
     return {
-        "_captured": {
-            "origin": (
-                "tests/test_flow_validator_att1.py, prueba 2: las cinco definiciones de "
-                "att1_definitions_20261016.json como una propuesta de primeras versiones, en ese orden, "
-                "con el catalogo de la bandeja 11 del 2026-10-10"
-            ),
-            "regenerate": "FLOW_STORE_FIXTURE_DIR=tests/fixtures/flow_store uv run pytest tests/test_flow_validator_att1.py",
-        },
-        "validator": {"contract": VALIDATOR_CONTRACT, "rules_version": RULES_VERSION},
-        "actor": "operador",
-        "phase": "publish",
+        "_generated": _generated(
+            "la prueba 2: las cinco definiciones de att1_definitions_20261016.json como una propuesta de "
+            "primeras versiones del operador, en ese orden, con el catalogo de la bandeja 11 del 2026-10-10"
+        ),
+        # p_validator sin product_version ni git_sha, que suma quien llama.
+        "validator": FIRST_VERSIONS.validator_json(),
+        "actor": FIRST_VERSIONS.actor,
+        "phase": FIRST_VERSIONS.phase,
         "catalog_sha256": CATALOG.catalog_sha256,
         "result": FIRST_VERSIONS.to_json(),
     }
@@ -363,4 +405,9 @@ def test_the_json_shared_with_pglite_is_the_one_in_the_repo() -> None:
         return
     for name, document in documents.items():
         in_repo = json.loads((FLOW_STORE / name).read_text(encoding="utf-8"))
+        generated_on = in_repo.get("_generated", {}).pop("date", None)
+        assert isinstance(generated_on, str) and date.fromisoformat(generated_on) >= date(2026, 10, 16), name
+        document["_generated"].pop("date")
         assert in_repo == document, f"{name} no es el de hoy: regenerarlo con FLOW_STORE_FIXTURE_DIR"
+    assert documents["att1_validation_result_20261016.json"]["validator"] == {
+        "contract": VALIDATOR_CONTRACT, "rules_version": RULES_VERSION, "phase": "publish", "actor": "operador"}
