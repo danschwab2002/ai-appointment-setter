@@ -172,6 +172,33 @@ van. Si la lectura falla, el turno sigue sin el dato
 ([commercial-knowledge-v1](commercial-knowledge-v1.md)). `CONTEXT_BUILDER_VERSION`
 pasa a `shadow-context-v2`.
 
+#### Los productos y lo que hizo la persona (paso 2b de varios productos)
+
+Solo con `[[productos]]` en el manifiesto ([referencia](../referencia-manifiesto.md)),
+y sin flag propio: sin productos declarados nada de esto existe. Cada turno lleva
+`products`, la `key` de cada producto y el `name` con el que aparece en el
+conocimiento (`# Producto: …`), y `person_activity` si el móvil de quien escribe
+hizo algo en el funnel en los últimos 30 días: una lista, de lo más viejo a lo más
+nuevo, de `{activity, product, at}`. `activity` es `form` (cada envío del
+formulario), `cart`, `payment_rejected`, `payment_slip_printed`,
+`payment_slip_expired` o `purchase`; `product` es la clave del producto del funnel
+leído; `at`, ISO 8601 en UTC. Lo devuelve
+`get_portable_person_activity_v1(tenant, funnel, teléfono)` (migración
+`20261016000200`), que compara las dos formas del móvil y trae las 20 más
+recientes, sin email, nombre, transacción ni payload. Sin actividad la clave no
+va. Si la lectura falla, el turno sigue sin el dato
+(`person_activity_lookup_failed` en el log, sin el número).
+
+La salida del agente admite entonces una séptima clave, `product`: `null` o la
+clave de un producto declarado. Cualquier otro valor invalida la propuesta. Con
+`send_payment_link` dice de qué producto es el link: con un solo producto, si
+falta, el link es de ese; con dos o más, un link sin producto es inválido. El
+bridge deja `payment_link_product product=<clave> source=agent|single_product`
+en el log. Con un solo producto el link es el de siempre; elegir la ficha por el
+producto es la 2c. Sin productos declarados, `product` invalida la propuesta como
+cualquier clave de más, y la salida de Johanna no cambia.
+`CONTEXT_BUILDER_VERSION` pasa a `shadow-context-v3`.
+
 #### Los eventos de la ficha (desde la 1.6.0)
 
 Con el mismo flag, `PURCHASE_BILLET_PRINTED` y `PURCHASE_EXPIRED` versión

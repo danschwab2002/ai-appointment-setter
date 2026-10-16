@@ -55,7 +55,9 @@ def test_invariant_sections_are_identical_to_johanna(heading: str) -> None:
 # ultimo pago rechazado en la entrada (recent_payment_failure). Johanna no tiene
 # ninguna de las dos: su conocimiento vive en su SOUL y su bridge no corre el
 # runtime con manifiesto. Hasta que se mude al manifiesto (Etapa 2), estas son
-# las unicas diferencias, texto por texto.
+# las unicas diferencias, texto por texto. La 2b (varios productos por aliada)
+# suma en la entrada `products` y `person_activity`, que solo trae un manifiesto
+# con [[productos]].
 _PAYMENT_GUIDE = {
     "### 3. Compra fallida": (
         """Usá esta ruta sólo cuando la persona diga que su pago falló o fue rechazado. No
@@ -100,7 +102,17 @@ número en la última semana, según la plataforma de pago. Trae `failed_at`
 de pago, a veces en otro idioma; puede faltar) y `checkout_country` (código ISO
 del país). Usalo en la ruta de compra fallida. Podés decir con qué medio intentó
 pagar, pero no cites el texto del rechazo ni los códigos. Si no viene, no sabés
-si hubo un pago rechazado.""",
+si hubo un pago rechazado.
+
+Si la aliada declara productos, trae `products`: la `key` y el `name` de cada
+uno, el nombre con el que aparece en el bloque («# Producto: …»). Puede traer
+además `person_activity`: lo que hizo este número en los últimos 30 días, de lo
+más viejo a lo más nuevo. Cada elemento trae `activity` (`form`: llenó el
+formulario; `cart`: dejó el pago sin terminar; `payment_rejected`;
+`payment_slip_printed`: sacó una ficha para pagar en efectivo;
+`payment_slip_expired`: la ficha venció; `purchase`: compró), `product` (una
+`key` de `products`) y `at` (ISO 8601, UTC). Usalo para saber de qué producto
+habla la persona, sin recitarle la lista. Si no viene, no sabés qué hizo.""",
     ),
 }
 
@@ -114,9 +126,16 @@ def test_payment_guide_sections_differ_from_johanna_only_in_the_guide(heading: s
     assert _section(COMMON, heading) == johanna.replace(johanna_text, common_text)
 
 
-def test_output_contract_differs_only_in_the_neutral_reason_code() -> None:
+def test_output_contract_differs_only_in_the_neutral_reason_code_and_the_product() -> None:
+    # La 2b: con `products` en la entrada, el pedido del link lleva `product`.
+    # Sin productos declarados, la salida es la de Johanna.
     johanna = _section(JOHANNA, "## Salida obligatoria").replace(
         "johanna_e2e_response", "commercial_response"
+    ).replace(
+        "- No agregues ni elimines claves.\n",
+        "- No agregues ni elimines claves. Única excepción: con `products` en la\n"
+        "  entrada y `decision=\"send_payment_link\"`, va también `product` (ver “Enlace\n"
+        "  de pago”).\n",
     )
 
     assert _section(COMMON, "## Salida obligatoria") == johanna

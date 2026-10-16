@@ -34,6 +34,7 @@ expected_service_role(signature) as (
         ('public.claim_portable_conversation_followup_v1(bigint, bigint, bigint, text, text, text, text, text, text, text, bigint, bigint, integer, text, timestamp with time zone)'),
         ('public.get_portable_recent_payment_failure_v1(text, text, text)'),
         ('public.admit_portable_hotmart_payment_slip_event_v1(text, text, integer, text, jsonb)'),
+        ('public.get_portable_person_activity_v1(text, text, text)'),
         ('public.settle_conversation_followup_v1(text, text, bigint, text, timestamp with time zone)'),
         ('public.settle_conversation_reactivation(text, text, bigint, text, timestamp with time zone)'),
         ('public.apply_chatwoot_inbound_opt_out(bigint, bigint, bigint, bigint, text, timestamp with time zone, text)'),

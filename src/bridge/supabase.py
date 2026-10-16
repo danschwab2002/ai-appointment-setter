@@ -322,6 +322,28 @@ class RecentPaymentFailure:
     checkout_country_iso: str | None
 
 
+PERSON_ACTIVITY_KINDS = frozenset({
+    "form",
+    "cart",
+    "payment_rejected",
+    "payment_slip_printed",
+    "payment_slip_expired",
+    "purchase",
+})
+
+
+@dataclass(frozen=True)
+class PersonActivity:
+    """Una cosa que hizo un movil en un funnel en los ultimos 30 dias (2b).
+
+    Solo la actividad y la hora: el funnel es el producto, y nada de email,
+    nombre, transaccion ni payload.
+    """
+
+    activity: str
+    occurred_at: datetime
+
+
 @dataclass(frozen=True)
 class PaymentSlipAdmissionResult:
     """Admision de un evento de la ficha (PURCHASE_BILLET_PRINTED o PURCHASE_EXPIRED)."""
@@ -2093,6 +2115,52 @@ class SupabaseClient:
             refusal_reason=texts["refusal_reason"],
             checkout_country_iso=texts["checkout_country_iso"],
         )
+
+    async def get_portable_person_activity(
+        self,
+        *,
+        config: CommercialAllyConfig,
+        whatsapp_phone: str,
+    ) -> tuple[PersonActivity, ...]:
+        """Lo que hizo este movil en el funnel del binding, del mas viejo al mas nuevo."""
+        operation = "portable_person_activity_get"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_portable_person_activity_v1",
+            content=json.dumps(
+                {
+                    "p_tenant_ref": config.tenant_ref,
+                    "p_funnel_ref": config.funnel_ref,
+                    "p_whatsapp_phone": whatsapp_phone,
+                }
+            ),
+        )
+        rejection = _deterministic_rejection(response)
+        if rejection is not None:
+            raise SupabasePermanentError(
+                f"{operation}_rejected: {rejection}", reason=rejection
+            )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        activities: list[PersonActivity] = []
+        for row in _response_rows(response, operation=operation):
+            activity = row.get("activity")
+            occurred_at = row.get("occurred_at")
+            if (
+                set(row) != {"activity", "occurred_at"}
+                or not isinstance(activity, str)
+                or activity not in PERSON_ACTIVITY_KINDS
+                or not isinstance(occurred_at, str)
+            ):
+                raise _invalid_row_error(operation)
+            try:
+                parsed_at = datetime.fromisoformat(occurred_at.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise _invalid_row_error(operation) from exc
+            if parsed_at.tzinfo is None:
+                raise _invalid_row_error(operation)
+            activities.append(PersonActivity(activity=activity, occurred_at=parsed_at))
+        return tuple(activities)
 
     async def admit_portable_hotmart_payment_slip_event(
         self,

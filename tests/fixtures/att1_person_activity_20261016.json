@@ -1,0 +1,354 @@
+{
+  "_fixture": {
+    "captured_at": "2026-10-16T19:40Z",
+    "source": "att1-db (stack setter-att1), transaccion de solo lectura (default_transaction_read_only=on)",
+    "how": "El cuerpo de get_portable_person_activity_v1 (20261016000200) corrido como consulta, con tenant lancemos y funnel att1, sobre una persona real por cada combinacion de actividades de los ultimos 30 dias (la de mas actividades de cada una). Cada persona es la respuesta que daria la funcion para su telefono.",
+    "redaction": "Sin telefonos, emails, nombres ni payloads: solo la actividad y la hora. Las personas se numeran por cantidad de actividades.",
+    "notes": [
+      "La persona 11 tiene dos payment_slip_expired a 2 s: Hotmart mando dos eventos y la funcion devuelve los dos.",
+      "La persona 2 compro el 2026-10-16 a las 19:22:35Z, despues de una ficha impresa."
+    ]
+  },
+  "people": [
+    {
+      "person": 1,
+      "combination": "cart+form",
+      "rows": [
+        {
+          "activity": "form",
+          "occurred_at": "2026-10-01T03:17:45Z"
+        },
+        {
+          "activity": "form",
+          "occurred_at": "2026-10-01T03:43:28Z"
+        },
+        {
+          "activity": "cart",
+          "occurred_at": "2026-10-06T19:33:48Z"
+        },
+        {
+          "activity": "form",
+          "occurred_at": "2026-10-07T23:57:59Z"
+        },
+        {
+          "activity": "cart",
+          "occurred_at": "2026-10-08T00:39:39Z"
+        },
+        {
+          "activity": "form",
+          "occurred_at": "2026-10-10T20:51:45Z"
+        },
+        {
+          "activity": "cart",
+          "occurred_at": "2026-10-10T21:33:04Z"
+        }
+      ]
+    },
+    {
+      "person": 2,
+      "combination": "cart+form+payment_slip_printed+purchase",
+      "rows": [
+        {
+          "activity": "form",
+          "occurred_at": "2026-10-16T15:08:47Z"
+        },
+        {
+          "activity": "cart",
+          "occurred_at": "2026-10-16T15:51:01Z"
+        },
+        {
+          "activity": "form",
+          "occurred_at": "2026-10-16T19:18:57Z"
+        },
+        {
+          "activity": "payment_slip_printed",
+          "occurred_at": "2026-10-16T19:21:53Z"
+        },
+        {
+          "activity": "purchase",
+          "occurred_at": "2026-10-16T19:22:35Z"
+        }
+      ]
+    },
+    {
+      "person": 3,
+      "combination": "form+payment_rejected+payment_slip_printed",
+      "rows": [
+        {
+          "activity": "form",
+          "occurred_at": "2026-10-14T14:56:36Z"
+        },
+        {
+          "activity": "payment_slip_printed",
+          "occurred_at": "2026-10-14T14:59:23Z"
+        },
+        {
+          "activity": "payment_rejected",
+          "occurred_at": "2026-10-14T17:13:38Z"
+        },
+        {
+          "activity": "payment_slip_printed",
+          "occurred_at": "2026-10-15T17:47:21Z"
+        },
+        {
+          "activity": "payment_rejected",
+          "occurred_at": "2026-10-15T20:01:35Z"
+        }
+      ]
+    },
+    {
+      "person": 4,
+      "combination": "cart+form+payment_rejected+purchase",
+      "rows": [
+        {
+          "activity": "form",
+          "occurred_at": "2026-10-11T23:59:19Z"
+        },
+        {
+          "activity": "cart",
+          "occurred_at": "2026-10-12T00:41:36Z"
+        },
+        {
+          "activity": "payment_rejected",
+          "occurred_at": "2026-10-14T19:47:49Z"
+        },
+        {
+          "activity": "purchase",
+          "occurred_at": "2026-10-14T19:48:18Z"
+        }
+      ]
+    },
+    {
+      "person": 5,
+      "combination": "cart+form+payment_slip_printed",
+      "rows": [
+        {
+          "activity": "form",
+          "occurred_at": "2026-10-13T13:33:51Z"
+        },
+        {
+          "activity": "payment_slip_printed",
+          "occurred_at": "2026-10-13T13:39:35Z"
+        },
+        {
+          "activity": "cart",
+          "occurred_at": "2026-10-13T14:16:34Z"
+        },
+        {
+          "activity": "payment_slip_printed",
+          "occurred_at": "2026-10-16T18:41:42Z"
+        }
+      ]
+    },
+    {
+      "person": 6,
+      "combination": "cart+form+purchase",
+      "rows": [
+        {
+          "activity": "form",
+          "occurred_at": "2026-10-09T12:16:18Z"
+        },
+        {
+          "activity": "form",
+          "occurred_at": "2026-10-09T12:32:35Z"
+        },
+        {
+          "activity": "cart",
+          "occurred_at": "2026-10-09T13:14:40Z"
+        },
+        {
+          "activity": "purchase",
+          "occurred_at": "2026-10-11T17:21:47Z"
+        }
+      ]
+    },
+    {
+      "person": 7,
+      "combination": "cart+payment_rejected+purchase",
+      "rows": [
+        {
+          "activity": "cart",
+          "occurred_at": "2026-10-13T22:31:16Z"
+        },
+        {
+          "activity": "payment_rejected",
+          "occurred_at": "2026-10-14T01:45:10Z"
+        },
+        {
+          "activity": "purchase",
+          "occurred_at": "2026-10-14T01:58:34Z"
+        }
+      ]
+    },
+    {
+      "person": 8,
+      "combination": "form",
+      "rows": [
+        {
+          "activity": "form",
+          "occurred_at": "2026-10-01T13:20:55Z"
+        },
+        {
+          "activity": "form",
+          "occurred_at": "2026-10-03T00:52:14Z"
+        },
+        {
+          "activity": "form",
+          "occurred_at": "2026-10-05T18:05:30Z"
+        }
+      ]
+    },
+    {
+      "person": 9,
+      "combination": "form+payment_rejected",
+      "rows": [
+        {
+          "activity": "form",
+          "occurred_at": "2026-10-11T18:51:05Z"
+        },
+        {
+          "activity": "form",
+          "occurred_at": "2026-10-11T18:54:28Z"
+        },
+        {
+          "activity": "payment_rejected",
+          "occurred_at": "2026-10-16T19:02:41Z"
+        }
+      ]
+    },
+    {
+      "person": 10,
+      "combination": "form+payment_rejected+purchase",
+      "rows": [
+        {
+          "activity": "form",
+          "occurred_at": "2026-10-11T15:01:28Z"
+        },
+        {
+          "activity": "payment_rejected",
+          "occurred_at": "2026-10-11T15:07:44Z"
+        },
+        {
+          "activity": "purchase",
+          "occurred_at": "2026-10-11T15:09:28Z"
+        }
+      ]
+    },
+    {
+      "person": 11,
+      "combination": "form+payment_slip_expired",
+      "rows": [
+        {
+          "activity": "form",
+          "occurred_at": "2026-10-11T02:23:27Z"
+        },
+        {
+          "activity": "payment_slip_expired",
+          "occurred_at": "2026-10-15T01:02:47Z"
+        },
+        {
+          "activity": "payment_slip_expired",
+          "occurred_at": "2026-10-15T01:02:49Z"
+        }
+      ]
+    },
+    {
+      "person": 12,
+      "combination": "form+payment_slip_printed+purchase",
+      "rows": [
+        {
+          "activity": "form",
+          "occurred_at": "2026-10-12T21:06:46Z"
+        },
+        {
+          "activity": "payment_slip_printed",
+          "occurred_at": "2026-10-12T21:08:43Z"
+        },
+        {
+          "activity": "purchase",
+          "occurred_at": "2026-10-12T21:12:17Z"
+        }
+      ]
+    },
+    {
+      "person": 13,
+      "combination": "form+purchase",
+      "rows": [
+        {
+          "activity": "form",
+          "occurred_at": "2026-10-09T15:29:26Z"
+        },
+        {
+          "activity": "purchase",
+          "occurred_at": "2026-10-09T15:37:05Z"
+        },
+        {
+          "activity": "form",
+          "occurred_at": "2026-10-09T15:39:20Z"
+        }
+      ]
+    },
+    {
+      "person": 14,
+      "combination": "cart+purchase",
+      "rows": [
+        {
+          "activity": "cart",
+          "occurred_at": "2026-10-13T02:37:38Z"
+        },
+        {
+          "activity": "purchase",
+          "occurred_at": "2026-10-13T03:25:05Z"
+        }
+      ]
+    },
+    {
+      "person": 15,
+      "combination": "form+payment_slip_printed",
+      "rows": [
+        {
+          "activity": "form",
+          "occurred_at": "2026-10-15T05:41:12Z"
+        },
+        {
+          "activity": "payment_slip_printed",
+          "occurred_at": "2026-10-15T05:44:00Z"
+        }
+      ]
+    },
+    {
+      "person": 16,
+      "combination": "payment_slip_printed+purchase",
+      "rows": [
+        {
+          "activity": "payment_slip_printed",
+          "occurred_at": "2026-10-13T19:58:42Z"
+        },
+        {
+          "activity": "purchase",
+          "occurred_at": "2026-10-13T20:01:15Z"
+        }
+      ]
+    },
+    {
+      "person": 17,
+      "combination": "cart",
+      "rows": [
+        {
+          "activity": "cart",
+          "occurred_at": "2026-10-08T00:13:57Z"
+        }
+      ]
+    },
+    {
+      "person": 18,
+      "combination": "purchase",
+      "rows": [
+        {
+          "activity": "purchase",
+          "occurred_at": "2026-10-05T20:52:06Z"
+        }
+      ]
+    }
+  ]
+}

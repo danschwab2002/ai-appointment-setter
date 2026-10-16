@@ -104,19 +104,58 @@ def _parse_agent_proposal(content: object) -> dict[str, object] | None:
     return None
 
 
-def _is_valid_proposal(proposal: dict[str, object]) -> bool:
-    if set(proposal) != {
-        "decision",
-        "qualification_status",
-        "reason_code",
-        "reply",
-        "captured_fields",
-        "missing_fields",
-    }:
+_PROPOSAL_KEYS = frozenset({
+    "decision",
+    "qualification_status",
+    "reason_code",
+    "reply",
+    "captured_fields",
+    "missing_fields",
+})
+
+
+def payment_link_product(
+    proposal: dict[str, object], product_keys: tuple[str, ...]
+) -> str | None:
+    """De que producto es el link que pide el agente (2b).
+
+    El que dijo el agente en `product`. Si no lo dijo y la instancia declara
+    un solo producto, ese: asi un SOUL que todavia no conoce la clave no deja
+    a nadie sin link. Sin productos declarados, None.
+    """
+    product = proposal.get("product")
+    if isinstance(product, str):
+        return product
+    if len(product_keys) == 1:
+        return product_keys[0]
+    return None
+
+
+def _is_valid_proposal(
+    proposal: dict[str, object],
+    product_keys: frozenset[str] = frozenset(),
+) -> bool:
+    # Las seis claves de siempre. Con productos declarados en el manifiesto
+    # (2b), una septima opcional, `product`: null o la clave de un producto
+    # declarado. Sin productos, `product` invalida la propuesta como cualquier
+    # otra clave de mas: Johanna no cambia.
+    keys = set(proposal)
+    if keys == _PROPOSAL_KEYS:
+        product = None
+    elif product_keys and keys == _PROPOSAL_KEYS | {"product"}:
+        product = proposal["product"]
+        if product is not None and (
+            not isinstance(product, str) or product not in product_keys
+        ):
+            return False
+    else:
         return False
 
     decision = proposal["decision"]
     if not isinstance(decision, str) or decision not in _DECISION_STATUSES:
+        return False
+    # Con dos productos o mas, el link sin producto no se puede armar.
+    if decision == "send_payment_link" and product is None and len(product_keys) > 1:
         return False
     if proposal["qualification_status"] != _DECISION_STATUSES.get(decision):
         return False
@@ -206,8 +245,12 @@ class HermesShadowProcessor:
         timeout_seconds: float = 60.0,
         provenance_recorder: TurnProvenanceRecorder | None = None,
         system_prompt: str | None = None,
+        product_keys: tuple[str, ...] = (),
     ) -> None:
         self._base_url = base_url.rstrip("/")
+        # Las claves de [[productos]] del manifiesto: las unicas que acepta
+        # `product` en la propuesta. Vacio, la salida es la de siempre.
+        self._product_keys = frozenset(product_keys)
         self._api_key = api_key
         self._model_name = model_name
         # El conocimiento comercial de la instancia (contracts/commercial-knowledge-v1).
@@ -266,7 +309,9 @@ class HermesShadowProcessor:
         ):
             return None
         proposal = result.get("proposal")
-        if not isinstance(proposal, dict) or not _is_valid_proposal(proposal):
+        if not isinstance(proposal, dict) or not _is_valid_proposal(
+            proposal, self._product_keys
+        ):
             return None
         return proposal
 
@@ -410,7 +455,9 @@ class HermesShadowProcessor:
             else:
                 proposal = _parse_agent_proposal(proposal_text)
 
-            if isinstance(proposal, dict) and _is_valid_proposal(proposal):
+            if isinstance(proposal, dict) and _is_valid_proposal(
+                proposal, self._product_keys
+            ):
                 self._persist_result(
                     digest=digest,
                     result=self._attempted(
@@ -518,8 +565,7 @@ class HermesShadowProcessor:
                 except FileNotFoundError:
                     pass
 
-    @staticmethod
-    def _is_terminal_result(path: Path, *, digest: str) -> bool:
+    def _is_terminal_result(self, path: Path, *, digest: str) -> bool:
         try:
             result = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError):
@@ -534,5 +580,5 @@ class HermesShadowProcessor:
         return (
             result.get("status") == "completed"
             and isinstance(proposal, dict)
-            and _is_valid_proposal(proposal)
+            and _is_valid_proposal(proposal, self._product_keys)
         )
