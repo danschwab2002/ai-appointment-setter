@@ -4621,6 +4621,23 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'portable_person_activity'
+    union all
+    select
+        '20261016000300',
+        '20261016000300_portable_person_activity_link_purchase_v1.sql',
+        -- Lo que hizo la persona cuenta la compra con nuestro link: la rama de
+        -- las emisiones purchase_matched, sin contar dos veces la portable.
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_portable_person_activity_v1(text,text,text)')
+              and prosecdef
+              and position('person_activity: link purchase' in definition) > 0
+              and position('public.checkout_link_issuances' in definition) > 0
+              and position('purchase_matched' in definition) > 0
+        )::int,
+        1,
+        'portable_person_activity_link_purchase'
 )
 select
     version,

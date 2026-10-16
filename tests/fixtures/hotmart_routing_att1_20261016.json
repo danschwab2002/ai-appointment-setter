@@ -1,0 +1,133 @@
+{
+  "_fixture": {
+    "origen": "Base de ATT1 (servicio setter-att1_att1-db, autohospedada), public.webhook_events con source = 'hotmart', tal como lo guardo el bridge. Lectura de solo lectura por psql dentro del contenedor, el 2026-10-16 ~22:20Z: el ultimo evento de cada caso.",
+    "reduccion": "Armado adentro de la base con una lista blanca: el tipo, la version, las fechas, el producto (id, nombre, ucode), la oferta (data.offer en el carrito, data.purchase.offer en el resto), el estado, el tipo de pago y el pais del checkout. El comprador es de prueba (Comprador Prueba, comprador.prueba@example.test, 5215550000001) y la transaccion tambien (HPPRUEBA0000001). Nada personal salio de la base: ni nombre, email, telefono, documento, direccion, IP, ficha, sck ni comisiones. El id del evento es fixture-<caso>.",
+    "para_que": "El ruteo por producto y oferta (paso 2c-2): donde viene la oferta en cada tipo de evento, y la compra de la oferta 83utgyow, que ningun producto declara (la recuperacion de GHL en ATT1).",
+    "medido": "En webhook_events de att1-db hay un solo producto, 5071808, con las ofertas 2uafw5bg y bmaztyhg (carritos, compras, fichas y pagos fallidos) y 83utgyow (6 compras)."
+  },
+  "eventos": [
+    {
+      "caso": "carrito_2uafw5bg",
+      "payload": {
+        "id": "fixture-carrito_2uafw5bg",
+        "data": {
+          "buyer": {
+            "name": "Comprador Prueba",
+            "email": "comprador.prueba@example.test",
+            "phone": "5215550000001",
+            "checkout_phone": "5215550000001"
+          },
+          "offer": {
+            "code": "2uafw5bg"
+          },
+          "product": {
+            "id": 5071808,
+            "name": "Alimenta tu Tiroides"
+          },
+          "checkout_country": {
+            "iso": "AR",
+            "name": "Argentina"
+          }
+        },
+        "event": "PURCHASE_OUT_OF_SHOPPING_CART",
+        "version": "2.0.0",
+        "creation_date": 1792188362696
+      }
+    },
+    {
+      "caso": "carrito_bmaztyhg",
+      "payload": {
+        "id": "fixture-carrito_bmaztyhg",
+        "data": {
+          "buyer": {
+            "name": "Comprador Prueba",
+            "email": "comprador.prueba@example.test",
+            "phone": "5215550000001",
+            "checkout_phone": "5215550000001"
+          },
+          "offer": {
+            "code": "bmaztyhg"
+          },
+          "product": {
+            "id": 5071808,
+            "name": "Alimenta tu Tiroides"
+          },
+          "checkout_country": {
+            "iso": "MX",
+            "name": "México"
+          }
+        },
+        "event": "PURCHASE_OUT_OF_SHOPPING_CART",
+        "version": "2.0.0",
+        "creation_date": 1792171367223
+      }
+    },
+    {
+      "caso": "compra_83utgyow",
+      "payload": {
+        "id": "fixture-compra_83utgyow",
+        "data": {
+          "buyer": {
+            "name": "Comprador Prueba",
+            "email": "comprador.prueba@example.test",
+            "phone": "5215550000001",
+            "checkout_phone": "5215550000001"
+          },
+          "product": {
+            "id": 5071808,
+            "name": "Alimenta tu Tiroides",
+            "ucode": "384858a0-bdc4-4b9a-a479-9eeff9ed8893"
+          },
+          "purchase": {
+            "offer": {
+              "code": "83utgyow"
+            },
+            "status": "APPROVED",
+            "payment": {
+              "type": "CREDIT_CARD"
+            },
+            "order_date": 1791998588000,
+            "transaction": "HPPRUEBA0000001",
+            "approved_date": 1791998590000
+          }
+        },
+        "event": "PURCHASE_APPROVED",
+        "version": "2.0.0",
+        "creation_date": 1791998602824
+      }
+    },
+    {
+      "caso": "ficha_impresa_2uafw5bg",
+      "payload": {
+        "id": "fixture-ficha_impresa_2uafw5bg",
+        "data": {
+          "buyer": {
+            "name": "Comprador Prueba",
+            "email": "comprador.prueba@example.test",
+            "phone": "5215550000001",
+            "checkout_phone": "5215550000001"
+          },
+          "product": {
+            "id": 5071808,
+            "name": "Alimenta tu Tiroides",
+            "ucode": "384858a0-bdc4-4b9a-a479-9eeff9ed8893"
+          },
+          "purchase": {
+            "offer": {
+              "code": "2uafw5bg"
+            },
+            "status": "BILLET_PRINTED",
+            "payment": {
+              "type": "CASHPAYMENT"
+            },
+            "order_date": 1792185374000,
+            "transaction": "HPPRUEBA0000001"
+          }
+        },
+        "event": "PURCHASE_BILLET_PRINTED",
+        "version": "2.0.0",
+        "creation_date": 1792185386513
+      }
+    }
+  ]
+}

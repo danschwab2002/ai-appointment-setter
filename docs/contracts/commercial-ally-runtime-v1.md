@@ -185,8 +185,12 @@ formulario), `cart`, `payment_rejected`, `payment_slip_printed`,
 leído; `at`, ISO 8601 en UTC. Lo devuelve
 `get_portable_person_activity_v1(tenant, funnel, teléfono)` (migración
 `20261016000200`), que compara las dos formas del móvil y trae las 20 más
-recientes, sin email, nombre, transacción ni payload. Sin actividad la clave no
-va. Si la lectura falla, el turno sigue sin el dato
+recientes, sin email, nombre, transacción ni payload. `purchase` cuenta también
+la compra hecha con el link del agente (migración `20261016000300`, paso 2c-0):
+esa compra pasa por el correlador de la emisión y no por el portable, así que se
+lee de la emisión `purchase_matched` cuya intención es del funnel, por la
+identidad a la que se mandó el link o el teléfono del evento. Sin actividad la
+clave no va. Si la lectura falla, el turno sigue sin el dato
 (`person_activity_lookup_failed` en el log, sin el número).
 
 La salida del agente admite entonces una séptima clave, `product`: `null` o la
@@ -198,6 +202,50 @@ en el log. Con un solo producto el link es el de siempre; elegir la ficha por el
 producto es la 2c. Sin productos declarados, `product` invalida la propuesta como
 cualquier clave de más, y la salida de Johanna no cambia.
 `CONTEXT_BUILDER_VERSION` pasa a `shadow-context-v3`.
+
+#### Un binding por producto (paso 2c-1)
+
+Cada producto de `[[productos]]` es su propio binding, con su `funnel_ref`
+([referencia](../referencia-manifiesto.md)). El principal, el primero, es el de
+siempre (`[hotmart]` y `[instancia]`); los demás traen su funnel y su Hotmart, y
+comparten lo que es de la instancia: la aliada, Chatwoot, el scope entrante y el
+consentimiento. El bridge arma una ruta por producto (`ProductRoutes`), y el
+arranque y `/ready` resuelven el binding de cada una contra la base. Con más de
+uno, `/ready` publica `commercial_ally_bindings`; si falta uno o no coincide,
+responde 503 `commercial_ally_binding_unavailable`, como con uno solo. Mientras
+falte el ruteo del link, la etiqueta y lo que hizo la persona (2c-3), el bridge no
+arranca con más de un producto.
+
+#### El ruteo de Hotmart y de los formularios (paso 2c-2)
+
+Con más de un producto, cada evento y cada formulario se admite con el binding
+de su producto (`ProductRoutes`). Con uno solo, todo va al principal, como antes.
+- **Hotmart.** Se rutea por producto y oferta. El carrito trae la oferta en
+  `data.offer.code`, y la compra, el pago fallido y la ficha en
+  `data.purchase.offer.code`. La compra de una oferta que ningún producto
+  declara va al dueño de ese producto de Hotmart (el principal, si es uno de
+  ellos), así sigue frenando con cualquier oferta del producto. Un evento sin
+  producto en la instancia, o un carrito, un pago fallido o una ficha con una
+  oferta no declarada, responde 200 `{"status": "ignored", "reason":
+  "hotmart_event_unrouted"}` y deja `hotmart_event_unrouted event_id=…
+  event_type=… product_id=… offer=… reason=product_not_declared|offer_not_declared`
+  en el log. Antes salía con 200 y sin rastro.
+- **Lo que no es del principal no se planifica.** El evento queda admitido en el
+  funnel de su producto, que es lo que leen la historia de la persona, la
+  correlación y los frenos. Pero el worker de resolución lo marca `ignored` con
+  `product_without_recovery_flows`, sin crear el contacto, y deja
+  `hotmart_event_not_planned`: los flujos de los demás productos llegan con el
+  motor de flujos.
+- **`/webhooks/lead`.** El producto sale de `source.site` y `source.landing_id`.
+- **El adaptador de GHL.** El producto sale de la landing. En modo `activo`, un
+  formulario con landing declarada en `landing_por_formulario` va al producto de
+  esa landing. Si no, la URL se prueba con cada producto, el principal primero,
+  y si no es de ninguno queda el rechazo del principal (`ghl_landing_unknown`).
+  En modo `sombra`, la nota `would_fix` solo compara landings del mismo producto.
+- **El formulario de un producto que no es el principal** se admite en su funnel
+  (`admit_portable_observed_lead_precheckout`) sin planificar el primer
+  contacto, aunque esté prendido, y deja
+  `portable_precheckout_admitted_without_flows product=…` en el log.
 
 #### Los eventos de la ficha (desde la 1.6.0)
 

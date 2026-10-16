@@ -193,7 +193,7 @@ La guarda completa, con lo que responde `/ready` en cada caso, está en [ghl-pre
 
 ## `[[productos]]`, opcional
 
-Los productos de la aliada, el primer paso de varios productos por aliada. Hoy hace dos cosas: ata cada producto con su sección del conocimiento y le pone a cada conversación la etiqueta del producto en Chatwoot, para que el equipo vea en el inbox de qué producto es. El producto que se vende sigue saliendo de `[hotmart]`.
+Los productos de la aliada. Atan cada producto con su sección del conocimiento y le ponen a cada conversación la etiqueta del producto en Chatwoot, para que el equipo vea en el inbox de qué producto es. Con un solo producto, lo que se vende sale de `[hotmart]`.
 
 ```toml
 [[productos]]
@@ -208,9 +208,49 @@ macro_etiqueta = 12
 | `etiqueta` | Opcional, con el macro. La etiqueta de Chatwoot del producto: minúsculas, números, guiones y guiones bajos. No puede ser `automation_paused` ni `automation_opted_out` | No carga |
 | `macro_etiqueta` | Opcional, con la etiqueta. El id del macro de Chatwoot que suma esa etiqueta | No carga si no es un entero positivo. El bridge no arranca si es el macro de pausa, de reanudar o de baja |
 
+**Varios productos (paso 2c).** El primero de la lista es el **principal**: lo suyo sale de `[hotmart]` y del `funnel_ref` y el `binding_version` de `[instancia]`, como siempre. Desde el segundo, cada producto es su propio binding en la base y trae su funnel y su Hotmart, con las mismas claves que `[hotmart]`:
+
+```toml
+[[productos]]
+clave = "att1"            # el principal: sin funnel ni hotmart propios
+etiqueta = "att1"
+macro_etiqueta = 7
+
+[[productos]]
+clave = "att2"
+funnel_ref = "att2"
+binding_version = 1
+etiqueta = "att2"
+macro_etiqueta = 8
+
+[productos.hotmart]
+product_id = 8437428
+hotlink = "…"
+product_name = "…"
+moneda = "USD"
+precio = "67"
+
+[[productos.hotmart.ofertas]]
+codigo = "…"
+site = "…"
+landing_id = "…"
+url = "https://…"
+origen = "pauta"
+por_defecto = true
+```
+
+| Campo | Qué es | Si está mal |
+|---|---|---|
+| `funnel_ref`, `binding_version` | Solo desde el segundo producto. El binding de ese producto en la base. El `funnel_ref` no puede repetirse entre productos (tampoco con el de `[instancia]`) | No carga |
+| `[productos.hotmart]` | Solo desde el segundo producto. Lo mismo que `[hotmart]`, con sus ofertas | No carga |
+
 Reglas:
 
-- **Un solo producto, por ahora.** Con dos, la etiqueta de cada conversación la decide el ruteo por producto, que todavía no existe: el manifiesto no carga.
+- **Hasta 8 productos.** El principal y siete más. El principal no puede traer `funnel_ref`, `binding_version` ni `hotmart`: los suyos están arriba.
+- **El ruteo tiene que poder separarlos.** No pueden repetirse entre productos: el par (producto de Hotmart, oferta), la landing (`site`/`landing_id`), la página (host y ruta de la `url`), la `clave`, la `etiqueta` ni el `macro_etiqueta`. Dos productos pueden compartir un producto de Hotmart si sus ofertas no se pisan (ATT2 se vendió con ofertas del producto de ATT1); en ese caso, el `hotlink` y el `product_name` tienen que ser los mismos, porque son los de Hotmart.
+- **Con más de un producto, el bridge todavía no arranca.** El manifiesto carga y `validate` muestra el funnel y el Hotmart de cada producto, pero marca el error hasta que el bridge enrute también el link, la etiqueta y lo que hizo la persona (paso 2c-3). Los eventos de Hotmart y los formularios ya se enrutan por producto (2c-2, [commercial-ally-runtime-v1](contracts/commercial-ally-runtime-v1.md), «El ruteo de Hotmart y de los formularios»). Con uno, nada cambia.
+- **Solo el principal tiene flujos de recuperación.** Los eventos y formularios de los demás productos se admiten en su funnel (la historia, la correlación y los frenos los ven), pero no se planifica nada para ellos: sus flujos llegan con el motor de flujos.
+- **`/ready` verifica el binding de cada producto.** Con más de uno, publica también `commercial_ally_bindings` con cuántos son. Si falta uno, o no coincide con el manifiesto, responde 503 `commercial_ally_binding_unavailable`.
 - **El conocimiento separa los mismos productos.** Con `[[productos]]`, el conocimiento tiene que tener una sección por producto con las mismas claves. Si no, `validate` lo marca como error y el bridge no arranca. Sin la sección no se ata nada, y el conocimiento puede tener una sección o varias.
 - **La etiqueta va por un macro, nunca por el endpoint de etiquetas.** `POST /conversations/{id}/labels` reemplaza la lista entera y puede borrar `automation_paused`; la acción `add_label` de un macro solo suma. El macro se crea en la cuenta de la aliada, **global** y con **una sola acción**: `add_label` con la etiqueta del producto. Antes de usarlo, el bridge lo lee. Si hace cualquier otra cosa, o no existe, no lo ejecuta nunca y el etiquetado queda apagado hasta el próximo arranque, con `product_label_macro_invalid` en el log.
 - **Cuándo se pone.** Cuando la persona escribe (antes de la admisión y de la pausa: la etiqueta dice de qué producto es la conversación, la atienda el agente o una persona) y cuando una plantilla de primer contacto sale. Las conversaciones que ya existían se etiquetan la próxima vez que la persona escribe.
