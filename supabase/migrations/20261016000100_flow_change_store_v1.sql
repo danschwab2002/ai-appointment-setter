@@ -53,8 +53,11 @@ as $function$
 $function$;
 
 -- El texto libre: una linea de 1 a 500 caracteres, sin controles C0 ni C1, sin
--- guion suave, sin marcas de direccion ni de ancho cero, sin aislantes bidi y
--- sin BOM. La clase es explicita: [[:cntrl:]] no ve RLO y depende del locale.
+-- guion suave, sin marcas de direccion ni de ancho cero, sin los separadores
+-- de linea y de parrafo (U+2028 y U+2029), sin aislantes bidi, sin los formatos
+-- viejos (U+206A a U+206F), sin BOM, sin las anclas de anotacion (U+FFF9 a
+-- U+FFFB) y sin las etiquetas (U+E0000 a U+E007F, texto invisible). La clase
+-- es explicita: [[:cntrl:]] no ve RLO y depende del locale.
 create function public._flow_store_free_text_is_valid(p_text text)
 returns boolean
 language sql
@@ -64,7 +67,7 @@ set search_path = pg_catalog, pg_temp
 as $function$
     select coalesce(
         length(btrim(p_text)) between 1 and 500
-        and p_text !~ '[\u0001-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]',
+        and p_text !~ '[\u0001-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u206f\ufeff\ufff9-\ufffb\U000e0000-\U000e007f]',
         false)
 $function$;
 
@@ -110,7 +113,9 @@ create table public.flow_change_proposals (
     constraint flow_change_proposals_closed_by
         check ((closed_by_kind is null and closed_by_ref is null)
                or public._flow_store_actor_is_valid(closed_by_kind, closed_by_ref)),
-    constraint flow_change_proposals_state_coherent check (case status
+    -- El CASE entero adentro de coalesce: una comparacion con NULL (un
+    -- expires_at o un closed_by_kind que falta) no deja pasar la fila.
+    constraint flow_change_proposals_state_coherent check (coalesce(case status
         when 'borrador' then base is null and fingerprint is null and validated_at is null
             and expires_at is null and approved_at is null and approved_by_kind is null
             and published_at is null and closed_at is null and closed_by_kind is null
@@ -130,7 +135,7 @@ create table public.flow_change_proposals (
             and close_reason is not null and published_at is null
         when 'vencida' then fingerprint is not null and expires_at is not null
             and closed_at is not null and closed_by_kind = 'sistema' and published_at is null
-    end)
+    end, false))
 );
 
 create table public.flow_controls (
@@ -150,6 +155,9 @@ create table public.flow_controls (
     changed_at timestamptz not null default clock_timestamp(),
     created_at timestamptz not null default clock_timestamp(),
     updated_at timestamptz not null default clock_timestamp(),
+    -- La identidad no lleva la aliada. Riesgo anotado para la Etapa 2: un
+    -- producto que pasa de una aliada a otra no puede registrar sus flujos en
+    -- la nueva (flow_already_registered, sin el flow_id ajeno).
     constraint flow_controls_identity unique (tenant_ref, product_ref, flow_key),
     constraint flow_controls_changed_by
         check (public._flow_store_actor_is_valid(changed_by_kind, changed_by_ref)),
@@ -739,7 +747,11 @@ end;
 $function$;
 
 -- El resultado de una validacion: claves exactas blocks y warnings, dos listas
--- validas, hasta 200 hallazgos en total.
+-- validas, hasta 200 hallazgos en total y hasta 60 KiB de texto. En forma
+-- positiva: toda advertencia tiene kind advertencia y la regla nula, y todo
+-- bloqueo tiene uno de los otros cuatro kind (cero bloqueos quiere decir
+-- cero). Con la vista previa (128 KiB) y el validador entra en la columna
+-- validation (192 KiB); con la base de una instancia grande lo mira registrar.
 create function public._flow_change_result_is_valid(p_result jsonb)
 returns boolean
 language plpgsql
@@ -759,11 +771,26 @@ begin
                     and public._flow_change_findings_are_valid(p_result -> 'warnings'), false) then
         return false;
     end if;
+    if exists (select 1 from jsonb_array_elements(p_result -> 'warnings') f
+                where not coalesce(f -> 'kind' = '"advertencia"'::jsonb and f -> 'rule' = 'null'::jsonb, false)) then
+        return false;
+    end if;
+    if exists (select 1 from jsonb_array_elements(p_result -> 'blocks') f
+                where not coalesce(f ->> 'kind' in ('forma', 'proteccion', 'todavia_no', 'ciclo'), false)) then
+        return false;
+    end if;
+    if not coalesce(octet_length(p_result::text) <= 61440, false) then
+        return false;
+    end if;
     return jsonb_array_length(p_result -> 'blocks') + jsonb_array_length(p_result -> 'warnings') <= 200;
 end;
 $function$;
 
--- El validador que corrio: claves exactas.
+-- El validador que corrio: claves exactas. Las reglas (contract y
+-- rules_version), el modo (phase y actor, como los emite
+-- ValidationResult.validator_json()) y la imagen (product_version y git_sha).
+-- La forma acepta las dos fases y los dos actores; registrar y publicar exigen
+-- publish y la clase de quien pidio la propuesta.
 create function public._flow_change_validator_is_valid(p_validator jsonb)
 returns boolean
 language plpgsql
@@ -776,13 +803,15 @@ begin
         return false;
     end if;
     if (select array_agg(k order by k) from jsonb_object_keys(p_validator) k)
-       is distinct from array['contract', 'git_sha', 'product_version', 'rules_version'] then
+       is distinct from array['actor', 'contract', 'git_sha', 'phase', 'product_version', 'rules_version'] then
         return false;
     end if;
     return coalesce(
         p_validator -> 'contract' = '"setter-flujo/v1"'::jsonb
         and jsonb_typeof(p_validator -> 'rules_version') = 'number'
         and p_validator ->> 'rules_version' ~ '^[1-9][0-9]{0,3}$'
+        and p_validator -> 'phase' in ('"draft"'::jsonb, '"publish"'::jsonb)
+        and p_validator -> 'actor' in ('"automation_expert"'::jsonb, '"operador"'::jsonb)
         and jsonb_typeof(p_validator -> 'product_version') = 'string'
         and p_validator ->> 'product_version' ~ '^v?[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$'
         and jsonb_typeof(p_validator -> 'git_sha') = 'string'
@@ -975,6 +1004,7 @@ declare
     v_draft_now jsonb;
     v_now timestamptz;
     v_fingerprint text;
+    v_validation jsonb;
 begin
     if not coalesce(p_actor_kind in ('automation_expert', 'operador')
                     and public._flow_store_actor_is_valid(p_actor_kind, p_actor_ref), false) then
@@ -983,8 +1013,12 @@ begin
     if not coalesce(public._flow_change_validator_is_valid(p_validator), false) then
         raise exception using errcode = '22023', message = 'flow_change_validator_invalid';
     end if;
+    -- Un resultado que se pasa de 60 KiB tiene su propio codigo: no llega al
+    -- CHECK de la columna validation.
     if not coalesce(public._flow_change_result_is_valid(p_result), false) then
-        raise exception using errcode = '22023', message = 'flow_change_result_invalid';
+        raise exception using errcode = '22023', message = case
+            when octet_length(p_result::text) > 61440 then 'flow_change_result_too_large'
+            else 'flow_change_result_invalid' end;
     end if;
     if not coalesce(jsonb_typeof(p_preview) = 'object' and octet_length(p_preview::text) <= 131072, false) then
         raise exception using errcode = '22023', message = 'flow_change_preview_invalid';
@@ -998,6 +1032,13 @@ begin
      for update;
     if not found or v_proposal.requested_by_kind is distinct from p_actor_kind then
         raise exception using errcode = 'P0002', message = 'flow_change_not_found';
+    end if;
+    -- Lo que se registra es la validacion de publicar, corrida con la clase de
+    -- quien pidio la propuesta: la de draft no mira las reglas 11 a 17, y la de
+    -- otro actor no mira lo que depende de quien propone.
+    if not coalesce(p_validator -> 'phase' = '"publish"'::jsonb
+                    and p_validator -> 'actor' = to_jsonb(v_proposal.requested_by_kind), false) then
+        raise exception using errcode = '22023', message = 'flow_change_validator_mismatch';
     end if;
     if v_proposal.status is distinct from 'borrador' then
         return jsonb_build_object('ok', false, 'reason_code', 'flow_change_not_draft', 'status', v_proposal.status);
@@ -1029,10 +1070,22 @@ begin
         return jsonb_build_object('ok', false, 'reason_code', 'flow_change_stale_base', 'base', v_base);
     end if;
 
+    -- Lo que se guarda en validation: con bloqueos lleva tambien la base, que
+    -- crece con los flujos de la instancia. Si no entra en la columna, un
+    -- codigo propio y no el 23514 del CHECK.
+    if jsonb_array_length(p_result -> 'blocks') > 0 then
+        v_validation := jsonb_build_object('validator', p_validator, 'result', p_result,
+            'preview', p_preview, 'base', v_base);
+    else
+        v_validation := jsonb_build_object('validator', p_validator, 'result', p_result, 'preview', p_preview);
+    end if;
+    if not coalesce(octet_length(v_validation::text) <= 196608, false) then
+        raise exception using errcode = '22023', message = 'flow_change_validation_too_large';
+    end if;
+
     if jsonb_array_length(p_result -> 'blocks') > 0 then
         update public.flow_change_proposals
-           set validation = jsonb_build_object('validator', p_validator, 'result', p_result,
-                   'preview', p_preview, 'base', v_base)
+           set validation = v_validation
          where id = v_proposal.id;
         perform public._flow_change_event(v_proposal, 'flow_change_validation_blocked', p_actor_kind, p_actor_ref,
             'flow_change_validation_blocked', jsonb_build_object('revision', v_proposal.revision,
@@ -1050,7 +1103,7 @@ begin
     update public.flow_change_proposals
        set status = 'validada', base = v_base, fingerprint = v_fingerprint,
            validated_at = v_now, expires_at = v_now + interval '24 hours',
-           validation = jsonb_build_object('validator', p_validator, 'result', p_result, 'preview', p_preview)
+           validation = v_validation
      where id = v_proposal.id
     returning * into v_proposal;
     perform public._flow_change_event(v_proposal, 'flow_change_validated', p_actor_kind, p_actor_ref,
@@ -1204,9 +1257,10 @@ begin
     end if;
 
     -- La revalidacion de esta misma huella, con claves y tipos exactos y en
-    -- forma positiva: cero bloqueos, el contrato, la minima de reglas y hecha
-    -- hace menos de diez minutos. validated_at es una fecha ISO 8601 con zona:
-    -- una palabra que Postgres lee como fecha (now, today) no cuenta.
+    -- forma positiva: cero bloqueos, el contrato, la fase publish, la clase de
+    -- quien pidio la propuesta, la minima de reglas y hecha hace menos de diez
+    -- minutos. validated_at es una fecha ISO 8601 con zona: una palabra que
+    -- Postgres lee como fecha (now, today) no cuenta.
     if jsonb_typeof(p_revalidation) = 'object' then
         if (select array_agg(k order by k) from jsonb_object_keys(p_revalidation) k)
            is not distinct from array['catalog_sha256', 'fingerprint', 'result', 'validated_at', 'validator'] then
@@ -1224,6 +1278,8 @@ begin
                 end if;
                 v_reval_ok := coalesce(
                     p_revalidation -> 'fingerprint' = to_jsonb(v_proposal.fingerprint)
+                    and p_revalidation #> '{validator,phase}' = '"publish"'::jsonb
+                    and p_revalidation #> '{validator,actor}' = to_jsonb(v_proposal.requested_by_kind)
                     and (p_revalidation #>> '{validator,rules_version}')::integer >= c_min_rules_version
                     and p_revalidation #> '{result,blocks}' = '[]'::jsonb
                     and jsonb_typeof(p_revalidation -> 'catalog_sha256') = 'string'

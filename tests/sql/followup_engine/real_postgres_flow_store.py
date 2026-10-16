@@ -43,7 +43,17 @@ MIGRATION_VERSION = "20261016000100"
 POLL_SECONDS = 0.05
 BARRIER_SECONDS = 10.0
 INSTANCE = {"tenant_ref": "lancemos", "ally_ref": "att1", "funnel_ref": "att1"}
-VALIDATOR = {"contract": "setter-flujo/v1", "rules_version": 1, "product_version": "v1.9.0", "git_sha": "abcdef0"}
+# The rules and the mode (what ValidationResult.validator_json() emits) and the
+# image. Recording and publishing require phase publish and the class of whoever
+# asked for the proposal (here, the operator).
+VALIDATOR = {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador",
+    "product_version": "v1.9.0",
+    "git_sha": "abcdef0",
+}
 CLEAN = {"blocks": [], "warnings": []}
 
 

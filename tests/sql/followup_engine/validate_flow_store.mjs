@@ -14,11 +14,13 @@
 //      inventario de esquema ausente antes y presente despues; el inventario
 //      de permisos todo ok; ningun privilegio de la API sobre las tablas;
 //   3. el ciclo entero por las funciones del operador;
-//   4. los casos negativos (las guardas con NULL, la base de toda la
-//      instancia, la base de quien propone, el texto libre, lo inmutable, el
-//      vencimiento, lo que publicar vuelve a mirar, los disparadores);
+//   4. los casos negativos (las guardas con NULL, el resultado y el validador
+//      con claves y tipos exactos, la base de toda la instancia, la base de
+//      quien propone, el texto libre, lo inmutable, el vencimiento, lo que
+//      publicar vuelve a mirar, los disparadores), y en 4v y 4w el tope de
+//      la columna validation y el CHECK de coherencia sin huecos con NULL;
 //   5. el actor: Automation Expert, operador y slack, llamando a los helpers
-//      como duenio;
+//      como duenio, y la validacion de la clase de quien propone;
 //   6. los casos compartidos con el validador (tests/fixtures/flow_store/
 //      invariant_cases.json);
 //   7. las definiciones de ATT1 del dato real (att1_definitions_20261016.json),
@@ -100,6 +102,52 @@ const canonical = (value) => JSON.stringify(value, (key, inner) => (
     : inner));
 const sameJson = (left, right) => canonical(left) === canonical(right);
 const counts = (values) => values.reduce((acc, value) => ({ ...acc, [value]: (acc[value] ?? 0) + 1 }), {});
+// El texto que da Postgres para un jsonb, armado en JS y no pedido a la base:
+// las claves por largo en bytes y despues por bytes, ", " y ": " entre los
+// elementos, y en las cadenas el escape de escape_json (los controles C0 como
+// \u00xx, y lo demas tal cual). Alcanza para lo que guarda el almacen: enteros,
+// cadenas, booleanos y nulos.
+const jsonbString = (text) => `"${[...text].map((char) => {
+  const code = char.codePointAt(0);
+  const named = { 8: '\\b', 9: '\\t', 10: '\\n', 12: '\\f', 13: '\\r', 34: '\\"', 92: '\\\\' }[code];
+  if (named) return named;
+  return code < 0x20 ? `\\u${code.toString(16).padStart(4, '0')}` : char;
+}).join('')}"`;
+const jsonbText = (value) => {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return `[${value.map(jsonbText).join(', ')}]`;
+  if (typeof value === 'string') return jsonbString(value);
+  if (typeof value === 'boolean') return String(value);
+  if (typeof value === 'number') {
+    if (!Number.isInteger(value)) throw new Error(`jsonbText: un numero que no es entero: ${value}`);
+    return String(value);
+  }
+  const keys = Object.keys(value).sort((a, b) => (Buffer.byteLength(a) - Buffer.byteLength(b))
+    || Buffer.compare(Buffer.from(a), Buffer.from(b)));
+  return `{${keys.map((key) => `${jsonbString(key)}: ${jsonbText(value[key])}`).join(', ')}}`;
+};
+// Un resultado con bloqueos de exactamente `target` bytes de texto (ASCII):
+// hallazgos con los tres textos de 300, y el resto en el largo de las rutas.
+const resultOfSize = (target) => {
+  const make = (paths) => ({
+    blocks: paths.map((length) => ({
+      rule: 1, code: 'unknown_key', kind: 'forma', path: `/${'x'.repeat(length - 1)}`,
+      reason: 'r'.repeat(300), alternative: 'a'.repeat(300), limit: 'l'.repeat(300),
+    })),
+    warnings: [],
+  });
+  const paths = [];
+  while (jsonbText(make([...paths, 2])).length <= target) paths.push(2);
+  let gap = target - jsonbText(make(paths)).length;
+  for (let index = 0; index < paths.length && gap > 0; index += 1) {
+    const grow = Math.min(gap, 512 - paths[index]);
+    paths[index] += grow;
+    gap -= grow;
+  }
+  const result = make(paths);
+  if (jsonbText(result).length !== target) throw new Error(`resultOfSize: no llega a ${target}`);
+  return result;
+};
 
 // ---------------------------------------------------------------------------
 // La foto de lo que existe en public (y de los roles del cluster).
@@ -238,6 +286,15 @@ const attempt = async (sql, params, target = db) => {
     return { code: error.code, message: error.message };
   }
 };
+// Lo que devuelve una llamada, o el error si levanta: un camino que deberia
+// devolver un resultado y aborta deja un FAIL con su mensaje, no corta el arnes.
+const settle = async (promise) => {
+  try {
+    return await promise;
+  } catch (error) {
+    return { error: { code: error.code, message: error.message } };
+  }
+};
 const asRole = async (role, fn, target = db) => {
   await target.exec(`set role ${role}`);
   try {
@@ -266,6 +323,8 @@ const BINDINGS = [
   ['lancemos', 'mundo', 'mundo', 21],
   ['lancemos', 'mundo-dos', 'mundo', 22],
   ['lancemos', 'vecina', 'vecina', 23],
+  // Una instancia con muchos flujos, para el tope de la columna validation (4v).
+  ['lancemos', 'grande', 'grande', 24],
 ];
 const seedBinding = async (target, [tenant, funnel, ally, inbox]) => {
   await target.exec('set session_replication_role = replica');
@@ -295,7 +354,14 @@ const ATT1 = { tenant_ref: 'lancemos', ally_ref: 'att1', funnel_ref: 'att1', cha
 const OTRA = { tenant_ref: 'lancemos', ally_ref: 'otra' };
 const MUNDO = { tenant_ref: 'lancemos', ally_ref: 'mundo' };
 const VECINA = { tenant_ref: 'lancemos', ally_ref: 'vecina' };
-const VALIDATOR = { contract: 'setter-flujo/v1', rules_version: 1, product_version: 'v1.9.0', git_sha: 'abcdef0' };
+// El validador que corrio: las reglas y el modo (lo que emite
+// ValidationResult.validator_json()) y la imagen. Registrar y publicar exigen
+// phase publish y el actor de quien pidio la propuesta.
+const VALIDATOR = {
+  contract: 'setter-flujo/v1', rules_version: 1, phase: 'publish', actor: 'operador',
+  product_version: 'v1.9.0', git_sha: 'abcdef0',
+};
+const VALIDATOR_AE = { ...VALIDATOR, actor: 'automation_expert' };
 const CLEAN = { blocks: [], warnings: [] };
 const PURPOSE = 'que el carrito salga a las 2 horas';
 const json = (value) => (value === null || value === undefined ? null : JSON.stringify(value));
@@ -664,7 +730,16 @@ const recordError = async (overrides) => attempt(RECORD_SQL, [json(ATT1), draft.
   json('result' in overrides ? overrides.result : CLEAN),
   json('preview' in overrides ? overrides.preview : {})]);
 const finding = (extra = {}) => ({ rule: 1, code: 'unknown_key', kind: 'forma', path: '/topes/max', ...extra });
+const warning = (code = 'always_with_marketing', path = '/0/definicion/horario') => ({
+  rule: null, code, kind: 'advertencia', path,
+});
 for (const [label, result] of [
+  // Cero bloqueos quiere decir cero: lo que bloquea no se esconde en warnings.
+  ['un hallazgo de proteccion en warnings', { blocks: [], warnings: [finding({
+    rule: 13, code: 'template_not_approved', kind: 'proteccion', path: '/0/definicion/pasos/0/plantilla' })] }],
+  ['un hallazgo de forma en warnings', { blocks: [], warnings: [finding()] }],
+  ['una advertencia con regla', { blocks: [], warnings: [{ ...warning(), rule: 13 }] }],
+  ['una advertencia en blocks', { blocks: [warning()], warnings: [] }],
   ['{}', {}],
   ['una clave de mas', { blocks: [], warnings: [], x: 1 }],
   ['blocks que no es lista', { blocks: {}, warnings: [] }],
@@ -691,10 +766,33 @@ for (const [label, validator] of [
   ['rules_version 0', { ...VALIDATOR, rules_version: 0 }],
   ['un git_sha corto', { ...VALIDATOR, git_sha: 'abc' }],
   ['una clave de mas', { ...VALIDATOR, extra: 1 }],
+  ['sin phase', (({ phase, ...rest }) => rest)(VALIDATOR)],
+  ['sin actor', (({ actor, ...rest }) => rest)(VALIDATOR)],
+  ['una phase que no existe', { ...VALIDATOR, phase: 'revisar' }],
+  ['el actor slack', { ...VALIDATOR, actor: 'slack' }],
+  ['el actor como lista', { ...VALIDATOR, actor: ['operador'] }],
 ]) {
   error = await recordError({ validator });
   check(error?.code === '22023' && error.message === 'flow_change_validator_invalid', `4b: validar con el validador ${label}: flow_change_validator_invalid`, error);
 }
+// La forma acepta draft y los dos actores; registrar exige publish y la clase
+// de quien pidio la propuesta (aca, el operador).
+for (const [label, validator] of [
+  ['de la fase draft', { ...VALIDATOR, phase: 'draft' }],
+  ['del Automation Expert sobre una propuesta del operador', VALIDATOR_AE],
+]) {
+  error = await recordError({ validator });
+  check(error?.code === '22023' && error.message === 'flow_change_validator_mismatch',
+    `4b: validar con un validador ${label}: flow_change_validator_mismatch`, error);
+}
+// El resultado, hasta 60 KiB de texto: con la vista previa (128 KiB) y el
+// validador entra en la columna validation (192 KiB). Si se pasa, su codigo.
+const textBytes = async (value) => (await one('select octet_length($1::jsonb::text) n', [json(value)])).n;
+const tooLarge = resultOfSize(61441);
+check(await textBytes(tooLarge) === 61441, '4b: (el resultado mide 60 KiB y un byte en la base)');
+error = await recordError({ result: tooLarge });
+check(error?.code === '22023' && error.message === 'flow_change_result_too_large',
+  '4b: un resultado de 60 KiB y un byte: flow_change_result_too_large', error);
 for (const [label, preview] of [['NULL', null], ['una lista', []], ['de mas de 128 KiB', { x: 'x'.repeat(131072) }]]) {
   error = await recordError({ preview });
   check(error?.code === '22023' && error.message === 'flow_change_preview_invalid', `4b: una vista previa ${label}: flow_change_preview_invalid`, error);
@@ -711,6 +809,12 @@ check(row.status === 'borrador' && row.validation?.result?.blocks?.length === 2 
   '4b: con bloqueos, guarda la validacion con la base', row);
 let blockedEvent = (await eventsOf(draft.proposal_id)).find((event) => event.event_type === 'flow_change_validation_blocked');
 check(sameJson(blockedEvent?.data?.codes, ['unknown_key', 'flow_change_stale_base']), '4b: el evento lleva los codigos', blockedEvent?.data);
+// El borde que pasa: un resultado de exactamente 60 KiB.
+const largest = resultOfSize(61440);
+check(await textBytes(largest) === 61440, '4b: (el resultado mide 60 KiB en la base)');
+recorded = await settle(record(ATT1, draft.proposal_id, draft.revision, good, { result: largest }));
+check(recorded.ok && recorded.status === 'borrador' && recorded.blocks === largest.blocks.length,
+  '4b: un resultado de exactamente 60 KiB se registra', recorded);
 
 // Rehacer: sube la revision y borra la validacion; la revision vieja no valida.
 let redone = await saveDraft(ATT1, [versionItem(carrito, 'att1', 'carrito', { nombre: 'Guardas 2' })], await draftBase([carrito]),
@@ -784,6 +888,13 @@ const badRevalidations = [
   ['con una fecha sin zona', revalidation(guards.fingerprint, { validated_at: minutesAgo(1).replace('Z', '') })],
   ['con una clave de mas', revalidation(guards.fingerprint, { preview: {} })],
   ['con un catalogo que no es hex', revalidation(guards.fingerprint, { catalog_sha256: 'z'.repeat(64) })],
+  // La de publicar, con la clase de quien pidio la propuesta, y cero bloqueos
+  // de verdad: un hallazgo de proteccion no se esconde en warnings.
+  ['de la fase draft', revalidation(guards.fingerprint, { validator: { ...VALIDATOR, phase: 'draft' } })],
+  ['del Automation Expert sobre una propuesta del operador', revalidation(guards.fingerprint, { validator: VALIDATOR_AE })],
+  ['sin el actor', revalidation(guards.fingerprint, { validator: (({ actor, ...rest }) => rest)(VALIDATOR) })],
+  ['con un bloqueo puesto en warnings', revalidation(guards.fingerprint, { result: { blocks: [], warnings: [finding({
+    rule: 13, code: 'template_not_approved', kind: 'proteccion', path: '/0/definicion/pasos/0/plantilla' })] } })],
 ];
 for (const [label, reval] of badRevalidations) {
   const result = await publish(ATT1, guards.id, guards.fingerprint, reval);
@@ -899,6 +1010,17 @@ for (const [label, text] of [
   ['LRI', `a${codepoint(0x2066)}b`],
   ['solo espacios', '   '],
   ['501 caracteres', 'x'.repeat(501)],
+  // El separador de linea y el de parrafo (purpose es una linea), los
+  // formatos viejos, las anclas de anotacion y las etiquetas (texto invisible).
+  ['LS U+2028', `a${codepoint(0x2028)}b`],
+  ['PS U+2029', `a${codepoint(0x2029)}b`],
+  ['U+206A', `a${codepoint(0x206a)}b`],
+  ['U+206F', `a${codepoint(0x206f)}b`],
+  ['U+FFF9', `a${codepoint(0xfff9)}b`],
+  ['U+FFFB', `a${codepoint(0xfffb)}b`],
+  ['la etiqueta U+E0001', `a${codepoint(0xe0001)}b`],
+  ['la etiqueta U+E0041', `a${codepoint(0xe0041)}b`],
+  ['la etiqueta U+E007F', `a${codepoint(0xe007f)}b`],
 ]) {
   error = await attempt(SAVE_SQL, [json(ATT1), null, null, json([carritoItem]), json(await draftBase([carrito])), text]);
   check(error?.code === '22023' && error.message === 'flow_store_text_invalid', `4i: purpose con ${label}: flow_store_text_invalid`, error);
@@ -906,6 +1028,11 @@ for (const [label, text] of [
 const legitText = `que el carrito salga a las 2 horas, ${codepoint(0xf1)}and${codepoint(0xfa)}: ${codepoint(0xbf)}s${codepoint(0xed)}? ${codepoint(0x1f642)}`;
 saved = await saveDraft(ATT1, [carritoItem], await draftBase([carrito]), { purpose: legitText });
 check(saved.ok, '4i: un texto con tildes, enie, signos de apertura y un emoji pasa', saved);
+// Los vecinos de los rangos nuevos pasan: la clase no es mas ancha de lo que dice.
+const neighbors = `vecinos: a${codepoint(0x2027)}b${codepoint(0x202f)}c${codepoint(0x2065)}d${codepoint(0x2070)}e`
+  + `${codepoint(0xfff8)}f${codepoint(0xfffc)}g${codepoint(0xe0080)}h${codepoint(0xe0100)}i`;
+const neighborsSaved = await settle(saveDraft(ATT1, [carritoItem], await draftBase([carrito]), { purpose: neighbors }));
+check(neighborsSaved.ok, '4i: U+2027, U+202F, U+2065, U+2070, U+FFF8, U+FFFC, U+E0080 y U+E0100 pasan', neighborsSaved);
 const draftEvent = (await eventsOf(saved.proposal_id)).find((event) => event.event_type === 'flow_change_draft_saved');
 const savedDefinitionText = (await one(
   `select (items -> 0 -> 'definicion')::text d from public.flow_change_proposals where id = $1`, [saved.proposal_id])).d;
@@ -1130,6 +1257,52 @@ check(error?.message === 'flow_store_text_invalid', '4p: descartar con un salto 
 result = await discard(ATT1, pending.id, 'la base cambio');
 check(result.ok && (await proposal(pending.id)).status === 'descartada', '4p: descartar una aprobada', result);
 
+// 4v. Lo que se guarda en validation entra en la columna: con bloqueos lleva
+// la base, que crece con los flujos de la instancia. Una instancia de 120
+// flujos, el resultado de 60 KiB y la vista previa de 128 KiB no entran.
+const GRANDE = { tenant_ref: 'lancemos', ally_ref: 'grande' };
+const grandes = [];
+for (let index = 0; index < 120; index += 1) {
+  grandes.push((await register(GRANDE, 'grande', `f${String(index).padStart(3, '0')}`)).flow_id);
+}
+const bigDraft = await saveDraft(GRANDE, [versionItem(grandes[0], 'grande', 'f000')], await draftBase([grandes[0]]));
+const grandeBase = await instanceBase(GRANDE, [grandes[0]]);
+const bigPreview = { x: 'x'.repeat(131072 - 9) };
+check(grandes.every(Boolean) && bigDraft.ok && await textBytes(bigPreview) === 131072
+    && await textBytes(largest) + await textBytes(bigPreview) + await textBytes(grandeBase) > 196608,
+  '4v: (la base de la instancia grande, el resultado de 60 KiB y la vista previa de 128 KiB pasan de 192 KiB)',
+  { base: await textBytes(grandeBase) });
+error = await attempt(RECORD_SQL, [json(GRANDE), bigDraft.proposal_id, bigDraft.revision, json(grandeBase), json(VALIDATOR),
+  json(largest), json(bigPreview)]);
+const bigRow = await proposal(bigDraft.proposal_id);
+check(error?.code === '22023' && error.message === 'flow_change_validation_too_large' && bigRow.status === 'borrador'
+    && bigRow.validation === null
+    && !(await eventsOf(bigDraft.proposal_id)).some((event) => event.event_type === 'flow_change_validation_blocked'),
+  '4v: si no entra en la columna, flow_change_validation_too_large y no guarda nada', { error, status: bigRow.status });
+recorded = await settle(record(GRANDE, bigDraft.proposal_id, bigDraft.revision, grandeBase, { result: largest }));
+check(recorded.ok && recorded.status === 'borrador' && recorded.blocks === largest.blocks.length,
+  '4v: el mismo resultado con una vista previa chica se guarda', recorded);
+
+// 4w. El CHECK de coherencia de la propuesta, sin huecos con NULL: el CASE
+// entero va adentro de coalesce, asi que una comparacion con un NULL no deja
+// pasar la fila (un UPDATE o un INSERT directo del duenio).
+const coherent = await saveDraft(ATT1, [versionItem(carrito, 'att1', 'carrito', { nombre: 'Para el CHECK' })], await draftBase([carrito]));
+for (const [label, sql, params] of [
+  ['una validada sin expires_at', `update public.flow_change_proposals set status = 'validada', base = '{}'::jsonb,
+    fingerprint = repeat('a', 64), validation = '{}'::jsonb, validated_at = now() where id = $1`, [coherent.proposal_id]],
+  ['una descartada sin closed_by', `update public.flow_change_proposals set status = 'descartada', closed_at = now(),
+    close_reason = 'a mano' where id = $1`, [coherent.proposal_id]],
+  ['una vencida sin closed_by_kind', `insert into public.flow_change_proposals (tenant_ref, ally_ref, status, revision, items,
+    draft_base, purpose, requested_by_kind, requested_by_ref, fingerprint, expires_at, closed_at) values ('lancemos', 'att1',
+    'vencida', 1, $1::jsonb, '{}'::jsonb, 'una vencida a mano', 'operador', 'dan', repeat('a', 64), now(), now())`,
+  [json([carritoItem])]],
+]) {
+  error = await attempt(sql, params);
+  check(error?.code === '23514' && /violates check constraint "flow_change_proposals_state_coherent"/.test(error.message),
+    `4w: ${label}: el CHECK flow_change_proposals_state_coherent`, error);
+}
+check((await proposal(coherent.proposal_id)).status === 'borrador', '4w: el borrador sigue en borrador');
+
 // ===========================================================================
 // 5. El actor, llamando a los helpers como duenio.
 // ===========================================================================
@@ -1151,9 +1324,15 @@ error = await attempt(SAVE_SQL, [json(ATT1), aeDraft.proposal_id, 1, json([carri
 check(error?.code === 'P0002', '5: el operador no rehace una propuesta del Automation Expert: P0002', error);
 error = await attempt(RECORD_SQL, [json(ATT1), aeDraft.proposal_id, 1, json(await instanceBase(ATT1, [carrito])), json(VALIDATOR), json(CLEAN), '{}']);
 check(error?.code === 'P0002', '5: el operador no congela una propuesta del Automation Expert: P0002', error);
+// La validacion que registra el Automation Expert es la de su clase.
+error = await attempt(`select public._flow_change_record_validation('lancemos', 'att1', $1::uuid, 1, $2::jsonb, $3::jsonb,
+  $4::jsonb, '{}'::jsonb, 'automation_expert', $5)`, [aeDraft.proposal_id, json(await instanceBase(ATT1, [carrito])),
+  json(VALIDATOR), json(CLEAN), AE]);
+check(error?.code === '22023' && error.message === 'flow_change_validator_mismatch',
+  '5: el Automation Expert no registra una validacion corrida como operador: flow_change_validator_mismatch', error);
 const aeValidated = (await one(`select public._flow_change_record_validation('lancemos', 'att1', $1::uuid, 1, $2::jsonb, $3::jsonb,
   $4::jsonb, '{}'::jsonb, 'automation_expert', $5) r`, [aeDraft.proposal_id, json(await instanceBase(ATT1, [carrito])),
-  json(VALIDATOR), json(CLEAN), AE])).r;
+  json(VALIDATOR_AE), json(CLEAN), AE])).r;
 check(aeValidated.status === 'validada', '5: el Automation Expert valida su propia propuesta', aeValidated);
 error = await attempt(`select public._flow_change_approve('lancemos', 'att1', $1::uuid, $2, 'automation_expert', $3)`,
   [aeDraft.proposal_id, aeValidated.fingerprint, AE]);
@@ -1193,6 +1372,23 @@ const aePause = await control(carrito);
 check(paused.ok && paused.changed && aePause.changed_by_kind === 'automation_expert' && aePause.changed_by_ref === AE,
   '5: la pausa del Automation Expert queda con su clase y su ID', { paused, aePause });
 await cycle(ATT1, [stateItem(carrito, 'att1', 'carrito', 'prender')], '5: sacar la pausa del agente');
+// Una propuesta del Automation Expert se publica con la revalidacion de su
+// clase, no con la del operador que la aprueba.
+const aeThird = (await one(`select public._flow_change_save_draft('lancemos', 'att1', null, null, $1::jsonb, $2::jsonb,
+  'la tercera del agente', 'automation_expert', $3) r`, [json([versionItem(carrito, 'att1', 'carrito', { nombre: 'Del agente 3' })]),
+  json(await draftBase([carrito])), AE])).r;
+const aeThirdValidated = (await one(`select public._flow_change_record_validation('lancemos', 'att1', $1::uuid, $2::int, $3::jsonb,
+  $4::jsonb, $5::jsonb, '{}'::jsonb, 'automation_expert', $6) r`, [aeThird.proposal_id, aeThird.revision,
+  json(await instanceBase(ATT1, [carrito])), json(VALIDATOR_AE), json(CLEAN), AE])).r;
+const aeThirdApproved = await approve(ATT1, aeThird.proposal_id, aeThirdValidated.fingerprint);
+check(aeThirdValidated.status === 'validada' && aeThirdApproved.ok, '5: (la tercera del agente, validada y aprobada por el operador)',
+  { aeThirdValidated, aeThirdApproved });
+result = await publish(ATT1, aeThird.proposal_id, aeThirdValidated.fingerprint, revalidation(aeThirdValidated.fingerprint));
+check(result.ok === false && result.reason_code === 'flow_change_revalidation_blocked',
+  '5: publicar la del agente con una revalidacion corrida como operador: revalidation_blocked', result);
+result = await publish(ATT1, aeThird.proposal_id, aeThirdValidated.fingerprint,
+  revalidation(aeThirdValidated.fingerprint, { validator: VALIDATOR_AE }));
+check(result.ok && result.replayed === false, '5: con la revalidacion del agente, publica', result);
 
 // ===========================================================================
 // 6. Los casos compartidos con el validador (invariantes 3 y 4).

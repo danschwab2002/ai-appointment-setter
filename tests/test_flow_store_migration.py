@@ -123,8 +123,12 @@ def _escaped_free_text_class() -> str:
     """The character class of the free text, written with ASCII escapes.
 
     Built from code points so that no escape sequence is typed here: the class
-    is C0 and C1, the soft hyphen, the direction and zero-width marks, the bidi
-    isolates and the BOM (design, section 2.3).
+    is C0 and C1, the soft hyphen, the direction and zero-width marks, the line
+    and paragraph separators, the bidi isolates, the deprecated format
+    characters, the BOM, the interlinear annotation anchors and the tags
+    (design, section 2.3, and the review of the code, C#7). A code point above
+    U+FFFF is written with the eight digits of the regular expressions of
+    PostgreSQL.
     """
     ranges = (
         (0x0001, 0x001F),
@@ -133,14 +137,16 @@ def _escaped_free_text_class() -> str:
         (0x061C, None),
         (0x180E, None),
         (0x200B, 0x200F),
-        (0x202A, 0x202E),
+        (0x2028, 0x202E),
         (0x2060, 0x2064),
-        (0x2066, 0x2069),
+        (0x2066, 0x206F),
         (0xFEFF, None),
+        (0xFFF9, 0xFFFB),
+        (0xE0000, 0xE007F),
     )
 
     def escape(code: int) -> str:
-        return "\\" + f"u{code:04x}"
+        return "\\" + (f"u{code:04x}" if code <= 0xFFFF else f"U{code:08x}")
 
     return "[" + "".join(
         escape(first) + ("" if last is None else "-" + escape(last)) for first, last in ranges
