@@ -1,0 +1,1085 @@
+{
+ "_doc": [
+  "Las propuestas medidas de la simulacion del motor sobre la captura de ATT1 del 2026-10-16 (diseno de la T3a, §5.2 y §6). Las lee tests/test_flow_engine_simulate_att1.py.",
+  "Cada propuesta: sus items con la forma de flow_definition.parse_items (una version nueva por flujo, en_curso seguir), si corre con PREVIEW_CAPABILITIES (varios_toques) y lo esperado, literal: los cambios contra la v5 en toda la ventana y el resumen de la propuesta (replay_summary): el fin, los motivos de no arranque, lo en curso a la hora de la captura, lo que no se sabe por su nombre, los pasos de cada flujo con su cota y los dias locales de la ventana que llegan al tope.",
+  "La vigente es la v5 de los dos flujos (la activa de att1-recuperacion a la hora de la captura). Las definiciones son la v5 de att1_definitions_by_scope_version.json con el cambio de cada propuesta.",
+  "Los numeros salen del motor (flow_replay.simulate) y se verificaron contra el legado donde difieren del prototipo del diseno: el pago fallido a 10 minutos (F#11, 20260904000100:142-154) y el tope en 1 (la compra mientras espera, 20260808000100:190-206, :405-412 y :428-444). Ver la cabecera de la prueba."
+ ],
+ "vigente": {
+  "carrito": 5,
+  "pago_fallido": 5
+ },
+ "propuestas": [
+  {
+   "nombre": "carrito_a_1h",
+   "descripcion": "El carrito con el primer mensaje a 1 h del disparo; el pago fallido como la v5.",
+   "varios_toques": false,
+   "items": [
+    {
+     "producto": "att1",
+     "flujo": "carrito",
+     "flow_id": "1b000003-0000-4000-8000-0000000c0001",
+     "tipo": "version",
+     "definicion": {
+      "esquema": "setter-flujo/v1",
+      "flujo": "carrito",
+      "producto": "att1",
+      "nombre": "Carrito abandonado",
+      "estado": "borrador",
+      "dispara": {
+       "evento": "carrito"
+      },
+      "entra": {
+       "permiso": "formulario",
+       "contesto_a": []
+      },
+      "pasos": [
+       {
+        "esperar": "1h"
+       },
+       {
+        "plantilla": "att1_carrito_abandonado_01",
+        "idioma": "es_MX",
+        "variables": [
+         "nombre",
+         "producto"
+        ]
+       }
+      ],
+      "termina": {
+       "si": [
+        "compra"
+       ],
+       "vence": "1d"
+      },
+      "horario": {
+       "zona": "America/Mexico_City",
+       "desde": "09:00",
+       "hasta": "21:00"
+      },
+      "topes": {
+       "bolsa": "att1-recuperacion",
+       "por_dia": 80,
+       "total": 1000,
+       "repeticion": {
+        "una_por": "persona_y_oferta",
+        "otra_despues_de": "0m"
+       }
+      },
+      "prioridad": {
+       "le_gana_a": [
+        "precheckout"
+       ],
+       "no_arranca_mientras": [
+        "pago_fallido"
+       ]
+      }
+     },
+     "en_curso": "seguir"
+    }
+   ],
+   "esperado": {
+    "cambios": 141,
+    "propuesta": {
+     "disparos": 252,
+     "recibieron": 212,
+     "fin": {
+      "en_curso": 1,
+      "enviado": 212,
+      "no_arranco": 35,
+      "no_llego": 4
+     },
+     "no_arrancaron": {
+      "baja": 3,
+      "no_entra:permiso": 26,
+      "sin_motivo": 5,
+      "ya_en_curso": 1
+     },
+     "en_curso": 1,
+     "sin_saber": {
+      "baja": 141,
+      "compra": 1,
+      "intencion": 141
+     },
+     "flujos": {
+      "carrito": {
+       "recorridos": 208,
+       "en_curso": 1,
+       "pasos": [
+        {
+         "paso": 0,
+         "enviados": 207,
+         "terminan": {
+          "en_curso": 1
+         },
+         "movidos_por_el_tope": 0,
+         "cota": "como_maximo"
+        }
+       ]
+      },
+      "pago_fallido": {
+       "recorridos": 5,
+       "en_curso": 0,
+       "pasos": [
+        {
+         "paso": 0,
+         "enviados": 5,
+         "terminan": {},
+         "movidos_por_el_tope": 0,
+         "cota": "exacta"
+        }
+       ]
+      }
+     },
+     "dias_al_tope": []
+    }
+   }
+  },
+  {
+   "nombre": "pago_fallido_a_10m",
+   "descripcion": "El pago fallido con una espera de 10 minutos; el carrito como la v5.",
+   "varios_toques": false,
+   "items": [
+    {
+     "producto": "att1",
+     "flujo": "pago_fallido",
+     "flow_id": "1b000003-0000-4000-8000-0000000c0002",
+     "tipo": "version",
+     "definicion": {
+      "esquema": "setter-flujo/v1",
+      "flujo": "pago_fallido",
+      "producto": "att1",
+      "nombre": "Pago fallido",
+      "estado": "borrador",
+      "dispara": {
+       "evento": "pago_fallido"
+      },
+      "entra": {
+       "permiso": "formulario",
+       "contesto_a": []
+      },
+      "pasos": [
+       {
+        "esperar": "10m"
+       },
+       {
+        "plantilla": "att1_compra_fallida_01",
+        "idioma": "es_MX",
+        "variables": [
+         "nombre",
+         "producto"
+        ]
+       }
+      ],
+      "termina": {
+       "si": [
+        "compra"
+       ],
+       "vence": "1d"
+      },
+      "horario": {
+       "zona": "America/Mexico_City",
+       "desde": "09:00",
+       "hasta": "21:00"
+      },
+      "topes": {
+       "bolsa": "att1-recuperacion",
+       "por_dia": 80,
+       "total": 1000,
+       "repeticion": {
+        "una_por": "persona_y_oferta",
+        "otra_despues_de": "0m"
+       }
+      },
+      "prioridad": {
+       "le_gana_a": [
+        "precheckout"
+       ],
+       "no_arranca_mientras": []
+      }
+     },
+     "en_curso": "seguir"
+    }
+   ],
+   "esperado": {
+    "cambios": 4,
+    "propuesta": {
+     "disparos": 252,
+     "recibieron": 211,
+     "fin": {
+      "compro": 1,
+      "enviado": 211,
+      "no_arranco": 36,
+      "no_llego": 4
+     },
+     "no_arrancaron": {
+      "baja": 3,
+      "no_entra:permiso": 26,
+      "sin_motivo": 5,
+      "ya_en_curso": 2
+     },
+     "en_curso": 0,
+     "sin_saber": {
+      "baja": 3,
+      "intencion": 3
+     },
+     "flujos": {
+      "carrito": {
+       "recorridos": 208,
+       "en_curso": 0,
+       "pasos": [
+        {
+         "paso": 0,
+         "enviados": 208,
+         "terminan": {},
+         "movidos_por_el_tope": 0,
+         "cota": "exacta"
+        }
+       ]
+      },
+      "pago_fallido": {
+       "recorridos": 4,
+       "en_curso": 0,
+       "pasos": [
+        {
+         "paso": 0,
+         "enviados": 3,
+         "terminan": {
+          "compro": 1
+         },
+         "movidos_por_el_tope": 0,
+         "cota": "como_maximo"
+        }
+       ]
+      }
+     },
+     "dias_al_tope": []
+    }
+   }
+  },
+  {
+   "nombre": "tope_del_dia_en_1",
+   "descripcion": "El tope del dia en 1, en los dos flujos (la misma bolsa).",
+   "varios_toques": false,
+   "items": [
+    {
+     "producto": "att1",
+     "flujo": "carrito",
+     "flow_id": "1b000003-0000-4000-8000-0000000c0001",
+     "tipo": "version",
+     "definicion": {
+      "esquema": "setter-flujo/v1",
+      "flujo": "carrito",
+      "producto": "att1",
+      "nombre": "Carrito abandonado",
+      "estado": "borrador",
+      "dispara": {
+       "evento": "carrito"
+      },
+      "entra": {
+       "permiso": "formulario",
+       "contesto_a": []
+      },
+      "pasos": [
+       {
+        "plantilla": "att1_carrito_abandonado_01",
+        "idioma": "es_MX",
+        "variables": [
+         "nombre",
+         "producto"
+        ]
+       }
+      ],
+      "termina": {
+       "si": [
+        "compra"
+       ],
+       "vence": "1d"
+      },
+      "horario": {
+       "zona": "America/Mexico_City",
+       "desde": "09:00",
+       "hasta": "21:00"
+      },
+      "topes": {
+       "bolsa": "att1-recuperacion",
+       "por_dia": 1,
+       "total": 1000,
+       "repeticion": {
+        "una_por": "persona_y_oferta",
+        "otra_despues_de": "0m"
+       }
+      },
+      "prioridad": {
+       "le_gana_a": [
+        "precheckout"
+       ],
+       "no_arranca_mientras": [
+        "pago_fallido"
+       ]
+      }
+     },
+     "en_curso": "seguir"
+    },
+    {
+     "producto": "att1",
+     "flujo": "pago_fallido",
+     "flow_id": "1b000003-0000-4000-8000-0000000c0002",
+     "tipo": "version",
+     "definicion": {
+      "esquema": "setter-flujo/v1",
+      "flujo": "pago_fallido",
+      "producto": "att1",
+      "nombre": "Pago fallido",
+      "estado": "borrador",
+      "dispara": {
+       "evento": "pago_fallido"
+      },
+      "entra": {
+       "permiso": "formulario",
+       "contesto_a": []
+      },
+      "pasos": [
+       {
+        "plantilla": "att1_compra_fallida_01",
+        "idioma": "es_MX",
+        "variables": [
+         "nombre",
+         "producto"
+        ]
+       }
+      ],
+      "termina": {
+       "si": [
+        "compra"
+       ],
+       "vence": "1d"
+      },
+      "horario": {
+       "zona": "America/Mexico_City",
+       "desde": "09:00",
+       "hasta": "21:00"
+      },
+      "topes": {
+       "bolsa": "att1-recuperacion",
+       "por_dia": 1,
+       "total": 1000,
+       "repeticion": {
+        "una_por": "persona_y_oferta",
+        "otra_despues_de": "0m"
+       }
+      },
+      "prioridad": {
+       "le_gana_a": [
+        "precheckout"
+       ],
+       "no_arranca_mientras": []
+      }
+     },
+     "en_curso": "seguir"
+    }
+   ],
+   "esperado": {
+    "cambios": 210,
+    "propuesta": {
+     "disparos": 252,
+     "recibieron": 8,
+     "fin": {
+      "compro": 4,
+      "en_curso": 1,
+      "enviado": 8,
+      "no_arranco": 36,
+      "no_llego": 4,
+      "vencio": 199
+     },
+     "no_arrancaron": {
+      "baja": 3,
+      "no_entra:permiso": 26,
+      "sin_motivo": 5,
+      "ya_en_curso": 2
+     },
+     "en_curso": 1,
+     "sin_saber": {
+      "baja": 209,
+      "compra": 1,
+      "intencion": 209
+     },
+     "flujos": {
+      "carrito": {
+       "recorridos": 208,
+       "en_curso": 1,
+       "pasos": [
+        {
+         "paso": 0,
+         "enviados": 8,
+         "terminan": {
+          "compro": 2,
+          "en_curso": 1,
+          "vencio": 197
+         },
+         "movidos_por_el_tope": 205,
+         "cota": "como_maximo"
+        }
+       ]
+      },
+      "pago_fallido": {
+       "recorridos": 4,
+       "en_curso": 0,
+       "pasos": [
+        {
+         "paso": 0,
+         "enviados": 0,
+         "terminan": {
+          "compro": 2,
+          "vencio": 2
+         },
+         "movidos_por_el_tope": 4,
+         "cota": "exacta"
+        }
+       ]
+      }
+     },
+     "dias_al_tope": [
+      "2026-10-08",
+      "2026-10-09",
+      "2026-10-10",
+      "2026-10-11",
+      "2026-10-12",
+      "2026-10-13",
+      "2026-10-14",
+      "2026-10-15",
+      "2026-10-16"
+     ]
+    }
+   }
+  },
+  {
+   "nombre": "horario_de_10_a_20",
+   "descripcion": "El horario de 10 a 20 de CDMX, en los dos flujos.",
+   "varios_toques": false,
+   "items": [
+    {
+     "producto": "att1",
+     "flujo": "carrito",
+     "flow_id": "1b000003-0000-4000-8000-0000000c0001",
+     "tipo": "version",
+     "definicion": {
+      "esquema": "setter-flujo/v1",
+      "flujo": "carrito",
+      "producto": "att1",
+      "nombre": "Carrito abandonado",
+      "estado": "borrador",
+      "dispara": {
+       "evento": "carrito"
+      },
+      "entra": {
+       "permiso": "formulario",
+       "contesto_a": []
+      },
+      "pasos": [
+       {
+        "plantilla": "att1_carrito_abandonado_01",
+        "idioma": "es_MX",
+        "variables": [
+         "nombre",
+         "producto"
+        ]
+       }
+      ],
+      "termina": {
+       "si": [
+        "compra"
+       ],
+       "vence": "1d"
+      },
+      "horario": {
+       "zona": "America/Mexico_City",
+       "desde": "10:00",
+       "hasta": "20:00"
+      },
+      "topes": {
+       "bolsa": "att1-recuperacion",
+       "por_dia": 80,
+       "total": 1000,
+       "repeticion": {
+        "una_por": "persona_y_oferta",
+        "otra_despues_de": "0m"
+       }
+      },
+      "prioridad": {
+       "le_gana_a": [
+        "precheckout"
+       ],
+       "no_arranca_mientras": [
+        "pago_fallido"
+       ]
+      }
+     },
+     "en_curso": "seguir"
+    },
+    {
+     "producto": "att1",
+     "flujo": "pago_fallido",
+     "flow_id": "1b000003-0000-4000-8000-0000000c0002",
+     "tipo": "version",
+     "definicion": {
+      "esquema": "setter-flujo/v1",
+      "flujo": "pago_fallido",
+      "producto": "att1",
+      "nombre": "Pago fallido",
+      "estado": "borrador",
+      "dispara": {
+       "evento": "pago_fallido"
+      },
+      "entra": {
+       "permiso": "formulario",
+       "contesto_a": []
+      },
+      "pasos": [
+       {
+        "plantilla": "att1_compra_fallida_01",
+        "idioma": "es_MX",
+        "variables": [
+         "nombre",
+         "producto"
+        ]
+       }
+      ],
+      "termina": {
+       "si": [
+        "compra"
+       ],
+       "vence": "1d"
+      },
+      "horario": {
+       "zona": "America/Mexico_City",
+       "desde": "10:00",
+       "hasta": "20:00"
+      },
+      "topes": {
+       "bolsa": "att1-recuperacion",
+       "por_dia": 80,
+       "total": 1000,
+       "repeticion": {
+        "una_por": "persona_y_oferta",
+        "otra_despues_de": "0m"
+       }
+      },
+      "prioridad": {
+       "le_gana_a": [
+        "precheckout"
+       ],
+       "no_arranca_mientras": []
+      }
+     },
+     "en_curso": "seguir"
+    }
+   ],
+   "esperado": {
+    "cambios": 119,
+    "propuesta": {
+     "disparos": 252,
+     "recibieron": 212,
+     "fin": {
+      "compro": 1,
+      "enviado": 212,
+      "no_arranco": 35,
+      "no_llego": 4
+     },
+     "no_arrancaron": {
+      "baja": 3,
+      "no_entra:permiso": 26,
+      "sin_motivo": 5,
+      "ya_en_curso": 1
+     },
+     "en_curso": 0,
+     "sin_saber": {
+      "baja": 119,
+      "intencion": 119
+     },
+     "flujos": {
+      "carrito": {
+       "recorridos": 208,
+       "en_curso": 0,
+       "pasos": [
+        {
+         "paso": 0,
+         "enviados": 208,
+         "terminan": {},
+         "movidos_por_el_tope": 0,
+         "cota": "como_maximo"
+        }
+       ]
+      },
+      "pago_fallido": {
+       "recorridos": 5,
+       "en_curso": 0,
+       "pasos": [
+        {
+         "paso": 0,
+         "enviados": 4,
+         "terminan": {
+          "compro": 1
+         },
+         "movidos_por_el_tope": 0,
+         "cota": "como_maximo"
+        }
+       ]
+      }
+     },
+     "dias_al_tope": []
+    }
+   }
+  },
+  {
+   "nombre": "horario_de_10_a_20_solo_carrito",
+   "descripcion": "El horario de 10 a 20 de CDMX, solo en el carrito.",
+   "varios_toques": false,
+   "items": [
+    {
+     "producto": "att1",
+     "flujo": "carrito",
+     "flow_id": "1b000003-0000-4000-8000-0000000c0001",
+     "tipo": "version",
+     "definicion": {
+      "esquema": "setter-flujo/v1",
+      "flujo": "carrito",
+      "producto": "att1",
+      "nombre": "Carrito abandonado",
+      "estado": "borrador",
+      "dispara": {
+       "evento": "carrito"
+      },
+      "entra": {
+       "permiso": "formulario",
+       "contesto_a": []
+      },
+      "pasos": [
+       {
+        "plantilla": "att1_carrito_abandonado_01",
+        "idioma": "es_MX",
+        "variables": [
+         "nombre",
+         "producto"
+        ]
+       }
+      ],
+      "termina": {
+       "si": [
+        "compra"
+       ],
+       "vence": "1d"
+      },
+      "horario": {
+       "zona": "America/Mexico_City",
+       "desde": "10:00",
+       "hasta": "20:00"
+      },
+      "topes": {
+       "bolsa": "att1-recuperacion",
+       "por_dia": 80,
+       "total": 1000,
+       "repeticion": {
+        "una_por": "persona_y_oferta",
+        "otra_despues_de": "0m"
+       }
+      },
+      "prioridad": {
+       "le_gana_a": [
+        "precheckout"
+       ],
+       "no_arranca_mientras": [
+        "pago_fallido"
+       ]
+      }
+     },
+     "en_curso": "seguir"
+    }
+   ],
+   "esperado": {
+    "cambios": 117,
+    "propuesta": {
+     "disparos": 252,
+     "recibieron": 213,
+     "fin": {
+      "enviado": 213,
+      "no_arranco": 35,
+      "no_llego": 4
+     },
+     "no_arrancaron": {
+      "baja": 3,
+      "no_entra:permiso": 26,
+      "sin_motivo": 5,
+      "ya_en_curso": 1
+     },
+     "en_curso": 0,
+     "sin_saber": {
+      "baja": 117,
+      "intencion": 117
+     },
+     "flujos": {
+      "carrito": {
+       "recorridos": 208,
+       "en_curso": 0,
+       "pasos": [
+        {
+         "paso": 0,
+         "enviados": 208,
+         "terminan": {},
+         "movidos_por_el_tope": 0,
+         "cota": "como_maximo"
+        }
+       ]
+      },
+      "pago_fallido": {
+       "recorridos": 5,
+       "en_curso": 0,
+       "pasos": [
+        {
+         "paso": 0,
+         "enviados": 5,
+         "terminan": {},
+         "movidos_por_el_tope": 0,
+         "cota": "exacta"
+        }
+       ]
+      }
+     },
+     "dias_al_tope": []
+    }
+   }
+  },
+  {
+   "nombre": "tres_toques_vence_4d",
+   "descripcion": "El carrito con tres toques: el primero a 1 h del disparo, y el 2 y el 3 a 24 h y 48 h del primer envio (la regla del legado), tope 80 y plazo de 4 dias; el pago fallido como la v5.",
+   "varios_toques": true,
+   "items": [
+    {
+     "producto": "att1",
+     "flujo": "carrito",
+     "flow_id": "1b000003-0000-4000-8000-0000000c0001",
+     "tipo": "version",
+     "definicion": {
+      "esquema": "setter-flujo/v1",
+      "flujo": "carrito",
+      "producto": "att1",
+      "nombre": "Carrito abandonado",
+      "estado": "borrador",
+      "dispara": {
+       "evento": "carrito"
+      },
+      "entra": {
+       "permiso": "formulario",
+       "contesto_a": []
+      },
+      "pasos": [
+       {
+        "esperar": "1h"
+       },
+       {
+        "plantilla": "att1_carrito_abandonado_01",
+        "idioma": "es_MX",
+        "variables": [
+         "nombre",
+         "producto"
+        ]
+       },
+       {
+        "esperar": "24h"
+       },
+       {
+        "plantilla": "att1_carrito_abandonado_01",
+        "idioma": "es_MX",
+        "variables": [
+         "nombre",
+         "producto"
+        ]
+       },
+       {
+        "esperar": "24h"
+       },
+       {
+        "plantilla": "att1_carrito_abandonado_01",
+        "idioma": "es_MX",
+        "variables": [
+         "nombre",
+         "producto"
+        ]
+       }
+      ],
+      "termina": {
+       "si": [
+        "compra"
+       ],
+       "vence": "4d"
+      },
+      "horario": {
+       "zona": "America/Mexico_City",
+       "desde": "09:00",
+       "hasta": "21:00"
+      },
+      "topes": {
+       "bolsa": "att1-recuperacion",
+       "por_dia": 80,
+       "total": 1000,
+       "repeticion": {
+        "una_por": "persona_y_oferta",
+        "otra_despues_de": "0m"
+       }
+      },
+      "prioridad": {
+       "le_gana_a": [
+        "precheckout"
+       ],
+       "no_arranca_mientras": [
+        "pago_fallido"
+       ]
+      }
+     },
+     "en_curso": "seguir"
+    }
+   ],
+   "esperado": {
+    "cambios": 208,
+    "propuesta": {
+     "disparos": 252,
+     "recibieron": 212,
+     "fin": {
+      "compro": 3,
+      "en_curso": 48,
+      "enviado": 162,
+      "no_arranco": 35,
+      "no_llego": 4
+     },
+     "no_arrancaron": {
+      "baja": 3,
+      "no_entra:permiso": 26,
+      "sin_motivo": 5,
+      "ya_en_curso": 1
+     },
+     "en_curso": 48,
+     "sin_saber": {
+      "baja": 208,
+      "compra": 48,
+      "intencion": 208,
+      "respuesta": 207
+     },
+     "flujos": {
+      "carrito": {
+       "recorridos": 208,
+       "en_curso": 48,
+       "pasos": [
+        {
+         "paso": 0,
+         "enviados": 207,
+         "terminan": {
+          "en_curso": 1
+         },
+         "movidos_por_el_tope": 49,
+         "cota": "como_maximo"
+        },
+        {
+         "paso": 1,
+         "enviados": 183,
+         "terminan": {
+          "compro": 2,
+          "en_curso": 22
+         },
+         "movidos_por_el_tope": 24,
+         "cota": "como_maximo"
+        },
+        {
+         "paso": 2,
+         "enviados": 157,
+         "terminan": {
+          "compro": 1,
+          "en_curso": 25
+         },
+         "movidos_por_el_tope": 40,
+         "cota": "como_maximo"
+        }
+       ]
+      },
+      "pago_fallido": {
+       "recorridos": 5,
+       "en_curso": 0,
+       "pasos": [
+        {
+         "paso": 0,
+         "enviados": 5,
+         "terminan": {},
+         "movidos_por_el_tope": 0,
+         "cota": "exacta"
+        }
+       ]
+      }
+     },
+     "dias_al_tope": [
+      "2026-10-11",
+      "2026-10-12",
+      "2026-10-13",
+      "2026-10-14",
+      "2026-10-15"
+     ]
+    }
+   }
+  },
+  {
+   "nombre": "tres_toques_vence_1d",
+   "descripcion": "Los mismos tres toques con el plazo de hoy, 1 dia.",
+   "varios_toques": true,
+   "items": [
+    {
+     "producto": "att1",
+     "flujo": "carrito",
+     "flow_id": "1b000003-0000-4000-8000-0000000c0001",
+     "tipo": "version",
+     "definicion": {
+      "esquema": "setter-flujo/v1",
+      "flujo": "carrito",
+      "producto": "att1",
+      "nombre": "Carrito abandonado",
+      "estado": "borrador",
+      "dispara": {
+       "evento": "carrito"
+      },
+      "entra": {
+       "permiso": "formulario",
+       "contesto_a": []
+      },
+      "pasos": [
+       {
+        "esperar": "1h"
+       },
+       {
+        "plantilla": "att1_carrito_abandonado_01",
+        "idioma": "es_MX",
+        "variables": [
+         "nombre",
+         "producto"
+        ]
+       },
+       {
+        "esperar": "24h"
+       },
+       {
+        "plantilla": "att1_carrito_abandonado_01",
+        "idioma": "es_MX",
+        "variables": [
+         "nombre",
+         "producto"
+        ]
+       },
+       {
+        "esperar": "24h"
+       },
+       {
+        "plantilla": "att1_carrito_abandonado_01",
+        "idioma": "es_MX",
+        "variables": [
+         "nombre",
+         "producto"
+        ]
+       }
+      ],
+      "termina": {
+       "si": [
+        "compra"
+       ],
+       "vence": "1d"
+      },
+      "horario": {
+       "zona": "America/Mexico_City",
+       "desde": "09:00",
+       "hasta": "21:00"
+      },
+      "topes": {
+       "bolsa": "att1-recuperacion",
+       "por_dia": 80,
+       "total": 1000,
+       "repeticion": {
+        "una_por": "persona_y_oferta",
+        "otra_despues_de": "0m"
+       }
+      },
+      "prioridad": {
+       "le_gana_a": [
+        "precheckout"
+       ],
+       "no_arranca_mientras": [
+        "pago_fallido"
+       ]
+      }
+     },
+     "en_curso": "seguir"
+    }
+   ],
+   "esperado": {
+    "cambios": 208,
+    "propuesta": {
+     "disparos": 252,
+     "recibieron": 212,
+     "fin": {
+      "en_curso": 1,
+      "enviado": 5,
+      "fuera_de_plazo": 207,
+      "no_arranco": 35,
+      "no_llego": 4
+     },
+     "no_arrancaron": {
+      "baja": 3,
+      "no_entra:permiso": 26,
+      "sin_motivo": 5,
+      "ya_en_curso": 1
+     },
+     "en_curso": 1,
+     "sin_saber": {
+      "baja": 141,
+      "compra": 1,
+      "intencion": 141
+     },
+     "flujos": {
+      "carrito": {
+       "recorridos": 208,
+       "en_curso": 1,
+       "pasos": [
+        {
+         "paso": 0,
+         "enviados": 207,
+         "terminan": {
+          "en_curso": 1
+         },
+         "movidos_por_el_tope": 0,
+         "cota": "como_maximo"
+        },
+        {
+         "paso": 1,
+         "enviados": 0,
+         "terminan": {
+          "fuera_de_plazo": 207
+         },
+         "movidos_por_el_tope": 0,
+         "cota": "exacta"
+        }
+       ]
+      },
+      "pago_fallido": {
+       "recorridos": 5,
+       "en_curso": 0,
+       "pasos": [
+        {
+         "paso": 0,
+         "enviados": 5,
+         "terminan": {},
+         "movidos_por_el_tope": 0,
+         "cota": "exacta"
+        }
+       ]
+      }
+     },
+     "dias_al_tope": []
+    }
+   }
+  }
+ ]
+}

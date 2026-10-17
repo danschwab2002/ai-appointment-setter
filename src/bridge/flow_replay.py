@@ -58,7 +58,7 @@ from zoneinfo import ZoneInfo
 
 from . import flow_engine as engine
 from .flow_capture import parse_instant
-from .flow_definition import trigger_of
+from .flow_definition import ProposalItem, as_published, trigger_of
 from .flow_engine import (
     ARMED,
     ENGINE_CAPABILITIES_V1,
@@ -74,15 +74,27 @@ from .flow_engine import (
     RunView,
     StartDecision,
 )
-from .flow_parity import EXCEPTIONS_V1, MATCH_ORDER, Capture, CaptureError, Supersession, control_state_at
+from .flow_parity import (
+    EXCEPTIONS_V1,
+    MATCH_ORDER,
+    Capture,
+    CaptureError,
+    Supersession,
+    control_state_at,
+    eligible_at,
+    parity_report,
+    supersessions,
+    winners_without_cancel,
+)
 from .flow_policy import interval_of
 from .flow_schedule import Franja, franja_of_policy, local_day
 
 __all__ = [
-    "History", "ObservedGate", "ObservedLedger", "PredictedLedger", "PurchaseFact", "CaptureControl",
-    "Replay", "RunOutcome", "StepOutcome", "VersionChoice", "Versions", "as_ran", "engine_flows_from_definitions",
-    "exceptions_for", "fixed", "history_from_capture", "in_flight_at", "observed_gate_inputs",
-    "observed_supersessions", "observed_winners_without_cancel", "replay",
+    "ConsistencyReport", "History", "ObservedGate", "ObservedLedger", "PredictedLedger", "PurchaseFact",
+    "CaptureControl", "Replay", "RunChange", "RunOutcome", "Simulation", "StepOutcome", "VersionChoice", "Versions",
+    "as_ran", "consistency_report", "current_versions", "engine_flows_from_definitions", "exceptions_for", "fixed",
+    "flow_summary", "history_from_capture", "in_flight_at", "observed_gate_inputs", "observed_supersessions",
+    "observed_winners_without_cancel", "proposed_versions", "replay", "replay_summary", "simulate",
 ]
 
 # Los disparos de hoy y su evento del motor (el legacy_kind del flujo).
@@ -900,7 +912,13 @@ class _Replayer:
         self.runs[firing.source_ref] = run
         if firing.contact_ref is not None:
             self.by_contact.setdefault(firing.contact_ref, []).append(run)
-        self.push(run.started_at, run)
+        # La compra durante la espera inicial cierra el recorrido a su hora, como el legado, que gana el caso y
+        # cancela la accion al aprobarse (20260808000100:405-412 y :428-444), no cuando la accion vence su espera.
+        look = run.started_at
+        bought = self.purchase_at(run)
+        if bought is not None:
+            look = min(look, max(bought, firing.received_at))
+        self.push(look, run)
 
     def join(self, firing: Firing, run_ref: str) -> None:
         """F#11: la repeticion del pago fallido adelanta el comienzo del recorrido abierto.
@@ -1112,3 +1130,310 @@ def replay(history: History, versions: Versions, choose: VersionChoice, *,
     replayer = _Replayer(history, versions, choose, capabilities)
     replayer.run_all()
     return replayer.result()
+
+
+# ---------------------------------------------------------------------------
+# simulate: la vigente en toda la ventana contra la propuesta en toda la ventana.
+# ---------------------------------------------------------------------------
+
+SENT = "enviado"
+IN_FLIGHT = "en_curso"
+NOT_STARTED = ("no_arranco", "no_llego")
+NO_REASON = "sin_motivo"
+EXACT = "exacta"
+AT_MOST = "como_maximo"
+DAY_CAP = "bolsa_dia"
+# Lo que no se sabe y no cambia el numero de un paso: la compra despues de la
+# captura la lleva un paso en_curso, que no se cuenta como enviado.
+_NOT_A_BOUND = frozenset({"compra"})
+
+
+@dataclass(frozen=True)
+class RunChange:
+    firing_ref: str
+    before: RunOutcome
+    after: RunOutcome
+
+
+@dataclass(frozen=True)
+class Simulation:
+    current: Replay
+    proposed: Replay
+    changes: tuple[RunChange, ...]      # solo los disparos donde algo difiere: fin, hora o motivo de algun paso
+    summary: Mapping[str, Any]          # lo que muestra la vista previa (§5.2 y §5.3)
+
+
+def _signature(run: RunOutcome) -> tuple[Any, ...]:
+    """Lo que compara ``simulate``: el fin, el motivo del arranque y la hora, el estado y el motivo de cada paso.
+
+    No mira la version ni el plan: la vigente y la propuesta son versiones
+    distintas del mismo flujo, y eso no es un cambio para la persona.
+    """
+    return (run.end, run.start.reason,
+            tuple((step.index, step.at, step.status, step.reason) for step in run.steps))
+
+
+def _capped_days(result: Replay, window: tuple[datetime, datetime | None] | None) -> list[str]:
+    """Los dias locales de la ventana en que la bolsa llega al tope del dia de los planes que corrieron en ella.
+
+    El tope de una bolsa es el menor de sus planes, y el dia local, el de la
+    zona de su franja. Sin ventana, todos los dias del libro.
+    """
+    caps: dict[str, int] = {}
+    zones: dict[str, str] = {}
+    for run in result.runs:
+        if run.plan is None or run.plan.per_day is None:
+            continue
+        caps[run.plan.pool] = min(caps.get(run.plan.pool, run.plan.per_day), run.plan.per_day)
+        if run.plan.franja.zone:
+            zones.setdefault(run.plan.pool, run.plan.franja.zone)
+    out = []
+    for (pool, day), count in result.bolsa_by_day.items():
+        if pool not in caps or count < caps[pool]:
+            continue
+        if window is not None and pool in zones:
+            first = local_day(zones[pool], window[0]).isoformat()
+            last = local_day(zones[pool], window[1]).isoformat() if window[1] is not None else day
+            if not first <= day <= last:
+                continue
+        out.append(day)
+    return sorted(out)
+
+
+def flow_summary(result: Replay) -> dict[str, Any]:
+    """Por flujo, cuantos recorridos pasan por cada paso (§5.3), y cuantos quedan en curso.
+
+    Un paso cuenta los ``enviado`` en su indice, lo que termina ahi por otro
+    motivo (``terminan``) y los que movio el tope del dia. Su ``cota`` es
+    ``exacta`` si ningun envio que cuenta tiene algo que no se sabe (la baja, la
+    respuesta, la intencion, la repeticion sin contacto), y ``como_maximo`` si
+    alguno lo tiene. Sin uuid, horas ni nada de una persona: solo conteos.
+    """
+    out: dict[str, Any] = {}
+    for run in result.runs:
+        if run.plan is None:
+            continue
+        flow = out.setdefault(run.flow[1], {"recorridos": 0, "en_curso": 0, "pasos": []})
+        flow["recorridos"] += 1
+        flow["en_curso"] += run.end == IN_FLIGHT
+        steps = flow["pasos"]
+        run_unknown = run.unknown - _NOT_A_BOUND
+        for step in run.steps:
+            while len(steps) <= step.index:
+                steps.append({"paso": len(steps), "enviados": 0, "terminan": {}, "movidos_por_el_tope": 0,
+                              "cota": EXACT})
+            row = steps[step.index]
+            if step.status == SENT:
+                row["enviados"] += 1
+                if (step.unknown | (run_unknown & {"repeticion"})) - _NOT_A_BOUND:
+                    row["cota"] = AT_MOST
+            else:
+                row["terminan"][step.status] = row["terminan"].get(step.status, 0) + 1
+            if DAY_CAP in step.moved_by:
+                row["movidos_por_el_tope"] += 1
+    for flow in out.values():
+        for row in flow["pasos"]:
+            row["terminan"] = dict(sorted(row["terminan"].items()))
+    return dict(sorted(out.items()))
+
+
+def replay_summary(result: Replay, window: tuple[datetime, datetime | None] | None = None) -> dict[str, Any]:
+    """El resumen de una corrida, con la forma que pide el ciclo (``flow-change-cycle-v1.md:90``).
+
+    De M disparos, cuantos habrian recibido el mensaje; de los otros, cuantos
+    ya habian comprado, cuantos vencieron, cuantos no arrancaron y por que,
+    cuantos siguen en curso a la hora de la captura y cuantos tienen algo que no
+    se sabe, por su nombre. Mas los pasos de cada flujo (§5.3) y los dias
+    locales de ``window`` en que la bolsa llega a su tope.
+    """
+    not_started = Counter(run.start.reason or NO_REASON for run in result.runs if run.end == "no_arranco")
+    unknown = Counter(name for run in result.runs if run.plan is not None for name in run.unknown)
+    return {
+        "disparos": len(result.runs),
+        "recibieron": sum(1 for run in result.runs if run.sends),
+        "fin": dict(sorted(Counter(run.end for run in result.runs).items())),
+        "no_arrancaron": dict(sorted(not_started.items())),
+        "en_curso": sum(1 for run in result.runs if run.end == IN_FLIGHT),
+        "sin_saber": dict(sorted(unknown.items())),
+        "flujos": flow_summary(result),
+        "dias_al_tope": _capped_days(result, window),
+    }
+
+
+def simulate(history: History, versions: Versions, current: VersionChoice, proposed: VersionChoice, *,
+             capabilities: EngineCapabilities = ENGINE_CAPABILITIES_V1) -> Simulation:
+    """La vigente aplicada a toda la ventana contra la propuesta aplicada a toda la ventana (§5.1).
+
+    Los mismos hechos dos veces, con la bolsa predicha y las mismas
+    capacidades en las dos. No compara contra «lo que paso»: en una ventana
+    corren varias versiones y eso mezclaria el efecto de la propuesta con el de
+    los cambios pasados. «Lo que paso» es ``replay`` con ``as_ran`` y va en la
+    consistencia. Un cambio es un disparo cuyo fin, motivo de arranque, o hora,
+    estado o motivo de algun paso difiere.
+    """
+    before = replay(history, versions, current, capabilities=capabilities)
+    after = replay(history, versions, proposed, capabilities=capabilities)
+    changes = tuple(RunChange(old.firing_ref, old, new) for old, new in zip(before.runs, after.runs, strict=True)
+                    if _signature(old) != _signature(new))
+    summary = {
+        "disparos": len(after.runs),
+        "cambios": len(changes),
+        "vigente": replay_summary(before, history.window),
+        "propuesta": replay_summary(after, history.window),
+    }
+    return Simulation(before, after, changes, MappingProxyType(summary))
+
+
+def current_versions(history: History, versions: Versions) -> dict[FlowRef, int | None]:
+    """La vigente de cada flujo: la version activa de su bolsa a la hora de la captura."""
+    at = history.window[1]
+    if at is None:
+        raise CaptureError("_captured.captured_at: falta, y la vigente se lee a esa hora")
+    out: dict[FlowRef, int | None] = {}
+    for ref, by_version in sorted(versions.items()):
+        pool = by_version[max(by_version)].pool
+        active = CaptureControl(history.capture, pool).version_at(at)
+        out[ref] = active if active in by_version else None
+    return out
+
+
+def proposed_versions(versions: Versions, current: Mapping[FlowRef, int | None],
+                      items: Sequence[ProposalItem]) -> tuple[Versions, dict[FlowRef, int | None]]:
+    """Las versiones con los items de una propuesta aplicados, y la version de cada flujo en la propuesta.
+
+    Una ``version`` nueva entra con el numero siguiente al mayor de su flujo, y
+    ``volver`` elige una existente; ``apagar`` deja el flujo sin version (0
+    arranques); ``prender`` lo deja en la vigente, o en la mayor si estaba
+    apagado. Lo en curso sigue con su version (``seguir``): ``cancelar`` y
+    ``migrar`` no existen todavia (el ciclo, ``:401``).
+    """
+    by_id = {by_version[max(by_version)].flow_id: ref for ref, by_version in versions.items()}
+    out = {ref: dict(by_version) for ref, by_version in versions.items()}
+    chosen = dict(current)
+    for item in items:
+        ref = by_id.get(item.flow_id)
+        if ref is None or ref != (item.producto, item.flujo):
+            raise ValueError(f"proposal_flow_unknown: {item.producto}/{item.flujo}")
+        if item.en_curso not in (None, "seguir"):
+            raise ValueError("en_curso_not_supported")
+        latest = out[ref][max(out[ref])]
+        if item.tipo == "version":
+            number = max(out[ref]) + 1
+            definition = as_published(item.definicion or {}, number)
+            out[ref][number] = dataclasses.replace(latest, version=number, definition=MappingProxyType(definition))
+            chosen[ref] = number
+        elif item.tipo == "volver":
+            if item.version not in out[ref]:
+                raise ValueError(f"proposal_version_unknown: {item.flujo} v{item.version}")
+            chosen[ref] = item.version
+        elif item.tipo == "apagar":
+            chosen[ref] = None
+        else:   # prender
+            chosen[ref] = chosen.get(ref) or max(out[ref])
+    frozen = MappingProxyType({ref: MappingProxyType(by_version) for ref, by_version in out.items()})
+    return frozen, chosen
+
+
+# ---------------------------------------------------------------------------
+# La consistencia contra la T1 (§7).
+# ---------------------------------------------------------------------------
+
+ELIGIBLE_WITHOUT_SEND = "elegible_sin_envio"
+
+
+@dataclass(frozen=True)
+class ConsistencyReport:
+    self_changes: int                   # simulate(vigente, vigente): tiene que ser 0
+    replay_counts: Mapping[str, int]
+    t1_counts: Mapping[str, int]        # parity_report en vivo, no copiado
+    e_mismatches: tuple[str, ...]       # de las acciones de la ventana, las que tienen otra E que la T1
+    extra_sends: tuple[str, ...]        # enviados en el replay y no en el legado
+    extra_explained_by_named: tuple[str, ...]
+    named_not_in_replay: tuple[str, ...]
+    p6: Mapping[str, int]
+    t1_p6: Mapping[str, int]            # lo que suma esta implementacion a §3.2: el otro lado de P6
+
+    def ok(self) -> bool:
+        return (not self.e_mismatches and self.extra_sends == self.extra_explained_by_named
+                and not self.named_not_in_replay and self.self_changes == 0 and dict(self.p6) == dict(self.t1_p6)
+                and all(self.replay_counts.get(key) == value for key, value in self.t1_counts.items()))
+
+
+def _p6_counts(ceded: Sequence[Supersession], winners_without_cancel: int) -> dict[str, int]:
+    groups = Counter("las_dos" if {"persona", "intencion"} <= item.routes else
+                     "solo_persona" if "persona" in item.routes else
+                     "solo_intencion" if "intencion" in item.routes else "sin_ruta" for item in ceded)
+    return {
+        "cedieron": len(ceded), "las_dos": groups["las_dos"], "solo_persona": groups["solo_persona"],
+        "solo_intencion": groups["solo_intencion"],
+        "sin_ganador": sum(1 for item in ceded if item.winner_ref is None),
+        "ganadores_sin_cancelacion": winners_without_cancel,
+    }
+
+
+def consistency_report(history: History, versions: Versions, named: Sequence[Mapping[str, Any]]
+                       ) -> ConsistencyReport:
+    """El replay «como corrio» contra el reporte de la T1, en vivo, y la vigente contra si misma (§7.1).
+
+    - ``self_changes``: ``simulate`` de la vigente contra la vigente;
+    - los conteos de los disparos, de los que llegaron al flujo y de los
+      envios, contra ``flow_parity.parity_report``: los envios del replay son
+      los de la T1 mas los que explica una diferencia con nombre;
+    - ``e_mismatches``: cada accion de la ventana cuya primera hora del replay
+      no es ``flow_parity.eligible_at``;
+    - en los dos sentidos: un envio de mas sin nombre, o un ``elegible_sin_envio``
+      con nombre que el replay no manda, ponen ``ok()`` en falso. Las
+      diferencias con nombre de otra clase (la tolerancia del despachador, P6)
+      no las juzga el replay;
+    - P6 con los intervalos del replay contra ``supersessions`` y
+      ``winners_without_cancel`` de la T1.
+    """
+    capture = history.capture
+    current = current_versions(history, versions)
+    self_changes = len(simulate(history, versions, fixed(current), fixed(current)).changes)
+    as_run = replay(history, versions, as_ran())
+    by_ref = {run.firing_ref: run for run in as_run.runs}
+
+    report = parity_report(capture, named)
+    t1_starts = sum(count for key, count in report.firings.items() if key.endswith("/processed"))
+    t1_counts = {"disparos": sum(report.firings.values()), "llegaron": report.reached_flow,
+                 "arranques": t1_starts}
+    sent = {run.firing_ref for run in as_run.runs if run.sends}
+    replay_counts = {
+        "disparos": len(as_run.runs),
+        "llegaron": sum(1 for run in as_run.runs if run.end != "no_llego"),
+        "arranques": sum(1 for run in as_run.runs if run.plan is not None),
+        "envios": len(sent),
+    }
+
+    mismatches = []
+    actions = {action["recovery_case_id"]: action for action in capture.actions}
+    for firing in history.firings:
+        case = capture.case_of_event(firing.source_ref)
+        if case is None or case["abandonment_event_id"] != firing.source_ref or case["id"] not in actions:
+            continue
+        run = by_ref.get(firing.source_ref)
+        first = run.steps[0].at if run is not None and run.steps else None
+        if first != eligible_at(capture, actions[case["id"]]):
+            mismatches.append(firing.source_ref)
+
+    extra = sorted(ref for ref in sent if ref not in history.observed_sends)
+    named_refs = {entry.get("disparo") for entry in named
+                  if isinstance(entry, Mapping) and entry.get("diferencia") == ELIGIBLE_WITHOUT_SEND}
+    explained = sorted(ref for ref in extra if ref in named_refs and by_ref[ref].legacy_note is not None)
+    missing = sorted(str(ref) for ref in named_refs if ref not in extra)
+    # Los envios del replay, sin los que explica una diferencia con nombre, son los del legado.
+    replay_counts["envios_del_legado"] = len(sent) - len(explained)
+    t1_counts["envios_del_legado"] = report.sends
+
+    return ConsistencyReport(
+        self_changes=self_changes,
+        replay_counts=MappingProxyType(replay_counts),
+        t1_counts=MappingProxyType(t1_counts),
+        e_mismatches=tuple(sorted(mismatches)),
+        extra_sends=tuple(extra),
+        extra_explained_by_named=tuple(explained),
+        named_not_in_replay=tuple(missing),
+        p6=MappingProxyType(_p6_counts(as_run.supersessions, len(as_run.winners_without_cancel))),
+        t1_p6=MappingProxyType(_p6_counts(supersessions(capture), len(winners_without_cancel(capture)))),
+    )
