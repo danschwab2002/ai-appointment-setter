@@ -8,6 +8,18 @@ Cada versión dice qué cambia y **qué tiene que hacer quien actualiza una inst
 
 Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab2002/setter-bridge`, `setter-slack-connector` y `setter-daily-feedback`. La release de GitHub lleva el digest de cada una. Cómo se pasa un servicio a la imagen y cómo se vuelve atrás: [docs/operations/release-por-imagen-v1.md](docs/operations/release-por-imagen-v1.md).
 
+## [1.9.1] - 2026-10-17
+
+Un parche sobre la 1.9.0, que es lo que corre en ATT1. No trae nada de lo que entró a `main` después de la 1.9.0 (el almacén de flujos, varios productos por aliada, la T1 y la T3a del motor): sale de una rama sobre `956848b` con un solo arreglo.
+
+### Corregido
+
+- **Con manifiesto, la baja se registra aunque la conversación esté derivada o pausada** (#255). La admisión de esas conversaciones da `blocked` (o `evidence_conflict`) y el bridge salía antes de buscar la baja: un «No más mensajes» escrito ahí no quedaba en la base y la persona seguía abierta a los flujos siguientes. Pasó en ATT1 con la conversación 50, el 2026-10-12. Ahora, en esa salida, corre lo mismo que ya corría cuando la admisión falla: el stop y la baja, sin el agente. Sin manifiesto (Johanna) no cambia nada.
+
+### Qué hace quien actualiza
+
+Nada más que cambiar la imagen del bridge a `v1.9.1`. No hay migraciones, variables, flags ni campos del manifiesto.
+
 ## [1.9.0] - sin publicar
 
 Trae tres cosas: la lectura del Automation Expert (la 1a de la Etapa 1), apagada; el conocimiento comercial en dos capas, lo común y una sección por producto (el paso 1 de varios productos por aliada); y el arreglo de los comentarios de más de un renglón en la revisión diaria. Con el flag de la 1a apagado y el conocimiento de un solo producto, una instancia que sube desde la 1.8.0 se comporta igual, salvo por ese arreglo.
