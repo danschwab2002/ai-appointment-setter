@@ -181,8 +181,16 @@ Los hooks sólo protegen este clon y pueden omitirse desde otro equipo. GitHub
 branch protection para `main` debe mantener push directo bloqueado, PR y tests
 requeridos. El workflow `.github/workflows/ci.yml` ejecuta la suite Python, la
 suite SQL y `validate-tree`; este último rechaza versiones duplicadas de
-migraciones dentro del árbol propuesto. Branch protection debe marcar ese job
-como requerido.
+migraciones dentro del árbol propuesto. Corre en jobs paralelos: Python y
+Postgres real en uno, y la suite de PGlite en tandas
+(`tests/sql/followup_engine/run_shard.mjs`, que reparte `scripts.test` de
+`package.json` por el peso de `shard_weights.json`). El job `verify` los junta
+y pasa solo si pasaron todos; es el que branch protection marca como
+requerido. Un script nuevo de PGlite se suma a `package.json` como siempre y
+entra solo en una tanda; uno que se saca o se renombra se saca también de
+`shard_weights.json` (lo exige `tests/test_ci_sql_shards.py`). Si cambia mucho
+cuánto tarda la suite, se actualizan los pesos con los tiempos que imprime cada
+tanda.
 
 Los worktrees no son sandbox de filesystem; agentes no confiables requieren
 contenedor o clon aislado.
