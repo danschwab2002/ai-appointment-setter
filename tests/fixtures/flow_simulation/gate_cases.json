@@ -1,0 +1,896 @@
+{
+ "_formato": {
+  "que_es": "El orden de la puerta del motor (diseno de la T3a, §8.2; diseno del motor, §1.0 y §2.9): un renglon por motivo que decide la puerta para un recorrido sin envios, y uno por cada par que pide un orden. Lo corre tests/test_flow_engine_gate.py contra bridge.flow_engine.evaluate_gate; la T2, cuando vuelva con la 1c, puede correr la misma tabla en PGlite. Escrito a mano.",
+  "flujo": "carrito_v5 es la definicion del carrito de la v5 de att1-recuperacion (att1_definitions_by_scope_version.json): de 09:00 a 21:00 en America/Mexico_City (UTC-6 todo 2026), vence 1d, sin espera, 80 por dia y 1000 en total, termina.si [compra]. cambios reemplaza valores por JSON Pointer. El flujo tiene todas las excepciones de capa sql y despacho (flow_parity.EXCEPTIONS_V1), como todo flujo del motor.",
+  "horas": "disparo es el instante del disparo (creation_date), en UTC; llego un segundo despues. Toda otra hora es un entero de segundos desde el disparo: ahora (la hora de la puerta), control, autorizaciones, hechos y next_at.",
+  "control": "La linea del control del scope: pares [segundos, estado], con el estado desde esa hora (armed, paused, inactive o closed).",
+  "autorizaciones": "Las autorizaciones de la bolsa, ya concedidas, todas antes de ahora: las cuenta el dia local de la zona del flujo.",
+  "hechos": "baja, compra, toma y respuesta: la hora del hecho. intencion_viva_hasta: hasta cuando la intencion estuvo viva (sin la clave, no se sabe). conflicto_de_compra: true si hay uno sin resolver.",
+  "esperado": "decision, reason (la lista cerrada de §2.9 del diseno del motor, o null) y next_at (con esperar, la hora en que vuelve a mirar).",
+  "legado": "En los renglones que salen de un caso generado: lo que hizo el legado en ese caso, copiado tal cual de legacy_recovery_cases.json en c7fa8ef (la accion, de donde sale: el primer paso de la reevaluacion o del arranque de esa accion, o su estado final; la decision o el resultado, y el motivo). La prueba lo traduce con flow_engine.LEGACY_REASON_TO_MOTIVO y tiene que dar el esperado, salvo con clase y nombre: una diferencia con nombre de la lista cerrada. due_at es el de la accion al final del caso generado, en segundos desde su disparo (el disparo del caso es T0 - 600 s, como el del renglon): en los renglones donde la reevaluacion difiere (defer) es el due_at reprogramado, y es el oraculo de next_at; en los demas el legado no lo reprograma (un arranque rechazado se reintenta con el mismo due_at), y no se compara con next_at."
+ },
+ "_legado": {
+  "archivo": "tests/fixtures/flow_engine/legacy_recovery_cases.json",
+  "base": "c7fa8ef",
+  "sha256": "e34d3815c16c88c3681892f6cd376fc6b5c0cb2f0f6aad751129523308f962ed"
+ },
+ "casos": [
+  {
+   "id": "mandar_de_dia",
+   "que": "Un carrito de dia, con la franja abierta, el control armado y la bolsa vacia: sale al llegar.",
+   "flujo": "carrito_v5",
+   "cambios": {},
+   "disparo": "2026-10-14T18:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [],
+   "hechos": {},
+   "ahora": 0,
+   "esperado": {
+    "decision": "mandar",
+    "reason": null,
+    "next_at": null
+   },
+   "legado": {
+    "caso": "G1",
+    "accion": "a1",
+    "fuente": "arranque",
+    "decision": "request_started",
+    "motivo": "pilot_request_start_authorized",
+    "due_at": 0
+   }
+  },
+  {
+   "id": "mandar_mas_tarde",
+   "que": "La misma puerta mirada dos horas despues, con todo abierto: sale ahora.",
+   "flujo": "carrito_v5",
+   "cambios": {},
+   "disparo": "2026-10-14T18:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [],
+   "hechos": {},
+   "ahora": 7200,
+   "esperado": {
+    "decision": "mandar",
+    "reason": null,
+    "next_at": null
+   }
+  },
+  {
+   "id": "espera_antes_del_envio",
+   "que": "Con una espera de 60 minutos, antes de la hora del paso: espera hasta esa hora, sin motivo.",
+   "flujo": "carrito_v5",
+   "cambios": {
+    "/pasos": [
+     {
+      "esperar": "60m"
+     },
+     {
+      "plantilla": "att1_carrito_abandonado_01",
+      "idioma": "es_MX",
+      "variables": [
+       "nombre",
+       "producto"
+      ]
+     }
+    ]
+   },
+   "disparo": "2026-10-14T18:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [],
+   "hechos": {},
+   "ahora": 0,
+   "esperado": {
+    "decision": "esperar",
+    "reason": null,
+    "next_at": 3600
+   }
+  },
+  {
+   "id": "vencio",
+   "que": "La puerta en el instante del vencimiento (expires_at <= ahora): vence.",
+   "flujo": "carrito_v5",
+   "cambios": {},
+   "disparo": "2026-10-14T18:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [],
+   "hechos": {},
+   "ahora": 86400,
+   "esperado": {
+    "decision": "vencer",
+    "reason": "vencio",
+    "next_at": null
+   },
+   "legado": {
+    "caso": "G25",
+    "accion": "a1",
+    "fuente": "reevaluacion",
+    "decision": "expire",
+    "motivo": "expired",
+    "due_at": 0
+   }
+  },
+  {
+   "id": "baja",
+   "que": "La baja antes de la puerta: cancela.",
+   "flujo": "carrito_v5",
+   "cambios": {},
+   "disparo": "2026-10-14T18:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [],
+   "hechos": {
+    "baja": 300
+   },
+   "ahora": 600,
+   "esperado": {
+    "decision": "cancelar",
+    "reason": "baja",
+    "next_at": null
+   },
+   "legado": {
+    "caso": "G19",
+    "accion": "a1",
+    "fuente": "final",
+    "decision": "cancelled",
+    "motivo": "contact_opted_out",
+    "due_at": 0
+   }
+  },
+  {
+   "id": "compro",
+   "que": "La compra antes de la puerta, con la salida compra: cancela.",
+   "flujo": "carrito_v5",
+   "cambios": {},
+   "disparo": "2026-10-14T18:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [],
+   "hechos": {
+    "compra": 570
+   },
+   "ahora": 600,
+   "esperado": {
+    "decision": "cancelar",
+    "reason": "compro",
+    "next_at": null
+   },
+   "legado": {
+    "caso": "G15",
+    "accion": "a1",
+    "fuente": "final",
+    "decision": "cancelled",
+    "motivo": "purchase_detected",
+    "due_at": 0
+   }
+  },
+  {
+   "id": "compra_sin_la_salida",
+   "que": "La misma compra con termina.si vacio: la puerta no la mira.",
+   "flujo": "carrito_v5",
+   "cambios": {
+    "/termina/si": []
+   },
+   "disparo": "2026-10-14T18:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [],
+   "hechos": {
+    "compra": 570
+   },
+   "ahora": 600,
+   "esperado": {
+    "decision": "mandar",
+    "reason": null,
+    "next_at": null
+   }
+  },
+  {
+   "id": "compra_despues_de_ahora",
+   "que": "Una compra posterior a la hora de la puerta todavia no paso: sale.",
+   "flujo": "carrito_v5",
+   "cambios": {},
+   "disparo": "2026-10-14T18:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [],
+   "hechos": {
+    "compra": 900
+   },
+   "ahora": 600,
+   "esperado": {
+    "decision": "mandar",
+    "reason": null,
+    "next_at": null
+   }
+  },
+  {
+   "id": "toma_humana_antes_del_envio",
+   "que": "La toma humana antes del primer envio: la excepcion 1 mira solo la conversacion del caso, que nace con el envio.",
+   "flujo": "carrito_v5",
+   "cambios": {},
+   "disparo": "2026-10-14T18:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [],
+   "hechos": {
+    "toma": 300
+   },
+   "ahora": 600,
+   "esperado": {
+    "decision": "mandar",
+    "reason": null,
+    "next_at": null
+   }
+  },
+  {
+   "id": "respuesta_antes_del_envio",
+   "que": "Una respuesta antes del primer envio no frena: contesto es despues de un envio.",
+   "flujo": "carrito_v5",
+   "cambios": {},
+   "disparo": "2026-10-14T18:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [],
+   "hechos": {
+    "respuesta": 300
+   },
+   "ahora": 600,
+   "esperado": {
+    "decision": "mandar",
+    "reason": null,
+    "next_at": null
+   }
+  },
+  {
+   "id": "fuera_de_horario",
+   "que": "Un carrito de noche: espera a la proxima apertura, las 09:00 de CDMX.",
+   "flujo": "carrito_v5",
+   "cambios": {},
+   "disparo": "2026-10-14T10:50:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [],
+   "hechos": {},
+   "ahora": 600,
+   "esperado": {
+    "decision": "esperar",
+    "reason": "fuera_de_horario",
+    "next_at": 15000
+   },
+   "legado": {
+    "caso": "G2",
+    "accion": "a1",
+    "fuente": "reevaluacion",
+    "decision": "defer",
+    "motivo": "business_window_closed",
+    "due_at": 15000
+   }
+  },
+  {
+   "id": "sin_horario",
+   "que": "De noche y con un plazo de 2 h: no abre antes de vencer, y escala (excepcion 3).",
+   "flujo": "carrito_v5",
+   "cambios": {
+    "/termina/vence": "2h"
+   },
+   "disparo": "2026-10-14T05:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [],
+   "hechos": {},
+   "ahora": 0,
+   "esperado": {
+    "decision": "escalar",
+    "reason": "sin_horario",
+    "next_at": null
+   },
+   "legado": {
+    "caso": "G3",
+    "accion": "a1",
+    "fuente": "reevaluacion",
+    "decision": "escalate",
+    "motivo": "no_business_window_before_expiry",
+    "due_at": 0
+   }
+  },
+  {
+   "id": "sin_horario_vence_al_abrir",
+   "que": "Vence en el mismo instante en que abriria: escala (la base compara con >=).",
+   "flujo": "carrito_v5",
+   "cambios": {
+    "/termina/vence": "600m"
+   },
+   "disparo": "2026-10-14T05:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [],
+   "hechos": {},
+   "ahora": 0,
+   "esperado": {
+    "decision": "escalar",
+    "reason": "sin_horario",
+    "next_at": null
+   }
+  },
+  {
+   "id": "vence_un_minuto_despues_de_abrir",
+   "que": "Vence un minuto despues de abrir: espera a la apertura.",
+   "flujo": "carrito_v5",
+   "cambios": {
+    "/termina/vence": "601m"
+   },
+   "disparo": "2026-10-14T05:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [],
+   "hechos": {},
+   "ahora": 0,
+   "esperado": {
+    "decision": "esperar",
+    "reason": "fuera_de_horario",
+    "next_at": 36000
+   }
+  },
+  {
+   "id": "flujo_pausado",
+   "que": "El control pausado, rearmado a la hora: espera al rearme.",
+   "flujo": "carrito_v5",
+   "cambios": {},
+   "disparo": "2026-10-14T18:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ],
+    [
+     -60,
+     "paused"
+    ],
+    [
+     3600,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [],
+   "hechos": {},
+   "ahora": 0,
+   "esperado": {
+    "decision": "esperar",
+    "reason": "flujo_pausado",
+    "next_at": 3600
+   },
+   "legado": {
+    "caso": "G23",
+    "accion": "a1",
+    "fuente": "arranque",
+    "decision": "rechazado",
+    "motivo": "pilot_runtime_not_armed",
+    "due_at": 0
+   }
+  },
+  {
+   "id": "pausado_sin_volver",
+   "que": "El control pausado y nunca rearmado: espera hasta vencer.",
+   "flujo": "carrito_v5",
+   "cambios": {},
+   "disparo": "2026-10-14T18:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ],
+    [
+     -60,
+     "paused"
+    ]
+   ],
+   "autorizaciones": [],
+   "hechos": {},
+   "ahora": 0,
+   "esperado": {
+    "decision": "esperar",
+    "reason": "flujo_pausado",
+    "next_at": 86400
+   }
+  },
+  {
+   "id": "version_activada_sin_armar",
+   "que": "Una version activada y todavia sin armar (inactive): espera al armado, sin motivo.",
+   "flujo": "carrito_v5",
+   "cambios": {},
+   "disparo": "2026-10-14T18:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ],
+    [
+     -60,
+     "inactive"
+    ],
+    [
+     600,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [],
+   "hechos": {},
+   "ahora": 0,
+   "esperado": {
+    "decision": "esperar",
+    "reason": null,
+    "next_at": 600
+   }
+  },
+  {
+   "id": "control_cerrado",
+   "que": "El control cerrado: espera hasta vencer, con flujo_apagado.",
+   "flujo": "carrito_v5",
+   "cambios": {},
+   "disparo": "2026-10-14T18:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ],
+    [
+     -60,
+     "closed"
+    ]
+   ],
+   "autorizaciones": [],
+   "hechos": {},
+   "ahora": 0,
+   "esperado": {
+    "decision": "esperar",
+    "reason": "flujo_apagado",
+    "next_at": 86400
+   }
+  },
+  {
+   "id": "lo_en_curso_sigue",
+   "que": "La version del recorrido pausada y otra activada y armada: el motor no mira la version activa, y sale.",
+   "flujo": "carrito_v5",
+   "cambios": {},
+   "disparo": "2026-10-14T18:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ],
+    [
+     -180,
+     "paused"
+    ],
+    [
+     -120,
+     "inactive"
+    ],
+    [
+     -60,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [],
+   "hechos": {},
+   "ahora": 0,
+   "esperado": {
+    "decision": "mandar",
+    "reason": null,
+    "next_at": null
+   },
+   "legado": {
+    "caso": "G21",
+    "accion": "a1",
+    "fuente": "arranque",
+    "decision": "rechazado",
+    "motivo": "pilot_scope_version_mismatch",
+    "due_at": 0,
+    "clase": "C",
+    "nombre": "lo_en_curso_sigue"
+   }
+  },
+  {
+   "id": "ya_no_entra",
+   "que": "La intencion dejo de estar viva antes de la puerta: espera hasta vencer (excepcion 4).",
+   "flujo": "carrito_v5",
+   "cambios": {},
+   "disparo": "2026-10-14T18:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [],
+   "hechos": {
+    "intencion_viva_hasta": 60
+   },
+   "ahora": 600,
+   "esperado": {
+    "decision": "esperar",
+    "reason": "ya_no_entra",
+    "next_at": 86400
+   },
+   "legado": {
+    "caso": "G18",
+    "accion": "a1",
+    "fuente": "arranque",
+    "decision": "rechazado",
+    "motivo": "pilot_audience_consented_intent_not_live",
+    "due_at": 0
+   }
+  },
+  {
+   "id": "intencion_viva_todavia",
+   "que": "La intencion sigue viva a la hora de la puerta: sale.",
+   "flujo": "carrito_v5",
+   "cambios": {},
+   "disparo": "2026-10-14T18:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [],
+   "hechos": {
+    "intencion_viva_hasta": 900
+   },
+   "ahora": 600,
+   "esperado": {
+    "decision": "mandar",
+    "reason": null,
+    "next_at": null
+   }
+  },
+  {
+   "id": "tope_del_dia",
+   "que": "El tope del dia (1) gastado hoy: espera a la medianoche local y, con la franja cerrada, a las 09:00.",
+   "flujo": "carrito_v5",
+   "cambios": {
+    "/topes/por_dia": 1,
+    "/topes/total": 10
+   },
+   "disparo": "2026-10-14T18:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [
+    -60
+   ],
+   "hechos": {},
+   "ahora": 0,
+   "esperado": {
+    "decision": "esperar",
+    "reason": "tope_del_flujo",
+    "next_at": 75600
+   },
+   "legado": {
+    "caso": "G4",
+    "accion": "a2",
+    "fuente": "arranque",
+    "decision": "rechazado",
+    "motivo": "pilot_daily_budget_exhausted",
+    "due_at": 60
+   }
+  },
+  {
+   "id": "tope_gastado_ayer",
+   "que": "El tope del dia gastado el dia local anterior no frena hoy.",
+   "flujo": "carrito_v5",
+   "cambios": {
+    "/topes/por_dia": 1,
+    "/topes/total": 10
+   },
+   "disparo": "2026-10-14T18:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [
+    -86400
+   ],
+   "hechos": {},
+   "ahora": 0,
+   "esperado": {
+    "decision": "mandar",
+    "reason": null,
+    "next_at": null
+   },
+   "legado": {
+    "caso": "G5",
+    "accion": "a2",
+    "fuente": "arranque",
+    "decision": "request_started",
+    "motivo": "pilot_request_start_authorized",
+    "due_at": 60
+   }
+  },
+  {
+   "id": "tope_total",
+   "que": "El tope total (1) agotado, que se mira antes que el del dia: no vuelve, espera hasta vencer.",
+   "flujo": "carrito_v5",
+   "cambios": {
+    "/topes/por_dia": 1,
+    "/topes/total": 1
+   },
+   "disparo": "2026-10-14T18:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [
+    -60
+   ],
+   "hechos": {},
+   "ahora": 0,
+   "esperado": {
+    "decision": "esperar",
+    "reason": "tope_del_flujo",
+    "next_at": 86400
+   },
+   "legado": {
+    "caso": "G6",
+    "accion": "a2",
+    "fuente": "arranque",
+    "decision": "rechazado",
+    "motivo": "pilot_total_budget_exhausted",
+    "due_at": 60
+   }
+  },
+  {
+   "id": "sin_tope",
+   "que": "Con sin_tope en el dia y en el total, la bolsa no frena.",
+   "flujo": "carrito_v5",
+   "cambios": {
+    "/topes/por_dia": "sin_tope",
+    "/topes/total": "sin_tope"
+   },
+   "disparo": "2026-10-14T18:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [
+    -120,
+    -60
+   ],
+   "hechos": {},
+   "ahora": 0,
+   "esperado": {
+    "decision": "mandar",
+    "reason": null,
+    "next_at": null
+   }
+  },
+  {
+   "id": "conflicto_de_compra",
+   "que": "Un conflicto de compra sin resolver frena todo arranque (4c): espera hasta vencer, sin motivo.",
+   "flujo": "carrito_v5",
+   "cambios": {},
+   "disparo": "2026-10-14T18:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [],
+   "hechos": {
+    "conflicto_de_compra": true
+   },
+   "ahora": 0,
+   "esperado": {
+    "decision": "esperar",
+    "reason": null,
+    "next_at": 86400
+   }
+  },
+  {
+   "id": "baja_y_compra_a_la_vez",
+   "que": "La baja y la compra a la vez: gana la baja (la reevaluacion la mira antes).",
+   "flujo": "carrito_v5",
+   "cambios": {},
+   "disparo": "2026-10-14T18:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [],
+   "hechos": {
+    "baja": 300,
+    "compra": 300
+   },
+   "ahora": 600,
+   "esperado": {
+    "decision": "cancelar",
+    "reason": "baja",
+    "next_at": null
+   }
+  },
+  {
+   "id": "compra_y_tope",
+   "que": "La compra con el tope del dia gastado: gana la compra.",
+   "flujo": "carrito_v5",
+   "cambios": {
+    "/topes/por_dia": 1,
+    "/topes/total": 10
+   },
+   "disparo": "2026-10-14T18:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [
+    -60
+   ],
+   "hechos": {
+    "compra": 300
+   },
+   "ahora": 600,
+   "esperado": {
+    "decision": "cancelar",
+    "reason": "compro",
+    "next_at": null
+   }
+  },
+  {
+   "id": "pausado_y_franja_cerrada",
+   "que": "El control pausado y la franja cerrada: el motivo es la franja (la reevaluacion va antes que la autorizacion), y espera a la apertura, que es despues del rearme.",
+   "flujo": "carrito_v5",
+   "cambios": {},
+   "disparo": "2026-10-14T05:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ],
+    [
+     -60,
+     "paused"
+    ],
+    [
+     3600,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [],
+   "hechos": {},
+   "ahora": 0,
+   "esperado": {
+    "decision": "esperar",
+    "reason": "fuera_de_horario",
+    "next_at": 36000
+   }
+  },
+  {
+   "id": "pausado_hasta_despues_de_abrir",
+   "que": "El control rearmado despues de la apertura: el motivo es la franja, y espera al rearme.",
+   "flujo": "carrito_v5",
+   "cambios": {},
+   "disparo": "2026-10-14T05:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ],
+    [
+     -60,
+     "paused"
+    ],
+    [
+     40000,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [],
+   "hechos": {},
+   "ahora": 0,
+   "esperado": {
+    "decision": "esperar",
+    "reason": "fuera_de_horario",
+    "next_at": 40000
+   }
+  },
+  {
+   "id": "tope_y_franja_cerrada",
+   "que": "De noche con el tope del dia gastado: el motivo es la franja, y a la apertura ya es otro dia local.",
+   "flujo": "carrito_v5",
+   "cambios": {
+    "/topes/por_dia": 1,
+    "/topes/total": 10
+   },
+   "disparo": "2026-10-14T05:00:00.000000Z",
+   "control": [
+    [
+     -86400,
+     "armed"
+    ]
+   ],
+   "autorizaciones": [
+    -60
+   ],
+   "hechos": {},
+   "ahora": 0,
+   "esperado": {
+    "decision": "esperar",
+    "reason": "fuera_de_horario",
+    "next_at": 36000
+   }
+  }
+ ]
+}
