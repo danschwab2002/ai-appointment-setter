@@ -14,7 +14,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  verify:
+  # verify es el check requerido de main: junta los jobs de abajo y pasa solo si
+  # pasaron todos. La suite de PGlite corre en tandas (run_shard.mjs) y el resto
+  # en un job aparte, en paralelo (claude-ci-split-v1).
+  python-and-postgres:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -39,14 +42,6 @@ jobs:
         run: uv run python scripts/agent_workspace.py validate-tree
       - name: Run Python test suite
         run: uv run pytest -q
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: tests/sql/followup_engine/package-lock.json
-      - name: Run SQL behavioral suite
-        working-directory: tests/sql/followup_engine
-        run: npm ci && npm test && node validate_pilot_boundary.mjs && node validate_pilot_boundary_runtime.mjs
       - name: Verify handoff request-start races on PostgreSQL
         env:
           PGUSER: postgres
@@ -104,3 +99,45 @@ jobs:
         run: >-
           createdb -h 127.0.0.1 -p 5432 flow_store_ci
           && uv run python tests/sql/followup_engine/real_postgres_flow_store.py
+
+  sql-pglite:
+    name: sql-pglite (${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: tests/sql/followup_engine/package-lock.json
+      - name: Run SQL behavioral suite (shard ${{ matrix.shard }} of 3)
+        working-directory: tests/sql/followup_engine
+        run: >-
+          npm ci
+          && node run_shard.mjs --shard ${{ matrix.shard }} --of 3
+          --also validate_pilot_boundary.mjs
+          --also validate_pilot_boundary_runtime.mjs
+
+  # always() a proposito: con !cancelled(), un verify salteado cuenta como
+  # pasado para branch protection, y cancelar la corrida habilitaria el merge
+  # sin tests. El costo es un verify rojo en el commit viejo cuando un push
+  # nuevo cancela la corrida anterior.
+  verify:
+    needs: [python-and-postgres, sql-pglite]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every job to pass
+        env:
+          PYTHON_AND_POSTGRES: ${{ needs.python-and-postgres.result }}
+          SQL_PGLITE: ${{ needs.sql-pglite.result }}
+        run: |
+          echo "python-and-postgres: $PYTHON_AND_POSTGRES"
+          echo "sql-pglite: $SQL_PGLITE"
+          test "$PYTHON_AND_POSTGRES" = success && test "$SQL_PGLITE" = success
