@@ -1,0 +1,778 @@
+{
+  "_formato": {
+    "que_es": "La gemela del horario (diseno del motor de flujos, §3.2 y §3.4): los mismos casos corren en pytest contra bridge.flow_schedule (tests/test_flow_schedule.py) y en PGlite contra reevaluate_followup_action real (tests/sql/followup_engine/validate_flow_engine_legacy.mjs, la version vigente de 20260805000300_per_case_conversation_anchor.sql, :219-254 para la ventana).",
+    "horas": "Todas las horas son instantes ISO 8601 en UTC (Z). 'local' es solo para leer: la hora local en la zona de la fila, con su abreviatura y su isodow. 2026-10-16 es viernes. America/Mexico_City es UTC-6 todo 2026 (sin horario de verano desde 2022).",
+    "lado_python": "horario y fixed_zone van a flow_schedule.franja_of(horario, fixed_zone=...); policy va a franja_of_policy(policy). Con las dos franjas: is_open(franja, at) == is_open y next_open(franja, at) == next_open. next_open se define para todo at (el primer inicio estrictamente posterior); la base lo calcula solo con la franja cerrada.",
+    "lado_pglite": "Por caso, una fila de followup_policy_versions propia (policy_key unica) con policy_base y, encima, policy (timezone y business_windows, con la forma real de la tabla). Una accion first_contact_review, step_key first_contact, con expires_at del caso y un lease vigente en at; un caso sin conversacion (conversation_id null), en grace_period o active, con la version que espera la accion; su secuencia active con automatic_messages_accepted = 0; el contacto sin baja, la identidad resuelta con su channel_identity de whatsapp activa, y una contact_authorizations allowed de cart_recovery por whatsapp con valid_from anterior a todos los at (los hay de marzo de 2026). Se llama reevaluate_followup_action(p_now => at, p_chatwoot_checked => false, el resto de la evidencia de Chatwoot en null). Con eso, lo unico que decide es la ventana.",
+    "esperado_pglite": "reevaluation.decision y reevaluation.reason_code son las columnas que devuelve la funcion. reevaluation.due_at: con defer, el due_at que queda en scheduled_actions (es next_open); con execute o escalate es null, que quiere decir que la reevaluacion no lo reescribe (execute deja la accion como estaba; escalate la cancela). next_open se contrasta en PGlite solo a traves del due_at de los defer.",
+    "decision": "Abierta: execute / eligible_for_execution. Cerrada con next_open < expires_at: defer / business_window_closed, con due_at = next_open. Cerrada con next_open nulo o >= expires_at: escalate / no_business_window_before_expiry.",
+    "la_hora_que_no_existe": "Medido en PGlite 0.5.4 (PostgreSQL 18.3) el 2026-10-16: (fecha + hora) at time zone zona toma, de las dos lecturas de una hora local, la que cae mas tarde en UTC. La hora que no existe (Madrid, 2026-03-29 02:30) se lee con el offset de antes del salto, como fold=0 de zoneinfo; la que pasa dos veces (Madrid, 2026-10-25 02:30), con el de despues, como fold=1. flow_schedule toma el maximo en UTC de fold=0 y fold=1.",
+    "policy_base": {
+      "status": "published",
+      "purpose": "cart_recovery",
+      "grace_period": "00:00:00",
+      "expires_after": "1 day",
+      "max_automatic_messages": 1,
+      "steps": [
+        {
+          "mode": "freeform",
+          "step_key": "first_contact"
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "id": "cdmx_0859_00",
+      "que": "Un minuto antes de abrir: cerrada, abre a las 09:00 del mismo dia.",
+      "horario": {
+        "zona": "America/Mexico_City",
+        "desde": "09:00",
+        "hasta": "21:00"
+      },
+      "fixed_zone": null,
+      "policy": {
+        "timezone": "America/Mexico_City",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "09:00",
+            "end": "21:00"
+          }
+        ]
+      },
+      "at": "2026-10-16T14:59:00Z",
+      "local": "2026-10-16 08:59:00 CST (vie, isodow 5)",
+      "expires_at": "2026-10-17T14:59:00Z",
+      "is_open": false,
+      "next_open": "2026-10-16T15:00:00Z",
+      "reevaluation": {
+        "decision": "defer",
+        "reason_code": "business_window_closed",
+        "due_at": "2026-10-16T15:00:00Z"
+      }
+    },
+    {
+      "id": "cdmx_0859_59",
+      "que": "El ultimo segundo antes de abrir: cerrada.",
+      "horario": {
+        "zona": "America/Mexico_City",
+        "desde": "09:00",
+        "hasta": "21:00"
+      },
+      "fixed_zone": null,
+      "policy": {
+        "timezone": "America/Mexico_City",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "09:00",
+            "end": "21:00"
+          }
+        ]
+      },
+      "at": "2026-10-16T14:59:59Z",
+      "local": "2026-10-16 08:59:59 CST (vie, isodow 5)",
+      "expires_at": "2026-10-17T14:59:59Z",
+      "is_open": false,
+      "next_open": "2026-10-16T15:00:00Z",
+      "reevaluation": {
+        "decision": "defer",
+        "reason_code": "business_window_closed",
+        "due_at": "2026-10-16T15:00:00Z"
+      }
+    },
+    {
+      "id": "cdmx_0900_00",
+      "que": "El minuto de inicio: abierta.",
+      "horario": {
+        "zona": "America/Mexico_City",
+        "desde": "09:00",
+        "hasta": "21:00"
+      },
+      "fixed_zone": null,
+      "policy": {
+        "timezone": "America/Mexico_City",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "09:00",
+            "end": "21:00"
+          }
+        ]
+      },
+      "at": "2026-10-16T15:00:00Z",
+      "local": "2026-10-16 09:00:00 CST (vie, isodow 5)",
+      "expires_at": "2026-10-17T15:00:00Z",
+      "is_open": true,
+      "next_open": "2026-10-17T15:00:00Z",
+      "reevaluation": {
+        "decision": "execute",
+        "reason_code": "eligible_for_execution",
+        "due_at": null
+      }
+    },
+    {
+      "id": "cdmx_2100_30",
+      "que": "Medio minuto despues del fin: abierta, el minuto de fin entra entero.",
+      "horario": {
+        "zona": "America/Mexico_City",
+        "desde": "09:00",
+        "hasta": "21:00"
+      },
+      "fixed_zone": null,
+      "policy": {
+        "timezone": "America/Mexico_City",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "09:00",
+            "end": "21:00"
+          }
+        ]
+      },
+      "at": "2026-10-17T03:00:30Z",
+      "local": "2026-10-16 21:00:30 CST (vie, isodow 5)",
+      "expires_at": "2026-10-18T03:00:30Z",
+      "is_open": true,
+      "next_open": "2026-10-17T15:00:00Z",
+      "reevaluation": {
+        "decision": "execute",
+        "reason_code": "eligible_for_execution",
+        "due_at": null
+      }
+    },
+    {
+      "id": "cdmx_2100_59",
+      "que": "El ultimo segundo del minuto de fin: abierta.",
+      "horario": {
+        "zona": "America/Mexico_City",
+        "desde": "09:00",
+        "hasta": "21:00"
+      },
+      "fixed_zone": null,
+      "policy": {
+        "timezone": "America/Mexico_City",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "09:00",
+            "end": "21:00"
+          }
+        ]
+      },
+      "at": "2026-10-17T03:00:59Z",
+      "local": "2026-10-16 21:00:59 CST (vie, isodow 5)",
+      "expires_at": "2026-10-18T03:00:59Z",
+      "is_open": true,
+      "next_open": "2026-10-17T15:00:00Z",
+      "reevaluation": {
+        "decision": "execute",
+        "reason_code": "eligible_for_execution",
+        "due_at": null
+      }
+    },
+    {
+      "id": "cdmx_2100_59_999999",
+      "que": "El ultimo microsegundo del minuto de fin: abierta (to_char trunca, no redondea).",
+      "horario": {
+        "zona": "America/Mexico_City",
+        "desde": "09:00",
+        "hasta": "21:00"
+      },
+      "fixed_zone": null,
+      "policy": {
+        "timezone": "America/Mexico_City",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "09:00",
+            "end": "21:00"
+          }
+        ]
+      },
+      "at": "2026-10-17T03:00:59.999999Z",
+      "local": "2026-10-16 21:00:59.999999 CST (vie, isodow 5)",
+      "expires_at": "2026-10-18T03:00:59Z",
+      "is_open": true,
+      "next_open": "2026-10-17T15:00:00Z",
+      "reevaluation": {
+        "decision": "execute",
+        "reason_code": "eligible_for_execution",
+        "due_at": null
+      }
+    },
+    {
+      "id": "cdmx_2101_00",
+      "que": "El minuto siguiente al fin: cerrada, abre a las 09:00 del dia siguiente.",
+      "horario": {
+        "zona": "America/Mexico_City",
+        "desde": "09:00",
+        "hasta": "21:00"
+      },
+      "fixed_zone": null,
+      "policy": {
+        "timezone": "America/Mexico_City",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "09:00",
+            "end": "21:00"
+          }
+        ]
+      },
+      "at": "2026-10-17T03:01:00Z",
+      "local": "2026-10-16 21:01:00 CST (vie, isodow 5)",
+      "expires_at": "2026-10-18T03:01:00Z",
+      "is_open": false,
+      "next_open": "2026-10-17T15:00:00Z",
+      "reevaluation": {
+        "decision": "defer",
+        "reason_code": "business_window_closed",
+        "due_at": "2026-10-17T15:00:00Z"
+      }
+    },
+    {
+      "id": "cdmx_noche_0300",
+      "que": "De madrugada: cerrada, el proximo inicio es en el mismo dia local.",
+      "horario": {
+        "zona": "America/Mexico_City",
+        "desde": "09:00",
+        "hasta": "21:00"
+      },
+      "fixed_zone": null,
+      "policy": {
+        "timezone": "America/Mexico_City",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "09:00",
+            "end": "21:00"
+          }
+        ]
+      },
+      "at": "2026-10-16T09:00:00Z",
+      "local": "2026-10-16 03:00:00 CST (vie, isodow 5)",
+      "expires_at": "2026-10-17T09:00:00Z",
+      "is_open": false,
+      "next_open": "2026-10-16T15:00:00Z",
+      "reevaluation": {
+        "decision": "defer",
+        "reason_code": "business_window_closed",
+        "due_at": "2026-10-16T15:00:00Z"
+      }
+    },
+    {
+      "id": "cdmx_noche_2330",
+      "que": "De noche, con la fecha UTC ya en el dia siguiente: cerrada, el proximo inicio es al dia siguiente.",
+      "horario": {
+        "zona": "America/Mexico_City",
+        "desde": "09:00",
+        "hasta": "21:00"
+      },
+      "fixed_zone": null,
+      "policy": {
+        "timezone": "America/Mexico_City",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "09:00",
+            "end": "21:00"
+          }
+        ]
+      },
+      "at": "2026-10-17T05:30:00Z",
+      "local": "2026-10-16 23:30:00 CST (vie, isodow 5)",
+      "expires_at": "2026-10-18T05:30:00Z",
+      "is_open": false,
+      "next_open": "2026-10-17T15:00:00Z",
+      "reevaluation": {
+        "decision": "defer",
+        "reason_code": "business_window_closed",
+        "due_at": "2026-10-17T15:00:00Z"
+      }
+    },
+    {
+      "id": "cdmx_franja_de_noche_2100",
+      "que": "Una franja de noche (22:00 a 23:00) a las 21:00 locales, con la fecha UTC ya en el dia siguiente: cerrada, el proximo inicio es a las 22:00 del mismo dia local (04:00Z del 17), no del dia siguiente.",
+      "horario": {
+        "zona": "America/Mexico_City",
+        "desde": "22:00",
+        "hasta": "23:00"
+      },
+      "fixed_zone": null,
+      "policy": {
+        "timezone": "America/Mexico_City",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "22:00",
+            "end": "23:00"
+          }
+        ]
+      },
+      "at": "2026-10-17T03:00:00Z",
+      "local": "2026-10-16 21:00:00 CST (vie, isodow 5)",
+      "expires_at": "2026-10-18T03:00:00Z",
+      "is_open": false,
+      "next_open": "2026-10-17T04:00:00Z",
+      "reevaluation": {
+        "decision": "defer",
+        "reason_code": "business_window_closed",
+        "due_at": "2026-10-17T04:00:00Z"
+      }
+    },
+    {
+      "id": "cdmx_vence_justo_al_abrir",
+      "que": "Cerrada y vence en el mismo instante en que abriria: escala (la base compara con >=).",
+      "horario": {
+        "zona": "America/Mexico_City",
+        "desde": "09:00",
+        "hasta": "21:00"
+      },
+      "fixed_zone": null,
+      "policy": {
+        "timezone": "America/Mexico_City",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "09:00",
+            "end": "21:00"
+          }
+        ]
+      },
+      "at": "2026-10-17T03:01:00Z",
+      "local": "2026-10-16 21:01:00 CST (vie, isodow 5)",
+      "expires_at": "2026-10-17T15:00:00Z",
+      "is_open": false,
+      "next_open": "2026-10-17T15:00:00Z",
+      "reevaluation": {
+        "decision": "escalate",
+        "reason_code": "no_business_window_before_expiry",
+        "due_at": null
+      }
+    },
+    {
+      "id": "cdmx_vence_un_segundo_despues_de_abrir",
+      "que": "Cerrada y vence un segundo despues de abrir: difiere.",
+      "horario": {
+        "zona": "America/Mexico_City",
+        "desde": "09:00",
+        "hasta": "21:00"
+      },
+      "fixed_zone": null,
+      "policy": {
+        "timezone": "America/Mexico_City",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "09:00",
+            "end": "21:00"
+          }
+        ]
+      },
+      "at": "2026-10-17T03:01:00Z",
+      "local": "2026-10-16 21:01:00 CST (vie, isodow 5)",
+      "expires_at": "2026-10-17T15:00:01Z",
+      "is_open": false,
+      "next_open": "2026-10-17T15:00:00Z",
+      "reevaluation": {
+        "decision": "defer",
+        "reason_code": "business_window_closed",
+        "due_at": "2026-10-17T15:00:00Z"
+      }
+    },
+    {
+      "id": "siempre_zona_fija_cdmx",
+      "que": "siempre, con la zona fija del flujo: abierta a las 23:59:59 locales; la proxima apertura es la medianoche local.",
+      "horario": "siempre",
+      "fixed_zone": "America/Mexico_City",
+      "policy": {
+        "timezone": "America/Mexico_City",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "00:00",
+            "end": "23:59"
+          }
+        ]
+      },
+      "at": "2026-10-17T05:59:59Z",
+      "local": "2026-10-16 23:59:59 CST (vie, isodow 5)",
+      "expires_at": "2026-10-18T05:59:59Z",
+      "is_open": true,
+      "next_open": "2026-10-17T06:00:00Z",
+      "reevaluation": {
+        "decision": "execute",
+        "reason_code": "eligible_for_execution",
+        "due_at": null
+      }
+    },
+    {
+      "id": "siempre_sin_zona_utc",
+      "que": "siempre, sin zona fija: la fila va en UTC; abierta a la medianoche.",
+      "horario": "siempre",
+      "fixed_zone": null,
+      "policy": {
+        "timezone": "UTC",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "00:00",
+            "end": "23:59"
+          }
+        ]
+      },
+      "at": "2026-10-16T00:00:00Z",
+      "local": "2026-10-16 00:00:00 UTC (vie, isodow 5)",
+      "expires_at": "2026-10-17T00:00:00Z",
+      "is_open": true,
+      "next_open": "2026-10-17T00:00:00Z",
+      "reevaluation": {
+        "decision": "execute",
+        "reason_code": "eligible_for_execution",
+        "due_at": null
+      }
+    },
+    {
+      "id": "madrid_hora_que_no_existe",
+      "que": "El 2026-03-29 las 02:30 de Madrid no existen: la base las lee con el offset de antes del salto (+01:00), 01:30Z, que son las 03:30 CEST (fold=0).",
+      "horario": {
+        "zona": "Europe/Madrid",
+        "desde": "02:30",
+        "hasta": "05:00"
+      },
+      "fixed_zone": null,
+      "policy": {
+        "timezone": "Europe/Madrid",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "02:30",
+            "end": "05:00"
+          }
+        ]
+      },
+      "at": "2026-03-29T00:00:00Z",
+      "local": "2026-03-29 01:00:00 CET (dom, isodow 7)",
+      "expires_at": "2026-03-30T00:00:00Z",
+      "is_open": false,
+      "next_open": "2026-03-29T01:30:00Z",
+      "reevaluation": {
+        "decision": "defer",
+        "reason_code": "business_window_closed",
+        "due_at": "2026-03-29T01:30:00Z"
+      }
+    },
+    {
+      "id": "madrid_dia_del_salto_abierta",
+      "que": "El dia del salto, a las 03:00 CEST: abierta; la proxima apertura es la de las 02:30 que no existen, 01:30Z.",
+      "horario": {
+        "zona": "Europe/Madrid",
+        "desde": "02:30",
+        "hasta": "05:00"
+      },
+      "fixed_zone": null,
+      "policy": {
+        "timezone": "Europe/Madrid",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "02:30",
+            "end": "05:00"
+          }
+        ]
+      },
+      "at": "2026-03-29T01:00:00Z",
+      "local": "2026-03-29 03:00:00 CEST (dom, isodow 7)",
+      "expires_at": "2026-03-30T01:00:00Z",
+      "is_open": true,
+      "next_open": "2026-03-29T01:30:00Z",
+      "reevaluation": {
+        "decision": "execute",
+        "reason_code": "eligible_for_execution",
+        "due_at": null
+      }
+    },
+    {
+      "id": "madrid_hora_que_pasa_dos_veces",
+      "que": "El 2026-10-25 las 02:30 de Madrid pasan dos veces: la base toma la segunda (+01:00), 01:30Z; fold=0 daria 00:30Z.",
+      "horario": {
+        "zona": "Europe/Madrid",
+        "desde": "02:30",
+        "hasta": "05:00"
+      },
+      "fixed_zone": null,
+      "policy": {
+        "timezone": "Europe/Madrid",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "02:30",
+            "end": "05:00"
+          }
+        ]
+      },
+      "at": "2026-10-24T23:00:00Z",
+      "local": "2026-10-25 01:00:00 CEST (dom, isodow 7)",
+      "expires_at": "2026-10-25T23:00:00Z",
+      "is_open": false,
+      "next_open": "2026-10-25T01:30:00Z",
+      "reevaluation": {
+        "decision": "defer",
+        "reason_code": "business_window_closed",
+        "due_at": "2026-10-25T01:30:00Z"
+      }
+    },
+    {
+      "id": "madrid_primera_pasada_abierta",
+      "que": "A las 02:30 CEST, la primera pasada: ya esta abierta, aunque la proxima apertura de la base sea la segunda, 01:30Z.",
+      "horario": {
+        "zona": "Europe/Madrid",
+        "desde": "02:30",
+        "hasta": "05:00"
+      },
+      "fixed_zone": null,
+      "policy": {
+        "timezone": "Europe/Madrid",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "02:30",
+            "end": "05:00"
+          }
+        ]
+      },
+      "at": "2026-10-25T00:30:00Z",
+      "local": "2026-10-25 02:30:00 CEST (dom, isodow 7)",
+      "expires_at": "2026-10-26T00:30:00Z",
+      "is_open": true,
+      "next_open": "2026-10-25T01:30:00Z",
+      "reevaluation": {
+        "decision": "execute",
+        "reason_code": "eligible_for_execution",
+        "due_at": null
+      }
+    },
+    {
+      "id": "etc_gmt_mas_5_abierta",
+      "que": "Una zona de offset fijo, Etc/GMT+5 (UTC-5, la de los casos generados): 13:00:30 locales, abierta.",
+      "horario": {
+        "zona": "Etc/GMT+5",
+        "desde": "11:00",
+        "hasta": "13:00"
+      },
+      "fixed_zone": null,
+      "policy": {
+        "timezone": "Etc/GMT+5",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "11:00",
+            "end": "13:00"
+          }
+        ]
+      },
+      "at": "2026-10-16T18:00:30Z",
+      "local": "2026-10-16 13:00:30 -05 (vie, isodow 5)",
+      "expires_at": "2026-10-17T18:00:30Z",
+      "is_open": true,
+      "next_open": "2026-10-17T16:00:00Z",
+      "reevaluation": {
+        "decision": "execute",
+        "reason_code": "eligible_for_execution",
+        "due_at": null
+      }
+    },
+    {
+      "id": "etc_gmt_menos_3_cerrada",
+      "que": "Etc/GMT-3 (UTC+3): 10:59:59 locales, cerrada, abre en un segundo.",
+      "horario": {
+        "zona": "Etc/GMT-3",
+        "desde": "11:00",
+        "hasta": "13:00"
+      },
+      "fixed_zone": null,
+      "policy": {
+        "timezone": "Etc/GMT-3",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "11:00",
+            "end": "13:00"
+          }
+        ]
+      },
+      "at": "2026-10-16T07:59:59Z",
+      "local": "2026-10-16 10:59:59 +03 (vie, isodow 5)",
+      "expires_at": "2026-10-17T07:59:59Z",
+      "is_open": false,
+      "next_open": "2026-10-16T08:00:00Z",
+      "reevaluation": {
+        "decision": "defer",
+        "reason_code": "business_window_closed",
+        "due_at": "2026-10-16T08:00:00Z"
+      }
+    }
+  ]
+}

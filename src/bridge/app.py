@@ -19,7 +19,7 @@ from dataclasses import dataclass, fields as dataclass_fields
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import MappingProxyType
-from typing import AsyncGenerator, Awaitable, Callable, Protocol
+from typing import AsyncGenerator, Awaitable, Callable, Iterable, Mapping, Protocol
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -64,10 +64,12 @@ from bridge.reactivation import ConversationReactivationSweeper
 from bridge.commercial_ally import CommercialAllyConfig, JOHANNA_COMMERCIAL_ALLY
 from bridge.commercial_knowledge import CommercialKnowledge
 from bridge.instance_manifest import GHL_RISK_GATED_FLOWS, InstanceManifest
+from bridge.product_label import ProductLabeler
+from bridge.product_routes import HotmartUnrouted, ProductRoute, ProductRoutes
 from bridge.checkout_delivery import CheckoutDeliveryError, deliver_checkout_issuance_v2
 from bridge.filtering import EventDecision, classify_chatwoot_event
 from bridge.agent_provenance import AgentTurn, CONTEXT_BUILDER_VERSION
-from bridge.hermes import HermesShadowProcessor
+from bridge.hermes import HermesShadowProcessor, payment_link_product
 from bridge.hotmart import (
     EVENT_CART_ABANDONMENT,
     EVENT_PURCHASE_APPROVED,
@@ -82,6 +84,7 @@ from bridge.hotmart import (
 )
 from bridge.inbound_handoff import request_handoff_for_inbound_proposal
 from bridge.ghl_precheckout_adapter import (
+    FORM_LANDING_ACTIVE,
     GhlAdapterRejection,
     ghl_body_token,
     parse_ghl_body,
@@ -166,6 +169,7 @@ from bridge.supabase import (
     InboundCommercialCaseAdmissionResult,
     OperatorCorrelationResolutionError,
     PilotBoundaryConfig,
+    PersonActivity,
     PrecheckoutAdmissionResult,
     RecentPaymentFailure,
     SupabaseClient,
@@ -1851,6 +1855,64 @@ def recent_payment_failure_context(failure: RecentPaymentFailure) -> dict[str, o
     return {key: value for key, value in context.items() if value is not None}
 
 
+# Cuantas cosas de lo que hizo la persona recibe el agente: el mismo tope que
+# pone la lectura de cada funnel (get_portable_person_activity_v1).
+PERSON_ACTIVITY_CONTEXT_LIMIT = 20
+
+
+def person_activity_context(
+    activities: tuple[PersonActivity, ...], *, product: str
+) -> list[dict[str, str]]:
+    """Lo que hizo la persona, para la entrada del agente (SOUL comun, «Entrada»).
+
+    El funnel es el producto: cada cosa lleva la clave del producto del funnel
+    que se leyo. En orden, de la mas vieja a la mas nueva.
+    """
+    return products_activity_context((product, item) for item in activities)
+
+
+def products_activity_context(
+    items: Iterable[tuple[str, PersonActivity]],
+) -> list[dict[str, str]]:
+    """Lo que hizo la persona en el funnel de cada producto, todo junto (2c-3b).
+
+    Cada cosa con la clave del producto de su funnel, de la mas vieja a la mas
+    nueva, y solo las 20 mas nuevas: con varios productos, la suma de las
+    lecturas puede pasar el tope de una.
+    """
+    ordered = sorted(items, key=lambda pair: pair[1].occurred_at)
+    return [
+        {
+            "activity": item.activity,
+            "product": product,
+            "at": item.occurred_at.astimezone(UTC)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z"),
+        }
+        for product, item in ordered[-PERSON_ACTIVITY_CONTEXT_LIMIT:]
+    ]
+
+
+def agent_products_context(settings: "Settings") -> list[dict[str, str]]:
+    """Los productos de la aliada, para la entrada del agente (2b).
+
+    La clave de [[productos]] del manifiesto y el nombre con el que el producto
+    aparece en el conocimiento («# Producto: ...»). Vacio sin productos
+    declarados: la entrada es la de siempre.
+    """
+    manifest = settings.instance_manifest
+    knowledge = settings.commercial_knowledge
+    if manifest is None or not manifest.products or knowledge is None:
+        return []
+    names = {product.key: product.offer_name for product in knowledge.products}
+    return [
+        {"key": product.key, "name": names[product.key]}
+        for product in manifest.products
+        if product.key in names
+    ]
+
+
 def _shadow_context(payload: dict[str, object]) -> dict[str, object] | None:
     conversation = payload.get("conversation")
     content = payload.get("content")
@@ -2142,6 +2204,11 @@ _FLAG_REQUIRED_FLOW = MappingProxyType({
 _OUTBOUND_FLOWS = ("precheckout", "carrito", "pago_fallido", "reactivacion", "descuento")
 
 
+# Los rechazos del adaptador de GHL que dependen del producto con que se
+# tradujo: con otro producto, la misma URL puede ser de una landing suya.
+_GHL_LANDING_REJECTIONS = frozenset({"landing_unknown", "landing_ambiguous"})
+
+
 def _validate_instance_manifest_gates(settings: Settings) -> None:
     manifest = settings.instance_manifest
     assert manifest is not None
@@ -2152,6 +2219,14 @@ def _validate_instance_manifest_gates(settings: Settings) -> None:
     knowledge = settings.commercial_knowledge
     if knowledge is not None and knowledge.ally_ref != manifest.ally_ref:
         raise ValueError("commercial knowledge belongs to another ally")
+    if knowledge is not None:
+        # [[productos]] y las secciones del conocimiento se atan por la clave: con
+        # productos en el manifiesto, el conocimiento separa los mismos.
+        products_error = manifest.knowledge_products_error(
+            tuple(product.key for product in knowledge.products)
+        )
+        if products_error is not None:
+            raise ValueError(f"instance products: {products_error}")
     blocked = sorted(
         f"{flag}->{flow}"
         for flag, flow in _FLAG_REQUIRED_FLOW.items()
@@ -2595,12 +2670,19 @@ class _PhoneEquivalentCheckoutIssuance:
     trabajan por issuance_id y no cambian. Sin manifiesto (Johanna) el
     bridge le pasa el cliente tal cual y la reserva sigue siendo la
     compartida.
+
+    Con ``funnel_ref`` (varios productos, 2c-3a) la reserva es la del funnel del
+    producto que nombro el agente: su oferta, su hotlink y su intencion. Con un
+    solo producto no se pasa y la reserva es la de siempre.
     """
 
-    def __init__(self, client: object) -> None:
+    def __init__(self, client: object, funnel_ref: str | None = None) -> None:
         self._client = client
+        self._funnel_ref = funnel_ref
 
     async def reserve_chatwoot_checkout_issuance_v2(self, **kwargs: object) -> object:
+        if self._funnel_ref is not None:
+            kwargs["funnel_ref"] = self._funnel_ref
         return await self._client.reserve_chatwoot_checkout_issuance_v2(  # type: ignore[attr-defined]
             phone_equivalence=True, **kwargs
         )
@@ -2863,6 +2945,11 @@ def create_app(
     portable_runtime = (
         explicit_manifest_runtime
         or settings.commercial_ally_config != JOHANNA_COMMERCIAL_ALLY
+    )
+    # Un binding por producto (paso 2c): el principal es el que ya carga el
+    # bridge; con un solo producto es la unica ruta.
+    commercial_ally_routes = ProductRoutes.build(
+        settings.commercial_ally_config, settings.instance_manifest
     )
     # Candado del binding v1 de ATT1 (COMMERCIAL_ALLY_CONFIG_PATH con
     # tenant_ref "att1", 2026-09-04). Con el manifiesto v2 no dispara: ahi
@@ -3374,6 +3461,67 @@ def create_app(
             resume_macro_id=settings.chatwoot_resume_macro_id,
             opt_out_macro_id=settings.chatwoot_opt_out_macro_id,
         )
+    # La etiqueta de producto (varios productos por aliada, pasos 2a y 2c-3b): un
+    # etiquetador por producto de [[productos]] que la declare. Sin ninguno no se
+    # crea nada y nada cambia.
+    product_labelers: dict[str, ProductLabeler] = {}
+    several_products = len(commercial_ally_routes) > 1
+    for labeled_product in (
+        settings.instance_manifest.products
+        if settings.instance_manifest is not None
+        else ()
+    ):
+        if labeled_product.chatwoot_label is None:
+            continue
+        assert labeled_product.chatwoot_label_macro_id is not None
+        if control_client is None:
+            raise ValueError("the product label requires Chatwoot control")
+        if labeled_product.chatwoot_label_macro_id in {
+            settings.chatwoot_pause_macro_id,
+            settings.chatwoot_resume_macro_id,
+            settings.chatwoot_opt_out_macro_id,
+        }:
+            # Ejecutado sobre cada conversacion, el macro de pausa pausaria el
+            # inbox entero.
+            raise ValueError(
+                "the product label macro cannot be a pause, resume or opt-out macro"
+            )
+        product_labelers[labeled_product.key] = ProductLabeler(
+            client=control_client,
+            label=labeled_product.chatwoot_label,
+            macro_id=labeled_product.chatwoot_label_macro_id,
+        )
+
+    async def label_products(
+        conversation_id: int, keys: Iterable[str | None], *, source: str
+    ) -> None:
+        """Suma la etiqueta de cada producto que la declara. Nunca lanza."""
+        for product_key in dict.fromkeys(keys):
+            labeler = product_labelers.get(product_key) if product_key is not None else None
+            if labeler is not None:
+                await labeler.ensure(conversation_id, source=source)
+
+    async def label_opened_conversation(conversation_id: int) -> None:
+        # Las plantillas salen de los flujos, y hoy solo el principal tiene
+        # flujos (los demas llegan con el motor de la 1b, decision de Dan del
+        # 2026-10-16): la plantilla lleva la etiqueta del principal.
+        await label_products(
+            conversation_id, (commercial_ally_routes.principal.key,), source="plantilla"
+        )
+
+    conversation_opened_hook = (
+        label_opened_conversation
+        if commercial_ally_routes.principal.key in product_labelers
+        else None
+    )
+    # Lo que ve el agente de los productos (paso 2b): la lista de productos y lo
+    # que hizo la persona, solo con [[productos]]. Sin eso la entrada no cambia.
+    agent_products = agent_products_context(settings)
+    agent_product_keys = (
+        tuple(product.key for product in settings.instance_manifest.products)
+        if settings.instance_manifest is not None
+        else ()
+    )
     configured_reply_splitter = reply_splitter
     reply_manifest_reader = HermesReplySplitter(
         base_url="",
@@ -3931,6 +4079,7 @@ def create_app(
                 dynamic_recipient_enabled=portable_dynamic_recipient,
                 template=waba_template,
                 whatsapp_equivalence_enabled=portable_dynamic_recipient,
+                on_conversation_opened=conversation_opened_hook,
             )
         resolution_worker = ResolutionWorker(
             supabase=shared_supabase,
@@ -3948,6 +4097,7 @@ def create_app(
                 settings.portable_hotmart_payment_failure_enabled
             ),
             pilot_boundary=pilot_boundary,
+            product_routes=commercial_ally_routes,
             commercial_ally_config=(
                 settings.commercial_ally_config
                 if portable_dynamic_recipient
@@ -4018,6 +4168,7 @@ def create_app(
                     dynamic_recipient_enabled=portable_dynamic_recipient,
                     template=waba_template,
                     whatsapp_equivalence_enabled=portable_dynamic_recipient,
+                    on_conversation_opened=conversation_opened_hook,
                 )
             if outbound_sender is None or (
                 outbound_agent is None and not approved_template_direct
@@ -4169,9 +4320,10 @@ def create_app(
             if slack_projection_worker is not None:
                 if portable_runtime:
                     assert shared_supabase is not None
-                    await shared_supabase.resolve_commercial_ally_runtime_binding(
-                        settings.commercial_ally_config
-                    )
+                    for route in commercial_ally_routes:
+                        await shared_supabase.resolve_commercial_ally_runtime_binding(
+                            route.config
+                        )
                 await slack_projection_worker.start()
             if slack_handoff_projection_worker is not None:
                 await slack_handoff_projection_worker.start()
@@ -4290,25 +4442,112 @@ def create_app(
         """
         if shared_supabase is None or not wa_id:
             return None
-        try:
-            failure = await shared_supabase.get_portable_recent_payment_failure(
-                config=settings.commercial_ally_config,
-                whatsapp_phone=wa_id,
-            )
-        except SupabaseError as exc:
-            logger.warning(
-                "recent_payment_failure_lookup_failed error=%s",
-                type(exc).__name__,
-            )
+        # Con varios productos, una lectura por funnel y el mas reciente de
+        # todos, con la clave de su producto (2c-3b). Con uno, como siempre.
+        lookups: list[tuple[str | None, CommercialAllyConfig]] = (
+            [(route.key, route.config) for route in commercial_ally_routes]
+            if several_products
+            else [(None, settings.commercial_ally_config)]
+        )
+        failures: list[tuple[str | None, RecentPaymentFailure]] = []
+        for failure_product, failure_config in lookups:
+            try:
+                failure = await shared_supabase.get_portable_recent_payment_failure(
+                    config=failure_config,
+                    whatsapp_phone=wa_id,
+                )
+            except SupabaseError as exc:
+                if failure_product is None:
+                    logger.warning(
+                        "recent_payment_failure_lookup_failed error=%s",
+                        type(exc).__name__,
+                    )
+                else:
+                    logger.warning(
+                        "recent_payment_failure_lookup_failed error=%s product=%s",
+                        type(exc).__name__,
+                        failure_product,
+                    )
+                continue
+            if failure is not None:
+                failures.append((failure_product, failure))
+        if not failures:
             return None
-        if failure is None:
-            return None
+        failure_product, failure = max(failures, key=lambda pair: pair[1].failed_at)
         logger.info(
             "recent_payment_failure_context method=%s country=%s",
             failure.payment_type,
             failure.checkout_country_iso,
         )
-        return recent_payment_failure_context(failure)
+        context = recent_payment_failure_context(failure)
+        if failure_product is not None:
+            context["product"] = failure_product
+        return context
+
+    async def _read_person_activity(
+        wa_id: str | None,
+    ) -> tuple[tuple[str, PersonActivity], ...] | None:
+        """Lo que hizo este movil en el funnel de cada producto (2b y 2c-3b).
+
+        Con un producto, el funnel del binding; con varios, una lectura por
+        funnel. Cada cosa va con la clave de su producto. None sin productos o
+        sin movil, o si falla la unica lectura. Con varios, el funnel que falla
+        queda afuera y el resto sigue: el agente contesta igual.
+        """
+        if shared_supabase is None or not wa_id:
+            return None
+        if several_products:
+            lookups = [
+                (route.key, route.config)
+                for route in commercial_ally_routes
+                if route.key is not None
+            ]
+        elif len(agent_product_keys) == 1 and settings.commercial_ally_config is not None:
+            lookups = [(agent_product_keys[0], settings.commercial_ally_config)]
+        else:
+            return None
+        items: list[tuple[str, PersonActivity]] = []
+        for activity_product, activity_config in lookups:
+            try:
+                activities = await shared_supabase.get_portable_person_activity(
+                    config=activity_config,
+                    whatsapp_phone=wa_id,
+                )
+            except SupabaseError as exc:
+                if not several_products:
+                    logger.warning(
+                        "person_activity_lookup_failed error=%s",
+                        type(exc).__name__,
+                    )
+                    return None
+                logger.warning(
+                    "person_activity_lookup_failed error=%s product=%s",
+                    type(exc).__name__,
+                    activity_product,
+                )
+                continue
+            items.extend((activity_product, activity) for activity in activities)
+        logger.info("person_activity_context items=%s", len(items))
+        return tuple(items)
+
+    async def _person_activity_context(
+        wa_id: str | None,
+        *,
+        already_read: tuple[tuple[str, PersonActivity], ...] | None = None,
+    ) -> list[dict[str, str]] | None:
+        """Lo que hizo la persona, para la entrada del agente (2b y 2c-3b).
+
+        Con varios productos se lee al entrar el mensaje, para las etiquetas, y
+        se reusa aca. Si la lectura falla, el agente contesta igual, sin el dato.
+        """
+        items = (
+            already_read
+            if already_read is not None
+            else await _read_person_activity(wa_id)
+        )
+        if not items:
+            return None
+        return products_activity_context(items)
 
     async def resolve_inbound_external_user_id(
         wa_id: str,
@@ -4681,6 +4920,38 @@ def create_app(
             raise RuntimeError("chatwoot_invalid_message_id")
         if not decision.accepted:
             return
+        # Con varios productos, lo que hizo la persona se lee una vez, aca: da las
+        # etiquetas y lo reusa la entrada del agente.
+        inbound_person_activity: tuple[tuple[str, PersonActivity], ...] | None = None
+        if product_labelers:
+            # Antes de la admision y de la pausa, a proposito: la etiqueta dice de
+            # que producto es la conversacion, la atienda el agente o una persona.
+            # Es de falla blanda: ensure no lanza.
+            labeled_conversation = payload.get("conversation")
+            labeled_conversation_id = (
+                labeled_conversation.get("id")
+                if isinstance(labeled_conversation, dict)
+                else None
+            )
+            if isinstance(labeled_conversation_id, int):
+                if several_products:
+                    # La de cada producto que aparece en lo que hizo la persona.
+                    # Sin nada, ninguna: no se adivina el producto.
+                    inbound_person_activity = await _read_person_activity(
+                        _whatsapp_digits(decision.sender_jid)
+                    )
+                    await label_products(
+                        labeled_conversation_id,
+                        (
+                            activity_product
+                            for activity_product, _ in inbound_person_activity or ()
+                        ),
+                        source="entrante",
+                    )
+                else:
+                    await label_products(
+                        labeled_conversation_id, product_labelers, source="entrante"
+                    )
         scoped_expected_jid = (
             decision.sender_jid
             if settings.chatwoot_scoped_inbound_senders_enabled
@@ -5112,14 +5383,24 @@ def create_app(
                     "bridge_injects_exact_url": True,
                     "agent_must_not_include_url": True,
                 }
+            person_wa_id = (
+                external_user_id
+                if external_user_id.isdigit()
+                else _whatsapp_digits(decision.sender_jid)
+            )
             if settings.portable_hotmart_payment_failure_enabled:
                 recent_failure = await _recent_payment_failure_context(
-                    external_user_id
-                    if external_user_id.isdigit()
-                    else _whatsapp_digits(decision.sender_jid)
+                    person_wa_id
                 )
                 if recent_failure is not None:
                     context["recent_payment_failure"] = recent_failure
+            if agent_products:
+                context["products"] = agent_products
+                person_activity = await _person_activity_context(
+                    person_wa_id, already_read=inbound_person_activity
+                )
+                if person_activity is not None:
+                    context["person_activity"] = person_activity
             completed_proposal = (
                 shadow_processor.get_completed_proposal(delivery_id=delivery_id)
                 if shadow_processor is not None
@@ -5248,6 +5529,38 @@ def create_app(
                     "reason_code": "payment_link_disabled",
                 })
                 return
+            link_product = payment_link_product(
+                completed_proposal, agent_product_keys
+            )
+            if link_product is not None:
+                # Con un solo producto el link es el de siempre; con mas de uno,
+                # el producto elige la ficha (2c-3a).
+                logger.info(
+                    "payment_link_product product=%s source=%s",
+                    link_product,
+                    "agent"
+                    if isinstance(completed_proposal.get("product"), str)
+                    else "single_product",
+                )
+            # Con mas de un producto, la reserva va por el funnel del producto
+            # que nombro el agente. Con uno solo, la de siempre.
+            link_funnel_ref: str | None = None
+            if len(commercial_ally_routes) > 1:
+                link_route = (
+                    commercial_ally_routes.by_key(link_product)
+                    if link_product is not None
+                    else None
+                )
+                if link_route is None:
+                    logger.info("payment_link_handoff reason=product_unrouted")
+                    await request_current_inbound_handoff({
+                        **completed_proposal,
+                        "decision": "handoff",
+                        "qualification_status": "needs_human",
+                        "reason_code": "payment_link_product_unrouted",
+                    })
+                    return
+                link_funnel_ref = link_route.config.funnel_ref
             assert shared_supabase is not None
             assert admission is not None
             assert settings.chatwoot_account_id is not None
@@ -5258,7 +5571,9 @@ def create_app(
                     # Con manifiesto, la reserva busca la intencion por las
                     # dos formas del movil. Sin manifiesto, como siempre.
                     supabase=(
-                        _PhoneEquivalentCheckoutIssuance(shared_supabase)
+                        _PhoneEquivalentCheckoutIssuance(
+                            shared_supabase, funnel_ref=link_funnel_ref
+                        )
                         if whatsapp_inbound_equivalence
                         else shared_supabase
                     ),
@@ -5297,6 +5612,10 @@ def create_app(
                 delivery.outcome,
                 delivery.issuance_id,
             )
+            if several_products:
+                # Con varios productos, la conversacion lleva la etiqueta del
+                # producto del link que salio. Con uno ya la tiene.
+                await label_products(conversation_id, (link_product,), source="link")
             return
         # V1 remains as rollback-only code during the V2 rolling transition.
         if False and completed_proposal.get("decision") == "send_payment_link":
@@ -6535,26 +6854,48 @@ def create_app(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail="commercial_ally_binding_unavailable",
                 )
-            try:
-                await shared_supabase.resolve_commercial_ally_runtime_binding(
-                    settings.commercial_ally_config
-                )
-            except Exception as exc:
-                logger.warning(
-                    "commercial_ally_binding_check_failed error_type=%s",
-                    type(exc).__name__,
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="commercial_ally_binding_unavailable",
-                ) from exc
+            for route in commercial_ally_routes:
+                try:
+                    await shared_supabase.resolve_commercial_ally_runtime_binding(
+                        route.config
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "commercial_ally_binding_check_failed error_type=%s funnel_ref=%s",
+                        type(exc).__name__,
+                        route.config.funnel_ref,
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="commercial_ally_binding_unavailable",
+                    ) from exc
             commercial_ally_readiness = {
                 "commercial_ally_binding": "active",
             }
+            if len(commercial_ally_routes) > 1:
+                # Solo con varios productos: con uno, /ready no cambia.
+                commercial_ally_readiness["commercial_ally_bindings"] = str(
+                    len(commercial_ally_routes)
+                )
         commercial_ally_readiness = {
             **commercial_ally_readiness,
             **instance_readiness,
         }
+        if product_labelers:
+            # La etiqueta de producto no responde 503: no atiende a nadie, y un
+            # macro que no sirve apaga solo el etiquetado. Se publica y se ve:
+            # con un producto, product_label; con varios, una por producto.
+            commercial_ally_readiness = {
+                **commercial_ally_readiness,
+                **(
+                    {
+                        f"product_label_{label_product}": labeler.state
+                        for label_product, labeler in product_labelers.items()
+                    }
+                    if several_products
+                    else {"product_label": next(iter(product_labelers.values())).state}
+                ),
+            }
         precheckout_readiness: dict[str, str] = {
             "precheckout_delayed_first_touch": "disabled",
         }
@@ -7059,6 +7400,7 @@ def create_app(
     async def _admit_portable_lead(
         submission: LeadPrecheckoutSubmission,
         raw_payload: dict[str, object],
+        route: ProductRoute,
     ) -> PrecheckoutAdmissionResult:
         # La admision portable de lead.precheckout, la misma para /webhooks/lead
         # con manifiesto y para el adaptador de GHL. Apagado el primer contacto,
@@ -7067,9 +7409,27 @@ def create_app(
         # si el plan no procede, y la respuesta HTTP es la misma en los dos
         # casos.
         assert shared_supabase is not None
+        if not route.principal:
+            # Un producto que no es el principal todavia no tiene primer
+            # contacto (paso 2c-2): el envio se admite en su funnel, que es lo
+            # que lee la historia de la persona, y no se planifica nada.
+            admission = await shared_supabase.admit_portable_observed_lead_precheckout(
+                config=route.config,
+                external_submission_id=submission.external_submission_id,
+                raw_payload=raw_payload,
+                canonical_payload=submission.as_canonical_payload(),
+            )
+            logger.info(
+                "portable_precheckout_admitted_without_flows product=%s admission=%s "
+                "submission_id=%s",
+                route.key,
+                admission.outcome,
+                admission.submission_id,
+            )
+            return admission
         if not settings.portable_precheckout_first_contact_enabled:
             return await shared_supabase.admit_portable_observed_lead_precheckout(
-                config=settings.commercial_ally_config,
+                config=route.config,
                 external_submission_id=submission.external_submission_id,
                 raw_payload=raw_payload,
                 canonical_payload=submission.as_canonical_payload(),
@@ -7078,7 +7438,7 @@ def create_app(
         assert settings.pilot_precheckout_scope_key is not None
         assert settings.pilot_precheckout_scope_version is not None
         admission = await shared_supabase.admit_and_plan_portable_lead_precheckout(
-            config=settings.commercial_ally_config,
+            config=route.config,
             external_submission_id=submission.external_submission_id,
             raw_payload=raw_payload,
             canonical_payload=submission.as_canonical_payload(),
@@ -7148,9 +7508,19 @@ def create_app(
             payload = json.loads(raw_body)
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise HTTPException(status_code=400, detail="invalid_json") from exc
+        # El producto del envio, por su landing (paso 2c-2). Con un solo
+        # producto, o una landing que no es de ninguno, el principal, y el
+        # parser rechaza como antes.
+        lead_route = commercial_ally_routes.principal
+        source = payload.get("source") if isinstance(payload, dict) else None
+        if len(commercial_ally_routes) > 1 and isinstance(source, dict):
+            lead_route = (
+                commercial_ally_routes.for_landing(source.get("site"), source.get("landing_id"))
+                or lead_route
+            )
         submission = parse_lead_precheckout(
             payload,
-            config=settings.commercial_ally_config,
+            config=lead_route.config,
         )
         if submission is None:
             raise HTTPException(status_code=400, detail="invalid_lead_precheckout_payload")
@@ -7168,7 +7538,7 @@ def create_app(
             # oferta) de cualquier landing declarada en el binding. La por
             # defecto es la de LEAD_PRECHECKOUT_* (create_app exige que
             # coincidan); las demas salen de additional_offer_landings.
-            offer_landing = settings.commercial_ally_config.offer_landing(
+            offer_landing = lead_route.config.offer_landing(
                 submission.site, submission.landing_id
             )
             outside_scope = (
@@ -7187,7 +7557,7 @@ def create_app(
         assert isinstance(payload, dict)
         try:
             admission = (
-                await _admit_portable_lead(submission, payload)
+                await _admit_portable_lead(submission, payload, lead_route)
                 if explicit_manifest_runtime
                 else await shared_supabase.admit_observed_lead_precheckout(
                     external_submission_id=submission.external_submission_id,
@@ -7220,6 +7590,44 @@ def create_app(
             raise HTTPException(
                 status_code=exc.status_code, detail=f"ghl_{exc.reason}"
             ) from None
+
+    def _ghl_candidate_routes(
+        body: dict[str, object], form_landings: object
+    ) -> tuple[ProductRoute, ...]:
+        # En que orden se prueba cada producto para un envio de GHL (paso
+        # 2c-2). En modo activo, el formulario con landing declarada va al
+        # producto de esa landing; si no, la URL, probando cada producto con el
+        # principal primero. Con un solo producto, solo el principal.
+        routes = tuple(commercial_ally_routes)
+        if (
+            len(routes) == 1
+            or form_landings is None
+            or getattr(form_landings, "mode", None) != FORM_LANDING_ACTIVE
+        ):
+            return routes
+        source = body.get("attributionSource")
+        form_id = source.get("mediumId") if isinstance(source, dict) else None
+        declared = (
+            form_landings.landing_by_form.get(form_id)  # type: ignore[attr-defined]
+            if isinstance(form_id, str)
+            else None
+        )
+        owner = (
+            commercial_ally_routes.owner_of_landing_id(declared)
+            if declared is not None
+            else None
+        )
+        return (owner,) if owner is not None else routes
+
+    def _landing_by_form_of(
+        route: ProductRoute, landing_by_form: Mapping[str, str] | None
+    ) -> Mapping[str, str] | None:
+        # landing_por_formulario de toda la instancia, reducido a las landings
+        # de un producto. Con uno solo, entero, como antes.
+        if landing_by_form is None or len(commercial_ally_routes) == 1:
+            return landing_by_form
+        own = {landing.landing_id for landing in route.config.offer_landings}
+        return {form: landing for form, landing in landing_by_form.items() if landing in own}
 
     async def _admit_ghl_form_submission(
         request: Request,
@@ -7270,20 +7678,36 @@ def create_app(
 
         trace.note_form(body)
         form_landings = manifest.ghl_form_landings
-        try:
-            translation = translate_ghl_form_submission(
-                body,
-                config=settings.commercial_ally_config,
-                allowed_forms=frozenset(manifest.ghl_form_ids),
-                now=datetime.now(UTC),
-                landing_by_form=(
-                    form_landings.landing_by_form if form_landings is not None else None
-                ),
-                form_landing_mode=(
-                    form_landings.mode if form_landings is not None else None
-                ),
-            )
-        except GhlAdapterRejection as exc:
+        landing_by_form = form_landings.landing_by_form if form_landings is not None else None
+        translation = None
+        ghl_route = commercial_ally_routes.principal
+        rejection: GhlAdapterRejection | None = None
+        for candidate in _ghl_candidate_routes(body, form_landings):
+            try:
+                translation = translate_ghl_form_submission(
+                    body,
+                    config=candidate.config,
+                    allowed_forms=frozenset(manifest.ghl_form_ids),
+                    now=datetime.now(UTC),
+                    landing_by_form=_landing_by_form_of(candidate, landing_by_form),
+                    form_landing_mode=(
+                        form_landings.mode if form_landings is not None else None
+                    ),
+                )
+            except GhlAdapterRejection as exc:
+                if exc.reason not in _GHL_LANDING_REJECTIONS:
+                    # No es la landing: es igual para cualquier producto.
+                    rejection = exc
+                    break
+                # La landing no es de este producto: se prueba el siguiente, y
+                # si no es de ninguno queda el rechazo del primero.
+                rejection = rejection or exc
+                continue
+            ghl_route = candidate
+            break
+        if translation is None:
+            assert rejection is not None
+            exc = rejection
             if exc.phone_region is not None:
                 trace.phone_region = exc.phone_region
             if exc.form_landing is not None:
@@ -7300,7 +7724,7 @@ def create_app(
         trace.has_fbclid = str(translation.has_fbclid).lower()
 
         submission = parse_lead_precheckout(
-            translation.event, config=settings.commercial_ally_config
+            translation.event, config=ghl_route.config
         )
         if submission is None:
             # Un error del traductor: reintentar no lo arregla, asi que no es
@@ -7316,7 +7740,7 @@ def create_app(
         try:
             # Siempre la admision portable, con el evento traducido: el cuerpo
             # de GHL no se guarda.
-            admission = await _admit_portable_lead(submission, translation.event)
+            admission = await _admit_portable_lead(submission, translation.event, ghl_route)
         except SupabaseError as exc:
             raise HTTPException(
                 status_code=503, detail="ghl_precheckout_persist_unavailable"
@@ -8142,13 +8566,31 @@ def create_app(
             raise HTTPException(
                 status_code=503, detail="supabase_not_configured"
             )
+        # El producto del evento, por producto y oferta (paso 2c-2). Con un solo
+        # producto es siempre el principal y todo sigue como antes.
+        hotmart_route = commercial_ally_routes.for_hotmart(payload)
+        if isinstance(hotmart_route, HotmartUnrouted):
+            # Un evento que no es de ningun producto de la instancia. Antes salia
+            # con 200 y sin rastro; ahora deja la linea (sin datos personales).
+            logger.info(
+                "hotmart_event_unrouted event_id=%s event_type=%s product_id=%s "
+                "offer=%s reason=%s",
+                event_id,
+                event_type,
+                hotmart_route.product_id,
+                hotmart_route.offer_code or "-",
+                hotmart_route.reason,
+            )
+            response.status_code = status.HTTP_200_OK
+            return {"status": "ignored", "reason": "hotmart_event_unrouted"}
+        event_config = hotmart_route.config
         if event_type in PAYMENT_SLIP_EVENT_TYPES:
             # La ficha se guarda tal cual llego y no dispara nada (1.6.0). Solo
             # llega aca con el pago fallido portable: sin el, la clasificacion
             # la deja como antes, unsupported_event_type.
             try:
                 slip = await shared_supabase.admit_portable_hotmart_payment_slip_event(
-                    config=settings.commercial_ally_config,
+                    config=event_config,
                     external_event_id=event_id,
                     payload=payload,
                 )
@@ -8190,7 +8632,7 @@ def create_app(
                     }
                 parsed_failure = parse_hotmart_payment_failure_payload(
                     payload,
-                    config=settings.commercial_ally_config,
+                    config=event_config,
                 )
                 if parsed_failure is None:
                     # Igual que el carrito y la compra: un evento que este runtime no
@@ -8205,7 +8647,7 @@ def create_app(
                 if settings.portable_hotmart_payment_failure_enabled:
                     portable_failure_admission = (
                         await shared_supabase.admit_portable_hotmart_payment_failure(
-                            config=settings.commercial_ally_config,
+                            config=event_config,
                             external_event_id=event_id,
                             payload=payload,
                             normalized_email=parsed_failure.buyer_email,
@@ -8313,7 +8755,7 @@ def create_app(
                 parsed_purchase = parse_hotmart_purchase_payload(
                     payload,
                     config=(
-                        settings.commercial_ally_config
+                        event_config
                         if settings.portable_hotmart_purchase_stop_enabled
                         else None
                     ),
@@ -8365,7 +8807,7 @@ def create_app(
                     }
                 purchase_admission = (
                     await shared_supabase.admit_portable_hotmart_purchase_approved(
-                        config=settings.commercial_ally_config,
+                        config=event_config,
                         external_event_id=event_id,
                         payload=payload,
                         normalized_email=parsed_purchase.buyer_email,
@@ -8398,7 +8840,7 @@ def create_app(
             parsed_abandonment = parse_hotmart_payload(
                 payload,
                 config=(
-                    settings.commercial_ally_config
+                    event_config
                     if settings.portable_hotmart_recovery_enabled
                     else None
                 ),
@@ -8411,7 +8853,7 @@ def create_app(
                 }
             abandonment_admission = (
                 await shared_supabase.admit_portable_hotmart_cart_abandonment(
-                    config=settings.commercial_ally_config,
+                    config=event_config,
                     external_event_id=event_id,
                     payload=payload,
                     normalized_email=parsed_abandonment.buyer_email,
@@ -8547,11 +8989,23 @@ def build_app() -> FastAPI:
             if settings.commercial_knowledge is not None
             else {}
         )
+        # Con [[productos]], la propuesta acepta `product` de esos productos (2b).
+        product_kwargs = (
+            {
+                "product_keys": tuple(
+                    product.key for product in settings.instance_manifest.products
+                )
+            }
+            if settings.instance_manifest is not None
+            and settings.instance_manifest.products
+            else {}
+        )
         shadow_processor = HermesShadowProcessor(
             base_url=settings.hermes_api_base_url,
             api_key=settings.hermes_api_key,
             model_name=settings.hermes_model_name,
             shadow_dir=settings.shadow_dir,
             **knowledge_kwargs,
+            **product_kwargs,
         )
     return create_app(settings, shadow_processor=shadow_processor)

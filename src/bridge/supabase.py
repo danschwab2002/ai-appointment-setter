@@ -322,6 +322,28 @@ class RecentPaymentFailure:
     checkout_country_iso: str | None
 
 
+PERSON_ACTIVITY_KINDS = frozenset({
+    "form",
+    "cart",
+    "payment_rejected",
+    "payment_slip_printed",
+    "payment_slip_expired",
+    "purchase",
+})
+
+
+@dataclass(frozen=True)
+class PersonActivity:
+    """Una cosa que hizo un movil en un funnel en los ultimos 30 dias (2b).
+
+    Solo la actividad y la hora: el funnel es el producto, y nada de email,
+    nombre, transaccion ni payload.
+    """
+
+    activity: str
+    occurred_at: datetime
+
+
 @dataclass(frozen=True)
 class PaymentSlipAdmissionResult:
     """Admision de un evento de la ficha (PURCHASE_BILLET_PRINTED o PURCHASE_EXPIRED)."""
@@ -2093,6 +2115,52 @@ class SupabaseClient:
             refusal_reason=texts["refusal_reason"],
             checkout_country_iso=texts["checkout_country_iso"],
         )
+
+    async def get_portable_person_activity(
+        self,
+        *,
+        config: CommercialAllyConfig,
+        whatsapp_phone: str,
+    ) -> tuple[PersonActivity, ...]:
+        """Lo que hizo este movil en el funnel del binding, del mas viejo al mas nuevo."""
+        operation = "portable_person_activity_get"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_portable_person_activity_v1",
+            content=json.dumps(
+                {
+                    "p_tenant_ref": config.tenant_ref,
+                    "p_funnel_ref": config.funnel_ref,
+                    "p_whatsapp_phone": whatsapp_phone,
+                }
+            ),
+        )
+        rejection = _deterministic_rejection(response)
+        if rejection is not None:
+            raise SupabasePermanentError(
+                f"{operation}_rejected: {rejection}", reason=rejection
+            )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        activities: list[PersonActivity] = []
+        for row in _response_rows(response, operation=operation):
+            activity = row.get("activity")
+            occurred_at = row.get("occurred_at")
+            if (
+                set(row) != {"activity", "occurred_at"}
+                or not isinstance(activity, str)
+                or activity not in PERSON_ACTIVITY_KINDS
+                or not isinstance(occurred_at, str)
+            ):
+                raise _invalid_row_error(operation)
+            try:
+                parsed_at = datetime.fromisoformat(occurred_at.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise _invalid_row_error(operation) from exc
+            if parsed_at.tzinfo is None:
+                raise _invalid_row_error(operation)
+            activities.append(PersonActivity(activity=activity, occurred_at=parsed_at))
+        return tuple(activities)
 
     async def admit_portable_hotmart_payment_slip_event(
         self,
@@ -4500,6 +4568,7 @@ class SupabaseClient:
         issuance_ulid: str,
         now: str,
         phone_equivalence: bool = False,
+        funnel_ref: str | None = None,
     ) -> CheckoutIssuanceReservation:
         """Atomically persist one V2 checkout issuance before Chatwoot.
 
@@ -4508,9 +4577,30 @@ class SupabaseClient:
         intencion del movil y el opt-out buscados por las dos formas del
         telefono (52/521, 54/549). Mismo payload y misma respuesta. Sin el
         flag, la compartida de siempre.
+
+        Con ``funnel_ref`` (varios productos, 2c-3a) pega en
+        reserve_portable_checkout_issuance_for_funnel_v1: la portable, con la
+        oferta del producto de ese funnel. Exige un binding activo del funnel
+        en el mismo inbox; si no, ``blocked_funnel``.
         """
 
-        if phone_equivalence:
+        payload: dict[str, object] = {
+            "p_commercial_case_id": commercial_case_id,
+            "p_external_user_id": external_user_id,
+            "p_chatwoot_account_id": chatwoot_account_id,
+            "p_chatwoot_inbox_id": chatwoot_inbox_id,
+            "p_chatwoot_conversation_id": chatwoot_conversation_id,
+            "p_trigger_external_message_id": trigger_external_message_id,
+            "p_issuance_ulid": issuance_ulid,
+            "p_now": now,
+        }
+        if funnel_ref is not None:
+            if not phone_equivalence:
+                raise ValueError("a funnel reserve is portable: it needs phone_equivalence")
+            operation = "portable_checkout_issuance_for_funnel_reserve"
+            path = "/rest/v1/rpc/reserve_portable_checkout_issuance_for_funnel_v1"
+            payload["p_funnel_ref"] = funnel_ref
+        elif phone_equivalence:
             operation = "portable_checkout_issuance_v2_reserve"
             path = "/rest/v1/rpc/reserve_portable_checkout_issuance_v2"
         else:
@@ -4519,16 +4609,7 @@ class SupabaseClient:
         response = await self._request(
             "POST",
             path,
-            content=json.dumps({
-                "p_commercial_case_id": commercial_case_id,
-                "p_external_user_id": external_user_id,
-                "p_chatwoot_account_id": chatwoot_account_id,
-                "p_chatwoot_inbox_id": chatwoot_inbox_id,
-                "p_chatwoot_conversation_id": chatwoot_conversation_id,
-                "p_trigger_external_message_id": trigger_external_message_id,
-                "p_issuance_ulid": issuance_ulid,
-                "p_now": now,
-            }, ensure_ascii=False),
+            content=json.dumps(payload, ensure_ascii=False),
         )
         if response.status_code != 200:
             raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
@@ -4548,6 +4629,8 @@ class SupabaseClient:
             "blocked_opt_out", "blocked_conversation", "blocked_identity",
             "purchase_already_approved", "replay_conflict",
         }
+        if funnel_ref is not None:
+            allowed.add("blocked_funnel")
         if outcome not in allowed:
             raise SupabaseCommittedResponseError(operation)
         values = {

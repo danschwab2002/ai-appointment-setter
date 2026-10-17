@@ -1,0 +1,1477 @@
+{
+  "_formato": {
+    "que_es": "Los casos de la politica compilada (diseno del motor de flujos, §2.5 y §3.4): los corre pytest contra bridge.flow_policy.compile_policy (tests/test_flow_policy.py) y T2 contra _flow_engine_compile_policy, con los mismos esperados.",
+    "input": "definition, flow_id (uuid), version, legacy_kind y fixed_zone son los argumentos de compile_policy. fixed_zone es la zona fija del flujo, la que toma un siempre; la funcion de SQL no la recibe, asi que en T2 sale del almacen para ese flow_id. Las tres de ATT1 son las definiciones normalizadas de tests/fixtures/flow_store/att1_definitions_20261016.json; las otras son minimas, con solo lo que se compila (horario, pasos y termina).",
+    "expected": "La fila de followup_policy_versions que se compila, sin status ni aprobacion: policy_key 'flujo:' || flow_id, version, purpose, timezone, business_windows (una ventana, days del 1 al 7 en orden), los intervalos en segundos (grace_period_seconds y expires_after_seconds; en SQL, extract(epoch from ...)), max_automatic_messages y steps (un solo paso). Es CompiledPolicy.as_json().",
+    "error": "El codigo de PolicyCompileError (en SQL, el message del raise). Se mira en este orden y gana el primero: flow_id, version, legacy_kind, horario, pasos (de arriba abajo: el tipo de cada paso, una espera despues del envio, una espera sin leer, un segundo envio; al final, que haya uno) y vence."
+  },
+  "cases": [
+    {
+      "id": "att1_carrito",
+      "que": "El carrito de ATT1, publicado y normalizado: sin espera, vence en un dia, de 09 a 21 de CDMX, el paso first_contact.",
+      "input": {
+        "definition": {
+          "esquema": "setter-flujo/v1",
+          "flujo": "carrito",
+          "producto": "att1",
+          "nombre": "Carrito abandonado",
+          "estado": "borrador",
+          "dispara": {
+            "evento": "carrito"
+          },
+          "entra": {
+            "permiso": "formulario",
+            "contesto_a": []
+          },
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          },
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "topes": {
+            "bolsa": "att1-recuperacion",
+            "por_dia": 80,
+            "total": 1000,
+            "repeticion": {
+              "una_por": "persona_y_oferta",
+              "otra_despues_de": "0m"
+            }
+          },
+          "prioridad": {
+            "le_gana_a": [
+              "precheckout"
+            ],
+            "no_arranca_mientras": [
+              "pago_fallido"
+            ]
+          }
+        },
+        "flow_id": "1b000001-0000-4000-8000-00000000c001",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "expected": {
+        "policy_key": "flujo:1b000001-0000-4000-8000-00000000c001",
+        "version": 1,
+        "purpose": "cart_recovery",
+        "timezone": "America/Mexico_City",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "09:00",
+            "end": "21:00"
+          }
+        ],
+        "grace_period_seconds": 0,
+        "expires_after_seconds": 86400,
+        "max_automatic_messages": 1,
+        "steps": [
+          {
+            "mode": "freeform",
+            "step_key": "first_contact"
+          }
+        ]
+      }
+    },
+    {
+      "id": "att1_pago_fallido",
+      "que": "El pago fallido de ATT1: los mismos valores que el carrito y su propio paso, payment_failure_first_contact.",
+      "input": {
+        "definition": {
+          "esquema": "setter-flujo/v1",
+          "flujo": "pago_fallido",
+          "producto": "att1",
+          "nombre": "Pago fallido",
+          "estado": "borrador",
+          "dispara": {
+            "evento": "pago_fallido"
+          },
+          "entra": {
+            "permiso": "formulario",
+            "contesto_a": []
+          },
+          "pasos": [
+            {
+              "plantilla": "att1_compra_fallida_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          },
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "topes": {
+            "bolsa": "att1-recuperacion",
+            "por_dia": 80,
+            "total": 1000,
+            "repeticion": {
+              "una_por": "persona_y_oferta",
+              "otra_despues_de": "0m"
+            }
+          },
+          "prioridad": {
+            "le_gana_a": [
+              "precheckout"
+            ],
+            "no_arranca_mientras": []
+          }
+        },
+        "flow_id": "1b000002-0000-4000-8000-00000000c002",
+        "version": 1,
+        "legacy_kind": "pago_fallido",
+        "fixed_zone": null
+      },
+      "expected": {
+        "policy_key": "flujo:1b000002-0000-4000-8000-00000000c002",
+        "version": 1,
+        "purpose": "cart_recovery",
+        "timezone": "America/Mexico_City",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "09:00",
+            "end": "21:00"
+          }
+        ],
+        "grace_period_seconds": 0,
+        "expires_after_seconds": 86400,
+        "max_automatic_messages": 1,
+        "steps": [
+          {
+            "mode": "freeform",
+            "step_key": "payment_failure_first_contact"
+          }
+        ]
+      }
+    },
+    {
+      "id": "att1_precheckout",
+      "que": "El primer contacto de ATT1: la espera de 60m es la gracia de una hora.",
+      "input": {
+        "definition": {
+          "esquema": "setter-flujo/v1",
+          "flujo": "precheckout",
+          "producto": "att1",
+          "nombre": "Primer contacto tras el formulario",
+          "estado": "borrador",
+          "dispara": {
+            "evento": "intencion"
+          },
+          "entra": {
+            "permiso": "formulario",
+            "contesto_a": []
+          },
+          "pasos": [
+            {
+              "esperar": "60m"
+            },
+            {
+              "plantilla": "att1_interes_precheckout_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          },
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "topes": {
+            "bolsa": "att1-primer-contacto",
+            "por_dia": 10,
+            "total": 150,
+            "repeticion": {
+              "una_por": "persona",
+              "otra_despues_de": "24h"
+            }
+          },
+          "prioridad": {
+            "le_gana_a": [],
+            "no_arranca_mientras": []
+          }
+        },
+        "flow_id": "1b000003-0000-4000-8000-00000000c003",
+        "version": 1,
+        "legacy_kind": "precheckout",
+        "fixed_zone": null
+      },
+      "expected": {
+        "policy_key": "flujo:1b000003-0000-4000-8000-00000000c003",
+        "version": 1,
+        "purpose": "cart_recovery",
+        "timezone": "America/Mexico_City",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "09:00",
+            "end": "21:00"
+          }
+        ],
+        "grace_period_seconds": 3600,
+        "expires_after_seconds": 86400,
+        "max_automatic_messages": 1,
+        "steps": [
+          {
+            "mode": "freeform",
+            "step_key": "first_contact"
+          }
+        ]
+      }
+    },
+    {
+      "id": "siempre_con_zona_fija",
+      "que": "siempre: de 00:00 a 23:59 en la zona fija del flujo.",
+      "input": {
+        "definition": {
+          "horario": "siempre",
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 4,
+        "legacy_kind": "carrito",
+        "fixed_zone": "America/Mexico_City"
+      },
+      "expected": {
+        "policy_key": "flujo:1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 4,
+        "purpose": "cart_recovery",
+        "timezone": "America/Mexico_City",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "00:00",
+            "end": "23:59"
+          }
+        ],
+        "grace_period_seconds": 0,
+        "expires_after_seconds": 86400,
+        "max_automatic_messages": 1,
+        "steps": [
+          {
+            "mode": "freeform",
+            "step_key": "first_contact"
+          }
+        ]
+      }
+    },
+    {
+      "id": "siempre_sin_zona_fija",
+      "que": "siempre en un flujo que nunca tuvo un horario objeto: en UTC.",
+      "input": {
+        "definition": {
+          "horario": "siempre",
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "pago_fallido",
+        "fixed_zone": null
+      },
+      "expected": {
+        "policy_key": "flujo:1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "purpose": "cart_recovery",
+        "timezone": "UTC",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "00:00",
+            "end": "23:59"
+          }
+        ],
+        "grace_period_seconds": 0,
+        "expires_after_seconds": 86400,
+        "max_automatic_messages": 1,
+        "steps": [
+          {
+            "mode": "freeform",
+            "step_key": "payment_failure_first_contact"
+          }
+        ]
+      }
+    },
+    {
+      "id": "horario_objeto_con_su_zona_fija",
+      "que": "Un horario objeto con la zona fija igual a la suya: la de su horario.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 2,
+        "legacy_kind": "carrito",
+        "fixed_zone": "America/Mexico_City"
+      },
+      "expected": {
+        "policy_key": "flujo:1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 2,
+        "purpose": "cart_recovery",
+        "timezone": "America/Mexico_City",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "09:00",
+            "end": "21:00"
+          }
+        ],
+        "grace_period_seconds": 0,
+        "expires_after_seconds": 86400,
+        "max_automatic_messages": 1,
+        "steps": [
+          {
+            "mode": "freeform",
+            "step_key": "first_contact"
+          }
+        ]
+      }
+    },
+    {
+      "id": "esperas_seguidas_se_suman",
+      "que": "Dos esperas antes del envio: cada una se cuenta desde la anterior, la gracia es la suma (30m + 2h).",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "esperar": "30m"
+            },
+            {
+              "esperar": "2h"
+            },
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "precheckout",
+        "fixed_zone": null
+      },
+      "expected": {
+        "policy_key": "flujo:1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "purpose": "cart_recovery",
+        "timezone": "America/Mexico_City",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "09:00",
+            "end": "21:00"
+          }
+        ],
+        "grace_period_seconds": 9000,
+        "expires_after_seconds": 86400,
+        "max_automatic_messages": 1,
+        "steps": [
+          {
+            "mode": "freeform",
+            "step_key": "first_contact"
+          }
+        ]
+      }
+    },
+    {
+      "id": "espera_cero",
+      "que": "Una espera de 0m: gracia 0.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "esperar": "0m"
+            },
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "expected": {
+        "policy_key": "flujo:1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "purpose": "cart_recovery",
+        "timezone": "America/Mexico_City",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "09:00",
+            "end": "21:00"
+          }
+        ],
+        "grace_period_seconds": 0,
+        "expires_after_seconds": 86400,
+        "max_automatic_messages": 1,
+        "steps": [
+          {
+            "mode": "freeform",
+            "step_key": "first_contact"
+          }
+        ]
+      }
+    },
+    {
+      "id": "vence_en_horas_y_franja_sin_redondear",
+      "que": "vence de 36h, una zona de offset fijo y una franja con minutos.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "Etc/GMT+5",
+            "desde": "08:30",
+            "hasta": "17:45"
+          },
+          "pasos": [
+            {
+              "esperar": "45m"
+            },
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "36h"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 3,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "expected": {
+        "policy_key": "flujo:1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 3,
+        "purpose": "cart_recovery",
+        "timezone": "Etc/GMT+5",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "08:30",
+            "end": "17:45"
+          }
+        ],
+        "grace_period_seconds": 2700,
+        "expires_after_seconds": 129600,
+        "max_automatic_messages": 1,
+        "steps": [
+          {
+            "mode": "freeform",
+            "step_key": "first_contact"
+          }
+        ]
+      }
+    },
+    {
+      "id": "madrid_franja_de_madrugada",
+      "que": "La franja de los casos de Madrid de window_cases.json, con vence de 2d.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "Europe/Madrid",
+            "desde": "02:30",
+            "hasta": "05:00"
+          },
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "2d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 2,
+        "legacy_kind": "pago_fallido",
+        "fixed_zone": null
+      },
+      "expected": {
+        "policy_key": "flujo:1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 2,
+        "purpose": "cart_recovery",
+        "timezone": "Europe/Madrid",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "02:30",
+            "end": "05:00"
+          }
+        ],
+        "grace_period_seconds": 0,
+        "expires_after_seconds": 172800,
+        "max_automatic_messages": 1,
+        "steps": [
+          {
+            "mode": "freeform",
+            "step_key": "payment_failure_first_contact"
+          }
+        ]
+      }
+    },
+    {
+      "id": "flow_id_no_uuid",
+      "que": "El flow_id no es un uuid.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          }
+        },
+        "flow_id": "carrito",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "error": "compile_policy_flow_id_invalid"
+    },
+    {
+      "id": "version_cero",
+      "que": "La version 0.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 0,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "error": "compile_policy_version_invalid"
+    },
+    {
+      "id": "legacy_kind_nulo",
+      "que": "Sin legacy_kind no hay paso de hoy que elegir.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": null,
+        "fixed_zone": null
+      },
+      "error": "compile_policy_legacy_kind_without_step"
+    },
+    {
+      "id": "legacy_kind_descuento",
+      "que": "El cupon no tiene fila de politica.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "descuento",
+        "fixed_zone": null
+      },
+      "error": "compile_policy_legacy_kind_without_step"
+    },
+    {
+      "id": "legacy_kind_reactivacion",
+      "que": "La reactivacion tampoco.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "reactivacion",
+        "fixed_zone": null
+      },
+      "error": "compile_policy_legacy_kind_without_step"
+    },
+    {
+      "id": "horario_sin_resolver",
+      "que": "Un horario a_medir.",
+      "input": {
+        "definition": {
+          "horario": "a_medir",
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "error": "compile_policy_horario_invalid"
+    },
+    {
+      "id": "zona_no_iana",
+      "que": "Una zona POSIX, que Postgres acepta con el signo al reves.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "UTC+3",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "error": "compile_policy_horario_invalid"
+    },
+    {
+      "id": "hora_sin_cero",
+      "que": "Una hora sin el cero adelante.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "9:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "error": "compile_policy_horario_invalid"
+    },
+    {
+      "id": "zona_distinta_de_la_fija",
+      "que": "Un horario en CDMX en un flujo cuya zona fija es Madrid.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": "Europe/Madrid"
+      },
+      "error": "compile_policy_horario_invalid"
+    },
+    {
+      "id": "paso_conversar",
+      "que": "conversar: la v1 del motor no le hace llegar un objetivo al agente.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "conversar": "Que termine la compra."
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "error": "compile_policy_step_not_supported:conversar"
+    },
+    {
+      "id": "paso_condicion",
+      "que": "Una condicion: la v1 tiene un solo camino.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "condicion": {
+                "dato": "ventana",
+                "es": [
+                  "abierta"
+                ]
+              },
+              "entonces": [
+                {
+                  "plantilla": "att1_carrito_abandonado_01",
+                  "idioma": "es_MX",
+                  "variables": [
+                    "nombre",
+                    "producto"
+                  ]
+                }
+              ],
+              "si_no": []
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "error": "compile_policy_step_not_supported:condicion"
+    },
+    {
+      "id": "paso_derivar",
+      "que": "derivar.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            },
+            {
+              "derivar": "humano"
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "error": "compile_policy_step_not_supported:derivar"
+    },
+    {
+      "id": "paso_sin_tipo",
+      "que": "Un paso con dos claves de tipo.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "esperar": "1h",
+              "plantilla": "x"
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "error": "compile_policy_step_not_supported:desconocido"
+    },
+    {
+      "id": "dos_plantillas",
+      "que": "Dos envios: la politica compilada tiene un solo paso.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            },
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "error": "compile_policy_more_than_one_send"
+    },
+    {
+      "id": "espera_despues_del_envio",
+      "que": "Una espera despues del envio.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            },
+            {
+              "esperar": "1h"
+            },
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "error": "compile_policy_step_after_send"
+    },
+    {
+      "id": "sin_envio",
+      "que": "Solo una espera.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "esperar": "1h"
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "error": "compile_policy_without_send"
+    },
+    {
+      "id": "pasos_vacios",
+      "que": "Sin pasos.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "error": "compile_policy_without_send"
+    },
+    {
+      "id": "espera_sin_resolver",
+      "que": "Una espera a_medir.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "esperar": "a_medir"
+            },
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "error": "compile_policy_wait_invalid"
+    },
+    {
+      "id": "vence_sin_resolver",
+      "que": "Un vence a_decidir.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "a_decidir"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "error": "compile_policy_vence_invalid"
+    },
+    {
+      "id": "sin_vence",
+      "que": "termina sin vence (el de un silencio).",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": []
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "error": "compile_policy_vence_invalid"
+    },
+    {
+      "id": "vence_cero",
+      "que": "Un vence de 0m: la tabla pide expires_after mayor que 0.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "0m"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "error": "compile_policy_vence_invalid"
+    },
+    {
+      "id": "pasos_y_vence_invalidos",
+      "que": "Un paso que la v1 no ejecuta y un vence a_decidir: gana el paso, que se mira antes.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "conversar": "x"
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "a_decidir"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "error": "compile_policy_step_not_supported:conversar"
+    }
+  ]
+}

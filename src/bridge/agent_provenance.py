@@ -27,7 +27,11 @@ from dataclasses import dataclass
 # cuando `_shadow_context` o el enriquecido de `app.py` dejan de producir el
 # mismo conjunto de claves. Un turno viejo con otra version no es comparable.
 # v2 (1.6.0): el runtime con manifiesto puede sumar `recent_payment_failure`.
-CONTEXT_BUILDER_VERSION = "shadow-context-v2"
+# v3 (2b): con [[productos]] en el manifiesto suma `products` y puede sumar
+# `person_activity`.
+# v4 (2c-3b): con varios productos, `person_activity` junta la de cada funnel y
+# `recent_payment_failure` suma `product`.
+CONTEXT_BUILDER_VERSION = "shadow-context-v4"
 
 _ACTORES = ("prospect", "agent", "team", "system")
 

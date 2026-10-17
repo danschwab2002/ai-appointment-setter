@@ -1,0 +1,5393 @@
+{
+ "_generated": {
+  "generator": "tests/test_flow_validator.py (test_the_bridge_json_with_the_base_is_the_one_in_the_repo)",
+  "date": "2026-10-16",
+  "from": "los casos negativo y positivo de cada codigo de CASES, dos bordes del resultado y validator_json() con las dos fases y los dos actores",
+  "regenerate": "FLOW_STORE_FIXTURE_DIR=tests/fixtures/flow_store uv run pytest tests/test_flow_validator.py"
+ },
+ "validators": [
+  {
+   "contract": "setter-flujo/v1",
+   "rules_version": 1,
+   "phase": "draft",
+   "actor": "automation_expert"
+  },
+  {
+   "contract": "setter-flujo/v1",
+   "rules_version": 1,
+   "phase": "draft",
+   "actor": "operador"
+  },
+  {
+   "contract": "setter-flujo/v1",
+   "rules_version": 1,
+   "phase": "publish",
+   "actor": "automation_expert"
+  },
+  {
+   "contract": "setter-flujo/v1",
+   "rules_version": 1,
+   "phase": "publish",
+   "actor": "operador"
+  }
+ ],
+ "cases": [
+  {
+   "code": "always_with_marketing",
+   "case": "negativo",
+   "result": {
+    "blocks": [],
+    "warnings": [
+     {
+      "rule": null,
+      "code": "always_with_marketing",
+      "kind": "advertencia",
+      "path": "/0/definicion/horario",
+      "reason": "Sin horario, una plantilla que no es de utilidad, como una de marketing, puede salir de noche."
+     },
+     {
+      "rule": null,
+      "code": "silence_without_purchase_exit",
+      "kind": "advertencia",
+      "path": "/0/definicion/termina/si",
+      "reason": "Un silencio sin la salida compra le puede llegar a quien ya compró."
+     }
+    ]
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "always_with_marketing",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": [
+     {
+      "rule": null,
+      "code": "silence_without_purchase_exit",
+      "kind": "advertencia",
+      "path": "/0/definicion/termina/si",
+      "reason": "Un silencio sin la salida compra le puede llegar a quien ya compró."
+     }
+    ]
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "cap_invalid",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 9,
+      "code": "cap_invalid",
+      "kind": "forma",
+      "path": "/0/definicion/topes/por_dia",
+      "reason": "Un tope es un entero mayor que 0, o sin_tope."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "cap_invalid",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "change_outside_1b_scope",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "change_outside_1b_scope",
+      "kind": "ciclo",
+      "path": "/0/definicion/topes/bolsa",
+      "reason": "En la 1b el Automation Expert cambia las esperas y el plazo, la plantilla, los topes por día y total, el horario, y prende, pausa o apaga.",
+      "alternative": "Pedírselo a un operador."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "change_outside_1b_scope",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "client_purchase_ok_missing",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "client_purchase_ok_missing",
+      "kind": "ciclo",
+      "path": "/0/ok_del_cliente",
+      "reason": "Pasar a permiso: compra pide el OK del cliente: quién lo dio, por qué medio y la fecha.",
+      "alternative": "Sumar ok_del_cliente al ítem."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "client_purchase_ok_missing",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "contesto_a_requires_conversation",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 3,
+      "code": "contesto_a_requires_conversation",
+      "kind": "forma",
+      "path": "/0/definicion/entra/contesto_a",
+      "reason": "contesto_a vale solo con permiso: conversacion."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "contesto_a_requires_conversation",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "conversar_outside_open_window_branch",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 7,
+      "code": "conversar_outside_open_window_branch",
+      "kind": "forma",
+      "path": "/0/definicion/pasos/0/conversar",
+      "reason": "conversar va solo en la rama entonces de una condición con la ventana abierta."
+     }
+    ],
+    "warnings": [
+     {
+      "rule": null,
+      "code": "silence_without_purchase_exit",
+      "kind": "advertencia",
+      "path": "/0/definicion/termina/si",
+      "reason": "Un silencio sin la salida compra le puede llegar a quien ya compró."
+     }
+    ]
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "conversar_outside_open_window_branch",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": [
+     {
+      "rule": null,
+      "code": "always_with_marketing",
+      "kind": "advertencia",
+      "path": "/0/definicion/horario",
+      "reason": "Sin horario, una plantilla que no es de utilidad, como una de marketing, puede salir de noche."
+     },
+     {
+      "rule": null,
+      "code": "silence_without_purchase_exit",
+      "kind": "advertencia",
+      "path": "/0/definicion/termina/si",
+      "reason": "Un silencio sin la salida compra le puede llegar a quien ya compró."
+     }
+    ]
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "coupon_change_not_supported",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 15,
+      "code": "coupon_change_not_supported",
+      "kind": "todavia_no",
+      "path": "/0/definicion/pasos/0/boton/cupon",
+      "limit": "El cambio del código del cupón",
+      "reason": "El código del cupón vive también en Hotmart y en el conocimiento del agente, y en la v1 no se cambia conversando.",
+      "alternative": "Dejar el cupón de la versión publicada; cambiarlo es un cambio con PR y aprobación."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "coupon_change_not_supported",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "coupon_requires_checkout_link",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 5,
+      "code": "ficha_link_requires_ficha_trigger",
+      "kind": "forma",
+      "path": "/0/definicion/pasos/0/boton/link",
+      "reason": "El link ficha va solo con los disparadores de la ficha."
+     },
+     {
+      "rule": 5,
+      "code": "coupon_requires_checkout_link",
+      "kind": "forma",
+      "path": "/0/definicion/pasos/0/boton/cupon",
+      "reason": "Un cupón va solo con el link checkout."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "coupon_requires_checkout_link",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "daily_cap_exceeds_total",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 9,
+      "code": "daily_cap_exceeds_total",
+      "kind": "proteccion",
+      "path": "/0/definicion/topes/por_dia",
+      "limit": "El tope por día",
+      "reason": "el tope por día de un flujo no puede pasar el total.",
+      "alternative": "Subir el total o bajar el tope por día."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "daily_cap_exceeds_total",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "default_pool_invalid",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 1,
+      "code": "default_pool_invalid",
+      "kind": "forma",
+      "path": "/0/definicion/topes/bolsa",
+      "reason": "La bolsa por defecto, <producto>-<flujo>, no cumple la forma de una bolsa: empieza con una letra y tiene hasta 40 caracteres.",
+      "alternative": "Escribir topes.bolsa."
+     }
+    ],
+    "warnings": [
+     {
+      "rule": null,
+      "code": "always_with_marketing",
+      "kind": "advertencia",
+      "path": "/0/definicion/horario",
+      "reason": "Sin horario, una plantilla que no es de utilidad, como una de marketing, puede salir de noche."
+     },
+     {
+      "rule": null,
+      "code": "silence_without_purchase_exit",
+      "kind": "advertencia",
+      "path": "/0/definicion/termina/si",
+      "reason": "Un silencio sin la salida compra le puede llegar a quien ya compró."
+     }
+    ]
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "default_pool_invalid",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": [
+     {
+      "rule": null,
+      "code": "always_with_marketing",
+      "kind": "advertencia",
+      "path": "/0/definicion/horario",
+      "reason": "Sin horario, una plantilla que no es de utilidad, como una de marketing, puede salir de noche."
+     },
+     {
+      "rule": null,
+      "code": "silence_without_purchase_exit",
+      "kind": "advertencia",
+      "path": "/0/definicion/termina/si",
+      "reason": "Un silencio sin la salida compra le puede llegar a quien ya compró."
+     }
+    ]
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "duplicate_flow_key",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 10,
+      "code": "duplicate_flow_key",
+      "kind": "forma",
+      "path": "/0/definicion/flujo",
+      "reason": "Ya hay otro flujo con esa clave en ese producto."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "duplicate_flow_key",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "duplicate_key",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 1,
+      "code": "duplicate_key",
+      "kind": "forma",
+      "path": "/topes/bolsa",
+      "reason": "La misma clave aparece dos veces en un objeto: lo que se aprobaría no sería exactamente lo que se guarda.",
+      "alternative": "Dejar la clave una sola vez."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": null
+  },
+  {
+   "code": "duplicate_key",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "empty_branch_with_le_gana_a",
+   "case": "negativo",
+   "result": {
+    "blocks": [],
+    "warnings": [
+     {
+      "rule": null,
+      "code": "empty_branch_with_le_gana_a",
+      "kind": "advertencia",
+      "path": "/0/definicion/pasos/0",
+      "reason": "A quien cae en la rama vacía no le llega nada, y tampoco el flujo al que este le gana."
+     }
+    ]
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "empty_branch_with_le_gana_a",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "en_curso_not_supported",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "en_curso_not_supported",
+      "kind": "ciclo",
+      "path": "/0/en_curso",
+      "reason": "Hasta el motor, lo que está en curso sigue con la versión que lo empezó.",
+      "alternative": "Usar en_curso: seguir."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "en_curso_not_supported",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "event_requires_vence",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "required_key_missing",
+      "kind": "ciclo",
+      "path": "/0/definicion/termina/vence",
+      "reason": "Un flujo con versión recibe la definición completa, desde la versión publicada y sin valores por defecto.",
+      "alternative": "Copiar la clave de la versión publicada."
+     },
+     {
+      "rule": 6,
+      "code": "event_requires_vence",
+      "kind": "forma",
+      "path": "/0/definicion/termina/vence",
+      "reason": "Un flujo disparado por un evento lleva vence, el plazo desde el disparo.",
+      "alternative": "Escribir termina.vence."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "event_requires_vence",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "ficha_link_requires_ficha_trigger",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 5,
+      "code": "ficha_link_requires_ficha_trigger",
+      "kind": "forma",
+      "path": "/0/definicion/pasos/0/boton/link",
+      "reason": "El link ficha va solo con los disparadores de la ficha."
+     },
+     {
+      "rule": 13,
+      "code": "template_button_mismatch",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/0/boton",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "El botón que declara el paso no es el que tiene la plantilla aprobada.",
+      "alternative": "Declarar el botón que tiene la plantilla, o elegir otra."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "ficha_link_requires_ficha_trigger",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "ficha_vencida_requires_ficha_trigger",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 5,
+      "code": "ficha_vencida_requires_ficha_trigger",
+      "kind": "forma",
+      "path": "/0/definicion/termina/si/1",
+      "reason": "La salida ficha_vencida vale solo con el disparador ficha_impresa."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "ficha_vencida_requires_ficha_trigger",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "flow_change_stale_base",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "flow_change_stale_base",
+      "kind": "ciclo",
+      "path": "/0",
+      "reason": "La versión activa del flujo no es la que se leyó al armar el borrador.",
+      "alternative": "Rehacer la propuesta sobre la versión activa."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "flow_change_stale_base",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "flow_creation_not_enabled",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "flow_creation_not_enabled",
+      "kind": "ciclo",
+      "path": "/0",
+      "reason": "En la 1b el Automation Expert no crea flujos: crear un flujo es de la 1c.",
+      "alternative": "Pedírselo a un operador."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "automation_expert"
+   }
+  },
+  {
+   "code": "flow_creation_not_enabled",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "flow_has_no_version",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "flow_has_no_version",
+      "kind": "ciclo",
+      "path": "/0",
+      "reason": "Un flujo sin versión no se prende.",
+      "alternative": "Publicar su primera versión en la misma propuesta."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "flow_has_no_version",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "hour_invalid",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 8,
+      "code": "hour_invalid",
+      "kind": "forma",
+      "path": "/0/definicion/horario/desde",
+      "reason": "Las horas se escriben HH:MM, de 00:00 a 23:59."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "hour_invalid",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "identifier_not_allowed",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "identifier_not_allowed",
+      "kind": "ciclo",
+      "path": "/0/definicion/nombre",
+      "reason": "El texto tiene un tramo con forma de teléfono o un mail, y en una definición no van datos de una persona.",
+      "alternative": "Escribirlo sin el teléfono ni el mail."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "identifier_not_allowed",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "invalid_value",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 1,
+      "code": "invalid_value",
+      "kind": "forma",
+      "path": "/0/definicion/nombre",
+      "reason": "El texto tiene un carácter de control, de formato o de dirección, un separador de línea o un sustituto suelto (categorías Cc, Cf, Zl, Zp y Cs).",
+      "alternative": "Escribirlo con una de las formas de la definición formal del esquema."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "invalid_value",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "medio_de_pago_requires_ficha_trigger",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 5,
+      "code": "medio_de_pago_requires_ficha_trigger",
+      "kind": "forma",
+      "path": "/0/definicion/pasos/0/variables/1",
+      "reason": "medio_de_pago, como variable o como dato de una condición, va solo con los disparadores de la ficha."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "medio_de_pago_requires_ficha_trigger",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "mutual_le_gana_a",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 10,
+      "code": "mutual_le_gana_a",
+      "kind": "forma",
+      "path": "/0/definicion/prioridad/le_gana_a/0",
+      "reason": "Dos flujos no pueden ganarse uno al otro."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "mutual_le_gana_a",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "nested_condition",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 7,
+      "code": "nested_condition",
+      "kind": "forma",
+      "path": "/0/definicion/pasos/0/entonces/0/condicion",
+      "reason": "Una condición no puede llevar otra adentro."
+     }
+    ],
+    "warnings": [
+     {
+      "rule": null,
+      "code": "always_with_marketing",
+      "kind": "advertencia",
+      "path": "/0/definicion/horario",
+      "reason": "Sin horario, una plantilla que no es de utilidad, como una de marketing, puede salir de noche."
+     },
+     {
+      "rule": null,
+      "code": "silence_without_purchase_exit",
+      "kind": "advertencia",
+      "path": "/0/definicion/termina/si",
+      "reason": "Un silencio sin la salida compra le puede llegar a quien ya compró."
+     }
+    ]
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "nested_condition",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": [
+     {
+      "rule": null,
+      "code": "always_with_marketing",
+      "kind": "advertencia",
+      "path": "/0/definicion/horario",
+      "reason": "Sin horario, una plantilla que no es de utilidad, como una de marketing, puede salir de noche."
+     },
+     {
+      "rule": null,
+      "code": "silence_without_purchase_exit",
+      "kind": "advertencia",
+      "path": "/0/definicion/termina/si",
+      "reason": "Un silencio sin la salida compra le puede llegar a quien ya compró."
+     }
+    ]
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "permission_trigger_mismatch",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 3,
+      "code": "permission_trigger_mismatch",
+      "kind": "forma",
+      "path": "/0/definicion/entra/permiso",
+      "reason": "formulario va solo con un evento, conversacion solo con un silencio y compra solo con el disparador compra."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "permission_trigger_mismatch",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "pool_zone_mismatch",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 8,
+      "code": "pool_zone_mismatch",
+      "kind": "forma",
+      "path": "/0/definicion/horario",
+      "reason": "Los flujos de una misma bolsa tienen la misma zona; siempre cuenta como sin zona, distinta de cualquier zona."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "pool_zone_mismatch",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "product_not_declared",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 1,
+      "code": "invalid_value",
+      "kind": "forma",
+      "path": "/0/definicion/producto",
+      "reason": "El producto no es el del flujo del ítem.",
+      "alternative": "Escribirlo con una de las formas de la definición formal del esquema."
+     },
+     {
+      "rule": 10,
+      "code": "product_not_declared",
+      "kind": "forma",
+      "path": "/0/definicion/producto",
+      "reason": "La instancia no declara ese producto."
+     },
+     {
+      "rule": 10,
+      "code": "unknown_flow_reference",
+      "kind": "forma",
+      "path": "/0/definicion/prioridad/le_gana_a/0",
+      "reason": "Nombra un flujo que no existe en la instancia."
+     },
+     {
+      "rule": 10,
+      "code": "unknown_flow_reference",
+      "kind": "forma",
+      "path": "/0/definicion/prioridad/no_arranca_mientras/0",
+      "reason": "Nombra un flujo que no existe en la instancia."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "product_not_declared",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "product_required",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 10,
+      "code": "product_required",
+      "kind": "forma",
+      "path": "/0/definicion/producto",
+      "reason": "La instancia tiene más de un producto: el flujo dice de cuál es.",
+      "alternative": "Escribir producto."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "product_required",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "purchase_exit_missing",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 4,
+      "code": "purchase_exit_missing",
+      "kind": "proteccion",
+      "path": "/0/definicion/termina/si",
+      "limit": "La salida compra en todo flujo disparado por un evento que no es la compra",
+      "reason": "sin la salida compra, el flujo le escribe a quien ya compró.",
+      "alternative": "Sumar compra a termina.si."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "purchase_exit_missing",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "purchase_exit_with_purchase_trigger",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 4,
+      "code": "purchase_exit_with_purchase_trigger",
+      "kind": "forma",
+      "path": "/0/definicion/termina/si",
+      "reason": "Un flujo disparado por la compra no termina con la compra.",
+      "alternative": "Sacar compra de termina.si."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "purchase_exit_with_purchase_trigger",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "purchase_permission_requires_single_utility_send",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 17,
+      "code": "purchase_permission_requires_single_utility_send",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/0/plantilla",
+      "limit": "Con permiso: compra, un solo envío por camino, y una plantilla de utilidad",
+      "reason": "la persona no dio permiso de WhatsApp: con la compra como permiso solo se le confirma la compra, una vez.",
+      "alternative": "Usar una sola plantilla de utilidad, o permiso: formulario."
+     }
+    ],
+    "warnings": [
+     {
+      "rule": null,
+      "code": "always_with_marketing",
+      "kind": "advertencia",
+      "path": "/0/definicion/horario",
+      "reason": "Sin horario, una plantilla que no es de utilidad, como una de marketing, puede salir de noche."
+     }
+    ]
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "purchase_permission_requires_single_utility_send",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "recovery_without_cap",
+   "case": "negativo",
+   "result": {
+    "blocks": [],
+    "warnings": [
+     {
+      "rule": null,
+      "code": "recovery_without_cap",
+      "kind": "advertencia",
+      "path": "/0/definicion/topes",
+      "reason": "Un flujo de recuperación sin tope."
+     }
+    ]
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "recovery_without_cap",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "required_key_missing",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 1,
+      "code": "required_key_missing",
+      "kind": "forma",
+      "path": "/0/definicion/nombre",
+      "reason": "Falta una clave obligatoria, y no tiene un valor por defecto que se pueda completar.",
+      "alternative": "Completarla."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "required_key_missing",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "rollback_target_is_active",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "rollback_target_is_active",
+      "kind": "ciclo",
+      "path": "/0/version",
+      "reason": "Esa versión ya es la activa."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "rollback_target_is_active",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "rollback_target_not_found",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "rollback_target_not_found",
+      "kind": "ciclo",
+      "path": "/0/version",
+      "reason": "Esa versión no está publicada en el flujo."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "rollback_target_not_found",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "same_trigger_unrelated",
+   "case": "negativo",
+   "result": {
+    "blocks": [],
+    "warnings": [
+     {
+      "rule": null,
+      "code": "same_trigger_unrelated",
+      "kind": "advertencia",
+      "path": "/0/definicion/dispara",
+      "reason": "Otro flujo del mismo producto tiene el mismo disparador, y no hay relación entre los dos."
+     }
+    ]
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "same_trigger_unrelated",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "silence_forbids_vence",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 6,
+      "code": "silence_forbids_vence",
+      "kind": "forma",
+      "path": "/0/definicion/termina/vence",
+      "reason": "Un silencio no lleva vence: el plazo lo marca hasta.",
+      "alternative": "Sacar termina.vence."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "silence_forbids_vence",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "silence_window_invalid",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 2,
+      "code": "silence_window_invalid",
+      "kind": "forma",
+      "path": "/0/definicion/dispara/silencio/desde",
+      "reason": "En un silencio, desde es menor que hasta, y hasta no pasa de 30 días."
+     }
+    ],
+    "warnings": [
+     {
+      "rule": null,
+      "code": "silence_window_shorter_than_closed_gap",
+      "kind": "advertencia",
+      "path": "/0/definicion/dispara/silencio",
+      "reason": "La franja del silencio es más corta que el tramo cerrado del horario, y fuera de horario el barrido no mira nada: pierde conversaciones."
+     }
+    ]
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "silence_window_invalid",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "silence_window_shorter_than_closed_gap",
+   "case": "negativo",
+   "result": {
+    "blocks": [],
+    "warnings": [
+     {
+      "rule": null,
+      "code": "silence_window_shorter_than_closed_gap",
+      "kind": "advertencia",
+      "path": "/0/definicion/dispara/silencio",
+      "reason": "La franja del silencio es más corta que el tramo cerrado del horario, y fuera de horario el barrido no mira nada: pierde conversaciones."
+     }
+    ]
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "silence_window_shorter_than_closed_gap",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "silence_without_purchase_exit",
+   "case": "negativo",
+   "result": {
+    "blocks": [],
+    "warnings": [
+     {
+      "rule": null,
+      "code": "always_with_marketing",
+      "kind": "advertencia",
+      "path": "/0/definicion/horario",
+      "reason": "Sin horario, una plantilla que no es de utilidad, como una de marketing, puede salir de noche."
+     },
+     {
+      "rule": null,
+      "code": "silence_without_purchase_exit",
+      "kind": "advertencia",
+      "path": "/0/definicion/termina/si",
+      "reason": "Un silencio sin la salida compra le puede llegar a quien ya compró."
+     }
+    ]
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "silence_without_purchase_exit",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "state_transition_invalid",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "state_transition_invalid",
+      "kind": "ciclo",
+      "path": "/0/tipo",
+      "reason": "Un flujo apagado solo se prende; uno prendido se pausa o se apaga; uno pausado se prende o se apaga."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "state_transition_invalid",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "template_button_mismatch",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 13,
+      "code": "template_button_mismatch",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/0/boton",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "El botón que declara el paso no es el que tiene la plantilla aprobada.",
+      "alternative": "Declarar el botón que tiene la plantilla, o elegir otra."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "template_button_mismatch",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "template_catalog_unavailable",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 13,
+      "code": "template_catalog_unavailable",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/0/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "No se pudo leer el catálogo de la bandeja, y sin él no se sabe si la plantilla sigue aprobada.",
+      "alternative": "Volver a validar cuando el catálogo se pueda leer."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "template_catalog_unavailable",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "template_language_mismatch",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 13,
+      "code": "template_language_mismatch",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/0/idioma",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "La plantilla no está en ese idioma en el catálogo, y Meta la busca por nombre e idioma.",
+      "alternative": "Escribir el idioma con el que está aprobada."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "template_language_mismatch",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "template_not_approved",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 13,
+      "code": "template_not_approved",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/0/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está APPROVED en el catálogo.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "template_not_approved",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "template_not_in_catalog",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/0/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "template_not_in_catalog",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "template_variable_count_mismatch",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 13,
+      "code": "template_variable_count_mismatch",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/0/variables",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "La plantilla pide otra cantidad de variables, o parámetros que el flujo no manda, y Meta rechazaría el envío.",
+      "alternative": "Escribir tantas variables como marcadores tiene la plantilla, en orden."
+     }
+    ],
+    "warnings": [
+     {
+      "rule": null,
+      "code": "always_with_marketing",
+      "kind": "advertencia",
+      "path": "/0/definicion/horario",
+      "reason": "Sin horario, una plantilla que no es de utilidad, como una de marketing, puede salir de noche."
+     },
+     {
+      "rule": null,
+      "code": "silence_without_purchase_exit",
+      "kind": "advertencia",
+      "path": "/0/definicion/termina/si",
+      "reason": "Un silencio sin la salida compra le puede llegar a quien ya compró."
+     }
+    ]
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "template_variable_count_mismatch",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": [
+     {
+      "rule": null,
+      "code": "always_with_marketing",
+      "kind": "advertencia",
+      "path": "/0/definicion/horario",
+      "reason": "Sin horario, una plantilla que no es de utilidad, como una de marketing, puede salir de noche."
+     },
+     {
+      "rule": null,
+      "code": "silence_without_purchase_exit",
+      "kind": "advertencia",
+      "path": "/0/definicion/termina/si",
+      "reason": "Un silencio sin la salida compra le puede llegar a quien ya compró."
+     }
+    ]
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "terminal_step_not_last",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 7,
+      "code": "terminal_step_not_last",
+      "kind": "forma",
+      "path": "/0/definicion/pasos/0/derivar",
+      "reason": "conversar y derivar son el último paso de su rama."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "terminal_step_not_last",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "trigger_change_is_another_flow",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": null,
+      "code": "trigger_change_is_another_flow",
+      "kind": "ciclo",
+      "path": "/0/definicion/dispara",
+      "reason": "Un disparador distinto es otro flujo: otro evento, o un silencio con otro lo_ultimo.",
+      "alternative": "Dejar el evento, o el lo_ultimo del silencio, de la versión publicada; o armar otro flujo."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "trigger_change_is_another_flow",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "trigger_not_exactly_one",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 2,
+      "code": "trigger_not_exactly_one",
+      "kind": "forma",
+      "path": "/0/definicion/dispara",
+      "reason": "Un flujo tiene exactamente un disparador: un evento o un silencio.",
+      "alternative": "Dejar uno solo; un disparador distinto es otro flujo."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "trigger_not_exactly_one",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "unknown_flow_reference",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 10,
+      "code": "unknown_flow_reference",
+      "kind": "forma",
+      "path": "/0/definicion/prioridad/le_gana_a/0",
+      "reason": "Nombra un flujo que no existe en la instancia."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "unknown_flow_reference",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "unknown_key",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/topes/max",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "unknown_key",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "unresolved_value",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 11,
+      "code": "unresolved_value",
+      "kind": "forma",
+      "path": "/0/definicion/pasos/0/esperar",
+      "reason": "Una versión con a_medir, a_decidir o a_crear no se publica.",
+      "alternative": "Completar el dato antes de pedir el sí: medirlo, decidirlo o crear la plantilla."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "unresolved_value",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "vence_not_after_waits",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 12,
+      "code": "vence_not_after_waits",
+      "kind": "forma",
+      "path": "/0/definicion/termina/vence",
+      "reason": "vence tiene que superar la suma de las esperas del camino más largo."
+     }
+    ],
+    "warnings": [
+     {
+      "rule": null,
+      "code": "wait_without_contesta",
+      "kind": "advertencia",
+      "path": "/0/definicion/pasos",
+      "reason": "Mientras espera, si la persona contesta otra plantilla nuestra, el agente no le responde hasta que este mensaje salga o venza.",
+      "alternative": "Sumar contesta a termina.si."
+     }
+    ]
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "vence_not_after_waits",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": [
+     {
+      "rule": null,
+      "code": "wait_without_contesta",
+      "kind": "advertencia",
+      "path": "/0/definicion/pasos",
+      "reason": "Mientras espera, si la persona contesta otra plantilla nuestra, el agente no le responde hasta que este mensaje salga o venza.",
+      "alternative": "Sumar contesta a termina.si."
+     }
+    ]
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "version_set_by_cycle",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 1,
+      "code": "version_set_by_cycle",
+      "kind": "forma",
+      "path": "/0/definicion/version",
+      "reason": "La versión y el estado los pone el ciclo al publicar, nunca la conversación.",
+      "alternative": "Sacar version y dejar estado en borrador."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "version_set_by_cycle",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "wait_without_contesta",
+   "case": "negativo",
+   "result": {
+    "blocks": [],
+    "warnings": [
+     {
+      "rule": null,
+      "code": "wait_without_contesta",
+      "kind": "advertencia",
+      "path": "/0/definicion/pasos",
+      "reason": "Mientras espera, si la persona contesta otra plantilla nuestra, el agente no le responde hasta que este mensaje salga o venza.",
+      "alternative": "Sumar contesta a termina.si."
+     }
+    ]
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "wait_without_contesta",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "window_not_increasing",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 8,
+      "code": "window_not_increasing",
+      "kind": "forma",
+      "path": "/0/definicion/horario/hasta",
+      "reason": "En el horario, desde es menor que hasta."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "window_not_increasing",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "zone_changed",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 8,
+      "code": "zone_changed",
+      "kind": "proteccion",
+      "path": "/0/definicion/horario/zona",
+      "limit": "La zona de un flujo",
+      "reason": "se elige al crear el flujo y después no cambia, porque el cupo del día se cuenta en el día de esa zona.",
+      "alternative": "Cambiar la franja, desde y hasta, en la misma zona."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "zone_changed",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "zone_invalid",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 8,
+      "code": "zone_invalid",
+      "kind": "forma",
+      "path": "/0/definicion/horario/zona",
+      "reason": "La zona no es una zona IANA válida."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "zone_invalid",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  }
+ ],
+ "edges": [
+  {
+   "description": "200 hallazgos (el tope de cantidad)",
+   "result": {
+    "blocks": [
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_0",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_1",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_2",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_3",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_4",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_5",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_6",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_7",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_8",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_9",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_10",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_11",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_12",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_13",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_14",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_15",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_16",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_17",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_18",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_19",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_20",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_21",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_22",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_23",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_24",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_25",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_26",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_27",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_28",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_29",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_30",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_31",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_32",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_33",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_34",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_35",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_36",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_37",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_38",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_39",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_40",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_41",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_42",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_43",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_44",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_45",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_46",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_47",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_48",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_49",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_50",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_51",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_52",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_53",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_54",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_55",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_56",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_57",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_58",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_59",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_60",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_61",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_62",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_63",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_64",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_65",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_66",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_67",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_68",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_69",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_70",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_71",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_72",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_73",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_74",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_75",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_76",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_77",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_78",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_79",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_80",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_81",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_82",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_83",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_84",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_85",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_86",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_87",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_88",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_89",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_90",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_91",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_92",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_93",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_94",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_95",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_96",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_97",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_98",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_99",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_100",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_101",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_102",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_103",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_104",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_105",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_106",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_107",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_108",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_109",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_110",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_111",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_112",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_113",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_114",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_115",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_116",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_117",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_118",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_119",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_120",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_121",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_122",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_123",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_124",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_125",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_126",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_127",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_128",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_129",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_130",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_131",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_132",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_133",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_134",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_135",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_136",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_137",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_138",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_139",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_140",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_141",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_142",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_143",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_144",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_145",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_146",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_147",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_148",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_149",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_150",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_151",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_152",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_153",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_154",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_155",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_156",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_157",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_158",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_159",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_160",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_161",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_162",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_163",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_164",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_165",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_166",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_167",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_168",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_169",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_170",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_171",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_172",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_173",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_174",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_175",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_176",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_177",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_178",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_179",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_180",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_181",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_182",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_183",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_184",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_185",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_186",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_187",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_188",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_189",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_190",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_191",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_192",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_193",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_194",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_195",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_196",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_197",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_198",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     },
+     {
+      "rule": 1,
+      "code": "unknown_key",
+      "kind": "forma",
+      "path": "/0/definicion/clave_199",
+      "reason": "Esa clave no está en el esquema setter-flujo/v1, y una clave desconocida rechaza la definición entera.",
+      "alternative": "Sacar la clave, o escribirla con el nombre que tiene en el esquema."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "description": "el tope de bytes, con los hallazgos largos de la 13",
+   "result": {
+    "blocks": [
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/0/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/1/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/2/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/3/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/4/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/5/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/6/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/7/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/8/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/9/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/10/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/11/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/12/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/13/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/14/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/15/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/16/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/17/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/18/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/19/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/20/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/21/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/22/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/23/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/24/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/25/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/26/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/27/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/28/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/29/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/30/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/31/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/32/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/33/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/34/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/35/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/36/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/37/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/38/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/39/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/40/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/41/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/42/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/43/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/44/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/45/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/46/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/47/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/48/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/49/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/50/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/51/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/52/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/53/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/54/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/55/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/56/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/57/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/58/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/59/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/60/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/61/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/62/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/63/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/64/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/65/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/66/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/67/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/68/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/69/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/70/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/71/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/72/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/73/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/74/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/75/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/76/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/77/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/78/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/79/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/80/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/81/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/82/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/83/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/84/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/85/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/86/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/87/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/88/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/89/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/90/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/91/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/92/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/93/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/94/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/95/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/96/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/97/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/98/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/99/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/100/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/101/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/102/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/103/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/104/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/105/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/106/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/107/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/108/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/109/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/110/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/111/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/112/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/113/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/114/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/115/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/116/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/117/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/118/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/119/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/120/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/121/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/122/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/123/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/124/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/125/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/126/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/127/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/128/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/129/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/130/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/131/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/132/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/133/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/134/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/135/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/136/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/137/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/138/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/139/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/140/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     },
+     {
+      "rule": 13,
+      "code": "template_not_in_catalog",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/141/plantilla",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "Meta solo deja mandar una plantilla aprobada, y esa no está en el catálogo de la bandeja.",
+      "alternative": "Elegir una plantilla aprobada del catálogo, o crearla y esperar que Meta la apruebe."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  }
+ ]
+}

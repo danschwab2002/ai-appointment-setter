@@ -172,6 +172,137 @@ van. Si la lectura falla, el turno sigue sin el dato
 ([commercial-knowledge-v1](commercial-knowledge-v1.md)). `CONTEXT_BUILDER_VERSION`
 pasa a `shadow-context-v2`.
 
+#### Los productos y lo que hizo la persona (paso 2b de varios productos)
+
+Solo con `[[productos]]` en el manifiesto ([referencia](../referencia-manifiesto.md)),
+y sin flag propio: sin productos declarados nada de esto existe. Cada turno lleva
+`products`, la `key` de cada producto y el `name` con el que aparece en el
+conocimiento (`# Producto: …`), y `person_activity` si el móvil de quien escribe
+hizo algo en el funnel en los últimos 30 días: una lista, de lo más viejo a lo más
+nuevo, de `{activity, product, at}`. `activity` es `form` (cada envío del
+formulario), `cart`, `payment_rejected`, `payment_slip_printed`,
+`payment_slip_expired` o `purchase`; `product` es la clave del producto del funnel
+leído; `at`, ISO 8601 en UTC. Lo devuelve
+`get_portable_person_activity_v1(tenant, funnel, teléfono)` (migración
+`20261016000200`), que compara las dos formas del móvil y trae las 20 más
+recientes, sin email, nombre, transacción ni payload. `purchase` cuenta también
+la compra hecha con el link del agente (migración `20261016000300`, paso 2c-0):
+esa compra pasa por el correlador de la emisión y no por el portable, así que se
+lee de la emisión `purchase_matched` cuya intención es del funnel, por la
+identidad a la que se mandó el link o el teléfono del evento. Sin actividad la
+clave no va. Si la lectura falla, el turno sigue sin el dato
+(`person_activity_lookup_failed` en el log, sin el número).
+
+La salida del agente admite entonces una séptima clave, `product`: `null` o la
+clave de un producto declarado. Cualquier otro valor invalida la propuesta. Con
+`send_payment_link` dice de qué producto es el link: con un solo producto, si
+falta, el link es de ese; con dos o más, un link sin producto es inválido. El
+bridge deja `payment_link_product product=<clave> source=agent|single_product`
+en el log. Con un solo producto el link es el de siempre; con más de uno, la
+reserva va por el funnel de ese producto (paso 2c-3a, abajo). Sin productos
+declarados, `product` invalida la propuesta como cualquier clave de más, y la
+salida de Johanna no cambia.
+`CONTEXT_BUILDER_VERSION` pasa a `shadow-context-v3` (y a `shadow-context-v4`
+con la 2c-3b, abajo).
+
+#### Un binding por producto (paso 2c-1)
+
+Cada producto de `[[productos]]` es su propio binding, con su `funnel_ref`
+([referencia](../referencia-manifiesto.md)). El principal, el primero, es el de
+siempre (`[hotmart]` y `[instancia]`); los demás traen su funnel y su Hotmart, y
+comparten lo que es de la instancia: la aliada, Chatwoot, el scope entrante y el
+consentimiento. El bridge arma una ruta por producto (`ProductRoutes`), y el
+arranque y `/ready` resuelven el binding de cada una contra la base. Con más de
+uno, `/ready` publica `commercial_ally_bindings`; si falta uno o no coincide,
+responde 503 `commercial_ally_binding_unavailable`, como con uno solo. Desde la
+2c-3b el ruteo por producto está completo y el bridge arranca con más de uno.
+
+#### El ruteo de Hotmart y de los formularios (paso 2c-2)
+
+Con más de un producto, cada evento y cada formulario se admite con el binding
+de su producto (`ProductRoutes`). Con uno solo, todo va al principal, como antes.
+- **Hotmart.** Se rutea por producto y oferta. El carrito trae la oferta en
+  `data.offer.code`, y la compra, el pago fallido y la ficha en
+  `data.purchase.offer.code`. La compra de una oferta que ningún producto
+  declara va al dueño de ese producto de Hotmart (el principal, si es uno de
+  ellos), así sigue frenando con cualquier oferta del producto. Un evento sin
+  producto en la instancia, o un carrito, un pago fallido o una ficha con una
+  oferta no declarada, responde 200 `{"status": "ignored", "reason":
+  "hotmart_event_unrouted"}` y deja `hotmart_event_unrouted event_id=…
+  event_type=… product_id=… offer=… reason=product_not_declared|offer_not_declared`
+  en el log. Antes salía con 200 y sin rastro.
+- **Lo que no es del principal no se planifica.** El evento queda admitido en el
+  funnel de su producto, que es lo que leen la historia de la persona, la
+  correlación y los frenos. Pero el worker de resolución lo marca `ignored` con
+  `product_without_recovery_flows`, sin crear el contacto, y deja
+  `hotmart_event_not_planned`: los flujos de los demás productos llegan con el
+  motor de flujos.
+- **`/webhooks/lead`.** El producto sale de `source.site` y `source.landing_id`.
+- **El adaptador de GHL.** El producto sale de la landing. En modo `activo`, un
+  formulario con landing declarada en `landing_por_formulario` va al producto de
+  esa landing. Si no, la URL se prueba con cada producto, el principal primero,
+  y si no es de ninguno queda el rechazo del principal (`ghl_landing_unknown`).
+  En modo `sombra`, la nota `would_fix` solo compara landings del mismo producto.
+- **El formulario de un producto que no es el principal** se admite en su funnel
+  (`admit_portable_observed_lead_precheckout`) sin planificar el primer
+  contacto, aunque esté prendido, y deja
+  `portable_precheckout_admitted_without_flows product=…` en el log.
+
+#### El link del producto que nombra el agente (paso 2c-3a)
+
+Con más de un producto, el bridge reserva el link del agente con
+`reserve_portable_checkout_issuance_for_funnel_v1` (migración `20261016000400`)
+y el `funnel_ref` del producto que nombró en `product`, también cuando es el
+principal. Con uno solo, la reserva es `reserve_portable_checkout_issuance_v2`,
+como siempre. Es la reserva portable con un parámetro más, `p_funnel_ref`
+(obligatorio, un slug), derivada de su definición vigente con reemplazos
+contados. Cambian cinco cosas y nada más:
+- el funnel tiene que tener un binding `active` de la aliada del caso en la
+  misma cuenta y el mismo inbox de Chatwoot; si no, `blocked_funnel`, sin
+  emisión;
+- la oferta por defecto es la del catálogo del scope entrante con ese funnel
+  (`default_for_inbound`), no la del producto del caso;
+- la oferta de la intención viva se busca también por ese funnel;
+- el replay del mismo mensaje exige que la emisión anterior sea de ese funnel;
+  si no, `replay_conflict`;
+- un `p_funnel_ref` nulo o que no es un slug da `invalid_request`.
+
+Desde esa oferta sale todo lo demás, como en la portable: la compra que frena
+(quien compró un producto no recibe otro link de ese producto, y sí el de otro),
+la intención, el `sck` y la URL con el hotlink del producto. El caso, el scope,
+el contacto, la baja, la conversación y la identidad no cambian: un segundo caso
+`inbound_sales` por producto no sirve, porque las RPC de `20261001000500`
+abortan si una conversación tiene dos. Autorizar y cerrar la emisión tampoco
+cambian. `blocked_funnel` va a una derivación como cualquier link bloqueado
+(`payment_link_handoff reason=blocked_funnel`); un producto sin ruta, también
+(`payment_link_product_unrouted`). Solo `service_role` la ejecuta.
+
+Límite aceptado: el catálogo admite un solo default activo por scope, versión y
+producto de Hotmart (`20260914000100`). Dos productos con el mismo hotlink en el
+mismo scope entrante no pueden tener cada uno su default: el segundo da
+`missing_default_offer`.
+
+#### La etiqueta y lo que hizo la persona de cada producto (paso 2c-3b)
+
+Con más de un producto (con uno solo, todo como en la 2a y la 2b):
+- **Lo que hizo la persona** (`person_activity`) se lee en el funnel de cada
+  producto (`get_portable_person_activity_v1`, una lectura por funnel) y llega
+  junto: cada cosa con la clave de su producto, de la más vieja a la más nueva y
+  solo las 20 más nuevas, el mismo tope que la lectura de un funnel. Si falla la
+  de un funnel, queda afuera solo ese
+  (`person_activity_lookup_failed error=… product=…`). Se lee una vez, cuando
+  entra el mensaje: da las etiquetas y la reusa la entrada del agente.
+- **El último pago rechazado** (`recent_payment_failure`) se lee en cada funnel
+  y es el más reciente de todos, con una clave más, `product`.
+- **La etiqueta.** Un etiquetador por producto que la declara; el chequeo de que
+  el macro no sea el de pausa, reanudar o baja recorre todos. Cuando la persona
+  escribe, la de cada producto que aparece en lo que hizo; sin nada, ninguna.
+  Cuando sale un link, la del producto del link (`source=link`). Con una
+  plantilla, la del principal: hoy solo el principal tiene flujos, los demás
+  llegan con el motor de la 1b. `/ready` publica `product_label_<clave>` por
+  producto.
+- `CONTEXT_BUILDER_VERSION` pasa a `shadow-context-v4`.
+
 #### Los eventos de la ficha (desde la 1.6.0)
 
 Con el mismo flag, `PURCHASE_BILLET_PRINTED` y `PURCHASE_EXPIRED` versión
@@ -425,6 +556,7 @@ El mismo móvil llega con dos formas. El formulario (el adaptador de GHL y `/web
   Los dos corren al planificar y al arrancar el envío, en carrito y en pago fallido, en los modos de audiencia con consentimiento (el helper lo usa la frontera del piloto a través de `_lancemos_pilot_audience_intent`, que no se redefine). La comparación del envío del formulario con su propia intención queda exacta: son la misma fuente.
 - `plan_portable_payment_failure_recovery` compara en forma canónica y deja `phone_match` en la evidencia del permiso.
 - Los dos arranques del piloto que no son el del primer contacto, `mark_lancemos_pilot_request_started` (carrito) y `mark_portable_payment_failure_request_started`, miran el opt-out en todas las formas antes de arrancar, en los tres modos de audiencia. El helper privado `_portable_chatwoot_opt_out_stop` toma en orden el lock de opt-out de cada forma de la identidad del caso y de `contacts.phone` (adonde sale el envío) y busca un opt-out de Chatwoot de la cuenta en cualquiera, en los estados que frena el arranque compartido. Si lo hay, rechaza con `pilot_request_start_rejected` / `pilot_chatwoot_opt_out_stop` sin consumir cupo. Hace falta por `manual_cohort`: ahí no corre el chequeo del consentimiento, y el arranque compartido busca el id exacto de la identidad, así que un opt-out `unmatched` bajo `521…` no frenaba el carrito de una identidad `52…` ni el pago fallido que usa el permiso de ese carrito, y el envío salía a ese mismo `wa_id`. Con ese opt-out la reevaluación sigue ejecutando: el intento queda reservado y el arranque lo rechaza en cada lease hasta que la acción vence. Detalle: [lancemos-pilot-boundary-runtime-v1.md](lancemos-pilot-boundary-runtime-v1.md), §3 y §9.
+- `reserve_portable_checkout_issuance_for_funnel_v1` (`20261016000400`): la reserva portable con el funnel del producto que nombra el agente, solo para `service_role`. Ver *El link del producto que nombra el agente (paso 2c-3a)*.
 - `reserve_portable_checkout_issuance_v2`: la reserva del enlace de pago del entrante para el runtime portable, solo para `service_role`. Se deriva de la definición vigente de `reserve_chatwoot_checkout_issuance_v2` (`20260927000200`) con `pg_get_functiondef` + `replace`, como el correlador, con la cantidad exacta de cada texto (si no, la migración falla con `55000`). Cambian el nombre, las tres búsquedas de la intención del móvil (la compra previa, la intención del lead y la intención de la emisión), que pasan a `= any(_whatsapp_phone_variants(...))`, y el chequeo del opt-out, que mira cada forma. Quedan exactos el chequeo de la identidad del caso, el del replay y la intención que se inserta cuando no hay ninguna viva en ninguna forma. La compartida usa el mismo `p_external_user_id` para exigir la identidad y para buscar la intención: con la identidad en `521…` y la intención del formulario en `52…`, el enlace salía con la oferta por defecto (`default_no_intent`), sin el `sck` ni el `fbclid` del formulario, la reserva fabricaba una segunda intención viva bajo `521…` y no veía la compra de quien ya había comprado, así que le mandaba otro enlace.
 - **Un cambio de resultado:** con un opt-out previo, un pago fallido en un scope con consentimiento ya no se planifica (`pilot_scope_rejected` con `pilot_audience_consented_intent_prior_opt_out`). Antes se planificaba y lo frenaba la reevaluación.
 

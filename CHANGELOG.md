@@ -8,6 +8,40 @@ Cada versión dice qué cambia y **qué tiene que hacer quien actualiza una inst
 
 Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab2002/setter-bridge`, `setter-slack-connector` y `setter-daily-feedback`. La release de GitHub lleva el digest de cada una. Cómo se pasa un servicio a la imagen y cómo se vuelve atrás: [docs/operations/release-por-imagen-v1.md](docs/operations/release-por-imagen-v1.md).
 
+## [Sin publicar]
+
+Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
+
+### Agregado
+
+- **El almacén de las definiciones de flujo**, la primera pieza de la 1b ([flow-change-cycle-v1](docs/contracts/flow-change-cycle-v1.md) 1.1.0, sección «Lo que fijó la implementación (1.1.0)», #243).
+  - **Qué agrega:**
+    - la migración `20261016000100`, con cuatro tablas (`flow_controls`, `flow_definitions`, `flow_change_proposals` y `flow_change_events`) y sus disparadores. Lo publicado no se puede cambiar y el registro solo suma;
+    - siete funciones `operator_*_v1`, que ejecuta solo el dueño de la base;
+    - el validador de las definiciones en Python (`src/bridge/flow_definition.py` y `src/bridge/flow_validator.py`), que no importa ningún módulo del bridge.
+  - **No cambia nada de lo que ya corre:**
+    - ningún rol de la API (`anon`, `authenticated`, `service_role`) ejecuta nada del almacén ni tiene permisos sobre sus tablas;
+    - no crea roles ni toca objetos que ya existen;
+    - nada lo lee para mandar un mensaje. El motor que va a ejecutar las definiciones es otra pieza.
+- **Los flujos de ATT1 como definiciones, en las pruebas.** Salen de la configuración de `att1-db` leída en solo lectura el 2026-10-16 a las 13:15:51Z (`tests/fixtures/flow_store/`).
+  - El validador da cero bloqueos y las tres advertencias que el esquema anticipa.
+  - PGlite las publica con las funciones del dueño, incluida la reactivación con `horario: siempre`.
+
+### Qué hace quien actualiza
+
+Correr la migración `20261016000100`, y nada más. No hay variables, flags ni campos del manifiesto. La migración deja las cuatro tablas vacías y suma su fila a la huella del inventario de esquema. El inventario de permisos no cambia.
+
+### Verificado antes de publicar
+
+- **La imagen real de ATT1** (`supabase/postgres:17.6.1.167`), con toda la cadena y `aplicar-migraciones.sh` de la instancia:
+  - `pg_dump -s` y la foto del clúster antes y después no muestran ningún objeto existente cambiado;
+  - la huella pasa de `absent` a `present`, y las 275 funciones del inventario de permisos quedan en `ok`;
+  - PostgREST 14.15 recarga su caché solo y rechaza la función del operador con `42501`, tanto con la clave de `service_role` como sin clave.
+- **Johanna:** `supabase db push` con la CLI 2.113.0 la aplica sin pedir superusuario.
+- **Las pruebas:** `validate_flow_store.mjs` (PGlite, 773 comprobaciones), siete carreras en Postgres 17 real (`real_postgres_flow_store.py`) y las pruebas del validador en pytest.
+  - Cada guarda se vio fallar a propósito.
+  - Un corredor de mutaciones de la revisión adversarial mata 34 de las 37 de la base (las otras tres son equivalentes o imposibles de poner en rojo) y las 29 de Python.
+
 ## [1.9.1] - 2026-10-17
 
 Un parche sobre la 1.9.0, que es lo que corre en ATT1. No trae nada de lo que entró a `main` después de la 1.9.0 (el almacén de flujos, varios productos por aliada, la T1 y la T3a del motor): sale de una rama sobre `956848b` con un solo arreglo.

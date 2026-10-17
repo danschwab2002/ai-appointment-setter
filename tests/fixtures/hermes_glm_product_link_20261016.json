@@ -1,0 +1,38 @@
+{
+  "_capture": {
+    "origin": "Respuestas de z-ai/glm-5.3-flash por OpenRouter con el SOUL comun de la rama de la 2b (producto, feat/claude-agent-person-activity-product-link-v1) y el conocimiento v8 de ATT1 (aff7c592538c, 20.295 bytes), pedidas con conocimiento/prueba/probar.py de setter-instancia-att1 desde el contenedor del bridge de Johanna, como indica su README. Sin Hermes ni Chatwoot: nadie recibio nada.",
+    "captured_at": "2026-10-16 ~19:45Z",
+    "context": "El contexto que arma probar.context() mas, en los casos con productos, `products` ([{key: att1, name: Alimenta Tu Tiroides}]) y `person_activity` armado con las filas reales de tests/fixtures/att1_person_activity_20261016.json (personas 8 y 1). Sin datos de leads.",
+    "run": "6 casos por 3 repeticiones: las 18 respuestas pasan _is_valid_proposal de la rama. Los tres pedidos de link con productos (9 de 9) traen product=att1; la pregunta, la compra hecha y el caso sin productos devuelven las seis claves de siempre.",
+    "kept": "La repeticion 0 de tres casos: el pedido del link con productos, la pregunta con productos y el pedido del link sin productos."
+  },
+  "responses": [
+    {
+      "case": "01-enlace-con-formulario",
+      "prospect_message": "Envíame el enlace",
+      "context_keys_added": [
+        "person_activity",
+        "products"
+      ],
+      "model": "z-ai/glm-5.3-flash",
+      "content": "{\"decision\":\"send_payment_link\",\"qualification_status\":\"in_progress\",\"reason_code\":\"payment_link_requested\",\"reply\":\"Hola, soy el asistente virtual del equipo de la Dra. Nina. Con gusto te envío el enlace de Alimenta Tu Tiroides: el programa cuesta USD 47.\",\"captured_fields\":{\"person_name\":null,\"location\":null,\"role\":null,\"company_name\":null,\"company_size\":null,\"business_model\":null,\"company_operational\":null,\"can_invest_in_education\":null},\"missing_fields\":[\"person_name\",\"location\",\"role\",\"company_name\",\"company_size\",\"business_model\",\"company_operational\",\"can_invest_in_education\"],\"product\":\"att1\"}"
+    },
+    {
+      "case": "03-pregunta-programa",
+      "prospect_message": "Hola! De qué se trata el programa? Tengo Hashimoto",
+      "context_keys_added": [
+        "person_activity",
+        "products"
+      ],
+      "model": "z-ai/glm-5.3-flash",
+      "content": "{\"decision\":\"ask_question\",\"qualification_status\":\"in_progress\",\"reason_code\":\"commercial_response\",\"reply\":\"Hola, un gusto. Soy el asistente virtual del equipo de la Dra. Nina. Alimenta Tu Tiroides es el protocolo de alimentación para la tiroides que creó la Dra. Nina Garza, pensado para personas con hipotiroidismo y Hashimoto. Si quieres, te cuento qué incluye.\",\"captured_fields\":{\"person_name\":null,\"location\":null,\"role\":null,\"company_name\":null,\"company_size\":null,\"business_model\":null,\"company_operational\":null,\"can_invest_in_education\":null},\"missing_fields\":[\"person_name\",\"location\",\"role\",\"company_name\",\"company_size\",\"business_model\",\"company_operational\",\"can_invest_in_education\"]}"
+    },
+    {
+      "case": "06-sin-productos",
+      "prospect_message": "Envíame el enlace",
+      "context_keys_added": [],
+      "model": "z-ai/glm-5.3-flash",
+      "content": "{\"decision\":\"send_payment_link\",\"qualification_status\":\"in_progress\",\"reason_code\":\"payment_link_requested\",\"reply\":\"Hola, un gusto. Soy el asistente virtual del equipo de la Dra. Nina. Con gusto te envío el enlace de Alimenta Tu Tiroides, que cuesta USD 47:\",\"captured_fields\":{\"person_name\":null,\"location\":null,\"role\":null,\"company_name\":null,\"company_size\":null,\"business_model\":null,\"company_operational\":null,\"can_invest_in_education\":null},\"missing_fields\":[\"person_name\",\"location\",\"role\",\"company_name\",\"company_size\",\"business_model\",\"company_operational\",\"can_invest_in_education\"]}"
+    }
+  ]
+}

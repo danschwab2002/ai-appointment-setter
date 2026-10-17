@@ -437,8 +437,13 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
 
-    assert len(allowlisted) == 127
+    assert len(allowlisted) == 129
     assert "get_daily_feedback_review_page_v2(text, uuid, text[])" in allowlisted
+    assert "get_portable_person_activity_v1(text, text, text)" in allowlisted
+    assert (
+        "reserve_portable_checkout_issuance_for_funnel_v1(uuid, text, bigint, bigint, bigint, "
+        "text, text, text, timestamp with time zone)"
+    ) in allowlisted
     assert "close_daily_feedback_batch_v1(uuid, text, text, uuid, text)" in allowlisted
     assert "get_portable_recent_payment_failure_v1(text, text, text)" in allowlisted
     assert (
@@ -625,8 +630,10 @@ def test_daily_feedback_review_filters_fingerprint_checks_the_closure_and_both_p
 
 def test_automation_expert_read_fingerprint_checks_the_three_reads() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261015000200 es la ultima del inventario.
-    fingerprint = sql.split("'20261015000200'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261015000200 va antes de la de 20261016000100.
+    fingerprint = sql.split("'20261015000200'", 1)[1].split(
+        "\n    union all\n    select\n        '20261016000100'", 1
+    )[0]
     compact_fingerprint = re.sub(r"\s+", "", fingerprint)
 
     assert "'20261015000200_automation_expert_read_v1.sql'" in fingerprint
@@ -641,4 +648,122 @@ def test_automation_expert_read_fingerprint_checks_the_three_reads() -> None:
         "andnothas_function_privilege('anon',oid,'EXECUTE')",
     ):
         assert marker in compact_fingerprint, marker
-    assert compact_fingerprint.endswith(",3,'automation_expert_read')")
+    assert compact_fingerprint.endswith(",3,'automation_expert_read'")
+
+
+def test_flow_change_store_fingerprint_never_reads_the_publish_body() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261016000100 va justo antes de la de 20261016000200 (lo que
+    # hizo la persona, 2b).
+    fingerprint = sql.split("'20261016000100'", 1)[1].split("'20261016000200'", 1)[0]
+    fingerprint = fingerprint.rsplit("union all", 1)[0]
+    executable = re.sub(r"--[^\n]*", "", fingerprint)
+    compact_fingerprint = re.sub(r"\s+", "", executable)
+
+    assert "'20261016000100_flow_change_store_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",5,'flow_change_store'")
+    # Sin rol propio en esta pieza: la fila no nombra el rol de las
+    # herramientas del Automation Expert.
+    assert "automation_expert_change" not in fingerprint
+    for marker in (
+        "to_regclass('public.flow_controls')",
+        "to_regclass('public.flow_definitions')",
+        "to_regclass('public.flow_change_proposals')",
+        "to_regclass('public.flow_change_events')",
+        "andrelrowsecurity",
+        "andnothas_table_privilege('anon',oid,'SELECT')",
+        "'flow_definitions_immutable','flow_definitions_no_truncate'",
+        "'flow_change_events_append_only','flow_change_events_no_truncate'",
+        "'flow_controls_record_change','flow_change_proposals_validate'",
+        "andnotprosecdef",
+        "proconfig@>array['search_path=pg_catalog,public,pg_temp']",
+        "andnothas_function_privilege('service_role',oid,'EXECUTE')",
+    ):
+        assert marker in compact_fingerprint, marker
+    # El motor va a reescribir publicar: ningun marcador lee su cuerpo. Su
+    # firma aparece solo adentro de to_regprocedure, una vez por marcador de
+    # las siete, y el unico marcador que lee un cuerpo es el de los
+    # invariantes.
+    publish = "operator_publish_flow_change_v1(jsonb,uuid,text,jsonb)"
+    assert compact_fingerprint.count(publish) == 2
+    assert compact_fingerprint.count("to_regprocedure('public." + publish + "')") == 2
+    markers = [chunk for chunk in re.split(r"\)::int", executable) if "select" in chunk]
+    assert len(markers) == 5
+    for chunk in markers:
+        reads_a_body = re.search(r"\bdefinition\b", chunk) is not None
+        is_invariants = "to_regprocedure('public.validate_flow_definition_insert()')" in chunk
+        assert reads_a_body == is_invariants, chunk
+        if reads_a_body:
+            assert "operator_publish_flow_change_v1" not in chunk
+            for invariant in (
+                "flow_definition_identity_mismatch",
+                "flow_definition_version_not_next",
+                "flow_definition_unresolved_value",
+                "flow_definition_zone_must_remain_constant",
+            ):
+                assert f"position('{invariant}' in definition) > 0" in chunk, invariant
+
+
+def test_person_activity_fingerprint_is_service_role_only() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261016000200 va justo antes de la de 20261016000300 (la
+    # compra con nuestro link).
+    fingerprint = sql.split("'20261016000200'", 1)[1].split("'20261016000300'", 1)[0]
+    fingerprint = fingerprint.rsplit("union all", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261016000200_portable_person_activity_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",2,'portable_person_activity'")
+    for marker in (
+        "to_regprocedure('public.get_portable_person_activity_v1(text,text,text)')",
+        "andprosecdef",
+        "position('person_activity:begin'indefinition)>0",
+        "position('public._whatsapp_phone_variants(p_whatsapp_phone)'indefinition)>0",
+        "andhas_function_privilege('service_role',oid,'EXECUTE')",
+        "andnothas_function_privilege('anon',oid,'EXECUTE')",
+        "andnothas_function_privilege('authenticated',oid,'EXECUTE')",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_person_activity_link_purchase_fingerprint_reads_the_link_purchases() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261016000300 va justo antes de la de 20261016000400 (el link
+    # del producto que nombra el agente).
+    fingerprint = sql.split("'20261016000300'", 1)[1].split("'20261016000400'", 1)[0]
+    fingerprint = fingerprint.rsplit("union all", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261016000300_portable_person_activity_link_purchase_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",1,'portable_person_activity_link_purchase'")
+    for marker in (
+        "to_regprocedure('public.get_portable_person_activity_v1(text,text,text)')",
+        "andprosecdef",
+        "position('person_activity:linkpurchase'indefinition)>0",
+        "position('public.checkout_link_issuances'indefinition)>0",
+        "position('purchase_matched'indefinition)>0",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_checkout_issuance_for_funnel_fingerprint_is_last_and_service_role_only() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261016000400 es la ultima del inventario.
+    fingerprint = sql.split("'20261016000400'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261016000400_portable_checkout_issuance_for_funnel_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",2,'portable_checkout_issuance_for_funnel')")
+    for marker in (
+        "to_regprocedure('public.reserve_portable_checkout_issuance_for_funnel_v1("
+        "uuid,text,bigint,bigint,bigint,text,text,text,timestamptz)')",
+        "andprosecdef",
+        "position('public.commercial_ally_runtime_bindings'indefinition)>0",
+        "position('''blocked_funnel'''indefinition)>0",
+        "position('offer.funnel_ref=p_funnel_ref'indefinition)>0",
+        "position('replay_offer.funnel_ref=p_funnel_ref'indefinition)>0",
+        "has_function_privilege('service_role',oid,'EXECUTE')",
+        "andnothas_function_privilege('anon',oid,'EXECUTE')",
+        "andnothas_function_privilege('authenticated',oid,'EXECUTE')",
+    ):
+        assert marker in compact_fingerprint, marker

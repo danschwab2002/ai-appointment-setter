@@ -55,6 +55,36 @@ def validate_instance(directory: Path) -> dict[str, Any]:
         "chatwoot": f"cuenta {manifest.chatwoot_account_id}, inbox {manifest.chatwoot_inbox_id}",
         "eventos": sorted(manifest.events),
     }
+    if manifest.products:
+        # Solo cuando estan: sin [[productos]], el reporte no cambia.
+        report["manifiesto"]["productos"] = [
+            {
+                "clave": product.key,
+                "etiqueta": product.chatwoot_label,
+                "macro_etiqueta": product.chatwoot_label_macro_id,
+                # Los que no son el principal traen su funnel y su Hotmart (2c).
+                **(
+                    {
+                        "funnel_ref": product.commerce.funnel_ref,
+                        "hotmart": (
+                            f"{product.commerce.hotmart_product_id} / {product.commerce.hotlink}"
+                            f" / {product.commerce.currency} {product.commerce.price}"
+                        ),
+                        "ofertas": [
+                            {
+                                "codigo": offer.code,
+                                "landing": f"{offer.site}/{offer.landing_id}",
+                                "por_defecto": offer.default,
+                            }
+                            for offer in product.commerce.offers
+                        ],
+                    }
+                    if product.commerce is not None
+                    else {}
+                ),
+            }
+            for product in manifest.products
+        ]
     if manifest.ghl_form_ids:
         acceptance = manifest.ghl_risk_acceptance
         report["manifiesto"]["adaptadores"] = {
@@ -106,6 +136,11 @@ def validate_instance(directory: Path) -> dict[str, Any]:
         report["errores"].append(
             f"el conocimiento es de '{knowledge.ally_ref}' y el manifiesto de '{manifest.ally_ref}'"
         )
+    products_error = manifest.knowledge_products_error(
+        tuple(product.key for product in knowledge.products)
+    )
+    if products_error is not None:
+        report["errores"].append(f"{products_error}: el bridge no arranca")
     if not knowledge.approved:
         report["avisos"].append(
             "el conocimiento esta en borrador: el agente no puede responder hasta que se apruebe"
@@ -163,6 +198,13 @@ def _print_human(report: dict[str, Any]) -> None:
             mark = " (por defecto)" if offer["por_defecto"] else ""
             print(f"  oferta {offer['codigo']} ← {offer['landing']}{mark}")
         print(f"  chatwoot {manifest['chatwoot']}")
+        for product in manifest.get("productos", []):
+            label = (
+                f", etiqueta {product['etiqueta']} por el macro {product['macro_etiqueta']}"
+                if product["etiqueta"] is not None
+                else ", sin etiqueta"
+            )
+            print(f"  producto {product['clave']}{label}")
         print(f"  eventos: {', '.join(manifest['eventos'])}")
         ghl = manifest.get("adaptadores", {}).get("ghl")
         if ghl:

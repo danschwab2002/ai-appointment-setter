@@ -1,0 +1,612 @@
+{
+ "_about": [
+  "Los casos compartidos de los invariantes 3 (nada sin resolver) y 4 (la zona) entre la base y el validador.",
+  "La base: tests/sql/followup_engine/validate_flow_store.mjs registra el flujo de cada caso en la instancia, publica sus previous_versions en orden (v1, v2...) por las funciones del operador y despues publica definition; base es el error que tiene que dar esa publicacion (sqlstate y mensaje) o null si publica.",
+  "El validador: con el actor y la fase de abajo, en un mundo donde el flujo del caso tiene publicadas sus previous_versions (con version y estado: publicada), validar un item version con definition tiene que dar el bloqueo de validator (regla, codigo y path, la ruta del hallazgo adentro de definition como JSON Pointer), y ese solo, o ningun bloqueo si es null.",
+  "Las definiciones van como en un borrador: completas, normalizadas, con estado: borrador y sin version. Cada flujo tiene su propia bolsa y ninguna relacion, para que los casos no se crucen.",
+  "Un caso que una capa rechaza y la otra no hace fallar la suite."
+ ],
+ "instance": {
+  "tenant_ref": "lancemos",
+  "ally_ref": "att1",
+  "products": [
+   "att1"
+  ],
+  "time_zone": "America/Mexico_City"
+ },
+ "catalog_fixture": "tests/fixtures/chatwoot_inbox_11_message_templates_20261010.json",
+ "actor": "operador",
+ "phase": "publish",
+ "cases": [
+  {
+   "id": "a_medir_en_una_rama",
+   "description": "a_medir en una espera adentro de la rama entonces de una condicion",
+   "flujo": "inv_rama_a_medir",
+   "previous_versions": [],
+   "definition": {
+    "esquema": "setter-flujo/v1",
+    "flujo": "inv_rama_a_medir",
+    "producto": "att1",
+    "estado": "borrador",
+    "nombre": "Carrito abandonado",
+    "dispara": {
+     "evento": "carrito"
+    },
+    "entra": {
+     "permiso": "formulario",
+     "contesto_a": []
+    },
+    "pasos": [
+     {
+      "condicion": {
+       "dato": "ventana",
+       "es": [
+        "abierta"
+       ]
+      },
+      "entonces": [
+       {
+        "esperar": "a_medir"
+       },
+       {
+        "plantilla": "att1_carrito_abandonado_01",
+        "idioma": "es_MX",
+        "variables": [
+         "nombre",
+         "producto"
+        ]
+       }
+      ],
+      "si_no": [
+       {
+        "plantilla": "att1_carrito_abandonado_01",
+        "idioma": "es_MX",
+        "variables": [
+         "nombre",
+         "producto"
+        ]
+       }
+      ]
+     }
+    ],
+    "termina": {
+     "si": [
+      "compra"
+     ],
+     "vence": "1d"
+    },
+    "horario": {
+     "zona": "America/Mexico_City",
+     "desde": "09:00",
+     "hasta": "21:00"
+    },
+    "topes": {
+     "bolsa": "att1-inv_rama_a_medir",
+     "por_dia": 80,
+     "total": 1000,
+     "repeticion": {
+      "una_por": "persona_y_oferta",
+      "otra_despues_de": "0m"
+     }
+    },
+    "prioridad": {
+     "le_gana_a": [],
+     "no_arranca_mientras": []
+    }
+   },
+   "base": {
+    "sqlstate": "23514",
+    "error": "flow_definition_unresolved_value"
+   },
+   "validator": {
+    "rule": 11,
+    "code": "unresolved_value",
+    "path": "/pasos/0/entonces/0/esperar"
+   }
+  },
+  {
+   "id": "a_crear_en_un_paso",
+   "description": "una plantilla que todavia no existe, {a_crear: ...}, en un paso",
+   "flujo": "inv_paso_a_crear",
+   "previous_versions": [],
+   "definition": {
+    "esquema": "setter-flujo/v1",
+    "flujo": "inv_paso_a_crear",
+    "producto": "att1",
+    "estado": "borrador",
+    "nombre": "Carrito abandonado",
+    "dispara": {
+     "evento": "carrito"
+    },
+    "entra": {
+     "permiso": "formulario",
+     "contesto_a": []
+    },
+    "pasos": [
+     {
+      "plantilla": {
+       "a_crear": "att1_carrito_nuevo_01"
+      },
+      "idioma": "es_MX",
+      "variables": [
+       "nombre",
+       "producto"
+      ]
+     }
+    ],
+    "termina": {
+     "si": [
+      "compra"
+     ],
+     "vence": "1d"
+    },
+    "horario": {
+     "zona": "America/Mexico_City",
+     "desde": "09:00",
+     "hasta": "21:00"
+    },
+    "topes": {
+     "bolsa": "att1-inv_paso_a_crear",
+     "por_dia": 80,
+     "total": 1000,
+     "repeticion": {
+      "una_por": "persona_y_oferta",
+      "otra_despues_de": "0m"
+     }
+    },
+    "prioridad": {
+     "le_gana_a": [],
+     "no_arranca_mientras": []
+    }
+   },
+   "base": {
+    "sqlstate": "23514",
+    "error": "flow_definition_unresolved_value"
+   },
+   "validator": {
+    "rule": 11,
+    "code": "unresolved_value",
+    "path": "/pasos/0/plantilla"
+   }
+  },
+  {
+   "id": "a_decidir_en_vence",
+   "description": "a_decidir en termina.vence",
+   "flujo": "inv_vence_a_decidir",
+   "previous_versions": [],
+   "definition": {
+    "esquema": "setter-flujo/v1",
+    "flujo": "inv_vence_a_decidir",
+    "producto": "att1",
+    "estado": "borrador",
+    "nombre": "Carrito abandonado",
+    "dispara": {
+     "evento": "carrito"
+    },
+    "entra": {
+     "permiso": "formulario",
+     "contesto_a": []
+    },
+    "pasos": [
+     {
+      "plantilla": "att1_carrito_abandonado_01",
+      "idioma": "es_MX",
+      "variables": [
+       "nombre",
+       "producto"
+      ]
+     }
+    ],
+    "termina": {
+     "si": [
+      "compra"
+     ],
+     "vence": "a_decidir"
+    },
+    "horario": {
+     "zona": "America/Mexico_City",
+     "desde": "09:00",
+     "hasta": "21:00"
+    },
+    "topes": {
+     "bolsa": "att1-inv_vence_a_decidir",
+     "por_dia": 80,
+     "total": 1000,
+     "repeticion": {
+      "una_por": "persona_y_oferta",
+      "otra_despues_de": "0m"
+     }
+    },
+    "prioridad": {
+     "le_gana_a": [],
+     "no_arranca_mientras": []
+    }
+   },
+   "base": {
+    "sqlstate": "23514",
+    "error": "flow_definition_unresolved_value"
+   },
+   "validator": {
+    "rule": 11,
+    "code": "unresolved_value",
+    "path": "/termina/vence"
+   }
+  },
+  {
+   "id": "zona_inexistente",
+   "description": "un horario con una zona que no es IANA",
+   "flujo": "inv_zona_inexistente",
+   "previous_versions": [],
+   "definition": {
+    "esquema": "setter-flujo/v1",
+    "flujo": "inv_zona_inexistente",
+    "producto": "att1",
+    "estado": "borrador",
+    "nombre": "Carrito abandonado",
+    "dispara": {
+     "evento": "carrito"
+    },
+    "entra": {
+     "permiso": "formulario",
+     "contesto_a": []
+    },
+    "pasos": [
+     {
+      "plantilla": "att1_carrito_abandonado_01",
+      "idioma": "es_MX",
+      "variables": [
+       "nombre",
+       "producto"
+      ]
+     }
+    ],
+    "termina": {
+     "si": [
+      "compra"
+     ],
+     "vence": "1d"
+    },
+    "horario": {
+     "zona": "America/Nowhere",
+     "desde": "09:00",
+     "hasta": "21:00"
+    },
+    "topes": {
+     "bolsa": "att1-inv_zona_inexistente",
+     "por_dia": 80,
+     "total": 1000,
+     "repeticion": {
+      "una_por": "persona_y_oferta",
+      "otra_despues_de": "0m"
+     }
+    },
+    "prioridad": {
+     "le_gana_a": [],
+     "no_arranca_mientras": []
+    }
+   },
+   "base": {
+    "sqlstate": "22023",
+    "error": "flow_definition_zone_invalid"
+   },
+   "validator": {
+    "rule": 8,
+    "code": "zone_invalid",
+    "path": "/horario/zona"
+   }
+  },
+  {
+   "id": "zona_cambia_despues_de_siempre",
+   "description": "v1 con CDMX, v2 con horario: siempre y v3 con Bogota: la zona del flujo es la primera que tuvo",
+   "flujo": "inv_zona_cambia",
+   "previous_versions": [
+    {
+     "esquema": "setter-flujo/v1",
+     "flujo": "inv_zona_cambia",
+     "producto": "att1",
+     "estado": "borrador",
+     "nombre": "Carrito abandonado",
+     "dispara": {
+      "evento": "carrito"
+     },
+     "entra": {
+      "permiso": "formulario",
+      "contesto_a": []
+     },
+     "pasos": [
+      {
+       "plantilla": "att1_carrito_abandonado_01",
+       "idioma": "es_MX",
+       "variables": [
+        "nombre",
+        "producto"
+       ]
+      }
+     ],
+     "termina": {
+      "si": [
+       "compra"
+      ],
+      "vence": "1d"
+     },
+     "horario": {
+      "zona": "America/Mexico_City",
+      "desde": "09:00",
+      "hasta": "21:00"
+     },
+     "topes": {
+      "bolsa": "att1-inv_zona_cambia",
+      "por_dia": 80,
+      "total": 1000,
+      "repeticion": {
+       "una_por": "persona_y_oferta",
+       "otra_despues_de": "0m"
+      }
+     },
+     "prioridad": {
+      "le_gana_a": [],
+      "no_arranca_mientras": []
+     }
+    },
+    {
+     "esquema": "setter-flujo/v1",
+     "flujo": "inv_zona_cambia",
+     "producto": "att1",
+     "estado": "borrador",
+     "nombre": "Carrito abandonado",
+     "dispara": {
+      "evento": "carrito"
+     },
+     "entra": {
+      "permiso": "formulario",
+      "contesto_a": []
+     },
+     "pasos": [
+      {
+       "plantilla": "att1_carrito_abandonado_01",
+       "idioma": "es_MX",
+       "variables": [
+        "nombre",
+        "producto"
+       ]
+      }
+     ],
+     "termina": {
+      "si": [
+       "compra"
+      ],
+      "vence": "1d"
+     },
+     "horario": "siempre",
+     "topes": {
+      "bolsa": "att1-inv_zona_cambia",
+      "por_dia": 80,
+      "total": 1000,
+      "repeticion": {
+       "una_por": "persona_y_oferta",
+       "otra_despues_de": "0m"
+      }
+     },
+     "prioridad": {
+      "le_gana_a": [],
+      "no_arranca_mientras": []
+     }
+    }
+   ],
+   "definition": {
+    "esquema": "setter-flujo/v1",
+    "flujo": "inv_zona_cambia",
+    "producto": "att1",
+    "estado": "borrador",
+    "nombre": "Carrito abandonado",
+    "dispara": {
+     "evento": "carrito"
+    },
+    "entra": {
+     "permiso": "formulario",
+     "contesto_a": []
+    },
+    "pasos": [
+     {
+      "plantilla": "att1_carrito_abandonado_01",
+      "idioma": "es_MX",
+      "variables": [
+       "nombre",
+       "producto"
+      ]
+     }
+    ],
+    "termina": {
+     "si": [
+      "compra"
+     ],
+     "vence": "1d"
+    },
+    "horario": {
+     "zona": "America/Bogota",
+     "desde": "09:00",
+     "hasta": "21:00"
+    },
+    "topes": {
+     "bolsa": "att1-inv_zona_cambia",
+     "por_dia": 80,
+     "total": 1000,
+     "repeticion": {
+      "una_por": "persona_y_oferta",
+      "otra_despues_de": "0m"
+     }
+    },
+    "prioridad": {
+     "le_gana_a": [],
+     "no_arranca_mientras": []
+    }
+   },
+   "base": {
+    "sqlstate": "23514",
+    "error": "flow_definition_zone_must_remain_constant"
+   },
+   "validator": {
+    "rule": 8,
+    "code": "zone_changed",
+    "path": "/horario/zona"
+   }
+  },
+  {
+   "id": "horario_siempre",
+   "description": "horario: siempre no tiene zona que mirar (el positivo del bloqueante V1#1)",
+   "flujo": "inv_siempre",
+   "previous_versions": [],
+   "definition": {
+    "esquema": "setter-flujo/v1",
+    "flujo": "inv_siempre",
+    "producto": "att1",
+    "estado": "borrador",
+    "nombre": "Carrito abandonado",
+    "dispara": {
+     "evento": "carrito"
+    },
+    "entra": {
+     "permiso": "formulario",
+     "contesto_a": []
+    },
+    "pasos": [
+     {
+      "plantilla": "att1_carrito_abandonado_01",
+      "idioma": "es_MX",
+      "variables": [
+       "nombre",
+       "producto"
+      ]
+     }
+    ],
+    "termina": {
+     "si": [
+      "compra"
+     ],
+     "vence": "1d"
+    },
+    "horario": "siempre",
+    "topes": {
+     "bolsa": "att1-inv_siempre",
+     "por_dia": 80,
+     "total": 1000,
+     "repeticion": {
+      "una_por": "persona_y_oferta",
+      "otra_despues_de": "0m"
+     }
+    },
+    "prioridad": {
+     "le_gana_a": [],
+     "no_arranca_mientras": []
+    }
+   },
+   "base": null,
+   "validator": null
+  },
+  {
+   "id": "misma_zona",
+   "description": "v1 con CDMX y v2 con CDMX y otro tope por dia",
+   "flujo": "inv_zona_igual",
+   "previous_versions": [
+    {
+     "esquema": "setter-flujo/v1",
+     "flujo": "inv_zona_igual",
+     "producto": "att1",
+     "estado": "borrador",
+     "nombre": "Carrito abandonado",
+     "dispara": {
+      "evento": "carrito"
+     },
+     "entra": {
+      "permiso": "formulario",
+      "contesto_a": []
+     },
+     "pasos": [
+      {
+       "plantilla": "att1_carrito_abandonado_01",
+       "idioma": "es_MX",
+       "variables": [
+        "nombre",
+        "producto"
+       ]
+      }
+     ],
+     "termina": {
+      "si": [
+       "compra"
+      ],
+      "vence": "1d"
+     },
+     "horario": {
+      "zona": "America/Mexico_City",
+      "desde": "09:00",
+      "hasta": "21:00"
+     },
+     "topes": {
+      "bolsa": "att1-inv_zona_igual",
+      "por_dia": 80,
+      "total": 1000,
+      "repeticion": {
+       "una_por": "persona_y_oferta",
+       "otra_despues_de": "0m"
+      }
+     },
+     "prioridad": {
+      "le_gana_a": [],
+      "no_arranca_mientras": []
+     }
+    }
+   ],
+   "definition": {
+    "esquema": "setter-flujo/v1",
+    "flujo": "inv_zona_igual",
+    "producto": "att1",
+    "estado": "borrador",
+    "nombre": "Carrito abandonado",
+    "dispara": {
+     "evento": "carrito"
+    },
+    "entra": {
+     "permiso": "formulario",
+     "contesto_a": []
+    },
+    "pasos": [
+     {
+      "plantilla": "att1_carrito_abandonado_01",
+      "idioma": "es_MX",
+      "variables": [
+       "nombre",
+       "producto"
+      ]
+     }
+    ],
+    "termina": {
+     "si": [
+      "compra"
+     ],
+     "vence": "1d"
+    },
+    "horario": {
+     "zona": "America/Mexico_City",
+     "desde": "09:00",
+     "hasta": "21:00"
+    },
+    "topes": {
+     "bolsa": "att1-inv_zona_igual",
+     "por_dia": 90,
+     "total": 1000,
+     "repeticion": {
+      "una_por": "persona_y_oferta",
+      "otra_despues_de": "0m"
+     }
+    },
+    "prioridad": {
+     "le_gana_a": [],
+     "no_arranca_mientras": []
+    }
+   },
+   "base": null,
+   "validator": null
+  }
+ ]
+}
