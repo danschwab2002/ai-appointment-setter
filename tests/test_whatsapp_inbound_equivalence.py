@@ -766,6 +766,128 @@ def test_without_a_manifest_a_failed_admission_behaves_as_before(tmp_path: Path)
     assert item["last_error_type"] == "RetryableChatwootWorkError"
 
 
+# ------------------- el opt-out cuando la conversacion esta pausada o derivada
+#
+# La admision pasa sin error pero da ``blocked`` (una persona del equipo la
+# tiene: derivada o pausada) o ``evidence_conflict``. El agente no corre, y
+# antes el bridge salia ahi, antes de buscar la baja. El caso real es la
+# conversacion 50 de ATT1 (fixture de abajo): tocó «No más mensajes» el
+# 2026-10-12 estando derivada y la baja no quedo en att1-db.
+
+CONV_50 = (
+    Path(__file__).parent
+    / "fixtures"
+    / "chatwoot_conversation_inbox_11_conv_50_opt_out_paused_20261017.json"
+)
+
+
+def _blocked(outcome: str = "blocked", **kwargs: Any) -> _Supabase:
+    supabase = _Supabase(**kwargs)
+    supabase.outcome = outcome
+    return supabase
+
+
+@pytest.mark.parametrize("outcome", ["blocked", "evidence_conflict"])
+def test_an_opt_out_is_recorded_when_the_conversation_is_paused(
+    tmp_path: Path, outcome: str
+) -> None:
+    supabase = _blocked(outcome, identities=(FORM_ID,))
+    webhook, history = _text_webhook(OPT_OUT_TEXT)
+
+    chatwoot, shadow, app = _process(tmp_path, supabase, webhook=webhook, history=history)
+
+    assert supabase.admission_rpcs == ["portable"]
+    [opt_out] = supabase.opt_outs
+    assert opt_out["external_user_id"] == FORM_ID
+    assert opt_out["chatwoot_conversation_id"] == 200
+    assert opt_out["chatwoot_message_id"] == 2472
+    assert opt_out["rule_key"] == "stop_receiving_messages"
+    # La conversacion sigue con el equipo: el agente no corre ni contesta.
+    assert shadow.calls == [] and chatwoot.reply_calls == []
+    assert {call["expected_jid"] for call in chatwoot.authority_calls} == {WA_JID}
+    assert _pending(app) == []
+
+
+def test_the_opt_out_of_conversation_50_is_found_in_its_real_history(
+    tmp_path: Path,
+) -> None:
+    # La historia capturada entera: la plantilla del carrito, la derivacion
+    # (etiqueta, asignacion y nota privada), el mensaje del equipo y la baja,
+    # que responde a la plantilla de dos dias antes.
+    capture = json.loads(CONV_50.read_text(encoding="utf-8"))
+    history = capture["conversation"]["messages"]
+    [pressed] = [message for message in history if message["id"] == 3108]
+    assert pressed["content"] == OPT_OUT_TEXT
+    assert pressed["content_attributes"]["in_reply_to"] == 2820
+    webhook, _ = _text_webhook(OPT_OUT_TEXT)
+    webhook["id"] = 3108
+    webhook["conversation"]["messages"][0]["id"] = 3108
+    supabase = _blocked(identities=(FORM_ID,))
+
+    chatwoot, shadow, app = _process(tmp_path, supabase, webhook=webhook, history=history)
+
+    [opt_out] = supabase.opt_outs
+    assert opt_out["chatwoot_message_id"] == 3108
+    assert opt_out["rule_key"] == "stop_receiving_messages"
+    assert opt_out["occurred_at"] == "2026-10-12T17:48:57+00:00"
+    assert shadow.calls == [] and chatwoot.reply_calls == []
+    assert _pending(app) == []
+
+
+def test_a_paused_conversation_without_an_opt_out_ends_as_before(
+    tmp_path: Path,
+) -> None:
+    # Un mensaje comun con la conversacion pausada: se mira el stop, no hay
+    # baja, el agente no corre y el trabajo termina, como antes.
+    supabase = _blocked(identities=(FORM_ID,))
+    webhook, history = _text_webhook("Sí, quiero el enlace")
+
+    chatwoot, shadow, app = _process(tmp_path, supabase, webhook=webhook, history=history)
+
+    assert supabase.stop_checks != []
+    assert supabase.opt_outs == [] and supabase.reconciliations == []
+    assert shadow.calls == [] and chatwoot.reply_calls == []
+    assert _pending(app) == []
+
+
+def test_a_stopped_person_in_a_paused_conversation_is_reconciled(
+    tmp_path: Path,
+) -> None:
+    supabase = _blocked(identities=(FORM_ID,), stopped_user_ids=(WA_ID,))
+    webhook, history = _text_webhook("Hola, ¿siguen ahí?")
+
+    chatwoot, shadow, app = _process(tmp_path, supabase, webhook=webhook, history=history)
+
+    assert [call["external_user_id"] for call in supabase.reconciliations] == [WA_ID]
+    assert supabase.opt_outs == []
+    assert shadow.calls == [] and chatwoot.reply_calls == []
+    assert _pending(app) == []
+
+
+def test_without_a_manifest_a_paused_conversation_behaves_as_before(
+    tmp_path: Path,
+) -> None:
+    # Johanna: sin manifiesto, la conversacion pausada sigue saliendo antes
+    # de buscar la baja. No cambia nada de lo que ya corre.
+    supabase = _JohannaSupabase()
+    supabase.outcome = "blocked"
+    webhook, history = _text_webhook(OPT_OUT_TEXT)
+
+    chatwoot, shadow, app = _process(
+        tmp_path,
+        supabase,
+        settings=_johanna_settings(tmp_path),
+        webhook=webhook,
+        history=history,
+    )
+
+    assert supabase.admission_rpcs == ["v2"]
+    assert supabase.stop_checks == [] and supabase.opt_outs == []
+    assert chatwoot.authority_calls == []
+    assert shadow.calls == [] and chatwoot.reply_calls == []
+    assert _pending(app) == []
+
+
 # ------------------------------------------ el enlace de pago del entrante
 #
 # Quien dejo el formulario con 52... y escribe desde su wa_id 521... pide el
