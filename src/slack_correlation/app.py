@@ -44,7 +44,12 @@ _INTERNAL_TOKEN = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 _WORKER_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
 _SLACK_TS = re.compile(r"^[0-9]{10,16}\.[0-9]{6}$")
 _SLACK_USER_ID = re.compile(r"^U[A-Z0-9]{8,}$")
-_ALLOWED_TENANTS = {"johanna", "att1"}
+_TENANT_REF = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
+# Las etiquetas que el conector ya mostraba antes de que los tenants salieran de la
+# configuracion: sin SLACK_TENANT_LABELS_JSON, el mensaje de Johanna y el de ATT1
+# quedan iguales. Un tenant nuevo sin etiqueta muestra su ref en mayusculas.
+_LEGACY_TENANT_LABELS = {"johanna": "Johanna", "att1": "ATT1"}
+_MAX_TENANT_LABEL_CHARS = 40
 _JOHANNA_CHANNEL_ID = "C0C0YEACVT2"
 _MAX_BODY_BYTES = 8192
 
@@ -70,6 +75,7 @@ class SlackConnectorSettings:
     signing_secret: str | None = None
     team_id: str | None = None
     tenant_channels: dict[str, str] = field(default_factory=dict)
+    tenant_labels: dict[str, str] = field(default_factory=dict)
     tenant_review_base_urls: dict[str, str] = field(default_factory=dict)
     tenant_conversation_base_urls: dict[str, str] = field(default_factory=dict)
     tenant_operator_user_ids: dict[str, frozenset[str]] = field(default_factory=dict)
@@ -100,6 +106,7 @@ class SlackConnectorSettings:
             signing_secret=_env_value("SLACK_SIGNING_SECRET"),
             team_id=_env_value("SLACK_TEAM_ID"),
             tenant_channels=_env_tenant_channels(),
+            tenant_labels=_env_tenant_labels(),
             tenant_review_base_urls=_env_tenant_review_base_urls(),
             tenant_conversation_base_urls=_env_tenant_conversation_base_urls(),
             tenant_operator_user_ids=_env_tenant_user_ids(),
@@ -209,6 +216,22 @@ def _env_tenant_channels() -> dict[str, str]:
     return dict(payload)
 
 
+def _env_tenant_labels() -> dict[str, str]:
+    raw = os.getenv("SLACK_TENANT_LABELS_JSON")
+    if raw is None or not raw.strip():
+        return {}
+    try:
+        payload = json.loads(raw)
+    except ValueError as exc:
+        raise ValueError("invalid_json:SLACK_TENANT_LABELS_JSON") from exc
+    if not isinstance(payload, dict) or any(
+        not isinstance(key, str) or not isinstance(value, str)
+        for key, value in payload.items()
+    ):
+        raise ValueError("invalid_json:SLACK_TENANT_LABELS_JSON")
+    return dict(payload)
+
+
 def _env_tenant_review_base_urls() -> dict[str, str]:
     raw = os.getenv("SLACK_TENANT_REVIEW_BASE_URLS_JSON")
     if raw is None or not raw.strip():
@@ -282,6 +305,18 @@ def _env_operator_backends() -> dict[str, dict[str, str]]:
 
 def _resolved_tenant_channels(settings: SlackConnectorSettings) -> dict[str, str]:
     return dict(settings.tenant_channels)
+
+
+def _resolved_tenant_labels(settings: SlackConnectorSettings) -> dict[str, str]:
+    """La etiqueta de cada tenant configurado: la de SLACK_TENANT_LABELS_JSON, la que
+    ya tenia (Johanna, ATT1) o su ref en mayusculas."""
+
+    return {
+        tenant: settings.tenant_labels.get(tenant)
+        or _LEGACY_TENANT_LABELS.get(tenant)
+        or tenant.upper()
+        for tenant in settings.tenant_channels
+    }
 
 
 def _validate_settings(settings: SlackConnectorSettings) -> None:
@@ -369,10 +404,20 @@ def _validate_settings(settings: SlackConnectorSettings) -> None:
             validate_conversation_base_url(value)
         except ValueError as exc:
             raise ValueError("invalid_tenant_conversation_base_urls") from exc
-    if set(tenant_channels) - _ALLOWED_TENANTS or any(
+    # Los tenants del conector son los que tienen canal: sumar una instancia es
+    # configuracion, no un cambio de codigo.
+    if any(_TENANT_REF.fullmatch(tenant) is None for tenant in tenant_channels) or any(
         _CHANNEL_ID.fullmatch(value) is None for value in tenant_channels.values()
     ):
         raise ValueError("invalid_tenant_channel_configuration")
+    if set(settings.tenant_labels) - set(tenant_channels) or any(
+        not value.strip()
+        or value != value.strip()
+        or len(value) > _MAX_TENANT_LABEL_CHARS
+        or not value.isprintable()
+        for value in settings.tenant_labels.values()
+    ):
+        raise ValueError("invalid_tenant_label_configuration")
     if len(set(tenant_channels.values())) != len(tenant_channels):
         raise ValueError("tenant_channel_collision")
     if (
@@ -482,7 +527,7 @@ def create_app(
                 store=persistence,
                 slack_client=runtime_client,
                 tenant_channels=tenant_channels,
-                tenant_labels={"johanna": "Johanna", "att1": "ATT1"},
+                tenant_labels=_resolved_tenant_labels(settings),
                 tenant_review_base_urls=settings.tenant_review_base_urls,
                 tenant_conversation_base_urls=settings.tenant_conversation_base_urls,
                 worker_id=settings.worker_id,
@@ -1002,7 +1047,11 @@ def create_app(
                 raise ValueError
             tenant_ref = payload["tenant_ref"]
             notification_id = payload["notification_id"]
-            if tenant_ref not in _ALLOWED_TENANTS or str(UUID(notification_id)) != notification_id:
+            if (
+                not isinstance(tenant_ref, str)
+                or _TENANT_REF.fullmatch(tenant_ref) is None
+                or str(UUID(notification_id)) != notification_id
+            ):
                 raise ValueError
             message_ts = payload.get("message_ts")
             thread_ts = payload.get("thread_ts")
@@ -1090,7 +1139,7 @@ def create_app(
             if not isinstance(payload, dict) or set(payload) != {"tenant_ref"}:
                 raise ValueError
             tenant_ref = payload["tenant_ref"]
-            if tenant_ref not in _ALLOWED_TENANTS:
+            if not isinstance(tenant_ref, str) or _TENANT_REF.fullmatch(tenant_ref) is None:
                 raise ValueError
         except (PayloadTooLarge, ValueError, TypeError, KeyError):
             return JSONResponse(status_code=400, content={"detail": "invalid_backfill"})
