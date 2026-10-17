@@ -1,0 +1,388 @@
+{
+  "_capture": {
+    "origen": "API de Chatwoot de produccion, cuenta 2, inbox 11 (ATT1), 2026-10-17T18:47:59Z, desde el contenedor del bridge de ATT1 con su token de control: GET show + messages de la conversacion 50, y GET /conversations?status=resolved|open&inbox_id=11&page=1&sort_by=last_activity_at_desc",
+    "anonimizacion": "nombre, telefono, mail, identifier y source_id del contacto reemplazados (sinteticos con forma real); atributos del contacto vaciados; contenido de los mensajes del lead redactado; fbclid y sck del anuncio redactados en los links; nombre del lead borrado de todo texto; wamid reemplazados; los items de las paginas reducidos a los campos que usa el barrido",
+    "caso": "50 (id interno 271): el primer toque del carrito sale el 10/10 17:17Z (2820); la persona contesta (2836) y la derivan: la etiqueta automation_paused (2837), la asignacion al equipo (2838) y la nota privada de la derivacion (2839). El equipo le escribe el 12/10 (3037) y a las 17:48:57Z la persona toca el boton «No mas mensajes» de la plantilla del 10/10 (3108, in_reply_to 2820). Con la conversacion pausada la admision da 'blocked' y el bridge salia antes de buscar la baja: en att1-db no hay ningun contact_opt_out_events del mensaje 3108 (las otras 18 bajas del inbox 11 si estan, leido el 17/10 18:45Z), la conversacion no tiene la etiqueta automation_opted_out y el equipo le volvio a escribir el 13/10 y el 14/10.",
+    "forma": "la lista viene ordenada por last_activity_at descendente (tambien con sort_by explicito); resolver actualiza last_activity_at; meta trae mine_count, assigned_count, unassigned_count y all_count, sin current_page; 25 items por pagina",
+    "reposicion": "el content del mensaje 3108 se repuso con su texto real, «No más mensajes», leido de la base de Chatwoot el 17/10: es el texto del boton de la plantilla, no un dato de la persona. El resto de los mensajes del lead sigue redactado. Las paginas del barrido se sacaron: este fixture solo documenta la conversacion."
+  },
+  "conversation": {
+    "conversation": {
+      "meta": {
+        "sender": {
+          "additional_attributes": {},
+          "availability_status": "offline",
+          "email": "lead50@example.com",
+          "id": 278,
+          "name": "lucia herrera",
+          "phone_number": "+5215500050",
+          "blocked": false,
+          "identifier": null,
+          "thumbnail": "",
+          "custom_attributes": {},
+          "last_activity_at": 1791922078,
+          "created_at": 1791652647
+        },
+        "channel": "Channel::Whatsapp",
+        "team": {
+          "id": 2,
+          "name": "att1 - revisión humana",
+          "description": "Atención de derivaciones",
+          "allow_auto_assign": true,
+          "account_id": 2,
+          "is_member": false
+        },
+        "hmac_verified": false
+      },
+      "id": 50,
+      "messages": [
+        {
+          "id": 3329,
+          "content": "Hola NOMBRE un gusto saludarte y muchas gracias por tu paciencia \n\n\n",
+          "account_id": 2,
+          "inbox_id": 11,
+          "conversation_id": 50,
+          "message_type": 1,
+          "created_at": 1792008592,
+          "updated_at": "2026-10-14T20:10:01.417Z",
+          "private": false,
+          "status": "failed",
+          "source_id": null,
+          "content_type": "text",
+          "content_attributes": {
+            "external_error": "Template not found or invalid template name"
+          },
+          "sender_type": "User",
+          "sender_id": 4,
+          "external_source_ids": {},
+          "additional_attributes": {},
+          "processed_message_content": "Hola NOMBRE un gusto saludarte y muchas gracias por tu paciencia \n\n\n",
+          "sentiment": {},
+          "conversation": {
+            "assignee_id": null,
+            "unread_count": 0,
+            "last_activity_at": 1792008592,
+            "contact_inbox": {
+              "source_id": "REDACTED-source_id"
+            }
+          },
+          "sender": {
+            "id": 4,
+            "name": "Mariana Marín",
+            "available_name": "Mariana Marín",
+            "avatar_url": "",
+            "type": "user",
+            "availability_status": "offline",
+            "thumbnail": ""
+          }
+        }
+      ],
+      "account_id": 2,
+      "uuid": "90586b4c-1a73-4717-81c8-bde4422ff144",
+      "additional_attributes": {},
+      "agent_last_seen_at": 1792008594,
+      "assignee_last_seen_at": 0,
+      "can_reply": false,
+      "contact_last_seen_at": 0,
+      "custom_attributes": {},
+      "inbox_id": 11,
+      "labels": [
+        "automation_paused"
+      ],
+      "muted": false,
+      "snoozed_until": null,
+      "status": "open",
+      "created_at": 1791652647,
+      "updated_at": 1792008593.553447,
+      "timestamp": 1792008592,
+      "first_reply_created_at": 1791822108,
+      "unread_count": 0,
+      "last_non_activity_message": {
+        "id": 3329,
+        "content": "Hola NOMBRE un gusto saludarte y muchas gracias por tu paciencia \n\n\n",
+        "account_id": 2,
+        "inbox_id": 11,
+        "conversation_id": 50,
+        "message_type": 1,
+        "created_at": 1792008592,
+        "updated_at": "2026-10-14T20:10:01.417Z",
+        "private": false,
+        "status": "failed",
+        "source_id": null,
+        "content_type": "text",
+        "content_attributes": {
+          "external_error": "Template not found or invalid template name"
+        },
+        "sender_type": "User",
+        "sender_id": 4,
+        "external_source_ids": {},
+        "additional_attributes": {},
+        "processed_message_content": "Hola NOMBRE un gusto saludarte y muchas gracias por tu paciencia \n\n\n",
+        "sentiment": {},
+        "conversation": {
+          "assignee_id": null,
+          "unread_count": 0,
+          "last_activity_at": 1792008592,
+          "contact_inbox": {
+            "source_id": "REDACTED-source_id"
+          }
+        },
+        "sender": {
+          "id": 4,
+          "name": "Mariana Marín",
+          "available_name": "Mariana Marín",
+          "avatar_url": "",
+          "type": "user",
+          "availability_status": "offline",
+          "thumbnail": ""
+        }
+      },
+      "last_activity_at": 1792008592,
+      "priority": null,
+      "waiting_since": 0,
+      "sla_policy_id": null
+    },
+    "messages": [
+      {
+        "id": 2820,
+        "content": "Hola, NOMBRE. Soy del equipo de Dra. Nina.\n\nCompletaste el formulario para recibir información sobre Alimenta tu Tiroides. Si tienes alguna duda, puedo ayudarte. También puedo enviarte el enlace para que continúes cuando quieras.",
+        "inbox_id": 11,
+        "conversation_id": 50,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "read",
+        "content_attributes": {
+          "recovery_first_touch_hash": "85b735565cdb850227c5b50838d940fb924993c8a64306d7571fb8b9a20d06a5"
+        },
+        "created_at": 1791652647,
+        "private": false,
+        "source_id": "REDACTED-source_id",
+        "sender": {
+          "id": 2,
+          "name": "att1-setter",
+          "avatar_url": "",
+          "type": "agent_bot"
+        }
+      },
+      {
+        "id": 2836,
+        "content": "[mensaje del lead redactado]",
+        "inbox_id": 11,
+        "conversation_id": 50,
+        "message_type": 0,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1791668934,
+        "private": false,
+        "source_id": "REDACTED-source_id",
+        "sender": {
+          "additional_attributes": {},
+          "custom_attributes": {},
+          "email": "lead50@example.com",
+          "id": 278,
+          "identifier": null,
+          "name": "lucia herrera",
+          "phone_number": "+5215500050",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
+      },
+      {
+        "id": 2837,
+        "content": "Dan Schwab added automation_paused",
+        "inbox_id": 11,
+        "conversation_id": 50,
+        "message_type": 2,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1791668969,
+        "private": false,
+        "source_id": null
+      },
+      {
+        "id": 2838,
+        "content": "Assigned to att1 - revisión humana by Dan Schwab",
+        "inbox_id": 11,
+        "conversation_id": 50,
+        "message_type": 2,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1791668974,
+        "private": false,
+        "source_id": null
+      },
+      {
+        "id": 2839,
+        "content": "Derivacion automatica del setter de ATT1: el agente paso esta conversacion a una persona del equipo. Revisa el historial y responde desde el equipo de revision humana.\n\nMotivo: el caso es complejo, contradictorio o le falta informacion, y la politica pide que lo revise una persona (policy_requires_human).\n\n[supportmagician-handoff:7e176a68-4b24-4a4b-8918-1843ecf93f23:att1-nota-derivacion:v1]",
+        "inbox_id": 11,
+        "conversation_id": 50,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1791668975,
+        "private": true,
+        "source_id": null,
+        "sender": {
+          "id": 1,
+          "name": "Dan Schwab",
+          "available_name": "Dan Schwab",
+          "avatar_url": "",
+          "type": "user",
+          "availability_status": "offline",
+          "thumbnail": ""
+        }
+      },
+      {
+        "id": 3037,
+        "content": "Hola, NOMBRE. Soy el asistente virtual del equipo de Dra. Nina.\n\nQuedó una conversación pendiente entre nosotros y quiero retomarla. Si todavía necesitas ayuda, escríbeme por aquí y dime qué necesitas para continuar.",
+        "inbox_id": 11,
+        "conversation_id": 50,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "read",
+        "content_attributes": {},
+        "created_at": 1791822108,
+        "private": false,
+        "source_id": "REDACTED-source_id",
+        "sender": {
+          "id": 4,
+          "name": "Mariana Marín",
+          "available_name": "Mariana Marín",
+          "avatar_url": "",
+          "type": "user",
+          "availability_status": "offline",
+          "thumbnail": ""
+        }
+      },
+      {
+        "id": 3107,
+        "content": "[mensaje del lead redactado]",
+        "inbox_id": 11,
+        "conversation_id": 50,
+        "message_type": 0,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1791827336,
+        "private": false,
+        "source_id": "REDACTED-source_id",
+        "sender": {
+          "additional_attributes": {},
+          "custom_attributes": {},
+          "email": "lead50@example.com",
+          "id": 278,
+          "identifier": null,
+          "name": "lucia herrera",
+          "phone_number": "+5215500050",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
+      },
+      {
+        "id": 3108,
+        "content": "No más mensajes",
+        "inbox_id": 11,
+        "conversation_id": 50,
+        "message_type": 0,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {
+          "in_reply_to_external_id": "wamid.REDACTED",
+          "in_reply_to": 2820
+        },
+        "created_at": 1791827337,
+        "private": false,
+        "source_id": "REDACTED-source_id",
+        "sender": {
+          "additional_attributes": {},
+          "custom_attributes": {},
+          "email": "lead50@example.com",
+          "id": 278,
+          "identifier": null,
+          "name": "lucia herrera",
+          "phone_number": "+5215500050",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
+      },
+      {
+        "id": 3242,
+        "content": "Hola, NOMBRE. Soy el asistente virtual del equipo de Dra. Nina.\n\nQuedó una conversación pendiente entre nosotros y quiero retomarla. Si todavía necesitas ayuda, escríbeme por aquí y dime qué necesitas para continuar.",
+        "inbox_id": 11,
+        "conversation_id": 50,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "read",
+        "content_attributes": {},
+        "created_at": 1791922006,
+        "private": false,
+        "source_id": "REDACTED-source_id",
+        "sender": {
+          "id": 4,
+          "name": "Mariana Marín",
+          "available_name": "Mariana Marín",
+          "avatar_url": "",
+          "type": "user",
+          "availability_status": "offline",
+          "thumbnail": ""
+        }
+      },
+      {
+        "id": 3247,
+        "content": "[mensaje del lead redactado]",
+        "inbox_id": 11,
+        "conversation_id": 50,
+        "message_type": 0,
+        "content_type": "text",
+        "status": "sent",
+        "content_attributes": {},
+        "created_at": 1791922078,
+        "private": false,
+        "source_id": "REDACTED-source_id",
+        "sender": {
+          "additional_attributes": {},
+          "custom_attributes": {},
+          "email": "lead50@example.com",
+          "id": 278,
+          "identifier": null,
+          "name": "lucia herrera",
+          "phone_number": "+5215500050",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
+      },
+      {
+        "id": 3329,
+        "content": "Hola NOMBRE un gusto saludarte y muchas gracias por tu paciencia \n\n\n",
+        "inbox_id": 11,
+        "conversation_id": 50,
+        "message_type": 1,
+        "content_type": "text",
+        "status": "failed",
+        "content_attributes": {
+          "external_error": "Template not found or invalid template name"
+        },
+        "created_at": 1792008592,
+        "private": false,
+        "source_id": null,
+        "sender": {
+          "id": 4,
+          "name": "Mariana Marín",
+          "available_name": "Mariana Marín",
+          "avatar_url": "",
+          "type": "user",
+          "availability_status": "offline",
+          "thumbnail": ""
+        }
+      }
+    ]
+  }
+}

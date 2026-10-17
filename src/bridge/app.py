@@ -5173,6 +5173,30 @@ def create_app(
                 )
                 return
 
+            async def record_opt_out_without_admission() -> bool:
+                """Only the stop and the opt-out, without the agent.
+
+                With a manifest, a "No mas mensajes" does not depend on the
+                admission. Returns whether the person is stopped.
+                """
+                stop_context = _shadow_context(payload)
+                stop_message_id = payload.get("id")
+                if (
+                    stop_context is None
+                    or not isinstance(stop_message_id, int)
+                    or isinstance(stop_message_id, bool)
+                ):
+                    return False
+                stop_result = await run_shadow_with_canonical_history(
+                    delivery_id=delivery_id,
+                    current_message_id=stop_message_id,
+                    batch_message_ids=batch_message_ids,
+                    context=stop_context,
+                    expected_jid=scoped_expected_jid,
+                    opt_out_only=True,
+                )
+                return stop_result.stopped
+
             try:
                 admission = await admit_inbound_commercial_case(
                     scope_key=settings.chatwoot_cut_b_scope_key,
@@ -5182,29 +5206,13 @@ def create_app(
                 )
             except SupabaseError as exc:
                 if whatsapp_inbound_equivalence:
-                    # With a manifest, a "No mas mensajes" does not depend on
-                    # the admission. The conversation a recovery template
-                    # opened is not a draft-only inbound one, so the admission
-                    # rejects every reply to that template: without this the
-                    # opt-out of the person who pressed the button was never
-                    # recorded and the message was retried without limit.
-                    stop_context = _shadow_context(payload)
-                    stop_message_id = payload.get("id")
-                    if (
-                        stop_context is not None
-                        and isinstance(stop_message_id, int)
-                        and not isinstance(stop_message_id, bool)
-                    ):
-                        stop_result = await run_shadow_with_canonical_history(
-                            delivery_id=delivery_id,
-                            current_message_id=stop_message_id,
-                            batch_message_ids=batch_message_ids,
-                            context=stop_context,
-                            expected_jid=scoped_expected_jid,
-                            opt_out_only=True,
-                        )
-                        if stop_result.stopped:
-                            return
+                    # The conversation a recovery template opened is not a
+                    # draft-only inbound one, so the admission rejects every
+                    # reply to that template: without this the opt-out of the
+                    # person who pressed the button was never recorded and
+                    # the message was retried without limit.
+                    if await record_opt_out_without_admission():
+                        return
                     if isinstance(exc, SupabasePermanentError):
                         # Replaying the message cannot change the answer: the
                         # reason goes to the log and the work ends as failed
@@ -5315,6 +5323,17 @@ def create_app(
                 not settings.chatwoot_cut_b_agent_enabled
                 or admission.outcome in {"evidence_conflict", "blocked"}
             ):
+                if whatsapp_inbound_equivalence and admission.outcome in {
+                    "evidence_conflict",
+                    "blocked",
+                }:
+                    # A derived or paused conversation gives 'blocked' and the
+                    # agent does not run, but the opt-out still counts. Before
+                    # this, the scan below never ran for it: conversation 50 of
+                    # ATT1 pressed "No mas mensajes" on 2026-10-12 while
+                    # derived, the opt-out was never recorded and the person
+                    # stayed open to every following flow.
+                    await record_opt_out_without_admission()
                 return
         audio_handoff_reason: str | None = None
         if audio_transcriber is not None and needs_audio_transcription(payload):

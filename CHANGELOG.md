@@ -27,6 +27,10 @@ Lo que ya está en `main` y todavía no tiene versión. El número se elige al p
   - El validador da cero bloqueos y las tres advertencias que el esquema anticipa.
   - PGlite las publica con las funciones del dueño, incluida la reactivación con `horario: siempre`.
 
+### Corregido
+
+- **Con manifiesto, la baja se registra aunque la conversación esté derivada o pausada.** La admisión de esas conversaciones da `blocked` (o `evidence_conflict`) y el bridge salía antes de buscar la baja: un «No más mensajes» escrito ahí no quedaba en la base y la persona seguía abierta a los flujos siguientes. Pasó en ATT1 con la conversación 50, el 2026-10-12. Ahora, en esa salida, corre lo mismo que ya corría cuando la admisión falla: el stop y la baja, sin el agente. Sin manifiesto (Johanna) no cambia nada.
+
 ### Qué hace quien actualiza
 
 Correr la migración `20261016000100`, y nada más. No hay variables, flags ni campos del manifiesto. La migración deja las cuatro tablas vacías y suma su fila a la huella del inventario de esquema. El inventario de permisos no cambia.
