@@ -5,8 +5,8 @@
   "from": "tests/flow_store_translator.py sobre la config de flow_engine/att1_recovery_capture_20261016.json con el control de att1-recuperacion en la v3, la v4 y la v5, att1_instancia_f01fbcc.toml y schema_examples_v1.json; normalizado y publicado con bridge.flow_definition (as_published con la version del scope)",
   "regenerate": "FLOW_SIMULATION_FIXTURE_DIR=tests/fixtures/flow_simulation uv run pytest tests/test_flow_engine_definitions_fixture.py",
   "base": "c7fa8ef",
-  "code_sha256": "f1e183184fd9c37db941a711c800e3d6d01c979fe51ffd0fc512766206529c20",
-  "code_sha256_of": "json.dumps(CODE, sort_keys=True, ensure_ascii=False, separators=(\",\", \":\"))"
+  "translator_sha256": "b3ea196ca80d5dd72eb86d36d8d59337630ebb0f91d101e56fbafe3d92bdb2cb",
+  "translator_sha256_of": "los bytes de tests/flow_store_translator.py"
  },
  "instance": {
   "tenant_ref": "lancemos",

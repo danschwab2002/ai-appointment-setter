@@ -12,11 +12,17 @@ tentativa arma los ``GateFacts`` desde la historia y llama a
 intercepte. La compra, la baja, los topes, el control y la franja se deciden
 solo ahi.
 
-**La cola.** Los disparos y las horas tentativas van a una sola cola, en el
-orden ``(hora, source_ref)``. La E se recalcula al sacarla, cuando ya se conocen
-todas las autorizaciones concedidas hasta esa hora (las de la misma hora que
-salieron antes en la cola incluidas); si se movio, vuelve a la cola. La E solo
-crece, asi que converge.
+**La cola.** Los disparos y las horas tentativas van a una sola cola. A la
+misma hora, los recorridos salen como los toma el despachador del legado:
+``coalesce(next_attempt_at, due_at), sa.id`` (``20260803000100:2621``). El
+``due_at`` del recorrido es el que tendria su accion: su comienzo, el proximo
+inicio de la franja cuando la reevaluacion lo difiere (``:1200``) y el de cada
+toque; el id es el de la accion del legado si la captura lo trae, y si no, el
+``source_ref`` del disparo (sin un id comparable, ese desempate es una
+suposicion: lo declara ``sensible_al_orden`` en el fixture de las propuestas). La E se recalcula al sacarla, cuando ya se
+conocen todas las autorizaciones concedidas hasta esa hora (las de la misma hora
+que salieron antes en la cola incluidas); si se movio, vuelve a la cola. La E
+solo crece, asi que converge.
 
 **Los dos libros de la bolsa.** El observado (``ObservedLedger``) cuenta las
 autorizaciones de la captura estrictamente antes del instante, como la T1
@@ -27,8 +33,9 @@ estrictamente antes, ninguno veria a los otros de su tanda.
 
 **Lo que no sabe** queda en ``unknown`` con su nombre (§4.3): la baja despues
 del envio observado, la respuesta despues de un envio, la compra despues de la
-captura, la vida de la intencion a una hora nueva y la repeticion de un
-disparo sin contacto. Un paso con E posterior a ``captured_at`` queda
+captura, la vida de la intencion a una hora nueva, la repeticion de un
+disparo sin contacto y el permiso de un arranque que el adaptador rechazo antes
+de mirar la audiencia. Un paso con E posterior a ``captured_at`` queda
 ``en_curso``, y uno detras de la salida ``contesta``, ``sin_saber``: ninguno de
 los dos cuenta como enviado.
 
@@ -87,7 +94,7 @@ from .flow_parity import (
     winners_without_cancel,
 )
 from .flow_policy import interval_of
-from .flow_schedule import Franja, franja_of_policy, local_day
+from .flow_schedule import Franja, franja_of_policy, local_day, next_open
 
 __all__ = [
     "ConsistencyReport", "History", "ObservedGate", "ObservedLedger", "PredictedLedger", "PurchaseFact",
@@ -117,6 +124,9 @@ ENGINE_DECIDES = frozenset({
     "pilot_runtime_not_armed", "pilot_scope_version_mismatch", "pilot_daily_budget_exhausted",
     "pilot_total_budget_exhausted", "pilot_case_binding_conflict",
 })
+# Los dos que el legado devuelve antes de mirar la audiencia (20260930000300:270-300):
+# con ellos el permiso no se sabe, y queda en unknown.
+AUDIENCE_UNCHECKED = frozenset({"pilot_scope_version_mismatch", "pilot_runtime_not_armed"})
 # El permiso de un disparo que el adaptador dejo pasar: el de consented_intent
 # (tests/flow_store_translator.py, AUDIENCES).
 ADMITTED_PERMISSION = "formulario"
@@ -126,6 +136,9 @@ OPEN_CASE_STATUSES = frozenset({"grace_period", "active", "paused"})
 ALWAYS_LAYERS = ("sql", "despacho")
 # F#11 (20260904000100:142-154): la repeticion del pago fallido adelanta la accion.
 F11_LEGACY_KIND = "pago_fallido"
+# La compra que corta un recorrido: la de la misma oferta (offer_code is not distinct from,
+# 20260808000100:202) aprobada desde 5 minutos antes del disparo (20260808000200:70-77).
+PURCHASE_LOOKBACK = timedelta(minutes=5)
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 _MAX_POPS = 1_000_000
 
@@ -225,7 +238,8 @@ class PredictedLedger:
     """``BolsaLedger`` de una bolsa con las autorizaciones sembradas mas las que concede el replay.
 
     Cuenta hasta ``at`` inclusive: lo ya concedido a la misma hora salio antes
-    en la cola ``(at, source_ref)`` (§2.2 del diseno de la T3a). El dia local se
+    en la cola, con el desempate del despachador (§2.2 del diseno de la T3a, y
+    «La cola» arriba). El dia local se
     calcula de la hora, en la zona que pide la puerta.
     """
 
@@ -381,6 +395,7 @@ class History:
     contact_keys: Mapping[str, frozenset[str]]    # contacto -> sus claves de persona, digitos y mail
     precheckout_product: str | None
     window_actions: frozenset[str] = frozenset()  # las acciones de los casos que el replay replanifica
+    action_ref: Mapping[str, str] = MappingProxyType({})   # source_ref -> el id de la accion del legado
 
 
 def _correlated_intents(event: Mapping[str, Any]) -> frozenset[str]:
@@ -442,6 +457,7 @@ def history_from_capture(capture: Capture) -> History:
     firing_scope: dict[str, str | None] = {}
     window_cases: set[str] = set()
     window_actions: set[str] = set()
+    action_ref: dict[str, str] = {}
     firing_by_ref: dict[str, Firing] = {}
     for event in capture.events:
         event_type = event.get("event_type")
@@ -482,6 +498,7 @@ def history_from_capture(capture: Capture) -> History:
             action = actions_by_case.get(case["id"])
             if action is not None:
                 window_actions.add(action["id"])
+                action_ref[ref] = action["id"]
                 started = _request_started(action)
                 if started is not None:
                     observed_sends[ref] = started
@@ -539,6 +556,7 @@ def history_from_capture(capture: Capture) -> History:
         contact_keys=MappingProxyType(contact_keys),
         precheckout_product=next(iter(precheckout)) if len(precheckout) == 1 else None,
         window_actions=frozenset(window_actions),
+        action_ref=MappingProxyType(action_ref),
     )
 
 
@@ -753,12 +771,15 @@ class _Run:
     """Un recorrido del replay mientras corre la cola."""
 
     def __init__(self, firing: Firing, flow: EngineFlow, plan: Plan, start: StartDecision, started_at: datetime,
-                 open_from: datetime, unknown: set[str]) -> None:
+                 open_from: datetime, unknown: set[str], order_ref: str) -> None:
         self.firing = firing
         self.flow = flow
         self.plan = plan
         self.start = start
         self.started_at = started_at
+        # El desempate del despachador: el due_at que tendria la accion y su id (la cabecera, «La cola»).
+        self.due = started_at
+        self.order_ref = order_ref
         self.open_from = open_from
         self.sends: list[datetime] = []
         self.steps: list[StepOutcome] = []
@@ -814,6 +835,7 @@ class _Replayer:
         self.controls: dict[str, CaptureControl] = {}
         self.ledgers: dict[str, PredictedLedger] = {}
         self.runs: dict[str, _Run] = {}
+        self.run_by_order: dict[str, _Run] = {}     # el id del desempate -> el recorrido
         self.joined: dict[str, str] = {}             # la repeticion -> el recorrido al que se sumo
         self.outcomes: dict[str, RunOutcome] = {}
         self.by_contact: dict[str, list[_Run]] = {}
@@ -826,7 +848,7 @@ class _Replayer:
             if firing.contact_ref is not None:
                 self.firings_by_contact.setdefault(firing.contact_ref, []).append(firing)
         self.grants: Counter[tuple[str, str]] = Counter()
-        self.queue: list[tuple[datetime, str, int, int]] = []
+        self.queue: list[tuple[datetime, datetime, str, int, int]] = []
 
     # -- los recursos por bolsa --------------------------------------------
 
@@ -842,7 +864,7 @@ class _Replayer:
 
     def push(self, at: datetime, run: _Run) -> None:
         run.generation += 1
-        heapq.heappush(self.queue, (at, run.firing.source_ref, 1, run.generation))
+        heapq.heappush(self.queue, (at, run.due, run.order_ref, 1, run.generation))
 
     # -- el arranque -------------------------------------------------------
 
@@ -897,9 +919,11 @@ class _Replayer:
             self.not_started(firing, ref, version, StartDecision(False, LEGACY_REASON_TO_MOTIVO.get(code), None),
                              "no_arranco")
             return
+        unknown = {"repeticion"} if firing.contact_ref is None else set()
         if code in ENGINE_DECIDES and firing.permission is None:
             firing = dataclasses.replace(firing, permission=ADMITTED_PERMISSION)
-        unknown = {"repeticion"} if firing.contact_ref is None else set()
+            if code in AUDIENCE_UNCHECKED:
+                unknown.add("permiso")
         start = engine.plan_start(flow, firing, self.person(firing), flows=self.flows_at(firing))
         if not start.starts:
             self.not_started(firing, ref, version, start, "no_arranco", frozenset(unknown))
@@ -908,8 +932,12 @@ class _Replayer:
             return
         plan = engine.plan_steps(flow, firing, capabilities=self.capabilities)
         run = _Run(firing, flow, plan, start, firing.at + plan.steps[0].after,
-                   self.history.case_created.get(firing.source_ref, firing.received_at), unknown)
+                   self.history.case_created.get(firing.source_ref, firing.received_at), unknown,
+                   self.history.action_ref.get(firing.source_ref, firing.source_ref))
         self.runs[firing.source_ref] = run
+        if run.order_ref in self.run_by_order:
+            raise ValueError(f"replay_order_ref_repeated: {run.order_ref}")
+        self.run_by_order[run.order_ref] = run
         if firing.contact_ref is not None:
             self.by_contact.setdefault(firing.contact_ref, []).append(run)
         # La compra durante la espera inicial cierra el recorrido a su hora, como el legado, que gana el caso y
@@ -924,15 +952,20 @@ class _Replayer:
         """F#11: la repeticion del pago fallido adelanta el comienzo del recorrido abierto.
 
         Solo con el pago fallido, con el recorrido esperando su primer envio y
-        sin pausar (``20260904000100:142-154``, la condicion en ``:145`` y
-        ``:149``): ``started_at`` pasa a ``min(started_at, la llegada)``.
+        la secuencia ``active`` (``20260904000100:142-154``, la condicion en
+        ``:145`` y ``:149``): ``started_at`` y el ``due_at`` pasan a
+        ``min(..., la llegada)``. El control sin armar no pausa la secuencia: solo
+        la pausan ``pause`` y ``escalate`` (``20260803000100:1213-1216``), y eso en
+        el replay es «pausar», que deja el recorrido cerrado. Con el control sin
+        armar la reescritura vale, y la puerta espera el rearme.
         """
         self.joined[firing.source_ref] = run_ref
         run = self.runs.get(run_ref)
         if run is None or run.done or run.sends or run.flow.legacy_kind != F11_LEGACY_KIND:
             return
-        if run.last_decision == "pausar" or self.control(run.plan.pool).state_at(firing.received_at) != ARMED:
+        if run.last_decision == "pausar":
             return
+        run.due = min(run.due, firing.received_at)
         if firing.received_at < run.started_at:
             run.started_at = firing.received_at
             run.step_moved = ()
@@ -941,7 +974,15 @@ class _Replayer:
     # -- la puerta ----------------------------------------------------------
 
     def purchase_at(self, run: _Run) -> datetime | None:
-        """La compra que corta el recorrido: la de la misma oferta antes del disparo (4b), o la primera despues."""
+        """La compra que corta el recorrido, como la vincula el legado: una sola regla.
+
+        La primera compra de la persona del mismo producto y la misma oferta
+        (``offer_code is not distinct from``, ``20260808000100:202``) aprobada
+        desde 5 minutos antes del disparo (``20260808000200:70-77``). La que se
+        aprobo antes de que llegara el disparo la vincula el legado al crear el
+        caso: el recorrido nace ganado, y la hora que se devuelve es a lo sumo la
+        del disparo.
+        """
         firing = run.firing
         if firing.contact_ref is not None:
             keys = self.history.contact_keys.get(firing.contact_ref, frozenset())
@@ -950,11 +991,13 @@ class _Replayer:
         if not keys:
             return None
         product = self.history.external_product.get(firing.source_ref)
-        mine = [fact for fact in self.history.purchases if fact.product_id == product and fact.keys & keys]
-        known = [fact for fact in mine if fact.at < firing.at and fact.offer_ref == firing.offer_ref]
-        if known:
-            return known[0].at
-        return next((fact.at for fact in mine if fact.at >= firing.received_at), None)
+        since = firing.at - PURCHASE_LOOKBACK
+        fact = next((fact for fact in self.history.purchases
+                     if fact.product_id == product and fact.offer_ref == firing.offer_ref and fact.keys & keys
+                     and fact.at >= since), None)
+        if fact is None:
+            return None
+        return min(fact.at, firing.at) if fact.at < firing.received_at else fact.at
 
     def conflict_open(self, at: datetime) -> bool:
         for row in self.history.capture.purchase_conflicts:
@@ -997,6 +1040,12 @@ class _Replayer:
             following = decision.next_at
             if following is None or following <= now:
                 raise ValueError("replay_does_not_progress")
+            if decision.reason == "fuera_de_horario":
+                # La reevaluacion difiere la accion al proximo inicio de la franja (20260803000100:1200);
+                # los rechazos del arranque (el control, los topes) no le tocan el due_at.
+                opens = next_open(run.plan.franja, now)
+                if opens is not None:
+                    run.due = opens
             if facts.purchase_at is not None and now < facts.purchase_at < following:
                 # La compra es un hecho con hora: el recorrido se vuelve a mirar cuando ocurre.
                 following = facts.purchase_at
@@ -1044,22 +1093,28 @@ class _Replayer:
                                          "next_step_outside_expiration"))
             run.finish("fuera_de_plazo", now)
             return
+        run.due = following
+        bought = self.purchase_at(run)
+        if bought is not None and now < bought < following:
+            # La compra entre dos toques cierra el recorrido a su hora, no a la del toque siguiente.
+            self.push(bought, run)
+            return
         self.push(following, run)
 
     # -- la cola ------------------------------------------------------------
 
     def run_all(self) -> None:
         for firing in self.history.firings:
-            heapq.heappush(self.queue, (firing.at, firing.source_ref, 0, 0))
+            heapq.heappush(self.queue, (firing.at, firing.at, firing.source_ref, 0, 0))
         firings = {firing.source_ref: firing for firing in self.history.firings}
         for _ in range(_MAX_POPS):
             if not self.queue:
                 return
-            at, ref, kind, generation = heapq.heappop(self.queue)
+            at, _, order_ref, kind, generation = heapq.heappop(self.queue)
             if kind == 0:
-                self.arrive(firings[ref])
+                self.arrive(firings[order_ref])
                 continue
-            run = self.runs[ref]
+            run = self.run_by_order[order_ref]
             if run.done or run.generation != generation:
                 continue
             self.evaluate(run, at)
@@ -1108,7 +1163,9 @@ def replay(history: History, versions: Versions, choose: VersionChoice, *,
            capabilities: EngineCapabilities = ENGINE_CAPABILITIES_V1) -> Replay:
     """Lo que el motor habria hecho con cada disparo de la ventana, con la version que da ``choose``.
 
-    Un recorrido por disparo, por una cola de horas ``(hora, source_ref)``:
+    Un recorrido por disparo, por una cola de horas que a la misma hora desempata
+    como el despachador del legado (el ``due_at`` y el id de la accion; «La cola»
+    en la cabecera del modulo):
 
     1. **el arranque**: el flujo apagado no arranca; lo que el adaptador ya
        rechazo queda con su motivo (§2.9) y ``create_recovery_case_failed`` sin
@@ -1122,8 +1179,9 @@ def replay(history: History, versions: Versions, choose: VersionChoice, *,
        autorizacion; «esperar» vuelve a la cola; lo demas termina el recorrido;
     4. **los envios**: el envio predicho sale en E y se supone aceptado. Si el
        plan tiene otro paso y las capacidades lo dejan, vuelve a la cola en
-       ``max(primer envio + espera, este envio)``, o termina en
-       ``fuera_de_plazo`` si esa hora no es anterior al vencimiento comun;
+       ``max(primer envio + espera, este envio)``, o a la hora de la compra si
+       cae antes, o termina en ``fuera_de_plazo`` si esa hora no es anterior al
+       vencimiento comun;
     5. **P6**: quien le gana a cada primer contacto, con ``flow_engine.wins`` y
        los intervalos del replay (del caso a su ultimo envio, o a su fin).
     """
@@ -1138,7 +1196,6 @@ def replay(history: History, versions: Versions, choose: VersionChoice, *,
 
 SENT = "enviado"
 IN_FLIGHT = "en_curso"
-NOT_STARTED = ("no_arranco", "no_llego")
 NO_REASON = "sin_motivo"
 EXACT = "exacta"
 AT_MOST = "como_maximo"
@@ -1146,6 +1203,8 @@ DAY_CAP = "bolsa_dia"
 # Lo que no se sabe y no cambia el numero de un paso: la compra despues de la
 # captura la lleva un paso en_curso, que no se cuenta como enviado.
 _NOT_A_BOUND = frozenset({"compra"})
+# Lo que no se sabe del recorrido entero, y vale para cada uno de sus envios.
+_RUN_LEVEL = frozenset({"repeticion", "permiso"})
 
 
 @dataclass(frozen=True)
@@ -1207,7 +1266,9 @@ def flow_summary(result: Replay) -> dict[str, Any]:
     motivo (``terminan``) y los que movio el tope del dia. Su ``cota`` es
     ``exacta`` si ningun envio que cuenta tiene algo que no se sabe (la baja, la
     respuesta, la intencion, la repeticion sin contacto), y ``como_maximo`` si
-    alguno lo tiene. Sin uuid, horas ni nada de una persona: solo conteos.
+    alguno lo tiene; la repeticion sin contacto y el permiso sin mirar son del
+    recorrido y valen para todos sus envios. Sin uuid, horas ni nada de una
+    persona: solo conteos.
     """
     out: dict[str, Any] = {}
     for run in result.runs:
@@ -1225,7 +1286,7 @@ def flow_summary(result: Replay) -> dict[str, Any]:
             row = steps[step.index]
             if step.status == SENT:
                 row["enviados"] += 1
-                if (step.unknown | (run_unknown & {"repeticion"})) - _NOT_A_BOUND:
+                if (step.unknown | (run_unknown & _RUN_LEVEL)) - _NOT_A_BOUND:
                     row["cota"] = AT_MOST
             else:
                 row["terminan"][step.status] = row["terminan"].get(step.status, 0) + 1

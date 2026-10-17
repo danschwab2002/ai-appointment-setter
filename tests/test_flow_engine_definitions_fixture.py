@@ -14,12 +14,13 @@ No es una captura: lo genera esta prueba. Para regenerarlo:
 ``FLOW_SIMULATION_FIXTURE_DIR=tests/fixtures/flow_simulation uv run pytest
 tests/test_flow_engine_definitions_fixture.py``.
 
-**El legado que cambia no la pone roja** (diseno de la T3a, §9): la parte de
-la traduccion que vive en el codigo (``CODE`` del traductor) es de hoy, y la
-sesion de los flujos comerciales la puede cambiar. La cabecera guarda el
-sha256 de ``CODE`` en ``c7fa8ef``; si difiere, la prueba avisa
-(``warnings.warn``) y no compara. Lo que afirma igual, siempre, es lo que el
-fixture dice de la captura: los topes y la politica de cada version.
+**El legado que cambia no la pone roja** (diseno de la T3a, §9): el traductor
+es de hoy, y la sesion de los flujos comerciales lo puede cambiar (sumar OXXO,
+por ejemplo). La cabecera guarda el sha256 del archivo entero
+(``tests/flow_store_translator.py``) en ``c7fa8ef``; si difiere, la prueba que
+compara se saltea con el motivo (``pytest.skip``, que el resumen cuenta) y el
+traductor ni se importa. Lo que afirma igual, siempre, es lo que el fixture
+dice de la captura: los topes y la politica de cada version.
 """
 
 from __future__ import annotations
@@ -32,8 +33,8 @@ import os
 import re
 import sys
 import tomllib
-import warnings
 from datetime import date, datetime, timezone
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -48,13 +49,7 @@ FIXTURES = ROOT / "tests" / "fixtures"
 FLOW_STORE = FIXTURES / "flow_store"
 TARGET = FIXTURES / "flow_simulation" / "att1_definitions_by_scope_version.json"
 CAPTURE_NAME = "att1_recovery_capture_20261016.json"
-
-SPEC = importlib.util.spec_from_file_location("flow_store_translator", ROOT / "tests" / "flow_store_translator.py")
-assert SPEC and SPEC.loader
-TRANSLATOR = importlib.util.module_from_spec(SPEC)
-# Una dataclass busca su modulo en sys.modules al definirse.
-sys.modules[SPEC.name] = TRANSLATOR
-SPEC.loader.exec_module(TRANSLATOR)
+TRANSLATOR_PATH = ROOT / "tests" / "flow_store_translator.py"
 
 CAPTURE: dict[str, Any] = json.loads((FIXTURES / "flow_engine" / CAPTURE_NAME).read_text(encoding="utf-8"))
 MANIFEST: dict[str, Any] = tomllib.loads((FLOW_STORE / "att1_instancia_f01fbcc.toml").read_text(encoding="utf-8"))
@@ -76,14 +71,33 @@ FLOWS = {
     "carrito": {"flow_id": "1b000003-0000-4000-8000-0000000c0001", "legacy_kind": "carrito"},
     "pago_fallido": {"flow_id": "1b000003-0000-4000-8000-0000000c0002", "legacy_kind": "pago_fallido"},
 }
-# El sha256 de CODE en c7fa8ef, sobre json.dumps(CODE, sort_keys=True,
-# ensure_ascii=False, separators=(",", ":")) (diseno de la T3a, §3.4).
-CODE_SHA256_C7FA8EF = "f1e183184fd9c37db941a711c800e3d6d01c979fe51ffd0fc512766206529c20"
+# El sha256 del archivo entero del traductor en c7fa8ef (diseno de la T3a, §3.4):
+# CODE y todo lo demas que la traduccion toma del codigo.
+TRANSLATOR_SHA256_C7FA8EF = "b3ea196ca80d5dd72eb86d36d8d59337630ebb0f91d101e56fbafe3d92bdb2cb"
 
 
-def code_sha256() -> str:
-    text = json.dumps(TRANSLATOR.CODE, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+def translator_sha256() -> str:
+    return hashlib.sha256(TRANSLATOR_PATH.read_bytes()).hexdigest()
+
+
+@cache
+def _translator(path: Path) -> Any:
+    spec = importlib.util.spec_from_file_location("flow_store_translator", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    # Una dataclass busca su modulo en sys.modules al definirse.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def translator() -> Any:
+    """El traductor de c7fa8ef, o saltear: si cambio, ni se importa (un cambio suyo no pone roja a la T3a)."""
+    current = translator_sha256()
+    if current != TRANSLATOR_SHA256_C7FA8EF:
+        pytest.skip(f"tests/flow_store_translator.py cambio desde c7fa8ef (sha256 {current}); "
+                    f"{TARGET.name} sigue con las definiciones de c7fa8ef y no se compara. La 1c las vuelve a traducir.")
+    return _translator(TRANSLATOR_PATH)
 
 
 def _config_at(version: int) -> dict[str, Any]:
@@ -104,7 +118,7 @@ def _normalize(definition: dict[str, Any], version: int) -> dict[str, Any]:
 def _document() -> dict[str, Any]:
     versions: dict[str, dict[str, Any]] = {}
     for version in VERSIONS:
-        translated = TRANSLATOR.translate_att1(_config_at(version), MANIFEST, BLOCKS)
+        translated = translator().translate_att1(_config_at(version), MANIFEST, BLOCKS)
         versions[str(version)] = {key: _normalize(translated[key].definition, version) for key in FLOWS}
     return {
         "_generated": {
@@ -123,8 +137,8 @@ def _document() -> dict[str, Any]:
                 "uv run pytest tests/test_flow_engine_definitions_fixture.py"
             ),
             "base": "c7fa8ef",
-            "code_sha256": CODE_SHA256_C7FA8EF,
-            "code_sha256_of": 'json.dumps(CODE, sort_keys=True, ensure_ascii=False, separators=(",", ":"))',
+            "translator_sha256": TRANSLATOR_SHA256_C7FA8EF,
+            "translator_sha256_of": "los bytes de tests/flow_store_translator.py",
         },
         "instance": {"tenant_ref": INSTANCE.tenant_ref, "ally_ref": INSTANCE.ally_ref,
                      "products": sorted(INSTANCE.products), "time_zone": INSTANCE.time_zone},
@@ -143,14 +157,7 @@ def test_the_fixture_is_what_the_translator_gives() -> None:
         (Path(target) / TARGET.name).write_text(
             json.dumps(_document(), ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
         return
-    current = code_sha256()
-    if current != IN_REPO["_generated"]["code_sha256"]:
-        warnings.warn(
-            f"tests/flow_store_translator.py: CODE cambio desde c7fa8ef (sha256 {current}); "
-            f"{TARGET.name} sigue con las definiciones de c7fa8ef y no se compara. La 1c las vuelve a traducir.",
-            stacklevel=1,
-        )
-        return
+    translator()
     in_repo = copy.deepcopy(IN_REPO)
     generated_on = in_repo["_generated"].pop("date", None)
     assert isinstance(generated_on, str) and date.fromisoformat(generated_on) >= date(2026, 10, 17)
@@ -159,8 +166,8 @@ def test_the_fixture_is_what_the_translator_gives() -> None:
     assert in_repo == document, f"{TARGET.name} no es el de hoy: regenerarlo con FLOW_SIMULATION_FIXTURE_DIR"
 
 
-def test_the_header_keeps_the_sha256_of_code_at_c7fa8ef() -> None:
-    assert IN_REPO["_generated"]["code_sha256"] == CODE_SHA256_C7FA8EF
+def test_the_header_keeps_the_sha256_of_the_translator_at_c7fa8ef() -> None:
+    assert IN_REPO["_generated"]["translator_sha256"] == TRANSLATOR_SHA256_C7FA8EF
     assert IN_REPO["_generated"]["base"] == "c7fa8ef"
 
 
@@ -207,11 +214,14 @@ def test_the_fixture_has_no_personal_data() -> None:
     assert re.search(r"\b[0-9]{8,}\b", text) is None
 
 
-def test_a_change_in_code_warns_and_does_not_compare(monkeypatch: pytest.MonkeyPatch) -> None:
-    # La otra sesion cambia lo que el traductor toma del codigo: la prueba avisa
-    # y no se pone roja por un archivo que no es suyo.
+def test_a_change_in_the_translator_skips_and_does_not_compare(monkeypatch: pytest.MonkeyPatch,
+                                                               tmp_path: Path) -> None:
+    # La otra sesion cambia el traductor fuera de CODE (suma OXXO, por ejemplo), o lo rompe: la prueba se
+    # saltea con el motivo, sin importarlo, y no se pone roja por un archivo que no es suyo.
     monkeypatch.delenv("FLOW_SIMULATION_FIXTURE_DIR", raising=False)
-    monkeypatch.setattr(TRANSLATOR, "CODE", {**TRANSLATOR.CODE, "carrito": {**TRANSLATOR.CODE["carrito"],
-                                                                          "nombre": "Otro nombre"}})
-    with pytest.warns(UserWarning, match="CODE cambio desde c7fa8ef"):
+    changed = tmp_path / "flow_store_translator.py"
+    changed.write_text(TRANSLATOR_PATH.read_text(encoding="utf-8") + "\nraise RuntimeError('oxxo')\n",
+                       encoding="utf-8")
+    monkeypatch.setitem(globals(), "TRANSLATOR_PATH", changed)
+    with pytest.raises(pytest.skip.Exception, match="cambio desde c7fa8ef"):
         test_the_fixture_is_what_the_translator_gives()

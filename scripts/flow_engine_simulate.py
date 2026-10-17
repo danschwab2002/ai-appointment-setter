@@ -29,6 +29,12 @@ diferencias con nombre de la T1.
   hora de la captura, si corrio con ``--varios-toques`` y una cota por numero
   (``exacta`` o ``como_maximo``). Solo conteos, con una lista cerrada de claves
   que se verifica antes de escribir.
+* **El legado de la base.** Las definiciones del fixture son las del legado de
+  ``c7fa8ef`` (16/10). El comando compara el sha256 de
+  ``tests/fixtures/flow_engine/legacy_recovery_cases.json`` y el del archivo
+  entero ``tests/flow_store_translator.py`` contra los de ``c7fa8ef``; si alguno
+  cambio (o no esta), lo dice en la cabecera y en el lienzo
+  (``"legado_cambio": true`` y un ``aviso``). No frena: avisa.
 
 No hace red ni lee el entorno. Lo que imprime son conteos, horas, uuid internos
 y motivos; el archivo del lienzo, solo conteos. Ningun dato de una persona: la
@@ -38,6 +44,7 @@ captura no lo trae.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -82,11 +89,23 @@ CURRENT_LABEL = "hoy"
 DEFAULT_LABEL = "propuesto"
 LIENZO_SCHEMA = "setter-simulacion-lienzo/v1"
 
+# El legado del que salen las definiciones del fixture (diseno de la T3a, §9): los
+# casos generados y el traductor, con su sha256 en c7fa8ef.
+BASE = "c7fa8ef"
+LEGACY_FILES = {
+    "tests/fixtures/flow_engine/legacy_recovery_cases.json":
+        "e34d3815c16c88c3681892f6cd376fc6b5c0cb2f0f6aad751129523308f962ed",
+    "tests/flow_store_translator.py": "b3ea196ca80d5dd72eb86d36d8d59337630ebb0f91d101e56fbafe3d92bdb2cb",
+}
+LEGACY_CHANGED = "las definiciones de hoy son del 16/10; el legado cambio despues"
+
 # ---------------------------------------------------------------------------
 # La salida del lienzo: la lista cerrada de claves (§5.3).
 # ---------------------------------------------------------------------------
 
-LIENZO_KEYS = frozenset({"esquema", "captura", "ventana", "varios_toques", "flujos"})
+LIENZO_KEYS = frozenset({"esquema", "base", "legado_cambio", "captura", "ventana", "varios_toques", "flujos"})
+# La unica clave que puede faltar: el aviso, que va solo con el legado cambiado.
+LIENZO_OPTIONAL = frozenset({"aviso"})
 WINDOW_KEYS = frozenset({"desde", "hasta"})
 VERSION_KEYS = frozenset({"version", "recorridos", "en_curso", "pasos"})
 STEP_KEYS = frozenset({"paso", "envio", "enviados", "terminan", "movidos_por_el_tope", "cota"})
@@ -117,6 +136,19 @@ def _named(data: Any) -> list[Any]:
     if not isinstance(data, dict) or not isinstance(data.get("diferencias"), list):
         raise CaptureError("las diferencias con nombre: se esperaba un objeto con la lista «diferencias»")
     return data["diferencias"]
+
+
+def legacy_changed(root: Path = ROOT) -> list[str]:
+    """Los archivos del legado cuyo sha256 no es el de ``c7fa8ef`` (o que no estan). Vacio: es el de la base."""
+    changed = []
+    for name, expected in sorted(LEGACY_FILES.items()):
+        try:
+            current = hashlib.sha256((root / name).read_bytes()).hexdigest()
+        except OSError:
+            current = None
+        if current != expected:
+            changed.append(name)
+    return changed
 
 
 def _instant(value: datetime | None) -> str:
@@ -195,7 +227,7 @@ def _lienzo_version(result: Replay, versions: Versions, ref: Any, version: int |
 def build_lienzo(history: History, versions: Versions, current_result: Replay,
                  current: Mapping[Any, int | None], *, proposed_result: Replay | None = None,
                  chosen: Mapping[Any, int | None] | None = None, label: str = DEFAULT_LABEL,
-                 several_touches: bool = False) -> dict[str, Any]:
+                 several_touches: bool = False, changed: bool = False) -> dict[str, Any]:
     """Los conteos por paso de la vigente (``hoy``) y, si hay, de la propuesta (``label``), por flujo."""
     flows: dict[str, Any] = {}
     for ref in sorted(versions):
@@ -204,13 +236,18 @@ def build_lienzo(history: History, versions: Versions, current_result: Replay,
             by_label[label] = _lienzo_version(proposed_result, versions, ref, chosen.get(ref))
         flows[ref[1]] = by_label
     since, until = history.window
-    return {
+    document: dict[str, Any] = {
         "esquema": LIENZO_SCHEMA,
+        "base": BASE,
+        "legado_cambio": changed,
         "captura": _instant(until),
         "ventana": {"desde": _instant(since), "hasta": _instant(until)},
         "varios_toques": several_touches,
         "flujos": flows,
     }
+    if changed:
+        document["aviso"] = LEGACY_CHANGED
+    return document
 
 
 def _count_problem(path: str, value: Any) -> str | None:
@@ -219,11 +256,12 @@ def _count_problem(path: str, value: Any) -> str | None:
     return None
 
 
-def _keys_problem(path: str, value: Any, allowed: frozenset[str]) -> list[str]:
+def _keys_problem(path: str, value: Any, allowed: frozenset[str],
+                  optional: frozenset[str] = frozenset()) -> list[str]:
     if not isinstance(value, dict):
         return [f"{path}: no es un objeto"]
     extra = sorted(key if isinstance(key, str) and _LABEL.fullmatch(key) else "<rara>"
-                   for key in value if key not in allowed)
+                   for key in value if key not in allowed | optional)
     missing = sorted(allowed - set(value))
     return ([f"{path}: clave fuera de la lista ({key})" for key in extra]
             + [f"{path}: falta la clave {key}" for key in missing])
@@ -236,11 +274,20 @@ def lienzo_problems(document: Any) -> list[str]:
     con la forma fija, etiquetas cortas en minusculas. Los mensajes dicen el
     camino, nunca el valor.
     """
-    problems = _keys_problem("lienzo", document, LIENZO_KEYS)
+    problems = _keys_problem("lienzo", document, LIENZO_KEYS, LIENZO_OPTIONAL)
     if not isinstance(document, dict):
         return problems
     if document.get("esquema") != LIENZO_SCHEMA:
         problems.append("lienzo.esquema: no es el esquema del lienzo")
+    if document.get("base") != BASE:
+        problems.append("lienzo.base: no es la base de las definiciones")
+    changed = document.get("legado_cambio")
+    if not isinstance(changed, bool):
+        problems.append("lienzo.legado_cambio: no es un booleano")
+    if "aviso" in document and document["aviso"] != LEGACY_CHANGED:
+        problems.append("lienzo.aviso: no es el aviso del legado")
+    if (changed is True) != ("aviso" in document):
+        problems.append("lienzo.aviso: va si y solo si el legado cambio")
     if not isinstance(document.get("captura"), str) or not _INSTANT.fullmatch(document["captura"]):
         problems.append("lienzo.captura: no es una hora")
     if not isinstance(document.get("varios_toques"), bool):
@@ -317,20 +364,24 @@ def write_lienzo(path: Path, document: Mapping[str, Any]) -> list[str]:
 # Lo que se imprime.
 # ---------------------------------------------------------------------------
 
-def _header(capture: Capture, history: History, title: str, *, several_touches: bool | None = None) -> list[str]:
+def _header(capture: Capture, history: History, title: str, *, several_touches: bool | None = None,
+            changed: Sequence[str] = ()) -> list[str]:
     meta = capture.meta
     lines = [
         f"{title} sobre {meta.get('query')} (captura {meta.get('captured_at', '-')})",
         f"ventana: desde {_instant(history.window[0])} hasta {_instant(history.window[1])}",
     ]
+    if changed:
+        lines.append(f"aviso: {LEGACY_CHANGED} ({BASE}; cambio {', '.join(changed)})")
     if several_touches is not None:
         lines.append("capacidades: " + ("vista previa de varios toques (PREVIEW_CAPABILITIES, --varios-toques)"
                                         if several_touches else "v1, un envio por camino"))
     return lines
 
 
-def render_consistency(result: ConsistencyReport, capture: Capture, history: History) -> str:
-    lines = _header(capture, history, "Consistencia del motor") + [
+def render_consistency(result: ConsistencyReport, capture: Capture, history: History, *,
+                       changed: Sequence[str] = ()) -> str:
+    lines = _header(capture, history, "Consistencia del motor", changed=changed) + [
         "",
         f"Vigente contra si misma: {result.self_changes} cambios",
         "Conteos (replay / T1):",
@@ -393,11 +444,13 @@ def _steps_text(run: RunOutcome) -> str:
 
 
 def render_simulation(result: Simulation, capture: Capture, history: History, *, several_touches: bool,
-                      current: Mapping[Any, int | None], chosen: Mapping[Any, int | None]) -> str:
+                      current: Mapping[Any, int | None], chosen: Mapping[Any, int | None],
+                      changed: Sequence[str] = ()) -> str:
     versions = ", ".join(f"{ref[1]} v{current.get(ref)} -> "
                          + (f"v{chosen.get(ref)}" if chosen.get(ref) is not None else "apagado")
                          for ref in sorted(set(current) | set(chosen)))
-    lines = _header(capture, history, "Simulacion del motor", several_touches=several_touches) + [
+    lines = _header(capture, history, "Simulacion del motor", several_touches=several_touches,
+                    changed=changed) + [
         f"versiones: {versions}",
         "",
     ]
@@ -466,12 +519,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_RED
 
     code = EXIT_OK
-    output: dict[str, Any] = {}
+    changed = legacy_changed()
+    output: dict[str, Any] = {"base": BASE, "legado_cambio": bool(changed)}
     texts: list[str] = []
     if args.consistencia:
         report = consistency_report(history, versions, named)
         output["consistencia"] = consistency_json(report)
-        texts.append(render_consistency(report, capture, history))
+        texts.append(render_consistency(report, capture, history, changed=changed))
         code = EXIT_OK if report.ok() else EXIT_RED
 
     current = current_versions(history, versions)
@@ -494,21 +548,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         current_result = result.current
         output["simulacion"] = simulation_json(result, several_touches=args.varios_toques)
         texts.append(render_simulation(result, capture, history, several_touches=args.varios_toques,
-                                       current=current, chosen=chosen))
+                                       current=current, chosen=chosen, changed=changed))
     elif args.lienzo is not None or not args.consistencia:
         capabilities = PREVIEW_CAPABILITIES if args.varios_toques else ENGINE_CAPABILITIES_V1
         current_result = replay(history, versions, fixed(current), capabilities=capabilities)
         summary = replay_summary(current_result, history.window)
         output["vigente"] = summary
         texts.append("\n".join(_header(capture, history, "La vigente del motor",
-                                       several_touches=args.varios_toques)
+                                       several_touches=args.varios_toques, changed=changed)
                                + [""] + _render_summary("Vigente", summary)))
 
     if args.lienzo is not None:
         assert current_result is not None
         document = build_lienzo(history, lienzo_versions, current_result, current,
                                 proposed_result=proposed_result, chosen=chosen, label=args.etiqueta,
-                                several_touches=args.varios_toques)
+                                several_touches=args.varios_toques, changed=bool(changed))
         problems = write_lienzo(args.lienzo, document)
         if problems:
             print("error: la salida del lienzo no tiene la forma cerrada; no se escribio")

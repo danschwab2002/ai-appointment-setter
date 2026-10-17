@@ -3,7 +3,8 @@
   "Las propuestas medidas de la simulacion del motor sobre la captura de ATT1 del 2026-10-16 (diseno de la T3a, §5.2 y §6). Las lee tests/test_flow_engine_simulate_att1.py.",
   "Cada propuesta: sus items con la forma de flow_definition.parse_items (una version nueva por flujo, en_curso seguir), si corre con PREVIEW_CAPABILITIES (varios_toques) y lo esperado, literal: los cambios contra la v5 en toda la ventana y el resumen de la propuesta (replay_summary): el fin, los motivos de no arranque, lo en curso a la hora de la captura, lo que no se sabe por su nombre, los pasos de cada flujo con su cota y los dias locales de la ventana que llegan al tope.",
   "La vigente es la v5 de los dos flujos (la activa de att1-recuperacion a la hora de la captura). Las definiciones son la v5 de att1_definitions_by_scope_version.json con el cambio de cada propuesta.",
-  "Los numeros salen del motor (flow_replay.simulate) y se verificaron contra el legado donde difieren del prototipo del diseno: el pago fallido a 10 minutos (F#11, 20260904000100:142-154) y el tope en 1 (la compra mientras espera, 20260808000100:190-206, :405-412 y :428-444). Ver la cabecera de la prueba."
+  "Los numeros salen del motor (flow_replay.simulate) y se verificaron contra el legado donde difieren del prototipo del diseno: el pago fallido a 10 minutos (F#11, 20260904000100:142-154) y el tope en 1 (la compra mientras espera, 20260808000100:190-206, :405-412 y :428-444). Ver la cabecera de la prueba.",
+  "El desempate a la misma hora es el del despachador del legado: coalesce(next_attempt_at, due_at) y el id de la accion (20260803000100:2621). En todas las propuestas, cada recorrido que arranca tiene la accion del legado en la captura, asi que su primer toque se desempata como el legado. Los toques 2 y 3 no tienen accion en la captura: se desempatan por la del primero, que es una suposicion. sensible_al_orden lista los numeros del esperado que cambian si ese desempate se invierte (vacia: ninguno); lo verifica test_the_numbers_that_depend_on_an_unknown_order_are_declared."
  ],
  "vigente": {
   "carrito": 5,
@@ -133,7 +134,8 @@
      },
      "dias_al_tope": []
     }
-   }
+   },
+   "sensible_al_orden": []
   },
   {
    "nombre": "pago_fallido_a_10m",
@@ -255,7 +257,8 @@
      },
      "dias_al_tope": []
     }
-   }
+   },
+   "sensible_al_orden": []
   },
   {
    "nombre": "tope_del_dia_en_1",
@@ -380,7 +383,7 @@
     }
    ],
    "esperado": {
-    "cambios": 210,
+    "cambios": 213,
     "propuesta": {
      "disparos": 252,
      "recibieron": 8,
@@ -400,9 +403,9 @@
      },
      "en_curso": 1,
      "sin_saber": {
-      "baja": 209,
+      "baja": 212,
       "compra": 1,
-      "intencion": 209
+      "intencion": 212
      },
      "flujos": {
       "carrito": {
@@ -417,7 +420,7 @@
           "en_curso": 1,
           "vencio": 197
          },
-         "movidos_por_el_tope": 205,
+         "movidos_por_el_tope": 208,
          "cota": "como_maximo"
         }
        ]
@@ -451,7 +454,8 @@
       "2026-10-16"
      ]
     }
-   }
+   },
+   "sensible_al_orden": []
   },
   {
    "nombre": "horario_de_10_a_20",
@@ -629,7 +633,8 @@
      },
      "dias_al_tope": []
     }
-   }
+   },
+   "sensible_al_orden": []
   },
   {
    "nombre": "horario_de_10_a_20_solo_carrito",
@@ -747,7 +752,8 @@
      },
      "dias_al_tope": []
     }
-   }
+   },
+   "sensible_al_orden": []
   },
   {
    "nombre": "tres_toques_vence_4d",
@@ -895,7 +901,7 @@
           "compro": 1,
           "en_curso": 25
          },
-         "movidos_por_el_tope": 40,
+         "movidos_por_el_tope": 41,
          "cota": "como_maximo"
         }
        ]
@@ -922,7 +928,11 @@
       "2026-10-15"
      ]
     }
-   }
+   },
+   "sensible_al_orden": [
+    "flujos.carrito.pasos[1].movidos_por_el_tope",
+    "flujos.carrito.pasos[2].movidos_por_el_tope"
+   ]
   },
   {
    "nombre": "tres_toques_vence_1d",
@@ -1079,7 +1089,8 @@
      },
      "dias_al_tope": []
     }
-   }
+   },
+   "sensible_al_orden": []
   }
  ]
 }

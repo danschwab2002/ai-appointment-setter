@@ -11,8 +11,10 @@ Diseno de la T3a, §3.1, §8.1 y §8.2. Fixtures (``tests/fixtures/flow_simulati
 
 **El legado que cambia no la pone roja** (§9): si el sha256 de
 ``legacy_recovery_cases.json`` no es el de la cabecera, la prueba de la copia
-avisa y no compara. La columna ``legado`` se compara siempre contra el
-esperado: esa comparacion no lee el legado.
+se saltea con el motivo (``pytest.skip``, que el resumen cuenta) y no compara.
+La columna ``legado`` se compara siempre contra el esperado: esa comparacion no
+lee el legado. En el renglon que el legado difiere (``defer``), el ``due_at``
+reprogramado de la columna es el oraculo de ``next_at``.
 
 Las lineas de tiempo de ``first_eligible`` usan dobles de ``ControlLine`` y
 ``BolsaLedger``: el control como pares (hora, estado) y la bolsa como una lista
@@ -25,7 +27,6 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-import warnings
 from bisect import bisect_left, bisect_right
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
@@ -235,15 +236,21 @@ def test_each_row_with_legado_is_what_the_legacy_did_or_a_named_difference() -> 
     assert named == [("G21", "C", "lo_en_curso_sigue")]
 
 
+def test_the_rescheduled_due_at_of_the_legacy_is_the_next_at() -> None:
+    # Donde la reevaluacion del legado difiere la accion, el due_at que escribio es la hora en que el motor
+    # vuelve a mirar: los dos en segundos desde el disparo, con la misma geometria que el caso generado.
+    deferred = [case for case in CASES if case.get("legado", {}).get("decision") == "defer"]
+    assert [case["id"] for case in deferred] == ["fuera_de_horario"]
+    for case in deferred:
+        assert case["esperado"]["decision"] == "esperar", case["id"]
+        assert case["esperado"]["next_at"] == case["legado"]["due_at"], case["id"]
+
+
 def test_the_legado_column_is_a_copy_of_the_generated_cases() -> None:
     current = hashlib.sha256(LEGACY_PATH.read_bytes()).hexdigest()
     if current != GATE_CASES["_legado"]["sha256"]:
-        warnings.warn(
-            f"{GATE_CASES['_legado']['archivo']} cambio desde c7fa8ef (sha256 {current}): la columna legado de "
-            "gate_cases.json sigue con lo de c7fa8ef y no se compara. La 1c la regenera.",
-            stacklevel=1,
-        )
-        return
+        pytest.skip(f"{GATE_CASES['_legado']['archivo']} cambio desde c7fa8ef (sha256 {current}): la columna "
+                    "legado de gate_cases.json sigue con lo de c7fa8ef y no se compara. La 1c la regenera.")
     generated = {case["id"]: case for case in json.loads(LEGACY_PATH.read_text(encoding="utf-8"))["casos"]}
     for case in CASES:
         legado = case.get("legado")
@@ -258,6 +265,7 @@ def test_the_legado_column_is_a_copy_of_the_generated_cases() -> None:
                         if step["paso"] == legado["fuente"] and step.get("accion") == legado["accion"])
             found = (step["decision"] if legado["fuente"] == "reevaluacion" else step["resultado"], step["motivo"])
         assert found == (legado["decision"], legado["motivo"]), case["id"]
+        assert source["final"]["acciones"][legado["accion"]]["due_at"] == legado["due_at"], case["id"]
 
 
 def test_the_header_keeps_the_sha256_of_the_legacy_at_c7fa8ef() -> None:
@@ -386,6 +394,15 @@ def test_the_control_paused_moves_e_to_the_rearm() -> None:
     assert _first(DAY, control=never) == engine.Eligible(None, (), "control_sin_volver")
 
 
+def test_two_waits_that_end_at_the_same_hour_go_by_name() -> None:
+    # El control se rearma justo cuando abre la franja: las dos mueven la hora, y van por nombre.
+    night = at("2026-10-14T05:00:00Z")
+    opens = at("2026-10-14T15:00:00Z")
+    control = LineControl([(night - timedelta(days=1), "armed"), (night - timedelta(minutes=1), "paused"),
+                           (opens, "armed")])
+    assert _first(night, control=control) == engine.Eligible(opens, ("control", "franja"), None)
+
+
 def test_the_window_moves_e_to_the_next_opening_and_the_end_minute_counts_whole() -> None:
     night = at("2026-10-14T05:00:00Z")
     assert _first(night) == engine.Eligible(at("2026-10-14T15:00:00Z"), ("franja",), None)
@@ -437,11 +454,11 @@ def test_the_predicted_ledger_sees_what_was_granted_at_the_same_instant() -> Non
     assert _first(night, bolsa=ListLedger(granted, ties=True), per_day=1, days=1).at is None
 
 
-def test_a_change_in_the_legacy_cases_warns_and_does_not_compare(monkeypatch: pytest.MonkeyPatch,
+def test_a_change_in_the_legacy_cases_skips_and_does_not_compare(monkeypatch: pytest.MonkeyPatch,
                                                                  tmp_path: Path) -> None:
-    # La sesion comercial regenera los casos generados: la copia avisa y no compara.
+    # La sesion comercial regenera los casos generados: la copia se saltea con el motivo y no compara.
     changed = tmp_path / "legacy_recovery_cases.json"
     changed.write_text(LEGACY_PATH.read_text(encoding="utf-8").replace("G21", "G99"), encoding="utf-8")
     monkeypatch.setitem(globals(), "LEGACY_PATH", changed)
-    with pytest.warns(UserWarning, match="cambio desde c7fa8ef"):
+    with pytest.raises(pytest.skip.Exception, match="cambio desde c7fa8ef"):
         test_the_legado_column_is_a_copy_of_the_generated_cases()

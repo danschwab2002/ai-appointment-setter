@@ -55,6 +55,7 @@ from bridge.flow_replay import (
     engine_flows_from_definitions,
     exceptions_for,
     fixed,
+    flow_summary,
     history_from_capture,
     in_flight_at,
     replay,
@@ -409,10 +410,13 @@ def test_f11_a_repeated_payment_failure_brings_the_send_forward() -> None:
 
 
 @pytest.mark.parametrize(("rearm", "expected"), [
-    ("2026-10-10T18:40:00.000000Z", "2026-10-10T19:00:00Z"),   # sin reescritura: a los 60, no al rearmar
-    ("2026-10-10T19:30:00.000000Z", "2026-10-10T19:30:00Z"),   # sale al rearmar
+    ("2026-10-10T18:40:00.000000Z", "2026-10-10T18:40:00Z"),   # reescrita a los 20, sale al rearmar
+    ("2026-10-10T19:30:00.000000Z", "2026-10-10T19:30:00Z"),   # el rearme despues de los 60: sale al rearmar
 ])
-def test_f11_with_the_run_paused_does_not_rewrite(rearm: str, expected: str) -> None:
+def test_f11_with_the_control_not_armed_rewrites_and_sends_at_the_rearm(rearm: str, expected: str) -> None:
+    # El control sin armar no pausa la secuencia: el legado reescribe el due_at con la secuencia
+    # 'active' (20260904000100:145 y :149) y solo la pausan pause y escalate (20260803000100:1213-1216).
+    # El arranque se rechaza hasta el rearme, y ahi sale.
     result = replay(_failed_twice(control=paused("2026-10-10T18:10:00.000000Z", rearm)),
                     versions(failed=WAIT_60), V4)
     assert _run(result, T1.uid(2)).start.reason == "ya_en_curso"
@@ -459,24 +463,55 @@ def test_a_purchase_before_e_ends_the_run_without_a_send_or_an_authorization() -
     assert sum(result.bolsa_by_day.values()) == 0
 
 
-def test_a_purchase_known_before_the_plan_starts_and_ends_won() -> None:
-    # 4b: la compra de la misma oferta, anterior al disparo.
-    events = [purchase(50, "2026-10-09T12:00:00.000000Z", who=1), T1.cart(1, "2026-10-10T18:00:00.000000Z", who=1)]
+@pytest.mark.parametrize(("bought", "end"), [
+    ("2026-10-09T12:00:00.000000Z", "enviado"),   # 30 h antes: el legado no la vincula
+    ("2026-10-10T17:54:59.999000Z", "enviado"),   # un milisegundo antes de los 5 minutos
+    ("2026-10-10T17:55:00.000000Z", "compro"),    # justo 5 minutos antes: cuenta
+])
+def test_a_purchase_of_the_same_offer_before_the_firing_counts_from_five_minutes_before(bought: str,
+                                                                                        end: str) -> None:
+    # 4b: la compra que el legado vincula al crear el caso es la de la misma oferta aprobada desde
+    # 5 minutos antes del disparo (20260808000200:70-77). La de antes no corta.
+    events = [purchase(50, bought, who=1), T1.cart(1, "2026-10-10T18:00:00.000000Z", who=1)]
     run = _run(replay(history(events), VERSIONS, V4), T1.uid(1))
     assert run.start.starts
+    assert run.end == end
+    assert run.sends == (() if end == "compro" else (at("2026-10-10T18:00:00Z"),))
+
+
+def test_a_purchase_of_another_offer_after_the_firing_does_not_end_the_run() -> None:
+    # La misma oferta: offer_code is not distinct from (20260808000100:202). Otra no corta.
+    events = [T1.cart(1, "2026-10-10T05:00:00.000000Z", who=1),
+              purchase(50, "2026-10-10T08:00:00.000000Z", who=1, offer="otraofer")]
+    run = _run(replay(history(events), VERSIONS, V4), T1.uid(1))
+    assert (run.end, run.sends) == ("enviado", (at("2026-10-10T15:00:00Z"),))
+
+
+def test_a_purchase_between_the_creation_and_the_arrival_wins_the_run_from_the_start() -> None:
+    # Aprobada medio segundo despues de la creacion y antes de que llegue el disparo: el legado la
+    # vincula al crear el caso (20260808000200:70-77), y el recorrido nace ganado.
+    events = [T1.cart(1, "2026-10-10T18:00:00.000000Z", who=1), purchase(50, "2026-10-10T18:00:00.500000Z", who=1)]
+    result = replay(history(events), VERSIONS, V4)
+    run = _run(result, T1.uid(1))
     assert (run.end, run.sends) == ("compro", ())
+    assert sum(result.bolsa_by_day.values()) == 0
 
 
-def test_a_firing_without_contact_does_not_look_at_the_repetition_and_says_so() -> None:
+@pytest.mark.parametrize("wait", [False, True])
+def test_a_firing_without_contact_does_not_look_at_the_repetition_and_says_so(wait: bool) -> None:
     events = [T1.cart(1, "2026-10-10T18:00:00.000000Z", who=1), T1.cart(2, "2026-10-10T18:20:00.000000Z", who=1)]
     for event in events:
         del event["person_key"]
-    result = replay(history(events, who=()), versions(cart=WAIT_60), V4)
+    result = replay(history(events, who=()), versions(cart=WAIT_60) if wait else VERSIONS, V4)
     for number in (1, 2):
         run = _run(result, T1.uid(number))
         assert run.start.starts and run.firing.contact_ref is None
         assert "repeticion" in run.unknown
         assert len(run.sends) == 1
+        # Sin espera, el envio sale al disparo y la baja se sabe: lo unico que no se sabe es la repeticion.
+        assert ("baja" in run.steps[0].unknown) is wait
+    # La repeticion sin contacto deja el numero como maximo, aunque el paso no tenga nada mas sin saber.
+    assert flow_summary(result)["carrito"]["pasos"][0]["cota"] == "como_maximo"
 
 
 def test_a_flow_turned_off_in_the_proposal_starts_nothing() -> None:
@@ -533,6 +568,67 @@ def test_a_step_behind_the_contesta_exit_without_the_reply_is_unknown(monkeypatc
     assert (first.status, second.status) == ("enviado", "sin_saber")
     assert second.at == at("2026-10-10T19:00:00Z") and "respuesta" in second.unknown
     assert run.sends == (at("2026-10-10T18:00:00Z"),)
+
+
+def test_a_purchase_between_two_touches_ends_the_run_at_its_hour() -> None:
+    # La compra entre el primer toque y el segundo: el recorrido se vuelve a mirar a la hora de la
+    # compra, y no a la del toque siguiente. Lo en curso al otro dia ya no lo cuenta.
+    flows = versions(cart=steps(SEND, {"esperar": "24h"}, SEND, vence="4d"))
+    events = [T1.cart(1, "2026-10-10T18:00:00.000000Z", who=1), purchase(50, "2026-10-10T20:00:00.000000Z", who=1)]
+    result = replay(history(events), flows, V4, capabilities=PREVIEW_CAPABILITIES)
+    run = _run(result, T1.uid(1))
+    assert run.sends == (at("2026-10-10T18:00:00Z"),)
+    assert (run.end, run.end_at) == ("compro", at("2026-10-10T20:00:00Z"))
+    assert dict(in_flight_at(result, at("2026-10-11T12:00:00Z"))) == {}
+
+
+@pytest.mark.parametrize(("code", "unknown"), [
+    ("pilot_scope_version_mismatch", True),     # se rechaza antes de mirar la audiencia
+    ("pilot_runtime_not_armed", True),
+    ("pilot_daily_budget_exhausted", False),    # la audiencia ya se miro
+])
+def test_a_start_the_adapter_rejected_before_the_audience_leaves_the_permission_unknown(code: str,
+                                                                                         unknown: bool) -> None:
+    # pilot_scope_version_mismatch y pilot_runtime_not_armed salen antes de verificar la audiencia
+    # (20260930000300:270-300): el permiso no se sabe, y el envio cuenta como maximo.
+    event = T1.cart(1, "2026-10-10T18:00:00.000000Z", who=1)
+    event.update(processing_status="failed", processing_error=f"pilot_scope_rejected:{code}")
+    result = replay(history([event]), VERSIONS, V4)
+    run = _run(result, T1.uid(1))
+    assert run.start.starts and run.sends == (at("2026-10-10T18:00:00Z"),)
+    assert ("permiso" in run.unknown) is unknown
+    assert flow_summary(result)["carrito"]["pasos"][0]["cota"] == ("como_maximo" if unknown else "exacta")
+
+
+def _night_carts_with_actions(first_action: int, second_action: int) -> History:
+    events = [T1.cart(1, "2026-10-10T05:00:00.000000Z", who=1), T1.cart(2, "2026-10-10T05:30:00.000000Z", who=2)]
+    cases = [T1.case_of(event, who=who) for event, who in zip(events, (1, 2), strict=True)]
+    actions = [T1.action_of(case) for case in cases]
+    for action, number in zip(actions, (first_action, second_action), strict=True):
+        action["id"] = T1.uid(number)
+    return history(events, who=(1, 2), cases=cases, actions=actions)
+
+
+@pytest.mark.parametrize(("first_action", "second_action", "winner"), [(2001, 2002, 1), (2002, 2001, 2)])
+def test_two_night_carts_with_the_cap_at_one_tie_by_the_legacy_action_id(first_action: int, second_action: int,
+                                                                          winner: int) -> None:
+    # Los dos quedan con el due_at en las 09:00 de CDMX: el despachador los toma por
+    # coalesce(next_attempt_at, due_at) y despues por el id de la accion (20260803000100:2621).
+    result = replay(_night_carts_with_actions(first_action, second_action), versions(cart=per_day(1, vence="3d")), V4)
+    loser = 3 - winner
+    assert _run(result, T1.uid(winner)).sends == (at("2026-10-10T15:00:00Z"),)
+    assert _run(result, T1.uid(loser)).sends == (at("2026-10-11T15:00:00Z"),)
+
+
+def test_with_the_cap_at_one_the_older_due_at_goes_first_the_next_morning() -> None:
+    # A llega de dia con el tope gastado: su due_at queda a su hora. B llega de noche y se difiere a
+    # las 09:00. A la manana siguiente los dos esperan a las 09:00, y el legado toma primero el
+    # due_at mas viejo (20260803000100:2621), aunque B tenga el uuid menor.
+    spent = [T1.authorization(1, "2026-10-10T15:00:01.000000Z", "2026-10-10")]
+    events = [T1.cart(2, "2026-10-10T18:00:00.000000Z", who=2), T1.cart(1, "2026-10-11T05:00:00.000000Z", who=1)]
+    result = replay(history(events, who=(1, 2), authorizations=spent), versions(cart=per_day(1, vence="3d")), V4)
+    assert _run(result, T1.uid(2)).sends == (at("2026-10-11T15:00:00Z"),)
+    assert _run(result, T1.uid(1)).sends == (at("2026-10-12T15:00:00Z"),)
 
 
 def test_with_the_v1_a_definition_of_two_templates_is_not_supported() -> None:

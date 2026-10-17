@@ -8,10 +8,14 @@ las propuestas que se le pasan al comando.
 
 * **Los codigos de salida:** 0 en verde, 1 si la consistencia no cierra o un archivo no se lee, 2 si la
   propuesta se rechaza. Una propuesta de mas de un envio sin ``--varios-toques`` sale con 2 (el rojo 21).
-* **La salida del lienzo:** coincide con ``flow_summary`` de ``simulate``, con el indice de cada envio dentro
-  de ``pasos``; pasa la segunda red de la prueba de privacidad de la captura
+* **La salida del lienzo:** los conteos de cada paso, escritos aca como literales, con el indice de cada envio
+  dentro de ``pasos``; pasa la segunda red de la prueba de privacidad de la captura
   (``tests/test_flow_engine_capture_privacy.py``, importada, no copiada) y su lista cerrada de claves.
 * **Sin red ni entorno.**
+* **El legado que cambia avisa sin frenar:** con otro sha256 de los casos generados o del traductor, la
+  cabecera y el lienzo lo dicen (``legado_cambio``), y el comando sale igual.
+* **Los archivos de la T1** (las diferencias con nombre y la prueba de privacidad de la captura) se leen solo
+  con el sha256 de ``c7fa8ef``; si cambiaron, las pruebas que los usan se saltean con el motivo (§9).
 
 Las pruebas comparan conteos y caminos, nunca un valor de una persona: la captura no lo trae.
 """
@@ -19,13 +23,13 @@ Las pruebas comparan conteos y caminos, nunca un valor de una persona: la captur
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.util
 import json
 import os
 import re
 import socket
 import sys
-from collections.abc import Mapping
 from functools import cache
 from pathlib import Path
 from typing import Any
@@ -40,7 +44,6 @@ from bridge.flow_replay import (
     current_versions,
     engine_flows_from_definitions,
     fixed,
-    flow_summary,
     history_from_capture,
     proposed_versions,
     simulate,
@@ -70,8 +73,31 @@ def _load(name: str, path: Path) -> Any:
 
 
 SCRIPT = _load("flow_engine_simulate_script", ROOT / "scripts" / "flow_engine_simulate.py")
-# La prueba de privacidad de la captura: su segunda red y sus formas fijas.
-PRIVACY = _load("flow_engine_capture_privacy_for_simulate", ROOT / "tests" / "test_flow_engine_capture_privacy.py")
+# Los archivos de la T1 que lee esta prueba, con su sha256 en c7fa8ef.
+PRIVACY_FILE = ROOT / "tests" / "test_flow_engine_capture_privacy.py"
+T1_SHA256_C7FA8EF = {
+    NAMED_FILE.name: "57a4160635322ac91ea6f5de4863e91445b4ee8a7303f942565630da610d34ea",
+    PRIVACY_FILE.name: "d40736255d61b762d464258032b7029ee21e69ef514491b09c0e8062cbdc3adf",
+}
+
+
+def require_t1(path: Path) -> None:
+    """Saltear, con el motivo, si un archivo de la T1 cambio desde c7fa8ef: no es de la T3a."""
+    current = hashlib.sha256(path.read_bytes()).hexdigest()
+    if current != T1_SHA256_C7FA8EF[path.name]:
+        pytest.skip(f"{path.name} cambio desde c7fa8ef (sha256 {current}): la T3a lo usa como era en c7fa8ef."
+                    " La 1c lo vuelve a mirar.")
+
+
+@cache
+def _privacy() -> Any:
+    return _load("flow_engine_capture_privacy_for_simulate", PRIVACY_FILE)
+
+
+def privacy() -> Any:
+    """La prueba de privacidad de la captura (su segunda red y sus formas fijas), si es la de c7fa8ef."""
+    require_t1(PRIVACY_FILE)
+    return _privacy()
 
 
 def items_of(name: str) -> list[dict[str, Any]]:
@@ -92,13 +118,6 @@ def simulation(name: str) -> Simulation:
     return simulate(HISTORY, versions, fixed(current), fixed(chosen), capabilities=PREVIEW_CAPABILITIES)
 
 
-def lienzo_steps(summary: Mapping[str, Any], positions: list[int]) -> list[dict[str, Any]]:
-    """Lo que el lienzo tiene que traer para los pasos de ``flow_summary``, con el indice dentro de ``pasos``."""
-    return [{"paso": positions[row["paso"]], "envio": row["paso"], "enviados": row["enviados"],
-             "terminan": row["terminan"], "movidos_por_el_tope": row["movidos_por_el_tope"], "cota": row["cota"]}
-            for row in summary["pasos"]]
-
-
 def two_templates() -> list[dict[str, Any]]:
     items = items_of("carrito_a_1h")
     pasos = items[0]["definicion"]["pasos"]
@@ -111,6 +130,7 @@ def two_templates() -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 def test_the_consistency_on_the_fixture_exits_zero_with_its_numbers(capsys: pytest.CaptureFixture[str]) -> None:
+    require_t1(NAMED_FILE)
     assert SCRIPT.main(["--consistencia"]) == 0
     out = capsys.readouterr().out
     for line in ("Vigente contra si misma: 0 cambios", "  disparos: 252 / 252", "  llegaron: 248 / 248",
@@ -123,7 +143,9 @@ def test_the_consistency_on_the_fixture_exits_zero_with_its_numbers(capsys: pyte
         assert line in out.splitlines(), line
 
     assert SCRIPT.main(["--consistencia", "--capture", str(FIXTURE), "--named", str(NAMED_FILE), "--json"]) == 0
-    printed = json.loads(capsys.readouterr().out)["consistencia"]
+    whole = json.loads(capsys.readouterr().out)
+    assert (whole["base"], whole["legado_cambio"]) == ("c7fa8ef", False)
+    printed = whole["consistencia"]
     assert printed["ok"] is True
     assert printed["replay_counts"] == {"disparos": 252, "llegaron": 248, "arranques": 213, "envios": 213,
                                         "envios_del_legado": 208}
@@ -177,7 +199,7 @@ def test_three_touches_with_the_flag_give_207_183_and_157(capsys: pytest.Capture
     propuesta = out[out.index("Propuesta: de 252 disparos, 212 habrian recibido el mensaje"):]
     for line in ("    envio 0: 207 enviados (como_maximo), terminan: en_curso 1, movidos por el tope: 49",
                  "    envio 1: 183 enviados (como_maximo), terminan: compro 2, en_curso 22, movidos por el tope: 24",
-                 "    envio 2: 157 enviados (como_maximo), terminan: compro 1, en_curso 25, movidos por el tope: 40"):
+                 "    envio 2: 157 enviados (como_maximo), terminan: compro 1, en_curso 25, movidos por el tope: 41"):
         assert line in propuesta, line
     assert "Cambios: 208 de 252 disparos" in out
 
@@ -214,13 +236,10 @@ def test_a_proposal_the_engine_does_not_take_exits_two(change: Any, code: str, c
 # --lienzo.
 # ---------------------------------------------------------------------------
 
-def test_the_lienzo_of_the_current_matches_simulate(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+def test_the_lienzo_of_the_current_gives_its_counts(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
     lienzo = tmp_path / "lienzo.json"
     assert SCRIPT.main(["--lienzo", str(lienzo)]) == 0
     document = json.loads(lienzo.read_text(encoding="utf-8"))
-    current = current_versions(HISTORY, VERSIONS)
-    same = simulate(HISTORY, VERSIONS, fixed(current), fixed(current))
-    summary = flow_summary(same.current)
     # Las dos son la v5, de un solo envio en pasos[0]: 208 carritos y 5 pagos fallidos, los dos exactos.
     assert document["flujos"] == {
         "carrito": {"hoy": {"version": 5, "recorridos": 208, "en_curso": 0, "pasos": [
@@ -228,14 +247,12 @@ def test_the_lienzo_of_the_current_matches_simulate(capsys: pytest.CaptureFixtur
         "pago_fallido": {"hoy": {"version": 5, "recorridos": 5, "en_curso": 0, "pasos": [
             {"paso": 0, "envio": 0, "enviados": 5, "terminan": {}, "movidos_por_el_tope": 0, "cota": "exacta"}]}},
     }
-    for flow, data in summary.items():
-        assert document["flujos"][flow]["hoy"]["pasos"] == lienzo_steps(data, [0])
-        assert document["flujos"][flow]["hoy"]["recorridos"] == data["recorridos"]
     assert (document["captura"], document["ventana"], document["varios_toques"]) == (
         "2026-10-16T21:03:26.141035Z",
         {"desde": "2026-10-08T22:42:19.893671Z", "hasta": "2026-10-16T21:03:26.141035Z"}, False)
+    assert (document["base"], document["legado_cambio"], "aviso" in document) == ("c7fa8ef", False, False)
     assert SCRIPT.lienzo_problems(document) == []
-    assert PRIVACY._independent_findings(document) == []
+    assert privacy()._independent_findings(document) == []
     assert "lienzo: lienzo.json (2 flujos)" in capsys.readouterr().out
 
 
@@ -246,17 +263,22 @@ def test_the_lienzo_of_three_touches_indexes_each_send_by_its_place_in_pasos(tmp
                         "--etiqueta", "propuesto"]) == 0
     document = json.loads(lienzo.read_text(encoding="utf-8"))
     assert document["varios_toques"] is True
-    result = simulation("tres_toques_vence_4d")
     # pasos: esperar 1h, plantilla, esperar 24h, plantilla, esperar 24h, plantilla. Los envios son p1, p3 y p5.
     cart = document["flujos"]["carrito"]
-    assert cart["propuesto"]["pasos"] == lienzo_steps(flow_summary(result.proposed)["carrito"], [1, 3, 5])
-    assert [(row["paso"], row["enviados"], row["cota"]) for row in cart["propuesto"]["pasos"]] == [
-        (1, 207, "como_maximo"), (3, 183, "como_maximo"), (5, 157, "como_maximo")]
+    assert cart["propuesto"]["pasos"] == [
+        {"paso": 1, "envio": 0, "enviados": 207, "terminan": {"en_curso": 1}, "movidos_por_el_tope": 49,
+         "cota": "como_maximo"},
+        {"paso": 3, "envio": 1, "enviados": 183, "terminan": {"compro": 2, "en_curso": 22}, "movidos_por_el_tope": 24,
+         "cota": "como_maximo"},
+        {"paso": 5, "envio": 2, "enviados": 157, "terminan": {"compro": 1, "en_curso": 25}, "movidos_por_el_tope": 41,
+         "cota": "como_maximo"},
+    ]
     assert (cart["propuesto"]["version"], cart["propuesto"]["recorridos"], cart["propuesto"]["en_curso"]) == (6, 208, 48)
-    assert cart["hoy"]["pasos"] == lienzo_steps(flow_summary(result.current)["carrito"], [0])
+    assert cart["hoy"]["pasos"] == [
+        {"paso": 0, "envio": 0, "enviados": 208, "terminan": {}, "movidos_por_el_tope": 0, "cota": "exacta"}]
     assert document["flujos"]["pago_fallido"]["propuesto"] == document["flujos"]["pago_fallido"]["hoy"]
     assert SCRIPT.lienzo_problems(document) == []
-    assert PRIVACY._independent_findings(document) == []
+    assert privacy()._independent_findings(document) == []
 
 
 def test_the_lienzo_label_of_the_proposal_is_chosen_and_a_flow_turned_off_has_no_steps(tmp_path: Path) -> None:
@@ -313,6 +335,23 @@ def _set(path: tuple[Any, ...], value: Any) -> Any:
      "lienzo.flujos.pago_fallido.hoy.pasos[0].cota: no es exacta ni como_maximo"),
     ("una clave que falta", lambda document: document["flujos"]["carrito"]["hoy"].pop("en_curso"),
      "lienzo.flujos.carrito.hoy: falta la clave en_curso"),
+    ("un uuid como envio", _set(("flujos", "carrito", "propuesto", "pasos", 0, "envio"),
+                                "2462eaf0-b397-45b0-9aea-2ad8c77e42ec"),
+     "lienzo.flujos.carrito.propuesto.pasos[0].envio: no es un conteo"),
+    ("un uuid como enviados", _set(("flujos", "carrito", "propuesto", "pasos", 0, "enviados"),
+                                   "2462eaf0-b397-45b0-9aea-2ad8c77e42ec"),
+     "lienzo.flujos.carrito.propuesto.pasos[0].enviados: no es un conteo"),
+    ("un telefono como paso", _set(("flujos", "carrito", "propuesto", "pasos", 0, "paso"), 5215512345678),
+     "lienzo.flujos.carrito.propuesto.pasos[0].paso: no es un conteo"),
+    ("otro esquema", _set(("esquema",), "setter-simulacion-lienzo/v2"), "lienzo.esquema: no es el esquema del lienzo"),
+    ("varios_toques como numero", _set(("varios_toques",), 1), "lienzo.varios_toques: no es un booleano"),
+    ("varios_toques como texto", _set(("varios_toques",), "si"), "lienzo.varios_toques: no es un booleano"),
+    ("otra base", _set(("base",), "2462eaf0"), "lienzo.base: no es la base de las definiciones"),
+    ("legado_cambio como texto", _set(("legado_cambio",), "no"), "lienzo.legado_cambio: no es un booleano"),
+    ("un aviso con otro texto", _set(("aviso",), "2462eaf0-b397-45b0-9aea-2ad8c77e42ec"),
+     "lienzo.aviso: no es el aviso del legado"),
+    ("el legado cambiado sin aviso", _set(("legado_cambio",), True),
+     "lienzo.aviso: va si y solo si el legado cambio"),
 ])
 def test_a_key_or_value_out_of_the_closed_list_is_red(name: str, change: Any, expected: str) -> None:
     document = _valid_document()
@@ -349,6 +388,7 @@ def test_the_command_does_not_write_a_lienzo_out_of_shape(monkeypatch: pytest.Mo
 def test_the_command_does_no_network_and_reads_no_environment(monkeypatch: pytest.MonkeyPatch,
                                                               capsys: pytest.CaptureFixture[str],
                                                               tmp_path: Path) -> None:
+    require_t1(NAMED_FILE)
     def forbidden(*args: Any, **kwargs: Any) -> Any:
         raise AssertionError("el comando abrio la red")
 
@@ -369,11 +409,54 @@ def test_the_command_does_no_network_and_reads_no_environment(monkeypatch: pytes
 
 def test_what_the_command_prints_has_only_the_shapes_of_the_capture(capsys: pytest.CaptureFixture[str],
                                                                     tmp_path: Path) -> None:
+    fixed_shapes = privacy()._FIXED
     proposal = write_proposal(tmp_path, items_of("tres_toques_vence_4d"))
     assert SCRIPT.main(["--consistencia", "--propuesta", str(proposal), "--varios-toques"]) == 0
     out = capsys.readouterr().out
     assert "@" not in out
     # Fuera de las formas fijas (uuid, hex, sha256, hora y fecha), ninguna corrida de nueve cifras.
-    leftover = [line for line in (PRIVACY._FIXED.sub("", line) for line in out.splitlines())
+    leftover = [line for line in (fixed_shapes.sub("", line) for line in out.splitlines())
                 if re.search(r"[0-9]{9,}", line)]
     assert leftover == []
+
+
+# ---------------------------------------------------------------------------
+# El legado que cambio despues de las definiciones (§9).
+# ---------------------------------------------------------------------------
+
+def test_the_files_of_the_legacy_have_the_sha256_of_the_base() -> None:
+    assert SCRIPT.legacy_changed() == []
+    assert sorted(SCRIPT.LEGACY_FILES) == ["tests/fixtures/flow_engine/legacy_recovery_cases.json",
+                                           "tests/flow_store_translator.py"]
+
+
+@pytest.mark.parametrize("name", ["tests/fixtures/flow_engine/legacy_recovery_cases.json",
+                                  "tests/flow_store_translator.py"])
+def test_a_legacy_that_changed_is_said_in_the_header_and_the_lienzo(name: str, monkeypatch: pytest.MonkeyPatch,
+                                                                     capsys: pytest.CaptureFixture[str],
+                                                                     tmp_path: Path) -> None:
+    # La sesion comercial cambia el traductor (por ejemplo, suma OXXO) o regenera los casos: el comando avisa
+    # y sale igual, con 0. Lo que cambia es todo el archivo, no solo CODE.
+    monkeypatch.setitem(SCRIPT.LEGACY_FILES, name, "0" * 64)
+    assert SCRIPT.legacy_changed() == [name]
+    lienzo = tmp_path / "lienzo.json"
+    assert SCRIPT.main(["--lienzo", str(lienzo)]) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert (f"aviso: las definiciones de hoy son del 16/10; el legado cambio despues (c7fa8ef; cambio {name})"
+            in out)
+    document = json.loads(lienzo.read_text(encoding="utf-8"))
+    assert (document["base"], document["legado_cambio"], document["aviso"]) == (
+        "c7fa8ef", True, "las definiciones de hoy son del 16/10; el legado cambio despues")
+    assert SCRIPT.lienzo_problems(document) == []
+    assert SCRIPT.main(["--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["legado_cambio"] is True
+
+
+def test_a_legacy_file_that_is_missing_counts_as_changed(tmp_path: Path) -> None:
+    assert SCRIPT.legacy_changed(tmp_path) == sorted(SCRIPT.LEGACY_FILES)
+
+
+def test_a_change_in_a_file_of_the_t1_skips_and_does_not_go_red(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(T1_SHA256_C7FA8EF, PRIVACY_FILE.name, "0" * 64)
+    with pytest.raises(pytest.skip.Exception, match="cambio desde c7fa8ef"):
+        privacy()

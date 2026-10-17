@@ -32,11 +32,20 @@ propuestas medidas (``tests/fixtures/flow_simulation/simulation_proposals.json``
 
 Las dos quedan fijadas con lineas de tiempo al final, con los constructores de ``tests/test_flow_parity.py``
 (importados, no copiados) y datos inventados: uuid de la forma ``00000000-0000-4000-8000-<n>``.
+
+**El desempate a la misma hora** es el del despachador del legado, ``coalesce(next_attempt_at, due_at), sa.id``
+(``20260803000100:2621``). Cada recorrido que arranca en las propuestas tiene la accion del legado en la
+captura; los toques 2 y 3 no, y lo que depende de su orden lo declara ``sensible_al_orden`` en el fixture.
+
+**Las diferencias con nombre son de la T1** (§9): si su sha256 no es el de ``c7fa8ef``, las pruebas que las leen
+se saltean con el motivo, en vez de ponerse rojas por un archivo que no es de la T3a.
 """
 
 from __future__ import annotations
 
 import copy
+import hashlib
+import heapq
 import importlib.util
 import json
 import statistics
@@ -49,6 +58,7 @@ from typing import Any
 
 import pytest
 
+from bridge import flow_replay
 from bridge.flow_definition import parse_items
 from bridge.flow_engine import PREVIEW_CAPABILITIES, PlanNotSupported
 from bridge.flow_parity import Capture
@@ -76,7 +86,8 @@ DEFINITIONS: dict[str, Any] = json.loads(
     (SIMULATION / "att1_definitions_by_scope_version.json").read_text(encoding="utf-8"))
 PROPOSALS: dict[str, Any] = json.loads((SIMULATION / "simulation_proposals.json").read_text(encoding="utf-8"))
 RAW: dict[str, Any] = json.loads(FIXTURE.read_text(encoding="utf-8"))
-NAMED: list[dict[str, Any]] = json.loads(NAMED_FILE.read_text(encoding="utf-8"))["diferencias"]
+# El sha256 de las diferencias con nombre de la T1 en c7fa8ef.
+NAMED_SHA256_C7FA8EF = "57a4160635322ac91ea6f5de4863e91445b4ee8a7303f942565630da610d34ea"
 CAPTURE = Capture.from_json(RAW)
 HISTORY = history_from_capture(CAPTURE)
 VERSIONS = engine_flows_from_definitions(DEFINITIONS)
@@ -109,9 +120,24 @@ def at(text: str) -> datetime:
     return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(timezone.utc)
 
 
+def named() -> list[dict[str, Any]]:
+    """Las diferencias con nombre de la T1, o saltear: si cambiaron desde c7fa8ef, la T3a no las juzga."""
+    data = NAMED_FILE.read_bytes()
+    current = hashlib.sha256(data).hexdigest()
+    if current != NAMED_SHA256_C7FA8EF:
+        pytest.skip(f"{NAMED_FILE.name} cambio desde c7fa8ef (sha256 {current}): la consistencia de la T3a es "
+                    "contra las de c7fa8ef. La 1c la vuelve a medir.")
+    return json.loads(data)["diferencias"]
+
+
 @cache
+def _report() -> ConsistencyReport:
+    return consistency_report(HISTORY, VERSIONS, named())
+
+
 def report() -> ConsistencyReport:
-    return consistency_report(HISTORY, VERSIONS, NAMED)
+    named()
+    return _report()
 
 
 @cache
@@ -169,16 +195,16 @@ def test_the_v5_on_the_whole_window_is_not_what_happened() -> None:
 
 
 def test_named_with_an_invented_uuid_is_not_ok() -> None:
-    named = copy.deepcopy(NAMED)
-    named.append({**named[0], "disparo": "00000000-0000-4000-8000-000000000999"})
-    result = consistency_report(HISTORY, VERSIONS, named)
+    entries = copy.deepcopy(named())
+    entries.append({**entries[0], "disparo": "00000000-0000-4000-8000-000000000999"})
+    result = consistency_report(HISTORY, VERSIONS, entries)
     assert result.named_not_in_replay == ("00000000-0000-4000-8000-000000000999",)
     assert not result.ok()
 
 
 def test_named_without_one_uuid_is_not_ok() -> None:
-    named = [entry for entry in NAMED if entry["disparo"] != NAMED_FIRINGS[0]]
-    result = consistency_report(HISTORY, VERSIONS, named)
+    entries = [entry for entry in named() if entry["disparo"] != NAMED_FIRINGS[0]]
+    result = consistency_report(HISTORY, VERSIONS, entries)
     assert result.extra_sends == NAMED_FIRINGS
     assert result.extra_explained_by_named == NAMED_FIRINGS[1:]
     assert not result.ok()
@@ -253,7 +279,11 @@ def test_the_day_cap_at_one() -> None:
     summary = result.summary["propuesta"]
     assert summary["fin"] == {"compro": 4, "en_curso": 1, "enviado": 8, "no_arranco": 36, "no_llego": 4,
                               "vencio": 199}
-    assert result.summary["cambios"] == 210
+    # Los 8 que salen, los 4 que compran y los 199 que vencen no dependen del desempate; quienes son, si:
+    # con el del legado (el due_at y el id de la accion) cambian 213 disparos contra la v5.
+    assert result.summary["cambios"] == 213
+    started = [run for run in result.proposed.runs if run.plan is not None]
+    assert len(started) == 212 and all(run.firing_ref in HISTORY.action_ref for run in started)
     sends = sorted(when for run in result.proposed.runs for when in run.sends)
     assert sends == [at(f"2026-10-{day:02d}T15:00:00Z") for day in range(9, 17)]
     days = Counter(local_day(ZONE, when) for when in sends)
@@ -285,7 +315,7 @@ def test_three_touches_with_four_days() -> None:
         {"paso": 0, "enviados": 207, "terminan": {"en_curso": 1}, "movidos_por_el_tope": 49, "cota": "como_maximo"},
         {"paso": 1, "enviados": 183, "terminan": {"compro": 2, "en_curso": 22}, "movidos_por_el_tope": 24,
          "cota": "como_maximo"},
-        {"paso": 2, "enviados": 157, "terminan": {"compro": 1, "en_curso": 25}, "movidos_por_el_tope": 40,
+        {"paso": 2, "enviados": 157, "terminan": {"compro": 1, "en_curso": 25}, "movidos_por_el_tope": 41,
          "cota": "como_maximo"},
     ]
     assert steps(result, "pago_fallido") == [
@@ -306,6 +336,56 @@ def test_three_touches_with_four_days() -> None:
     gaps = [run.sends[2] - run.sends[1] for run in result.proposed.runs if len(run.sends) == 3]
     assert len(gaps) == 157
     assert [gap for gap in gaps if gap < timedelta(hours=24)] == [timedelta(0)]
+
+
+class _Reversed(str):
+    """Un id que ordena al reves: el desempate inverso de lo que la captura no trae."""
+
+    def __lt__(self, other: object) -> bool:
+        return str.__gt__(self, other)  # type: ignore[operator]
+
+    def __gt__(self, other: object) -> bool:
+        return str.__lt__(self, other)  # type: ignore[operator]
+
+    __hash__ = str.__hash__
+
+
+def _paths(before: Any, after: Any, prefix: str = "") -> list[str]:
+    if isinstance(before, dict) and isinstance(after, dict):
+        return [path for key in sorted(set(before) | set(after))
+                for path in _paths(before.get(key), after.get(key), f"{prefix}.{key}" if prefix else key)]
+    if isinstance(before, list) and isinstance(after, list) and len(before) == len(after):
+        return [path for index, pair in enumerate(zip(before, after, strict=True))
+                for path in _paths(*pair, f"{prefix}[{index}]")]
+    return [] if before == after else [prefix]
+
+
+@pytest.mark.parametrize("name", [item["nombre"] for item in PROPOSALS["propuestas"]])
+def test_the_numbers_that_depend_on_an_unknown_order_are_declared(name: str,
+                                                                   monkeypatch: pytest.MonkeyPatch) -> None:
+    # Con el desempate invertido en lo que la captura no trae (los toques 2 y 3, y un recorrido sin accion del
+    # legado), cambian exactamente los numeros de sensible_al_orden.
+    [proposal] = [item for item in PROPOSALS["propuestas"] if item["nombre"] == name]
+    expected = simulation(name)
+
+    def push(self: Any, when: datetime, run: Any) -> None:
+        run.generation += 1
+        key = run.order_ref
+        if run.sends or key == run.firing.source_ref:
+            key = _Reversed(key)
+        heapq.heappush(self.queue, (when, run.due, key, 1, run.generation))
+
+    monkeypatch.setattr(flow_replay._Replayer, "push", push)
+    simulation.cache_clear()
+    try:
+        reversed_order = simulation(name)
+    finally:
+        simulation.cache_clear()
+    differ = _paths(json.loads(json.dumps(expected.summary["propuesta"])),
+                    json.loads(json.dumps(reversed_order.summary["propuesta"])))
+    if len(expected.changes) != len(reversed_order.changes):
+        differ.insert(0, "cambios")
+    assert differ == proposal["sensible_al_orden"]
 
 
 def test_three_touches_with_one_day_send_no_second_touch() -> None:
@@ -424,3 +504,14 @@ def test_a_purchase_while_waiting_for_the_day_cap_wins_the_run() -> None:
     [run] = [run for run in replay(history, _definitions("pago_fallido", cap), V4).runs if run.plan is not None]
     assert (run.end, run.sends, run.end_at) == ("compro", (), at("2026-10-10T18:01:30Z"))
     assert run.steps[0].moved_by == ("bolsa_dia", "franja")
+
+
+def test_a_change_in_the_named_differences_skips_and_does_not_go_red(monkeypatch: pytest.MonkeyPatch,
+                                                                      tmp_path: Path) -> None:
+    # La sesion comercial regenera las diferencias con nombre de la T1: la consistencia de la T3a se saltea con
+    # el motivo, no se pone roja por un archivo que no es suyo.
+    changed = tmp_path / NAMED_FILE.name
+    changed.write_text(NAMED_FILE.read_text(encoding="utf-8").replace("lo_en_curso_sigue", "otra"), encoding="utf-8")
+    monkeypatch.setitem(globals(), "NAMED_FILE", changed)
+    with pytest.raises(pytest.skip.Exception, match="cambio desde c7fa8ef"):
+        test_named_without_one_uuid_is_not_ok()

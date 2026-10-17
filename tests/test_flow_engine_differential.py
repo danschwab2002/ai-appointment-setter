@@ -150,6 +150,13 @@ TIMELINES: dict[str, Callable[[], tuple[Capture, Any]]] = {
         authorizations=_spent((1, "2026-10-10T15:00:01.000000Z", "2026-10-10"),
                               (2, "2026-10-10T21:00:00.000000Z", "2026-10-10")),
         scopes=[T1.scope_row(4, per_day=2)]),
+    # Una autorizacion previa y otra exactamente a la hora del carrito, con tope 2: el libro observado cuenta
+    # estrictamente antes (como eligible_at), asi que la de la misma hora no cuenta y sale al ancla.
+    "tope_con_una_autorizacion_a_la_misma_hora": lambda: _timeline(
+        "2026-10-10T18:00:00.000000Z",
+        authorizations=_spent((1, "2026-10-10T15:00:01.000000Z", "2026-10-10"),
+                              (2, "2026-10-10T18:00:00.000000Z", "2026-10-10")),
+        scopes=[T1.scope_row(4, per_day=2)]),
     "tope_de_otro_dia_local": lambda: _timeline(
         "2026-10-10T18:00:00.000000Z",
         authorizations=_spent((1, "2026-10-10T02:00:00.000000Z", "2026-10-09"),
@@ -185,6 +192,7 @@ def test_the_timelines_exercise_what_the_real_data_does_not() -> None:
     assert values["control_pausado"] == _instant("2026-10-10T18:30:00Z")
     assert values["tope_del_dia_gastado"] == _instant("2026-10-11T15:00:00Z")
     assert values["minuto_de_fin_21_00_30"] == _instant("2026-10-11T03:00:30Z")
+    assert values["tope_con_una_autorizacion_a_la_misma_hora"] == _instant("2026-10-10T18:00:00Z")
     assert values["tope_total_gastado"] is None and values["control_pausado_hasta_vencer"] is None
 
 
