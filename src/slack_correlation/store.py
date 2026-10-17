@@ -25,6 +25,13 @@ from slack_correlation.catalog import (
 from slack_correlation.case_copy import CODE_TO_EVENT_OUTCOME
 
 _TENANT_REF = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
+
+
+def _valid_tenant_ref(value: object) -> bool:
+    """Un tenant es cualquier ref bien formado: cuáles existen lo decide la
+    configuración del conector (`SLACK_TENANT_CHANNELS_JSON`), no el store."""
+
+    return isinstance(value, str) and _TENANT_REF.fullmatch(value) is not None
 _MACHINE_FAILURE = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,119}$")
 _ACTIONABLE_CORRELATION_CODES = frozenset(
     event_code
@@ -1768,7 +1775,7 @@ class NotificationStore:
         message_ts: str | None = None,
         thread_ts: str | None = None,
     ) -> StoredNotification:
-        if tenant_ref not in {"johanna", "att1"}:
+        if not _valid_tenant_ref(tenant_ref):
             raise ValueError("invalid_tenant_ref")
         if decision not in {"confirm_delivered", "confirm_not_delivered"}:
             raise ValueError("invalid_reconciliation_decision")
@@ -2334,7 +2341,7 @@ def _validate_database(path: Path) -> None:
             state = str(row["state"])
             claim_owner = row["claim_owner"]
             if (
-                row["tenant_ref"] not in {"johanna", "att1"}
+                not _valid_tenant_ref(row["tenant_ref"])
                 or type(row["claim_generation"]) is not int
                 or row["claim_generation"] < 0
             ):
@@ -2436,7 +2443,7 @@ def _validate_database(path: Path) -> None:
                 raise RuntimeError("invalid_backup")
         for (tenant_ref, subject_ref), root in thread_roots.items():
             if (
-                tenant_ref not in {"johanna", "att1"}
+                not _valid_tenant_ref(tenant_ref)
                 or not valid_channel(root["channel_id"])
                 or not valid_slack_ts(root["message_ts"])
                 or not valid_datetime(root["created_at"])
@@ -2555,7 +2562,7 @@ def _validate_database(path: Path) -> None:
                 or opening is None
                 or (opening_state in {"pending", "request_started"} and state != "opened")
                 or (opening_state == "failed" and state != "failed")
-                or session["tenant_ref"] not in {"johanna", "att1"}
+                or not _valid_tenant_ref(session["tenant_ref"])
                 or re.fullmatch(r"T[A-Z0-9]{8,}", str(session["team_id"])) is None
                 or not valid_channel(session["channel_id"])
                 or not valid_slack_ts(session["message_ts"])
