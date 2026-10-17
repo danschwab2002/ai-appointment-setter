@@ -1,0 +1,350 @@
+{
+ "_generated": {
+  "generator": "tests/test_flow_engine_definitions_fixture.py (test_the_fixture_is_what_the_translator_gives), con tests/flow_store_translator.py y bridge.flow_definition",
+  "date": "2026-10-17",
+  "from": "tests/flow_store_translator.py sobre la config de flow_engine/att1_recovery_capture_20261016.json con el control de att1-recuperacion en la v3, la v4 y la v5, att1_instancia_f01fbcc.toml y schema_examples_v1.json; normalizado y publicado con bridge.flow_definition (as_published con la version del scope)",
+  "regenerate": "FLOW_SIMULATION_FIXTURE_DIR=tests/fixtures/flow_simulation uv run pytest tests/test_flow_engine_definitions_fixture.py",
+  "base": "c7fa8ef",
+  "code_sha256": "f1e183184fd9c37db941a711c800e3d6d01c979fe51ffd0fc512766206529c20",
+  "code_sha256_of": "json.dumps(CODE, sort_keys=True, ensure_ascii=False, separators=(\",\", \":\"))"
+ },
+ "instance": {
+  "tenant_ref": "lancemos",
+  "ally_ref": "att1",
+  "products": [
+   "att1"
+  ],
+  "time_zone": "America/Mexico_City"
+ },
+ "scope_key": "att1-recuperacion",
+ "flows": {
+  "carrito": {
+   "flow_id": "1b000003-0000-4000-8000-0000000c0001",
+   "legacy_kind": "carrito"
+  },
+  "pago_fallido": {
+   "flow_id": "1b000003-0000-4000-8000-0000000c0002",
+   "legacy_kind": "pago_fallido"
+  }
+ },
+ "versions": {
+  "3": {
+   "carrito": {
+    "esquema": "setter-flujo/v1",
+    "flujo": "carrito",
+    "producto": "att1",
+    "nombre": "Carrito abandonado",
+    "version": 3,
+    "estado": "publicada",
+    "dispara": {
+     "evento": "carrito"
+    },
+    "entra": {
+     "permiso": "formulario",
+     "contesto_a": []
+    },
+    "pasos": [
+     {
+      "plantilla": "att1_carrito_abandonado_01",
+      "idioma": "es_MX",
+      "variables": [
+       "nombre",
+       "producto"
+      ]
+     }
+    ],
+    "termina": {
+     "si": [
+      "compra"
+     ],
+     "vence": "1d"
+    },
+    "horario": {
+     "zona": "America/Mexico_City",
+     "desde": "09:00",
+     "hasta": "21:00"
+    },
+    "topes": {
+     "bolsa": "att1-recuperacion",
+     "por_dia": 40,
+     "total": 400,
+     "repeticion": {
+      "una_por": "persona_y_oferta",
+      "otra_despues_de": "0m"
+     }
+    },
+    "prioridad": {
+     "le_gana_a": [
+      "precheckout"
+     ],
+     "no_arranca_mientras": [
+      "pago_fallido"
+     ]
+    }
+   },
+   "pago_fallido": {
+    "esquema": "setter-flujo/v1",
+    "flujo": "pago_fallido",
+    "producto": "att1",
+    "nombre": "Pago fallido",
+    "version": 3,
+    "estado": "publicada",
+    "dispara": {
+     "evento": "pago_fallido"
+    },
+    "entra": {
+     "permiso": "formulario",
+     "contesto_a": []
+    },
+    "pasos": [
+     {
+      "plantilla": "att1_compra_fallida_01",
+      "idioma": "es_MX",
+      "variables": [
+       "nombre",
+       "producto"
+      ]
+     }
+    ],
+    "termina": {
+     "si": [
+      "compra"
+     ],
+     "vence": "1d"
+    },
+    "horario": {
+     "zona": "America/Mexico_City",
+     "desde": "09:00",
+     "hasta": "21:00"
+    },
+    "topes": {
+     "bolsa": "att1-recuperacion",
+     "por_dia": 40,
+     "total": 400,
+     "repeticion": {
+      "una_por": "persona_y_oferta",
+      "otra_despues_de": "0m"
+     }
+    },
+    "prioridad": {
+     "le_gana_a": [
+      "precheckout"
+     ],
+     "no_arranca_mientras": []
+    }
+   }
+  },
+  "4": {
+   "carrito": {
+    "esquema": "setter-flujo/v1",
+    "flujo": "carrito",
+    "producto": "att1",
+    "nombre": "Carrito abandonado",
+    "version": 4,
+    "estado": "publicada",
+    "dispara": {
+     "evento": "carrito"
+    },
+    "entra": {
+     "permiso": "formulario",
+     "contesto_a": []
+    },
+    "pasos": [
+     {
+      "plantilla": "att1_carrito_abandonado_01",
+      "idioma": "es_MX",
+      "variables": [
+       "nombre",
+       "producto"
+      ]
+     }
+    ],
+    "termina": {
+     "si": [
+      "compra"
+     ],
+     "vence": "1d"
+    },
+    "horario": {
+     "zona": "America/Mexico_City",
+     "desde": "09:00",
+     "hasta": "21:00"
+    },
+    "topes": {
+     "bolsa": "att1-recuperacion",
+     "por_dia": 40,
+     "total": 1000,
+     "repeticion": {
+      "una_por": "persona_y_oferta",
+      "otra_despues_de": "0m"
+     }
+    },
+    "prioridad": {
+     "le_gana_a": [
+      "precheckout"
+     ],
+     "no_arranca_mientras": [
+      "pago_fallido"
+     ]
+    }
+   },
+   "pago_fallido": {
+    "esquema": "setter-flujo/v1",
+    "flujo": "pago_fallido",
+    "producto": "att1",
+    "nombre": "Pago fallido",
+    "version": 4,
+    "estado": "publicada",
+    "dispara": {
+     "evento": "pago_fallido"
+    },
+    "entra": {
+     "permiso": "formulario",
+     "contesto_a": []
+    },
+    "pasos": [
+     {
+      "plantilla": "att1_compra_fallida_01",
+      "idioma": "es_MX",
+      "variables": [
+       "nombre",
+       "producto"
+      ]
+     }
+    ],
+    "termina": {
+     "si": [
+      "compra"
+     ],
+     "vence": "1d"
+    },
+    "horario": {
+     "zona": "America/Mexico_City",
+     "desde": "09:00",
+     "hasta": "21:00"
+    },
+    "topes": {
+     "bolsa": "att1-recuperacion",
+     "por_dia": 40,
+     "total": 1000,
+     "repeticion": {
+      "una_por": "persona_y_oferta",
+      "otra_despues_de": "0m"
+     }
+    },
+    "prioridad": {
+     "le_gana_a": [
+      "precheckout"
+     ],
+     "no_arranca_mientras": []
+    }
+   }
+  },
+  "5": {
+   "carrito": {
+    "esquema": "setter-flujo/v1",
+    "flujo": "carrito",
+    "producto": "att1",
+    "nombre": "Carrito abandonado",
+    "version": 5,
+    "estado": "publicada",
+    "dispara": {
+     "evento": "carrito"
+    },
+    "entra": {
+     "permiso": "formulario",
+     "contesto_a": []
+    },
+    "pasos": [
+     {
+      "plantilla": "att1_carrito_abandonado_01",
+      "idioma": "es_MX",
+      "variables": [
+       "nombre",
+       "producto"
+      ]
+     }
+    ],
+    "termina": {
+     "si": [
+      "compra"
+     ],
+     "vence": "1d"
+    },
+    "horario": {
+     "zona": "America/Mexico_City",
+     "desde": "09:00",
+     "hasta": "21:00"
+    },
+    "topes": {
+     "bolsa": "att1-recuperacion",
+     "por_dia": 80,
+     "total": 1000,
+     "repeticion": {
+      "una_por": "persona_y_oferta",
+      "otra_despues_de": "0m"
+     }
+    },
+    "prioridad": {
+     "le_gana_a": [
+      "precheckout"
+     ],
+     "no_arranca_mientras": [
+      "pago_fallido"
+     ]
+    }
+   },
+   "pago_fallido": {
+    "esquema": "setter-flujo/v1",
+    "flujo": "pago_fallido",
+    "producto": "att1",
+    "nombre": "Pago fallido",
+    "version": 5,
+    "estado": "publicada",
+    "dispara": {
+     "evento": "pago_fallido"
+    },
+    "entra": {
+     "permiso": "formulario",
+     "contesto_a": []
+    },
+    "pasos": [
+     {
+      "plantilla": "att1_compra_fallida_01",
+      "idioma": "es_MX",
+      "variables": [
+       "nombre",
+       "producto"
+      ]
+     }
+    ],
+    "termina": {
+     "si": [
+      "compra"
+     ],
+     "vence": "1d"
+    },
+    "horario": {
+     "zona": "America/Mexico_City",
+     "desde": "09:00",
+     "hasta": "21:00"
+    },
+    "topes": {
+     "bolsa": "att1-recuperacion",
+     "por_dia": 80,
+     "total": 1000,
+     "repeticion": {
+      "una_por": "persona_y_oferta",
+      "otra_despues_de": "0m"
+     }
+    },
+    "prioridad": {
+     "le_gana_a": [
+      "precheckout"
+     ],
+     "no_arranca_mientras": []
+    }
+   }
+  }
+ }
+}
