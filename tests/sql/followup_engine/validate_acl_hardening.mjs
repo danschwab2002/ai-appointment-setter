@@ -210,7 +210,9 @@ const rows = await db.query(`
       ('read_automation_expert_lead_history_v1(jsonb,uuid)'),
       ('claim_due_recovery_coupons_v1(timestamp with time zone,text,integer,text,interval,interval,numeric,integer)'),
       ('settle_recovery_coupon_v1(uuid,text,text,bigint,bigint,bigint,text,timestamp with time zone,timestamp with time zone)'),
-      ('get_recovery_coupon_for_case_v1(uuid,smallint)')
+      ('get_recovery_coupon_for_case_v1(uuid,smallint)'),
+      ('reserve_recovery_checkout_issuance_v1(uuid,text,bigint,uuid,text,timestamp with time zone)'),
+      ('authorize_recovery_checkout_issuance_v1(uuid,uuid,text,bigint,timestamp with time zone)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -250,9 +252,10 @@ const result = rows.rows[0];
 // (20261015000200) add three, and what the person did for the agent input
 // (20261016000200) adds one, and the reserve of the link of the product the
 // agent names (20261016000400) adds one, and the personal coupon of the cart
-// (20261018000100) adds three.
+// (20261018000100) adds three, and the reserve and the authorization of the
+// link of the first cart message (20261018000200) add two.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 132) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 134) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper
