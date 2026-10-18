@@ -1117,6 +1117,38 @@ def test_rule_13_the_ficha_button_is_a_dynamic_url() -> None:
     assert dynamic.blocks == ()
 
 
+def coupon_buttons(order: list[str]) -> TemplateCatalog:
+    """El catalogo con los botones de la plantilla del cupon en ``order``.
+
+    ``url`` es el boton al checkout y ``rapida`` una respuesta rapida, como
+    las plantillas A1 del carrito aprobadas el 18/10 (fixture
+    ``chatwoot_message_templates_inbox_11_carrito_20261018.json``).
+    """
+    def change(payload: dict[str, Any]) -> None:
+        for component in template_of(payload, "att1_seguimiento_descuento_01")["components"]:
+            if component.get("type") == "BUTTONS":
+                [url] = [b for b in component["buttons"] if b.get("type") == "URL"]
+                component["buttons"] = [
+                    copy.deepcopy(url) if kind == "url" else {"type": "QUICK_REPLY", "text": "No más mensajes"}
+                    for kind in order
+                ]
+    return catalog_with(change)
+
+
+def test_rule_13_the_checkout_button_may_be_followed_by_quick_replies() -> None:
+    descuento = [version_item(flow_def("descuento"), "descuento")]
+    assert check(descuento, catalog=coupon_buttons(["url", "rapida"])).blocks == ()
+    assert check(descuento, catalog=coupon_buttons(["url", "rapida", "rapida"])).blocks == ()
+
+
+@pytest.mark.parametrize("order", [["rapida", "url"], ["url", "url"], ["rapida"]],
+                         ids=["la-rapida-primero", "dos-links", "sin-link"])
+def test_rule_13_the_checkout_button_opens_the_group_and_is_the_only_link(order: list[str]) -> None:
+    descuento = [version_item(flow_def("descuento"), "descuento")]
+    assert blocks_at(check(descuento, catalog=coupon_buttons(order))) == [
+        ("template_button_mismatch", "/0/definicion/pasos/0/boton")]
+
+
 def test_rule_3_the_purchase_permission_goes_only_with_the_purchase_trigger() -> None:
     on_the_cart = with_(flow_def("carrito"), lambda d: d["entra"].update(permiso="compra"))
     assert blocks_at(check([version_item(on_the_cart)], phase="draft")) == [
