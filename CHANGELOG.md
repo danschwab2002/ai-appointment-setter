@@ -34,9 +34,20 @@ Lo que ya está en `main` y todavía no tiene versión. El número se elige al p
     - el canal reservado de Johanna y el chequeo de canales repetidos siguen igual;
     - una instancia sin ruta de token sigue recibiendo 401, y el backfill de una instancia sin canal, 409.
 
+- **A1 del carrito de ATT1 con el cupón personal y el link de recuperación** (decisión de Dan del 18/10, «A1 espera al cupón, que dura 24 h, en la hora del país»). Apagado por defecto.
+  - **Qué agrega:**
+    - la migración `20261018000100`: la tabla `recovery_coupons` (dos cupones por caso como máximo) y las RPC del worker del cupón;
+    - el worker del cupón (`RECOVERY_COUPON_WORKER_ENABLED`): a los 45 minutos del abandono crea el cupón en la API de Hotmart y lo vuelve a mirar hasta que figura válido. Las credenciales salen de `HOTMART_API_CREDENTIALS_FILE` y nunca van al log;
+    - la migración `20261018000200`: el link de A1 en `checkout_link_issuances` sin conversación (`recovery_first_touch`, atado al caso y al intento de envío), y la compra con ese link deja el caso `won`, corta los toques que faltan y marca el cupón `redeemed`;
+    - A1 (`RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED`, con `RECOVERY_DISCOUNT_TEMPLATE_NAME`, `RECOVERY_DISCOUNT_PRICE` y `RECOVERY_DISCOUNT_CURRENCY`, que por defecto es USD): con el cupón válido sale la plantilla con la hora del abandono, el precio y el vencimiento en la zona del país del teléfono, y el botón al checkout con el cupón ya puesto. Si el cupón no está listo, A1 se corre 5 minutos en los intentos 1 y 2, dentro de los 15 minutos de su hora; después sale la plantilla de hoy sin descuento;
+    - las plantillas aprobadas pueden abrir con el botón al checkout y seguir con respuestas rápidas, en el bridge y en la regla 13 del validador de flujos;
+    - la baja reconoce más formas de pedirla («STOP», «baja», «ya no me escriban», «denme de baja», «sáquenme de la lista») y la frase dentro de un mensaje de saludo o cortesía. Una razón, un momento o una pregunta la siguen frenando. Dejan de contar como baja «¿No más mensajes?» y una cita después de un saludo.
+  - **Corrige:** `authorize_chatwoot_checkout_issuance_v2` comparaba la conversación con `<>` y dejaba pasar una fila sin conversación; ahora usa `is distinct from` y rechaza la del carrito.
+  - **No cambia nada de lo que ya corre** con las dos banderas apagadas: no se lee el archivo de credenciales, no se crea ningún cupón y A1 sale como hoy.
+
 ### Qué hace quien actualiza
 
-Correr la migración `20261016000100`, y nada más. No hay variables, flags ni campos del manifiesto. La migración deja las cuatro tablas vacías y suma su fila a la huella del inventario de esquema. El inventario de permisos no cambia.
+Correr las migraciones `20261016000100`, `20261018000100` y `20261018000200`. Para prender A1 con cupón en una instancia: montar la credencial de la API de Hotmart, apuntar `HOTMART_API_CREDENTIALS_FILE` a ella y prender `RECOVERY_COUPON_WORKER_ENABLED` y `RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED` con la plantilla y el precio. La `20261016000100` no pide variables, flags ni campos del manifiesto, y deja las cuatro tablas vacías y suma su fila a la huella del inventario de esquema. El inventario de permisos no cambia.
 
 El conector de Slack no pide nada para seguir igual. Para sumar una instancia: su canal en `SLACK_TENANT_CHANNELS_JSON`, su token en `SLACK_TENANT_TOKENS_JSON` y, si se quiere otro nombre, `SLACK_TENANT_LABELS_JSON` (`deploy/slack-connector.env.example`).
 
