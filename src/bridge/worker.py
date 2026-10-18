@@ -18,6 +18,15 @@ from typing import Any, Callable
 
 import httpx
 
+from bridge.cart_first_touch import (
+    CART_ABANDONMENT_TRIGGER,
+    CartDiscountConfig,
+    CartDiscountDefer,
+    CartDiscountReady,
+    CartDiscountStop,
+    compose_cart_discount_first_touch,
+)
+from bridge.checkout_issuance import generate_issuance_ulid
 from bridge.approved_templates import (
     REASON_MISMATCH as APPROVED_TEMPLATE_MISMATCH,
     REASON_PARAMETERS_MISSING as APPROVED_TEMPLATE_PARAMETERS_MISSING,
@@ -117,6 +126,13 @@ class _ApprovedTemplateComposition:
     greeting_name: str | None = None
     failure_reason: str | None = None
     retryable: bool = True
+    # A1 of the cart with the personal coupon (cart_first_touch): how long a
+    # deferred attempt waits, and the template outside the manifest with its
+    # checkout button and the issued link it carries.
+    retry_after: timedelta | None = None
+    template_name: str | None = None
+    template_params: dict[str, object] | None = None
+    issuance_id: str | None = None
 
 
 def _precheckout_sender_process_entry(
@@ -724,7 +740,12 @@ class DurableDispatcher:
         approved_template_direct: bool = False,
         lead_first_name_greeting_enabled: bool = False,
         whatsapp_equivalence_enabled: bool = False,
+        cart_discount: CartDiscountConfig | None = None,
     ) -> None:
+        if cart_discount is not None and not approved_template_direct:
+            # A1 with the personal coupon is an approved template sent by the
+            # direct mode, with the final Meta gate; never a Hermes draft.
+            raise ValueError("cart discount requires the approved template direct mode")
         if type(whatsapp_equivalence_enabled) is not bool:
             raise ValueError("invalid whatsapp equivalence flag")
         if whatsapp_equivalence_enabled and commercial_ally_config is None:
@@ -812,6 +833,7 @@ class DurableDispatcher:
         self._waba_template = waba_template
         self._chatwoot_inbox_id = chatwoot_inbox_id
         self._approved_template_direct = approved_template_direct
+        self._cart_discount = cart_discount
         self._lead_first_name_greeting_enabled = lead_first_name_greeting_enabled
         self._whatsapp_equivalence_enabled = whatsapp_equivalence_enabled
         self._delivery_mode = (
@@ -883,6 +905,7 @@ class DurableDispatcher:
         attempt: DeliveryAttempt,
         reason_code: str,
         retryable: bool = True,
+        retry_after: timedelta | None = None,
     ) -> None:
         """Close a reserved attempt when no external request could have started.
 
@@ -894,7 +917,10 @@ class DurableDispatcher:
         """
         failed_at = self._clock()
         retry_at = (
-            (datetime.fromisoformat(failed_at) + timedelta(minutes=1)).isoformat()
+            (
+                datetime.fromisoformat(failed_at)
+                + (retry_after if retry_after is not None else timedelta(minutes=1))
+            ).isoformat()
             if retryable
             else None
         )
@@ -919,6 +945,97 @@ class DurableDispatcher:
             "expired",
         }:
             raise SupabaseError("followup_pre_request_finalization_mismatch")
+
+    async def _authorize_recovery_issuance(
+        self,
+        *,
+        action: ScheduledAction,
+        attempt: DeliveryAttempt,
+        issuance_id: str,
+        now: str,
+    ) -> bool:
+        """Move the A1 link to ``request_started`` once the request started.
+
+        It runs after ``mark_followup_request_started`` on purpose: a start
+        the base rejects leaves the attempt reserved for the next lease, and a
+        link already authorized would then come back as a replay and close A1
+        without sending it. A refusal here means a stop arrived in the last
+        seconds (an opt-out, a purchase): nothing is sent, and the attempt,
+        already started, closes as ``delivery_unknown`` for reconciliation.
+        """
+        try:
+            authorization = await self._supabase.authorize_recovery_checkout_issuance(
+                issuance_id=issuance_id,
+                action_id=action.action_id,
+                worker_id=self._worker_id,
+                lease_generation=action.lease_generation,
+                now=now,
+            )
+            outcome = authorization.outcome
+        except SupabaseError:
+            outcome = "authorize_failed"
+        if outcome == "request_started":
+            return True
+        logger.warning(
+            "cart_discount_issuance_not_authorized action_id=%s attempt_id=%s outcome=%s",
+            action.action_id,
+            attempt.attempt_id,
+            outcome,
+        )
+        finalized = await _commit_outcome_despite_cancellation(
+            self._supabase.finalize_followup_delivery_attempt(
+                action_id=action.action_id,
+                attempt_id=attempt.attempt_id,
+                worker_id=self._worker_id,
+                lease_generation=action.lease_generation,
+                outcome="delivery_unknown",
+                remote_message_id=None,
+                accepted_message_id=None,
+                reason_code=f"recovery_checkout_{outcome}",
+                next_attempt_at=None,
+                reconciliation_deadline=(
+                    datetime.fromisoformat(now) + timedelta(minutes=15)
+                ).isoformat(),
+                now=now,
+            )
+        )
+        if finalized.status != "delivery_unknown":
+            raise SupabaseError("followup_unknown_finalization_mismatch")
+        return False
+
+    async def _finalize_recovery_issuance(
+        self,
+        *,
+        issuance_id: str,
+        result: object,
+    ) -> None:
+        """Close the A1 link with what the send did; never breaks the attempt.
+
+        A message Chatwoot accepted closes it ``accepted_by_chatwoot`` with its
+        id; anything else, ``delivery_unknown``. The link carries its own sck,
+        so a purchase still finds the case either way.
+        """
+        sent = (
+            isinstance(result, FirstTouchResult)
+            and result.status == "sent"
+            and isinstance(result.message_id, int)
+            and not isinstance(result.message_id, bool)
+            and result.message_id > 0
+        )
+        try:
+            await self._supabase.finalize_chatwoot_checkout_issuance_v2(
+                issuance_id=issuance_id,
+                status="accepted_by_chatwoot" if sent else "delivery_unknown",
+                chatwoot_message_id=result.message_id if sent else None,  # type: ignore[union-attr]
+                failure_code=None if sent else "first_touch_not_confirmed",
+                now=self._clock(),
+            )
+        except SupabaseError as exc:
+            logger.warning(
+                "cart_discount_issuance_finalize_failed issuance_id=%s error=%s",
+                issuance_id,
+                type(exc).__name__,
+            )
 
     async def _load_chatwoot_evidence(
         self,
@@ -983,6 +1100,7 @@ class DurableDispatcher:
         *,
         action: ScheduledAction,
         execution_context: FollowupExecutionContext,
+        attempt: DeliveryAttempt | None = None,
     ) -> _ApprovedTemplateComposition:
         """Build the first contact from the approved template, without Hermes.
 
@@ -1085,6 +1203,68 @@ class DurableDispatcher:
             )
             return _ApprovedTemplateComposition(
                 failure_reason=APPROVED_TEMPLATE_UNAVAILABLE
+            )
+        if (
+            self._cart_discount is not None
+            and trigger_kind == CART_ABANDONMENT_TRIGGER
+            and attempt is not None
+        ):
+            discount = await compose_cart_discount_first_touch(
+                config=self._cart_discount,
+                supabase=self._supabase,
+                inbox=inbox,
+                action=action,
+                attempt=attempt,
+                buyer_name=name_value or "",
+                product_name=product_name or "",
+                buyer_phone=execution_context.buyer_phone,
+                worker_id=self._worker_id,
+                now=self._clock(),
+                ulid_factory=generate_issuance_ulid,
+            )
+            if isinstance(discount, CartDiscountReady):
+                logger.info(
+                    "cart_discount_first_touch_ready action_id=%s attempt_id=%s",
+                    action.action_id,
+                    attempt.attempt_id,
+                )
+                return _ApprovedTemplateComposition(
+                    proposal=FollowupMessageProposal(
+                        strategy=f"approved_template:{discount.template_name}",
+                        message=discount.message,
+                    ),
+                    greeting_name=greeting_name,
+                    template_name=discount.template_name,
+                    template_params=discount.template_params,
+                    issuance_id=discount.issuance_id,
+                )
+            if isinstance(discount, CartDiscountDefer):
+                logger.info(
+                    "cart_discount_first_touch_deferred action_id=%s "
+                    "attempt_number=%s retry_after_s=%s",
+                    action.action_id,
+                    attempt.attempt_number,
+                    int(discount.retry_after.total_seconds()),
+                )
+                return _ApprovedTemplateComposition(
+                    failure_reason=discount.reason,
+                    retry_after=discount.retry_after,
+                )
+            if isinstance(discount, CartDiscountStop):
+                logger.warning(
+                    "cart_discount_first_touch_stopped action_id=%s reason=%s",
+                    action.action_id,
+                    discount.reason,
+                )
+                return _ApprovedTemplateComposition(
+                    failure_reason=discount.reason,
+                    retryable=discount.retryable,
+                )
+            # A1 is never lost because of the coupon: the template of today.
+            logger.warning(
+                "cart_discount_first_touch_fallback action_id=%s reason=%s",
+                action.action_id,
+                discount.reason,
             )
         try:
             approved = parse_approved_template(
@@ -1191,6 +1371,10 @@ class DurableDispatcher:
                 if self._recovery_agent is not None or self._approved_template_direct:
                     direct_failure: str | None = None
                     direct_retryable = True
+                    direct_retry_after: timedelta | None = None
+                    direct_template_name: str | None = None
+                    direct_template_params: dict[str, object] | None = None
+                    direct_issuance_id: str | None = None
                     greeting_name: str | None = None
                     try:
                         execution_context = (
@@ -1210,12 +1394,17 @@ class DurableDispatcher:
                                 await self._compose_approved_template_proposal(
                                     action=action,
                                     execution_context=execution_context,
+                                    attempt=attempt,
                                 )
                             )
                             proposal = composition.proposal
                             greeting_name = composition.greeting_name
                             direct_failure = composition.failure_reason
                             direct_retryable = composition.retryable
+                            direct_retry_after = composition.retry_after
+                            direct_template_name = composition.template_name
+                            direct_template_params = composition.template_params
+                            direct_issuance_id = composition.issuance_id
                         else:
                             assert self._recovery_agent is not None
                             proposal = (
@@ -1253,6 +1442,7 @@ class DurableDispatcher:
                             attempt=attempt,
                             reason_code=direct_failure,
                             retryable=direct_retryable,
+                            retry_after=direct_retry_after,
                         )
                     elif proposal is None:
                         logger.warning(
@@ -1496,6 +1686,8 @@ class DurableDispatcher:
                                         else ""
                                     )
                                 )
+                                if direct_template_name is not None:
+                                    template_name = direct_template_name
                                 authorized = self._final_meta_effect_gate.authorize(
                                     FinalMetaEffect(
                                         delivery_id=attempt.attempt_id,
@@ -1642,6 +1834,16 @@ class DurableDispatcher:
                                     )
                                 )
                                 raise asyncio.CancelledError
+                            if direct_issuance_id is not None and not (
+                                await self._authorize_recovery_issuance(
+                                    action=action,
+                                    attempt=attempt,
+                                    issuance_id=direct_issuance_id,
+                                    now=final_now,
+                                )
+                            ):
+                                decisions.append(decision)
+                                continue
                             try:
                                 if followup_conversation_id is not None:
                                     result = await self._sender.send_followup(
@@ -1672,6 +1874,12 @@ class DurableDispatcher:
                                     if first_touch_recipient is not None:
                                         first_touch_kwargs["recipient"] = (
                                             first_touch_recipient
+                                        )
+                                    # A1 with the personal coupon: the template
+                                    # the final gate hashed, with its button.
+                                    if direct_template_params is not None:
+                                        first_touch_kwargs["template_params"] = (
+                                            direct_template_params
                                         )
                                     result = await self._sender.send_first_touch(
                                         **first_touch_kwargs
@@ -1730,6 +1938,11 @@ class DurableDispatcher:
                                         "followup_unknown_finalization_mismatch"
                                     )
                                 result = None
+                            if direct_issuance_id is not None:
+                                await self._finalize_recovery_issuance(
+                                    issuance_id=direct_issuance_id,
+                                    result=result,
+                                )
                             valid_sent = (
                                 isinstance(result, FirstTouchResult)
                                 and result.status == "sent"

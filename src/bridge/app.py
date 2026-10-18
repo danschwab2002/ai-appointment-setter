@@ -178,6 +178,8 @@ from bridge.supabase import (
     sck_carries_hermes_issuance,
 )
 from bridge.hotmart_api import HotmartApiClient, load_hotmart_api_credentials
+from bridge.cart_discount import format_price
+from bridge.cart_first_touch import CartDiscountConfig
 from bridge.recovery_coupons import RecoveryCouponWorker
 from bridge.worker import (
     DurableDispatcher,
@@ -227,6 +229,9 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # El cupon personal del carrito (A1): crea y verifica el cupon en la API
     # de Hotmart; lo especifico (prefijo, credenciales) es del runtime.
     "recovery_coupon_worker_enabled",
+    # A1 del carrito con ese cupon y el link de recuperacion (decision de
+    # Dan del 18/10); la plantilla y el precio son del runtime.
+    "recovery_discount_first_touch_enabled",
     "hotmart_purchase_worker_enabled",
     "lead_precheckout_enabled",
     # El adaptador de GHL traduce el formulario a lead.precheckout y lo manda
@@ -595,6 +600,11 @@ class Settings:
     recovery_coupon_worker_enabled: bool = False
     recovery_coupon_code_prefix: str = "ATT1"
     hotmart_api_credentials_file: Path | None = None
+    # A1 con el cupon personal (cart_first_touch). Apagado, A1 sale como hoy.
+    recovery_discount_first_touch_enabled: bool = False
+    recovery_discount_template_name: str | None = None
+    recovery_discount_price: str | None = None
+    recovery_discount_currency: str = "USD"
     precheckout_form_enabled: bool = False
     precheckout_form_token: str | None = None
     precheckout_max_age_seconds: int = 300
@@ -1103,6 +1113,19 @@ class Settings:
         recovery_coupon_code_prefix = (
             os.getenv("RECOVERY_COUPON_CODE_PREFIX", "ATT1").strip()
         )
+        recovery_discount_first_touch_enabled = (
+            os.getenv("RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED", "false").lower()
+            == "true"
+        )
+        recovery_discount_template_name = (
+            os.getenv("RECOVERY_DISCOUNT_TEMPLATE_NAME", "").strip() or None
+        )
+        recovery_discount_price = (
+            os.getenv("RECOVERY_DISCOUNT_PRICE", "").strip() or None
+        )
+        recovery_discount_currency = (
+            os.getenv("RECOVERY_DISCOUNT_CURRENCY", "USD").strip()
+        )
         hotmart_api_credentials_file_value = (
             os.getenv("HOTMART_API_CREDENTIALS_FILE", "").strip()
         )
@@ -1528,6 +1551,12 @@ class Settings:
             recovery_coupon_worker_enabled=recovery_coupon_worker_enabled,
             recovery_coupon_code_prefix=recovery_coupon_code_prefix,
             hotmart_api_credentials_file=hotmart_api_credentials_file,
+            recovery_discount_first_touch_enabled=(
+                recovery_discount_first_touch_enabled
+            ),
+            recovery_discount_template_name=recovery_discount_template_name,
+            recovery_discount_price=recovery_discount_price,
+            recovery_discount_currency=recovery_discount_currency,
             precheckout_form_enabled=precheckout_form_enabled,
             precheckout_form_token=precheckout_form_token,
             precheckout_max_age_seconds=precheckout_max_age_seconds,
@@ -4231,6 +4260,37 @@ def create_app(
                 raise ValueError(
                     "durable outbound requires Hermes and sender dependencies"
                 )
+        cart_discount: CartDiscountConfig | None = None
+        if settings.recovery_discount_first_touch_enabled:
+            # A1 lee el cupon que crea el worker del cupon y sale como
+            # plantilla aprobada con la compuerta final: sin los dos, no
+            # arranca en vez de mandar A1 sin descuento para siempre.
+            if not settings.recovery_coupon_worker_enabled:
+                raise ValueError(
+                    "RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED=true requires "
+                    "RECOVERY_COUPON_WORKER_ENABLED=true"
+                )
+            if not approved_template_direct or waba_template is None:
+                raise ValueError(
+                    "RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED=true requires "
+                    "the approved template direct mode"
+                )
+            if (
+                settings.recovery_discount_template_name is None
+                or settings.recovery_discount_price is None
+            ):
+                raise ValueError(
+                    "RECOVERY_DISCOUNT_TEMPLATE_NAME and RECOVERY_DISCOUNT_PRICE "
+                    "are required when RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED=true"
+                )
+            cart_discount = CartDiscountConfig(
+                template_name=settings.recovery_discount_template_name,
+                language=waba_template.language,
+                price=settings.recovery_discount_price,
+                currency=settings.recovery_discount_currency,
+            )
+            # Un precio que no se puede decir corta el arranque, no el envio.
+            format_price(cart_discount.price, cart_discount.currency)
         durable_dispatcher = DurableDispatcher(
             supabase=shared_supabase,
             worker_id=settings.dispatcher_worker_id,
@@ -4286,6 +4346,7 @@ def create_app(
                 and isinstance(outbound_sender, ChatwootMessageSender)
                 and outbound_sender.whatsapp_equivalence_enabled
             ),
+            cart_discount=cart_discount,
         )
 
     opt_out_projection_worker: OptOutProjectionWorker | None = None

@@ -1678,6 +1678,43 @@ class RecoveryCouponForCase:
     verified_at: datetime | None
 
 
+RECOVERY_CHECKOUT_RESERVE_OUTCOMES = frozenset({
+    "reserved", "request_started_replay", "already_accepted", "delivery_unknown",
+    "blocked_attempt", "blocked_case", "blocked_contact", "blocked_identity",
+    "blocked_binding", "missing_offer", "purchase_already_approved",
+})
+RECOVERY_CHECKOUT_AUTHORIZE_OUTCOMES = frozenset({
+    "request_started", "request_started_replay", "already_accepted",
+    "delivery_unknown", "blocked_attempt", "blocked_case", "blocked_contact",
+    "blocked_identity", "blocked_intent", "blocked_opt_out", "invalid_request",
+    "purchase_already_approved",
+})
+
+
+@dataclass(frozen=True)
+class RecoveryCheckoutReservation:
+    """The A1 link of a cart case (``reserve_recovery_checkout_issuance_v1``).
+
+    Only ``reserved`` carries the issuance and its URL. Every other outcome
+    leaves the three fields ``None``: a block says why the link was not
+    issued, and a replay (``request_started_replay``, ``already_accepted``,
+    ``delivery_unknown``) says this attempt already used its link, so it is
+    never sent twice.
+    """
+
+    outcome: str
+    issuance_id: str | None
+    checkout_url_final: str | None
+    sck_value: str | None
+
+
+@dataclass(frozen=True)
+class RecoveryCheckoutAuthorization:
+    outcome: str
+    issuance_id: str | None
+    status: str | None
+
+
 def _required_aware_timestamp(
     row: dict[str, Any], key: str, *, operation: str
 ) -> datetime:
@@ -7565,4 +7602,88 @@ class SupabaseClient:
                 row, "expires_at", operation=operation
             ),
             verified_at=verified_at,
+        )
+
+    async def reserve_recovery_checkout_issuance(
+        self,
+        *,
+        action_id: str,
+        worker_id: str,
+        lease_generation: int,
+        attempt_id: str,
+        issuance_ulid: str,
+        now: str,
+    ) -> RecoveryCheckoutReservation:
+        """Reserve the A1 link of the cart case under the dispatcher lease."""
+        operation = "recovery_checkout_issuance_reserve"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/reserve_recovery_checkout_issuance_v1",
+            content=json.dumps({
+                "p_action_id": action_id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": lease_generation,
+                "p_attempt_id": attempt_id,
+                "p_issuance_ulid": issuance_ulid,
+                "p_now": now,
+            }),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        outcome = _required_enum(
+            row, "outcome", set(RECOVERY_CHECKOUT_RESERVE_OUTCOMES), operation=operation
+        )
+        if outcome != "reserved":
+            return RecoveryCheckoutReservation(outcome, None, None, None)
+        return RecoveryCheckoutReservation(
+            outcome=outcome,
+            issuance_id=_required_uuid(row, "issuance_id", operation=operation),
+            checkout_url_final=_required_string(
+                row, "checkout_url_final", operation=operation
+            ),
+            sck_value=_required_string(row, "sck_value", operation=operation),
+        )
+
+    async def authorize_recovery_checkout_issuance(
+        self,
+        *,
+        issuance_id: str,
+        action_id: str,
+        worker_id: str,
+        lease_generation: int,
+        now: str,
+    ) -> RecoveryCheckoutAuthorization:
+        """Move the A1 link to ``request_started`` right before the send."""
+        operation = "recovery_checkout_issuance_authorize"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/authorize_recovery_checkout_issuance_v1",
+            content=json.dumps({
+                "p_issuance_id": issuance_id,
+                "p_action_id": action_id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": lease_generation,
+                "p_now": now,
+            }),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        outcome = _required_enum(
+            row, "outcome", set(RECOVERY_CHECKOUT_AUTHORIZE_OUTCOMES), operation=operation
+        )
+        if outcome != "request_started":
+            return RecoveryCheckoutAuthorization(outcome, None, None)
+        returned = _required_uuid(row, "issuance_id", operation=operation)
+        if returned != issuance_id:
+            raise SupabaseCommittedResponseError(operation)
+        return RecoveryCheckoutAuthorization(
+            outcome, returned, _required_string(row, "status", operation=operation)
         )
