@@ -24,7 +24,7 @@ Para quien instala el setter en una aliada nueva sin haber participado de su des
 ## Cómo leer esta guía
 
 - `<aliada>` es el nombre corto de la instancia, con la regla de [`referencia-nombres.md`](referencia-nombres.md): minúsculas, letras, números y guiones, y empieza con una letra. Es el mismo en el repo, en el servidor, en Slack y en el manifiesto.
-- `<stack>` es el stack de Swarm de la instancia, y `/opt/<stack>/` su carpeta en el servidor. En ATT1 son `setter-att1` y `/opt/setter-att1/` (ejemplo). Los nombres de los servicios adentro del stack siguen `referencia-nombres.md`. Donde un comando nombra un servicio de ATT1 (`att1-bridge`, `att1-db`), en la instancia nueva va el nombre que deja la plantilla.
+- `<stack>` es el stack de Swarm de la instancia, y `/opt/<stack>/` su carpeta en el servidor. En una instancia nueva, los dos llevan el nombre corto de la aliada (`<aliada>` y `/opt/<aliada>/`), como los deja la plantilla desde el 2026-10-18. En ATT1, que es anterior a la regla, son `setter-att1` y `/opt/setter-att1/`. Los nombres de los servicios adentro del stack siguen `referencia-nombres.md`. Donde un comando nombra un servicio de ATT1 (`setter-att1_att1-bridge`, `setter-att1_att1-db`), en la instancia nueva va `<aliada>_appointment-bridge` o `<aliada>_db`.
 - `<dominio del bridge>` es la ruta pública del bridge, `<instancia>.<dominio del servidor>`.
 - **Nombres del producto que llevan el de una empresa.** `LANCEMOS_PILOT_*`, `AGENT_PROVENANCE_TENANT_REF`, el `tenant_ref` del manifiesto y las funciones `*_lancemos_pilot_*` de la base son nombres del código del producto, no datos de un cliente. Se usan tal cual en cualquier instancia.
 - Un valor de ATT1 aparece solo como ejemplo, y lo dice al lado.
@@ -393,7 +393,7 @@ Rotar `API_SERVER_KEY` exige reiniciar el gateway (`aplicar --reiniciar`) y el b
    ssh <servidor> 'cd /opt/<stack>/instancia && docker stack deploy --resolve-image never -c despliegue/stack.yaml <stack>'
    ```
 
-4. **La ruta pública** en el Traefik de EasyPanel: un archivo `/etc/easypanel/traefik/config/<stack>.yaml` con solo los tres webhooks que llegan de afuera (`/webhooks/adapters/ghl/lead-precheckout`, `/webhooks/chatwoot` y `/webhooks/hotmart`) y, si se usa Slack, el backend de operador (`/internal/operator/correlations/`). Traefik relee el archivo solo. Se da de baja borrándolo. En ATT1, `despliegue/traefik/setter-att1.yaml` (ejemplo).
+4. **La ruta pública** en el Traefik de EasyPanel: un archivo `/etc/easypanel/traefik/config/<aliada>-appointment-bridge.yaml` (en la plantilla, `despliegue/traefik/`) con solo los tres webhooks que llegan de afuera (`/webhooks/adapters/ghl/lead-precheckout`, `/webhooks/chatwoot` y `/webhooks/hotmart`) y, si se usa Slack, el backend de operador (`/internal/operator/correlations/`). Traefik relee el archivo solo. Se da de baja borrándolo. En ATT1, `despliegue/traefik/setter-att1.yaml` (ejemplo).
 
 **Verificación:**
 - La prueba en seco imprime `BRIDGE_OK`. Si no, el error nombra la variable que falta: se corrige antes del deploy.
