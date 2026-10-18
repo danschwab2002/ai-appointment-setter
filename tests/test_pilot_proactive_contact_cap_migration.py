@@ -53,7 +53,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
     # (20261015000200), el almacen de las definiciones de flujo
     # (20261016000100) y lo que hizo la persona (20261016000200), con la
     # compra hecha con nuestro link (20261016000300), y el link del producto
-    # que nombra el agente (20261016000400).
+    # que nombra el agente (20261016000400), y el cupon personal del carrito
+    # (20261018000100).
     assert versions[position + 1:] == [
         "20261009000200",
         "20261010000100",
@@ -64,6 +65,7 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261016000200",
         "20261016000300",
         "20261016000400",
+        "20261018000100",
     ]
 
     sql = _sql()

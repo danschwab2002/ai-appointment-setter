@@ -4673,6 +4673,55 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'portable_checkout_issuance_for_funnel'
+    union all
+    select
+        '20261018000100',
+        '20261018000100_recovery_coupons_v1.sql',
+        -- El cupon personal del carrito: la tabla con RLS y sin privilegios
+        -- para los roles de la API, y su trigger de inmutabilidad.
+        (
+            select count(*) = 1
+            from pg_class c
+            where c.oid = to_regclass('public.recovery_coupons')
+              and c.relrowsecurity
+              and not has_table_privilege('anon', c.oid, 'SELECT')
+              and not has_table_privilege('authenticated', c.oid, 'SELECT')
+              and not has_table_privilege('service_role', c.oid, 'SELECT')
+        )::int
+        + (
+            select count(*) = 1
+            from triggers
+            where tgname = 'recovery_coupon_immutable'
+        )::int
+        -- Las tres RPC: definer, con el search_path fijo y sus anclas.
+        + (
+            select count(*) = 3
+            from functions
+            where oid in (
+                to_regprocedure('public.claim_due_recovery_coupons_v1(timestamptz,text,integer,text,interval,interval,numeric,integer)'),
+                to_regprocedure('public.settle_recovery_coupon_v1(uuid,text,text,bigint,bigint,bigint,text,timestamptz,timestamptz)'),
+                to_regprocedure('public.get_recovery_coupon_for_case_v1(uuid,smallint)')
+            )
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+              and position('recovery_coupons:' in definition) > 0
+        )::int
+        -- Son entrypoints del worker: solo service_role.
+        + (
+            select count(*) = 3
+            from functions
+            where oid in (
+                to_regprocedure('public.claim_due_recovery_coupons_v1(timestamptz,text,integer,text,interval,interval,numeric,integer)'),
+                to_regprocedure('public.settle_recovery_coupon_v1(uuid,text,text,bigint,bigint,bigint,text,timestamptz,timestamptz)'),
+                to_regprocedure('public.get_recovery_coupon_for_case_v1(uuid,smallint)')
+            )
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        4,
+        'recovery_coupons'
 )
 select
     version,

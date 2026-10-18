@@ -437,7 +437,7 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
 
-    assert len(allowlisted) == 129
+    assert len(allowlisted) == 132
     assert "get_daily_feedback_review_page_v2(text, uuid, text[])" in allowlisted
     assert "get_portable_person_activity_v1(text, text, text)" in allowlisted
     assert (
@@ -746,14 +746,16 @@ def test_person_activity_link_purchase_fingerprint_reads_the_link_purchases() ->
         assert marker in compact_fingerprint, marker
 
 
-def test_checkout_issuance_for_funnel_fingerprint_is_last_and_service_role_only() -> None:
+def test_checkout_issuance_for_funnel_fingerprint_is_service_role_only() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261016000400 es la ultima del inventario.
-    fingerprint = sql.split("'20261016000400'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261016000400 va justo antes de la de 20261018000100 (el
+    # cupon personal del carrito).
+    fingerprint = sql.split("'20261016000400'", 1)[1].split("'20261018000100'", 1)[0]
+    fingerprint = fingerprint.rsplit("union all", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261016000400_portable_checkout_issuance_for_funnel_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",2,'portable_checkout_issuance_for_funnel')")
+    assert compact_fingerprint.endswith(",2,'portable_checkout_issuance_for_funnel'")
     for marker in (
         "to_regprocedure('public.reserve_portable_checkout_issuance_for_funnel_v1("
         "uuid,text,bigint,bigint,bigint,text,text,text,timestamptz)')",
@@ -765,5 +767,30 @@ def test_checkout_issuance_for_funnel_fingerprint_is_last_and_service_role_only(
         "has_function_privilege('service_role',oid,'EXECUTE')",
         "andnothas_function_privilege('anon',oid,'EXECUTE')",
         "andnothas_function_privilege('authenticated',oid,'EXECUTE')",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_recovery_coupons_fingerprint_is_last_and_service_role_only() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261018000100 es la ultima del inventario.
+    fingerprint = sql.split("'20261018000100'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261018000100_recovery_coupons_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",4,'recovery_coupons')")
+    for marker in (
+        "to_regclass('public.recovery_coupons')",
+        "andc.relrowsecurity",
+        "andnothas_table_privilege('service_role',c.oid,'SELECT')",
+        "tgname='recovery_coupon_immutable'",
+        "to_regprocedure('public.claim_due_recovery_coupons_v1("
+        "timestamptz,text,integer,text,interval,interval,numeric,integer)')",
+        "to_regprocedure('public.settle_recovery_coupon_v1("
+        "uuid,text,text,bigint,bigint,bigint,text,timestamptz,timestamptz)')",
+        "to_regprocedure('public.get_recovery_coupon_for_case_v1(uuid,smallint)')",
+        "andprosecdef",
+        "has_function_privilege('service_role',oid,'EXECUTE')",
+        "andnothas_function_privilege('anon',oid,'EXECUTE')",
     ):
         assert marker in compact_fingerprint, marker
