@@ -12,6 +12,10 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.10.0] - 2026-10-18
+
+Sale de `main` y trae todo lo que entró después de la 1.9.0: A1 del carrito con el cupón personal y el link de recuperación, las frases nuevas de la baja, el almacén de flujos, varios productos por aliada (la 2a, la 2b y la 2c), los tenants del conector de Slack y la T1 y la T3a del motor de flujos. La 1.9.1 era un parche sobre la 1.9.0 y su arreglo (#255) también está acá. **Una instancia con un solo producto (sin `[[productos]]` en el manifiesto) y con las banderas nuevas apagadas se comporta igual que con la 1.9.1**, salvo por la baja, que reconoce más frases, y por el rótulo del contexto del agente, que pasa a `shadow-context-v4`.
+
 ### Agregado
 
 - **El almacén de las definiciones de flujo**, la primera pieza de la 1b ([flow-change-cycle-v1](docs/contracts/flow-change-cycle-v1.md) 1.1.0, sección «Lo que fijó la implementación (1.1.0)», #243).
@@ -45,11 +49,26 @@ Lo que ya está en `main` y todavía no tiene versión. El número se elige al p
   - **Corrige:** `authorize_chatwoot_checkout_issuance_v2` comparaba la conversación con `<>` y dejaba pasar una fila sin conversación; ahora usa `is distinct from` y rechaza la del carrito.
   - **No cambia nada de lo que ya corre** con las dos banderas apagadas: no se lee el archivo de credenciales, no se crea ningún cupón y A1 sale como hoy.
 
+- **Los productos de la aliada en el manifiesto y la etiqueta de producto en Chatwoot** ([referencia del manifiesto](docs/referencia-manifiesto.md), #245). `[[productos]]` es opcional: `clave`, igual a la sección del producto en el conocimiento, y, juntas o ninguna, `etiqueta` y `macro_etiqueta`. Con productos, el bridge no arranca si el conocimiento no separa los mismos. El bridge le suma la etiqueta a cada conversación cuando la persona escribe y cuando sale una plantilla de primer contacto, ejecutando un macro que solo hace `add_label`. Lo lee antes de usarlo y no lo ejecuta si hace algo más. Es de falla blanda, y `/ready` publica `product_label`.
+- **Lo que hizo la persona y el producto del link, en el agente** ([commercial-ally-runtime-v1](docs/contracts/commercial-ally-runtime-v1.md), #246). Solo con `[[productos]]` en el manifiesto. Cada turno del agente lleva `products` (la clave y el nombre de cada producto) y `person_activity`: lo que hizo el móvil en el funnel en los últimos 30 días (formularios, carritos, pagos rechazados, fichas y compras), de `get_portable_person_activity_v1` (migración `20261016000200`, solo lectura, solo `service_role`). Si la lectura falla, el agente contesta igual. La salida del agente admite `product`, `null` o un producto declarado: con un solo producto, un link sin `product` es de ese; con dos o más, es inválido. El bridge deja `payment_link_product` en el log. El SOUL común suma esas tres cosas.
+- **Un binding por producto en el manifiesto** ([referencia-manifiesto](docs/referencia-manifiesto.md), #248). Desde el segundo, cada producto de `[[productos]]` trae su `funnel_ref`, `binding_version` y `[productos.hotmart]`. El principal sigue en `[hotmart]` y `[instancia]`. El arranque y `/ready` verifican el binding de cada producto.
+- **El ruteo por producto de Hotmart y de los formularios** ([commercial-ally-runtime-v1](docs/contracts/commercial-ally-runtime-v1.md), «El ruteo de Hotmart y de los formularios», #250). Con más de un producto, cada evento de Hotmart se admite con el binding de su producto y oferta, y cada formulario con el de su landing. Un evento sin producto en la instancia deja `hotmart_event_unrouted` en el log. Los eventos y formularios de un producto que no es el principal se admiten sin planificar nada.
+- **El link del producto que nombra el agente** (#251). Con más de un producto, la reserva del link usa el funnel del producto que nombró el agente: `reserve_portable_checkout_issuance_for_funnel_v1` (migración `20261016000400`, derivada de la reserva portable con reemplazos contados; sin tablas ni índices). Con un solo producto la reserva es la de siempre.
+- **La etiqueta y lo que hizo la persona de cada producto** (#252). Con más de un producto, `person_activity` se lee en el funnel de cada producto y el último pago rechazado suma su `product`; cada producto que declara etiqueta tiene su etiquetador. Con esto el bridge arranca con más de un producto. `CONTEXT_BUILDER_VERSION` pasa a `shadow-context-v4`.
+- **El motor de flujos, tajadas 1 y 3a, fuera del runtime** (#249 y #254): la paridad contra el legado y la simulación sobre la captura de ATT1 (`scripts/flow_engine_simulate.py`). Nada de lo que corre importa sus módulos.
+
+### Corregido
+
+- **Lo que hizo la persona cuenta la compra hecha con el link del agente** (#247). `get_portable_person_activity_v1` sumaba solo las compras del correlador portable, y la compra con nuestro link pasa por el de la emisión. La migración `20261016000300` reemplaza solo el cuerpo de la función: la misma firma, los mismos permisos y ninguna función nueva.
+- **Con manifiesto, la baja se registra aunque la conversación esté derivada o pausada** (#255, ya en la 1.9.1).
+
 ### Qué hace quien actualiza
 
-Correr las migraciones `20261016000100`, `20261018000100` y `20261018000200`. Para prender A1 con cupón en una instancia: montar la credencial de la API de Hotmart, apuntar `HOTMART_API_CREDENTIALS_FILE` a ella y prender `RECOVERY_COUPON_WORKER_ENABLED` y `RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED` con la plantilla y el precio. La `20261016000100` no pide variables, flags ni campos del manifiesto, y deja las cuatro tablas vacías y suma su fila a la huella del inventario de esquema. El inventario de permisos no cambia.
-
-El conector de Slack no pide nada para seguir igual. Para sumar una instancia: su canal en `SLACK_TENANT_CHANNELS_JSON`, su token en `SLACK_TENANT_TOKENS_JSON` y, si se quiere otro nombre, `SLACK_TENANT_LABELS_JSON` (`deploy/slack-connector.env.example`).
+1. **La base primero:** las seis migraciones nuevas, en orden: `20261016000100` (el almacén de flujos), `20261016000200` y `20261016000300` (lo que hizo la persona), `20261016000400` (el link por funnel), `20261018000100` (los cupones) y `20261018000200` (el link de A1). Todas suman objetos; la `…000200` del 18/10 además corrige `authorize_chatwoot_checkout_issuance_v2` y engancha el cierre del caso en `correlate_hotmart_checkout_issuance_v2`, las dos con reemplazos contados que frenan con `55000` si la definición viva no es la esperada. Con un bridge 1.9.1 todavía corriendo, nada de lo nuevo se llama.
+2. **Después, las imágenes a la 1.10.0** y el redeploy. Sin `[[productos]]` y con las banderas apagadas no hace falta ninguna variable ni ningún campo nuevo del manifiesto.
+3. **Varios productos:** nada, si no se usa `[[productos]]`. Para usarlo: crear en Chatwoot la etiqueta y un macro global con una sola acción, `add_label` de esa etiqueta, y declarar `[[productos]]` con el id del macro, **después** de subir la imagen (una versión anterior no carga un manifiesto con la sección). El conocimiento tiene que estar en dos capas, con las mismas claves, y el SOUL común de esta versión va en el profile del agente.
+4. **A1 con cupón:** para prenderlo en una instancia, montar la credencial de la API de Hotmart, apuntar `HOTMART_API_CREDENTIALS_FILE` a ella y prender `RECOVERY_COUPON_WORKER_ENABLED` y `RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED` con la plantilla y el precio. Con el cupón prendido y A1 apagado se crean cupones que nadie recibe: van juntos.
+5. **El conector de Slack** no pide nada para seguir igual. Para sumar una instancia: su canal en `SLACK_TENANT_CHANNELS_JSON`, su token en `SLACK_TENANT_TOKENS_JSON` y, si se quiere otro nombre, `SLACK_TENANT_LABELS_JSON` (`deploy/slack-connector.env.example`).
 
 ### Verificado antes de publicar
 
@@ -61,6 +80,7 @@ El conector de Slack no pide nada para seguir igual. Para sumar una instancia: s
 - **Las pruebas:** `validate_flow_store.mjs` (PGlite, 773 comprobaciones), siete carreras en Postgres 17 real (`real_postgres_flow_store.py`) y las pruebas del validador en pytest.
   - Cada guarda se vio fallar a propósito.
   - Un corredor de mutaciones de la revisión adversarial mata 34 de las 37 de la base (las otras tres son equivalentes o imposibles de poner en rojo) y las 29 de Python.
+- **A1 con cupón y el link de recuperación** (#260): `uv run pytest -q` completo (6628 pasan y 5 se saltean, macOS, 18/10) y `npm test` de PGlite en verde, con `recovery_coupons=OK` y `recovery_checkout_issuance=OK`; la CI completa del #260 en verde, también `python-and-postgres`. Los dos reemplazos contados de `20261018000200` se buscaron en las definiciones vivas de `att1-db` el 18/10: cada fragmento aparece una sola vez. El detector de baja nuevo da el mismo veredicto que el viejo sobre los 267 mensajes entrantes cortos distintos de Chatwoot.
 - **El conector de Slack:** `tests/test_slack_correlation_tenants.py`, 22 casos. Cubren una instancia nueva aceptada con su canal y su nombre, las claves y los nombres mal formados, el canal de Johanna, los canales repetidos y que la instancia nueva sobreviva a un respaldo y su restauración. Corre en la CI completa. **Sin desplegar:** el conector compartido sigue con el código anterior hasta la instalación de la próxima aliada.
 
 ## [1.9.1] - 2026-10-17
