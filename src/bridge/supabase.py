@@ -1615,6 +1615,95 @@ def _optional_chatwoot_account_id(
     return _optional_positive_int({key: value}, key, operation=operation)
 
 
+# ── Recovery coupons (migracion 20261018000100) ─────────────────────
+
+RECOVERY_COUPON_CLAIMABLE_STATUSES = frozenset(
+    {"reserved", "create_unknown", "created"}
+)
+RECOVERY_COUPON_SETTLE_STATUSES = frozenset(
+    {"request_started", "created", "valid", "create_unknown", "create_failed"}
+)
+RECOVERY_COUPON_STATUSES = frozenset(
+    {
+        "reserved",
+        "request_started",
+        "created",
+        "valid",
+        "create_failed",
+        "create_unknown",
+        "redeemed",
+        "expired",
+    }
+)
+_RECOVERY_COUPON_CODE_RE = re.compile(r"[A-Z0-9]{8,25}")
+# Los rechazos de settle_recovery_coupon_v1 que ningun reintento cambia.
+_RECOVERY_COUPON_SETTLE_REJECTIONS = frozenset(
+    {
+        "recovery_coupon_lease_not_held",
+        "recovery_coupon_invalid_transition",
+        "recovery_coupon_terminal_status",
+        "recovery_coupon_not_found",
+        "recovery_coupon_hotmart_window_required",
+        "invalid_recovery_coupon_settle_input",
+    }
+)
+
+
+@dataclass(frozen=True)
+class RecoveryCouponClaim:
+    """Una fila de recovery_coupons reclamada con lease por el worker."""
+
+    coupon_id: str
+    recovery_case_id: str
+    code: str
+    status: str
+    external_product_id: str
+    expires_at: datetime
+    attempt_count: int
+
+
+@dataclass(frozen=True)
+class RecoveryCouponSettlement:
+    coupon_id: str
+    status: str
+    applied: bool
+
+
+@dataclass(frozen=True)
+class RecoveryCouponForCase:
+    coupon_id: str
+    code: str
+    status: str
+    expires_at: datetime
+    verified_at: datetime | None
+
+
+def _required_aware_timestamp(
+    row: dict[str, Any], key: str, *, operation: str
+) -> datetime:
+    value = _required_string(row, key, operation=operation)
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise _invalid_row_error(operation) from exc
+    if parsed.tzinfo is None:
+        raise _invalid_row_error(operation)
+    return parsed
+
+
+def _recovery_coupon_rejection(response: httpx.Response) -> str | None:
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    if not isinstance(body, dict):
+        return None
+    message = body.get("message")
+    if message in _RECOVERY_COUPON_SETTLE_REJECTIONS:
+        return str(message)
+    return None
+
+
 # ── Client ───────────────────────────────────────────────────────────
 
 
@@ -7301,3 +7390,179 @@ class SupabaseClient:
             raise SupabaseError(
                 f"log_resolution_attempt_failed: HTTP {response.status_code}"
             )
+
+    # ── Recovery coupons (migracion 20261018000100) ────────────────
+
+    async def claim_due_recovery_coupons(
+        self,
+        *,
+        now: str,
+        worker_id: str,
+        lease_seconds: int,
+        code_prefix: str,
+        lead_seconds: int,
+        validity_seconds: int,
+        discount: float,
+        limit: int,
+    ) -> list[RecoveryCouponClaim]:
+        """Sembrar el ordinal 1 que toca y reclamar con lease lo que hay que hacer."""
+        operation = "recovery_coupon_claim"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/claim_due_recovery_coupons_v1",
+            content=json.dumps(
+                {
+                    "p_now": now,
+                    "p_worker": worker_id,
+                    "p_lease_seconds": lease_seconds,
+                    "p_code_prefix": code_prefix,
+                    "p_lead": f"{int(lead_seconds)} seconds",
+                    "p_validity": f"{int(validity_seconds)} seconds",
+                    "p_discount": discount,
+                    "p_limit": limit,
+                }
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) > limit:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        claims: list[RecoveryCouponClaim] = []
+        for row in rows:
+            code = _required_string(row, "code", operation=operation)
+            if _RECOVERY_COUPON_CODE_RE.fullmatch(code) is None:
+                raise _invalid_row_error(operation)
+            product_id = _required_string(
+                row, "external_product_id", operation=operation
+            )
+            if not product_id.strip():
+                raise _invalid_row_error(operation)
+            claims.append(
+                RecoveryCouponClaim(
+                    coupon_id=_required_uuid(row, "coupon_id", operation=operation),
+                    recovery_case_id=_required_uuid(
+                        row, "recovery_case_id", operation=operation
+                    ),
+                    code=code,
+                    status=_required_enum(
+                        row,
+                        "status",
+                        set(RECOVERY_COUPON_CLAIMABLE_STATUSES),
+                        operation=operation,
+                    ),
+                    external_product_id=product_id.strip(),
+                    expires_at=_required_aware_timestamp(
+                        row, "expires_at", operation=operation
+                    ),
+                    attempt_count=_required_positive_int(
+                        row, "attempt_count", operation=operation
+                    ),
+                )
+            )
+        return claims
+
+    async def settle_recovery_coupon(
+        self,
+        *,
+        coupon_id: str,
+        worker_id: str,
+        status: str,
+        now: str,
+        hotmart_coupon_id: int | None = None,
+        hotmart_start_ms: int | None = None,
+        hotmart_end_ms: int | None = None,
+        failure_code: str | None = None,
+        next_attempt_at: str | None = None,
+    ) -> RecoveryCouponSettlement:
+        """El resultado de un intento, con el lease vigente (idempotente)."""
+        operation = "recovery_coupon_settle"
+        if status not in RECOVERY_COUPON_SETTLE_STATUSES:
+            raise ValueError("recovery_coupon_settle_status_invalid")
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/settle_recovery_coupon_v1",
+            content=json.dumps(
+                {
+                    "p_coupon_id": coupon_id,
+                    "p_worker": worker_id,
+                    "p_status": status,
+                    "p_hotmart_coupon_id": hotmart_coupon_id,
+                    "p_hotmart_start_ms": hotmart_start_ms,
+                    "p_hotmart_end_ms": hotmart_end_ms,
+                    "p_failure_code": failure_code,
+                    "p_next_attempt_at": next_attempt_at,
+                    "p_now": now,
+                }
+            ),
+        )
+        if response.status_code != 200:
+            rejection = _recovery_coupon_rejection(response)
+            if rejection is not None:
+                raise SupabasePermanentError(
+                    f"{operation}_failed: HTTP {response.status_code}",
+                    reason=rejection,
+                )
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        settled_id = _required_uuid(row, "coupon_id", operation=operation)
+        if settled_id != str(uuid.UUID(coupon_id)):
+            raise _invalid_row_error(operation)
+        settled_status = _required_enum(
+            row, "status", set(RECOVERY_COUPON_STATUSES), operation=operation
+        )
+        if settled_status != status:
+            raise _invalid_row_error(operation)
+        return RecoveryCouponSettlement(
+            coupon_id=settled_id,
+            status=settled_status,
+            applied=_required_bool(row, "applied", operation=operation),
+        )
+
+    async def get_recovery_coupon_for_case(
+        self,
+        *,
+        recovery_case_id: str,
+        ordinal: int = 1,
+    ) -> RecoveryCouponForCase | None:
+        """La lectura del emisor de A1: el cupon de un caso, o None."""
+        operation = "recovery_coupon_for_case"
+        if ordinal not in (1, 2):
+            raise ValueError("recovery_coupon_ordinal_invalid")
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_recovery_coupon_for_case_v1",
+            content=json.dumps(
+                {"p_recovery_case_id": recovery_case_id, "p_ordinal": ordinal}
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) > 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        if not rows:
+            return None
+        row = rows[0]
+        code = _required_string(row, "code", operation=operation)
+        if _RECOVERY_COUPON_CODE_RE.fullmatch(code) is None:
+            raise _invalid_row_error(operation)
+        verified_at = (
+            None
+            if row.get("verified_at") is None
+            else _required_aware_timestamp(row, "verified_at", operation=operation)
+        )
+        return RecoveryCouponForCase(
+            coupon_id=_required_uuid(row, "coupon_id", operation=operation),
+            code=code,
+            status=_required_enum(
+                row, "status", set(RECOVERY_COUPON_STATUSES), operation=operation
+            ),
+            expires_at=_required_aware_timestamp(
+                row, "expires_at", operation=operation
+            ),
+            verified_at=verified_at,
+        )

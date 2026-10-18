@@ -658,7 +658,8 @@ def test_validator_and_fixture_are_registered() -> None:
     package = json.loads(
         (ROOT / "tests" / "sql" / "followup_engine" / "package.json").read_text(encoding="utf-8")
     )
-    assert package["scripts"]["test"].endswith(f"&& node {VALIDATOR}")
+    # Esta en la cadena que corre la CI (despues se sumaron otros al final).
+    assert f" && node {VALIDATOR}" in package["scripts"]["test"]
     validator = (ROOT / "tests" / "sql" / "followup_engine" / VALIDATOR).read_text(encoding="utf-8")
     assert MIGRATION.name in validator
     # La reevaluacion real: el validador nunca inserta la decision a mano.

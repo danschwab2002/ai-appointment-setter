@@ -177,6 +177,8 @@ from bridge.supabase import (
     SupabasePermanentError,
     sck_carries_hermes_issuance,
 )
+from bridge.hotmart_api import HotmartApiClient, load_hotmart_api_credentials
+from bridge.recovery_coupons import RecoveryCouponWorker
 from bridge.worker import (
     DurableDispatcher,
     HotmartAbandonmentTimerWorker,
@@ -222,6 +224,9 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     "portable_hotmart_recovery_enabled",
     "portable_hotmart_payment_failure_enabled",
     "portable_hotmart_purchase_stop_enabled",
+    # El cupon personal del carrito (A1): crea y verifica el cupon en la API
+    # de Hotmart; lo especifico (prefijo, credenciales) es del runtime.
+    "recovery_coupon_worker_enabled",
     "hotmart_purchase_worker_enabled",
     "lead_precheckout_enabled",
     # El adaptador de GHL traduce el formulario a lead.precheckout y lo manda
@@ -585,6 +590,11 @@ class Settings:
     hotmart_abandonment_timer_worker_enabled: bool = False
     hotmart_abandonment_timer_poll_interval_seconds: float = 5.0
     hotmart_abandonment_timer_batch_size: int = 10
+    # El cupon personal del carrito (migracion 20261018000100). Apagado no
+    # cambia nada: ni se lee el archivo de credenciales.
+    recovery_coupon_worker_enabled: bool = False
+    recovery_coupon_code_prefix: str = "ATT1"
+    hotmart_api_credentials_file: Path | None = None
     precheckout_form_enabled: bool = False
     precheckout_form_token: str | None = None
     precheckout_max_age_seconds: int = 300
@@ -1086,6 +1096,21 @@ class Settings:
         hotmart_abandonment_timer_batch_size = int(
             os.getenv("HOTMART_ABANDONMENT_TIMER_BATCH_SIZE", "10")
         )
+        recovery_coupon_worker_enabled = (
+            os.getenv("RECOVERY_COUPON_WORKER_ENABLED", "false").lower()
+            == "true"
+        )
+        recovery_coupon_code_prefix = (
+            os.getenv("RECOVERY_COUPON_CODE_PREFIX", "ATT1").strip()
+        )
+        hotmart_api_credentials_file_value = (
+            os.getenv("HOTMART_API_CREDENTIALS_FILE", "").strip()
+        )
+        hotmart_api_credentials_file = (
+            Path(hotmart_api_credentials_file_value)
+            if hotmart_api_credentials_file_value
+            else None
+        )
         if hotmart_purchase_worker_enabled and not worker_enabled:
             raise ValueError(
                 "HOTMART_PURCHASE_WORKER_ENABLED requires "
@@ -1500,6 +1525,9 @@ class Settings:
             hotmart_abandonment_timer_batch_size=(
                 hotmart_abandonment_timer_batch_size
             ),
+            recovery_coupon_worker_enabled=recovery_coupon_worker_enabled,
+            recovery_coupon_code_prefix=recovery_coupon_code_prefix,
+            hotmart_api_credentials_file=hotmart_api_credentials_file,
             precheckout_form_enabled=precheckout_form_enabled,
             precheckout_form_token=precheckout_form_token,
             precheckout_max_age_seconds=precheckout_max_age_seconds,
@@ -4002,6 +4030,33 @@ def create_app(
                 settings.lead_first_name_greeting_enabled
             ),
         )
+    recovery_coupon_worker: RecoveryCouponWorker | None = None
+    if settings.recovery_coupon_worker_enabled:
+        # Solo con el flag prendido se valida y se lee el archivo.
+        if shared_supabase is None:
+            raise ValueError(
+                "Supabase is required when RECOVERY_COUPON_WORKER_ENABLED=true"
+            )
+        if not re.fullmatch(
+            r"[A-Z0-9]{2,8}", settings.recovery_coupon_code_prefix or ""
+        ):
+            raise ValueError(
+                "RECOVERY_COUPON_CODE_PREFIX must match ^[A-Z0-9]{2,8}$"
+            )
+        if settings.hotmart_api_credentials_file is None:
+            raise ValueError(
+                "HOTMART_API_CREDENTIALS_FILE is required when "
+                "RECOVERY_COUPON_WORKER_ENABLED=true"
+            )
+        # El error nombra las claves que faltan, nunca los valores.
+        hotmart_api_credentials = load_hotmart_api_credentials(
+            settings.hotmart_api_credentials_file
+        )
+        recovery_coupon_worker = RecoveryCouponWorker(
+            supabase=shared_supabase,
+            hotmart=HotmartApiClient(credentials=hotmart_api_credentials),
+            code_prefix=settings.recovery_coupon_code_prefix,
+        )
     if settings.worker_enabled and shared_supabase is None:
         raise ValueError("Supabase is required when RESOLUTION_WORKER_ENABLED=true")
     if (
@@ -4309,6 +4364,8 @@ def create_app(
                 await resolution_worker.start()
             if hotmart_abandonment_timer_worker is not None:
                 await hotmart_abandonment_timer_worker.start()
+            if recovery_coupon_worker is not None:
+                await recovery_coupon_worker.start()
             if durable_dispatcher is not None:
                 await durable_dispatcher.start()
             if opt_out_projection_worker is not None:
@@ -4354,6 +4411,7 @@ def create_app(
                 ("slack_handoff_projection", slack_handoff_projection_worker),
                 ("correlation_preresolution", correlation_preresolution_worker),
                 ("dispatcher", durable_dispatcher),
+                ("recovery_coupon", recovery_coupon_worker),
                 ("hotmart_abandonment_timer", hotmart_abandonment_timer_worker),
                 ("resolution", resolution_worker),
             ):
@@ -4379,6 +4437,7 @@ def create_app(
     app = FastAPI(title="AI Appointment Setter Bridge", lifespan=lifespan)
     app.state.resolution_worker = resolution_worker
     app.state.hotmart_abandonment_timer_worker = hotmart_abandonment_timer_worker
+    app.state.recovery_coupon_worker = recovery_coupon_worker
     app.state.durable_dispatcher = durable_dispatcher
     app.state.opt_out_projection_worker = opt_out_projection_worker
     app.state.human_handoff_projection_worker = human_handoff_projection_worker
