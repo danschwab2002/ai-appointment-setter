@@ -1254,14 +1254,20 @@ class _Run:
         link = button.get("link") if button is not None else None
         if button is not None and (not isinstance(link, str) or is_unresolved(link)):
             return
+        def quick_replies(rest: list[object]) -> bool:
+            return all(isinstance(b, Mapping) and b.get("type") == "QUICK_REPLY" for b in rest)
+
+        # The link opens the group and quick replies may follow it («No más
+        # mensajes» after the checkout, 18/10), the same order that
+        # ``parse_approved_template(checkout_button=True)`` accepts.
         if link == "checkout":
-            fits = groups == 1 and len(buttons) == 1 and _is_url_button(buttons[0]) and (
-                buttons[0].get("url") == CHECKOUT_BUTTON_URL)
+            fits = groups == 1 and bool(buttons) and _is_url_button(buttons[0]) and (
+                buttons[0].get("url") == CHECKOUT_BUTTON_URL) and quick_replies(buttons[1:])
         elif link == "ficha":
-            fits = groups == 1 and len(buttons) == 1 and _is_url_button(buttons[0]) and (
-                _is_dynamic_url(buttons[0].get("url")))
+            fits = groups == 1 and bool(buttons) and _is_url_button(buttons[0]) and (
+                _is_dynamic_url(buttons[0].get("url"))) and quick_replies(buttons[1:])
         else:
-            fits = all(isinstance(b, Mapping) and b.get("type") == "QUICK_REPLY" for b in buttons)
+            fits = quick_replies(buttons)
         if not fits:
             emitter.add(TEMPLATE_BUTTON_MISMATCH, at + (("boton",) if button is not None else ("plantilla",)))
 

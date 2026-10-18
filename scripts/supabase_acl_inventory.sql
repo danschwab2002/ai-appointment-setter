@@ -133,7 +133,12 @@ expected_service_role(signature) as (
         ('public.close_daily_feedback_batch_v1(uuid, text, text, uuid, text)'),
         ('public.read_automation_expert_flows_v1(jsonb)'),
         ('public.find_automation_expert_lead_v1(jsonb, bigint, text, text)'),
-        ('public.read_automation_expert_lead_history_v1(jsonb, uuid)')
+        ('public.read_automation_expert_lead_history_v1(jsonb, uuid)'),
+        ('public.claim_due_recovery_coupons_v1(timestamp with time zone, text, integer, text, interval, interval, numeric, integer)'),
+        ('public.settle_recovery_coupon_v1(uuid, text, text, bigint, bigint, bigint, text, timestamp with time zone, timestamp with time zone)'),
+        ('public.get_recovery_coupon_for_case_v1(uuid, smallint)'),
+        ('public.reserve_recovery_checkout_issuance_v1(uuid, text, bigint, uuid, text, timestamp with time zone)'),
+        ('public.authorize_recovery_checkout_issuance_v1(uuid, uuid, text, bigint, timestamp with time zone)')
 ),
 functions as (
     select

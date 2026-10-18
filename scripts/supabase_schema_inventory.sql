@@ -4673,6 +4673,144 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'portable_checkout_issuance_for_funnel'
+    union all
+    select
+        '20261018000100',
+        '20261018000100_recovery_coupons_v1.sql',
+        -- El cupon personal del carrito: la tabla con RLS y sin privilegios
+        -- para los roles de la API, y su trigger de inmutabilidad.
+        (
+            select count(*) = 1
+            from pg_class c
+            where c.oid = to_regclass('public.recovery_coupons')
+              and c.relrowsecurity
+              and not has_table_privilege('anon', c.oid, 'SELECT')
+              and not has_table_privilege('authenticated', c.oid, 'SELECT')
+              and not has_table_privilege('service_role', c.oid, 'SELECT')
+        )::int
+        + (
+            select count(*) = 1
+            from triggers
+            where tgname = 'recovery_coupon_immutable'
+        )::int
+        -- Las tres RPC: definer, con el search_path fijo y sus anclas.
+        + (
+            select count(*) = 3
+            from functions
+            where oid in (
+                to_regprocedure('public.claim_due_recovery_coupons_v1(timestamptz,text,integer,text,interval,interval,numeric,integer)'),
+                to_regprocedure('public.settle_recovery_coupon_v1(uuid,text,text,bigint,bigint,bigint,text,timestamptz,timestamptz)'),
+                to_regprocedure('public.get_recovery_coupon_for_case_v1(uuid,smallint)')
+            )
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+              and position('recovery_coupons:' in definition) > 0
+        )::int
+        -- Son entrypoints del worker: solo service_role.
+        + (
+            select count(*) = 3
+            from functions
+            where oid in (
+                to_regprocedure('public.claim_due_recovery_coupons_v1(timestamptz,text,integer,text,interval,interval,numeric,integer)'),
+                to_regprocedure('public.settle_recovery_coupon_v1(uuid,text,text,bigint,bigint,bigint,text,timestamptz,timestamptz)'),
+                to_regprocedure('public.get_recovery_coupon_for_case_v1(uuid,smallint)')
+            )
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int,
+        4,
+        'recovery_coupons'
+    union all
+    select
+        '20261018000200',
+        '20261018000200_recovery_checkout_issuance_v1.sql',
+        -- La emision del carrito: las dos columnas nuevas, la forma del origen
+        -- y el tipo recovery_first_touch, con la conversacion nullable.
+        (
+            select count(*) = 2
+            from pg_catalog.pg_attribute
+            where attrelid = to_regclass('public.checkout_link_issuances')
+              and attname in ('recovery_case_id', 'delivery_attempt_id')
+              and not attisdropped
+        )::int
+        + exists(
+            select 1
+            from pg_catalog.pg_attribute
+            where attrelid = to_regclass('public.checkout_link_issuances')
+              and attname = 'chatwoot_conversation_id'
+              and not attisdropped
+              and not attnotnull
+        )::int
+        + exists(
+            select 1
+            from pg_catalog.pg_constraint
+            where conrelid = to_regclass('public.checkout_link_issuances')
+              and conname = 'checkout_link_issuances_origin_shape'
+              and position('recovery_first_touch' in pg_get_constraintdef(oid)) > 0
+              and position('delivery_attempt_id' in pg_get_constraintdef(oid)) > 0
+        )::int
+        + exists(
+            select 1
+            from indexes
+            where indexname = 'checkout_link_issuances_delivery_attempt_idx'
+              and position('UNIQUE' in indexdef) > 0
+        )::int
+        -- El trigger de inmutabilidad cubre las columnas nuevas.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.protect_checkout_link_issuance()')
+              and position(
+                    'old.delivery_attempt_id is distinct from new.delivery_attempt_id'
+                    in definition
+                  ) > 0
+        )::int
+        -- Las dos RPC: definer, con el search_path fijo, solo service_role.
+        + (
+            select count(*) = 2
+            from functions
+            where oid in (
+                to_regprocedure('public.reserve_recovery_checkout_issuance_v1(uuid,text,bigint,uuid,text,timestamptz)'),
+                to_regprocedure('public.authorize_recovery_checkout_issuance_v1(uuid,uuid,text,bigint,timestamptz)')
+            )
+              and prosecdef
+              and array_to_string(proconfig, ',') =
+                  'search_path=pg_catalog, public, pg_temp'
+              and position('recovery_checkout_issuance:' in definition) > 0
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- La compra: el correlador llama al helper privado, que nadie ejecuta.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.correlate_hotmart_checkout_issuance_v2(uuid,text,timestamptz)')
+              and position('_close_recovery_case_for_checkout_purchase_v1' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._close_recovery_case_for_checkout_purchase_v1(uuid,uuid,timestamptz)')
+              and not prosecdef
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- La autorizacion del entrante ya no acepta la fila sin conversacion.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.authorize_chatwoot_checkout_issuance_v2(uuid,text,bigint,bigint,bigint,text,timestamptz)')
+              and position(
+                    'chatwoot_conversation_id is distinct from p_chatwoot_conversation_id'
+                    in definition
+                  ) > 0
+        )::int,
+        9,
+        'recovery_checkout_issuance'
 )
 select
     version,

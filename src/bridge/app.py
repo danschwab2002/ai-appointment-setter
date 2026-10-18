@@ -177,6 +177,10 @@ from bridge.supabase import (
     SupabasePermanentError,
     sck_carries_hermes_issuance,
 )
+from bridge.hotmart_api import HotmartApiClient, load_hotmart_api_credentials
+from bridge.cart_discount import format_price
+from bridge.cart_first_touch import CartDiscountConfig
+from bridge.recovery_coupons import RecoveryCouponWorker
 from bridge.worker import (
     DurableDispatcher,
     HotmartAbandonmentTimerWorker,
@@ -222,6 +226,12 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     "portable_hotmart_recovery_enabled",
     "portable_hotmart_payment_failure_enabled",
     "portable_hotmart_purchase_stop_enabled",
+    # El cupon personal del carrito (A1): crea y verifica el cupon en la API
+    # de Hotmart; lo especifico (prefijo, credenciales) es del runtime.
+    "recovery_coupon_worker_enabled",
+    # A1 del carrito con ese cupon y el link de recuperacion (decision de
+    # Dan del 18/10); la plantilla y el precio son del runtime.
+    "recovery_discount_first_touch_enabled",
     "hotmart_purchase_worker_enabled",
     "lead_precheckout_enabled",
     # El adaptador de GHL traduce el formulario a lead.precheckout y lo manda
@@ -585,6 +595,16 @@ class Settings:
     hotmart_abandonment_timer_worker_enabled: bool = False
     hotmart_abandonment_timer_poll_interval_seconds: float = 5.0
     hotmart_abandonment_timer_batch_size: int = 10
+    # El cupon personal del carrito (migracion 20261018000100). Apagado no
+    # cambia nada: ni se lee el archivo de credenciales.
+    recovery_coupon_worker_enabled: bool = False
+    recovery_coupon_code_prefix: str = "ATT1"
+    hotmart_api_credentials_file: Path | None = None
+    # A1 con el cupon personal (cart_first_touch). Apagado, A1 sale como hoy.
+    recovery_discount_first_touch_enabled: bool = False
+    recovery_discount_template_name: str | None = None
+    recovery_discount_price: str | None = None
+    recovery_discount_currency: str = "USD"
     precheckout_form_enabled: bool = False
     precheckout_form_token: str | None = None
     precheckout_max_age_seconds: int = 300
@@ -1086,6 +1106,34 @@ class Settings:
         hotmart_abandonment_timer_batch_size = int(
             os.getenv("HOTMART_ABANDONMENT_TIMER_BATCH_SIZE", "10")
         )
+        recovery_coupon_worker_enabled = (
+            os.getenv("RECOVERY_COUPON_WORKER_ENABLED", "false").lower()
+            == "true"
+        )
+        recovery_coupon_code_prefix = (
+            os.getenv("RECOVERY_COUPON_CODE_PREFIX", "ATT1").strip()
+        )
+        recovery_discount_first_touch_enabled = (
+            os.getenv("RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED", "false").lower()
+            == "true"
+        )
+        recovery_discount_template_name = (
+            os.getenv("RECOVERY_DISCOUNT_TEMPLATE_NAME", "").strip() or None
+        )
+        recovery_discount_price = (
+            os.getenv("RECOVERY_DISCOUNT_PRICE", "").strip() or None
+        )
+        recovery_discount_currency = (
+            os.getenv("RECOVERY_DISCOUNT_CURRENCY", "USD").strip()
+        )
+        hotmart_api_credentials_file_value = (
+            os.getenv("HOTMART_API_CREDENTIALS_FILE", "").strip()
+        )
+        hotmart_api_credentials_file = (
+            Path(hotmart_api_credentials_file_value)
+            if hotmart_api_credentials_file_value
+            else None
+        )
         if hotmart_purchase_worker_enabled and not worker_enabled:
             raise ValueError(
                 "HOTMART_PURCHASE_WORKER_ENABLED requires "
@@ -1500,6 +1548,15 @@ class Settings:
             hotmart_abandonment_timer_batch_size=(
                 hotmart_abandonment_timer_batch_size
             ),
+            recovery_coupon_worker_enabled=recovery_coupon_worker_enabled,
+            recovery_coupon_code_prefix=recovery_coupon_code_prefix,
+            hotmart_api_credentials_file=hotmart_api_credentials_file,
+            recovery_discount_first_touch_enabled=(
+                recovery_discount_first_touch_enabled
+            ),
+            recovery_discount_template_name=recovery_discount_template_name,
+            recovery_discount_price=recovery_discount_price,
+            recovery_discount_currency=recovery_discount_currency,
             precheckout_form_enabled=precheckout_form_enabled,
             precheckout_form_token=precheckout_form_token,
             precheckout_max_age_seconds=precheckout_max_age_seconds,
@@ -4002,6 +4059,33 @@ def create_app(
                 settings.lead_first_name_greeting_enabled
             ),
         )
+    recovery_coupon_worker: RecoveryCouponWorker | None = None
+    if settings.recovery_coupon_worker_enabled:
+        # Solo con el flag prendido se valida y se lee el archivo.
+        if shared_supabase is None:
+            raise ValueError(
+                "Supabase is required when RECOVERY_COUPON_WORKER_ENABLED=true"
+            )
+        if not re.fullmatch(
+            r"[A-Z0-9]{2,8}", settings.recovery_coupon_code_prefix or ""
+        ):
+            raise ValueError(
+                "RECOVERY_COUPON_CODE_PREFIX must match ^[A-Z0-9]{2,8}$"
+            )
+        if settings.hotmart_api_credentials_file is None:
+            raise ValueError(
+                "HOTMART_API_CREDENTIALS_FILE is required when "
+                "RECOVERY_COUPON_WORKER_ENABLED=true"
+            )
+        # El error nombra las claves que faltan, nunca los valores.
+        hotmart_api_credentials = load_hotmart_api_credentials(
+            settings.hotmart_api_credentials_file
+        )
+        recovery_coupon_worker = RecoveryCouponWorker(
+            supabase=shared_supabase,
+            hotmart=HotmartApiClient(credentials=hotmart_api_credentials),
+            code_prefix=settings.recovery_coupon_code_prefix,
+        )
     if settings.worker_enabled and shared_supabase is None:
         raise ValueError("Supabase is required when RESOLUTION_WORKER_ENABLED=true")
     if (
@@ -4176,6 +4260,37 @@ def create_app(
                 raise ValueError(
                     "durable outbound requires Hermes and sender dependencies"
                 )
+        cart_discount: CartDiscountConfig | None = None
+        if settings.recovery_discount_first_touch_enabled:
+            # A1 lee el cupon que crea el worker del cupon y sale como
+            # plantilla aprobada con la compuerta final: sin los dos, no
+            # arranca en vez de mandar A1 sin descuento para siempre.
+            if not settings.recovery_coupon_worker_enabled:
+                raise ValueError(
+                    "RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED=true requires "
+                    "RECOVERY_COUPON_WORKER_ENABLED=true"
+                )
+            if not approved_template_direct or waba_template is None:
+                raise ValueError(
+                    "RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED=true requires "
+                    "the approved template direct mode"
+                )
+            if (
+                settings.recovery_discount_template_name is None
+                or settings.recovery_discount_price is None
+            ):
+                raise ValueError(
+                    "RECOVERY_DISCOUNT_TEMPLATE_NAME and RECOVERY_DISCOUNT_PRICE "
+                    "are required when RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED=true"
+                )
+            cart_discount = CartDiscountConfig(
+                template_name=settings.recovery_discount_template_name,
+                language=waba_template.language,
+                price=settings.recovery_discount_price,
+                currency=settings.recovery_discount_currency,
+            )
+            # Un precio que no se puede decir corta el arranque, no el envio.
+            format_price(cart_discount.price, cart_discount.currency)
         durable_dispatcher = DurableDispatcher(
             supabase=shared_supabase,
             worker_id=settings.dispatcher_worker_id,
@@ -4231,6 +4346,7 @@ def create_app(
                 and isinstance(outbound_sender, ChatwootMessageSender)
                 and outbound_sender.whatsapp_equivalence_enabled
             ),
+            cart_discount=cart_discount,
         )
 
     opt_out_projection_worker: OptOutProjectionWorker | None = None
@@ -4309,6 +4425,8 @@ def create_app(
                 await resolution_worker.start()
             if hotmart_abandonment_timer_worker is not None:
                 await hotmart_abandonment_timer_worker.start()
+            if recovery_coupon_worker is not None:
+                await recovery_coupon_worker.start()
             if durable_dispatcher is not None:
                 await durable_dispatcher.start()
             if opt_out_projection_worker is not None:
@@ -4354,6 +4472,7 @@ def create_app(
                 ("slack_handoff_projection", slack_handoff_projection_worker),
                 ("correlation_preresolution", correlation_preresolution_worker),
                 ("dispatcher", durable_dispatcher),
+                ("recovery_coupon", recovery_coupon_worker),
                 ("hotmart_abandonment_timer", hotmart_abandonment_timer_worker),
                 ("resolution", resolution_worker),
             ):
@@ -4379,6 +4498,7 @@ def create_app(
     app = FastAPI(title="AI Appointment Setter Bridge", lifespan=lifespan)
     app.state.resolution_worker = resolution_worker
     app.state.hotmart_abandonment_timer_worker = hotmart_abandonment_timer_worker
+    app.state.recovery_coupon_worker = recovery_coupon_worker
     app.state.durable_dispatcher = durable_dispatcher
     app.state.opt_out_projection_worker = opt_out_projection_worker
     app.state.human_handoff_projection_worker = human_handoff_projection_worker

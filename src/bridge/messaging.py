@@ -395,6 +395,7 @@ class MessageSender(Protocol):
         trigger_kind: str | None = None,
         greeting_name: str | None = None,
         recipient: FirstTouchRecipient | None = None,
+        template_params: dict[str, object] | None = None,
     ) -> FirstTouchResult: ...
 
     async def resolve_first_touch_recipient(
@@ -599,6 +600,7 @@ class ChatwootMessageSender:
         trigger_kind: str | None = None,
         greeting_name: str | None = None,
         recipient: FirstTouchRecipient | None = None,
+        template_params: dict[str, object] | None = None,
     ) -> FirstTouchResult:
         """Send the first template; ``greeting_name`` fills ``{{1}}`` when given.
 
@@ -611,6 +613,11 @@ class ChatwootMessageSender:
         sender with the WhatsApp equivalence on resolves it here; one with the
         equivalence off (every runtime without a manifest) searches the exact
         phone, as before.
+
+        ``template_params`` are the parameters the dispatcher already built
+        for a template outside the manifest (A1 of the cart with the personal
+        coupon, with its checkout button): they go to Chatwoot as given, so
+        what the final gate hashed is what Meta sends.
         """
         normalized = normalize_phone(phone)
         if normalized is None:
@@ -729,7 +736,9 @@ class ChatwootMessageSender:
                 content=content,
                 delivery_id=delivery_id,
                 template_params=(
-                    self._template.params(
+                    template_params
+                    if template_params is not None
+                    else self._template.params(
                         content=content,
                         followup=False,
                         buyer_name=_template_name(greeting_name, buyer_name),

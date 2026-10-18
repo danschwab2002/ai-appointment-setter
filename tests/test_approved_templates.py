@@ -454,3 +454,158 @@ def test_a_wrong_call_is_a_programming_error(kwargs: dict[str, Any], message: st
     }
     with pytest.raises(ValueError, match=message):
         parse_approved_template(_inbox_0928(), **arguments)
+
+
+# --- El carrito con cupon: A1 lleva el boton del checkout primero ------------
+# Captura del catalogo de Chatwoot del inbox 11 el 18/10, despues de que Meta
+# aprobara las plantillas de los flujos comerciales y se sincronizara el canal
+# (19:40:19Z). Los ejemplos de Meta son inventados (Maria, EJEMPLO10).
+CART_CATALOG = FIXTURES / "chatwoot_message_templates_inbox_11_carrito_20261018.json"
+
+
+def _cart_catalog() -> dict[str, Any]:
+    return json.loads(CART_CATALOG.read_text(encoding="utf-8"))
+
+
+def _parse_cart(name: str, count: int, *, checkout_button: bool, payload=None):
+    return parse_approved_template(
+        payload if payload is not None else _cart_catalog(),
+        template_name=name,
+        expected_language="es_MX",
+        expected_category="MARKETING",
+        parameter_count=count,
+        checkout_button=checkout_button,
+    )
+
+
+A1_VALUES = {
+    "1": "María",
+    "2": "Alimenta tu Tiroides",
+    "3": "hoy a las 3:10 p. m.",
+    "4": "USD 47",
+    "5": "mañana a las 3:10 p. m.",
+}
+A1_SUFFIX = "D98014973Y?off=gopi6lh7&sck=hermes~v1~01JABCDEFGHJKMNPQRSTVWXYZ0&offDiscount=ATT1A1B2C3D4E5F6"
+
+
+def test_the_captured_a1_has_the_checkout_url_first_and_the_opt_out_second() -> None:
+    [a1] = [
+        t for t in _cart_catalog()["message_templates"]
+        if t["name"] == "att1_carrito_descuento_01"
+    ]
+    [buttons] = [c["buttons"] for c in a1["components"] if c["type"] == "BUTTONS"]
+    assert [(b["type"], b["text"]) for b in buttons] == [
+        ("URL", "Usar mi descuento"), ("QUICK_REPLY", "No más mensajes"),
+    ]
+    assert buttons[0]["url"] == "https://pay.hotmart.com/{{1}}"
+
+
+@pytest.mark.parametrize(
+    ("name", "count"),
+    [("att1_carrito_descuento_01", 5), ("att1_ultima_renovacion_01", 3)],
+)
+def test_a1_and_z_are_accepted_with_the_checkout_button(name: str, count: int) -> None:
+    template = _parse_cart(name, count, checkout_button=True)
+
+    assert template.has_checkout_button is True
+    assert template.parameter_count == count
+
+
+@pytest.mark.parametrize(
+    ("name", "count"),
+    [("att1_carrito_descuento_01", 5), ("att1_ultima_renovacion_01", 3)],
+)
+def test_a1_and_z_are_still_refused_without_the_checkout_button(name: str, count: int) -> None:
+    # Sin pedir el boton, un URL sigue sin poder salir: hoy nada en el
+    # runtime manda su sufijo.
+    with pytest.raises(ApprovedTemplateError) as error:
+        _parse_cart(name, count, checkout_button=False)
+    assert error.value.detail == "unsupported_button"
+
+
+def test_a_template_without_url_is_refused_when_the_button_is_required() -> None:
+    with pytest.raises(ApprovedTemplateError) as error:
+        _parse_cart("att1_carrito_dudas_01", 2, checkout_button=True)
+    assert error.value.detail == "checkout_button_not_first"
+
+
+def test_the_template_of_today_still_parses_as_before() -> None:
+    template = _parse_cart("att1_carrito_abandonado_01", 2, checkout_button=False)
+    assert template.has_checkout_button is False
+    assert template.processed_params({"1": "María", "2": "Alimenta tu Tiroides"}) == {
+        "body": {"1": "María", "2": "Alimenta tu Tiroides"},
+    }
+
+
+def _with_a1_buttons(buttons: list[dict[str, Any]]) -> dict[str, Any]:
+    payload = copy.deepcopy(_cart_catalog())
+    for template in payload["message_templates"]:
+        if template["name"] == "att1_carrito_descuento_01":
+            for component in template["components"]:
+                if component["type"] == "BUTTONS":
+                    component["buttons"] = buttons
+    return payload
+
+
+@pytest.mark.parametrize(
+    ("buttons", "detail"),
+    [
+        # El link segundo: Chatwoot indexa el URL por su posicion en la lista.
+        (
+            [{"type": "QUICK_REPLY", "text": "No más mensajes"},
+             {"type": "URL", "text": "Usar mi descuento", "url": "https://pay.hotmart.com/{{1}}"}],
+            "checkout_button_not_first",
+        ),
+        # Un URL estatico o a otro dominio no es el checkout.
+        (
+            [{"type": "URL", "text": "Usar mi descuento", "url": "https://pay.hotmart.com/D98014973Y"}],
+            "checkout_button_not_first",
+        ),
+        (
+            [{"type": "URL", "text": "Usar mi descuento", "url": "https://example.com/{{1}}"}],
+            "checkout_button_not_first",
+        ),
+        # Dos URL: el segundo no tendria sufijo.
+        (
+            [{"type": "URL", "text": "A", "url": "https://pay.hotmart.com/{{1}}"},
+             {"type": "URL", "text": "B", "url": "https://pay.hotmart.com/{{1}}"}],
+            "unsupported_button",
+        ),
+        ([], "checkout_button_missing"),
+    ],
+)
+def test_a_checkout_button_that_is_not_exactly_a1_s_fails_closed(
+    buttons: list[dict[str, Any]], detail: str,
+) -> None:
+    with pytest.raises(ApprovedTemplateError) as error:
+        _parse_cart("att1_carrito_descuento_01", 5, checkout_button=True,
+                    payload=_with_a1_buttons(buttons))
+    assert error.value.detail == detail
+
+
+def test_a1_renders_the_five_variables_and_sends_the_suffix_as_button_zero() -> None:
+    template = _parse_cart("att1_carrito_descuento_01", 5, checkout_button=True)
+
+    text = template.render(A1_VALUES)
+    assert text.startswith("Hola, María: te guardé un *10 % de descuento* para Alimenta tu Tiroides.")
+    assert "El 10 % es sobre los USD 47 y vale hasta mañana a las 3:10 p. m.;" in text
+    assert template.processed_params(A1_VALUES, button_suffix=A1_SUFFIX) == {
+        "body": A1_VALUES,
+        "buttons": [{"type": "url", "parameter": A1_SUFFIX}],
+    }
+
+
+@pytest.mark.parametrize("suffix", [None, "", "con espacio", "x" * 2001])
+def test_a1_without_a_usable_suffix_is_not_sent(suffix: str | None) -> None:
+    template = _parse_cart("att1_carrito_descuento_01", 5, checkout_button=True)
+    with pytest.raises(ApprovedTemplateError) as error:
+        template.processed_params(A1_VALUES, button_suffix=suffix)
+    assert error.value.detail == "invalid_button_suffix"
+
+
+def test_a_suffix_is_refused_for_a_template_without_the_button() -> None:
+    template = _parse_cart("att1_carrito_abandonado_01", 2, checkout_button=False)
+    with pytest.raises(ApprovedTemplateError) as error:
+        template.processed_params({"1": "María", "2": "Alimenta tu Tiroides"},
+                                  button_suffix=A1_SUFFIX)
+    assert error.value.detail == "unexpected_button_suffix"
