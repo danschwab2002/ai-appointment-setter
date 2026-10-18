@@ -51,6 +51,18 @@ COUNTRY_TIMEZONES = {
     "VE": "America/Caracas",
 }
 
+# The abandoned cart webhook of Hotmart carries no country (fixture
+# ``hotmart_cart_abandonment_rejected_v1.json``), so the zone comes from the
+# calling code of the WhatsApp number. Longest prefix wins: within +1, the
+# Dominican Republic and Puerto Rico by their area codes, the rest the US.
+CALLING_CODE_COUNTRIES = {
+    "52": "MX", "54": "AR", "591": "BO", "55": "BR", "56": "CL", "57": "CO",
+    "506": "CR", "1809": "DO", "1829": "DO", "1849": "DO", "593": "EC",
+    "34": "ES", "502": "GT", "504": "HN", "505": "NI", "507": "PA", "51": "PE",
+    "1787": "PR", "1939": "PR", "595": "PY", "503": "SV", "1": "US",
+    "598": "UY", "58": "VE",
+}
+
 _CURRENCY_RE = re.compile(r"[A-Z]{3}")
 
 
@@ -58,6 +70,16 @@ def timezone_for_country(country: str | None) -> ZoneInfo:
     """The zone of ``country``, or Mexico City's when it is missing or unknown."""
     code = country.strip().upper() if isinstance(country, str) else ""
     return ZoneInfo(COUNTRY_TIMEZONES.get(code, DEFAULT_TIMEZONE))
+
+
+def country_for_phone(phone: str | None) -> str | None:
+    """The ISO country of an E.164 number by its calling code, or ``None``."""
+    digits = "".join(ch for ch in phone if ch.isdigit()) if isinstance(phone, str) else ""
+    for length in (4, 3, 2, 1):
+        country = CALLING_CODE_COUNTRIES.get(digits[:length]) if len(digits) > length else None
+        if country is not None:
+            return country
+    return None
 
 
 def format_moment(at: datetime, *, now: datetime, zone: ZoneInfo) -> str:

@@ -17,7 +17,9 @@ import pytest
 
 from bridge.approved_templates import parse_approved_template
 from bridge.cart_discount import (
+    COUNTRY_TIMEZONES,
     cart_discount_values,
+    country_for_phone,
     coupon_expiry,
     format_moment,
     format_price,
@@ -134,3 +136,21 @@ def test_the_coupon_lasts_24_hours_from_a1() -> None:
     assert coupon_expiry(due) == datetime(2026, 10, 19, 21, 10, tzinfo=UTC)
     with pytest.raises(ValueError):
         coupon_expiry(datetime(2026, 10, 18, 21, 10))
+
+
+# Numeros inventados, del rango de ficcion de cada pais.
+@pytest.mark.parametrize(
+    ("phone", "country"),
+    [("+5215550000000", "MX"), ("5491100000000", "AR"), ("+18095550000", "DO"),
+     ("+17875550000", "PR"), ("+12025550000", "US"), ("+59899000000", "UY"),
+     ("+5930000000", "EC"), ("+34600000000", "ES")],
+)
+def test_the_country_comes_from_the_calling_code(phone: str, country: str) -> None:
+    assert country_for_phone(phone) == country
+    assert timezone_for_country(country_for_phone(phone)) == ZoneInfo(COUNTRY_TIMEZONES[country])
+
+
+@pytest.mark.parametrize("phone", [None, "", "+", "+999000000", "52"])
+def test_without_a_known_calling_code_there_is_no_country(phone: str | None) -> None:
+    assert country_for_phone(phone) is None
+    assert timezone_for_country(country_for_phone(phone)) == MX
