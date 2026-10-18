@@ -107,10 +107,10 @@ __all__ = [
     "supersessions", "winners_without_cancel",
 ]
 
-# R - E <= 5 minutos (P#2): un lease del despachador (worker.py:706). Con 15, un
+# R - E <= 5 minutos (P#2): un lease del despachador (worker.py:722). Con 15, un
 # error de hasta 12 pasaba sin verse.
 TOLERANCE = timedelta(minutes=5)
-# El lease del despachador (worker.py:706). Una accion con un arranque rechazado
+# El lease del despachador (worker.py:722). Una accion con un arranque rechazado
 # se vuelve a tomar recien cuando vence su lease (claim_due_followup_actions,
 # 20260803000100_followup_engine_v1.sql:2614).
 LEASE = timedelta(minutes=5)
@@ -143,7 +143,7 @@ OPEN_ACTION_STATUSES = frozenset({"pending", "deferred", "retryable_failed"})
 OPEN_CASE_STATUSES = frozenset({"grace_period", "active", "paused"})
 # Los hechos observados que explican pasar la tolerancia: un intento anterior
 # que termino asi (los resultados de followup_delivery_attempts,
-# 20260803000100:310-313). El reintento a un minuto es worker.py:897.
+# 20260803000100:310-313). El reintento a un minuto es worker.py:922.
 EXPLAINING_OUTCOMES: Mapping[str, str] = MappingProxyType({
     "failed_before_request": "reintento_tras_fallo_antes_del_pedido",
     "rejected": "rechazo_de_meta",
@@ -248,7 +248,7 @@ EXCEPTIONS_V1: tuple[FlowException, ...] = (
     ),
     FlowException(
         "nombre_inseguro_cierra", _CON_PRIMER_CONTACTO, "despacho",
-        "src/bridge/worker.py:1055-1071",
+        "src/bridge/worker.py:1173-1189",
         "El nombre que no pasa el filtro cierra la accion sin reintento (D1).",
     ),
     FlowException(
@@ -645,7 +645,7 @@ def _fact_of(last: Mapping[str, Any], where: str) -> tuple[str, datetime] | None
     """El hecho que deja el ultimo intento de un tramo sin pedido, y desde cuando explica la demora.
 
     Un fallo, un incierto o un rechazo explican hasta el reintento que pidieron
-    (``finalized_next_attempt_at``; el de un fallo es a 1 minuto, worker.py:897)
+    (``finalized_next_attempt_at``; el de un fallo es a 1 minuto, worker.py:922)
     o, sin el, hasta el comienzo del intento. Un arranque rechazado (reservado,
     sin resultado) explica hasta que vence su lease: recien ahi se vuelve a tomar
     la accion.

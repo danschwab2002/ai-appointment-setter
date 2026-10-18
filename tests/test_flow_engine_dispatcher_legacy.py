@@ -7,7 +7,7 @@ en Python y no lo ve ninguna base. Estas pruebas no prueban el motor: fijan lo
 que hace hoy el despachador, que el motor reusa entero (la capa ``despacho`` de
 §2.8), para que T2 se mida contra esto. Las lineas son de ``7c0a61b``.
 
-* **D1.** El nombre rechazado cierra sin reintento (``worker.py:1055-1071``). Es
+* **D1.** El nombre rechazado cierra sin reintento (``worker.py:1173-1189``). Es
   la excepcion 5 de §1.7 (``nombre_inseguro_cierra``) y la entrada de la 5b: sin
   proximo intento, la base deja la accion ``permanent_failed`` y el caso abierto
   para siempre (eso lo fija G14 en PGlite).
