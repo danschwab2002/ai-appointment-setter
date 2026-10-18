@@ -126,3 +126,78 @@ def test_does_not_treat_a_quoted_or_referenced_phrase_as_an_opt_out(
 @pytest.mark.parametrize("unsupported", [None, 123, {"text": "No me escriban más"}])
 def test_ignores_unsupported_non_text_batch_entries(unsupported: object) -> None:
     assert detect_explicit_opt_out([unsupported]) is None
+
+
+# Hueco 2 de la baja de ATT1 (18/10): con A2 y Z, quien quiere cortar lo
+# escribe con sus palabras. Las frases salen de la lista de la sesion del 17/10
+# (`documentacion/2026-10-17-flujos-comerciales-de-att1-lo-verificado-y-el-plan.md`).
+@pytest.mark.parametrize(
+    ("message", "rule_key"),
+    [
+        ("STOP", "stop_keyword"),
+        ("Stop 🛑", "stop_keyword"),
+        ("Baja", "stop_keyword"),
+        ("Ya no me escriban", "do_not_write_again"),
+        ("No me escriban", "do_not_write_again"),
+        ("Dejen de escribirme por favor", "do_not_write_again"),
+        ("Ya no me contacten", "do_not_contact_again"),
+        ("No me manden nada", "do_not_message_again"),
+        ("Dejen de mandarme mensajes", "do_not_message_again"),
+        ("No quiero más mensajes", "do_not_message_again"),
+        ("Basta de mensajes", "do_not_message_again"),
+        ("Denme de baja", "unsubscribe"),
+        ("Sáquenme de la lista", "unsubscribe"),
+        ("Bórrenme de su base", "unsubscribe"),
+    ],
+)
+def test_detects_the_ways_people_ask_to_stop(message: str, rule_key: str) -> None:
+    match = detect_explicit_opt_out([message])
+    assert match is not None
+    assert match.rule_key == rule_key
+
+
+@pytest.mark.parametrize(
+    ("message", "rule_key"),
+    [
+        ("Hola, no me interesa. No me escriban más, gracias", "do_not_write_again"),
+        ("Buenas tardes. Ya no me escriban por favor 🙏", "do_not_write_again"),
+        ("No estoy interesada, denme de baja.", "unsubscribe"),
+        ("Disculpen\nNo quiero recibir más mensajes", "stop_receiving_messages"),
+        ("STOP. Gracias", "stop_keyword"),
+    ],
+)
+def test_detects_the_request_inside_a_message_of_courtesy(
+    message: str, rule_key: str
+) -> None:
+    match = detect_explicit_opt_out([message])
+    assert match is not None
+    assert match.rule_key == rule_key
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        # Una razon o un momento: puede ser solo por ahora.
+        "Estoy en una reunión, no me escriban",
+        "No me escriban más hoy",
+        "Ahora no, no me escriban hasta el lunes",
+        "No me manden nada, ya compré",
+        # Preguntas.
+        "¿Si compro ya no me escriben más?",
+        "Hola, ¿cómo me doy de baja?",
+        "¿Stop?",
+        # Citas y palabras sueltas dentro de otra frase.
+        'Mi hija dice "No me escriban más"',
+        'Hola. "No me escriban más".',
+        "No pude pagar porque se dio de baja mi tarjeta",
+        "La baja de precio vale hasta cuándo",
+        "Stop, espera que busco la tarjeta",
+        # Falta de interes sin pedir que corten: no es una baja.
+        "Ya no me interesa, gracias",
+        "No gracias",
+    ],
+)
+def test_does_not_count_a_reason_a_question_or_a_word_inside_other_text(
+    message: str,
+) -> None:
+    assert detect_explicit_opt_out([message]) is None
