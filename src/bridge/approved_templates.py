@@ -42,6 +42,17 @@ _META_INVALID_PARAMETER_RE = re.compile(r"[\n\r\t]| {5,}")
 # footer needs nothing; a quick reply button needs no parameter either.
 _STATIC_COMPONENTS = frozenset({"HEADER", "FOOTER"})
 
+# The one URL button a first contact may carry: the dynamic Hotmart checkout,
+# whose ``{{1}}`` the sender fills with the issued link (path and query) plus
+# ``offDiscount``. It is the same URL the follow-up with a coupon uses
+# (``followup_discount.FOLLOWUP_BUTTON_URL``), written here so this module does
+# not import the follow-up one.
+CHECKOUT_BUTTON_URL = "https://pay.hotmart.com/{{1}}"
+# Meta caps the variable part of a URL button at 2000 characters; the link the
+# base issues is far shorter. A suffix with whitespace would break the URL.
+_BUTTON_SUFFIX_MAX_CHARS = 2000
+_BUTTON_SUFFIX_INVALID_RE = re.compile(r"\s")
+
 
 class ApprovedTemplateError(Exception):
     """The catalog or the values do not allow sending this template."""
@@ -61,6 +72,40 @@ class ApprovedTemplate:
     category: str
     body: str
     parameter_count: int
+    # True when the template opens with the checkout URL button (A1 of the
+    # cart): the send must then carry the button suffix, and Chatwoot 4.13
+    # indexes a URL button by its position in ``processed_params.buttons``,
+    # which is why the parser only accepts it first.
+    has_checkout_button: bool = False
+
+    def processed_params(
+        self,
+        values: Mapping[str, str],
+        *,
+        button_suffix: str | None = None,
+    ) -> dict[str, object]:
+        """The ``processed_params`` Chatwoot sends to Meta for this template.
+
+        ``values`` are the body variables, checked like ``render``. A template
+        with the checkout button needs ``button_suffix``; one without refuses
+        it, so a suffix never travels to a template that has no place for it.
+        """
+        self.render(values)
+        params: dict[str, object] = {"body": dict(values)}
+        if self.has_checkout_button:
+            if (
+                not isinstance(button_suffix, str)
+                or not button_suffix
+                or len(button_suffix) > _BUTTON_SUFFIX_MAX_CHARS
+                or _BUTTON_SUFFIX_INVALID_RE.search(button_suffix)
+            ):
+                raise ApprovedTemplateError(
+                    REASON_PARAMETERS_MISSING, "invalid_button_suffix"
+                )
+            params["buttons"] = [{"type": "url", "parameter": button_suffix}]
+        elif button_suffix is not None:
+            raise ApprovedTemplateError(REASON_MISMATCH, "unexpected_button_suffix")
+        return params
 
     def render(self, values: Mapping[str, str]) -> str:
         """The text Meta will show: the approved body with its variables filled.
@@ -93,8 +138,15 @@ def parse_approved_template(
     expected_language: str,
     expected_category: str,
     parameter_count: int,
+    checkout_button: bool = False,
 ) -> ApprovedTemplate:
     """Pick one template from the inbox catalog and fail closed on any doubt.
+
+    ``checkout_button``: the runtime will send the checkout link in a URL
+    button. The template must then open with exactly one URL button on
+    ``CHECKOUT_BUTTON_URL`` followed only by quick replies (the cart A1:
+    «Usar mi descuento» and «No más mensajes»). Without it, a URL button is
+    refused as before (``unsupported_button``).
 
     ``approved_template_unavailable``: the catalog is unreadable, the template
     is not there, or it is not APPROVED. ``approved_template_mismatch``: it is
@@ -162,6 +214,7 @@ def parse_approved_template(
     if "{{" in _PLACEHOLDER_RE.sub("", body):
         raise ApprovedTemplateError(REASON_MISMATCH, "unexpected_placeholders")
 
+    has_checkout_button = False
     for component in components:
         kind = component.get("type")
         if kind == "BODY":
@@ -169,9 +222,19 @@ def parse_approved_template(
         if kind == "BUTTONS":
             buttons = component.get("buttons")
             if not isinstance(buttons, list) or not all(
-                isinstance(button, dict) and button.get("type") == "QUICK_REPLY"
-                for button in buttons
+                isinstance(button, dict) for button in buttons
             ):
+                raise ApprovedTemplateError(REASON_MISMATCH, "unsupported_button")
+            quick_replies = buttons
+            if checkout_button:
+                if has_checkout_button or not buttons:
+                    raise ApprovedTemplateError(REASON_MISMATCH, "checkout_button_missing")
+                first = buttons[0]
+                if first.get("type") != "URL" or first.get("url") != CHECKOUT_BUTTON_URL:
+                    raise ApprovedTemplateError(REASON_MISMATCH, "checkout_button_not_first")
+                has_checkout_button = True
+                quick_replies = buttons[1:]
+            if not all(button.get("type") == "QUICK_REPLY" for button in quick_replies):
                 raise ApprovedTemplateError(REASON_MISMATCH, "unsupported_button")
             continue
         if kind in _STATIC_COMPONENTS:
@@ -185,10 +248,14 @@ def parse_approved_template(
             continue
         raise ApprovedTemplateError(REASON_MISMATCH, "unsupported_component")
 
+    if checkout_button and not has_checkout_button:
+        raise ApprovedTemplateError(REASON_MISMATCH, "checkout_button_missing")
+
     return ApprovedTemplate(
         name=wanted,
         language=template["language"].strip(),
         category=category.strip(),
         body=body,
         parameter_count=parameter_count,
+        has_checkout_button=has_checkout_button,
     )
