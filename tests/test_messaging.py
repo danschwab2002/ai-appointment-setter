@@ -2258,3 +2258,44 @@ def test_one_declared_variable_does_not_fill_the_captured_att1_form_template() -
     assert sorted(params["processed_params"]["body"]) != (  # type: ignore[index]
         _captured_att1_placeholders("att1_interes_precheckout_01")
     )
+
+
+def test_chatwoot_sender_sends_the_template_params_the_dispatcher_built() -> None:
+    # A1 del carrito con cupon personal (18/10): la plantilla no es la del
+    # manifiesto y lleva el boton al checkout; el sender no la recalcula.
+    transport = _waba_first_touch_transport()
+    sender = ChatwootMessageSender(
+        chatwoot=_chatwoot(transport),
+        inbox_id=1,
+        allowed_jid="5531999999999@s.whatsapp.net",
+        template=WhatsAppTemplateConfig(
+            first_touch_name="cart_recovery_first",
+            followup_name=None,
+            language="es_MX",
+            category="MARKETING",
+            first_touch_parameter="buyer_name_and_product",
+        ),
+    )
+    built = {
+        "name": "att1_carrito_descuento_01",
+        "category": "MARKETING",
+        "language": "es_MX",
+        "processed_params": {
+            "body": {"1": "María", "2": "Alimenta tu Tiroides", "3": "hoy a las 2:10 p. m.",
+                     "4": "USD 47", "5": "mañana a las 3:10 p. m."},
+            "buttons": [{"type": "url", "parameter": "D98014973Y?off=gopi6lh7&offDiscount=EJEMPLO10"}],
+        },
+    }
+
+    result = _run(sender.send_first_touch(
+        phone="5531999999999",
+        buyer_name="Test Buyer",
+        buyer_email="buyer@test.com",
+        product_name="Libre de Ansiedad",
+        content="¡Hola! Soy el asistente virtual de Dan.",
+        delivery_id="evt-001",
+        template_params=built,
+    ))
+
+    assert result.status == "sent"
+    assert json.loads(transport.requests[-1][2])["template_params"] == built
