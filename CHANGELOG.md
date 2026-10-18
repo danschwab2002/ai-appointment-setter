@@ -26,10 +26,19 @@ Lo que ya está en `main` y todavía no tiene versión. El número se elige al p
 - **Los flujos de ATT1 como definiciones, en las pruebas.** Salen de la configuración de `att1-db` leída en solo lectura el 2026-10-16 a las 13:15:51Z (`tests/fixtures/flow_store/`).
   - El validador da cero bloqueos y las tres advertencias que el esquema anticipa.
   - PGlite las publica con las funciones del dueño, incluida la reactivación con `horario: siempre`.
+- **El conector de Slack acepta instancias nuevas por configuración** (#257). Hasta acá solo aceptaba `johanna` y `att1`, fijos en el código, y una tercera instancia hacía fallar el arranque con `invalid_tenant_channel_configuration`.
+  - **Qué agrega:**
+    - las instancias son las claves de `SLACK_TENANT_CHANNELS_JSON`, con el formato `^[a-z0-9][a-z0-9_-]{0,39}$`, el mismo que validan los endpoints de reconciliación y de backfill;
+    - `SLACK_TENANT_LABELS_JSON`, opcional, con el nombre con que el conector muestra a cada instancia. Sin cargar, Johanna y ATT1 se ven como hasta ahora, y una instancia nueva aparece con su nombre en mayúsculas. Un nombre vacío, con espacios en los bordes, de más de 40 caracteres, con caracteres no imprimibles o de una instancia sin canal frena el arranque con `invalid_tenant_label_configuration`.
+  - **No cambia nada de lo que ya corre:**
+    - el canal reservado de Johanna y el chequeo de canales repetidos siguen igual;
+    - una instancia sin ruta de token sigue recibiendo 401, y el backfill de una instancia sin canal, 409.
 
 ### Qué hace quien actualiza
 
 Correr la migración `20261016000100`, y nada más. No hay variables, flags ni campos del manifiesto. La migración deja las cuatro tablas vacías y suma su fila a la huella del inventario de esquema. El inventario de permisos no cambia.
+
+El conector de Slack no pide nada para seguir igual. Para sumar una instancia: su canal en `SLACK_TENANT_CHANNELS_JSON`, su token en `SLACK_TENANT_TOKENS_JSON` y, si se quiere otro nombre, `SLACK_TENANT_LABELS_JSON` (`deploy/slack-connector.env.example`).
 
 ### Verificado antes de publicar
 
@@ -41,6 +50,7 @@ Correr la migración `20261016000100`, y nada más. No hay variables, flags ni c
 - **Las pruebas:** `validate_flow_store.mjs` (PGlite, 773 comprobaciones), siete carreras en Postgres 17 real (`real_postgres_flow_store.py`) y las pruebas del validador en pytest.
   - Cada guarda se vio fallar a propósito.
   - Un corredor de mutaciones de la revisión adversarial mata 34 de las 37 de la base (las otras tres son equivalentes o imposibles de poner en rojo) y las 29 de Python.
+- **El conector de Slack:** `tests/test_slack_correlation_tenants.py`, 22 casos. Cubren una instancia nueva aceptada con su canal y su nombre, las claves y los nombres mal formados, el canal de Johanna, los canales repetidos y que la instancia nueva sobreviva a un respaldo y su restauración. Corre en la CI completa. **Sin desplegar:** el conector compartido sigue con el código anterior hasta la instalación de la próxima aliada.
 
 ## [1.9.1] - 2026-10-17
 

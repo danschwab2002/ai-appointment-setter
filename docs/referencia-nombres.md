@@ -28,17 +28,22 @@ Cómo se llama cada cosa que se despliega para una instancia. La regla la fija e
 | Declaración de Hermes de la instancia | `hermes.toml`, en la raíz del repo de la instancia | todavía no existe |
 | Dominio | `<instancia>.<dominio del servidor>` | `setter-att1.u5iqmf.easypanel.host` |
 | Rutas de Traefik (archivo y router) | `<instancia>-<servicio>` | `setter-att1.yaml` y `setter-att1-revision.yaml` |
+| Carpeta del servidor | `/opt/<instancia>/` (la `/opt/<stack>/` de `instalar.md`) | `/opt/setter-att1/` |
 | Timers del servidor | `<instancia>-alertas`, `<instancia>-respaldo` | `att1-alertas`, `att1-respaldo` (siguen la regla) |
 | Canales de Slack | `#<instancia>-<uso>` | `#feed-chatwoot-att1` |
 
 **El servicio de Hermes se llama exactamente `hermes`.** El bridge acepta http solo hacia ese nombre o hacia localhost (`src/bridge/app.py`, `trusted_http_hosts`). Con otro nombre, la instancia necesitaría https adentro de su propia red.
+
+**El bridge llama al gateway por un alias con el nombre de la instancia.** El bridge está también en la red externa de Traefik (`easypanel`), y ahí un `gateway` de otro stack podría contestar primero. Por eso, en la plantilla de instancia, el servicio `gateway` lleva el alias `<instancia>-gateway` solo en la red interna del stack, y `SUPABASE_BASE_URL` apunta a ese alias. `db` y `rest` están solo en la red interna, así que no corren ese riesgo. Traefik llega al bridge por el nombre completo `<instancia>_appointment-bridge`, que es único en el Swarm.
+
+**La plantilla de instancia sigue esta regla desde el 2026-10-18** (`setter-instancia-plantilla#2`): una instancia nueva nace con estos nombres, y ATT1 los toma recién cuando se mude (regla 6).
 
 **El profile del manifiesto cambia con la mudanza.** `[agente].modelo` y `HERMES_MODEL_NAME` tienen que ser iguales, y el bridge no arranca si difieren. Cuando ATT1 pase a su Hermes, los dos pasan de `att1-agente-comercial` a `agente-comercial` en el mismo cambio, junto con `CORRELATION_PRERESOLUTION_MODEL_NAME`, que en ATT1 también nombra al profile del comercial. `LEAD_FIRST_NAME_MODEL_NAME` sin cargar toma el de `HERMES_MODEL_NAME`, y `HERMES_REPLY_SPLITTER_MODEL_NAME` nombra un modelo, no un profile.
 
 ## Lo que queda afuera de la regla
 
 - **Las plantillas de Meta.** Meta acepta solo minúsculas, números y guion bajo, y con varios productos por instancia el prefijo puede ser el del producto. Se decide con el multiproducto.
-- **La carpeta del servidor** (`/opt/setter-att1/`) **y el bucket del respaldo** (`setter-att1-backups`). Se deciden con la plantilla de instancia.
+- **El bucket del respaldo** (`setter-att1-backups`). Se decide cuando el respaldo diario entre a la plantilla de instancia, que todavía no lo trae. La carpeta del servidor ya entró a la lista: `/opt/<instancia>/`, decidida con la plantilla el 2026-10-18.
 
 ## Abierto
 
