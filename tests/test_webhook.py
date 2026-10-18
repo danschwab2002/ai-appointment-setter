@@ -814,6 +814,7 @@ def test_stalled_monitor_recovers_through_real_worker_and_sender(
             "inbox_id": 7,
             "status": "open",
             "can_reply": True,
+            "last_activity_at": now - 120,
             "labels": [] if conversation_id == 2 else ["automation_paused"],
             "meta": {
                 "sender": {"id": 20, "identifier": allowed_jid, "blocked": False},

@@ -2065,6 +2065,7 @@ def test_lists_stalled_waba_conversations_with_omitted_optional_fields() -> None
             "inbox_id": 7,
             "status": "open",
             "can_reply": True,
+            "last_activity_at": 900,
             "labels": [],
             "meta": {
                 "sender": {
@@ -2159,6 +2160,7 @@ def test_stalled_conversation_scan_rejects_malformed_scope_payload() -> None:
                     "inbox_id": 8,
                     "status": "open",
                     "can_reply": True,
+                    "last_activity_at": 900,
                     "labels": [],
                     "meta": {"sender": {"identifier": ALLOWED_JID}, "assignee": None},
                     "messages": [],
@@ -2181,7 +2183,7 @@ def test_stalled_conversation_scan_rejects_malformed_scope_payload() -> None:
         ))
 
 
-@pytest.mark.parametrize("mode", ["page_mismatch", "count_changed", "incomplete"])
+@pytest.mark.parametrize("mode", ["page_mismatch", "incomplete"])
 def test_stalled_scan_rejects_incomplete_or_unstable_pagination(mode: str) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/messages"):
@@ -2193,13 +2195,14 @@ def test_stalled_scan_rejects_incomplete_or_unstable_pagination(mode: str) -> No
                 "inbox_id": 7,
                 "status": "open",
                 "can_reply": True,
+                "last_activity_at": 900,
                 "labels": [],
                 "meta": {"sender": {"identifier": ALLOWED_JID}, "assignee": None},
                 "messages": [],
             })
         page = int(request.url.params["page"])
         current_page = 9 if mode == "page_mismatch" else page
-        all_count = 3 if mode != "count_changed" or page == 1 else 4
+        all_count = 3
         return httpx.Response(200, json={
             "data": {
                 "meta": {"all_count": all_count, "current_page": current_page},
@@ -2208,6 +2211,7 @@ def test_stalled_scan_rejects_incomplete_or_unstable_pagination(mode: str) -> No
                     "inbox_id": 7,
                     "status": "open",
                     "can_reply": True,
+                    "last_activity_at": 900,
                     "labels": [],
                     "meta": {"sender": {"identifier": ALLOWED_JID}, "assignee": None},
                     "messages": [],
@@ -2250,6 +2254,7 @@ def test_stalled_scan_excludes_ineligible_conversations(mutate: object) -> None:
         "inbox_id": 7,
         "status": "open",
         "can_reply": True,
+        "last_activity_at": 900,
         "labels": [],
         "meta": {
             "sender": {"identifier": ALLOWED_JID, "blocked": False},
@@ -2302,6 +2307,7 @@ def test_stalled_scan_uses_canonical_messages_for_latest_public_activity() -> No
         "inbox_id": 7,
         "status": "open",
         "can_reply": True,
+        "last_activity_at": 900,
         "labels": [],
         "meta": {"sender": {"identifier": ALLOWED_JID}, "assignee": None},
         "contact_inbox": {"source_id": ALLOWED_JID},
@@ -2353,6 +2359,7 @@ def test_stalled_scan_ignores_later_chatwoot_activity_message() -> None:
         "inbox_id": 7,
         "status": "open",
         "can_reply": True,
+        "last_activity_at": 900,
         "labels": [],
         "meta": {"sender": {"identifier": ALLOWED_JID}, "assignee": None},
         "contact_inbox": {"source_id": ALLOWED_JID},
@@ -2426,6 +2433,7 @@ def test_stalled_candidate_rejects_malformed_later_public_message_type(
         "inbox_id": 7,
         "status": "open",
         "can_reply": True,
+        "last_activity_at": 900,
         "labels": [],
         "meta": {
             "sender": {"identifier": ALLOWED_JID, "blocked": False},
@@ -2475,6 +2483,7 @@ def test_stalled_scan_uses_message_id_as_canonical_order_when_timestamps_tie_or_
         "inbox_id": 7,
         "status": "open",
         "can_reply": True,
+        "last_activity_at": 900,
         "labels": [],
         "meta": {
             "sender": {"identifier": ALLOWED_JID, "blocked": False},
@@ -2542,6 +2551,7 @@ def test_stalled_scan_requires_explicit_scoped_sender_gate() -> None:
         "inbox_id": 7,
         "status": "open",
         "can_reply": True,
+        "last_activity_at": 900,
         "labels": [],
         "meta": {"sender": {"identifier": jid, "blocked": False}, "assignee": None},
         "contact_inbox": {"source_id": jid},
@@ -3784,3 +3794,130 @@ def test_refuses_empty_template_params_before_any_request(
                 template_params=template_params,  # type: ignore[arg-type]
             )
         )
+
+
+# --- monitor de trabadas: listado por ultima actividad (LAN-103) -------------
+#
+# Mismas paginas capturadas que el seguimiento (inbox 9, 2026-10-01): la lista
+# de abiertas viene ordenada por last_activity_at descendente. El monitor corta
+# en la ventana (max_age_seconds) mas el margen, asi que el reloj se ubica para
+# que el corte caiga en RECENT_CUTOFF.
+
+STALLED_MAX_AGE = 86_400
+STALLED_NOW = RECENT_CUTOFF + STALLED_MAX_AGE + 3_600
+
+
+def _stalled_listings(requests: list[httpx.Request]) -> list[tuple[str, str]]:
+    return [
+        (request.url.params["status"], request.url.params["page"])
+        for request in requests
+        if request.url.path == "/api/v1/accounts/1/conversations"
+    ]
+
+
+def test_stalled_scan_lists_by_activity_and_stops_at_its_window(tmp_path: Path) -> None:
+    pages = _recent_pages()
+    requests: list[httpx.Request] = []
+    client = _reactivation_client(_recent_handler(pages, requests), tmp_path)
+    asyncio.run(
+        client.list_stalled_conversations(
+            expected_inbox_id=9,
+            max_age_seconds=STALLED_MAX_AGE,
+            max_pages=1,
+            now_epoch=STALLED_NOW,
+        )
+    )
+
+    expected = [
+        item["id"]
+        for item in pages["open"]["payload"]
+        if item["last_activity_at"] >= RECENT_CUTOFF
+    ]
+    # 18 de las 26 abiertas entran en la ventana; la 26 queda en la pagina 2.
+    assert len(expected) == 18 and pages["open"]["meta"]["all_count"] == 26
+    assert _detail_ids(requests) == expected
+    # Con una sola pagina alcanza: el barrido ya no depende del total de abiertas.
+    assert _stalled_listings(requests) == [("open", "1")]
+
+
+def test_stalled_scan_tolerates_a_count_that_changes_between_pages(
+    tmp_path: Path,
+) -> None:
+    # Una conversacion nueva entra arriba de la lista mientras se pagina: con el
+    # orden por actividad solo repite una que ya se vio, no esconde ninguna.
+    pages = _recent_pages()
+    first = pages["open"]["payload"][:2]
+    requests: list[httpx.Request] = []
+    captured = RECENT_FIXTURE["conversation"]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        path = request.url.path
+        if path == "/api/v1/accounts/1/conversations":
+            page = request.url.params["page"]
+            if page == "1":
+                return httpx.Response(200, json={"data": {"meta": {"all_count": 3}, "payload": first}})
+            if page == "2":
+                return httpx.Response(200, json={"data": {"meta": {"all_count": 4}, "payload": [first[1]]}})
+            return httpx.Response(200, json={"data": {"meta": {"all_count": 4}, "payload": []}})
+        prefix = "/api/v1/accounts/1/conversations/"
+        if path.endswith("/messages"):
+            return httpx.Response(200, json={"payload": captured["messages"]})
+        return httpx.Response(200, json={**captured["conversation"], "id": int(path.removeprefix(prefix))})
+
+    client = _reactivation_client(handler, tmp_path)
+    asyncio.run(
+        client.list_stalled_conversations(
+            expected_inbox_id=9,
+            max_age_seconds=STALLED_MAX_AGE,
+            max_pages=5,
+            now_epoch=STALLED_NOW,
+        )
+    )
+    assert _detail_ids(requests) == [item["id"] for item in first]
+    assert _stalled_listings(requests) == [("open", "1"), ("open", "2"), ("open", "3")]
+
+
+@pytest.mark.parametrize(
+    ("mutate", "error"),
+    [
+        # Dos de la ventana fuera de orden (invertir toda la lista no sirve: la
+        # primera ya queda debajo del corte y el barrido termina ahi).
+        (lambda payload: payload.insert(0, payload.pop(1)), "conversation_order_unexpected"),
+        (lambda payload: payload[0].pop("last_activity_at"), "invalid_conversation_activity"),
+        (lambda payload: payload[0].update(last_activity_at="1790854609"), "invalid_conversation_activity"),
+    ],
+)
+def test_stalled_scan_fails_closed_on_an_unexpected_listing(
+    tmp_path: Path, mutate: object, error: str
+) -> None:
+    pages = _recent_pages()
+    mutate(pages["open"]["payload"])  # type: ignore[operator]
+    client = _reactivation_client(_recent_handler(pages, []), tmp_path)
+    with pytest.raises(ChatwootProtocolError) as raised:
+        asyncio.run(
+            client.list_stalled_conversations(
+                expected_inbox_id=9,
+                max_age_seconds=STALLED_MAX_AGE,
+                max_pages=5,
+                now_epoch=STALLED_NOW,
+            )
+        )
+    assert str(raised.value) == error
+
+
+def test_stalled_scan_that_runs_out_of_pages_before_its_window_fails_closed(
+    tmp_path: Path,
+) -> None:
+    client = _reactivation_client(_recent_handler(_recent_pages(), []), tmp_path)
+    with pytest.raises(ChatwootProtocolError) as raised:
+        asyncio.run(
+            client.list_stalled_conversations(
+                expected_inbox_id=9,
+                # La ventana abarca toda la lista: con una pagina no llega al final.
+                max_age_seconds=STALLED_NOW,
+                max_pages=1,
+                now_epoch=STALLED_NOW,
+            )
+        )
+    assert str(raised.value) == "conversation_scan_incomplete"
