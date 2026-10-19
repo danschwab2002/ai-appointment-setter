@@ -1,0 +1,98 @@
+{
+  "_capture": {
+    "source": "channel_whatsapp.message_templates del inbox 11 (canal 10, ATT1), leido en solo lectura (default_transaction_read_only=on) en la base de Chatwoot de produccion (infra_chatwoot-db, base infra)",
+    "captured_at": "2026-10-19T14:44:00Z",
+    "catalog_synced_at": "2026-10-19T13:55:20.328453Z",
+    "total_en_el_catalogo": 21,
+    "kept": "las plantillas del seguimiento del pago rechazado: B2 att1_pago_rechazado_descuento_01 y Z att1_ultima_renovacion_01, tal cual",
+    "redactions": []
+  },
+  "id": 11,
+  "channel_type": "Channel::Whatsapp",
+  "message_templates": [
+    {
+      "id": "4579643042354992",
+      "name": "att1_pago_rechazado_descuento_01",
+      "status": "APPROVED",
+      "category": "MARKETING",
+      "language": "es_MX",
+      "components": [
+        {
+          "text": "Hola, {{1}}. Tu inscripción a {{2}} sigue pendiente.\n\nComo ayer el pago no se pudo completar, te dejé un *10 % de descuento* hasta {{3}}. En el botón está el pago ya preparado, y ahí puedes elegir otra tarjeta u otro medio de pago.\n\n¿Algo te sigue frenando? Respóndeme y lo resolvemos.",
+          "type": "BODY",
+          "example": {
+            "body_text": [
+              [
+                "María",
+                "Alimenta tu Tiroides",
+                "mañana a las 3:10 p. m."
+              ]
+            ]
+          }
+        },
+        {
+          "type": "BUTTONS",
+          "buttons": [
+            {
+              "url": "https://pay.hotmart.com/{{1}}",
+              "text": "Usar mi descuento",
+              "type": "URL",
+              "example": [
+                "https://pay.hotmart.com/D98014973Y?off=gopi6lh7&offDiscount=EJEMPLO10&sck=ejemplo"
+              ]
+            },
+            {
+              "text": "No más mensajes",
+              "type": "QUICK_REPLY"
+            }
+          ]
+        }
+      ],
+      "parameter_format": "POSITIONAL",
+      "disable_ios_autofill": false,
+      "is_primary_device_delivery_only": false
+    },
+    {
+      "id": "1101194956128264",
+      "name": "att1_ultima_renovacion_01",
+      "status": "APPROVED",
+      "category": "MARKETING",
+      "language": "es_MX",
+      "components": [
+        {
+          "text": "Hola, {{1}}. Te reactivé tu *10 % de descuento* para {{2}} por última vez, hasta {{3}}.\n\nEl pago está listo en el botón, con el descuento aplicado. Después de esto no te voy a insistir más con tu inscripción.\n\nSi en algún momento quieres retomarla o tienes una duda, respóndeme aquí.",
+          "type": "BODY",
+          "example": {
+            "body_text": [
+              [
+                "María",
+                "Alimenta tu Tiroides",
+                "mañana a las 3:10 p. m."
+              ]
+            ]
+          }
+        },
+        {
+          "type": "BUTTONS",
+          "buttons": [
+            {
+              "url": "https://pay.hotmart.com/{{1}}",
+              "text": "Usar mi descuento",
+              "type": "URL",
+              "example": [
+                "https://pay.hotmart.com/D98014973Y?off=gopi6lh7&offDiscount=EJEMPLO10&sck=ejemplo"
+              ]
+            },
+            {
+              "text": "No más mensajes",
+              "type": "QUICK_REPLY"
+            }
+          ]
+        }
+      ],
+      "parameter_format": "POSITIONAL",
+      "disable_ios_autofill": false,
+      "is_primary_device_delivery_only": false
+    }
+  ]
+}

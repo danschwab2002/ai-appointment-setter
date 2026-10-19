@@ -79,8 +79,15 @@ from bridge.messaging import (
     first_touch_recipient_matches,
     is_allowed_whatsapp_target,
 )
+from bridge.payment_failure_followups import (
+    PAYMENT_FAILURE_FOLLOWUP_STEP,
+    PAYMENT_FAILURE_FOLLOWUP_VARIABLES,
+    PaymentFailureFollowupConfig,
+    compose_payment_failure_followup,
+)
 from bridge.payment_failure_variant import (
     PAYMENT_FAILURE_TRIGGER,
+    PaymentFailureFirstTouchReady,
     PaymentFailurePlanningConfig,
     PaymentFailureVariantsConfig,
     compose_payment_failure_first_touch,
@@ -792,7 +799,17 @@ class DurableDispatcher:
         cart_followups: CartFollowupConfig | None = None,
         payment_slip: PaymentSlipFirstTouchConfig | None = None,
         payment_failure_variants: PaymentFailureVariantsConfig | None = None,
+        payment_failure_followup: PaymentFailureFollowupConfig | None = None,
     ) -> None:
+        if payment_failure_followup is not None and (
+            not approved_template_direct or payment_failure_variants is None
+        ):
+            # B2 and Z are approved templates sent by the direct mode, and
+            # which one goes out depends on the variant B1 recorded.
+            raise ValueError(
+                "payment failure followup requires the approved template direct "
+                "mode and the payment failure variants"
+            )
         if payment_failure_variants is not None and not approved_template_direct:
             # B1 is an approved template with its URL button, sent by the
             # direct mode with the final Meta gate; never a Hermes draft.
@@ -907,6 +924,7 @@ class DurableDispatcher:
         self._cart_followups = cart_followups
         self._payment_slip = payment_slip
         self._payment_failure_variants = payment_failure_variants
+        self._payment_failure_followup = payment_failure_followup
         self._lead_first_name_greeting_enabled = lead_first_name_greeting_enabled
         self._whatsapp_equivalence_enabled = whatsapp_equivalence_enabled
         self._delivery_mode = (
@@ -1188,7 +1206,8 @@ class DurableDispatcher:
         if action.action_type != "first_contact_review":
             # The only following steps this mode sends are the reminders of a
             # payment slip (C2, C3) and, when the instance turns them on, A2
-            # and Z of the cart: every other one closes as before.
+            # and Z of the cart and B2 or Z of a refused payment: every other
+            # one closes as before.
             slip_step = (
                 trigger_kind == PAYMENT_SLIP_TRIGGER
                 and action.step_key in PAYMENT_SLIP_STEPS
@@ -1198,9 +1217,14 @@ class DurableDispatcher:
                 and trigger_kind == CART_ABANDONMENT_TRIGGER
                 and action.step_key in CART_FOLLOWUP_STEPS
             )
+            refusal_step = (
+                self._payment_failure_followup is not None
+                and trigger_kind == PAYMENT_FAILURE_TRIGGER
+                and action.step_key == PAYMENT_FAILURE_FOLLOWUP_STEP
+            )
             if not (
                 action.action_type == "no_reply_review"
-                and (slip_step or cart_step)
+                and (slip_step or cart_step or refusal_step)
             ):
                 return _ApprovedTemplateComposition(
                     failure_reason=APPROVED_TEMPLATE_DIRECT_UNSUPPORTED_ACTION,
@@ -1219,6 +1243,12 @@ class DurableDispatcher:
                 if step_key == CART_LAST_TOUCH_STEP
                 else CART_SECOND_TOUCH_VARIABLES
             )
+        elif step_key == PAYMENT_FAILURE_FOLLOWUP_STEP:
+            # B2 or Z: the base picks which one when it is built; both take
+            # the same variables.
+            assert self._payment_failure_followup is not None
+            template_name = self._payment_failure_followup.second_touch_template
+            declared = PAYMENT_FAILURE_FOLLOWUP_VARIABLES
         elif step_key is not None:
             step_template = template.payment_slip_step(step_key)
             template_name = step_template.name if step_template is not None else None
@@ -1305,6 +1335,15 @@ class DurableDispatcher:
             return _ApprovedTemplateComposition(
                 failure_reason=APPROVED_TEMPLATE_PARAMETERS_MISSING,
                 retryable=False,
+            )
+        if step_key == PAYMENT_FAILURE_FOLLOWUP_STEP:
+            return await self._compose_payment_failure_followup_proposal(
+                action=action,
+                attempt=attempt,
+                name_value=name_value or "",
+                product_name=product_name or "",
+                buyer_phone=execution_context.buyer_phone,
+                greeting_name=greeting_name,
             )
         if step_key is not None and step_key in CART_FOLLOWUP_STEPS:
             return await self._compose_cart_followup_proposal(
@@ -1407,6 +1446,10 @@ class DurableDispatcher:
         if discount is not None:
             assert attempt is not None
             if isinstance(discount, CartDiscountReady):
+                if isinstance(discount, PaymentFailureFirstTouchReady):
+                    await self._record_payment_failure_first_touch(
+                        action=action, attempt=attempt, ready=discount
+                    )
                 logger.info(
                     "%s_ready action_id=%s attempt_id=%s",
                     log_prefix,
@@ -1484,6 +1527,146 @@ class DurableDispatcher:
                 message=message,
             ),
             greeting_name=greeting_name,
+        )
+
+    async def _record_payment_failure_first_touch(
+        self,
+        *,
+        action: ScheduledAction,
+        attempt: DeliveryAttempt,
+        ready: PaymentFailureFirstTouchReady,
+    ) -> None:
+        """Record the variant of B1 and its coupon, under the lease, before the send.
+
+        It never stops B1: without the record the follow-up goes out as B2,
+        which carries its own coupon 2, so the worst case is B2 where Z was
+        due. A base without the migration (20261019000700) answers with an
+        error here and B1 goes out as before.
+        """
+        try:
+            await self._supabase.record_payment_failure_first_touch(
+                action_id=action.action_id,
+                attempt_id=attempt.attempt_id,
+                worker_id=self._worker_id,
+                lease_generation=action.lease_generation,
+                variant=ready.variant,
+                coupon_code=ready.coupon_code,
+                now=self._clock(),
+            )
+        except SupabaseError as exc:
+            logger.warning(
+                "payment_failure_first_touch_record_failed action_id=%s "
+                "attempt_id=%s error=%s",
+                action.action_id,
+                attempt.attempt_id,
+                type(exc).__name__,
+            )
+
+    async def _compose_payment_failure_followup_proposal(
+        self,
+        *,
+        action: ScheduledAction,
+        attempt: DeliveryAttempt | None,
+        name_value: str,
+        product_name: str,
+        buyer_phone: str | None,
+        greeting_name: str | None,
+    ) -> _ApprovedTemplateComposition:
+        """B2 or Z of a refused payment: coupon 2 and our link, or no message.
+
+        Like Z of the cart, nothing falls back to another template. Only an
+        unreadable catalog or context, a catalog that does not close, or
+        coupon 2 still being created retries.
+        """
+        config = self._payment_failure_followup
+        assert config is not None
+        assert self._chatwoot is not None
+        assert self._chatwoot_inbox_id is not None
+        if attempt is None:
+            # The follow-up issues a link for its attempt: without one it
+            # cannot be built.
+            return _ApprovedTemplateComposition(
+                failure_reason="payment_failure_followup_attempt_missing",
+                retryable=False,
+            )
+        try:
+            inbox = await self._chatwoot.get_inbox(inbox_id=self._chatwoot_inbox_id)
+        except (httpx.HTTPError, ChatwootProtocolError) as exc:
+            logger.warning(
+                "approved_template_catalog_unavailable action_id=%s error=%s",
+                action.action_id,
+                type(exc).__name__,
+            )
+            return _ApprovedTemplateComposition(
+                failure_reason=APPROVED_TEMPLATE_UNAVAILABLE
+            )
+        try:
+            outcome = await compose_payment_failure_followup(
+                config=config,
+                supabase=self._supabase,
+                inbox=inbox,
+                action=action,
+                attempt=attempt,
+                buyer_name=name_value,
+                product_name=product_name,
+                buyer_phone=buyer_phone,
+                worker_id=self._worker_id,
+                now=self._clock(),
+                ulid_factory=generate_issuance_ulid,
+            )
+        except SupabasePermanentError as exc:
+            logger.warning(
+                "payment_failure_followup_context_rejected action_id=%s reason=%s",
+                action.action_id,
+                exc.reason,
+            )
+            return _ApprovedTemplateComposition(
+                failure_reason=exc.reason or "payment_failure_followup_context_rejected",
+                retryable=False,
+            )
+        except SupabaseError as exc:
+            logger.warning(
+                "payment_failure_followup_context_unavailable action_id=%s error=%s",
+                action.action_id,
+                type(exc).__name__,
+            )
+            return _ApprovedTemplateComposition(
+                failure_reason="payment_failure_followup_context_unavailable"
+            )
+        if isinstance(outcome, CartFollowupReady):
+            logger.info(
+                "payment_failure_followup_ready action_id=%s template=%s",
+                action.action_id,
+                outcome.template_name,
+            )
+            return _ApprovedTemplateComposition(
+                proposal=FollowupMessageProposal(
+                    strategy=f"approved_template:{outcome.template_name}",
+                    message=outcome.message,
+                ),
+                greeting_name=greeting_name,
+                template_name=outcome.template_name,
+                template_params=outcome.template_params,
+                issuance_id=outcome.issuance_id,
+            )
+        if isinstance(outcome, CartDiscountDefer):
+            logger.info(
+                "payment_failure_followup_deferred action_id=%s retry_after_s=%s",
+                action.action_id,
+                int(outcome.retry_after.total_seconds()),
+            )
+            return _ApprovedTemplateComposition(
+                failure_reason=outcome.reason,
+                retry_after=outcome.retry_after,
+            )
+        logger.warning(
+            "payment_failure_followup_stopped action_id=%s reason=%s",
+            action.action_id,
+            outcome.reason,
+        )
+        return _ApprovedTemplateComposition(
+            failure_reason=outcome.reason,
+            retryable=outcome.retryable,
         )
 
     async def _compose_cart_followup_proposal(

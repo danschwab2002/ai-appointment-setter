@@ -381,6 +381,27 @@ class PaymentFailureSendContext:
     other_coupon_expires_at: datetime | None
 
 
+PAYMENT_FAILURE_FOLLOWUP_KINDS = frozenset({"second_touch", "last_touch"})
+PAYMENT_FAILURE_FIRST_TOUCH_VARIANTS = frozenset({
+    "coupon", "two_refusals", "insufficient_funds", "declined",
+})
+
+
+@dataclass(frozen=True)
+class PaymentFailureFollowupContext:
+    """Si el seguimiento del pago rechazado es B2 o Z, segun lo que llevo B1.
+
+    ``followup_kind`` es la regla de la base
+    (``get_payment_failure_followup_context_v1``): ``last_touch`` (Z) si el B1
+    aceptado salio con cupon, ``second_touch`` (B2) si no, o si no quedo
+    registro. ``first_touch_variant`` es la variante registrada, o None.
+    """
+
+    followup_kind: str
+    first_touch_variant: str | None
+    payment_failure_count: int
+
+
 @dataclass(frozen=True)
 class PaymentSlipSendContext:
     """Los hechos crudos de la ficha mas reciente del caso, para componer C1.
@@ -5976,6 +5997,103 @@ class SupabaseClient:
             payment_type=_optional_string(row, "payment_type", operation=operation),
             other_coupon_code=other_code,
             other_coupon_expires_at=other_expires,
+        )
+
+    async def record_payment_failure_first_touch(
+        self,
+        *,
+        action_id: str,
+        attempt_id: str,
+        worker_id: str,
+        lease_generation: int,
+        variant: str,
+        coupon_code: str | None,
+        now: str,
+    ) -> str:
+        """Record the variant of B1 and the coupon it carries, before the send.
+
+        Idempotent per attempt: the same values again are ``already_recorded``.
+        A 55000 (no lease, an action that is not B1, another value for the
+        same attempt) is a ``SupabasePermanentError`` with its reason.
+        """
+        operation = "record_payment_failure_first_touch"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/record_payment_failure_first_touch_v1",
+            content=json.dumps({
+                "p_action_id": action_id,
+                "p_attempt_id": attempt_id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": lease_generation,
+                "p_variant": variant,
+                "p_coupon_code": coupon_code,
+                "p_now": now,
+            }),
+        )
+        if response.status_code != 200:
+            rejection = _pilot_plan_rejection(response)
+            if rejection is not None:
+                raise SupabasePermanentError(
+                    f"{operation}_rejected: {rejection}", reason=rejection
+                )
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1 or set(rows[0]) != {"outcome"}:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return _required_enum(
+            rows[0], "outcome", {"recorded", "already_recorded"}, operation=operation
+        )
+
+    async def get_payment_failure_followup_context(
+        self,
+        *,
+        action_id: str,
+        worker_id: str,
+        lease_generation: int,
+        now: str,
+    ) -> PaymentFailureFollowupContext:
+        """Whether the follow-up of a refused payment is B2 or Z, under the lease.
+
+        A 55000 (no lease, an action that is not the follow-up of a refused
+        payment) is a ``SupabasePermanentError`` with its reason: it does not
+        change by retrying.
+        """
+        operation = "payment_failure_followup_context"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_payment_failure_followup_context_v1",
+            content=json.dumps({
+                "p_action_id": action_id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": lease_generation,
+                "p_now": now,
+            }),
+        )
+        if response.status_code != 200:
+            rejection = _pilot_plan_rejection(response)
+            if rejection is not None:
+                raise SupabasePermanentError(
+                    f"{operation}_rejected: {rejection}", reason=rejection
+                )
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        if set(row) != {"followup_kind", "first_touch_variant", "payment_failure_count"}:
+            raise _invalid_row_error(operation)
+        variant = _optional_string(row, "first_touch_variant", operation=operation)
+        count = _required_int(row, "payment_failure_count", operation=operation)
+        if (
+            variant is not None and variant not in PAYMENT_FAILURE_FIRST_TOUCH_VARIANTS
+        ) or count < 1:
+            raise _invalid_row_error(operation)
+        return PaymentFailureFollowupContext(
+            followup_kind=_required_enum(
+                row, "followup_kind", set(PAYMENT_FAILURE_FOLLOWUP_KINDS), operation=operation
+            ),
+            first_touch_variant=variant,
+            payment_failure_count=count,
         )
 
     async def apply_hotmart_purchase_approved(

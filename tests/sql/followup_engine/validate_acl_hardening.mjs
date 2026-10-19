@@ -223,7 +223,9 @@ const rows = await db.query(`
       ('_portable_case_purchase_stop_reason(uuid)'),
       ('_recovery_followup_step(uuid)'),
       ('_recovery_renewal_requested(uuid)'),
-      ('request_recovery_renewal_v1(bigint,bigint,bigint,bigint,text,timestamp with time zone)')
+      ('request_recovery_renewal_v1(bigint,bigint,bigint,bigint,text,timestamp with time zone)'),
+      ('record_payment_failure_first_touch_v1(uuid,uuid,text,bigint,text,text,timestamp with time zone)'),
+      ('get_payment_failure_followup_context_v1(uuid,text,bigint,timestamp with time zone)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -270,9 +272,12 @@ const result = rows.rows[0];
 // B1 of the payment failure (20261019000200) adds two, and the purchase of
 // any offer of the product (20261019000300) adds the stop reason that
 // reevaluate_followup_action (security invoker, run by service_role) calls:
-// it reads tables service_role cannot read.
+// it reads tables service_role cannot read, and the steps with an approved
+// template and a coupon (20261019000600) add three, and the follow-up of the
+// payment failure (20261019000700) adds two: the record of the variant of B1
+// and the context of the follow-up.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 145) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 147) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

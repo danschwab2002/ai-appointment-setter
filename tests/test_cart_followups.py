@@ -371,6 +371,7 @@ def test_the_steps_of_every_flow_are_joined_by_their_key() -> None:
         "payment_slip_due_day": "payment_slip",
         "cart_second_touch": "cart_abandonment",
         "cart_last_touch": "cart_abandonment",
+        "payment_failure_followup": "payment_failure",
     }
     with pytest.raises(ValueError, match="duplicate_following_step:x"):
         _join({"x": "a"}, {"x": "b"})
