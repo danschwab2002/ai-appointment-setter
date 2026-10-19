@@ -24,9 +24,13 @@
 //   3. B contesta C1 con C2 esperando su dia: la adopcion de la respuesta
 //      (admit_portable_inbound_commercial_case_v1) la toma; con la secuencia de
 //      otro flujo, la misma accion la frena con 22000, como antes;
-//   4. y cuando C2 se reclama, la reevaluacion compartida lo cancela con
-//      prospect_replied (lo que hace esta version; la especificacion pide que
-//      el recordatorio sobreviva a una respuesta, y eso queda para despues).
+//   4. y cuando C2 se reclama, la respuesta no lo cancela
+//      (20261019000800): sale igual, como pide la especificacion. Lo siguen
+//      frenando la baja (contact_blocked) y una persona del equipo que escribe
+//      despues del toque (pausa); con la secuencia de otro flujo, la misma
+//      respuesta sigue cancelando con prospect_replied. La migracion
+//      20261019000800 cambia solo reevaluate_followup_action, con un solo
+//      texto reemplazado, y una segunda corrida aborta.
 //
 // Datos: el mismo armado de validate_portable_payment_slip_recovery.mjs (el
 // manifiesto de ATT1, las fichas capturadas el 2026-10-18 corridas en el
@@ -85,9 +89,16 @@ for (const name of migrationNames.slice(0, targetIndex)) {
 const before = await definitions();
 await apply(join(root, 'supabase/migrations', TARGET));
 const after = await definitions();
+// La respuesta no cancela el recordatorio (20261019000800): se mide al pasar.
+const SURVIVES = '20261019000800_portable_payment_slip_reminder_survives_reply_v1.sql';
+let beforeSurvives = null;
+let afterSurvives = null;
 for (const name of migrationNames.slice(targetIndex + 1)) {
+  if (name === SURVIVES) beforeSurvives = await definitions();
   await apply(join(root, 'supabase/migrations', name));
+  if (name === SURVIVES) afterSurvives = await definitions();
 }
+if (afterSurvives === null) throw new Error(`${SURVIVES} is missing from the canonical stack`);
 
 const CHANGED = [
   'mark_portable_payment_slip_request_started(uuid,uuid,text,bigint,timestamp with time zone)',
@@ -134,6 +145,37 @@ if (rerun === null || rerun.code !== '55000' || rerun.message !== 'payment_slip_
   throw new Error(`a second run did not abort: ${rerun ? `${rerun.code} ${rerun.message}` : 'success'}`);
 }
 results.migration = { changed: changed.length, added: added.length, rerun: rerun.message };
+{
+  const REEVALUATION = CHANGED[2];
+  const changedSurvives = [...afterSurvives.keys()]
+    .filter((signature) => beforeSurvives.get(signature) !== afterSurvives.get(signature));
+  const addedSurvives = [...afterSurvives.keys()].filter((signature) => !beforeSurvives.has(signature));
+  if (JSON.stringify(changedSurvives) !== JSON.stringify([REEVALUATION]) || addedSurvives.length !== 0) {
+    throw new Error(`${SURVIVES} changed other functions: ${JSON.stringify({ changedSurvives, addedSurvives })}`);
+  }
+  const old = "       and not public._recovery_renewal_requested(v_action.id) then\n";
+  const previous = beforeSurvives.get(REEVALUATION);
+  const current = afterSurvives.get(REEVALUATION);
+  const [head, tail] = previous.split(old);
+  if (previous.split(old).length !== 2 || !current.startsWith(head) || !current.endsWith(tail)
+      || !current.includes('portable_payment_slip_reminder_survives_reply')) {
+    throw new Error(`${SURVIVES}: the reevaluation is not the previous definition with one text replaced`);
+  }
+  let rerunSurvives = null;
+  await db.exec('begin');
+  try {
+    await apply(join(root, 'supabase/migrations', SURVIVES));
+  } catch (error) {
+    rerunSurvives = error;
+  } finally {
+    await db.exec('rollback');
+  }
+  if (rerunSurvives === null || rerunSurvives.code !== '55000'
+      || rerunSurvives.message !== 'payment_slip_survives_reply_already_applied') {
+    throw new Error(`a second run of ${SURVIVES} did not abort: ${rerunSurvives ? `${rerunSurvives.code} ${rerunSurvives.message}` : 'success'}`);
+  }
+  results.survives_reply_migration = { changed: changedSurvives.length, rerun: rerunSurvives.message };
+}
 
 // ---------------------------------------------------------------------------
 // El manifiesto de ATT1 (el mismo lector minimo que la cadena de ATT1).
@@ -510,13 +552,13 @@ const claim = async (worker, actionId, now) => {
 
 // Un toque de la ficha de punta a punta: claim, reevaluacion, contexto de la
 // ficha, reserva, arranque por la RPC de la ficha y aceptacion.
-const sendStep = async (who, actionId, label, { chatwoot = false, status = 'open' } = {}) => {
+const sendStep = async (who, actionId, label, { chatwoot = false, status = 'open', replied = false } = {}) => {
   const worker = `slip-worker-${who}`;
   const now = await dbNow();
   const claimed = await claim(worker, actionId, now);
   const lease = claimed.lease_generation;
   const decision = await reevaluate(actionId, worker, lease, now,
-    chatwoot ? evidence(CONVERSATION[who], now, { status }) : null);
+    chatwoot ? evidence(CONVERSATION[who], now, { status, replied }) : null);
   if (decision.decision !== 'execute' || decision.reason_code !== 'eligible_for_execution') {
     throw new Error(`${label} reevaluation: ${JSON.stringify(decision)}`);
   }
@@ -739,7 +781,7 @@ const nextStep = async (who, stepKey, label) => {
 }
 
 // ---------------------------------------------------------------------------
-// 4. B contesto despues de C1: la reevaluacion compartida cancela C2.
+// 4. B contesto despues de C1: el recordatorio sale igual (20261019000800).
 // ---------------------------------------------------------------------------
 {
   // El C2 que el caso 2 libero sin arrancar (queda retryable_failed).
@@ -748,14 +790,58 @@ const nextStep = async (who, stepKey, label) => {
       && row.status === 'retryable_failed'), 'B C2 released');
   await sleep(1200);
   const worker = 'slip-worker-B';
-  const now = await dbNow();
-  const claimed = await claim(worker, c2.id, now);
-  const decision = await reevaluate(c2.id, worker, claimed.lease_generation, now,
-    evidence(CONVERSATION.B, now, { replied: true }));
-  if (decision.decision !== 'cancel' || decision.reason_code !== 'prospect_replied') {
-    throw new Error(`B replied: ${JSON.stringify(decision)}`);
+  // Cada variante corre en su transaccion y se deshace: el C2 queda igual.
+  const decide = (prepare, chatwoot) => rolledBack(async () => {
+    await prepare();
+    const now = await dbNow();
+    const claimed = await claim(worker, c2.id, now);
+    return reevaluate(c2.id, worker, claimed.lease_generation, now, chatwoot(now));
+  });
+  const nothing = async () => {};
+  const replied = await decide(nothing, (now) => evidence(CONVERSATION.B, now, { replied: true }));
+  if (replied.decision !== 'execute' || replied.reason_code !== 'eligible_for_execution') {
+    throw new Error(`B replied, the reminder must go out: ${JSON.stringify(replied)}`);
   }
-  results.replied = decision.reason_code;
+  // Una persona del equipo escribio despues del toque: pausa, como antes.
+  const human = await decide(nothing, (now) => ({
+    ...evidence(CONVERSATION.B, now, { replied: true }),
+    p_chatwoot_human_activity_after_anchor: true,
+  }));
+  if (human.decision !== 'pause' || human.reason_code !== 'chatwoot_conversation_blocked') {
+    throw new Error(`B replied and a person wrote: ${JSON.stringify(human)}`);
+  }
+  // La baja (el boton o una frase): cancela, como antes.
+  const optedOut = await decide(async () => {
+    await db.query(`
+      update public.contacts set contact_permission = 'opted_out'
+      where id = (select contact_id from public.recovery_cases where id = $1)
+    `, [people.B.plan.recovery_case_id]);
+  }, (now) => evidence(CONVERSATION.B, now, { replied: true }));
+  if (optedOut.decision !== 'cancel' || optedOut.reason_code !== 'contact_blocked') {
+    throw new Error(`B opted out: ${JSON.stringify(optedOut)}`);
+  }
+  // Con la secuencia de otro flujo, la misma respuesta sigue cancelando.
+  const otherFlow = await decide(async () => {
+    await db.query(`
+      update public.followup_sequences set reason = 'cart_abandonment' where id = $1
+    `, [people.B.plan.followup_sequence_id]);
+  }, (now) => evidence(CONVERSATION.B, now, { replied: true }));
+  if (otherFlow.decision !== 'cancel' || otherFlow.reason_code !== 'prospect_replied') {
+    throw new Error(`another flow replied: ${JSON.stringify(otherFlow)}`);
+  }
+  // Y de verdad: B contesto y el recordatorio sale.
+  await sendStep('B', c2.id, 'B C2', { chatwoot: true, replied: true });
+  const sent = await actionOf(c2.id);
+  if (sent.status !== 'accepted_by_chatwoot') {
+    throw new Error(`B C2 after the reply: ${JSON.stringify(sent)}`);
+  }
+  results.replied = {
+    reminder: `${replied.decision}:${replied.reason_code}`,
+    sent: sent.status,
+    human_after: human.reason_code,
+    opted_out: optedOut.reason_code,
+    other_flow: otherFlow.reason_code,
+  };
 }
 
 console.log(`portable_payment_slip_reminders=OK ${JSON.stringify(results)}`);

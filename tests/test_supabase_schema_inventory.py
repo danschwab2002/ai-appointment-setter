@@ -1017,14 +1017,16 @@ def test_recovery_followup_steps_fingerprint_is_service_role_only() -> None:
         assert marker in compact_fingerprint, marker
 
 
-def test_payment_failure_followup_fingerprint_is_last_and_service_role_only() -> None:
+def test_payment_failure_followup_fingerprint_is_service_role_only() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261019000700 (el seguimiento del pago rechazado) es la ultima.
-    fingerprint = sql.split("'20261019000700'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261019000700 (el seguimiento del pago rechazado) va justo
+    # antes de la de 20261019000800 (la ficha sobrevive a una respuesta).
+    fingerprint = sql.split("'20261019000700'", 1)[1].split("'20261019000800'", 1)[0]
+    fingerprint = fingerprint.rsplit("union all", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261019000700_payment_failure_followup_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",4,'payment_failure_followup')")
+    assert compact_fingerprint.endswith(",4,'payment_failure_followup'")
     for marker in (
         "to_regprocedure('public.record_payment_failure_first_touch_v1"
         "(uuid,uuid,text,bigint,text,text,timestamptz)')",
@@ -1038,5 +1040,23 @@ def test_payment_failure_followup_fingerprint_is_last_and_service_role_only() ->
         "position('payment_failure_followup(20261019000700)'indefinition)>0",
         "position('refusal_sequence.reason=''payment_failure'''indefinition)>0",
         "position('waiting.action_type=''no_reply_review'''indefinition)>0",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_payment_slip_reminder_survives_reply_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261019000800 (la respuesta no cancela el recordatorio de la
+    # ficha) es la ultima.
+    fingerprint = sql.split("'20261019000800'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261019000800_portable_payment_slip_reminder_survives_reply_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",1,'portable_payment_slip_reminder_survives_reply')")
+    for marker in (
+        "to_regprocedure('public.reevaluate_followup_action(uuid,text,bigint,timestamptz,"
+        "boolean,text,text,timestamptz,text,boolean,boolean,boolean,boolean,boolean)')",
+        "position('portable_payment_slip_reminder_survives_reply(20261019000800)'indefinition)>0",
+        "position('reply_slip_sequence.reason=''payment_slip'''indefinition)>0",
     ):
         assert marker in compact_fingerprint, marker
