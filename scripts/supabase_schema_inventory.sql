@@ -5106,6 +5106,46 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         6,
         'recovery_followup_steps'
+    union all
+    select
+        '20261019000700',
+        '20261019000700_payment_failure_followup_v1.sql',
+        -- Las dos entradas nuevas del bridge: definer y solo service_role.
+        (
+            select count(*) = 2
+            from functions
+            where oid in (
+                to_regprocedure('public.record_payment_failure_first_touch_v1(uuid,uuid,text,bigint,text,text,timestamptz)'),
+                to_regprocedure('public.get_payment_failure_followup_context_v1(uuid,text,bigint,timestamptz)')
+            )
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- El registro de la variante de B1, inmutable.
+        + exists(
+            select 1 from triggers
+            where tgname = 'payment_failure_first_touch_record_immutable'
+        )::int
+        -- El arranque del pago rechazado acepta el seguimiento.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.mark_portable_payment_failure_request_started(uuid,uuid,text,bigint,timestamptz)')
+              and position('payment_failure_followup (20261019000700)' in definition) > 0
+              and position('refusal_sequence.reason = ''payment_failure''' in definition) > 0
+        )::int
+        -- Un rechazo nuevo corre la version del seguimiento que espera.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.plan_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,timestamptz)')
+              and position('payment_failure_followup (20261019000700)' in definition) > 0
+              and position('waiting.action_type = ''no_reply_review''' in definition) > 0
+        )::int,
+        4,
+        'payment_failure_followup'
 )
 select
     version,

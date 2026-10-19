@@ -193,6 +193,7 @@ from bridge.payment_slip_first_touch import (
 )
 from bridge.cart_first_touch import CartDiscountConfig
 from bridge.cart_followups import CartFollowupConfig, is_cart_renewal_request
+from bridge.payment_failure_followups import PaymentFailureFollowupConfig
 from bridge.payment_failure_variant import (
     VARIANT_COUPON,
     VARIANT_DECLINED,
@@ -255,6 +256,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # politica propios de LANCEMOS_PILOT_PAYMENT_FAILURE_SCOPE_* y
     # PAYMENT_FAILURE_FOLLOWUP_POLICY_*.
     "payment_failure_variants_enabled",
+    # B2 o Z del pago rechazado, 24 h despues de B1 (contrato
+    # portable-payment-failure-followup-v1); las plantillas son del runtime y
+    # el paso, de la politica del pago rechazado de la instancia.
+    "payment_failure_followup_enabled",
     "portable_hotmart_purchase_stop_enabled",
     # El cupon personal del carrito (A1): crea y verifica el cupon en la API
     # de Hotmart; lo especifico (prefijo, credenciales) es del runtime.
@@ -661,6 +666,12 @@ class Settings:
     waba_payment_failure_template_two_refusals: str | None = None
     waba_payment_failure_template_insufficient_funds: str | None = None
     waba_payment_failure_template_declined: str | None = None
+    # El seguimiento del pago rechazado (payment_failure_followups): B2 si B1
+    # salio sin cupon, Z si salio con cupon. Apagado, el paso cierra como
+    # cualquier paso siguiente del modo directo.
+    payment_failure_followup_enabled: bool = False
+    waba_payment_failure_template_second_touch: str | None = None
+    waba_payment_failure_template_last_touch: str | None = None
     portable_hotmart_purchase_stop_enabled: bool = False
     hotmart_purchase_worker_enabled: bool = False
     hotmart_abandonment_timer_worker_enabled: bool = False
@@ -1697,6 +1708,18 @@ class Settings:
             ),
             waba_payment_failure_template_declined=(
                 os.getenv("WABA_PAYMENT_FAILURE_TEMPLATE_DECLINED", "").strip() or None
+            ),
+            payment_failure_followup_enabled=(
+                os.getenv("PAYMENT_FAILURE_FOLLOWUP_ENABLED", "false").lower()
+                == "true"
+            ),
+            waba_payment_failure_template_second_touch=(
+                os.getenv("WABA_PAYMENT_FAILURE_TEMPLATE_SECOND_TOUCH", "").strip()
+                or None
+            ),
+            waba_payment_failure_template_last_touch=(
+                os.getenv("WABA_PAYMENT_FAILURE_TEMPLATE_LAST_TOUCH", "").strip()
+                or None
             ),
             waba_payment_slip_template_category=(
                 os.getenv("WABA_PAYMENT_SLIP_TEMPLATE_CATEGORY", "")
@@ -2740,6 +2763,35 @@ def _validate_payment_failure_own_scope(settings: Settings) -> None:
         raise ValueError(
             f"{flag} requires WABA_PAYMENT_FAILURE_TEMPLATE_COUPON, "
             "_TWO_REFUSALS, _INSUFFICIENT_FUNDS and _DECLINED"
+        )
+
+
+def _validate_payment_failure_followup(settings: Settings) -> None:
+    """B2 o Z del pago rechazado: solo encima de B1 en variantes.
+
+    Cual sale depende de la variante que B1 registro, y los dos llevan el
+    cupon 2 del caso: sin las variantes, sin el worker del cupon o sin las dos
+    plantillas no arranca, en vez de mandar un toque que promete un descuento
+    que no existe. Apagado no se lee nada.
+    """
+    if not settings.payment_failure_followup_enabled:
+        return
+    flag = "PAYMENT_FAILURE_FOLLOWUP_ENABLED"
+    if not settings.payment_failure_variants_enabled:
+        raise ValueError(f"{flag} requires PAYMENT_FAILURE_VARIANTS_ENABLED")
+    if not settings.recovery_coupon_worker_enabled:
+        raise ValueError(f"{flag} requires RECOVERY_COUPON_WORKER_ENABLED")
+    second = settings.waba_payment_failure_template_second_touch
+    last = settings.waba_payment_failure_template_last_touch
+    if second is None or last is None:
+        raise ValueError(
+            f"{flag} requires WABA_PAYMENT_FAILURE_TEMPLATE_SECOND_TOUCH and "
+            "WABA_PAYMENT_FAILURE_TEMPLATE_LAST_TOUCH"
+        )
+    if second == last:
+        raise ValueError(
+            "WABA_PAYMENT_FAILURE_TEMPLATE_SECOND_TOUCH and "
+            "WABA_PAYMENT_FAILURE_TEMPLATE_LAST_TOUCH must differ"
         )
 
 
@@ -3817,6 +3869,7 @@ def create_app(
     _validate_precheckout_first_contact(settings)
     _validate_payment_slip_first_contact(settings)
     _validate_payment_failure_own_scope(settings)
+    _validate_payment_failure_followup(settings)
     waba_template = _waba_template_config(settings)
     _validate_approved_template_direct(
         settings,
@@ -4962,6 +5015,21 @@ def create_app(
                     language=waba_template.language,
                 )
                 if settings.payment_failure_variants_enabled
+                and waba_template is not None
+                else None
+            ),
+            payment_failure_followup=(
+                PaymentFailureFollowupConfig(
+                    language=waba_template.language,
+                    second_touch_template=(
+                        settings.waba_payment_failure_template_second_touch  # type: ignore[arg-type]
+                    ),
+                    last_touch_template=(
+                        settings.waba_payment_failure_template_last_touch  # type: ignore[arg-type]
+                    ),
+                )
+                if settings.payment_failure_followup_enabled
+                and settings.payment_failure_variants_enabled
                 and waba_template is not None
                 else None
             ),

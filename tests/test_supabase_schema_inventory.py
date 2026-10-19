@@ -440,8 +440,16 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261019000100 (la ficha de pago) suma sus cinco entradas del bridge y
     # 20261019000200 (B1 del pago rechazado), sus dos, y 20261019000300 el
     # freno por la compra de cualquier oferta, que llama la reevaluacion
-    # (security invoker) como service_role.
-    assert len(allowlisted) == 145
+    # (security invoker) como service_role. 20261019000700 (el seguimiento del
+    # pago rechazado) suma el registro de B1 y el contexto del seguimiento.
+    assert len(allowlisted) == 147
+    for signature in (
+        "record_payment_failure_first_touch_v1(uuid, uuid, text, bigint, text, text, "
+        "timestamp with time zone)",
+        "get_payment_failure_followup_context_v1(uuid, text, bigint, "
+        "timestamp with time zone)",
+    ):
+        assert signature in allowlisted, signature
     # 20261019000600: el paso de la politica, el pedido de renovacion y su
     # lectura, que llaman funciones security invoker que corre service_role.
     assert "_recovery_followup_step(uuid)" in allowlisted
@@ -986,14 +994,16 @@ def test_payment_failure_other_coupon_delivered_fingerprint() -> None:
         assert marker in compact_fingerprint, marker
 
 
-def test_recovery_followup_steps_fingerprint_is_last_and_service_role_only() -> None:
+def test_recovery_followup_steps_fingerprint_is_service_role_only() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261019000600 (los pasos con plantilla y cupon) es la ultima.
-    fingerprint = sql.split("'20261019000600'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261019000600 (los pasos con plantilla y cupon) va justo
+    # antes de la de 20261019000700 (el seguimiento del pago rechazado).
+    fingerprint = sql.split("'20261019000600'", 1)[1].split("'20261019000700'", 1)[0]
+    fingerprint = fingerprint.rsplit("union all", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261019000600_recovery_followup_steps_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",6,'recovery_followup_steps')")
+    assert compact_fingerprint.endswith(",6,'recovery_followup_steps'")
     for marker in (
         "to_regprocedure('public._recovery_followup_step(uuid)')",
         "to_regprocedure('public._recovery_renewal_requested(uuid)')",
@@ -1003,5 +1013,30 @@ def test_recovery_followup_steps_fingerprint_is_last_and_service_role_only() -> 
         "position('public._recovery_renewal_requested(v_action.id)'indefinition)>0",
         "position('recovery_followup_steps:begin'indefinition)>0",
         "position('public._recovery_followup_step(scheduled_actions.id)'indefinition)>0",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_payment_failure_followup_fingerprint_is_last_and_service_role_only() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261019000700 (el seguimiento del pago rechazado) es la ultima.
+    fingerprint = sql.split("'20261019000700'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261019000700_payment_failure_followup_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",4,'payment_failure_followup')")
+    for marker in (
+        "to_regprocedure('public.record_payment_failure_first_touch_v1"
+        "(uuid,uuid,text,bigint,text,text,timestamptz)')",
+        "to_regprocedure('public.get_payment_failure_followup_context_v1"
+        "(uuid,text,bigint,timestamptz)')",
+        "andprosecdef",
+        "andhas_function_privilege('service_role',oid,'EXECUTE')",
+        "andnothas_function_privilege('anon',oid,'EXECUTE')",
+        "andnothas_function_privilege('authenticated',oid,'EXECUTE')",
+        "tgname='payment_failure_first_touch_record_immutable'",
+        "position('payment_failure_followup(20261019000700)'indefinition)>0",
+        "position('refusal_sequence.reason=''payment_failure'''indefinition)>0",
+        "position('waiting.action_type=''no_reply_review'''indefinition)>0",
     ):
         assert marker in compact_fingerprint, marker

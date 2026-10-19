@@ -93,6 +93,7 @@ class _RefusalAuthority(_Authority):
         attempt_number: int = 1,
         reserve_outcome: str = "reserved",
         context_error: SupabaseError | None = None,
+        record_error: SupabaseError | None = None,
     ) -> None:
         super().__init__(offer_code="2uafw5bg", anchor_type="payment_failure")
         self.attempt = replace(self.attempt, attempt_number=attempt_number)
@@ -118,6 +119,21 @@ class _RefusalAuthority(_Authority):
         )
         self.reserve_outcome = reserve_outcome
         self.issuance_finalizations: list[dict[str, object]] = []
+        self.record_error = record_error
+        self.records: list[dict[str, object]] = []
+
+    async def record_payment_failure_first_touch(self, **kwargs: object) -> str:
+        # The follow-up (20261019000700) reads what B1 carried from here.
+        assert kwargs["action_id"] == self.action.action_id
+        assert kwargs["attempt_id"] == self.attempt.attempt_id
+        assert kwargs["lease_generation"] == self.action.lease_generation
+        self.events.append("record")
+        self.records.append(
+            {"variant": kwargs["variant"], "coupon_code": kwargs["coupon_code"]}
+        )
+        if self.record_error is not None:
+            raise self.record_error
+        return "recorded"
 
     async def get_portable_payment_failure_send_context(
         self, **kwargs: object
@@ -232,11 +248,13 @@ def test_the_bank_refusal_goes_out_with_our_link_and_no_coupon(tmp_path: Path) -
     chatwoot = _run(authority, tmp_path)
 
     _sent(chatwoot, VARIANT_DECLINED, [NAME, WHEN, PRODUCT], BARE)
-    # Sin cupon no se lee el cupon del caso; el link se autoriza justo antes.
+    # Sin cupon no se lee el cupon del caso; la variante se registra antes del
+    # envio y el link se autoriza justo antes.
     assert authority.events == [
-        "reevaluate", "reserve", "send_context", "reserve_link", "reevaluate",
-        "request_started", "authorize_link", "accepted",
+        "reevaluate", "reserve", "send_context", "reserve_link", "record",
+        "reevaluate", "request_started", "authorize_link", "accepted",
     ]
+    assert authority.records == [{"variant": VARIANT_DECLINED, "coupon_code": None}]
     assert authority.issuance_finalizations[0]["status"] == "accepted_by_chatwoot"
 
 
@@ -247,6 +265,7 @@ def test_two_refusals_win_over_the_reason(tmp_path: Path) -> None:
 
     _sent(chatwoot, VARIANT_TWO_REFUSALS, [NAME, WHEN, PRODUCT], BARE)
     assert "coupon" not in authority.events
+    assert authority.records == [{"variant": VARIANT_TWO_REFUSALS, "coupon_code": None}]
 
 
 def test_no_balance_goes_out_with_its_own_coupon(tmp_path: Path) -> None:
@@ -259,6 +278,9 @@ def test_no_balance_goes_out_with_its_own_coupon(tmp_path: Path) -> None:
         [NAME, WHEN, PRODUCT, "mañana a las 11:00 a. m."],
         f"{BARE}&offDiscount={OWN_CODE}",
     )
+    assert authority.records == [
+        {"variant": VARIANT_INSUFFICIENT_FUNDS, "coupon_code": OWN_CODE}
+    ]
 
 
 def test_a_valid_coupon_of_another_case_wins_and_keeps_its_expiry(tmp_path: Path) -> None:
@@ -272,6 +294,7 @@ def test_a_valid_coupon_of_another_case_wins_and_keeps_its_expiry(tmp_path: Path
         f"{BARE}&offDiscount={OTHER_CODE}",
     )
     assert "coupon" not in authority.events
+    assert authority.records == [{"variant": VARIANT_COUPON, "coupon_code": OTHER_CODE}]
 
 
 @pytest.mark.parametrize("coupon_status", [None, "reserved", "created"])
@@ -309,6 +332,9 @@ def test_without_its_coupon_in_time_the_template_of_today_goes_out(
     assert message["template_params"]["name"] == PAYMENT_FAILURE_TEMPLATE
     assert message["content"] == _expected(PAYMENT_FAILURE_TEMPLATE, first=NAME, product=PRODUCT)
     assert "reserve_link" not in authority.events
+    # La plantilla de hoy no es una variante: no se registra nada, y el
+    # seguimiento sale como B2.
+    assert authority.records == []
 
 
 def test_a_link_that_cannot_be_issued_falls_back_to_the_template_of_today(

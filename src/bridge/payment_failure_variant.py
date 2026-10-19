@@ -89,6 +89,19 @@ _REPLAY_OUTCOMES = frozenset({
 
 
 @dataclass(frozen=True)
+class PaymentFailureFirstTouchReady(CartDiscountReady):
+    """B1 is built: the variant it sends and the coupon code it carries.
+
+    The dispatcher records both before the send
+    (``record_payment_failure_first_touch_v1``): the follow-up of the refused
+    payment is B2 or Z depending on whether B1 carried a coupon.
+    """
+
+    variant: str = ""
+    coupon_code: str | None = None
+
+
+@dataclass(frozen=True)
 class PaymentFailurePlanningConfig:
     """What the resolution worker needs to plan a refusal: its own scope and policy.
 
@@ -313,7 +326,7 @@ async def compose_payment_failure_first_touch(
         action.action_id,  # type: ignore[attr-defined]
         variant,
     )
-    return CartDiscountReady(
+    return PaymentFailureFirstTouchReady(
         message=message,
         template_name=template_name,
         template_params={
@@ -323,4 +336,6 @@ async def compose_payment_failure_first_touch(
             "processed_params": processed,
         },
         issuance_id=reservation.issuance_id,
+        variant=variant,
+        coupon_code=coupon_code,
     )
