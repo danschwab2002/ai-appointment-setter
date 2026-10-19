@@ -609,3 +609,104 @@ def test_a_suffix_is_refused_for_a_template_without_the_button() -> None:
         template.processed_params({"1": "María", "2": "Alimenta tu Tiroides"},
                                   button_suffix=A1_SUFFIX)
     assert error.value.detail == "unexpected_button_suffix"
+
+
+# --- La ficha de OXXO: C1 lleva el boton de la ficha primero -----------------
+# Captura del catalogo del inbox 11 del 18/10 ~20:05Z: att1_ficha_efectivo_01,
+# UTILITY, cuatro variables posicionales, primero el URL con la base fija de la
+# ficha de OXXO y despues «No más mensajes».
+SLIP_CATALOG = FIXTURES / "chatwoot_message_templates_inbox_11_ficha_20261018.json"
+SLIP_BUTTON = "https://customer-local-latam.ebanx.com/print/oxxo?hash={{1}}"
+SLIP_VALUES = {
+    "1": "María",
+    "2": "Alimenta tu Tiroides",
+    "3": "OXXO",
+    "4": "jueves 22 de octubre",
+}
+# El hash de la ficha capturada, anonimizado con el mismo largo (48 hex).
+SLIP_SUFFIX = "f" * 48
+
+
+def _slip_catalog() -> dict[str, Any]:
+    return json.loads(SLIP_CATALOG.read_text(encoding="utf-8"))
+
+
+def _parse_slip(payload=None, **overrides: Any):
+    arguments: dict[str, Any] = {
+        "template_name": "att1_ficha_efectivo_01",
+        "expected_language": "es_MX",
+        "expected_category": "UTILITY",
+        "parameter_count": 4,
+        "url_button": SLIP_BUTTON,
+    }
+    arguments.update(overrides)
+    return parse_approved_template(
+        payload if payload is not None else _slip_catalog(), **arguments
+    )
+
+
+def test_c1_is_accepted_with_the_button_of_the_slip() -> None:
+    template = _parse_slip()
+
+    assert template.has_checkout_button is True
+    assert template.button_url == SLIP_BUTTON
+    assert template.category == "UTILITY"
+    text = template.render(SLIP_VALUES)
+    assert text.startswith(
+        "Hola, María. Te dejo aquí tu ficha para pagar Alimenta tu Tiroides en OXXO,"
+    )
+    assert "Puedes pagarla en efectivo hasta el jueves 22 de octubre," in text
+    assert template.processed_params(SLIP_VALUES, button_suffix=SLIP_SUFFIX) == {
+        "body": SLIP_VALUES,
+        "buttons": [{"type": "url", "parameter": SLIP_SUFFIX}],
+    }
+
+
+def test_c1_is_refused_with_the_base_of_another_country() -> None:
+    # La de Chile llega con otra base: un sufijo pegado a la base aprobada de
+    # OXXO abriria una pagina rota.
+    with pytest.raises(ApprovedTemplateError) as error:
+        _parse_slip(url_button="https://api.ebanx.com/ws/redirect?hash={{1}}")
+    assert error.value.reason == "approved_template_mismatch"
+    assert error.value.detail == "checkout_button_not_first"
+
+
+def test_c1_is_refused_as_the_checkout_of_the_cart_and_without_the_button() -> None:
+    with pytest.raises(ApprovedTemplateError) as checkout:
+        _parse_slip(url_button=None, checkout_button=True)
+    assert checkout.value.detail == "checkout_button_not_first"
+    with pytest.raises(ApprovedTemplateError) as plain:
+        _parse_slip(url_button=None)
+    assert plain.value.detail == "unsupported_button"
+
+
+def test_the_seguimiento_with_only_its_url_still_parses_as_the_checkout() -> None:
+    # El precedente de la misma captura: un URL al checkout, solo.
+    template = _parse_slip(
+        template_name="att1_seguimiento_descuento_01",
+        expected_category="MARKETING",
+        parameter_count=2,
+        url_button=None,
+        checkout_button=True,
+    )
+    assert template.button_url == "https://pay.hotmart.com/{{1}}"
+
+
+@pytest.mark.parametrize(
+    "url_button",
+    [
+        "https://customer-local-latam.ebanx.com/print/oxxo?hash=",
+        "http://customer-local-latam.ebanx.com/print/oxxo?hash={{1}}",
+        "https://customer-local-latam.ebanx.com/{{1}}/x",
+        "https://customer local.com/{{1}}",
+        "https://customer-local-latam.ebanx.com/print/oxxo?hash={{2}}",
+    ],
+)
+def test_a_declared_url_button_must_have_the_shape_meta_approves(url_button: str) -> None:
+    with pytest.raises(ValueError, match="approved_template_url_button_invalid"):
+        _parse_slip(url_button=url_button)
+
+
+def test_the_checkout_and_another_url_at_once_is_an_error_of_the_caller() -> None:
+    with pytest.raises(ValueError, match="approved_template_url_button_conflict"):
+        _parse_slip(checkout_button=True)
