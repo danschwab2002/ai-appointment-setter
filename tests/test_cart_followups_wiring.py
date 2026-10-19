@@ -235,7 +235,7 @@ def test_with_the_flag_off_the_button_is_a_message_like_any_other(tmp_path: Path
 
 
 def test_a_failed_renewal_keeps_the_work_for_a_retry(tmp_path: Path) -> None:
-    supabase = _Renewal(SupabaseError("request_cart_renewal_v1_failed: HTTP 503"), identities=(FORM_ID,))
+    supabase = _Renewal(SupabaseError("request_recovery_renewal_v1_failed: HTTP 503"), identities=(FORM_ID,))
 
     chatwoot, shadow, app = _press(tmp_path, supabase)
 

@@ -27,7 +27,7 @@ Los pasos son datos de la política del carrito de la instancia, después del pr
 [
   {"step_key": "first_contact", "mode": "freeform"},
   {"step_key": "cart_second_touch", "mode": "freeform", "delay": "24 hours", "approved_template": true},
-  {"step_key": "cart_last_touch", "mode": "freeform", "delay": "72 hours", "approved_template": true}
+  {"step_key": "cart_last_touch", "mode": "freeform", "delay": "72 hours", "approved_template": true, "coupon_ordinal": 2}
 ]
 ```
 
@@ -35,7 +35,9 @@ con `max_automatic_messages = 3` y `expires_after = '5 days'`.
 
 - Al aceptarse un toque, el motor inserta el paso siguiente como `no_reply_review` con `due_at` = la aceptación de A1 más el `delay` (absoluto desde el primer envío, `20260813000100`). Z cae a las 72 h de A1 aunque A2 se haya corrido por el horario: la distancia mínima entre A2 y Z puede bajar de 48 h, y no se compensa.
 - El flujo de un paso siguiente sale de su `step_key` (`followup_steps.FOLLOWING_STEP_TRIGGERS`): los dos del carrito mapean a `cart_abandonment`, que es lo que el arranque del envío (`mark_lancemos_pilot_request_started`) autoriza con `PURCHASE_OUT_OF_SHOPPING_CART`.
-- `approved_template: true` dice que el paso sale con una plantilla aprobada, fuera de la ventana de 24 h. Es lo que la base lee para no pausarlo por la ventana ni por una conversación resuelta, y para que no frene la adopción de una respuesta (ver la migración).
+- Las dos marcas de un paso son genéricas, no del carrito (las reusan B2 y Z del pago rechazado):
+  - `approved_template: true`: el paso sale con una plantilla aprobada, fuera de la ventana de 24 h. La base no lo pausa por la ventana ni por una conversación resuelta, y no frena la adopción de una respuesta.
+  - `coupon_ordinal: 1 | 2`: el paso lleva un cupón personal con ese ordinal y nuestro link. La base siembra el cupón con la misma anticipación que el de A1 y emite el link para esa acción.
 
 ## El envío (bridge)
 
@@ -50,21 +52,24 @@ con `max_automatic_messages = 3` y `expires_after = '5 days'`.
 ## «Quiero mi 10 %» (bridge y base)
 
 - El webhook entrante, con el flag prendido y antes de la admisión, reconoce la respuesta exacta «Quiero mi 10 %» (sin mayúsculas, acentos, comillas ni espacios de más; con o sin espacio antes del %). Cualquier otro texto sigue el camino de siempre.
-- Llama a `request_cart_renewal_v1` con la conversación, el mensaje y la persona:
+- Llama a `request_recovery_renewal_v1` con la conversación, el mensaje y la persona:
   - `advanced`: había una Z pendiente de la persona en esa conversación. La base la marca como pedida y la pone a vencer ya. El agente no corre para ese mensaje.
   - `already_requested`: el mismo pedido otra vez (un reintento del webhook o un segundo toque del botón). El agente tampoco corre.
   - `no_pending_last_touch`: no hay Z pendiente. Sigue el camino de siempre: la admisión y el agente.
 - Con la Z marcada como pedida, la reevaluación no la cancela por la respuesta (`prospect_replied`). Cualquier otra causa la corta igual: la compra, la baja o la derivación.
 - El cupón 2 lo crea el worker de cupones cuando Z entra en su ventana, igual que el de A1. Hotmart lo aplica unos 5 minutos después de creado, así que una Z adelantada sale entre 5 y 20 minutos después del botón.
 
-## La base (migración, después de este PR)
+## La base (migración `20261019000600`)
 
-- `reevaluate_followup_action`: un `no_reply_review` cuyo paso de la política tiene `approved_template: true` no se pausa por la ventana de 24 h cerrada ni por una conversación resuelta. Z pedida por «Quiero mi 10 %» no se cancela por `prospect_replied`.
-- `admit_portable_inbound_commercial_case_v1`: ese mismo paso pendiente no frena la adopción de la respuesta a A1 o a A2.
-- `reserve_recovery_checkout_issuance_v1` acepta la acción del paso `cart_last_touch`.
-- `claim_due_recovery_coupons_v1` siembra el cupón 2 para el paso `cart_last_touch`, con la misma anticipación que el 1.
-- `plan_cart_recovery`: un carrito nuevo durante la secuencia no adelanta un `no_reply_review` pendiente (hoy hace `due_at = least(due_at, now())`).
-- `request_cart_renewal_v1`, nueva, solo `service_role`.
+- `_recovery_followup_step(action)`: el paso de la política de un `no_reply_review`. Solo `service_role`.
+- `reevaluate_followup_action`: un paso con `approved_template` no se pausa por la ventana de 24 h cerrada ni por una conversación resuelta. Un paso adelantado por `request_recovery_renewal_v1` no se cancela por `prospect_replied`.
+- `admit_portable_inbound_commercial_case_v1`: un paso con `approved_template` que espera no frena la adopción de la respuesta a A1 o a A2.
+- `claim_due_recovery_coupons_v1` siembra el cupón de un paso con `coupon_ordinal`, con la misma anticipación y vigencia que el de A1.
+- `reserve_recovery_checkout_issuance_v1` emite nuestro link también para un paso con `coupon_ordinal`.
+- `plan_cart_recovery`: un carrito nuevo durante la secuencia no adelanta un paso con `approved_template` (hasta ahora hacía `due_at = least(due_at, now())`).
+- `request_recovery_renewal_v1` (nueva) y `recovery_renewal_requests` (nueva): el pedido de la persona adelanta el paso pendiente con `coupon_ordinal` de esa conversación. Solo `service_role`.
+
+Ninguna política publicada antes de esta migración tiene las marcas: nada cambia hasta que la instancia publique una que las use.
 
 ## Qué lo corta
 

@@ -6139,7 +6139,7 @@ class SupabaseClient:
         same request again. ``no_pending_last_touch``: nothing to bring forward,
         the message follows the usual path.
         """
-        operation = "request_cart_renewal_v1"
+        operation = "request_recovery_renewal_v1"
         response = await self._request(
             "POST",
             f"/rest/v1/rpc/{operation}",

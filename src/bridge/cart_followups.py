@@ -11,7 +11,7 @@ and Z (2026-10-17), and in the decision of 2026-10-18 «A2 es uno solo»:
 
 The steps live in the cart policy of the instance after the first contact;
 the engine inserts each one when the previous one is accepted. «Quiero mi
-10 %» on A2 brings Z forward (``request_cart_renewal_v1``): Z is the renewal
+10 %» on A2 brings Z forward (``request_recovery_renewal_v1``): Z is the renewal
 with the payment ready, so the agent never creates coupons and there is no
 «Z without a code».
 
