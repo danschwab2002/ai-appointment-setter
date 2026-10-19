@@ -192,6 +192,7 @@ from bridge.payment_slip_first_touch import (
     PaymentSlipPlanningConfig,
 )
 from bridge.cart_first_touch import CartDiscountConfig
+from bridge.cart_followups import CartFollowupConfig, is_cart_renewal_request
 from bridge.payment_failure_variant import (
     VARIANT_COUPON,
     VARIANT_DECLINED,
@@ -261,6 +262,9 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # A1 del carrito con ese cupon y el link de recuperacion (decision de
     # Dan del 18/10); la plantilla y el precio son del runtime.
     "recovery_discount_first_touch_enabled",
+    # A2 y Z del carrito, despues de A1 (contrato portable-cart-followups-v1);
+    # las plantillas son del runtime y los pasos, de la politica de la instancia.
+    "recovery_cart_followups_enabled",
     "hotmart_purchase_worker_enabled",
     "lead_precheckout_enabled",
     # El adaptador de GHL traduce el formulario a lead.precheckout y lo manda
@@ -672,6 +676,12 @@ class Settings:
     recovery_discount_template_name: str | None = None
     recovery_discount_price: str | None = None
     recovery_discount_currency: str = "USD"
+    # A2 y Z del carrito (cart_followups). Apagado, los dos pasos cierran como
+    # cualquier paso siguiente del modo directo, y «Quiero mi 10 %» va al
+    # agente como cualquier mensaje.
+    recovery_cart_followups_enabled: bool = False
+    recovery_cart_second_touch_template_name: str | None = None
+    recovery_cart_last_touch_template_name: str | None = None
     precheckout_form_enabled: bool = False
     precheckout_form_token: str | None = None
     precheckout_max_age_seconds: int = 300
@@ -1209,6 +1219,15 @@ class Settings:
         recovery_discount_currency = (
             os.getenv("RECOVERY_DISCOUNT_CURRENCY", "USD").strip()
         )
+        recovery_cart_followups_enabled = (
+            os.getenv("RECOVERY_CART_FOLLOWUPS_ENABLED", "false").lower() == "true"
+        )
+        recovery_cart_second_touch_template_name = (
+            os.getenv("RECOVERY_CART_SECOND_TOUCH_TEMPLATE_NAME", "").strip() or None
+        )
+        recovery_cart_last_touch_template_name = (
+            os.getenv("RECOVERY_CART_LAST_TOUCH_TEMPLATE_NAME", "").strip() or None
+        )
         hotmart_api_credentials_file_value = (
             os.getenv("HOTMART_API_CREDENTIALS_FILE", "").strip()
         )
@@ -1724,6 +1743,13 @@ class Settings:
             recovery_discount_template_name=recovery_discount_template_name,
             recovery_discount_price=recovery_discount_price,
             recovery_discount_currency=recovery_discount_currency,
+            recovery_cart_followups_enabled=recovery_cart_followups_enabled,
+            recovery_cart_second_touch_template_name=(
+                recovery_cart_second_touch_template_name
+            ),
+            recovery_cart_last_touch_template_name=(
+                recovery_cart_last_touch_template_name
+            ),
             precheckout_form_enabled=precheckout_form_enabled,
             precheckout_form_token=precheckout_form_token,
             precheckout_max_age_seconds=precheckout_max_age_seconds,
@@ -2831,6 +2857,67 @@ def _validate_payment_slip_first_contact(settings: Settings) -> None:
             raise ValueError(
                 f"{env}_TEMPLATE_CATEGORY must be MARKETING or UTILITY for {flag}"
             )
+
+
+def _webhook_created_at(value: object) -> str | None:
+    """The moment of a Chatwoot webhook message, in ISO with its zone, or ``None``.
+
+    The ``message_created`` webhook carries it as ISO text
+    (``2026-09-28T18:39:45.415Z`` in the capture of conversation 200); a
+    message of the conversation history carries it as epoch seconds. Both are
+    accepted.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        if not math.isfinite(value) or value <= 0:
+            return None
+        return datetime.fromtimestamp(value, tz=UTC).isoformat()
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return None
+        return parsed.astimezone(UTC).isoformat()
+    return None
+
+
+def _cart_followup_config(
+    settings: Settings,
+    *,
+    cart_discount: CartDiscountConfig | None,
+    waba_template: WhatsAppTemplateConfig | None,
+) -> CartFollowupConfig | None:
+    """A2 y Z del carrito, o ``None`` con el flag apagado.
+
+    Siguen a A1 con cupon: A2 dice que el 10 % ya vencio y Z manda el cupon 2.
+    Sin A1 con cupon, sin plantillas o sin el worker del cupon (Z), no arranca
+    en vez de mandar un toque que promete algo que no existe.
+    """
+    if not settings.recovery_cart_followups_enabled:
+        return None
+    flag = "RECOVERY_CART_FOLLOWUPS_ENABLED=true"
+    if cart_discount is None or waba_template is None:
+        raise ValueError(f"{flag} requires RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED=true")
+    second = settings.recovery_cart_second_touch_template_name
+    last = settings.recovery_cart_last_touch_template_name
+    if second is None and last is None:
+        raise ValueError(
+            f"{flag} requires RECOVERY_CART_SECOND_TOUCH_TEMPLATE_NAME or "
+            "RECOVERY_CART_LAST_TOUCH_TEMPLATE_NAME"
+        )
+    if last is not None and not settings.recovery_coupon_worker_enabled:
+        raise ValueError(
+            "RECOVERY_CART_LAST_TOUCH_TEMPLATE_NAME requires "
+            "RECOVERY_COUPON_WORKER_ENABLED=true"
+        )
+    return CartFollowupConfig(
+        language=waba_template.language,
+        second_touch_template=second,
+        last_touch_template=last,
+    )
 
 
 def _payment_slip_reminder_settings(
@@ -4790,6 +4877,11 @@ def create_app(
             )
             # Un precio que no se puede decir corta el arranque, no el envio.
             format_price(cart_discount.price, cart_discount.currency)
+        cart_followups = _cart_followup_config(
+            settings,
+            cart_discount=cart_discount,
+            waba_template=waba_template,
+        )
         durable_dispatcher = DurableDispatcher(
             supabase=shared_supabase,
             worker_id=settings.dispatcher_worker_id,
@@ -4846,6 +4938,7 @@ def create_app(
                 and outbound_sender.whatsapp_equivalence_enabled
             ),
             cart_discount=cart_discount,
+            cart_followups=cart_followups,
             payment_slip=(
                 PaymentSlipFirstTouchConfig(
                     methods=settings.instance_manifest.payment_slip_methods
@@ -5075,6 +5168,52 @@ def create_app(
             external_conversation_id=external_conversation_id,
             external_user_id=external_user_id,
         )
+
+    async def request_cart_renewal(
+        *,
+        payload: dict[str, object],
+        conversation_id: int,
+        external_user_id: str,
+    ) -> bool:
+        """«Quiero mi 10 %»: ask the base to bring the pending Z forward.
+
+        Returns whether the message is handled (``advanced`` or
+        ``already_requested``). Without a pending Z, or without the message id
+        and time to record it, the message follows the usual path: the
+        admission and the agent.
+        """
+        assert shared_supabase is not None
+        message_id = payload.get("id")
+        occurred_at = _webhook_created_at(payload.get("created_at"))
+        if (
+            settings.chatwoot_account_id is None
+            or settings.chatwoot_inbox_id is None
+            or not isinstance(message_id, int)
+            or isinstance(message_id, bool)
+            or message_id < 1
+            or occurred_at is None
+        ):
+            logger.warning(
+                "cart_renewal_evidence_incomplete conversation=%s", conversation_id
+            )
+            return False
+        try:
+            outcome = await shared_supabase.request_cart_renewal(
+                chatwoot_account_id=settings.chatwoot_account_id,
+                chatwoot_inbox_id=settings.chatwoot_inbox_id,
+                chatwoot_conversation_id=conversation_id,
+                chatwoot_message_id=message_id,
+                external_user_id=external_user_id,
+                occurred_at=occurred_at,
+            )
+        except SupabaseError as exc:
+            raise RetryableChatwootWorkError("cart_renewal_request_failed") from exc
+        logger.info(
+            "cart_renewal_requested outcome=%s conversation=%s",
+            outcome,
+            conversation_id,
+        )
+        return outcome in {"advanced", "already_requested"}
 
     async def _recent_payment_failure_context(
         wa_id: str | None,
@@ -5762,6 +5901,19 @@ def create_app(
                 external_user_id,
                 conversation_id=conversation_id,
             )
+            if (
+                settings.recovery_cart_followups_enabled
+                and whatsapp_inbound_equivalence
+                and is_cart_renewal_request(payload.get("content"))
+                and await request_cart_renewal(
+                    payload=payload,
+                    conversation_id=conversation_id,
+                    external_user_id=external_user_id,
+                )
+            ):
+                # «Quiero mi 10 %» on A2 brought Z forward: Z is the answer,
+                # the agent does not run for this message.
+                return
             if settings.chatwoot_post_inbound_discount_planning_enabled:
                 assert settings.commercial_ally_discount_policy_key is not None
                 assert settings.commercial_ally_discount_policy_version is not None

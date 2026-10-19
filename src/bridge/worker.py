@@ -27,6 +27,17 @@ from bridge.cart_first_touch import (
     CartDiscountStop,
     compose_cart_discount_first_touch,
 )
+from bridge.cart_followups import (
+    CART_FOLLOWUP_STEPS,
+    CART_LAST_TOUCH_STEP,
+    CART_LAST_TOUCH_VARIABLES,
+    CART_SECOND_TOUCH_VARIABLES,
+    CartFollowupConfig,
+    CartFollowupOutcome,
+    CartFollowupReady,
+    compose_cart_last_touch,
+    compose_cart_second_touch,
+)
 from bridge.checkout_issuance import generate_issuance_ulid
 from bridge.approved_templates import (
     REASON_MISMATCH as APPROVED_TEMPLATE_MISMATCH,
@@ -83,7 +94,8 @@ from bridge.payment_slip_first_touch import (
     compose_payment_slip_first_touch,
     payment_slip_ingestion_reason,
 )
-from bridge.payment_slip_reminders import FOLLOWING_STEP_TRIGGERS, PAYMENT_SLIP_STEPS
+from bridge.followup_steps import FOLLOWING_STEP_TRIGGERS
+from bridge.payment_slip_reminders import PAYMENT_SLIP_STEPS
 from bridge.phones import equivalent_whatsapp_phones, whatsapp_phone_region
 from bridge.product_routes import HotmartUnrouted, ProductRoutes
 from bridge.recovery_agent import (
@@ -136,7 +148,7 @@ def _flow_trigger(action: ScheduledAction) -> str:
     ``precheckout_intent``, ...), so the anchor says it. A following step
     (``no_reply_review``) is anchored to the accepted message of the step
     before it: its flow comes from its step key
-    (``payment_slip_reminders.FOLLOWING_STEP_TRIGGERS``). A step key nobody
+    (``followup_steps.FOLLOWING_STEP_TRIGGERS``). A step key nobody
     declared keeps the anchor, which is what every following step did before.
     """
     if action.action_type == "no_reply_review":
@@ -777,6 +789,7 @@ class DurableDispatcher:
         lead_first_name_greeting_enabled: bool = False,
         whatsapp_equivalence_enabled: bool = False,
         cart_discount: CartDiscountConfig | None = None,
+        cart_followups: CartFollowupConfig | None = None,
         payment_slip: PaymentSlipFirstTouchConfig | None = None,
         payment_failure_variants: PaymentFailureVariantsConfig | None = None,
     ) -> None:
@@ -790,6 +803,9 @@ class DurableDispatcher:
             # A1 with the personal coupon is an approved template sent by the
             # direct mode, with the final Meta gate; never a Hermes draft.
             raise ValueError("cart discount requires the approved template direct mode")
+        if cart_followups is not None and not approved_template_direct:
+            # A2 and Z are approved templates sent by the direct mode.
+            raise ValueError("cart followups require the approved template direct mode")
         if payment_slip is not None and (
             not approved_template_direct
             or waba_template is None
@@ -888,6 +904,7 @@ class DurableDispatcher:
         self._chatwoot_inbox_id = chatwoot_inbox_id
         self._approved_template_direct = approved_template_direct
         self._cart_discount = cart_discount
+        self._cart_followups = cart_followups
         self._payment_slip = payment_slip
         self._payment_failure_variants = payment_failure_variants
         self._lead_first_name_greeting_enabled = lead_first_name_greeting_enabled
@@ -1170,11 +1187,20 @@ class DurableDispatcher:
         step_key: str | None = None
         if action.action_type != "first_contact_review":
             # The only following steps this mode sends are the reminders of a
-            # payment slip (C2, C3): every other one closes as before.
+            # payment slip (C2, C3) and, when the instance turns them on, A2
+            # and Z of the cart: every other one closes as before.
+            slip_step = (
+                trigger_kind == PAYMENT_SLIP_TRIGGER
+                and action.step_key in PAYMENT_SLIP_STEPS
+            )
+            cart_step = (
+                self._cart_followups is not None
+                and trigger_kind == CART_ABANDONMENT_TRIGGER
+                and action.step_key in CART_FOLLOWUP_STEPS
+            )
             if not (
                 action.action_type == "no_reply_review"
-                and trigger_kind == PAYMENT_SLIP_TRIGGER
-                and action.step_key in PAYMENT_SLIP_STEPS
+                and (slip_step or cart_step)
             ):
                 return _ApprovedTemplateComposition(
                     failure_reason=APPROVED_TEMPLATE_DIRECT_UNSUPPORTED_ACTION,
@@ -1185,7 +1211,15 @@ class DurableDispatcher:
         assert template is not None
         assert self._chatwoot is not None
         assert self._chatwoot_inbox_id is not None
-        if step_key is not None:
+        if step_key is not None and step_key in CART_FOLLOWUP_STEPS:
+            assert self._cart_followups is not None
+            template_name = self._cart_followups.template_for(step_key)
+            declared = (
+                CART_LAST_TOUCH_VARIABLES
+                if step_key == CART_LAST_TOUCH_STEP
+                else CART_SECOND_TOUCH_VARIABLES
+            )
+        elif step_key is not None:
             step_template = template.payment_slip_step(step_key)
             template_name = step_template.name if step_template is not None else None
             declared = (
@@ -1271,6 +1305,16 @@ class DurableDispatcher:
             return _ApprovedTemplateComposition(
                 failure_reason=APPROVED_TEMPLATE_PARAMETERS_MISSING,
                 retryable=False,
+            )
+        if step_key is not None and step_key in CART_FOLLOWUP_STEPS:
+            return await self._compose_cart_followup_proposal(
+                action=action,
+                attempt=attempt,
+                step_key=step_key,
+                name_value=name_value or "",
+                product_name=product_name or "",
+                buyer_phone=execution_context.buyer_phone,
+                greeting_name=greeting_name,
             )
         if trigger_kind == PAYMENT_SLIP_TRIGGER:
             return await self._compose_payment_slip_proposal(
@@ -1440,6 +1484,104 @@ class DurableDispatcher:
                 message=message,
             ),
             greeting_name=greeting_name,
+        )
+
+    async def _compose_cart_followup_proposal(
+        self,
+        *,
+        action: ScheduledAction,
+        attempt: DeliveryAttempt | None,
+        step_key: str,
+        name_value: str,
+        product_name: str,
+        buyer_phone: str | None,
+        greeting_name: str | None,
+    ) -> _ApprovedTemplateComposition:
+        """A2 or Z of the cart: its approved template, and for Z coupon 2 and the link.
+
+        Nothing falls back to another template: a step that cannot be built
+        closes without a message. Only an unreadable catalog, a catalog that
+        does not close, or coupon 2 still being created retries.
+        """
+        config = self._cart_followups
+        assert config is not None
+        assert self._chatwoot is not None
+        assert self._chatwoot_inbox_id is not None
+        if step_key == CART_LAST_TOUCH_STEP and attempt is None:
+            # Z issues a link for its attempt: without one it cannot be built.
+            return _ApprovedTemplateComposition(
+                failure_reason="cart_last_touch_attempt_missing", retryable=False
+            )
+        try:
+            inbox = await self._chatwoot.get_inbox(inbox_id=self._chatwoot_inbox_id)
+        except (httpx.HTTPError, ChatwootProtocolError) as exc:
+            logger.warning(
+                "approved_template_catalog_unavailable action_id=%s error=%s",
+                action.action_id,
+                type(exc).__name__,
+            )
+            return _ApprovedTemplateComposition(
+                failure_reason=APPROVED_TEMPLATE_UNAVAILABLE
+            )
+        outcome: CartFollowupOutcome
+        if step_key == CART_LAST_TOUCH_STEP:
+            assert attempt is not None
+            outcome = await compose_cart_last_touch(
+                config=config,
+                supabase=self._supabase,
+                inbox=inbox,
+                action=action,
+                attempt=attempt,
+                buyer_name=name_value,
+                product_name=product_name,
+                buyer_phone=buyer_phone,
+                worker_id=self._worker_id,
+                now=self._clock(),
+                ulid_factory=generate_issuance_ulid,
+            )
+        else:
+            outcome = compose_cart_second_touch(
+                config=config,
+                inbox=inbox,
+                buyer_name=name_value,
+                product_name=product_name,
+            )
+        if isinstance(outcome, CartFollowupReady):
+            logger.info(
+                "cart_followup_ready action_id=%s step=%s",
+                action.action_id,
+                step_key,
+            )
+            return _ApprovedTemplateComposition(
+                proposal=FollowupMessageProposal(
+                    strategy=f"approved_template:{outcome.template_name}",
+                    message=outcome.message,
+                ),
+                greeting_name=greeting_name,
+                template_name=outcome.template_name,
+                template_params=outcome.template_params,
+                issuance_id=outcome.issuance_id,
+            )
+        if isinstance(outcome, CartDiscountDefer):
+            logger.info(
+                "cart_followup_deferred action_id=%s step=%s retry_after_s=%s",
+                action.action_id,
+                step_key,
+                int(outcome.retry_after.total_seconds()),
+            )
+            return _ApprovedTemplateComposition(
+                failure_reason=outcome.reason,
+                retry_after=outcome.retry_after,
+            )
+        logger.warning(
+            "cart_followup_stopped action_id=%s step=%s reason=%s",
+            action.action_id,
+            step_key,
+            outcome.reason,
+        )
+        return _ApprovedTemplateComposition(
+            failure_reason=outcome.reason,
+            retryable=outcome.retryable,
         )
 
     async def _compose_payment_slip_proposal(

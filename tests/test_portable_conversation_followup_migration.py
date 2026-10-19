@@ -336,7 +336,7 @@ def test_the_inventories_and_the_sql_suite_know_the_function() -> None:
     assert f"('{signature}')" in ACL_INVENTORY.read_text(encoding="utf-8")
     acl_validator = (SQL_SUITE / "validate_acl_hardening.mjs").read_text(encoding="utf-8")
     assert f"('{PORTABLE}({ARGS_CATALOG})')" in acl_validator
-    assert "result.expected_count !== 142" in acl_validator
+    assert "result.expected_count !== 145" in acl_validator
     # Lee human_handoff_requests: el validador de Postgres real la permite.
     handoff = (SQL_SUITE / "validate_handoff_postgres.py").read_text(encoding="utf-8")
     assert f"'{PORTABLE}'," in handoff

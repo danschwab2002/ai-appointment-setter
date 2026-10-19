@@ -85,6 +85,9 @@ const after = await snapshot();
 for (const name of migrationNames.slice(targetIndex + 1)) {
   await db.exec(sqlOf(join(root, 'supabase/migrations', name)));
 }
+// La cadena completa: la segunda corrida se compara contra esto, no contra
+// `after`, porque una migracion posterior puede redefinir otras funciones.
+const settled = await snapshot();
 
 const HELPER = 'recovery_coupon_was_delivered(uuid)';
 const PATCHED = [
@@ -123,8 +126,8 @@ try {
 await db.exec('rollback').catch(() => {});
 const afterRerun = await snapshot();
 if (rerun === null
-    || [...after.keys()].some((signature) => afterRerun.get(signature)?.definition
-      !== after.get(signature).definition)) {
+    || [...settled.keys()].some((signature) => afterRerun.get(signature)?.definition
+      !== settled.get(signature).definition)) {
   fail('rerun', rerun);
 }
 results.migration = {
