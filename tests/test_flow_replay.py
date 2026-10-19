@@ -463,26 +463,37 @@ def test_a_purchase_before_e_ends_the_run_without_a_send_or_an_authorization() -
     assert sum(result.bolsa_by_day.values()) == 0
 
 
-@pytest.mark.parametrize(("bought", "end"), [
-    ("2026-10-09T12:00:00.000000Z", "enviado"),   # 30 h antes: el legado no la vincula
-    ("2026-10-10T17:54:59.999000Z", "enviado"),   # un milisegundo antes de los 5 minutos
-    ("2026-10-10T17:55:00.000000Z", "compro"),    # justo 5 minutos antes: cuenta
+@pytest.mark.parametrize(("bought", "offer"), [
+    ("2026-10-09T12:00:00.000000Z", None),         # 30 h antes, la misma oferta
+    ("2026-10-10T17:54:59.999000Z", None),         # un milisegundo antes de los 5 minutos
+    ("2026-10-10T17:55:00.000000Z", None),         # justo 5 minutos antes
+    ("2026-10-09T12:00:00.000000Z", "otraofer"),   # 30 h antes, otra oferta del producto
 ])
-def test_a_purchase_of_the_same_offer_before_the_firing_counts_from_five_minutes_before(bought: str,
-                                                                                        end: str) -> None:
-    # 4b: la compra que el legado vincula al crear el caso es la de la misma oferta aprobada desde
-    # 5 minutos antes del disparo (20260808000200:70-77). La de antes no corta.
-    events = [purchase(50, bought, who=1), T1.cart(1, "2026-10-10T18:00:00.000000Z", who=1)]
+def test_a_purchase_of_the_product_at_any_time_before_the_firing_ends_the_run(bought: str,
+                                                                              offer: str | None) -> None:
+    # 20261019000300: la reevaluacion cancela el primer toque si la misma persona compro el producto,
+    # de cualquier oferta y sin ventana (_portable_case_purchase_stop_reason). Antes cortaba solo la de
+    # la misma oferta aprobada desde 5 minutos antes del disparo (20260808000200:70-77).
+    extra = {} if offer is None else {"offer": offer}
+    events = [purchase(50, bought, who=1, **extra), T1.cart(1, "2026-10-10T18:00:00.000000Z", who=1)]
     run = _run(replay(history(events), VERSIONS, V4), T1.uid(1))
     assert run.start.starts
-    assert run.end == end
-    assert run.sends == (() if end == "compro" else (at("2026-10-10T18:00:00Z"),))
+    assert (run.end, run.sends) == ("compro", ())
 
 
-def test_a_purchase_of_another_offer_after_the_firing_does_not_end_the_run() -> None:
-    # La misma oferta: offer_code is not distinct from (20260808000100:202). Otra no corta.
+def test_a_purchase_of_another_offer_after_the_firing_ends_the_run() -> None:
+    # 20261019000300: otra oferta del mismo producto corta igual (antes no: offer_code is not distinct
+    # from, 20260808000100:202). Compra a las 08:00Z, antes del envio de las 15:00Z: no manda nada.
     events = [T1.cart(1, "2026-10-10T05:00:00.000000Z", who=1),
               purchase(50, "2026-10-10T08:00:00.000000Z", who=1, offer="otraofer")]
+    run = _run(replay(history(events), VERSIONS, V4), T1.uid(1))
+    assert (run.end, run.sends, run.end_at) == ("compro", (), at("2026-10-10T08:00:00Z"))
+
+
+def test_a_purchase_of_another_person_does_not_end_the_run() -> None:
+    # El control: la compra del producto de otra persona no corta.
+    events = [T1.cart(1, "2026-10-10T05:00:00.000000Z", who=1),
+              purchase(50, "2026-10-10T08:00:00.000000Z", who=2, offer="otraofer")]
     run = _run(replay(history(events), VERSIONS, V4), T1.uid(1))
     assert (run.end, run.sends) == ("enviado", (at("2026-10-10T15:00:00Z"),))
 

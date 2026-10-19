@@ -136,9 +136,8 @@ OPEN_CASE_STATUSES = frozenset({"grace_period", "active", "paused"})
 ALWAYS_LAYERS = ("sql", "despacho")
 # F#11 (20260904000100:142-154): la repeticion del pago fallido adelanta la accion.
 F11_LEGACY_KIND = "pago_fallido"
-# La compra que corta un recorrido: la de la misma oferta (offer_code is not distinct from,
-# 20260808000100:202) aprobada desde 5 minutos antes del disparo (20260808000200:70-77).
-PURCHASE_LOOKBACK = timedelta(minutes=5)
+# La compra que corta un recorrido: cualquiera del mismo producto y la misma persona, de cualquier
+# oferta y a cualquier hora (_portable_case_purchase_stop_reason, 20261019000300).
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 _MAX_POPS = 1_000_000
 
@@ -976,12 +975,17 @@ class _Replayer:
     def purchase_at(self, run: _Run) -> datetime | None:
         """La compra que corta el recorrido, como la vincula el legado: una sola regla.
 
-        La primera compra de la persona del mismo producto y la misma oferta
-        (``offer_code is not distinct from``, ``20260808000100:202``) aprobada
-        desde 5 minutos antes del disparo (``20260808000200:70-77``). La que se
-        aprobo antes de que llegara el disparo la vincula el legado al crear el
-        caso: el recorrido nace ganado, y la hora que se devuelve es a lo sumo la
-        del disparo.
+        La primera compra de la persona del mismo producto, de cualquier oferta y
+        sin ventana: desde ``20261019000300`` la reevaluacion cancela el toque de
+        un caso portable si la misma persona compro el producto
+        (``_portable_case_purchase_stop_reason``). Antes cortaba solo la de la
+        misma oferta (``offer_code is not distinct from``, ``20260808000100:202``)
+        aprobada desde 5 minutos antes del disparo (``20260808000200:70-77``), que
+        sigue ganando el caso al aprobarse. La que se aprobo antes de que llegara
+        el disparo frena el primer toque: el recorrido no manda nada, y la hora
+        que se devuelve es a lo sumo la del disparo. La de otra oferta despues del
+        disparo la cancela la reevaluacion del toque siguiente; el replay cierra
+        el recorrido a la hora de la compra, con los mismos envios.
         """
         firing = run.firing
         if firing.contact_ref is not None:
@@ -991,10 +995,8 @@ class _Replayer:
         if not keys:
             return None
         product = self.history.external_product.get(firing.source_ref)
-        since = firing.at - PURCHASE_LOOKBACK
         fact = next((fact for fact in self.history.purchases
-                     if fact.product_id == product and fact.offer_ref == firing.offer_ref and fact.keys & keys
-                     and fact.at >= since), None)
+                     if fact.product_id == product and fact.keys & keys), None)
         if fact is None:
             return None
         return min(fact.at, firing.at) if fact.at < firing.received_at else fact.at
