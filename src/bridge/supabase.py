@@ -6122,6 +6122,50 @@ class SupabaseClient:
             ),
         )
 
+    async def request_cart_renewal(
+        self,
+        *,
+        chatwoot_account_id: int,
+        chatwoot_inbox_id: int,
+        chatwoot_conversation_id: int,
+        chatwoot_message_id: int,
+        external_user_id: str,
+        occurred_at: str,
+    ) -> str:
+        """«Quiero mi 10 %» on A2: bring the pending Z of the cart forward.
+
+        ``advanced``: the person had a pending Z in that conversation; the base
+        marks it as requested and makes it due now. ``already_requested``: the
+        same request again. ``no_pending_last_touch``: nothing to bring forward,
+        the message follows the usual path.
+        """
+        operation = "request_cart_renewal_v1"
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps(
+                {
+                    "p_chatwoot_account_id": chatwoot_account_id,
+                    "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                    "p_chatwoot_conversation_id": chatwoot_conversation_id,
+                    "p_chatwoot_message_id": chatwoot_message_id,
+                    "p_external_user_id": external_user_id,
+                    "p_occurred_at": occurred_at,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if response.status_code != 200:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        return _required_enum(
+            rows[0],
+            "outcome",
+            {"advanced", "already_requested", "no_pending_last_touch"},
+            operation=operation,
+        )
     async def has_chatwoot_opt_out_stop(
         self,
         *,

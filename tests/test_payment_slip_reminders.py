@@ -330,7 +330,8 @@ def test_a_reminder_without_its_template_closes_without_a_message(tmp_path: Path
 
 
 def test_a_following_step_of_another_flow_still_closes_unsupported(tmp_path: Path) -> None:
-    # Un no_reply_review del carrito (A2 todavia no existe en este modo).
+    # Un no_reply_review del carrito con A2 y Z apagados (el dispatcher de esta
+    # prueba no tiene cart_followups): cierra como antes.
     authority = _ReminderAuthority("cart_second_touch", anchor_type="cart_abandonment")
 
     chatwoot = _run(authority, tmp_path, clock=C2_AT)
@@ -342,7 +343,7 @@ def test_a_following_step_of_another_flow_still_closes_unsupported(tmp_path: Pat
 def test_the_flow_of_an_action_comes_from_its_anchor_or_from_its_step() -> None:
     first = _SlipAuthority().action
     reminder = _ReminderAuthority(PAYMENT_SLIP_DUE_EVE_STEP).action
-    unknown = replace(reminder, step_key="cart_second_touch")
+    unknown = replace(reminder, step_key="some_undeclared_step")
     payment_failure = replace(first, anchor_type="payment_failure")
 
     assert _flow_trigger(first) == "payment_slip"
