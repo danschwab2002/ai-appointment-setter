@@ -12,6 +12,19 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.15.1] - 2026-10-19
+
+Un parche sobre la 1.15.0: el recordatorio del vencimiento de la ficha ya no se cancela porque la persona conteste (#280). Lleva una migración y no cambia el bridge.
+
+### Arreglado
+
+- **El recordatorio de la ficha sobrevive a una respuesta.** Hasta acá, si la persona escribía después del toque anterior, el recordatorio del vencimiento (C2 o C3) se cancelaba con `prospect_replied`. Ahora sale igual el día que le toca, como pide la especificación: es utilidad sobre un pago que la persona generó, y el agente toma la respuesta igual. Lo siguen frenando la baja (botón o frase), la compra de cualquier oferta y una persona del equipo que escribe o toma la conversación. En cualquier otro flujo, una respuesta sigue cancelando el seguimiento. Contrato: [docs/contracts/portable-payment-slip-reminders-v1.md](docs/contracts/portable-payment-slip-reminders-v1.md).
+
+### Qué hace quien actualiza
+
+- **Correr la migración `20261019000800_portable_payment_slip_reminder_survives_reply_v1.sql`.** Redefine una sola función, `reevaluate_followup_action`, desde su definición viva con un reemplazo contado (si el texto no coincide, aborta sin cambiar nada). Sin paso manual y sin cambios de permisos. Con la ficha prendida, cambia desde que se aplica.
+- **El bridge no cambia:** la imagen 1.15.0 anda sobre la base migrada.
+
 ## [1.15.0] - 2026-10-19
 
 Una versión menor sobre la 1.14.0 con el seguimiento del pago rechazado (#278), apagado por defecto: B2 o Z, 24 h después de B1, y nada más. Lleva una migración.
