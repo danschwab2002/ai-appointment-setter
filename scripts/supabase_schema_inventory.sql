@@ -5020,6 +5020,36 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         4,
         'portable_payment_slip_reminders'
+    union all
+    select
+        '20261019000500',
+        '20261019000500_payment_failure_other_coupon_delivered_v1.sql',
+        -- La regla de si un cupon le llego a la persona: definer y de nadie de
+        -- la API (la llaman las dos funciones security definer de B1).
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.recovery_coupon_was_delivered(uuid)')
+              and prosecdef
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- Las dos funciones de B1 que buscan el cupon de otro caso la usan.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.payment_failure_wants_first_coupon(uuid)')
+              and position('public.recovery_coupon_was_delivered(coupon.id)' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_portable_payment_failure_send_context_v1(uuid,text,bigint,timestamptz)')
+              and position('public.recovery_coupon_was_delivered(coupon.id)' in definition) > 0
+        )::int,
+        3,
+        'payment_failure_other_coupon_delivered'
 )
 select
     version,
