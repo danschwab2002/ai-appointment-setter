@@ -12,6 +12,10 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.10.1] - 2026-10-19
+
+Un parche sobre la 1.10.0 con un solo arreglo, el del monitor de trabadas.
+
 ### Corregido
 
 - **El monitor de trabadas lista por última actividad y corta en su ventana** (#262). Antes pedía todas las abiertas del inbox, sin orden, y el detalle y 20 mensajes de cada una, para después descartar las que tenían el último mensaje fuera de `CHATWOOT_STALLED_MAX_AGE_SECONDS`. Las abiertas crecen con cada plantilla sin respuesta (en ATT1, 234 el 2026-10-18, 175 de gente que nunca escribió), y pasado `CHATWOOT_STALLED_MAX_PAGES` el barrido fallaba cerrado con `conversation_scan_incomplete`: no rescataba ninguna trabada y `/ready` daba 503. Ahora pide `sort_by=last_activity_at_desc` y corta en la primera conversación más vieja que la ventana más una hora, igual que el barrido del seguimiento con cupón. El barrido depende de las conversaciones con actividad reciente, no del total.
