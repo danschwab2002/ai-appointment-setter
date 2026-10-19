@@ -42,6 +42,12 @@ PAYMENT_SLIP_REASONS = frozenset({
 
 DueDateSource = Literal["reference", "generated_plus_days"]
 
+# Las variables que la plantilla de la ficha puede pedir, por nombre del
+# manifiesto (``[plantillas.ficha].parametros``), en el orden de la plantilla
+# aprobada de ATT1 (att1_ficha_efectivo_01): {{1}} nombre, {{2}} producto,
+# {{3}} tienda, {{4}} vencimiento.
+PAYMENT_SLIP_TEMPLATE_PARAMETERS = ("nombre", "producto", "tienda", "vencimiento")
+
 # El sufijo va como variable de un boton URL de Meta: solo caracteres que no
 # cambian la URL (sin '&', '#', '/', '%' ni espacios). El hash medido de OXXO
 # tiene 48 hex en minuscula; el patron no lo fija para no atarse a un proveedor.

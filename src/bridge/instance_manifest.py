@@ -29,6 +29,11 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .commercial_ally import CommercialAllyConfig, OfferLanding
+from .payment_slip import (
+    PAYMENT_SLIP_TEMPLATE_PARAMETERS,
+    PaymentSlipMethod,
+    parse_payment_slip_methods,
+)
 
 SCHEMA = "setter-instancia/v2"
 
@@ -63,17 +68,38 @@ _GHL_RISK_PLACEHOLDER_CHARS = ("<", ">")
 # Los flujos que usan una intencion como permiso o como audiencia sin mirar la
 # base: con [adaptadores.ghl] y sin la aceptacion no se prenden.
 GHL_RISK_GATED_FLOWS = ("precheckout", "pago_fallido")
+# La ficha de pago (C1) tambien usa la intencion como permiso: su planificador
+# se deriva del del pago fallido. No entra en GHL_RISK_GATED_FLOWS para no
+# cambiar lo que esa lista ya publica (el log del arranque y validate); la
+# guarda del riesgo la suma aparte (INTENT_PERMISSION_FLOWS).
+INTENT_PERMISSION_FLOWS = GHL_RISK_GATED_FLOWS + ("ficha",)
 
-EVENTS = ("intencion", "carrito", "pago_fallido", "compra", "entrante")
+EVENTS = ("intencion", "carrito", "pago_fallido", "compra", "entrante", "ficha_impresa")
 FLOWS = ("inbound", "precheckout", "carrito", "pago_fallido", "reactivacion", "descuento")
-TEMPLATE_SLOTS = ("precheckout", "carrito", "pago_fallido", "reactivacion", "descuento")
+# Los flujos que un manifiesto puede no declarar: sin la clave, el flujo esta
+# apagado y ``flows`` no la trae, asi que un manifiesto anterior carga y se lee
+# igual que antes. ``flow_enabled`` los lee a los dos.
+OPTIONAL_FLOWS = ("ficha",)
+TEMPLATE_SLOTS = (
+    "precheckout", "carrito", "pago_fallido", "reactivacion", "descuento", "ficha",
+)
 # Las variables del cuerpo que una plantilla de primer contacto puede pedir, en el
 # orden en que la plantilla aprobada las numera ({{1}}, {{2}}). Por defecto son las
 # dos que el bridge manda hoy. Reactivacion y descuento arman sus parametros en su
 # propio modulo, asi que no aceptan ``parametros``.
 TEMPLATE_PARAMETERS = ("nombre", "producto")
 DEFAULT_TEMPLATE_PARAMETERS = ("nombre", "producto")
-PARAMETERIZED_TEMPLATE_SLOTS = ("precheckout", "carrito", "pago_fallido")
+PARAMETERIZED_TEMPLATE_SLOTS = ("precheckout", "carrito", "pago_fallido", "ficha")
+# La plantilla de la ficha tiene su propio vocabulario: el nombre y el producto,
+# como las otras, y la tienda y el vencimiento que salen de [[ficha.medios]]
+# (docs/contracts/portable-payment-slip-first-contact-v1.md). Por defecto, las
+# cuatro en el orden de la plantilla aprobada de ATT1.
+SLOT_TEMPLATE_PARAMETERS: Mapping[str, tuple[str, ...]] = MappingProxyType({
+    "ficha": PAYMENT_SLIP_TEMPLATE_PARAMETERS,
+})
+SLOT_DEFAULT_TEMPLATE_PARAMETERS: Mapping[str, tuple[str, ...]] = MappingProxyType({
+    "ficha": PAYMENT_SLIP_TEMPLATE_PARAMETERS,
+})
 OFFER_ORIGINS = ("pauta", "organico", "otro")
 
 # Lo que cada flujo necesita para poder prenderse: el evento que lo dispara y la
@@ -86,6 +112,7 @@ FLOW_REQUIREMENTS: Mapping[str, tuple[str, str | None]] = MappingProxyType({
     "pago_fallido": ("pago_fallido", "pago_fallido"),
     "reactivacion": ("entrante", "reactivacion"),
     "descuento": ("entrante", "descuento"),
+    "ficha": ("ficha_impresa", "ficha"),
 })
 
 _TOP_KEYS_REQUIRED = {
@@ -102,7 +129,7 @@ _TOP_KEYS_REQUIRED = {
     "flujos",
     "guardas",
 }
-_TOP_KEYS_OPTIONAL = {"slack", "revision_diaria", "adaptadores", "productos"}
+_TOP_KEYS_OPTIONAL = {"slack", "revision_diaria", "adaptadores", "productos", "ficha"}
 
 # La etiqueta de Chatwoot de un producto. Chatwoot pasa el titulo a minusculas y
 # acepta letras, numeros, guiones y guiones bajos.
@@ -273,6 +300,17 @@ class InstanceManifest:
     # productos: el bridge no etiqueta nada y el conocimiento puede tener una capa
     # o varias.
     products: tuple[Product, ...] = ()
+    # La tabla [[ficha.medios]]: que medio de pago en que pais tiene ficha que
+    # se le puede mandar, con su tienda, su vencimiento y la base del boton.
+    # Vacia = ningun medio habilitado.
+    payment_slip_methods: tuple[PaymentSlipMethod, ...] = ()
+
+    def flow_enabled(self, flow: str) -> bool:
+        """Si ``flow`` esta prendido; un flujo opcional sin declarar, no."""
+
+        if flow in OPTIONAL_FLOWS:
+            return bool(self.flows.get(flow, False))
+        return bool(self.flows[flow])
 
     @property
     def labeled_product(self) -> Product | None:
@@ -323,7 +361,7 @@ class InstanceManifest:
         if self.ghl_form_ids:
             return "accepted" if self.ghl_risk_acceptance is not None else "not_accepted"
         if "intencion" in self.events and any(
-            self.flows[flow] for flow in GHL_RISK_GATED_FLOWS
+            self.flow_enabled(flow) for flow in INTENT_PERMISSION_FLOWS
         ):
             return "no_adapter_section"
         return None
@@ -351,6 +389,10 @@ class InstanceManifest:
             missing.append(f"el evento '{event}' no esta en eventos")
         if slot is not None and slot not in self.templates:
             missing.append(f"falta la plantilla '{slot}'")
+        if flow == "ficha" and not any(
+            method.habilitada for method in self.payment_slip_methods
+        ):
+            missing.append("no hay ninguna fila habilitada en [[ficha.medios]]")
         return tuple(missing)
 
     def to_commercial_ally_config(self) -> CommercialAllyConfig:
@@ -534,6 +576,7 @@ class InstanceManifest:
             _exact_keys("revision_diaria", review, set(), {"revisores"})
             reviewers = _str_list(review.get("revisores", []), "revision_diaria.revisores")
         products = _products(payload.get("productos"))
+        payment_slip_methods = _payment_slip_methods(payload)
         # landing_por_formulario puede apuntar a la landing de cualquier producto.
         all_offers = offers + tuple(
             offer
@@ -578,6 +621,7 @@ class InstanceManifest:
             ghl_risk_acceptance=ghl_risk_acceptance,
             ghl_form_landings=ghl_form_landings,
             products=products,
+            payment_slip_methods=payment_slip_methods,
         )
         for flow, enabled in manifest.flows.items():
             blockers = manifest.flow_blockers(flow)
@@ -1040,25 +1084,30 @@ def _templates(table: Mapping[str, Any]) -> Mapping[str, Template]:
         language = _str(raw, "idioma", f"{where}.idioma")
         if _LANGUAGE.fullmatch(language) is None:
             raise ManifestError(f"{where}.idioma debe ser un codigo de Meta como es_MX")
+        vocabulary = SLOT_TEMPLATE_PARAMETERS.get(slot, TEMPLATE_PARAMETERS)
         parameters = (
-            _template_parameters(raw["parametros"], f"{where}.parametros")
+            _template_parameters(raw["parametros"], f"{where}.parametros", vocabulary)
             if "parametros" in raw
-            else DEFAULT_TEMPLATE_PARAMETERS
+            else SLOT_DEFAULT_TEMPLATE_PARAMETERS.get(slot, DEFAULT_TEMPLATE_PARAMETERS)
         )
         templates[slot] = Template(name=name, language=language, parameters=parameters)
     return MappingProxyType(templates)
 
 
-def _template_parameters(value: object, where: str) -> tuple[str, ...]:
-    if not isinstance(value, list) or not 1 <= len(value) <= len(TEMPLATE_PARAMETERS):
+def _template_parameters(
+    value: object,
+    where: str,
+    vocabulary: tuple[str, ...] = TEMPLATE_PARAMETERS,
+) -> tuple[str, ...]:
+    if not isinstance(value, list) or not 1 <= len(value) <= len(vocabulary):
         raise ManifestError(
-            f"{where} debe ser una lista de 1 a {len(TEMPLATE_PARAMETERS)} variables"
+            f"{where} debe ser una lista de 1 a {len(vocabulary)} variables"
         )
-    unknown = [item for item in value if item not in TEMPLATE_PARAMETERS]
+    unknown = [item for item in value if item not in vocabulary]
     if unknown:
         raise ManifestError(
             f"{where}: variables no soportadas {', '.join(map(str, unknown))} "
-            f"(validas: {', '.join(TEMPLATE_PARAMETERS)})"
+            f"(validas: {', '.join(vocabulary)})"
         )
     if len(set(value)) != len(value):
         raise ManifestError(f"{where} tiene variables repetidas")
@@ -1076,8 +1125,29 @@ def _events(value: object) -> frozenset[str]:
 
 
 def _flows(table: Mapping[str, Any]) -> Mapping[str, bool]:
-    _exact_keys("flujos", table, set(FLOWS))
+    _exact_keys("flujos", table, set(FLOWS), set(OPTIONAL_FLOWS))
     for flow, enabled in table.items():
         if type(enabled) is not bool:
             raise ManifestError(f"flujos.{flow} debe ser true o false")
-    return MappingProxyType({flow: table[flow] for flow in FLOWS})
+    return MappingProxyType({
+        flow: table[flow]
+        for flow in FLOWS + OPTIONAL_FLOWS
+        if flow in table
+    })
+
+
+def _payment_slip_methods(payload: Mapping[str, Any]) -> tuple[PaymentSlipMethod, ...]:
+    """``[[ficha.medios]]``, validada por ``payment_slip.parse_payment_slip_methods``.
+
+    Sin ``[ficha]`` no hay medios. Una fila mal escrita no carga: el bridge no
+    arranca con una tabla que mandaria la ficha a otra base o con otra fecha.
+    """
+
+    if "ficha" not in payload:
+        return ()
+    ficha = _table(payload, "ficha")
+    _exact_keys("ficha", ficha, {"medios"})
+    try:
+        return parse_payment_slip_methods(ficha["medios"])
+    except ValueError as exc:
+        raise ManifestError(str(exc)) from exc
