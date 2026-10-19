@@ -82,23 +82,37 @@ FLOWS = ("inbound", "precheckout", "carrito", "pago_fallido", "reactivacion", "d
 OPTIONAL_FLOWS = ("ficha",)
 TEMPLATE_SLOTS = (
     "precheckout", "carrito", "pago_fallido", "reactivacion", "descuento", "ficha",
+    "ficha_vence_manana", "ficha_vence_hoy",
 )
+# Los recordatorios del vencimiento de la ficha (C2 y C3,
+# docs/contracts/portable-payment-slip-reminders-v1.md): siguen a C1, asi que
+# solo se declaran con [plantillas].ficha. Opcionales: sin ellos, la ficha manda
+# solo C1.
+PAYMENT_SLIP_REMINDER_SLOTS = ("ficha_vence_manana", "ficha_vence_hoy")
 # Las variables del cuerpo que una plantilla de primer contacto puede pedir, en el
 # orden en que la plantilla aprobada las numera ({{1}}, {{2}}). Por defecto son las
 # dos que el bridge manda hoy. Reactivacion y descuento arman sus parametros en su
 # propio modulo, asi que no aceptan ``parametros``.
 TEMPLATE_PARAMETERS = ("nombre", "producto")
 DEFAULT_TEMPLATE_PARAMETERS = ("nombre", "producto")
-PARAMETERIZED_TEMPLATE_SLOTS = ("precheckout", "carrito", "pago_fallido", "ficha")
+PARAMETERIZED_TEMPLATE_SLOTS = (
+    "precheckout", "carrito", "pago_fallido", "ficha", *PAYMENT_SLIP_REMINDER_SLOTS,
+)
 # La plantilla de la ficha tiene su propio vocabulario: el nombre y el producto,
 # como las otras, y la tienda y el vencimiento que salen de [[ficha.medios]]
 # (docs/contracts/portable-payment-slip-first-contact-v1.md). Por defecto, las
-# cuatro en el orden de la plantilla aprobada de ATT1.
+# cuatro en el orden de la plantilla aprobada de ATT1. Los recordatorios usan el
+# mismo vocabulario, y por defecto el orden de sus plantillas aprobadas en ATT1
+# (att1_ficha_vence_manana_01 y att1_ficha_vence_hoy_01).
 SLOT_TEMPLATE_PARAMETERS: Mapping[str, tuple[str, ...]] = MappingProxyType({
     "ficha": PAYMENT_SLIP_TEMPLATE_PARAMETERS,
+    "ficha_vence_manana": PAYMENT_SLIP_TEMPLATE_PARAMETERS,
+    "ficha_vence_hoy": PAYMENT_SLIP_TEMPLATE_PARAMETERS,
 })
 SLOT_DEFAULT_TEMPLATE_PARAMETERS: Mapping[str, tuple[str, ...]] = MappingProxyType({
     "ficha": PAYMENT_SLIP_TEMPLATE_PARAMETERS,
+    "ficha_vence_manana": ("nombre", "tienda", "producto", "vencimiento"),
+    "ficha_vence_hoy": ("nombre", "tienda", "producto"),
 })
 OFFER_ORIGINS = ("pauta", "organico", "otro")
 
@@ -1091,6 +1105,11 @@ def _templates(table: Mapping[str, Any]) -> Mapping[str, Template]:
             else SLOT_DEFAULT_TEMPLATE_PARAMETERS.get(slot, DEFAULT_TEMPLATE_PARAMETERS)
         )
         templates[slot] = Template(name=name, language=language, parameters=parameters)
+    for slot in PAYMENT_SLIP_REMINDER_SLOTS:
+        if slot in templates and "ficha" not in templates:
+            raise ManifestError(
+                f"plantillas.{slot} es un recordatorio de la ficha: exige plantillas.ficha"
+            )
     return MappingProxyType(templates)
 
 

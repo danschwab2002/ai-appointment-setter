@@ -76,12 +76,14 @@ from bridge.payment_failure_variant import (
 )
 from bridge.payment_slip import payment_slip_facts
 from bridge.payment_slip_first_touch import (
+    PaymentSlipDefer,
     PaymentSlipFirstTouchConfig,
     PaymentSlipPlanningConfig,
     PaymentSlipReady,
     compose_payment_slip_first_touch,
     payment_slip_ingestion_reason,
 )
+from bridge.payment_slip_reminders import FOLLOWING_STEP_TRIGGERS, PAYMENT_SLIP_STEPS
 from bridge.phones import equivalent_whatsapp_phones, whatsapp_phone_region
 from bridge.product_routes import HotmartUnrouted, ProductRoutes
 from bridge.recovery_agent import (
@@ -125,6 +127,23 @@ def _first_touch_template_name(
 APPROVED_TEMPLATE_DIRECT_UNSUPPORTED_ACTION = (
     "approved_template_direct_unsupported_action"
 )
+
+
+def _flow_trigger(action: ScheduledAction) -> str:
+    """The flow an action belongs to.
+
+    A first contact is anchored to its trigger (``payment_slip``,
+    ``precheckout_intent``, ...), so the anchor says it. A following step
+    (``no_reply_review``) is anchored to the accepted message of the step
+    before it: its flow comes from its step key
+    (``payment_slip_reminders.FOLLOWING_STEP_TRIGGERS``). A step key nobody
+    declared keeps the anchor, which is what every following step did before.
+    """
+    if action.action_type == "no_reply_review":
+        trigger = FOLLOWING_STEP_TRIGGERS.get(action.step_key)
+        if trigger is not None:
+            return trigger
+    return action.anchor_type
 
 
 @dataclass(frozen=True)
@@ -1147,23 +1166,41 @@ class DurableDispatcher:
         show. Every catalog or data problem returns a reason instead of
         raising: the caller closes the reserved attempt with it.
         """
+        trigger_kind = _flow_trigger(action)
+        step_key: str | None = None
         if action.action_type != "first_contact_review":
-            return _ApprovedTemplateComposition(
-                failure_reason=APPROVED_TEMPLATE_DIRECT_UNSUPPORTED_ACTION,
-                retryable=False,
-            )
+            # The only following steps this mode sends are the reminders of a
+            # payment slip (C2, C3): every other one closes as before.
+            if not (
+                action.action_type == "no_reply_review"
+                and trigger_kind == PAYMENT_SLIP_TRIGGER
+                and action.step_key in PAYMENT_SLIP_STEPS
+            ):
+                return _ApprovedTemplateComposition(
+                    failure_reason=APPROVED_TEMPLATE_DIRECT_UNSUPPORTED_ACTION,
+                    retryable=False,
+                )
+            step_key = action.step_key
         template = self._waba_template
         assert template is not None
         assert self._chatwoot is not None
         assert self._chatwoot_inbox_id is not None
-        trigger_kind = action.anchor_type
-        template_name = _first_touch_template_name(template, anchor_type=trigger_kind)
+        if step_key is not None:
+            step_template = template.payment_slip_step(step_key)
+            template_name = step_template.name if step_template is not None else None
+            declared = (
+                step_template.body_parameters if step_template is not None else None
+            )
+        else:
+            template_name = _first_touch_template_name(
+                template, anchor_type=trigger_kind
+            )
+            declared = template.declared_body_parameters(trigger_kind=trigger_kind)
         if template_name is None:
             return _ApprovedTemplateComposition(
                 failure_reason=FIRST_TOUCH_TEMPLATE_NOT_CONFIGURED,
                 retryable=False,
             )
-        declared = template.declared_body_parameters(trigger_kind=trigger_kind)
         if declared is None:
             # Without the manifest declaring this template's variables the
             # bridge does not know what the approved body expects.
@@ -1178,11 +1215,22 @@ class DurableDispatcher:
             )
         buyer_name = execution_context.buyer_name
         product_name = execution_context.product_name
-        if template.body_parameters_missing(
-            trigger_kind=trigger_kind,
-            buyer_name=buyer_name,
-            product_name=product_name,
-        ):
+        if step_key is not None:
+            # The values of the case the reminder declares: the store and the
+            # due date are checked where they are built.
+            case_values = {"nombre": buyer_name, "producto": product_name}
+            values_missing = any(
+                not (isinstance(case_values[item], str) and case_values[item].strip())
+                for item in declared
+                if item in case_values
+            )
+        else:
+            values_missing = template.body_parameters_missing(
+                trigger_kind=trigger_kind,
+                buyer_name=buyer_name,
+                product_name=product_name,
+            )
+        if values_missing:
             return _ApprovedTemplateComposition(
                 failure_reason=APPROVED_TEMPLATE_PARAMETERS_MISSING,
                 retryable=False,
@@ -1231,6 +1279,7 @@ class DurableDispatcher:
                 name_value=name_value or "",
                 product_name=product_name or "",
                 greeting_name=greeting_name,
+                step_key=step_key,
             )
         values = template.body_values(
             trigger_kind=trigger_kind,
@@ -1401,17 +1450,33 @@ class DurableDispatcher:
         name_value: str,
         product_name: str,
         greeting_name: str | None,
+        step_key: str | None = None,
     ) -> _ApprovedTemplateComposition:
-        """C1: the template of the slip with its store, due date and button.
+        """C1, C2 or C3: the template of the slip with its store, due date and button.
 
         Every reason closes the attempt without a message. Only an unreadable
-        catalog or slip context, or a catalog that does not close, retries.
+        catalog or slip context, or a catalog that does not close, retries. A
+        reminder composed before its moment waits until then.
         """
         template = self._waba_template
         assert template is not None
         assert self._chatwoot is not None
         assert self._chatwoot_inbox_id is not None
-        template_name = template.first_touch_name_for(trigger_kind=PAYMENT_SLIP_TRIGGER)
+        step = PAYMENT_SLIP_STEPS.get(step_key) if step_key is not None else None
+        step_template = (
+            template.payment_slip_step(step_key) if step_key is not None else None
+        )
+        if step_key is None:
+            template_name = template.first_touch_name_for(
+                trigger_kind=PAYMENT_SLIP_TRIGGER
+            )
+            category = template.category_for(trigger_kind=PAYMENT_SLIP_TRIGGER)
+        elif step is not None and step_template is not None:
+            template_name = step_template.name
+            category = step_template.category
+        else:
+            template_name = None
+            category = template.category
         if self._payment_slip is None or template_name is None:
             return _ApprovedTemplateComposition(
                 failure_reason=FIRST_TOUCH_TEMPLATE_NOT_CONFIGURED,
@@ -1435,19 +1500,33 @@ class DurableDispatcher:
             action=action,
             template_name=template_name,
             language=template.language,
-            category=template.category_for(trigger_kind=PAYMENT_SLIP_TRIGGER),
+            category=category,
             parameters=declared,
             buyer_name=name_value,
             product_name=product_name,
             worker_id=self._worker_id,
             now=self._clock(),
+            step=step,
         )
+        if isinstance(slip, PaymentSlipDefer):
+            logger.info(
+                "payment_slip_step_deferred action_id=%s step=%s retry_after_s=%s",
+                action.action_id,
+                step_key,
+                int(slip.retry_after.total_seconds()),
+            )
+            return _ApprovedTemplateComposition(
+                failure_reason=slip.reason,
+                retry_after=slip.retry_after,
+            )
         if not isinstance(slip, PaymentSlipReady):
             # The log carries the code only: never the link, the reference or
             # the person.
             logger.warning(
-                "payment_slip_first_touch_not_sent action_id=%s reason=%s retryable=%s",
+                "payment_slip_first_touch_not_sent action_id=%s step=%s reason=%s "
+                "retryable=%s",
                 action.action_id,
+                step_key or "first_contact",
                 slip.reason,
                 slip.retryable,
             )
@@ -1456,8 +1535,9 @@ class DurableDispatcher:
                 retryable=slip.retryable,
             )
         logger.info(
-            "payment_slip_first_touch_ready action_id=%s due_date_source=%s",
+            "payment_slip_first_touch_ready action_id=%s step=%s due_date_source=%s",
             action.action_id,
+            step_key or "first_contact",
             slip.due_date_source,
         )
         return _ApprovedTemplateComposition(
@@ -1525,7 +1605,7 @@ class DurableDispatcher:
                         # The first contact after a slip: its own template in
                         # the direct mode, or nothing (never Hermes, never
                         # the cart template).
-                        action.anchor_type == PAYMENT_SLIP_TRIGGER
+                        _flow_trigger(action) == PAYMENT_SLIP_TRIGGER
                         and self._payment_slip is None
                     )
                 ):
@@ -1907,7 +1987,10 @@ class DurableDispatcher:
                                             lease_generation=action.lease_generation,
                                             now=final_now,
                                             pilot_boundary=self._pilot_boundary,
-                                            anchor_type=action.anchor_type,
+                                            # A reminder of a slip starts
+                                            # through the RPC of the slip,
+                                            # against its scope.
+                                            anchor_type=_flow_trigger(action),
                                         )
                                     )
                                 )
@@ -2027,11 +2110,20 @@ class DurableDispatcher:
                                 continue
                             try:
                                 if followup_conversation_id is not None:
+                                    followup_kwargs: dict[str, Any] = {
+                                        "conversation_id": followup_conversation_id,
+                                        "phone": execution_context.buyer_phone or "",
+                                        "content": proposal.message,
+                                        "delivery_id": attempt.attempt_id,
+                                    }
+                                    # A slip reminder: the template the final
+                                    # gate hashed, with its button.
+                                    if direct_template_params is not None:
+                                        followup_kwargs["template_params"] = (
+                                            direct_template_params
+                                        )
                                     result = await self._sender.send_followup(
-                                        conversation_id=followup_conversation_id,
-                                        phone=execution_context.buyer_phone or "",
-                                        content=proposal.message,
-                                        delivery_id=attempt.attempt_id,
+                                        **followup_kwargs
                                     )
                                 else:
                                     first_touch_kwargs: dict[str, Any] = {

@@ -911,12 +911,15 @@ def test_payment_failure_variants_fingerprint_is_service_role_only() -> None:
 
 def test_purchase_stops_any_offer_fingerprint_is_last_and_service_role_only() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261019000300 (la compra de cualquier oferta) es la ultima.
-    fingerprint = sql.split("'20261019000300'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261019000300 (la compra de cualquier oferta), seguida de
+    # 20261019000400 (los recordatorios de la ficha).
+    fingerprint = sql.split("'20261019000300'", 1)[1].split("'20261019000400'", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261019000300_portable_purchase_stops_any_offer_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",2,'portable_purchase_stops_any_offer')")
+    assert compact_fingerprint.endswith(
+        ",2,'portable_purchase_stops_any_offer'unionallselect"
+    )
     for marker in (
         "to_regprocedure('public._portable_case_purchase_stop_reason(uuid)')",
         "andprosecdef",
@@ -925,5 +928,25 @@ def test_purchase_stops_any_offer_fingerprint_is_last_and_service_role_only() ->
         "position('portable_purchase_stops_any_offer'indefinition)>0",
         "position('public._portable_case_purchase_stop_reason(v_case.id)'indefinition)>0",
         "position('''purchase_detected_any_offer'''indefinition)>0",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_payment_slip_reminders_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261019000400 (los recordatorios de la ficha) es la ultima.
+    fingerprint = sql.split("'20261019000400'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261019000400_portable_payment_slip_reminders_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",2,'portable_payment_slip_reminders')")
+    for marker in (
+        "to_regprocedure('public.mark_portable_payment_slip_request_started"
+        "(uuid,uuid,text,bigint,timestamptz)')",
+        "to_regprocedure('public.get_portable_payment_slip_send_context"
+        "(uuid,text,bigint,timestamptz)')",
+        "position('slip_sequence.reason=''payment_slip'''indefinition)>0",
+        "position('action.action_type=''no_reply_review'''indefinition)>0",
+        "position('v_action.action_type=''no_reply_review'''indefinition)>0",
     ):
         assert marker in compact_fingerprint, marker

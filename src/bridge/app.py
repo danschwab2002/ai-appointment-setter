@@ -101,9 +101,11 @@ from bridge.messaging import (
     ChatwootMessageSender,
     FinalMetaEffectGate,
     MessageSender,
+    PaymentSlipStepTemplate,
     WhatsAppTemplateConfig,
     allowed_phone_from_jid,
 )
+from bridge.payment_slip_reminders import PAYMENT_SLIP_STEPS
 from bridge.opt_out import detect_explicit_opt_out
 from bridge.automation_expert_read import (
     CHATWOOT_MAX_MESSAGES_PER_CONVERSATION,
@@ -632,6 +634,14 @@ class Settings:
     payment_slip_followup_policy_version: int | None = None
     waba_payment_slip_template_name: str | None = None
     waba_payment_slip_template_category: str | None = None
+    # Los recordatorios del vencimiento de la ficha (C2 y C3,
+    # payment_slip_reminders): la plantilla y la categoria de cada uno, que
+    # tienen que ser las de [plantillas].ficha_vence_manana y ficha_vence_hoy.
+    # Sin ellas, el paso de la politica no sale y la ficha queda en C1.
+    waba_payment_slip_due_eve_template_name: str | None = None
+    waba_payment_slip_due_eve_template_category: str | None = None
+    waba_payment_slip_due_day_template_name: str | None = None
+    waba_payment_slip_due_day_template_category: str | None = None
     # El pago rechazado con su propio scope y su politica (migracion
     # 20261019000200): los cuatro, y solo con PAYMENT_FAILURE_VARIANTS_ENABLED.
     # Con el flag apagado no se leen y el pago fallido se planifica con los del
@@ -1671,6 +1681,26 @@ class Settings:
             ),
             waba_payment_slip_template_category=(
                 os.getenv("WABA_PAYMENT_SLIP_TEMPLATE_CATEGORY", "")
+                .strip()
+                .upper()
+                or None
+            ),
+            waba_payment_slip_due_eve_template_name=(
+                os.getenv("WABA_PAYMENT_SLIP_DUE_EVE_TEMPLATE_NAME", "").strip()
+                or None
+            ),
+            waba_payment_slip_due_eve_template_category=(
+                os.getenv("WABA_PAYMENT_SLIP_DUE_EVE_TEMPLATE_CATEGORY", "")
+                .strip()
+                .upper()
+                or None
+            ),
+            waba_payment_slip_due_day_template_name=(
+                os.getenv("WABA_PAYMENT_SLIP_DUE_DAY_TEMPLATE_NAME", "").strip()
+                or None
+            ),
+            waba_payment_slip_due_day_template_category=(
+                os.getenv("WABA_PAYMENT_SLIP_DUE_DAY_TEMPLATE_CATEGORY", "")
                 .strip()
                 .upper()
                 or None
@@ -2782,6 +2812,69 @@ def _validate_payment_slip_first_contact(settings: Settings) -> None:
         raise ValueError(
             f"{flag} requires CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED"
         )
+    # The reminders (C2, C3) are optional: declared in the manifest, each one
+    # needs its name and category; not declared, neither.
+    for env, slot, name, category in _payment_slip_reminder_settings(settings):
+        declared = manifest.templates.get(slot)
+        if declared is None and name is None and category is None:
+            continue
+        if declared is None or name != declared.name:
+            raise ValueError(
+                f"{env}_TEMPLATE_NAME must match plantillas.{slot}.nombre "
+                "of the instance manifest"
+            )
+        if declared.language != template.language:
+            raise ValueError(
+                f"plantillas.{slot}.idioma must match plantillas.ficha.idioma"
+            )
+        if category not in {"MARKETING", "UTILITY"}:
+            raise ValueError(
+                f"{env}_TEMPLATE_CATEGORY must be MARKETING or UTILITY for {flag}"
+            )
+
+
+def _payment_slip_reminder_settings(
+    settings: Settings,
+) -> tuple[tuple[str, str, str | None, str | None], ...]:
+    """Each slip reminder: its environment prefix, its slot, its name and category."""
+    return (
+        (
+            "WABA_PAYMENT_SLIP_DUE_EVE",
+            "ficha_vence_manana",
+            settings.waba_payment_slip_due_eve_template_name,
+            settings.waba_payment_slip_due_eve_template_category,
+        ),
+        (
+            "WABA_PAYMENT_SLIP_DUE_DAY",
+            "ficha_vence_hoy",
+            settings.waba_payment_slip_due_day_template_name,
+            settings.waba_payment_slip_due_day_template_category,
+        ),
+    )
+
+
+def _payment_slip_step_templates(
+    settings: Settings,
+) -> tuple[PaymentSlipStepTemplate, ...]:
+    """The reminder templates validated against the manifest, by step key."""
+    manifest = settings.instance_manifest
+    if manifest is None:
+        return ()
+    by_slot = {step.slot: step.step_key for step in PAYMENT_SLIP_STEPS.values()}
+    steps = []
+    for _env, slot, name, category in _payment_slip_reminder_settings(settings):
+        declared = manifest.templates.get(slot)
+        if declared is None or name is None or category is None:
+            continue
+        steps.append(
+            PaymentSlipStepTemplate(
+                step_key=by_slot[slot],
+                name=name,
+                category=category,
+                body_parameters=declared.parameters,
+            )
+        )
+    return tuple(steps)
 
 
 def _validate_conversation_followup(
@@ -2982,6 +3075,12 @@ def _waba_template_config(settings: Settings) -> WhatsAppTemplateConfig | None:
         ),
         payment_slip_category=(
             payment_slip_category if payment_slip_name is not None else None
+        ),
+        # The reminders (C2, C3) only with the template of C1: they follow it.
+        payment_slip_steps=(
+            _payment_slip_step_templates(settings)
+            if payment_slip_name is not None
+            else ()
         ),
     )
 

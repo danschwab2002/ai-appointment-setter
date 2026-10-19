@@ -4982,6 +4982,28 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         2,
         'portable_purchase_stops_any_offer'
+    union all
+    select
+        '20261019000400',
+        '20261019000400_portable_payment_slip_reminders_v1.sql',
+        -- Los recordatorios de la ficha (C2 y C3): las dos RPC de la ficha
+        -- aceptan un no_reply_review de una secuencia de ficha.
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.mark_portable_payment_slip_request_started(uuid,uuid,text,bigint,timestamptz)')
+              and position('slip_sequence.reason = ''payment_slip''' in definition) > 0
+              and position('action.action_type = ''no_reply_review''' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.get_portable_payment_slip_send_context(uuid,text,bigint,timestamptz)')
+              and position('slip_sequence.reason = ''payment_slip''' in definition) > 0
+              and position('v_action.action_type = ''no_reply_review''' in definition) > 0
+        )::int,
+        2,
+        'portable_payment_slip_reminders'
 )
 select
     version,

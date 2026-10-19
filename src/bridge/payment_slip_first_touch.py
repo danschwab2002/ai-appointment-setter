@@ -1,5 +1,9 @@
 """C1 of the ATT1 flows: the first contact one hour after a payment slip.
 
+The same composition builds C2 and C3, the reminders of the due date
+(``payment_slip_reminders``), with ``step``: another template, and a moment
+anchored to the due date.
+
 Contract: ``docs/contracts/portable-payment-slip-first-contact-v1.md``.
 Decided by Dan on 2026-10-18 (decision «la ficha de OXXO va con scope propio y
 código global», points 4 and 5): the slip goes out with its approved template
@@ -23,7 +27,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from bridge.approved_templates import (
@@ -39,12 +43,19 @@ from bridge.payment_slip import (
     format_due_date_es,
     resolve_payment_slip,
 )
+from bridge.payment_slip_reminders import (
+    PAYMENT_SLIP_STEP_LATE,
+    PAYMENT_SLIP_STEP_NOT_DUE,
+    PaymentSlipStep,
+    payment_slip_step_wait,
+)
 from bridge.supabase import PilotBoundaryConfig, SupabaseError, SupabasePermanentError
 
 __all__ = [
     "PAYMENT_SLIP_CONTEXT_UNAVAILABLE",
     "PAYMENT_SLIP_EXPIRED",
     "PAYMENT_SLIP_TRIGGER",
+    "PaymentSlipDefer",
     "PaymentSlipFirstTouchConfig",
     "PaymentSlipPlanningConfig",
     "PaymentSlipReady",
@@ -119,7 +130,15 @@ class PaymentSlipStop:
     retryable: bool
 
 
-PaymentSlipOutcome = PaymentSlipReady | PaymentSlipStop
+@dataclass(frozen=True)
+class PaymentSlipDefer:
+    """A reminder composed before its moment: the attempt waits ``retry_after``."""
+
+    reason: str
+    retry_after: timedelta
+
+
+PaymentSlipOutcome = PaymentSlipReady | PaymentSlipStop | PaymentSlipDefer
 
 
 def payment_slip_ingestion_reason(
@@ -158,8 +177,13 @@ async def compose_payment_slip_first_touch(
     product_name: str,
     worker_id: str,
     now: str,
+    step: PaymentSlipStep | None = None,
 ) -> PaymentSlipOutcome:
-    """Build C1 for one payment slip action, or say why it does not go out."""
+    """Build C1 (or, with ``step``, C2 or C3) for one payment slip action.
+
+    With ``step``, after the slip resolves: before the moment of the step the
+    attempt is deferred until then, and on a later day it does not go out.
+    """
     try:
         context = await supabase.get_portable_payment_slip_send_context(  # type: ignore[attr-defined]
             action_id=action.action_id,  # type: ignore[attr-defined]
@@ -193,6 +217,17 @@ async def compose_payment_slip_first_touch(
     today = at.astimezone(ZoneInfo(resolution.method.zona_horaria)).date()
     if today > resolution.due_date:
         return PaymentSlipStop(reason=PAYMENT_SLIP_EXPIRED, retryable=False)
+    if step is not None:
+        wait = payment_slip_step_wait(
+            step,
+            due_date=resolution.due_date,
+            zone=resolution.method.zona_horaria,
+            now=at,
+        )
+        if wait == PAYMENT_SLIP_STEP_LATE:
+            return PaymentSlipStop(reason=PAYMENT_SLIP_STEP_LATE, retryable=False)
+        if isinstance(wait, timedelta):
+            return PaymentSlipDefer(reason=PAYMENT_SLIP_STEP_NOT_DUE, retry_after=wait)
 
     source = {
         "nombre": _collapse(buyer_name),
