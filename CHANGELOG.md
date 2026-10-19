@@ -12,6 +12,25 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.14.0] - 2026-10-19
+
+Una versión menor sobre la 1.13.1 con A2 y Z del carrito (#276), apagados por defecto, y la base genérica de los pasos con plantilla y cupón, que reusa el pago rechazado. Lleva una migración.
+
+### Agregado
+
+- **A2 y Z del carrito.** Dos toques después de A1, con plantillas aprobadas: A2 (`cart_second_touch`) sin link, y Z (`cart_last_touch`) con el cupón 2 del caso, el link de recuperación y su vencimiento real. Sin el cupón o sin el link, Z cierra sin mensaje. Contrato: [docs/contracts/portable-cart-followups-v1.md](docs/contracts/portable-cart-followups-v1.md).
+- **«Quiero mi 10 %» adelanta Z.** El webhook entrante reconoce la respuesta exacta del botón de A2 y pide la renovación (`request_recovery_renewal_v1`): Z sale en ese momento y el agente no corre. Sin Z pendiente, el mensaje sigue el camino de siempre.
+- **Los pasos de una política pueden declarar dos marcas** (migración `20261019000600`):
+  - `"approved_template": true`: la reevaluación no pausa el paso por la ventana de 24 h cerrada ni por una conversación resuelta, la adopción de una respuesta no lo cuenta como pendiente y un carrito nuevo no lo adelanta;
+  - `"coupon_ordinal": 1 | 2`: se siembra el cupón de ese ordinal para el paso y se emite su link.
+  Una política sin marcas se comporta como antes.
+
+### Qué hace quien actualiza
+
+- **Correr la migración `20261019000600_recovery_followup_steps_v1.sql`.** Suma tres funciones privadas (solo `service_role`) y la tabla `recovery_renewal_requests`, y redefine cinco funciones desde su definición viva con reemplazos contados (si el texto no coincide, aborta sin cambiar nada). Sin paso manual. La ACL pasa de 142 a 145 entradas.
+- **Para prender A2 y Z** (opcional): `RECOVERY_CART_FOLLOWUPS_ENABLED=true` con al menos una de `RECOVERY_CART_SECOND_TOUCH_TEMPLATE_NAME` (A2) y `RECOVERY_CART_LAST_TOUCH_TEMPLATE_NAME` (Z), que exigen `RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED` (y Z, `RECOVERY_COUPON_WORKER_ENABLED`); el bridge no arranca si falta alguna. Además, publicar una política del carrito con los pasos y sus marcas. Apagado, el bridge cierra los dos pasos como hasta ahora.
+- Si en la instancia el pago fallido todavía usa la política del carrito (`PAYMENT_FAILURE_VARIANTS_ENABLED` apagado), la política de varios toques del carrito se activa después de prender ese flag: si no, un pago fallido recibe A2.
+
 ## [1.13.1] - 2026-10-19
 
 Un parche sobre la 1.13.0 (#274): B1-cupón, la variante del pago rechazado que nombra el cupón de otro caso, solo usa un cupón que le llegó a la persona. Lleva una migración y no cambia el bridge.
