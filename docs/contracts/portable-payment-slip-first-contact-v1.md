@@ -1,6 +1,6 @@
 # Contrato: primer contacto portable tras la ficha de pago en efectivo (v1)
 
-- **Estado:** propuesta, escrita antes de la construcción. Describe la interfaz que va a implementar C1; no describe nada desplegado ni activado. Lo único que existe en el árbol al escribirlo son las funciones puras de `src/bridge/payment_slip.py` y el parser de `src/bridge/hotmart.py` (`parse_hotmart_payment_slip_payload`), con sus pruebas.
+- **Estado:** implementado en el árbol (rama `feat/claude-att1-ficha-efectivo-v1`), sin desplegar ni activar. Están las funciones puras de `src/bridge/payment_slip.py`, el parser de `src/bridge/hotmart.py`, la migración `20261019000100`, el armado de C1 en `src/bridge/payment_slip_first_touch.py` y su cableado en el worker, el dispatcher y el arranque del bridge, con sus pruebas.
 - **Fecha:** 2026-10-18
 - **Alcance:** una instancia con manifiesto v2 y salida por WABA. Un `PURCHASE_BILLET_PRINTED` de Hotmart cuyo medio y país están habilitados en la tabla `[[ficha.medios]]` del manifiesto planifica **un** primer contacto, demorado, que el dispatcher durable manda con la plantilla aprobada de la ficha (en ATT1, `att1_ficha_efectivo_01`).
 - **Relacionados:** [portable-precheckout-first-contact-v1.md](portable-precheckout-first-contact-v1.md) (el otro primer contacto portable), [lancemos-pilot-boundary-runtime-v1.md](lancemos-pilot-boundary-runtime-v1.md), [approved-template-direct-dispatch-v1.md](approved-template-direct-dispatch-v1.md), [instance-runtime-v2.md](instance-runtime-v2.md). La admisión que ya guarda la ficha tal como llega es `admit_portable_hotmart_payment_slip_event_v1` (migración `20261012000100_portable_payment_failure_context_and_slip_events.sql`).
@@ -114,10 +114,19 @@ Esto queda fijado acá como interfaz; el detalle lo implementan las migraciones 
 - **Configuración:** `PORTABLE_HOTMART_PAYMENT_SLIP_ENABLED` (apagado por defecto), `LANCEMOS_PILOT_PAYMENT_SLIP_SCOPE_KEY` / `_VERSION`, `PAYMENT_SLIP_FOLLOWUP_POLICY_KEY` / `_VERSION` y `WABA_PAYMENT_SLIP_TEMPLATE_NAME` / `_CATEGORY`. En el manifiesto, el evento `ficha_impresa`, la ranura de plantilla `ficha` (hasta 4 parámetros) y el flujo `ficha`, **opcional**, para que un manifiesto sin él siga cargando.
 - **El disparador `payment_slip` entra en los disparadores del primer toque sin préstamo:** sin eso, un disparador desconocido saldría con la plantilla del carrito.
 
+## Al componer C1 (decididos por Dan el 2026-10-18)
+
+- **La política vence al día** (decisión 4): si en un día no se pudo mandar C1 (fuera de horario, el tope, un freno), la acción expira sin mandarlo. Lo publica la instancia en su política (`expires_after`), no el bridge.
+- **Una ficha ya vencida no se manda** (decisión 5): si al componer la fecha de vencimiento ya pasó en `zona_horaria` de la fila, el intento cierra sin reintento con `payment_slip_expired`. El día del vencimiento todavía se manda («hasta el jueves 22»): cuenta solo un día posterior.
+- **La resolución se repite al componer.** El worker de resolución ya dejó `ignored` con su motivo (`payment_slip_method_not_enabled`, `_url_prefix_mismatch`, `_button_suffix_invalid`, `_due_date_unknown`) toda ficha que no resuelve, sin planificarla. Si igual llega una acción cuya ficha no resuelve (el manifiesto cambió en el medio), el intento cierra sin reintento con el mismo motivo, sin mensaje.
+- **El botón se exige al componer, no al arrancar:** el bridge no lee el catálogo de Chatwoot al arrancar. `parse_approved_template(..., url_button=button_url_template)` exige que el primer botón de la plantilla aprobada sea exactamente `boton_prefijo` + `{{1}}`; si no, el intento cierra con `approved_template_mismatch` y se reintenta (el catálogo lo puede corregir Meta), sin mandar nada.
+- Sin la configuración de la ficha en el dispatcher (el flag apagado), una acción `payment_slip` cierra con `first_touch_template_not_configured` antes de leer el catálogo: nunca sale con la plantilla del carrito.
+- Los hechos crudos se leen con `get_portable_payment_slip_send_context` bajo el lease vigente. Si la base no contesta, `payment_slip_context_unavailable` y se reintenta; un 55000 (sin lease, una acción que no es de la ficha, un caso sin ficha resuelta) cierra con su motivo, sin reintento.
+
 ## Qué NO hace
 
 - **No manda seguimientos** de la ficha (C2 a C5 de los flujos de ATT1): un solo mensaje.
 - **No habilita otros países ni medios.** Chile, Mercado Pago, Nequi y Yape quedan `payment_slip_method_not_enabled` hasta que una fila del manifiesto los habilite con su prefijo medido.
 - **No reprocesa** las fichas que llegaron antes de prender el flujo.
-- **No recalcula** el vencimiento desde `PURCHASE_EXPIRED`, ni cierra sola una ficha ya vencida al componer (está propuesto, sin decidir, como `payment_slip_expired`).
-- **No toca el carrito:** el planificador del carrito puede encontrarse con un caso abierto de la ficha del mismo contacto, producto y oferta; falla cerrado (`policy_step_invalid`) y solo con el flag prendido. Arreglarlo es tocar ese planificador y queda fuera de este contrato.
+- **No recalcula** el vencimiento desde `PURCHASE_EXPIRED`.
+- **No toca el carrito:** el planificador del carrito puede encontrarse con un caso abierto de la ficha del mismo contacto, producto y oferta; falla cerrado y solo con el flag prendido: el planificador del piloto del carrito aborta con `55000 pilot_case_binding_conflict` (medido en PGlite, `validate_portable_payment_slip_recovery.mjs`, sección 9), la transacción se deshace entera y el worker deja el carrito `failed` con ese motivo, sin excepción y sin mensaje (`tests/test_payment_slip_wiring.py`). Ese carrito no recibe su mensaje mientras el caso de la ficha siga abierto. Arreglarlo es tocar ese planificador y queda fuera de este contrato.
