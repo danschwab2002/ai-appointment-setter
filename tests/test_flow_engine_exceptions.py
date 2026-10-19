@@ -114,14 +114,14 @@ def test_the_unsafe_name_is_backed_by_d1_of_the_dispatcher() -> None:
     # D1 corre el despachador real con nombres que no son un nombre y ve que cierra sin
     # reintento. Aca no se busca su texto: se toma la prueba como objeto, y se mira que sus
     # nombres son los que rechaza el filtro real que usa la linea citada
-    # (template_greeting_name_is_safe, worker.py:1258). Que D1 haga lo que dice lo fija D1:
+    # (template_greeting_name_is_safe, worker.py:1292). Que D1 haga lo que dice lo fija D1:
     # mutar esa linea la pone en rojo (el rojo 4 de §5.4).
     from test_flow_engine_dispatcher_legacy import test_d1_a_refused_name_closes_the_action_without_a_retry as d1
 
     from bridge.lead_first_name import template_greeting_name_is_safe
 
     [unsafe] = [exception for exception in EXCEPTIONS_V1 if exception.name == "nombre_inseguro_cierra"]
-    assert unsafe.cita == "src/bridge/worker.py:1258-1274"
+    assert unsafe.cita == "src/bridge/worker.py:1292-1308"
     assert "template_greeting_name_is_safe(name_value)" in _cited_lines(unsafe)[0]
     [names] = [mark.args[1] for mark in d1.pytestmark if mark.name == "parametrize" and mark.args[0] == "name"]
     values = [name.values[0] if hasattr(name, "values") else name for name in names]

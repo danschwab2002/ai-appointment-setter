@@ -5050,6 +5050,62 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         3,
         'payment_failure_other_coupon_delivered'
+    union all
+    select
+        '20261019000600',
+        '20261019000600_recovery_followup_steps_v1.sql',
+        -- Las tres funciones nuevas: definer y solo service_role.
+        (
+            select count(*) = 3
+            from functions
+            where oid in (
+                to_regprocedure('public._recovery_followup_step(uuid)'),
+                to_regprocedure('public._recovery_renewal_requested(uuid)'),
+                to_regprocedure('public.request_recovery_renewal_v1(bigint,bigint,bigint,bigint,text,timestamptz)')
+            )
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- La reevaluacion: el paso con plantilla no se pausa por la ventana,
+        -- y el adelantado por la persona no se cancela por su respuesta.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.reevaluate_followup_action(uuid,text,bigint,timestamptz,boolean,text,text,timestamptz,text,boolean,boolean,boolean,boolean,boolean)')
+              and position('public._recovery_renewal_requested(v_action.id)' in definition) > 0
+              and position('v_step ->> ''approved_template''' in definition) > 0
+        )::int
+        -- La adopcion de la respuesta no cuenta el paso que espera.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_portable_inbound_commercial_case_v1(text,integer,bigint,text)')
+              and position('recovery_followup_steps: begin' in definition) > 0
+        )::int
+        -- El cupon y el link del paso que los declara.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.claim_due_recovery_coupons_v1(timestamptz,text,integer,text,interval,interval,numeric,integer)')
+              and position('recovery_followup_steps (20261019000600)' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.reserve_recovery_checkout_issuance_v1(uuid,text,bigint,uuid,text,timestamptz)')
+              and position('recovery_followup_steps (20261019000600)' in definition) > 0
+        )::int
+        -- Un carrito nuevo no adelanta el paso con plantilla.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.plan_cart_recovery(uuid,uuid,text,text,text,text,integer,timestamptz)')
+              and position('public._recovery_followup_step(scheduled_actions.id)' in definition) > 0
+        )::int,
+        6,
+        'recovery_followup_steps'
 )
 select
     version,

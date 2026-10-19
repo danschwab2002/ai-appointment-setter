@@ -441,7 +441,10 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # 20261019000200 (B1 del pago rechazado), sus dos, y 20261019000300 el
     # freno por la compra de cualquier oferta, que llama la reevaluacion
     # (security invoker) como service_role.
-    assert len(allowlisted) == 142
+    assert len(allowlisted) == 145
+    # 20261019000600: el paso de la politica, el pedido de renovacion y su
+    # lectura, que llaman funciones security invoker que corre service_role.
+    assert "_recovery_followup_step(uuid)" in allowlisted
     assert "_portable_case_purchase_stop_reason(uuid)" in allowlisted
     for signature in (
         "get_portable_payment_failure_pilot_runtime_status(text, integer, text, text, text)",
@@ -959,14 +962,16 @@ def test_payment_slip_reminders_fingerprint_is_service_role_only() -> None:
         assert marker in compact_fingerprint, marker
 
 
-def test_payment_failure_other_coupon_delivered_fingerprint_is_last() -> None:
+def test_payment_failure_other_coupon_delivered_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261019000500 (el cupon de otro caso que llego) es la ultima.
-    fingerprint = sql.split("'20261019000500'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261019000500 (el cupon de otro caso que llego) va justo
+    # antes de la de 20261019000600 (los pasos con plantilla y cupon).
+    fingerprint = sql.split("'20261019000500'", 1)[1].split("'20261019000600'", 1)[0]
+    fingerprint = fingerprint.rsplit("union all", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261019000500_payment_failure_other_coupon_delivered_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",3,'payment_failure_other_coupon_delivered')")
+    assert compact_fingerprint.endswith(",3,'payment_failure_other_coupon_delivered'")
     for marker in (
         "to_regprocedure('public.recovery_coupon_was_delivered(uuid)')",
         "andprosecdef",
@@ -977,5 +982,26 @@ def test_payment_failure_other_coupon_delivered_fingerprint_is_last() -> None:
         "to_regprocedure('public.get_portable_payment_failure_send_context_v1"
         "(uuid,text,bigint,timestamptz)')",
         "position('public.recovery_coupon_was_delivered(coupon.id)'indefinition)>0",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_recovery_followup_steps_fingerprint_is_last_and_service_role_only() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261019000600 (los pasos con plantilla y cupon) es la ultima.
+    fingerprint = sql.split("'20261019000600'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261019000600_recovery_followup_steps_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",6,'recovery_followup_steps')")
+    for marker in (
+        "to_regprocedure('public._recovery_followup_step(uuid)')",
+        "to_regprocedure('public._recovery_renewal_requested(uuid)')",
+        "to_regprocedure('public.request_recovery_renewal_v1(bigint,bigint,bigint,bigint,text,timestamptz)')",
+        "andprosecdef",
+        "andnothas_function_privilege('anon',oid,'EXECUTE')",
+        "position('public._recovery_renewal_requested(v_action.id)'indefinition)>0",
+        "position('recovery_followup_steps:begin'indefinition)>0",
+        "position('public._recovery_followup_step(scheduled_actions.id)'indefinition)>0",
     ):
         assert marker in compact_fingerprint, marker
