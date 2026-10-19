@@ -28,7 +28,7 @@ Una versión menor sobre la 1.13.1 con A2 y Z del carrito (#276), apagados por d
 ### Qué hace quien actualiza
 
 - **Correr la migración `20261019000600_recovery_followup_steps_v1.sql`.** Suma tres funciones privadas (solo `service_role`) y la tabla `recovery_renewal_requests`, y redefine cinco funciones desde su definición viva con reemplazos contados (si el texto no coincide, aborta sin cambiar nada). Sin paso manual. La ACL pasa de 142 a 145 entradas.
-- **Para prender A2 y Z** (opcional): `RECOVERY_CART_FOLLOWUPS_ENABLED=true` con `RECOVERY_CART_SECOND_TOUCH_TEMPLATE_NAME` y `RECOVERY_CART_LAST_TOUCH_TEMPLATE_NAME`, que exigen `RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED` (y Z, `RECOVERY_COUPON_WORKER_ENABLED`); el bridge no arranca si falta alguna. Además, publicar una política del carrito con los pasos y sus marcas. Apagado, el bridge cierra los dos pasos como hasta ahora.
+- **Para prender A2 y Z** (opcional): `RECOVERY_CART_FOLLOWUPS_ENABLED=true` con al menos una de `RECOVERY_CART_SECOND_TOUCH_TEMPLATE_NAME` (A2) y `RECOVERY_CART_LAST_TOUCH_TEMPLATE_NAME` (Z), que exigen `RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED` (y Z, `RECOVERY_COUPON_WORKER_ENABLED`); el bridge no arranca si falta alguna. Además, publicar una política del carrito con los pasos y sus marcas. Apagado, el bridge cierra los dos pasos como hasta ahora.
 - Si en la instancia el pago fallido todavía usa la política del carrito (`PAYMENT_FAILURE_VARIANTS_ENABLED` apagado), la política de varios toques del carrito se activa después de prender ese flag: si no, un pago fallido recibe A2.
 
 ## [1.13.1] - 2026-10-19
