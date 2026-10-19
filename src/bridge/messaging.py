@@ -95,6 +95,36 @@ PAYMENT_SLIP_TRIGGER = "payment_slip"
 
 
 @dataclass(frozen=True)
+class PaymentSlipStepTemplate:
+    """The approved template of one reminder of a payment slip (C2, C3).
+
+    ``step_key`` is the step of the slip policy that sends it
+    (``payment_slip_reminders.PAYMENT_SLIP_STEPS``); its variables come from
+    ``PAYMENT_SLIP_TEMPLATE_PARAMETERS``, like C1, and its URL button is the
+    slip.
+    """
+
+    step_key: str
+    name: str
+    category: str
+    body_parameters: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not self.step_key.strip() or not self.name.strip():
+            raise ValueError("invalid_payment_slip_step_template")
+        if self.category not in {"MARKETING", "UTILITY"}:
+            raise ValueError("invalid_payment_slip_step_category")
+        declared = self.body_parameters
+        if (
+            not isinstance(declared, tuple)
+            or not 1 <= len(declared) <= len(PAYMENT_SLIP_TEMPLATE_PARAMETERS)
+            or any(item not in PAYMENT_SLIP_TEMPLATE_PARAMETERS for item in declared)
+            or len(set(declared)) != len(declared)
+        ):
+            raise ValueError("invalid_template_body_parameters")
+
+
+@dataclass(frozen=True)
 class WhatsAppTemplateConfig:
     """Approved Chatwoot WABA templates and their body placeholders.
 
@@ -122,6 +152,9 @@ class WhatsAppTemplateConfig:
     (the store and the due date are not the case's), so ``body_values`` and
     ``params`` do not build them: the dispatcher hands the sender the
     parameters ``payment_slip_first_touch`` built, with the URL button.
+
+    ``payment_slip_steps`` are the templates of the reminders that follow C1,
+    one per step key. A step without its template does not go out.
     """
 
     first_touch_name: str
@@ -138,8 +171,19 @@ class WhatsAppTemplateConfig:
     payment_slip_name: str | None = None
     payment_slip_body_parameters: tuple[str, ...] | None = None
     payment_slip_category: str | None = None
+    payment_slip_steps: tuple[PaymentSlipStepTemplate, ...] = ()
 
     def __post_init__(self) -> None:
+        if not isinstance(self.payment_slip_steps, tuple) or not all(
+            isinstance(step, PaymentSlipStepTemplate) for step in self.payment_slip_steps
+        ):
+            raise ValueError("invalid_payment_slip_steps")
+        step_keys = [step.step_key for step in self.payment_slip_steps]
+        if len(set(step_keys)) != len(step_keys):
+            raise ValueError("duplicate_payment_slip_step")
+        if self.payment_slip_steps and self.payment_slip_name is None:
+            # A reminder only follows the first contact of a slip.
+            raise ValueError("payment_slip_steps_without_template")
         for declared in (
             self.first_touch_body_parameters,
             self.payment_failure_body_parameters,
@@ -189,6 +233,13 @@ class WhatsAppTemplateConfig:
                 raise ValueError("payment_slip_category_without_template")
             if self.payment_slip_category not in {"MARKETING", "UTILITY"}:
                 raise ValueError("invalid_payment_slip_category")
+
+    def payment_slip_step(self, step_key: str) -> PaymentSlipStepTemplate | None:
+        """The template of the slip reminder ``step_key``, or ``None``."""
+        for step in self.payment_slip_steps:
+            if step.step_key == step_key:
+                return step
+        return None
 
     def first_touch_name_for(self, *, trigger_kind: str | None) -> str | None:
         """The first-contact template this trigger sends, or ``None``.
@@ -481,6 +532,7 @@ class MessageSender(Protocol):
         phone: str,
         content: str,
         delivery_id: str,
+        template_params: dict[str, object] | None = None,
     ) -> FirstTouchResult: ...
 
 
@@ -913,8 +965,15 @@ class ChatwootMessageSender:
         phone: str,
         content: str,
         delivery_id: str,
+        template_params: dict[str, object] | None = None,
     ) -> FirstTouchResult:
-        """Send a follow-up without creating another Chatwoot conversation."""
+        """Send a follow-up without creating another Chatwoot conversation.
+
+        ``template_params`` is the approved template the dispatcher built and
+        the final gate hashed (a payment slip reminder, with its button): it
+        goes as is, and the follow-up template of the instance is not needed.
+        Without it, the follow-up template of the instance, as before.
+        """
         if not self._is_target_allowed(phone):
             return FirstTouchResult(
                 status="blocked",
@@ -933,7 +992,11 @@ class ChatwootMessageSender:
                 message_id=None,
                 reason="invalid_conversation_id",
             )
-        if self._template is not None and self._template.followup_name is None:
+        if (
+            template_params is None
+            and self._template is not None
+            and self._template.followup_name is None
+        ):
             return FirstTouchResult(
                 status="blocked",
                 conversation_id=conversation_id,
@@ -947,9 +1010,13 @@ class ChatwootMessageSender:
                 content=content,
                 delivery_id=delivery_id,
                 template_params=(
-                    self._template.params(content=content, followup=True)
-                    if self._template is not None
-                    else None
+                    template_params
+                    if template_params is not None
+                    else (
+                        self._template.params(content=content, followup=True)
+                        if self._template is not None
+                        else None
+                    )
                 ),
             )
         except ChatwootProtocolError as exc:

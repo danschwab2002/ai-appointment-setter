@@ -12,6 +12,16 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+### Agregado
+
+- **C2 y C3, los recordatorios del vencimiento de la ficha** ([portable-payment-slip-reminders-v1.md](docs/contracts/portable-payment-slip-reminders-v1.md)). Después de C1, la ficha recibe `att1_ficha_vence_manana_01` el día anterior al vencimiento a las 10:00 de su país y `att1_ficha_vence_hoy_01` el día del vencimiento a las 09:00, en la conversación de C1 y con la ficha en el botón. Son pasos de la política del scope de la ficha (`payment_slip_due_eve` y `payment_slip_due_day`): el motor inserta cada uno al aceptarse el anterior, y el bridge lo hace esperar, con un solo diferimiento, hasta su momento; si ese día ya pasó, no sale (`payment_slip_step_late`). Cortan la compra de cualquier oferta, la baja, la derivación y, en esta versión, también que la persona conteste (`prospect_replied`).
+  - Es el primer paso siguiente que manda el modo directo (`DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED`): el flujo de un `no_reply_review` sale de su `step_key`, y `send_followup` acepta la plantilla armada, con su botón. El seguimiento sale como el AgentBot, como los otros seguimientos.
+
+### Qué hace quien actualiza
+
+- **Correr la migración `20261019000400_portable_payment_slip_reminders_v1.sql`.** Cuatro funciones reconocen el recordatorio de la ficha (un `no_reply_review` de una secuencia `payment_slip`): las dos RPC de la ficha lo aceptan, `reevaluate_followup_action` no lo pausa por la ventana de 24 h ni por una conversación resuelta (es una plantilla aprobada), y la adopción de la respuesta (`admit_portable_inbound_commercial_case_v1`) no lo cuenta como paso pendiente, así el agente toma a quien contesta C1. Ningún otro seguimiento cambia. Sin paso manual y sin efecto mientras la política tenga un solo paso.
+- Para prenderlos: declarar `[plantillas].ficha_vence_manana` y `ficha_vence_hoy` en el manifiesto, cargar las cuatro `WABA_PAYMENT_SLIP_DUE_*` ([.env.example](.env.example)) y publicar una política de la ficha con los dos pasos (y un scope que la use). Sin la política nueva, nada cambia.
+
 ## [1.12.0] - 2026-10-19
 
 Una versión menor sobre la 1.11.0 con B1 del pago rechazado (#269), apagado por defecto. La migración cambia dos cosas del pago fallido aunque el flag esté apagado (ver «Qué hace quien actualiza»).

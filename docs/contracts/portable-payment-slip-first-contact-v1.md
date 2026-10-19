@@ -12,7 +12,7 @@ Quien elige pagar en efectivo recibe de Hotmart una ficha con un link y una fech
 - Un `PURCHASE_BILLET_PRINTED` admitido y cruzado con la intención de compra de la persona planifica la acción de primer contacto sobre un caso de disparador `payment_slip`.
 - Sale después de la demora de la política del scope (en ATT1, 60 minutos), dentro del horario de la política.
 - Lo frenan, igual que en los otros flujos del piloto, la compra, la baja, la derivación a una persona y la pérdida del consentimiento.
-- No manda seguimientos: la política tiene un solo paso (`payment_slip_first_contact`).
+- Con una política de un solo paso (`payment_slip_first_contact`) no manda seguimientos. Los recordatorios del vencimiento (C2 y C3) son pasos siguientes de la política: [portable-payment-slip-reminders-v1.md](portable-payment-slip-reminders-v1.md).
 
 ## El disparador
 

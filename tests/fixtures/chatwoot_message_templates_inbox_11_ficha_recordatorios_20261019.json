@@ -1,0 +1,141 @@
+{
+  "_capture": {
+    "origen": "Chatwoot de produccion (servicio infra_chatwoot-db), tabla channel_whatsapp del inbox 11 (ATT1), columna message_templates, tal como la sincronizo Chatwoot desde Meta. Lectura de solo lectura por psql dentro del contenedor, el 2026-10-19 ~04:01Z.",
+    "captured_at": "2026-10-19T04:01:22Z",
+    "message_templates_last_updated": "2026-10-19T01:45:06.085104",
+    "total_en_el_catalogo": 21,
+    "anonimizado": "No hace falta: son definiciones de plantillas, sin datos de personas. Se guardan solo las tres de la ficha, tal cual.",
+    "lo_que_prueba": "Los recordatorios de la ficha: att1_ficha_vence_manana_01 (C2, MARKETING, 4 variables: nombre, tienda, producto, vencimiento) y att1_ficha_vence_hoy_01 (C3, UTILITY, 3 variables: nombre, tienda, producto) llevan los mismos dos botones que C1 (att1_ficha_efectivo_01), en el mismo orden: el URL con base fija https://customer-local-latam.ebanx.com/print/oxxo?hash={{1}} y despues la respuesta rapida 'No mas mensajes'."
+  },
+  "message_templates": [
+    {
+      "id": "1135382735609669",
+      "name": "att1_ficha_efectivo_01",
+      "status": "APPROVED",
+      "category": "UTILITY",
+      "language": "es_MX",
+      "components": [
+        {
+          "text": "Hola, {{1}}. Te dejo aquí tu ficha para pagar {{2}} en {{3}}, para que la tengas a mano.\n\nTe escribo del equipo de la Dra. Nina. Puedes pagarla en efectivo hasta el {{4}}, mostrándola desde tu celular. Cuando se confirma el pago, tu acceso te llega al correo.\n\n¿Qué día te queda bien pasar a pagarla?",
+          "type": "BODY",
+          "example": {
+            "body_text": [
+              [
+                "María",
+                "Alimenta tu Tiroides",
+                "OXXO",
+                "jueves 22 de octubre"
+              ]
+            ]
+          }
+        },
+        {
+          "type": "BUTTONS",
+          "buttons": [
+            {
+              "url": "https://customer-local-latam.ebanx.com/print/oxxo?hash={{1}}",
+              "text": "Ver mi ficha",
+              "type": "URL",
+              "example": [
+                "https://customer-local-latam.ebanx.com/print/oxxo?hash=EJEMPLO0123456789"
+              ]
+            },
+            {
+              "text": "No más mensajes",
+              "type": "QUICK_REPLY"
+            }
+          ]
+        }
+      ],
+      "parameter_format": "POSITIONAL",
+      "disable_ios_autofill": false,
+      "is_primary_device_delivery_only": false
+    },
+    {
+      "id": "1894168628572098",
+      "name": "att1_ficha_vence_hoy_01",
+      "status": "APPROVED",
+      "category": "UTILITY",
+      "language": "es_MX",
+      "components": [
+        {
+          "text": "Hola, {{1}}. Tu ficha de {{2}} para {{3}} vence hoy.\n\nSi ya la pagaste, no tienes que hacer nada. Si todavía no, ¿alcanzas a pasar hoy?",
+          "type": "BODY",
+          "example": {
+            "body_text": [
+              [
+                "María",
+                "OXXO",
+                "Alimenta tu Tiroides"
+              ]
+            ]
+          }
+        },
+        {
+          "type": "BUTTONS",
+          "buttons": [
+            {
+              "url": "https://customer-local-latam.ebanx.com/print/oxxo?hash={{1}}",
+              "text": "Ver mi ficha",
+              "type": "URL",
+              "example": [
+                "https://customer-local-latam.ebanx.com/print/oxxo?hash=EJEMPLO0123456789"
+              ]
+            },
+            {
+              "text": "No más mensajes",
+              "type": "QUICK_REPLY"
+            }
+          ]
+        }
+      ],
+      "parameter_format": "POSITIONAL",
+      "disable_ios_autofill": false,
+      "is_primary_device_delivery_only": false
+    },
+    {
+      "id": "1487556399862613",
+      "name": "att1_ficha_vence_manana_01",
+      "status": "APPROVED",
+      "category": "MARKETING",
+      "language": "es_MX",
+      "components": [
+        {
+          "text": "Hola, {{1}}. Tu ficha de {{2}} para {{3}} vence mañana, {{4}}.\n\nSi ya la pagaste, no tienes que hacer nada: la confirmación llega al día siguiente del pago. Si todavía no, ¿te da tiempo de pasar hoy o mañana?",
+          "type": "BODY",
+          "example": {
+            "body_text": [
+              [
+                "María",
+                "OXXO",
+                "Alimenta tu Tiroides",
+                "jueves 22 de octubre"
+              ]
+            ]
+          }
+        },
+        {
+          "type": "BUTTONS",
+          "buttons": [
+            {
+              "url": "https://customer-local-latam.ebanx.com/print/oxxo?hash={{1}}",
+              "text": "Ver mi ficha",
+              "type": "URL",
+              "example": [
+                "https://customer-local-latam.ebanx.com/print/oxxo?hash=EJEMPLO0123456789"
+              ]
+            },
+            {
+              "text": "No más mensajes",
+              "type": "QUICK_REPLY"
+            }
+          ]
+        }
+      ],
+      "parameter_format": "POSITIONAL",
+      "previous_category": "UTILITY",
+      "disable_ios_autofill": false,
+      "is_primary_device_delivery_only": false
+    }
+  ]
+}
