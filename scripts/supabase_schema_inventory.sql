@@ -4895,6 +4895,67 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         8,
         'portable_payment_slip_first_contact'
+    union all
+    select
+        '20261019000200',
+        '20261019000200_portable_payment_failure_variants_v1.sql',
+        -- B1 del pago rechazado: las dos entradas del bridge, definer y solo
+        -- service_role.
+        (
+            select count(*) = 2
+            from functions
+            where oid in (
+                to_regprocedure('public.get_portable_payment_failure_pilot_runtime_status(text,integer,text,text,text)'),
+                to_regprocedure('public.get_portable_payment_failure_send_context_v1(uuid,text,bigint,timestamptz)')
+            )
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- Las dos reglas: nadie de la API las ejecuta.
+        + (
+            select count(*) = 2
+            from functions
+            where oid in (
+                to_regprocedure('public.payment_failure_refusal_kind(text,text)'),
+                to_regprocedure('public.payment_failure_wants_first_coupon(uuid)')
+            )
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- Un caso por persona y producto durante 72 h, y el contador.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.plan_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,timestamptz)')
+              and position('payment_failure_count' in definition) > 0
+              and position('72 hours' in definition) > 0
+              and position('least(due_at, now())' in definition) = 0
+        )::int
+        -- Un cancelado que no es un rechazo no se planifica.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.plan_portable_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,timestamptz,bigint,bigint,text,text,integer)')
+              and position('payment_failure_not_a_refusal' in definition) > 0
+        )::int
+        -- El cupon y el link del primer toque del pago rechazado.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.claim_due_recovery_coupons_v1(timestamptz,text,integer,text,interval,interval,numeric,integer)')
+              and position('payment_failure_wants_first_coupon' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.reserve_recovery_checkout_issuance_v1(uuid,text,bigint,uuid,text,timestamptz)')
+              and position('payment_failure_variants' in definition) > 0
+        )::int,
+        6,
+        'portable_payment_failure_variants'
 )
 select
     version,

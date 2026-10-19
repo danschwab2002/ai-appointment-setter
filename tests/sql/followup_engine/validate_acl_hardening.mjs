@@ -217,7 +217,9 @@ const rows = await db.query(`
       ('plan_portable_payment_slip_recovery(uuid,uuid,text,text,text,text,integer,timestamp with time zone,bigint,bigint,text,text,integer)'),
       ('mark_portable_payment_slip_request_started(uuid,uuid,text,bigint,timestamp with time zone)'),
       ('get_portable_payment_slip_pilot_runtime_status(text,integer,text,text,text)'),
-      ('get_portable_payment_slip_send_context(uuid,text,bigint,timestamp with time zone)')
+      ('get_portable_payment_slip_send_context(uuid,text,bigint,timestamp with time zone)'),
+      ('get_portable_payment_failure_pilot_runtime_status(text,integer,text,text,text)'),
+      ('get_portable_payment_failure_send_context_v1(uuid,text,bigint,timestamp with time zone)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -262,7 +264,7 @@ const result = rows.rows[0];
 // contact after a payment slip (20261019000100) adds five: the admission v2,
 // the plan, the request start, the runtime status and the send context.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 139) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 141) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper
