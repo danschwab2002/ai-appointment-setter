@@ -12,6 +12,10 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.11.0] - 2026-10-19
+
+Una versión menor sobre la 1.10.2 con C1 de la ficha de pago en efectivo (#266), apagada por defecto.
+
 ### Agregado
 
 - **El primer mensaje a quien generó una ficha de pago en efectivo** (C1 de la ficha de OXXO, [portable-payment-slip-first-contact-v1.md](docs/contracts/portable-payment-slip-first-contact-v1.md)). Hasta acá, `PURCHASE_BILLET_PRINTED` se guardaba y nadie le escribía: en ATT1, 13 fichas desde el 2026-10-12, todas `failed` con `unsupported_persisted_event_type`. Con `PORTABLE_HOTMART_PAYMENT_SLIP_ENABLED`, la ficha se admite y se cruza con la intención del formulario (`admit_portable_hotmart_payment_slip_v2`), el worker la filtra por la tabla `[[ficha.medios]]` del manifiesto y la planifica con **su propio scope y su propia política** (no los del carrito ni los del pago fallido). El mensaje es la plantilla `[plantillas].ficha` con cuatro variables (nombre, producto, tienda y vencimiento, «jueves 22 de octubre») y el botón con el link de la ficha.
