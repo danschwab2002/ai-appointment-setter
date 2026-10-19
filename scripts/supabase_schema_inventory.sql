@@ -4811,6 +4811,90 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         9,
         'recovery_checkout_issuance'
+    union all
+    select
+        '20261019000100',
+        '20261019000100_portable_payment_slip_first_contact_v1.sql',
+        -- La ficha de pago (C1): la tabla de los hechos crudos, con RLS, sin
+        -- privilegios para los roles de la API y con su trigger de solo
+        -- agregar.
+        (
+            select count(*) = 1
+            from pg_class c
+            where c.oid = to_regclass('public.commercial_ally_payment_slip_details')
+              and c.relrowsecurity
+              and not has_table_privilege('anon', c.oid, 'SELECT')
+              and not has_table_privilege('authenticated', c.oid, 'SELECT')
+              and not has_table_privilege('service_role', c.oid, 'SELECT')
+        )::int
+        + (
+            select count(*) = 1
+            from triggers
+            where tgname = 'commercial_ally_payment_slip_details_append_only'
+        )::int
+        -- El scope de la ficha y el rol del evento en el caso.
+        + exists(
+            select 1
+            from pg_catalog.pg_constraint
+            where conrelid = to_regclass('public.pilot_scope_versions')
+              and conname = 'pilot_scope_versions_source_event_type_check'
+              and position('PURCHASE_BILLET_PRINTED' in pg_get_constraintdef(oid)) > 0
+        )::int
+        + exists(
+            select 1
+            from pg_catalog.pg_constraint
+            where conrelid = to_regclass('public.recovery_case_events')
+              and conname = 'recovery_case_events_event_role_check'
+              and position('payment_slip' in pg_get_constraintdef(oid)) > 0
+        )::int
+        -- Las cinco entradas del bridge: definer, solo service_role.
+        + (
+            select count(*) = 5
+            from functions
+            where oid in (
+                to_regprocedure('public.admit_portable_hotmart_payment_slip_v2(text,text,integer,text,jsonb,text,text)'),
+                to_regprocedure('public.plan_portable_payment_slip_recovery(uuid,uuid,text,text,text,text,integer,timestamptz,bigint,bigint,text,text,integer)'),
+                to_regprocedure('public.mark_portable_payment_slip_request_started(uuid,uuid,text,bigint,timestamptz)'),
+                to_regprocedure('public.get_portable_payment_slip_pilot_runtime_status(text,integer,text,text,text)'),
+                to_regprocedure('public.get_portable_payment_slip_send_context(uuid,text,bigint,timestamptz)')
+            )
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- Los dos planes internos, la forma procesable y el trigger: nadie de
+        -- la API los ejecuta.
+        + (
+            select count(*) = 4
+            from functions
+            where oid in (
+                to_regprocedure('public.plan_payment_slip_recovery(uuid,uuid,text,text,text,text,integer,timestamptz)'),
+                to_regprocedure('public.plan_payment_slip_recovery_with_identity(uuid,uuid,text,text,text,text,integer,timestamptz,bigint,bigint,text)'),
+                to_regprocedure('public.hotmart_payment_slip_payload_is_processable(text,jsonb)'),
+                to_regprocedure('public.protect_commercial_ally_payment_slip_evidence()')
+            )
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- La rama de la ficha en el correlador portable.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._correlate_portable_hotmart_purchase_intent(uuid)')
+              and position('payment_slip_first_contact: begin' in definition) > 0
+        )::int
+        -- El arranque de la ficha autoriza con su tipo de evento.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.mark_portable_payment_slip_request_started(uuid,uuid,text,bigint,timestamptz)')
+              and position('PURCHASE_BILLET_PRINTED' in definition) > 0
+              and position('payment_failure' in definition) = 0
+        )::int,
+        8,
+        'portable_payment_slip_first_contact'
 )
 select
     version,

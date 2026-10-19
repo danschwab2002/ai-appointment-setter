@@ -212,7 +212,12 @@ const rows = await db.query(`
       ('settle_recovery_coupon_v1(uuid,text,text,bigint,bigint,bigint,text,timestamp with time zone,timestamp with time zone)'),
       ('get_recovery_coupon_for_case_v1(uuid,smallint)'),
       ('reserve_recovery_checkout_issuance_v1(uuid,text,bigint,uuid,text,timestamp with time zone)'),
-      ('authorize_recovery_checkout_issuance_v1(uuid,uuid,text,bigint,timestamp with time zone)')
+      ('authorize_recovery_checkout_issuance_v1(uuid,uuid,text,bigint,timestamp with time zone)'),
+      ('admit_portable_hotmart_payment_slip_v2(text,text,integer,text,jsonb,text,text)'),
+      ('plan_portable_payment_slip_recovery(uuid,uuid,text,text,text,text,integer,timestamp with time zone,bigint,bigint,text,text,integer)'),
+      ('mark_portable_payment_slip_request_started(uuid,uuid,text,bigint,timestamp with time zone)'),
+      ('get_portable_payment_slip_pilot_runtime_status(text,integer,text,text,text)'),
+      ('get_portable_payment_slip_send_context(uuid,text,bigint,timestamp with time zone)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -253,9 +258,11 @@ const result = rows.rows[0];
 // (20261016000200) adds one, and the reserve of the link of the product the
 // agent names (20261016000400) adds one, and the personal coupon of the cart
 // (20261018000100) adds three, and the reserve and the authorization of the
-// link of the first cart message (20261018000200) add two.
+// link of the first cart message (20261018000200) add two, and the first
+// contact after a payment slip (20261019000100) adds five: the admission v2,
+// the plan, the request start, the runtime status and the send context.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 134) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 139) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper

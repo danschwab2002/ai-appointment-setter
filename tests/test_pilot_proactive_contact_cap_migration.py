@@ -55,7 +55,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
     # compra hecha con nuestro link (20261016000300), y el link del producto
     # que nombra el agente (20261016000400), y el cupon personal del carrito
     # (20261018000100), con el link del primer mensaje del carrito
-    # (20261018000200).
+    # (20261018000200), y el primer contacto de la ficha de pago
+    # (20261019000100).
     assert versions[position + 1:] == [
         "20261009000200",
         "20261010000100",
@@ -68,6 +69,7 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261016000400",
         "20261018000100",
         "20261018000200",
+        "20261019000100",
     ]
 
     sql = _sql()

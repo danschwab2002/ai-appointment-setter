@@ -437,7 +437,18 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     sql = ACL_INVENTORY.read_text(encoding="utf-8")
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
 
-    assert len(allowlisted) == 134
+    # 20261019000100 (la ficha de pago) suma sus cinco entradas del bridge.
+    assert len(allowlisted) == 139
+    for signature in (
+        "admit_portable_hotmart_payment_slip_v2(text, text, integer, text, jsonb, text, text)",
+        "plan_portable_payment_slip_recovery(uuid, uuid, text, text, text, text, integer, "
+        "timestamp with time zone, bigint, bigint, text, text, integer)",
+        "mark_portable_payment_slip_request_started(uuid, uuid, text, bigint, "
+        "timestamp with time zone)",
+        "get_portable_payment_slip_pilot_runtime_status(text, integer, text, text, text)",
+        "get_portable_payment_slip_send_context(uuid, text, bigint, timestamp with time zone)",
+    ):
+        assert signature in allowlisted, signature
     assert "get_daily_feedback_review_page_v2(text, uuid, text[])" in allowlisted
     assert "get_portable_person_activity_v1(text, text, text)" in allowlisted
     assert (
@@ -798,14 +809,16 @@ def test_recovery_coupons_fingerprint_is_service_role_only() -> None:
         assert marker in compact_fingerprint, marker
 
 
-def test_recovery_checkout_issuance_fingerprint_is_last_and_service_role_only() -> None:
+def test_recovery_checkout_issuance_fingerprint_is_service_role_only() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261018000200 es la ultima del inventario.
-    fingerprint = sql.split("'20261018000200'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261018000200 va justo antes de la de 20261019000100 (la
+    # ficha de pago).
+    fingerprint = sql.split("'20261018000200'", 1)[1].split("'20261019000100'", 1)[0]
+    fingerprint = fingerprint.rsplit("union all", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261018000200_recovery_checkout_issuance_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",9,'recovery_checkout_issuance')")
+    assert compact_fingerprint.endswith(",9,'recovery_checkout_issuance'")
     for marker in (
         "attnamein('recovery_case_id','delivery_attempt_id')",
         "andnotattnotnull",
@@ -823,5 +836,33 @@ def test_recovery_checkout_issuance_fingerprint_is_last_and_service_role_only() 
         "andnotprosecdef",
         "andnothas_function_privilege('service_role',oid,'EXECUTE')",
         "'chatwoot_conversation_idisdistinctfromp_chatwoot_conversation_id'",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_payment_slip_first_contact_fingerprint_is_last_and_service_role_only() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261019000100 (C1, la ficha de pago) es la ultima.
+    fingerprint = sql.split("'20261019000100'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261019000100_portable_payment_slip_first_contact_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",8,'portable_payment_slip_first_contact')")
+    for marker in (
+        "to_regclass('public.commercial_ally_payment_slip_details')",
+        "andc.relrowsecurity",
+        "andnothas_table_privilege('service_role',c.oid,'SELECT')",
+        "tgname='commercial_ally_payment_slip_details_append_only'",
+        "conname='pilot_scope_versions_source_event_type_check'",
+        "conname='recovery_case_events_event_role_check'",
+        "selectcount(*)=5",
+        "to_regprocedure('public.admit_portable_hotmart_payment_slip_v2("
+        "text,text,integer,text,jsonb,text,text)')",
+        "to_regprocedure('public.get_portable_payment_slip_send_context("
+        "uuid,text,bigint,timestamptz)')",
+        "selectcount(*)=4",
+        "andnothas_function_privilege('service_role',oid,'EXECUTE')",
+        "position('payment_slip_first_contact:begin'indefinition)>0",
+        "position('payment_failure'indefinition)=0",
     ):
         assert marker in compact_fingerprint, marker

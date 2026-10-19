@@ -1309,6 +1309,25 @@ results.purchase = {
     throw new Error(`the shared correlator changed: ${JSON.stringify({ outcome: admitted.outcome, correlation: correlation?.outcome, classification: intent.current_classification })}`);
   }
 
+  // 20261019000100 (la ficha de pago) le suma al portable, y solo a el, dos
+  // reemplazos en el lugar: la oferta y la hora de la ficha como las del pago
+  // fallido, y la rama de la ficha que no clasifica la intencion. Se leen del
+  // archivo de la migracion, tal cual, para que la prueba siga siendo
+  // "compartido mas sus reemplazos y nada mas".
+  const slipMigration = readFileSync(
+    join(root, 'supabase/migrations/20261019000100_portable_payment_slip_first_contact_v1.sql'),
+    'utf8',
+  );
+  const slipBlock = slipMigration.split('do $slip_correlator$')[1]?.split('$slip_correlator$;')[0];
+  const slipPatch = (name, tag) => {
+    const match = slipBlock?.match(new RegExp(`${name} constant text := \\$${tag}\\$([\\s\\S]*?)\\$${tag}\\$;`));
+    if (!match) throw new Error(`payment slip correlator patch ${name} not found`);
+    return match[1];
+  };
+  const slipPatches = [
+    [slipPatch('v_old_offer', 'old'), slipPatch('v_new_offer', 'new')],
+    [slipPatch('v_old_class', 'old'), slipPatch('v_new_class', 'new')],
+  ];
   const drift = one((await db.query(`
     with definitions as (
       select
@@ -1316,17 +1335,18 @@ results.purchase = {
         pg_get_functiondef('public._correlate_portable_hotmart_purchase_intent(uuid)'::regprocedure) as portable
     )
     select
+      replace(replace(
       replace(
         replace(shared, 'public.correlate_hotmart_purchase_intent(',
           'public._correlate_portable_hotmart_purchase_intent('),
         'intent.normalized_phone = v_phone',
         'intent.normalized_phone = any(public._whatsapp_phone_variants(v_phone))'
-      ) = portable as derived,
+      ), $1, $2), $3, $4) = portable as derived,
       (length(shared) - length(replace(shared, 'intent.normalized_phone = v_phone', '')))
         / length('intent.normalized_phone = v_phone') as exact_comparisons,
       position('_whatsapp_phone_' in shared) as shared_mentions_equivalence
     from definitions
-  `)).rows, 'correlator drift');
+  `, slipPatches.flat())).rows, 'correlator drift');
   if (drift.derived !== true || drift.exact_comparisons !== 2
       || drift.shared_mentions_equivalence !== 0) {
     throw new Error(`the portable correlator drifted from the shared one: ${JSON.stringify(drift)}`);

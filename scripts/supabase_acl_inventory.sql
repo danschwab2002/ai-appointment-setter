@@ -138,7 +138,12 @@ expected_service_role(signature) as (
         ('public.settle_recovery_coupon_v1(uuid, text, text, bigint, bigint, bigint, text, timestamp with time zone, timestamp with time zone)'),
         ('public.get_recovery_coupon_for_case_v1(uuid, smallint)'),
         ('public.reserve_recovery_checkout_issuance_v1(uuid, text, bigint, uuid, text, timestamp with time zone)'),
-        ('public.authorize_recovery_checkout_issuance_v1(uuid, uuid, text, bigint, timestamp with time zone)')
+        ('public.authorize_recovery_checkout_issuance_v1(uuid, uuid, text, bigint, timestamp with time zone)'),
+        ('public.admit_portable_hotmart_payment_slip_v2(text, text, integer, text, jsonb, text, text)'),
+        ('public.plan_portable_payment_slip_recovery(uuid, uuid, text, text, text, text, integer, timestamp with time zone, bigint, bigint, text, text, integer)'),
+        ('public.mark_portable_payment_slip_request_started(uuid, uuid, text, bigint, timestamp with time zone)'),
+        ('public.get_portable_payment_slip_pilot_runtime_status(text, integer, text, text, text)'),
+        ('public.get_portable_payment_slip_send_context(uuid, text, bigint, timestamp with time zone)')
 ),
 functions as (
     select
