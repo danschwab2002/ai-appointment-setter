@@ -19,7 +19,7 @@ Lo que ya está en `main` y todavía no tiene versión. El número se elige al p
 
 ### Qué hace quien actualiza
 
-- **Correr la migración `20261019000400_portable_payment_slip_reminders_v1.sql`.** Amplía dos funciones de la ficha (`mark_portable_payment_slip_request_started` y `get_portable_payment_slip_send_context`) para que acepten un paso siguiente de una secuencia de ficha. Sin paso manual y sin efecto mientras la política tenga un solo paso.
+- **Correr la migración `20261019000400_portable_payment_slip_reminders_v1.sql`.** Cuatro funciones reconocen el recordatorio de la ficha (un `no_reply_review` de una secuencia `payment_slip`): las dos RPC de la ficha lo aceptan, `reevaluate_followup_action` no lo pausa por la ventana de 24 h ni por una conversación resuelta (es una plantilla aprobada), y la adopción de la respuesta (`admit_portable_inbound_commercial_case_v1`) no lo cuenta como paso pendiente, así el agente toma a quien contesta C1. Ningún otro seguimiento cambia. Sin paso manual y sin efecto mientras la política tenga un solo paso.
 - Para prenderlos: declarar `[plantillas].ficha_vence_manana` y `ficha_vence_hoy` en el manifiesto, cargar las cuatro `WABA_PAYMENT_SLIP_DUE_*` ([.env.example](.env.example)) y publicar una política de la ficha con los dos pasos (y un scope que la use). Sin la política nueva, nada cambia.
 
 ## [1.12.0] - 2026-10-19

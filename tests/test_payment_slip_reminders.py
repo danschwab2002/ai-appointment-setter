@@ -194,7 +194,9 @@ EVIDENCE: dict[str, object] = {
     "p_chatwoot_checkpoint_message_id": "888",
     "p_chatwoot_checkpoint_at": "2026-10-13T04:57:00+00:00",
     "p_chatwoot_status": "open",
-    "p_chatwoot_can_reply": True,
+    # Despues de C1 (una plantilla sin respuesta) la ventana de 24 h esta
+    # cerrada; la reevaluacion real de esto la cubre la prueba de SQL.
+    "p_chatwoot_can_reply": False,
     "p_chatwoot_anchor_found": True,
     "p_chatwoot_automation_paused": False,
     "p_chatwoot_inbound_after_anchor": False,

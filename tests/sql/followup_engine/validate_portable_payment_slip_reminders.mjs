@@ -2,10 +2,11 @@
 // 20261019000400), con las RPC reales sobre la cadena completa de migraciones.
 //
 // Prueba:
-//   0. la migracion: cambia exactamente dos funciones (el arranque y el
-//      contexto de envio de la ficha), cada una es su definicion anterior con
-//      la condicion del ancla ampliada y nada mas, no agrega ni saca ninguna, y
-//      correrla dos veces aborta sin tocar nada;
+//   0. la migracion: cambia exactamente cuatro funciones (el arranque y el
+//      contexto de envio de la ficha, la reevaluacion compartida y la adopcion
+//      de la respuesta), cada una es su definicion anterior con un solo texto
+//      reemplazado y nada mas, no agrega ni saca ninguna, y correrla dos veces
+//      aborta sin tocar nada;
 //   1. A de punta a punta con una politica de tres pasos (C1 y los dos
 //      recordatorios): al aceptarse C1 el motor inserta C2 como no_reply_review
 //      anclado al mensaje aceptado, con la conversacion del caso y el mismo
@@ -13,10 +14,17 @@
 //      y arranca por mark_portable_payment_slip_request_started (autoriza contra
 //      el scope de la ficha y cuenta en sus topes; el arranque compartido del
 //      carrito lo rechaza); al aceptarse C2 entra C3, y al aceptarse C3 la
-//      secuencia termina con policy_exhausted;
+//      secuencia termina con policy_exhausted. La evidencia de Chatwoot es la
+//      de una plantilla sin respuesta: la ventana de 24 h cerrada
+//      (can_reply = false), y C3 con la conversacion resuelta por el equipo.
+//      En espera (snoozed), el recordatorio se pausa;
 //   2. el predicado: un no_reply_review de una secuencia que no es de una
-//      ficha sigue rechazado por las dos RPC;
-//   3. B contesta despues de C1: la reevaluacion compartida cancela C2 con
+//      ficha sigue rechazado por las dos RPC, y con la ventana cerrada se
+//      pausa como antes;
+//   3. B contesta C1 con C2 esperando su dia: la adopcion de la respuesta
+//      (admit_portable_inbound_commercial_case_v1) la toma; con la secuencia de
+//      otro flujo, la misma accion la frena con 22000, como antes;
+//   4. y cuando C2 se reclama, la reevaluacion compartida lo cancela con
 //      prospect_replied (lo que hace esta version; la especificacion pide que
 //      el recordatorio sobreviva a una respuesta, y eso queda para despues).
 //
@@ -84,6 +92,8 @@ for (const name of migrationNames.slice(targetIndex + 1)) {
 const CHANGED = [
   'mark_portable_payment_slip_request_started(uuid,uuid,text,bigint,timestamp with time zone)',
   'get_portable_payment_slip_send_context(uuid,text,bigint,timestamp with time zone)',
+  'reevaluate_followup_action(uuid,text,bigint,timestamp with time zone,boolean,text,text,timestamp with time zone,text,boolean,boolean,boolean,boolean,boolean)',
+  'admit_portable_inbound_commercial_case_v1(text,integer,bigint,text)',
 ];
 const changed = [...after.keys()].filter((signature) => before.get(signature) !== after.get(signature)).sort();
 const added = [...after.keys()].filter((signature) => !before.has(signature));
@@ -92,16 +102,23 @@ if (JSON.stringify(changed) !== JSON.stringify([...CHANGED].sort())
     || added.length !== 0 || removed.length !== 0) {
   throw new Error(`the migration changed other functions: ${JSON.stringify({ changed, added, removed })}`);
 }
-// Cada una es la anterior con la condicion del ancla ampliada, nada mas.
-const OLD_MARK = "          and action.anchor_type = 'payment_slip'\n";
-const OLD_CONTEXT = "    if v_action.anchor_type is distinct from 'payment_slip' then\n";
-for (const [signature, old] of [[CHANGED[0], OLD_MARK], [CHANGED[1], OLD_CONTEXT]]) {
+// Cada una es la anterior con un solo texto reemplazado, nada mas.
+const OLD_TEXTS = [
+  "          and action.anchor_type = 'payment_slip'\n",
+  "    if v_action.anchor_type is distinct from 'payment_slip' then\n",
+  "    elsif p_chatwoot_automation_paused\n"
+    + "       or p_chatwoot_human_activity_after_anchor\n"
+    + "       or not p_chatwoot_can_reply\n"
+    + "       or p_chatwoot_status in ('snoozed', 'resolved') then\n",
+  `${' '.repeat(29)}-- portable_adoption_stopped_first_contact: end\n`,
+];
+for (const [signature, old] of CHANGED.map((signature, index) => [signature, OLD_TEXTS[index]])) {
   const previous = before.get(signature);
   const current = after.get(signature);
   const [head, tail] = previous.split(old);
   if (previous.split(old).length !== 2 || !current.startsWith(head) || !current.endsWith(tail)
       || !current.includes("slip_sequence.reason = 'payment_slip'")) {
-    throw new Error(`${signature} is not the previous definition with the anchor widened`);
+    throw new Error(`${signature} is not the previous definition with one text replaced`);
   }
 }
 let rerun = null;
@@ -447,13 +464,16 @@ const people = { A: await person(A_SLIP, at(-70)) };
 const CONVERSATION = { A: '910001', B: '910002' };
 
 // Lo que el dispatcher arma de Chatwoot antes de un no_reply_review.
-const evidence = (conversation, now, { replied = false } = {}) => ({
+// Despues de una plantilla sin respuesta, la ventana de 24 h de WhatsApp esta
+// cerrada: Chatwoot da can_reply = false (lo que lee chatwoot.py del
+// conversation). Una respuesta la abre.
+const evidence = (conversation, now, { replied = false, status = 'open' } = {}) => ({
   p_chatwoot_checked: true,
   p_chatwoot_conversation_id: conversation,
   p_chatwoot_checkpoint_message_id: '1',
   p_chatwoot_checkpoint_at: now.toISOString(),
-  p_chatwoot_status: 'open',
-  p_chatwoot_can_reply: true,
+  p_chatwoot_status: status,
+  p_chatwoot_can_reply: replied,
   p_chatwoot_anchor_found: true,
   p_chatwoot_automation_paused: false,
   p_chatwoot_inbound_after_anchor: replied,
@@ -473,6 +493,14 @@ const reevaluate = async (actionId, worker, lease, now, chatwoot) => {
     )
   `, [actionId, worker, lease, now, ...names.map((name) => chatwoot[name])])).rows, 'reevaluation');
 };
+const rolledBack = async (run) => {
+  await db.exec('begin');
+  try {
+    return await run();
+  } finally {
+    await db.exec('rollback');
+  }
+};
 const claim = async (worker, actionId, now) => {
   const claimed = (await db.query(`
     select * from public.claim_due_followup_actions($1,$2,interval '5 minutes',100)
@@ -482,13 +510,13 @@ const claim = async (worker, actionId, now) => {
 
 // Un toque de la ficha de punta a punta: claim, reevaluacion, contexto de la
 // ficha, reserva, arranque por la RPC de la ficha y aceptacion.
-const sendStep = async (who, actionId, label, { chatwoot = false } = {}) => {
+const sendStep = async (who, actionId, label, { chatwoot = false, status = 'open' } = {}) => {
   const worker = `slip-worker-${who}`;
   const now = await dbNow();
   const claimed = await claim(worker, actionId, now);
   const lease = claimed.lease_generation;
   const decision = await reevaluate(actionId, worker, lease, now,
-    chatwoot ? evidence(CONVERSATION[who], now) : null);
+    chatwoot ? evidence(CONVERSATION[who], now, { status }) : null);
   if (decision.decision !== 'execute' || decision.reason_code !== 'eligible_for_execution') {
     throw new Error(`${label} reevaluation: ${JSON.stringify(decision)}`);
   }
@@ -568,7 +596,18 @@ const nextStep = async (who, stepKey, label) => {
   await sendStep('A', c2.id, 'C2', { chatwoot: true });
   const c3 = await nextStep('A', 'payment_slip_due_day', 'C3');
   await sleep(1200);
-  await sendStep('A', c3.id, 'C3', { chatwoot: true });
+  // En espera (snoozed) se pausa, como todo seguimiento.
+  const snoozed = await rolledBack(async () => {
+    const now = await dbNow();
+    const claimed = await claim('slip-worker-A', c3.id, now);
+    return reevaluate(c3.id, 'slip-worker-A', claimed.lease_generation, now,
+      evidence(CONVERSATION.A, now, { status: 'snoozed' }));
+  });
+  if (snoozed.decision !== 'pause' || snoozed.reason_code !== 'chatwoot_conversation_blocked') {
+    throw new Error(`C3 snoozed: ${JSON.stringify(snoozed)}`);
+  }
+  // Resuelta por el equipo sin respuesta, sale.
+  await sendStep('A', c3.id, 'C3', { chatwoot: true, status: 'resolved' });
   const sequence = one((await db.query(`
     select status, completion_reason, automatic_messages_accepted
     from public.followup_sequences where id = $1
@@ -584,6 +623,9 @@ const nextStep = async (who, stepKey, label) => {
     steps: actions.map((row) => `${row.action_type}:${row.step_key}`),
     sequence: sequence.completion_reason,
     starts_in_slip_scope: 3,
+    window_closed: 'execute',
+    resolved: 'execute',
+    snoozed: snoozed.reason_code,
   };
 }
 
@@ -610,6 +652,16 @@ const nextStep = async (who, stepKey, label) => {
       return run(claimed.lease_generation);
     }, { code: '55000', message: 'payment_slip_action_required' });
   }
+  // La ventana cerrada: un seguimiento de otro flujo se pausa como antes.
+  const otherFlow = await rolledBack(async () => {
+    await db.query(`
+      update public.followup_sequences set reason = 'cart_abandonment' where id = $1
+    `, [people.B.plan.followup_sequence_id]);
+    return reevaluate(c2.id, worker, claimed.lease_generation, now, evidence(CONVERSATION.B, now));
+  });
+  if (otherFlow.decision !== 'pause' || otherFlow.reason_code !== 'chatwoot_conversation_blocked') {
+    throw new Error(`a cart follow-up with the window closed: ${JSON.stringify(otherFlow)}`);
+  }
   // El arranque: con la secuencia de otro flujo, tampoco.
   const decision = await reevaluate(c2.id, worker, claimed.lease_generation, now,
     evidence(CONVERSATION.B, now));
@@ -633,11 +685,61 @@ const nextStep = async (who, stepKey, label) => {
     )
   `, [c2.id, attempt.id, worker, claimed.lease_generation,
     new Date(now.getTime() + 1000).toISOString(), now]);
-  results.predicate = 'payment_slip_action_required';
+  results.predicate = { rpcs: 'payment_slip_action_required', window_closed: otherFlow.reason_code };
 }
 
 // ---------------------------------------------------------------------------
-// 3. B contesto despues de C1: la reevaluacion compartida cancela C2.
+// 3. B contesta C1 mientras C2 espera su dia: el agente toma la respuesta.
+// ---------------------------------------------------------------------------
+{
+  // El scope entrante de ATT1, como lo siembra aprovisionar-att1.sql.
+  await db.query(`
+    insert into public.inbound_commercial_scope_versions
+      (scope_key, version, status, tenant_key, chatwoot_account_id, chatwoot_inbox_id,
+       external_product_id, offer_code, approved_by, approved_at, published_at)
+    values ($1,$2,'published',$3,$4,$5,$6,$7,'operator-test',now(),now())
+  `, [ATT1.inboundScope, ATT1.inboundVersion, ATT1.tenant, ATT1.accountId, ATT1.inboxId,
+    ATT1.hotlink, defaultOffer.offer_code]);
+  const userId = one((await db.query(`
+    select identity.external_user_id
+    from public.recovery_cases recovery
+    join public.channel_identities identity on identity.id = recovery.selected_channel_identity_id
+    where recovery.id = $1
+  `, [people.B.plan.recovery_case_id])).rows, 'B identity').external_user_id;
+  const pending = (await caseActions(people.B.plan.recovery_case_id))
+    .filter((row) => row.step_key === 'payment_slip_due_eve');
+  if (pending.length !== 1 || pending[0].status !== 'retryable_failed') {
+    throw new Error(`B C2 is not waiting: ${JSON.stringify(pending)}`);
+  }
+  const ADMISSION = 'select * from public.admit_portable_inbound_commercial_case_v1($1,$2,$3,$4)';
+  const args = [ATT1.inboundScope, ATT1.inboundVersion, Number(CONVERSATION.B), userId];
+  const asService = async (run) => {
+    await db.exec('set role service_role');
+    try {
+      return await run();
+    } finally {
+      await db.exec('reset role');
+    }
+  };
+  // Con la secuencia de otro flujo, el paso pendiente frena la adopcion (el
+  // 22000 del 09/10): lo que hace la migracion es solo para la ficha.
+  await expectError('adoption with a pending follow-up of another flow', async () => {
+    await db.query(`
+      update public.followup_sequences set reason = 'cart_abandonment' where id = $1
+    `, [people.B.plan.followup_sequence_id]);
+    // set local: el rollback de expectError devuelve el rol.
+    await db.exec('set local role service_role');
+    return db.query(ADMISSION, args);
+  }, { code: '22000' });
+  const adopted = one((await asService(() => db.query(ADMISSION, args))).rows, 'B adoption');
+  if (adopted.outcome !== 'created' || adopted.automation_status !== 'draft_only') {
+    throw new Error(`B adoption: ${JSON.stringify(adopted)}`);
+  }
+  results.adoption = `${adopted.outcome}:${adopted.automation_status}`;
+}
+
+// ---------------------------------------------------------------------------
+// 4. B contesto despues de C1: la reevaluacion compartida cancela C2.
 // ---------------------------------------------------------------------------
 {
   // El C2 que el caso 2 libero sin arrancar (queda retryable_failed).

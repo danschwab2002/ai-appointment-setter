@@ -939,7 +939,7 @@ def test_payment_slip_reminders_fingerprint_is_last() -> None:
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261019000400_portable_payment_slip_reminders_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",2,'portable_payment_slip_reminders')")
+    assert compact_fingerprint.endswith(",4,'portable_payment_slip_reminders')")
     for marker in (
         "to_regprocedure('public.mark_portable_payment_slip_request_started"
         "(uuid,uuid,text,bigint,timestamptz)')",
@@ -948,5 +948,10 @@ def test_payment_slip_reminders_fingerprint_is_last() -> None:
         "position('slip_sequence.reason=''payment_slip'''indefinition)>0",
         "position('action.action_type=''no_reply_review'''indefinition)>0",
         "position('v_action.action_type=''no_reply_review'''indefinition)>0",
+        "to_regprocedure('public.reevaluate_followup_action(uuid,text,bigint,timestamptz,"
+        "boolean,text,text,timestamptz,text,boolean,boolean,boolean,boolean,boolean)')",
+        "position('portable_payment_slip_reminders(20261019000400)'indefinition)>0",
+        "to_regprocedure('public.admit_portable_inbound_commercial_case_v1(text,integer,bigint,text)')",
+        "position('portable_payment_slip_reminders:begin'indefinition)>0",
     ):
         assert marker in compact_fingerprint, marker

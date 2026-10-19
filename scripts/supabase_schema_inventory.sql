@@ -5001,8 +5001,24 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
             where oid = to_regprocedure('public.get_portable_payment_slip_send_context(uuid,text,bigint,timestamptz)')
               and position('slip_sequence.reason = ''payment_slip''' in definition) > 0
               and position('v_action.action_type = ''no_reply_review''' in definition) > 0
+        )::int
+        -- La reevaluacion no pausa un recordatorio por la ventana ni por una
+        -- conversacion resuelta, y la adopcion no lo cuenta como pendiente.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.reevaluate_followup_action(uuid,text,bigint,timestamptz,boolean,text,text,timestamptz,text,boolean,boolean,boolean,boolean,boolean)')
+              and position('portable_payment_slip_reminders (20261019000400)' in definition) > 0
+              and position('slip_sequence.reason = ''payment_slip''' in definition) > 0
+        )::int
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.admit_portable_inbound_commercial_case_v1(text,integer,bigint,text)')
+              and position('portable_payment_slip_reminders: begin' in definition) > 0
+              and position('slip_sequence.reason = ''payment_slip''' in definition) > 0
         )::int,
-        2,
+        4,
         'portable_payment_slip_reminders'
 )
 select
