@@ -32,6 +32,12 @@ _AGENT_DECISION_MARKER_RE = re.compile(r"[a-z][a-z0-9_]{0,63}")
 # Los estados de una conversacion en Chatwoot 4.13 (enum ``status``).
 _CONVERSATION_STATUSES = frozenset({"open", "resolved", "pending", "snoozed"})
 
+# Margen del corte del listado del monitor de trabadas sobre su ventana
+# (``max_age_seconds``): cubre la diferencia entre el reloj del bridge y el de
+# Chatwoot. Ninguna candidata queda debajo del corte, porque su ultimo mensaje
+# esta dentro de la ventana y ``last_activity_at`` nunca es anterior a el.
+_STALLED_LISTING_MARGIN_SECONDS = 3_600
+
 
 class ChatwootProtocolError(RuntimeError):
     """Raised when Chatwoot returns an unexpected response shape."""
@@ -174,7 +180,25 @@ class ChatwootClient:
         allow_any_scoped_sender: bool = False,
         now_epoch: float | None = None,
     ) -> list[StalledChatwootConversation]:
-        """List bounded, replyable conversations whose latest public message stalled."""
+        """List bounded, replyable conversations whose latest public message stalled.
+
+        Pide las abiertas ordenadas por ``last_activity_at`` descendente
+        (explicito: no depende del default de Chatwoot) y corta en la primera
+        con actividad anterior a la ventana (``max_age_seconds`` mas un
+        margen): de ahi para abajo ninguna puede ser candidata, porque una
+        candidata tiene su ultimo mensaje dentro de la ventana. Asi el barrido
+        depende de las conversaciones con actividad reciente y no del total de
+        abiertas, que en ATT1 crece con cada plantilla sin respuesta (234 el
+        2026-10-18, 175 de gente que nunca escribio).
+
+        Falla cerrado si se agotan las paginas antes del corte o del final de
+        la lista, si un item no trae ``last_activity_at`` o si el orden no es
+        el pedido. Una conversacion que recibe actividad durante el barrido
+        sube al principio de la lista y puede quedar afuera de esta pasada; la
+        toma la siguiente. Por eso un ``all_count`` que cambia entre paginas
+        ya no corta el barrido: con la lista ordenada, una conversacion nueva
+        entra arriba y solo repite una que ya se vio.
+        """
         if (
             not isinstance(expected_inbox_id, int)
             or isinstance(expected_inbox_id, bool)
@@ -190,10 +214,13 @@ class ChatwootClient:
         observed_at = time.time() if now_epoch is None else now_epoch
         if not math.isfinite(observed_at):
             raise ValueError("invalid stalled conversation scan clock")
+        active_since = observed_at - max_age_seconds - _STALLED_LISTING_MARGIN_SECONDS
         path = f"/api/v1/accounts/{self._account_id}/conversations"
         candidates: list[StalledChatwootConversation] = []
         seen_conversations: set[int] = set()
-        expected_all_count: int | None = None
+        listed: set[int] = set()
+        previous_activity: int | None = None
+        reached_end = False
         async with httpx.AsyncClient(
             base_url=self._base_url,
             headers={"api_access_token": self._access_token},
@@ -207,6 +234,7 @@ class ChatwootClient:
                         "status": "open",
                         "inbox_id": str(expected_inbox_id),
                         "page": str(page_number),
+                        "sort_by": "last_activity_at_desc",
                     },
                 )
                 response.raise_for_status()
@@ -214,11 +242,8 @@ class ChatwootClient:
                     response,
                     expected_page=page_number,
                 )
-                if expected_all_count is None:
-                    expected_all_count = all_count
-                elif all_count != expected_all_count:
-                    raise ChatwootProtocolError("conversation_count_changed")
                 if not conversations:
+                    reached_end = True
                     break
                 for conversation in conversations:
                     conversation_id = conversation.get("id")
@@ -230,6 +255,20 @@ class ChatwootClient:
                         or inbox_id != expected_inbox_id
                     ):
                         raise ChatwootProtocolError("invalid_conversation_scope")
+                    activity = conversation.get("last_activity_at")
+                    if (
+                        not isinstance(activity, int)
+                        or isinstance(activity, bool)
+                        or activity <= 0
+                    ):
+                        raise ChatwootProtocolError("invalid_conversation_activity")
+                    if previous_activity is not None and activity > previous_activity:
+                        raise ChatwootProtocolError("conversation_order_unexpected")
+                    previous_activity = activity
+                    if activity < active_since:
+                        reached_end = True
+                        break
+                    listed.add(conversation_id)
                     if conversation_id in seen_conversations:
                         continue
                     seen_conversations.add(conversation_id)
@@ -264,9 +303,10 @@ class ChatwootClient:
                     )
                     if candidate is not None:
                         candidates.append(candidate)
-                if all_count is not None and len(seen_conversations) >= all_count:
+                if reached_end or len(listed) >= all_count:
+                    reached_end = True
                     break
-        if expected_all_count is not None and len(seen_conversations) < expected_all_count:
+        if not reached_end:
             raise ChatwootProtocolError("conversation_scan_incomplete")
         return candidates
 

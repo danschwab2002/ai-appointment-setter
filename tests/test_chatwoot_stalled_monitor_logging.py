@@ -66,20 +66,30 @@ def test_stalled_monitor_does_not_log_arbitrary_exception_message(
     assert "private conversation text" not in caplog.text
 
 
+@pytest.mark.parametrize(
+    "reason_code",
+    [
+        "invalid_conversations_payload",
+        # Los dos del listado por ultima actividad (LAN-103).
+        "invalid_conversation_activity",
+        "conversation_order_unexpected",
+    ],
+)
 def test_stalled_monitor_logs_sanitized_chatwoot_protocol_reason_code(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
+    reason_code: str,
 ) -> None:
     messages = _exercise_recovering_monitor(
         tmp_path=tmp_path,
         caplog=caplog,
-        failure=ChatwootProtocolError("invalid_conversations_payload"),
+        failure=ChatwootProtocolError(reason_code),
     )
 
     assert (
         "chatwoot_stalled_monitor_scan_failed "
         "error_type=ChatwootProtocolError "
-        "reason_code=invalid_conversations_payload"
+        f"reason_code={reason_code}"
     ) in messages
 
 

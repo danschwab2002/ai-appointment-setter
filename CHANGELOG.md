@@ -12,6 +12,16 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+### Corregido
+
+- **El monitor de trabadas lista por última actividad y corta en su ventana** (#262). Antes pedía todas las abiertas del inbox, sin orden, y el detalle y 20 mensajes de cada una, para después descartar las que tenían el último mensaje fuera de `CHATWOOT_STALLED_MAX_AGE_SECONDS`. Las abiertas crecen con cada plantilla sin respuesta (en ATT1, 234 el 2026-10-18, 175 de gente que nunca escribió), y pasado `CHATWOOT_STALLED_MAX_PAGES` el barrido fallaba cerrado con `conversation_scan_incomplete`: no rescataba ninguna trabada y `/ready` daba 503. Ahora pide `sort_by=last_activity_at_desc` y corta en la primera conversación más vieja que la ventana más una hora, igual que el barrido del seguimiento con cupón. El barrido depende de las conversaciones con actividad reciente, no del total.
+  - **Dos motivos nuevos de falla**, que se registran por nombre: `invalid_conversation_activity` (un ítem sin `last_activity_at`) y `conversation_order_unexpected` (la lista no viene en el orden pedido).
+  - **Un conteo que cambia entre páginas ya no corta el barrido** (antes, `conversation_count_changed`): con la lista ordenada, una conversación nueva entra arriba y solo repite una que ya se vio.
+
+### Qué hace quien actualiza
+
+Nada más que cambiar la imagen del bridge. No hay migraciones, variables, flags ni campos del manifiesto. `CHATWOOT_STALLED_MAX_PAGES` sigue valiendo como tope, pero con este cambio alcanza con pocas páginas.
+
 ## [1.10.0] - 2026-10-18
 
 Sale de `main` y trae todo lo que entró después de la 1.9.0: A1 del carrito con el cupón personal y el link de recuperación, las frases nuevas de la baja, el almacén de flujos, varios productos por aliada (la 2a, la 2b y la 2c), los tenants del conector de Slack y la T1 y la T3a del motor de flujos. La 1.9.1 era un parche sobre la 1.9.0 y su arreglo (#255) también está acá. **Una instancia con un solo producto (sin `[[productos]]` en el manifiesto) y con las banderas nuevas apagadas se comporta igual que con la 1.9.1**, salvo por la baja, que reconoce más frases, y por el rótulo del contexto del agente, que pasa a `shadow-context-v4`.

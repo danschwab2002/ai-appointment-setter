@@ -25,7 +25,9 @@ logger = logging.getLogger(__name__)
 _STALLED_MONITOR_PROTOCOL_REASON_CODES = frozenset(
     {
         "conversation_count_changed",
+        "conversation_order_unexpected",
         "conversation_scan_incomplete",
+        "invalid_conversation_activity",
         "invalid_conversation_scope",
         "invalid_conversations_payload",
         "invalid_json",
