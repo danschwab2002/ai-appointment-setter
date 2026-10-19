@@ -12,6 +12,25 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.15.0] - 2026-10-19
+
+Una versión menor sobre la 1.14.0 con el seguimiento del pago rechazado (#278), apagado por defecto: B2 o Z, 24 h después de B1, y nada más. Lleva una migración.
+
+### Agregado
+
+- **El seguimiento del pago rechazado.** A quien no compra ni contesta después de B1 le llega un solo mensaje 24 h después: B2 (`WABA_PAYMENT_FAILURE_TEMPLATE_SECOND_TOUCH`) si B1 salió sin cupón, o Z (`WABA_PAYMENT_FAILURE_TEMPLATE_LAST_TOUCH`) si salió con cupón. Las dos llevan el cupón 2 del caso y el link de recuperación; sin el cupón o sin el link, el seguimiento cierra sin mensaje. Contrato: [docs/contracts/portable-payment-failure-followup-v1.md](docs/contracts/portable-payment-failure-followup-v1.md).
+- **B1 registra qué variante salió** (`payment_failure_first_touch_records`), aunque el seguimiento esté apagado. Si el registro falla, B1 sale igual y queda en el log `payment_failure_first_touch_record_failed`.
+
+### Arreglado
+
+- **Un segundo rechazo con un seguimiento pendiente** ya no lo pausa con `authoritative_state_changed`: la versión esperada de los `no_reply_review` pendientes acompaña al caso, sin mover su `due_at`.
+- **«Quiero mi 10 %» adelanta solo Z del carrito** (`cart_last_touch`), no cualquier paso con cupón de la conversación.
+
+### Qué hace quien actualiza
+
+- **Correr la migración `20261019000700_payment_failure_followup_v1.sql`.** Suma la tabla `payment_failure_first_touch_records` y dos funciones privadas (solo `service_role`), y redefine tres funciones desde su definición viva con reemplazos contados (si el texto no coincide, aborta sin cambiar nada). Sin paso manual. La ACL pasa de 145 a 147 entradas.
+- **Para prender el seguimiento** (opcional, con B1 prendido): publicar una política del pago rechazado con el paso `payment_failure_followup` y apuntarle el scope, y después `PAYMENT_FAILURE_FOLLOWUP_ENABLED=true` con las dos plantillas; el bridge no arranca si falta alguna, o si falta B1 o el worker del cupón. Apagado, nada cambia salvo el registro de la variante de B1.
+
 ## [1.14.0] - 2026-10-19
 
 Una versión menor sobre la 1.13.1 con A2 y Z del carrito (#276), apagados por defecto, y la base genérica de los pasos con plantilla y cupón, que reusa el pago rechazado. Lleva una migración.
