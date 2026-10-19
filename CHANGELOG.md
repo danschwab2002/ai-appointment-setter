@@ -12,6 +12,22 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.13.1] - 2026-10-19
+
+Un parche sobre la 1.13.0 (#274): B1-cupón, la variante del pago rechazado que nombra el cupón de otro caso, solo usa un cupón que le llegó a la persona. Lleva una migración y no cambia el bridge.
+
+### Arreglado
+
+- **B1 no le habla a la persona de un cupón que nunca recibió.** El worker del cupón (`RECOVERY_COUPON_WORKER_ENABLED`, que B1 exige) crea el cupón de cada carrito unos 15 minutos antes de A1, aunque A1 salga sin cupón (`RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED` apagado, o el cupón no estuvo listo a tiempo). B1 tomaba cualquier cupón `valid` de otro caso del producto como si fuera de la persona.
+  - Desde esta versión, un cupón de carrito cuenta solo si su caso tiene el link de A1 (`recovery_first_touch`) aceptado por Chatwoot después de que el cupón quedó `valid`. Una entrega desconocida no cuenta.
+  - La regla vive en `recovery_coupon_was_delivered(uuid)`, una función privada, y la usan `payment_failure_wants_first_coupon` (la siembra del cupón de B1-saldo) y `get_portable_payment_failure_send_context_v1` (la variante de B1).
+  - Sin el cupón del carrito, B1 elige otra variante y B1-saldo pide su propio cupón, como si la persona no tuviera ninguno.
+
+### Qué hace quien actualiza
+
+- **Correr la migración `20261019000500_payment_failure_other_coupon_delivered_v1.sql`.** Suma una función y parcha dos en el lugar, con reemplazos contados (si el texto no coincide, aborta sin cambiar nada). Sin paso manual. Las imágenes no cambian de comportamiento: no hace falta redesplegar.
+- Si la instancia va a prender B1 (`PAYMENT_FAILURE_VARIANTS_ENABLED`), esta migración va antes.
+
 ## [1.13.0] - 2026-10-19
 
 Una versión menor sobre la 1.12.0 con C2 y C3 de la ficha de pago (#272), apagados por defecto, y el corte por la compra de cualquier oferta del producto (#268), que rige con la migración. Lleva dos migraciones.
