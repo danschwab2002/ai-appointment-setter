@@ -13,10 +13,12 @@ from datetime import datetime, timedelta, timezone
 
 from bridge.commercial_ally import CommercialAllyConfig
 from bridge.hotmart import (
+    EVENT_PURCHASE_BILLET_PRINTED,
     EVENT_PURCHASE_CANCELED,
     HotmartBuyerData,
     parse_hotmart_payload,
     parse_hotmart_payment_failure_buyer_payload,
+    parse_hotmart_payment_slip_buyer_payload,
 )
 from bridge.messaging import is_allowed_whatsapp_target
 from bridge.phones import equivalent_whatsapp_phones, whatsapp_phone_region
@@ -130,6 +132,17 @@ async def resolve_event(
     if event_type == EVENT_PURCHASE_CANCELED:
         buyer = (
             parse_hotmart_payment_failure_buyer_payload(
+                payload,
+                config=commercial_ally_config,
+            )
+            if commercial_ally_config is not None
+            else None
+        )
+    elif event_type == EVENT_PURCHASE_BILLET_PRINTED:
+        # The payment slip (C1) only exists in the portable runtime, like the
+        # payment failure it derives from.
+        buyer = (
+            parse_hotmart_payment_slip_buyer_payload(
                 payload,
                 config=commercial_ally_config,
             )
@@ -321,11 +334,12 @@ async def resolve_event(
                     chatwoot_account_id=chatwoot_account_id,
                     chatwoot_inbox_id=chatwoot_inbox_id,
                 )
-            planner = (
-                supabase.plan_payment_failure_recovery
-                if buyer.event_type == EVENT_PURCHASE_CANCELED
-                else supabase.plan_cart_recovery
-            )
+            if buyer.event_type == EVENT_PURCHASE_CANCELED:
+                planner = supabase.plan_payment_failure_recovery
+            elif buyer.event_type == EVENT_PURCHASE_BILLET_PRINTED:
+                planner = supabase.plan_payment_slip_recovery
+            else:
+                planner = supabase.plan_cart_recovery
             plan = await planner(
                 webhook_event_id=webhook_event_id,
                 contact_id=contact_id,

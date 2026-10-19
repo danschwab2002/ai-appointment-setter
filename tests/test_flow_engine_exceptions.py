@@ -95,7 +95,9 @@ def test_every_exception_is_sql_except_the_unsafe_name_which_is_the_dispatchers(
 
 
 def test_no_legacy_kind_is_outside_the_template_slots() -> None:
-    assert TEMPLATE_SLOTS == ("precheckout", "carrito", "pago_fallido", "reactivacion", "descuento")
+    assert TEMPLATE_SLOTS == (
+        "precheckout", "carrito", "pago_fallido", "reactivacion", "descuento", "ficha",
+    )
     for exception in EXCEPTIONS_V1:
         assert exception.legacy_kinds and exception.legacy_kinds <= set(TEMPLATE_SLOTS), exception.name
 
@@ -111,14 +113,14 @@ def test_the_unsafe_name_is_backed_by_d1_of_the_dispatcher() -> None:
     # D1 corre el despachador real con nombres que no son un nombre y ve que cierra sin
     # reintento. Aca no se busca su texto: se toma la prueba como objeto, y se mira que sus
     # nombres son los que rechaza el filtro real que usa la linea citada
-    # (template_greeting_name_is_safe, worker.py:1173). Que D1 haga lo que dice lo fija D1:
-    # mutar la linea 1173 la pone en rojo (el rojo 4 de §5.4).
+    # (template_greeting_name_is_safe, worker.py:1195). Que D1 haga lo que dice lo fija D1:
+    # mutar la linea 1195 la pone en rojo (el rojo 4 de §5.4).
     from test_flow_engine_dispatcher_legacy import test_d1_a_refused_name_closes_the_action_without_a_retry as d1
 
     from bridge.lead_first_name import template_greeting_name_is_safe
 
     [unsafe] = [exception for exception in EXCEPTIONS_V1 if exception.name == "nombre_inseguro_cierra"]
-    assert unsafe.cita == "src/bridge/worker.py:1173-1189"
+    assert unsafe.cita == "src/bridge/worker.py:1195-1211"
     assert "template_greeting_name_is_safe(name_value)" in _cited_lines(unsafe)[0]
     [names] = [mark.args[1] for mark in d1.pytestmark if mark.name == "parametrize" and mark.args[0] == "name"]
     values = [name.values[0] if hasattr(name, "values") else name for name in names]
