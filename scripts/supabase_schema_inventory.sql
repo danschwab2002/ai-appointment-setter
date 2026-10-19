@@ -5146,6 +5146,20 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         4,
         'payment_failure_followup'
+    union all
+    select
+        '20261019000800',
+        '20261019000800_portable_payment_slip_reminder_survives_reply_v1.sql',
+        -- La respuesta de la persona no cancela el recordatorio de la ficha.
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.reevaluate_followup_action(uuid,text,bigint,timestamptz,boolean,text,text,timestamptz,text,boolean,boolean,boolean,boolean,boolean)')
+              and position('portable_payment_slip_reminder_survives_reply (20261019000800)' in definition) > 0
+              and position('reply_slip_sequence.reason = ''payment_slip''' in definition) > 0
+        )::int,
+        1,
+        'portable_payment_slip_reminder_survives_reply'
 )
 select
     version,

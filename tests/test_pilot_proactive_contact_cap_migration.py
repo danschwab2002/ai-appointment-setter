@@ -59,8 +59,9 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
     # (20261019000100), B1 del pago rechazado (20261019000200) y la compra de
     # cualquier oferta del producto (20261019000300), los recordatorios de la
     # ficha (20261019000400), el cupon de otro caso que le llego a la persona
-    # (20261019000500), los pasos con plantilla y cupon (20261019000600) y el
-    # seguimiento del pago rechazado (20261019000700).
+    # (20261019000500), los pasos con plantilla y cupon (20261019000600), el
+    # seguimiento del pago rechazado (20261019000700) y la ficha que sobrevive
+    # a una respuesta (20261019000800).
     assert versions[position + 1:] == [
         "20261009000200",
         "20261010000100",
@@ -80,6 +81,7 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261019000500",
         "20261019000600",
         "20261019000700",
+        "20261019000800",
     ]
 
     sql = _sql()
