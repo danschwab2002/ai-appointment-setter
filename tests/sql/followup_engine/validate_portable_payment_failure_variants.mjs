@@ -26,8 +26,11 @@
 //      del pago fallido contra su scope y la aceptacion;
 //   6. un segundo rechazo despues del mensaje se suma al caso cerrado: no
 //      abre otro caso ni crea otra accion; uno mas de 72 h despues, si;
-//   7. el contexto de envio da el cupon vigente de la persona en otro caso
-//      (B1-cupon), y con ese cupon el saldo deja de pedir el suyo.
+//   7. un cupon vigente de la persona en otro caso que nunca se le mando (el
+//      del carrito, sembrado sin A1) no cuenta desde 20261019000500: el
+//      contexto de envio no lo da y el saldo sigue pidiendo el suyo. El cupon
+//      que si llego (B1-cupon) esta en
+//      validate_payment_failure_other_coupon_delivered.mjs.
 //
 // Datos:
 //   - Binding, ofertas, producto, Chatwoot y consentimiento: tests/fixtures/
@@ -813,8 +816,10 @@ if (results.first_contact_with_open_refusal !== 'superseded_by_provider_event') 
     values ($1,1,'ATT1CARRITO0001',$2,0.10,$3,'valid',$4,$5,now(),now(),now())
   `, [cartCase, String(ATT1.productId), expiresAt, baseMs - 4 * 3_600_000,
     expiresAt.getTime() - 3 * 3_600_000]);
+  // Sin A1 que lo haya mandado, el cupon no le llego a la persona
+  // (20261019000500): S sigue pidiendo el suyo.
   const state = await caseState(plans.S.recovery_case_id);
-  if (state.wants_coupon !== false) throw new Error('S still wants its own coupon with a valid one');
+  if (state.wants_coupon !== true) throw new Error('S stopped asking for its own coupon for an unsent one');
   await db.exec('begin');
   try {
     const due = await actionOf(plans.S.scheduled_action_id);
@@ -827,14 +832,14 @@ if (results.first_contact_with_open_refusal !== 'superseded_by_provider_event') 
       select * from public.get_portable_payment_failure_send_context_v1($1,'refusal-s',$2,$3)
     `, [claimed.id, claimed.lease_generation, when])).rows, 'S send context');
     if (context.refusal_kind !== 'insufficient_funds' || context.payment_failure_count !== 1
-        || context.other_coupon_code !== 'ATT1CARRITO0001'
-        || context.other_coupon_expires_at.getTime() !== expiresAt.getTime()) {
+        || context.other_coupon_code !== null
+        || context.other_coupon_expires_at !== null) {
       throw new Error(`S send context: ${JSON.stringify(context)}`);
     }
   } finally {
     await db.exec('rollback');
   }
-  results.other_coupon = 'send context gives it; no own coupon';
+  results.other_coupon = 'an unsent coupon of another case: not given; own coupon still asked';
 }
 
 console.log(JSON.stringify(results, null, 2));

@@ -932,14 +932,16 @@ def test_purchase_stops_any_offer_fingerprint_is_last_and_service_role_only() ->
         assert marker in compact_fingerprint, marker
 
 
-def test_payment_slip_reminders_fingerprint_is_last() -> None:
+def test_payment_slip_reminders_fingerprint_is_service_role_only() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261019000400 (los recordatorios de la ficha) es la ultima.
-    fingerprint = sql.split("'20261019000400'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261019000400 (los recordatorios de la ficha) va justo antes
+    # de la de 20261019000500 (el cupon de otro caso que llego).
+    fingerprint = sql.split("'20261019000400'", 1)[1].split("'20261019000500'", 1)[0]
+    fingerprint = fingerprint.rsplit("union all", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261019000400_portable_payment_slip_reminders_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",4,'portable_payment_slip_reminders')")
+    assert compact_fingerprint.endswith(",4,'portable_payment_slip_reminders'")
     for marker in (
         "to_regprocedure('public.mark_portable_payment_slip_request_started"
         "(uuid,uuid,text,bigint,timestamptz)')",
@@ -953,5 +955,27 @@ def test_payment_slip_reminders_fingerprint_is_last() -> None:
         "position('portable_payment_slip_reminders(20261019000400)'indefinition)>0",
         "to_regprocedure('public.admit_portable_inbound_commercial_case_v1(text,integer,bigint,text)')",
         "position('portable_payment_slip_reminders:begin'indefinition)>0",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_payment_failure_other_coupon_delivered_fingerprint_is_last() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261019000500 (el cupon de otro caso que llego) es la ultima.
+    fingerprint = sql.split("'20261019000500'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261019000500_payment_failure_other_coupon_delivered_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",3,'payment_failure_other_coupon_delivered')")
+    for marker in (
+        "to_regprocedure('public.recovery_coupon_was_delivered(uuid)')",
+        "andprosecdef",
+        "andnothas_function_privilege('service_role',oid,'EXECUTE')",
+        "andnothas_function_privilege('anon',oid,'EXECUTE')",
+        "andnothas_function_privilege('authenticated',oid,'EXECUTE')",
+        "to_regprocedure('public.payment_failure_wants_first_coupon(uuid)')",
+        "to_regprocedure('public.get_portable_payment_failure_send_context_v1"
+        "(uuid,text,bigint,timestamptz)')",
+        "position('public.recovery_coupon_was_delivered(coupon.id)'indefinition)>0",
     ):
         assert marker in compact_fingerprint, marker
