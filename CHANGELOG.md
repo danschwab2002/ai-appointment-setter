@@ -12,6 +12,14 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+### Corregido
+
+- **Quien se dio de baja y vuelve a escribir se deriva al equipo** (LAN-132). Hasta acá, con la baja durable el bridge no contestaba y la conversación quedaba sin etiqueta ni agente: en ATT1, la persona de la conversación 103 se dio de baja el 2026-10-12, el 17/10 escribió «Envíame el enlace» en la 257 y nadie la vio. Ahora, con `HUMAN_HANDOFF_ADMISSION_ENABLED` y el entrante admitido, el bridge pide una derivación (`commercial_exception`, detalle `opted_out_contact_wrote_again`), que asigna la conversación, deja una nota privada y suma `automation_paused`. La baja no cambia: el bridge no le contesta y no sale nada proactivo. Un nuevo pedido de baja no se deriva.
+
+### Qué hace quien actualiza
+
+Nada más que cambiar la imagen del bridge. Sin `HUMAN_HANDOFF_ADMISSION_ENABLED` no cambia nada.
+
 ## [1.10.1] - 2026-10-19
 
 Un parche sobre la 1.10.0 con un solo arreglo, el del monitor de trabadas.

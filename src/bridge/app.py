@@ -331,6 +331,9 @@ class CanonicalHistoryIncompleteError(RetryableChatwootWorkError):
 class CanonicalWorkResult:
     proposal: dict[str, object] | None
     stopped: bool = False
+    # The stop came from an opt-out recorded before this message: the person
+    # had opted out and wrote again (LAN-132).
+    prior_opt_out: bool = False
 
 
 class ChatwootInboundAdmissionRejectedError(RuntimeError):
@@ -4867,7 +4870,9 @@ def create_app(
                     reconciliation.outcome,
                     reconciliation.opt_out_event_id,
                 )
-                return CanonicalWorkResult(proposal=None, stopped=True)
+                return CanonicalWorkResult(
+                    proposal=None, stopped=True, prior_opt_out=True
+                )
 
         if settings.chatwoot_durable_opt_out_enabled:
             assert shared_supabase is not None
@@ -5530,62 +5535,6 @@ def create_app(
                 shadow_processor is not None
                 and not shadow_processor.has_result(delivery_id=delivery_id)
             )
-        if must_scan_canonical_history:
-            assert context is not None
-            message_id = payload.get("id")
-            canonical_result = await run_shadow_with_canonical_history(
-                delivery_id=delivery_id,
-                current_message_id=(
-                    message_id
-                    if isinstance(message_id, int) and not isinstance(message_id, bool)
-                    else None
-                ),
-                batch_message_ids=batch_message_ids,
-                context=context,
-                expected_jid=scoped_expected_jid,
-            )
-            if canonical_result.stopped:
-                return
-            completed_proposal = canonical_result.proposal
-        if not settings.automated_replies_enabled or completed_proposal is None:
-            return
-
-        message_id = payload.get("id")
-        conversation = payload.get("conversation")
-        conversation_id = (
-            conversation.get("id") if isinstance(conversation, dict) else None
-        )
-        if (
-            settings.human_handoff_admission_enabled
-            and completed_proposal.get("decision") != "handoff"
-            and _requires_medication_guidance_handoff(
-                payload.get("content"),
-                subject_re=medication_subject_re,
-                action_re=medication_action_re,
-            )
-        ):
-            # El motivo tambien se reescribe: si solo cambiara la decision, la
-            # fila y la nota se quedarian con el reason_code que el agente habia
-            # elegido para otra cosa (por ejemplo payment_link_requested).
-            completed_proposal = {
-                **completed_proposal,
-                "decision": "handoff",
-                "reason_code": "direct_medication_guidance",
-            }
-            logger.info(
-                "chatwoot_inbound_handoff_forced "
-                "reason=direct_medication_guidance"
-            )
-        reply = completed_proposal.get("reply")
-        if (
-            control_client is None
-            or not isinstance(message_id, int)
-            or isinstance(message_id, bool)
-            or not isinstance(conversation_id, int)
-            or isinstance(conversation_id, bool)
-            or not isinstance(reply, str)
-        ):
-            raise RuntimeError("chatwoot_reply_not_configured")
         async def request_current_inbound_handoff(
             proposal: dict[str, object],
         ) -> None:
@@ -5635,6 +5584,87 @@ def create_app(
                     "handoff_automation_pause_not_confirmed"
                 ) from exc
 
+        if must_scan_canonical_history:
+            assert context is not None
+            message_id = payload.get("id")
+            canonical_result = await run_shadow_with_canonical_history(
+                delivery_id=delivery_id,
+                current_message_id=(
+                    message_id
+                    if isinstance(message_id, int) and not isinstance(message_id, bool)
+                    else None
+                ),
+                batch_message_ids=batch_message_ids,
+                context=context,
+                expected_jid=scoped_expected_jid,
+            )
+            if canonical_result.stopped:
+                if (
+                    canonical_result.prior_opt_out
+                    and settings.human_handoff_admission_enabled
+                    and admission is not None
+                    and isinstance(message_id, int)
+                    and not isinstance(message_id, bool)
+                    and detect_explicit_opt_out([payload.get("content")]) is None
+                ):
+                    # LAN-132 (ATT1, 17/10): la persona de la conversacion 103 se
+                    # dio de baja y despues escribio «Envíame el enlace» en la 257.
+                    # El bridge callo y nadie del equipo la vio. La derivacion
+                    # asigna la conversacion y deja una nota privada: a la persona
+                    # no le llega nada. Un nuevo pedido de baja no se deriva.
+                    logger.info(
+                        "chatwoot_opted_out_contact_wrote_again message=%s",
+                        message_id,
+                    )
+                    await request_current_inbound_handoff(
+                        {
+                            "decision": "handoff",
+                            "reply": "",
+                            "qualification_status": "needs_human",
+                            "reason_code": "opted_out_contact_wrote_again",
+                        }
+                    )
+                return
+            completed_proposal = canonical_result.proposal
+        if not settings.automated_replies_enabled or completed_proposal is None:
+            return
+
+        message_id = payload.get("id")
+        conversation = payload.get("conversation")
+        conversation_id = (
+            conversation.get("id") if isinstance(conversation, dict) else None
+        )
+        if (
+            settings.human_handoff_admission_enabled
+            and completed_proposal.get("decision") != "handoff"
+            and _requires_medication_guidance_handoff(
+                payload.get("content"),
+                subject_re=medication_subject_re,
+                action_re=medication_action_re,
+            )
+        ):
+            # El motivo tambien se reescribe: si solo cambiara la decision, la
+            # fila y la nota se quedarian con el reason_code que el agente habia
+            # elegido para otra cosa (por ejemplo payment_link_requested).
+            completed_proposal = {
+                **completed_proposal,
+                "decision": "handoff",
+                "reason_code": "direct_medication_guidance",
+            }
+            logger.info(
+                "chatwoot_inbound_handoff_forced "
+                "reason=direct_medication_guidance"
+            )
+        reply = completed_proposal.get("reply")
+        if (
+            control_client is None
+            or not isinstance(message_id, int)
+            or isinstance(message_id, bool)
+            or not isinstance(conversation_id, int)
+            or isinstance(conversation_id, bool)
+            or not isinstance(reply, str)
+        ):
+            raise RuntimeError("chatwoot_reply_not_configured")
         if settings.human_handoff_admission_enabled and (
             completed_proposal.get("decision") == "handoff"
         ):
