@@ -2,8 +2,9 @@
 // las RPC reales sobre la cadena completa de migraciones.
 //
 // Prueba:
-//   0. la migracion: cambia exactamente dos funciones (el arranque del pago
-//      rechazado y su planificacion), cada una es su definicion anterior con
+//   0. la migracion: cambia exactamente tres funciones (el arranque del pago
+//      rechazado, su planificacion y el pedido de renovacion de la 0600), cada
+//      una es su definicion anterior con
 //      su texto reemplazado y nada mas; agrega tres (el registro, el contexto
 //      y el trigger que hace inmutable la tabla) y la tabla; las dos entradas
 //      son solo de service_role, el trigger y la tabla de nadie, y correrla
@@ -22,7 +23,10 @@
 //      no le cambia el due_at y le corre el expected_case_version: la
 //      reevaluacion no lo pausa. Con la version vieja (lo que pasaba antes) la
 //      misma reevaluacion pausa con authoritative_state_changed;
-//   e. contestar cancela el seguimiento (prospect_replied).
+//   e. contestar cancela el seguimiento (prospect_replied);
+//   f. el boton «Quiero mi 10 %» de A2 en la misma conversacion
+//      (request_recovery_renewal_v1) no adelanta el seguimiento: devuelve
+//      no_pending_last_touch y el paso queda como estaba.
 //
 // Datos: los de validate_portable_payment_failure_variants.mjs (el manifiesto
 // de ATT1, el formulario con consentimiento, los rechazos capturados de
@@ -102,6 +106,7 @@ for (const name of migrationNames.slice(targetIndex + 1)) {
 const TZ = 'timestamp with time zone';
 const START = `mark_portable_payment_failure_request_started(uuid,uuid,text,bigint,${TZ})`;
 const PLAN = `plan_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,${TZ})`;
+const RENEWAL = `request_recovery_renewal_v1(bigint,bigint,bigint,bigint,text,${TZ})`;
 const ENTRYPOINTS = [
   `record_payment_failure_first_touch_v1(uuid,uuid,text,bigint,text,text,${TZ})`,
   `get_payment_failure_followup_context_v1(uuid,text,bigint,${TZ})`,
@@ -116,7 +121,7 @@ const changed = [...before.keys()].filter((signature) => after.has(signature)
       || after.get(signature).api_x !== before.get(signature).api_x));
 const addedTables = tablesAfter.filter((name) => !tablesBefore.includes(name));
 if (!sameSet(added, [...ENTRYPOINTS, ...PRIVATE]) || removed.length !== 0
-    || !sameSet(changed, [START, PLAN])
+    || !sameSet(changed, [START, PLAN, RENEWAL])
     || !sameSet(addedTables, ['payment_failure_first_touch_records'])) {
   throw new Error(`the migration changed something else: ${JSON.stringify({ added, removed, changed, addedTables })}`);
 }
@@ -142,7 +147,7 @@ const specs = [...migrationText.matchAll(
   old: match[2],
   next: match[3],
 }));
-if (!sameSet(specs.map((spec) => spec.signature), [START, PLAN])) {
+if (!sameSet(specs.map((spec) => spec.signature), [START, PLAN, RENEWAL])) {
   throw new Error(`the replacements are not the documented ones: ${JSON.stringify(specs.map((spec) => spec.signature))}`);
 }
 for (const spec of specs) {
@@ -872,6 +877,31 @@ const bFollowup = await followupOf('banco', bPlan);
       || context.first_touch_variant !== null) {
     throw new Error(`without a record: ${JSON.stringify({ records, context })}`);
   }
+  // f. «Quiero mi 10 %» en la misma conversacion. Primero, que el pedido llega
+  // al seguimiento: la conversacion del caso es la de la persona (sin esto, el
+  // no_pending_last_touch de abajo no probaria nada).
+  const sameConversation = one((await db.query(`
+    select count(*)::integer as count
+    from public.scheduled_actions action
+    join public.recovery_cases recovery on recovery.id = action.recovery_case_id
+    join public.conversations conversation on conversation.id = recovery.conversation_id
+    where action.id = $1
+      and conversation.commercial_context ->> 'chatwoot_conversation_id' = $2
+  `, [followup.id, String(F.lead.chatwoot)])).rows, 'same conversation').count;
+  const beforeRenewal = await actionOf(followup.id);
+  const renewal = one((await db.query(`
+    select * from public.request_recovery_renewal_v1($1,$2,$3,$4,$5,$6)
+  `, [ATT1.accountId, ATT1.inboxId, F.lead.chatwoot, 990001, F.lead.phone, fence.now])).rows,
+  'renewal');
+  const afterRenewal = await actionOf(followup.id);
+  const renewals = one((await db.query(`
+    select count(*)::integer as count from public.recovery_renewal_requests where action_id = $1
+  `, [followup.id])).rows, 'renewals').count;
+  if (sameConversation !== 1 || renewal.outcome !== 'no_pending_last_touch' || renewals !== 0
+      || afterRenewal.due_at.getTime() !== beforeRenewal.due_at.getTime()) {
+    throw new Error(`the cart renewal reached the follow-up: ${JSON.stringify({ sameConversation, renewal, renewals })}`);
+  }
+  results.cart_renewal = `${renewal.outcome}; the follow-up is untouched`;
   const replied = await reevaluate(followup.id, fence, evidence(F.lead, fence.now, { replied: true }));
   const cancelled = await actionOf(followup.id);
   if (replied.decision !== 'cancel' || replied.reason_code !== 'prospect_replied'

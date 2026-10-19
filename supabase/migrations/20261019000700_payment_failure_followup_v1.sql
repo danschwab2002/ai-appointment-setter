@@ -48,6 +48,13 @@
 --    pausa el caso. Ahora corre tambien el expected_case_version de los
 --    no_reply_review pendientes del caso, sin tocar su due_at: los relojes no
 --    se reinician y no sale ningun mensaje de mas.
+-- 5. request_recovery_renewal_v1 (20261019000600) adelanta el paso pendiente
+--    con coupon_ordinal de la conversacion. El seguimiento tambien lo tiene:
+--    quien tiene el seguimiento del pago rechazado pendiente y toca
+--    «Quiero mi 10 %» en un A2 del carrito de la misma conversacion lo
+--    adelantaria, y la reevaluacion ya no lo cancelaria por la respuesta.
+--    Ahora adelanta solo cart_last_touch, el unico paso que ese boton pide
+--    (docs/contracts/portable-cart-followups-v1.md).
 --
 -- Como. Cada funcion existente se redefine desde su definicion viva
 -- (pg_get_functiondef), reemplazando un texto exacto que tiene que aparecer
@@ -127,6 +134,18 @@ $old$,
             where waiting.recovery_case_id = v_case_id
               and waiting.action_type = 'no_reply_review'
               and waiting.status in ('pending', 'deferred', 'retryable_failed');
+$new$),
+            (3,
+             'public.request_recovery_renewal_v1(bigint,bigint,bigint,bigint,text,timestamptz)',
+             $old$      and coalesce(public._recovery_followup_step(action.id) ->> 'coupon_ordinal', '')
+              in ('1', '2')
+$old$,
+             $new$      and coalesce(public._recovery_followup_step(action.id) ->> 'coupon_ordinal', '')
+              in ('1', '2')
+      -- payment_failure_followup (20261019000700): el boton «Quiero mi 10 %»
+      -- de A2 adelanta solo Z del carrito, nunca el seguimiento del pago
+      -- rechazado de la misma conversacion.
+      and action.step_key = 'cart_last_touch'
 $new$)
         ) as spec(ord, signature, old_text, new_text)
         order by spec.ord
