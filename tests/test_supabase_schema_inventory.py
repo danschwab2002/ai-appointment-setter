@@ -438,8 +438,11 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     allowlisted = re.findall(r"\('public\.([a-z0-9_]+\([^']*\))'\)", sql)
 
     # 20261019000100 (la ficha de pago) suma sus cinco entradas del bridge y
-    # 20261019000200 (B1 del pago rechazado), sus dos.
-    assert len(allowlisted) == 141
+    # 20261019000200 (B1 del pago rechazado), sus dos, y 20261019000300 el
+    # freno por la compra de cualquier oferta, que llama la reevaluacion
+    # (security invoker) como service_role.
+    assert len(allowlisted) == 142
+    assert "_portable_case_purchase_stop_reason(uuid)" in allowlisted
     for signature in (
         "get_portable_payment_failure_pilot_runtime_status(text, integer, text, text, text)",
         "get_portable_payment_failure_send_context_v1(uuid, text, bigint, "
@@ -877,14 +880,16 @@ def test_payment_slip_first_contact_fingerprint_is_service_role_only() -> None:
         assert marker in compact_fingerprint, marker
 
 
-def test_payment_failure_variants_fingerprint_is_last_and_service_role_only() -> None:
+def test_payment_failure_variants_fingerprint_is_service_role_only() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
-    # La fila de 20261019000200 (B1 del pago rechazado) es la ultima.
-    fingerprint = sql.split("'20261019000200'", 1)[1].split("select\n    version,", 1)[0]
+    # La fila de 20261019000200 (B1 del pago rechazado) va justo antes de la de
+    # 20261019000300 (la compra de cualquier oferta).
+    fingerprint = sql.split("'20261019000200'", 1)[1].split("'20261019000300'", 1)[0]
+    fingerprint = fingerprint.rsplit("union all", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261019000200_portable_payment_failure_variants_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",6,'portable_payment_failure_variants')")
+    assert compact_fingerprint.endswith(",6,'portable_payment_failure_variants'")
     for marker in (
         "to_regprocedure('public.get_portable_payment_failure_pilot_runtime_status("
         "text,integer,text,text,text)')",
@@ -900,5 +905,25 @@ def test_payment_failure_variants_fingerprint_is_last_and_service_role_only() ->
         "position('payment_failure_not_a_refusal'indefinition)>0",
         "position('payment_failure_wants_first_coupon'indefinition)>0",
         "position('payment_failure_variants'indefinition)>0",
+    ):
+        assert marker in compact_fingerprint, marker
+
+
+def test_purchase_stops_any_offer_fingerprint_is_last_and_service_role_only() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261019000300 (la compra de cualquier oferta) es la ultima.
+    fingerprint = sql.split("'20261019000300'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261019000300_portable_purchase_stops_any_offer_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",2,'portable_purchase_stops_any_offer')")
+    for marker in (
+        "to_regprocedure('public._portable_case_purchase_stop_reason(uuid)')",
+        "andprosecdef",
+        "has_function_privilege('service_role',oid,'EXECUTE')",
+        "andnothas_function_privilege('anon',oid,'EXECUTE')",
+        "position('portable_purchase_stops_any_offer'indefinition)>0",
+        "position('public._portable_case_purchase_stop_reason(v_case.id)'indefinition)>0",
+        "position('''purchase_detected_any_offer'''indefinition)>0",
     ):
         assert marker in compact_fingerprint, marker

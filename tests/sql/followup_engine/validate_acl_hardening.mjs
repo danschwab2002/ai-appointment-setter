@@ -219,7 +219,8 @@ const rows = await db.query(`
       ('get_portable_payment_slip_pilot_runtime_status(text,integer,text,text,text)'),
       ('get_portable_payment_slip_send_context(uuid,text,bigint,timestamp with time zone)'),
       ('get_portable_payment_failure_pilot_runtime_status(text,integer,text,text,text)'),
-      ('get_portable_payment_failure_send_context_v1(uuid,text,bigint,timestamp with time zone)')
+      ('get_portable_payment_failure_send_context_v1(uuid,text,bigint,timestamp with time zone)'),
+      ('_portable_case_purchase_stop_reason(uuid)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -262,9 +263,13 @@ const result = rows.rows[0];
 // (20261018000100) adds three, and the reserve and the authorization of the
 // link of the first cart message (20261018000200) add two, and the first
 // contact after a payment slip (20261019000100) adds five: the admission v2,
-// the plan, the request start, the runtime status and the send context.
+// the plan, the request start, the runtime status and the send context, and
+// B1 of the payment failure (20261019000200) adds two, and the purchase of
+// any offer of the product (20261019000300) adds the stop reason that
+// reevaluate_followup_action (security invoker, run by service_role) calls:
+// it reads tables service_role cannot read.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 141) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 142) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper
