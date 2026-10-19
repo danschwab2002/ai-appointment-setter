@@ -12,6 +12,26 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.12.0] - 2026-10-19
+
+Una versión menor sobre la 1.11.0 con B1 del pago rechazado (#269), apagado por defecto. La migración cambia dos cosas del pago fallido aunque el flag esté apagado (ver «Qué hace quien actualiza»).
+
+### Agregado
+
+- **B1, el primer toque del pago rechazado en cuatro variantes** ([portable-payment-failure-variants-v1.md](docs/contracts/portable-payment-failure-variants-v1.md)). Con `PAYMENT_FAILURE_VARIANTS_ENABLED`, un `PURCHASE_CANCELED` que es un rechazo planifica **un** mensaje a la gracia de su propia política (en ATT1, 15 minutos) contada desde el **último** rechazo, con su propio scope y su propia política. Sale la primera variante que corresponde: cupón vigente de otro caso, dos rechazos, saldo insuficiente (con su cupón de 24 h) o banco. El botón lleva el link de recuperación (`reserve_recovery_checkout_issuance_v1` acepta ahora `anchor_type = payment_failure`), con `&offDiscount=` cuando hay cupón. Si el cupón o el link fallan, sale la plantilla de hoy (`WABA_PAYMENT_FAILURE_TEMPLATE_NAME`): B1 nunca se pierde.
+  - El tipo de rechazo lo decide la base (`payment_failure_refusal_kind`): sobre los 17 cancelados de ATT1 del 11 al 17/10, 9 de banco, 3 de saldo y 5 que no son un rechazo.
+  - `/ready` publica `portable_payment_failure_own_scope` con el flag prendido.
+
+### Cambiado (con la migración, con o sin el flag)
+
+- **Un caso de pago fallido por persona y producto.** Un rechazo que llega hasta 72 h después de un caso que ya mandó su mensaje, compró o tomó una persona se suma a ese caso y no abre otro: no sale un segundo mensaje (en ATT1, la persona 2 recibió dos). Un segundo rechazo con el mensaje pendiente lo corre a su propia gracia en vez de adelantarlo.
+- **Un cancelado que no es un rechazo no se planifica** (sin `refusal_reason` y con un medio que no es tarjeta ni PayPal: Mercado Pago, transferencia, Nequi). Queda `failed` con `payment_failure_not_a_refusal` y no recibe el mensaje de «rechazado».
+
+### Qué hace quien actualiza
+
+- **Correr la migración `20261019000200_portable_payment_failure_variants_v1.sql`.** Suma cuatro funciones y parcha en el lugar cuatro (`plan_payment_failure_recovery`, `plan_portable_payment_failure_recovery`, `claim_due_recovery_coupons_v1`, `reserve_recovery_checkout_issuance_v1`). Sin paso manual.
+- Sin el flag, el bridge no lee nada nuevo. Para prenderlo, en este orden: publicar la política y el scope del pago rechazado en la base, armar el scope y recién ahí cargar `PAYMENT_FAILURE_VARIANTS_ENABLED`, `LANCEMOS_PILOT_PAYMENT_FAILURE_SCOPE_KEY`/`_VERSION`, `PAYMENT_FAILURE_FOLLOWUP_POLICY_KEY`/`_VERSION` y las cuatro `WABA_PAYMENT_FAILURE_TEMPLATE_*` ([.env.example](.env.example)). Exige `RECOVERY_COUPON_WORKER_ENABLED`, que también siembra el cupón de A1 de cada carrito. Con el flag y algo faltante, el bridge no arranca y dice qué falta.
+
 ## [1.11.0] - 2026-10-19
 
 Una versión menor sobre la 1.10.2 con C1 de la ficha de pago en efectivo (#266), apagada por defecto.
