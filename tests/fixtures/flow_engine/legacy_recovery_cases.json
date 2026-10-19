@@ -1839,7 +1839,7 @@
     },
     {
       "id": "G11",
-      "que": "Un pago fallido repetido antes del envio: queda como evidencia del mismo caso y su due_at se adelanta a now(); la reevaluacion siguiente lo vuelve a diferir.",
+      "que": "Un pago fallido repetido antes del envio: queda como evidencia del mismo caso y su due_at no se adelanta: queda en lo mas tarde entre lo que ya tenia (aca, la apertura de la ventana) y la gracia contada desde el segundo rechazo (20261019000200: sale un solo mensaje, el del ultimo evento). Hasta la 1.11 se adelantaba a now(), se volvia a tomar y la reevaluacion lo volvia a diferir.",
       "fija": "8 (D, F#11)",
       "config": {
         "zona": "Etc/GMT+-N, con la hora local de T0 entre las 11:30 y las 12:30",
@@ -1916,20 +1916,13 @@
         {
           "paso": "due_at",
           "accion": "a1",
-          "due_at": "reloj"
+          "due_at": "sin_cambio"
         },
         {
           "paso": "toma",
           "accion": "a1",
           "t": 661,
-          "tomada": true
-        },
-        {
-          "paso": "reevaluacion",
-          "accion": "a1",
-          "t": 661,
-          "decision": "defer",
-          "motivo": "business_window_closed"
+          "tomada": false
         }
       ],
       "final": {
@@ -2002,7 +1995,7 @@
     },
     {
       "id": "G12",
-      "que": "Un pago fallido repetido despues del envio (aceptado): abre otro recorrido.",
+      "que": "Un pago fallido repetido despues del envio (aceptado): se suma al caso, que ya mando su mensaje, y no abre otro recorrido (20261019000200: un caso por persona y producto durante 72 h). Hasta la 1.11 abria otro caso y mandaba un segundo mensaje.",
       "fija": "8",
       "config": {
         "zona": "Etc/GMT+-N, con la hora local de T0 entre las 11:30 y las 12:30",
@@ -2101,9 +2094,9 @@
           "arranco": true,
           "motivo": null,
           "contacto_existia": true,
-          "caso": "c2",
-          "accion": "a2",
-          "creado": true
+          "caso": "c1",
+          "accion": "a1",
+          "creado": false
         }
       ],
       "final": {
@@ -2127,7 +2120,8 @@
             "correlacion_de_compra": null,
             "con_conversacion": true,
             "eventos": [
-              "e1"
+              "e1",
+              "e2"
             ],
             "scope_version": 1,
             "audiencia": "consented_intent",
@@ -2136,25 +2130,6 @@
                 "estado": "completed",
                 "cierre": "policy_exhausted",
                 "aceptados": 1
-              }
-            ]
-          },
-          "c2": {
-            "estado": "grace_period",
-            "etapa": "new",
-            "compra": null,
-            "correlacion_de_compra": null,
-            "con_conversacion": false,
-            "eventos": [
-              "e2"
-            ],
-            "scope_version": 1,
-            "audiencia": "consented_intent",
-            "secuencias": [
-              {
-                "estado": "active",
-                "cierre": null,
-                "aceptados": 0
               }
             ]
           }
@@ -2178,17 +2153,6 @@
                 "autorizado": true
               }
             ]
-          },
-          "a2": {
-            "caso": "c2",
-            "tipo": "first_contact_review",
-            "paso": "payment_failure_first_contact",
-            "ancla": "payment_failure",
-            "estado": "pending",
-            "terminal_reason": null,
-            "due_at": 660,
-            "expires_at": 87060,
-            "intentos": []
           }
         },
         "personas": {

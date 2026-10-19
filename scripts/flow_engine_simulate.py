@@ -90,11 +90,14 @@ DEFAULT_LABEL = "propuesto"
 LIENZO_SCHEMA = "setter-simulacion-lienzo/v1"
 
 # El legado del que salen las definiciones del fixture (diseno de la T3a, §9): los
-# casos generados y el traductor, con su sha256 en c7fa8ef.
+# casos generados y el traductor, con su sha256 en c7fa8ef. Los casos se
+# regeneraron con 20261019000200 (G11 y G12: el pago fallido repetido ya no
+# adelanta el envio ni abre otro caso); las politicas y los flujos que traduce el
+# fixture no cambiaron, asi que las definiciones siguen siendo las de c7fa8ef.
 BASE = "c7fa8ef"
 LEGACY_FILES = {
     "tests/fixtures/flow_engine/legacy_recovery_cases.json":
-        "e34d3815c16c88c3681892f6cd376fc6b5c0cb2f0f6aad751129523308f962ed",
+        "68bcbfe7a1df77f8e2db0fb6a22cc8fdcbb3e8ae6eeefce939780abda3cc9da7",
     "tests/flow_store_translator.py": "b3ea196ca80d5dd72eb86d36d8d59337630ebb0f91d101e56fbafe3d92bdb2cb",
 }
 LEGACY_CHANGED = "las definiciones de hoy son del 16/10; el legado cambio despues"

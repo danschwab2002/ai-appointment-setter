@@ -143,7 +143,9 @@ expected_service_role(signature) as (
         ('public.plan_portable_payment_slip_recovery(uuid, uuid, text, text, text, text, integer, timestamp with time zone, bigint, bigint, text, text, integer)'),
         ('public.mark_portable_payment_slip_request_started(uuid, uuid, text, bigint, timestamp with time zone)'),
         ('public.get_portable_payment_slip_pilot_runtime_status(text, integer, text, text, text)'),
-        ('public.get_portable_payment_slip_send_context(uuid, text, bigint, timestamp with time zone)')
+        ('public.get_portable_payment_slip_send_context(uuid, text, bigint, timestamp with time zone)'),
+        ('public.get_portable_payment_failure_pilot_runtime_status(text, integer, text, text, text)'),
+        ('public.get_portable_payment_failure_send_context_v1(uuid, text, bigint, timestamp with time zone)')
 ),
 functions as (
     select

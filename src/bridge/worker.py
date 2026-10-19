@@ -22,6 +22,7 @@ from bridge.cart_first_touch import (
     CART_ABANDONMENT_TRIGGER,
     CartDiscountConfig,
     CartDiscountDefer,
+    CartDiscountOutcome,
     CartDiscountReady,
     CartDiscountStop,
     compose_cart_discount_first_touch,
@@ -66,6 +67,12 @@ from bridge.messaging import (
     WhatsAppTemplateConfig,
     first_touch_recipient_matches,
     is_allowed_whatsapp_target,
+)
+from bridge.payment_failure_variant import (
+    PAYMENT_FAILURE_TRIGGER,
+    PaymentFailurePlanningConfig,
+    PaymentFailureVariantsConfig,
+    compose_payment_failure_first_touch,
 )
 from bridge.payment_slip import payment_slip_facts
 from bridge.payment_slip_first_touch import (
@@ -752,7 +759,14 @@ class DurableDispatcher:
         whatsapp_equivalence_enabled: bool = False,
         cart_discount: CartDiscountConfig | None = None,
         payment_slip: PaymentSlipFirstTouchConfig | None = None,
+        payment_failure_variants: PaymentFailureVariantsConfig | None = None,
     ) -> None:
+        if payment_failure_variants is not None and not approved_template_direct:
+            # B1 is an approved template with its URL button, sent by the
+            # direct mode with the final Meta gate; never a Hermes draft.
+            raise ValueError(
+                "payment failure variants require the approved template direct mode"
+            )
         if cart_discount is not None and not approved_template_direct:
             # A1 with the personal coupon is an approved template sent by the
             # direct mode, with the final Meta gate; never a Hermes draft.
@@ -856,6 +870,7 @@ class DurableDispatcher:
         self._approved_template_direct = approved_template_direct
         self._cart_discount = cart_discount
         self._payment_slip = payment_slip
+        self._payment_failure_variants = payment_failure_variants
         self._lead_first_name_greeting_enabled = lead_first_name_greeting_enabled
         self._whatsapp_equivalence_enabled = whatsapp_equivalence_enabled
         self._delivery_mode = (
@@ -1234,7 +1249,51 @@ class DurableDispatcher:
             return _ApprovedTemplateComposition(
                 failure_reason=APPROVED_TEMPLATE_UNAVAILABLE
             )
+        discount: CartDiscountOutcome | None = None
+        log_prefix = "cart_discount_first_touch"
         if (
+            self._payment_failure_variants is not None
+            and trigger_kind == PAYMENT_FAILURE_TRIGGER
+            and attempt is not None
+        ):
+            # B1: the variant of the refusal, with its link and, when it has
+            # one, its coupon. Without the send context it does not go out
+            # with a guess: the attempt fails like any lookup of the base.
+            log_prefix = "payment_failure_first_touch"
+            try:
+                discount = await compose_payment_failure_first_touch(
+                    config=self._payment_failure_variants,
+                    supabase=self._supabase,
+                    inbox=inbox,
+                    action=action,
+                    attempt=attempt,
+                    buyer_name=name_value or "",
+                    product_name=product_name or "",
+                    buyer_phone=execution_context.buyer_phone,
+                    worker_id=self._worker_id,
+                    now=self._clock(),
+                    ulid_factory=generate_issuance_ulid,
+                )
+            except SupabasePermanentError as exc:
+                logger.warning(
+                    "payment_failure_first_touch_context_rejected action_id=%s reason=%s",
+                    action.action_id,
+                    exc.reason,
+                )
+                return _ApprovedTemplateComposition(
+                    failure_reason=exc.reason or "payment_failure_send_context_rejected",
+                    retryable=False,
+                )
+            except SupabaseError as exc:
+                logger.warning(
+                    "payment_failure_first_touch_context_unavailable action_id=%s error=%s",
+                    action.action_id,
+                    type(exc).__name__,
+                )
+                return _ApprovedTemplateComposition(
+                    failure_reason="payment_failure_send_context_unavailable"
+                )
+        elif (
             self._cart_discount is not None
             and trigger_kind == CART_ABANDONMENT_TRIGGER
             and attempt is not None
@@ -1252,9 +1311,12 @@ class DurableDispatcher:
                 now=self._clock(),
                 ulid_factory=generate_issuance_ulid,
             )
+        if discount is not None:
+            assert attempt is not None
             if isinstance(discount, CartDiscountReady):
                 logger.info(
-                    "cart_discount_first_touch_ready action_id=%s attempt_id=%s",
+                    "%s_ready action_id=%s attempt_id=%s",
+                    log_prefix,
                     action.action_id,
                     attempt.attempt_id,
                 )
@@ -1270,8 +1332,8 @@ class DurableDispatcher:
                 )
             if isinstance(discount, CartDiscountDefer):
                 logger.info(
-                    "cart_discount_first_touch_deferred action_id=%s "
-                    "attempt_number=%s retry_after_s=%s",
+                    "%s_deferred action_id=%s attempt_number=%s retry_after_s=%s",
+                    log_prefix,
                     action.action_id,
                     attempt.attempt_number,
                     int(discount.retry_after.total_seconds()),
@@ -1282,7 +1344,8 @@ class DurableDispatcher:
                 )
             if isinstance(discount, CartDiscountStop):
                 logger.warning(
-                    "cart_discount_first_touch_stopped action_id=%s reason=%s",
+                    "%s_stopped action_id=%s reason=%s",
+                    log_prefix,
                     action.action_id,
                     discount.reason,
                 )
@@ -1290,9 +1353,11 @@ class DurableDispatcher:
                     failure_reason=discount.reason,
                     retryable=discount.retryable,
                 )
-            # A1 is never lost because of the coupon: the template of today.
+            # A1 and B1 are never lost because of the coupon or the link: the
+            # template of today.
             logger.warning(
-                "cart_discount_first_touch_fallback action_id=%s reason=%s",
+                "%s_fallback action_id=%s reason=%s",
+                log_prefix,
                 action.action_id,
                 discount.reason,
             )
@@ -2605,6 +2670,7 @@ class ResolutionWorker:
         payment_failure_enabled: bool = False,
         product_routes: ProductRoutes | None = None,
         payment_slip: PaymentSlipPlanningConfig | None = None,
+        payment_failure_planning: PaymentFailurePlanningConfig | None = None,
     ) -> None:
         self._supabase = supabase
         self._poll_interval = poll_interval_seconds
@@ -2623,6 +2689,10 @@ class ResolutionWorker:
         # La ficha de pago (C1): sin esto, una ficha queda failed con
         # unsupported_persisted_event_type, como hasta la 1.10.
         self._payment_slip = payment_slip
+        # El pago rechazado (B1) con su propio scope y su politica (15 minutos
+        # de gracia). Sin esto se planifica como hasta la 1.11, con los del
+        # carrito.
+        self._payment_failure_planning = payment_failure_planning
         # Con varios productos, solo el principal tiene flujos de recuperacion
         # (paso 2c-2): los de los demas llegan con el motor de flujos.
         self._product_routes = product_routes
@@ -2790,6 +2860,13 @@ class ResolutionWorker:
             policy_key = self._payment_slip.policy_key
             policy_version = self._payment_slip.policy_version
             pilot_boundary = self._payment_slip.pilot_boundary
+        elif (
+            self._payment_failure_planning is not None
+            and event_type == EVENT_PURCHASE_CANCELED
+        ):
+            policy_key = self._payment_failure_planning.policy_key
+            policy_version = self._payment_failure_planning.policy_version
+            pilot_boundary = self._payment_failure_planning.pilot_boundary
         try:
             resolver_kwargs: dict[str, Any] = {}
             if self._commercial_ally_config is not None:
