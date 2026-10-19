@@ -361,6 +361,26 @@ class PaymentSlipAdmissionResult:
     webhook_event_id: str | None
 
 
+PAYMENT_FAILURE_REFUSAL_KINDS = frozenset({"declined", "insufficient_funds", "not_a_refusal"})
+
+
+@dataclass(frozen=True)
+class PaymentFailureSendContext:
+    """Lo que el primer toque del pago rechazado necesita para elegir su variante.
+
+    ``refusal_kind`` es la regla de la base (``payment_failure_refusal_kind``),
+    no se repite aca. ``other_coupon_*`` es el cupon vigente de la persona en
+    otro caso del producto (B1-cupon), o None.
+    """
+
+    refusal_kind: str
+    payment_failure_count: int
+    latest_failed_at: datetime
+    payment_type: str | None
+    other_coupon_code: str | None
+    other_coupon_expires_at: datetime | None
+
+
 @dataclass(frozen=True)
 class PaymentSlipSendContext:
     """Los hechos crudos de la ficha mas reciente del caso, para componer C1.
@@ -5477,6 +5497,22 @@ class SupabaseClient:
             operation="portable_payment_slip_pilot_runtime_status",
         )
 
+    async def get_portable_payment_failure_pilot_runtime_status(
+        self,
+        *,
+        pilot_boundary: PilotBoundaryConfig,
+    ) -> PilotRuntimeStatus:
+        """Runtime status of the own scope of the payment failure (B1).
+
+        Same row as ``get_pilot_runtime_status``, for a published scope of
+        source ``hotmart`` that takes ``PURCHASE_CANCELED``.
+        """
+        return await self._get_pilot_runtime_status(
+            pilot_boundary=pilot_boundary,
+            rpc="get_portable_payment_failure_pilot_runtime_status",
+            operation="portable_payment_failure_pilot_runtime_status",
+        )
+
     async def get_pilot_scope_audience_mode(
         self,
         *,
@@ -5870,6 +5906,76 @@ class SupabaseClient:
                     row, "generated_at", operation=operation
                 )
             ),
+        )
+
+    async def get_portable_payment_failure_send_context(
+        self,
+        *,
+        action_id: str,
+        worker_id: str,
+        lease_generation: int,
+        now: str,
+    ) -> PaymentFailureSendContext:
+        """What B1 needs to pick its variant, under the current lease.
+
+        A 55000 (no lease, an action that is not ``payment_failure``, a case
+        without its latest refusal) is a ``SupabasePermanentError`` with its
+        reason: it does not change by retrying.
+        """
+        operation = "portable_payment_failure_send_context"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_portable_payment_failure_send_context_v1",
+            content=json.dumps({
+                "p_action_id": action_id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": lease_generation,
+                "p_now": now,
+            }),
+        )
+        if response.status_code != 200:
+            rejection = _pilot_plan_rejection(response)
+            if rejection is not None:
+                raise SupabasePermanentError(
+                    f"{operation}_rejected: {rejection}", reason=rejection
+                )
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        if set(row) != {
+            "refusal_kind",
+            "payment_failure_count",
+            "latest_failed_at",
+            "payment_type",
+            "other_coupon_code",
+            "other_coupon_expires_at",
+        }:
+            raise _invalid_row_error(operation)
+        refusal_kind = _required_string(row, "refusal_kind", operation=operation)
+        count = _required_int(row, "payment_failure_count", operation=operation)
+        if refusal_kind not in PAYMENT_FAILURE_REFUSAL_KINDS or count < 1:
+            raise _invalid_row_error(operation)
+        other_code = _optional_string(row, "other_coupon_code", operation=operation)
+        other_expires = (
+            None
+            if row.get("other_coupon_expires_at") is None
+            else _required_aware_timestamp(
+                row, "other_coupon_expires_at", operation=operation
+            )
+        )
+        if (other_code is None) != (other_expires is None):
+            raise _invalid_row_error(operation)
+        return PaymentFailureSendContext(
+            refusal_kind=refusal_kind,
+            payment_failure_count=count,
+            latest_failed_at=_required_aware_timestamp(
+                row, "latest_failed_at", operation=operation
+            ),
+            payment_type=_optional_string(row, "payment_type", operation=operation),
+            other_coupon_code=other_code,
+            other_coupon_expires_at=other_expires,
         )
 
     async def apply_hotmart_purchase_approved(

@@ -190,6 +190,14 @@ from bridge.payment_slip_first_touch import (
     PaymentSlipPlanningConfig,
 )
 from bridge.cart_first_touch import CartDiscountConfig
+from bridge.payment_failure_variant import (
+    VARIANT_COUPON,
+    VARIANT_DECLINED,
+    VARIANT_INSUFFICIENT_FUNDS,
+    VARIANT_TWO_REFUSALS,
+    PaymentFailurePlanningConfig,
+    PaymentFailureVariantsConfig,
+)
 from bridge.recovery_coupons import RecoveryCouponWorker
 from bridge.worker import (
     DurableDispatcher,
@@ -239,6 +247,11 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # la plantilla salen del manifiesto; el scope y la politica, de
     # LANCEMOS_PILOT_PAYMENT_SLIP_SCOPE_* y PAYMENT_SLIP_FOLLOWUP_POLICY_*.
     "portable_hotmart_payment_slip_enabled",
+    # B1 del pago rechazado (cuatro variantes con el link y, cuando
+    # corresponde, el cupon): las plantillas son del runtime, y el scope y la
+    # politica propios de LANCEMOS_PILOT_PAYMENT_FAILURE_SCOPE_* y
+    # PAYMENT_FAILURE_FOLLOWUP_POLICY_*.
+    "payment_failure_variants_enabled",
     "portable_hotmart_purchase_stop_enabled",
     # El cupon personal del carrito (A1): crea y verifica el cupon en la API
     # de Hotmart; lo especifico (prefijo, credenciales) es del runtime.
@@ -619,6 +632,21 @@ class Settings:
     payment_slip_followup_policy_version: int | None = None
     waba_payment_slip_template_name: str | None = None
     waba_payment_slip_template_category: str | None = None
+    # El pago rechazado con su propio scope y su politica (migracion
+    # 20261019000200): los cuatro, y solo con PAYMENT_FAILURE_VARIANTS_ENABLED.
+    # Con el flag apagado no se leen y el pago fallido se planifica con los del
+    # carrito, como hasta la 1.11.
+    pilot_payment_failure_scope_key: str | None = None
+    pilot_payment_failure_scope_version: int | None = None
+    payment_failure_followup_policy_key: str | None = None
+    payment_failure_followup_policy_version: int | None = None
+    # B1 en cuatro variantes (decision de Dan del 18/10). Apagado, sale la
+    # plantilla de hoy (WABA_PAYMENT_FAILURE_TEMPLATE_NAME).
+    payment_failure_variants_enabled: bool = False
+    waba_payment_failure_template_coupon: str | None = None
+    waba_payment_failure_template_two_refusals: str | None = None
+    waba_payment_failure_template_insufficient_funds: str | None = None
+    waba_payment_failure_template_declined: str | None = None
     portable_hotmart_purchase_stop_enabled: bool = False
     hotmart_purchase_worker_enabled: bool = False
     hotmart_abandonment_timer_worker_enabled: bool = False
@@ -966,6 +994,12 @@ class Settings:
         ).strip()
         payment_slip_followup_policy_version_raw = os.getenv(
             "PAYMENT_SLIP_FOLLOWUP_POLICY_VERSION", ""
+        ).strip()
+        pilot_payment_failure_scope_version_raw = os.getenv(
+            "LANCEMOS_PILOT_PAYMENT_FAILURE_SCOPE_VERSION", ""
+        ).strip()
+        payment_failure_followup_policy_version_raw = os.getenv(
+            "PAYMENT_FAILURE_FOLLOWUP_POLICY_VERSION", ""
         ).strip()
         hotmart_max_age_seconds = int(
             os.getenv("HOTMART_MAX_AGE_SECONDS", "300")
@@ -1599,6 +1633,41 @@ class Settings:
             ),
             waba_payment_slip_template_name=(
                 os.getenv("WABA_PAYMENT_SLIP_TEMPLATE_NAME", "").strip() or None
+            ),
+            pilot_payment_failure_scope_key=(
+                os.getenv("LANCEMOS_PILOT_PAYMENT_FAILURE_SCOPE_KEY", "").strip()
+                or None
+            ),
+            pilot_payment_failure_scope_version=(
+                int(pilot_payment_failure_scope_version_raw)
+                if pilot_payment_failure_scope_version_raw
+                else None
+            ),
+            payment_failure_followup_policy_key=(
+                os.getenv("PAYMENT_FAILURE_FOLLOWUP_POLICY_KEY", "").strip() or None
+            ),
+            payment_failure_followup_policy_version=(
+                int(payment_failure_followup_policy_version_raw)
+                if payment_failure_followup_policy_version_raw
+                else None
+            ),
+            payment_failure_variants_enabled=(
+                os.getenv("PAYMENT_FAILURE_VARIANTS_ENABLED", "false").lower()
+                == "true"
+            ),
+            waba_payment_failure_template_coupon=(
+                os.getenv("WABA_PAYMENT_FAILURE_TEMPLATE_COUPON", "").strip() or None
+            ),
+            waba_payment_failure_template_two_refusals=(
+                os.getenv("WABA_PAYMENT_FAILURE_TEMPLATE_TWO_REFUSALS", "").strip()
+                or None
+            ),
+            waba_payment_failure_template_insufficient_funds=(
+                os.getenv("WABA_PAYMENT_FAILURE_TEMPLATE_INSUFFICIENT_FUNDS", "").strip()
+                or None
+            ),
+            waba_payment_failure_template_declined=(
+                os.getenv("WABA_PAYMENT_FAILURE_TEMPLATE_DECLINED", "").strip() or None
             ),
             waba_payment_slip_template_category=(
                 os.getenv("WABA_PAYMENT_SLIP_TEMPLATE_CATEGORY", "")
@@ -2530,6 +2599,91 @@ def _validate_precheckout_first_contact(settings: Settings) -> None:
     if not settings.chatwoot_scoped_inbound_senders_enabled:
         raise ValueError(
             f"{flag} requires CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED"
+        )
+
+
+def _validate_payment_failure_own_scope(settings: Settings) -> None:
+    """B1 del pago rechazado: su scope y su politica propios, y las variantes.
+
+    Como la ficha, todo cuelga de un flag: apagado, el bridge arranca igual
+    con las constantes cargadas y no las lee (el pago fallido se planifica con
+    el scope y la politica del carrito, como hasta la 1.11). Prendido, exige
+    los cuatro valores del scope y la politica (a medias, el planificador
+    rechazaria cada rechazo con pilot_policy_mismatch), el modo directo, el
+    worker del cupon (B1-saldo lleva su cupon) y las cuatro plantillas.
+    """
+    if not settings.payment_failure_variants_enabled:
+        return
+    flag = "PAYMENT_FAILURE_VARIANTS_ENABLED"
+    own = (
+        settings.pilot_payment_failure_scope_key,
+        settings.pilot_payment_failure_scope_version,
+        settings.payment_failure_followup_policy_key,
+        settings.payment_failure_followup_policy_version,
+    )
+    if all(value is None for value in own):
+        raise ValueError(
+            f"{flag} requires LANCEMOS_PILOT_PAYMENT_FAILURE_SCOPE_* and "
+            "PAYMENT_FAILURE_FOLLOWUP_POLICY_*"
+        )
+    if not all(value is not None for value in own):
+        raise ValueError(
+            "LANCEMOS_PILOT_PAYMENT_FAILURE_SCOPE_KEY, "
+            "LANCEMOS_PILOT_PAYMENT_FAILURE_SCOPE_VERSION, "
+            "PAYMENT_FAILURE_FOLLOWUP_POLICY_KEY and "
+            "PAYMENT_FAILURE_FOLLOWUP_POLICY_VERSION go together"
+        )
+    if not settings.portable_hotmart_payment_failure_enabled:
+        raise ValueError(
+            "LANCEMOS_PILOT_PAYMENT_FAILURE_SCOPE_KEY requires "
+            "PORTABLE_HOTMART_PAYMENT_FAILURE_ENABLED"
+        )
+    if not settings.pilot_boundary_enabled:
+        raise ValueError(
+            "LANCEMOS_PILOT_PAYMENT_FAILURE_SCOPE_KEY requires "
+            "LANCEMOS_PILOT_BOUNDARY_ENABLED"
+        )
+    if (
+        settings.pilot_payment_failure_scope_version < 1  # type: ignore[operator]
+        or settings.payment_failure_followup_policy_version < 1  # type: ignore[operator]
+    ):
+        raise ValueError(
+            "LANCEMOS_PILOT_PAYMENT_FAILURE_SCOPE_VERSION and "
+            "PAYMENT_FAILURE_FOLLOWUP_POLICY_VERSION must be positive"
+        )
+    if settings.pilot_payment_failure_scope_key in {
+        settings.pilot_scope_key,
+        settings.pilot_precheckout_scope_key,
+        settings.pilot_payment_slip_scope_key,
+    }:
+        raise ValueError(
+            "LANCEMOS_PILOT_PAYMENT_FAILURE_SCOPE_KEY must differ from the "
+            "other pilot scope keys"
+        )
+    if settings.payment_failure_followup_policy_key in {
+        settings.followup_policy_key,
+        settings.payment_slip_followup_policy_key,
+    }:
+        raise ValueError(
+            "PAYMENT_FAILURE_FOLLOWUP_POLICY_KEY must differ from "
+            "FOLLOWUP_POLICY_KEY and PAYMENT_SLIP_FOLLOWUP_POLICY_KEY"
+        )
+    if not settings.dispatcher_approved_template_direct_enabled:
+        raise ValueError(f"{flag} requires DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED")
+    if not settings.recovery_coupon_worker_enabled:
+        raise ValueError(f"{flag} requires RECOVERY_COUPON_WORKER_ENABLED")
+    if any(
+        name is None
+        for name in (
+            settings.waba_payment_failure_template_coupon,
+            settings.waba_payment_failure_template_two_refusals,
+            settings.waba_payment_failure_template_insufficient_funds,
+            settings.waba_payment_failure_template_declined,
+        )
+    ):
+        raise ValueError(
+            f"{flag} requires WABA_PAYMENT_FAILURE_TEMPLATE_COUPON, "
+            "_TWO_REFUSALS, _INSUFFICIENT_FUNDS and _DECLINED"
         )
 
 
@@ -3476,6 +3630,7 @@ def create_app(
         )
     _validate_precheckout_first_contact(settings)
     _validate_payment_slip_first_contact(settings)
+    _validate_payment_failure_own_scope(settings)
     waba_template = _waba_template_config(settings)
     _validate_approved_template_direct(
         settings,
@@ -3530,6 +3685,21 @@ def create_app(
             channel_account_ref=settings.pilot_channel_account_ref,  # type: ignore[arg-type]
         )
         if settings.portable_hotmart_payment_slip_enabled
+        else None
+    )
+    # El scope propio del pago rechazado (B1): otra clave y otra version, el
+    # mismo tenant y el mismo canal. Lo leen el worker (planifica contra el) y
+    # /ready; el envio lo autoriza contra el scope del caso.
+    payment_failure_pilot_boundary = (
+        PilotBoundaryConfig(
+            scope_key=settings.pilot_payment_failure_scope_key,  # type: ignore[arg-type]
+            scope_version=settings.pilot_payment_failure_scope_version,  # type: ignore[arg-type]
+            tenant_key=settings.pilot_tenant_key,  # type: ignore[arg-type]
+            channel_provider=settings.pilot_channel_provider,  # type: ignore[arg-type]
+            channel_account_ref=settings.pilot_channel_account_ref,  # type: ignore[arg-type]
+        )
+        if settings.payment_failure_variants_enabled
+        and settings.pilot_payment_failure_scope_key is not None
         else None
     )
     if settings.hotmart_purchase_worker_enabled and not settings.worker_enabled:
@@ -4408,6 +4578,15 @@ def create_app(
                 and settings.instance_manifest is not None
                 else None
             ),
+            payment_failure_planning=(
+                PaymentFailurePlanningConfig(
+                    policy_key=settings.payment_failure_followup_policy_key,  # type: ignore[arg-type]
+                    policy_version=settings.payment_failure_followup_policy_version,  # type: ignore[arg-type]
+                    pilot_boundary=payment_failure_pilot_boundary,
+                )
+                if payment_failure_pilot_boundary is not None
+                else None
+            ),
         )
 
     if settings.dispatcher_enabled:
@@ -4574,6 +4753,24 @@ def create_app(
                 )
                 if settings.portable_hotmart_payment_slip_enabled
                 and settings.instance_manifest is not None
+                else None
+            ),
+            payment_failure_variants=(
+                PaymentFailureVariantsConfig(
+                    templates={
+                        VARIANT_COUPON: settings.waba_payment_failure_template_coupon,
+                        VARIANT_TWO_REFUSALS: (
+                            settings.waba_payment_failure_template_two_refusals
+                        ),
+                        VARIANT_INSUFFICIENT_FUNDS: (
+                            settings.waba_payment_failure_template_insufficient_funds
+                        ),
+                        VARIANT_DECLINED: settings.waba_payment_failure_template_declined,
+                    },
+                    language=waba_template.language,
+                )
+                if settings.payment_failure_variants_enabled
+                and waba_template is not None
                 else None
             ),
         )
@@ -7437,6 +7634,45 @@ def create_app(
             payment_slip_readiness = {
                 "portable_payment_slip_first_contact": (
                     payment_slip_status.runtime_state
+                ),
+            }
+        # El pago rechazado con su propio scope (B1): igual que la ficha, la
+        # clave solo aparece cuando el scope esta configurado.
+        if payment_failure_pilot_boundary is not None:
+            if shared_supabase is None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="portable_payment_failure_readiness_unavailable",
+                )
+            try:
+                payment_failure_status = await (
+                    shared_supabase.get_portable_payment_failure_pilot_runtime_status(
+                        pilot_boundary=payment_failure_pilot_boundary
+                    )
+                )
+            except Exception as exc:
+                logger.warning(
+                    "portable_payment_failure_readiness_check_failed error_type=%s",
+                    type(exc).__name__,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="portable_payment_failure_readiness_unavailable",
+                ) from exc
+            if (
+                not payment_failure_status.configured
+                or payment_failure_status.runtime_state is None
+            ):
+                # Scope sin publicar, sin PURCHASE_CANCELED o con otra version
+                # activa: el pago rechazado no puede planificar.
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=f"portable_payment_failure_{payment_failure_status.reason_code}",
+                )
+            payment_slip_readiness = {
+                **payment_slip_readiness,
+                "portable_payment_failure_own_scope": (
+                    payment_failure_status.runtime_state
                 ),
             }
         if pilot_boundary is None:
