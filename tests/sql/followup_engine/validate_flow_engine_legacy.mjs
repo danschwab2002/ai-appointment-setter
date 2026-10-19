@@ -1317,7 +1317,7 @@ const CASES = [
   },
   {
     id: 'G11', ventana: 'cerrada',
-    que: 'Un pago fallido repetido antes del envio: queda como evidencia del mismo caso y su due_at se adelanta a now(); la reevaluacion siguiente lo vuelve a diferir.',
+    que: 'Un pago fallido repetido antes del envio: queda como evidencia del mismo caso y su due_at no se adelanta: queda en lo mas tarde entre lo que ya tenia (aca, la apertura de la ventana) y la gracia contada desde el segundo rechazo (20261019000200: sale un solo mensaje, el del ultimo evento). Hasta la 1.11 se adelantaba a now(), se volvia a tomar y la reevaluacion lo volvia a diferir.',
     fija: '8 (D, F#11)',
     run: async (ctx) => {
       const lead = personOf(ctx, 'A');
@@ -1325,21 +1325,29 @@ const CASES = [
       const first = await admitEvent(ctx, 'pago_fallido', lead, ctx.disparo);
       const plan = await resolveAndPlan(ctx, first);
       await lease(ctx, plan.scheduled_action_id, ctx.T0);
+      const dueOf = async () => one(await query(
+        'select due_at from public.scheduled_actions where id = $1',
+        [plan.scheduled_action_id],
+      ), 'due_at').due_at.getTime();
+      const deferred = await dueOf();
       const second = await admitEvent(ctx, 'pago_fallido', lead, ctx.at(60));
       await resolveAndPlan(ctx, second);
-      const moved = one(await query(`select due_at from public.scheduled_actions where id = $1`,
-        [plan.scheduled_action_id]), 'due_at adelantado');
-      ctx.step({ paso: 'due_at', accion: ctx.label('a', plan.scheduled_action_id), due_at: clockStamp(ctx, moved.due_at) });
+      const moved = await dueOf();
+      ctx.step({
+        paso: 'due_at', accion: ctx.label('a', plan.scheduled_action_id),
+        due_at: moved === deferred ? 'sin_cambio' : (moved < deferred ? 'adelantado' : 'corrido'),
+      });
       await lease(ctx, plan.scheduled_action_id, ctx.T2);
     },
     check: (record) => stepsOf(record, 'plan')[1]?.creado === false
       && stepsOf(record, 'plan')[1]?.caso === 'c1'
-      && stepsOf(record, 'due_at')[0]?.due_at === 'reloj'
-      && stepsOf(record, 'reevaluacion').length === 2,
+      && stepsOf(record, 'due_at')[0]?.due_at === 'sin_cambio'
+      && stepsOf(record, 'reevaluacion').length === 1
+      && stepsOf(record, 'toma').at(-1)?.tomada === false,
   },
   {
     id: 'G12', ventana: 'abierta',
-    que: 'Un pago fallido repetido despues del envio (aceptado): abre otro recorrido.',
+    que: 'Un pago fallido repetido despues del envio (aceptado): se suma al caso, que ya mando su mensaje, y no abre otro recorrido (20261019000200: un caso por persona y producto durante 72 h). Hasta la 1.11 abria otro caso y mandaba un segundo mensaje.',
     fija: '8',
     run: async (ctx) => {
       const lead = personOf(ctx, 'A');
@@ -1350,8 +1358,11 @@ const CASES = [
       const second = await admitEvent(ctx, 'pago_fallido', lead, ctx.at(60));
       await resolveAndPlan(ctx, second);
     },
-    check: (record) => stepsOf(record, 'plan')[1]?.creado === true
-      && stepsOf(record, 'plan')[1]?.caso === 'c2',
+    check: (record) => stepsOf(record, 'plan')[1]?.creado === false
+      && stepsOf(record, 'plan')[1]?.caso === 'c1'
+      && record.final.casos.c2 === undefined
+      && record.final.casos.c1.estado === 'sequence_exhausted'
+      && record.final.casos.c1.eventos.join(',') === 'e1,e2',
   },
   {
     id: 'G13', ventana: 'abierta',
