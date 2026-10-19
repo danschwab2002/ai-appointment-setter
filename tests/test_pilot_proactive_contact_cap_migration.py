@@ -56,7 +56,8 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
     # que nombra el agente (20261016000400), y el cupon personal del carrito
     # (20261018000100), con el link del primer mensaje del carrito
     # (20261018000200), el primer contacto de la ficha de pago
-    # (20261019000100) y B1 del pago rechazado (20261019000200).
+    # (20261019000100), B1 del pago rechazado (20261019000200) y la compra de
+    # cualquier oferta del producto (20261019000300).
     assert versions[position + 1:] == [
         "20261009000200",
         "20261010000100",
@@ -71,6 +72,7 @@ def test_migration_comes_right_after_the_sck_one_and_creates_no_function() -> No
         "20261018000200",
         "20261019000100",
         "20261019000200",
+        "20261019000300",
     ]
 
     sql = _sql()

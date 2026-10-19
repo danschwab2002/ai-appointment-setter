@@ -63,6 +63,12 @@
 //  12. el link del producto que nombra el agente (20261016000400): con un
 //      segundo producto en el mismo inbox, la reserva por funnel da la oferta
 //      de ese producto, y frena un funnel sin binding en el inbox.
+//  13. la compra de otra oferta del producto antes del toque (20261019000300):
+//      con el carrito de una oferta planificado, una compra aprobada de otra
+//      oferta de la misma persona, que cruza solo por el mail o solo por el
+//      telefono, hace que reevaluate_followup_action
+//      cancele el caso (cancelled, no won) con purchase_detected_any_offer,
+//      sin intento; la compra de otra persona no lo frena.
 //
 // Datos:
 //   - Binding, ofertas, landings, producto, Chatwoot y consentimiento salen de
@@ -2096,6 +2102,134 @@ if (JSON.stringify(funnelLinks) !== JSON.stringify(expectedFunnelLinks)
   throw new Error(`the link of the product the agent names: ${JSON.stringify({ ...funnelLinks, principalIntent: principalLink.row?.purchase_intent_id === asker.intent, secondUrl: secondUrl.split('?')[0] })}`);
 }
 
+// ---------------------------------------------------------------------------
+// 13. La compra de otra oferta del producto antes del toque (20261019000300).
+//     Hasta esa migracion la compra cortaba el caso solo si era de la misma
+//     oferta (apply_hotmart_purchase_approved, 20260808000100:202), y la
+//     reevaluacion miraba solo si el caso ya estaba won: con A2 y Z, quien
+//     abandono una oferta y compro por otra seguia recibiendo toques. Cada
+//     persona compra por otra oferta que la de su carrito. La compra entra por
+//     la admision portable y su correlacion no resuelve la intencion del
+//     formulario (cruza solo un dato): el freno es la identidad, no la
+//     intencion. service_role ejecuta el freno (lo llama la reevaluacion,
+//     security invoker, desde el bridge).
+// ---------------------------------------------------------------------------
+const anyOfferPurchase = (lead, offer, buyer, transaction) => ({
+  id: `att1-chain-any-offer-${transaction}`,
+  creation_date: at(-2).getTime(),
+  event: 'PURCHASE_APPROVED',
+  version: '2.0.0',
+  data: {
+    product: { id: ATT1.productId, ucode: 'ATT1-CHAIN-UCODE' },
+    buyer: { email: buyer.email, checkout_phone: `+${buyer.phone}` },
+    purchase: {
+      approved_date: at(-2).getTime(),
+      status: 'APPROVED',
+      transaction,
+      offer: { code: offer.offer_code },
+    },
+  },
+});
+const admitAnyOfferPurchase = async (label, payload, buyer) => one((await db.query(`
+  select * from public.admit_portable_hotmart_purchase_approved($1,$2,$3,$4,$5::jsonb,$6,$7)
+`, [ATT1.tenant, ATT1.funnel, ATT1.bindingVersion, payload.id,
+  JSON.stringify(payload), buyer.email, buyer.phone])).rows, `${label} purchase`);
+const reevaluateAnyOffer = async (lead, plan) => {
+  const worker = `att1-chain-${lead.label}`;
+  const now = await dbNow();
+  const claimed = (await db.query(`
+    select * from public.claim_due_followup_actions($1,$2,interval '5 minutes',100)
+  `, [worker, now])).rows;
+  // Los casos anteriores pueden dejar acciones vivas: el claim tiene que
+  // traer la de este carrito.
+  const mine = claimed.find((row) => row.id === plan.scheduled_action_id);
+  if (mine === undefined || mine.anchor_type !== 'cart_abandonment') {
+    throw new Error(`${lead.label}: claimed ${JSON.stringify(claimed.map((row) => [row.id, row.anchor_type]))}`);
+  }
+  // Como en dispatch: la compartida corre con los permisos de la suite (aca
+  // service_role no tiene las tablas del motor). El permiso de service_role
+  // sobre el freno se prueba abajo.
+  const decision = one((await asBridge('cart_abandonment', () => db.query(`
+    select * from public.${reevaluateOperationFor('cart_abandonment')}($1,$2,$3,$4)
+  `, [plan.scheduled_action_id, worker, mine.lease_generation, now]))).rows,
+  `${lead.label} reevaluation`);
+  const state = one((await db.query(`
+    select
+      (select status from public.recovery_cases where id = $1) as case_status,
+      (select purchase_event_id from public.recovery_cases where id = $1) as purchase_event_id,
+      (select status from public.scheduled_actions where id = $2) as action_status,
+      (select terminal_reason from public.scheduled_actions where id = $2) as terminal_reason,
+      (select completion_reason from public.followup_sequences where id = $3) as completion_reason,
+      (select count(*)::integer from public.followup_delivery_attempts where action_id = $2) as attempts
+  `, [plan.recovery_case_id, plan.scheduled_action_id, plan.followup_sequence_id])).rows,
+  `${lead.label} state`);
+  return { decision, state };
+};
+const planAnyOfferCart = async (lead, offer) => {
+  await admitForm(lead, offer);
+  const cart = await admitCart(lead, offer);
+  await createContact(lead, cart.eventId);
+  // La audiencia de produccion (caso 7): la intencion consentida, sin cohorte.
+  const plan = one((await planCart(lead, offer, cart, openPlan)).rows, `${lead.label} plan`);
+  if (!plan.created) throw new Error(`${lead.label}: the cart was not planned: ${JSON.stringify(plan)}`);
+  return plan;
+};
+const anyOffer = {};
+for (const [label, cartOffer, purchaseOffer, cruce] of [
+  ['compra-otra-oferta-mail', offers[0], offers[1], 'email'],
+  ['compra-otra-oferta-telefono', offers[1], offers[2], 'phone'],
+]) {
+  const lead = person(label);
+  const plan = await planAnyOfferCart(lead, cartOffer);
+  const stranger = person(`${label}-otro-dato`);
+  const buyer = cruce === 'email'
+    ? { email: lead.email, phone: stranger.phone }
+    : { email: stranger.email, phone: lead.phone };
+  const purchase = await admitAnyOfferPurchase(
+    label, anyOfferPurchase(lead, purchaseOffer, buyer, `HPATT1ANY${cruce.toUpperCase()}`), buyer,
+  );
+  const { decision, state } = await reevaluateAnyOffer(lead, plan);
+  if (purchase.outcome !== 'inserted'
+      || decision.decision !== 'cancel'
+      || decision.reason_code !== 'purchase_detected_any_offer'
+      || state.case_status !== 'cancelled'
+      || state.purchase_event_id !== null
+      || state.action_status !== 'cancelled'
+      || state.terminal_reason !== 'purchase_detected_any_offer'
+      || state.completion_reason !== 'purchase_detected_any_offer'
+      || state.attempts !== 0) {
+    throw new Error(`${label}: the purchase of ${purchaseOffer.offer_code} did not cut the cart of ${cartOffer.offer_code}: ${JSON.stringify({ purchase: purchase.outcome, decision, state })}`);
+  }
+  anyOffer[cruce] = `${decision.decision}:${decision.reason_code}:${state.case_status}`;
+}
+// El control: la compra de otra persona, con otra oferta, no frena.
+{
+  const lead = person('compra-otra-oferta-control');
+  const plan = await planAnyOfferCart(lead, offers[2]);
+  const stranger = person('compra-otra-oferta-control-comprador');
+  await admitAnyOfferPurchase('control', anyOfferPurchase(
+    stranger, offers[0], stranger, 'HPATT1ANYCONTROL',
+  ), stranger);
+  const { decision, state } = await reevaluateAnyOffer(lead, plan);
+  if (decision.decision !== 'execute'
+      || decision.reason_code !== 'eligible_for_execution'
+      || state.case_status !== 'active' && state.case_status !== 'grace_period') {
+    throw new Error(`the purchase of another person cut the cart: ${JSON.stringify({ decision, state })}`);
+  }
+  anyOffer.another_person = `${decision.decision}:${decision.reason_code}`;
+}
+const anyOfferGrant = one((await db.query(`
+  select has_function_privilege('service_role',
+           'public._portable_case_purchase_stop_reason(uuid)', 'execute') as service,
+         has_function_privilege('anon',
+           'public._portable_case_purchase_stop_reason(uuid)', 'execute') as anon,
+         has_function_privilege('authenticated',
+           'public._portable_case_purchase_stop_reason(uuid)', 'execute') as authenticated
+`)).rows, 'any offer stop grant');
+if (!anyOfferGrant.service || anyOfferGrant.anon || anyOfferGrant.authenticated) {
+  throw new Error(`the any offer stop has the wrong grants: ${JSON.stringify(anyOfferGrant)}`);
+}
+
 console.log(JSON.stringify({
   att1_portable_chain: 'OK',
   empty_cohort: 'pilot_scope_rejected:pilot_contact_not_in_cohort',
@@ -2140,5 +2274,6 @@ console.log(JSON.stringify({
     activity: linkActivity.rows.map((row) => row.activity).join(','),
   },
   link_for_funnel: funnelLinks,
+  purchase_of_another_offer: anyOffer,
 }));
 await db.close();

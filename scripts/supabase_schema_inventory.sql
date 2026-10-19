@@ -4956,6 +4956,32 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         6,
         'portable_payment_failure_variants'
+    union all
+    select
+        '20261019000300',
+        '20261019000300_portable_purchase_stops_any_offer_v1.sql',
+        -- El freno por la compra de cualquier oferta: definer y solo
+        -- service_role (lo llama la reevaluacion, security invoker).
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._portable_case_purchase_stop_reason(uuid)')
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- La rama de la reevaluacion que cancela el caso, sin ganarlo.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.reevaluate_followup_action(uuid,text,bigint,timestamptz,boolean,text,text,timestamptz,text,boolean,boolean,boolean,boolean,boolean)')
+              and position('portable_purchase_stops_any_offer' in definition) > 0
+              and position('public._portable_case_purchase_stop_reason(v_case.id)' in definition) > 0
+              and position('''purchase_detected_any_offer''' in definition) > 0
+        )::int,
+        2,
+        'portable_purchase_stops_any_offer'
 )
 select
     version,
