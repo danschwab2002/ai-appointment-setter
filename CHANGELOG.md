@@ -12,6 +12,21 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+### Agregado
+
+- **El primer mensaje a quien generó una ficha de pago en efectivo** (C1 de la ficha de OXXO, [portable-payment-slip-first-contact-v1.md](docs/contracts/portable-payment-slip-first-contact-v1.md)). Hasta acá, `PURCHASE_BILLET_PRINTED` se guardaba y nadie le escribía: en ATT1, 13 fichas desde el 2026-10-12, todas `failed` con `unsupported_persisted_event_type`. Con `PORTABLE_HOTMART_PAYMENT_SLIP_ENABLED`, la ficha se admite y se cruza con la intención del formulario (`admit_portable_hotmart_payment_slip_v2`), el worker la filtra por la tabla `[[ficha.medios]]` del manifiesto y la planifica con **su propio scope y su propia política** (no los del carrito ni los del pago fallido). El mensaje es la plantilla `[plantillas].ficha` con cuatro variables (nombre, producto, tienda y vencimiento, «jueves 22 de octubre») y el botón con el link de la ficha.
+  - **El código es global y lo que se prende es una fila:** medio, país, tienda, zona horaria, de qué dígitos de la referencia sale el vencimiento (en ATT1, los 19 a 26 de los 34 de OXXO, medidos sobre las 5 fichas de México) y la base del botón. Lo que no matchea una fila habilitada queda `ignored` con su motivo, sin mensaje.
+  - **Una ficha ya vencida al componer no se manda** (`payment_slip_expired`).
+  - **El primer contacto declara el botón de URL que espera** (`parse_approved_template(url_button=…)`): el del carrito sigue en `https://pay.hotmart.com/{{1}}` y no cambia.
+  - Las cuatro funciones del pago fallido no cambian: las de la ficha se derivan de su definición viva, y el validador comprueba el md5 de 13 funciones de producción antes y después.
+  - Con un caso de ficha abierto, un carrito posterior de la misma persona termina `failed` con `pilot_case_binding_conflict`, sin mensaje: un pendiente abierto bloquea el carrito.
+
+### Qué hace quien actualiza
+
+- **Correr la migración `20261019000100_portable_payment_slip_first_contact_v1.sql`.** Amplía cuatro CHECK (toma `ACCESS EXCLUSIVE` un momento: aplicarla con poco tráfico) y suma la tabla `commercial_ally_payment_slip_details` y cinco funciones.
+- Sin el flag no cambia nada: la ficha se sigue guardando y descartando como hoy. El manifiesto no necesita cambios; `flujos.ficha`, `ficha_impresa`, `[plantillas].ficha` y `[[ficha.medios]]` son opcionales ([referencia-manifiesto.md](docs/referencia-manifiesto.md)).
+- Para prenderla: publicar la política y el scope de la ficha en la base, declarar la ficha en el manifiesto y cargar `PORTABLE_HOTMART_PAYMENT_SLIP_ENABLED`, `LANCEMOS_PILOT_PAYMENT_SLIP_SCOPE_KEY`/`_VERSION`, `PAYMENT_SLIP_FOLLOWUP_POLICY_KEY`/`_VERSION` y `WABA_PAYMENT_SLIP_TEMPLATE_NAME`/`_CATEGORY` ([.env.example](.env.example)). Con el flag y algo faltante, el bridge no arranca y dice qué falta.
+
 ## [1.10.2] - 2026-10-19
 
 Un parche sobre la 1.10.1 con un solo arreglo, LAN-132.

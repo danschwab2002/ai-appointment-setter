@@ -18,7 +18,7 @@ El formato es TOML: lo lee la biblioteca estándar de Python, sin dependencias, 
 |---|---|---|
 | `schema` | Siempre `"setter-instancia/v2"` | No carga |
 | `producto` | Versión del setter que usa la instancia, `"v1.0.0"`. Es el tag de la imagen que se despliega | No carga |
-| `eventos` | Qué hechos le llegan a esta instancia: `intencion` (formulario de la landing, directo por `/webhooks/lead` o por el adaptador de GHL), `carrito` (abandono en Hotmart), `pago_fallido`, `compra`, `entrante` (mensaje de WhatsApp) | Un evento desconocido no carga. Un evento ausente deja apagados los flujos que dependen de él |
+| `eventos` | Qué hechos le llegan a esta instancia: `intencion` (formulario de la landing, directo por `/webhooks/lead` o por el adaptador de GHL), `carrito` (abandono en Hotmart), `pago_fallido`, `compra`, `entrante` (mensaje de WhatsApp), `ficha_impresa` (la ficha de pago en efectivo, `PURCHASE_BILLET_PRINTED`) | Un evento desconocido no carga. Un evento ausente deja apagados los flujos que dependen de él |
 
 ## `[instancia]`
 
@@ -73,7 +73,7 @@ Reglas: al menos una oferta, códigos sin repetir y una sola oferta por landing.
 
 ## `[plantillas]`
 
-Una entrada por cada plantilla de Meta, con `{ nombre = "...", idioma = "es_MX" }`. Los lugares posibles son `precheckout`, `carrito`, `pago_fallido`, `reactivacion` y `descuento`. El nombre y el idioma tienen que ser **exactamente** los aprobados en Meta: una plantilla aprobada en otro idioma es otra plantilla. Una plantilla que todavía no existe se omite, y el flujo que la usa no se puede prender.
+Una entrada por cada plantilla de Meta, con `{ nombre = "...", idioma = "es_MX" }`. Los lugares posibles son `precheckout`, `carrito`, `pago_fallido`, `reactivacion`, `descuento` y `ficha`. El nombre y el idioma tienen que ser **exactamente** los aprobados en Meta: una plantilla aprobada en otro idioma es otra plantilla. Una plantilla que todavía no existe se omite, y el flujo que la usa no se puede prender.
 
 Las plantillas de primer contacto (`precheckout`, `carrito` y `pago_fallido`) aceptan una clave opcional, `parametros`: las variables del cuerpo aprobado, en el orden en que la plantilla las numera.
 
@@ -94,6 +94,8 @@ carrito = { nombre = "att1_carrito_abandonado_01", idioma = "es_MX", parametros 
 - `reactivacion` y `descuento` arman sus variables en su propio código: `parametros` ahí no carga. La de `descuento` es la plantilla del seguimiento con cupón (1.5.0): `{{1}}` es el nombre, `{{2}}` el producto y, si el texto también lleva el código, `{{3}}` el cupón. El cupón va siempre en el botón de URL, que es uno solo y apunta a `https://pay.hotmart.com/{{1}}`.
 
 Con `carrito` o `pago_fallido` en `true` y la salida por WABA, el bridge no arranca si las variables del servicio no nombran la misma plantilla que el manifiesto: `WABA_FIRST_TOUCH_TEMPLATE_NAME` tiene que ser `carrito.nombre`, `WABA_PAYMENT_FAILURE_TEMPLATE_NAME` tiene que ser `pago_fallido.nombre` (si está definida) y `WABA_TEMPLATE_LANGUAGE` tiene que ser el `idioma` de las dos. Por eso `carrito` y `pago_fallido` prendidos a la vez tienen que estar aprobadas en el mismo idioma. Con el flujo en `false`, sus `parametros` no se usan.
+
+**`ficha` tiene su propio vocabulario**: `parametros` elige de `"nombre"`, `"producto"`, `"tienda"` (la de la fila de `[[ficha.medios]]`, por ejemplo OXXO) y `"vencimiento"` (la fecha en español, «jueves 22 de octubre»), de una a cuatro. Sin `parametros` vale `["nombre", "producto", "tienda", "vencimiento"]`, el orden de la plantilla aprobada de ATT1. Su botón de URL es el de la ficha y su base la da la fila (`boton_prefijo`). Con `PORTABLE_HOTMART_PAYMENT_SLIP_ENABLED`, `WABA_PAYMENT_SLIP_TEMPLATE_NAME` tiene que ser `ficha.nombre` ([portable-payment-slip-first-contact-v1.md](contracts/portable-payment-slip-first-contact-v1.md)).
 
 Para `precheckout` vale la misma regla con `WABA_PRECHECKOUT_TEMPLATE_NAME`, que tiene que ser `precheckout.nombre` y compartir `WABA_TEMPLATE_LANGUAGE` y `WABA_TEMPLATE_CATEGORY` con las otras. No tiene préstamo: sin esa variable, el primer contacto del formulario no sale, y nunca usa la plantilla del carrito ([portable-precheckout-first-contact-v1.md](contracts/portable-precheckout-first-contact-v1.md)).
 
@@ -116,6 +118,7 @@ Los seis flujos, cada uno `true` o `false`: `inbound`, `precheckout`, `carrito`,
 | `pago_fallido` | `pago_fallido` | `pago_fallido` |
 | `reactivacion` | `entrante` | `reactivacion` |
 | `descuento` | `entrante` | `descuento` |
+| `ficha` (opcional) | `ficha_impresa` | `ficha` |
 
 El flujo declarado es el techo: el mensaje sale recién cuando además está prendido el flag del servicio ([instance-runtime-v2.md](contracts/instance-runtime-v2.md)). Para `precheckout` ese flag es `PORTABLE_PRECHECKOUT_FIRST_CONTACT_ENABLED`: el envío del formulario con consentimiento planifica un único primer contacto, demorado, con la plantilla `precheckout`. Con `[adaptadores.ghl]` en el manifiesto, `precheckout` y `pago_fallido` en `true` exigen además la aceptación escrita del riesgo del adaptador (abajo): sin ella el bridge no arranca y `validate` da error.
 
@@ -126,6 +129,37 @@ El flujo declarado es el techo: el mensaje sale recién cuando además está pre
 - 24 h de silencio o más en `CONVERSATION_FOLLOWUP_MIN_AGE_SECONDS`, salvo en la prueba con `CONVERSATION_FOLLOWUP_ONLY_PHONE`.
 
 El mismo flujo es el techo del descuento posterior a la respuesta (`CHATWOOT_POST_INBOUND_DISCOUNT_PLANNING_ENABLED`), que nació con el binding v1: no corre junto al agente de Corte B y no manda mensajes, porque deja la acción diferida. `validate` informa el flujo, no cuál de los dos flags lo usa. Contrato: [conversation-followup-discount-v1.md](contracts/conversation-followup-discount-v1.md), sección *En un runtime con manifiesto*.
+
+**`ficha` es opcional** (desde la ficha de pago, C1): un manifiesto que no la declara carga igual que antes y la ficha queda apagada. En `true` exige, además del evento y la plantilla, al menos una fila habilitada en `[[ficha.medios]]`, y su flag es `PORTABLE_HOTMART_PAYMENT_SLIP_ENABLED`. Usa la intención del formulario como permiso, igual que `precheckout` y `pago_fallido`, así que con `[adaptadores.ghl]` también exige la aceptación escrita del riesgo.
+
+## `[[ficha.medios]]`, opcional
+
+Qué medio de pago en qué país tiene una ficha a la que se le puede escribir. Una fila por medio y país; un país nuevo entra agregando una fila, sin tocar el código.
+
+```toml
+[[ficha.medios]]
+medio = "CASHPAYMENT"
+pais = "MX"
+tienda = "OXXO"
+zona_horaria = "America/Mexico_City"
+referencia_largo = 34
+vencimiento_digitos = [19, 26]
+vencimiento_dias_si_falta = 3
+boton_prefijo = "https://customer-local-latam.ebanx.com/print/oxxo?hash="
+habilitada = true
+```
+
+| Campo | Qué es |
+|---|---|
+| `medio` y `pais` | El `payment.type` y el país del checkout de Hotmart que matchean la fila |
+| `tienda` | Dónde se paga; va a la variable `"tienda"` |
+| `zona_horaria` | La del país: con ella se calcula el día del vencimiento y si la ficha ya venció |
+| `referencia_largo` y `vencimiento_digitos` | El largo de `billet_barcode` y los dígitos (desde 1, inclusive) que traen el vencimiento en `AAAAMMDD` |
+| `vencimiento_dias_si_falta` | Si la referencia no trae la fecha, el vencimiento es el día de generada más estos días |
+| `boton_prefijo` | La base del link de la ficha; tiene que coincidir con la del botón aprobado en Meta, y lo que sigue es el sufijo del botón |
+| `habilitada` | `false` deja la fila escrita sin mandar nada |
+
+Una ficha que no matchea ninguna fila habilitada queda `ignored` con `payment_slip_method_not_enabled`; una cuyo link no empieza con `boton_prefijo`, con `payment_slip_url_prefix_mismatch`; una ficha ya vencida al componer no se manda (`payment_slip_expired`). Una fila mal escrita no carga el manifiesto.
 
 ## `[guardas]`
 

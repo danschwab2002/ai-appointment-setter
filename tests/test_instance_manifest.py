@@ -853,3 +853,144 @@ def test_the_docs_form_landings_example_loads(doc: Path) -> None:
     assert manifest.ghl_form_landings is not None
     assert manifest.ghl_form_landings.mode == "sombra"
     assert set(manifest.ghl_form_landings.landing_by_form) <= set(manifest.ghl_form_ids)
+
+
+# ------------------------------------------------- la ficha de pago (C1, 1.11)
+
+# La fila de Mexico tal como la escribe el diseno del 18/10 (lo medido en las 5
+# fichas de OXXO de ATT1 desde el 12/10: la base del link, los 34 digitos y el
+# vencimiento en los digitos 19 a 26).
+OXXO_ROW = {
+    "medio": "CASHPAYMENT",
+    "pais": "MX",
+    "tienda": "OXXO",
+    "zona_horaria": "America/Mexico_City",
+    "referencia_largo": 34,
+    "vencimiento_digitos": [19, 26],
+    "vencimiento_dias_si_falta": 3,
+    "boton_prefijo": "https://customer-local-latam.ebanx.com/print/oxxo?hash=",
+    "habilitada": True,
+}
+
+
+def _with_slip(payload: dict, *, flow: bool | None = True, rows=None, template=True) -> dict:
+    payload["eventos"] = [*payload["eventos"], "ficha_impresa"]
+    payload["ficha"] = {"medios": [dict(OXXO_ROW)] if rows is None else rows}
+    if template:
+        payload["plantillas"]["ficha"] = {"nombre": "att1_ficha_efectivo_01", "idioma": "es_MX"}
+    if flow is not None:
+        payload["flujos"]["ficha"] = flow
+    return payload
+
+
+def test_a_manifest_without_the_slip_loads_as_before() -> None:
+    manifest = _load(_payload("att1"))
+
+    assert "ficha" not in manifest.flows
+    assert manifest.flow_enabled("ficha") is False
+    assert manifest.payment_slip_methods == ()
+    assert "ficha" not in manifest.templates
+
+
+def test_the_slip_flow_loads_with_its_event_template_and_mexico() -> None:
+    manifest = _load(_with_slip(_payload("att1")))
+
+    assert manifest.flow_enabled("ficha") is True
+    assert "ficha_impresa" in manifest.events
+    [row] = manifest.payment_slip_methods
+    assert (row.medio, row.pais, row.tienda) == ("CASHPAYMENT", "MX", "OXXO")
+    assert row.button_url_template == (
+        "https://customer-local-latam.ebanx.com/print/oxxo?hash={{1}}"
+    )
+    template = manifest.templates["ficha"]
+    assert template.name == "att1_ficha_efectivo_01"
+    assert template.parameters == ("nombre", "producto", "tienda", "vencimiento")
+    # Los flujos de siempre siguen en el mismo orden, y la ficha al final.
+    assert tuple(manifest.flows) == FLOWS + ("ficha",)
+
+
+def test_the_slip_template_takes_up_to_four_variables_of_its_own() -> None:
+    payload = _with_slip(_payload("att1"))
+    payload["plantillas"]["ficha"]["parametros"] = ["nombre", "tienda", "vencimiento"]
+    assert _load(payload).templates["ficha"].parameters == ("nombre", "tienda", "vencimiento")
+
+    payload["plantillas"]["ficha"]["parametros"] = ["nombre", "precio"]
+    with pytest.raises(ManifestError, match="variables no soportadas precio"):
+        _load(payload)
+    payload["plantillas"]["ficha"]["parametros"] = [
+        "nombre", "producto", "tienda", "vencimiento", "nombre",
+    ]
+    with pytest.raises(ManifestError, match="de 1 a 4 variables"):
+        _load(payload)
+
+
+def test_the_other_templates_keep_their_two_variables() -> None:
+    payload = _payload("att1")
+    payload["plantillas"]["carrito"]["parametros"] = ["nombre", "tienda"]
+
+    with pytest.raises(ManifestError, match="variables no soportadas tienda"):
+        _load(payload)
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"template": False}, "falta la plantilla 'ficha'"),
+        ({"rows": []}, "ninguna fila habilitada"),
+        ({"rows": [{**OXXO_ROW, "habilitada": False}]}, "ninguna fila habilitada"),
+    ],
+)
+def test_the_slip_flow_does_not_turn_on_without_what_it_needs(
+    changes: dict, message: str
+) -> None:
+    with pytest.raises(ManifestError, match=message):
+        _load(_with_slip(_payload("att1"), **changes))
+
+
+def test_the_slip_flow_needs_its_event() -> None:
+    payload = _with_slip(_payload("att1"))
+    payload["eventos"].remove("ficha_impresa")
+
+    with pytest.raises(ManifestError, match="el evento 'ficha_impresa'"):
+        _load(payload)
+
+
+def test_the_slip_flow_off_loads_without_rows() -> None:
+    manifest = _load(_with_slip(_payload("att1"), flow=False, rows=[]))
+
+    assert manifest.flow_enabled("ficha") is False
+    assert manifest.payment_slip_methods == ()
+
+
+@pytest.mark.parametrize(
+    ("rows", "message"),
+    [
+        ([{**OXXO_ROW, "boton_prefijo": "http://customer-local-latam.ebanx.com/print/oxxo?hash="}],
+         r"ficha.medios\[0\]: .*boton_prefijo"),
+        ([{**OXXO_ROW, "vencimiento_digitos": [19, 27]}], r"ficha.medios\[0\]: .*8 digits"),
+        ([dict(OXXO_ROW), dict(OXXO_ROW)], r"ficha.medios\[1\] repeats"),
+        ([{**OXXO_ROW, "extra": 1}], r"ficha.medios\[0\] must contain exactly"),
+    ],
+)
+def test_a_row_written_wrong_does_not_load(rows: list, message: str) -> None:
+    with pytest.raises(ManifestError, match=message):
+        _load(_with_slip(_payload("att1"), rows=rows))
+
+
+def test_the_ficha_table_only_takes_medios() -> None:
+    payload = _with_slip(_payload("att1"))
+    payload["ficha"]["otra"] = 1
+
+    with pytest.raises(ManifestError, match="ficha"):
+        _load(payload)
+
+
+def test_the_slip_counts_as_a_flow_that_uses_the_intent_as_permission() -> None:
+    payload = _with_slip(_payload("att1"))
+    payload["eventos"] = [*payload["eventos"], "intencion"]
+
+    manifest = _load(payload)
+
+    assert all(not manifest.flows[flow] for flow in GHL_RISK_GATED_FLOWS)
+    assert manifest.ghl_adapter_risk == "no_adapter_section"
+    assert instance_manifest.INTENT_PERMISSION_FLOWS == ("precheckout", "pago_fallido", "ficha")

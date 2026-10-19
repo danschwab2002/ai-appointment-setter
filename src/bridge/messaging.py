@@ -19,6 +19,7 @@ from typing import Awaitable, Callable, Protocol
 
 from bridge.chatwoot import ChatwootClient, ChatwootProtocolError
 from bridge.hotmart import normalize_phone
+from bridge.payment_slip import PAYMENT_SLIP_TEMPLATE_PARAMETERS
 from bridge.phones import (
     equivalent_whatsapp_phones,
     same_whatsapp_phone,
@@ -86,6 +87,11 @@ PRECHECKOUT_INTENT_TRIGGER = "precheckout_intent"
 # The first contact after the form has its own approved template. Without it
 # nothing is sent: it never goes out with the cart template.
 FIRST_TOUCH_TEMPLATE_NOT_CONFIGURED = "first_touch_template_not_configured"
+# The trigger of the first contact after a payment slip (OXXO and the like):
+# the ``anchor_type`` of the action ``plan_portable_payment_slip_recovery``
+# plans. Like the form, it has its own template and no fallback; its values
+# and its URL button are built by ``bridge.payment_slip_first_touch``.
+PAYMENT_SLIP_TRIGGER = "payment_slip"
 
 
 @dataclass(frozen=True)
@@ -108,6 +114,14 @@ class WhatsAppTemplateConfig:
     template when it differs from ``category`` (a cart template approved as
     MARKETING and a payment failure one approved as UTILITY). ``None`` keeps
     the single ``category`` for every template, as before.
+
+    ``payment_slip_name`` is the template of the first contact after a payment
+    slip (trigger ``payment_slip``). It has no fallback either: without it
+    ``first_touch_name_for`` returns ``None`` and nothing is sent, never the
+    cart template. Its variables come from ``PAYMENT_SLIP_TEMPLATE_PARAMETERS``
+    (the store and the due date are not the case's), so ``body_values`` and
+    ``params`` do not build them: the dispatcher hands the sender the
+    parameters ``payment_slip_first_touch`` built, with the URL button.
     """
 
     first_touch_name: str
@@ -121,6 +135,9 @@ class WhatsAppTemplateConfig:
     payment_failure_category: str | None = None
     precheckout_name: str | None = None
     precheckout_body_parameters: tuple[str, ...] | None = None
+    payment_slip_name: str | None = None
+    payment_slip_body_parameters: tuple[str, ...] | None = None
+    payment_slip_category: str | None = None
 
     def __post_init__(self) -> None:
         for declared in (
@@ -154,6 +171,24 @@ class WhatsAppTemplateConfig:
                 raise ValueError("payment_failure_category_without_template")
             if self.payment_failure_category not in {"MARKETING", "UTILITY"}:
                 raise ValueError("invalid_payment_failure_category")
+        if self.payment_slip_name is not None and not self.payment_slip_name.strip():
+            raise ValueError("invalid_payment_slip_template_name")
+        declared_slip = self.payment_slip_body_parameters
+        if declared_slip is not None:
+            if self.payment_slip_name is None:
+                raise ValueError("payment_slip_body_parameters_without_template")
+            if (
+                not isinstance(declared_slip, tuple)
+                or not 1 <= len(declared_slip) <= len(PAYMENT_SLIP_TEMPLATE_PARAMETERS)
+                or any(item not in PAYMENT_SLIP_TEMPLATE_PARAMETERS for item in declared_slip)
+                or len(set(declared_slip)) != len(declared_slip)
+            ):
+                raise ValueError("invalid_template_body_parameters")
+        if self.payment_slip_category is not None:
+            if self.payment_slip_name is None:
+                raise ValueError("payment_slip_category_without_template")
+            if self.payment_slip_category not in {"MARKETING", "UTILITY"}:
+                raise ValueError("invalid_payment_slip_category")
 
     def first_touch_name_for(self, *, trigger_kind: str | None) -> str | None:
         """The first-contact template this trigger sends, or ``None``.
@@ -163,12 +198,22 @@ class WhatsAppTemplateConfig:
         """
         if trigger_kind == PRECHECKOUT_INTENT_TRIGGER:
             return self.precheckout_name
+        if trigger_kind == PAYMENT_SLIP_TRIGGER:
+            # Its own template or nothing: a slip never goes out with the cart
+            # one (the first contact names the store and the due date).
+            return self.payment_slip_name
         if trigger_kind == "payment_failure" and self.payment_failure_name is not None:
             return self.payment_failure_name
         return self.first_touch_name
 
     def category_for(self, *, trigger_kind: str | None) -> str:
         """The Meta category of the first-contact template this trigger uses."""
+        if (
+            trigger_kind == PAYMENT_SLIP_TRIGGER
+            and self.payment_slip_name is not None
+            and self.payment_slip_category is not None
+        ):
+            return self.payment_slip_category
         if (
             trigger_kind == "payment_failure"
             and self.payment_failure_name is not None
@@ -184,6 +229,8 @@ class WhatsAppTemplateConfig:
         if trigger_kind == PRECHECKOUT_INTENT_TRIGGER:
             # Its own template or nothing: never the variables of the cart one.
             return self.precheckout_body_parameters
+        if trigger_kind == PAYMENT_SLIP_TRIGGER:
+            return self.payment_slip_body_parameters
         if trigger_kind == "payment_failure" and self.payment_failure_name is not None:
             return self.payment_failure_body_parameters
         return self.first_touch_body_parameters
@@ -203,7 +250,12 @@ class WhatsAppTemplateConfig:
         dispatcher renders the text it hashes from these same values and the
         sender puts them in ``processed_params``, so both stay identical.
         Without a declaration (Johanna) nothing changes.
+
+        ``None`` for the payment slip: the store and the due date are not
+        values of the case, ``payment_slip_first_touch`` builds them.
         """
+        if trigger_kind == PAYMENT_SLIP_TRIGGER:
+            return None
         declared = self.declared_body_parameters(trigger_kind=trigger_kind)
         if declared is None:
             return None
@@ -231,9 +283,12 @@ class WhatsAppTemplateConfig:
                 else ()
             )
         source = {"nombre": buyer_name, "producto": product_name}
+        # Only the values of the case: the store and the due date of a payment
+        # slip are checked where they are built.
         return any(
             not isinstance(source[parameter], str) or not source[parameter].strip()
             for parameter in declared
+            if parameter in source
         )
 
     def params(
@@ -252,6 +307,10 @@ class WhatsAppTemplateConfig:
         )
         if name is None:
             raise ValueError("template_disabled")
+        if not followup and trigger_kind == PAYMENT_SLIP_TRIGGER:
+            # Its parameters (four variables and the URL button) are built by
+            # payment_slip_first_touch; this config cannot build them.
+            raise ValueError("payment_slip_template_params_required")
         body = {"1": content}
         declared = (
             None
@@ -646,6 +705,16 @@ class ChatwootMessageSender:
                 conversation_id=None,
                 message_id=None,
                 reason=FIRST_TOUCH_TEMPLATE_NOT_CONFIGURED,
+            )
+        if trigger_kind == PAYMENT_SLIP_TRIGGER and template_params is None:
+            # The first contact after a slip only goes out with the parameters
+            # the dispatcher built (the store, the due date and the button of
+            # the slip). Blocked before any Chatwoot call.
+            return FirstTouchResult(
+                status="blocked",
+                conversation_id=None,
+                message_id=None,
+                reason="template_parameters_missing",
             )
         if self._template is not None and self._template.body_parameters_missing(
             trigger_kind=trigger_kind,

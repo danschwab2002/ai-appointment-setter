@@ -63,7 +63,11 @@ from bridge.followup_discount import (
 from bridge.reactivation import ConversationReactivationSweeper
 from bridge.commercial_ally import CommercialAllyConfig, JOHANNA_COMMERCIAL_ALLY
 from bridge.commercial_knowledge import CommercialKnowledge
-from bridge.instance_manifest import GHL_RISK_GATED_FLOWS, InstanceManifest
+from bridge.instance_manifest import (
+    GHL_RISK_GATED_FLOWS,
+    INTENT_PERMISSION_FLOWS,
+    InstanceManifest,
+)
 from bridge.product_label import ProductLabeler
 from bridge.product_routes import HotmartUnrouted, ProductRoute, ProductRoutes
 from bridge.checkout_delivery import CheckoutDeliveryError, deliver_checkout_issuance_v2
@@ -73,12 +77,14 @@ from bridge.hermes import HermesShadowProcessor, payment_link_product
 from bridge.hotmart import (
     EVENT_CART_ABANDONMENT,
     EVENT_PURCHASE_APPROVED,
+    EVENT_PURCHASE_BILLET_PRINTED,
     EVENT_PURCHASE_CANCELED,
     PAYMENT_SLIP_EVENT_TYPES,
     classify_hotmart_event,
     is_stale_event,
     parse_hotmart_purchase_payload,
     parse_hotmart_payment_failure_payload,
+    parse_hotmart_payment_slip_payload,
     parse_hotmart_payload,
     verify_hotmart_token,
 )
@@ -179,6 +185,10 @@ from bridge.supabase import (
 )
 from bridge.hotmart_api import HotmartApiClient, load_hotmart_api_credentials
 from bridge.cart_discount import format_price
+from bridge.payment_slip_first_touch import (
+    PaymentSlipFirstTouchConfig,
+    PaymentSlipPlanningConfig,
+)
 from bridge.cart_first_touch import CartDiscountConfig
 from bridge.recovery_coupons import RecoveryCouponWorker
 from bridge.worker import (
@@ -225,6 +235,10 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     "reply_splitter_enabled",
     "portable_hotmart_recovery_enabled",
     "portable_hotmart_payment_failure_enabled",
+    # La ficha de pago (C1): la tabla por medio y pais, el evento, el flujo y
+    # la plantilla salen del manifiesto; el scope y la politica, de
+    # LANCEMOS_PILOT_PAYMENT_SLIP_SCOPE_* y PAYMENT_SLIP_FOLLOWUP_POLICY_*.
+    "portable_hotmart_payment_slip_enabled",
     "portable_hotmart_purchase_stop_enabled",
     # El cupon personal del carrito (A1): crea y verifica el cupon en la API
     # de Hotmart; lo especifico (prefijo, credenciales) es del runtime.
@@ -593,6 +607,18 @@ class Settings:
     hotmart_max_age_seconds: int = 300
     portable_hotmart_recovery_enabled: bool = False
     portable_hotmart_payment_failure_enabled: bool = False
+    # La ficha de pago (migracion 20261019000100, C1). Apagado, la ficha se
+    # descarta como hasta la 1.10: se guarda solo con el pago fallido portable
+    # y el worker la deja failed. Prendido, la admision v2 la cruza con la
+    # intencion, el worker la filtra por [[ficha.medios]] y la planifica
+    # contra su scope y su politica, y el dispatcher manda C1.
+    portable_hotmart_payment_slip_enabled: bool = False
+    pilot_payment_slip_scope_key: str | None = None
+    pilot_payment_slip_scope_version: int | None = None
+    payment_slip_followup_policy_key: str | None = None
+    payment_slip_followup_policy_version: int | None = None
+    waba_payment_slip_template_name: str | None = None
+    waba_payment_slip_template_category: str | None = None
     portable_hotmart_purchase_stop_enabled: bool = False
     hotmart_purchase_worker_enabled: bool = False
     hotmart_abandonment_timer_worker_enabled: bool = False
@@ -931,6 +957,16 @@ class Settings:
             ).lower()
             == "true"
         )
+        portable_hotmart_payment_slip_enabled = (
+            os.getenv("PORTABLE_HOTMART_PAYMENT_SLIP_ENABLED", "false").lower()
+            == "true"
+        )
+        pilot_payment_slip_scope_version_raw = os.getenv(
+            "LANCEMOS_PILOT_PAYMENT_SLIP_SCOPE_VERSION", ""
+        ).strip()
+        payment_slip_followup_policy_version_raw = os.getenv(
+            "PAYMENT_SLIP_FOLLOWUP_POLICY_VERSION", ""
+        ).strip()
         hotmart_max_age_seconds = int(
             os.getenv("HOTMART_MAX_AGE_SECONDS", "300")
         )
@@ -1540,6 +1576,35 @@ class Settings:
             ),
             portable_precheckout_first_contact_enabled=(
                 portable_precheckout_first_contact_enabled
+            ),
+            portable_hotmart_payment_slip_enabled=(
+                portable_hotmart_payment_slip_enabled
+            ),
+            pilot_payment_slip_scope_key=(
+                os.getenv("LANCEMOS_PILOT_PAYMENT_SLIP_SCOPE_KEY", "").strip()
+                or None
+            ),
+            pilot_payment_slip_scope_version=(
+                int(pilot_payment_slip_scope_version_raw)
+                if pilot_payment_slip_scope_version_raw
+                else None
+            ),
+            payment_slip_followup_policy_key=(
+                os.getenv("PAYMENT_SLIP_FOLLOWUP_POLICY_KEY", "").strip() or None
+            ),
+            payment_slip_followup_policy_version=(
+                int(payment_slip_followup_policy_version_raw)
+                if payment_slip_followup_policy_version_raw
+                else None
+            ),
+            waba_payment_slip_template_name=(
+                os.getenv("WABA_PAYMENT_SLIP_TEMPLATE_NAME", "").strip() or None
+            ),
+            waba_payment_slip_template_category=(
+                os.getenv("WABA_PAYMENT_SLIP_TEMPLATE_CATEGORY", "")
+                .strip()
+                .upper()
+                or None
             ),
             hotmart_purchase_worker_enabled=hotmart_purchase_worker_enabled,
             hotmart_abandonment_timer_worker_enabled=(
@@ -2251,6 +2316,7 @@ _FLAG_REQUIRED_FLOW = MappingProxyType({
     "payment_link_enabled": "inbound",
     "portable_hotmart_recovery_enabled": "carrito",
     "portable_hotmart_payment_failure_enabled": "pago_fallido",
+    "portable_hotmart_payment_slip_enabled": "ficha",
     "portable_precheckout_first_contact_enabled": "precheckout",
     "conversation_reactivation_enabled": "reactivacion",
     "chatwoot_post_inbound_discount_planning_enabled": "descuento",
@@ -2261,7 +2327,9 @@ _FLAG_REQUIRED_FLOW = MappingProxyType({
     # usa el flujo (docs/decisions/0023-el-cupon-con-manifiesto-reusa-descuento.md).
     "conversation_followup_enabled": "descuento",
 })
-_OUTBOUND_FLOWS = ("precheckout", "carrito", "pago_fallido", "reactivacion", "descuento")
+_OUTBOUND_FLOWS = (
+    "precheckout", "carrito", "pago_fallido", "reactivacion", "descuento", "ficha",
+)
 
 
 # Los rechazos del adaptador de GHL que dependen del producto con que se
@@ -2290,7 +2358,7 @@ def _validate_instance_manifest_gates(settings: Settings) -> None:
     blocked = sorted(
         f"{flag}->{flow}"
         for flag, flow in _FLAG_REQUIRED_FLOW.items()
-        if getattr(settings, flag) is True and not manifest.flows[flow]
+        if getattr(settings, flag) is True and not manifest.flow_enabled(flow)
     )
     if settings.lead_precheckout_enabled and "intencion" not in manifest.events:
         blocked.append("lead_precheckout_enabled->intencion")
@@ -2303,7 +2371,7 @@ def _validate_instance_manifest_gates(settings: Settings) -> None:
         if not manifest.ghl_form_ids:
             blocked.append("ghl_precheckout_adapter_enabled->adaptadores.ghl")
     if settings.meta_final_effect_enabled and not any(
-        manifest.flows[flow] for flow in _OUTBOUND_FLOWS
+        manifest.flow_enabled(flow) for flow in _OUTBOUND_FLOWS
     ):
         blocked.append("meta_final_effect_enabled->outbound")
     if blocked:
@@ -2321,7 +2389,11 @@ def _validate_instance_manifest_gates(settings: Settings) -> None:
         # (docs/contracts/ghl-precheckout-adapter-v1.md, Riesgos). Cuelga de la
         # seccion y no del flag: apagar GHL_PRECHECKOUT_ADAPTER_ENABLED no saca
         # de la base las intenciones que el adaptador ya admitio.
-        gated = [flow for flow in GHL_RISK_GATED_FLOWS if manifest.flows[flow]]
+        # La ficha usa la intencion como permiso igual que el pago fallido
+        # del que se deriva su planificador.
+        gated = [
+            flow for flow in INTENT_PERMISSION_FLOWS if manifest.flow_enabled(flow)
+        ]
         if gated:
             raise ValueError(
                 "[adaptadores.ghl] cannot run with flujos."
@@ -2455,6 +2527,103 @@ def _validate_precheckout_first_contact(settings: Settings) -> None:
         # Sin el hottok el webhook de Hotmart responde 503 y ninguna compra
         # llega a frenar el primer contacto.
         raise ValueError(f"{flag} requires HOTMART_HOTTOK")
+    if not settings.chatwoot_scoped_inbound_senders_enabled:
+        raise ValueError(
+            f"{flag} requires CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED"
+        )
+
+
+def _validate_payment_slip_first_contact(settings: Settings) -> None:
+    """Startup gates of the first contact after a payment slip (C1).
+
+    The flag makes the Hotmart webhook admit the slip with its correlation
+    (admit_portable_hotmart_payment_slip_v2), the resolution worker plan it
+    against its own scope and policy, and the dispatcher send C1. It only
+    starts with everything that flow needs, and with what has to be able to
+    stop it:
+
+    * an instance manifest with ``flujos.ficha``, the ``ficha_impresa`` event,
+      ``[plantillas.ficha]`` and an enabled row of ``[[ficha.medios]]``;
+    * the webhook (``HOTMART_HOTTOK``), the resolution worker, the pilot
+      boundary, the dispatcher and the direct mode;
+    * its own scope, other than the recovery one and the form one (a published
+      scope has a single main event type), and its own policy, other than the
+      shared one (the slip waits one hour and expires in a day);
+    * its own approved template, the one of the manifest, with its Meta
+      category written down;
+    * the purchase stop and the scoped inbound, which carries the opt-out.
+    """
+    if not settings.portable_hotmart_payment_slip_enabled:
+        return
+    flag = "PORTABLE_HOTMART_PAYMENT_SLIP_ENABLED"
+    manifest = settings.instance_manifest
+    if manifest is None:
+        raise ValueError(f"{flag} requires an instance manifest")
+    if not manifest.flow_enabled("ficha"):
+        raise ValueError(f"{flag} requires flujos.ficha in the instance manifest")
+    if not any(method.habilitada for method in manifest.payment_slip_methods):
+        raise ValueError(f"{flag} requires an enabled row in [[ficha.medios]]")
+    if settings.hotmart_hottok is None:
+        raise ValueError(f"{flag} requires HOTMART_HOTTOK")
+    if not settings.worker_enabled:
+        raise ValueError(f"{flag} requires RESOLUTION_WORKER_ENABLED")
+    if not settings.pilot_boundary_enabled:
+        raise ValueError(f"{flag} requires LANCEMOS_PILOT_BOUNDARY_ENABLED")
+    if not settings.dispatcher_enabled:
+        raise ValueError(f"{flag} requires DURABLE_DISPATCHER_ENABLED")
+    if not settings.dispatcher_approved_template_direct_enabled:
+        raise ValueError(
+            f"{flag} requires DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED"
+        )
+    if not settings.pilot_payment_slip_scope_key:
+        raise ValueError(
+            f"LANCEMOS_PILOT_PAYMENT_SLIP_SCOPE_KEY is required for {flag}"
+        )
+    if (
+        settings.pilot_payment_slip_scope_version is None
+        or settings.pilot_payment_slip_scope_version < 1
+    ):
+        raise ValueError("LANCEMOS_PILOT_PAYMENT_SLIP_SCOPE_VERSION must be positive")
+    if settings.pilot_payment_slip_scope_key in {
+        settings.pilot_scope_key,
+        settings.pilot_precheckout_scope_key,
+    }:
+        raise ValueError(
+            "LANCEMOS_PILOT_PAYMENT_SLIP_SCOPE_KEY must differ from "
+            "LANCEMOS_PILOT_SCOPE_KEY and LANCEMOS_PILOT_PRECHECKOUT_SCOPE_KEY"
+        )
+    if not settings.payment_slip_followup_policy_key:
+        raise ValueError(f"PAYMENT_SLIP_FOLLOWUP_POLICY_KEY is required for {flag}")
+    if (
+        settings.payment_slip_followup_policy_version is None
+        or settings.payment_slip_followup_policy_version < 1
+    ):
+        raise ValueError("PAYMENT_SLIP_FOLLOWUP_POLICY_VERSION must be positive")
+    if settings.payment_slip_followup_policy_key == settings.followup_policy_key:
+        raise ValueError(
+            "PAYMENT_SLIP_FOLLOWUP_POLICY_KEY must differ from FOLLOWUP_POLICY_KEY"
+        )
+    template = manifest.templates.get("ficha")
+    if (
+        template is None
+        or settings.waba_payment_slip_template_name != template.name
+    ):
+        raise ValueError(
+            "WABA_PAYMENT_SLIP_TEMPLATE_NAME must match plantillas.ficha.nombre "
+            "of the instance manifest"
+        )
+    if settings.waba_template_language != template.language:
+        raise ValueError(
+            "WABA_TEMPLATE_LANGUAGE must match plantillas.ficha.idioma "
+            "of the instance manifest"
+        )
+    if settings.waba_payment_slip_template_category not in {"MARKETING", "UTILITY"}:
+        raise ValueError(
+            "WABA_PAYMENT_SLIP_TEMPLATE_CATEGORY must be MARKETING or UTILITY "
+            f"for {flag}"
+        )
+    if not settings.portable_hotmart_purchase_stop_enabled:
+        raise ValueError(f"{flag} requires PORTABLE_HOTMART_PURCHASE_STOP_ENABLED")
     if not settings.chatwoot_scoped_inbound_senders_enabled:
         raise ValueError(
             f"{flag} requires CHATWOOT_SCOPED_INBOUND_SENDERS_ENABLED"
@@ -2625,6 +2794,20 @@ def _waba_template_config(settings: Settings) -> WhatsAppTemplateConfig | None:
         if settings.portable_precheckout_first_contact_enabled
         else None
     )
+    # La plantilla de la ficha entra solo con su flag (validada en
+    # _validate_payment_slip_first_contact contra [plantillas.ficha]). Apagado,
+    # una accion payment_slip no encuentra plantilla y cierra sin mandar nada.
+    payment_slip_name: str | None = None
+    payment_slip_parameters: tuple[str, ...] | None = None
+    payment_slip_category: str | None = None
+    if (
+        settings.portable_hotmart_payment_slip_enabled
+        and settings.instance_manifest is not None
+        and "ficha" in settings.instance_manifest.templates
+    ):
+        payment_slip_name = settings.waba_payment_slip_template_name
+        payment_slip_parameters = settings.instance_manifest.templates["ficha"].parameters
+        payment_slip_category = settings.waba_payment_slip_template_category
     return WhatsAppTemplateConfig(
         first_touch_name=settings.waba_first_touch_template_name,  # type: ignore[arg-type]
         followup_name=settings.waba_followup_template_name,  # type: ignore[arg-type]
@@ -2638,6 +2821,13 @@ def _waba_template_config(settings: Settings) -> WhatsAppTemplateConfig | None:
         precheckout_name=precheckout_name,
         precheckout_body_parameters=(
             precheckout_parameters if precheckout_name is not None else None
+        ),
+        payment_slip_name=payment_slip_name,
+        payment_slip_body_parameters=(
+            payment_slip_parameters if payment_slip_name is not None else None
+        ),
+        payment_slip_category=(
+            payment_slip_category if payment_slip_name is not None else None
         ),
     )
 
@@ -3000,6 +3190,8 @@ def create_app(
             # dice la base y no a un JID fijo: sin esto el dispatcher directo
             # no recibe el binding ni arranca.
             or settings.portable_precheckout_first_contact_enabled
+            # La ficha le escribe a quien la genero, como el pago fallido.
+            or settings.portable_hotmart_payment_slip_enabled
         )
     )
     portable_runtime = (
@@ -3283,6 +3475,7 @@ def create_app(
             "DURABLE_OUTBOUND_ENABLED requires LANCEMOS_PILOT_BOUNDARY_ENABLED"
         )
     _validate_precheckout_first_contact(settings)
+    _validate_payment_slip_first_contact(settings)
     waba_template = _waba_template_config(settings)
     _validate_approved_template_direct(
         settings,
@@ -3323,6 +3516,20 @@ def create_app(
             channel_account_ref=settings.pilot_channel_account_ref,  # type: ignore[arg-type]
         )
         if settings.portable_precheckout_first_contact_enabled
+        else None
+    )
+    # El scope de la ficha (C1): otra clave y otra version, el mismo tenant y
+    # el mismo canal. Lo leen el worker (planifica contra el) y /ready; el
+    # envio lo autoriza contra el scope del caso.
+    payment_slip_pilot_boundary = (
+        PilotBoundaryConfig(
+            scope_key=settings.pilot_payment_slip_scope_key,  # type: ignore[arg-type]
+            scope_version=settings.pilot_payment_slip_scope_version,  # type: ignore[arg-type]
+            tenant_key=settings.pilot_tenant_key,  # type: ignore[arg-type]
+            channel_provider=settings.pilot_channel_provider,  # type: ignore[arg-type]
+            channel_account_ref=settings.pilot_channel_account_ref,  # type: ignore[arg-type]
+        )
+        if settings.portable_hotmart_payment_slip_enabled
         else None
     )
     if settings.hotmart_purchase_worker_enabled and not settings.worker_enabled:
@@ -4190,6 +4397,17 @@ def create_app(
                 if portable_dynamic_recipient
                 else None
             ),
+            payment_slip=(
+                PaymentSlipPlanningConfig(
+                    methods=settings.instance_manifest.payment_slip_methods,
+                    policy_key=settings.payment_slip_followup_policy_key,  # type: ignore[arg-type]
+                    policy_version=settings.payment_slip_followup_policy_version,  # type: ignore[arg-type]
+                    pilot_boundary=payment_slip_pilot_boundary,
+                )
+                if payment_slip_pilot_boundary is not None
+                and settings.instance_manifest is not None
+                else None
+            ),
         )
 
     if settings.dispatcher_enabled:
@@ -4350,6 +4568,14 @@ def create_app(
                 and outbound_sender.whatsapp_equivalence_enabled
             ),
             cart_discount=cart_discount,
+            payment_slip=(
+                PaymentSlipFirstTouchConfig(
+                    methods=settings.instance_manifest.payment_slip_methods
+                )
+                if settings.portable_hotmart_payment_slip_enabled
+                and settings.instance_manifest is not None
+                else None
+            ),
         )
 
     opt_out_projection_worker: OptOutProjectionWorker | None = None
@@ -7174,6 +7400,45 @@ def create_app(
                     first_contact_status.runtime_state
                 ),
             }
+        # La ficha (C1) tiene su propio scope del piloto: se publica su estado.
+        # La clave solo aparece con el flag.
+        payment_slip_readiness: dict[str, str] = {}
+        if payment_slip_pilot_boundary is not None:
+            if shared_supabase is None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="portable_payment_slip_readiness_unavailable",
+                )
+            try:
+                payment_slip_status = await (
+                    shared_supabase.get_portable_payment_slip_pilot_runtime_status(
+                        pilot_boundary=payment_slip_pilot_boundary
+                    )
+                )
+            except Exception as exc:
+                logger.warning(
+                    "portable_payment_slip_readiness_check_failed error_type=%s",
+                    type(exc).__name__,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="portable_payment_slip_readiness_unavailable",
+                ) from exc
+            if (
+                not payment_slip_status.configured
+                or payment_slip_status.runtime_state is None
+            ):
+                # Scope sin publicar, de otro tipo de evento o con otra
+                # version activa: la ficha no puede planificar ni mandar.
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=f"portable_payment_slip_{payment_slip_status.reason_code}",
+                )
+            payment_slip_readiness = {
+                "portable_payment_slip_first_contact": (
+                    payment_slip_status.runtime_state
+                ),
+            }
         if pilot_boundary is None:
             return {
                 "status": "ready",
@@ -7183,6 +7448,7 @@ def create_app(
                 **commercial_ally_readiness,
                 **precheckout_readiness,
                 **first_contact_readiness,
+                **payment_slip_readiness,
                 **handoff_readiness,
                 **stalled_monitor_readiness,
             }
@@ -7228,6 +7494,7 @@ def create_app(
             **commercial_ally_readiness,
             **precheckout_readiness,
             **first_contact_readiness,
+            **payment_slip_readiness,
             **handoff_readiness,
             **stalled_monitor_readiness,
         }
@@ -8662,7 +8929,10 @@ def create_app(
 
         decision = classify_hotmart_event(
             payload,
-            payment_slip_events=settings.portable_hotmart_payment_failure_enabled,
+            payment_slip_events=(
+                settings.portable_hotmart_payment_failure_enabled
+                or settings.portable_hotmart_payment_slip_enabled
+            ),
         )
         if not decision.accepted:
             response.status_code = status.HTTP_200_OK
@@ -8675,6 +8945,7 @@ def create_app(
             settings.portable_hotmart_purchase_stop_enabled
             or settings.portable_hotmart_recovery_enabled
             or settings.portable_hotmart_payment_failure_enabled
+            or settings.portable_hotmart_payment_slip_enabled
         ) and (
             decision.event_type != EVENT_PURCHASE_APPROVED
             and not (
@@ -8687,6 +8958,10 @@ def create_app(
                     decision.event_type == EVENT_PURCHASE_CANCELED
                     or decision.event_type in PAYMENT_SLIP_EVENT_TYPES
                 )
+            )
+            and not (
+                settings.portable_hotmart_payment_slip_enabled
+                and decision.event_type == EVENT_PURCHASE_BILLET_PRINTED
             )
         ):
             response.status_code = status.HTTP_200_OK
@@ -8734,6 +9009,53 @@ def create_app(
             response.status_code = status.HTTP_200_OK
             return {"status": "ignored", "reason": "hotmart_event_unrouted"}
         event_config = hotmart_route.config
+        parsed_slip = (
+            parse_hotmart_payment_slip_payload(payload, config=event_config)
+            if settings.portable_hotmart_payment_slip_enabled
+            and event_type == EVENT_PURCHASE_BILLET_PRINTED
+            else None
+        )
+        if parsed_slip is not None:
+            # La ficha de C1: se guarda, se admite la identidad y se cruza con
+            # la intencion (admit_portable_hotmart_payment_slip_v2). Toda ficha
+            # del binding, sea del medio que sea: el filtro por medio y pais va
+            # en el worker. Una ficha que este parser no lee (sin email ni
+            # telefono, otra transaccion) sigue por la v1 de abajo: se guarda
+            # tal cual, como hasta la 1.10, y nadie le escribe.
+            try:
+                slip = await shared_supabase.admit_portable_hotmart_payment_slip_v2(
+                    config=event_config,
+                    external_event_id=event_id,
+                    payload=payload,
+                    normalized_email=parsed_slip.buyer_email,
+                    normalized_phone=parsed_slip.buyer_phone,
+                )
+            except SupabasePermanentError as exc:
+                logger.warning(
+                    "hotmart_payment_slip_rejected event_type=%s reason=%s",
+                    event_type,
+                    exc.reason,
+                )
+                response.status_code = status.HTTP_200_OK
+                return {"status": "ignored", "reason": "invalid_payment_slip_payload"}
+            except SupabaseError as exc:
+                raise HTTPException(
+                    status_code=503, detail="payment_slip_admission_failed"
+                ) from exc
+            logger.info(
+                "hotmart_payment_slip_admitted event_type=%s outcome=%s admission=v2",
+                event_type,
+                slip.outcome,
+            )
+            if slip.outcome == "inserted":
+                return {"status": "received", "event_id": event_id}
+            # Otra oferta, un replay, un replay distinto o una ficha que la v1
+            # guardo antes: nada que reintentar. Un 4xx lo contaria Hotmart
+            # como falla del webhook entero.
+            response.status_code = status.HTTP_200_OK
+            if slip.outcome == "ignored_binding_mismatch":
+                return {"status": "ignored", "reason": "payment_slip_binding_mismatch"}
+            return {"status": slip.outcome, "event_id": event_id}
         if event_type in PAYMENT_SLIP_EVENT_TYPES:
             # La ficha se guarda tal cual llego y no dispara nada (1.6.0). Solo
             # llega aca con el pago fallido portable: sin el, la clasificacion

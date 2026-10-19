@@ -1,0 +1,1302 @@
+{
+  "_capture": {
+    "origen": "Base de ATT1 (servicio setter-att1_att1-db, autohospedada), public.webhook_events con event_type = 'PURCHASE_BILLET_PRINTED', todos los guardados desde la suscripcion del 12/10 (13 eventos), tal como los guardo el bridge (admit_portable_hotmart_payment_slip_event_v1). Lectura de solo lectura por psql dentro del contenedor, el 2026-10-18 ~19:40Z.",
+    "captured_at": "2026-10-18T19:40:00Z",
+    "anonimizado": "Sustituidos adentro de la base antes de salir, con un chequeo que abortaba si la salida contenia algun valor real (email, nombre, telefono, documento, ucode, transaccion, IP, id del evento, hash de la ficha, referencia, productor, direccion): el id del evento, todo data.buyer (telefono con el mismo largo y el mismo prefijo de pais; de la direccion queda solo el pais), data.purchase.transaction (tambien donde aparece en order_bump.parent_purchase_transaction), buyer_ip, los valores de origin, data.producer, data.affiliates (vaciado), los nombres y mails de data.commissions y el email de soporte del producto. De billet_url queda la base hasta 'hash=' y el hash se reemplaza por 'f' del mismo largo. De billet_barcode (34 digitos) quedan solo los digitos 19 a 26, que son el vencimiento AAAAMMDD; el resto va en cero. Lo demas es tal cual llego: event, version, creation_date, el producto, la oferta, los precios, data.purchase.payment.type, order_date, status y checkout_country.",
+    "lo_que_prueba": "La forma real de la ficha: 6 CASHPAYMENT (5 de Mexico con customer-local-latam.ebanx.com/print/oxxo y referencia de 34 digitos; 1 de Chile con api.ebanx.com/ws/redirect y referencia de 1 caracter) y 7 de otros medios sin billet_url (4 MERCADO_PAGO, 2 NEQUI, 1 YAPE). En las 5 de Mexico el vencimiento de la referencia es el dia de generada en hora de CDMX (order_date) mas 3: 15/10, 16/10, 17/10, 19/10 y 20/10."
+  },
+  "eventos": [
+    {
+      "payload": {
+        "id": "00000000-0000-4000-8000-000000000101",
+        "data": {
+          "buyer": {
+            "name": "Persona Ficha 1",
+            "email": "persona.ficha1@example.com",
+            "ucode": "00000000-0000-4000-9000-000000000101",
+            "address": {
+              "country": "Peru",
+              "country_iso": "PE"
+            },
+            "document": "00000000",
+            "last_name": "Ficha 1",
+            "first_name": "Persona",
+            "document_type": "",
+            "checkout_phone": "51000000101"
+          },
+          "product": {
+            "id": 5071808,
+            "name": "Alimenta tu Tiroides",
+            "ucode": "384858a0-bdc4-4b9a-a479-9eeff9ed8893",
+            "support_email": "soporte@example.com",
+            "has_co_production": true,
+            "product_format_id": 8,
+            "is_physical_product": false
+          },
+          "producer": {
+            "name": "Productora Prueba",
+            "document": "00000000",
+            "legal_nature": "Pessoa Física"
+          },
+          "purchase": {
+            "offer": {
+              "code": "2uafw5bg",
+              "name": "VSL | PAUTA | D | 47USD | HISTORICO🔴",
+              "description": "Alimenta tu Tiroides"
+            },
+            "price": {
+              "value": 170.33,
+              "currency_value": "PEN"
+            },
+            "origin": {
+              "sck": "fixture",
+              "xcod": "fixture"
+            },
+            "status": "BILLET_PRINTED",
+            "payment": {
+              "type": "YAPE",
+              "installments_number": 1
+            },
+            "buyer_ip": "192.0.2.1",
+            "is_funnel": false,
+            "full_price": {
+              "value": 172,
+              "currency_value": "PEN"
+            },
+            "invoice_by": "SELLER",
+            "order_bump": {
+              "is_order_bump": false
+            },
+            "order_date": 1791839309000,
+            "transaction": "HP000000000101",
+            "business_model": "A",
+            "checkout_country": {
+              "iso": "PE",
+              "name": "Peru"
+            },
+            "original_offer_price": {
+              "value": 49.45,
+              "currency_value": "USD"
+            },
+            "subscription_anticipation_purchase": false
+          },
+          "affiliates": [],
+          "commissions": [
+            {
+              "value": 3.22,
+              "source": "MARKETPLACE",
+              "currency_value": "USD"
+            },
+            {
+              "value": 39.28,
+              "source": "PRODUCER",
+              "currency_value": "USD",
+              "currency_conversion": {
+                "conversion_rate": 18.26123,
+                "converted_value": 717.3,
+                "converted_to_currency": "MXN"
+              }
+            }
+          ]
+        },
+        "event": "PURCHASE_BILLET_PRINTED",
+        "version": "2.0.0",
+        "creation_date": 1791839322038
+      },
+      "recibido": "2026-10-12T21:08:43.266982+00:00"
+    },
+    {
+      "payload": {
+        "id": "00000000-0000-4000-8000-000000000102",
+        "data": {
+          "buyer": {
+            "name": "Persona Ficha 2",
+            "email": "persona.ficha2@example.com",
+            "ucode": "00000000-0000-4000-9000-000000000102",
+            "address": {
+              "country": "Mexico",
+              "country_iso": "MX"
+            },
+            "document": "00000000",
+            "last_name": "Ficha 2",
+            "first_name": "Persona",
+            "document_type": "CPF",
+            "checkout_phone": "520000000102"
+          },
+          "product": {
+            "id": 5071808,
+            "name": "Alimenta tu Tiroides",
+            "ucode": "384858a0-bdc4-4b9a-a479-9eeff9ed8893",
+            "support_email": "soporte@example.com",
+            "has_co_production": true,
+            "product_format_id": 8,
+            "is_physical_product": false
+          },
+          "producer": {
+            "name": "Productora Prueba",
+            "document": "00000000",
+            "legal_nature": "Pessoa Física"
+          },
+          "purchase": {
+            "offer": {
+              "code": "2uafw5bg",
+              "name": "VSL | PAUTA | D | 47USD | HISTORICO🔴",
+              "description": "Alimenta tu Tiroides"
+            },
+            "price": {
+              "value": 898.2,
+              "currency_value": "MXN"
+            },
+            "origin": {
+              "sck": "fixture",
+              "xcod": "fixture"
+            },
+            "status": "BILLET_PRINTED",
+            "payment": {
+              "type": "MERCADO_PAGO",
+              "installments_number": 1
+            },
+            "buyer_ip": "192.0.2.2",
+            "is_funnel": false,
+            "full_price": {
+              "value": 1052.12,
+              "currency_value": "MXN"
+            },
+            "invoice_by": "HOTMART",
+            "order_bump": {
+              "is_order_bump": false
+            },
+            "order_date": 1791863763000,
+            "transaction": "HP000000000102",
+            "business_model": "R",
+            "checkout_country": {
+              "iso": "MX",
+              "name": "Mexico"
+            },
+            "original_offer_price": {
+              "value": 49.19,
+              "currency_value": "USD"
+            },
+            "subscription_anticipation_purchase": false
+          },
+          "affiliates": [],
+          "commissions": [
+            {
+              "value": 3.2,
+              "source": "MARKETPLACE",
+              "currency_value": "USD"
+            },
+            {
+              "value": 39.08,
+              "source": "PRODUCER",
+              "currency_value": "USD",
+              "currency_conversion": {
+                "conversion_rate": 18.26123,
+                "converted_value": 713.65,
+                "converted_to_currency": "MXN"
+              }
+            }
+          ]
+        },
+        "event": "PURCHASE_BILLET_PRINTED",
+        "version": "2.0.0",
+        "creation_date": 1791863775403
+      },
+      "recibido": "2026-10-13T03:56:16.655944+00:00"
+    },
+    {
+      "payload": {
+        "id": "00000000-0000-4000-8000-000000000103",
+        "data": {
+          "buyer": {
+            "name": "Persona Ficha 3",
+            "email": "persona.ficha3@example.com",
+            "ucode": "00000000-0000-4000-9000-000000000103",
+            "address": {
+              "country": "Mexico",
+              "country_iso": "MX"
+            },
+            "document": "00000000",
+            "last_name": "Ficha 3",
+            "first_name": "Persona",
+            "document_type": "",
+            "checkout_phone": "520000000103"
+          },
+          "product": {
+            "id": 5071808,
+            "name": "Alimenta tu Tiroides",
+            "ucode": "384858a0-bdc4-4b9a-a479-9eeff9ed8893",
+            "support_email": "soporte@example.com",
+            "has_co_production": true,
+            "product_format_id": 8,
+            "is_physical_product": false
+          },
+          "producer": {
+            "name": "Productora Prueba",
+            "document": "00000000",
+            "legal_nature": "Pessoa Física"
+          },
+          "purchase": {
+            "offer": {
+              "code": "2uafw5bg",
+              "name": "VSL | PAUTA | D | 47USD | HISTORICO🔴",
+              "description": "Alimenta tu Tiroides"
+            },
+            "price": {
+              "value": 898.2,
+              "currency_value": "MXN"
+            },
+            "origin": {
+              "sck": "fixture",
+              "xcod": "fixture"
+            },
+            "status": "BILLET_PRINTED",
+            "payment": {
+              "type": "CASHPAYMENT",
+              "billet_url": "https://customer-local-latam.ebanx.com/print/oxxo?hash=ffffffffffffffffffffffffffffffffffffffffffffffff",
+              "billet_barcode": "0000000000000000002026101500000000",
+              "installments_number": 1
+            },
+            "buyer_ip": "192.0.2.3",
+            "is_funnel": false,
+            "full_price": {
+              "value": 1052.12,
+              "currency_value": "MXN"
+            },
+            "invoice_by": "HOTMART",
+            "order_bump": {
+              "is_order_bump": true
+            },
+            "order_date": 1791863778000,
+            "transaction": "HP000000000103",
+            "business_model": "R",
+            "checkout_country": {
+              "iso": "MX",
+              "name": "Mexico"
+            },
+            "original_offer_price": {
+              "value": 49.19,
+              "currency_value": "USD"
+            },
+            "subscription_anticipation_purchase": false
+          },
+          "affiliates": [],
+          "commissions": [
+            {
+              "value": 3.2,
+              "source": "MARKETPLACE",
+              "currency_value": "USD"
+            },
+            {
+              "value": 39.08,
+              "source": "PRODUCER",
+              "currency_value": "USD",
+              "currency_conversion": {
+                "conversion_rate": 18.26123,
+                "converted_value": 713.65,
+                "converted_to_currency": "MXN"
+              }
+            }
+          ]
+        },
+        "event": "PURCHASE_BILLET_PRINTED",
+        "version": "2.0.0",
+        "creation_date": 1791863793103
+      },
+      "recibido": "2026-10-13T03:56:34.335654+00:00"
+    },
+    {
+      "payload": {
+        "id": "00000000-0000-4000-8000-000000000104",
+        "data": {
+          "buyer": {
+            "name": "Persona Ficha 4",
+            "email": "persona.ficha4@example.com",
+            "ucode": "00000000-0000-4000-9000-000000000104",
+            "address": {
+              "country": "Mexico",
+              "country_iso": "MX"
+            },
+            "document": "00000000",
+            "last_name": "Ficha 4",
+            "first_name": "Persona",
+            "document_type": "",
+            "checkout_phone": "520000000104"
+          },
+          "product": {
+            "id": 5071808,
+            "name": "Alimenta tu Tiroides",
+            "ucode": "384858a0-bdc4-4b9a-a479-9eeff9ed8893",
+            "support_email": "soporte@example.com",
+            "has_co_production": true,
+            "product_format_id": 8,
+            "is_physical_product": false
+          },
+          "producer": {
+            "name": "Productora Prueba",
+            "document": "00000000",
+            "legal_nature": "Pessoa Física"
+          },
+          "purchase": {
+            "offer": {
+              "code": "bmaztyhg",
+              "name": "VSL | ORG | A | 47USD 🟢"
+            },
+            "price": {
+              "value": 898.2,
+              "currency_value": "MXN"
+            },
+            "origin": {
+              "sck": "fixture"
+            },
+            "status": "BILLET_PRINTED",
+            "payment": {
+              "type": "CASHPAYMENT",
+              "billet_url": "https://customer-local-latam.ebanx.com/print/oxxo?hash=ffffffffffffffffffffffffffffffffffffffffffffffff",
+              "billet_barcode": "0000000000000000002026101600000000",
+              "installments_number": 1
+            },
+            "buyer_ip": "192.0.2.4",
+            "is_funnel": false,
+            "full_price": {
+              "value": 1052.12,
+              "currency_value": "MXN"
+            },
+            "invoice_by": "HOTMART",
+            "order_bump": {
+              "is_order_bump": false
+            },
+            "order_date": 1791898762000,
+            "transaction": "HP000000000104",
+            "business_model": "R",
+            "checkout_country": {
+              "iso": "MX",
+              "name": "Mexico"
+            },
+            "original_offer_price": {
+              "value": 49.19,
+              "currency_value": "USD"
+            },
+            "subscription_anticipation_purchase": false
+          },
+          "affiliates": [],
+          "commissions": [
+            {
+              "value": 3.2,
+              "source": "MARKETPLACE",
+              "currency_value": "USD"
+            },
+            {
+              "value": 39.08,
+              "source": "PRODUCER",
+              "currency_value": "USD",
+              "currency_conversion": {
+                "conversion_rate": 18.26123,
+                "converted_value": 713.65,
+                "converted_to_currency": "MXN"
+              }
+            }
+          ]
+        },
+        "event": "PURCHASE_BILLET_PRINTED",
+        "version": "2.0.0",
+        "creation_date": 1791898774232
+      },
+      "recibido": "2026-10-13T13:39:35.966126+00:00"
+    },
+    {
+      "payload": {
+        "id": "00000000-0000-4000-8000-000000000105",
+        "data": {
+          "buyer": {
+            "name": "Persona Ficha 5",
+            "email": "persona.ficha5@example.com",
+            "ucode": "00000000-0000-4000-9000-000000000105",
+            "address": {
+              "country": "Colombia",
+              "country_iso": "CO"
+            },
+            "document": "00000000",
+            "last_name": "Ficha 5",
+            "first_name": "Persona",
+            "document_type": "",
+            "checkout_phone": "570000000105"
+          },
+          "product": {
+            "id": 5071808,
+            "name": "Alimenta tu Tiroides",
+            "ucode": "384858a0-bdc4-4b9a-a479-9eeff9ed8893",
+            "support_email": "soporte@example.com",
+            "has_co_production": true,
+            "product_format_id": 8,
+            "is_physical_product": false
+          },
+          "producer": {
+            "name": "Productora Prueba",
+            "document": "00000000",
+            "legal_nature": "Pessoa Física"
+          },
+          "purchase": {
+            "offer": {
+              "code": "2uafw5bg",
+              "name": "VSL | PAUTA | D | 47USD | HISTORICO🔴",
+              "description": "Alimenta tu Tiroides"
+            },
+            "price": {
+              "value": 156929.87,
+              "currency_value": "COP"
+            },
+            "origin": {
+              "sck": "fixture",
+              "xcod": "fixture"
+            },
+            "status": "BILLET_PRINTED",
+            "payment": {
+              "type": "NEQUI",
+              "installments_number": 1
+            },
+            "buyer_ip": "192.0.2.5",
+            "is_funnel": false,
+            "full_price": {
+              "value": 158467,
+              "currency_value": "COP"
+            },
+            "invoice_by": "SELLER",
+            "order_bump": {
+              "is_order_bump": true
+            },
+            "order_date": 1791921507000,
+            "transaction": "HP000000000105",
+            "business_model": "A",
+            "checkout_country": {
+              "iso": "CO",
+              "name": "Colombia"
+            },
+            "original_offer_price": {
+              "value": 49.1,
+              "currency_value": "USD"
+            },
+            "subscription_anticipation_purchase": false
+          },
+          "affiliates": [],
+          "commissions": [
+            {
+              "value": 3.2,
+              "source": "MARKETPLACE",
+              "currency_value": "USD"
+            },
+            {
+              "value": 39.07,
+              "source": "PRODUCER",
+              "currency_value": "USD",
+              "currency_conversion": {
+                "conversion_rate": 18.26123,
+                "converted_value": 713.47,
+                "converted_to_currency": "MXN"
+              }
+            }
+          ]
+        },
+        "event": "PURCHASE_BILLET_PRINTED",
+        "version": "2.0.0",
+        "creation_date": 1791921520897
+      },
+      "recibido": "2026-10-13T19:58:42.226336+00:00"
+    },
+    {
+      "payload": {
+        "id": "00000000-0000-4000-8000-000000000106",
+        "data": {
+          "buyer": {
+            "name": "Persona Ficha 6",
+            "email": "persona.ficha6@example.com",
+            "ucode": "00000000-0000-4000-9000-000000000106",
+            "address": {
+              "country": "Mexico",
+              "country_iso": "MX"
+            },
+            "document": "00000000",
+            "last_name": "Ficha 6",
+            "first_name": "Persona",
+            "document_type": "",
+            "checkout_phone": "520000000106"
+          },
+          "product": {
+            "id": 5071808,
+            "name": "Alimenta tu Tiroides",
+            "ucode": "384858a0-bdc4-4b9a-a479-9eeff9ed8893",
+            "support_email": "soporte@example.com",
+            "has_co_production": true,
+            "product_format_id": 8,
+            "is_physical_product": false
+          },
+          "producer": {
+            "name": "Productora Prueba",
+            "document": "00000000",
+            "legal_nature": "Pessoa Física"
+          },
+          "purchase": {
+            "offer": {
+              "code": "bmaztyhg",
+              "name": "VSL | ORG | A | 47USD 🟢"
+            },
+            "price": {
+              "value": 903.15,
+              "currency_value": "MXN"
+            },
+            "origin": {
+              "xcod": "fixture"
+            },
+            "status": "BILLET_PRINTED",
+            "payment": {
+              "type": "MERCADO_PAGO",
+              "installments_number": 1
+            },
+            "buyer_ip": "192.0.2.6",
+            "is_funnel": false,
+            "full_price": {
+              "value": 1057.92,
+              "currency_value": "MXN"
+            },
+            "invoice_by": "HOTMART",
+            "order_bump": {
+              "is_order_bump": true
+            },
+            "order_date": 1791989948000,
+            "transaction": "HP000000000106",
+            "business_model": "R",
+            "checkout_country": {
+              "iso": "MX",
+              "name": "Mexico"
+            },
+            "original_offer_price": {
+              "value": 49.13,
+              "currency_value": "USD"
+            },
+            "subscription_anticipation_purchase": false
+          },
+          "affiliates": [],
+          "commissions": [
+            {
+              "value": 3.2,
+              "source": "MARKETPLACE",
+              "currency_value": "USD"
+            },
+            {
+              "value": 39.03,
+              "source": "PRODUCER",
+              "currency_value": "USD",
+              "currency_conversion": {
+                "conversion_rate": 18.382203,
+                "converted_value": 717.46,
+                "converted_to_currency": "MXN"
+              }
+            }
+          ]
+        },
+        "event": "PURCHASE_BILLET_PRINTED",
+        "version": "2.0.0",
+        "creation_date": 1791989961320
+      },
+      "recibido": "2026-10-14T14:59:23.175496+00:00"
+    },
+    {
+      "payload": {
+        "id": "00000000-0000-4000-8000-000000000107",
+        "data": {
+          "buyer": {
+            "name": "Persona Ficha 7",
+            "email": "persona.ficha7@example.com",
+            "ucode": "00000000-0000-4000-9000-000000000107",
+            "address": {
+              "country": "Mexico",
+              "country_iso": "MX"
+            },
+            "document": "00000000",
+            "last_name": "Ficha 7",
+            "first_name": "Persona",
+            "document_type": "",
+            "checkout_phone": "520000000107"
+          },
+          "product": {
+            "id": 5071808,
+            "name": "Alimenta tu Tiroides",
+            "ucode": "384858a0-bdc4-4b9a-a479-9eeff9ed8893",
+            "support_email": "soporte@example.com",
+            "has_co_production": true,
+            "product_format_id": 8,
+            "is_physical_product": false
+          },
+          "producer": {
+            "name": "Productora Prueba",
+            "document": "00000000",
+            "legal_nature": "Pessoa Física"
+          },
+          "purchase": {
+            "offer": {
+              "code": "2uafw5bg",
+              "name": "VSL | PAUTA | D | 47USD 🟢",
+              "description": "Alimenta tu Tiroides"
+            },
+            "price": {
+              "value": 908.11,
+              "currency_value": "MXN"
+            },
+            "origin": {
+              "sck": "fixture",
+              "xcod": "fixture"
+            },
+            "status": "BILLET_PRINTED",
+            "payment": {
+              "type": "CASHPAYMENT",
+              "billet_url": "https://customer-local-latam.ebanx.com/print/oxxo?hash=ffffffffffffffffffffffffffffffffffffffffffffffff",
+              "billet_barcode": "0000000000000000002026101700000000",
+              "installments_number": 1
+            },
+            "buyer_ip": "192.0.2.7",
+            "is_funnel": true,
+            "full_price": {
+              "value": 1063.72,
+              "currency_value": "MXN"
+            },
+            "invoice_by": "HOTMART",
+            "order_bump": {
+              "is_order_bump": false
+            },
+            "order_date": 1792043026000,
+            "transaction": "HP000000000107",
+            "business_model": "R",
+            "checkout_country": {
+              "iso": "MX",
+              "name": "Mexico"
+            },
+            "original_offer_price": {
+              "value": 49.11,
+              "currency_value": "USD"
+            },
+            "subscription_anticipation_purchase": false
+          },
+          "affiliates": [],
+          "commissions": [
+            {
+              "value": 3.2,
+              "source": "MARKETPLACE",
+              "currency_value": "USD"
+            },
+            {
+              "value": 39.01,
+              "source": "PRODUCER",
+              "currency_value": "USD",
+              "currency_conversion": {
+                "conversion_rate": 18.492502,
+                "converted_value": 721.39,
+                "converted_to_currency": "MXN"
+              }
+            }
+          ]
+        },
+        "event": "PURCHASE_BILLET_PRINTED",
+        "version": "2.0.0",
+        "creation_date": 1792043039042
+      },
+      "recibido": "2026-10-15T05:44:00.986109+00:00"
+    },
+    {
+      "payload": {
+        "id": "00000000-0000-4000-8000-000000000108",
+        "data": {
+          "buyer": {
+            "name": "Persona Ficha 8",
+            "email": "persona.ficha8@example.com",
+            "ucode": "00000000-0000-4000-9000-000000000108",
+            "address": {
+              "country": "Mexico",
+              "country_iso": "MX"
+            },
+            "document": "00000000",
+            "last_name": "Ficha 8",
+            "first_name": "Persona",
+            "document_type": "",
+            "checkout_phone": "520000000108"
+          },
+          "product": {
+            "id": 5071808,
+            "name": "Alimenta tu Tiroides",
+            "ucode": "384858a0-bdc4-4b9a-a479-9eeff9ed8893",
+            "support_email": "soporte@example.com",
+            "has_co_production": true,
+            "product_format_id": 8,
+            "is_physical_product": false
+          },
+          "producer": {
+            "name": "Productora Prueba",
+            "document": "00000000",
+            "legal_nature": "Pessoa Física"
+          },
+          "purchase": {
+            "offer": {
+              "code": "bmaztyhg",
+              "name": "VSL | ORG | A | 47USD 🟢"
+            },
+            "price": {
+              "value": 908.11,
+              "currency_value": "MXN"
+            },
+            "origin": {},
+            "status": "BILLET_PRINTED",
+            "payment": {
+              "type": "MERCADO_PAGO",
+              "installments_number": 1
+            },
+            "buyer_ip": "192.0.2.8",
+            "is_funnel": true,
+            "full_price": {
+              "value": 1063.72,
+              "currency_value": "MXN"
+            },
+            "invoice_by": "HOTMART",
+            "order_bump": {
+              "is_order_bump": true,
+              "parent_purchase_transaction": "HP000000000108"
+            },
+            "order_date": 1792086426000,
+            "transaction": "HP000000000108",
+            "business_model": "R",
+            "checkout_country": {
+              "iso": "MX",
+              "name": "Mexico"
+            },
+            "original_offer_price": {
+              "value": 49.11,
+              "currency_value": "USD"
+            },
+            "subscription_anticipation_purchase": false
+          },
+          "affiliates": [],
+          "commissions": [
+            {
+              "value": 3.2,
+              "source": "MARKETPLACE",
+              "currency_value": "USD"
+            },
+            {
+              "value": 39.01,
+              "source": "PRODUCER",
+              "currency_value": "USD",
+              "currency_conversion": {
+                "conversion_rate": 18.492502,
+                "converted_value": 721.39,
+                "converted_to_currency": "MXN"
+              }
+            }
+          ]
+        },
+        "event": "PURCHASE_BILLET_PRINTED",
+        "version": "2.0.0",
+        "creation_date": 1792086439426
+      },
+      "recibido": "2026-10-15T17:47:21.299469+00:00"
+    },
+    {
+      "payload": {
+        "id": "00000000-0000-4000-8000-000000000109",
+        "data": {
+          "buyer": {
+            "name": "Persona Ficha 9",
+            "email": "persona.ficha9@example.com",
+            "ucode": "00000000-0000-4000-9000-000000000109",
+            "address": {
+              "country": "Mexico",
+              "country_iso": "MX"
+            },
+            "document": "00000000",
+            "last_name": "Ficha 9",
+            "first_name": "Persona",
+            "document_type": "",
+            "checkout_phone": "520000000109"
+          },
+          "product": {
+            "id": 5071808,
+            "name": "Alimenta tu Tiroides",
+            "ucode": "384858a0-bdc4-4b9a-a479-9eeff9ed8893",
+            "support_email": "soporte@example.com",
+            "has_co_production": true,
+            "product_format_id": 8,
+            "is_physical_product": false
+          },
+          "producer": {
+            "name": "Productora Prueba",
+            "document": "00000000",
+            "legal_nature": "Pessoa Física"
+          },
+          "purchase": {
+            "offer": {
+              "code": "2uafw5bg",
+              "name": "VSL | PAUTA | D | 47USD 🟢",
+              "coupon_code": "TIROIDES10",
+              "description": "Alimenta tu Tiroides"
+            },
+            "price": {
+              "value": 814.62,
+              "currency_value": "MXN"
+            },
+            "origin": {
+              "sck": "fixture"
+            },
+            "status": "BILLET_PRINTED",
+            "payment": {
+              "type": "CASHPAYMENT",
+              "billet_url": "https://customer-local-latam.ebanx.com/print/oxxo?hash=ffffffffffffffffffffffffffffffffffffffffffffffff",
+              "billet_barcode": "0000000000000000002026101900000000",
+              "installments_number": 1
+            },
+            "buyer_ip": "192.0.2.9",
+            "is_funnel": true,
+            "full_price": {
+              "value": 954.22,
+              "currency_value": "MXN"
+            },
+            "invoice_by": "HOTMART",
+            "order_bump": {
+              "is_order_bump": false
+            },
+            "order_date": 1792176089000,
+            "transaction": "HP000000000109",
+            "business_model": "R",
+            "checkout_country": {
+              "iso": "MX",
+              "name": "Mexico"
+            },
+            "original_offer_price": {
+              "value": 44.23,
+              "currency_value": "USD"
+            },
+            "subscription_anticipation_purchase": false
+          },
+          "affiliates": [],
+          "commissions": [
+            {
+              "value": 2.93,
+              "source": "MARKETPLACE",
+              "currency_value": "USD"
+            },
+            {
+              "value": 35.1,
+              "source": "PRODUCER",
+              "currency_value": "USD",
+              "currency_conversion": {
+                "conversion_rate": 18.417103,
+                "converted_value": 646.44,
+                "converted_to_currency": "MXN"
+              }
+            }
+          ]
+        },
+        "event": "PURCHASE_BILLET_PRINTED",
+        "version": "2.0.0",
+        "creation_date": 1792176101204
+      },
+      "recibido": "2026-10-16T18:41:42.819819+00:00"
+    },
+    {
+      "payload": {
+        "id": "00000000-0000-4000-8000-000000000110",
+        "data": {
+          "buyer": {
+            "name": "Persona Ficha 10",
+            "email": "persona.ficha10@example.com",
+            "ucode": "00000000-0000-4000-9000-000000000110",
+            "address": {
+              "country": "Argentina",
+              "country_iso": "AR"
+            },
+            "document": "00000000",
+            "last_name": "Ficha 10",
+            "first_name": "Persona",
+            "document_type": "CPF",
+            "checkout_phone": "540000000110"
+          },
+          "product": {
+            "id": 5071808,
+            "name": "Alimenta tu Tiroides",
+            "ucode": "384858a0-bdc4-4b9a-a479-9eeff9ed8893",
+            "support_email": "soporte@example.com",
+            "has_co_production": true,
+            "product_format_id": 8,
+            "is_physical_product": false
+          },
+          "producer": {
+            "name": "Productora Prueba",
+            "document": "00000000",
+            "legal_nature": "Pessoa Física"
+          },
+          "purchase": {
+            "offer": {
+              "code": "2uafw5bg",
+              "name": "VSL | PAUTA | D | 47USD 🟢",
+              "description": "Alimenta tu Tiroides"
+            },
+            "price": {
+              "value": 82343.45,
+              "currency_value": "ARS"
+            },
+            "origin": {
+              "sck": "fixture",
+              "xcod": "fixture"
+            },
+            "status": "BILLET_PRINTED",
+            "payment": {
+              "type": "MERCADO_PAGO",
+              "installments_number": 1
+            },
+            "buyer_ip": "192.0.2.10",
+            "is_funnel": true,
+            "full_price": {
+              "value": 83150,
+              "currency_value": "ARS"
+            },
+            "invoice_by": "SELLER",
+            "order_bump": {
+              "is_order_bump": false
+            },
+            "order_date": 1792178494000,
+            "transaction": "HP000000000110",
+            "business_model": "A",
+            "checkout_country": {
+              "iso": "AR",
+              "name": "Argentina"
+            },
+            "original_offer_price": {
+              "value": 50.97,
+              "currency_value": "USD"
+            },
+            "subscription_anticipation_purchase": false
+          },
+          "affiliates": [],
+          "commissions": [
+            {
+              "value": 3.2,
+              "source": "MARKETPLACE",
+              "currency_value": "USD"
+            },
+            {
+              "value": 38.99,
+              "source": "PRODUCER",
+              "currency_value": "USD",
+              "currency_conversion": {
+                "conversion_rate": 18.417103,
+                "converted_value": 718.08,
+                "converted_to_currency": "MXN"
+              }
+            }
+          ]
+        },
+        "event": "PURCHASE_BILLET_PRINTED",
+        "version": "2.0.0",
+        "creation_date": 1792178511773
+      },
+      "recibido": "2026-10-16T19:21:53.214389+00:00"
+    },
+    {
+      "payload": {
+        "id": "00000000-0000-4000-8000-000000000111",
+        "data": {
+          "buyer": {
+            "name": "Persona Ficha 11",
+            "email": "persona.ficha11@example.com",
+            "ucode": "00000000-0000-4000-9000-000000000111",
+            "address": {
+              "country": "Chile",
+              "country_iso": "CL"
+            },
+            "document": "00000000",
+            "last_name": "Ficha 11",
+            "first_name": "Persona",
+            "document_type": "",
+            "checkout_phone": "56000000111"
+          },
+          "product": {
+            "id": 5071808,
+            "name": "Alimenta tu Tiroides",
+            "ucode": "384858a0-bdc4-4b9a-a479-9eeff9ed8893",
+            "support_email": "soporte@example.com",
+            "has_co_production": true,
+            "product_format_id": 8,
+            "is_physical_product": false
+          },
+          "producer": {
+            "name": "Productora Prueba",
+            "document": "00000000",
+            "legal_nature": "Pessoa Física"
+          },
+          "purchase": {
+            "offer": {
+              "code": "2uafw5bg",
+              "name": "VSL | PAUTA | D | 47USD 🟢",
+              "description": "Alimenta tu Tiroides"
+            },
+            "price": {
+              "value": 48308.33,
+              "currency_value": "CLP"
+            },
+            "origin": {
+              "sck": "fixture",
+              "xcod": "fixture"
+            },
+            "status": "BILLET_PRINTED",
+            "payment": {
+              "type": "CASHPAYMENT",
+              "billet_url": "https://api.ebanx.com/ws/redirect?hash=ffffffffffffffffffffffffffffffffffffffffffffffff",
+              "billet_barcode": "0",
+              "installments_number": 1
+            },
+            "buyer_ip": "192.0.2.11",
+            "is_funnel": true,
+            "full_price": {
+              "value": 58050,
+              "currency_value": "CLP"
+            },
+            "invoice_by": "HOTMART",
+            "order_bump": {
+              "is_order_bump": false
+            },
+            "order_date": 1792185374000,
+            "transaction": "HP000000000111",
+            "business_model": "A",
+            "checkout_country": {
+              "iso": "CL",
+              "name": "Chile"
+            },
+            "original_offer_price": {
+              "value": 49.1,
+              "currency_value": "USD"
+            },
+            "subscription_anticipation_purchase": false
+          },
+          "affiliates": [],
+          "commissions": [
+            {
+              "value": 3.2,
+              "source": "MARKETPLACE",
+              "currency_value": "USD"
+            },
+            {
+              "value": 38.99,
+              "source": "PRODUCER",
+              "currency_value": "USD",
+              "currency_conversion": {
+                "conversion_rate": 18.498715,
+                "converted_value": 721.26,
+                "converted_to_currency": "MXN"
+              }
+            }
+          ]
+        },
+        "event": "PURCHASE_BILLET_PRINTED",
+        "version": "2.0.0",
+        "creation_date": 1792185386513
+      },
+      "recibido": "2026-10-16T21:16:27.965474+00:00"
+    },
+    {
+      "payload": {
+        "id": "00000000-0000-4000-8000-000000000112",
+        "data": {
+          "buyer": {
+            "name": "Persona Ficha 12",
+            "email": "persona.ficha12@example.com",
+            "ucode": "00000000-0000-4000-9000-000000000112",
+            "address": {
+              "country": "Colombia",
+              "country_iso": "CO"
+            },
+            "document": "00000000",
+            "last_name": "Ficha 12",
+            "first_name": "Persona",
+            "document_type": "",
+            "checkout_phone": "570000000112"
+          },
+          "product": {
+            "id": 5071808,
+            "name": "Alimenta tu Tiroides",
+            "ucode": "384858a0-bdc4-4b9a-a479-9eeff9ed8893",
+            "support_email": "soporte@example.com",
+            "has_co_production": true,
+            "product_format_id": 8,
+            "is_physical_product": false
+          },
+          "producer": {
+            "name": "Productora Prueba",
+            "document": "00000000",
+            "legal_nature": "Pessoa Física"
+          },
+          "purchase": {
+            "offer": {
+              "code": "2uafw5bg",
+              "name": "VSL | PAUTA | D | 47USD 🟢",
+              "description": "Alimenta tu Tiroides"
+            },
+            "price": {
+              "value": 156254.49,
+              "currency_value": "COP"
+            },
+            "origin": {
+              "sck": "fixture",
+              "xcod": "fixture"
+            },
+            "status": "BILLET_PRINTED",
+            "payment": {
+              "type": "NEQUI",
+              "installments_number": 1
+            },
+            "buyer_ip": "192.0.2.12",
+            "is_funnel": true,
+            "full_price": {
+              "value": 157785,
+              "currency_value": "COP"
+            },
+            "invoice_by": "SELLER",
+            "order_bump": {
+              "is_order_bump": false
+            },
+            "order_date": 1792245464000,
+            "transaction": "HP000000000112",
+            "business_model": "A",
+            "checkout_country": {
+              "iso": "CO",
+              "name": "Colombia"
+            },
+            "original_offer_price": {
+              "value": 49.1,
+              "currency_value": "USD"
+            },
+            "subscription_anticipation_purchase": false
+          },
+          "affiliates": [],
+          "commissions": [
+            {
+              "value": 3.2,
+              "source": "MARKETPLACE",
+              "currency_value": "USD"
+            },
+            {
+              "value": 39.02,
+              "source": "PRODUCER",
+              "currency_value": "USD",
+              "currency_conversion": {
+                "conversion_rate": 18.498715,
+                "converted_value": 721.82,
+                "converted_to_currency": "MXN"
+              }
+            }
+          ]
+        },
+        "event": "PURCHASE_BILLET_PRINTED",
+        "version": "2.0.0",
+        "creation_date": 1792245477394
+      },
+      "recibido": "2026-10-17T13:57:58.971647+00:00"
+    },
+    {
+      "payload": {
+        "id": "00000000-0000-4000-8000-000000000113",
+        "data": {
+          "buyer": {
+            "name": "Persona Ficha 13",
+            "email": "persona.ficha13@example.com",
+            "ucode": "00000000-0000-4000-9000-000000000113",
+            "address": {
+              "country": "Mexico",
+              "country_iso": "MX"
+            },
+            "document": "00000000",
+            "last_name": "Ficha 13",
+            "first_name": "Persona",
+            "document_type": "",
+            "checkout_phone": "520000000113"
+          },
+          "product": {
+            "id": 5071808,
+            "name": "Alimenta tu Tiroides",
+            "ucode": "384858a0-bdc4-4b9a-a479-9eeff9ed8893",
+            "support_email": "soporte@example.com",
+            "has_co_production": true,
+            "product_format_id": 8,
+            "is_physical_product": false
+          },
+          "producer": {
+            "name": "Productora Prueba",
+            "document": "00000000",
+            "legal_nature": "Pessoa Física"
+          },
+          "purchase": {
+            "offer": {
+              "code": "2uafw5bg",
+              "name": "VSL | PAUTA | D | 47USD 🟢",
+              "description": "Alimenta tu Tiroides"
+            },
+            "price": {
+              "value": 910.09,
+              "currency_value": "MXN"
+            },
+            "origin": {
+              "sck": "fixture",
+              "xcod": "fixture"
+            },
+            "status": "BILLET_PRINTED",
+            "payment": {
+              "type": "CASHPAYMENT",
+              "billet_url": "https://customer-local-latam.ebanx.com/print/oxxo?hash=ffffffffffffffffffffffffffffffffffffffffffffffff",
+              "billet_barcode": "0000000000000000002026102000000000",
+              "installments_number": 1
+            },
+            "buyer_ip": "192.0.2.13",
+            "is_funnel": true,
+            "full_price": {
+              "value": 1066.04,
+              "currency_value": "MXN"
+            },
+            "invoice_by": "HOTMART",
+            "order_bump": {
+              "is_order_bump": false
+            },
+            "order_date": 1792246740000,
+            "transaction": "HP000000000113",
+            "business_model": "R",
+            "checkout_country": {
+              "iso": "MX",
+              "name": "Mexico"
+            },
+            "original_offer_price": {
+              "value": 49.2,
+              "currency_value": "USD"
+            },
+            "subscription_anticipation_purchase": false
+          },
+          "affiliates": [],
+          "commissions": [
+            {
+              "value": 3.2,
+              "source": "MARKETPLACE",
+              "currency_value": "USD"
+            },
+            {
+              "value": 39.09,
+              "source": "PRODUCER",
+              "currency_value": "USD",
+              "currency_conversion": {
+                "conversion_rate": 18.498715,
+                "converted_value": 723.11,
+                "converted_to_currency": "MXN"
+              }
+            }
+          ]
+        },
+        "event": "PURCHASE_BILLET_PRINTED",
+        "version": "2.0.0",
+        "creation_date": 1792246752136
+      },
+      "recibido": "2026-10-17T14:19:13.968581+00:00"
+    }
+  ]
+}

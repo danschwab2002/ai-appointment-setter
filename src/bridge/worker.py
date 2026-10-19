@@ -45,6 +45,7 @@ from bridge.commercial_ally import CommercialAllyConfig
 from bridge.hotmart import (
     EVENT_CART_ABANDONMENT,
     EVENT_PURCHASE_APPROVED,
+    EVENT_PURCHASE_BILLET_PRINTED,
     EVENT_PURCHASE_CANCELED,
     parse_hotmart_purchase_payload,
 )
@@ -55,6 +56,7 @@ from bridge.lead_first_name import (
 from bridge.messaging import (
     FIRST_TOUCH_RECIPIENT_MISMATCH,
     FIRST_TOUCH_TEMPLATE_NOT_CONFIGURED,
+    PAYMENT_SLIP_TRIGGER,
     PRECHECKOUT_INTENT_TRIGGER,
     FinalMetaEffect,
     FinalMetaEffectGate,
@@ -64,6 +66,14 @@ from bridge.messaging import (
     WhatsAppTemplateConfig,
     first_touch_recipient_matches,
     is_allowed_whatsapp_target,
+)
+from bridge.payment_slip import payment_slip_facts
+from bridge.payment_slip_first_touch import (
+    PaymentSlipFirstTouchConfig,
+    PaymentSlipPlanningConfig,
+    PaymentSlipReady,
+    compose_payment_slip_first_touch,
+    payment_slip_ingestion_reason,
 )
 from bridge.phones import equivalent_whatsapp_phones, whatsapp_phone_region
 from bridge.product_routes import HotmartUnrouted, ProductRoutes
@@ -741,11 +751,22 @@ class DurableDispatcher:
         lead_first_name_greeting_enabled: bool = False,
         whatsapp_equivalence_enabled: bool = False,
         cart_discount: CartDiscountConfig | None = None,
+        payment_slip: PaymentSlipFirstTouchConfig | None = None,
     ) -> None:
         if cart_discount is not None and not approved_template_direct:
             # A1 with the personal coupon is an approved template sent by the
             # direct mode, with the final Meta gate; never a Hermes draft.
             raise ValueError("cart discount requires the approved template direct mode")
+        if payment_slip is not None and (
+            not approved_template_direct
+            or waba_template is None
+            or waba_template.payment_slip_name is None
+        ):
+            # C1 is an approved template with its URL button, sent by the
+            # direct mode: never a Hermes draft, never without its template.
+            raise ValueError(
+                "payment slip requires the approved template direct mode and its template"
+            )
         if type(whatsapp_equivalence_enabled) is not bool:
             raise ValueError("invalid whatsapp equivalence flag")
         if whatsapp_equivalence_enabled and commercial_ally_config is None:
@@ -834,6 +855,7 @@ class DurableDispatcher:
         self._chatwoot_inbox_id = chatwoot_inbox_id
         self._approved_template_direct = approved_template_direct
         self._cart_discount = cart_discount
+        self._payment_slip = payment_slip
         self._lead_first_name_greeting_enabled = lead_first_name_greeting_enabled
         self._whatsapp_equivalence_enabled = whatsapp_equivalence_enabled
         self._delivery_mode = (
@@ -1187,6 +1209,14 @@ class DurableDispatcher:
                 failure_reason=APPROVED_TEMPLATE_PARAMETERS_MISSING,
                 retryable=False,
             )
+        if trigger_kind == PAYMENT_SLIP_TRIGGER:
+            return await self._compose_payment_slip_proposal(
+                action=action,
+                declared=declared,
+                name_value=name_value or "",
+                product_name=product_name or "",
+                greeting_name=greeting_name,
+            )
         values = template.body_values(
             trigger_kind=trigger_kind,
             buyer_name=name_value,
@@ -1298,6 +1328,83 @@ class DurableDispatcher:
             greeting_name=greeting_name,
         )
 
+    async def _compose_payment_slip_proposal(
+        self,
+        *,
+        action: ScheduledAction,
+        declared: tuple[str, ...],
+        name_value: str,
+        product_name: str,
+        greeting_name: str | None,
+    ) -> _ApprovedTemplateComposition:
+        """C1: the template of the slip with its store, due date and button.
+
+        Every reason closes the attempt without a message. Only an unreadable
+        catalog or slip context, or a catalog that does not close, retries.
+        """
+        template = self._waba_template
+        assert template is not None
+        assert self._chatwoot is not None
+        assert self._chatwoot_inbox_id is not None
+        template_name = template.first_touch_name_for(trigger_kind=PAYMENT_SLIP_TRIGGER)
+        if self._payment_slip is None or template_name is None:
+            return _ApprovedTemplateComposition(
+                failure_reason=FIRST_TOUCH_TEMPLATE_NOT_CONFIGURED,
+                retryable=False,
+            )
+        try:
+            inbox = await self._chatwoot.get_inbox(inbox_id=self._chatwoot_inbox_id)
+        except (httpx.HTTPError, ChatwootProtocolError) as exc:
+            logger.warning(
+                "approved_template_catalog_unavailable action_id=%s error=%s",
+                action.action_id,
+                type(exc).__name__,
+            )
+            return _ApprovedTemplateComposition(
+                failure_reason=APPROVED_TEMPLATE_UNAVAILABLE
+            )
+        slip = await compose_payment_slip_first_touch(
+            config=self._payment_slip,
+            supabase=self._supabase,
+            inbox=inbox,
+            action=action,
+            template_name=template_name,
+            language=template.language,
+            category=template.category_for(trigger_kind=PAYMENT_SLIP_TRIGGER),
+            parameters=declared,
+            buyer_name=name_value,
+            product_name=product_name,
+            worker_id=self._worker_id,
+            now=self._clock(),
+        )
+        if not isinstance(slip, PaymentSlipReady):
+            # The log carries the code only: never the link, the reference or
+            # the person.
+            logger.warning(
+                "payment_slip_first_touch_not_sent action_id=%s reason=%s retryable=%s",
+                action.action_id,
+                slip.reason,
+                slip.retryable,
+            )
+            return _ApprovedTemplateComposition(
+                failure_reason=slip.reason,
+                retryable=slip.retryable,
+            )
+        logger.info(
+            "payment_slip_first_touch_ready action_id=%s due_date_source=%s",
+            action.action_id,
+            slip.due_date_source,
+        )
+        return _ApprovedTemplateComposition(
+            proposal=FollowupMessageProposal(
+                strategy=f"approved_template:{slip.template_name}",
+                message=slip.message,
+            ),
+            greeting_name=greeting_name,
+            template_name=slip.template_name,
+            template_params=slip.template_params,
+        )
+
     async def dispatch_due(self, *, now: str) -> list[ReevaluationDecision]:
         """Claim and re-evaluate; return execute candidates without side effects."""
         actions = await self.claim_due(now=now)
@@ -1342,10 +1449,19 @@ class DurableDispatcher:
                 if (
                     self._recovery_agent is not None or self._approved_template_direct
                 ) and (
-                    action.anchor_type == PRECHECKOUT_INTENT_TRIGGER
-                    and (
-                        self._waba_template is None
-                        or self._waba_template.precheckout_name is None
+                    (
+                        action.anchor_type == PRECHECKOUT_INTENT_TRIGGER
+                        and (
+                            self._waba_template is None
+                            or self._waba_template.precheckout_name is None
+                        )
+                    )
+                    or (
+                        # The first contact after a slip: its own template in
+                        # the direct mode, or nothing (never Hermes, never
+                        # the cart template).
+                        action.anchor_type == PAYMENT_SLIP_TRIGGER
+                        and self._payment_slip is None
                     )
                 ):
                     # The first contact after the form only goes out with its
@@ -2488,6 +2604,7 @@ class ResolutionWorker:
         commercial_ally_config: CommercialAllyConfig | None = None,
         payment_failure_enabled: bool = False,
         product_routes: ProductRoutes | None = None,
+        payment_slip: PaymentSlipPlanningConfig | None = None,
     ) -> None:
         self._supabase = supabase
         self._poll_interval = poll_interval_seconds
@@ -2503,6 +2620,9 @@ class ResolutionWorker:
         self._pilot_boundary = pilot_boundary
         self._commercial_ally_config = commercial_ally_config
         self._payment_failure_enabled = payment_failure_enabled
+        # La ficha de pago (C1): sin esto, una ficha queda failed con
+        # unsupported_persisted_event_type, como hasta la 1.10.
+        self._payment_slip = payment_slip
         # Con varios productos, solo el principal tiene flujos de recuperacion
         # (paso 2c-2): los de los demas llegan con el motor de flujos.
         self._product_routes = product_routes
@@ -2608,10 +2728,14 @@ class ResolutionWorker:
                 result.outcome,
             )
             return
+        slip_event = (
+            self._payment_slip is not None
+            and event_type == EVENT_PURCHASE_BILLET_PRINTED
+        )
         if event_type != EVENT_CART_ABANDONMENT and not (
             self._payment_failure_enabled
             and event_type == EVENT_PURCHASE_CANCELED
-        ):
+        ) and not slip_event:
             await self._supabase.update_event_status(
                 event_id=event_id,
                 status="failed",
@@ -2640,6 +2764,32 @@ class ResolutionWorker:
                     reason,
                 )
                 return
+        policy_key = self._policy_key
+        policy_version = self._policy_version
+        pilot_boundary = self._pilot_boundary
+        if slip_event:
+            assert self._payment_slip is not None
+            # The filter by method and country: what the table of the manifest
+            # does not enable stays in the base (admitted and correlated) and
+            # nobody is written to.
+            slip_reason = payment_slip_ingestion_reason(
+                payment_slip_facts(payload), self._payment_slip.methods
+            )
+            if slip_reason is not None:
+                await self._supabase.update_event_status(
+                    event_id=event_id, status="ignored", error=slip_reason
+                )
+                logger.info(
+                    "payment_slip_not_planned event_id=%s reason=%s",
+                    event_id,
+                    slip_reason,
+                )
+                return
+            # Its own policy (one hour of grace, one day of life) and its own
+            # scope (source event PURCHASE_BILLET_PRINTED).
+            policy_key = self._payment_slip.policy_key
+            policy_version = self._payment_slip.policy_version
+            pilot_boundary = self._payment_slip.pilot_boundary
         try:
             resolver_kwargs: dict[str, Any] = {}
             if self._commercial_ally_config is not None:
@@ -2648,12 +2798,12 @@ class ResolutionWorker:
                 webhook_event_id=event_id,
                 payload=payload,
                 supabase=self._supabase,
-                policy_key=self._policy_key,
-                policy_version=self._policy_version,
+                policy_key=policy_key,
+                policy_version=policy_version,
                 allowed_jid=self._allowed_jid,
                 chatwoot_account_id=self._chatwoot_account_id,
                 chatwoot_inbox_id=self._chatwoot_inbox_id,
-                pilot_boundary=self._pilot_boundary,
+                pilot_boundary=pilot_boundary,
                 event_type=event_type,
                 **resolver_kwargs,
             )
@@ -2674,9 +2824,11 @@ class ResolutionWorker:
 
         # Durable planning ends this ingestion stage. A separate dispatcher
         # will claim the due action, re-evaluate, and only then invoke Hermes.
-        if self._policy_key is not None and self._policy_version is not None:
+        if policy_key is not None and policy_version is not None:
             logger.info(
-                "cart_recovery_planned event_id=%s",
+                "payment_slip_recovery_planned event_id=%s"
+                if slip_event
+                else "cart_recovery_planned event_id=%s",
                 report.event_id,
             )
             return

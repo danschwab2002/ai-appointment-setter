@@ -183,6 +183,15 @@ _PILOT_PLAN_REJECTION_TOKEN = re.compile(r"[a-z][a-z_]{0,79}")
 # (admit_and_plan_portable_lead_precheckout). Its actions use their own
 # reevaluation and request-start RPCs.
 PRECHECKOUT_INTENT_ANCHOR = "precheckout_intent"
+# The anchor of the first contact planned from a payment slip
+# (plan_portable_payment_slip_recovery). Its request starts through its own RPC.
+PAYMENT_SLIP_ANCHOR = "payment_slip"
+# What admit_portable_hotmart_payment_slip_v2 answers. ignored_legacy_slip is
+# a replay of a slip the v1 stored before 20261019000100: it has no detail row
+# and is not processed again.
+PAYMENT_SLIP_V2_ADMISSION_OUTCOMES = frozenset({
+    "inserted", "duplicate", "semantic_conflict", "ignored_legacy_slip",
+})
 _PRECHECKOUT_PLAN_OUTCOMES = frozenset({"planned", "not_planned", "plan_failed"})
 # The reason of a plan as the base stores it: always a code, never free text.
 _PRECHECKOUT_PLAN_REASON = re.compile(r"[a-z0-9_]{1,64}")
@@ -350,6 +359,23 @@ class PaymentSlipAdmissionResult:
 
     outcome: str
     webhook_event_id: str | None
+
+
+@dataclass(frozen=True)
+class PaymentSlipSendContext:
+    """Los hechos crudos de la ficha mas reciente del caso, para componer C1.
+
+    Tal como los guardo la admision v2 (commercial_ally_payment_slip_details).
+    La tienda, el vencimiento y el sufijo del boton los calcula
+    ``bridge.payment_slip`` al componer.
+    """
+
+    webhook_event_id: str
+    payment_type: str | None
+    checkout_country_iso: str | None
+    billet_url: str | None
+    billet_barcode: str | None
+    generated_at: datetime | None
 
 
 @dataclass(frozen=True)
@@ -2328,6 +2354,63 @@ class SupabaseClient:
                 raise _invalid_row_error(operation)
             return PaymentSlipAdmissionResult(outcome, None)
         if outcome not in {"inserted", "duplicate", "semantic_conflict"}:
+            raise SupabaseError(f"{operation}_invalid_outcome")
+        webhook_event_id = _required_uuid(
+            row, "webhook_event_id", operation=operation
+        )
+        return PaymentSlipAdmissionResult(outcome, webhook_event_id)
+
+    async def admit_portable_hotmart_payment_slip_v2(
+        self,
+        *,
+        config: CommercialAllyConfig,
+        external_event_id: str,
+        payload: dict[str, Any],
+        normalized_email: str | None,
+        normalized_phone: str | None,
+    ) -> PaymentSlipAdmissionResult:
+        """Guarda la ficha, admite la identidad y cruza la intencion (C1).
+
+        Como la admision del pago fallido: la identidad que manda el bridge
+        tiene que ser la del payload. Toda ficha del binding se admite y se
+        cruza, sea del medio que sea; el filtro por medio y pais va en el
+        worker. Otro producto u otra oferta vuelve ``ignored_binding_mismatch``
+        sin error, como la v1.
+        """
+        operation = "portable_payment_slip_v2_admission"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/admit_portable_hotmart_payment_slip_v2",
+            content=json.dumps(
+                {
+                    "p_tenant_ref": config.tenant_ref,
+                    "p_funnel_ref": config.funnel_ref,
+                    "p_binding_version": config.binding_version,
+                    "p_external_event_id": external_event_id,
+                    "p_payload": payload,
+                    "p_normalized_email": normalized_email,
+                    "p_normalized_phone": normalized_phone,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        rejection = _deterministic_rejection(response)
+        if rejection is not None:
+            raise SupabasePermanentError(
+                f"{operation}_rejected: {rejection}", reason=rejection
+            )
+        rows = _response_rows(response, operation=operation)
+        if response.status_code != 200 or len(rows) != 1:
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        row = rows[0]
+        if set(row) != {"outcome", "webhook_event_id"}:
+            raise _invalid_row_error(operation)
+        outcome = row.get("outcome")
+        if outcome == "ignored_binding_mismatch":
+            if row.get("webhook_event_id") is not None:
+                raise _invalid_row_error(operation)
+            return PaymentSlipAdmissionResult(outcome, None)
+        if outcome not in PAYMENT_SLIP_V2_ADMISSION_OUTCOMES:
             raise SupabaseError(f"{operation}_invalid_outcome")
         webhook_event_id = _required_uuid(
             row, "webhook_event_id", operation=operation
@@ -5378,6 +5461,22 @@ class SupabaseClient:
             operation="portable_precheckout_pilot_runtime_status",
         )
 
+    async def get_portable_payment_slip_pilot_runtime_status(
+        self,
+        *,
+        pilot_boundary: PilotBoundaryConfig,
+    ) -> PilotRuntimeStatus:
+        """Runtime status of the scope of the first contact after a payment slip.
+
+        Same row as ``get_pilot_runtime_status``, for a published scope of
+        source ``hotmart`` whose event type is ``PURCHASE_BILLET_PRINTED``.
+        """
+        return await self._get_pilot_runtime_status(
+            pilot_boundary=pilot_boundary,
+            rpc="get_portable_payment_slip_pilot_runtime_status",
+            operation="portable_payment_slip_pilot_runtime_status",
+        )
+
     async def get_pilot_scope_audience_mode(
         self,
         *,
@@ -5629,6 +5728,148 @@ class SupabaseClient:
                 row, "scheduled_action_id", operation=operation
             ),
             created=created,
+        )
+
+    async def plan_payment_slip_recovery(
+        self,
+        *,
+        webhook_event_id: str,
+        contact_id: str,
+        external_product_id: str,
+        product_name: str,
+        offer_code: str | None,
+        policy_key: str,
+        policy_version: int,
+        abandoned_at: str,
+        chatwoot_account_id: int | None = None,
+        chatwoot_inbox_id: int | None = None,
+        external_user_id: str | None = None,
+        pilot_boundary: PilotBoundaryConfig | None = None,
+    ) -> CartRecoveryPlan:
+        """Atomically create the portable payment-slip recovery plan.
+
+        Calcado de ``plan_payment_failure_recovery``: la RPC es la derivada de
+        la del pago fallido y conserva sus parametros (``p_failed_at`` es la
+        hora de la ficha). Solo con el scope y la identidad del piloto.
+        """
+        if (
+            pilot_boundary is None
+            or chatwoot_account_id is None
+            or chatwoot_inbox_id is None
+            or external_user_id is None
+        ):
+            raise SupabaseError(
+                "portable_payment_slip_plan_requires_scoped_identity"
+            )
+        operation = "plan_portable_payment_slip_recovery"
+        response = await self._request(
+            "POST",
+            f"/rest/v1/rpc/{operation}",
+            content=json.dumps({
+                "p_webhook_event_id": webhook_event_id,
+                "p_contact_id": contact_id,
+                "p_external_product_id": external_product_id,
+                "p_product_name": product_name,
+                "p_offer_code": offer_code,
+                "p_policy_key": policy_key,
+                "p_policy_version": policy_version,
+                "p_failed_at": abandoned_at,
+                "p_chatwoot_account_id": chatwoot_account_id,
+                "p_chatwoot_inbox_id": chatwoot_inbox_id,
+                "p_external_user_id": external_user_id,
+                "p_scope_key": pilot_boundary.scope_key,
+                "p_scope_version": pilot_boundary.scope_version,
+            }, ensure_ascii=False),
+        )
+        if response.status_code != 200:
+            rejection = _pilot_plan_rejection(response)
+            if rejection is not None:
+                raise PilotPlanRejectedError(rejection)
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        created = row.get("created")
+        if not isinstance(created, bool):
+            raise SupabaseError(f"{operation}_invalid_row")
+        return CartRecoveryPlan(
+            recovery_case_id=_required_string(
+                row, "recovery_case_id", operation=operation
+            ),
+            followup_sequence_id=_required_string(
+                row, "followup_sequence_id", operation=operation
+            ),
+            scheduled_action_id=_required_string(
+                row, "scheduled_action_id", operation=operation
+            ),
+            created=created,
+        )
+
+    async def get_portable_payment_slip_send_context(
+        self,
+        *,
+        action_id: str,
+        worker_id: str,
+        lease_generation: int,
+        now: str,
+    ) -> PaymentSlipSendContext:
+        """The facts of the latest slip of the case, under the current lease.
+
+        A 55000 (no lease, an action that is not ``payment_slip``, a case
+        without a resolved slip) is a ``SupabasePermanentError`` with its
+        reason: it does not change by retrying.
+        """
+        operation = "portable_payment_slip_send_context"
+        response = await self._request(
+            "POST",
+            "/rest/v1/rpc/get_portable_payment_slip_send_context",
+            content=json.dumps({
+                "p_action_id": action_id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": lease_generation,
+                "p_now": now,
+            }),
+        )
+        if response.status_code != 200:
+            rejection = _pilot_plan_rejection(response)
+            if rejection is not None:
+                raise SupabasePermanentError(
+                    f"{operation}_rejected: {rejection}", reason=rejection
+                )
+            raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        rows = _response_rows(response, operation=operation)
+        if len(rows) != 1:
+            raise SupabaseError(f"{operation}_invalid_shape")
+        row = rows[0]
+        if set(row) != {
+            "webhook_event_id",
+            "payment_type",
+            "checkout_country_iso",
+            "billet_url",
+            "billet_barcode",
+            "generated_at",
+        }:
+            raise _invalid_row_error(operation)
+        return PaymentSlipSendContext(
+            webhook_event_id=_required_uuid(
+                row, "webhook_event_id", operation=operation
+            ),
+            payment_type=_optional_string(row, "payment_type", operation=operation),
+            checkout_country_iso=_optional_string(
+                row, "checkout_country_iso", operation=operation
+            ),
+            billet_url=_optional_string(row, "billet_url", operation=operation),
+            billet_barcode=_optional_string(
+                row, "billet_barcode", operation=operation
+            ),
+            generated_at=(
+                None
+                if row.get("generated_at") is None
+                else _required_aware_timestamp(
+                    row, "generated_at", operation=operation
+                )
+            ),
         )
 
     async def apply_hotmart_purchase_approved(
@@ -6652,6 +6893,13 @@ class SupabaseClient:
             if pilot_boundary is None:
                 raise SupabaseError("payment_failure_pilot_boundary_required")
             operation = "mark_portable_payment_failure_request_started"
+        elif anchor_type == PAYMENT_SLIP_ANCHOR:
+            # Derived from the payment failure one: it only starts a
+            # payment_slip action and authorizes it against the scope bound to
+            # the case with PURCHASE_BILLET_PRINTED.
+            if pilot_boundary is None:
+                raise SupabaseError("payment_slip_pilot_boundary_required")
+            operation = "mark_portable_payment_slip_request_started"
         elif anchor_type == PRECHECKOUT_INTENT_ANCHOR:
             # The first contact after the form only starts through its own
             # RPC: it authorizes against the landing scope bound to the case

@@ -93,6 +93,27 @@ class HotmartPaymentFailureData:
     offer_code: str
 
 
+@dataclass(frozen=True)
+class HotmartPaymentSlipData:
+    """Los campos canonicos de una ficha de pago generada (OXXO y parecidos).
+
+    Los hechos propios de la ficha (medio, pais, link, referencia, fecha) los
+    lee ``bridge.payment_slip.payment_slip_facts``; aca va solo lo que la
+    correlaciona, como en el pago fallido.
+    """
+
+    event_id: str
+    creation_date_ms: int
+    transaction: str
+    status: str
+    payment_type: str | None
+    buyer_email: str | None
+    buyer_phone: str | None
+    product_id: int
+    product_ucode: str | None
+    offer_code: str
+
+
 # ── Normalisation helpers ────────────────────────────────────────────
 
 # Hotmart normally sends DDI and digits without "+". Accept conventional
@@ -353,6 +374,105 @@ def parse_hotmart_payment_failure_buyer_payload(
         product_id=failure.product_id,
         product_name=product_name,
         offer_code=failure.offer_code,
+        checkout_country_iso=_str(country.get("iso")),
+        checkout_country_name=_str(country.get("name")),
+        affiliate=_bool(data.get("affiliate")),
+    )
+
+
+def parse_hotmart_payment_slip_payload(
+    payload: object,
+    *,
+    config: CommercialAllyConfig,
+) -> HotmartPaymentSlipData | None:
+    """Una ficha generada (``PURCHASE_BILLET_PRINTED``) del producto y oferta del binding.
+
+    Calcado del pago fallido: misma transaccion, mismo email y mismo telefono
+    (primero ``checkout_phone``). No filtra por medio ni pais: eso lo hace el
+    worker con la tabla ``[[ficha.medios]]``.
+    """
+    event = _json_object(payload)
+    data = _json_object(event.get("data"))
+    buyer = _json_object(data.get("buyer"))
+    product = _json_object(data.get("product"))
+    purchase = _json_object(data.get("purchase"))
+    offer = _json_object(purchase.get("offer"))
+    payment = _json_object(purchase.get("payment"))
+
+    event_id = _str(event.get("id"))
+    creation_date = _int(event.get("creation_date"))
+    transaction = _str(purchase.get("transaction"))
+    buyer_email = _normalize_payment_failure_email(buyer.get("email"))
+    buyer_phone = normalize_phone(buyer.get("checkout_phone"))
+    if buyer_phone is None:
+        buyer_phone = normalize_phone(buyer.get("phone"))
+    product_id = _int(product.get("id"))
+    offer_code = _str(offer.get("code"))
+    if (
+        event_id is None
+        or event.get("event") != EVENT_PURCHASE_BILLET_PRINTED
+        or event.get("version") != EVENT_VERSION
+        or creation_date is None
+        or not 0 < creation_date <= _MAX_DATETIME_TIMESTAMP_MS
+        or transaction is None
+        or _TRANSACTION_REFERENCE.fullmatch(transaction) is None
+        or purchase.get("status") != "BILLET_PRINTED"
+        or (buyer_email is None and buyer_phone is None)
+        or product_id != config.hotmart_product_id
+        or offer_code not in config.accepted_offer_codes
+    ):
+        return None
+
+    assert product_id is not None and offer_code is not None
+    return HotmartPaymentSlipData(
+        event_id=event_id,
+        creation_date_ms=creation_date,
+        transaction=transaction,
+        status="BILLET_PRINTED",
+        payment_type=_str(payment.get("type")),
+        buyer_email=buyer_email,
+        buyer_phone=buyer_phone,
+        product_id=product_id,
+        product_ucode=_str(product.get("ucode")),
+        offer_code=offer_code,
+    )
+
+
+def parse_hotmart_payment_slip_buyer_payload(
+    payload: object,
+    *,
+    config: CommercialAllyConfig,
+) -> HotmartBuyerData | None:
+    """La proyeccion portable del comprador de una ficha del binding.
+
+    Como el pago fallido, exige el nombre del producto del binding. El pais se
+    lee de ``data.purchase.checkout_country``, donde llega en las fichas
+    capturadas el 2026-10-18, y si falta de ``data.checkout_country``.
+    """
+    slip = parse_hotmart_payment_slip_payload(payload, config=config)
+    if slip is None:
+        return None
+    event = _json_object(payload)
+    data = _json_object(event.get("data"))
+    buyer = _json_object(data.get("buyer"))
+    product = _json_object(data.get("product"))
+    purchase = _json_object(data.get("purchase"))
+    country = _json_object(purchase.get("checkout_country")) or _json_object(
+        data.get("checkout_country")
+    )
+    product_name = _str(product.get("name"))
+    if product_name != config.product_name:
+        return None
+    return HotmartBuyerData(
+        event_id=slip.event_id,
+        event_type=EVENT_PURCHASE_BILLET_PRINTED,
+        creation_date_ms=slip.creation_date_ms,
+        buyer_name=_str(buyer.get("name")),
+        buyer_email=slip.buyer_email,
+        buyer_phone=slip.buyer_phone,
+        product_id=slip.product_id,
+        product_name=product_name,
+        offer_code=slip.offer_code,
         checkout_country_iso=_str(country.get("iso")),
         checkout_country_name=_str(country.get("name")),
         affiliate=_bool(data.get("affiliate")),
