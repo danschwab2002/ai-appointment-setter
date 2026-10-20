@@ -7053,7 +7053,7 @@ class SupabaseClient:
             decision=_required_enum(
                 row,
                 "decision",
-                {"execute", "cancel", "pause", "expire", "escalate"},
+                {"execute", "cancel", "pause", "expire", "escalate", "defer"},
                 operation=operation,
             ),
             reason_code=_required_string(row, "reason_code", operation=operation),

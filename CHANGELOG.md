@@ -12,6 +12,18 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.15.4] - 2026-10-20
+
+Un parche sobre la 1.15.3: el despachador acepta la decisión `defer` de la reevaluación (#285). Cambia el bridge y no lleva migración.
+
+### Arreglado
+
+- **Una acción que vence con la ventana cerrada ya no corta la vuelta del despachador.** `reevaluate_followup_action` decide `defer` (`business_window_closed`) cuando una acción vence fuera de la ventana de su política, y la deja ella misma en `deferred` con `due_at` en la próxima apertura. El cliente aceptaba solo `execute`, `cancel`, `pause`, `expire` y `escalate`: cada `defer` tiraba `reevaluate_followup_action_invalid_row` y cortaba la vuelta entera de `dispatch_due`, así que las otras acciones reclamadas en esa vuelta esperaban a que venciera su lease. En ATT1 pasó unas 32 veces en 12 h desde el 2026-10-20 a las 03Z, siempre fuera de 09 a 21 de Ciudad de México. Ahora `defer` es una decisión válida y la vuelta sigue con la acción siguiente.
+
+### Qué hace quien actualiza
+
+- **Pasar el bridge a la imagen 1.15.4.** Sin migración ni cambios en el manifiesto.
+
 ## [1.15.3] - 2026-10-20
 
 Un parche sobre la 1.15.2: el cupón personal vuelve a quedar `valid` (#284). Cambia el bridge y no lleva migración.
