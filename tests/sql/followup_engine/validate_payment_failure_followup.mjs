@@ -588,8 +588,10 @@ const CONTEXT = 'select * from public.get_payment_failure_followup_context_v1($1
 let messageNumber = 0;
 // Un toque del pago rechazado de punta a punta: claim, reevaluacion, intento,
 // lo que haga la prueba antes del arranque (el registro, el link), el arranque
-// del pago rechazado contra su scope y la aceptacion en la conversacion.
-const send = async (label, lead, actionId, { chatwoot = null, beforeStart } = {}) => {
+// del pago rechazado contra su scope, lo que haga despues del arranque (la
+// autorizacion del link, en el orden real del bridge) y la aceptacion en la
+// conversacion.
+const send = async (label, lead, actionId, { chatwoot = null, beforeStart, afterStart } = {}) => {
   const fence = await claim(label, actionId);
   const decision = await reevaluate(actionId, fence, chatwoot ? chatwoot(fence.now) : null);
   if (decision.decision !== 'execute' || decision.reason_code !== 'eligible_for_execution') {
@@ -603,6 +605,9 @@ const send = async (label, lead, actionId, { chatwoot = null, beforeStart } = {}
   const authorization = one((await db.query(`
     select scope_key from public.pilot_outbound_request_authorizations where id = $1
   `, [started.pilot_authorization_id])).rows, `${label} authorization`);
+  // Lo que el bridge hace entre el inicio y el HTTP: autorizar el link, con el
+  // intento ya en request_started (20261020000100).
+  if (afterStart) await afterStart({ ...fence, attempt });
   messageNumber += 1;
   const accepted = one((await db.query(`
     select * from public.record_and_finalize_followup_acceptance($1,$2,$3,$4,$5,$6,$7,$8)
@@ -654,6 +659,22 @@ const couponOf = async (caseId, ordinal) => (await db.query(`
   where recovery_case_id = $1 and ordinal = $2
 `, [caseId, ordinal])).rows[0] ?? null;
 
+// La autorizacion del link despues del inicio, como el bridge
+// (_authorize_recovery_issuance): antes de 20261020000100 daba blocked_attempt.
+const authorizeLinkAfterStart = async (label, actionId, issuanceId, { worker, lease, attempt }) => {
+  const phase = one((await db.query(`
+    select phase from public.followup_delivery_attempts where id = $1
+  `, [attempt.id])).rows, `${label} attempt phase`).phase;
+  const authorized = one((await db.query(`
+    select * from public.authorize_recovery_checkout_issuance_v1($1,$2,$3,$4,$5)
+  `, [issuanceId, actionId, worker, lease, await dbNow()])).rows, `${label} link authorization`);
+  if (phase !== 'request_started' || authorized.outcome !== 'request_started'
+      || authorized.status !== 'request_started') {
+    throw new Error(`${label} link authorization after the start: ${JSON.stringify({ phase, authorized })}`);
+  }
+  return authorized.outcome;
+};
+
 const [B_PAYLOAD] = byPerson(4);
 const [S_PAYLOAD] = byPerson(12);
 const [F_PAYLOAD] = byPerson(1);
@@ -701,8 +722,15 @@ const bPlan = await planRefusal(B.lead, B);
       `, [bPlan.scheduled_action_id, worker, lease, attempt.id, ulidAt(Date.now()), now])).rows,
       'B1 link');
       if (link.outcome !== 'reserved') throw new Error(`B1 link: ${JSON.stringify(link)}`);
+      record.link = link.issuance_id;
+    },
+    afterStart: async (fence) => {
+      record.link_authorized_after_start = await authorizeLinkAfterStart(
+        'B1', bPlan.scheduled_action_id, record.link, fence,
+      );
     },
   });
+  delete record.link;
   if (record.first !== 'recorded' || record.again !== 'already_recorded') {
     throw new Error(`the record: ${JSON.stringify(record)}`);
   }
@@ -773,6 +801,7 @@ const bFollowup = await followupOf('banco', bPlan);
 
   let context = null;
   let link = null;
+  let linkAuthorized = null;
   const sent = await send('seguimiento-banco', B.lead, bFollowup.id, {
     chatwoot: (now) => evidence(B.lead, now),
     beforeStart: async ({ worker, lease, now, attempt }) => {
@@ -786,6 +815,11 @@ const bFollowup = await followupOf('banco', bPlan);
       await expectError('a record on the followup', () => db.query(RECORD,
         [bFollowup.id, attempt.id, worker, lease, 'declined', null, now]),
       { code: '55000', message: 'payment_failure_action_required' });
+    },
+    afterStart: async (fence) => {
+      linkAuthorized = await authorizeLinkAfterStart(
+        'followup', bFollowup.id, link.issuance_id, fence,
+      );
     },
   });
   if (context.followup_kind !== 'second_touch' || context.first_touch_variant !== 'declined'
@@ -816,6 +850,7 @@ const bFollowup = await followupOf('banco', bPlan);
     coupon_2: 'due_at + 24 h',
     link: link.outcome,
     start: 'mark_portable_payment_failure_request_started',
+    link_authorized_after_start: linkAuthorized,
     sequence: `${sequence.completion_reason}:${sequence.automatic_messages_accepted}`,
     case: state.status,
   };

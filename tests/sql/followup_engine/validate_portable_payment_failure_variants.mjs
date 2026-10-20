@@ -747,6 +747,16 @@ if (results.first_contact_with_open_refusal !== 'superseded_by_provider_event') 
   const authorization = one((await db.query(`
     select scope_key from public.pilot_outbound_request_authorizations where id = $1
   `, [started.pilot_authorization_id])).rows, 'B authorization');
+  // El orden real del bridge: el link se autoriza DESPUES de marcar el inicio,
+  // con el intento ya en request_started (20261020000100; antes daba
+  // blocked_attempt y B1 no salia, ATT1 2026-10-20 02:07Z).
+  const linkAuthorized = one((await db.query(`
+    select * from public.authorize_recovery_checkout_issuance_v1($1,$2,$3,$4,$5)
+  `, [link.issuance_id, plans.B.scheduled_action_id, worker, lease, await dbNow()])).rows,
+  'B link authorization');
+  if (linkAuthorized.outcome !== 'request_started' || linkAuthorized.status !== 'request_started') {
+    throw new Error(`B link authorization after the start: ${JSON.stringify(linkAuthorized)}`);
+  }
   const accepted = one((await db.query(`
     select * from public.record_and_finalize_followup_acceptance($1,$2,$3,$4,'920001','refusal-wamid-1',$5,$6)
   `, [plans.B.scheduled_action_id, attempt.id, worker, lease,
@@ -759,6 +769,7 @@ if (results.first_contact_with_open_refusal !== 'superseded_by_provider_event') 
   results.dispatch = {
     send_context: `${context.refusal_kind}/${context.payment_failure_count}`,
     link: link.outcome, start_scope: authorization.scope_key,
+    link_authorized_after_start: linkAuthorized.outcome,
     acceptance: accepted.status, case_after: closed.status,
   };
   // Con el caso cerrado, el primer contacto del formulario sigue frenado.

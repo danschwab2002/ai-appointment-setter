@@ -5160,6 +5160,20 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         1,
         'portable_payment_slip_reminder_survives_reply'
+    union all
+    select
+        '20261020000100',
+        '20261020000100_recovery_checkout_authorize_started_attempt_v1.sql',
+        -- La autorizacion del link acepta el intento ya arrancado.
+        (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.authorize_recovery_checkout_issuance_v1(uuid,uuid,text,bigint,timestamptz)')
+              and position('recovery_checkout_authorize_started_attempt (20261020000100)' in definition) > 0
+              and position('v_attempt.phase not in (''reserved'', ''request_started'')' in definition) > 0
+        )::int,
+        1,
+        'recovery_checkout_authorize_started_attempt'
 )
 select
     version,

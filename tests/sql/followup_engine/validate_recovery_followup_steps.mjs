@@ -608,13 +608,16 @@ const reserveAttempt = async (actionId, { worker, lease, now }, decision) => one
 // El arranque del carrito (el flujo de cada paso del carrito es
 // cart_abandonment) y la aceptacion, en la conversacion de A1.
 let messageNumber = 0;
-const startAndAccept = async (lead, actionId, attempt, { worker, lease }) => {
+const startAndAccept = async (lead, actionId, attempt, { worker, lease }, afterStart) => {
   const started = one((await db.query(`
     select * from public.mark_lancemos_pilot_request_started($1,$2,$3,$4,$5)
   `, [actionId, attempt.id, worker, lease, await dbNow()])).rows, `${lead.label} start`);
   if (started.phase !== 'request_started' || started.pilot_authorization_id == null) {
     throw new Error(`${lead.label} start: ${JSON.stringify(started)}`);
   }
+  // Lo que el bridge hace entre el inicio y el HTTP (la autorizacion del link,
+  // con el intento ya en request_started: 20261020000100).
+  if (afterStart) await afterStart({ worker, lease, attempt });
   messageNumber += 1;
   const accepted = one((await db.query(`
     select * from public.record_and_finalize_followup_acceptance($1,$2,$3,$4,$5,$6,$7,$8)
@@ -628,7 +631,7 @@ const startAndAccept = async (lead, actionId, attempt, { worker, lease }) => {
 };
 // Un toque de punta a punta: claim, reevaluacion, intento, arranque y
 // aceptacion. A1 sale sin evidencia de Chatwoot (no hay conversacion).
-const send = async (lead, actionId, { chatwoot = null, beforeStart } = {}) => {
+const send = async (lead, actionId, { chatwoot = null, beforeStart, afterStart } = {}) => {
   const fence = await claim(lead, actionId);
   const decision = await reevaluate(actionId, fence.worker, fence.lease, fence.now,
     chatwoot ? chatwoot(fence.now) : null);
@@ -637,7 +640,7 @@ const send = async (lead, actionId, { chatwoot = null, beforeStart } = {}) => {
   }
   const attempt = await reserveAttempt(actionId, fence, decision);
   if (beforeStart) await beforeStart({ ...fence, attempt });
-  await startAndAccept(lead, actionId, attempt, fence);
+  await startAndAccept(lead, actionId, attempt, fence, afterStart);
   return { ...fence, attempt, decision };
 };
 const sendA1 = (lead) => send(lead, lead.plan.scheduled_action_id);
@@ -790,12 +793,27 @@ let a2Checkout = null;
   await sleepUntil(main.z.due_at);
   const ulid = ulidAt(Date.now());
   let issuance = null;
+  let zAuthorized = null;
   await send(main, main.z.id, {
     chatwoot: (now) => evidence(main, now),
     beforeStart: async ({ worker, lease, now, attempt }) => {
       issuance = one((await db.query(`
         select * from public.reserve_recovery_checkout_issuance_v1($1,$2,$3,$4,$5,$6)
       `, [main.z.id, worker, lease, attempt.id, ulid, now])).rows, 'Z checkout link');
+    },
+    // El orden real del bridge: el link se autoriza despues del inicio.
+    afterStart: async ({ worker, lease, attempt }) => {
+      const phase = one((await db.query(`
+        select phase from public.followup_delivery_attempts where id = $1
+      `, [attempt.id])).rows, 'Z attempt phase').phase;
+      zAuthorized = one((await db.query(`
+        select * from public.authorize_recovery_checkout_issuance_v1($1,$2,$3,$4,$5)
+      `, [issuance.issuance_id, main.z.id, worker, lease, await dbNow()])).rows,
+      'Z link authorization');
+      if (phase !== 'request_started' || zAuthorized.outcome !== 'request_started'
+          || zAuthorized.status !== 'request_started') {
+        throw new Error(`Z link authorization after the start: ${JSON.stringify({ phase, zAuthorized })}`);
+      }
     },
   });
   if (issuance.outcome !== 'reserved'
@@ -814,6 +832,7 @@ let a2Checkout = null;
   }
   results.z_checkout = {
     z: issuance.outcome,
+    z_authorized_after_start: zAuthorized.outcome,
     sck: 'hermes~v1~',
     a2: `${a2Checkout.code}:${a2Checkout.message}`,
     sequence: `${sequence.completion_reason}:${sequence.automatic_messages_accepted}`,
