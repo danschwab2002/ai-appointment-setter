@@ -14,7 +14,7 @@ Lo que ya está en `main` y todavía no tiene versión. El número se elige al p
 
 ## [1.15.4] - 2026-10-20
 
-Un parche sobre la 1.15.3: el despachador acepta la decisión `defer` de la reevaluación (#PR). Cambia el bridge y no lleva migración.
+Un parche sobre la 1.15.3: el despachador acepta la decisión `defer` de la reevaluación (#285). Cambia el bridge y no lleva migración.
 
 ### Arreglado
 
