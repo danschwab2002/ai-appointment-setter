@@ -12,6 +12,20 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.15.2] - 2026-10-20
+
+Un parche sobre la 1.15.1: los mensajes con el link de recuperación vuelven a poder salir (#282). Lleva una migración y no cambia el bridge.
+
+### Arreglado
+
+- **El link de recuperación se autoriza con el envío ya iniciado.** El bridge pide la autorización del link después de marcar el inicio del envío, a propósito, y `authorize_recovery_checkout_issuance_v1` solo la daba con el intento todavía en `reserved`: todo mensaje con link de recuperación (A1 con cupón, B1 con link, Z del carrito, B2 y Z del pago rechazado) terminaba en `delivery_unknown` con `recovery_checkout_blocked_attempt` y no salía. Lo mostró el primer B1 real de ATT1, el 2026-10-20 a las 02:07Z. Ahora la autorización acepta el intento en `reserved` o en `request_started`, con el mismo cerco de la lease.
+
+### Qué hace quien actualiza
+
+- **Correr la migración `20261020000100_recovery_checkout_authorize_started_attempt_v1.sql`.** Redefine una sola función, `authorize_recovery_checkout_issuance_v1`, desde su definición viva con un reemplazo contado (si el texto no coincide, aborta sin cambiar nada). Sin paso manual y sin cambios de permisos. Cambia desde que se aplica.
+- **El bridge no cambia:** la imagen 1.15.0 anda sobre la base migrada.
+- Los intentos que ya quedaron en `delivery_unknown` por este motivo no se reabren.
+
 ## [1.15.1] - 2026-10-19
 
 Un parche sobre la 1.15.0: el recordatorio del vencimiento de la ficha ya no se cancela porque la persona conteste (#280). Lleva una migración y no cambia el bridge.
