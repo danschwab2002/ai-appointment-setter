@@ -49,6 +49,16 @@ def _ms(moment: datetime) -> int:
     return int(moment.timestamp() * 1000)
 
 
+# La respuesta real de GET /products/api/v1/coupon/product/{id}?code=..., capturada
+# en ATT1 el 2026-10-20 sobre un cupon del carrito (el codigo, tapado). Sin la
+# clave `active`: el worker la exigia en `true` y ningun cupon pasaba a `valid`.
+FIND_FIXTURE = Path(__file__).parent / "fixtures" / "hotmart" / "coupon_find_att1_2026-10-20.json"
+
+
+def _find_fixture_item() -> dict[str, Any]:
+    return json.loads(FIND_FIXTURE.read_text())["items"][0]
+
+
 def _credentials(basic: str = BASIC) -> HotmartApiCredentials:
     return HotmartApiCredentials(
         client_id=CLIENT_ID, client_secret=CLIENT_SECRET, basic=basic
@@ -63,7 +73,8 @@ class FakeHotmart:
         self.coupons: dict[str, dict[str, Any]] = {}
         self.create_failures: list[object] = []
         self.find_status = "valid"
-        self.find_active = True
+        # None: como Hotmart de verdad, sin la clave `active` (FIND_FIXTURE).
+        self.find_active: bool | None = None
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
@@ -102,17 +113,16 @@ class FakeHotmart:
             code = request.url.params["code"]
             items = []
             if code in self.coupons:
-                items.append(
-                    {
-                        "id": 987,
-                        "coupon_code": code,
-                        "active": self.find_active,
-                        "status": self.find_status,
-                        "discount": 0.1,
-                        "start_date": self.coupons[code]["start_date"],
-                        "time_zone": "America/Sao_Paulo",
-                    }
+                item = dict(_find_fixture_item())
+                item.update(
+                    id=987,
+                    coupon_code=code,
+                    status=self.find_status,
+                    start_date=self.coupons[code]["start_date"],
                 )
+                if self.find_active is not None:
+                    item["active"] = self.find_active
+                items.append(item)
             return httpx.Response(200, json={"items": items, "page_info": {}})
         raise AssertionError(f"unexpected request {request.method} {path}")
 
@@ -307,6 +317,26 @@ def test_find_requires_the_exact_code() -> None:
     assert asyncio.run(client.find_coupon(PRODUCT_ID, CODE)) is None
 
 
+def test_find_reads_the_captured_response_without_active() -> None:
+    body = json.loads(FIND_FIXTURE.read_text().replace("<CODIGO>", CODE))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/security/oauth/token":
+            return httpx.Response(200, json={"access_token": ACCESS_TOKEN, "expires_in": 172799})
+        return httpx.Response(200, json=body)
+
+    client = HotmartApiClient(
+        credentials=_credentials(), transport=httpx.MockTransport(handler)
+    )
+
+    found = asyncio.run(client.find_coupon(PRODUCT_ID, CODE))
+
+    assert found is not None
+    assert found.status == "valid"
+    assert found.active is None
+    assert found.coupon_id == 4301687
+
+
 # ── El worker ──────────────────────────────────────────────────────
 
 
@@ -341,6 +371,36 @@ def test_reserved_is_created_then_verified_seven_minutes_later() -> None:
 
     assert store.row["status"] == "valid"
     assert hotmart.count("POST", "/coupon") == 1
+
+
+def test_valid_without_active_is_valid_as_hotmart_answers() -> None:
+    hotmart = FakeHotmart()
+    assert hotmart.find_active is None
+    store = FakeCouponStore()
+    clock = Clock(T0)
+    worker = _worker(store, hotmart.client(), clock)
+
+    asyncio.run(worker.run_once())
+    clock.now = T0 + timedelta(minutes=7)
+    asyncio.run(worker.run_once())
+
+    assert store.row["status"] == "valid"
+    assert hotmart.count("GET", f"/coupon/product/{PRODUCT_ID}") == 1
+
+
+def test_valid_but_explicitly_inactive_is_create_failed() -> None:
+    hotmart = FakeHotmart()
+    hotmart.find_active = False
+    store = FakeCouponStore()
+    clock = Clock(T0)
+    worker = _worker(store, hotmart.client(), clock)
+
+    asyncio.run(worker.run_once())
+    clock.now = T0 + timedelta(minutes=7)
+    asyncio.run(worker.run_once())
+
+    assert store.row["status"] == "create_failed"
+    assert store.row["failure_code"] == "hotmart_coupon_inactive"
 
 
 def test_soon_is_checked_again_a_minute_later() -> None:

@@ -327,7 +327,10 @@ class RecoveryCouponWorker:
                 claim, "create_failed", failure_code="hotmart_coupon_missing"
             )
             return
-        if found.status == "valid" and found.active is True:
+        # Hotmart no manda `active` al buscar por codigo (respuesta real de
+        # ATT1 del 2026-10-20, tests/fixtures/hotmart/): solo un `false`
+        # explicito descarta un cupon `valid`.
+        if found.status == "valid" and found.active is not False:
             await self._settle(claim, "valid")
             return
         if found.status == "overdue":
