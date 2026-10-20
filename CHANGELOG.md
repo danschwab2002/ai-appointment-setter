@@ -12,6 +12,18 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.15.3] - 2026-10-20
+
+Un parche sobre la 1.15.2: el cupón personal vuelve a quedar `valid` (#PR). Cambia el bridge y no lleva migración.
+
+### Arreglado
+
+- **Un cupón `valid` de Hotmart sin la clave `active` cuenta como válido.** El worker del cupón exigía `active: true` al verificarlo, pero la búsqueda por código de Hotmart (`GET /products/api/v1/coupon/product/{id}?code=…`) no manda esa clave: ningún cupón pasaba de `created` a `valid`, el worker los volvía a mirar cada minuto, y A1, Z del carrito y los mensajes con cupón del pago rechazado salían sin descuento o no salían. En ATT1, los 20 cupones del carrito del 19 al 20/10 quedaron en `created`, con hasta 576 verificaciones. Ahora solo un `active: false` explícito descarta un cupón `valid`. La respuesta real quedó capturada en `tests/fixtures/hotmart/coupon_find_att1_2026-10-20.json`, y el Hotmart simulado de las pruebas responde con esa forma.
+
+### Qué hace quien actualiza
+
+- **Pasar el bridge a la imagen 1.15.3.** Sin migración ni cambios en el manifiesto. Los cupones que quedaron en `created` y siguen vigentes pasan a `valid` en la próxima verificación.
+
 ## [1.15.2] - 2026-10-20
 
 Un parche sobre la 1.15.1: los mensajes con el link de recuperación vuelven a poder salir (#282). Lleva una migración y no cambia el bridge.
