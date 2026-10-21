@@ -10,8 +10,8 @@ con la biblioteca estandar, con el molde de ``piloto.sh``.
 **Lo corre una persona, en una terminal.** Toda escritura pide un codigo que
 el script muestra y lee por ``/dev/tty``; sin terminal se niega. La garantia
 real es ser root en el VPS: el codigo ataja un error, no a un root.
-**Andy no corre ``publicar``, ``volver``, ``prender``, ``apagar``, ``pausar``
-ni ``descartar``.**
+**Andy no corre ``publicar``, ``volver``, ``prender``, ``apagar``, ``pausar``,
+``descartar``, ``registrar`` ni ``ruta``.**
 
 Subcomandos::
 
@@ -25,6 +25,8 @@ Subcomandos::
     prender <producto>/<flujo> --quien <q> --motivo "..." [--sin-simulacion]
     apagar <producto>/<flujo> --quien <q> --motivo "..." [--sin-simulacion]
     pausar <producto>/<flujo> --quien <q> --motivo "..."
+    registrar <producto>/<flujo> --quien <q> --motivo "..."
+    ruta <producto>/<flujo> --tipo carrito|pago_fallido|ficha --scope <scope del legado> --quien <q> --motivo "..."
     descartar <propuesta> --quien <q> --motivo "..."
     descartar --todo-del-agente --quien <q> --motivo "..."
 
@@ -384,6 +386,15 @@ SQL_OPEN = f"""select coalesce(jsonb_agg(jsonb_build_object({_PROPOSAL_FIELDS}) 
  where p.tenant_ref = {_arg('tenant')} and p.ally_ref = {_arg('ally')}
    and p.status in ('borrador', 'validada', 'aprobada');"""
 
+# Las rutas de los flujos de la instancia (20261021000200). Solo para mostrarlas en ``estado``.
+SQL_ROUTES = f"""select coalesce(jsonb_agg(jsonb_build_object(
+    'product_ref', c.product_ref, 'flow_key', c.flow_key, 'executor', r.executor, 'legacy_kind', r.legacy_kind,
+    'legacy_scope_key', r.legacy_scope_key) order by c.product_ref, c.flow_key), '[]'::jsonb)::text
+  from public.flow_engine_routes r join public.flow_controls c on c.flow_id = r.flow_id
+ where c.tenant_ref = {_arg('tenant')} and c.ally_ref = {_arg('ally')};"""
+# Los tipos del legado que frena la guarda del almacen (operator_create_flow_route_v1).
+ROUTE_KINDS = ("carrito", "pago_fallido", "ficha")
+
 # Las dos lecturas del motor (flow-engine-v1, secciones 1 y 2), para la simulacion de la vista previa.
 # La historia se pide con el now() de la base: 8 dias menos 5 minutos, lo que la funcion acepta.
 SQL_ENGINE = f"""select public.read_flow_engine_v1({INSTANCE_SQL}, {_arg('after')})::text;"""
@@ -492,9 +503,23 @@ def cmd_estado(ops: Ops, _args: argparse.Namespace) -> int:
     ops.say(NOT_GOVERNING)
     world = ops.read_world()
     ops.show("instancia", world["instance"])
+    try:
+        found = ops.sql_json(SQL_ROUTES, {"tenant": ops.config.tenant, "ally": ops.config.ally}, read_only=True)
+    except Refused:
+        found = None
+    routes = {(route["product_ref"], route["flow_key"]): route for route in found} \
+        if isinstance(found, list) and all(isinstance(route, dict) for route in found) else None
     for flow in world["store"]["flows"]:
         ops.say(f"* {flow['product_ref']}/{flow['flow_key']}: {flow['state']}, version {flow['active_version']}, "
                 f"generacion {flow['generation']}, versiones {sorted(int(v) for v in flow['versions'])}")
+        route = None if routes is None else routes.get((flow["product_ref"], flow["flow_key"]))
+        if routes is None:
+            ops.say("  ruta: no se pudo leer (la base no tiene la migracion del motor)")
+        elif route is None:
+            ops.say("  ruta: ninguna; el estado de aca no frena nada del legado")
+        else:
+            ops.say(f"  ruta: {route['executor']} ({route['legacy_kind']}, {route['legacy_scope_key']}); "
+                    "pausarlo o apagarlo aca frena el legado")
     if not world["store"]["flows"]:
         ops.say("* no hay flujos registrados")
     return EXIT_OK
@@ -693,6 +718,61 @@ def cmd_pausar(ops: Ops, args: argparse.Namespace) -> int:
     return EXIT_OK if paused.get("ok") is True else EXIT_BLOCKED
 
 
+def cmd_registrar(ops: Ops, args: argparse.Namespace) -> int:
+    """Registra un flujo nuevo en el almacen: queda apagado y sin version (operator_register_flow_v1).
+
+    Despues va su v1 con ``proponer`` (una ``version`` y un ``prender`` en la misma propuesta).
+    """
+    ops.check_approver(args.quien)
+    match = _FLOW.fullmatch(args.flujo)
+    if not match:
+        raise Refused("el flujo va como <producto>/<flujo>", EXIT_USAGE)
+    world = ops.read_world()
+    product, key = match.groups()
+    if product not in world["instance"]["products"]:
+        raise Refused(f"el producto {product} no tiene un binding activo en esta instancia")
+    for flow in world["store"]["flows"]:
+        if (flow["product_ref"], flow["flow_key"]) == (product, key):
+            raise Refused(f"{args.flujo} ya esta registrado: {flow['flow_id']}")
+    ops.say(f"{args.flujo}: se registra apagado y sin version; el almacen no lo ejecuta ni frena nada")
+    ops.confirm(f"registrar {args.flujo}")
+    params = {"tenant": ops.config.tenant, "ally": ops.config.ally, "product": product, "flow": key,
+              "who": args.quien, "reason": args.motivo}
+    registered = ops.sql_json(INSTANCE_ARGS + _call(
+        "operator_register_flow_v1", ("instance", "jsonb"), ("product", "text"), ("flow", "text"),
+        ("who", "text"), ("reason", "text")), params)
+    ops.show("registro", registered)
+    return EXIT_OK if registered.get("ok") is True else EXIT_BLOCKED
+
+
+def cmd_ruta(ops: Ops, args: argparse.Namespace) -> int:
+    """Crea la ruta de un flujo en ``legado`` (operator_create_flow_route_v1, contrato flow-engine-v1 §3).
+
+    Desde ahi, la guarda del legado lee el estado del flujo en el almacen: pausarlo
+    o apagarlo aca frena lo que manda el legado. Por eso el flujo tiene que estar
+    prendido: con una ruta sobre un flujo apagado, el legado se frena al instante.
+    """
+    ops.check_approver(args.quien)
+    if args.tipo not in ROUTE_KINDS:
+        raise Refused(f"--tipo va como {', '.join(ROUTE_KINDS)}", EXIT_USAGE)
+    flow = _find_flow(ops.read_world(), args.flujo)
+    if flow["state"] != "prendido" or flow["active_version"] is None:
+        raise Refused(f"{args.flujo} esta {flow['state']} (version {flow['active_version']}): con la ruta, el legado "
+                      "se frenaria al instante; primero publica su version prendida")
+    ops.say(f"{args.flujo}: prendido en la version {flow['active_version']}")
+    ops.say(f"la ruta va en legado ({args.tipo}, {args.scope}): el legado sigue mandando lo mismo, pero desde ahora "
+            f"pausar o apagar {args.flujo} en el almacen frena al legado")
+    ops.confirm(f"crear la ruta de {args.flujo}")
+    params = {"tenant": ops.config.tenant, "ally": ops.config.ally, "product": flow["product_ref"],
+              "flow": flow["flow_key"], "kind": args.tipo, "scope": args.scope, "who": args.quien,
+              "reason": args.motivo}
+    created = ops.sql_json(INSTANCE_ARGS + _call(
+        "operator_create_flow_route_v1", ("instance", "jsonb"), ("product", "text"), ("flow", "text"),
+        ("kind", "text"), ("scope", "text"), ("who", "text"), ("reason", "text")), params)
+    ops.show("ruta", created)
+    return EXIT_OK if created.get("ok") is True else EXIT_BLOCKED
+
+
 def _discard(ops: Ops, proposal_id: str, who: str, reason: str) -> dict[str, Any]:
     params = {"tenant": ops.config.tenant, "ally": ops.config.ally, "id": proposal_id, "who": who,
               "reason": reason}
@@ -758,6 +838,14 @@ def parser() -> argparse.ArgumentParser:
     command = writer("pausar")
     command.add_argument("flujo")
     command.add_argument("--motivo", required=True)
+    command = writer("registrar")
+    command.add_argument("flujo")
+    command.add_argument("--motivo", required=True)
+    command = writer("ruta")
+    command.add_argument("flujo")
+    command.add_argument("--tipo", required=True)
+    command.add_argument("--scope", required=True)
+    command.add_argument("--motivo", required=True)
     command = writer("descartar")
     command.add_argument("propuesta", nargs="?")
     command.add_argument("--todo-del-agente", action="store_true")
@@ -769,7 +857,7 @@ COMMANDS: dict[str, Callable[[Ops, argparse.Namespace], int]] = {
     "estado": cmd_estado, "listar": cmd_listar, "ver": cmd_ver, "proponer": cmd_proponer,
     "validar": cmd_validar, "publicar": cmd_publicar, "volver": cmd_estado_o_version,
     "prender": cmd_estado_o_version, "apagar": cmd_estado_o_version, "pausar": cmd_pausar,
-    "descartar": cmd_descartar,
+    "descartar": cmd_descartar, "registrar": cmd_registrar, "ruta": cmd_ruta,
 }
 
 
