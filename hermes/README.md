@@ -104,6 +104,10 @@ python3 scripts/hermes_instancia.py chequear --instancia /opt/setter-att1/instan
 ```
 
 - **`plan`** dice qué haría `aplicar` y no escribe nada. Se corre siempre antes.
+- **`--solo <profile>`** acota `plan`, `aplicar` y `chequear` a ese profile: los otros no se instalan
+  ni se chequean (la marca, el dueño del Hermes y los profiles de más, sí). Sirve para instalar uno
+  nuevo sin arrastrar un cambio pendiente de otro: el 2026-10-21, el SOUL del comercial de ATT1 no era
+  el de Git (le faltaba lo de varios productos) y el Automation Expert se instaló con `--solo`.
 - **`aplicar` es un deploy.** Hermes lee el SOUL y el `config.yaml` de un profile en cada pedido:
   lo que escribe `aplicar` lo usa el agente desde el pedido siguiente, sin reiniciar.
   - crea lo que falta (`hermes profile create`, que registra el servicio en s6);
