@@ -14,7 +14,7 @@ Lo que ya está en `main` y todavía no tiene versión. El número se elige al p
 
 ## [1.15.5] - 2026-10-21
 
-Un parche sobre la 1.15.4: los pasos siguientes (A2 y Z del carrito, B2 o Z del pago rechazado, C3 de la ficha) verifican Chatwoot contra el teléfono del caso (#PR). Cambia el bridge y no lleva migración.
+Un parche sobre la 1.15.4: los pasos siguientes (A2 y Z del carrito, B2 o Z del pago rechazado, C3 de la ficha) verifican Chatwoot contra el teléfono del caso (#286). Cambia el bridge y no lleva migración.
 
 ### Arreglado
 
