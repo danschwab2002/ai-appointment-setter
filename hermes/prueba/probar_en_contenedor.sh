@@ -43,6 +43,16 @@ a = (d.get("platforms") or {}).get("api_server") or {}
 print("gateway_state.json:", {k: d.get(k) for k in ("gateway_state", "desired_state", "pid", "exit_reason", "updated_at")},
       "api_server:", {k: a.get(k) for k in ("state", "writer_pid", "error_message")})
 ' 2>&1 || true
+  docker exec "$C" /command/s6-svstat /run/service/gateway-automation-expert 2>&1 || true
+  docker exec "$C" /opt/hermes/.venv/bin/python -c '
+import json, os
+r = "/opt/data/profiles/automation-expert/gateway_state.json"
+if os.path.exists(r):
+    d = json.load(open(r))
+    s = (d.get("platforms") or {}).get("slack") or {}
+    print("automation-expert gateway_state.json:", {k: d.get(k) for k in ("gateway_state", "desired_state", "pid", "exit_reason", "updated_at")},
+          "slack:", {k: s.get(k) for k in ("state", "error_code")})
+' 2>&1 || true
   docker exec "$C" sh -c 'tail -n 80 /opt/data/profiles/agente-comercial/logs/gateway.log; echo "--- s6-log"; tail -n 40 /opt/data/logs/gateways/agente-comercial/current' 2>&1 \
     | grep -v "rejected invalid API key" | sed 's/[0-9a-f]\{40,\}/***/g' || true
 }
@@ -199,13 +209,105 @@ contiene ajeno-profile "el profile agente-comercial ya existe, no lo instalo est
 [ "$(docker exec "$AJENO" md5sum /opt/data/profiles/agente-comercial/SOUL.md)" = "$SOUL_AJENO" ] || fallar "toco el SOUL ajeno"
 docker exec "$AJENO" test ! -e /opt/data/.setter-instancia.json || fallar "marco el Hermes ajeno"
 
+paso "10b. el Automation Expert: un profile de Slack, con sus plugins y sus herramientas"
+# Sin red, Slack no conecta: Hermes reintenta en segundo plano y el gateway sigue corriendo. Por eso
+# aplicar y chequear salen con 1 y la unica diferencia es esa. Los tokens son de prueba.
+python3 - "$TMP/secretos/automation-expert.variables" <<'PY'
+import secrets, sys
+with open(sys.argv[1], "w") as f:
+    f.write("SLACK_BOT_TOKEN=xoxb-prueba-" + secrets.token_hex(16) + "\n")
+    f.write("SLACK_APP_TOKEN=xapp-prueba-" + secrets.token_hex(16) + "\n")
+    f.write("SLACK_ALLOWED_USERS=U0123ABCD\n")
+    f.write("AUTOMATION_EXPERT_API_URL=http://127.0.0.1:9998\n")
+    f.write("AUTOMATION_EXPERT_API_TOKEN=" + secrets.token_hex(24) + "\n")
+    f.write("AUTOMATION_EXPERT_INTERNAL_HOST=127.0.0.1:9998\n")
+PY
+cp "$TMP/hermes.toml" "$TMP/hermes-ae.toml"
+cat >> "$TMP/hermes-ae.toml" <<'TOML'
+
+[profiles.automation-expert]
+modelo = "prueba/modelo"
+proveedor = "custom"
+base_url = "http://127.0.0.1:9999/v1"
+administran = ["U0123ABCD"]
+
+[profiles.automation-expert.variables]
+SLACK_BOT_TOKEN = { archivo = "secretos/automation-expert.variables", variable = "SLACK_BOT_TOKEN" }
+SLACK_APP_TOKEN = { archivo = "secretos/automation-expert.variables", variable = "SLACK_APP_TOKEN" }
+SLACK_ALLOWED_USERS = { archivo = "secretos/automation-expert.variables", variable = "SLACK_ALLOWED_USERS" }
+AUTOMATION_EXPERT_API_URL = { archivo = "secretos/automation-expert.variables", variable = "AUTOMATION_EXPERT_API_URL" }
+AUTOMATION_EXPERT_API_TOKEN = { archivo = "secretos/automation-expert.variables", variable = "AUTOMATION_EXPERT_API_TOKEN" }
+AUTOMATION_EXPERT_INTERNAL_HOST = { archivo = "secretos/automation-expert.variables", variable = "AUTOMATION_EXPERT_INTERNAL_HOST" }
+TOML
+PID=$(pid_del_gateway agente-comercial)
+instalador plan-ae 0 plan --instancia "$TMP/hermes-ae.toml"
+contiene plan-ae "crear el profile automation-expert"
+contiene plan-ae "arrancar el gateway de automation-expert"
+instalador aplicar-ae 1 aplicar --instancia "$TMP/hermes-ae.toml"
+contiene aplicar-ae "instalar la distribucion en automation-expert"
+contiene aplicar-ae "automation-expert: plugins/ igual a Git"
+contiene aplicar-ae "automation-expert: en slack tiene exactamente [automation_expert_read]"
+contiene aplicar-ae "automation-expert: el gateway corre"
+contiene aplicar-ae "automation-expert: el gateway arranco despues de sus variables y sus plugins"
+contiene aplicar-ae "automation-expert: Slack no esta conectado"
+contiene aplicar-ae "agente-comercial: cero herramientas en el API server"
+contiene aplicar-ae "VEREDICTO: 1 diferencia(s) con la declaracion"
+[ "$(pid_del_gateway agente-comercial)" = "$PID" ] || fallar "instalar el Automation Expert reinicio al comercial"
+como_hermes "$C" test -f /opt/data/profiles/automation-expert/plugins/automation-expert-read/tools.py || fallar "no copio los plugins"
+instalador plan-ae-sin-cambios 0 plan --instancia "$TMP/hermes-ae.toml"
+contiene plan-ae-sin-cambios "VEREDICTO: nada que aplicar"
+
+paso "10c. rojo a proposito: un plugin tocado en el servidor se repara sin reiniciar"
+# El proceso cargo el plugin de Git al arrancar: tocar el archivo no cambia lo que corre, y
+# repararlo lo deja igual a lo que corre. No hace falta reiniciar.
+PID_AE=$(pid_del_gateway automation-expert)
+como_hermes "$C" sh -c 'printf "\n# x\n" >> /opt/data/profiles/automation-expert/plugins/automation-expert-read/tools.py'
+instalador rojo-plugin 1 chequear --instancia "$TMP/hermes-ae.toml"
+contiene rojo-plugin "automation-expert: plugins/ distinto de Git"
+instalador repara-plugin 1 aplicar --instancia "$TMP/hermes-ae.toml"
+contiene repara-plugin "instalar la distribucion en automation-expert (plugins/)"
+contiene repara-plugin "automation-expert: plugins/ igual a Git"
+contiene repara-plugin "automation-expert: el gateway arranco despues de sus variables y sus plugins"
+[ "$(pid_del_gateway automation-expert)" = "$PID_AE" ] || fallar "reparar el plugin reinicio al Automation Expert"
+
+paso "10c2. rotar el token de Slack: el gateway lo lee solo al arrancar"
+python3 - "$TMP/secretos/automation-expert.variables" <<'PY'
+import secrets, sys
+ruta = sys.argv[1]
+lineas = [l for l in open(ruta) if not l.startswith("SLACK_BOT_TOKEN=")]
+lineas.append("SLACK_BOT_TOKEN=xoxb-prueba-" + secrets.token_hex(16) + "\n")
+open(ruta, "w").writelines(lineas)
+PY
+instalador plan-token 0 plan --instancia "$TMP/hermes-ae.toml"
+contiene plan-token "reiniciar el gateway de automation-expert, porque cambian sus variables o sus plugins"
+instalador rota-token 1 aplicar --instancia "$TMP/hermes-ae.toml"
+contiene rota-token "poner SLACK_BOT_TOKEN en las variables de automation-expert"
+contiene rota-token "corre con variables o plugins de antes: reiniciarlo con aplicar --reiniciar"
+[ "$(pid_del_gateway automation-expert)" = "$PID_AE" ] || fallar "aplicar sin --reiniciar reinicio al Automation Expert"
+instalador rota-token-chequear 1 chequear --instancia "$TMP/hermes-ae.toml"
+contiene rota-token-chequear "el gateway corre con variables o plugins de antes: falta aplicar --reiniciar"
+instalador rota-token-reinicia 1 aplicar --instancia "$TMP/hermes-ae.toml" --reiniciar
+contiene rota-token-reinicia "reiniciar el gateway de automation-expert: sus variables o sus plugins son mas nuevos que el proceso"
+contiene rota-token-reinicia "automation-expert: el gateway arranco despues de sus variables y sus plugins"
+[ "$(pid_del_gateway automation-expert)" != "$PID_AE" ] || fallar "aplicar --reiniciar no reinicio al Automation Expert"
+[ "$(pid_del_gateway agente-comercial)" = "$PID" ] || fallar "reiniciar al Automation Expert reinicio al comercial"
+
+paso "10d. la instancia que no declara el Automation Expert lo ve como profile de mas"
+instalador sin-ae 1 chequear --instancia "$TMP/hermes.toml"
+contiene sin-ae "sobra el profile automation-expert"
+
 paso "11. la key de prueba no aparece en ninguna salida"
 for archivo in "$TMP/clave-vieja.env" "$TMP/clave-intermedia.env" "$TMP/secretos/bridge.env"; do
   CLAVE=$(sed -n 's/^HERMES_API_KEY=//p' "$archivo")
   [ -n "$CLAVE" ] || fallar "no hay key de prueba en $archivo"
   if grep -rqF -- "$CLAVE" "$SALIDAS"; then fallar "una key de prueba aparecio en una salida"; fi
 done
-echo "ninguna de las $(ls "$SALIDAS" | wc -l | tr -d ' ') salidas tiene alguna de las tres keys de prueba"
+for VAR in SLACK_BOT_TOKEN SLACK_APP_TOKEN AUTOMATION_EXPERT_API_TOKEN; do
+  VALOR=$(sed -n "s/^$VAR=//p" "$TMP/secretos/automation-expert.variables")
+  [ -n "$VALOR" ] || fallar "no hay $VAR de prueba"
+  if grep -rqF -- "$VALOR" "$SALIDAS"; then fallar "el $VAR de prueba aparecio en una salida"; fi
+done
+echo "ninguna de las $(ls "$SALIDAS" | wc -l | tr -d ' ') salidas tiene alguna de las keys ni de los tokens de prueba"
 
 echo
 echo "TODO OK"

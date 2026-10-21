@@ -25,7 +25,22 @@ version_hermes = "0.21.0"
 distribucion = "profiles/agente-comercial-comun"   # SOUL.md, config.yaml y distribution.yaml
 puerto = 8642                                      # el del API server, adentro de la red del stack
 le_habla = "bridge"
+
+[profiles.automation-expert]
+distribucion = "profiles/automation-expert"        # además, su carpeta plugins/
+le_habla = "slack"                                 # sin API server ni puerto
+herramientas = ["automation_expert_read"]          # exactamente estas en Slack, ni una más
+obligatorio = false                                # la instancia puede no declararlo
 ```
+
+Hay dos tipos de profile:
+
+- **`le_habla = "bridge"`** (el agente comercial): lo llama el bridge por el API server del `puerto`.
+  Cero herramientas y ninguna otra plataforma.
+- **`le_habla = "slack"`** (el Automation Expert): atiende por mensaje directo de Slack y le habla al
+  bridge por su plugin. No tiene API server. Tiene exactamente las `herramientas` declaradas en
+  Slack, y su carpeta `plugins/` se instala y se chequea por hash contra Git. Sus variables (los
+  tokens de Slack) y sus plugins se leen solo al arrancar el gateway.
 
 Lista solo los profiles que esta versión trae. Lo que tiene que estar apagado no se declara: el
 chequeo lo exige siempre (el panel, el profile `default` y el multiplex de profiles).
@@ -55,7 +70,25 @@ API_SERVER_KEY = { archivo = "/opt/setter-att1/secretos/bridge.env", variable = 
 OPENROUTER_API_KEY = { archivo = "/opt/setter-att1/secretos/hermes.env", variable = "OPENROUTER_API_KEY" }
 ```
 
-Tiene que declarar todos los profiles del producto, y ninguno más. Una ruta de secretos relativa se
+Un profile de Slack lleva además `administran`, la lista de IDs de usuario de Slack que pueden
+correr los comandos de administración (`/model`, `/restart`); el instalador la pone en
+`slack.allow_admin_from` y `slack.group_allow_admin_from`:
+
+```toml
+[profiles.automation-expert]
+modelo = "z-ai/glm-5.3-flash"
+proveedor = "openrouter"
+administran = ["U0123ABCD"]
+
+[profiles.automation-expert.variables]
+SLACK_BOT_TOKEN = { archivo = "/opt/setter-att1/secretos/automation-expert.env", variable = "SLACK_BOT_TOKEN" }
+# … SLACK_APP_TOKEN, SLACK_ALLOWED_USERS, AUTOMATION_EXPERT_API_URL, AUTOMATION_EXPERT_API_TOKEN
+# (el AUTOMATION_EXPERT_READ_TOKEN del bridge), AUTOMATION_EXPERT_INTERNAL_HOST y OPENROUTER_API_KEY
+```
+
+Tiene que declarar todos los profiles obligatorios del producto, y ninguno que el producto no
+declare. Un profile opcional que la instancia no declara no se instala, y si igual está en el Hermes,
+`chequear` lo marca como profile de más. Una ruta de secretos relativa se
 resuelve contra la carpeta del `hermes.toml`, cosa que solo usan las pruebas. `API_SERVER_KEY` es la
 misma `HERMES_API_KEY` del bridge: sale del mismo archivo para que no haya dos copias que se separen.
 
@@ -115,6 +148,10 @@ Medido el 2026-10-14 en un Hermes descartable con la imagen declarada, salvo don
   Si cambian con el gateway andando, `aplicar` lo deja como diferencia; con `aplicar --reiniciar`
   reinicia solo ese gateway y espera a que el proceso nuevo responda con la clave actual. Rotar
   `API_SERVER_KEY` también exige reiniciar el bridge, que lee `HERMES_API_KEY` al arrancar.
+- **Un profile de Slack, reiniciando también:** sus variables (los tokens) y sus `plugins/`. Como
+  no tiene API server para preguntarle, el instalador compara la hora de arranque del proceso del
+  gateway (`/proc/<pid>/stat`) con la última escritura de sus variables y sus plugins: si alguna es
+  más nueva, `aplicar` lo deja como diferencia y `aplicar --reiniciar` lo reinicia.
 - **El reinicio corta el API entre 15 y 25 s** (medido en el VPS, cuatro veces): el proceso viejo
   sale enseguida y el nuevo tarda en cargar. En ese rato el bridge no tiene a quién hablarle.
 - **Un reinicio que llega mientras el gateway todavía termina de arrancar lo deja apagado.** Hermes
