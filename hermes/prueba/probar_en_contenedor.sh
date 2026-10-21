@@ -259,7 +259,7 @@ instalador aplicar-ae 1 aplicar --instancia "$TMP/hermes-ae.toml" --solo automat
 contiene aplicar-ae "agente-comercial: no se mira (--solo automation-expert)"
 contiene aplicar-ae "instalar la distribucion en automation-expert"
 contiene aplicar-ae "automation-expert: plugins/ igual a Git"
-contiene aplicar-ae "automation-expert: en slack tiene exactamente [automation_expert_read]"
+contiene aplicar-ae "automation-expert: en slack tiene exactamente [automation_expert_change, automation_expert_read]"
 contiene aplicar-ae "automation-expert: el gateway corre"
 contiene aplicar-ae "automation-expert: el gateway arranco despues de sus variables y sus plugins"
 contiene aplicar-ae "automation-expert: Slack no esta conectado"
