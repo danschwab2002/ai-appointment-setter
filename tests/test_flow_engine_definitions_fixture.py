@@ -75,7 +75,7 @@ FLOWS = {
 # demas que la traduccion toma del codigo. Era el de c7fa8ef; la T2.1 (2026-10-21) lo
 # cambio para los varios toques (la captura del 21/10), y su traduccion de esta captura
 # es la misma: el fixture se regenero y solo cambio este sha de la cabecera.
-TRANSLATOR_SHA256_C7FA8EF = "447cfef1948975ae635a7e0c84735ede2ceeb654480b8d075b6abe02a1d1d3f2"
+TRANSLATOR_SHA256_C7FA8EF = "9f61e478b7dde6f459098afbf5190ed02b6a2b75ab89de1d371a4924d3ab7630"
 
 
 def translator_sha256() -> str:

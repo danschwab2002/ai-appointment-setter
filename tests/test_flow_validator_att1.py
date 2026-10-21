@@ -487,7 +487,7 @@ def test_every_field_of_21_10_says_where_it_comes_from(flow_key: str) -> None:
     assert set(_leaves(translated.definition)) == set(translated.sources)
     for source in translated.sources.values():
         assert source in (TRANSLATOR.SOURCE_CODE, TRANSLATOR.TOUCHES_SOURCE) or source.startswith(
-            (TRANSLATOR.SOURCE_REAL + ": ", TRANSLATOR.SOURCE_MANIFEST + ": ")), source
+            (TRANSLATOR.SOURCE_REAL + ": ", TRANSLATOR.SOURCE_MANIFEST + ": ", TRANSLATOR.SOURCE_BRIDGE + ": ")), source
     if flow_key == "carrito":
         assert translated.sources["/pasos/3/esperar"] == (
             "dato real: followup_policy_versions.steps[cart_last_touch].delay")
@@ -503,7 +503,7 @@ def test_without_the_touches_the_translation_of_21_10_fails_loudly() -> None:
 def test_a_touch_whose_coupon_is_not_the_policys_fails_loudly() -> None:
     touches = dict(TRANSLATOR.ATT1_TOUCHES_20261021)
     a1, a2, z = touches["carrito"]
-    touches["carrito"] = (a1, a2, TRANSLATOR.Touch(z.template, z.language, False))
+    touches["carrito"] = (a1, a2, TRANSLATOR.Touch(z.template, z.language, False, z.variables, z.variables_from))
     with pytest.raises(TRANSLATOR.TranslationError, match="touch_coupon_and_policy_differ:cart_last_touch"):
         TRANSLATOR.translate_att1(CONFIG_21, MANIFEST, BLOCKS, touches)
 
@@ -524,18 +524,31 @@ def test_the_v7_validates_without_blocks_as_a_draft_and_the_engine_runs_it() -> 
         assert not_supported(DEFINITIONS_21[key], ENGINE_CAPABILITIES_V1) == (), key
 
 
-def test_the_v7_at_publish_blocks_only_on_the_variables_the_schema_does_not_have() -> None:
-    # Lo que el esquema no escribe todavia: A1 lleva cinco variables (nombre, producto, la hora
-    # del intento, el precio y el vencimiento del cupon), y Z y B2 tres (con el vencimiento). La
-    # lista de variables del esquema (nombre, producto y medio_de_pago) no las tiene: las llena el
-    # bridge. Es un hueco conocido de la T2.1, no del dato.
+def test_the_v7_publishes_without_blocks_against_the_captured_catalog() -> None:
+    # Con las variables de la 1.1 (cuando, precio y vence), cada toque declara las de su plantilla:
+    # A1 cinco, A2 dos, y Z y B2 tres. La regla 13 las cuenta contra el catalogo capturado.
     result = validate(_first_versions_21(), actor="operador", world=_registered_world(), instance=INSTANCE,
                       catalog=CATALOG_21, phase="publish")
-    assert [(f.code, f.path) for f in result.blocks] == [
-        ("template_variable_count_mismatch", "/0/definicion/pasos/0/variables"),
-        ("template_variable_count_mismatch", "/0/definicion/pasos/4/variables"),
-        ("template_variable_count_mismatch", "/1/definicion/pasos/3/variables"),
-    ]
+    assert result.blocks == ()
+    cart, payment = TRANSLATED_21["carrito"].definition, TRANSLATED_21["pago_fallido"].definition
+    assert [step["variables"] for step in cart["pasos"][::2]] == [
+        ["nombre", "producto", "cuando", "precio", "vence"], ["nombre", "producto"], ["nombre", "producto", "vence"]]
+    assert payment["pasos"][3]["variables"] == ["nombre", "producto", "vence"]
+    # Las variables salen de las constantes del bridge, que existen con esos valores.
+    from bridge.cart_first_touch import CART_DISCOUNT_VARIABLES
+    from bridge.cart_followups import CART_LAST_TOUCH_VARIABLES, CART_SECOND_TOUCH_VARIABLES
+    from bridge.payment_failure_followups import PAYMENT_FAILURE_FOLLOWUP_VARIABLES
+
+    assert (CART_DISCOUNT_VARIABLES, CART_SECOND_TOUCH_VARIABLES, CART_LAST_TOUCH_VARIABLES,
+            PAYMENT_FAILURE_FOLLOWUP_VARIABLES) == (
+        TRANSLATOR.A1_VARIABLES, TRANSLATOR.A2_VARIABLES, TRANSLATOR.LAST_TOUCH_VARIABLES,
+        TRANSLATOR.LAST_TOUCH_VARIABLES)
+
+
+def test_the_red_of_vence_without_the_personal_coupon() -> None:
+    # Z sin el cupon personal pero con vence: el bridge no tiene que vencimiento poner.
+    result = _change_21(lambda d: d["pasos"][4].pop("boton"))
+    assert ("variable_needs_personal_coupon", "/pasos/4/variables/2") in _codes(result)
 
 
 def _published_world_21() -> FlowWorld:
@@ -557,16 +570,12 @@ def _change_21(change: Callable[[dict[str, Any]], None]) -> ValidationResult:
                     catalog=CATALOG_21, phase="publish")
 
 
-def _blocks_besides_the_variables(result: ValidationResult) -> list[tuple[str, str | None]]:
-    return [code for code in _codes(result) if code[0] != "template_variable_count_mismatch"]
-
-
 def test_a2_at_36_hours_only_changes_the_waits() -> None:
     def later(definition: dict[str, Any]) -> None:
         definition["pasos"][1]["esperar"] = "36h"
         definition["pasos"][3]["esperar"] = "36h"
 
-    assert _blocks_besides_the_variables(_change_21(later)) == []
+    assert _codes(_change_21(later)) == []
 
 
 def test_the_red_of_a_third_personal_coupon() -> None:

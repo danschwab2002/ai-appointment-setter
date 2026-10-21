@@ -478,6 +478,20 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
         lambda: run(with_(flow_def("carrito"), lambda d: d.update(pasos=_personal_touches(3)))),
         lambda: run(with_(flow_def("carrito"), lambda d: d.update(pasos=_personal_touches(2)))),
     ),
+    # Regla 5, con las variables de la 1.1: precio y vence solo con cupon personal; cuando solo con un evento.
+    "variable_needs_personal_coupon": (
+        lambda: run(with_(flow_def("carrito"), lambda d: d["pasos"][0].update(
+            variables=["nombre", "producto", "vence"])), phase="draft"),
+        lambda: run(with_(flow_def("carrito"), lambda d: d["pasos"][0].update(
+            variables=["nombre", "producto", "vence"], boton={"link": "checkout", "cupon": fd.PERSONAL_COUPON})),
+            phase="draft"),
+    ),
+    "variable_needs_event_trigger": (
+        lambda: run(with_(block("5a"), lambda d: d["pasos"][0].update(variables=["nombre", "cuando"])),
+                    "reactivacion", phase="draft"),
+        lambda: run(with_(flow_def("carrito"), lambda d: d["pasos"][0].update(
+            variables=["nombre", "producto", "cuando"])), phase="draft"),
+    ),
     # Regla 17.
     "purchase_permission_requires_single_utility_send": (
         lambda: check([version_item(purchase_flow(pasos=[dict(TEMPLATE_STEP)]), "activacion", ok=CLIENT_OK)]).blocks,
@@ -607,7 +621,8 @@ def test_the_catalog_has_the_rule_and_kind_of_the_design() -> None:
         3: {"permission_trigger_mismatch", "contesto_a_requires_conversation"},
         4: {"purchase_exit_missing", "purchase_exit_with_purchase_trigger"},
         5: {"ficha_vencida_requires_ficha_trigger", "medio_de_pago_requires_ficha_trigger",
-            "ficha_link_requires_ficha_trigger", "coupon_requires_checkout_link"},
+            "ficha_link_requires_ficha_trigger", "coupon_requires_checkout_link",
+            "variable_needs_personal_coupon", "variable_needs_event_trigger"},
         6: {"event_requires_vence", "silence_forbids_vence"},
         7: {"conversar_outside_open_window_branch", "terminal_step_not_last", "nested_condition"},
         8: {"hour_invalid", "window_not_increasing", "zone_invalid", "zone_changed", "pool_zone_mismatch"},
@@ -631,6 +646,7 @@ def test_the_catalog_has_the_rule_and_kind_of_the_design() -> None:
         "template_not_in_catalog", "template_not_approved", "template_language_mismatch",
         "template_variable_count_mismatch", "template_button_mismatch", "template_catalog_unavailable",
         "purchase_permission_requires_single_utility_send", "coupon_personal_limit",
+        "variable_needs_personal_coupon", "variable_needs_event_trigger",
     }
     assert {code for code, pairs in fv.CODE_RULES.items() if any(k == "todavia_no" for _, k in pairs)} == {
         "coupon_change_not_supported"}

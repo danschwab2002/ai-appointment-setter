@@ -101,7 +101,7 @@ BASE = "c7fa8ef"
 LEGACY_FILES = {
     "tests/fixtures/flow_engine/legacy_recovery_cases.json":
         "68bcbfe7a1df77f8e2db0fb6a22cc8fdcbb3e8ae6eeefce939780abda3cc9da7",
-    "tests/flow_store_translator.py": "447cfef1948975ae635a7e0c84735ede2ceeb654480b8d075b6abe02a1d1d3f2",
+    "tests/flow_store_translator.py": "9f61e478b7dde6f459098afbf5190ed02b6a2b75ab89de1d371a4924d3ab7630",
 }
 LEGACY_CHANGED = "las definiciones de hoy son del 16/10; el legado cambio despues"
 

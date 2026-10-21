@@ -302,7 +302,10 @@
               "idioma": "es_MX",
               "variables": [
                 "nombre",
-                "producto"
+                "producto",
+                "cuando",
+                "precio",
+                "vence"
               ],
               "boton": {
                 "link": "checkout",
@@ -328,7 +331,8 @@
               "idioma": "es_MX",
               "variables": [
                 "nombre",
-                "producto"
+                "producto",
+                "vence"
               ],
               "boton": {
                 "link": "checkout",
@@ -451,7 +455,8 @@
               "idioma": "es_MX",
               "variables": [
                 "nombre",
-                "producto"
+                "producto",
+                "vence"
               ],
               "boton": {
                 "link": "checkout",

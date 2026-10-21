@@ -134,7 +134,8 @@ ENGINE_CAPABILITIES_V1 = EngineCapabilities(
     step_types=frozenset({"esperar", "plantilla"}),
     max_sends_per_path=3,
     waits_between_sends=True,
-    variables=frozenset({"nombre", "producto"}),
+    # cuando, precio y vence (1.1): las llena el bridge en A1, Z y el seguimiento del pago rechazado.
+    variables=frozenset({"nombre", "producto", "cuando", "precio", "vence"}),
     buttons=frozenset({"checkout"}),
     exits=frozenset({"compra", "contesta"}),
     relations_between_engine_flows_only=True,

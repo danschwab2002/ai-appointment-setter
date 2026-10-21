@@ -1,5 +1,5 @@
 """El validador de las definiciones de flujo: las reglas 1 a 13, 15 (con el limite de
-cupones personales de la 1.1) y 17, las
+cupones personales de la 1.1), 17 (la 5 suma las variables del cupon y del evento de la 1.1), las
 siete advertencias y los chequeos del ciclo.
 
 Contratos: docs/contracts/flow-definition-v1.md («Las reglas del validador») y
@@ -37,6 +37,8 @@ from .flow_definition import (
     KIND_NOT_YET,
     KIND_PROTECTION,
     KIND_WARNING,
+    COUPON_VARIABLES,
+    EVENT_VARIABLES,
     MAX_DEPTH,
     NO_CAP,
     PERSONAL_COUPONS_PER_PATH,
@@ -285,6 +287,18 @@ COUPON_CHANGE_NOT_SUPPORTED = _spec(
     limit="El cambio del código del cupón",
     alternative="Dejar el cupón de la versión publicada; cambiarlo es un cambio con PR y aprobación.",
 )
+VARIABLE_NEEDS_PERSONAL_COUPON = _spec(
+    "variable_needs_personal_coupon", 5, KIND_PROTECTION,
+    "precio y vence hablan del cupón personal: el bridge solo los llena en un paso cuyo botón lleva cupon: personal.",
+    limit="precio y vence, solo con cupon: personal",
+    alternative="Sumar el botón con cupon: personal al paso, o sacar la variable.",
+)
+VARIABLE_NEEDS_EVENT_TRIGGER = _spec(
+    "variable_needs_event_trigger", 5, KIND_PROTECTION,
+    "cuando es la hora del evento que disparó el flujo: un silencio no la tiene.",
+    limit="cuando, solo con un disparador de evento",
+    alternative="Sacar la variable, o usar una plantilla sin ese marcador.",
+)
 COUPON_PERSONAL_LIMIT = _spec(
     "coupon_personal_limit", 15, KIND_PROTECTION,
     "Un camino lleva más de dos cupones personales, y a cada caso le tocan a lo sumo dos códigos.",
@@ -387,6 +401,7 @@ _VALIDATOR_CODES: tuple[CodeSpec, ...] = (
     UNRESOLVED_VALUE, VENCE_NOT_AFTER_WAITS, TEMPLATE_NOT_IN_CATALOG, TEMPLATE_NOT_APPROVED,
     TEMPLATE_LANGUAGE_MISMATCH, TEMPLATE_VARIABLE_COUNT_MISMATCH, TEMPLATE_BUTTON_MISMATCH,
     TEMPLATE_CATALOG_UNAVAILABLE, COUPON_CHANGE_NOT_SUPPORTED, COUPON_PERSONAL_LIMIT,
+    VARIABLE_NEEDS_PERSONAL_COUPON, VARIABLE_NEEDS_EVENT_TRIGGER,
     PURCHASE_PERMISSION_REQUIRES_SINGLE_UTILITY_SEND, FLOW_CREATION_NOT_ENABLED,
     CHANGE_OUTSIDE_1B_SCOPE, TRIGGER_CHANGE_IS_ANOTHER_FLOW, FLOW_CHANGE_STALE_BASE,
     ROLLBACK_TARGET_NOT_FOUND, ROLLBACK_TARGET_IS_ACTIVE, STATE_TRANSITION_INVALID,
@@ -918,6 +933,7 @@ class _Run:
         self._rule8(emitter, definition, flow)
         self._rule9(emitter, definition)
         self._rule10(emitter, definition, flow)
+        self._rule5_variables(emitter, definition)
         if self.publish:
             self._rule11(emitter, definition)
             self._rule12(emitter, definition)
@@ -1070,6 +1086,30 @@ class _Run:
             elif kind == "condicion":
                 if _get(_mapping(step.get("condicion")), "dato") == "medio_de_pago" and ficha is False:
                     emitter.add(MEDIO_DE_PAGO_REQUIRES_FICHA_TRIGGER, at + ("condicion", "dato"))
+
+    def _rule5_variables(self, emitter: _Emitter, definition: Mapping[str, Any]) -> None:
+        """Las variables de la 1.1, en la regla 5: precio y vence solo con cupon personal, cuando solo
+        con un evento. Van en la 5 y no en una 18 porque la base acepta reglas de 1 a 17
+        (``_flow_change_result_is_valid``, ``20261016000100_flow_change_store_v1.sql:726``).
+
+        Es lo que hace el bridge: llena precio y vence con el cupon del paso (A1, Z y el seguimiento
+        del pago rechazado) y cuando con la hora del evento. Con el disparador sin resolver, cuando
+        no se mira.
+        """
+        trigger = trigger_of(definition)
+        event = None if trigger is None else trigger.kind == "evento"
+        for step, at, _, _, _, _ in _iter_steps(definition.get("pasos"), ("pasos",)):
+            if step_type(step) != "plantilla":
+                continue
+            variables = step.get("variables")
+            if not isinstance(variables, list):
+                continue
+            personal = _personal_coupon(step)
+            for index, variable in enumerate(variables):
+                if variable in COUPON_VARIABLES and not personal:
+                    emitter.add(VARIABLE_NEEDS_PERSONAL_COUPON, at + ("variables", index))
+                elif variable in EVENT_VARIABLES and event is False:
+                    emitter.add(VARIABLE_NEEDS_EVENT_TRIGGER, at + ("variables", index))
 
     def _rule6(self, emitter: _Emitter, definition: Mapping[str, Any]) -> None:
         trigger = trigger_of(definition)

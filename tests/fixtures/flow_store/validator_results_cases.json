@@ -2342,6 +2342,82 @@
    }
   },
   {
+   "code": "variable_needs_event_trigger",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 5,
+      "code": "variable_needs_event_trigger",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/0/variables/1",
+      "limit": "cuando, solo con un disparador de evento",
+      "reason": "cuando es la hora del evento que disparó el flujo: un silencio no la tiene.",
+      "alternative": "Sacar la variable, o usar una plantilla sin ese marcador."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "variable_needs_event_trigger",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "variable_needs_personal_coupon",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 5,
+      "code": "variable_needs_personal_coupon",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/0/variables/2",
+      "limit": "precio y vence, solo con cupon: personal",
+      "reason": "precio y vence hablan del cupón personal: el bridge solo los llena en un paso cuyo botón lleva cupon: personal.",
+      "alternative": "Sumar el botón con cupon: personal al paso, o sacar la variable."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "variable_needs_personal_coupon",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "draft",
+    "actor": "operador"
+   }
+  },
+  {
    "code": "vence_not_after_waits",
    "case": "negativo",
    "result": {

@@ -116,7 +116,7 @@ El disparo es el momento del evento, o el del barrido que encontró el silencio.
 
 **Qué admite en la v1.** Cinco tipos de paso:
 - `esperar`: una duración. Se cuenta desde el paso anterior, y la primera espera se cuenta desde el disparo. El motor la guarda como hoy: la primera espera como gracia y las siguientes como plazos fijos desde el primer envío aceptado (`followup-engine-v1.md:68-81`). Si un envío sale tarde por el horario, el siguiente no se corre, así que puede quedar más cerca de lo pedido. Los máximos de frecuencia ponen el límite.
-- `plantilla`: una plantilla aprobada, con su `idioma` y sus `variables` en el orden {{1}}, {{2}}… Si la plantilla tiene un botón de URL dinámica, lleva también el `boton`: `checkout` (con `cupon` opcional: un código fijo, o `personal`, el código por persona que crea el worker del cupón en Hotmart y que vence; `personal` va a lo sumo dos veces por camino) o `ficha`. Mientras la plantilla no exista, se escribe `{a_crear: <nombre propuesto>}`, así al publicar se sabe cuál buscar en el catálogo.
+- `plantilla`: una plantilla aprobada, con su `idioma` y sus `variables` en el orden {{1}}, {{2}}… (`nombre`, `producto`, `medio_de_pago`, y desde la 1.1 `cuando`, `precio` y `vence`, ver la definición formal). Si la plantilla tiene un botón de URL dinámica, lleva también el `boton`: `checkout` (con `cupon` opcional: un código fijo, o `personal`, el código por persona que crea el worker del cupón en Hotmart y que vence; `personal` va a lo sumo dos veces por camino) o `ficha`. Mientras la plantilla no exista, se escribe `{a_crear: <nombre propuesto>}`, así al publicar se sabe cuál buscar en el catálogo.
 - `conversar`: un objetivo de hasta 300 caracteres. El agente comercial escribe con toda la conversación, su SOUL, su conocimiento y ese objetivo. El bridge valida lo que el agente propone antes de mandarlo (ADR-0007 §3). Este paso va dentro de la rama de una condición con la ventana abierta.
 - `condicion`: un `dato` y los valores que lo cumplen, con dos ramas, `entonces` y `si_no`. En la v1 hay dos datos posibles:
   - `ventana`: abierta o cerrada, como la informa Chatwoot;
@@ -880,8 +880,24 @@ pasos:                            # [existe: followup_policy_versions.steps] [NU
     idioma: es_MX                           # default: el de esa plantilla en el catálogo
     variables: [nombre, producto]           # en el orden {{1}}, {{2}}…: nombre | producto |
                                             #   medio_de_pago (solo con la ficha; va el nombre
-                                            #   del medio). Default: [nombre, producto].
+                                            #   del medio) | cuando | precio | vence.
+                                            #   Default: [nombre, producto].
                                             #   [existe: nombre y producto] [NUEVO: medio_de_pago]
+                                            #   [1.1: cuando, precio y vence, los nombres con los
+                                            #   que el bridge arma A1, Z y el seguimiento del pago
+                                            #   rechazado: cart_first_touch.py:33,
+                                            #   cart_followups.py:67-68,
+                                            #   payment_failure_followups.py:65]
+                                            #   cuando: el momento del intento (el abandono o el
+                                            #   rechazo) en la zona del país del comprador (CDMX
+                                            #   si Hotmart no la manda); solo con un disparador
+                                            #   de evento.
+                                            #   precio: el precio del producto que declara la
+                                            #   instancia (RECOVERY_DISCOUNT_PRICE, «USD 47»),
+                                            #   aunque el checkout muestre moneda local; solo con
+                                            #   cupon: personal.
+                                            #   vence: el vencimiento del cupón personal del paso,
+                                            #   en la zona del país; solo con cupon: personal.
     # boton: {link: checkout, cupon: TIROIDES10}
     #                             # solo si la plantilla tiene un botón de URL dinámica.
     #                             #   link: checkout [existe: el del cupón] | ficha [NUEVO; solo
@@ -982,7 +998,7 @@ Son código y corren en dos momentos. Un bloqueo no se puede confirmar; una adve
 2. `dispara` que no tiene exactamente un evento o un silencio. Con un silencio, `desde` mayor o igual que `hasta`, o `hasta` de más de 30 días.
 3. Un `permiso` que no corresponde al disparador: `formulario` va solo con un evento, `conversacion` solo con un silencio y `compra` solo con el disparador `compra`. `contesto_a` sin `permiso: conversacion`.
 4. Un flujo disparado por un evento que no es la compra y que no tiene `compra` en `termina.si`, o la compra como salida de un flujo disparado por la compra. La baja no se escribe, porque corta siempre.
-5. `ficha_vencida` como salida sin el disparador `ficha_impresa`. `medio_de_pago` o el link `ficha` sin un disparador de la ficha. Un `cupon` sin el link `checkout`.
+5. `ficha_vencida` como salida sin el disparador `ficha_impresa`. `medio_de_pago` o el link `ficha` sin un disparador de la ficha. Un `cupon` sin el link `checkout`. Desde la 1.1, como protección: `precio` o `vence` en un paso cuyo botón no lleva `cupon: personal` (`variable_needs_personal_coupon`), y `cuando` sin un disparador de evento (`variable_needs_event_trigger`). Van en la 5 y no en una regla nueva porque la base acepta reglas de 1 a 17 (`20261016000100:726`).
 6. Un evento sin `vence`, o un silencio con `vence`.
 7. Un `conversar` fuera de la rama `entonces` de una condición con la ventana abierta. Un `conversar` o un `derivar` que no es el último paso de su rama. Una condición dentro de otra.
 8. Horas mal escritas, o un `desde` que no es menor que `hasta`. Una zona que no es IANA, o distinta de la de la versión anterior. Flujos de una misma bolsa con zonas distintas.
@@ -1143,4 +1159,5 @@ La migración los actualiza. Qué cambia en la base no se aprueba con este esque
   - se levanta «un solo envío por camino»: el motor ejecuta los envíos de la forma de su flujo del legado (`flow_policy.STEPS_BY_LEGACY_KIND`: el carrito, A1, A2 y Z; el pago fallido, B1 y su seguimiento; el primer contacto, uno), hasta tres, con la espera entre envíos. Una definición con más envíos que esa forma, o con el cupón personal en un paso que no lo admite, no se compila (`flow_policy_not_compilable:<detalle>`): agregar o sacar un toque es un cambio de código;
   - `boton.cupon` acepta `personal`, el código por persona del worker del cupón, a lo sumo dos veces por camino (regla 15, `coupon_personal_limit`). Pasar de un código fijo a `personal`, o al revés, sigue siendo `coupon_change_not_supported`;
   - el carrito y el pago fallido de ATT1 ya no comparten bolsa desde el 2026-10-19 (`att1-recuperacion` y `att1-pago-rechazado`). Los bloques 1 y 2 de «Los siete flujos de validación» siguen siendo la línea de base del 2026-10-14, con la bolsa compartida;
-  - la regla 17 no cambia: con `permiso: compra`, un solo envío por camino.
+  - la regla 17 no cambia: con `permiso: compra`, un solo envío por camino;
+  - tres variables nuevas, con los nombres del bridge: `cuando` (el momento del intento en la zona del país), `precio` (el que declara la instancia) y `vence` (el vencimiento del cupón personal). La regla 5 suma dos protecciones: `precio` y `vence` solo en un paso con `cupon: personal`, y `cuando` solo con un disparador de evento.

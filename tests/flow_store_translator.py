@@ -96,7 +96,8 @@ DEDICATED_SCOPES: Mapping[str, str] = {"PURCHASE_CANCELED": "att1-pago-rechazado
 
 @dataclass(frozen=True)
 class Touch:
-    """La plantilla de un toque que no esta en el manifiesto: su nombre, su idioma y si lleva el cupon personal.
+    """La plantilla de un toque que no esta en el manifiesto: su nombre, su idioma, si lleva el cupon
+    personal y sus variables, con la constante del bridge de la que salen.
 
     El cupon personal va con el boton del checkout (``{link: checkout, cupon:
     personal}``): el link de recuperacion con ``offDiscount``.
@@ -105,6 +106,21 @@ class Touch:
     template: str
     language: str
     personal_coupon: bool
+    variables: tuple[str, ...]
+    variables_from: str
+
+
+SOURCE_BRIDGE = "codigo del bridge"
+# Las variables de cada toque, en el orden {{1}}, {{2}}...: las constantes con las que el bridge
+# arma los parametros (y que exige al leer la plantilla del catalogo).
+A1_VARIABLES = ("nombre", "producto", "cuando", "precio", "vence")
+A1_VARIABLES_FROM = f"{SOURCE_BRIDGE}: cart_first_touch.CART_DISCOUNT_VARIABLES (src/bridge/cart_first_touch.py:33)"
+A2_VARIABLES = ("nombre", "producto")
+A2_VARIABLES_FROM = f"{SOURCE_BRIDGE}: cart_followups.CART_SECOND_TOUCH_VARIABLES (src/bridge/cart_followups.py:67)"
+LAST_TOUCH_VARIABLES = ("nombre", "producto", "vence")
+Z_VARIABLES_FROM = f"{SOURCE_BRIDGE}: cart_followups.CART_LAST_TOUCH_VARIABLES (src/bridge/cart_followups.py:68)"
+B2_VARIABLES_FROM = (f"{SOURCE_BRIDGE}: payment_failure_followups.PAYMENT_FAILURE_FOLLOWUP_VARIABLES "
+                     "(src/bridge/payment_failure_followups.py:65)")
 
 
 # Las plantillas de los toques de ATT1 al 2026-10-21, por flujo y en el orden de
@@ -123,11 +139,12 @@ class Touch:
 #   cupon (portable-payment-failure-followup-v1.md, «Proposito y limite»).
 ATT1_TOUCHES_20261021: Mapping[str, tuple[Touch | None, ...]] = {
     "carrito": (
-        Touch("att1_carrito_descuento_01", "es_MX", True),
-        Touch("att1_carrito_dudas_01", "es_MX", False),
-        Touch("att1_ultima_renovacion_01", "es_MX", True),
+        Touch("att1_carrito_descuento_01", "es_MX", True, A1_VARIABLES, A1_VARIABLES_FROM),
+        Touch("att1_carrito_dudas_01", "es_MX", False, A2_VARIABLES, A2_VARIABLES_FROM),
+        Touch("att1_ultima_renovacion_01", "es_MX", True, LAST_TOUCH_VARIABLES, Z_VARIABLES_FROM),
     ),
-    "pago_fallido": (None, Touch("att1_pago_rechazado_descuento_01", "es_MX", True)),
+    "pago_fallido": (None, Touch("att1_pago_rechazado_descuento_01", "es_MX", True, LAST_TOUCH_VARIABLES,
+                                 B2_VARIABLES_FROM)),
 }
 TOUCHES_SOURCE = ("parametro del traductor: ATT1_TOUCHES_20261021 "
                   "(despliegue/secretos/generar.py de la instancia ATT1, origin/main d9fa3ee)")
@@ -293,10 +310,10 @@ def _from_scope(scope: Mapping[str, Any], policy: Mapping[str, Any], event_type:
             sources[f"{step_at}/plantilla"] = f"{SOURCE_MANIFEST}: [plantillas].{flow_key}.nombre"
             sources[f"{step_at}/idioma"] = f"{SOURCE_MANIFEST}: [plantillas].{flow_key}.idioma"
         else:
-            step = {"plantilla": touch.template, "idioma": touch.language, "variables": list(code["variables"])}
+            step = {"plantilla": touch.template, "idioma": touch.language, "variables": list(touch.variables)}
             sources[f"{step_at}/plantilla"] = TOUCHES_SOURCE
             sources[f"{step_at}/idioma"] = TOUCHES_SOURCE
-        sources[f"{step_at}/variables"] = SOURCE_CODE
+        sources[f"{step_at}/variables"] = SOURCE_CODE if touch is None else touch.variables_from
         personal = touch is not None and touch.personal_coupon
         marked = "coupon_ordinal" in policy_step
         # El primer toque no lleva marca: su cupon lo gobierna el flag (a1_cupon_por_flag).
