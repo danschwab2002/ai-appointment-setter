@@ -442,7 +442,13 @@ def test_supabase_acl_inventory_is_exhaustive_and_allowlisted() -> None:
     # freno por la compra de cualquier oferta, que llama la reevaluacion
     # (security invoker) como service_role. 20261019000700 (el seguimiento del
     # pago rechazado) suma el registro de B1 y el contexto del seguimiento.
-    assert len(allowlisted) == 147
+    # 20261021000200 (las rutas del motor de flujos) suma sus dos lecturas.
+    assert len(allowlisted) == 149
+    for signature in (
+        "read_flow_engine_v1(jsonb, text)",
+        "read_flow_engine_history_v1(jsonb, text, timestamp with time zone)",
+    ):
+        assert signature in allowlisted, signature
     for signature in (
         "record_payment_failure_first_touch_v1(uuid, uuid, text, bigint, text, text, "
         "timestamp with time zone)",
@@ -1083,15 +1089,16 @@ def test_recovery_checkout_authorize_started_attempt_fingerprint() -> None:
         assert marker in compact_fingerprint, marker
 
 
-def test_automation_expert_change_fingerprint_is_last_and_names_the_role_only_through_to_regrole() -> None:
+def test_automation_expert_change_fingerprint_names_the_role_only_through_to_regrole() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261021000100 (el rol del Automation Expert para proponer
-    # cambios de flujo) es la ultima.
-    fingerprint = sql.split("'20261021000100'", 1)[1].split("select\n    version,", 1)[0]
+    # cambios de flujo) va justo antes de la de las rutas del motor.
+    fingerprint = sql.split("'20261021000100'", 1)[1].split("'20261021000200'", 1)[0]
+    fingerprint = fingerprint.rsplit("union all", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261021000100_automation_expert_change_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",5,'automation_expert_change')")
+    assert compact_fingerprint.endswith(",5,'automation_expert_change'")
     for marker in (
         "to_regprocedure('public.read_flow_store_v1(jsonb)')",
         "to_regprocedure('public.save_flow_change_draft_v1(jsonb,uuid,integer,jsonb,jsonb,text,text)')",
@@ -1105,3 +1112,30 @@ def test_automation_expert_change_fingerprint_is_last_and_names_the_role_only_th
     # has_function_privilege, que fallaria.
     code = re.sub(r"--[^\n]*", "", fingerprint)
     assert code.count("'automation_expert_change'") == code.count("to_regrole('automation_expert_change')") + 1
+
+
+def test_flow_engine_routes_fingerprint_is_last_and_reads_are_the_only_grants() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261021000200 (las rutas, las lecturas y la guarda del
+    # almacen, la T2.3a del motor de flujos) es la ultima.
+    fingerprint = sql.split("'20261021000200'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261021000200_flow_engine_routes_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",6,'flow_engine_routes')")
+    for marker in (
+        "to_regclass('public.flow_engine_routes')",
+        "to_regclass('public.flow_engine_divergences')",
+        "andc.relrowsecurity",
+        "to_regprocedure('public.read_flow_engine_v1(jsonb,text)')",
+        "to_regprocedure('public.read_flow_engine_history_v1(jsonb,text,timestamptz)')",
+        "andhas_function_privilege('service_role',oid,'EXECUTE')",
+        "andnothas_function_privilege('anon',oid,'EXECUTE')",
+        "position('flow_engine_legacy_guard:begin'indefinition)>0",
+        "position('flow_engine_shared_pool:begin'indefinition)>0",
+        "position('flow_route_moved'inpg_get_constraintdef(con.oid))>0",
+    ):
+        assert marker in compact_fingerprint, marker
+    # El rol de la T4 se nombra solo a traves de to_regrole: el inventario
+    # corre tambien antes de aplicar.
+    assert "'automation_expert_change'" not in fingerprint.replace("to_regrole('automation_expert_change')", "")

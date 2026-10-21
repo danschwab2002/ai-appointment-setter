@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/danschwab2002/ai-appointment-setter/tests/fixtures/flow_engine/read_flow_engine_v1.schema.json",
+  "title": "read_flow_engine_v1",
+  "description": "La respuesta de read_flow_engine_v1 (docs/contracts/flow-engine-v1.md, seccion 1). La usan la prueba de la base (validate_flow_engine_v1.mjs, PGlite) y el doble de la T4. Solo usa type, const, enum, pattern, minimum, maxItems, required, properties, additionalProperties false, items y $ref a $defs. Ninguna clave fuera de la lista: un telefono, un mail, un nombre o un id de contacto no tiene donde ir.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "contract_version", "database_at", "engine", "flows", "next"],
+  "properties": {
+    "contract": {"const": "flow-engine-v1"},
+    "contract_version": {"const": "1.0.0"},
+    "database_at": {"$ref": "#/$defs/utc"},
+    "engine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capabilities", "rules_version"],
+      "properties": {
+        "capabilities": {"const": "v1"},
+        "rules_version": {"type": "integer", "minimum": 2}
+      }
+    },
+    "flows": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/flow"}},
+    "next": {"type": ["string", "null"], "pattern": "^[a-z0-9][a-z0-9-]{0,127}/[a-z][a-z0-9_]{1,39}$"}
+  },
+  "$defs": {
+    "utc": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}Z$"
+    },
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "scope_key": {"type": ["string", "null"], "pattern": "^[a-z0-9][a-z0-9_-]{0,127}$"},
+    "flow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["flow_id", "product_ref", "flow_key", "state", "active_version", "generation", "route", "versions"],
+      "properties": {
+        "flow_id": {"$ref": "#/$defs/uuid"},
+        "product_ref": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,127}$"},
+        "flow_key": {"type": "string", "pattern": "^[a-z][a-z0-9_]{1,39}$"},
+        "state": {"enum": ["apagado", "prendido", "pausado"]},
+        "active_version": {"type": ["integer", "null"], "minimum": 1},
+        "generation": {"type": "integer", "minimum": 0},
+        "route": {"$ref": "#/$defs/route"},
+        "versions": {"type": "array", "items": {"$ref": "#/$defs/version"}}
+      }
+    },
+    "route": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["executor", "legacy_kind", "legacy_scope_key", "generation", "changed_at"],
+      "properties": {
+        "executor": {"enum": ["legado", "motor"]},
+        "legacy_kind": {"enum": ["carrito", "pago_fallido", "ficha", "precheckout", "descuento", "reactivacion"]},
+        "legacy_scope_key": {"$ref": "#/$defs/scope_key"},
+        "generation": {"type": "integer", "minimum": 0},
+        "changed_at": {"$ref": "#/$defs/utc"}
+      }
+    },
+    "version": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "definition", "definition_sha256", "published_at", "pool", "in_flight"],
+      "properties": {
+        "version": {"type": "integer", "minimum": 1},
+        "definition": {"type": "object"},
+        "definition_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "published_at": {"$ref": "#/$defs/utc"},
+        "pool": {"$ref": "#/$defs/scope_key"},
+        "in_flight": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

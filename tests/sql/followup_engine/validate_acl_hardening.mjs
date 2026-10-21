@@ -225,7 +225,9 @@ const rows = await db.query(`
       ('_recovery_renewal_requested(uuid)'),
       ('request_recovery_renewal_v1(bigint,bigint,bigint,bigint,text,timestamp with time zone)'),
       ('record_payment_failure_first_touch_v1(uuid,uuid,text,bigint,text,text,timestamp with time zone)'),
-      ('get_payment_failure_followup_context_v1(uuid,text,bigint,timestamp with time zone)')
+      ('get_payment_failure_followup_context_v1(uuid,text,bigint,timestamp with time zone)'),
+      ('read_flow_engine_v1(jsonb,text)'),
+      ('read_flow_engine_history_v1(jsonb,text,timestamp with time zone)')
   ), functions as (
     select p.oid, p.prorettype::regtype::text result_type,
            p.oid::regprocedure::text signature,
@@ -275,9 +277,10 @@ const result = rows.rows[0];
 // it reads tables service_role cannot read, and the steps with an approved
 // template and a coupon (20261019000600) add three, and the follow-up of the
 // payment failure (20261019000700) adds two: the record of the variant of B1
-// and the context of the follow-up.
+// and the context of the follow-up, and the two reads of the flow engine
+// (20261021000200) add two.
 if (result.api_leaks !== 0 || result.trigger_leaks !== 0
-    || result.allowlist_mismatches !== 0 || result.expected_count !== 147) {
+    || result.allowlist_mismatches !== 0 || result.expected_count !== 149) {
   throw new Error(`ACL hardening failed: ${JSON.stringify(result)}`);
 }
 // 20260930000100: el criterio de intencion con consentimiento es un helper
