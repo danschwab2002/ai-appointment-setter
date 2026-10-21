@@ -49,8 +49,8 @@ def _tools() -> ModuleType:
 def test_the_profile_talks_only_by_direct_message_with_only_its_toolset() -> None:
     config = yaml.safe_load((PROFILE / "config.yaml").read_text(encoding="utf-8"))
     assert config["platform_toolsets"] == {
-        "slack": ["automation_expert_read", "no_mcp"],
-        "cli": ["automation_expert_read", "no_mcp"],
+        "slack": ["automation_expert_read", "automation_expert_change", "no_mcp"],
+        "cli": ["automation_expert_read", "automation_expert_change", "no_mcp"],
     }
     slack = config["slack"]
     # Un centinela que no es un canal real: vacio querria decir «todos».
@@ -63,7 +63,7 @@ def test_the_profile_talks_only_by_direct_message_with_only_its_toolset() -> Non
     assert config["sessions"]["auto_prune"] is True and config["sessions"]["retention_days"] <= 14
     for toolset in ("memory", "skills", "terminal", "web", "delegation", "cronjob", "kanban"):
         assert toolset in config["agent"]["disabled_toolsets"]
-    assert config["plugins"]["enabled"] == ["automation-expert-read"]
+    assert config["plugins"]["enabled"] == ["automation-expert-read", "automation-expert-change"]
     text = (PROFILE / "config.yaml").read_text(encoding="utf-8")
     assert "ALLOW_ALL" not in text and "ignored_channels" not in text
     # Lo de cada instancia lo completa el instalador.
@@ -77,17 +77,22 @@ def test_the_distribution_copies_the_plugin_and_names_its_variables() -> None:
     assert set(distribution["distribution_owned"]) == {"SOUL.md", "config.yaml", "plugins"}
     required = {item["name"] for item in distribution["env_requires"] if item.get("required", True)}
     assert required == {"SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_ALLOWED_USERS",
-                        "AUTOMATION_EXPERT_API_URL", "AUTOMATION_EXPERT_API_TOKEN"}
+                        "AUTOMATION_EXPERT_API_URL", "AUTOMATION_EXPERT_API_TOKEN",
+                        "AUTOMATION_EXPERT_CHANGE_API_TOKEN"}
     plugin = yaml.safe_load((PLUGIN / "plugin.yaml").read_text(encoding="utf-8"))
     # Hermes busca el plugin por el nombre de su carpeta.
     assert plugin["name"] == PLUGIN.name
-    assert plugin["provides_tools"] == ["list_flows", "lead_history"]
+    assert plugin["provides_tools"] == ["list_flows", "lead_history", "draw_flow"]
+    change = yaml.safe_load((PROFILE / "plugins" / "automation-expert-change" / "plugin.yaml").read_text(encoding="utf-8"))
+    assert change["name"] == "automation-expert-change"
+    assert change["provides_tools"] == ["get_flow_definitions", "propose_flow_change", "validate_flow_change",
+                                        "get_flow_change"]
 
 
 def test_the_soul_never_asks_for_a_phone_or_a_mail() -> None:
     soul = (PROFILE / "SOUL.md").read_text(encoding="utf-8")
     assert "Nunca pidas un teléfono ni un mail" in soul
-    assert "Solo leés" in soul
+    assert "No aprobás, no publicás y no pausás" in soul
 
 
 def test_the_registered_tools_and_hooks() -> None:
@@ -100,7 +105,7 @@ def test_the_registered_tools_and_hooks() -> None:
         register_hook=lambda name, callback: hooks.__setitem__(name, callback),
     )
     plugin.register(ctx)
-    assert tools == ["list_flows", "lead_history"]
+    assert tools == ["list_flows", "lead_history", "draw_flow"]
     dispatch = hooks["pre_gateway_dispatch"]
     slack = SimpleNamespace(value="slack")
     assert dispatch(event=SimpleNamespace(source=SimpleNamespace(platform=slack, chat_id="D0123"))) is None

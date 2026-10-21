@@ -20,10 +20,10 @@ le_habla = "bridge"
 
 [profiles.automation-expert]
 # El Automation Expert (la 1a de la Etapa 1): lee y explica los flujos y la historia de un lead, por
-# mensaje directo de Slack. No tiene API server: le habla a la gente por Slack, y al bridge por su
+# mensaje directo de Slack, y propone y valida un cambio de flujo (la T4) que publica un aprobador. No tiene API server: le habla a la gente por Slack, y al bridge por su
 # plugin. Tiene exactamente las herramientas de abajo en Slack; chequear exige eso, ni una mas.
 # Opcional: una instancia que todavia no tiene la app de Slack no lo declara y no se instala.
 distribucion = "profiles/automation-expert"
 le_habla = "slack"
-herramientas = ["automation_expert_read"]
+herramientas = ["automation_expert_change", "automation_expert_read"]
 obligatorio = false

@@ -1,0 +1,14 @@
+name: automation-expert-change
+version: "0.1.0"
+description: Proponer y validar un cambio de flujo (flow-change-cycle-v1). Nunca aprueba ni publica.
+author: ai-appointment-setter
+provides_tools:
+  - get_flow_definitions
+  - propose_flow_change
+  - validate_flow_change
+  - get_flow_change
+provides_hooks:
+  - pre_tool_call
+requires_env:
+  - AUTOMATION_EXPERT_API_URL
+  - AUTOMATION_EXPERT_CHANGE_API_TOKEN

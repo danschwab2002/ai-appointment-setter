@@ -83,7 +83,8 @@ administran = ["U0123ABCD"]
 [profiles.automation-expert.variables]
 SLACK_BOT_TOKEN = { archivo = "/opt/setter-att1/secretos/automation-expert.env", variable = "SLACK_BOT_TOKEN" }
 # … SLACK_APP_TOKEN, SLACK_ALLOWED_USERS, AUTOMATION_EXPERT_API_URL, AUTOMATION_EXPERT_API_TOKEN
-# (el AUTOMATION_EXPERT_READ_TOKEN del bridge), AUTOMATION_EXPERT_INTERNAL_HOST y OPENROUTER_API_KEY
+# (el AUTOMATION_EXPERT_READ_TOKEN del bridge), AUTOMATION_EXPERT_CHANGE_API_TOKEN (el
+# AUTOMATION_EXPERT_CHANGE_TOKEN del bridge), AUTOMATION_EXPERT_INTERNAL_HOST y OPENROUTER_API_KEY
 ```
 
 Tiene que declarar todos los profiles obligatorios del producto, y ninguno que el producto no
