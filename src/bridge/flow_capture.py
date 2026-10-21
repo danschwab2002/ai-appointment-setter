@@ -22,6 +22,16 @@ error dice el camino y la forma que falto, nunca el valor.
 Un nulo es una clave ausente: la consulta los trae, el fixture no. Las listas
 no llevan nulos adentro.
 
+**Dos formas** (``CaptureForm``): la v2 (``FORM_V2``, la de la T1, que no
+cambia y es la de por defecto) y la v3 (``FORM_V3``), la de
+``att1_recovery_capture_query_v3.sql`` (``captura-paridad-recuperacion-v3``,
+la T2.2: el carrito de tres toques). La v3 suma las secuencias, los cupones
+sin su codigo, el link de cada intento sin URL ni sck, las renovaciones y, en
+cada accion con envio, la primera respuesta solo como hora; y los pasos de la
+politica con ``delay``, ``approved_template`` y ``coupon_ordinal``. En la v3
+los disparos son solo los carritos: el pago rechazado queda como hecho de la
+persona.
+
 Es puro: no lee el entorno, no hace red ni toca bases.
 """
 
@@ -36,25 +46,44 @@ from datetime import date, datetime, timezone
 from typing import Any, Union
 
 __all__ = [
-    "FIRING_EVENT_TYPES", "FIRST_CONTACT_KEYS", "FIXTURE_MAX_BYTES", "INTENT_KEYS",
-    "QUERY_NAME", "ROW_SECTIONS", "TOP_SECTIONS", "TRANSFORMATIONS",
-    "CaptureFixtureError", "CaptureShapeError", "FixtureTooLargeError", "ShapeProblem",
+    "CART_SCOPE_KEY", "FIRING_EVENT_TYPES", "FIRING_EVENT_TYPES_V3", "FIRST_CONTACT_KEYS",
+    "FIXTURE_MAX_BYTES", "FORMS", "FORM_V2", "FORM_V3", "INTENT_KEYS",
+    "QUERY_NAME", "QUERY_NAME_V3", "ROW_SECTIONS", "ROW_SECTIONS_V3", "TOP_SECTIONS",
+    "TOP_SECTIONS_V3", "TRANSFORMATIONS",
+    "CaptureFixtureError", "CaptureForm", "CaptureShapeError", "FixtureTooLargeError", "ShapeProblem",
     "build_fixture", "count_sections", "firings", "is_fixture", "parse_instant", "restore_fixture",
     "section_sizes", "serialize", "shape_problems", "validate_shape",
 ]
 
 QUERY_NAME = "captura-paridad-recuperacion-v2"
+# La v3 (T2.2): el carrito de tres toques, desde la activacion de la v7.
+QUERY_NAME_V3 = "captura-paridad-recuperacion-v3"
+# El scope del carrito de ATT1: la v3 lleva sus secuencias, acciones, cupones,
+# links y renovaciones; los demas casos van solo como hechos de la persona.
+CART_SCOPE_KEY = "att1-recuperacion"
 # El limite del fixture del repo (P#12). No se sube en silencio: si una captura
 # no entra, se decide que mas recortar y se dice en el reporte (§6.4, paso 7).
 FIXTURE_MAX_BYTES = 1_000_000
 # Los disparos de la recuperacion: el carrito y el pago fallido (§6.5).
 FIRING_EVENT_TYPES = ("PURCHASE_OUT_OF_SHOPPING_CART", "PURCHASE_CANCELED")
+# En la v3, solo el carrito: el pago rechazado no se migra en la Etapa 1.
+FIRING_EVENT_TYPES_V3 = ("PURCHASE_OUT_OF_SHOPPING_CART",)
+# Los eventos cuya correlacion deja una intencion en el recorte (§6.4, paso 2).
+# Son los disparos de la v2 tambien en la v3: P6 mira al pago fallido como
+# ganador aunque no sea un disparo del carrito.
+TRIM_EVENT_TYPES = FIRING_EVENT_TYPES
 # Las secciones de filas, en el orden de la consulta.
 ROW_SECTIONS = (
     "eventos", "conflictos_de_compra", "intenciones", "contactos", "casos",
     "acciones", "autorizaciones", "reevaluaciones", "primer_contacto",
 )
 TOP_SECTIONS = ("_captured", "config") + ROW_SECTIONS
+ROW_SECTIONS_V3 = (
+    "eventos", "conflictos_de_compra", "intenciones", "contactos", "casos",
+    "secuencias", "acciones", "cupones", "links", "renovaciones", "autorizaciones",
+    "reevaluaciones", "primer_contacto",
+)
+TOP_SECTIONS_V3 = ("_captured", "config") + ROW_SECTIONS_V3
 # Lo que T1 lee de la siembra (§6.4, paso 2): del primer contacto, los planes
 # creados desde «desde» con estas claves; de las intenciones, las que toca uno
 # de esos planes o un disparo desde «desde», con estas claves.
@@ -395,6 +424,145 @@ CAPTURE = Record("captura", {
 
 
 # ---------------------------------------------------------------------------
+# La forma v3 (T2.2): el carrito de tres toques.
+# ---------------------------------------------------------------------------
+
+# El ordinal de un cupon: el de A1 (1) y la unica renovacion (2), como lo
+# fija la tabla (20261018000100: ordinal in (1, 2)).
+COUPON_ORDINAL = _int("ordinal_del_cupon", 1, 2)
+# El efecto de un pedido de renovacion sobre su paso, como lo escribe la
+# consulta v3.
+RENEWAL_EFFECT = _text("efecto_de_la_renovacion", r"adelanto|ya_vencia|movido_despues")
+
+ROWS_V3: Mapping[str, Record] = {
+    **{section: ROWS[section] for section in (
+        "eventos", "conflictos_de_compra", "intenciones", "contactos", "casos",
+    )},
+    # current_step y el cierre de cada secuencia del carrito: completion_reason
+    # (policy_exhausted, next_step_outside_expiration) y cancel_reason, con la
+    # forma de un motivo.
+    "secuencias": Record("secuencia", {
+        "id": UUID, "recovery_case_id": UUID, "status": CODE, "reason": CODE,
+        "policy_key": KEY, "policy_version": POSITIVE, "current_step": COUNT,
+        "max_attempts": POSITIVE, "automatic_messages_accepted": COUNT,
+        "started_at": INSTANT, "completed_at": INSTANT, "cancelled_at": INSTANT,
+        "completion_reason": REASON, "cancel_reason": REASON,
+    }),
+    # La accion de la v2, con su secuencia y la primera respuesta despues de su
+    # primer pedido, solo como hora y por fuente.
+    "acciones": Record("accion", {
+        **ROWS["acciones"].fields,
+        "followup_sequence_id": UUID,
+        "respuesta": Record("respuesta", {
+            "adopcion_at": INSTANT, "contesto_at": INSTANT, "renovacion_at": INSTANT,
+        }),
+    }),
+    # Sin code ni hotmart_coupon_id: el codigo es lo que se canjea.
+    "cupones": Record("cupon", {
+        "id": UUID, "recovery_case_id": UUID, "ordinal": COUPON_ORDINAL, "status": CODE,
+        "expires_at": INSTANT, "failure_code": REASON, "attempt_count": COUNT,
+        "next_attempt_at": INSTANT, "verified_at": INSTANT, "redeemed_webhook_event_id": UUID,
+        "created_at": INSTANT, "updated_at": INSTANT,
+    }),
+    # Sin URL, sck, ulid ni los ids de Chatwoot.
+    "links": Record("link", {
+        "id": UUID, "recovery_case_id": UUID, "delivery_attempt_id": UUID, "action_id": UUID,
+        "attempt_number": POSITIVE, "status": CODE, "offer_resolution": CODE,
+        "attribution_resolution": CODE, "failure_code": REASON, "comprado": BOOLEAN,
+        "hotmart_webhook_event_id": UUID, "created_at": INSTANT, "finalized_at": INSTANT,
+        "purchased_at": INSTANT,
+    }),
+    # Sin los ids de Chatwoot ni external_user_id (el telefono).
+    "renovaciones": Record("renovacion", {
+        "action_id": UUID, "recovery_case_id": UUID, "occurred_at": INSTANT,
+        "created_at": INSTANT, "efecto": RENEWAL_EFFECT,
+    }),
+    **{section: ROWS[section] for section in (
+        "autorizaciones", "reevaluaciones", "primer_contacto",
+    )},
+}
+assert tuple(ROWS_V3) == ROW_SECTIONS_V3
+
+# La configuracion de la v2, con los pasos de la politica con sus marcas
+# (20261019000600): el delay como intervalo de Postgres ('24 hours' sale
+# '24:00:00'), si sale con plantilla aprobada y el ordinal de su cupon.
+CONFIG_V3 = Record("config", {
+    **CONFIG.fields,
+    "followup_policy_versions": ListOf(Record("version_de_la_politica", {
+        **CONFIG.fields["followup_policy_versions"].item.fields,
+        "steps": ListOf(Record("paso", {
+            "step_key": CODE, "mode": CODE, "delay": INTERVAL,
+            "approved_template": BOOLEAN, "coupon_ordinal": COUPON_ORDINAL,
+        })),
+    })),
+}, required=CONFIG.required)
+
+COUNTS_V3 = Record("conteos", {name: COUNT for name in (
+    "eventos", "disparos_desde", "casos", "casos_del_carrito", "secuencias", "acciones",
+    "intentos", "intentos_tramos", "envios", "reevaluaciones", "reevaluaciones_tramos",
+    "cupones", "links", "renovaciones", "autorizaciones", "primer_contacto",
+    "intenciones", "contactos",
+)})
+
+# Lo que recorta el fixture v3, por conteo: los de la v2 (el primer contacto y
+# las intenciones de la siembra) y, para que entre en 1 MB, las secuencias y
+# las acciones de los casos que no son de la ventana (con sus intentos y sus
+# reevaluaciones, que la paridad v3 no lee) (``_trim_outside_window``).
+TRIMMED_COUNTS_V3 = (
+    "primer_contacto", "intenciones", "secuencias", "acciones", "intentos", "intentos_tramos",
+    "envios", "reevaluaciones", "reevaluaciones_tramos",
+)
+TRANSFORMATIONS_V3 = (
+    "valida_forma", "recorta_siembra", "recorta_fuera_de_la_ventana", "horas_en_z", "sin_nulos",
+    "constantes", "claves_ordenadas_compacta",
+)
+
+FIXTURE_META_V3 = Record("fixture", {
+    **FIXTURE_META.fields,
+    "constantes": Record("constantes", {
+        section: Record(f"constantes_de_{section}", {
+            key: spec for key, spec in ROWS_V3[section].fields.items() if isinstance(spec, Form)
+        })
+        for section in ROW_SECTIONS_V3
+    }),
+    "recortes": Record("recortes", {
+        name: Record(f"recorte_de_{name}", {"captura": COUNT, "fixture": COUNT})
+        for name in TRIMMED_COUNTS_V3
+    }),
+}, required=FIXTURE_META.required)
+
+CAPTURED_V3 = Record("_captured", {
+    **CAPTURED.fields,
+    # La v3 se dice por su nombre: una captura v2 no pasa por la forma v3.
+    "query": _text("consulta_v3", re.escape(QUERY_NAME_V3)),
+    "conteos": COUNTS_V3,
+    "fixture": FIXTURE_META_V3,
+}, required=CAPTURED.required)
+
+CAPTURE_V3 = Record("captura", {
+    "_captured": CAPTURED_V3, "config": CONFIG_V3,
+    **{section: ListOf(ROWS_V3[section]) for section in ROW_SECTIONS_V3},
+}, required=TOP_SECTIONS_V3)
+
+
+@dataclass(frozen=True)
+class CaptureForm:
+    """Una forma de la captura: su consulta, sus secciones de filas y que eventos son disparos."""
+
+    name: str                                   # "v2" | "v3"
+    query: str
+    row_sections: tuple[str, ...]
+    rows: Mapping[str, Record]
+    capture: Record
+    firing_event_types: tuple[str, ...]
+
+
+FORM_V2 = CaptureForm("v2", QUERY_NAME, ROW_SECTIONS, ROWS, CAPTURE, FIRING_EVENT_TYPES)
+FORM_V3 = CaptureForm("v3", QUERY_NAME_V3, ROW_SECTIONS_V3, ROWS_V3, CAPTURE_V3, FIRING_EVENT_TYPES_V3)
+FORMS: Mapping[str, CaptureForm] = {"v2": FORM_V2, "v3": FORM_V3}
+
+
+# ---------------------------------------------------------------------------
 # La validacion.
 # ---------------------------------------------------------------------------
 
@@ -484,18 +652,18 @@ def _walk(value: Any, spec: Spec, path: str, out: list[ShapeProblem]) -> None:
             _walk(item, child, where, out)
 
 
-def shape_problems(data: Any) -> list[ShapeProblem]:
+def shape_problems(data: Any, form: CaptureForm = FORM_V2) -> list[ShapeProblem]:
     """Todos los problemas de forma de una captura o de un fixture, en el orden del documento."""
     out: list[ShapeProblem] = []
-    _walk(data, CAPTURE, "", out)
+    _walk(data, form.capture, "", out)
     if data is None:
         out.append(ShapeProblem("", "se esperaba un objeto (captura)"))
     return out
 
 
-def validate_shape(data: Any) -> None:
+def validate_shape(data: Any, form: CaptureForm = FORM_V2) -> None:
     """Levanta ``CaptureShapeError`` con el camino del primer problema; nunca dice el valor."""
-    problems = shape_problems(data)
+    problems = shape_problems(data, form)
     if problems:
         raise CaptureShapeError(tuple(problems))
 
@@ -577,14 +745,19 @@ def _same(left: Any, right: Any) -> bool:
 
 
 def _trim_seed(data: dict[str, Any]) -> dict[str, dict[str, int]]:
-    """El paso 2 de §6.4: deja del primer contacto y de las intenciones lo que T1 lee."""
+    """El paso 2 de §6.4: deja del primer contacto y de las intenciones lo que T1 lee.
+
+    Las intenciones que toca un carrito o un pago fallido desde «desde»
+    (``TRIM_EVENT_TYPES``), en las dos formas: en la v3 el pago fallido no es
+    un disparo, pero P6 lo mira como ganador.
+    """
     desde = parse_instant(data["_captured"]["desde"])
     plans: list[dict[str, Any]] = []
     for index, row in enumerate(data["primer_contacto"]):
         if parse_instant(_present(row, "created_at", f"primer_contacto[{index}]")) >= desde:
             plans.append({key: row[key] for key in FIRST_CONTACT_KEYS if key in row})
     touched = {plan["purchase_intent_id"] for plan in plans if plan.get("purchase_intent_id")}
-    for event in firings(data):
+    for event in _events_since(data, TRIM_EVENT_TYPES):
         for name in ("cart_correlation", "payment_failure_correlation"):
             correlation = event.get(name) or {}
             if correlation.get("purchase_intent_id"):
@@ -602,7 +775,42 @@ def _trim_seed(data: dict[str, Any]) -> dict[str, dict[str, int]]:
     return trims
 
 
-def _extract_constants(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def window_case_ids(data: Mapping[str, Any]) -> frozenset[str]:
+    """Los casos del carrito de la ventana: atados a ``CART_SCOPE_KEY`` y anclados por un carrito desde «desde».
+
+    Es la misma regla que ``flow_parity._window_cases``.
+    """
+    fired = {event["id"] for event in firings(data, FORM_V3)}
+    return frozenset(
+        case["id"] for case in data["casos"]
+        if case.get("abandonment_event_id") in fired
+        and (case.get("binding") or {}).get("scope_key") == CART_SCOPE_KEY
+    )
+
+
+def _trim_outside_window(data: dict[str, Any]) -> dict[str, dict[str, int]]:
+    """El recorte de la v3 para que el fixture entre en 1 MB, sin cambiar nada de lo que la paridad mide.
+
+    * Las acciones y las secuencias de los casos que no son de la ventana: P3 y los finales miran solo
+      los de la ventana; P6 y «llego al flujo» miran los casos, que quedan todos. Las autorizaciones
+      quedan todas: la bolsa cuenta las observadas.
+    * Las reevaluaciones de los casos que no son de la ventana: la paridad v3 no las lee (la respuesta
+      viene en cada accion); las de la ventana quedan como evidencia del reporte.
+    Los cupones, los links y las renovaciones quedan enteros: son la evidencia del reporte.
+    """
+    before = count_sections(data, FORM_V3)
+    window = window_case_ids(data)
+    data["acciones"] = [row for row in data["acciones"] if row.get("recovery_case_id") in window]
+    data["secuencias"] = [row for row in data["secuencias"] if row.get("recovery_case_id") in window]
+    data["reevaluaciones"] = [row for row in data["reevaluaciones"] if row.get("recovery_case_id") in window]
+    after = count_sections(data, FORM_V3)
+    return {
+        name: {"captura": before[name], "fixture": after[name]}
+        for name in TRIMMED_COUNTS_V3 if name not in ("primer_contacto", "intenciones")
+    }
+
+
+def _extract_constants(data: dict[str, Any], form: CaptureForm = FORM_V2) -> dict[str, dict[str, Any]]:
     """El paso 3 de §6.4: una columna con el mismo valor en todas las filas de su seccion.
 
     Solo en las secciones de filas, con dos filas o mas, y solo las hojas (no
@@ -610,11 +818,11 @@ def _extract_constants(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
     ausente en alguna fila no es constante.
     """
     constants: dict[str, dict[str, Any]] = {}
-    for section in ROW_SECTIONS:
+    for section in form.row_sections:
         rows = data[section]
         if len(rows) < 2:
             continue
-        fields = ROWS[section].fields
+        fields = form.rows[section].fields
         found = {
             key: value for key, value in rows[0].items()
             if isinstance(fields[key], Form)
@@ -641,7 +849,7 @@ def section_sizes(data: Mapping[str, Any]) -> dict[str, int]:
 
 
 def build_fixture(capture: Mapping[str, Any], *, source_sha256: str,
-                  source_bytes: int | None = None) -> dict[str, Any]:
+                  source_bytes: int | None = None, form: CaptureForm = FORM_V2) -> dict[str, Any]:
     """Arma el fixture recortado de una captura completa, con los pasos de §6.4.
 
     1. valida la forma (una clave fuera de la lista aborta: no se descarta en
@@ -658,27 +866,31 @@ def build_fixture(capture: Mapping[str, Any], *, source_sha256: str,
 
     ``_captured.conteos`` queda como lo midio la consulta: el recorte de las
     dos secciones se lee en ``_captured.fixture.recortes``.
+
+    ``form`` es la forma de la captura (la v2 por defecto, o ``FORM_V3``).
     """
-    validate_shape(capture)
+    validate_shape(capture, form)
     if is_fixture(capture):
         raise CaptureFixtureError(
             "_captured.fixture: la entrada ya es un fixture; se arma desde la captura")
-    for name, value, form in (("source_sha256", source_sha256, SHA256),
+    for name, value, leaf in (("source_sha256", source_sha256, SHA256),
                               ("source_bytes", source_bytes, COUNT)):
-        reason = None if value is None and name == "source_bytes" else _leaf_problem(value, form)
+        reason = None if value is None and name == "source_bytes" else _leaf_problem(value, leaf)
         if reason is not None:
             raise CaptureFixtureError(f"{name}: {reason}")
     data: dict[str, Any] = copy.deepcopy(dict(capture))
     trims = _trim_seed(data)
-    data = _times_in_z(data, CAPTURE)
+    if form.name == "v3":
+        trims.update(_trim_outside_window(data))
+    data = _times_in_z(data, form.capture)
     data = _without_nulls(data)
-    constants = _extract_constants(data)
+    constants = _extract_constants(data, form)
     meta: dict[str, Any] = {
         "source_sha256": source_sha256,
         "max_bytes": FIXTURE_MAX_BYTES,
         "constantes": constants,
         "recortes": trims,
-        "transformaciones": list(TRANSFORMATIONS),
+        "transformaciones": list(TRANSFORMATIONS_V3 if form.name == "v3" else TRANSFORMATIONS),
         "fixture_bytes": 0,
     }
     if source_bytes is not None:
@@ -696,7 +908,7 @@ def build_fixture(capture: Mapping[str, Any], *, source_sha256: str,
         raise CaptureFixtureError("fixture_bytes: el peso no converge")
     if size > FIXTURE_MAX_BYTES:
         raise FixtureTooLargeError(size, FIXTURE_MAX_BYTES, section_sizes(data))
-    validate_shape(data)
+    validate_shape(data, form)
     return data
 
 
@@ -733,26 +945,33 @@ def _present(row: Mapping[str, Any], key: str, where: str) -> Any:
     return value
 
 
-def firings(data: Mapping[str, Any]) -> Iterator[Mapping[str, Any]]:
-    """Los disparos: los carritos y los pagos fallidos recibidos desde «desde» (§6.5).
-
-    Sobre una captura completa o un fixture restaurado (``restore_fixture``).
-    """
+def _events_since(data: Mapping[str, Any], types: tuple[str, ...]) -> Iterator[Mapping[str, Any]]:
     desde = parse_instant(data["_captured"]["desde"])
     for index, event in enumerate(data["eventos"]):
-        if event.get("event_type") not in FIRING_EVENT_TYPES:
+        if event.get("event_type") not in types:
             continue
         if parse_instant(_present(event, "received_at", f"eventos[{index}]")) >= desde:
             yield event
 
 
-def count_sections(data: Mapping[str, Any]) -> dict[str, int]:
+def firings(data: Mapping[str, Any], form: CaptureForm = FORM_V2) -> Iterator[Mapping[str, Any]]:
+    """Los disparos recibidos desde «desde» (§6.5): en la v2, los carritos y los pagos fallidos; en la v3,
+    solo los carritos.
+
+    Sobre una captura completa o un fixture restaurado (``restore_fixture``).
+    """
+    return _events_since(data, form.firing_event_types)
+
+
+def count_sections(data: Mapping[str, Any], form: CaptureForm = FORM_V2) -> dict[str, int]:
     """Los conteos de ``_captured.conteos``, recontados desde las filas.
 
     Sobre una captura completa o un fixture restaurado. Los tramos se expanden
     para contar: los intentos y las reevaluaciones suman su ``n``, y un envio
     es un intento con ``request_started_at`` (en un tramo, todos sus intentos
-    tienen la misma fase y el mismo resultado).
+    tienen la misma fase y el mismo resultado). La v3 suma los casos del
+    carrito (los atados a ``CART_SCOPE_KEY``), las secuencias, los cupones, los
+    links y las renovaciones.
     """
     tramos = [
         (f"acciones[{index}].intentos[{position}]", tramo)
@@ -762,9 +981,9 @@ def count_sections(data: Mapping[str, Any]) -> dict[str, int]:
     attempts = [(_present(tramo, "n", where), tramo) for where, tramo in tramos]
     reevaluations = [_present(row, "n", f"reevaluaciones[{index}]")
                      for index, row in enumerate(data["reevaluaciones"])]
-    return {
+    counts = {
         "eventos": len(data["eventos"]),
-        "disparos_desde": sum(1 for _ in firings(data)),
+        "disparos_desde": sum(1 for _ in firings(data, form)),
         "casos": len(data["casos"]),
         "acciones": len(data["acciones"]),
         "intentos": sum(n for n, _ in attempts),
@@ -778,3 +997,13 @@ def count_sections(data: Mapping[str, Any]) -> dict[str, int]:
         "intenciones": len(data["intenciones"]),
         "contactos": len(data["contactos"]),
     }
+    if form.name == "v3":
+        counts.update({
+            "casos_del_carrito": sum(1 for case in data["casos"]
+                                     if (case.get("binding") or {}).get("scope_key") == CART_SCOPE_KEY),
+            "secuencias": len(data["secuencias"]),
+            "cupones": len(data["cupones"]),
+            "links": len(data["links"]),
+            "renovaciones": len(data["renovaciones"]),
+        })
+    return counts

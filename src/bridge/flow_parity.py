@@ -70,6 +70,11 @@ esta en verde. Un envio antes de E no se acepta nunca.
 La captura tiene una accion por caso (el carrito y el pago fallido de hoy
 mandan uno); con mas, ``Capture`` falla en voz alta en vez de elegir una.
 
+**La v3 (T2.2).** ``CaptureV3`` lee la captura v3, la del carrito de tres
+toques (A1, A2 y Z), y ``parity_report_v3`` mide P3 por paso, los finales de
+cada paso y P6: ver la seccion del final del modulo. Lo de arriba, la v2, no
+cambia.
+
 Es puro: no lee el entorno, no hace red ni toca bases.
 """
 
@@ -87,9 +92,13 @@ from types import MappingProxyType
 from typing import Any
 
 from .flow_capture import (
+    CART_SCOPE_KEY,
     FIRING_EVENT_TYPES,
+    FORM_V2,
+    FORM_V3,
     QUERY_NAME,
     CaptureFixtureError,
+    CaptureForm,
     count_sections,
     firings,
     is_fixture,
@@ -97,6 +106,7 @@ from .flow_capture import (
     restore_fixture,
     validate_shape,
 )
+from .flow_engine import legacy_motivo
 from .flow_policy import interval_of
 from .flow_schedule import LAST_MINUTE, Franja, franja_of_policy, is_open, local_day, next_open
 
@@ -105,6 +115,9 @@ __all__ = [
     "TOLERANCE", "Capture", "CaptureError", "FlowException", "ParityReport", "SendTiming",
     "Supersession", "control_state_at", "eligible_at", "parity_report", "send_timings",
     "supersessions", "winners_without_cancel",
+    # La T2.2: la paridad sobre la captura v3, el carrito de tres toques.
+    "DIFFERENCE_KINDS_V3", "COUPON_WAIT_BY_STEP", "CaptureV3", "ParityReportV3", "StepTiming",
+    "parity_report_v3", "step_finals", "step_timings",
 ]
 
 # R - E <= 5 minutos (P#2): un lease del despachador (worker.py:739). Con 15, un
@@ -402,6 +415,9 @@ class Capture:
     def __post_init__(self) -> None:
         object.__setattr__(self, "_index", MappingProxyType(_build_index(self)))
 
+    # La forma de la captura que lee: la v2. ``CaptureV3`` lee la v3.
+    FORM = FORM_V2
+
     @classmethod
     def from_json(cls, data: Mapping[str, Any]) -> Capture:
         """Valida la forma (la de ``flow_capture``) y los conteos, y devuelve la captura congelada.
@@ -410,16 +426,23 @@ class Capture:
         devuelve las constantes (``restore_fixture``), y sus dos secciones
         recortadas se recuentan contra ``_captured.fixture.recortes``.
         """
+        restored = cls._restored(data)
+        return cls(**cls._fields_of(restored))
+
+    @classmethod
+    def _restored(cls, data: Mapping[str, Any]) -> dict[str, Any]:
+        """Valida la forma de ``cls.FORM``, devuelve las constantes y recuenta contra los conteos."""
+        form: CaptureForm = cls.FORM
         try:
-            validate_shape(data)
+            validate_shape(data, form)
             restored = restore_fixture(data)
         except CaptureFixtureError as error:
             raise CaptureError(str(error)) from error
         captured = restored["_captured"]
-        if captured.get("query") != QUERY_NAME:
-            raise CaptureError(f"_captured.query: se esperaba {QUERY_NAME}")
+        if captured.get("query") != form.query:
+            raise CaptureError(f"_captured.query: se esperaba {form.query}")
         try:
-            counted = count_sections(restored)
+            counted = count_sections(restored, form)
         except CaptureFixtureError as error:
             raise CaptureError(str(error)) from error
         expected = dict(captured["conteos"])
@@ -431,7 +454,12 @@ class Capture:
             if expected.get(name) != value:
                 raise CaptureError(
                     f"_captured.conteos.{name}: la captura dice {expected.get(name)} y las filas dan {value}")
-        return cls(
+        return restored
+
+    @staticmethod
+    def _fields_of(restored: Mapping[str, Any]) -> dict[str, Any]:
+        captured = restored["_captured"]
+        return dict(
             meta=_freeze(captured),
             config=_freeze(restored["config"]),
             events=_freeze(restored["eventos"]),
@@ -463,14 +491,15 @@ class Capture:
         return self._index["case_by_event"].get(event_id)
 
 
-def _build_index(capture: Capture) -> dict[str, Any]:
+def _build_index(capture: Capture, *, form: CaptureForm = FORM_V2,
+                 one_action_per_case: bool = True) -> dict[str, Any]:
     meta = capture.meta
     index: dict[str, Any] = {
         "desde": _instant(meta, "desde", "_captured"),
         "captured_at": _optional_instant(meta, "captured_at", "_captured"),
     }
     index["events"] = {_need(row, "id", f"eventos[{i}]"): row for i, row in enumerate(capture.events)}
-    index["firings"] = tuple(firings({"_captured": meta, "eventos": capture.events}))
+    index["firings"] = tuple(firings({"_captured": meta, "eventos": capture.events}, form))
     index["cases"] = {_need(row, "id", f"casos[{i}]"): row for i, row in enumerate(capture.cases)}
     case_by_event: dict[str, Mapping[str, Any]] = {}
     for i, case in enumerate(capture.cases):
@@ -482,6 +511,9 @@ def _build_index(capture: Capture) -> dict[str, Any]:
     action_by_case: dict[str, Mapping[str, Any]] = {}
     for i, row in enumerate(capture.actions):
         case_id = _need(row, "recovery_case_id", f"acciones[{i}]")
+        if not one_action_per_case:
+            # La v3: un caso del carrito tiene un paso por accion (A1, A2, Z).
+            continue
         if case_id in action_by_case:
             # P3 mira la accion del disparo: con dos (un segundo paso, el cupon,
             # la reactivacion) no se elige una en silencio.
@@ -583,7 +615,7 @@ class _Gate:
     expires: datetime
 
 
-def _gate_of(capture: Capture, action: Mapping[str, Any]) -> _Gate:
+def _gate_of(capture: Capture, action: Mapping[str, Any], start: datetime | None = None) -> _Gate:
     where = f"accion {action.get('id')}"
     case = capture._index["cases"].get(_need(action, "recovery_case_id", where))
     if case is None:
@@ -613,7 +645,7 @@ def _gate_of(capture: Capture, action: Mapping[str, Any]) -> _Gate:
         max_total=scope["max_outbound_request_starts_total"],
         franja=franja,
         midnight=Franja(always=False, zone=zone, start_minute=0, end_minute=LAST_MINUTE),
-        start=_instant(action, "anchor_observed_at", where) + grace,
+        start=start if start is not None else _instant(action, "anchor_observed_at", where) + grace,
         expires=_instant(action, "expires_at", where),
     )
 
@@ -626,7 +658,7 @@ def _bolsa_at(capture: Capture, gate: _Gate, at: datetime) -> tuple[int, int]:
     return total, daily
 
 
-def eligible_at(capture: Capture, action: Mapping[str, Any]) -> datetime | None:
+def eligible_at(capture: Capture, action: Mapping[str, Any], *, start: datetime | None = None) -> datetime | None:
     """E de P3: el primer instante >= anchor_observed_at + gracia con la franja abierta, el control armado
     en la version del recorrido y la bolsa con cupo en el dia local, antes de expires_at.
 
@@ -636,8 +668,14 @@ def eligible_at(capture: Capture, action: Mapping[str, Any]) -> datetime | None:
     da la primera hora en que puede cumplirse (la proxima apertura, el proximo
     ``armed``, la proxima medianoche local), y se vuelve a mirar todo desde la
     mayor. Con el tope total agotado no vuelve: las autorizaciones no bajan.
+
+    ``start`` reemplaza ``anchor_observed_at + gracia`` como primer instante:
+    lo usa la v3 para A2 y Z (la primera aceptacion mas el delay del paso, o
+    la renovacion que adelanta Z).
     """
-    gate = _gate_of(capture, action)
+    if start is not None:
+        _require_aware(start)
+    gate = _gate_of(capture, action, start)
     at = gate.start
     for _ in range(_MAX_STEPS):
         if at >= gate.expires:
@@ -901,7 +939,7 @@ def supersessions(capture: Capture) -> tuple[Supersession, ...]:
     product = _precheckout_product(capture)
     events = _all_firing_events(capture)
     out: list[Supersession] = []
-    for index, plan in enumerate(capture.first_contacts):
+    for index, plan in enumerate(capture._index.get("p6_plans", capture.first_contacts)):
         if not _superseded(plan):
             continue
         where = f"primer_contacto[{index}]"
@@ -917,8 +955,42 @@ def supersessions(capture: Capture) -> tuple[Supersession, ...]:
                 routes.add(route)
                 if winner is None:
                     winner, matched = found[-1]["id"], route
+        if capture._index.get("open_case_route"):
+            # La v3: el legado cede tambien ante cualquier caso de Hotmart abierto del producto
+            # (20261001000200:300-311, §1.7 fila 13), aunque su disparo no sea de la captura
+            # (la ficha, PURCHASE_BILLET_PRINTED). El caso es un hecho de la persona.
+            case = _open_case_of(capture, plan, product, stopped)
+            if case is not None:
+                routes.add(OPEN_CASE_ROUTE)
+                if winner is None:
+                    winner, matched = case["abandonment_event_id"], OPEN_CASE_ROUTE
+            # Y ante la intencion clasificada por un carrito o un pago fallido (20261001000200:297-299),
+            # aunque el disparo que la clasifico no sea de la captura (llego antes de la siembra). Es una
+            # cota: la captura trae la foto de la intencion, no desde cuando esta clasificada, asi que
+            # se usa solo si ninguna otra ruta encuentra un ganador.
+            intent = capture._index["intents"].get(plan.get("purchase_intent_id"))
+            if (winner is None and intent is not None
+                    and intent.get("current_classification") in CLASSIFIED_INTENT):
+                routes.add(CLASSIFIED_INTENT_ROUTE)
+                winner, matched = intent["id"], CLASSIFIED_INTENT_ROUTE
         out.append(Supersession(_plan_ref(plan), stopped, winner, matched, frozenset(routes)))
     return tuple(out)
+
+
+OPEN_CASE_ROUTE = "caso_en_curso"
+CLASSIFIED_INTENT_ROUTE = "intencion_clasificada"
+CLASSIFIED_INTENT = frozenset({"confirmed_abandonment", "payment_failure_supported"})
+
+
+def _open_case_of(capture: Capture, plan: Mapping[str, Any], product: str,
+                  at: datetime) -> Mapping[str, Any] | None:
+    """El caso de Hotmart del contacto del plan y del producto que estaba en curso en ``at``, el mas reciente."""
+    contact = plan.get("contact_id")
+    if contact is None:
+        return None
+    found = [case for case in capture._index["cases_by_contact"].get(contact, ())
+             if case.get("external_product_id") == product and _case_open_at(case, at)]
+    return max(found, key=lambda case: case["created_at"]) if found else None
 
 
 def _route_group(routes: frozenset[str]) -> str | None:
@@ -943,9 +1015,11 @@ def winners_without_cancel(capture: Capture) -> tuple[tuple[str, str], ...]:
     """
     product = _precheckout_product(capture)
     out: list[tuple[str, str]] = []
-    for event in capture.firings():
+    # En la v3 los disparos son solo los carritos, y P6 mira tambien el pago
+    # fallido, como en la T1 (``p6_firings``).
+    for event in capture._index.get("p6_firings", capture._index["firings"]):
         arrived = _instant(event, "received_at", f"evento {event['id']}")
-        for index, plan in enumerate(capture.first_contacts):
+        for index, plan in enumerate(capture._index.get("p6_plans", capture.first_contacts)):
             if plan.get("outcome") != "planned":
                 continue
             where = f"primer_contacto[{index}]"
@@ -1078,14 +1152,14 @@ def _percentile(values: Sequence[float], share: float) -> float:
     return ordered[max(1, math.ceil(share * len(ordered))) - 1]
 
 
-def _named_problem(entry: object) -> str | None:
+def _named_problem(entry: object, kinds: tuple[str, ...] = DIFFERENCE_KINDS) -> str | None:
     if not isinstance(entry, Mapping):
         return "no_es_un_objeto"
     if set(entry) - NAMED_KEYS:
         return "clave_desconocida"
     if not isinstance(entry.get("disparo"), str) or not _UUID.fullmatch(entry["disparo"]):
         return "disparo_sin_uuid"
-    if entry.get("diferencia") not in DIFFERENCE_KINDS:
+    if entry.get("diferencia") not in kinds:
         return "diferencia_desconocida"
     if entry["diferencia"] == NEVER_BEFORE:
         return "nunca_antes_no_se_acepta"
@@ -1219,4 +1293,685 @@ def parity_report(capture: Capture, named: Sequence[Mapping[str, Any]], *,
         supersessions_by=MappingProxyType({route: by_route.get(route, 0) for route in MATCH_ORDER}),
         supersessions_by_routes=MappingProxyType({group: by_routes.get(group, 0) for group in ROUTE_GROUPS}),
         ceded_to_a_firing_without_case=MappingProxyType(dict(sorted(without_case.items()))),
+    )
+
+
+# ---------------------------------------------------------------------------
+# La T2.2: la paridad sobre la captura v3, el carrito de tres toques.
+# ---------------------------------------------------------------------------
+#
+# Especificacion: «T2.2: la captura v3 y la paridad del carrito de tres
+# toques» (2026-10-21, en el vault). La captura es la de
+# ``captura-paridad-recuperacion-v3`` (``flow_capture.FORM_V3``): desde la
+# activacion de la v7 de att1-recuperacion, con las secuencias, los cupones,
+# los links, las renovaciones y la primera respuesta de cada envio.
+#
+# **P3, por paso.** Para cada A1, A2 y Z enviado de un carrito de la ventana
+# (un caso del scope del carrito que ancla un disparo desde «desde»), E es el
+# primer instante en que la puerta dice «mandar» (``eligible_at``, la misma de
+# la T1) desde un comienzo que depende del paso:
+#
+# * A1 (``first_contact``): el ancla mas la gracia, como en la T1;
+# * A2 y Z: la primera aceptacion de la secuencia mas el ``delay`` del paso
+#   en la politica del caso. El delay se cuenta desde la primera aceptacion y
+#   no desde el paso anterior (20260813000100:328-350: «Z cae a las 72 h de A1
+#   aunque A2 se haya corrido por el horario»), y el paso siguiente no tiene
+#   gracia;
+# * Z con un pedido de renovacion: la hora del pedido, si es antes
+#   (20261019000600:331-334). Es la excepcion
+#   ``renovacion_adelanta_el_ultimo_toque`` y se cuenta como explicada.
+#
+# R es el ``request_started_at`` observado. Se cumple R >= E - 1 s siempre, y
+# R - E <= 5 minutos salvo un hecho observado. Ademas de los de la T1, el
+# cupon que se espera: un intento ``failed_before_request`` con
+# ``recovery_coupon_not_ready`` es la excepcion ``a1_espera_al_cupon`` en A1
+# (cart_first_touch.py:130-139) y ``toque_con_cupon_cierra_sin_cupon`` en Z
+# (cart_followups.py:215-230); como todo hecho, explica hasta el reintento que
+# pidio. Las diferencias de P3 llevan como ``ref`` el uuid de la accion: un
+# disparo tiene hasta tres pasos.
+#
+# **Los finales.** Cada paso de la politica de cada carrito de la ventana es
+# ``enviado``, ``pendiente`` (espera a la hora de la captura) o un motivo: el
+# de la tabla de §2.9 (``flow_engine.LEGACY_REASON_TO_MOTIVO``: contesto,
+# compro, vencio, baja...) o ``sin_cupon`` (el toque con cupon cerro sin el).
+# Un paso que no llego a crearse hereda el final del anterior (A2 contesto: Z
+# contesto), o el del cierre del caso si el anterior salio (la compra, el
+# vencimiento antes del paso). Un paso sin motivo es la diferencia
+# ``final_sin_motivo``. La cuenta cierra contra el censo: los pasos
+# clasificados son los casos por sus pasos, y los enviados son los envios de P3
+# (si no, ``censo_no_cierra``).
+#
+# Un paso que el legado no creo, con el anterior enviado y su E (la primera aceptacion mas su delay,
+# con la puerta) mas la tolerancia ya pasado a la hora de la captura, es ``paso_no_creado``: una
+# diferencia.
+#
+# **P6**, como en la T1, con los carritos y los pagos fallidos como ganadores, sobre los planes desde
+# «desde». Suma dos rutas, despues de las de la T1: ``caso_en_curso`` (un caso de Hotmart abierto del
+# producto, aunque su disparo no se capture, como la ficha) e ``intencion_clasificada`` (la intencion
+# del plan clasificada por un carrito o un pago fallido; es una cota, porque la captura trae la foto de
+# la intencion y no desde cuando esta clasificada). Los casos de la ficha no se comparan por persona:
+# se cuentan aparte (``persons_not_comparable``).
+
+DIFFERENCE_KINDS_V3 = DIFFERENCE_KINDS + ("final_sin_motivo", "censo_no_cierra", "paso_no_creado")
+FIRST_STEP = "first_contact"
+LAST_TOUCH_STEP = "cart_last_touch"
+# El cupon que todavia no esta valid: el intento se difiere (worker.py:992-1030,
+# con el retry_after del paso).
+COUPON_NOT_READY = "recovery_coupon_not_ready"
+COUPON_WAIT_BY_STEP: Mapping[str, str] = MappingProxyType({
+    FIRST_STEP: "a1_espera_al_cupon",
+    LAST_TOUCH_STEP: "toque_con_cupon_cierra_sin_cupon",
+})
+RENEWAL_ADVANCES = "renovacion_adelanta_el_ultimo_toque"
+# Los cierres de un toque con cupon que no tuvo su cupon (cart_followups.py:
+# 213-230 y cart_first_touch.py:_COUPON_DEAD): no hay toque sin el descuento.
+COUPON_CLOSE_REASONS = frozenset({
+    "recovery_coupon_create_failed", "recovery_coupon_expired", "recovery_coupon_redeemed",
+    "cart_last_touch_coupon_not_ready_in_time",
+})
+WITHOUT_COUPON = "sin_cupon"
+FINAL_SENT = "enviado"
+FINAL_PENDING = "pendiente"
+FINAL_WITHOUT_REASON = "sin_motivo"
+# Un paso que el legado no creo aunque el anterior salio y su E (mas la tolerancia) ya paso a la hora
+# de la captura: el motor lo habria mandado. Es una diferencia.
+FINAL_NOT_CREATED = "paso_no_creado"
+# Los cierres de la secuencia que explican un paso que no llego a crearse
+# (20260813000100:398-416).
+SEQUENCE_CLOSE_MOTIVES: Mapping[str, str] = MappingProxyType({
+    "next_step_outside_expiration": "vencio",
+    "policy_exhausted": "completo",
+})
+
+
+@dataclass(frozen=True)
+class CaptureV3(Capture):
+    """La captura v3, leida y congelada: la de ``Capture`` con las secciones nuevas.
+
+    Un caso del carrito tiene una accion por paso: el indice las guarda por
+    caso y por paso, sin la regla de una accion por caso de la v2.
+    """
+
+    sequences: tuple[Mapping[str, Any], ...] = ()
+    coupons: tuple[Mapping[str, Any], ...] = ()
+    links: tuple[Mapping[str, Any], ...] = ()
+    renewals: tuple[Mapping[str, Any], ...] = ()
+
+    FORM = FORM_V3
+
+    def __post_init__(self) -> None:
+        index = _build_index(self, form=FORM_V3, one_action_per_case=False)
+        index.update(_build_index_v3(self))
+        object.__setattr__(self, "_index", MappingProxyType(index))
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> CaptureV3:
+        """Valida la forma v3 y los conteos, y devuelve la captura congelada (tambien desde un fixture)."""
+        restored = cls._restored(data)
+        return cls(
+            **cls._fields_of(restored),
+            sequences=_freeze(restored["secuencias"]),
+            coupons=_freeze(restored["cupones"]),
+            links=_freeze(restored["links"]),
+            renewals=_freeze(restored["renovaciones"]),
+        )
+
+
+def _build_index_v3(capture: CaptureV3) -> dict[str, Any]:
+    """Lo que suma la v3 al indice: los disparos de P6, las acciones por caso y paso, las secuencias y las
+    renovaciones por accion."""
+    out: dict[str, Any] = {}
+    out["p6_firings"] = tuple(firings({"_captured": capture.meta, "eventos": capture.events}, FORM_V2))
+    # P6 mira los planes desde «desde», como la T1 sobre su fixture (§6.4, paso 2): asi la captura
+    # completa y el fixture recortado dan lo mismo. Uno de la siembra cedio ante un disparo que
+    # puede haber llegado antes de la siembra, y la captura no lo trae.
+    desde = _instant(capture.meta, "desde", "_captured")
+    out["p6_plans"] = tuple(
+        plan for i, plan in enumerate(capture.first_contacts)
+        if _instant(plan, "created_at", f"primer_contacto[{i}]") >= desde
+    )
+    out["open_case_route"] = True
+    out["intents"] = {_need(row, "id", f"intenciones[{i}]"): row for i, row in enumerate(capture.intents)}
+    actions_by_case: dict[str, dict[str, Mapping[str, Any]]] = {}
+    for i, row in enumerate(capture.actions):
+        where = f"acciones[{i}]"
+        steps = actions_by_case.setdefault(_need(row, "recovery_case_id", where), {})
+        step = _need(row, "step_key", where)
+        if step in steps:
+            # Dos acciones del mismo paso en un caso: no se elige una en silencio.
+            raise CaptureError(f"{where}: su caso ya tiene otra accion del paso {step}")
+        steps[step] = row
+    out["actions_by_case"] = {key: MappingProxyType(value) for key, value in actions_by_case.items()}
+    out["sequences"] = {_need(row, "id", f"secuencias[{i}]"): row for i, row in enumerate(capture.sequences)}
+    renewals: dict[str, Mapping[str, Any]] = {}
+    for i, row in enumerate(capture.renewals):
+        renewals[_need(row, "action_id", f"renovaciones[{i}]")] = row
+    out["renewals"] = renewals
+    return out
+
+
+@dataclass(frozen=True)
+class StepTiming:
+    """Un envio de un paso de un carrito de la ventana: desde donde se cuenta E, E, R y la demora."""
+
+    action_id: str
+    case_id: str
+    firing_ref: str
+    step_key: str
+    start: datetime
+    start_by: str                       # "gracia" | "delay" | "renovacion"
+    eligible_at: datetime | None
+    request_started_at: datetime
+    delay_seconds: float | None
+    explained_by: str | None
+    explained_since: datetime | None = None
+
+
+def _window_cases(capture: CaptureV3) -> Iterator[tuple[Mapping[str, Any], Mapping[str, Any]]]:
+    """Los casos del carrito que ancla un disparo desde «desde», con su disparo."""
+    for event in capture.firings():
+        case = capture._index["case_by_event"].get(event["id"])
+        if case is None or case["abandonment_event_id"] != event["id"]:
+            continue
+        if (case.get("binding") or {}).get("scope_key") != CART_SCOPE_KEY:
+            continue
+        yield event, case
+
+
+def _policy_steps(capture: CaptureV3, case: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
+    policy = capture._index["policies"].get(
+        (_need(case, "policy_key", "caso"), _need(case, "policy_version", "caso")))
+    if policy is None:
+        raise CaptureError(f"caso {case.get('id')}: la politica no esta en config")
+    steps = tuple(policy.get("steps") or ())
+    if not steps:
+        raise CaptureError(f"politica {policy.get('policy_key')}: sin pasos")
+    return steps
+
+
+def _sent(action: Mapping[str, Any]) -> bool:
+    return any(tramo["primero"].get("request_started_at") is not None for tramo in action.get("intentos") or ())
+
+
+def _first_acceptance(capture: CaptureV3, action: Mapping[str, Any]) -> datetime:
+    """La primera aceptacion de la secuencia de la accion: desde ahi cuenta el delay de A2 y Z."""
+    sequence = _need(action, "followup_sequence_id", f"accion {action['id']}")
+    accepted: list[datetime] = []
+    for other in capture.actions:
+        if other.get("followup_sequence_id") != sequence:
+            continue
+        for tramo in other.get("intentos") or ():
+            for attempt in (tramo["primero"], tramo.get("ultimo")):
+                if attempt is not None and attempt.get("accepted_at") is not None:
+                    accepted.append(_instant(attempt, "accepted_at", f"accion {other['id']}"))
+    if not accepted:
+        raise CaptureError(f"accion {action['id']}: un paso siguiente sin una aceptacion en su secuencia")
+    return min(accepted)
+
+
+def _step_start(capture: CaptureV3, case: Mapping[str, Any], action: Mapping[str, Any]) -> tuple[datetime, str]:
+    """Desde cuando se cuenta E para la accion: el ancla con la gracia (A1), o la primera aceptacion con el
+    delay del paso (A2 y Z), o la renovacion que lo adelanto."""
+    step_key = _need(action, "step_key", f"accion {action['id']}")
+    if action.get("action_type") == "first_contact_review" or step_key == FIRST_STEP:
+        return _gate_of(capture, action).start, "gracia"
+    step = next((row for row in _policy_steps(capture, case) if row.get("step_key") == step_key), None)
+    if step is None:
+        raise CaptureError(f"accion {action['id']}: su paso no esta en la politica del caso")
+    delay = interval_of(step.get("delay"))
+    if delay is None:
+        raise CaptureError(f"accion {action['id']}: el delay de su paso no se lee")
+    start, by = _first_acceptance(capture, action) + delay, "delay"
+    # Toda fila de recovery_renewal_requests es un pedido que adelanto su paso
+    # (la base la escribe solo con «advanced», 20261019000600:321-336). El
+    # efecto que trae la consulta no decide: «movido_despues» es un diferido
+    # posterior por el horario, que la franja de la puerta ya modela.
+    renewal = capture._index["renewals"].get(action["id"])
+    if renewal is not None:
+        asked = _instant(renewal, "created_at", f"renovacion {action['id']}")
+        if asked < start:
+            start, by = asked, "renovacion"
+    return start, by
+
+
+# Cuanto pide reintentar el despachador despues de un fallo antes del pedido, por paso
+# (worker.py:992-1030, _finalize_pre_request_failure: retry_after o, sin el, 1 minuto). El cupon que
+# todavia no esta valid difiere 5 minutos en A1 (cart_first_touch.py:56-58, CartDiscountConfig) y 8 en
+# Z (cart_followups.py:96-98, CartFollowupConfig), y solo en los primeros ``defer_attempts`` (2)
+# intentos; despues A1 sale sin descuento y Z cierra sin mensaje (cart_first_touch.py:130-139,
+# cart_followups.py:215-230).
+COUPON_RETRY_BY_STEP: Mapping[str, timedelta] = MappingProxyType({
+    FIRST_STEP: timedelta(minutes=5),
+    LAST_TOUCH_STEP: timedelta(minutes=8),
+})
+COUPON_DEFER_ATTEMPTS = 2
+GENERIC_RETRY = timedelta(minutes=1)
+# Lo que tarda el despachador entre que arranca el intento y lo cierra (el reintento se cuenta desde
+# el cierre, no desde el arranque): en ATT1, el 20/10, 1 s.
+RETRY_SLACK = timedelta(minutes=1)
+GENERIC_FAILURE = "reintento_tras_fallo_antes_del_pedido"
+
+
+def _fact_of_step(last: Mapping[str, Any], step_key: str, where: str) -> tuple[str, datetime] | None:
+    """El hecho de la T1 (``_fact_of``), con el cupon que se espera nombrado por su excepcion y el
+    reintento acotado a lo que pide el despachador.
+
+    Un fallo antes del pedido explica hasta su reintento, pero no mas alla del arranque del intento mas
+    el ``retry_after`` del paso y una holgura: un ``finalized_next_attempt_at`` a 7 horas no lo pide el
+    despachador. La espera del cupon vale solo en los primeros dos intentos; despues, el fallo es
+    generico y explica un minuto.
+    """
+    found = _fact_of(last, where)
+    if found is None or last.get("outcome") != "failed_before_request":
+        return found
+    fact, since = found
+    coupon_wait = (last.get("reason_code") == COUPON_NOT_READY and step_key in COUPON_WAIT_BY_STEP
+                   and (last.get("attempt_number") or 0) <= COUPON_DEFER_ATTEMPTS)
+    if coupon_wait:
+        fact, retry = COUPON_WAIT_BY_STEP[step_key], COUPON_RETRY_BY_STEP[step_key]
+    else:
+        fact, retry = GENERIC_FAILURE, GENERIC_RETRY
+    started = _optional_instant(last, "started_at", where)
+    if started is not None:
+        since = min(since, started + retry + RETRY_SLACK)
+    return fact, since
+
+
+def _request_started_step(action: Mapping[str, Any]) -> tuple[datetime | None, str | None, datetime | None]:
+    """``_request_started`` de la T1, con los hechos de ``_fact_of_step``."""
+    where = f"accion {action['id']}"
+    step_key = action.get("step_key") or ""
+    explained: tuple[str, datetime] | None = None
+    for tramo in _attempts(action):
+        first = tramo["primero"]
+        if first.get("request_started_at") is not None:
+            fact, since = explained if explained is not None else (None, None)
+            return _instant(first, "request_started_at", where), fact, since
+        found = _fact_of_step(tramo.get("ultimo") or first, step_key, where)
+        if found is not None:
+            explained = found
+    return None, None, None
+
+
+def _window_actions_v3(capture: CaptureV3) -> Iterator[tuple[Mapping[str, Any], Mapping[str, Any],
+                                                             Mapping[str, Any]]]:
+    for event, case in _window_cases(capture):
+        for action in (capture._index["actions_by_case"].get(case["id"]) or {}).values():
+            yield event, case, action
+
+
+def step_timings(capture: CaptureV3) -> tuple[StepTiming, ...]:
+    """Cada envio de un paso de un carrito de la ventana, con su E y su R, en el orden de los disparos."""
+    out: list[StepTiming] = []
+    for event, case, action in _window_actions_v3(capture):
+        started, explained, since = _request_started_step(action)
+        if started is None:
+            continue
+        start, start_by = _step_start(capture, case, action)
+        eligible = eligible_at(capture, action, start=start)
+        out.append(StepTiming(
+            action_id=action["id"], case_id=case["id"], firing_ref=event["id"],
+            step_key=action["step_key"], start=start, start_by=start_by, eligible_at=eligible,
+            request_started_at=started,
+            delay_seconds=None if eligible is None else (started - eligible).total_seconds(),
+            explained_by=explained, explained_since=since,
+        ))
+    return tuple(out)
+
+
+def _final_motive(action: Mapping[str, Any]) -> str | None:
+    """El motivo de un paso que termino sin envio, con los nombres de §2.9."""
+    reason = action.get("terminal_reason")
+    if reason in COUPON_CLOSE_REASONS:
+        return WITHOUT_COUPON
+    motive = legacy_motivo(reason)
+    if motive is None and action.get("status") == "expired":
+        return "vencio"
+    return motive
+
+
+def _absent_step_eligible(capture: CaptureV3, case: Mapping[str, Any], step: Mapping[str, Any],
+                          previous_action: Mapping[str, Any]) -> datetime | None:
+    """E de un paso que el legado no creo: la primera aceptacion de la secuencia mas su ``delay``, con la
+    puerta de ``eligible_at`` y el vencimiento del paso anterior (el paso siguiente lo hereda,
+    20260813000100:353-381). Sin accion no hay renovacion: el pedido se ata a una accion."""
+    delay = interval_of(step.get("delay"))
+    if delay is None:
+        raise CaptureError(f"caso {case['id']}: el delay del paso {step.get('step_key')} no se lee")
+    start = _first_acceptance(capture, previous_action) + delay
+    phantom = {"id": f"{previous_action['id']}:{step.get('step_key')}", "recovery_case_id": case["id"],
+               "expires_at": previous_action["expires_at"]}
+    return eligible_at(capture, phantom, start=start)
+
+
+def _absent_step_final(capture: CaptureV3, case: Mapping[str, Any], previous: str,
+                       previous_action: Mapping[str, Any] | None, step: Mapping[str, Any] | None = None,
+                       tolerance: timedelta = TOLERANCE) -> str:
+    """El final de un paso que no llego a crearse: el del anterior, o el cierre del caso o de la secuencia.
+
+    Si el anterior salio y nada lo cerro, el paso espera solo mientras su E mas la tolerancia no paso a
+    la hora de la captura; si paso, el legado no lo creo y el motor lo habria mandado
+    (``paso_no_creado``). Si la puerta no dice «mandar» antes de vencer, vencio.
+    """
+    if previous != FINAL_SENT:
+        return previous
+    if case.get("status") == "won" or case.get("purchase_event_id") is not None:
+        return "compro"
+    sequence = None
+    if previous_action is not None:
+        sequence = capture._index["sequences"].get(previous_action.get("followup_sequence_id"))
+    if sequence is not None:
+        # La secuencia se completa tambien cuando la reevaluacion corta un paso: su
+        # completion_reason es el motivo (prospect_replied, purchase_detected).
+        for reason in (sequence.get("completion_reason"), sequence.get("cancel_reason")):
+            motive = SEQUENCE_CLOSE_MOTIVES.get(reason or "") or legacy_motivo(reason)
+            if motive is not None:
+                return motive
+    if previous_action is not None and previous_action.get("status") == "delivery_unknown":
+        return "envio_incierto"
+    if case.get("status") in OPEN_CASE_STATUSES:
+        if step is None or previous_action is None:
+            return FINAL_PENDING
+        eligible = _absent_step_eligible(capture, case, step, previous_action)
+        if eligible is None:
+            return "vencio"
+        captured = capture.captured_at
+        if captured is not None and eligible + tolerance < captured:
+            return FINAL_NOT_CREATED
+        # El paso anterior salio y el siguiente todavia no tenia que insertarse: espera.
+        return FINAL_PENDING
+    return FINAL_WITHOUT_REASON
+
+
+def step_finals(capture: CaptureV3) -> tuple[tuple[str, str, str], ...]:
+    """El final de cada paso de la politica de cada carrito de la ventana: (caso, paso, final)."""
+    out: list[tuple[str, str, str]] = []
+    for _, case in _window_cases(capture):
+        by_step = capture._index["actions_by_case"].get(case["id"]) or {}
+        previous, previous_action = FINAL_SENT, None
+        for position, step in enumerate(_policy_steps(capture, case)):
+            step_key = step.get("step_key") or ""
+            action = by_step.get(step_key)
+            if action is not None:
+                if _sent(action):
+                    final = FINAL_SENT
+                elif action.get("status") in OPEN_ACTION_STATUSES:
+                    final = FINAL_PENDING
+                else:
+                    final = _final_motive(action) or FINAL_WITHOUT_REASON
+            elif position == 0:
+                final = FINAL_WITHOUT_REASON
+            else:
+                final = _absent_step_final(capture, case, previous, previous_action, step)
+            out.append((case["id"], step_key, final))
+            previous, previous_action = final, action
+    return tuple(out)
+
+
+@dataclass(frozen=True)
+class ParityReportV3:
+    """Lo que mide la paridad sobre la captura v3. ``ok()`` es cero sin explicar."""
+
+    firings: Mapping[str, int]
+    reached_flow: int
+    cases: int
+    sends: Mapping[str, int]                    # por paso
+    delay: Mapping[str, Mapping[str, float]]    # por paso: min, mediana, p95, max
+    never_before_violations: tuple[str, ...]
+    over_tolerance: tuple[str, ...]
+    explained: tuple[Mapping[str, str], ...]    # las demoras y los comienzos explicados por una excepcion
+    explained_by: Mapping[str, int]
+    finals: Mapping[str, Mapping[str, int]]     # por paso, por final
+    census: Mapping[str, int]
+    supersessions: int
+    supersessions_without_winner: tuple[str, ...]
+    winners_without_cancel: tuple[str, ...]
+    named: Mapping[str, int]
+    named_total: int
+    unexplained: tuple[Mapping[str, Any], ...]
+    # P6 por la primera ruta que encuentra un ganador: persona, intencion, caso_en_curso o
+    # intencion_clasificada (una cota).
+    supersessions_by: Mapping[str, int] = field(default_factory=dict)
+    # Los casos cuyo disparo la v3 no captura (la ficha): la persona no se compara.
+    persons_not_comparable: tuple[str, ...] = ()
+
+    def ok(self) -> bool:
+        return not self.unexplained and not self.never_before_violations
+
+    def as_json(self) -> dict[str, Any]:
+        return {
+            "ok": self.ok(),
+            "supersessions_by": dict(self.supersessions_by),
+            "persons_not_comparable": list(self.persons_not_comparable),
+            "firings": dict(self.firings),
+            "reached_flow": self.reached_flow,
+            "cases": self.cases,
+            "sends": dict(self.sends),
+            "delay_seconds": {step: dict(values) for step, values in self.delay.items()},
+            "never_before_violations": list(self.never_before_violations),
+            "over_tolerance": list(self.over_tolerance),
+            "explained": [dict(item) for item in self.explained],
+            "explained_by": dict(self.explained_by),
+            "finals": {step: dict(values) for step, values in self.finals.items()},
+            "census": dict(self.census),
+            "supersessions": self.supersessions,
+            "supersessions_without_winner": list(self.supersessions_without_winner),
+            "winners_without_cancel": list(self.winners_without_cancel),
+            "named": dict(self.named),
+            "named_total": self.named_total,
+            "unexplained": [dict(item) for item in self.unexplained],
+        }
+
+
+def _explains_step(capture: CaptureV3, timing: StepTiming, tolerance: timedelta) -> bool:
+    """Si el hecho observado explica la demora: R a lo sumo la tolerancia despues de la primera vez que la
+    puerta vuelve a decir «mandar» desde el hecho.
+
+    En la T1 la cota era max(E, el hecho). Con la espera del cupon no alcanza: si el reintento cae con la
+    franja cerrada (A1 que espera al cupon a las 20:55 de CDMX y reintenta a las 21:05), la reevaluacion
+    difiere a las 09:00, y eso no es una demora sin explicar. La puerta se vuelve a mirar desde el hecho.
+    """
+    if timing.explained_by is None or timing.explained_since is None or timing.eligible_at is None:
+        return False
+    action = next(row for row in capture.actions if row["id"] == timing.action_id)
+    again = eligible_at(capture, action, start=max(timing.eligible_at, timing.explained_since))
+    if again is None:
+        return False
+    # Antes de que la puerta vuelva a decir «mandar» no hay excusa: salio con la puerta cerrada.
+    return again - NEVER_BEFORE_SLACK <= timing.request_started_at <= again + tolerance
+
+
+# Los roles de evento de un caso cuyo disparo la v3 no captura: la ficha (PURCHASE_BILLET_PRINTED,
+# 20261019000100). La consulta trae los carritos, los pagos fallidos y las compras.
+UNCAPTURED_EVENT_ROLES = frozenset({"payment_slip"})
+
+
+def _not_comparable(capture: CaptureV3, case: Mapping[str, Any]) -> bool:
+    """Un caso cuyo disparo es de un tipo que la v3 no captura: no hay clave del evento que comparar."""
+    if capture._index["events"].get(case["abandonment_event_id"]) is not None:
+        return False
+    roles = {item.get("event_role") for item in case.get("eventos") or ()
+             if item.get("webhook_event_id") == case["abandonment_event_id"]}
+    return bool(roles) and roles <= UNCAPTURED_EVENT_ROLES
+
+
+def _person_mismatches_v3(capture: CaptureV3) -> tuple[list[dict[str, str]], tuple[str, ...]]:
+    """``_person_mismatches`` de la T1, con los casos de la ficha aparte, como no comparables.
+
+    Un caso de la ficha es un hecho de la persona: entra por su contacto, pero su evento no viene en la
+    captura. Cualquier otro caso sin su evento (del carrito o del pago fallido) sigue siendo una
+    diferencia.
+    """
+    mismatches: list[dict[str, str]] = []
+    not_comparable: list[str] = []
+    for item in _person_mismatches(capture):
+        if _not_comparable(capture, capture._index["cases"][item["ref"]]):
+            not_comparable.append(item["ref"])
+        else:
+            mismatches.append(item)
+    return mismatches, tuple(not_comparable)
+
+
+def _unsent_differences_v3(capture: CaptureV3, tolerance: timedelta) -> Iterator[dict[str, str]]:
+    """Los pasos sin envio a los que la puerta les dice «mandar» antes de que terminaran (P3)."""
+    for _, case, action in _window_actions_v3(capture):
+        if _sent(action):
+            continue
+        start, _ = _step_start(capture, case, action)
+        eligible = eligible_at(capture, action, start=start)
+        if eligible is None:
+            continue
+        where = f"accion {action['id']}"
+        if action.get("status") in OPEN_ACTION_STATUSES:
+            end = capture.captured_at
+            if end is None:
+                continue
+        else:
+            end = _instant(action, "updated_at", where)
+        if eligible + tolerance < end:
+            yield {
+                "ref": action["id"], "diferencia": "elegible_sin_envio", "paso": action["step_key"],
+                "detalle": (f"E={_text(eligible)} sin envio; la accion termino {action.get('status')}"
+                            f" ({action.get('terminal_reason') or 'sin motivo'})"),
+            }
+
+
+def parity_report_v3(capture: CaptureV3, named: Sequence[Mapping[str, Any]], *,
+                     tolerance: timedelta = TOLERANCE) -> ParityReportV3:
+    """Mide P3 por paso, los finales y P6 sobre la captura v3, y cruza las diferencias con las que tienen
+    nombre (con las reglas de ``parity_report``; en P3, el ``disparo`` de una diferencia es la accion)."""
+    if not isinstance(tolerance, timedelta) or tolerance < timedelta(0):
+        raise ValueError("tolerance_invalid")
+    firing_counts: Counter[str] = Counter()
+    reached = 0
+    for event in capture.firings():
+        firing_counts[f"{FIRING_KIND[event['event_type']]}/{_firing_result(capture, event)}"] += 1
+        reached += _reached_flow(capture, event)
+
+    differences: list[dict[str, str]] = []
+    timings = step_timings(capture)
+    never_before: list[str] = []
+    over: list[str] = []
+    explained_items: list[dict[str, str]] = []
+    delays: dict[str, list[float]] = {}
+    sends: Counter[str] = Counter()
+    for timing in timings:
+        sends[timing.step_key] += 1
+        if timing.start_by == "renovacion":
+            explained_items.append({"ref": timing.action_id, "paso": timing.step_key,
+                                    "excepcion": RENEWAL_ADVANCES})
+        if timing.eligible_at is None or timing.delay_seconds is None:
+            differences.append({
+                "ref": timing.action_id, "diferencia": "envio_sin_E", "paso": timing.step_key,
+                "detalle": f"R={_text(timing.request_started_at)} y la puerta no dice mandar antes de vencer",
+            })
+            continue
+        delays.setdefault(timing.step_key, []).append(timing.delay_seconds)
+        detail = (f"E={_text(timing.eligible_at)} R={_text(timing.request_started_at)}"
+                  f" R-E={timing.delay_seconds:.3f}s")
+        if timing.request_started_at < timing.eligible_at - NEVER_BEFORE_SLACK:
+            never_before.append(timing.action_id)
+            differences.append({"ref": timing.action_id, "diferencia": NEVER_BEFORE,
+                                "paso": timing.step_key, "detalle": detail})
+        elif timing.delay_seconds > tolerance.total_seconds():
+            over.append(timing.action_id)
+            if _explains_step(capture, timing, tolerance):
+                explained_items.append({"ref": timing.action_id, "paso": timing.step_key,
+                                        "excepcion": timing.explained_by or ""})
+            else:
+                if timing.explained_by is not None:
+                    detail += (f"; {timing.explained_by} explica hasta"
+                               f" {_text(timing.explained_since)} y no alcanza")
+                differences.append({"ref": timing.action_id, "diferencia": "envio_fuera_de_tolerancia",
+                                    "paso": timing.step_key, "detalle": detail})
+    differences.extend(_unsent_differences_v3(capture, tolerance))
+
+    finals = step_finals(capture)
+    by_step: dict[str, Counter[str]] = {}
+    for case_id, step_key, final in finals:
+        by_step.setdefault(step_key, Counter())[final] += 1
+        if final == FINAL_WITHOUT_REASON:
+            differences.append({"ref": case_id, "diferencia": "final_sin_motivo", "paso": step_key,
+                                "detalle": f"el paso {step_key} no salio y no tiene un motivo"})
+        elif final == FINAL_NOT_CREATED:
+            differences.append({"ref": case_id, "diferencia": FINAL_NOT_CREATED, "paso": step_key,
+                                "detalle": (f"el paso {step_key} no se creo y su E mas la tolerancia ya habia"
+                                            " pasado a la hora de la captura")})
+    cases = list(_window_cases(capture))
+    expected_steps = sum(len(_policy_steps(capture, case)) for _, case in cases)
+    sent_steps = sum(1 for _, _, final in finals if final == FINAL_SENT)
+    census = {"casos": len(cases), "pasos_esperados": expected_steps, "pasos_clasificados": len(finals),
+              "enviados": sent_steps, "envios_de_p3": len(timings)}
+    if len(finals) != expected_steps or sent_steps != len(timings):
+        differences.append({"ref": str(capture.meta.get("query")), "diferencia": "censo_no_cierra",
+                            "detalle": f"{census}"})
+
+    ceded = supersessions(capture)
+    without_winner = tuple(item.plan_ref for item in ceded if item.winner_ref is None)
+    for item in ceded:
+        if item.winner_ref is None:
+            differences.append({"ref": item.plan_ref, "diferencia": "cesion_sin_ganador",
+                                "detalle": f"cedio a las {_text(item.stopped_at)} sin un disparo que le gane"})
+    unexpected = winners_without_cancel(capture)
+    for firing_ref, plan_ref in unexpected:
+        differences.append({"ref": firing_ref, "diferencia": "ganador_sin_cancelacion",
+                            "detalle": f"le gana al primer contacto {plan_ref}, que no se cancelo"})
+    mismatches, not_comparable = _person_mismatches_v3(capture)
+    differences.extend(mismatches)
+
+    observed = {(item["ref"], item["diferencia"]) for item in differences}
+    explained: set[tuple[str, str]] = set()
+    problems: list[dict[str, str]] = []
+    named_counts: Counter[str] = Counter()
+    for position, entry in enumerate(named):
+        reason = _named_problem(entry, DIFFERENCE_KINDS_V3)
+        disparo = entry.get("disparo") if isinstance(entry, Mapping) else None
+        ref = disparo if isinstance(disparo, str) else f"nombrada[{position}]"
+        if reason is not None:
+            problems.append({"ref": ref, "diferencia": f"nombrada_invalida:{reason}",
+                             "detalle": f"la diferencia con nombre {position} no es valida"})
+            continue
+        key = (entry["disparo"], entry["diferencia"])
+        if key in explained:
+            problems.append({"ref": ref, "diferencia": "nombrada_repetida",
+                             "detalle": f"la diferencia con nombre {position} repite disparo y clase"})
+        elif key not in observed:
+            problems.append({"ref": ref, "diferencia": "nombrada_sin_diferencia",
+                             "detalle": f"{entry['nombre']}: la paridad no observa esa diferencia"})
+        else:
+            explained.add(key)
+            named_counts[entry["nombre"]] += 1
+    unexplained = [
+        item for item in differences
+        if item["diferencia"] == NEVER_BEFORE or (item["ref"], item["diferencia"]) not in explained
+    ] + problems
+
+    delay = {
+        step: MappingProxyType({"min": min(values), "mediana": statistics.median(values),
+                                "p95": _percentile(values, 0.95), "max": max(values)})
+        for step, values in sorted(delays.items())
+    }
+    return ParityReportV3(
+        firings=MappingProxyType(dict(sorted(firing_counts.items()))),
+        reached_flow=reached,
+        cases=len(cases),
+        sends=MappingProxyType(dict(sorted(sends.items()))),
+        delay=MappingProxyType(delay),
+        never_before_violations=tuple(never_before),
+        over_tolerance=tuple(over),
+        explained=tuple(MappingProxyType(item) for item in explained_items),
+        explained_by=MappingProxyType(dict(sorted(Counter(item["excepcion"] for item in explained_items).items()))),
+        finals=MappingProxyType({step: MappingProxyType(dict(sorted(values.items())))
+                                 for step, values in sorted(by_step.items())}),
+        census=MappingProxyType(census),
+        supersessions=len(ceded),
+        supersessions_without_winner=without_winner,
+        winners_without_cancel=tuple(firing for firing, _ in unexpected),
+        named=MappingProxyType(dict(sorted(named_counts.items()))),
+        named_total=sum(named_counts.values()),
+        unexplained=tuple(MappingProxyType(item) for item in unexplained),
+        persons_not_comparable=not_comparable,
+        supersessions_by=MappingProxyType({
+            route: count for route, count in Counter(
+                item.matched_by for item in ceded if item.matched_by is not None).items()}),
     )

@@ -1,0 +1,8 @@
+{
+  "_doc": [
+    "Las diferencias con nombre de la paridad v3 (T2.2, el carrito de tres toques) sobre la captura de ATT1 del 2026-10-21 (att1_recovery_capture_v3_20261021.json). Reporte: docs/operations/2026-10-21-paridad-carrito-tres-toques.md.",
+    "Las mismas reglas que att1_parity_named_differences.json (flow_parity._named_problem, con flow_parity.DIFFERENCE_KINDS_V3): el disparo (en P3 de la v3, el uuid de la accion del paso; en P6, el del plan o su intencion), la diferencia, la clase de §1.7 del diseno (E, D, C o M), el nombre, y el caso generado o la cita de un hecho del legado.",
+    "Vacia a proposito. Los dos planes de la intencion f6431dad-fe82-4764-adfe-21ba9890b8c6 (dos reenvios del formulario del 20/10 sobre una intencion del 11/10 clasificada confirmed_abandonment antes de la siembra) los explica la ruta intencion_clasificada de P6 (supabase/migrations/20261001000200_portable_precheckout_first_contact.sql:297-299), que es una cota: la captura trae la foto de la intencion, no desde cuando esta clasificada. La revision de la T2.2 pidio la ruta en vez de la diferencia con nombre."
+  ],
+  "diferencias": []
+}

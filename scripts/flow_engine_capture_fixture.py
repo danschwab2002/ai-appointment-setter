@@ -9,6 +9,13 @@ en att1-db en solo lectura; el fixture es lo que entra al repo:
         --capture captura.json --out tests/fixtures/flow_engine/att1_recovery_capture_AAAAMMDD.json
     uv run python scripts/flow_engine_capture_fixture.py --check-privacy captura.json
 
+``--forma v3`` lee la captura de ``att1_recovery_capture_query_v3.sql`` (la
+T2.2, el carrito de tres toques); sin la opcion, la forma es la v2:
+
+    uv run python scripts/flow_engine_capture_fixture.py --forma v3 \\
+        --capture captura-v3.json --out tests/fixtures/flow_engine/att1_recovery_capture_v3_AAAAMMDD.json
+    uv run python scripts/flow_engine_capture_fixture.py --forma v3 --check-privacy captura-v3.json
+
 ``--check-privacy`` sirve para la captura completa y para el fixture: sale con
 0 si la forma esta en verde y con 1 si no, y dice el camino de cada problema,
 nunca el valor. ``--capture`` valida antes de escribir, y si el fixture pasa de
@@ -28,7 +35,9 @@ from typing import Any
 
 from bridge.flow_capture import (
     FIXTURE_MAX_BYTES,
+    FORMS,
     CaptureFixtureError,
+    CaptureForm,
     CaptureShapeError,
     FixtureTooLargeError,
     build_fixture,
@@ -60,10 +69,12 @@ def _print_problems(problems: Sequence[object]) -> None:
         print(f"  ... y {len(problems) - MAX_LISTED} mas")
 
 
-def check_privacy(path: Path) -> int:
+def check_privacy(path: Path, form: CaptureForm = FORMS["v2"]) -> int:
     raw, data = _read(path)
-    problems = shape_problems(data)
+    problems = shape_problems(data, form)
     kind = "fixture" if isinstance(data, dict) and is_fixture(data) else "captura"
+    if form.name != "v2":
+        kind = f"{kind} {form.name}"
     if problems:
         print(f"privacidad: rojo ({kind}, {len(raw)} bytes): {len(problems)} problemas")
         _print_problems(problems)
@@ -72,11 +83,11 @@ def check_privacy(path: Path) -> int:
     return 0
 
 
-def build(capture_path: Path, out_path: Path) -> int:
+def build(capture_path: Path, out_path: Path, form: CaptureForm = FORMS["v2"]) -> int:
     raw, capture = _read(capture_path)
     try:
         fixture = build_fixture(capture, source_sha256=hashlib.sha256(raw).hexdigest(),
-                                source_bytes=len(raw))
+                                source_bytes=len(raw), form=form)
     except CaptureShapeError as error:
         print(f"captura: rojo, {len(error.problems)} problemas de forma; no se escribe nada")
         _print_problems(error.problems)
@@ -107,15 +118,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     mode.add_argument("--check-privacy", type=Path, metavar="JSON",
                       help="una captura o un fixture: 0 si la forma esta en verde, 1 si no")
     parser.add_argument("--out", type=Path, help="donde escribir el fixture (con --capture)")
+    parser.add_argument("--forma", choices=sorted(FORMS), default="v2",
+                        help="la forma de la captura: v2 (la T1, por defecto) o v3 (el carrito de tres toques)")
     args = parser.parse_args(argv)
+    form = FORMS[args.forma]
     if args.capture is not None and args.out is None:
         parser.error("--capture necesita --out")
     if args.check_privacy is not None and args.out is not None:
         parser.error("--out va solo con --capture")
     try:
         if args.check_privacy is not None:
-            return check_privacy(args.check_privacy)
-        return build(args.capture, args.out)
+            return check_privacy(args.check_privacy, form)
+        return build(args.capture, args.out, form)
     except CaptureFixtureError as error:
         print(f"error: {error}")
         return 1
