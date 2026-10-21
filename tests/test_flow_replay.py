@@ -39,13 +39,14 @@ from typing import Any
 import pytest
 
 from bridge import flow_engine
+from bridge.flow_definition import ProposalItem
 from bridge.flow_engine import (
     ENGINE_CAPABILITIES_V1,
     PREVIEW_CAPABILITIES,
     GateDecision,
     PlanNotSupported,
 )
-from bridge.flow_parity import Capture, eligible_at
+from bridge.flow_parity import EXCEPTIONS_V1, Capture, eligible_at
 from bridge.flow_replay import (
     History,
     Replay,
@@ -58,6 +59,8 @@ from bridge.flow_replay import (
     flow_summary,
     history_from_capture,
     in_flight_at,
+    plan_step_keys,
+    proposed_versions,
     replay,
 )
 
@@ -179,22 +182,39 @@ def test_with_the_v1_no_run_sends_twice_and_none_is_looked_at_after_its_send(
     assert after_a_send == []
 
 
-def test_with_the_v1_a_plan_of_three_sends_still_sends_one(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Aunque el plan traiga tres pasos, las capacidades de la v1 dejan uno: el replay no vuelve a
-    # meter el recorrido en la cola y la puerta, con la v1, nunca manda un segundo.
+# Las capacidades de antes de la T2.1: un envio por camino.
+ONE_SEND = dataclasses.replace(ENGINE_CAPABILITIES_V1, max_sends_per_path=1, waits_between_sends=False)
+
+
+def _plan_of(count: int):  # type: ignore[no-untyped-def]
+    """Un plan_steps que repite el primer paso hasta ``count``, cada uno una hora despues."""
     real = flow_engine.plan_steps
 
-    def three(flow, firing, *, capabilities=ENGINE_CAPABILITIES_V1):  # type: ignore[no-untyped-def]
+    def plan_steps(flow, firing, *, capabilities=ENGINE_CAPABILITIES_V1):  # type: ignore[no-untyped-def]
         plan = real(flow, firing, capabilities=capabilities)
         first = plan.steps[0]
-        steps = (first, dataclasses.replace(first, index=1, after=timedelta(hours=1)),
-                 dataclasses.replace(first, index=2, after=timedelta(hours=2)))
+        steps = (first, *(dataclasses.replace(first, index=index, after=timedelta(hours=index))
+                          for index in range(1, count)))
         return dataclasses.replace(plan, steps=steps, expires_after=timedelta(days=4))
 
-    monkeypatch.setattr(flow_engine, "plan_steps", three)
-    result = replay(HISTORY, VERSIONS, as_ran())
+    return plan_steps
+
+
+def test_with_one_send_a_plan_of_three_sends_still_sends_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Aunque el plan traiga tres pasos, una capacidad de un envio deja uno: el replay no vuelve a
+    # meter el recorrido en la cola y la puerta nunca manda un segundo.
+    monkeypatch.setattr(flow_engine, "plan_steps", _plan_of(3))
+    result = replay(HISTORY, VERSIONS, as_ran(), capabilities=ONE_SEND)
     assert dict(result.counts()) == {"enviado": 213, "no_arranco": 35, "no_llego": 4}
     assert all(len(run.steps) <= 1 and len(run.sends) <= 1 for run in result.runs)
+
+
+def test_with_the_v1_a_plan_of_four_sends_sends_three_at_most(monkeypatch: pytest.MonkeyPatch) -> None:
+    # La v1 de la T2.1 manda hasta tres envios por camino: el cuarto paso del plan no sale nunca.
+    monkeypatch.setattr(flow_engine, "plan_steps", _plan_of(4))
+    result = replay(HISTORY, VERSIONS, as_ran())
+    assert all(len(run.sends) <= 3 for run in result.runs)
+    assert any(len(run.sends) > 1 for run in result.runs)
 
 
 # ---------------------------------------------------------------------------
@@ -642,11 +662,17 @@ def test_with_the_cap_at_one_the_older_due_at_goes_first_the_next_morning() -> N
     assert _run(result, T1.uid(1)).sends == (at("2026-10-12T15:00:00Z"),)
 
 
-def test_with_the_v1_a_definition_of_two_templates_is_not_supported() -> None:
-    flows = versions(cart=steps(SEND, {"esperar": "1h"}, SEND, vence="2d"))
+def test_with_the_v1_a_definition_of_four_templates_is_not_supported() -> None:
+    flows = versions(cart=steps(SEND, {"esperar": "1h"}, SEND, {"esperar": "1h"}, SEND, {"esperar": "1h"}, SEND,
+                                vence="2d"))
     with pytest.raises(PlanNotSupported) as raised:
         replay(history([T1.cart(1, "2026-10-10T18:00:00.000000Z", who=1)]), flows, V4)
-    assert "engine_not_supported:mas_de_un_envio" in raised.value.codes
+    assert "engine_not_supported:demasiados_envios" in raised.value.codes
+    # Con dos, la v1 la ejecuta (T2.1); con una capacidad de un envio, no.
+    two = versions(cart=steps(SEND, {"esperar": "1h"}, SEND, vence="2d"))
+    replay(history([T1.cart(1, "2026-10-10T18:00:00.000000Z", who=1)]), two, V4)
+    with pytest.raises(PlanNotSupported):
+        replay(history([T1.cart(1, "2026-10-10T18:00:00.000000Z", who=1)]), two, V4, capabilities=ONE_SEND)
 
 
 def test_an_e_after_the_capture_is_in_flight_with_the_purchase_unknown() -> None:
@@ -683,7 +709,32 @@ def test_in_flight_counts_only_the_run_that_is_waiting() -> None:
 
 
 def test_every_engine_flow_has_the_sql_and_dispatch_exceptions() -> None:
+    # Las diez de §1.7 las tiene todo flujo; las de los varios toques, solo su legacy_kind y si su plan
+    # tiene el paso. Las versiones del fixture (16/10) son de un toque: no tienen las de Z.
+    assert len(exceptions_for(None)) == 10
+    by_step = {item.name: item for item in EXCEPTIONS_V1 if item.by_step}
+    assert len(by_step) == 6
     for by_version in VERSIONS.values():
         for flow in by_version.values():
-            assert flow.exceptions == exceptions_for(flow.legacy_kind) == exceptions_for(None)
-            assert len(flow.exceptions) == 10
+            keys = plan_step_keys(flow.definition, flow.legacy_kind)
+            assert flow.exceptions == exceptions_for(flow.legacy_kind, keys)
+            mine = {name for name, item in by_step.items()
+                    if flow.legacy_kind in item.legacy_kinds and item.step_keys & keys}
+            assert flow.exceptions == exceptions_for(None) | mine
+    assert exceptions_for("precheckout", {"first_contact"}) == exceptions_for(None)
+    one_touch = exceptions_for("carrito", {"first_contact"})
+    three = exceptions_for("carrito", {"first_contact", "cart_second_touch", "cart_last_touch"})
+    assert one_touch - exceptions_for(None) == {"a1_espera_al_cupon", "a1_cupon_por_flag", "boton_con_off_discount"}
+    assert len(three) == 16
+    assert exceptions_for("pago_fallido", {"payment_failure_first_contact"}) == exceptions_for(None)
+    assert len(exceptions_for("pago_fallido", {"payment_failure_first_contact", "payment_failure_followup"})) == 12
+
+
+def test_a_proposed_version_gets_the_exceptions_of_its_own_plan() -> None:
+    three = {**dict(VERSIONS[CART][5].definition), "pasos": [
+        SEND, {"esperar": "24h"}, SEND, {"esperar": "48h"}, SEND]}
+    versions, _ = proposed_versions(VERSIONS, {CART: 5}, [ProposalItem(
+        producto="att1", flujo="carrito", flow_id=VERSIONS[CART][5].flow_id, tipo="version",
+        definicion=three, en_curso="seguir")])
+    assert "renovacion_adelanta_el_ultimo_toque" in versions[CART][6].exceptions
+    assert "renovacion_adelanta_el_ultimo_toque" not in versions[CART][5].exceptions

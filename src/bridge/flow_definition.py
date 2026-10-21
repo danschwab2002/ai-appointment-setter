@@ -45,6 +45,12 @@ _LANGUAGE = re.compile(r"[a-z]{2}(?:_[A-Z]{2})?")
 # La forma del cupon que acepta el boton del seguimiento
 # (followup_discount.COUPON_CODE_RE).
 _COUPON = re.compile(r"[A-Za-z0-9_-]{1,64}")
+# boton.cupon: personal es el codigo por persona que crea el worker del cupon en
+# Hotmart y que vence (contrato 1.1, «Los pasos»). Tiene la forma de un codigo,
+# asi que la forma no cambia; lo distinguen la regla 15 y la politica compilada.
+PERSONAL_COUPON = "personal"
+# A lo sumo dos cupones personales por camino: dos codigos por caso (regla del 17/10).
+PERSONAL_COUPONS_PER_PATH = 2
 # El codigo de Hotmart del medio de pago (CASHPAYMENT, MERCADO_PAGO...).
 _PAYMENT_CODE = re.compile(r"[A-Z][A-Z0-9_]{1,39}")
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
@@ -62,7 +68,19 @@ LAST_SPEAKERS = ("agente", "persona")
 CONVERSATION_STATES = ("abierta", "resuelta")
 PERMISSIONS = ("formulario", "conversacion", "compra")
 EXITS = ("compra", "contesta", "ficha_vencida")
-VARIABLES = ("nombre", "producto", "medio_de_pago")
+# cuando, precio y vence (1.1) son las del bridge para A1, Z y el seguimiento del pago
+# rechazado (cart_first_touch.CART_DISCOUNT_VARIABLES, cart_followups.CART_LAST_TOUCH_VARIABLES,
+# payment_failure_followups.PAYMENT_FAILURE_FOLLOWUP_VARIABLES): cuando, el momento del
+# intento, action.anchor_observed_at (cart_first_touch.py:144); precio, el precio del producto
+# que declara la instancia (RECOVERY_DISCOUNT_PRICE, «USD 47»); vence, el vencimiento del cupon
+# personal (cart_discount.cart_discount_values). Las dos horas se escriben en la zona del pais
+# que sale del prefijo del telefono (country_for_phone y timezone_for_country,
+# cart_discount.py:69-82), con la de CDMX si el prefijo no se reconoce.
+VARIABLES = ("nombre", "producto", "medio_de_pago", "cuando", "precio", "vence")
+# Las que solo valen en un paso con cupon: hablan del cupon personal (regla 5).
+COUPON_VARIABLES = ("precio", "vence")
+# La que solo vale con un disparador de evento: es la hora del evento (regla 5).
+EVENT_VARIABLES = ("cuando",)
 LINKS = ("checkout", "ficha")
 CONDITION_DATA = ("ventana", "medio_de_pago")
 WINDOW_VALUES = ("abierta", "cerrada")
@@ -343,6 +361,11 @@ def is_template_name(value: object) -> bool:
 
 def is_coupon_code(value: object) -> bool:
     return isinstance(value, str) and _COUPON.fullmatch(value) is not None
+
+
+def is_personal_coupon(value: object) -> bool:
+    """Si ``boton.cupon`` es el codigo por persona (``personal``), no un codigo fijo."""
+    return value == PERSONAL_COUPON
 
 
 def is_flow_id(value: object) -> bool:
@@ -724,6 +747,9 @@ class WorldFlow:
     generation: int = 0
     versions: Mapping[int, Mapping[str, Any]] = field(default_factory=dict)
     declared_fixed_zone: str | None = None
+    # El flujo del legado que ejecuta (carrito, pago_fallido, precheckout), si tiene: con el,
+    # el validador mira al publicar que la definicion compile a su politica (regla 14, T2.1).
+    legacy_kind: str | None = None
 
     def __post_init__(self) -> None:
         if not is_flow_id(self.flow_id):
@@ -734,6 +760,8 @@ class WorldFlow:
             raise ValueError("world_flow_state_invalid")
         if not _is_int(self.generation) or self.generation < 0:
             raise ValueError("world_flow_generation_invalid")
+        if self.legacy_kind is not None and not isinstance(self.legacy_kind, str):
+            raise ValueError("world_flow_legacy_kind_invalid")
         if not isinstance(self.versions, Mapping) or not all(
             _is_int(number) and number > 0 and isinstance(definition, Mapping)
             for number, definition in self.versions.items()
