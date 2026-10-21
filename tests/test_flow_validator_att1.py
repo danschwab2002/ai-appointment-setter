@@ -14,6 +14,11 @@ Diseno del almacen, §7.5. Fixtures (``tests/fixtures/flow_store/``):
 * ``chatwoot_inbox_11_message_templates_20261010.json``: el catalogo de la
   bandeja 11 de ATT1, capturado de Chatwoot el 2026-10-10.
 * ``schema_examples_v1.json``: los bloques del esquema.
+* ``att1_flow_config_20261021.json`` (T2.1): la misma consulta el 2026-10-21 a
+  las 15:43:39Z, con el carrito en ``att1-recuperacion`` v7 (tres toques) y el
+  pago fallido en ``att1-pago-rechazado`` v2. Las plantillas de los toques salen
+  del parametro ``ATT1_TOUCHES_20261021`` del traductor, y su catalogo de las
+  capturas de Chatwoot del 18 y el 19/10 (``chatwoot_message_templates_inbox_11_*``).
 * ``att1_definitions_20261016.json`` y ``att1_validation_result_20261016.json``:
   los genera esta prueba (la 4) y los publica PGlite
   (``validate_flow_store.mjs``, paso 7). No son capturas: ``_generated`` dice
@@ -223,7 +228,7 @@ def test_the_translation_follows_the_data_when_the_data_changes() -> None:
         (lambda c: _policy(c, "att1-primer-contacto-formulario").update(grace_period="00:00:30"), "grace_period_shape"),
         (lambda c: _policy(c, "att1-recuperacion-un-toque").update(expires_after="1 mon"), "expires_after_shape"),
         (lambda c: _policy(c, "att1-recuperacion-un-toque").update(max_automatic_messages=2),
-         "more_than_one_automatic_message"),
+         "automatic_messages_and_steps_differ"),
         (lambda c: _active(c, "att1-recuperacion").update(audience_mode="manual_cohort"), "audience_mode_unknown"),
         (lambda c: _active(c, "att1-recuperacion").update(additional_source_event_types=["PURCHASE_BILLET_PRINTED"]),
          "event_type_unknown"),
@@ -411,3 +416,182 @@ def test_the_json_shared_with_pglite_is_the_one_in_the_repo() -> None:
         assert in_repo == document, f"{name} no es el de hoy: regenerarlo con FLOW_STORE_FIXTURE_DIR"
     assert documents["att1_validation_result_20261016.json"]["validator"] == {
         "contract": VALIDATOR_CONTRACT, "rules_version": RULES_VERSION, "phase": "publish", "actor": "operador"}
+
+
+# ---------------------------------------------------------------------------
+# 5. La captura del 21/10 (T2.1): los varios toques.
+# ---------------------------------------------------------------------------
+
+CONFIG_21: dict[str, Any] = json.loads(
+    (FLOW_STORE / "att1_flow_config_20261021.json").read_text(encoding="utf-8"))
+TRANSLATED_21 = TRANSLATOR.translate_att1(CONFIG_21, MANIFEST, BLOCKS, TRANSLATOR.ATT1_TOUCHES_20261021)
+DEFINITIONS_21 = {key: normalize(translated.definition) for key, translated in TRANSLATED_21.items()}
+EVENT_FLOWS = ("carrito", "pago_fallido", "precheckout")
+
+
+def _templates_of(name: str) -> list[dict[str, Any]]:
+    data = json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+    return list(data["message_templates"] if isinstance(data, dict) else data)
+
+
+# El catalogo de la bandeja 11 con las plantillas de los toques: el del 10/10 mas las capturas
+# del carrito (18/10) y del seguimiento del pago rechazado (19/10). Una plantilla repetida
+# (att1_ultima_renovacion_01 esta en las dos) entra una vez.
+_CATALOG_21_TEMPLATES: dict[str, dict[str, Any]] = {}
+for _name in ("chatwoot_inbox_11_message_templates_20261010.json",
+              "chatwoot_message_templates_inbox_11_carrito_20261018.json",
+              "chatwoot_message_templates_inbox_11_pago_rechazado_seguimiento_20261019.json"):
+    for _template in _templates_of(_name):
+        _CATALOG_21_TEMPLATES.setdefault(f"{_template['name']}/{_template['language']}", _template)
+CATALOG_21 = TemplateCatalog.from_inbox_payload({"message_templates": list(_CATALOG_21_TEMPLATES.values())})
+
+
+def _scope_21(scope_key: str) -> dict[str, Any]:
+    [control] = [c for c in CONFIG_21["pilot_runtime_controls"] if c["scope_key"] == scope_key]
+    [scope] = [s for s in CONFIG_21["pilot_scope_versions"]
+               if s["scope_key"] == scope_key and s["version"] == control["scope_version"]]
+    return scope
+
+
+def test_the_translation_of_21_10_is_the_cart_v7_and_the_payment_failure_v2() -> None:
+    recovery, failure = _scope_21("att1-recuperacion"), _scope_21("att1-pago-rechazado")
+    assert (recovery["version"], recovery["policy_key"]) == (7, "att1-carrito-tres-toques")
+    assert (failure["version"], failure["policy_key"]) == (2, "att1-pago-rechazado-dos-toques")
+    cart, payment = TRANSLATED_21["carrito"].definition, TRANSLATED_21["pago_fallido"].definition
+    assert [step.get("plantilla", step.get("esperar")) for step in cart["pasos"]] == [
+        "att1_carrito_descuento_01", "24h", "att1_carrito_dudas_01", "48h", "att1_ultima_renovacion_01"]
+    assert [step.get("boton") for step in cart["pasos"][::2]] == [
+        {"link": "checkout", "cupon": "personal"}, None, {"link": "checkout", "cupon": "personal"}]
+    assert cart["termina"]["vence"] == "5d"
+    assert (cart["topes"]["bolsa"], cart["topes"]["por_dia"], cart["topes"]["total"]) == (
+        "att1-recuperacion", 240, 5000)
+    assert [step.get("plantilla", step.get("esperar")) for step in payment["pasos"]] == [
+        "15m", "att1_compra_fallida_01", "24h", "att1_pago_rechazado_descuento_01"]
+    assert payment["termina"]["vence"] == "3d"
+    # Ya no comparten bolsa: el pago fallido cuenta en su scope.
+    assert (payment["topes"]["bolsa"], payment["topes"]["por_dia"], payment["topes"]["total"]) == (
+        "att1-pago-rechazado", 10, 200)
+    # att1-recuperacion v7 sigue nombrando PURCHASE_CANCELED, pero el pago fallido sale de su
+    # scope propio (src/bridge/app.py:254-257).
+    assert recovery["additional_source_event_types"] == ["PURCHASE_CANCELED"]
+    assert failure["source_event_type"] == "PURCHASE_CANCELED"
+    assert TRANSLATED_21["pago_fallido"].sources["/dispara/evento"] == (
+        "dato real: pilot_scope_versions.source_event_type")
+    # El primer contacto, como el 16/10.
+    assert TRANSLATED_21["precheckout"].definition == TRANSLATED["precheckout"].definition
+
+
+@pytest.mark.parametrize("flow_key", EVENT_FLOWS)
+def test_every_field_of_21_10_says_where_it_comes_from(flow_key: str) -> None:
+    translated = TRANSLATED_21[flow_key]
+    assert set(_leaves(translated.definition)) == set(translated.sources)
+    for source in translated.sources.values():
+        assert source in (TRANSLATOR.SOURCE_CODE, TRANSLATOR.TOUCHES_SOURCE) or source.startswith(
+            (TRANSLATOR.SOURCE_REAL + ": ", TRANSLATOR.SOURCE_MANIFEST + ": ")), source
+    if flow_key == "carrito":
+        assert translated.sources["/pasos/3/esperar"] == (
+            "dato real: followup_policy_versions.steps[cart_last_touch].delay")
+        assert translated.sources["/pasos/4/boton/cupon"] == (
+            "dato real: followup_policy_versions.steps[cart_last_touch].coupon_ordinal")
+
+
+def test_without_the_touches_the_translation_of_21_10_fails_loudly() -> None:
+    with pytest.raises(TRANSLATOR.TranslationError, match="touch_templates_missing:carrito"):
+        TRANSLATOR.translate_att1(CONFIG_21, MANIFEST, BLOCKS)
+
+
+def test_a_touch_whose_coupon_is_not_the_policys_fails_loudly() -> None:
+    touches = dict(TRANSLATOR.ATT1_TOUCHES_20261021)
+    a1, a2, z = touches["carrito"]
+    touches["carrito"] = (a1, a2, TRANSLATOR.Touch(z.template, z.language, False))
+    with pytest.raises(TRANSLATOR.TranslationError, match="touch_coupon_and_policy_differ:cart_last_touch"):
+        TRANSLATOR.translate_att1(CONFIG_21, MANIFEST, BLOCKS, touches)
+
+
+def _first_versions_21(keys: tuple[str, ...] = EVENT_FLOWS) -> list[ProposalItem]:
+    return [ProposalItem(producto="att1", flujo=key, flow_id=IDS[key], tipo="version",
+                         definicion=TRANSLATED_21[key].definition, en_curso="seguir") for key in keys]
+
+
+def test_the_v7_validates_without_blocks_as_a_draft_and_the_engine_runs_it() -> None:
+    from bridge.flow_engine import ENGINE_CAPABILITIES_V1, not_supported
+
+    result = validate(_first_versions_21(), actor="operador", world=_registered_world(), instance=INSTANCE,
+                      catalog=CATALOG_21, phase="draft")
+    assert result.blocks == ()
+    # La regla 14, con las capacidades de la T2.1: tres envios, la espera entre ellos y el cupon.
+    for key in EVENT_FLOWS:
+        assert not_supported(DEFINITIONS_21[key], ENGINE_CAPABILITIES_V1) == (), key
+
+
+def test_the_v7_at_publish_blocks_only_on_the_variables_the_schema_does_not_have() -> None:
+    # Lo que el esquema no escribe todavia: A1 lleva cinco variables (nombre, producto, la hora
+    # del intento, el precio y el vencimiento del cupon), y Z y B2 tres (con el vencimiento). La
+    # lista de variables del esquema (nombre, producto y medio_de_pago) no las tiene: las llena el
+    # bridge. Es un hueco conocido de la T2.1, no del dato.
+    result = validate(_first_versions_21(), actor="operador", world=_registered_world(), instance=INSTANCE,
+                      catalog=CATALOG_21, phase="publish")
+    assert [(f.code, f.path) for f in result.blocks] == [
+        ("template_variable_count_mismatch", "/0/definicion/pasos/0/variables"),
+        ("template_variable_count_mismatch", "/0/definicion/pasos/4/variables"),
+        ("template_variable_count_mismatch", "/1/definicion/pasos/3/variables"),
+    ]
+
+
+def _published_world_21() -> FlowWorld:
+    return FlowWorld(
+        WorldFlow(flow_id=IDS[key], product_ref="att1", flow_key=key,
+                  state="apagado" if key == "reactivacion" else "prendido",
+                  active_version=1, generation=1, versions={1: fd.as_published(
+                      (DEFINITIONS_21 if key in EVENT_FLOWS else DEFINITIONS)[key], 1)})
+        for key in ORDER
+    )
+
+
+def _change_21(change: Callable[[dict[str, Any]], None]) -> ValidationResult:
+    draft = fd.as_draft(fd.as_published(DEFINITIONS_21["carrito"], 1))
+    change(draft)
+    item = ProposalItem(producto="att1", flujo="carrito", flow_id=IDS["carrito"], tipo="version",
+                        definicion=draft, en_curso="seguir")
+    return validate([item], actor="operador", world=_published_world_21(), instance=INSTANCE,
+                    catalog=CATALOG_21, phase="publish")
+
+
+def _blocks_besides_the_variables(result: ValidationResult) -> list[tuple[str, str | None]]:
+    return [code for code in _codes(result) if code[0] != "template_variable_count_mismatch"]
+
+
+def test_a2_at_36_hours_only_changes_the_waits() -> None:
+    def later(definition: dict[str, Any]) -> None:
+        definition["pasos"][1]["esperar"] = "36h"
+        definition["pasos"][3]["esperar"] = "36h"
+
+    assert _blocks_besides_the_variables(_change_21(later)) == []
+
+
+def test_the_red_of_a_third_personal_coupon() -> None:
+    def third(definition: dict[str, Any]) -> None:
+        definition["pasos"][2]["boton"] = {"link": "checkout", "cupon": "personal"}
+
+    # A2 no tiene boton de URL en el catalogo (13) y es el tercer cupon personal (15).
+    assert ("coupon_personal_limit", "/pasos/4/boton/cupon") in _codes(_change_21(third))
+
+
+def test_the_red_of_a_fixed_code_instead_of_the_personal_one() -> None:
+    result = _change_21(lambda d: d["pasos"][4]["boton"].update(cupon="TIROIDES10"))
+    assert ("coupon_change_not_supported", "/pasos/4/boton/cupon") in _codes(result)
+    # Y al reves: un codigo fijo que pasa a personal en el seguimiento con cupon.
+    back = _change("descuento", lambda d: d["pasos"][0]["boton"].update(cupon="personal"))
+    assert _codes(back) == [("coupon_change_not_supported", "/pasos/0/boton/cupon")]
+
+
+def test_the_red_of_a_fourth_send() -> None:
+    from bridge.flow_engine import not_supported
+
+    def fourth(definition: dict[str, Any]) -> None:
+        definition["pasos"].extend([{"esperar": "24h"}, copy.deepcopy(definition["pasos"][2])])
+
+    draft = copy.deepcopy(DEFINITIONS_21["carrito"])
+    fourth(draft)
+    assert not_supported(draft) == ("engine_not_supported:demasiados_envios",)
+

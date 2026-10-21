@@ -71,9 +71,11 @@ FLOWS = {
     "carrito": {"flow_id": "1b000003-0000-4000-8000-0000000c0001", "legacy_kind": "carrito"},
     "pago_fallido": {"flow_id": "1b000003-0000-4000-8000-0000000c0002", "legacy_kind": "pago_fallido"},
 }
-# El sha256 del archivo entero del traductor en c7fa8ef (diseno de la T3a, §3.4):
-# CODE y todo lo demas que la traduccion toma del codigo.
-TRANSLATOR_SHA256_C7FA8EF = "b3ea196ca80d5dd72eb86d36d8d59337630ebb0f91d101e56fbafe3d92bdb2cb"
+# El sha256 del archivo entero del traductor (diseno de la T3a, §3.4): CODE y todo lo
+# demas que la traduccion toma del codigo. Era el de c7fa8ef; la T2.1 (2026-10-21) lo
+# cambio para los varios toques (la captura del 21/10), y su traduccion de esta captura
+# es la misma: el fixture se regenero y solo cambio este sha de la cabecera.
+TRANSLATOR_SHA256_C7FA8EF = "447cfef1948975ae635a7e0c84735ede2ceeb654480b8d075b6abe02a1d1d3f2"
 
 
 def translator_sha256() -> str:
@@ -204,7 +206,8 @@ def test_each_version_compiles_to_the_policy_row_of_the_capture() -> None:
         for key, definition in IN_REPO["versions"][str(version)].items():
             compiled = compile_policy(definition, flow_id=FLOWS[key]["flow_id"], version=version,
                                       legacy_kind=FLOWS[key]["legacy_kind"])
-            assert differences_from_row(compiled, row) == (), (version, key)
+            # La fila del 16/10 la compartian el carrito y el pago fallido (diferencia 9).
+            assert differences_from_row(compiled, row, shared_row=True) == (), (version, key)
 
 
 def test_the_fixture_has_no_personal_data() -> None:
