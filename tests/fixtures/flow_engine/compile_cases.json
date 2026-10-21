@@ -1,9 +1,9 @@
 {
   "_formato": {
     "que_es": "Los casos de la politica compilada (diseno del motor de flujos, §2.5 y §3.4): los corre pytest contra bridge.flow_policy.compile_policy (tests/test_flow_policy.py) y T2 contra _flow_engine_compile_policy, con los mismos esperados.",
-    "input": "definition, flow_id (uuid), version, legacy_kind y fixed_zone son los argumentos de compile_policy. fixed_zone es la zona fija del flujo, la que toma un siempre; la funcion de SQL no la recibe, asi que en T2 sale del almacen para ese flow_id. Las tres de ATT1 son las definiciones normalizadas de tests/fixtures/flow_store/att1_definitions_20261016.json; las otras son minimas, con solo lo que se compila (horario, pasos y termina).",
-    "expected": "La fila de followup_policy_versions que se compila, sin status ni aprobacion: policy_key 'flujo:' || flow_id, version, purpose, timezone, business_windows (una ventana, days del 1 al 7 en orden), los intervalos en segundos (grace_period_seconds y expires_after_seconds; en SQL, extract(epoch from ...)), max_automatic_messages y steps (un solo paso). Es CompiledPolicy.as_json().",
-    "error": "El codigo de PolicyCompileError (en SQL, el message del raise). Se mira en este orden y gana el primero: flow_id, version, legacy_kind, horario, pasos (de arriba abajo: el tipo de cada paso, una espera despues del envio, una espera sin leer, un segundo envio; al final, que haya uno) y vence."
+    "input": "definition, flow_id (uuid), version, legacy_kind y fixed_zone son los argumentos de compile_policy. fixed_zone es la zona fija del flujo, la que toma un siempre; la funcion de SQL no la recibe, asi que en T2 sale del almacen para ese flow_id. Las tres de ATT1 del 16/10 son las definiciones normalizadas de tests/fixtures/flow_store/att1_definitions_20261016.json, y att1_carrito_tres_toques y att1_pago_fallido_dos_toques, las de la captura del 21/10 (att1_flow_config_20261021.json) traducidas con ATT1_TOUCHES_20261021 y normalizadas; las otras son minimas, con solo lo que se compila (horario, pasos y termina).",
+    "expected": "La fila de followup_policy_versions que se compila, sin status ni aprobacion: policy_key 'flujo:' || flow_id, version, purpose, timezone, business_windows (una ventana, days del 1 al 7 en orden), los intervalos en segundos (grace_period_seconds y expires_after_seconds; en SQL, extract(epoch from ...)), max_automatic_messages y steps: un paso por envio, con el step_key de la forma de su legacy_kind (flow_policy.STEPS_BY_LEGACY_KIND); desde el segundo, delay (el texto del legado, '24 hours': la suma de las esperas desde el primer envio) y approved_template true, y coupon_ordinal en el paso con el cupon personal de ordinal 2 o mas (el primero va sin marca). Es CompiledPolicy.as_json().",
+    "error": "El codigo de PolicyCompileError (en SQL, el message del raise). Se mira en este orden y gana el primero: flow_id, version, legacy_kind, horario, pasos y vence. Los pasos, de arriba abajo: el tipo de cada paso, una espera sin leer, y en cada envio, que tenga lugar en la forma (flow_policy_not_compilable:more_sends_than_steps) y su cupon (coupon_not_allowed, fixed_coupon o coupon_missing, con el step_key); al final, que haya un envio y que no quede una espera despues del ultimo (compile_policy_step_after_send)."
   },
   "cases": [
     {
@@ -275,6 +275,256 @@
           {
             "mode": "freeform",
             "step_key": "first_contact"
+          }
+        ]
+      }
+    },
+    {
+      "id": "att1_carrito_tres_toques",
+      "que": "El carrito de ATT1 del 21/10 (att1-recuperacion v7), traducido y normalizado: A1 con el cupon personal sin marca, A2 a las 24 h y Z a las 72 h del primero con el cupon 2. Es la fila att1-carrito-tres-toques v1.",
+      "input": {
+        "definition": {
+          "esquema": "setter-flujo/v1",
+          "flujo": "carrito",
+          "producto": "att1",
+          "nombre": "Carrito abandonado",
+          "estado": "borrador",
+          "dispara": {
+            "evento": "carrito"
+          },
+          "entra": {
+            "permiso": "formulario",
+            "contesto_a": []
+          },
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_descuento_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ],
+              "boton": {
+                "link": "checkout",
+                "cupon": "personal"
+              }
+            },
+            {
+              "esperar": "24h"
+            },
+            {
+              "plantilla": "att1_carrito_dudas_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            },
+            {
+              "esperar": "48h"
+            },
+            {
+              "plantilla": "att1_ultima_renovacion_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ],
+              "boton": {
+                "link": "checkout",
+                "cupon": "personal"
+              }
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "5d"
+          },
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "topes": {
+            "bolsa": "att1-recuperacion",
+            "por_dia": 240,
+            "total": 5000,
+            "repeticion": {
+              "una_por": "persona_y_oferta",
+              "otra_despues_de": "0m"
+            }
+          },
+          "prioridad": {
+            "le_gana_a": [
+              "precheckout"
+            ],
+            "no_arranca_mientras": [
+              "pago_fallido"
+            ]
+          }
+        },
+        "flow_id": "1b000001-0000-4000-8000-00000000c004",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "expected": {
+        "policy_key": "flujo:1b000001-0000-4000-8000-00000000c004",
+        "version": 1,
+        "purpose": "cart_recovery",
+        "timezone": "America/Mexico_City",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "09:00",
+            "end": "21:00"
+          }
+        ],
+        "grace_period_seconds": 0,
+        "expires_after_seconds": 432000,
+        "max_automatic_messages": 3,
+        "steps": [
+          {
+            "mode": "freeform",
+            "step_key": "first_contact"
+          },
+          {
+            "mode": "freeform",
+            "step_key": "cart_second_touch",
+            "delay": "24 hours",
+            "approved_template": true
+          },
+          {
+            "mode": "freeform",
+            "step_key": "cart_last_touch",
+            "delay": "72 hours",
+            "approved_template": true,
+            "coupon_ordinal": 2
+          }
+        ]
+      }
+    },
+    {
+      "id": "att1_pago_fallido_dos_toques",
+      "que": "El pago fallido de ATT1 del 21/10 (att1-pago-rechazado v2), traducido y normalizado: B1 a los 15 minutos y el seguimiento a las 24 h con el cupon 2. Es la fila att1-pago-rechazado-dos-toques v1.",
+      "input": {
+        "definition": {
+          "esquema": "setter-flujo/v1",
+          "flujo": "pago_fallido",
+          "producto": "att1",
+          "nombre": "Pago fallido",
+          "estado": "borrador",
+          "dispara": {
+            "evento": "pago_fallido"
+          },
+          "entra": {
+            "permiso": "formulario",
+            "contesto_a": []
+          },
+          "pasos": [
+            {
+              "esperar": "15m"
+            },
+            {
+              "plantilla": "att1_compra_fallida_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            },
+            {
+              "esperar": "24h"
+            },
+            {
+              "plantilla": "att1_pago_rechazado_descuento_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ],
+              "boton": {
+                "link": "checkout",
+                "cupon": "personal"
+              }
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "3d"
+          },
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "topes": {
+            "bolsa": "att1-pago-rechazado",
+            "por_dia": 10,
+            "total": 200,
+            "repeticion": {
+              "una_por": "persona_y_oferta",
+              "otra_despues_de": "0m"
+            }
+          },
+          "prioridad": {
+            "le_gana_a": [
+              "precheckout"
+            ],
+            "no_arranca_mientras": []
+          }
+        },
+        "flow_id": "1b000001-0000-4000-8000-00000000c005",
+        "version": 1,
+        "legacy_kind": "pago_fallido",
+        "fixed_zone": null
+      },
+      "expected": {
+        "policy_key": "flujo:1b000001-0000-4000-8000-00000000c005",
+        "version": 1,
+        "purpose": "cart_recovery",
+        "timezone": "America/Mexico_City",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "09:00",
+            "end": "21:00"
+          }
+        ],
+        "grace_period_seconds": 900,
+        "expires_after_seconds": 259200,
+        "max_automatic_messages": 2,
+        "steps": [
+          {
+            "mode": "freeform",
+            "step_key": "payment_failure_first_contact"
+          },
+          {
+            "mode": "freeform",
+            "step_key": "payment_failure_followup",
+            "delay": "24 hours",
+            "approved_template": true,
+            "coupon_ordinal": 2
           }
         ]
       }
@@ -1169,7 +1419,7 @@
     },
     {
       "id": "dos_plantillas",
-      "que": "Dos envios: la politica compilada tiene un solo paso.",
+      "que": "Dos envios en el primer contacto, cuya forma tiene un solo paso: no se compila (T2.1).",
       "input": {
         "definition": {
           "horario": {
@@ -1204,14 +1454,14 @@
         },
         "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
         "version": 1,
-        "legacy_kind": "carrito",
+        "legacy_kind": "precheckout",
         "fixed_zone": null
       },
-      "error": "compile_policy_more_than_one_send"
+      "error": "flow_policy_not_compilable:more_sends_than_steps"
     },
     {
       "id": "espera_despues_del_envio",
-      "que": "Una espera despues del envio.",
+      "que": "Una espera despues del ultimo envio: no lleva a nada. Entre dos envios vale desde la T2.1.",
       "input": {
         "definition": {
           "horario": {
@@ -1230,14 +1480,6 @@
             },
             {
               "esperar": "1h"
-            },
-            {
-              "plantilla": "att1_carrito_abandonado_01",
-              "idioma": "es_MX",
-              "variables": [
-                "nombre",
-                "producto"
-              ]
             }
           ],
           "termina": {
@@ -1253,6 +1495,247 @@
         "fixed_zone": null
       },
       "error": "compile_policy_step_after_send"
+    },
+    {
+      "id": "cuarto_envio",
+      "que": "Cuatro envios en el carrito, cuya forma tiene tres: agregar un toque es un cambio de codigo.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ],
+              "boton": {
+                "link": "checkout",
+                "cupon": "personal"
+              }
+            },
+            {
+              "esperar": "24h"
+            },
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            },
+            {
+              "esperar": "48h"
+            },
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ],
+              "boton": {
+                "link": "checkout",
+                "cupon": "personal"
+              }
+            },
+            {
+              "esperar": "24h"
+            },
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "5d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "error": "flow_policy_not_compilable:more_sends_than_steps"
+    },
+    {
+      "id": "cupon_en_a2",
+      "que": "El cupon personal en A2 (cart_second_touch), que no lo admite.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ],
+              "boton": {
+                "link": "checkout",
+                "cupon": "personal"
+              }
+            },
+            {
+              "esperar": "24h"
+            },
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ],
+              "boton": {
+                "link": "checkout",
+                "cupon": "personal"
+              }
+            },
+            {
+              "esperar": "48h"
+            },
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ],
+              "boton": {
+                "link": "checkout",
+                "cupon": "personal"
+              }
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "5d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "error": "flow_policy_not_compilable:coupon_not_allowed:cart_second_touch"
+    },
+    {
+      "id": "z_sin_cupon",
+      "que": "Z (cart_last_touch) sin el cupon personal: el bridge la cierra sin mensaje.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ],
+              "boton": {
+                "link": "checkout",
+                "cupon": "personal"
+              }
+            },
+            {
+              "esperar": "24h"
+            },
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            },
+            {
+              "esperar": "48h"
+            },
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "5d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "error": "flow_policy_not_compilable:coupon_missing:cart_last_touch"
+    },
+    {
+      "id": "cupon_fijo",
+      "que": "Un codigo fijo en A1: el legado no manda un cupon fijo en un paso.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ],
+              "boton": {
+                "link": "checkout",
+                "cupon": "TIROIDES10"
+              }
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "5d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "error": "flow_policy_not_compilable:fixed_coupon:first_contact"
     },
     {
       "id": "sin_envio",

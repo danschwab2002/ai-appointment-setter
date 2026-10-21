@@ -13,9 +13,12 @@ Diseno de la T3a, §8.3. Fixtures (``tests/fixtures/flow_engine/``, de la T1, si
   esperada, ``plan_steps`` da la franja de esa fila (comparada por ``is_open``
   y ``next_open`` sobre un juego de horas: con ``siempre``, ``franja_of`` da
   ``always`` y la fila, de 00:00 a 23:59), el comienzo de su gracia y el
-  vencimiento de su ``expires_after``. Para cada caso con error, ``plan_steps``
-  da un codigo de la misma familia (la tabla ``EQUIVALENT``), o «no aplica»:
-  el flow_id, la version y el legacy_kind no los mira.
+  vencimiento de su ``expires_after``, y un paso del plan por cada paso de la
+  fila, con su ``step_key`` y su espera (desde la T2.1, varios). Para cada caso
+  con error, ``plan_steps`` da un codigo de la misma familia (la tabla
+  ``EQUIVALENT``, o ``PLAN_ERROR_BY_CASE`` si el mismo codigo de la politica
+  tiene dos respuestas del plan), o «no aplica»: el flow_id, la version, el
+  legacy_kind y la forma de su flujo del legado no los mira.
 """
 
 from __future__ import annotations
@@ -54,12 +57,20 @@ EQUIVALENT: dict[str, str | None] = {
     "compile_policy_step_not_supported:condicion": "engine_not_supported:condicion",
     "compile_policy_step_not_supported:derivar": "engine_not_supported:derivar",
     "compile_policy_step_not_supported:desconocido": "engine_not_supported:desconocido",
-    "compile_policy_more_than_one_send": "engine_not_supported:mas_de_un_envio",
+    # La forma del flujo del legado es de la politica: el plan no la conoce (salvo el
+    # tope de envios de las capacidades, que va por caso en PLAN_ERROR_BY_CASE).
+    "flow_policy_not_compilable:more_sends_than_steps": None,
+    "flow_policy_not_compilable:coupon_not_allowed:cart_second_touch": None,
+    "flow_policy_not_compilable:coupon_missing:cart_last_touch": None,
+    "flow_policy_not_compilable:fixed_coupon:first_contact": None,
     "compile_policy_step_after_send": "engine_not_supported:espera_despues_del_envio",
     "compile_policy_without_send": "plan_without_send",
     "compile_policy_wait_invalid": "plan_wait_invalid",
     "compile_policy_vence_invalid": "plan_vence_invalid",
 }
+# Los casos en que el plan responde distinto que el resto de su codigo: cuatro envios
+# pasan el tope de las capacidades v1 (tres por camino).
+PLAN_ERROR_BY_CASE: dict[str, str] = {"cuarto_envio": "engine_not_supported:demasiados_envios"}
 
 
 def instant(text: str) -> datetime:
@@ -170,24 +181,32 @@ def test_plan_steps_gives_the_franja_the_grace_and_the_deadline_of_the_compiled_
     for hour in HOURS:
         assert is_open(plan.franja, hour) == is_open(row_franja, hour), (case["id"], hour)
         assert next_open(plan.franja, hour) == next_open(row_franja, hour), (case["id"], hour)
-    [step] = plan.steps
-    assert step.after == timedelta(seconds=expected["grace_period_seconds"])
+    assert expected["max_automatic_messages"] == len(plan.steps) == len(expected["steps"])
+    assert plan.steps[0].after == timedelta(seconds=expected["grace_period_seconds"])
     assert plan.expires_after == timedelta(seconds=expected["expires_after_seconds"])
-    assert expected["max_automatic_messages"] == len(plan.steps)
-    assert [{"mode": "freeform", "step_key": step.step_key}] == expected["steps"]
+    assert [step.step_key for step in plan.steps] == [step["step_key"] for step in expected["steps"]]
+    # Desde el segundo, la espera desde el primer envio es el delay de la fila.
+    for step, row_step in zip(plan.steps[1:], expected["steps"][1:]):
+        assert step.after == delay_of(row_step["delay"]), case["id"]
+
+
+def delay_of(text: str) -> timedelta:
+    number, unit = text.split()
+    return timedelta(minutes=int(number) * {"minute": 1, "hour": 60, "day": 24 * 60}[unit.rstrip("s")])
 
 
 def test_every_compile_error_has_its_equivalent() -> None:
     assert {case["error"] for case in ERRORS} == set(EQUIVALENT)
+    assert set(PLAN_ERROR_BY_CASE) <= {case["id"] for case in ERRORS}
 
 
 @pytest.mark.parametrize("case", ERRORS, ids=[case["id"] for case in ERRORS])
 def test_plan_steps_gives_an_error_of_the_same_family(case: dict[str, Any]) -> None:
     flow = flow_from_case(case)
-    expected = EQUIVALENT[case["error"]]
+    expected = PLAN_ERROR_BY_CASE.get(case["id"], EQUIVALENT[case["error"]])
     if expected is None:
         plan = engine.plan_steps(flow, firing(HOURS[0]))
-        assert len(plan.steps) == 1
+        assert plan.steps
         return
     with pytest.raises((PlanInvalid, PlanNotSupported)) as raised:
         engine.plan_steps(flow, firing(HOURS[0]))
