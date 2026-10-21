@@ -5236,6 +5236,85 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         5,
         'automation_expert_change'
+    union all
+    select
+        '20261021000200',
+        '20261021000200_flow_engine_routes_v1.sql',
+        -- Las cinco tablas del motor, con RLS.
+        (
+            select count(*) = 5
+            from pg_class c
+            where c.oid in (
+                to_regclass('public.flow_engine_routes'),
+                to_regclass('public.flow_engine_runs'),
+                to_regclass('public.flow_engine_request_authorizations'),
+                to_regclass('public.flow_engine_start_rejections'),
+                to_regclass('public.flow_engine_divergences')
+            )
+              and c.relrowsecurity
+        )::int
+        -- Las dos lecturas: security definer, STABLE y solo para service_role
+        -- (y el rol de la T4, que se nombra por to_regrole) de la API.
+        + (
+            select count(*) = 2
+            from functions
+            where oid in (
+                to_regprocedure('public.read_flow_engine_v1(jsonb,text)'),
+                to_regprocedure('public.read_flow_engine_history_v1(jsonb,text,timestamptz)')
+            )
+              and prosecdef
+              and provolatile = 's'
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+              and (to_regrole('automation_expert_change') is null
+                   or has_function_privilege(to_regrole('automation_expert_change'), oid, 'EXECUTE'))
+        )::int
+        -- Las dos escrituras del operador: de nadie de la API.
+        + (
+            select count(*) = 2
+            from functions
+            where oid in (
+                to_regprocedure('public.operator_create_flow_route_v1(jsonb,text,text,text,text,text,text)'),
+                to_regprocedure('public.operator_route_flow_v1(jsonb,text,text,text,bigint,text,text,jsonb)')
+            )
+              and not prosecdef
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- La guarda del almacen en los tres planificadores y los tres arranques.
+        + (
+            select count(*) = 6
+            from functions
+            where oid in (
+                to_regprocedure('public.plan_lancemos_pilot_cart_recovery(uuid,uuid,text,text,text,text,integer,timestamptz,bigint,bigint,text,text,integer)'),
+                to_regprocedure('public.plan_portable_payment_failure_recovery(uuid,uuid,text,text,text,text,integer,timestamptz,bigint,bigint,text,text,integer)'),
+                to_regprocedure('public.plan_portable_payment_slip_recovery(uuid,uuid,text,text,text,text,integer,timestamptz,bigint,bigint,text,text,integer)'),
+                to_regprocedure('public.mark_lancemos_pilot_request_started(uuid,uuid,text,bigint,timestamptz)'),
+                to_regprocedure('public.mark_portable_payment_failure_request_started(uuid,uuid,text,bigint,timestamptz)'),
+                to_regprocedure('public.mark_portable_payment_slip_request_started(uuid,uuid,text,bigint,timestamptz)')
+            )
+              and position('flow_engine_legacy_guard: begin' in definition) > 0
+        )::int
+        -- La bolsa contada por los dos caminos.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public.authorize_lancemos_pilot_request_start(text,integer,text,bigint,bigint,text,text,text,text,text,text,uuid,uuid,uuid,timestamptz)')
+              and position('flow_engine_shared_pool: begin' in definition) > 0
+              and position('engine_row.pool = p_scope_key' in definition) > 0
+        )::int
+        -- Los eventos de la ruta en el almacen.
+        + (
+            select count(*) = 1
+            from pg_constraint con
+            where con.conrelid = to_regclass('public.flow_change_events')
+              and con.conname = 'flow_change_events_event_type_check'
+              and position('flow_route_moved' in pg_get_constraintdef(con.oid)) > 0
+        )::int,
+        6,
+        'flow_engine_routes'
 )
 select
     version,

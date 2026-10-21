@@ -151,7 +151,9 @@ expected_service_role(signature) as (
         ('public._recovery_renewal_requested(uuid)'),
         ('public.request_recovery_renewal_v1(bigint, bigint, bigint, bigint, text, timestamp with time zone)'),
         ('public.record_payment_failure_first_touch_v1(uuid, uuid, text, bigint, text, text, timestamp with time zone)'),
-        ('public.get_payment_failure_followup_context_v1(uuid, text, bigint, timestamp with time zone)')
+        ('public.get_payment_failure_followup_context_v1(uuid, text, bigint, timestamp with time zone)'),
+        ('public.read_flow_engine_v1(jsonb, text)'),
+        ('public.read_flow_engine_history_v1(jsonb, text, timestamp with time zone)')
 ),
 functions as (
     select
