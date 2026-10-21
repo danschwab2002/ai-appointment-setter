@@ -176,8 +176,11 @@ def test_the_event_is_the_one_the_portable_admission_writes() -> None:
     # Nadie mas escribe ese evento. Las lecturas del Automation Expert
     # (20261015000200) solo lo leen, para mostrar en la historia de un lead
     # que contesto a una plantilla; validate_automation_expert_read.mjs lo
-    # prueba adentro de una transaccion de solo lectura.
-    readers = (MIGRATIONS / "20261015000200_automation_expert_read_v1.sql",)
+    # prueba adentro de una transaccion de solo lectura. La historia del motor
+    # de flujos (20261021000200) tambien solo lo lee: es la captura v3, que
+    # toma la hora de la adopcion como la primera respuesta a un envio.
+    readers = (MIGRATIONS / "20261015000200_automation_expert_read_v1.sql",
+               MIGRATIONS / "20261021000200_flow_engine_routes_v1.sql")
     for path in sorted(MIGRATIONS.glob("*.sql")):
         if path not in (ADOPTION, MIGRATION, *readers):
             assert EVENT not in path.read_text(encoding="utf-8"), path.name

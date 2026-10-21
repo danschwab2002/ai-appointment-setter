@@ -31,11 +31,13 @@ def _code() -> str:
     return re.sub(r"--[^\n]*", "", _sql())
 
 
-def test_it_is_one_transaction_and_the_last_migration() -> None:
+def test_it_is_one_transaction_and_comes_before_the_flow_engine_routes() -> None:
     sql = _sql()
     assert "\nbegin;\n" in sql and sql.rstrip().endswith("commit;")
     names = sorted(path.name for path in (ROOT / "supabase" / "migrations").glob("*.sql"))
-    assert names[-1] == MIGRATION.name
+    # La migracion del motor (20261021000200) va despues: concede sus dos
+    # lecturas a este rol, detras de to_regrole.
+    assert names[names.index(MIGRATION.name) + 1:] == ["20261021000200_flow_engine_routes_v1.sql"]
 
 
 def test_the_role_only_gets_its_four_functions_and_the_schema() -> None:

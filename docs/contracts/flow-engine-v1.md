@@ -111,6 +111,7 @@ operator_create_flow_route_v1(p_instance jsonb, p_product_ref text, p_flow_key t
 - Crea la ruta **siempre en `legado`**, con `generation = 0`.
 - Exige:
   - que el flujo esté registrado (`P0002 flow_not_found`);
+  - en la v1, que el `legacy_kind` sea uno que la guarda del almacén frena en el legado: `carrito`, `pago_fallido` o `ficha` (`flow_route_kind_not_guarded`). `precheckout`, `descuento` y `reactivacion` no tienen guarda, y una ruta suya haría creer al operador que pausarlos en el almacén los frena;
   - que tenga versión activa (`flow_route_needs_published_version`);
   - que el disparador de la versión activa corresponda al `legacy_kind` (`flow_route_kind_mismatch`);
   - que exista el scope del legado (`flow_route_legacy_scope_unknown`);
@@ -131,7 +132,7 @@ operator_route_flow_v1(p_instance jsonb, p_product_ref text, p_flow_key text, p_
   2. que el flujo esté `prendido` o `pausado`, no `apagado` (`flow_route_flow_off`);
   3. que la versión activa pase las reglas 14 y 16 con las capacidades del motor. `p_revalidation` es el resultado del validador sobre esa versión, con estas claves exactas y ninguna más: `version` y `definition_sha256` (las de la versión activa), `rules_version` (2 o más), `capabilities` (`"v1"`), `blocks` (lista, vacía para pasar) y `validator` (las seis claves del validador del ciclo: `contract`, `rules_version`, `phase`, `actor`, `product_version` y `git_sha`). No lleva `fingerprint`: mover una ruta no es una propuesta. Si falta o sobra una clave, si `blocks` no está vacía, o si `version` o `definition_sha256` no son las de la versión activa, devuelve `flow_route_revalidation_invalid`;
   4. que la instancia no tenga renglón de tope por persona (`flow_route_person_cap_present`, el principio 12 del diseño).
-- **A `legado`** exige que el scope del legado esté armado en la versión que tiene el bridge (`flow_route_legacy_not_armed`). Armarlo es un paso del operador y no lo hace esta función.
+- **A `legado`** exige que el control del scope del legado esté armado (`pilot_runtime_controls.runtime_state = 'armed'`; si no, `flow_route_legacy_not_armed`). La base no conoce la versión del scope que tiene el bridge, así que no la compara: que el bridge tenga esa versión lo verifica el operador. Armarlo es un paso del operador y no lo hace esta función.
 - Con el mismo `executor` que ya tiene, devuelve `{"ok": true, "unchanged": true}` y no sube la `generation`.
 - Toma la fila de la ruta `FOR UPDATE` y después la de `flow_controls` `FOR SHARE`, en ese orden.
 - Devuelve `{"ok": true, "route": {...}}` o `{"ok": false, "reason_code": ...}`, y deja un `flow_change_events` de tipo `flow_route_moved` con la generación vieja y la nueva.
@@ -149,7 +150,7 @@ Corre en el bridge, en Python, y no escribe en la base salvo el resultado que gu
    - la vigente, la activa que dio la lectura (`current_versions`, `flow_replay.py:1350`, la lee de la captura y da lo mismo);
    - la propuesta, `proposed_versions(versions, current, items)` (`flow_replay.py:1363`) con los `ProposalItem` de la propuesta (`flow_definition.py:844`).
 4. **Simular**, `flow_replay.simulate(history, versions, fixed(vigente), fixed(propuesta), capabilities=ENGINE_CAPABILITIES_V1)` (`flow_replay.py:1326`). Devuelve una `Simulation` con su `summary`: los disparos, los cambios y el resumen de cada lado (`replay_summary`).
-5. **Guardar.** La simulación va adentro de la vista previa, en `validation.preview.simulacion`, y queda congelada al validar: `{"estado": "built", "summary": {...}, "summary_sha256": "<64 hex>", "cambios": [...recortados]}` o `{"estado": "failed", "reason_code": "..."}`. **Aprobar la lee de ahí**, sin cambiar la firma de `operator_approve_flow_change_v1`, y registra `simulation: built` con el `summary_sha256`, `failed` con su `reason_code`, o `not_built` solo si el operador lo fuerza. Lo implementa la T4, en su migración. Con la ruta en `legado`, la simulación vale igual: simula lo que haría la definición, que es lo que el motor ejecutaría al pasar la ruta.
+5. **Guardar.** La simulación va adentro de la vista previa, en `validation.preview.simulacion`, y queda congelada al validar: `{"status": "built", "summary": {...}, "summary_sha256": "<64 hex>", "cambios": [...recortados]}` o `{"status": "failed", "reason_code": "<^[a-z][a-z0-9_:]{0,79}$>"}`. **Aprobar la lee de ahí**, sin cambiar la firma de `operator_approve_flow_change_v1`, y registra `simulation: built` con el `summary_sha256`, `failed` con su `reason_code`, o `not_built` con cualquier otra forma (también cuando el operador lo fuerza). Lo implementa la T4, en su migración. Con la ruta en `legado`, la simulación vale igual: simula lo que haría la definición, que es lo que el motor ejecutaría al pasar la ruta.
 
 **Las capacidades** de la simulación son las del motor de la instancia. La v1 del motor ejecuta varios envíos por camino desde la T2.1. Hasta entonces, una propuesta con más de un envío sale con `engine_not_supported:mas_de_un_envio`. `PREVIEW_CAPABILITIES` es solo para el lienzo y nunca para aprobar.
 
@@ -163,6 +164,7 @@ Los de este contrato, todos en forma `^[a-z][a-z0-9_]{1,79}$`:
 |---|---|---|
 | `flow_engine_history_window_too_wide` | 2 | `p_since` es anterior a 8 días |
 | `flow_engine_history_too_large` | 2 | la historia pasa de 1 MB |
+| `flow_route_kind_not_guarded` | 3.1 | en la v1, el legado de ese `legacy_kind` no tiene guarda del almacén |
 | `flow_route_needs_published_version` | 3.1 | el flujo no tiene versión activa |
 | `flow_route_kind_mismatch` | 3.1 | el disparador no es el del `legacy_kind` |
 | `flow_route_legacy_scope_unknown` | 3.1 | el scope del legado no existe |

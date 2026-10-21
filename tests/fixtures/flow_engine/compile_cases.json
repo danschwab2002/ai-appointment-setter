@@ -980,6 +980,117 @@
       }
     },
     {
+      "id": "esperas_que_pasan_el_integer",
+      "que": "16 esperas de 99999d antes del primer envio: la gracia pasa el integer de Postgres (2.303.976.960 minutos). La gemela de SQL suma en bigint y da lo mismo que Python, sin 22003.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "esperar": "99999d"
+            },
+            {
+              "esperar": "99999d"
+            },
+            {
+              "esperar": "99999d"
+            },
+            {
+              "esperar": "99999d"
+            },
+            {
+              "esperar": "99999d"
+            },
+            {
+              "esperar": "99999d"
+            },
+            {
+              "esperar": "99999d"
+            },
+            {
+              "esperar": "99999d"
+            },
+            {
+              "esperar": "99999d"
+            },
+            {
+              "esperar": "99999d"
+            },
+            {
+              "esperar": "99999d"
+            },
+            {
+              "esperar": "99999d"
+            },
+            {
+              "esperar": "99999d"
+            },
+            {
+              "esperar": "99999d"
+            },
+            {
+              "esperar": "99999d"
+            },
+            {
+              "esperar": "99999d"
+            },
+            {
+              "plantilla": "att1_carrito_abandonado_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "1d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "expected": {
+        "policy_key": "flujo:1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "purpose": "cart_recovery",
+        "timezone": "America/Mexico_City",
+        "business_windows": [
+          {
+            "days": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "start": "09:00",
+            "end": "21:00"
+          }
+        ],
+        "grace_period_seconds": 138238617600,
+        "expires_after_seconds": 86400,
+        "max_automatic_messages": 1,
+        "steps": [
+          {
+            "mode": "freeform",
+            "step_key": "first_contact"
+          }
+        ]
+      }
+    },
+    {
       "id": "flow_id_no_uuid",
       "que": "El flow_id no es un uuid.",
       "input": {
