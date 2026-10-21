@@ -19,7 +19,7 @@ Este contrato fija eso para que la T4 se construya en paralelo con el motor, con
 
 ## En corto
 
-- **Dos lecturas y dos escrituras en la base.** Las lecturas son solo para `service_role`, como las tres de la 1a. Las escrituras son solo del dueño de la base, como las siete del almacén, y las corre el comando del operador.
+- **Dos lecturas y dos escrituras en la base.** Las lecturas son para `service_role` y para el rol de la T4, `automation_expert_change`. Las escrituras son solo del dueño de la base, como las siete del almacén, y las corre el comando del operador.
 - **La ruta de un flujo es `legado` o `motor`.** Nace en `legado`. Pasar a `motor` exige que el motor sepa ejecutar la versión activa. Volver a `legado` exige que el scope del legado siga armado.
 - **En la v1, solo el carrito puede ir a `motor`.** El pago rechazado y la ficha tienen ruta, pero solo `legado`: la ruta existe para que la pausa del almacén también los frene (decisión del 2026-10-21).
 - **La simulación corre en Python**, en el bridge, con `flow_replay.simulate`. La base da la historia con la forma cerrada de la captura de la paridad, así que la simulación de la vista previa y la de la paridad leen lo mismo.
@@ -31,7 +31,7 @@ Este contrato fija eso para que la T4 se construya en paralelo con el motor, con
 read_flow_engine_v1(p_instance jsonb, p_after text default null) returns jsonb
 ```
 
-- `stable`, `security definer`, `search_path` fijo. Solo la ejecuta `service_role`.
+- `stable`, `security definer`, `search_path` fijo. La ejecutan `service_role` y el rol `automation_expert_change` de la T4, con el grant dentro de un guard (`to_regrole('automation_expert_change') is not null`): el rol lo crea la migración de la T4, que va antes que la del motor.
 - `p_instance` es la marca de la instancia de la 1a. Se resuelve como en el almacén: el par (`tenant_ref`, `ally_ref`) con un binding activo (`_flow_store_instance`). Con otra cosa, `22023 flow_store_instance_invalid` o `flow_store_instance_not_bound`.
 - Pagina de a 50 flujos, ordenados por (`product_ref`, `flow_key`). `p_after` es el `next` de la página anterior.
 
@@ -80,7 +80,7 @@ read_flow_engine_v1(p_instance jsonb, p_after text default null) returns jsonb
 - **`pool`** es la bolsa de los topes de esa versión (`topes.bolsa`, o el `legacy_scope_key`). Dos flujos con la misma bolsa gastan el mismo cupo.
 - **No lleva datos personales.** Ningún teléfono, mail, nombre ni id de contacto.
 
-**Para la simulación**, el bridge traduce `flows` a `Versions` con una función nueva de `flow_replay`, `engine_flows_from_read(document)`, que hace con esta forma lo mismo que `engine_flows_from_definitions` hace con el documento de la paridad (`flow_replay.py:325-360`): una `EngineFlow` por versión, con su `legacy_kind`, su zona fija, su bolsa y las excepciones de su `legacy_kind`.
+**Para la simulación**, el bridge traduce `flows` a `Versions` con una función nueva, `engine_flows_from_read(document)`, que escribe la T4 en `src/bridge/flow_change_simulation.py`, que hace con esta forma lo mismo que `engine_flows_from_definitions` hace con el documento de la paridad (`flow_replay.py:325-360`): una `EngineFlow` por versión, con su `legacy_kind`, su zona fija, su bolsa y las excepciones de su `legacy_kind`.
 
 ## 2. `read_flow_engine_history_v1`: la historia para simular
 
@@ -88,7 +88,7 @@ read_flow_engine_v1(p_instance jsonb, p_after text default null) returns jsonb
 read_flow_engine_history_v1(p_instance jsonb, p_product_ref text, p_since timestamptz) returns jsonb
 ```
 
-- `stable`, `security definer`, `search_path` fijo. Solo la ejecuta `service_role`.
+- `stable`, `security definer`, `search_path` fijo. La ejecutan `service_role` y el rol `automation_expert_change` de la T4, con el grant dentro de un guard (`to_regrole('automation_expert_change') is not null`): el rol lo crea la migración de la T4, que va antes que la del motor.
 - Devuelve **la captura** de la paridad, con su forma cerrada (`src/bridge/flow_capture.py`), restringida a la instancia y al producto, desde `p_since`, con la siembra que pide la forma. `p_since` no puede ser anterior a 8 días: la vista previa simula los últimos 7 (el ciclo), y el día de más es la siembra de lo que ya estaba en curso. Si es anterior, `22023 flow_engine_history_window_too_wide`.
 - La forma es la de la captura v3 (`captura-paridad-recuperacion-v3`), que trae la T2.2: la v2 de hoy más los pasos siguientes (A2 y Z), los cupones por persona, el link por intento y los pedidos de renovación. Hasta que exista, el doble de la T4 usa el fixture de la v2 (`tests/fixtures/flow_engine/att1_recovery_capture_20261016.json`), que tiene la misma forma salvo esas secciones.
 - **La forma es la prueba de privacidad.** La función no devuelve nada que `flow_capture.validate_shape` rechace: claves de persona de 16 hex, sin arroba y sin nueve dígitos seguidos. El bridge la valida igual antes de usarla, y si falla, la simulación no se construye (`simulation: failed`, sección 4).
@@ -129,7 +129,7 @@ operator_route_flow_v1(p_instance jsonb, p_product_ref text, p_flow_key text, p_
 - **A `motor`** exige, en este orden:
   1. que el `legacy_kind` esté en las capacidades de esta versión del motor. En la v1, solo `carrito`. Si no, `flow_route_kind_not_supported`;
   2. que el flujo esté `prendido` o `pausado`, no `apagado` (`flow_route_flow_off`);
-  3. que la versión activa pase las reglas 14 y 16 con las capacidades del motor. `p_revalidation` es el resultado del validador sobre esa versión, con la forma de la revalidación de `operator_publish_flow_change_v1`. Si trae un bloqueo, o si es de otra versión o de otro `definition_sha256`, devuelve `flow_route_revalidation_invalid`;
+  3. que la versión activa pase las reglas 14 y 16 con las capacidades del motor. `p_revalidation` es el resultado del validador sobre esa versión, con estas claves exactas y ninguna más: `version` y `definition_sha256` (las de la versión activa), `rules_version` (2 o más), `capabilities` (`"v1"`), `blocks` (lista, vacía para pasar) y `validator` (las seis claves del validador del ciclo: `contract`, `rules_version`, `phase`, `actor`, `product_version` y `git_sha`). No lleva `fingerprint`: mover una ruta no es una propuesta. Si falta o sobra una clave, si `blocks` no está vacía, o si `version` o `definition_sha256` no son las de la versión activa, devuelve `flow_route_revalidation_invalid`;
   4. que la instancia no tenga renglón de tope por persona (`flow_route_person_cap_present`, el principio 12 del diseño).
 - **A `legado`** exige que el scope del legado esté armado en la versión que tiene el bridge (`flow_route_legacy_not_armed`). Armarlo es un paso del operador y no lo hace esta función.
 - Con el mismo `executor` que ya tiene, devuelve `{"ok": true, "unchanged": true}` y no sube la `generation`.
@@ -146,10 +146,10 @@ Corre en el bridge, en Python, y no escribe en la base salvo el resultado que gu
 1. **Leer el motor**, `read_flow_engine_v1`, y traducir a `Versions` (`engine_flows_from_read`).
 2. **Leer la historia**, `read_flow_engine_history_v1` con `p_since = ahora − 8 días`, validar la forma y armar `History` (`flow_replay.history_from_capture`, `flow_replay.py:427`).
 3. **Elegir las versiones:**
-   - la vigente, `current_versions(history, versions)` (`flow_replay.py`), o la activa que dio la lectura;
-   - la propuesta, `proposed_versions(versions, current, items)` con los `ProposalItem` de la propuesta (`flow_definition.py:844`).
+   - la vigente, la activa que dio la lectura (`current_versions`, `flow_replay.py:1350`, la lee de la captura y da lo mismo);
+   - la propuesta, `proposed_versions(versions, current, items)` (`flow_replay.py:1363`) con los `ProposalItem` de la propuesta (`flow_definition.py:844`).
 4. **Simular**, `flow_replay.simulate(history, versions, fixed(vigente), fixed(propuesta), capabilities=ENGINE_CAPABILITIES_V1)` (`flow_replay.py:1326`). Devuelve una `Simulation` con su `summary`: los disparos, los cambios y el resumen de cada lado (`replay_summary`).
-5. **Guardar.** La vista previa lleva el `summary` y los cambios recortados. Aprobar registra `simulation: built` con el sha256 del `summary`, o `simulation: failed` con su `reason_code` si algún paso falló. Con la ruta en `legado`, la simulación vale igual: simula lo que haría la definición, que es lo que el motor ejecutaría al pasar la ruta.
+5. **Guardar.** La simulación va adentro de la vista previa, en `validation.preview.simulacion`, y queda congelada al validar: `{"estado": "built", "summary": {...}, "summary_sha256": "<64 hex>", "cambios": [...recortados]}` o `{"estado": "failed", "reason_code": "..."}`. **Aprobar la lee de ahí**, sin cambiar la firma de `operator_approve_flow_change_v1`, y registra `simulation: built` con el `summary_sha256`, `failed` con su `reason_code`, o `not_built` solo si el operador lo fuerza. Lo implementa la T4, en su migración. Con la ruta en `legado`, la simulación vale igual: simula lo que haría la definición, que es lo que el motor ejecutaría al pasar la ruta.
 
 **Las capacidades** de la simulación son las del motor de la instancia. La v1 del motor ejecuta varios envíos por camino desde la T2.1. Hasta entonces, una propuesta con más de un envío sale con `engine_not_supported:mas_de_un_envio`. `PREVIEW_CAPABILITIES` es solo para el lienzo y nunca para aprobar.
 
@@ -187,4 +187,3 @@ Los errores de entrada siguen la convención del almacén: `22023` para una entr
 
 - La ruta a `motor` del pago rechazado y de la ficha. Piden un esquema que exprese las condiciones (la variante de B1, el cupón de B1 y la fecha de vencimiento de la ficha).
 - `en_curso: cancelar` y `migrar` (el ciclo).
-- Un rol propio para el Automation Expert que lea `read_flow_engine_v1` sin pasar por `service_role`, si la T4 lo pide.
