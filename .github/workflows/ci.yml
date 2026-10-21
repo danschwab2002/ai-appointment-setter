@@ -99,6 +99,16 @@ jobs:
         run: >-
           createdb -h 127.0.0.1 -p 5432 flow_store_ci
           && uv run python tests/sql/followup_engine/real_postgres_flow_store.py
+      - name: Verify the flow store operator command on PostgreSQL
+        env:
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          DATABASE_URL: postgresql://postgres@127.0.0.1:5432/flow_store_operator_ci
+          PSQL: /usr/bin/psql
+          ALLOW_DISPOSABLE_DATABASE: flow-store
+        run: >-
+          createdb -h 127.0.0.1 -p 5432 flow_store_operator_ci
+          && uv run python tests/sql/followup_engine/real_postgres_flow_change_operator.py
 
   sql-pglite:
     name: sql-pglite (${{ matrix.shard }}/3)

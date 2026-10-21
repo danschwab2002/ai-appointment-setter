@@ -1,8 +1,8 @@
 # Distribucion nativa de Hermes del Automation Expert (ADR-0025 §4).
 #
-# Todavia no se instala: hermes/declaracion.toml no lo lista, y el instalador
-# (scripts/hermes_instancia.py) tiene que aprender a completar lo que config.yaml deja en null (el
-# modelo y quien administra los comandos) y a copiar plugins/. Eso se acuerda con la Etapa 0 bis.
+# Lo instala scripts/hermes_instancia.py en las instancias que lo declaran en su hermes.toml (en
+# hermes/declaracion.toml es opcional): completa lo que config.yaml deja en null (el modelo y quien
+# administra los comandos, `administran` de la instancia) y copia plugins/.
 #
 # Hermes copia solo lo que esta en distribution_owned: con la lista explicita, plugins/ tiene que
 # estar (hermes_cli/profile_distribution.py:84-91 y :601-625). Las sesiones, la memoria y el .env

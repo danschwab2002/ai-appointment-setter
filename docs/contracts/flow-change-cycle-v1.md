@@ -3,7 +3,7 @@
 - **Estado:** aceptado como contrato conceptual el 2026-10-15; sin implementación (lo construye la 1b). El contrato no describe nada desplegado ni activado. Lo que dice de ATT1 es lo que pasó, con su fecha y de dónde sale.
 - **Fecha:** 2026-10-15
 - **ADR:** [ADR-0025](../decisions/0025-cada-instancia-tiene-su-hermes-declarado-por-el-producto.md) §7, [ADR-0007](../decisions/0007-durable-next-action-engine.md) §5 y [ADR-0017](../decisions/0017-central-slack-operations-connector.md)
-- **Contrato:** `flow-change-cycle-v1`, versión `1.1.0`. La 1.1.0 suma «Lo que fijó la implementación (1.1.0)»: lo que decidió la construcción del almacén (#243) y que este contrato dejaba abierto. No cambia ninguna decisión de Dan.
+- **Contrato:** `flow-change-cycle-v1`, versión `1.2.0`. La 1.1.0 suma «Lo que fijó la implementación (1.1.0)»: lo que decidió la construcción del almacén (#243) y que este contrato dejaba abierto. No cambia ninguna decisión de Dan. La 1.2.0 suma «Lo que fija el comando del operador (1.2.0)», con un valor por defecto que revisa Dan: el operador también arma propuestas.
 - **Alcance:** cómo se cambia un flujo que ya está escrito como dato. Fija:
   - quién lo propone;
   - qué lleva la propuesta y cómo se valida;
@@ -414,6 +414,17 @@ El almacén es la primera pieza de la 1b: `supabase/migrations/20261016000100_fl
 - **La bolsa por defecto.** `<producto>-<flujo>` puede no entrar en la forma de una bolsa, que llega hasta 40 caracteres. Si no entra, el validador bloquea con `default_pool_invalid` y pide una bolsa explícita.
 - **La ruta de pausa del Automation Expert** (`POST /flows/{flow_key}/pause`, en «Las rutas y las herramientas») no lleva el producto. Desde que la clave de un flujo es única solo dentro de su producto, la va a tener que llevar.
 - **La identidad del flujo no lleva la aliada.** La clave única es (`tenant_ref`, `product_ref`, `flow_key`). Si un producto pasa de una aliada a otra, la nueva no puede registrar sus flujos. Queda para la Etapa 2.
+
+## Lo que fija el comando del operador (1.2.0)
+
+El comando del operador es la primera parte de las herramientas (la T4): `scripts/flow_change_operator.py`, que corre en el VPS como `piloto.sh`, y `src/bridge/flow_change_operator.py` con `src/bridge/flow_change_preview.py`, que corren en un contenedor nuevo de la imagen del bridge. Escrita el 2026-10-21, antes del merge; no afirma que nada esté desplegado ni activado, y mientras ningún flujo tenga su ruta en el motor, el almacén no gobierna ningún envío.
+
+- **El comando también arma propuestas.** `volver`, `prender` y `apagar` arman su ítem, lo guardan como propuesta del operador, lo validan y siguen al sí y a la publicación en un solo comando, y `proponer` guarda y valida una propuesta del operador escrita en un archivo, como la v1 de un flujo. Así, el operador vuelve atrás sin depender del agente. El agente sigue armando las suyas, y el canal las aprueba igual. **Es el valor por defecto de Andy (21/10) para el desvío V1#16 del diseño del almacén, y lo revisa Dan:** donde arriba dice que «las cuatro clases de ítem las arma el agente» y que el canal «solo las aprueba y las ejecuta», el operador también puede armarlas.
+- **El sí lo da una persona en una terminal.** Toda escritura muestra un código y lo lee de `/dev/tty`; sin terminal, el comando no escribe. La garantía real es ser root en el VPS. `--quien` tiene que estar en `APROBADORES` (`dan` en ATT1).
+- **La validación corre aparte del bridge vivo,** en un contenedor nuevo de la imagen fijada por digest, sin red y de solo lectura, con el almacén y el catálogo que el comando leyó con `psql`. El catálogo sale de la base de Chatwoot (`channel_whatsapp.message_templates` de la bandeja), con la misma forma que `GET /inboxes/{id}`. El diff que se muestra antes del sí lo calcula el comando con la biblioteca estándar, y el «para qué» de la propuesta se muestra escapado y cercado como texto no verificado.
+- **Sin simulación no se publica salvo que se pida.** Mientras la vista previa traiga `simulation_not_built`, publicar exige `--sin-simulacion`. La base sigue registrando `simulation: not_built` al aprobar hasta la migración de las herramientas del agente.
+- **Validar** registra solo las propuestas del operador; las del agente las valida su ruta del bridge.
+- **Mover la ruta de un flujo** (`operator_route_flow_v1`, contrato `flow-engine-v1`) va en este comando cuando exista.
 
 ## Lo que se confirma al construir
 
