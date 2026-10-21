@@ -12,6 +12,39 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.16.0] - 2026-10-21
+
+Una versión menor sobre la 1.15.5. El Automation Expert puede proponer y validar un cambio de flujo (la T4: #288, #290, #296 y #297), y dibuja los flujos (#295). La base suma las rutas, las lecturas y la guarda del motor de flujos (la T2.3a, #294), sobre el esquema de varios toques y la captura v3 (#287, #291 y #292). El instalador de Hermes instala un profile de Slack y se acota a uno (#289 y #293). Todo nace apagado. Lleva dos migraciones, `20261021000100` y `20261021000200`, que aplicadas no cambian nada de lo que corre.
+
+### Agregado
+
+- **El comando del operador del almacén de flujos** (#288, `scripts/flow_change_operator.py`). Corre en el VPS como `piloto.sh` y lee la base y el catálogo de plantillas de Chatwoot con `psql`. Con él se listan y se ven las propuestas, se arma una propuesta propia (`proponer`, `volver`, `prender` y `apagar`), se valida, y se aprueba y publica con un código leído de la terminal. También se pausa un flujo y se descarta una propuesta. El validador corre en un contenedor nuevo de la imagen del bridge, fijada por digest, sin red y de solo lectura. Publicar sin simulación exige `--sin-simulacion`.
+- **El permiso de base del Automation Expert** (#290, migración `20261021000100`). El rol `automation_expert_change` (`NOLOGIN NOINHERIT`, lo asume PostgREST por un JWT) ejecuta solo cuatro funciones: leer el almacén, guardar un borrador, registrar una validación y releer una propuesta. No puede aprobar, publicar, pausar ni descartar. Topes: 10 propuestas abiertas, 100 revisiones y 100 validaciones por propuesta. Aprobar registra la simulación que quedó congelada en la vista previa (`built` con su `summary_sha256`, `failed` con el motivo, o `not_built`).
+- **Las herramientas de cambio del Automation Expert** (#296). Las rutas del bridge bajo `/internal/automation-expert/v1/` están detrás de `AUTOMATION_EXPERT_CHANGE_ENABLED`, apagado por defecto:
+  - `GET /flow-store`;
+  - `POST /flow-changes`;
+  - `POST /flow-changes/{id}/validate`;
+  - `GET /flow-changes/{id}`.
+
+  El plugin `automation-expert-change` suma cuatro herramientas en Slack: `get_flow_definitions`, `propose_flow_change`, `validate_flow_change` y `get_flow_change`. Quién pide el cambio lo pone el plugin, con el ID de Slack de la sesión. El agente propone y valida; nunca aprueba, publica ni pausa.
+- **La simulación en la vista previa** (#297). Validar lee el motor (`read_flow_engine_v1`) y la historia de los últimos 8 días (`read_flow_engine_history_v1`), y simula la versión vigente contra la propuesta. El resultado queda congelado en `validation.preview.simulacion`. Si la simulación no se puede armar, la propuesta se valida igual y la vista previa dice por qué.
+- **El motor de flujos en la base, apagado** (#294, migración `20261021000200`, contrato `docs/contracts/flow-engine-v1.md` de #287). Las tablas de rutas, corridas y autorizaciones; las lecturas `read_flow_engine_v1` y `read_flow_engine_history_v1`; las rutas `operator_create_flow_route_v1` y `operator_route_flow_v1` (a `motor` contestan `flow_route_kind_not_supported` hasta la T2.3b); la política compilada en SQL, gemela de `flow_policy.compile_policy`; y la guarda del almacén al principio de los envoltorios y los `mark_*` del carrito, el pago fallido y la ficha. Sin filas en `flow_engine_routes`, la guarda no frena nada y la bolsa suma cero.
+- **El esquema de varios toques** (#291, `setter-flujo/v1` 1.1): hasta tres envíos por camino, `cupon: personal` y las variables `cuando`, `precio` y `vence`. La v7 del carrito de ATT1 compila igual a su fila real. **La captura v3 y la paridad del carrito de tres toques** (#292): sobre la captura real de ATT1, 83 envíos, ninguno antes de tiempo ni sin explicar.
+- **El Automation Expert dibuja los flujos** (#295, `draw_flow` en el toolset `automation_expert_read`): una página HTML con el lienzo, armada desde la misma lectura que `list_flows`, adjunta en Slack. Necesita el permiso `files:write` en la app de Slack.
+- **El instalador de Hermes instala un profile de Slack** (#289), con plugins y herramientas exactas, y **se acota a uno con `--solo PROFILE`** (#293) en `plan`, `aplicar` y `chequear`. No cuenta como diferencia lo que Hermes anota solo en el `config.yaml` (`onboarding.seen`, #295).
+
+### Qué hace quien actualiza
+
+- **Correr las dos migraciones, en orden y como `postgres`:** `20261021000100` (crea el rol `automation_expert_change` si no existe; si existe con otros atributos, falla cerrada) y después `20261021000200`. Aplicadas, no cambian nada de lo que corre.
+- **Pasar el bridge a la imagen 1.16.0.** Sin campos nuevos en el manifiesto.
+- **Para prender las herramientas de cambio del Automation Expert** (opcional), el bridge necesita estas variables:
+  - `AUTOMATION_EXPERT_CHANGE_ENABLED=true`. Exige además `AUTOMATION_EXPERT_READ_ENABLED=true`, el manifiesto de la instancia y `SUPABASE_BASE_URL`.
+  - `AUTOMATION_EXPERT_CHANGE_TOKEN`: 32 caracteres o más, distinto de todo otro valor del bridge.
+  - `AUTOMATION_EXPERT_CHANGE_DB_KEY`: un JWT con `role: automation_expert_change`, firmado con el secreto JWT de la base, distinto de la clave de `service_role`.
+
+  El profile del Automation Expert lleva `AUTOMATION_EXPERT_CHANGE_API_TOKEN`, con el mismo valor que `AUTOMATION_EXPERT_CHANGE_TOKEN`. Si falta alguna de estas condiciones, el bridge no arranca y dice cuál. Con el flag prendido, `/ready` muestra `"automation_expert_change": "enabled"`.
+- **Sin el flag**, las rutas no existen y el plugin del Automation Expert contesta error.
+
 ## [1.15.5] - 2026-10-21
 
 Un parche sobre la 1.15.4: los pasos siguientes (A2 y Z del carrito, B2 o Z del pago rechazado, C3 de la ficha) verifican Chatwoot contra el teléfono del caso (#286). Cambia el bridge y no lleva migración.
