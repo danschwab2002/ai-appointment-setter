@@ -31,11 +31,14 @@ el legado, a proposito:
   que falta da la primera hora en que puede cumplirse y se vuelve a mirar todo
   desde la mayor.
 
-**Varios toques.** Con ``ENGINE_CAPABILITIES_V1`` el motor manda uno solo. La
-vista previa del lienzo (``PREVIEW_CAPABILITIES``) simula N con la regla del
-legado (``20260813000100_absolute_followup_deadlines.sql``): cada paso despues
-del primero se mide desde el primer envio aceptado (``:337-350``) y todos
-comparten el vencimiento del primero (``:355``, ``:380``).
+**Varios toques.** Desde la T2.1 (2026-10-21), ``ENGINE_CAPABILITIES_V1`` manda
+hasta tres envios por camino, con la espera entre uno y otro: los de la forma
+de su flujo del legado (``flow_policy.STEPS_BY_LEGACY_KIND``; el carrito de ATT1
+tiene tres). La vista previa del lienzo (``PREVIEW_CAPABILITIES``) no tiene
+limite. Los dos siguen la regla del legado
+(``20260813000100_absolute_followup_deadlines.sql``): cada paso despues del
+primero se mide desde el primer envio aceptado (``:337-350``) y todos comparten
+el vencimiento del primero (``:355``, ``:380``).
 
 Es puro: no lee el entorno, no hace red ni toca bases. No importa
 ``flow_parity``: el orden de los imports es ``flow_parity -> flow_engine ->
@@ -63,7 +66,7 @@ from .flow_definition import (
     step_type,
     trigger_of,
 )
-from .flow_policy import STEP_KEY_BY_LEGACY_KIND
+from .flow_policy import STEPS_BY_LEGACY_KIND
 from .flow_schedule import DEFAULT_ZONE, LAST_MINUTE, Franja, franja_of, is_open, next_open
 
 __all__ = [
@@ -75,6 +78,8 @@ __all__ = [
 ]
 
 NOT_SUPPORTED = "engine_not_supported"
+# Mas envios por camino de los que ejecuta el motor (las capacidades).
+TOO_MANY_SENDS = "demasiados_envios"
 # El estado del control que deja arrancar (pilot_runtime_controls.runtime_state).
 ARMED = "armed"
 # El motivo de un control que no esta armado (§2.9 del diseno): solo paused es
@@ -116,7 +121,8 @@ class EngineCapabilities:
 
     triggers: frozenset[str]          # "carrito", "pago_fallido", "intencion", "silencio:agente", "silencio:persona"
     step_types: frozenset[str]        # "esperar", "plantilla"
-    max_sends_per_path: int | None    # 1 en la v1; None (sin limite) solo en la vista previa del lienzo
+    max_sends_per_path: int | None    # 3 en la v1; None (sin limite) solo en la vista previa del lienzo
+    waits_between_sends: bool         # una espera despues de un envio y antes del siguiente
     variables: frozenset[str]         # "nombre", "producto"
     buttons: frozenset[str]           # "checkout"
     exits: frozenset[str]             # "compra", y "contesta" solo con un silencio
@@ -126,13 +132,15 @@ class EngineCapabilities:
 ENGINE_CAPABILITIES_V1 = EngineCapabilities(
     triggers=frozenset({"carrito", "pago_fallido", "intencion", "silencio:agente", "silencio:persona"}),
     step_types=frozenset({"esperar", "plantilla"}),
-    max_sends_per_path=1,
-    variables=frozenset({"nombre", "producto"}),
+    max_sends_per_path=3,
+    waits_between_sends=True,
+    # cuando, precio y vence (1.1): las llena el bridge en A1, Z y el seguimiento del pago rechazado.
+    variables=frozenset({"nombre", "producto", "cuando", "precio", "vence"}),
     buttons=frozenset({"checkout"}),
     exits=frozenset({"compra", "contesta"}),
     relations_between_engine_flows_only=True,
 )
-# La v1 con varios envios por camino, y nada mas distinto: la vista previa del
+# La v1 sin limite de envios por camino, y nada mas distinto: la vista previa del
 # lienzo de flujos (diseno de la T3a, §5.3 y §6).
 PREVIEW_CAPABILITIES = dataclasses.replace(ENGINE_CAPABILITIES_V1, max_sends_per_path=None)
 
@@ -177,8 +185,9 @@ def not_supported(definition: Mapping[str, Any], capabilities: EngineCapabilitie
     cada plantilla y cada conversar, y de una condicion la rama con mas), copiada, no importada.
 
     Mira, en este orden: el disparador, el tipo de cada paso (con sus variables
-    y su boton), una espera despues de un envio, los envios por camino y las
-    salidas. Lo que la definicion no trae no se marca: la forma la mira la
+    y su boton), una espera despues de un envio (entre dos envios, solo si las
+    capacidades no la admiten; despues del ultimo, siempre), los envios por
+    camino y las salidas. Lo que la definicion no trae no se marca: la forma la mira la
     regla 1. Las relaciones con un flujo del legado necesitan el mundo, y las
     mira la regla 14 (``relation_with_legacy_flow``), no esta funcion.
     """
@@ -215,23 +224,29 @@ def not_supported(definition: Mapping[str, Any], capabilities: EngineCapabilitie
             if isinstance(button, Mapping) and button.get("link") not in capabilities.buttons:
                 add(f"boton_{button.get('link')}")
     if isinstance(steps, list):
-        # Con un solo envio, una espera despues de el no lleva a nada; con varios,
-        # la que queda despues del ultimo tampoco.
+        # Una espera despues del ultimo envio no lleva a nada; una entre dos envios
+        # vale si las capacidades la admiten.
         sends_seen = 0
         wait_after_send = False
+        waited_a_minute = False
         for step in steps:
             kind = step_type(step)
             if kind in ("plantilla", "conversar"):
+                if sends_seen and not waited_a_minute:
+                    # Dos envios seguidos: el segundo tiene que esperar al menos un minuto (T2.1).
+                    add("espera_entre_envios")
                 sends_seen += 1
-                wait_after_send = False
+                wait_after_send = waited_a_minute = False
             elif kind == "esperar" and sends_seen:
                 wait_after_send = True
-                if capabilities.max_sends_per_path == 1:
+                minutes = parse_duration(step.get("esperar")) if isinstance(step, Mapping) else None
+                waited_a_minute = waited_a_minute or minutes is None or minutes > 0
+                if not capabilities.waits_between_sends:
                     add("espera_despues_del_envio")
         if wait_after_send:
             add("espera_despues_del_envio")
     if capabilities.max_sends_per_path is not None and _max_sends(steps) > capabilities.max_sends_per_path:
-        add("mas_de_un_envio")
+        add(TOO_MANY_SENDS)
     ends = definition.get("termina")
     exits = ends.get("si") if isinstance(ends, Mapping) else None
     for exit_name in exits if isinstance(exits, list) else ():
@@ -311,14 +326,14 @@ class PlannedStep:
     language: str
     variables: tuple[str, ...]
     button: str | None
-    step_key: str | None              # el del legado (flow_policy.STEP_KEY_BY_LEGACY_KIND) en el paso 0
+    step_key: str | None              # el del legado en ese indice (flow_policy.STEPS_BY_LEGACY_KIND), o None
 
 
 @dataclass(frozen=True)
 class Plan:
     """Lo que un recorrido va a hacer, segun la definicion de su version."""
 
-    steps: tuple[PlannedStep, ...]    # uno solo con ENGINE_CAPABILITIES_V1
+    steps: tuple[PlannedStep, ...]    # hasta tres con ENGINE_CAPABILITIES_V1
     expires_after: timedelta          # desde el disparo, el mismo para todos los pasos (20260813000100:355, :380)
     franja: Franja
     pool: str
@@ -336,12 +351,18 @@ def _cap(caps: Mapping[str, Any], key: str) -> int | None:
     return value
 
 
+def _legacy_step_key(legacy_kind: str | None, index: int) -> str | None:
+    """El ``step_key`` del paso ``index`` de la forma del flujo del legado, o None si no tiene."""
+    shape = STEPS_BY_LEGACY_KIND.get(legacy_kind or "", ())
+    return shape[index].step_key if index < len(shape) else None
+
+
 def plan_steps(flow: EngineFlow, firing: Firing, *,
                capabilities: EngineCapabilities = ENGINE_CAPABILITIES_V1) -> Plan:
     """El plan de la definicion de ``flow`` para ``firing``.
 
-    No compila la politica: ``compile_policy`` rechaza mas de un envio
-    (``flow_policy.py:152-154``) y la vista previa necesita N. Usa los mismos
+    No compila la politica: ``compile_policy`` rechaza los envios de mas sobre
+    la forma de su flujo del legado, y la vista previa necesita N. Usa los mismos
     ayudantes (``franja_of``, ``parse_duration``), y los ata
     ``tests/test_flow_engine_shared_cases.py``. Mira, en este orden, el
     horario, lo que las capacidades no ejecutan (``PlanNotSupported``), las
@@ -391,7 +412,7 @@ def plan_steps(flow: EngineFlow, firing: Firing, *,
             language=step.get("idioma") if isinstance(step.get("idioma"), str) else "",
             variables=tuple(step.get("variables") or DEFAULT_VARIABLES),
             button=button.get("link") if isinstance(button, Mapping) else None,
-            step_key=None if planned else STEP_KEY_BY_LEGACY_KIND.get(flow.legacy_kind or ""),
+            step_key=_legacy_step_key(flow.legacy_kind, len(planned)),
         ))
         if len(planned) == 1:
             waited = 0

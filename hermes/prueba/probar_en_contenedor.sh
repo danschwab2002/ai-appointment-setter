@@ -240,22 +240,36 @@ AUTOMATION_EXPERT_API_TOKEN = { archivo = "secretos/automation-expert.variables"
 AUTOMATION_EXPERT_INTERNAL_HOST = { archivo = "secretos/automation-expert.variables", variable = "AUTOMATION_EXPERT_INTERNAL_HOST" }
 TOML
 PID=$(pid_del_gateway agente-comercial)
-instalador plan-ae 0 plan --instancia "$TMP/hermes-ae.toml"
+# Como en ATT1 el 2026-10-21: el SOUL del comercial que corre no es el de Git. --solo instala el
+# Automation Expert sin arrastrar ese cambio.
+como_hermes "$C" sh -c 'printf "\n# como en ATT1\n" >> /opt/data/profiles/agente-comercial/SOUL.md'
+SOUL_COMERCIAL=$(docker exec "$C" md5sum /opt/data/profiles/agente-comercial/SOUL.md)
+instalador plan-ae-sin-solo 0 plan --instancia "$TMP/hermes-ae.toml"
+contiene plan-ae-sin-solo "instalar la distribucion en agente-comercial (SOUL.md)"
+instalador plan-ae 0 plan --instancia "$TMP/hermes-ae.toml" --solo automation-expert
 contiene plan-ae "crear el profile automation-expert"
 contiene plan-ae "arrancar el gateway de automation-expert"
-instalador aplicar-ae 1 aplicar --instancia "$TMP/hermes-ae.toml"
+if grep -qF "agente-comercial (SOUL.md)" "$SALIDAS/plan-ae.txt"; then fallar "plan --solo quiere tocar al comercial"; fi
+instalador solo-ajeno 2 plan --instancia "$TMP/hermes.toml" --solo automation-expert
+contiene solo-ajeno "--solo automation-expert: la instancia no declara ese profile"
+instalador aplicar-ae 1 aplicar --instancia "$TMP/hermes-ae.toml" --solo automation-expert
+[ "$(docker exec "$C" md5sum /opt/data/profiles/agente-comercial/SOUL.md)" = "$SOUL_COMERCIAL" ] || fallar "aplicar --solo toco el SOUL del comercial"
+contiene aplicar-ae "agente-comercial: no se mira (--solo automation-expert)"
 contiene aplicar-ae "instalar la distribucion en automation-expert"
 contiene aplicar-ae "automation-expert: plugins/ igual a Git"
 contiene aplicar-ae "automation-expert: en slack tiene exactamente [automation_expert_read]"
 contiene aplicar-ae "automation-expert: el gateway corre"
 contiene aplicar-ae "automation-expert: el gateway arranco despues de sus variables y sus plugins"
 contiene aplicar-ae "automation-expert: Slack no esta conectado"
-contiene aplicar-ae "agente-comercial: cero herramientas en el API server"
 contiene aplicar-ae "VEREDICTO: 1 diferencia(s) con la declaracion"
 [ "$(pid_del_gateway agente-comercial)" = "$PID" ] || fallar "instalar el Automation Expert reinicio al comercial"
 como_hermes "$C" test -f /opt/data/profiles/automation-expert/plugins/automation-expert-read/tools.py || fallar "no copio los plugins"
-instalador plan-ae-sin-cambios 0 plan --instancia "$TMP/hermes-ae.toml"
+instalador plan-ae-sin-cambios 0 plan --instancia "$TMP/hermes-ae.toml" --solo automation-expert
 contiene plan-ae-sin-cambios "VEREDICTO: nada que aplicar"
+# Sin --solo, aplicar repara el SOUL del comercial y no toca al Automation Expert.
+instalador repara-comercial 1 aplicar --instancia "$TMP/hermes-ae.toml"
+contiene repara-comercial "instalar la distribucion en agente-comercial (SOUL.md)"
+contiene repara-comercial "agente-comercial: SOUL.md igual a Git"
 
 paso "10c. rojo a proposito: un plugin tocado en el servidor se repara sin reiniciar"
 # El proceso cargo el plugin de Git al arrancar: tocar el archivo no cambia lo que corre, y

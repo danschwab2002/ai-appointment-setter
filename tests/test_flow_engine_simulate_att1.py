@@ -48,8 +48,10 @@ import hashlib
 import heapq
 import importlib.util
 import json
+import os
 import statistics
 import sys
+import tomllib
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from functools import cache
@@ -58,6 +60,7 @@ from typing import Any
 
 import pytest
 
+from bridge import flow_definition as fd
 from bridge import flow_replay
 from bridge.flow_definition import parse_items
 from bridge.flow_engine import PREVIEW_CAPABILITIES, PlanNotSupported
@@ -77,6 +80,7 @@ from bridge.flow_replay import (
     simulate,
 )
 from bridge.flow_schedule import local_day
+from bridge.flow_validator import InstanceView, TemplateCatalog
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests" / "fixtures" / "flow_engine" / "att1_recovery_capture_20261016.json"
@@ -396,13 +400,26 @@ def test_three_touches_with_one_day_send_no_second_touch() -> None:
     ]
 
 
-def test_three_touches_with_the_v1_are_not_supported() -> None:
+def test_three_touches_with_the_v1_simulate_like_the_preview() -> None:
+    # Desde la T2.1 la v1 ejecuta hasta tres envios por camino: los tres toques dan lo mismo
+    # que con la vista previa.
     [proposal] = [item for item in PROPOSALS["propuestas"] if item["nombre"] == "tres_toques_vence_4d"]
     current = current_versions(HISTORY, VERSIONS)
     versions, chosen = proposed_versions(VERSIONS, current, parse_items(proposal["items"]))
+    with_v1 = simulate(HISTORY, versions, fixed(current), fixed(chosen))
+    assert with_v1.summary == simulation("tres_toques_vence_4d").summary
+
+
+def test_four_touches_with_the_v1_are_not_supported() -> None:
+    [proposal] = [item for item in PROPOSALS["propuestas"] if item["nombre"] == "tres_toques_vence_4d"]
+    items = copy.deepcopy(proposal["items"])
+    pasos = items[0]["definicion"]["pasos"]
+    pasos.extend([{"esperar": "24h"}, copy.deepcopy(pasos[-1])])
+    current = current_versions(HISTORY, VERSIONS)
+    versions, chosen = proposed_versions(VERSIONS, current, parse_items(items))
     with pytest.raises(PlanNotSupported) as raised:
         simulate(HISTORY, versions, fixed(current), fixed(chosen))
-    assert "engine_not_supported:mas_de_un_envio" in raised.value.codes
+    assert "engine_not_supported:demasiados_envios" in raised.value.codes
 
 
 def test_turning_a_flow_off_starts_nothing_of_it() -> None:
@@ -515,3 +532,122 @@ def test_a_change_in_the_named_differences_skips_and_does_not_go_red(monkeypatch
     monkeypatch.setitem(globals(), "NAMED_FILE", changed)
     with pytest.raises(pytest.skip.Exception, match="cambio desde c7fa8ef"):
         test_named_without_one_uuid_is_not_ok()
+
+
+# ---------------------------------------------------------------------------
+# El primer cambio de Brayan (T2.1): A2 a las 36 h en vez de 24, sobre el carrito de tres toques.
+# ---------------------------------------------------------------------------
+#
+# El documento de versiones (``flow_simulation/att1_cart_three_touches_a2_36h.json``) lo genera esta
+# prueba: la vigente es el carrito de att1-recuperacion v7 como lo traduce tests/flow_store_translator.py de
+# la captura del 21/10 (con ATT1_TOUCHES_20261021), y la propuesta, el mismo con A2 a las 36 h y Z a las
+# 72 h del primero, como antes. Se corre sobre la captura del 16/10, con el pago fallido en su v5. Para
+# regenerarlo: ``FLOW_SIMULATION_FIXTURE_DIR=tests/fixtures/flow_simulation uv run pytest
+# tests/test_flow_engine_simulate_att1.py -k a2_at_36``.
+
+A2_36H_FILE = SIMULATION / "att1_cart_three_touches_a2_36h.json"
+FLOW_STORE_DIR = ROOT / "tests" / "fixtures" / "flow_store"
+
+
+def _translated_cart_v7() -> dict[str, Any]:
+    spec = importlib.util.spec_from_file_location("flow_store_translator", ROOT / "tests" / "flow_store_translator.py")
+    assert spec and spec.loader
+    translator = importlib.util.module_from_spec(spec)
+    # Una dataclass busca su modulo en sys.modules al definirse.
+    sys.modules[spec.name] = translator
+    spec.loader.exec_module(translator)
+    config = json.loads((FLOW_STORE_DIR / "att1_flow_config_20261021.json").read_text(encoding="utf-8"))
+    manifest = tomllib.loads((FLOW_STORE_DIR / "att1_instancia_f01fbcc.toml").read_text(encoding="utf-8"))
+    blocks = json.loads((FLOW_STORE_DIR / "schema_examples_v1.json").read_text(encoding="utf-8"))["blocks"]
+    translated = translator.translate_att1(config, manifest, blocks, translator.ATT1_TOUCHES_20261021)
+    instance = DEFINITIONS["instance"]
+    catalog = TemplateCatalog.from_inbox_payload(json.loads(
+        (ROOT / "tests" / "fixtures" / "chatwoot_inbox_11_message_templates_20261010.json").read_text(
+            encoding="utf-8")))
+    result = fd.normalize_definition(
+        translated["carrito"].definition, new_flow=True, catalog=catalog,
+        instance=InstanceView(instance["tenant_ref"], instance["ally_ref"], frozenset(instance["products"]),
+                              instance["time_zone"]))
+    assert result.findings == ()
+    return fd.as_draft(fd.as_published(result.definition, 1))
+
+
+def _a2_36h_document() -> dict[str, Any]:
+    current = _translated_cart_v7()
+    proposed = copy.deepcopy(current)
+    assert [step.get("esperar") for step in proposed["pasos"]] == [None, "24h", None, "48h", None]
+    proposed["pasos"][1]["esperar"] = "36h"
+    proposed["pasos"][3]["esperar"] = "36h"
+    flow_id = DEFINITIONS["flows"]["carrito"]["flow_id"]
+
+    def item(definition: dict[str, Any]) -> dict[str, Any]:
+        return {"producto": "att1", "flujo": "carrito", "flow_id": flow_id, "tipo": "version",
+                "definicion": definition, "en_curso": "seguir"}
+
+    return {
+        "_doc": [
+            "El primer cambio de Brayan, simulado (T2.1, 2026-10-21): A2 a las 36 h del primer envio en vez de 24,"
+            " con Z a las 72 h, como antes. Lo genera tests/test_flow_engine_simulate_att1.py"
+            " (test_a2_at_36_hours_document_is_what_the_translator_gives).",
+            "vigente: el carrito de att1-recuperacion v7 (att1-carrito-tres-toques v1), traducido de"
+            " flow_store/att1_flow_config_20261021.json con ATT1_TOUCHES_20261021 y normalizado. propuesta: el"
+            " mismo con las dos esperas en 36h. Cada uno es una version nueva sobre la v5 de"
+            " att1_definitions_by_scope_version.json; el pago fallido sigue en su v5.",
+            "regenerar: FLOW_SIMULATION_FIXTURE_DIR=tests/fixtures/flow_simulation uv run pytest"
+            " tests/test_flow_engine_simulate_att1.py -k a2_at_36",
+        ],
+        "vigente": [item(current)],
+        "propuesta": [item(proposed)],
+    }
+
+
+def _a2_36h() -> Simulation:
+    document = json.loads(A2_36H_FILE.read_text(encoding="utf-8"))
+    current = current_versions(HISTORY, VERSIONS)
+    with_v7, chosen_v7 = proposed_versions(VERSIONS, current, parse_items(document["vigente"]))
+    with_36h, chosen_36h = proposed_versions(with_v7, chosen_v7, parse_items(document["propuesta"]))
+    return simulate(HISTORY, with_36h, fixed(chosen_v7), fixed(chosen_36h))
+
+
+def test_a2_at_36_hours_document_is_what_the_translator_gives() -> None:
+    document = _a2_36h_document()
+    target = os.environ.get("FLOW_SIMULATION_FIXTURE_DIR")
+    if target:
+        (Path(target) / A2_36H_FILE.name).write_text(
+            json.dumps(document, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+        return
+    assert json.loads(A2_36H_FILE.read_text(encoding="utf-8")) == document, (
+        f"{A2_36H_FILE.name} no es el de hoy: regenerarlo con FLOW_SIMULATION_FIXTURE_DIR")
+
+
+def test_a2_at_36_hours_changes_only_the_second_step_of_the_cart() -> None:
+    # Los cambios caen en el paso 1 (A2): sale 12 h despues. A1 queda igual, y Z, que va a las 72 h del
+    # primer envio en las dos, tambien. La unica diferencia en Z es el horizonte de la captura: 10 recorridos
+    # que en la vigente ya mandaron A2 y esperan Z, en la propuesta todavia esperan A2 (Z no esta planeada).
+    result = _a2_36h()
+    assert result.summary["cambios"] == len(result.changes) == 206
+    waiting_for_a2 = 0
+    for change in result.changes:
+        old, new = change.before, change.after
+        assert old.flow == new.flow == CART, change.firing_ref
+        assert old.start == new.start, change.firing_ref
+        before = {step.index: (step.at, step.status, step.reason) for step in old.steps}
+        after = {step.index: (step.at, step.status, step.reason) for step in new.steps}
+        assert before[0] == after[0], change.firing_ref
+        assert before[1][0] != after[1][0], change.firing_ref
+        if after[1][1] == "en_curso" and before[1][1] != "en_curso":
+            assert 2 not in after and before[2][1] == "en_curso", change.firing_ref
+            waiting_for_a2 += 1
+        else:
+            assert before.get(2) == after.get(2), change.firing_ref
+    assert waiting_for_a2 == 10
+    steps = {name: result.summary[name]["flujos"]["carrito"]["pasos"] for name in ("vigente", "propuesta")}
+    assert steps["vigente"][0] == steps["propuesta"][0]
+    for name in ("vigente", "propuesta"):
+        # Z: los mismos enviados y las mismas compras; lo en curso se corre al paso 1.
+        assert (steps[name][2]["enviados"], steps[name][2]["terminan"]["compro"]) == (150, 2)
+    assert (steps["vigente"][1]["enviados"], steps["propuesta"][1]["enviados"]) == (188, 178)
+    assert result.summary["vigente"]["fin"] == result.summary["propuesta"]["fin"]
+    # El pago fallido no cambia.
+    assert (result.summary["vigente"]["flujos"]["pago_fallido"]
+            == result.summary["propuesta"]["flujos"]["pago_fallido"])

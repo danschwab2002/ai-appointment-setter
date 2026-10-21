@@ -60,7 +60,7 @@ HISTORY = history_from_capture(Capture.from_json(json.loads(FIXTURE.read_text(en
 VERSIONS = engine_flows_from_definitions(DEFINITIONS)
 CART = ("att1", "carrito")
 FAILED = ("att1", "pago_fallido")
-MORE_THAN_ONE_SEND = "engine_not_supported:mas_de_un_envio"
+TOO_MANY_SENDS = "engine_not_supported:demasiados_envios"
 
 
 def _load(name: str, path: Path) -> Any:
@@ -118,10 +118,13 @@ def simulation(name: str) -> Simulation:
     return simulate(HISTORY, versions, fixed(current), fixed(chosen), capabilities=PREVIEW_CAPABILITIES)
 
 
-def two_templates() -> list[dict[str, Any]]:
+def four_templates() -> list[dict[str, Any]]:
+    """El carrito con cuatro envios: uno mas de los que ejecuta la v1 (tres desde la T2.1)."""
     items = items_of("carrito_a_1h")
     pasos = items[0]["definicion"]["pasos"]
-    items[0]["definicion"]["pasos"] = [pasos[1], {"esperar": "24h"}, copy.deepcopy(pasos[1])]
+    send = pasos[1]
+    items[0]["definicion"]["pasos"] = [send, *([{"esperar": "24h"}, copy.deepcopy(send)] * 3)]
+    items[0]["definicion"]["termina"]["vence"] = "4d"
     return items
 
 
@@ -174,19 +177,26 @@ def test_an_unreadable_file_exits_one(capsys: pytest.CaptureFixture[str], tmp_pa
 # --propuesta y --varios-toques.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("name", ["tres_toques_vence_4d", "dos_plantillas"])
-def test_more_than_one_send_without_the_flag_is_rejected(name: str, capsys: pytest.CaptureFixture[str],
-                                                         tmp_path: Path) -> None:
-    # El rojo 21: las capacidades v1 son de un envio por camino, y sin --varios-toques el comando no simula.
-    items = two_templates() if name == "dos_plantillas" else items_of(name)
-    proposal = write_proposal(tmp_path, items)
+def test_more_than_three_sends_without_the_flag_is_rejected(capsys: pytest.CaptureFixture[str],
+                                                            tmp_path: Path) -> None:
+    # El rojo 21, desde la T2.1: las capacidades v1 son de hasta tres envios por camino, y sin
+    # --varios-toques el comando no simula un cuarto.
+    proposal = write_proposal(tmp_path, four_templates())
     lienzo = tmp_path / "lienzo.json"
     assert SCRIPT.main(["--propuesta", str(proposal), "--lienzo", str(lienzo)]) == 2
     out = capsys.readouterr().out
     assert out.startswith("propuesta rechazada: ")
-    assert MORE_THAN_ONE_SEND in out.splitlines()[0]
+    assert TOO_MANY_SENDS in out.splitlines()[0]
     assert "--varios-toques" in out
     assert not lienzo.exists()
+
+
+def test_three_touches_run_with_the_v1(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    proposal = write_proposal(tmp_path, items_of("tres_toques_vence_4d"))
+    assert SCRIPT.main(["--propuesta", str(proposal)]) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert "capacidades: v1, hasta tres envios por camino" in out
+    assert "Propuesta: de 252 disparos, 212 habrian recibido el mensaje" in out
 
 
 def test_three_touches_with_the_flag_give_207_183_and_157(capsys: pytest.CaptureFixture[str],
@@ -214,7 +224,7 @@ def test_a_single_send_proposal_runs_with_the_v1(capsys: pytest.CaptureFixture[s
     proposal = write_proposal(tmp_path, items_of("carrito_a_1h"))
     assert SCRIPT.main(["--propuesta", str(proposal)]) == 0
     out = capsys.readouterr().out.splitlines()
-    assert "capacidades: v1, un envio por camino" in out
+    assert "capacidades: v1, hasta tres envios por camino" in out
     assert "Propuesta: de 252 disparos, 212 habrian recibido el mensaje" in out
     assert "Cambios: 141 de 252 disparos" in out
 
