@@ -1,4 +1,4 @@
-"""Los esquemas de las dos herramientas del Automation Expert (automation-expert-read-v1)."""
+"""Los esquemas de las herramientas de lectura del Automation Expert (automation-expert-read-v1)."""
 
 LIST_FLOWS = {
     "name": "list_flows",
@@ -15,6 +15,28 @@ LIST_FLOWS = {
                 "type": "string",
                 "enum": ["precheckout", "carrito", "pago_fallido", "reactivacion", "descuento"],
                 "description": "La clave de un flujo, para pedir solo ese.",
+            }
+        },
+        "additionalProperties": False,
+    },
+}
+
+DRAW_FLOW = {
+    "name": "draw_flow",
+    "description": (
+        "Dibuja los flujos de la instancia como en un editor (disparador, esperas, "
+        "plantillas, fin), en un HTML que se adjunta en Slack. Con flow_key ese flujo "
+        "queda adelante. Devuelve `media`: copiá esa línea MEDIA:... tal cual, sola, al "
+        "final de tu respuesta, y Slack adjunta el archivo. El dibujo sale de la misma "
+        "lectura que list_flows: decí también los huecos que trae (`gaps`). Solo lee."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "flow_key": {
+                "type": "string",
+                "enum": ["precheckout", "carrito", "pago_fallido", "reactivacion", "descuento"],
+                "description": "El flujo que se abre primero en el dibujo.",
             }
         },
         "additionalProperties": False,

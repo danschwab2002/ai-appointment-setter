@@ -13,10 +13,13 @@ identificador de la emision) o por nombre.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from importlib import import_module
 import json
 import os
+from pathlib import Path
 import re
+import tempfile
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -274,3 +277,41 @@ def lead_history(params: dict[str, object], **kwargs: object) -> str:
             return _dumps({"error": "automation_expert_response_invalid"})
     query = f"?limit={limit}" + (f"&cursor={cursor}" if cursor else "")
     return _dumps(_request("GET", f"/internal/automation-expert/v1/leads/{lead_ref}/history{query}"))
+
+
+def _drawings_dir() -> Path:
+    """La cache de documentos del profile, de donde Hermes adjunta lo que nombra un MEDIA:."""
+    try:
+        home = Path(import_module("hermes_constants").get_hermes_home())
+    except (ImportError, AttributeError):
+        home = Path(os.getenv("HERMES_HOME") or tempfile.gettempdir())
+    return home / "cache" / "documents" / "automation-expert"
+
+
+def draw_flow(params: dict[str, object], **kwargs: object) -> str:
+    """El lienzo de los flujos en un HTML, con el pedido adelante, listo para adjuntar en Slack."""
+    del kwargs
+    flow_key = params.get("flow_key")
+    if flow_key is not None and (not isinstance(flow_key, str) or not _FLOW_KEY_RE.fullmatch(flow_key)):
+        return _dumps({"error": "invalid_flow_key"})
+    payload = _request("GET", "/internal/automation-expert/v1/flows")
+    if "error" in payload:
+        return _dumps(payload)
+    flows = (payload.get("data") or {}).get("flows") or []  # type: ignore[union-attr]
+    keys = [f.get("flow_key") for f in flows if isinstance(f, dict)]
+    if flow_key is not None and flow_key not in keys:
+        return _dumps({"error": "flow_not_found"})
+    dibujo = import_module(f"{__package__}.dibujo" if __package__ else "dibujo")
+    html, avisos, errores = dibujo.armar_dibujo(payload, flow_key)
+    if html is None:
+        return _dumps({"error": "automation_expert_drawing_invalid", "detail": errores[:5]})
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    path = dibujo.guardar(html, _drawings_dir(), f"flujos-{flow_key or 'todos'}-{stamp}.html")
+    return _dumps({
+        "media": f"MEDIA:{path}",
+        "flows": keys,
+        "opened_first": flow_key,
+        "read_at": payload.get("database_at"),
+        "warnings": avisos,
+        "gaps": payload.get("gaps") or [],
+    })

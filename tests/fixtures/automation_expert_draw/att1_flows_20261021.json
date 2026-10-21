@@ -1,0 +1,739 @@
+{
+ "contract": "automation-expert-read-v1",
+ "contract_version": "1.1.0",
+ "instance": {
+  "tenant_ref": "lancemos",
+  "ally_ref": "att1",
+  "funnel_ref": "att1",
+  "chatwoot_inbox_id": "11",
+  "hotmart_product_id": "5071808",
+  "product_version": "v1.15.5"
+ },
+ "source": "projection",
+ "generated_at": "2026-10-21T20:11:40.432068+00:00",
+ "database_at": "2026-10-21T20:11:32.642208+00:00",
+ "bridge_git_sha": "b163669f57bfdafbac6cb19d82dd357c83c3c1e8",
+ "gaps": [
+  {
+   "code": "env_value_unversioned",
+   "scope": "flow:reactivacion",
+   "what": "desde cuándo vale lo que vale",
+   "why": "sale de una variable o del manifiesto, que no tienen historia"
+  },
+  {
+   "code": "env_value_unversioned",
+   "scope": "flow:descuento",
+   "what": "desde cuándo vale lo que vale",
+   "why": "sale de una variable o del manifiesto, que no tienen historia"
+  }
+ ],
+ "data": {
+  "flows": [
+   {
+    "flow_key": "precheckout",
+    "version": {
+     "scope": "att1-primer-contacto v2",
+     "policy": "att1-primer-contacto-formulario v1"
+    },
+    "status": {
+     "state": "on",
+     "detail": "armed",
+     "since": "2026-10-09T18:47:05.833032+00:00"
+    },
+    "priority": {
+     "le_gana_a": [],
+     "no_arranca_mientras": [],
+     "derived": [
+      "le_ganan"
+     ],
+     "le_ganan": [
+      "carrito",
+      "pago_fallido"
+     ]
+    },
+    "usage": {
+     "local_date": "2026-10-21",
+     "starts_today": 0,
+     "daily_cap": 10,
+     "starts_total": 43,
+     "total_cap": 150,
+     "pool": "att1-primer-contacto"
+    },
+    "observed": {
+     "window_days": 7,
+     "triggers": 291,
+     "cases_opened": 260,
+     "starts": 33,
+     "accepted_by_chatwoot": 33,
+     "deferred_by_hours": 8,
+     "median_trigger_to_accept_seconds": 3606,
+     "superseded": 200,
+     "median_form_to_winning_event_seconds": 2527,
+     "rejected_on_entry": {},
+     "stopped": {
+      "intent_purchased": 22,
+      "precheckout_intent_not_live": 4,
+      "superseded_by_provider_event": 200
+     },
+     "first_contact_plans": {
+      "planned:first_contact_scheduled": 260,
+      "not_planned:precheckout_intent_not_live": 6,
+      "not_planned:superseded_by_provider_event": 11,
+      "not_planned:precheckout_contact_ambiguous": 1,
+      "not_planned:precheckout_conversation_handoff": 3,
+      "not_planned:precheckout_contact_already_planned": 10
+     }
+    },
+    "source": "projection",
+    "definition": {
+     "esquema": "setter-flujo/v1",
+     "flujo": "precheckout",
+     "nombre": "Primer contacto tras el formulario",
+     "version": 1,
+     "estado": "publicada",
+     "dispara": {
+      "evento": "intencion"
+     },
+     "entra": {
+      "permiso": "formulario"
+     },
+     "pasos": [
+      {
+       "esperar": "60m"
+      },
+      {
+       "plantilla": "att1_interes_precheckout_01",
+       "idioma": "es_MX",
+       "variables": [
+        "nombre",
+        "producto"
+       ]
+      }
+     ],
+     "termina": {
+      "si": [
+       "compra"
+      ],
+      "vence": "1d"
+     },
+     "horario": {
+      "zona": "America/Mexico_City",
+      "desde": "09:00",
+      "hasta": "21:00"
+     },
+     "topes": {
+      "bolsa": "att1-primer-contacto",
+      "por_dia": 10,
+      "total": 150,
+      "repeticion": {
+       "una_por": "persona",
+       "otra_despues_de": "24h"
+      }
+     },
+     "prioridad": {
+      "le_gana_a": [],
+      "no_arranca_mientras": []
+     }
+    },
+    "provenance": {
+     "/definition/version": {
+      "from": "code",
+      "ref": "docs/contracts/flow-definition-v1.md «Los siete flujos de validación»"
+     },
+     "/definition/estado": {
+      "from": "code",
+      "ref": "docs/contracts/flow-definition-v1.md «Los siete flujos de validación»"
+     },
+     "/status": {
+      "from": "database",
+      "ref": "pilot_runtime_controls"
+     },
+     "/version": {
+      "from": "database",
+      "ref": "pilot_scope_versions att1-primer-contacto v2"
+     },
+     "/usage/daily_cap": {
+      "from": "database",
+      "ref": "pilot_scope_versions att1-primer-contacto v2"
+     },
+     "/definition/pasos": {
+      "from": "manifest",
+      "ref": "[plantillas].precheckout"
+     },
+     "/definition/horario": {
+      "from": "database",
+      "ref": "followup_policy_versions att1-primer-contacto-formulario v1"
+     },
+     "/definition/termina/vence": {
+      "from": "database",
+      "ref": "followup_policy_versions att1-primer-contacto-formulario v1"
+     },
+     "/definition/topes": {
+      "from": "database",
+      "ref": "pilot_scope_versions att1-primer-contacto v2"
+     },
+     "/definition/topes/repeticion": {
+      "from": "code",
+      "ref": "docs/contracts/flow-definition-v1.md «Los siete flujos de validación»"
+     }
+    }
+   },
+   {
+    "flow_key": "carrito",
+    "version": {
+     "scope": "att1-recuperacion v7",
+     "policy": "att1-carrito-tres-toques v1"
+    },
+    "status": {
+     "state": "on",
+     "detail": "armed",
+     "since": "2026-10-19T18:13:52.943806+00:00"
+    },
+    "priority": {
+     "le_gana_a": [
+      "precheckout"
+     ],
+     "no_arranca_mientras": [
+      "pago_fallido"
+     ],
+     "derived": [
+      "le_ganan"
+     ],
+     "le_ganan": []
+    },
+    "usage": {
+     "local_date": "2026-10-21",
+     "starts_today": 39,
+     "daily_cap": 240,
+     "starts_total": 396,
+     "total_cap": 5000,
+     "pool": "att1-recuperacion"
+    },
+    "observed": {
+     "window_days": 7,
+     "triggers": 245,
+     "cases_opened": 199,
+     "starts": 197,
+     "accepted_by_chatwoot": 197,
+     "deferred_by_hours": 86,
+     "median_trigger_to_accept_seconds": 614,
+     "superseded": null,
+     "median_form_to_winning_event_seconds": null,
+     "rejected_on_entry": {
+      "create_recovery_case_failed": 10,
+      "pilot_case_binding_conflict": 1,
+      "pilot_audience_intent_unresolved": 29,
+      "pilot_audience_consented_intent_not_authorized": 6
+     },
+     "stopped": {
+      "chatwoot_authority_unavailable": 17
+     }
+    },
+    "source": "projection",
+    "definition": {
+     "esquema": "setter-flujo/v1",
+     "flujo": "carrito",
+     "nombre": "Carrito abandonado",
+     "version": 1,
+     "estado": "publicada",
+     "dispara": {
+      "evento": "carrito"
+     },
+     "entra": {
+      "permiso": "formulario"
+     },
+     "pasos": [
+      {
+       "plantilla": "att1_carrito_abandonado_01",
+       "idioma": "es_MX",
+       "variables": [
+        "nombre",
+        "producto"
+       ]
+      }
+     ],
+     "termina": {
+      "si": [
+       "compra"
+      ],
+      "vence": "5d"
+     },
+     "horario": {
+      "zona": "America/Mexico_City",
+      "desde": "09:00",
+      "hasta": "21:00"
+     },
+     "topes": {
+      "bolsa": "att1-recuperacion",
+      "por_dia": 240,
+      "total": 5000,
+      "repeticion": {
+       "una_por": "persona_y_oferta",
+       "otra_despues_de": "0m"
+      }
+     },
+     "prioridad": {
+      "le_gana_a": [
+       "precheckout"
+      ],
+      "no_arranca_mientras": [
+       "pago_fallido"
+      ]
+     }
+    },
+    "provenance": {
+     "/definition/version": {
+      "from": "code",
+      "ref": "docs/contracts/flow-definition-v1.md «Los siete flujos de validación»"
+     },
+     "/definition/estado": {
+      "from": "code",
+      "ref": "docs/contracts/flow-definition-v1.md «Los siete flujos de validación»"
+     },
+     "/status": {
+      "from": "database",
+      "ref": "pilot_runtime_controls"
+     },
+     "/version": {
+      "from": "database",
+      "ref": "pilot_scope_versions att1-recuperacion v7"
+     },
+     "/usage/daily_cap": {
+      "from": "database",
+      "ref": "pilot_scope_versions att1-recuperacion v7"
+     },
+     "/definition/pasos": {
+      "from": "manifest",
+      "ref": "[plantillas].carrito"
+     },
+     "/definition/horario": {
+      "from": "database",
+      "ref": "followup_policy_versions att1-carrito-tres-toques v1"
+     },
+     "/definition/termina/vence": {
+      "from": "database",
+      "ref": "followup_policy_versions att1-carrito-tres-toques v1"
+     },
+     "/definition/topes": {
+      "from": "database",
+      "ref": "pilot_scope_versions att1-recuperacion v7"
+     },
+     "/definition/topes/repeticion": {
+      "from": "code",
+      "ref": "docs/contracts/flow-definition-v1.md «Los siete flujos de validación»"
+     },
+     "/priority/le_gana_a": {
+      "from": "code",
+      "ref": "20261001000200_portable_precheckout_first_contact.sql:296-313"
+     },
+     "/priority/no_arranca_mientras": {
+      "from": "code",
+      "ref": "20260930000300_pilot_scope_audience_mode.sql:837-846"
+     }
+    }
+   },
+   {
+    "flow_key": "pago_fallido",
+    "version": {
+     "scope": "att1-recuperacion v7",
+     "policy": "att1-carrito-tres-toques v1"
+    },
+    "status": {
+     "state": "on",
+     "detail": "armed",
+     "since": "2026-10-19T18:13:52.943806+00:00"
+    },
+    "priority": {
+     "le_gana_a": [
+      "precheckout"
+     ],
+     "no_arranca_mientras": [],
+     "derived": [
+      "le_ganan"
+     ],
+     "le_ganan": []
+    },
+    "usage": {
+     "local_date": "2026-10-21",
+     "starts_today": 39,
+     "daily_cap": 240,
+     "starts_total": 396,
+     "total_cap": 5000,
+     "pool": "att1-recuperacion"
+    },
+    "observed": {
+     "window_days": 7,
+     "triggers": 18,
+     "cases_opened": 4,
+     "starts": 4,
+     "accepted_by_chatwoot": 3,
+     "deferred_by_hours": 1,
+     "median_trigger_to_accept_seconds": 9,
+     "superseded": null,
+     "median_form_to_winning_event_seconds": null,
+     "rejected_on_entry": {
+      "payment_failure_correlation_unresolved": 12,
+      "pilot_audience_consented_intent_prior_opt_out": 2
+     },
+     "stopped": {}
+    },
+    "source": "projection",
+    "definition": {
+     "esquema": "setter-flujo/v1",
+     "flujo": "pago_fallido",
+     "nombre": "Pago fallido",
+     "version": 1,
+     "estado": "publicada",
+     "dispara": {
+      "evento": "pago_fallido"
+     },
+     "entra": {
+      "permiso": "formulario"
+     },
+     "pasos": [
+      {
+       "plantilla": "att1_compra_fallida_01",
+       "idioma": "es_MX",
+       "variables": [
+        "nombre",
+        "producto"
+       ]
+      }
+     ],
+     "termina": {
+      "si": [
+       "compra"
+      ],
+      "vence": "5d"
+     },
+     "horario": {
+      "zona": "America/Mexico_City",
+      "desde": "09:00",
+      "hasta": "21:00"
+     },
+     "topes": {
+      "bolsa": "att1-recuperacion",
+      "por_dia": 240,
+      "total": 5000,
+      "repeticion": {
+       "una_por": "persona_y_oferta",
+       "otra_despues_de": "0m"
+      }
+     },
+     "prioridad": {
+      "le_gana_a": [
+       "precheckout"
+      ],
+      "no_arranca_mientras": []
+     }
+    },
+    "provenance": {
+     "/definition/version": {
+      "from": "code",
+      "ref": "docs/contracts/flow-definition-v1.md «Los siete flujos de validación»"
+     },
+     "/definition/estado": {
+      "from": "code",
+      "ref": "docs/contracts/flow-definition-v1.md «Los siete flujos de validación»"
+     },
+     "/status": {
+      "from": "database",
+      "ref": "pilot_runtime_controls"
+     },
+     "/version": {
+      "from": "database",
+      "ref": "pilot_scope_versions att1-recuperacion v7"
+     },
+     "/usage/daily_cap": {
+      "from": "database",
+      "ref": "pilot_scope_versions att1-recuperacion v7"
+     },
+     "/definition/pasos": {
+      "from": "manifest",
+      "ref": "[plantillas].pago_fallido"
+     },
+     "/definition/horario": {
+      "from": "database",
+      "ref": "followup_policy_versions att1-carrito-tres-toques v1"
+     },
+     "/definition/termina/vence": {
+      "from": "database",
+      "ref": "followup_policy_versions att1-carrito-tres-toques v1"
+     },
+     "/definition/topes": {
+      "from": "database",
+      "ref": "pilot_scope_versions att1-recuperacion v7"
+     },
+     "/definition/topes/repeticion": {
+      "from": "code",
+      "ref": "docs/contracts/flow-definition-v1.md «Los siete flujos de validación»"
+     },
+     "/priority/le_gana_a": {
+      "from": "code",
+      "ref": "20261001000200_portable_precheckout_first_contact.sql:296-313"
+     }
+    }
+   },
+   {
+    "flow_key": "reactivacion",
+    "version": null,
+    "status": {
+     "state": "off",
+     "detail": null,
+     "since": null
+    },
+    "priority": {
+     "le_gana_a": [],
+     "no_arranca_mientras": [],
+     "derived": [
+      "le_ganan"
+     ],
+     "le_ganan": []
+    },
+    "usage": null,
+    "observed": {
+     "window_days": 7,
+     "sent": 0,
+     "failed": 0
+    },
+    "source": "projection",
+    "definition": {
+     "esquema": "setter-flujo/v1",
+     "flujo": "reactivacion",
+     "nombre": "Reactivación de quien quedó esperando",
+     "version": 1,
+     "estado": "publicada",
+     "dispara": {
+      "silencio": {
+       "lo_ultimo": "persona",
+       "desde": "24h",
+       "hasta": "30d",
+       "conversaciones": [
+        "abierta"
+       ]
+      }
+     },
+     "entra": {
+      "permiso": "conversacion"
+     },
+     "pasos": [],
+     "termina": {
+      "si": []
+     },
+     "horario": "siempre",
+     "topes": {
+      "por_dia": "sin_tope",
+      "total": "sin_tope",
+      "repeticion": {
+       "una_por": "conversacion",
+       "otra_despues_de": "nunca"
+      }
+     },
+     "prioridad": {
+      "le_gana_a": [],
+      "no_arranca_mientras": []
+     }
+    },
+    "provenance": {
+     "/definition/version": {
+      "from": "code",
+      "ref": "docs/contracts/flow-definition-v1.md «Los siete flujos de validación»"
+     },
+     "/definition/estado": {
+      "from": "code",
+      "ref": "docs/contracts/flow-definition-v1.md «Los siete flujos de validación»"
+     },
+     "/status": {
+      "from": "env",
+      "ref": "CONVERSATION_REACTIVATION_ENABLED y [flujos].reactivacion"
+     },
+     "/definition": {
+      "from": "env",
+      "ref": "CONVERSATION_REACTIVATION_*"
+     }
+    }
+   },
+   {
+    "flow_key": "descuento",
+    "version": null,
+    "status": {
+     "state": "on",
+     "detail": null,
+     "since": null
+    },
+    "priority": {
+     "le_gana_a": [],
+     "no_arranca_mientras": [],
+     "derived": [
+      "le_ganan"
+     ],
+     "le_ganan": []
+    },
+    "usage": null,
+    "observed": {
+     "window_days": 7,
+     "sent": 32,
+     "failed": 0
+    },
+    "source": "projection",
+    "definition": {
+     "esquema": "setter-flujo/v1",
+     "flujo": "descuento",
+     "nombre": "Seguimiento con cupón",
+     "version": 1,
+     "estado": "publicada",
+     "dispara": {
+      "silencio": {
+       "lo_ultimo": "agente",
+       "desde": "24h",
+       "hasta": "72h",
+       "conversaciones": [
+        "abierta",
+        "resuelta"
+       ]
+      }
+     },
+     "entra": {
+      "permiso": "conversacion",
+      "contesto_a": [
+       "carrito",
+       "pago_fallido",
+       "precheckout"
+      ]
+     },
+     "pasos": [
+      {
+       "plantilla": "att1_seguimiento_descuento_01",
+       "idioma": "es_MX",
+       "variables": [
+        "nombre",
+        "producto"
+       ],
+       "boton": {
+        "link": "checkout",
+        "cupon": "TIROIDES10"
+       }
+      }
+     ],
+     "termina": {
+      "si": [
+       "compra",
+       "contesta"
+      ]
+     },
+     "horario": {
+      "zona": "America/Mexico_City",
+      "desde": "09:00",
+      "hasta": "20:59"
+     },
+     "topes": {
+      "por_dia": "sin_tope",
+      "total": "sin_tope",
+      "repeticion": {
+       "una_por": "conversacion",
+       "otra_despues_de": "nunca"
+      }
+     },
+     "prioridad": {
+      "le_gana_a": [],
+      "no_arranca_mientras": []
+     }
+    },
+    "provenance": {
+     "/definition/version": {
+      "from": "code",
+      "ref": "docs/contracts/flow-definition-v1.md «Los siete flujos de validación»"
+     },
+     "/definition/estado": {
+      "from": "code",
+      "ref": "docs/contracts/flow-definition-v1.md «Los siete flujos de validación»"
+     },
+     "/status": {
+      "from": "env",
+      "ref": "CONVERSATION_FOLLOWUP_ENABLED y [flujos].descuento"
+     },
+     "/definition": {
+      "from": "env",
+      "ref": "CONVERSATION_FOLLOWUP_* y [plantillas].descuento"
+     }
+    }
+   }
+  ],
+  "in_code": [
+   {
+    "key": "inbound",
+    "name": "El agente que contesta",
+    "status": "on",
+    "provenance": {
+     "from": "manifest",
+     "ref": "[flujos].inbound"
+    }
+   },
+   {
+    "key": "stalled_monitor",
+    "name": "El monitor de conversaciones trabadas",
+    "status": "on",
+    "provenance": {
+     "from": "env",
+     "ref": "CHATWOOT_STALLED_MONITOR_ENABLED"
+    }
+   },
+   {
+    "key": "resume",
+    "name": "La reanudación de conversaciones pausadas",
+    "status": "on",
+    "provenance": {
+     "from": "env",
+     "ref": "CONVERSATION_RESUME_ENABLED"
+    }
+   }
+  ],
+  "events_without_flow": [
+   {
+    "event_type": "PURCHASE_BILLET_PRINTED",
+    "what_happens": "El bridge lo guarda en failed con unsupported_persisted_event_type y no dispara nada.",
+    "count_window": 9,
+    "window_days": 7,
+    "last_received_at": "2026-10-18T19:53:26.465876+00:00",
+    "provenance": {
+     "from": "code",
+     "ref": "src/bridge/worker.py:2395-2402"
+    }
+   },
+   {
+    "event_type": "PURCHASE_EXPIRED",
+    "what_happens": "El bridge lo guarda en failed con unsupported_persisted_event_type y no dispara nada.",
+    "count_window": 2,
+    "window_days": 7,
+    "last_received_at": "2026-10-15T01:02:49.883151+00:00",
+    "provenance": {
+     "from": "code",
+     "ref": "src/bridge/worker.py:2395-2402"
+    }
+   }
+  ],
+  "shared": {
+   "gate": null,
+   "gate_note": "La puerta común no existe todavía: la construye la 1b. Cada flujo tiene hoy sus propias barreras, y la pausa del piloto no frena el cupón ni la reactivación.",
+   "per_person_cap": {
+    "esquema": "puerta.tope_por_persona",
+    "value": "sin_tope",
+    "window_seconds": null,
+    "provenance": {
+     "from": "database",
+     "ref": "pilot_proactive_contact_caps"
+    }
+   },
+   "test_settings": {
+    "coupon_test_phone_set": false,
+    "precheckout_test_phone_set": false,
+    "allowed_jid_set": false
+   }
+  },
+  "local_date": "2026-10-21"
+ },
+ "page": {
+  "limit": null,
+  "next_cursor": null
+ }
+}
