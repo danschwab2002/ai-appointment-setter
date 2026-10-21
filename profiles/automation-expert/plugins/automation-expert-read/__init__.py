@@ -1,9 +1,9 @@
 """Registro del plugin de lectura del Automation Expert en Hermes."""
 
-from .schemas import LEAD_HISTORY, LIST_FLOWS
-from .tools import PROFILE_NAME, lead_history, list_flows
+from .schemas import DRAW_FLOW, LEAD_HISTORY, LIST_FLOWS
+from .tools import PROFILE_NAME, draw_flow, lead_history, list_flows
 
-_TOOLS = frozenset({"list_flows", "lead_history"})
+_TOOLS = frozenset({"list_flows", "lead_history", "draw_flow"})
 
 
 def only_one_to_one_dms(**kwargs):
@@ -52,6 +52,12 @@ def register(ctx):
         toolset="automation_expert_read",
         schema=LEAD_HISTORY,
         handler=lead_history,
+    )
+    ctx.register_tool(
+        name="draw_flow",
+        toolset="automation_expert_read",
+        schema=DRAW_FLOW,
+        handler=draw_flow,
     )
     ctx.register_hook("pre_gateway_dispatch", only_one_to_one_dms)
     ctx.register_hook("pre_tool_call", make_profile_guard(getattr(ctx, "profile_name", None)))

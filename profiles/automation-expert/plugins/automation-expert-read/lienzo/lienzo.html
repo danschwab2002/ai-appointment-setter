@@ -1,0 +1,573 @@
+<title>__TITULO__</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..900&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Un editor de flujos en blanco y negro, con la piel del roadmap del recuperador:
+   barra de flujos a la izquierda, lienzo punteado al centro, inspector a la derecha.
+   La forma del nodo dice el tipo; el punto dice el estado; el borde punteado, lo que todavía no existe.
+   Una sola apariencia, clara, elegida a propósito. */
+:root {
+  --paper: #ffffff;
+  --paper-2: #f4f4f2;
+  --paper-3: #ebebe8;
+  --ink: #0b0b0b;
+  --ink-2: #333333;
+  --ink-3: #6b6b6b;
+  --hair: #e2e2e2;
+  --dot: #d4d4d0;
+  --wa: #e7f3e4;
+  --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --body: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --r-xl: 22px;
+  --r-lg: 16px;
+  --r-md: 12px;
+  --glow-soft: 0 1px 0 rgba(11, 11, 11, .04), 0 14px 34px -16px rgba(11, 11, 11, .30);
+  --glow-on: 0 0 0 4px rgba(11, 11, 11, .07), 0 10px 28px -8px rgba(11, 11, 11, .45);
+  --glow-ink: 0 26px 64px -22px rgba(11, 11, 11, .65), 0 0 44px -10px rgba(11, 11, 11, .30);
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { background: var(--paper); color: var(--ink); font-family: var(--body); font-size: 14.5px; line-height: 1.5; -webkit-font-smoothing: antialiased; overflow: hidden; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+p { margin: 0; }
+code, .mono { font-family: var(--mono); font-size: .86em; }
+
+.app { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+
+/* Barra de arriba */
+.barra {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px;
+  padding-block: 12px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  border-bottom: 3px solid var(--ink); background: var(--paper); z-index: 5;
+}
+.marca { display: grid; gap: 1px; min-width: 0; margin-right: auto; }
+.eyebrow { font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
+h1 { margin: 0; font-family: var(--display); font-weight: 900; font-stretch: 116%; font-size: clamp(19px, 2.4vw, 25px); line-height: 1.05; letter-spacing: -.015em; text-wrap: balance; }
+.seg { display: inline-flex; border: 1.5px solid var(--ink); border-radius: 999px; padding: 3px; gap: 2px; background: var(--paper); }
+.seg button { border: 0; background: none; border-radius: 999px; padding: 5px 13px; font-family: var(--mono); font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--paper); box-shadow: 0 0 14px -2px rgba(11, 11, 11, .5); }
+.seg button:disabled { color: var(--ink-3); cursor: not-allowed; text-decoration: line-through; }
+.zoom { display: inline-flex; gap: 6px; }
+.btn { border: 1.5px solid var(--ink); background: var(--paper); border-radius: 999px; min-width: 34px; height: 34px; padding: 0 12px; font-family: var(--mono); font-size: 12px; font-weight: 600; cursor: pointer; transition: box-shadow .15s; }
+.btn:hover { box-shadow: var(--glow-on); }
+
+/* Cuerpo: tres columnas */
+.cuerpo { position: relative; display: grid; grid-template-columns: 268px minmax(0, 1fr); min-height: 0; }
+.lado { border-right: 1.5px solid var(--ink); overflow-y: auto; padding: 16px 14px 24px; display: grid; gap: 22px; align-content: start; background: var(--paper); z-index: 3; }
+.lado h2 { margin: 0 0 8px; font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
+.lista { display: grid; gap: 8px; }
+.flujo-btn { text-align: left; border: 1.5px solid var(--hair); background: var(--paper); border-radius: var(--r-md); padding: 10px 12px; cursor: pointer; display: grid; gap: 3px; transition: border-color .15s, box-shadow .15s; }
+.flujo-btn:hover { border-color: var(--ink); }
+.flujo-btn[aria-current="true"] { border-color: var(--ink); box-shadow: var(--glow-on); }
+.flujo-btn .fila1 { display: flex; align-items: center; gap: 8px; }
+.flujo-btn b { font-family: var(--display); font-weight: 800; font-stretch: 106%; font-size: 15px; line-height: 1.2; }
+.flujo-btn .letra { font-family: var(--mono); font-size: 11px; font-weight: 600; border: 1.5px solid var(--ink); border-radius: 6px; padding: 0 5px; }
+.flujo-btn small { color: var(--ink-3); font-size: 12.5px; line-height: 1.35; }
+.regla-btn { text-align: left; border: 0; border-bottom: 1px solid var(--hair); background: none; padding: 9px 2px; cursor: pointer; display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 9px; align-items: start; font-size: 13.5px; line-height: 1.35; }
+.regla-btn:hover b { text-decoration: underline; text-underline-offset: 3px; }
+.regla-btn .g { margin-top: 3px; }
+.leyenda { display: grid; gap: 7px; font-size: 12.5px; color: var(--ink-2); }
+.leyenda div { display: flex; align-items: center; gap: 9px; }
+.pie-lado { font-size: 12px; color: var(--ink-3); display: grid; gap: 4px; }
+
+/* Puntos de estado: lleno = en producción, mitad = construido sin prender, punteado = espera algo, vacío = propuesto */
+.g { width: 11px; height: 11px; flex: none; display: inline-block; border: 2px solid var(--ink); border-radius: 50%; background: var(--paper); }
+.g.vigente { background: var(--ink); }
+.g.sin_activar { background: linear-gradient(90deg, var(--ink) 50%, var(--paper) 50%); }
+.g.espera { border-style: dotted; }
+.g.hueco { border-color: var(--ink); background: repeating-linear-gradient(45deg, var(--ink) 0 2px, var(--paper) 2px 4px); }
+
+/* Lienzo */
+.lienzo { position: relative; overflow: hidden; background-color: var(--paper-2); background-image: radial-gradient(var(--dot) 1.2px, transparent 1.3px); background-size: 22px 22px; cursor: grab; touch-action: none; }
+.lienzo.arrastrando { cursor: grabbing; }
+.capa { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.capa svg { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+.arista { fill: none; stroke: var(--ink); stroke-width: 2; }
+.arista.no, .arista.corte { stroke-dasharray: 6 5; }
+.arista.propuesta { stroke: var(--ink-3); stroke-dasharray: 2 5; stroke-linecap: round; }
+.arista.activa { stroke-width: 3; filter: url(#brillo); }
+.etq { position: absolute; transform: translate(-50%, -50%); font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .04em; background: var(--paper); border: 1.5px solid var(--ink); border-radius: 999px; padding: 2px 9px; white-space: nowrap; pointer-events: none; }
+.etq.suave { border-color: var(--hair); color: var(--ink-2); }
+
+.ayuda { position: absolute; left: 14px; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); font-family: var(--mono); font-size: 11px; color: var(--ink-3); background: rgba(255, 255, 255, .85); border: 1px solid var(--hair); border-radius: 999px; padding: 4px 12px; pointer-events: none; max-width: calc(100% - 28px); }
+.vacio { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--ink-2); pointer-events: none; }
+.vacio div { max-width: 46ch; display: grid; gap: 8px; background: var(--paper); border: 2px dashed var(--ink); border-radius: var(--r-lg); padding: 20px 22px; pointer-events: auto; }
+.vacio b { font-family: var(--display); font-weight: 800; font-size: 18px; color: var(--ink); }
+
+/* Nodos */
+.nodo { position: absolute; width: 248px; grid-template-columns: minmax(0, 1fr); background: var(--paper); border: 1.5px solid var(--ink); border-radius: var(--r-lg); box-shadow: var(--glow-soft); cursor: pointer; text-align: left; padding: 0; display: grid; transition: box-shadow .15s, transform .15s; }
+.nodo:hover { box-shadow: var(--glow-on); }
+.nodo[aria-selected="true"] { box-shadow: 0 0 0 4px var(--paper), 0 0 0 6px var(--ink), 0 14px 38px -8px rgba(11, 11, 11, .55); }
+.nodo.propuesto, .nodo.espera { border-style: dashed; border-width: 2px; }
+.nodo.sale { opacity: .45; }
+.nodo .cab { display: flex; align-items: center; gap: 8px; padding: 9px 12px 8px; border-bottom: 1px solid var(--hair); }
+.nodo .tipo { min-width: 0; font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-2); margin-right: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nodo .cambio { font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; border-radius: 999px; padding: 1px 7px; border: 1.5px solid var(--ink); white-space: nowrap; }
+.nodo .cambio.nuevo { background: var(--ink); color: var(--paper); box-shadow: 0 0 10px -1px rgba(11, 11, 11, .5); }
+.nodo .cuerpo-n { padding: 10px 12px 12px; display: grid; gap: 6px; }
+.nodo .tit { font-family: var(--display); font-weight: 800; font-stretch: 104%; font-size: 15.5px; line-height: 1.22; text-wrap: balance; }
+.nodo .sub { font-size: 12.5px; color: var(--ink-2); line-height: 1.38; overflow-wrap: anywhere; }
+.nodo .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.nodo .chip { font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .03em; border: 1px solid var(--ink-3); color: var(--ink-2); border-radius: 999px; padding: 0 7px; white-space: nowrap; }
+.nodo .metrica { font-family: var(--mono); font-size: 11px; color: var(--ink); background: var(--paper-2); border-radius: 8px; padding: 4px 8px; }
+.nodo .simulado { font-family: var(--mono); font-size: 11px; color: var(--ink); border: 1px dashed var(--ink); border-radius: 8px; padding: 4px 8px; }
+.nodo .simulado::before { content: "Simulado · "; opacity: .7; }
+.nodo .alerta { font-size: 12px; font-weight: 600; border-left: 3px solid var(--ink); padding-left: 8px; }
+.puerto { position: absolute; top: 50%; width: 12px; height: 12px; margin-top: -6px; border-radius: 50%; background: var(--paper); border: 2px solid var(--ink); }
+.puerto.in { left: -7px; }
+.puerto.out { right: -7px; }
+
+/* Forma por tipo */
+.nodo.disparador { border-radius: 40px var(--r-lg) var(--r-lg) 40px; }
+.nodo.disparador .cab { padding-left: 20px; }
+.nodo.disparador .cuerpo-n { padding-left: 20px; }
+.nodo.disparador .puerto.in { display: none; }
+.nodo.espera-t { width: 200px; border-radius: 999px; }
+.nodo.espera-t .cab { border-bottom: 0; padding: 10px 18px 0; }
+.nodo.espera-t .cuerpo-n { padding: 2px 18px 12px; }
+.nodo.espera-t .tit { font-stretch: 118%; font-weight: 900; font-size: 20px; }
+.nodo.condicion { border-width: 2px; }
+.nodo.condicion .cab { background: var(--paper-3); border-radius: calc(var(--r-lg) - 2px) calc(var(--r-lg) - 2px) 0 0; }
+.nodo.plantilla .cab { background: var(--wa); border-radius: calc(var(--r-lg) - 2px) calc(var(--r-lg) - 2px) 0 0; }
+.nodo.corte, .nodo.fin { width: 210px; background: radial-gradient(130% 95% at 0% 0%, #2c2c2c 0%, #0b0b0b 62%); color: var(--paper); border-color: var(--ink); box-shadow: var(--glow-ink); }
+.nodo.corte .cab, .nodo.fin .cab { border-bottom-color: #333; }
+.nodo.corte .tipo, .nodo.fin .tipo { color: #bdbdbd; }
+.nodo.corte .sub, .nodo.fin .sub { color: #d6d6d6; }
+.nodo.corte .tit, .nodo.fin .tit { text-shadow: 0 0 18px rgba(255, 255, 255, .3); }
+.nodo.corte .g, .nodo.fin .g { border-color: var(--paper); }
+.nodo.corte .g.vigente, .nodo.fin .g.vigente { background: var(--paper); }
+.nodo.corte .puerto, .nodo.fin .puerto { border-color: var(--paper); background: var(--ink); }
+.nodo.corte .puerto.out, .nodo.fin .puerto.out { display: none; }
+.nodo.nota { background: var(--paper); border: 2px dashed var(--ink-3); box-shadow: none; }
+
+/* Inspector */
+.inspector { position: absolute; top: 0; right: 0; bottom: 0; width: min(420px, 100%); background: var(--paper); border-left: 1.5px solid var(--ink); box-shadow: -18px 0 44px -26px rgba(11, 11, 11, .5); overflow-y: auto; z-index: 4; padding: 18px 20px 28px; padding-right: max(20px, env(safe-area-inset-right, 0px)); display: grid; gap: 18px; align-content: start; }
+.inspector header { display: grid; gap: 8px; padding-bottom: 14px; border-bottom: 3px solid var(--ink); }
+.inspector .top { display: flex; align-items: center; gap: 8px; }
+.inspector h3 { margin: 0; font-family: var(--display); font-weight: 900; font-stretch: 112%; font-size: 23px; line-height: 1.1; letter-spacing: -.01em; text-wrap: balance; }
+.cerrar { margin-left: auto; }
+.bloque { display: grid; gap: 8px; }
+.bloque > .eyebrow { color: var(--ink-2); }
+.texto { color: var(--ink-2); font-size: 14.5px; white-space: pre-line; }
+.datos { margin: 0; display: grid; border-top: 1.5px solid var(--ink); }
+.datos div { display: grid; grid-template-columns: minmax(0, 8.5rem) minmax(0, 1fr); gap: 2px 14px; padding: 8px 0; border-bottom: 1px solid var(--hair); }
+.datos dt { font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3); padding-top: 2px; }
+.datos dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.estado-chip { display: inline-flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; border: 1.5px solid var(--ink); border-radius: 999px; padding: 3px 10px; }
+.decide { background: radial-gradient(130% 95% at 0% 0%, #2c2c2c 0%, #0b0b0b 58%); color: #e6e6e6; border-radius: var(--r-lg); padding: 14px 16px; box-shadow: var(--glow-ink); display: grid; gap: 4px; }
+.decide .eyebrow { color: #bdbdbd; }
+.decide p { color: #fff; font-weight: 600; text-shadow: 0 0 18px rgba(255, 255, 255, .25); }
+.evid { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.evid li { display: grid; gap: 1px; font-size: 13px; color: var(--ink-2); border-left: 3px solid var(--ink); padding-left: 10px; }
+.evid code { color: var(--ink); overflow-wrap: anywhere; }
+.supuesto { border: 2px dashed var(--ink); border-radius: var(--r-md); padding: 10px 12px; font-size: 13px; }
+
+/* La burbuja de WhatsApp */
+.wa { background: #efeae2; border-radius: var(--r-lg); padding: 14px; display: grid; gap: 4px; justify-items: start; }
+.wa-meta { font-family: var(--mono); font-size: 10.5px; color: var(--ink-2); letter-spacing: .04em; }
+.burbuja { background: #fff; border-radius: 4px 14px 14px 14px; padding: 9px 11px 7px; max-width: 100%; font-size: 14px; line-height: 1.45; white-space: pre-line; box-shadow: 0 1px 0 rgba(0, 0, 0, .08); overflow-wrap: anywhere; }
+.burbuja .var { font-family: var(--mono); font-size: 12px; background: var(--paper-3); border: 1px solid var(--ink-3); border-radius: 5px; padding: 0 4px; }
+.botones-wa { display: grid; gap: 4px; width: 100%; }
+.boton-wa { background: #fff; border-radius: 10px; padding: 8px 10px; text-align: center; font-weight: 600; font-size: 13.5px; color: #027eb5; box-shadow: 0 1px 0 rgba(0, 0, 0, .08); display: grid; gap: 1px; }
+.boton-wa small { font-family: var(--mono); font-size: 10px; font-weight: 400; color: var(--ink-3); overflow-wrap: anywhere; }
+
+@media (max-width: 760px) {
+  .cuerpo { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .lado { border-right: 0; border-bottom: 1.5px solid var(--ink); padding: 10px 16px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); max-height: 34vh; gap: 12px; }
+  .lado .lista.flujos { display: flex; overflow-x: auto; gap: 8px; padding-bottom: 4px; }
+  .lado .lista.flujos .flujo-btn { flex: 0 0 210px; }
+  .lado .solo-ancho { display: none; }
+  .inspector { top: auto; height: 72%; width: 100%; border-left: 0; border-top: 3px solid var(--ink); border-radius: var(--r-xl) var(--r-xl) 0 0; padding-bottom: max(28px, env(safe-area-inset-bottom, 0px)); padding-left: max(20px, env(safe-area-inset-left, 0px)); }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="app">
+  <header class="barra">
+    <div class="marca">
+      <span class="eyebrow" id="eyebrow"></span>
+      <h1 id="titulo"></h1>
+    </div>
+    <div class="seg" role="group" aria-label="Versión del flujo" id="vistas"></div>
+    <div class="zoom">
+      <button class="btn" id="z-menos" type="button" aria-label="Alejar">−</button>
+      <button class="btn" id="z-mas" type="button" aria-label="Acercar">+</button>
+      <button class="btn" id="z-ajustar" type="button">Ajustar</button>
+    </div>
+  </header>
+  <div class="cuerpo">
+    <nav class="lado" aria-label="Flujos">
+      <div>
+        <h2>Flujos</h2>
+        <div class="lista flujos" id="lista-flujos"></div>
+      </div>
+      <div class="solo-ancho">
+        <h2>Reglas de todos los flujos</h2>
+        <div id="lista-reglas"></div>
+      </div>
+      <div class="solo-ancho">
+        <h2>Cómo se lee</h2>
+        <div class="leyenda">
+          <div><span class="g vigente"></span>En producción</div>
+          <div><span class="g sin_activar"></span>Construido, sin prender</div>
+          <div><span class="g"></span>Propuesto, sin construir</div>
+          <div><span class="g espera"></span>Espera un dato o una decisión</div>
+          <div><span class="g hueco"></span>Hueco o riesgo conocido</div>
+        </div>
+      </div>
+      <div class="pie-lado solo-ancho" id="pie"></div>
+    </nav>
+    <main class="lienzo" id="lienzo" aria-label="Lienzo del flujo">
+      <div class="capa" id="capa">
+        <svg id="aristas" width="1" height="1" aria-hidden="true">
+          <defs>
+            <filter id="brillo" filterUnits="userSpaceOnUse" x="-2000" y="-2000" width="40000" height="40000"><feGaussianBlur stdDeviation="2.4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+            <marker id="punta" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#0b0b0b"/></marker>
+            <marker id="punta-gris" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#6b6b6b"/></marker>
+          </defs>
+          <g id="trazos"></g>
+        </svg>
+        <div id="nodos"></div>
+      </div>
+      <p class="ayuda">Arrastrá para recorrer · ctrl + rueda o pellizco para el zoom · tocá un paso para ver el detalle</p>
+      <div class="vacio" id="vacio" hidden><div><b id="vacio-t"></b><span id="vacio-d"></span></div></div>
+    </main>
+    <aside class="inspector" id="inspector" hidden aria-live="polite"></aside>
+  </div>
+</div>
+
+<script type="application/json" id="datos">__DATOS__</script>
+<script>
+(() => {
+  const D = JSON.parse(document.getElementById('datos').textContent);
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  const TIPOS = {
+    disparador: 'Disparador', espera: 'Espera', condicion: 'Condición', plantilla: 'WhatsApp',
+    agente: 'Agente', accion: 'Acción', corte: 'Corte', fin: 'Fin', nota: 'Nota'
+  };
+  const ESTADOS = {
+    vigente: 'En producción', sin_activar: 'Construido, sin prender', propuesto: 'Propuesto',
+    espera: 'Espera', hueco: 'Hueco'
+  };
+  const CAMBIOS = { nuevo: 'Nuevo', cambia: 'Cambia', sale: 'Sale', igual: '' };
+  const NOMBRE_VISTA = Object.assign({ hoy: 'Hoy', propuesto: 'Propuesto' }, D.nombres_vistas || {});
+  const COLW = 316, ROWH = 214, CENTRO = 150, HUECO = 84;
+
+  const st = { flujo: null, vista: null, sel: null, cam: { x: 40, y: 40, k: 1 }, pos: {} };
+  try { const g = JSON.parse(localStorage.getItem('lienzo:' + (D.instancia || '')) || '{}'); if (g.flujo) st.flujo = g.flujo; if (g.vista) st.vista = g.vista; } catch (e) {}
+  const guardar = () => { try { localStorage.setItem('lienzo:' + (D.instancia || ''), JSON.stringify({ flujo: st.flujo, vista: st.vista })); } catch (e) {} };
+
+  const flujos = D.flujos || [];
+  const vistasDe = (f) => Object.keys(f.versiones || {});
+  const flujoActual = () => flujos.find((f) => f.id === st.flujo) || flujos[0];
+  const version = () => { const f = flujoActual(); return f && f.versiones ? f.versiones[st.vista] : null; };
+
+  // Cabecera
+  $('eyebrow').textContent = D.eyebrow || ('Instancia ' + (D.instancia || ''));
+  $('titulo').textContent = D.titulo || 'Flujos';
+  $('pie').innerHTML = [
+    D.medido_el ? '<span>Medido: ' + esc(D.medido_el) + '</span>' : '',
+    D.generado_el ? '<span>Armado: ' + esc(D.generado_el) + '</span>' : '',
+    (D.fuentes || []).length ? '<span>' + D.fuentes.length + ' fuentes citadas</span>' : ''
+  ].join('');
+
+  // Lista de flujos
+  function pintarLista() {
+    $('lista-flujos').innerHTML = flujos.map((f) => {
+      const v = f.versiones && (f.versiones[st.vista] || f.versiones[vistasDe(f)[0]]);
+      return '<button type="button" class="flujo-btn" data-f="' + esc(f.id) + '" aria-current="' + (f.id === st.flujo) + '">' +
+        '<span class="fila1">' + (f.letra ? '<span class="letra">' + esc(f.letra) + '</span>' : '') +
+        '<span class="g ' + esc((v && v.estado) || f.estado || 'propuesto') + '"></span><b>' + esc(f.nombre) + '</b></span>' +
+        (f.resumen ? '<small>' + esc(f.resumen) + '</small>' : '') + '</button>';
+    }).join('');
+    $('lista-flujos').querySelectorAll('.flujo-btn').forEach((b) => b.addEventListener('click', () => {
+      st.flujo = b.dataset.f; const vs = vistasDe(flujoActual()); if (!vs.includes(st.vista)) st.vista = vs[0];
+      st.sel = null; guardar(); todo(true);
+    }));
+    $('lista-reglas').innerHTML = (D.reglas || []).map((r, i) =>
+      '<button type="button" class="regla-btn" data-r="' + i + '"><span class="g ' + esc(r.estado || 'vigente') + '"></span><span><b>' + esc(r.nombre) + '</b></span></button>'
+    ).join('');
+    $('lista-reglas').querySelectorAll('.regla-btn').forEach((b) => b.addEventListener('click', () => inspeccionarRegla(D.reglas[+b.dataset.r])));
+  }
+
+  // Selector de versión
+  function pintarVistas() {
+    const f = flujoActual(); const disp = f ? vistasDe(f) : [];
+    const todas = D.vistas || ['hoy', 'propuesto'];
+    $('vistas').innerHTML = todas.map((v) =>
+      '<button type="button" data-v="' + esc(v) + '" aria-pressed="' + (v === st.vista) + '"' + (disp.includes(v) ? '' : ' disabled title="Este flujo no tiene esta versión"') + '>' + esc(NOMBRE_VISTA[v] || v) + '</button>'
+    ).join('');
+    $('vistas').querySelectorAll('button:not(:disabled)').forEach((b) => b.addEventListener('click', () => { st.vista = b.dataset.v; st.sel = null; guardar(); todo(true); }));
+  }
+
+  // Diagramación: columnas por camino más largo desde el disparador, filas que siguen al padre
+  function diagramar(v) {
+    const nodos = v.nodos || [], ar = v.aristas || [];
+    const byId = Object.fromEntries(nodos.map((n) => [n.id, n]));
+    const hijos = {}, padres = {};
+    nodos.forEach((n) => { hijos[n.id] = []; padres[n.id] = []; });
+    ar.forEach((a) => { if (byId[a.de] && byId[a.a] && !a.vuelta) { hijos[a.de].push(a.a); padres[a.a].push(a.de); } });
+    const col = {}, orden = [], visit = {};
+    const raices = nodos.filter((n) => !padres[n.id].length).map((n) => n.id);
+    // orden topológico (Kahn)
+    const grado = Object.fromEntries(nodos.map((n) => [n.id, padres[n.id].length]));
+    const cola = [...raices];
+    while (cola.length) { const id = cola.shift(); orden.push(id); visit[id] = 1; hijos[id].forEach((h) => { if (--grado[h] === 0) cola.push(h); }); }
+    nodos.forEach((n) => { if (!visit[n.id]) orden.push(n.id); });
+    orden.forEach((id) => { col[id] = padres[id].length ? Math.max(...padres[id].map((p) => (col[p] ?? 0) + 1)) : 0; });
+    const fila = {}, ocupadas = {};
+    orden.forEach((id) => {
+      const n = byId[id];
+      let deseo = 0;
+      if (padres[id].length) {
+        const p = padres[id][0]; const hs = hijos[p]; const i = hs.indexOf(id);
+        deseo = (fila[p] ?? 0) + (i - (hs.length - 1) / 2);
+      }
+      if (n.pos) { col[id] = n.pos[0]; deseo = n.pos[1]; }
+      const c = col[id]; ocupadas[c] = ocupadas[c] || [];
+      let r = Math.round(deseo * 2) / 2, paso = 0.5, k = 0;
+      while (ocupadas[c].some((o) => Math.abs(o - r) < 1) && k < 40) { k++; r = Math.round(deseo * 2) / 2 + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * paso; }
+      ocupadas[c].push(r); fila[id] = r;
+    });
+    const minF = Math.min(0, ...Object.values(fila));
+    const pos = {};
+    nodos.forEach((n) => { pos[n.id] = { col: col[n.id], fila: fila[n.id], padres: padres[n.id], x: col[n.id] * COLW, cy: (fila[n.id] - minF) * ROWH + CENTRO }; });
+    st.orden = orden;
+    return pos;
+  }
+
+  function chipsDe(n) {
+    const c = [];
+    if (n.plantilla) { if (n.plantilla.categoria) c.push(n.plantilla.categoria); (n.plantilla.botones || []).forEach((b) => c.push((b.tipo === 'url' ? '↗ ' : '') + b.texto)); }
+    (n.corta_si || []).forEach((x) => c.push('corta: ' + x));
+    (n.chips || []).forEach((x) => c.push(x));
+    return c;
+  }
+
+  function pintarNodos(v) {
+    const pos = st.pos = diagramar(v);
+    const capa = $('nodos');
+    capa.innerHTML = (v.nodos || []).map((n) => {
+      const tipo = n.tipo || 'accion';
+      const cls = ['nodo', tipo === 'espera' ? 'espera-t' : tipo, n.estado || 'propuesto', n.cambio || ''].join(' ');
+      const p = pos[n.id];
+      const ch = chipsDe(n);
+      const cambio = n.cambio && CAMBIOS[n.cambio] ? '<span class="cambio ' + esc(n.cambio) + '">' + esc(CAMBIOS[n.cambio]) + '</span>' : '';
+      return '<button type="button" class="' + esc(cls) + '" data-n="' + esc(n.id) + '" aria-selected="' + (st.sel === n.id) + '" style="left:' + p.x + 'px;top:' + p.cy + 'px">' +
+        '<span class="puerto in"></span><span class="puerto out"></span>' +
+        '<span class="cab"><span class="g ' + esc(n.estado || 'propuesto') + '"></span><span class="tipo">' + esc(n.etiqueta_tipo || TIPOS[tipo] || tipo) + '</span>' + cambio + '</span>' +
+        '<span class="cuerpo-n"><span class="tit">' + esc(n.titulo) + '</span>' +
+        (n.sub ? '<span class="sub">' + esc(n.sub) + '</span>' : '') +
+        (n.metrica ? '<span class="metrica">' + esc(n.metrica) + '</span>' : '') +
+        (n.simulado ? '<span class="simulado">' + esc(n.simulado) + '</span>' : '') +
+        (n.pendiente ? '<span class="alerta">' + esc(n.pendiente.corto || 'Falta decidir') + '</span>' : '') +
+        (ch.length && tipo !== 'espera' ? '<span class="chips">' + ch.slice(0, 6).map((x) => '<span class="chip">' + esc(x) + '</span>').join('') + '</span>' : '') +
+        '</span></button>';
+    }).join('');
+    centrar();
+    capa.querySelectorAll('.nodo').forEach((el) => {
+      el.addEventListener('click', (e) => { e.stopPropagation(); if (movido) return; st.sel = el.dataset.n; marcarSel(); inspeccionarNodo(v.nodos.find((x) => x.id === st.sel)); });
+    });
+  }
+
+  // Cada nodo se centra en la línea de su fila (los puertos quedan a la misma altura y la flecha va recta)
+  // y arranca a un HUECO fijo del borde derecho de su padre: la distancia entre dos nodos unidos es siempre
+  // la misma, aunque una espera sea más angosta que una plantilla o dos ramas tengan anchos distintos.
+  // Si en la misma fila ya hay un nodo, se corre para no pisarlo.
+  function centrar() {
+    const el = {};
+    $('nodos').querySelectorAll('.nodo').forEach((e) => { el[e.dataset.n] = e; });
+    const x = {}, finFila = {};
+    (st.orden || Object.keys(el)).forEach((id) => {
+      const p = st.pos[id], e = el[id]; if (!p || !e) return;
+      let izq = 0;
+      (p.padres || []).forEach((pa) => { if (x[pa] !== undefined) izq = Math.max(izq, x[pa] + el[pa].offsetWidth + HUECO); });
+      if (finFila[p.fila] !== undefined) izq = Math.max(izq, finFila[p.fila] + HUECO);
+      if (p.manual) izq = p.x;
+      x[id] = izq; finFila[p.fila] = izq + e.offsetWidth;
+      e.style.left = Math.round(izq) + 'px';
+      e.style.top = Math.round(p.cy - e.offsetHeight / 2) + 'px';
+    });
+  }
+
+  function pintarAristas(v) {
+    const g = $('trazos'); const capa = $('nodos');
+    const caja = (id) => { const el = capa.querySelector('[data-n="' + CSS.escape(id) + '"]'); if (!el) return null; return { x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight }; };
+    let svg = '', etq = '';
+    let maxX = 0, maxY = 0;
+    capa.querySelectorAll('.nodo').forEach((el) => { maxX = Math.max(maxX, el.offsetLeft + el.offsetWidth); maxY = Math.max(maxY, el.offsetTop + el.offsetHeight); });
+    (v.aristas || []).forEach((a, i) => {
+      const A = caja(a.de), B = caja(a.a); if (!A || !B) return;
+      const x1 = A.x + A.w + 6, y1 = A.y + A.h / 2, x2 = B.x - 8, y2 = B.y + B.h / 2;
+      let d;
+      if (x2 > x1 + 10 && Math.abs(y2 - y1) < 3) { d = 'M' + x1 + ' ' + y1 + ' L' + x2 + ' ' + y1; }
+      else if (x2 > x1 + 10) { const dx = Math.max(40, (x2 - x1) / 2); d = 'M' + x1 + ' ' + y1 + ' C' + (x1 + dx) + ' ' + y1 + ' ' + (x2 - dx) + ' ' + y2 + ' ' + x2 + ' ' + y2; }
+      else { const bajo = Math.max(A.y + A.h, B.y + B.h) + 46; d = 'M' + x1 + ' ' + y1 + ' C' + (x1 + 80) + ' ' + y1 + ' ' + (x1 + 80) + ' ' + bajo + ' ' + ((x1 + x2) / 2) + ' ' + bajo + ' S' + (x2 - 80) + ' ' + y2 + ' ' + x2 + ' ' + y2; maxY = Math.max(maxY, bajo + 20); }
+      const prop = a.estado === 'propuesto';
+      const activa = st.sel && (a.de === st.sel || a.a === st.sel);
+      const cls = ['arista', a.tipo || '', prop ? 'propuesta' : '', activa ? 'activa' : ''].join(' ');
+      svg += '<path class="' + cls + '" d="' + d + '" marker-end="url(#' + (prop ? 'punta-gris' : 'punta') + ')"/>';
+      if (a.etiqueta) {
+        const mx = x2 > x1 + 10 ? (x1 + x2) / 2 : (x1 + x2) / 2, my = x2 > x1 + 10 ? (y1 + y2) / 2 : Math.max(A.y + A.h, B.y + B.h) + 46;
+        etq += '<span class="etq' + (a.tipo === 'no' || prop ? ' suave' : '') + '" style="left:' + mx + 'px;top:' + my + 'px">' + esc(a.etiqueta) + '</span>';
+      }
+    });
+    g.innerHTML = svg;
+    capa.querySelectorAll('.etq').forEach((e) => e.remove());
+    capa.insertAdjacentHTML('beforeend', etq);
+    const s = $('aristas'); s.setAttribute('width', maxX + 200); s.setAttribute('height', maxY + 200);
+    st.lim = { w: maxX, h: maxY };
+  }
+
+  function marcarSel() {
+    $('nodos').querySelectorAll('.nodo').forEach((el) => el.setAttribute('aria-selected', String(el.dataset.n === st.sel)));
+    const v = version(); if (v) pintarAristas(v);
+  }
+
+  // Inspector
+  function burbuja(p) {
+    const vars = p.variables || [];
+    let t = esc(p.texto || '');
+    t = t.replace(/\*([^*\n]+)\*/g, '<b>$1</b>').replace(/\{\{(\d+)\}\}/g, (m, k) => '<span class="var" title="' + esc(vars[+k - 1] || '') + '">' + esc(vars[+k - 1] || ('{{' + k + '}}')) + '</span>');
+    const bot = (p.botones || []).map((b) => '<div class="boton-wa">' + (b.tipo === 'url' ? '↗ ' : '↩ ') + esc(b.texto) + (b.destino ? '<small>' + esc(b.destino) + '</small>' : '') + '</div>').join('');
+    return '<div class="wa"><span class="wa-meta">' + esc([p.nombre, p.categoria, p.idioma].filter(Boolean).join(' · ')) + '</span>' +
+      '<div class="burbuja">' + t + '</div>' + (bot ? '<div class="botones-wa">' + bot + '</div>' : '') + '</div>';
+  }
+  function evidencias(list) {
+    if (!list || !list.length) return '';
+    return '<div class="bloque"><span class="eyebrow">De dónde sale</span><ul class="evid">' + list.map((e) =>
+      '<li><code>' + esc(e.ref) + '</code>' + (e.nota ? '<span>' + esc(e.nota) + '</span>' : '') + '</li>').join('') + '</ul></div>';
+  }
+  function abrirInspector(html) {
+    const ins = $('inspector'); ins.innerHTML = html; ins.hidden = false;
+    ins.querySelector('.cerrar').addEventListener('click', cerrarInspector);
+    ins.scrollTop = 0;
+  }
+  function cerrarInspector() { $('inspector').hidden = true; st.sel = null; marcarSel(); }
+  function inspeccionarNodo(n) {
+    if (!n) return;
+    const tipo = n.tipo || 'accion';
+    const filas = [];
+    if (n.espera) filas.push(['Espera', n.espera]);
+    if (n.condicion) filas.push(['Condición', n.condicion]);
+    if (n.corta_si && n.corta_si.length) filas.push(['Se corta si', n.corta_si.join(' · ')]);
+    if (n.metrica) filas.push(['Medido', n.metrica]);
+    if (n.simulado) filas.push(['Simulado', n.simulado + ' (predicción sobre la semana de la captura' + (D.simulacion && D.simulacion.captura ? ' del ' + D.simulacion.captura.slice(0, 10) : '') + '; los pasos después de una espera no descuentan bajas ni respuestas)' + (D.simulacion && D.simulacion.aviso ? ' · ⚠ ' + D.simulacion.aviso : '')]);
+    (n.datos || []).forEach((d) => filas.push(d));
+    abrirInspector(
+      '<header><div class="top"><span class="estado-chip"><span class="g ' + esc(n.estado || 'propuesto') + '"></span>' + esc(ESTADOS[n.estado] || n.estado || 'Propuesto') + '</span>' +
+      (n.cambio && CAMBIOS[n.cambio] ? '<span class="estado-chip">' + esc(CAMBIOS[n.cambio]) + '</span>' : '') +
+      '<button type="button" class="btn cerrar" aria-label="Cerrar">✕</button></div>' +
+      '<span class="eyebrow">' + esc(n.etiqueta_tipo || TIPOS[tipo] || tipo) + '</span><h3>' + esc(n.titulo) + '</h3></header>' +
+      (n.detalle ? '<p class="texto">' + esc(n.detalle) + '</p>' : '') +
+      (n.pendiente ? '<div class="decide"><span class="eyebrow">' + esc(n.pendiente.quien ? 'Decide ' + n.pendiente.quien : 'Falta') + '</span><p>' + esc(n.pendiente.texto || n.pendiente.corto) + '</p></div>' : '') +
+      (n.plantilla ? '<div class="bloque"><span class="eyebrow">El mensaje</span>' + burbuja(n.plantilla) + '</div>' : '') +
+      (filas.length ? '<dl class="datos">' + filas.map((f) => '<div><dt>' + esc(f[0]) + '</dt><dd>' + esc(f[1]) + '</dd></div>').join('') + '</dl>' : '') +
+      (n.supuesto ? '<p class="supuesto"><b>Supuesto:</b> ' + esc(n.supuesto) + '</p>' : '') +
+      evidencias(n.evidencia)
+    );
+  }
+  function inspeccionarRegla(r) {
+    st.sel = null; marcarSel();
+    abrirInspector(
+      '<header><div class="top"><span class="estado-chip"><span class="g ' + esc(r.estado || 'vigente') + '"></span>' + esc(ESTADOS[r.estado] || r.estado || '') + '</span>' +
+      '<button type="button" class="btn cerrar" aria-label="Cerrar">✕</button></div>' +
+      '<span class="eyebrow">Regla de todos los flujos</span><h3>' + esc(r.nombre) + '</h3></header>' +
+      (r.detalle ? '<p class="texto">' + esc(r.detalle) + '</p>' : '') +
+      (r.pendiente ? '<div class="decide"><span class="eyebrow">' + esc(r.pendiente.quien ? 'Decide ' + r.pendiente.quien : 'Falta') + '</span><p>' + esc(r.pendiente.texto || r.pendiente.corto) + '</p></div>' : '') +
+      evidencias(r.evidencia)
+    );
+  }
+
+  // Cámara
+  const capaEl = $('capa'), lienzo = $('lienzo');
+  function aplicar() {
+    const c = st.cam;
+    capaEl.style.transform = 'translate(' + c.x + 'px,' + c.y + 'px) scale(' + c.k + ')';
+    lienzo.style.backgroundSize = (22 * c.k) + 'px ' + (22 * c.k) + 'px';
+    lienzo.style.backgroundPosition = c.x + 'px ' + c.y + 'px';
+  }
+  function ajustar() {
+    if (!st.lim) return;
+    // Entra entero si se puede; si no, arranca legible desde el disparador y el resto se recorre arrastrando.
+    const W = lienzo.clientWidth, H = lienzo.clientHeight, m = W < 500 ? 20 : 48;
+    const minK = W < 500 ? 0.62 : 0.78;
+    const k = Math.max(minK, Math.min(1, (W - 2 * m) / Math.max(1, st.lim.w), (H - 2 * m) / Math.max(1, st.lim.h)));
+    st.cam = { k, x: Math.max(m, (W - st.lim.w * k) / 2), y: Math.max(m, (H - st.lim.h * k) / 2) };
+    aplicar();
+  }
+  function zoomEn(f, cx, cy) {
+    const c = st.cam; const k2 = Math.max(0.25, Math.min(2.2, c.k * f));
+    cx = cx ?? lienzo.clientWidth / 2; cy = cy ?? lienzo.clientHeight / 2;
+    c.x = cx - (cx - c.x) * (k2 / c.k); c.y = cy - (cy - c.y) * (k2 / c.k); c.k = k2; aplicar();
+  }
+  $('z-mas').addEventListener('click', () => zoomEn(1.2));
+  $('z-menos').addEventListener('click', () => zoomEn(1 / 1.2));
+  $('z-ajustar').addEventListener('click', ajustar);
+  lienzo.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const r = lienzo.getBoundingClientRect();
+    if (e.ctrlKey || e.metaKey) zoomEn(Math.exp(-e.deltaY * 0.01), e.clientX - r.left, e.clientY - r.top);
+    else { st.cam.x -= e.deltaX; st.cam.y -= e.deltaY; aplicar(); }
+  }, { passive: false });
+  const punteros = new Map(); let movido = false, inicio = null, pinza = null;
+  lienzo.addEventListener('pointerdown', (e) => {
+    punteros.set(e.pointerId, { x: e.clientX, y: e.clientY }); movido = false;
+    inicio = { x: e.clientX, y: e.clientY, cx: st.cam.x, cy: st.cam.y };
+    if (punteros.size === 2) { const [a, b] = [...punteros.values()]; pinza = { d: Math.hypot(a.x - b.x, a.y - b.y), k: st.cam.k }; }
+  });
+  window.addEventListener('pointermove', (e) => {
+    if (!punteros.has(e.pointerId)) return;
+    punteros.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (punteros.size === 2 && pinza) {
+      const [a, b] = [...punteros.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y); const r = lienzo.getBoundingClientRect();
+      zoomEn((pinza.k * d / pinza.d) / st.cam.k, (a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top); movido = true; return;
+    }
+    const dx = e.clientX - inicio.x, dy = e.clientY - inicio.y;
+    if (!movido && Math.hypot(dx, dy) < 5) return;
+    if (!movido) { movido = true; lienzo.classList.add('arrastrando'); try { lienzo.setPointerCapture(e.pointerId); } catch (_) {} }
+    st.cam.x = inicio.cx + dx; st.cam.y = inicio.cy + dy; aplicar();
+  });
+  const soltar = (e) => { punteros.delete(e.pointerId); if (punteros.size < 2) pinza = null; lienzo.classList.remove('arrastrando'); setTimeout(() => { movido = false; }, 0); };
+  window.addEventListener('pointerup', soltar); window.addEventListener('pointercancel', soltar);
+  lienzo.addEventListener('click', (e) => { if (!movido && (e.target === lienzo || e.target.id === 'nodos')) cerrarInspector(); });
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') cerrarInspector();
+    if (e.target.closest && e.target.closest('input,textarea')) return;
+    if (e.key === '+' || e.key === '=') zoomEn(1.2);
+    if (e.key === '-') zoomEn(1 / 1.2);
+    if (e.key === '0') ajustar();
+  });
+  window.addEventListener('resize', () => ajustar());
+
+  function todo(reajustar) {
+    if (!flujos.length) { $('vacio').hidden = false; $('vacio-t').textContent = 'Esta instancia no tiene flujos cargados'; $('vacio-d').textContent = 'Se cargan en el JSON de la instancia y se vuelve a armar la página.'; return; }
+    if (!flujos.some((f) => f.id === st.flujo)) st.flujo = flujos[0].id;
+    const vs = vistasDe(flujoActual()); if (!vs.includes(st.vista)) st.vista = vs.includes('hoy') ? 'hoy' : vs[0];
+    pintarLista(); pintarVistas();
+    const v = version();
+    $('inspector').hidden = true;
+    if (!v || !(v.nodos || []).length) {
+      $('nodos').innerHTML = ''; $('trazos').innerHTML = '';
+      $('vacio').hidden = false; $('vacio-t').textContent = (flujoActual().nombre) + ': ' + (NOMBRE_VISTA[st.vista] || st.vista);
+      $('vacio-d').textContent = (v && v.vacio) || 'Esta versión no tiene pasos.';
+      return;
+    }
+    $('vacio').hidden = true;
+    pintarNodos(v); pintarAristas(v);
+    if (reajustar) ajustar();
+  }
+  todo(true);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { const v = version(); if (v && (v.nodos || []).length) { centrar(); pintarAristas(v); ajustar(); } });
+})();
+</script>

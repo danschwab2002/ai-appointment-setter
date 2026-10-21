@@ -260,6 +260,21 @@ def test_diferencias_de_config_dice_rutas_y_nunca_valores():
     assert hi.diferencias_de_config(esperado, esperado) == []
 
 
+def test_lo_que_hermes_anota_solo_en_el_config_no_es_diferencia():
+    # Visto en ATT1 el 2026-10-21, despues del primer mensaje al automation-expert:
+    # chequear daba «sobra onboarding.seen.profile_build_offered» (agent/onboarding.py).
+    esperado = {"model": {"default": "m"}}
+    vivo = {"model": {"default": "m"}, "onboarding": {"seen": {"profile_build_offered": True}}}
+    assert hi.diferencias_de_config(vivo, esperado) == []
+    # Fuera de onboarding.seen, una clave de mas sigue siendo una diferencia.
+    vivo["onboarding"]["otra"] = True
+    assert hi.diferencias_de_config(vivo, esperado) == ["sobra onboarding.otra"]
+    # Si la declaracion la fija, se compara como cualquier otra.
+    esperado_con = {**esperado, "onboarding": {"seen": {"profile_build_offered": False}}}
+    vivo_con = {"model": {"default": "m"}, "onboarding": {"seen": {"profile_build_offered": True}}}
+    assert hi.diferencias_de_config(vivo_con, esperado_con) == ["distinto onboarding.seen.profile_build_offered"]
+
+
 def test_profiles_presentes_cuenta_como_hermes_y_saltea_default(tmp_path):
     for nombre, con_soul in (("agente-comercial", True), ("default", True), ("sin-soul", False)):
         (tmp_path / nombre).mkdir()
