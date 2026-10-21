@@ -30,6 +30,18 @@ What it proves, in order:
 6. ``pausar att1/carrito`` pauses it with the generation it read;
 7. ``descartar`` closes an open proposal;
 8. every psql call carried its values in the COPY block, never in the SQL text.
+
+With the engine migration (20261021000200) applied, it also proves the T4d and
+the criterion of the T4 (flow-change-cycle-v1, 1.4.0 and 1.5.0):
+
+0. ``registrar att1/precheckout`` registers a new flow, off and without a
+   version, and refuses one that is already registered;
+5b. ``ruta`` refuses a flow that is off and creates the route of the cart in
+   ``legado`` on a published scope of the legacy; ``estado`` shows it;
+5c. a wait in the cart, proposed and validated by the command, carries a
+   built simulation read from the base; ``publicar`` without
+   ``--sin-simulacion`` publishes it and the approval records
+   ``simulation: built`` with the ``summary_sha256`` of the preview.
 """
 
 from __future__ import annotations
@@ -57,6 +69,12 @@ STORE_SPEC.loader.exec_module(store)
 operator = importlib.util.module_from_spec(OPERATOR_SPEC)
 sys.modules[OPERATOR_SPEC.name] = operator
 OPERATOR_SPEC.loader.exec_module(operator)
+# El scope del legado publicado que pide la ruta: el mismo que siembra el arnes del motor.
+ENGINE_SPEC = importlib.util.spec_from_file_location(
+    "real_postgres_flow_engine", ROOT / "tests/sql/followup_engine/real_postgres_flow_engine.py")
+assert ENGINE_SPEC and ENGINE_SPEC.loader
+ENGINE = importlib.util.module_from_spec(ENGINE_SPEC)
+ENGINE_SPEC.loader.exec_module(ENGINE)
 
 PURPOSE = "que el carrito espere 2 horas antes del primer mensaje"
 DEFINITIONS = {d["flujo"]: d for d in json.loads(
@@ -132,8 +150,6 @@ def install() -> None:
     # base vacia que empieza con flow_store (flow_store_operator_ci en la CI).
     store.install_schema()
     store.seed()  # el binding de att1 y el carrito y el pago fallido registrados
-    registered = store.call("operator_register_flow_v1", store.INSTANCE, "att1", "precheckout", "dan", "alta del flujo")
-    store.require(registered.get("ok") is True, f"register failed: {registered}")
     chatwoot = chatwoot_env()["PGDATABASE"]
     store.query(f'drop database if exists "{chatwoot}"')
     store.query(f'create database "{chatwoot}"')
@@ -180,6 +196,12 @@ def main() -> None:
     install()
     docker, terminal = ShimDocker(), ShimTerminal()
     ops = operator.Ops(operator.Config.from_env(ENV), docker=docker, terminal=terminal)
+    # 0. Registrar el precheckout con el comando: apagado y sin version; el que ya esta, no.
+    code, out = run(ops, "registrar", "att1/precheckout", "--quien", "dan", "--motivo", "alta del flujo")
+    store.require(code == 0 and "apagado y sin version" in out, out)
+    writes = docker.writes
+    code, out = run(ops, "registrar", "att1/carrito", "--quien", "dan", "--motivo", "otra vez")
+    store.require(code == 1 and "ya esta registrado" in out and docker.writes == writes, out)
     ids = flow_ids()
 
     # 1. Las tres v1, propuestas, validadas y publicadas apagadas.
@@ -230,10 +252,42 @@ def main() -> None:
     store.require(controls()["carrito"] == ("prendido", "1", "4"), f"after volver: {controls()}")
     store.require(store.query("select count(*) from public.flow_definitions") == "4", "volver wrote a version")
 
+    # 5b. La ruta del carrito en legado: no sobre un flujo apagado, si sobre el carrito prendido.
+    ENGINE.seed_scope()
+    writes = docker.writes
+    code, out = run(ops, "ruta", "att1/pago_fallido", "--tipo", "pago_fallido", "--scope", "att1-recuperacion",
+                    "--quien", "dan", "--motivo", "x")
+    store.require(code == 1 and "se frenaria al instante" in out and docker.writes == writes, out)
+    code, out = run(ops, "ruta", "att1/carrito", "--tipo", "carrito", "--scope", "att1-recuperacion",
+                    "--quien", "dan", "--motivo", "el carrito, frenable desde el almacen")
+    store.require(code == 0 and "frena al legado" in out, out)
+    route = store.query("select r.executor, r.legacy_kind, r.legacy_scope_key from public.flow_engine_routes r "
+                        f"where r.flow_id = '{ids['carrito']}'")
+    store.require(route == "legado|carrito|att1-recuperacion", f"the route: {route}")
+    code, out = run(ops, "estado")
+    store.require("ruta: legado (carrito, att1-recuperacion); pausarlo o apagarlo aca frena el legado" in out, out)
+    print("flow_change_operator_route=OK")
+
+    # 5c. El criterio de la T4: una espera con su simulacion, publicada sin --sin-simulacion, y aprobar
+    # registra simulation: built con el summary_sha256 de la vista previa.
+    code, out = run(ops, "proponer", "--archivo", items_file(item), "--quien", "dan", "--motivo", PURPOSE)
+    store.require(code == 0, out)
+    built_id = re.search(r"publicar ([0-9a-f-]{36})", out).group(1)
+    stored = json.loads(store.query("select validation #> '{preview,simulacion}' from public.flow_change_proposals "
+                                    f"where id = '{built_id}'"))
+    store.require(stored.get("status") == "built", f"the stored simulation: {stored}")
+    code, out = run(ops, "publicar", built_id, "--quien", "dan")
+    store.require(code == 0, out)
+    approved = store.query("select data->>'simulation', data->>'summary_sha256' from public.flow_change_events "
+                           f"where proposal_id = '{built_id}' and event_type = 'flow_change_approved'")
+    store.require(approved == f"built|{stored['summary_sha256']}", f"the approval: {approved}")
+    store.require(controls()["carrito"][:2] == ("prendido", "3"), f"after the built publish: {controls()}")
+    print("flow_change_operator_simulation_built=OK")
+
     # 6. Pausar con la generacion leida.
     code, out = run(ops, "pausar", "att1/carrito", "--quien", "dan", "--motivo", "pausa de prueba")
     store.require(code == 0, out)
-    store.require(controls()["carrito"] == ("pausado", "1", "5"), f"after pausar: {controls()}")
+    store.require(controls()["carrito"] == ("pausado", "3", "6"), f"after pausar: {controls()}")
 
     # 7. Descartar una propuesta abierta.
     code, out = run(ops, "proponer", "--archivo", items_file(item), "--quien", "dan", "--motivo", PURPOSE)

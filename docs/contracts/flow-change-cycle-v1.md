@@ -3,7 +3,7 @@
 - **Estado:** aceptado como contrato conceptual el 2026-10-15; sin implementación (lo construye la 1b). El contrato no describe nada desplegado ni activado. Lo que dice de ATT1 es lo que pasó, con su fecha y de dónde sale.
 - **Fecha:** 2026-10-15
 - **ADR:** [ADR-0025](../decisions/0025-cada-instancia-tiene-su-hermes-declarado-por-el-producto.md) §7, [ADR-0007](../decisions/0007-durable-next-action-engine.md) §5 y [ADR-0017](../decisions/0017-central-slack-operations-connector.md)
-- **Contrato:** `flow-change-cycle-v1`, versión `1.4.0`. La 1.1.0 suma «Lo que fijó la implementación (1.1.0)»: lo que decidió la construcción del almacén (#243) y que este contrato dejaba abierto. No cambia ninguna decisión de Dan. La 1.2.0 suma «Lo que fija el comando del operador (1.2.0)», con un valor por defecto que revisa Dan: el operador también arma propuestas. La 1.3.0 suma «Lo que fijan las rutas del agente (1.3.0)»: la forma de las rutas y de las herramientas del Automation Expert, sin la pausa (otro valor por defecto que revisa Dan), y una ruta de lectura del almacén. La 1.4.0 suma «La simulación en la vista previa (1.4.0)»: validar arma la simulación con el motor, y aprobar registra la que quedó congelada.
+- **Contrato:** `flow-change-cycle-v1`, versión `1.5.0`. La 1.1.0 suma «Lo que fijó la implementación (1.1.0)»: lo que decidió la construcción del almacén (#243) y que este contrato dejaba abierto. No cambia ninguna decisión de Dan. La 1.2.0 suma «Lo que fija el comando del operador (1.2.0)», con un valor por defecto que revisa Dan: el operador también arma propuestas. La 1.3.0 suma «Lo que fijan las rutas del agente (1.3.0)»: la forma de las rutas y de las herramientas del Automation Expert, sin la pausa (otro valor por defecto que revisa Dan), y una ruta de lectura del almacén. La 1.4.0 suma «La simulación en la vista previa (1.4.0)»: validar arma la simulación con el motor, y aprobar registra la que quedó congelada. La 1.5.0 suma «Registrar un flujo y crear su ruta (1.5.0)»: dos subcomandos del operador para poner un flujo del legado en el almacén.
 - **Alcance:** cómo se cambia un flujo que ya está escrito como dato. Fija:
   - quién lo propone;
   - qué lleva la propuesta y cómo se valida;
@@ -463,6 +463,16 @@ La tercera parte de las herramientas (la T4c): `src/bridge/flow_change_simulatio
 - **La vista previa.** Con la simulación, el hueco `simulation_not_built` se va. Si la simulación falló, queda `simulation_failed` con su motivo. **Validar no se frena por la simulación:** sin ella, la propuesta se valida igual y la vista previa dice por qué no está.
 - **Aprobar** registra la simulación de la validación guardada (migración `20261021000100`): `built` con el `summary_sha256`, o `failed` con el motivo. **El comando del operador** publica sin `--sin-simulacion` solo si esa simulación guardada está `built`; si no, frena y dice el motivo.
 - **Lo que no cambia:** el conteo de lo que está en curso (`in_flight_not_counted`) y el cambio de audiencia (`audience_change_not_computed`) siguen siendo huecos. Mover la ruta de un flujo (`operator_route_flow_v1`) todavía no está en el comando.
+
+## Registrar un flujo y crear su ruta (1.5.0)
+
+La cuarta parte de las herramientas (la T4d): dos subcomandos de `scripts/flow_change_operator.py`, con el mismo código de confirmación que el resto. Escrita el 2026-10-21, antes del merge; no afirma que nada esté desplegado ni activado.
+
+- **`registrar <producto>/<flujo>`** llama a `operator_register_flow_v1`. El flujo queda `apagado` y sin versión, y el almacén no lo ejecuta ni frena nada. El producto tiene que tener un binding activo, y un flujo ya registrado se rechaza antes del código. Después va su v1 con `proponer`: una `version` y un `prender` en la misma propuesta.
+- **`ruta <producto>/<flujo> --tipo carrito|pago_fallido|ficha --scope <scope del legado>`** llama a `operator_create_flow_route_v1` (contrato `flow-engine-v1`, sección 3). La ruta va en `legado`. Desde ahí, la guarda del legado lee el estado del flujo en el almacén: **pausarlo o apagarlo en el almacén frena lo que manda el legado.** Una versión nueva no cambia ningún envío mientras la ruta siga en `legado`. Por eso el comando exige el flujo prendido y con versión: con la ruta sobre un flujo apagado, el legado se frenaría al instante.
+- **`estado`** muestra la ruta de cada flujo y si pausarlo frena el legado.
+- **La simulación necesita la ruta:** `read_flow_engine_history_v1` lee la historia por la ruta del carrito del producto. Sin ella, la simulación queda `failed` con `flow_engine_unavailable`.
+- **El orden para un flujo del legado:** `registrar`, `proponer` con su v1 y `prender`, `publicar --sin-simulacion` (todavía no hay historia que leer), y `ruta`. Desde ahí, cada propuesta se valida con su simulación.
 
 ## Lo que se confirma al construir
 

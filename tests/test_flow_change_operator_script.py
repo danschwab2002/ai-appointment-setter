@@ -11,6 +11,7 @@ tests/sql/followup_engine/real_postgres_flow_change_operator.py.
 
 from __future__ import annotations
 
+import copy
 import importlib.util
 import io
 import json
@@ -65,6 +66,8 @@ class FakeDocker:
                  fail_with: str | None = None, engine: bool = False) -> None:
         self.calls: list[tuple[list[str], str]] = []
         self.engine = engine
+        self.routes: list[dict] = []
+        self.flows = FLOWS
         self.containers = containers
         self.prop = proposal() if prop is None else prop
         self.valid = validation() if valid is None else valid
@@ -87,8 +90,10 @@ class FakeDocker:
             return ok(json.dumps({"contract": "flow-engine-v1", "flows": [], "next": None}) + "\n")
         if self.engine and "read_flow_engine_history_v1" in stdin:
             return ok(json.dumps({"_captured": {"query": "captura-paridad-recuperacion-v3"}}) + "\n")
+        if "from public.flow_engine_routes r" in stdin:
+            return ok(json.dumps(self.routes) + "\n")
         if "commercial_ally_runtime_bindings" in stdin:
-            return ok('["att1"]\n' + json.dumps(FLOWS) + "\n")
+            return ok('["att1"]\n' + json.dumps(self.flows) + "\n")
         if "from public.flow_change_proposals p\n where p.id" in stdin:
             return ok(json.dumps(self.prop) + "\n")
         if "channel_whatsapp" in stdin:
@@ -281,3 +286,52 @@ def _copy_value(stdin: str, key: str) -> str:
         if found_key == key:
             return value.replace("\\t", "\t").replace("\\n", "\n").replace("\\\\", "\\")
     raise AssertionError(f"{key} is not in the COPY block")
+
+
+def test_registrar_registers_a_new_flow_after_the_code_and_refuses_one_that_exists() -> None:
+    docker = FakeDocker()
+    code, out = run(["registrar", "att1/pago_fallido", "--quien", "dan", "--motivo", "el pago fallido al almacen"],
+                    docker)
+    assert code == script.EXIT_OK, out
+    [write] = docker.writes()
+    assert "operator_register_flow_v1" in write
+    assert _copy_value(write, "product") == "att1" and _copy_value(write, "flow") == "pago_fallido"
+    assert "apagado y sin version" in out
+    code, out = run(["registrar", "att1/carrito", "--quien", "dan", "--motivo", "x"], docker := FakeDocker())
+    assert code == script.EXIT_REFUSED and "ya esta registrado" in out and docker.writes() == []
+    code, out = run(["registrar", "otro/carrito", "--quien", "dan", "--motivo", "x"], docker := FakeDocker())
+    assert code == script.EXIT_REFUSED and "binding activo" in out and docker.writes() == []
+
+
+def test_ruta_needs_the_flow_on_and_says_that_pausing_here_stops_the_legacy() -> None:
+    docker = FakeDocker()
+    code, out = run(["ruta", "att1/carrito", "--tipo", "carrito", "--scope", "att1-recuperacion", "--quien", "dan",
+                     "--motivo", "el carrito, frenable desde el almacen"], docker)
+    assert code == script.EXIT_OK, out
+    [write] = docker.writes()
+    assert "operator_create_flow_route_v1" in write
+    assert (_copy_value(write, "kind"), _copy_value(write, "scope")) == ("carrito", "att1-recuperacion")
+    assert "frena al legado" in out
+    # Apagado, la ruta frenaria al legado al instante: no se crea.
+    flows = copy.deepcopy(FLOWS)
+    flows[0]["state"] = "apagado"
+    docker = FakeDocker()
+    docker.flows = flows
+    code, out = run(["ruta", "att1/carrito", "--tipo", "carrito", "--scope", "att1-recuperacion", "--quien", "dan",
+                     "--motivo", "x"], docker)
+    assert code == script.EXIT_REFUSED and "se frenaria al instante" in out and docker.writes() == []
+    assert FLOWS[0]["state"] == "prendido"
+    code, out = run(["ruta", "att1/carrito", "--tipo", "descuento", "--scope", "x", "--quien", "dan",
+                     "--motivo", "x"], FakeDocker())
+    assert code == script.EXIT_USAGE
+
+
+def test_estado_shows_the_route_and_what_pausing_does() -> None:
+    docker = FakeDocker()
+    docker.routes = [{"product_ref": "att1", "flow_key": "carrito", "executor": "legado", "legacy_kind": "carrito",
+                      "legacy_scope_key": "att1-recuperacion"}]
+    code, out = run(["estado"], docker)
+    assert code == script.EXIT_OK
+    assert "ruta: legado (carrito, att1-recuperacion); pausarlo o apagarlo aca frena el legado" in out
+    code, out = run(["estado"], FakeDocker())
+    assert "ruta: ninguna; el estado de aca no frena nada del legado" in out
