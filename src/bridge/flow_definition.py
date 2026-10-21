@@ -71,9 +71,11 @@ EXITS = ("compra", "contesta", "ficha_vencida")
 # cuando, precio y vence (1.1) son las del bridge para A1, Z y el seguimiento del pago
 # rechazado (cart_first_touch.CART_DISCOUNT_VARIABLES, cart_followups.CART_LAST_TOUCH_VARIABLES,
 # payment_failure_followups.PAYMENT_FAILURE_FOLLOWUP_VARIABLES): cuando, el momento del
-# intento (el abandono) en la zona del pais del comprador; precio, el precio del producto que
-# declara la instancia (RECOVERY_DISCOUNT_PRICE, «USD 47»); vence, el vencimiento del cupon
-# personal en la zona del pais (cart_discount.cart_discount_values).
+# intento, action.anchor_observed_at (cart_first_touch.py:144); precio, el precio del producto
+# que declara la instancia (RECOVERY_DISCOUNT_PRICE, «USD 47»); vence, el vencimiento del cupon
+# personal (cart_discount.cart_discount_values). Las dos horas se escriben en la zona del pais
+# que sale del prefijo del telefono (country_for_phone y timezone_for_country,
+# cart_discount.py:69-82), con la de CDMX si el prefijo no se reconoce.
 VARIABLES = ("nombre", "producto", "medio_de_pago", "cuando", "precio", "vence")
 # Las que solo valen en un paso con cupon: hablan del cupon personal (regla 5).
 COUPON_VARIABLES = ("precio", "vence")

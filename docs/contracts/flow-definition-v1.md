@@ -888,16 +888,20 @@ pasos:                            # [existe: followup_policy_versions.steps] [NU
                                             #   rechazado: cart_first_touch.py:33,
                                             #   cart_followups.py:67-68,
                                             #   payment_failure_followups.py:65]
-                                            #   cuando: el momento del intento (el abandono o el
-                                            #   rechazo) en la zona del país del comprador (CDMX
-                                            #   si Hotmart no la manda); solo con un disparador
-                                            #   de evento.
+                                            #   cuando: el momento del intento, el
+                                            #   anchor_observed_at de la acción
+                                            #   (cart_first_touch.py:144), en la zona del país
+                                            #   que sale del prefijo del teléfono
+                                            #   (country_for_phone, cart_discount.py:69-82), con
+                                            #   la de CDMX si no se reconoce; solo con un
+                                            #   disparador de evento.
                                             #   precio: el precio del producto que declara la
                                             #   instancia (RECOVERY_DISCOUNT_PRICE, «USD 47»),
                                             #   aunque el checkout muestre moneda local; solo con
                                             #   cupon: personal.
                                             #   vence: el vencimiento del cupón personal del paso,
-                                            #   en la zona del país; solo con cupon: personal.
+                                            #   en la misma zona que cuando; solo con
+                                            #   cupon: personal.
     # boton: {link: checkout, cupon: TIROIDES10}
     #                             # solo si la plantilla tiene un botón de URL dinámica.
     #                             #   link: checkout [existe: el del cupón] | ficha [NUEVO; solo
@@ -1160,4 +1164,4 @@ La migración los actualiza. Qué cambia en la base no se aprueba con este esque
   - `boton.cupon` acepta `personal`, el código por persona del worker del cupón, a lo sumo dos veces por camino (regla 15, `coupon_personal_limit`). Pasar de un código fijo a `personal`, o al revés, sigue siendo `coupon_change_not_supported`;
   - el carrito y el pago fallido de ATT1 ya no comparten bolsa desde el 2026-10-19 (`att1-recuperacion` y `att1-pago-rechazado`). Los bloques 1 y 2 de «Los siete flujos de validación» siguen siendo la línea de base del 2026-10-14, con la bolsa compartida;
   - la regla 17 no cambia: con `permiso: compra`, un solo envío por camino;
-  - tres variables nuevas, con los nombres del bridge: `cuando` (el momento del intento en la zona del país), `precio` (el que declara la instancia) y `vence` (el vencimiento del cupón personal). La regla 5 suma dos protecciones: `precio` y `vence` solo en un paso con `cupon: personal`, y `cuando` solo con un disparador de evento.
+  - tres variables nuevas, con los nombres del bridge: `cuando` (el momento del intento, el `anchor_observed_at` de la acción, en la zona del país que sale del prefijo del teléfono, o CDMX), `precio` (el que declara la instancia) y `vence` (el vencimiento del cupón personal). La regla 5 suma dos protecciones: `precio` y `vence` solo en un paso con `cupon: personal`, y `cuando` solo con un disparador de evento.
