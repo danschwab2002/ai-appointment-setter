@@ -9,14 +9,24 @@ la version del flujo. Este modulo es la gemela en Python de
 ``tests/fixtures/flow_engine/compile_cases.json``.
 
 **La forma de cada flujo del legado** (``STEPS_BY_LEGACY_KIND``) es la lista de
-sus pasos, en orden: el ``step_key`` y el cupon personal que admite. Las
-autorizaciones, los envios y el bridge eligen el paso por ``step_key``, asi que
-el motor no puede inventar otro: una definicion con mas envios que esa lista, o
-con el cupon personal en un paso que no lo admite, no se compila
-(``flow_policy_not_compilable:<detalle>``). Se pueden cambiar las esperas, el
-plazo, el horario, los topes y la plantilla de cada toque; agregar o sacar un
-toque, o mover el cupon, es un cambio de codigo. Una definicion con menos
-envios que la forma se compila con los primeros pasos (la del 16/10, un toque).
+sus pasos, en orden: el ``step_key``, el cupon personal que admite y las
+variables que el bridge manda en ese paso. Las autorizaciones, los envios y el
+bridge eligen el paso por ``step_key``, y el bridge compone cada paso con su
+tupla fija de variables, asi que el motor no puede inventar otro: una
+definicion con mas envios que esa lista, con el cupon personal en un paso que
+no lo admite, con otras variables (u otro orden), o con dos envios sin al menos
+un minuto entre ellos, no se compila (``flow_policy_not_compilable:<detalle>``).
+Se pueden cambiar las esperas, el plazo, el horario y los topes; agregar o sacar
+un toque, mover el cupon o cambiar sus variables es un cambio de codigo. Una
+definicion con menos envios que la forma se compila con los primeros pasos (la
+del 16/10, un toque).
+
+**La plantilla de cada paso todavia no se cambia con una version.** La fila no
+la lleva: el bridge manda la de su entorno (``RECOVERY_DISCOUNT_TEMPLATE_NAME``,
+``RECOVERY_CART_SECOND_TOUCH_TEMPLATE_NAME``...) o la del manifiesto. Una
+definicion con otra plantilla se compila a la misma fila, y el legado manda la
+de siempre. La plantilla por paso de la version fijada es el principio 10 del
+diseno y llega con la T2.4.
 
 Los campos:
 
@@ -76,7 +86,7 @@ NOT_COMPILABLE = "flow_policy_not_compilable"
 
 @dataclass(frozen=True)
 class LegacyStep:
-    """Un paso de la forma de un flujo del legado: su ``step_key`` y el cupon personal que admite.
+    """Un paso de la forma de un flujo del legado: su ``step_key``, el cupon personal que admite y sus variables.
 
     ``coupon_ordinal`` es el ordinal del cupon personal de ese paso en el caso
     (``recovery_coupons.ordinal``), o None si el paso no lleva cupon personal.
@@ -84,10 +94,19 @@ class LegacyStep:
     mas, el paso lo exige: el bridge cierra sin mensaje un paso con
     ``coupon_ordinal`` que no tiene su cupon (``portable-cart-followups-v1.md``,
     «Z»), asi que compilar ese paso sin el cupon de la definicion seria mentir.
+
+    ``variables`` son las que el bridge manda en ese paso sin cupon personal, y
+    ``coupon_variables`` las que manda con el cupon, en el orden {{1}}, {{2}}...:
+    el bridge compone cada paso con su tupla fija, no con la de la definicion,
+    asi que una definicion con otras (u otro orden) no se compila. None: el paso
+    no se manda de esa forma. Las fija ``tests/test_flow_policy.py`` contra las
+    constantes del bridge.
     """
 
     step_key: str
     coupon_ordinal: int | None = None
+    variables: tuple[str, ...] | None = None
+    coupon_variables: tuple[str, ...] | None = None
 
 
 # La forma de cada flujo del legado que usa followup_policy_versions: sus pasos
@@ -100,12 +119,25 @@ class LegacyStep:
 #   variante en el bridge, no la definicion) y el seguimiento
 #   (payment_failure_followup, cupon 2): att1-pago-rechazado-dos-toques v1;
 # * precheckout: el primer contacto, uno solo.
+# Las variables, en el bridge:
+# * el primer contacto de los tres, sin cupon: instance_manifest.DEFAULT_TEMPLATE_PARAMETERS
+#   (src/bridge/instance_manifest.py:97), las del manifiesto por defecto, que usa ATT1;
+# * A1 con el cupon: cart_first_touch.CART_DISCOUNT_VARIABLES (src/bridge/cart_first_touch.py:33);
+# * A2: cart_followups.CART_SECOND_TOUCH_VARIABLES (src/bridge/cart_followups.py:67);
+# * Z: cart_followups.CART_LAST_TOUCH_VARIABLES (:68);
+# * el seguimiento del pago rechazado: payment_failure_followups.PAYMENT_FAILURE_FOLLOWUP_VARIABLES
+#   (src/bridge/payment_failure_followups.py:65).
+_FIRST_CONTACT_VARIABLES = ("nombre", "producto")
+_A1_COUPON_VARIABLES = ("nombre", "producto", "cuando", "precio", "vence")
+_A2_VARIABLES = ("nombre", "producto")
+_LAST_TOUCH_VARIABLES = ("nombre", "producto", "vence")
 STEPS_BY_LEGACY_KIND: Mapping[str, tuple[LegacyStep, ...]] = MappingProxyType({
-    "carrito": (LegacyStep("first_contact", 1), LegacyStep("cart_second_touch"),
-                LegacyStep("cart_last_touch", 2)),
-    "precheckout": (LegacyStep("first_contact"),),
-    "pago_fallido": (LegacyStep("payment_failure_first_contact"),
-                     LegacyStep("payment_failure_followup", 2)),
+    "carrito": (LegacyStep("first_contact", 1, _FIRST_CONTACT_VARIABLES, _A1_COUPON_VARIABLES),
+                LegacyStep("cart_second_touch", None, _A2_VARIABLES),
+                LegacyStep("cart_last_touch", 2, None, _LAST_TOUCH_VARIABLES)),
+    "precheckout": (LegacyStep("first_contact", None, _FIRST_CONTACT_VARIABLES),),
+    "pago_fallido": (LegacyStep("payment_failure_first_contact", None, _FIRST_CONTACT_VARIABLES),
+                     LegacyStep("payment_failure_followup", 2, None, _LAST_TOUCH_VARIABLES)),
 })
 # El primer paso de cada forma: el que reevalua el arranque.
 STEP_KEY_BY_LEGACY_KIND: Mapping[str, str] = MappingProxyType({
@@ -139,8 +171,13 @@ class PolicyCompileError(ValueError):
     """La definicion trae algo que la politica compilada no puede escribir.
 
     ``str(error)`` es el codigo (``^[a-z0-9_:]{1,80}$``), el mismo que da la
-    gemela de SQL.
+    gemela de SQL. ``send_index`` es el envio (0, 1, 2...) que no entra en la
+    forma, cuando el error es de un envio: el validador lo usa para la ruta.
     """
+
+    def __init__(self, code: str, send_index: int | None = None) -> None:
+        super().__init__(code)
+        self.send_index = send_index
 
 
 @dataclass(frozen=True)
@@ -207,6 +244,10 @@ def _path(steps: object, shape: tuple[LegacyStep, ...]) -> list[_Send]:
     waited = 0
     since_first = 0
     waited_after_send = False
+
+    def refuse(detail: str) -> PolicyCompileError:
+        return PolicyCompileError(f"{NOT_COMPILABLE}:{detail}", send_index=len(sends))
+
     for step in steps:
         kind = step_type(step)
         if kind == "esperar":
@@ -223,18 +264,26 @@ def _path(steps: object, shape: tuple[LegacyStep, ...]) -> list[_Send]:
             raise PolicyCompileError(f"compile_policy_step_not_supported:{kind or 'desconocido'}")
         waited_after_send = False
         if len(sends) >= len(shape):
-            raise PolicyCompileError(f"{NOT_COMPILABLE}:more_sends_than_steps")
+            raise refuse("more_sends_than_steps")
         slot = shape[len(sends)]
+        if sends and since_first <= (sends[-1].minutes if len(sends) > 1 else 0):
+            # Entre dos envios, al menos un minuto: el delay crece, y el traductor lo vuelve a leer.
+            raise refuse(f"espera_entre_envios:{slot.step_key}")
         button = step.get("boton")
         coupon = button.get("cupon") if isinstance(button, Mapping) else None
-        if is_personal_coupon(coupon):
+        personal = is_personal_coupon(coupon)
+        if personal:
             if slot.coupon_ordinal is None:
-                raise PolicyCompileError(f"{NOT_COMPILABLE}:coupon_not_allowed:{slot.step_key}")
+                raise refuse(f"coupon_not_allowed:{slot.step_key}")
         elif coupon is not None:
             # Un codigo fijo (o uno sin resolver): el legado no manda un cupon fijo en un paso.
-            raise PolicyCompileError(f"{NOT_COMPILABLE}:fixed_coupon:{slot.step_key}")
+            raise refuse(f"fixed_coupon:{slot.step_key}")
         elif slot.coupon_ordinal is not None and slot.coupon_ordinal > 1:
-            raise PolicyCompileError(f"{NOT_COMPILABLE}:coupon_missing:{slot.step_key}")
+            raise refuse(f"coupon_missing:{slot.step_key}")
+        variables = step.get("variables")
+        wanted = slot.coupon_variables if personal else slot.variables
+        if not isinstance(variables, list) or tuple(variables) != wanted:
+            raise refuse(f"variables_differ:{slot.step_key}")
         sends.append(_Send(minutes=since_first if sends else waited,
                            coupon_ordinal=slot.coupon_ordinal if is_personal_coupon(coupon) else None))
     if not sends:

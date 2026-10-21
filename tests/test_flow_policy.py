@@ -380,14 +380,61 @@ def test_a_third_personal_coupon_never_reaches_the_policy() -> None:
         _compile_cart(third)
 
 
-def test_brayan_changes_the_waits_the_deadline_and_the_template_without_touching_the_shape() -> None:
+def test_brayan_changes_the_waits_and_the_deadline_without_touching_the_shape() -> None:
     # A2 a las 36 h: el paso 2 cambia su delay y Z sigue a las 72 h del primero.
     later = _cart_v7(lambda d: (d["pasos"][1].update(esperar="36h"), d["pasos"][3].update(esperar="36h"),
-                                d["termina"].update(vence="6d"), d["pasos"][2].update(plantilla="otra_01")))
+                                d["termina"].update(vence="6d")))
     compiled = _compile_cart(later)
     assert [step.get("delay") for step in compiled.as_json()["steps"]] == [None, "36 hours", "72 hours"]
     assert compiled.expires_after == timedelta(days=6)
     assert differences_from_row(compiled, ROWS_21[("att1-carrito-tres-toques", 1)]) == ("expires_after", "steps")
+
+
+def test_the_template_of_a_step_is_not_in_the_policy_yet() -> None:
+    # La plantilla no se compila: la fila no la lleva y el bridge manda la de su entorno. Otra
+    # plantilla en A2 da la misma fila, y el legado mandaria la de siempre. Hasta la T2.4
+    # (principio 10, la plantilla por paso de la version fijada), cambiarla no es un cambio que
+    # la politica pueda hacer valer.
+    other = _cart_v7(lambda d: d["pasos"][2].update(plantilla="otra_01"))
+    assert _compile_cart(other) == _compile_cart(TRANSLATED_21["carrito"].definition)
+
+
+@pytest.mark.parametrize(("step", "variables", "error"), [
+    (2, ["producto", "nombre"], "variables_differ:cart_second_touch"),
+    (0, ["nombre", "producto"], "variables_differ:first_contact"),
+    (4, ["vence", "nombre", "producto"], "variables_differ:cart_last_touch"),
+    (4, ["nombre", "producto", "vence", "precio"], "variables_differ:cart_last_touch"),
+])
+def test_the_variables_of_each_step_are_the_bridges(step: int, variables: list[str], error: str) -> None:
+    changed = _cart_v7(lambda d: d["pasos"][step].update(variables=variables))
+    with pytest.raises(PolicyCompileError) as raised:
+        _compile_cart(changed)
+    assert str(raised.value) == f"flow_policy_not_compilable:{error}"
+    assert raised.value.send_index == step // 2
+
+
+def test_the_variables_of_the_shape_are_the_constants_of_the_bridge() -> None:
+    from bridge.cart_first_touch import CART_DISCOUNT_VARIABLES
+    from bridge.cart_followups import CART_LAST_TOUCH_VARIABLES, CART_SECOND_TOUCH_VARIABLES
+    from bridge.instance_manifest import DEFAULT_TEMPLATE_PARAMETERS
+    from bridge.payment_failure_followups import PAYMENT_FAILURE_FOLLOWUP_VARIABLES
+
+    cart, failure, first = (STEPS_BY_LEGACY_KIND[kind] for kind in ("carrito", "pago_fallido", "precheckout"))
+    assert [(step.variables, step.coupon_variables) for step in cart] == [
+        (DEFAULT_TEMPLATE_PARAMETERS, CART_DISCOUNT_VARIABLES), (CART_SECOND_TOUCH_VARIABLES, None),
+        (None, CART_LAST_TOUCH_VARIABLES)]
+    assert [(step.variables, step.coupon_variables) for step in failure] == [
+        (DEFAULT_TEMPLATE_PARAMETERS, None), (None, PAYMENT_FAILURE_FOLLOWUP_VARIABLES)]
+    assert [(step.variables, step.coupon_variables) for step in first] == [(DEFAULT_TEMPLATE_PARAMETERS, None)]
+
+
+def test_two_sends_need_a_minute_between_them() -> None:
+    back_to_back = _cart_v7(lambda d: d["pasos"][1].update(esperar="0m"))
+    with pytest.raises(PolicyCompileError, match="espera_entre_envios:cart_second_touch"):
+        _compile_cart(back_to_back)
+    a_minute = _cart_v7(lambda d: (d["pasos"][1].update(esperar="1m"), d["pasos"][3].update(esperar="4319m")))
+    assert [step.get("delay") for step in _compile_cart(a_minute).as_json()["steps"]] == [
+        None, "1 minute", "72 hours"]
 
 
 def test_fewer_sends_than_the_shape_compile_to_the_first_steps() -> None:

@@ -228,13 +228,19 @@ def not_supported(definition: Mapping[str, Any], capabilities: EngineCapabilitie
         # vale si las capacidades la admiten.
         sends_seen = 0
         wait_after_send = False
+        waited_a_minute = False
         for step in steps:
             kind = step_type(step)
             if kind in ("plantilla", "conversar"):
+                if sends_seen and not waited_a_minute:
+                    # Dos envios seguidos: el segundo tiene que esperar al menos un minuto (T2.1).
+                    add("espera_entre_envios")
                 sends_seen += 1
-                wait_after_send = False
+                wait_after_send = waited_a_minute = False
             elif kind == "esperar" and sends_seen:
                 wait_after_send = True
+                minutes = parse_duration(step.get("esperar")) if isinstance(step, Mapping) else None
+                waited_a_minute = waited_a_minute or minutes is None or minutes > 0
                 if not capabilities.waits_between_sends:
                     add("espera_despues_del_envio")
         if wait_after_send:

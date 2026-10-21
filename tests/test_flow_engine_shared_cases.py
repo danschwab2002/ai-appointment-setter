@@ -63,6 +63,9 @@ EQUIVALENT: dict[str, str | None] = {
     "flow_policy_not_compilable:coupon_not_allowed:cart_second_touch": None,
     "flow_policy_not_compilable:coupon_missing:cart_last_touch": None,
     "flow_policy_not_compilable:fixed_coupon:first_contact": None,
+    "flow_policy_not_compilable:variables_differ:cart_second_touch": None,
+    "flow_policy_not_compilable:variables_differ:first_contact": None,
+    "flow_policy_not_compilable:espera_entre_envios:cart_second_touch": "engine_not_supported:espera_entre_envios",
     "compile_policy_step_after_send": "engine_not_supported:espera_despues_del_envio",
     "compile_policy_without_send": "plan_without_send",
     "compile_policy_wait_invalid": "plan_wait_invalid",
@@ -70,7 +73,11 @@ EQUIVALENT: dict[str, str | None] = {
 }
 # Los casos en que el plan responde distinto que el resto de su codigo: cuatro envios
 # pasan el tope de las capacidades v1 (tres por camino).
-PLAN_ERROR_BY_CASE: dict[str, str] = {"cuarto_envio": "engine_not_supported:demasiados_envios"}
+PLAN_ERROR_BY_CASE: dict[str, str] = {
+    "cuarto_envio": "engine_not_supported:demasiados_envios",
+    # Dos envios sin espera entre ellos: el motor tampoco los ejecuta (T2.1).
+    "dos_plantillas": "engine_not_supported:espera_entre_envios",
+}
 
 
 def instant(text: str) -> datetime:

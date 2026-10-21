@@ -3,7 +3,7 @@
     "que_es": "Los casos de la politica compilada (diseno del motor de flujos, §2.5 y §3.4): los corre pytest contra bridge.flow_policy.compile_policy (tests/test_flow_policy.py) y T2 contra _flow_engine_compile_policy, con los mismos esperados.",
     "input": "definition, flow_id (uuid), version, legacy_kind y fixed_zone son los argumentos de compile_policy. fixed_zone es la zona fija del flujo, la que toma un siempre; la funcion de SQL no la recibe, asi que en T2 sale del almacen para ese flow_id. Las tres de ATT1 del 16/10 son las definiciones normalizadas de tests/fixtures/flow_store/att1_definitions_20261016.json, y att1_carrito_tres_toques y att1_pago_fallido_dos_toques, las de la captura del 21/10 (att1_flow_config_20261021.json) traducidas con ATT1_TOUCHES_20261021 y normalizadas; las otras son minimas, con solo lo que se compila (horario, pasos y termina).",
     "expected": "La fila de followup_policy_versions que se compila, sin status ni aprobacion: policy_key 'flujo:' || flow_id, version, purpose, timezone, business_windows (una ventana, days del 1 al 7 en orden), los intervalos en segundos (grace_period_seconds y expires_after_seconds; en SQL, extract(epoch from ...)), max_automatic_messages y steps: un paso por envio, con el step_key de la forma de su legacy_kind (flow_policy.STEPS_BY_LEGACY_KIND); desde el segundo, delay (el texto del legado, '24 hours': la suma de las esperas desde el primer envio) y approved_template true, y coupon_ordinal en el paso con el cupon personal de ordinal 2 o mas (el primero va sin marca). Es CompiledPolicy.as_json().",
-    "error": "El codigo de PolicyCompileError (en SQL, el message del raise). Se mira en este orden y gana el primero: flow_id, version, legacy_kind, horario, pasos y vence. Los pasos, de arriba abajo: el tipo de cada paso, una espera sin leer, y en cada envio, que tenga lugar en la forma (flow_policy_not_compilable:more_sends_than_steps) y su cupon (coupon_not_allowed, fixed_coupon o coupon_missing, con el step_key); al final, que haya un envio y que no quede una espera despues del ultimo (compile_policy_step_after_send)."
+    "error": "El codigo de PolicyCompileError (en SQL, el message del raise). Se mira en este orden y gana el primero: flow_id, version, legacy_kind, horario, pasos y vence. Los pasos, de arriba abajo: el tipo de cada paso, una espera sin leer, y en cada envio, que tenga lugar en la forma (flow_policy_not_compilable:more_sends_than_steps) que haya al menos un minuto desde el envio anterior (espera_entre_envios), su cupon (coupon_not_allowed, fixed_coupon o coupon_missing) y sus variables, las de la tupla fija del bridge para ese paso (variables_differ), todos con el step_key; al final, que haya un envio y que no quede una espera despues del ultimo (compile_policy_step_after_send)."
   },
   "cases": [
     {
@@ -1513,11 +1513,14 @@
           },
           "pasos": [
             {
-              "plantilla": "att1_carrito_abandonado_01",
+              "plantilla": "att1_carrito_descuento_01",
               "idioma": "es_MX",
               "variables": [
                 "nombre",
-                "producto"
+                "producto",
+                "cuando",
+                "precio",
+                "vence"
               ],
               "boton": {
                 "link": "checkout",
@@ -1528,7 +1531,7 @@
               "esperar": "24h"
             },
             {
-              "plantilla": "att1_carrito_abandonado_01",
+              "plantilla": "att1_carrito_dudas_01",
               "idioma": "es_MX",
               "variables": [
                 "nombre",
@@ -1539,11 +1542,12 @@
               "esperar": "48h"
             },
             {
-              "plantilla": "att1_carrito_abandonado_01",
+              "plantilla": "att1_ultima_renovacion_01",
               "idioma": "es_MX",
               "variables": [
                 "nombre",
-                "producto"
+                "producto",
+                "vence"
               ],
               "boton": {
                 "link": "checkout",
@@ -1554,7 +1558,7 @@
               "esperar": "24h"
             },
             {
-              "plantilla": "att1_carrito_abandonado_01",
+              "plantilla": "att1_carrito_dudas_01",
               "idioma": "es_MX",
               "variables": [
                 "nombre",
@@ -1588,11 +1592,14 @@
           },
           "pasos": [
             {
-              "plantilla": "att1_carrito_abandonado_01",
+              "plantilla": "att1_carrito_descuento_01",
               "idioma": "es_MX",
               "variables": [
                 "nombre",
-                "producto"
+                "producto",
+                "cuando",
+                "precio",
+                "vence"
               ],
               "boton": {
                 "link": "checkout",
@@ -1603,7 +1610,7 @@
               "esperar": "24h"
             },
             {
-              "plantilla": "att1_carrito_abandonado_01",
+              "plantilla": "att1_carrito_dudas_01",
               "idioma": "es_MX",
               "variables": [
                 "nombre",
@@ -1618,11 +1625,12 @@
               "esperar": "48h"
             },
             {
-              "plantilla": "att1_carrito_abandonado_01",
+              "plantilla": "att1_ultima_renovacion_01",
               "idioma": "es_MX",
               "variables": [
                 "nombre",
-                "producto"
+                "producto",
+                "vence"
               ],
               "boton": {
                 "link": "checkout",
@@ -1656,11 +1664,14 @@
           },
           "pasos": [
             {
-              "plantilla": "att1_carrito_abandonado_01",
+              "plantilla": "att1_carrito_descuento_01",
               "idioma": "es_MX",
               "variables": [
                 "nombre",
-                "producto"
+                "producto",
+                "cuando",
+                "precio",
+                "vence"
               ],
               "boton": {
                 "link": "checkout",
@@ -1671,7 +1682,7 @@
               "esperar": "24h"
             },
             {
-              "plantilla": "att1_carrito_abandonado_01",
+              "plantilla": "att1_carrito_dudas_01",
               "idioma": "es_MX",
               "variables": [
                 "nombre",
@@ -1682,11 +1693,12 @@
               "esperar": "48h"
             },
             {
-              "plantilla": "att1_carrito_abandonado_01",
+              "plantilla": "att1_ultima_renovacion_01",
               "idioma": "es_MX",
               "variables": [
                 "nombre",
-                "producto"
+                "producto",
+                "vence"
               ]
             }
           ],
@@ -1741,6 +1753,161 @@
         "fixed_zone": null
       },
       "error": "flow_policy_not_compilable:fixed_coupon:first_contact"
+    },
+    {
+      "id": "variables_cambiadas",
+      "que": "A2 con sus variables en otro orden: el bridge manda las de su tupla fija (cart_followups.py:67), asi que no se compila.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_descuento_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto",
+                "cuando",
+                "precio",
+                "vence"
+              ],
+              "boton": {
+                "link": "checkout",
+                "cupon": "personal"
+              }
+            },
+            {
+              "esperar": "24h"
+            },
+            {
+              "plantilla": "att1_carrito_dudas_01",
+              "idioma": "es_MX",
+              "variables": [
+                "producto",
+                "nombre"
+              ]
+            },
+            {
+              "esperar": "48h"
+            },
+            {
+              "plantilla": "att1_ultima_renovacion_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto",
+                "vence"
+              ],
+              "boton": {
+                "link": "checkout",
+                "cupon": "personal"
+              }
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "5d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "error": "flow_policy_not_compilable:variables_differ:cart_second_touch"
+    },
+    {
+      "id": "a1_con_cupon_y_dos_variables",
+      "que": "A1 con el cupon personal y solo nombre y producto: con el cupon, el bridge manda cinco (cart_first_touch.py:33).",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_descuento_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ],
+              "boton": {
+                "link": "checkout",
+                "cupon": "personal"
+              }
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "5d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "error": "flow_policy_not_compilable:variables_differ:first_contact"
+    },
+    {
+      "id": "sin_espera_entre_envios",
+      "que": "A1 y A2 sin espera entre los dos: el delay no crece y el traductor no lo puede volver a leer.",
+      "input": {
+        "definition": {
+          "horario": {
+            "zona": "America/Mexico_City",
+            "desde": "09:00",
+            "hasta": "21:00"
+          },
+          "pasos": [
+            {
+              "plantilla": "att1_carrito_descuento_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto",
+                "cuando",
+                "precio",
+                "vence"
+              ],
+              "boton": {
+                "link": "checkout",
+                "cupon": "personal"
+              }
+            },
+            {
+              "plantilla": "att1_carrito_dudas_01",
+              "idioma": "es_MX",
+              "variables": [
+                "nombre",
+                "producto"
+              ]
+            }
+          ],
+          "termina": {
+            "si": [
+              "compra"
+            ],
+            "vence": "5d"
+          }
+        },
+        "flow_id": "1b0000ff-0000-4000-8000-00000000c0ff",
+        "version": 1,
+        "legacy_kind": "carrito",
+        "fixed_zone": null
+      },
+      "error": "flow_policy_not_compilable:espera_entre_envios:cart_second_touch"
     },
     {
       "id": "sin_envio",
