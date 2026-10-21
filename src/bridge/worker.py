@@ -1128,11 +1128,51 @@ class DurableDispatcher:
                 type(exc).__name__,
             )
 
+    async def _case_conversation_jids(
+        self,
+        *,
+        action: ScheduledAction,
+        now: str,
+        buyer_phone: str | None,
+    ) -> list[str | None]:
+        """The JIDs the case's own conversation may carry in Chatwoot.
+
+        A portable instance sends to every buyer of its offers, so the
+        conversation of a following step (A2, Z, B2, C3) belongs to the case's
+        contact, not to the one JID a legacy runtime allowlists. Measured in
+        ATT1 on 2026-10-21: with the allowlisted JID every following step
+        failed ``conversation_identity_mismatch`` and closed with
+        ``chatwoot_authority_unavailable`` (17 of 17 A2). Chatwoot keeps the
+        contact as the form the first touch went to (``521`` + 10 for Mexico,
+        D13), so both equivalent forms are tried, the canonical one first.
+        Without a phone the legacy check runs unchanged and fails closed.
+        """
+        if not self._portable_recipient_enabled:
+            return [None]
+        if buyer_phone is None:
+            execution_context = await self._supabase.get_followup_execution_context(
+                action_id=action.action_id,
+                worker_id=self._worker_id,
+                lease_generation=action.lease_generation,
+                now=now,
+            )
+            _validate_followup_execution_context(action, execution_context)
+            buyer_phone = execution_context.buyer_phone
+        if self._whatsapp_equivalence_enabled:
+            forms = equivalent_whatsapp_phones(buyer_phone)
+        else:
+            digits = "".join(ch for ch in buyer_phone or "" if ch.isdigit())
+            forms = (digits,) if digits else ()
+        if not forms:
+            return [None]
+        return [f"{form}@s.whatsapp.net" for form in forms]
+
     async def _load_chatwoot_evidence(
         self,
         *,
         action: ScheduledAction,
         now: str,
+        buyer_phone: str | None = None,
     ) -> dict[str, object] | None:
         evidence: dict[str, object] | None = None
         try:
@@ -1150,12 +1190,32 @@ class DurableDispatcher:
                 and context.expected_inbox_id is not None
             ):
                 observed_at = datetime.fromisoformat(action.anchor_observed_at)
-                snapshot = await self._chatwoot.get_canonical_conversation_snapshot(
-                    conversation_id=context.external_conversation_id,
-                    expected_inbox_id=context.expected_inbox_id,
-                    anchor_message_id=context.anchor_external_message_id,
-                    anchor_observed_at_epoch=int(observed_at.timestamp()),
+                candidates = await self._case_conversation_jids(
+                    action=action, now=now, buyer_phone=buyer_phone
                 )
+                for index, expected_jid in enumerate(candidates):
+                    # A legacy runtime keeps the call it always made.
+                    identity = (
+                        {} if expected_jid is None else {"expected_jid": expected_jid}
+                    )
+                    try:
+                        snapshot = (
+                            await self._chatwoot.get_canonical_conversation_snapshot(
+                                conversation_id=context.external_conversation_id,
+                                expected_inbox_id=context.expected_inbox_id,
+                                anchor_message_id=context.anchor_external_message_id,
+                                anchor_observed_at_epoch=int(observed_at.timestamp()),
+                                **identity,
+                            )
+                        )
+                    except ChatwootProtocolError as exc:
+                        if (
+                            str(exc) == "conversation_identity_mismatch"
+                            and index + 1 < len(candidates)
+                        ):
+                            continue
+                        raise
+                    break
                 if (
                     snapshot.checkpoint_message_id is not None
                     and snapshot.checkpoint_created_at is not None
@@ -2194,6 +2254,7 @@ class DurableDispatcher:
                                     await self._load_chatwoot_evidence(
                                         action=action,
                                         now=final_now,
+                                        buyer_phone=execution_context.buyer_phone,
                                     )
                                 )
                                 final_decision = (

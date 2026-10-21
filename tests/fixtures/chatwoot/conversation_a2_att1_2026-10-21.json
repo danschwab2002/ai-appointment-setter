@@ -1,0 +1,21 @@
+{
+  "_origen": "GET /api/v1/accounts/2/conversations/368 del Chatwoot de ATT1 (inbox 11), leido en solo lectura desde el contenedor del bridge el 2026-10-21 ≈14:30Z, para un A2 pendiente. Solo los campos que lee la verificacion canonica; telefono reemplazado por uno de prueba en la misma forma (521 + 10), nombre fuera. El contacto de WABA no trae identifier ni source_id: la identidad sale de phone_number.",
+  "id": 368,
+  "inbox_id": 11,
+  "status": "open",
+  "can_reply": false,
+  "labels": [],
+  "contact_inbox": {
+    "source_id": null
+  },
+  "meta": {
+    "sender": {
+      "id": 587,
+      "identifier": null,
+      "phone_number": "+5215500000001",
+      "blocked": false,
+      "type": null
+    },
+    "assignee": null
+  }
+}

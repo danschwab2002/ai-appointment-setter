@@ -121,7 +121,7 @@ def test_the_unsafe_name_is_backed_by_d1_of_the_dispatcher() -> None:
     from bridge.lead_first_name import template_greeting_name_is_safe
 
     [unsafe] = [exception for exception in EXCEPTIONS_V1 if exception.name == "nombre_inseguro_cierra"]
-    assert unsafe.cita == "src/bridge/worker.py:1322-1338"
+    assert unsafe.cita == "src/bridge/worker.py:1382-1398"
     assert "template_greeting_name_is_safe(name_value)" in _cited_lines(unsafe)[0]
     [names] = [mark.args[1] for mark in d1.pytestmark if mark.name == "parametrize" and mark.args[0] == "name"]
     values = [name.values[0] if hasattr(name, "values") else name for name in names]
