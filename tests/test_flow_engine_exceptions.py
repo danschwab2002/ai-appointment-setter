@@ -26,6 +26,7 @@ from bridge.flow_parity import EXCEPTIONS_V1, FlowException
 from bridge.instance_manifest import TEMPLATE_SLOTS
 
 ROOT = Path(__file__).resolve().parents[1]
+CART = frozenset({"carrito"})
 CART_AND_PAYMENT = frozenset({"carrito", "pago_fallido"})
 WITH_FIRST_CONTACT = frozenset({"carrito", "pago_fallido", "precheckout"})
 
@@ -42,6 +43,14 @@ EXPECTED = (
     ("5", "nombre_inseguro_cierra", WITH_FIRST_CONTACT, "despacho"),
     ("5b", "fallo_permanente_deja_el_caso_abierto", WITH_FIRST_CONTACT, "sql"),
     ("6", "persona_es_el_contacto", WITH_FIRST_CONTACT, "sql"),
+    # Las de los varios toques (T2.1, 2026-10-21): A1, A2 y Z del carrito y el seguimiento
+    # del pago rechazado. No son filas de §1.7: van con su nombre.
+    ("t2.1", "a1_espera_al_cupon", CART, "despacho"),
+    ("t2.1", "a1_cupon_por_flag", CART, "despacho"),
+    ("t2.1", "toque_con_cupon_cierra_sin_cupon", CART_AND_PAYMENT, "despacho"),
+    ("t2.1", "renovacion_adelanta_el_ultimo_toque", CART, "sql"),
+    ("t2.1", "renovacion_sobrevive_a_la_respuesta", CART, "sql"),
+    ("t2.1", "boton_con_off_discount", CART_AND_PAYMENT, "despacho"),
 )
 
 # Lo que tiene que estar en las lineas citadas de cada una: el codigo de hoy
@@ -57,6 +66,12 @@ MARKS = {
     "nombre_inseguro_cierra": "retryable=False",
     "fallo_permanente_deja_el_caso_abierto": "permanent_failed",
     "persona_es_el_contacto": "rc.contact_id = p_contact_id",
+    "a1_espera_al_cupon": 'CartDiscountFallback("recovery_coupon_not_ready_in_time")',
+    "a1_cupon_por_flag": "if settings.recovery_discount_first_touch_enabled:",
+    "toque_con_cupon_cierra_sin_cupon": "reason=CART_LAST_TOUCH_COUPON_NOT_READY_IN_TIME, retryable=False",
+    "renovacion_adelanta_el_ultimo_toque": "set due_at = least(action.due_at, now())",
+    "renovacion_sobrevive_a_la_respuesta": "and not public._recovery_renewal_requested(v_action.id)",
+    "boton_con_off_discount": "followup_button_suffix(reservation.checkout_url_final, coupon.code)",
 }
 
 _NAME = re.compile(r"[a-z][a-z0-9_]{2,59}")
@@ -86,12 +101,29 @@ def test_there_is_one_entry_for_each_e_of_the_cart_and_the_payment_failure_in_or
         (name, kinds) for _, name, kinds, _ in EXPECTED]
 
 
-def test_every_exception_is_sql_except_the_unsafe_name_which_is_the_dispatchers() -> None:
+def test_every_exception_is_sql_or_the_dispatchers() -> None:
     assert {exception.name: exception.layer for exception in EXCEPTIONS_V1} == {
         name: layer for _, name, _, layer in EXPECTED}
     assert all(exception.layer in LAYERS for exception in EXCEPTIONS_V1)
+    # De las de §1.7, solo el nombre inseguro es del despachador; de los varios toques, lo que
+    # arma el bridge (el cupon de A1, el toque que espera al cupon 2 y el boton).
     assert [exception.name for exception in EXCEPTIONS_V1 if exception.layer == "despacho"] == [
-        "nombre_inseguro_cierra"]
+        "nombre_inseguro_cierra", "a1_espera_al_cupon", "a1_cupon_por_flag", "toque_con_cupon_cierra_sin_cupon",
+        "boton_con_off_discount"]
+
+
+def test_only_the_several_touches_ones_are_by_step() -> None:
+    # Las de la T2.1 las aplica codigo que elige por el paso: no las hereda todo flujo del motor.
+    assert [exception.name for exception in EXCEPTIONS_V1 if exception.by_step] == [
+        name for row, name, _, _ in EXPECTED if row == "t2.1"]
+
+
+def test_the_payment_failure_followup_reuses_the_last_touch_of_the_cart() -> None:
+    # toque_con_cupon_cierra_sin_cupon y boton_con_off_discount citan la Z del carrito para el pago
+    # fallido tambien: su seguimiento la reusa (portable-payment-failure-followup-v1.md, «El envio»).
+    source = (ROOT / "src" / "bridge" / "payment_failure_followups.py").read_text(encoding="utf-8")
+    assert "compose_cart_last_touch" in source
+    assert "CART_LAST_TOUCH_COUPON_NOT_READY_IN_TIME" in source
 
 
 def test_no_legacy_kind_is_outside_the_template_slots() -> None:

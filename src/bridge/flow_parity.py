@@ -199,8 +199,13 @@ class FlowException:
     layer: str                      # "plan" | "puerta" | "despacho" | "sql"
     cita: str                       # archivo:linea del comportamiento de hoy
     descripcion: str
+    # Si el codigo que la aplica elige por el paso (el step_key de la forma del legacy_kind, o su
+    # coupon_ordinal): entonces la tiene solo un flujo de esos legacy_kinds, aunque sea de capa sql
+    # o despacho. Las de los varios toques (T2.1).
+    by_step: bool = False
 
 
+_CARRITO = frozenset({"carrito"})
 _CARRITO_PAGO = frozenset({"carrito", "pago_fallido"})
 _CON_PRIMER_CONTACTO = frozenset({"carrito", "pago_fallido", "precheckout"})
 
@@ -208,6 +213,14 @@ _CON_PRIMER_CONTACTO = frozenset({"carrito", "pago_fallido", "precheckout"})
 # 4, 4b, 4c, 5, 5b y 6. Las de capa sql y despacho las aplica codigo que el
 # motor reusa, asi que las hereda todo flujo del motor (§2.8). Las citas son de
 # 7c0a61b.
+#
+# Despues, las de los varios toques (T2.1, 2026-10-21; las citas son de b163669):
+# lo que hacen hoy A1, A2 y Z del carrito y el seguimiento del pago rechazado y
+# que el esquema no escribe. Las de la ficha y las variantes de B1 no entran: no
+# se migran en la Etapa 1. Son de capa sql o despacho, pero el codigo que las
+# aplica elige por el paso (el bridge por el step_key del carrito o del pago
+# rechazado, la base por coupon_ordinal), asi que llevan by_step: las tiene solo
+# un flujo de sus legacy_kinds.
 EXCEPTIONS_V1: tuple[FlowException, ...] = (
     FlowException(
         "toma_humana_en_su_conversacion", _CARRITO_PAGO, "sql",
@@ -261,6 +274,49 @@ EXCEPTIONS_V1: tuple[FlowException, ...] = (
         "persona_es_el_contacto", _CON_PRIMER_CONTACTO, "sql",
         "supabase/migrations/20260803000100_followup_engine_v1.sql:475-485",
         "La persona es el contacto, no las dos formas del movil.",
+    ),
+    FlowException(
+        "a1_espera_al_cupon", _CARRITO, "despacho",
+        "src/bridge/cart_first_touch.py:130-139",
+        "A1 espera unos minutos a que el cupon 1 este valid; si no llega a tiempo, o murio, sale la"
+        " plantilla de hoy, sin descuento (la del manifiesto). A1 no se pierde por el cupon.",
+        by_step=True,
+    ),
+    FlowException(
+        "a1_cupon_por_flag", _CARRITO, "despacho",
+        "src/bridge/app.py:4902-4903",
+        "Que A1 lleve el cupon personal lo decide RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED, no la"
+        " politica: el primer paso no tiene coupon_ordinal.",
+        by_step=True,
+    ),
+    FlowException(
+        "toque_con_cupon_cierra_sin_cupon", _CARRITO_PAGO, "despacho",
+        "src/bridge/cart_followups.py:215-230",
+        "Un toque siguiente con cupon (Z del carrito, y B2 o Z del pago rechazado, que la reusan) espera"
+        " al cupon 2 y, si no esta valid a tiempo o murio, cierra sin mensaje: no hay toque sin el"
+        " descuento que promete.",
+        by_step=True,
+    ),
+    FlowException(
+        "renovacion_adelanta_el_ultimo_toque", _CARRITO, "sql",
+        "supabase/migrations/20261019000600_recovery_followup_steps_v1.sql:214-217",
+        "La respuesta «Quiero mi 10 %» a A2 adelanta Z: el paso pendiente con cupon de esa"
+        " conversacion pasa a vencer ya, en vez de esperar su delay.",
+        by_step=True,
+    ),
+    FlowException(
+        "renovacion_sobrevive_a_la_respuesta", _CARRITO, "sql",
+        "supabase/migrations/20261019000800_portable_payment_slip_reminder_survives_reply_v1.sql:58-72",
+        "El paso que adelanto la renovacion no se cancela por la respuesta que la pidio"
+        " (prospect_replied); la compra, la baja y la derivacion lo cortan igual.",
+        by_step=True,
+    ),
+    FlowException(
+        "boton_con_off_discount", _CARRITO_PAGO, "despacho",
+        "src/bridge/cart_followups.py:277-279",
+        "El boton de un toque con cupon es nuestro link emitido mas &offDiscount=<codigo>: el cupon"
+        " va en el boton, no en la definicion.",
+        by_step=True,
     ),
 )
 

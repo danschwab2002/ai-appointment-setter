@@ -310,12 +310,15 @@ def exceptions_for(legacy_kind: str | None) -> frozenset[str]:
     """Las excepciones del catalogo que tiene un flujo del motor (§2.8 del diseno).
 
     Las de capa ``sql`` y ``despacho`` siempre: las aplica codigo que el motor
-    reusa. Las de capa ``plan`` y ``puerta``, solo las del ``legacy_kind`` del
-    flujo. El catalogo es ``flow_parity.EXCEPTIONS_V1``, importado.
+    reusa. Las de capa ``plan`` y ``puerta``, y las que el codigo aplica por el
+    paso (``by_step``, las de los varios toques de la T2.1), solo las del
+    ``legacy_kind`` del flujo. El catalogo es ``flow_parity.EXCEPTIONS_V1``,
+    importado.
     """
     return frozenset(
         item.name for item in EXCEPTIONS_V1
-        if item.layer in ALWAYS_LAYERS or (legacy_kind is not None and legacy_kind in item.legacy_kinds)
+        if (item.layer in ALWAYS_LAYERS and not item.by_step)
+        or (legacy_kind is not None and legacy_kind in item.legacy_kinds)
     )
 
 
