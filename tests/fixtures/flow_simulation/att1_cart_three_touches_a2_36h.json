@@ -1,0 +1,189 @@
+{
+ "_doc": [
+  "El primer cambio de Brayan, simulado (T2.1, 2026-10-21): A2 a las 36 h del primer envio en vez de 24, con Z a las 72 h, como antes. Lo genera tests/test_flow_engine_simulate_att1.py (test_a2_at_36_hours_document_is_what_the_translator_gives).",
+  "vigente: el carrito de att1-recuperacion v7 (att1-carrito-tres-toques v1), traducido de flow_store/att1_flow_config_20261021.json con ATT1_TOUCHES_20261021 y normalizado. propuesta: el mismo con las dos esperas en 36h. Cada uno es una version nueva sobre la v5 de att1_definitions_by_scope_version.json; el pago fallido sigue en su v5.",
+  "regenerar: FLOW_SIMULATION_FIXTURE_DIR=tests/fixtures/flow_simulation uv run pytest tests/test_flow_engine_simulate_att1.py -k a2_at_36"
+ ],
+ "vigente": [
+  {
+   "producto": "att1",
+   "flujo": "carrito",
+   "flow_id": "1b000003-0000-4000-8000-0000000c0001",
+   "tipo": "version",
+   "definicion": {
+    "esquema": "setter-flujo/v1",
+    "flujo": "carrito",
+    "producto": "att1",
+    "nombre": "Carrito abandonado",
+    "estado": "borrador",
+    "dispara": {
+     "evento": "carrito"
+    },
+    "entra": {
+     "permiso": "formulario",
+     "contesto_a": []
+    },
+    "pasos": [
+     {
+      "plantilla": "att1_carrito_descuento_01",
+      "idioma": "es_MX",
+      "variables": [
+       "nombre",
+       "producto"
+      ],
+      "boton": {
+       "link": "checkout",
+       "cupon": "personal"
+      }
+     },
+     {
+      "esperar": "24h"
+     },
+     {
+      "plantilla": "att1_carrito_dudas_01",
+      "idioma": "es_MX",
+      "variables": [
+       "nombre",
+       "producto"
+      ]
+     },
+     {
+      "esperar": "48h"
+     },
+     {
+      "plantilla": "att1_ultima_renovacion_01",
+      "idioma": "es_MX",
+      "variables": [
+       "nombre",
+       "producto"
+      ],
+      "boton": {
+       "link": "checkout",
+       "cupon": "personal"
+      }
+     }
+    ],
+    "termina": {
+     "si": [
+      "compra"
+     ],
+     "vence": "5d"
+    },
+    "horario": {
+     "zona": "America/Mexico_City",
+     "desde": "09:00",
+     "hasta": "21:00"
+    },
+    "topes": {
+     "bolsa": "att1-recuperacion",
+     "por_dia": 240,
+     "total": 5000,
+     "repeticion": {
+      "una_por": "persona_y_oferta",
+      "otra_despues_de": "0m"
+     }
+    },
+    "prioridad": {
+     "le_gana_a": [
+      "precheckout"
+     ],
+     "no_arranca_mientras": [
+      "pago_fallido"
+     ]
+    }
+   },
+   "en_curso": "seguir"
+  }
+ ],
+ "propuesta": [
+  {
+   "producto": "att1",
+   "flujo": "carrito",
+   "flow_id": "1b000003-0000-4000-8000-0000000c0001",
+   "tipo": "version",
+   "definicion": {
+    "esquema": "setter-flujo/v1",
+    "flujo": "carrito",
+    "producto": "att1",
+    "nombre": "Carrito abandonado",
+    "estado": "borrador",
+    "dispara": {
+     "evento": "carrito"
+    },
+    "entra": {
+     "permiso": "formulario",
+     "contesto_a": []
+    },
+    "pasos": [
+     {
+      "plantilla": "att1_carrito_descuento_01",
+      "idioma": "es_MX",
+      "variables": [
+       "nombre",
+       "producto"
+      ],
+      "boton": {
+       "link": "checkout",
+       "cupon": "personal"
+      }
+     },
+     {
+      "esperar": "36h"
+     },
+     {
+      "plantilla": "att1_carrito_dudas_01",
+      "idioma": "es_MX",
+      "variables": [
+       "nombre",
+       "producto"
+      ]
+     },
+     {
+      "esperar": "36h"
+     },
+     {
+      "plantilla": "att1_ultima_renovacion_01",
+      "idioma": "es_MX",
+      "variables": [
+       "nombre",
+       "producto"
+      ],
+      "boton": {
+       "link": "checkout",
+       "cupon": "personal"
+      }
+     }
+    ],
+    "termina": {
+     "si": [
+      "compra"
+     ],
+     "vence": "5d"
+    },
+    "horario": {
+     "zona": "America/Mexico_City",
+     "desde": "09:00",
+     "hasta": "21:00"
+    },
+    "topes": {
+     "bolsa": "att1-recuperacion",
+     "por_dia": 240,
+     "total": 5000,
+     "repeticion": {
+      "una_por": "persona_y_oferta",
+      "otra_despues_de": "0m"
+     }
+    },
+    "prioridad": {
+     "le_gana_a": [
+      "precheckout"
+     ],
+     "no_arranca_mientras": [
+      "pago_fallido"
+     ]
+    }
+   },
+   "en_curso": "seguir"
+  }
+ ]
+}
