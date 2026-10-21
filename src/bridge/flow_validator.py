@@ -4,8 +4,10 @@ siete advertencias y los chequeos del ciclo.
 
 Contratos: docs/contracts/flow-definition-v1.md («Las reglas del validador») y
 docs/contracts/flow-change-cycle-v1.md (la propuesta, la decision 4 y el OK
-del cliente). La regla 14 y la 16 van con el motor (pieza 2): esta pieza no
-mira lo que el motor ejecuta ni el manifiesto.
+del cliente). La regla 16 va con el motor (pieza 2), y de la 14 esta pieza mira
+solo, al publicar un flujo con ``legacy_kind`` (``WorldFlow.legacy_kind``), que
+la definicion compile a la politica de su flujo del legado (T2.1); lo demas lo
+mira ``flow_engine.not_supported``.
 
 Corre una sola vez, aca, en Python. La base no lo repite: se queda con sus
 cuatro invariantes y con la regla de que nadie publica sin una revalidacion
@@ -80,6 +82,7 @@ from .flow_definition import (
     trigger_of,
     ITEMS_MAX_BYTES,
 )
+from .flow_policy import PolicyCompileError, compile_policy
 
 __all__ = [
     "ACTORS", "BLOCK_CODES", "CATALOG", "CHECKOUT_BUTTON_URL", "PHASES", "RULES_VERSION",
@@ -299,6 +302,54 @@ VARIABLE_NEEDS_EVENT_TRIGGER = _spec(
     limit="cuando, solo con un disparador de evento",
     alternative="Sacar la variable, o usar una plantilla sin ese marcador.",
 )
+# La regla 14 cuando el flujo tiene legacy_kind (T2.1): lo que se publica tiene que compilar a la
+# politica de su flujo del legado (flow_policy.compile_policy). El detalle de
+# flow_policy_not_compilable, sin el step_key, es el codigo; la ruta es el paso.
+_SHAPE_LIMIT = "La forma de su flujo del legado: los toques, el cupón y las variables de cada uno"
+_SHAPE_ALTERNATIVE = "Dejar los toques como están; agregar, sacar o cambiar uno es un cambio con PR y aprobación."
+ENGINE_NOT_SUPPORTED_MORE_SENDS = _spec(
+    "engine_not_supported:more_sends_than_steps", 14, KIND_NOT_YET,
+    "El flujo tiene más envíos que los pasos de su flujo del legado.",
+    limit=_SHAPE_LIMIT, alternative=_SHAPE_ALTERNATIVE,
+)
+ENGINE_NOT_SUPPORTED_COUPON_NOT_ALLOWED = _spec(
+    "engine_not_supported:coupon_not_allowed", 14, KIND_NOT_YET,
+    "Ese paso de su flujo del legado no lleva cupón personal.",
+    limit=_SHAPE_LIMIT, alternative=_SHAPE_ALTERNATIVE,
+)
+ENGINE_NOT_SUPPORTED_COUPON_MISSING = _spec(
+    "engine_not_supported:coupon_missing", 14, KIND_NOT_YET,
+    "Ese paso de su flujo del legado sale solo con su cupón personal: sin él, cierra sin mensaje.",
+    limit=_SHAPE_LIMIT, alternative="Dejar el botón con cupon: personal en ese paso.",
+)
+ENGINE_NOT_SUPPORTED_FIXED_COUPON = _spec(
+    "engine_not_supported:fixed_coupon", 14, KIND_NOT_YET,
+    "El flujo del legado no manda un cupón fijo en un paso: solo el personal.",
+    limit=_SHAPE_LIMIT, alternative="Usar cupon: personal, o sacar el cupón del paso.",
+)
+ENGINE_NOT_SUPPORTED_VARIABLES_DIFFER = _spec(
+    "engine_not_supported:variables_differ", 14, KIND_NOT_YET,
+    "El bridge manda ese paso con sus variables fijas, en su orden: otras no llegan a la plantilla.",
+    limit=_SHAPE_LIMIT, alternative="Escribir las variables del paso como las manda el bridge.",
+)
+ENGINE_NOT_SUPPORTED_WAIT_BETWEEN_SENDS = _spec(
+    "engine_not_supported:espera_entre_envios", 14, KIND_NOT_YET,
+    "Entre dos envíos tiene que haber al menos un minuto de espera.",
+    limit="Al menos un minuto entre dos envíos", alternative="Sumar una espera entre los dos envíos.",
+)
+ENGINE_NOT_SUPPORTED_WAIT_AFTER_SEND = _spec(
+    "engine_not_supported:espera_despues_del_envio", 14, KIND_NOT_YET,
+    "Una espera después del último envío no lleva a nada, y el motor no la ejecuta.",
+    limit="Las esperas, antes de un envío", alternative="Sacar la espera del final.",
+)
+_COMPILE_DETAIL_SPECS: Mapping[str, CodeSpec] = {
+    "more_sends_than_steps": ENGINE_NOT_SUPPORTED_MORE_SENDS,
+    "coupon_not_allowed": ENGINE_NOT_SUPPORTED_COUPON_NOT_ALLOWED,
+    "coupon_missing": ENGINE_NOT_SUPPORTED_COUPON_MISSING,
+    "fixed_coupon": ENGINE_NOT_SUPPORTED_FIXED_COUPON,
+    "variables_differ": ENGINE_NOT_SUPPORTED_VARIABLES_DIFFER,
+    "espera_entre_envios": ENGINE_NOT_SUPPORTED_WAIT_BETWEEN_SENDS,
+}
 COUPON_PERSONAL_LIMIT = _spec(
     "coupon_personal_limit", 15, KIND_PROTECTION,
     "Un camino lleva más de dos cupones personales, y a cada caso le tocan a lo sumo dos códigos.",
@@ -402,6 +453,9 @@ _VALIDATOR_CODES: tuple[CodeSpec, ...] = (
     TEMPLATE_LANGUAGE_MISMATCH, TEMPLATE_VARIABLE_COUNT_MISMATCH, TEMPLATE_BUTTON_MISMATCH,
     TEMPLATE_CATALOG_UNAVAILABLE, COUPON_CHANGE_NOT_SUPPORTED, COUPON_PERSONAL_LIMIT,
     VARIABLE_NEEDS_PERSONAL_COUPON, VARIABLE_NEEDS_EVENT_TRIGGER,
+    ENGINE_NOT_SUPPORTED_MORE_SENDS, ENGINE_NOT_SUPPORTED_COUPON_NOT_ALLOWED, ENGINE_NOT_SUPPORTED_COUPON_MISSING,
+    ENGINE_NOT_SUPPORTED_FIXED_COUPON, ENGINE_NOT_SUPPORTED_VARIABLES_DIFFER,
+    ENGINE_NOT_SUPPORTED_WAIT_BETWEEN_SENDS, ENGINE_NOT_SUPPORTED_WAIT_AFTER_SEND,
     PURCHASE_PERMISSION_REQUIRES_SINGLE_UTILITY_SEND, FLOW_CREATION_NOT_ENABLED,
     CHANGE_OUTSIDE_1B_SCOPE, TRIGGER_CHANGE_IS_ANOTHER_FLOW, FLOW_CHANGE_STALE_BASE,
     ROLLBACK_TARGET_NOT_FOUND, ROLLBACK_TARGET_IS_ACTIVE, STATE_TRANSITION_INVALID,
@@ -938,6 +992,7 @@ class _Run:
             self._rule11(emitter, definition)
             self._rule12(emitter, definition)
             categories = self._rule13(emitter, definition)
+            self._rule14_compiles(emitter, definition, flow)
             if active is not None:
                 self._rule15(emitter, definition, active)
             self._rule15_personal(emitter, definition)
@@ -1354,6 +1409,38 @@ class _Run:
                 emitter.add(COUPON_CHANGE_NOT_SUPPORTED, at + ("boton", "cupon"))
                 return
         emitter.add(COUPON_CHANGE_NOT_SUPPORTED, ("pasos",))
+
+    def _rule14_compiles(self, emitter: _Emitter, definition: Mapping[str, Any], flow: WorldFlow) -> None:
+        """Con ``legacy_kind``, lo que se publica compila a la politica de su flujo del legado (T2.1).
+
+        Solo se convierte lo que es de la forma (``flow_policy_not_compilable``) y la
+        espera despues del ultimo envio. Lo demas que no compila (el horario, el vence,
+        un tipo de paso) lo miran otras reglas.
+        """
+        if flow.legacy_kind is None:
+            return
+        try:
+            compile_policy(definition, flow_id=flow.flow_id, version=1, legacy_kind=flow.legacy_kind,
+                           fixed_zone=flow.fixed_zone)
+        except PolicyCompileError as error:
+            code = str(error)
+            steps = definition.get("pasos")
+            sends = [index for index, step in enumerate(steps) if step_type(step) == "plantilla"] if (
+                isinstance(steps, list)) else []
+            if code.startswith("flow_policy_not_compilable:"):
+                detail = code.split(":")[1]
+                spec = _COMPILE_DETAIL_SPECS.get(detail)
+                if spec is None:
+                    return
+                index = error.send_index
+                at: tuple[Segment, ...] = ("pasos", sends[index]) if index is not None and index < len(sends) else (
+                    "pasos",)
+                if spec is ENGINE_NOT_SUPPORTED_VARIABLES_DIFFER and len(at) == 2:
+                    at = at + ("variables",)
+                emitter.add(spec, at)
+            elif code == "compile_policy_step_after_send":
+                emitter.add(ENGINE_NOT_SUPPORTED_WAIT_AFTER_SEND, ("pasos", len(steps) - 1) if isinstance(
+                    steps, list) and steps else ("pasos",))
 
     def _rule15_personal(self, emitter: _Emitter, definition: Mapping[str, Any]) -> None:
         """Mas de dos ``cupon: personal`` en un camino (contrato 1.1): en el tercero, o en ``pasos`` con ramas."""

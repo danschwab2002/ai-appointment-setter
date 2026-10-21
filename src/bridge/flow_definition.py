@@ -745,6 +745,9 @@ class WorldFlow:
     generation: int = 0
     versions: Mapping[int, Mapping[str, Any]] = field(default_factory=dict)
     declared_fixed_zone: str | None = None
+    # El flujo del legado que ejecuta (carrito, pago_fallido, precheckout), si tiene: con el,
+    # el validador mira al publicar que la definicion compile a su politica (regla 14, T2.1).
+    legacy_kind: str | None = None
 
     def __post_init__(self) -> None:
         if not is_flow_id(self.flow_id):
@@ -755,6 +758,8 @@ class WorldFlow:
             raise ValueError("world_flow_state_invalid")
         if not _is_int(self.generation) or self.generation < 0:
             raise ValueError("world_flow_generation_invalid")
+        if self.legacy_kind is not None and not isinstance(self.legacy_kind, str):
+            raise ValueError("world_flow_legacy_kind_invalid")
         if not isinstance(self.versions, Mapping) or not all(
             _is_int(number) and number > 0 and isinstance(definition, Mapping)
             for number, definition in self.versions.items()

@@ -714,6 +714,356 @@
    }
   },
   {
+   "code": "engine_not_supported:coupon_missing",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 12,
+      "code": "vence_not_after_waits",
+      "kind": "forma",
+      "path": "/0/definicion/termina/vence",
+      "reason": "vence tiene que superar la suma de las esperas del camino más largo."
+     },
+     {
+      "rule": 14,
+      "code": "engine_not_supported:coupon_missing",
+      "kind": "todavia_no",
+      "path": "/0/definicion/pasos/4",
+      "limit": "La forma de su flujo del legado: los toques, el cupón y las variables de cada uno",
+      "reason": "Ese paso de su flujo del legado sale solo con su cupón personal: sin él, cierra sin mensaje.",
+      "alternative": "Dejar el botón con cupon: personal en ese paso."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "engine_not_supported:coupon_missing",
+   "case": "positivo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 12,
+      "code": "vence_not_after_waits",
+      "kind": "forma",
+      "path": "/0/definicion/termina/vence",
+      "reason": "vence tiene que superar la suma de las esperas del camino más largo."
+     },
+     {
+      "rule": 13,
+      "code": "template_variable_count_mismatch",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/4/variables",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "La plantilla pide otra cantidad de variables, o parámetros que el flujo no manda, y Meta rechazaría el envío.",
+      "alternative": "Escribir tantas variables como marcadores tiene la plantilla, en orden."
+     },
+     {
+      "rule": 13,
+      "code": "template_button_mismatch",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/4/boton",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "El botón que declara el paso no es el que tiene la plantilla aprobada.",
+      "alternative": "Declarar el botón que tiene la plantilla, o elegir otra."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "engine_not_supported:coupon_not_allowed",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 12,
+      "code": "vence_not_after_waits",
+      "kind": "forma",
+      "path": "/0/definicion/termina/vence",
+      "reason": "vence tiene que superar la suma de las esperas del camino más largo."
+     },
+     {
+      "rule": 13,
+      "code": "template_button_mismatch",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/2/boton",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "El botón que declara el paso no es el que tiene la plantilla aprobada.",
+      "alternative": "Declarar el botón que tiene la plantilla, o elegir otra."
+     },
+     {
+      "rule": 14,
+      "code": "engine_not_supported:coupon_not_allowed",
+      "kind": "todavia_no",
+      "path": "/0/definicion/pasos/2",
+      "limit": "La forma de su flujo del legado: los toques, el cupón y las variables de cada uno",
+      "reason": "Ese paso de su flujo del legado no lleva cupón personal.",
+      "alternative": "Dejar los toques como están; agregar, sacar o cambiar uno es un cambio con PR y aprobación."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "engine_not_supported:coupon_not_allowed",
+   "case": "positivo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 12,
+      "code": "vence_not_after_waits",
+      "kind": "forma",
+      "path": "/0/definicion/termina/vence",
+      "reason": "vence tiene que superar la suma de las esperas del camino más largo."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "engine_not_supported:espera_despues_del_envio",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 14,
+      "code": "engine_not_supported:espera_despues_del_envio",
+      "kind": "todavia_no",
+      "path": "/0/definicion/pasos/1",
+      "limit": "Las esperas, antes de un envío",
+      "reason": "Una espera después del último envío no lleva a nada, y el motor no la ejecuta.",
+      "alternative": "Sacar la espera del final."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "engine_not_supported:espera_despues_del_envio",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "engine_not_supported:espera_entre_envios",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 14,
+      "code": "engine_not_supported:espera_entre_envios",
+      "kind": "todavia_no",
+      "path": "/0/definicion/pasos/1",
+      "limit": "Al menos un minuto entre dos envíos",
+      "reason": "Entre dos envíos tiene que haber al menos un minuto de espera.",
+      "alternative": "Sumar una espera entre los dos envíos."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "engine_not_supported:espera_entre_envios",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "engine_not_supported:fixed_coupon",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 13,
+      "code": "template_button_mismatch",
+      "kind": "proteccion",
+      "path": "/0/definicion/pasos/0/boton",
+      "limit": "Una plantilla APPROVED del catálogo de la bandeja, en su idioma, con sus variables y su botón",
+      "reason": "El botón que declara el paso no es el que tiene la plantilla aprobada.",
+      "alternative": "Declarar el botón que tiene la plantilla, o elegir otra."
+     },
+     {
+      "rule": 14,
+      "code": "engine_not_supported:fixed_coupon",
+      "kind": "todavia_no",
+      "path": "/0/definicion/pasos/0",
+      "limit": "La forma de su flujo del legado: los toques, el cupón y las variables de cada uno",
+      "reason": "El flujo del legado no manda un cupón fijo en un paso: solo el personal.",
+      "alternative": "Usar cupon: personal, o sacar el cupón del paso."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "engine_not_supported:fixed_coupon",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "engine_not_supported:more_sends_than_steps",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 14,
+      "code": "engine_not_supported:more_sends_than_steps",
+      "kind": "todavia_no",
+      "path": "/0/definicion/pasos/3",
+      "limit": "La forma de su flujo del legado: los toques, el cupón y las variables de cada uno",
+      "reason": "El flujo tiene más envíos que los pasos de su flujo del legado.",
+      "alternative": "Dejar los toques como están; agregar, sacar o cambiar uno es un cambio con PR y aprobación."
+     }
+    ],
+    "warnings": [
+     {
+      "rule": null,
+      "code": "wait_without_contesta",
+      "kind": "advertencia",
+      "path": "/0/definicion/pasos",
+      "reason": "Mientras espera, si la persona contesta otra plantilla nuestra, el agente no le responde hasta que este mensaje salga o venza.",
+      "alternative": "Sumar contesta a termina.si."
+     }
+    ]
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "engine_not_supported:more_sends_than_steps",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": [
+     {
+      "rule": null,
+      "code": "wait_without_contesta",
+      "kind": "advertencia",
+      "path": "/0/definicion/pasos",
+      "reason": "Mientras espera, si la persona contesta otra plantilla nuestra, el agente no le responde hasta que este mensaje salga o venza.",
+      "alternative": "Sumar contesta a termina.si."
+     }
+    ]
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "engine_not_supported:variables_differ",
+   "case": "negativo",
+   "result": {
+    "blocks": [
+     {
+      "rule": 14,
+      "code": "engine_not_supported:variables_differ",
+      "kind": "todavia_no",
+      "path": "/0/definicion/pasos/0/variables",
+      "limit": "La forma de su flujo del legado: los toques, el cupón y las variables de cada uno",
+      "reason": "El bridge manda ese paso con sus variables fijas, en su orden: otras no llegan a la plantilla.",
+      "alternative": "Escribir las variables del paso como las manda el bridge."
+     }
+    ],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
+   "code": "engine_not_supported:variables_differ",
+   "case": "positivo",
+   "result": {
+    "blocks": [],
+    "warnings": []
+   },
+   "validator": {
+    "contract": "setter-flujo/v1",
+    "rules_version": 1,
+    "phase": "publish",
+    "actor": "operador"
+   }
+  },
+  {
    "code": "event_requires_vence",
    "case": "negativo",
    "result": {

@@ -508,6 +508,11 @@ def test_a_touch_whose_coupon_is_not_the_policys_fails_loudly() -> None:
         TRANSLATOR.translate_att1(CONFIG_21, MANIFEST, BLOCKS, touches)
 
 
+def _registered_world_21() -> FlowWorld:
+    return FlowWorld(WorldFlow(flow_id=IDS[key], product_ref="att1", flow_key=key,
+                               legacy_kind=key if key in EVENT_FLOWS else None) for key in ORDER)
+
+
 def _first_versions_21(keys: tuple[str, ...] = EVENT_FLOWS) -> list[ProposalItem]:
     return [ProposalItem(producto="att1", flujo=key, flow_id=IDS[key], tipo="version",
                          definicion=TRANSLATED_21[key].definition, en_curso="seguir") for key in keys]
@@ -516,7 +521,7 @@ def _first_versions_21(keys: tuple[str, ...] = EVENT_FLOWS) -> list[ProposalItem
 def test_the_v7_validates_without_blocks_as_a_draft_and_the_engine_runs_it() -> None:
     from bridge.flow_engine import ENGINE_CAPABILITIES_V1, not_supported
 
-    result = validate(_first_versions_21(), actor="operador", world=_registered_world(), instance=INSTANCE,
+    result = validate(_first_versions_21(), actor="operador", world=_registered_world_21(), instance=INSTANCE,
                       catalog=CATALOG_21, phase="draft")
     assert result.blocks == ()
     # La regla 14, con las capacidades de la T2.1: tres envios, la espera entre ellos y el cupon.
@@ -527,7 +532,8 @@ def test_the_v7_validates_without_blocks_as_a_draft_and_the_engine_runs_it() -> 
 def test_the_v7_publishes_without_blocks_against_the_captured_catalog() -> None:
     # Con las variables de la 1.1 (cuando, precio y vence), cada toque declara las de su plantilla:
     # A1 cinco, A2 dos, y Z y B2 tres. La regla 13 las cuenta contra el catalogo capturado.
-    result = validate(_first_versions_21(), actor="operador", world=_registered_world(), instance=INSTANCE,
+    # Con el legacy_kind de cada flujo: la regla 14 compila la v7 a su politica (T2.1).
+    result = validate(_first_versions_21(), actor="operador", world=_registered_world_21(), instance=INSTANCE,
                       catalog=CATALOG_21, phase="publish")
     assert result.blocks == ()
     cart, payment = TRANSLATED_21["carrito"].definition, TRANSLATED_21["pago_fallido"].definition
@@ -556,15 +562,16 @@ def _published_world_21() -> FlowWorld:
         WorldFlow(flow_id=IDS[key], product_ref="att1", flow_key=key,
                   state="apagado" if key == "reactivacion" else "prendido",
                   active_version=1, generation=1, versions={1: fd.as_published(
-                      (DEFINITIONS_21 if key in EVENT_FLOWS else DEFINITIONS)[key], 1)})
+                      (DEFINITIONS_21 if key in EVENT_FLOWS else DEFINITIONS)[key], 1)},
+                  legacy_kind=key if key in EVENT_FLOWS else None)
         for key in ORDER
     )
 
 
-def _change_21(change: Callable[[dict[str, Any]], None]) -> ValidationResult:
-    draft = fd.as_draft(fd.as_published(DEFINITIONS_21["carrito"], 1))
+def _change_21(change: Callable[[dict[str, Any]], None], flow_key: str = "carrito") -> ValidationResult:
+    draft = fd.as_draft(fd.as_published(DEFINITIONS_21[flow_key], 1))
     change(draft)
-    item = ProposalItem(producto="att1", flujo="carrito", flow_id=IDS["carrito"], tipo="version",
+    item = ProposalItem(producto="att1", flujo=flow_key, flow_id=IDS[flow_key], tipo="version",
                         definicion=draft, en_curso="seguir")
     return validate([item], actor="operador", world=_published_world_21(), instance=INSTANCE,
                     catalog=CATALOG_21, phase="publish")
@@ -603,4 +610,49 @@ def test_the_red_of_a_fourth_send() -> None:
     draft = copy.deepcopy(DEFINITIONS_21["carrito"])
     fourth(draft)
     assert not_supported(draft) == ("engine_not_supported:demasiados_envios",)
+
+
+# Lo que se publica tiene que compilar (regla 14 con legacy_kind, T2.1): los rojos de la revision.
+
+def _rule_14(result: ValidationResult) -> list[tuple[str, str | None]]:
+    return [code for code in _codes(result) if code[0].startswith("engine_not_supported:")]
+
+
+def test_the_red_of_a_payment_failure_with_three_sends() -> None:
+    def third(definition: dict[str, Any]) -> None:
+        definition["pasos"].extend([{"esperar": "24h"}, copy.deepcopy(definition["pasos"][3])])
+
+    assert _rule_14(_change_21(third, "pago_fallido")) == [
+        ("engine_not_supported:more_sends_than_steps", "/pasos/5")]
+
+
+def test_the_red_of_a_first_contact_with_two_sends() -> None:
+    def second(definition: dict[str, Any]) -> None:
+        definition["pasos"].extend([{"esperar": "1h"}, copy.deepcopy(definition["pasos"][1])])
+
+    assert _rule_14(_change_21(second, "precheckout")) == [
+        ("engine_not_supported:more_sends_than_steps", "/pasos/3")]
+
+
+def test_the_red_of_the_coupon_on_a2() -> None:
+    def a2(definition: dict[str, Any]) -> None:
+        definition["pasos"][2]["boton"] = {"link": "checkout", "cupon": "personal"}
+
+    assert _rule_14(_change_21(a2)) == [("engine_not_supported:coupon_not_allowed", "/pasos/2")]
+
+
+def test_the_red_of_the_variables_changed() -> None:
+    result = _change_21(lambda d: d["pasos"][4].update(variables=["vence", "nombre", "producto"]))
+    assert _rule_14(result) == [("engine_not_supported:variables_differ", "/pasos/4/variables")]
+
+
+def test_the_red_of_a_fixed_coupon_on_a1() -> None:
+    result = _change_21(lambda d: d["pasos"][0]["boton"].update(cupon="TIROIDES10"))
+    assert _rule_14(result) == [("engine_not_supported:fixed_coupon", "/pasos/0")]
+
+
+def test_the_v7_as_published_compiles_and_a2_at_36_hours_too() -> None:
+    assert _rule_14(_change_21(lambda d: None)) == []
+    for key in EVENT_FLOWS:
+        assert _rule_14(_change_21(lambda d: None, key)) == [], key
 
