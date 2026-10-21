@@ -1,0 +1,76 @@
+{
+ "_capture": {
+  "source": "PostgREST v14.15 (public.ecr.aws/supabase/postgrest:v14.15) sobre public.ecr.aws/supabase/postgres:17.6.1.167, descartables en la Mac, con la cadena completa aplicada como postgres y un JWT de prueba del rol automation_expert_change",
+  "captured_at": "2026-10-21T16:15Z"
+ },
+ "responses": {
+  "read_flow_store_ok": {
+   "function": "read_flow_store_v1",
+   "role": "automation_expert_change",
+   "status": 200,
+   "body": {
+    "flows": [
+     {
+      "state": "apagado",
+      "flow_id": "c776e3a6-3fdd-4a1d-b7d5-86c99369e023",
+      "flow_key": "carrito",
+      "versions": {},
+      "changed_at": "2026-10-21T16:12:32.000000+00:00",
+      "generation": 0,
+      "product_ref": "att1",
+      "active_version": null,
+      "changed_by_kind": "operador"
+     }
+    ],
+    "products": [
+     "att1"
+    ],
+    "database_at": "2026-10-21T16:15:00.000000+00:00"
+   }
+  },
+  "get_proposal_not_found_P0002": {
+   "function": "get_flow_change_proposal_v1",
+   "role": "automation_expert_change",
+   "status": 500,
+   "body": {
+    "code": "P0002",
+    "details": null,
+    "hint": null,
+    "message": "flow_change_not_found"
+   }
+  },
+  "save_items_invalid_22023": {
+   "function": "save_flow_change_draft_v1",
+   "role": "automation_expert_change",
+   "status": 400,
+   "body": {
+    "code": "22023",
+    "details": null,
+    "hint": null,
+    "message": "flow_change_items_invalid"
+   }
+  },
+  "instance_not_bound_22023": {
+   "function": "read_flow_store_v1",
+   "role": "automation_expert_change",
+   "status": 400,
+   "body": {
+    "code": "22023",
+    "details": null,
+    "hint": null,
+    "message": "flow_store_instance_not_bound"
+   }
+  },
+  "publish_denied_42501": {
+   "function": "operator_publish_flow_change_v1",
+   "role": "automation_expert_change",
+   "status": 403,
+   "body": {
+    "code": "42501",
+    "details": null,
+    "hint": null,
+    "message": "permission denied for function operator_publish_flow_change_v1"
+   }
+  }
+ }
+}

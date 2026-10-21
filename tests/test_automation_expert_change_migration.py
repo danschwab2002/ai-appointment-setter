@@ -1,0 +1,91 @@
+"""La forma de 20261021000100 (automation-expert-change-v1).
+
+Lo que la migracion hace en una base lo prueba PGlite
+(tests/sql/followup_engine/validate_automation_expert_change.mjs) y, con la
+imagen de Supabase de ATT1, la medicion del 2026-10-21 que cita el
+encabezado. Aca se fija lo que tiene que seguir siendo cierto del texto: que
+el rol solo recibe sus cuatro funciones, que ninguna va a un rol de la API, y
+que no se toca la configuracion del rol.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+MIGRATION = ROOT / "supabase" / "migrations" / "20261021000100_automation_expert_change_v1.sql"
+WRAPPERS = (
+    "public.read_flow_store_v1(jsonb)",
+    "public.save_flow_change_draft_v1(jsonb,uuid,integer,jsonb,jsonb,text,text)",
+    "public.record_flow_change_validation_v1(jsonb,uuid,integer,jsonb,jsonb,jsonb,jsonb,text)",
+    "public.get_flow_change_proposal_v1(jsonb,uuid)",
+)
+
+
+def _sql() -> str:
+    return MIGRATION.read_text(encoding="utf-8")
+
+
+def _code() -> str:
+    return re.sub(r"--[^\n]*", "", _sql())
+
+
+def test_it_is_one_transaction_and_the_last_migration() -> None:
+    sql = _sql()
+    assert "\nbegin;\n" in sql and sql.rstrip().endswith("commit;")
+    names = sorted(path.name for path in (ROOT / "supabase" / "migrations").glob("*.sql"))
+    assert names[-1] == MIGRATION.name
+
+
+def test_the_role_only_gets_its_four_functions_and_the_schema() -> None:
+    code = _code()
+    grants = re.findall(r"grant\s+(.+?)\s+to\s+automation_expert_change", code)
+    assert grants == ["usage on schema public", "execute on function %s"]
+    listed = re.search(r"foreach v_function in array array\[(.*?)\]::regprocedure\[\]", code, re.S)
+    assert listed is not None
+    assert tuple(re.findall(r"'([^']+)'", listed.group(1))) == WRAPPERS
+
+
+def test_nothing_goes_to_an_api_role_and_the_role_has_no_settings() -> None:
+    code = _code()
+    assert not re.search(r"grant\s+[^;]*\bto\s+(anon|authenticated|service_role|public)\b", code)
+    assert "alter role" not in code
+    assert re.search(r"create role automation_expert_change nologin noinherit;", code)
+    assert "grant automation_expert_change to authenticator;" in code
+
+
+def test_the_wrappers_are_definer_with_a_fixed_search_path_and_approve_stays_invoker() -> None:
+    code = _code()
+    functions = re.findall(r"create or replace function (public\.\w+)\((.*?)\)\s+returns jsonb\s+language plpgsql"
+                           r"\s+(\w+)\s+security (\w+)\s+set search_path = pg_catalog, public, pg_temp", code, re.S)
+    by_name = {name: (volatility, security) for name, _, volatility, security in functions}
+    assert by_name == {
+        "public.read_flow_store_v1": ("stable", "definer"),
+        "public.save_flow_change_draft_v1": ("volatile", "definer"),
+        "public.record_flow_change_validation_v1": ("volatile", "definer"),
+        "public.get_flow_change_proposal_v1": ("stable", "definer"),
+        "public._flow_change_approve": ("volatile", "invoker"),
+    }
+    # Los envoltorios llaman a los helpers con la clase del agente, nunca con otra.
+    assert code.count("'automation_expert', p_requested_by_ref)") == 2
+
+
+def test_what_postgrest_answered_with_the_images_of_att1() -> None:
+    # Capturado el 2026-10-21 con PostgREST v14.15 y la imagen de Supabase de
+    # ATT1 (descartables), la cadena completa aplicada como postgres y un JWT de
+    # prueba del rol. Es tambien el fixture de las respuestas de error del
+    # cliente del bridge: PostgREST 14 manda P0002 como 500, no como 404.
+    import json
+
+    captured = json.loads((ROOT / "tests" / "fixtures" / "automation_expert_change"
+                           / "postgrest_responses_automation_expert_change_20261021.json").read_text(encoding="utf-8"))
+    responses = captured["responses"]
+    assert responses["read_flow_store_ok"]["status"] == 200
+    assert responses["read_flow_store_ok"]["body"]["products"] == ["att1"]
+    assert responses["publish_denied_42501"]["status"] == 403
+    assert responses["publish_denied_42501"]["body"]["code"] == "42501"
+    assert (responses["get_proposal_not_found_P0002"]["status"],
+            responses["get_proposal_not_found_P0002"]["body"]["message"]) == (500, "flow_change_not_found")
+    assert (responses["save_items_invalid_22023"]["status"],
+            responses["save_items_invalid_22023"]["body"]["message"]) == (400, "flow_change_items_invalid")

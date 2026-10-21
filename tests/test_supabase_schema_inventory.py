@@ -1064,15 +1064,16 @@ def test_payment_slip_reminder_survives_reply_fingerprint_is_service_role_only()
         assert marker in compact_fingerprint, marker
 
 
-def test_recovery_checkout_authorize_started_attempt_fingerprint_is_last() -> None:
+def test_recovery_checkout_authorize_started_attempt_fingerprint() -> None:
     sql = INVENTORY.read_text(encoding="utf-8")
     # La fila de 20261020000100 (la autorizacion del link acepta el intento ya
-    # arrancado) es la ultima.
-    fingerprint = sql.split("'20261020000100'", 1)[1].split("select\n    version,", 1)[0]
+    # arrancado) va justo antes de la del rol del Automation Expert.
+    fingerprint = sql.split("'20261020000100'", 1)[1].split("'20261021000100'", 1)[0]
+    fingerprint = fingerprint.rsplit("union all", 1)[0]
     compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
 
     assert "'20261020000100_recovery_checkout_authorize_started_attempt_v1.sql'" in fingerprint
-    assert compact_fingerprint.endswith(",1,'recovery_checkout_authorize_started_attempt')")
+    assert compact_fingerprint.endswith(",1,'recovery_checkout_authorize_started_attempt'")
     for marker in (
         "to_regprocedure('public.authorize_recovery_checkout_issuance_v1"
         "(uuid,uuid,text,bigint,timestamptz)')",
@@ -1080,3 +1081,27 @@ def test_recovery_checkout_authorize_started_attempt_fingerprint_is_last() -> No
         "position('v_attempt.phasenotin(''reserved'',''request_started'')'indefinition)>0",
     ):
         assert marker in compact_fingerprint, marker
+
+
+def test_automation_expert_change_fingerprint_is_last_and_names_the_role_only_through_to_regrole() -> None:
+    sql = INVENTORY.read_text(encoding="utf-8")
+    # La fila de 20261021000100 (el rol del Automation Expert para proponer
+    # cambios de flujo) es la ultima.
+    fingerprint = sql.split("'20261021000100'", 1)[1].split("select\n    version,", 1)[0]
+    compact_fingerprint = re.sub(r"\s+", "", re.sub(r"--[^\n]*", "", fingerprint))
+
+    assert "'20261021000100_automation_expert_change_v1.sql'" in fingerprint
+    assert compact_fingerprint.endswith(",5,'automation_expert_change')")
+    for marker in (
+        "to_regprocedure('public.read_flow_store_v1(jsonb)')",
+        "to_regprocedure('public.save_flow_change_draft_v1(jsonb,uuid,integer,jsonb,jsonb,text,text)')",
+        "to_regprocedure('public.record_flow_change_validation_v1(jsonb,uuid,integer,jsonb,jsonb,jsonb,jsonb,text)')",
+        "to_regprocedure('public.get_flow_change_proposal_v1(jsonb,uuid)')",
+        "position('automation_expert_change_approve_simulation(20261021000100)'indefinition)>0",
+    ):
+        assert marker in compact_fingerprint, marker
+    # El inventario corre antes de aplicar, cuando el rol no existe: el rol
+    # solo aparece adentro de to_regrole, nunca como texto suelto de un
+    # has_function_privilege, que fallaria.
+    code = re.sub(r"--[^\n]*", "", fingerprint)
+    assert code.count("'automation_expert_change'") == code.count("to_regrole('automation_expert_change')") + 1
