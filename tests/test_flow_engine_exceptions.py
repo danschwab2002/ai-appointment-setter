@@ -116,6 +116,15 @@ def test_only_the_several_touches_ones_are_by_step() -> None:
     # Las de la T2.1 las aplica codigo que elige por el paso: no las hereda todo flujo del motor.
     assert [exception.name for exception in EXCEPTIONS_V1 if exception.by_step] == [
         name for row, name, _, _ in EXPECTED if row == "t2.1"]
+    # Los pasos de cada una: las de A1 van con first_contact, las de Z y el seguimiento con su paso.
+    assert {exception.name: exception.step_keys for exception in EXCEPTIONS_V1 if exception.by_step} == {
+        "a1_espera_al_cupon": {"first_contact"},
+        "a1_cupon_por_flag": {"first_contact"},
+        "toque_con_cupon_cierra_sin_cupon": {"cart_last_touch", "payment_failure_followup"},
+        "renovacion_adelanta_el_ultimo_toque": {"cart_last_touch"},
+        "renovacion_sobrevive_a_la_respuesta": {"cart_last_touch"},
+        "boton_con_off_discount": {"first_contact", "cart_last_touch", "payment_failure_followup"},
+    }
 
 
 def test_the_payment_failure_followup_reuses_the_last_touch_of_the_cart() -> None:

@@ -199,10 +199,15 @@ class FlowException:
     layer: str                      # "plan" | "puerta" | "despacho" | "sql"
     cita: str                       # archivo:linea del comportamiento de hoy
     descripcion: str
-    # Si el codigo que la aplica elige por el paso (el step_key de la forma del legacy_kind, o su
-    # coupon_ordinal): entonces la tiene solo un flujo de esos legacy_kinds, aunque sea de capa sql
-    # o despacho. Las de los varios toques (T2.1).
-    by_step: bool = False
+    # Los pasos (step_key) por los que la aplica el codigo de hoy: el bridge elige por el paso y la
+    # base por su coupon_ordinal. Con pasos, la tiene solo un flujo de esos legacy_kinds cuyo plan
+    # tiene alguno de esos pasos, aunque sea de capa sql o despacho: un carrito de un toque no
+    # hereda las de Z. Las de los varios toques (T2.1).
+    step_keys: frozenset[str] = frozenset()
+
+    @property
+    def by_step(self) -> bool:
+        return bool(self.step_keys)
 
 
 _CARRITO = frozenset({"carrito"})
@@ -219,8 +224,8 @@ _CON_PRIMER_CONTACTO = frozenset({"carrito", "pago_fallido", "precheckout"})
 # que el esquema no escribe. Las de la ficha y las variantes de B1 no entran: no
 # se migran en la Etapa 1. Son de capa sql o despacho, pero el codigo que las
 # aplica elige por el paso (el bridge por el step_key del carrito o del pago
-# rechazado, la base por coupon_ordinal), asi que llevan by_step: las tiene solo
-# un flujo de sus legacy_kinds.
+# rechazado, la base por coupon_ordinal), asi que llevan sus step_keys: las tiene
+# solo un flujo de sus legacy_kinds cuyo plan tiene alguno de esos pasos.
 EXCEPTIONS_V1: tuple[FlowException, ...] = (
     FlowException(
         "toma_humana_en_su_conversacion", _CARRITO_PAGO, "sql",
@@ -280,14 +285,14 @@ EXCEPTIONS_V1: tuple[FlowException, ...] = (
         "src/bridge/cart_first_touch.py:130-139",
         "A1 espera unos minutos a que el cupon 1 este valid; si no llega a tiempo, o murio, sale la"
         " plantilla de hoy, sin descuento (la del manifiesto). A1 no se pierde por el cupon.",
-        by_step=True,
+        step_keys=frozenset({"first_contact"}),
     ),
     FlowException(
         "a1_cupon_por_flag", _CARRITO, "despacho",
         "src/bridge/app.py:4902-4903",
         "Que A1 lleve el cupon personal lo decide RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED, no la"
         " politica: el primer paso no tiene coupon_ordinal.",
-        by_step=True,
+        step_keys=frozenset({"first_contact"}),
     ),
     FlowException(
         "toque_con_cupon_cierra_sin_cupon", _CARRITO_PAGO, "despacho",
@@ -295,28 +300,28 @@ EXCEPTIONS_V1: tuple[FlowException, ...] = (
         "Un toque siguiente con cupon (Z del carrito, y B2 o Z del pago rechazado, que la reusan) espera"
         " al cupon 2 y, si no esta valid a tiempo o murio, cierra sin mensaje: no hay toque sin el"
         " descuento que promete.",
-        by_step=True,
+        step_keys=frozenset({"cart_last_touch", "payment_failure_followup"}),
     ),
     FlowException(
         "renovacion_adelanta_el_ultimo_toque", _CARRITO, "sql",
         "supabase/migrations/20261019000600_recovery_followup_steps_v1.sql:214-217",
         "La respuesta «Quiero mi 10 %» a A2 adelanta Z: el paso pendiente con cupon de esa"
         " conversacion pasa a vencer ya, en vez de esperar su delay.",
-        by_step=True,
+        step_keys=frozenset({"cart_last_touch"}),
     ),
     FlowException(
         "renovacion_sobrevive_a_la_respuesta", _CARRITO, "sql",
-        "supabase/migrations/20261019000800_portable_payment_slip_reminder_survives_reply_v1.sql:58-72",
+        "supabase/migrations/20261019000600_recovery_followup_steps_v1.sql:243-248",
         "El paso que adelanto la renovacion no se cancela por la respuesta que la pidio"
         " (prospect_replied); la compra, la baja y la derivacion lo cortan igual.",
-        by_step=True,
+        step_keys=frozenset({"cart_last_touch"}),
     ),
     FlowException(
         "boton_con_off_discount", _CARRITO_PAGO, "despacho",
         "src/bridge/cart_followups.py:277-279",
         "El boton de un toque con cupon es nuestro link emitido mas &offDiscount=<codigo>: el cupon"
         " va en el boton, no en la definicion.",
-        by_step=True,
+        step_keys=frozenset({"first_contact", "cart_last_touch", "payment_failure_followup"}),
     ),
 )
 

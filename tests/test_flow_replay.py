@@ -39,6 +39,7 @@ from typing import Any
 import pytest
 
 from bridge import flow_engine
+from bridge.flow_definition import ProposalItem
 from bridge.flow_engine import (
     ENGINE_CAPABILITIES_V1,
     PREVIEW_CAPABILITIES,
@@ -58,6 +59,8 @@ from bridge.flow_replay import (
     flow_summary,
     history_from_capture,
     in_flight_at,
+    plan_step_keys,
+    proposed_versions,
     replay,
 )
 
@@ -706,13 +709,32 @@ def test_in_flight_counts_only_the_run_that_is_waiting() -> None:
 
 
 def test_every_engine_flow_has_the_sql_and_dispatch_exceptions() -> None:
-    # Las diez de §1.7 las tiene todo flujo; las de los varios toques (by_step), solo su legacy_kind.
+    # Las diez de §1.7 las tiene todo flujo; las de los varios toques, solo su legacy_kind y si su plan
+    # tiene el paso. Las versiones del fixture (16/10) son de un toque: no tienen las de Z.
     assert len(exceptions_for(None)) == 10
-    by_step = {item.name: item.legacy_kinds for item in EXCEPTIONS_V1 if item.by_step}
+    by_step = {item.name: item for item in EXCEPTIONS_V1 if item.by_step}
     assert len(by_step) == 6
     for by_version in VERSIONS.values():
         for flow in by_version.values():
-            mine = {name for name, kinds in by_step.items() if flow.legacy_kind in kinds}
-            assert flow.exceptions == exceptions_for(flow.legacy_kind) == exceptions_for(None) | mine
-    assert exceptions_for("precheckout") == exceptions_for(None)
-    assert len(exceptions_for("carrito")) == 16 and len(exceptions_for("pago_fallido")) == 12
+            keys = plan_step_keys(flow.definition, flow.legacy_kind)
+            assert flow.exceptions == exceptions_for(flow.legacy_kind, keys)
+            mine = {name for name, item in by_step.items()
+                    if flow.legacy_kind in item.legacy_kinds and item.step_keys & keys}
+            assert flow.exceptions == exceptions_for(None) | mine
+    assert exceptions_for("precheckout", {"first_contact"}) == exceptions_for(None)
+    one_touch = exceptions_for("carrito", {"first_contact"})
+    three = exceptions_for("carrito", {"first_contact", "cart_second_touch", "cart_last_touch"})
+    assert one_touch - exceptions_for(None) == {"a1_espera_al_cupon", "a1_cupon_por_flag", "boton_con_off_discount"}
+    assert len(three) == 16
+    assert exceptions_for("pago_fallido", {"payment_failure_first_contact"}) == exceptions_for(None)
+    assert len(exceptions_for("pago_fallido", {"payment_failure_first_contact", "payment_failure_followup"})) == 12
+
+
+def test_a_proposed_version_gets_the_exceptions_of_its_own_plan() -> None:
+    three = {**dict(VERSIONS[CART][5].definition), "pasos": [
+        SEND, {"esperar": "24h"}, SEND, {"esperar": "48h"}, SEND]}
+    versions, _ = proposed_versions(VERSIONS, {CART: 5}, [ProposalItem(
+        producto="att1", flujo="carrito", flow_id=VERSIONS[CART][5].flow_id, tipo="version",
+        definicion=three, en_curso="seguir")])
+    assert "renovacion_adelanta_el_ultimo_toque" in versions[CART][6].exceptions
+    assert "renovacion_adelanta_el_ultimo_toque" not in versions[CART][5].exceptions
