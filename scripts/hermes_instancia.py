@@ -16,6 +16,16 @@ usa la instancia, con permiso para usar docker:
   salvo que cambie su puerto y se pida con ``--reiniciar``.
 - ``chequear`` compara lo que corre con lo declarado y sale con 1 ante cualquier diferencia.
 
+Hay dos tipos de profile (``le_habla`` en hermes/declaracion.toml):
+- ``bridge`` (el agente comercial): API server en su puerto, cero herramientas, ninguna otra
+  plataforma. La clave del API server se lee solo al arrancar.
+- ``slack`` (el Automation Expert): sin API server, exactamente las herramientas declaradas en
+  Slack, y su carpeta ``plugins/``. La instancia dice quien administra sus comandos
+  (``administran``). Sus variables (los tokens de Slack) y sus plugins se leen solo al arrancar:
+  si cambian con el gateway andando, ``aplicar --reiniciar`` lo reinicia. Que Slack conecte no se
+  espera al arrancar; lo dice ``chequear``.
+Un profile ``obligatorio = false`` puede faltar en la instancia, y entonces no se instala.
+
 Frena (sale con 2) sin tocar nada si:
 - el contenedor no es del stack que declara la instancia (etiqueta ``com.docker.stack.namespace``);
 - con ``aplicar``, la imagen no es la que declara el producto;
@@ -100,12 +110,34 @@ class Imagen:
         return f"{self.nombre}@{self.digest}"
 
 
+LE_HABLA = ("bridge", "slack")
+# Las carpetas que una distribucion puede traer ademas de los tres archivos, si su
+# distribution.yaml las lista en distribution_owned. Hermes reemplaza la carpeta entera al instalar.
+CARPETAS_DISTRIBUCION = ("plugins",)
+ID_DE_SLACK = re.compile(r"^[UW][A-Z0-9]{6,}$")
+MARGEN_DE_ARRANQUE = 2.0  # segundos
+ARRANQUE = ".setter-arranque.json"  # en la carpeta del profile de Slack
+
+
 @dataclass(frozen=True)
 class ProfileProducto:
+    """Un profile del producto.
+
+    - ``le_habla = "bridge"``: lo llama el bridge por el API server del ``puerto``, con cero
+      herramientas y ninguna otra plataforma (el agente comercial).
+    - ``le_habla = "slack"``: atiende por Slack, sin API server, y tiene exactamente las
+      ``herramientas`` declaradas (el Automation Expert). No tiene puerto.
+
+    Un profile ``obligatorio = false`` puede faltar en la instancia: si la instancia no lo declara,
+    no se instala ni se chequea.
+    """
+
     nombre: str
     distribucion: Path
-    puerto: int
+    puerto: int | None
     le_habla: str
+    herramientas: tuple[str, ...] = ()
+    obligatorio: bool = True
 
 
 @dataclass(frozen=True)
@@ -128,6 +160,7 @@ class ProfileInstancia:
     base_url: str | None
     respaldo: tuple[tuple[str, str], ...]
     variables: dict[str, Secreto]
+    administran: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -194,7 +227,7 @@ def cargar_declaracion(ruta: Path = DECLARACION, raiz: Path = RAIZ) -> Declaraci
         if not NOMBRE_PROFILE.match(nombre):
             raise Freno(f"{donde}: nombre invalido (minusculas, numeros y guiones, 2 a 20)")
         p = _tabla(donde, p)
-        _claves(donde, p, {"distribucion", "puerto", "le_habla"})
+        _claves(donde, p, {"distribucion", "le_habla"}, {"puerto", "herramientas", "obligatorio"})
         relativa = Path(_texto(donde, p, "distribucion"))
         if relativa.is_absolute() or ".." in relativa.parts:
             raise Freno(f"{donde}.distribucion: tiene que ser una ruta adentro del repo")
@@ -202,17 +235,36 @@ def cargar_declaracion(ruta: Path = DECLARACION, raiz: Path = RAIZ) -> Declaraci
         for archivo in ARCHIVOS_DISTRIBUCION:
             if not (carpeta / archivo).is_file():
                 raise Freno(f"{donde}.distribucion: falta {relativa / archivo}")
-        puerto = p["puerto"]
-        if not isinstance(puerto, int) or isinstance(puerto, bool) or not 1024 <= puerto <= 65535:
-            raise Freno(f"{donde}.puerto: tiene que ser un entero entre 1024 y 65535")
-        if puerto in puertos:
-            raise Freno(f"{donde}.puerto: {puerto} ya lo usa otro profile")
-        puertos.add(puerto)
+        le_habla = _texto(donde, p, "le_habla")
+        if le_habla not in LE_HABLA:
+            raise Freno(f"{donde}.le_habla: tiene que ser {' o '.join(LE_HABLA)}")
+        obligatorio = p.get("obligatorio", True)
+        if not isinstance(obligatorio, bool):
+            raise Freno(f"{donde}.obligatorio: tiene que ser true o false")
+        puerto = p.get("puerto")
+        herramientas: tuple[str, ...] = ()
+        if le_habla == "bridge":
+            if "herramientas" in p:
+                raise Freno(f"{donde}.herramientas: un profile que le habla al bridge va sin herramientas")
+            if not isinstance(puerto, int) or isinstance(puerto, bool) or not 1024 <= puerto <= 65535:
+                raise Freno(f"{donde}.puerto: tiene que ser un entero entre 1024 y 65535")
+            if puerto in puertos:
+                raise Freno(f"{donde}.puerto: {puerto} ya lo usa otro profile")
+            puertos.add(puerto)
+        else:
+            if puerto is not None:
+                raise Freno(f"{donde}.puerto: un profile de Slack no tiene API server ni puerto")
+            lista = p.get("herramientas")
+            if not isinstance(lista, list) or not lista or not all(isinstance(x, str) and x.strip() for x in lista):
+                raise Freno(f"{donde}.herramientas: tiene que ser una lista no vacia de toolsets")
+            herramientas = tuple(sorted(x.strip() for x in lista))
         profiles[nombre] = ProfileProducto(
             nombre=nombre,
             distribucion=carpeta,
             puerto=puerto,
-            le_habla=_texto(donde, p, "le_habla"),
+            le_habla=le_habla,
+            herramientas=herramientas,
+            obligatorio=obligatorio,
         )
     return Declaracion(imagen=imagen, profiles=profiles)
 
@@ -227,7 +279,8 @@ def cargar_instancia(ruta: Path, declaracion: Declaracion) -> Instancia:
         raise Freno("instancia.stack: nombre de stack invalido")
     servicio = _texto("instancia", datos, "servicio") if "servicio" in datos else "hermes"
     perfiles = _tabla("instancia.profiles", datos["profiles"])
-    faltan = sorted(set(declaracion.profiles) - set(perfiles))
+    obligatorios = {n for n, p in declaracion.profiles.items() if p.obligatorio}
+    faltan = sorted(obligatorios - set(perfiles))
     sobran = sorted(set(perfiles) - set(declaracion.profiles))
     if faltan:
         raise Freno(f"instancia.profiles: falta {', '.join(faltan)}, que el producto declara")
@@ -237,7 +290,18 @@ def cargar_instancia(ruta: Path, declaracion: Declaracion) -> Instancia:
     for nombre, p in perfiles.items():
         donde = f"instancia.profiles.{nombre}"
         p = _tabla(donde, p)
-        _claves(donde, p, {"modelo", "proveedor", "variables"}, {"base_url", "respaldo"})
+        de_slack = declaracion.profiles[nombre].le_habla == "slack"
+        _claves(
+            donde, p,
+            {"modelo", "proveedor", "variables"} | ({"administran"} if de_slack else set()),
+            {"base_url", "respaldo"},
+        )
+        administran: tuple[str, ...] = ()
+        if de_slack:
+            lista = p["administran"]
+            if not isinstance(lista, list) or not lista or not all(isinstance(x, str) and ID_DE_SLACK.match(x) for x in lista):
+                raise Freno(f"{donde}.administran: tiene que ser una lista no vacia de IDs de usuario de Slack (U...)")
+            administran = tuple(lista)
         respaldo = []
         lista = p.get("respaldo", [])
         if not isinstance(lista, list):
@@ -267,6 +331,7 @@ def cargar_instancia(ruta: Path, declaracion: Declaracion) -> Instancia:
             base_url=_texto(donde, p, "base_url") if "base_url" in p else None,
             respaldo=tuple(respaldo),
             variables=variables,
+            administran=administran,
         )
     return Instancia(stack=stack, servicio=servicio, profiles=profiles)
 
@@ -366,7 +431,8 @@ def imagen_del_contenedor(contenedor: str) -> list[str]:
 
 def armar_paquete(carpeta: Path, destino: str, modo: str, declaracion: Declaracion,
                   instancia: Instancia, reiniciar: bool) -> None:
-    for nombre, producto in declaracion.profiles.items():
+    for nombre in instancia.profiles:
+        producto = declaracion.profiles[nombre]
         dist = carpeta / "profiles" / nombre
         dist.mkdir(parents=True)
         for archivo in ARCHIVOS_DISTRIBUCION:
@@ -374,6 +440,13 @@ def armar_paquete(carpeta: Path, destino: str, modo: str, declaracion: Declaraci
             if fuente.is_symlink():
                 raise Freno(f"{fuente} es un enlace: Hermes no instala distribuciones con enlaces")
             shutil.copyfile(fuente, dist / archivo)
+        for sub in CARPETAS_DISTRIBUCION:
+            fuente = producto.distribucion / sub
+            if not fuente.is_dir():
+                continue
+            if fuente.is_symlink() or any(x.is_symlink() for x in fuente.rglob("*")):
+                raise Freno(f"{fuente} tiene un enlace: Hermes no instala distribuciones con enlaces")
+            shutil.copytree(fuente, dist / sub, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     shutil.copyfile(Path(__file__).resolve(), carpeta / "hermes_instancia.py")
     plan = {
         "modo": modo,
@@ -382,7 +455,10 @@ def armar_paquete(carpeta: Path, destino: str, modo: str, declaracion: Declaraci
         "profiles": {
             nombre: {
                 "staged": f"{destino}/profiles/{nombre}",
+                "le_habla": declaracion.profiles[nombre].le_habla,
                 "puerto": declaracion.profiles[nombre].puerto,
+                "herramientas": list(declaracion.profiles[nombre].herramientas),
+                "administran": list(p.administran),
                 "modelo": p.modelo,
                 "proveedor": p.proveedor,
                 "base_url": p.base_url,
@@ -481,13 +557,27 @@ def formatear(modo: str, stack: str, contenedor: str, reporte: dict) -> str:
 
 
 def renderizar_config(molde: dict, plan_profile: dict) -> dict:
-    """El config.yaml del profile: el molde con el modelo, el respaldo y el puerto puestos."""
+    """El config.yaml del profile: el molde con el modelo y el respaldo puestos, y además el
+    puerto (profile del bridge) o quién administra los comandos (profile de Slack)."""
     config = copy.deepcopy(molde)
     if not isinstance(config.get("model"), dict):
         raise Freno("el molde de config.yaml no tiene la seccion model")
-    api = ((config.get("platforms") or {}).get("api_server"))
-    if not isinstance(api, dict):
-        raise Freno("el molde de config.yaml no tiene platforms.api_server")
+    if plan_profile.get("le_habla", "bridge") == "bridge":
+        api = ((config.get("platforms") or {}).get("api_server"))
+        if not isinstance(api, dict):
+            raise Freno("el molde de config.yaml no tiene platforms.api_server")
+        api["port"] = plan_profile["puerto"]
+    else:
+        if (config.get("platforms") or {}).get("api_server") is not None:
+            raise Freno("el molde de un profile de Slack no puede prender platforms.api_server")
+        slack = config.get("slack")
+        if not isinstance(slack, dict):
+            raise Freno("el molde de config.yaml no tiene la seccion slack")
+        administran = list(plan_profile.get("administran") or [])
+        if not administran:
+            raise Freno("un profile de Slack necesita quien administra los comandos")
+        slack["allow_admin_from"] = administran
+        slack["group_allow_admin_from"] = list(administran)
     config["model"]["default"] = plan_profile["modelo"]
     config["model"]["provider"] = plan_profile["proveedor"]
     if plan_profile.get("base_url"):
@@ -497,7 +587,6 @@ def renderizar_config(molde: dict, plan_profile: dict) -> dict:
     config["fallback_providers"] = [
         {"provider": r["proveedor"], "model": r["modelo"]} for r in plan_profile.get("respaldo", [])
     ]
-    api["port"] = plan_profile["puerto"]
     vacios = [ruta for ruta, valor in aplanar(config).items() if valor is None]
     if vacios:
         raise Freno(f"el config.yaml quedo con claves sin valor: {', '.join(vacios)}")
@@ -597,6 +686,41 @@ def verificar_duenio(stack: str, marca: dict | None, presentes: list[str], decla
             raise Freno(
                 f"el profile {nombre} ya existe, no lo instalo este script y el Hermes no tiene la marca de la instancia: no lo piso"
             )
+
+
+def huella_de_carpeta(raiz: Path) -> str | None:
+    """Un hash del contenido de una carpeta (rutas relativas y bytes), sin los caches de Python.
+    None si la carpeta no existe."""
+    if not raiz.is_dir():
+        return None
+    h = hashlib.sha256()
+    for ruta in sorted(p for p in raiz.rglob("*") if p.is_file()):
+        rel = ruta.relative_to(raiz)
+        if "__pycache__" in rel.parts or ruta.suffix == ".pyc":
+            continue
+        h.update(str(rel).encode("utf-8") + b"\0" + hashlib.sha256(ruta.read_bytes()).digest())
+    return h.hexdigest()
+
+
+def inicio_de_proceso(stat_del_proceso: str, stat_del_sistema: str, ticks_por_segundo: int) -> float:
+    """La hora (epoch) en que arranco un proceso, de /proc/<pid>/stat y /proc/stat.
+
+    El nombre del proceso va entre parentesis y puede tener espacios: los campos se cuentan desde
+    el ultimo ')'. starttime es el campo 22 (el 20 despues del nombre)."""
+    campos = stat_del_proceso.rsplit(")", 1)[1].split()
+    ticks = int(campos[19])
+    btime = next(int(l.split()[1]) for l in stat_del_sistema.splitlines() if l.startswith("btime "))
+    return btime + ticks / ticks_por_segundo
+
+
+def cambiado_despues(inicio: float | None, marcas: list[float | None]) -> bool:
+    """Si algo que el gateway lee solo al arrancar (las variables, los plugins) se escribio despues
+    de que arranco su proceso. Sin inicio conocido, se asume que si."""
+    if inicio is None:
+        return True
+    # El margen cubre la resolucion del arranque (ticks del kernel) contra la de las fechas de los
+    # archivos: lo que se escribio un instante antes de arrancar no cuenta como posterior.
+    return any(m is not None and m > inicio + MARGEN_DE_ARRANQUE for m in marcas)
 
 
 def leer_s6(estado: str) -> tuple[int | None, bool, str | None]:
@@ -739,15 +863,36 @@ class Dentro:
             if not simular:
                 self._hermes("profile", "create", nombre, "--no-alias", "--no-skills",
                              "--description", f"Instalado por {AUTOR}")
+        de_slack = p.get("le_habla", "bridge") == "slack"
         vivo = self._yaml(carpeta / "config.yaml") or {}
-        api_vivo = ((vivo.get("platforms") or {}).get("api_server") or {})
-        api_esperado = self.esperado[nombre]["platforms"]["api_server"]
-        cambia_escucha = carpeta.is_dir() and any(api_vivo.get(k) != api_esperado.get(k) for k in ("enabled", "host", "port"))
+        cambia_escucha = False
+        api_esperado: dict = {}
+        if not de_slack:
+            api_vivo = ((vivo.get("platforms") or {}).get("api_server") or {})
+            api_esperado = self.esperado[nombre]["platforms"]["api_server"]
+            cambia_escucha = carpeta.is_dir() and any(api_vivo.get(k) != api_esperado.get(k) for k in ("enabled", "host", "port"))
         soul_igual = self._sha(carpeta / "SOUL.md") == self._sha(staged / "SOUL.md")
         config_igual = not diferencias_de_config(vivo, self.esperado[nombre])
         dist_nuestra = es_nuestro(self._yaml(carpeta / "distribution.yaml"), nombre)
-        if not (soul_igual and config_igual and dist_nuestra):
+        carpetas_iguales = {
+            sub: huella_de_carpeta(carpeta / sub) == huella_de_carpeta(staged / sub)
+            for sub in CARPETAS_DISTRIBUCION if (staged / sub).is_dir()
+        }
+        cambian_carpetas = sorted(sub for sub, igual in carpetas_iguales.items() if not igual)
+        if de_slack and not simular:
+            # Si el gateway que corre no lo arranco este script, lo que hay ahora en disco es lo mejor
+            # que se sabe de lo que cargo: se anota antes de cambiar nada, para que despues se vea
+            # que corre con lo de antes.
+            pid = self._pid_s6(f"gateway-{nombre}")
+            try:
+                anotado = json.loads((carpeta / ARRANQUE).read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                anotado = {}
+            if pid is not None and anotado.get("pid") != pid:
+                self._anotar_arranque(nombre, pid)
+        if not (soul_igual and config_igual and dist_nuestra and not cambian_carpetas):
             que = [x for x, igual in (("SOUL.md", soul_igual), ("config.yaml", config_igual), ("distribution.yaml", dist_nuestra)) if not igual]
+            que += [f"{sub}/" for sub in cambian_carpetas]
             acciones.append(f"instalar la distribucion en {nombre} ({', '.join(que)}): el agente la usa desde el pedido siguiente")
             if not simular:
                 self._hermes("profile", "install", str(staged), "--name", nombre, "--force", "-y")
@@ -755,6 +900,9 @@ class Dentro:
                     raise Freno(f"despues de instalar, el SOUL.md de {nombre} no coincide con Git")
                 if diferencias_de_config(self._yaml(carpeta / "config.yaml") or {}, self.esperado[nombre]):
                     raise Freno(f"despues de instalar, el config.yaml de {nombre} no coincide con lo declarado")
+                for sub in carpetas_iguales:
+                    if huella_de_carpeta(carpeta / sub) != huella_de_carpeta(staged / sub):
+                        raise Freno(f"despues de instalar, {sub}/ de {nombre} no coincide con Git")
         deseadas = self.valores.get(nombre, {})
         ruta_vars = carpeta / VARIABLES_DEL_PROFILE
         actual = ruta_vars.read_text(encoding="utf-8") if ruta_vars.is_file() else ""
@@ -778,6 +926,9 @@ class Dentro:
                 self._hermes("--profile", nombre, "gateway", "start")
                 self._esperar_gateway(nombre)
             return
+        if de_slack:
+            self._aplicar_reinicio_slack(nombre, carpeta, servicio, cambian, cambian_carpetas, simular)
+            return
         # El SOUL y el config.yaml se leen en cada pedido; el puerto y la clave del API server,
         # solo al arrancar el gateway (las dos cosas medidas el 2026-10-14). Si el API server no
         # responde con el puerto y la clave actuales, hay que reiniciar ese gateway.
@@ -800,26 +951,124 @@ class Dentro:
                 f"el gateway de {nombre} sigue con el puerto o la clave de antes: reiniciarlo con aplicar --reiniciar"
             )
 
+    def _inicio_del_proceso(self, servicio: str) -> float | None:
+        # La fecha de la carpeta /proc/<pid> no sirve: el kernel la pone cuando alguien la mira por
+        # primera vez. El arranque real es el campo 22 de /proc/<pid>/stat (ticks desde el boot).
+        pid = self._pid_s6(servicio)
+        if pid is None:
+            return None
+        try:
+            return inicio_de_proceso(
+                Path(f"/proc/{pid}/stat").read_text(encoding="utf-8"),
+                Path("/proc/stat").read_text(encoding="utf-8"),
+                os.sysconf("SC_CLK_TCK"),
+            )
+        except (OSError, ValueError):
+            return None
+
+    def _huellas_de_arranque(self, carpeta: Path) -> dict:
+        return {
+            "variables": self._sha(carpeta / VARIABLES_DEL_PROFILE),
+            **{sub: huella_de_carpeta(carpeta / sub) for sub in CARPETAS_DISTRIBUCION},
+        }
+
+    def _anotar_arranque(self, nombre: str, pid: int) -> None:
+        """Lo que tenia el profile cuando este script lo arranco: el pid y el hash de sus variables
+        y sus plugins. Es lo que despues dice si el proceso corre con lo de antes."""
+        carpeta = PROFILES / nombre
+        tmp = carpeta / (ARRANQUE + ".tmp")
+        tmp.write_text(json.dumps({"pid": pid, "huellas": self._huellas_de_arranque(carpeta)}) + "\n", encoding="utf-8")
+        tmp.replace(carpeta / ARRANQUE)
+
+    def _desactualizado(self, nombre: str, carpeta: Path) -> bool:
+        """Un profile de Slack lee sus variables (los tokens) y sus plugins solo al arrancar.
+
+        Si este script arranco el proceso que corre, se compara contra lo que anoto en ese momento.
+        Las fechas no alcanzan: Hermes copia los plugins conservando la fecha del archivo, asi que un
+        plugin reparado parece mas viejo que el proceso (medido en la prueba en contenedor del
+        2026-10-21). Si lo arranco otro (s6 despues de una caida, un reinicio a mano), queda la
+        comparacion por fechas contra la hora de arranque del proceso."""
+        pid = self._pid_s6(f"gateway-{nombre}")
+        try:
+            anotado = json.loads((carpeta / ARRANQUE).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            anotado = {}
+        if pid is not None and anotado.get("pid") == pid:
+            return anotado.get("huellas") != self._huellas_de_arranque(carpeta)
+        marcas: list[float | None] = []
+        ruta_vars = carpeta / VARIABLES_DEL_PROFILE
+        marcas.append(ruta_vars.stat().st_mtime if ruta_vars.is_file() else None)
+        # Solo archivos: la fecha de una carpeta cambia cuando Python crea su __pycache__ al cargar
+        # el plugin, despues del arranque (medido en la prueba en contenedor del 2026-10-21).
+        for sub in CARPETAS_DISTRIBUCION:
+            raiz = carpeta / sub
+            if raiz.is_dir():
+                marcas += [
+                    p.stat().st_mtime for p in raiz.rglob("*")
+                    if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc"
+                ]
+        return cambiado_despues(self._inicio_del_proceso(f"gateway-{nombre}"), marcas)
+
+    def _aplicar_reinicio_slack(self, nombre: str, carpeta: Path, servicio: str, cambian: list[str],
+                                cambian_carpetas: list[str], simular: bool) -> None:
+        if simular:
+            if cambian or cambian_carpetas or self._desactualizado(nombre, carpeta):
+                acciones = self.reporte.acciones
+                acciones.append(
+                    f"reiniciar el gateway de {nombre}, porque cambian sus variables o sus plugins (solo con aplicar --reiniciar)"
+                )
+            return
+        if not self._desactualizado(nombre, carpeta):
+            return
+        if self.plan.get("reiniciar"):
+            self.reporte.acciones.append(f"reiniciar el gateway de {nombre}: sus variables o sus plugins son mas nuevos que el proceso")
+            pid_anterior = self._pid_s6(servicio)
+            self._hermes("--profile", nombre, "gateway", "restart")
+            self._esperar_gateway(nombre, pid_anterior)
+        else:
+            self.reporte.diferencia(
+                f"el gateway de {nombre} corre con variables o plugins de antes: reiniciarlo con aplicar --reiniciar"
+            )
+
     def _esperar_gateway(self, nombre: str, pid_anterior: int | None = None, segundos: int = 150) -> None:
         # Se prueba por presencia: s6 tiene arriba un proceso que no es el de antes, ese proceso
         # escribio "running" en gateway_state.json, y el API server responde 200 con la clave y 401
         # sin ella. El archivo solo no alcanza: despues de un reinicio conserva lo que escribio el
         # proceso anterior. El API solo tampoco: atiende antes de que el gateway pase de "starting"
         # a "running" (las dos cosas medidas el 2026-10-14).
+        # Un profile de Slack no tiene API server: alcanza con el proceso nuevo en "running". Que
+        # Slack conecte no se espera (sin red o con Slack caido, Hermes reintenta en segundo plano y
+        # el gateway sigue corriendo); lo dice chequear.
         servicio = f"gateway-{nombre}"
-        puerto = self.esperado[nombre]["platforms"]["api_server"]["port"]
+        de_slack = (self.plan.get("profiles") or {}).get(nombre, {}).get("le_habla", "bridge") == "slack"
+        puerto = None if de_slack else self.esperado[nombre]["platforms"]["api_server"]["port"]
         limite = time.monotonic() + segundos
         codigos: tuple[int, int] | None = None
         estado: dict = {}
         arrancado_de_nuevo = False
+        vistas_bien = 0
+        pid_bien: int | None = None
         while time.monotonic() < limite:
             s6 = self._estado_s6(servicio)
             pid, abajo_sin_volver, salida = leer_s6(s6)
             if pid is not None and pid != pid_anterior:
                 estado = self._estado_gateway(PROFILES / nombre)
-                codigos = self._probar_api(puerto, self._variables(nombre).get("API_SERVER_KEY", ""))
-                if codigos == (200, 401) and estado.get("pid") == pid and estado.get("gateway_state") == "running":
-                    return
+                if de_slack:
+                    # Sin API server que confirme, el estado tiene que verse bien dos vueltas
+                    # seguidas (2 s): despues de un reinicio que sale con 0, el proceso viejo puede
+                    # escribir gateway_state.json despues que el nuevo (visto en la prueba en
+                    # contenedor del 2026-10-21, una vez de cinco).
+                    bien = (estado.get("pid") == pid and estado.get("gateway_state") == "running"
+                            and estado.get("desired_state") == "running")
+                    vistas_bien = vistas_bien + 1 if bien and pid == pid_bien else (1 if bien else 0)
+                    pid_bien = pid if bien else None
+                    if vistas_bien >= 2:
+                        self._anotar_arranque(nombre, pid)
+                        return
+                else:
+                    codigos = self._probar_api(puerto, self._variables(nombre).get("API_SERVER_KEY", ""))
+                    if codigos == (200, 401) and estado.get("pid") == pid and estado.get("gateway_state") == "running":
+                        return
             elif abajo_sin_volver and salida is not None:
                 # El script finish de Hermes le pide a s6 que no levante un gateway que salio con 0 o
                 # con 78. Con 0 sale si el SIGTERM de un reinicio le llega mientras todavia termina de
@@ -834,11 +1083,15 @@ class Dentro:
                 arrancado_de_nuevo = True
             time.sleep(2)
         estado = estado or self._estado_gateway(PROFILES / nombre)
-        api = ((estado.get("platforms") or {}).get("api_server") or {}).get("state")
-        sonda = f"{codigos[0]} con la clave y {codigos[1]} sin ella" if codigos else "sin probar, s6 no mostro un proceso nuevo"
+        plataforma = "slack" if de_slack else "api_server"
+        conexion = ((estado.get("platforms") or {}).get(plataforma) or {}).get("state")
+        if de_slack:
+            sonda = "sin API server"
+        else:
+            sonda = f"{codigos[0]} con la clave y {codigos[1]} sin ella" if codigos else "sin probar, s6 no mostro un proceso nuevo"
         raise Freno(
             f"el gateway de {nombre} no quedo atendiendo en {segundos} s (s6: {self._estado_s6(servicio) or 'sin servicio'}; "
-            f"gateway_state.json: {estado.get('gateway_state')} del pid {estado.get('pid')}, api_server {api}; API: {sonda})"
+            f"gateway_state.json: {estado.get('gateway_state')} del pid {estado.get('pid')}, {plataforma} {conexion}; API: {sonda})"
         )
 
     # --- chequear ------------------------------------------------------------------------
@@ -896,11 +1149,25 @@ class Dentro:
             r.diferencia(f"{nombre}: config.yaml distinto de lo declarado en {', '.join(difs)}")
         else:
             r.ok(f"{nombre}: config.yaml igual a lo declarado")
-        herramientas = self._herramientas_efectivas(carpeta, vivo)
+        de_slack = p.get("le_habla", "bridge") == "slack"
+        for sub in CARPETAS_DISTRIBUCION:
+            if (staged / sub).is_dir() or (carpeta / sub).is_dir():
+                h_vivo, h_git = huella_de_carpeta(carpeta / sub), huella_de_carpeta(staged / sub)
+                if h_vivo == h_git:
+                    r.ok(f"{nombre}: {sub}/ igual a Git ({(h_git or '')[:12]})")
+                else:
+                    r.diferencia(f"{nombre}: {sub}/ distinto de Git ({(h_vivo or 'sin carpeta')[:12]} contra {(h_git or 'sin carpeta')[:12]})")
+        plataforma = "slack" if de_slack else "api_server"
+        herramientas = self._herramientas_efectivas(carpeta, vivo, plataforma)
+        esperadas = sorted(p.get("herramientas") or [])
         if herramientas is None:
             r.diferencia(f"{nombre}: no se pudo calcular sus herramientas con Hermes")
-        elif herramientas:
-            r.diferencia(f"{nombre}: tiene herramientas en el API server: {', '.join(herramientas)}")
+        elif herramientas != esperadas:
+            r.diferencia(
+                f"{nombre}: en {plataforma} tiene las herramientas [{', '.join(herramientas)}] y se esperaban [{', '.join(esperadas)}]"
+            )
+        elif esperadas:
+            r.ok(f"{nombre}: en {plataforma} tiene exactamente [{', '.join(esperadas)}]")
         else:
             r.ok(f"{nombre}: cero herramientas en el API server")
         vivas = self._variables(nombre)
@@ -921,9 +1188,20 @@ class Dentro:
             r.diferencia(f"{nombre}: el gateway no esta corriendo ({s6.split(' (')[0] or 'sin servicio'})")
             return
         r.ok(f"{nombre}: el gateway corre")
-        otras = sorted(set(plataformas) - {"api_server"})
+        otras = sorted(set(plataformas) - {plataforma})
         if otras:
             r.diferencia(f"{nombre}: el gateway tiene otras plataformas: {', '.join(otras)}")
+        if de_slack:
+            conexion = (plataformas.get("slack") or {}).get("state")
+            if conexion == "connected":
+                r.ok(f"{nombre}: Slack conectado")
+            else:
+                r.diferencia(f"{nombre}: Slack no esta conectado (estado: {conexion or 'sin estado'})")
+            if self._desactualizado(nombre, carpeta):
+                r.diferencia(f"{nombre}: el gateway corre con variables o plugins de antes: falta aplicar --reiniciar")
+            else:
+                r.ok(f"{nombre}: el gateway arranco despues de sus variables y sus plugins")
+            return
         if (plataformas.get("api_server") or {}).get("state") != "connected":
             r.diferencia(f"{nombre}: el API server no esta conectado")
         con, sin = self._probar_api(p["puerto"], vivas.get("API_SERVER_KEY", ""))
@@ -935,7 +1213,7 @@ class Dentro:
                 "(esperado 200 y 401; si cambio la clave o el puerto, falta aplicar --reiniciar)"
             )
 
-    def _herramientas_efectivas(self, carpeta: Path, config: dict) -> list[str] | None:
+    def _herramientas_efectivas(self, carpeta: Path, config: dict, plataforma: str = "api_server") -> list[str] | None:
         try:
             sys.path.insert(0, "/opt/hermes")
             from unittest import mock
@@ -951,7 +1229,7 @@ class Dentro:
             if not claves:
                 claves = set(tools_config._get_plugin_toolset_keys())
             with mock.patch.object(tools_config, "_get_plugin_toolset_keys", return_value=claves):
-                return sorted(tools_config._get_platform_tools(config, "api_server"))
+                return sorted(tools_config._get_platform_tools(config, plataforma))
         except Exception:
             return None
 
