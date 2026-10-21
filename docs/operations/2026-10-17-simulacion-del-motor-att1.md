@@ -98,7 +98,7 @@ La propuesta es el carrito con el primer mensaje a 1 h del disparo, el segundo a
 uv run python scripts/flow_engine_simulate.py --propuesta <tres-toques>.json --varios-toques
 ```
 
-Sale con 0. Sin `--varios-toques` sale con 2: `engine_not_supported:espera_despues_del_envio` y `engine_not_supported:mas_de_un_envio`, porque las capacidades v1 son de un envío por camino.
+Sale con 0. Sin `--varios-toques` salía con 2: `engine_not_supported:espera_despues_del_envio` y `engine_not_supported:mas_de_un_envio`, porque las capacidades v1 eran de un envío por camino. Desde la T2.1 (2026-10-21) la v1 ejecuta hasta tres envíos con la espera entre ellos, así que sin `--varios-toques` da lo mismo, y lo que sale con 2 es un cuarto envío (`engine_not_supported:demasiados_envios`; ver [la T2.1](2026-10-21-t2-1-esquema-de-varios-toques.md)).
 
 | | Toque 1 | Toque 2 | Toque 3 |
 |---|---|---|---|

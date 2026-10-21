@@ -4,7 +4,7 @@ Diseno de la T3a, §3.4 y §8.1. Fixture:
 ``tests/fixtures/flow_simulation/att1_definitions_by_scope_version.json``. Son
 el carrito y el pago fallido de la v3, la v4 y la v5 de ``att1-recuperacion``,
 las tres versiones que corrieron en la ventana de la captura de ATT1, como las
-da el traductor (``tests/flow_store_translator.py``, sin tocar) sobre la
+da el traductor (``tests/flow_store_translator.py``) sobre la
 ``config`` de ``flow_engine/att1_recovery_capture_20261016.json`` con el
 control apuntando a cada version, mas ``att1_instancia_f01fbcc.toml`` y
 ``schema_examples_v1.json``, normalizadas y publicadas con
@@ -17,9 +17,12 @@ tests/test_flow_engine_definitions_fixture.py``.
 **El legado que cambia no la pone roja** (diseno de la T3a, §9): el traductor
 es de hoy, y la sesion de los flujos comerciales lo puede cambiar (sumar OXXO,
 por ejemplo). La cabecera guarda el sha256 del archivo entero
-(``tests/flow_store_translator.py``) en ``c7fa8ef``; si difiere, la prueba que
-compara se saltea con el motivo (``pytest.skip``, que el resumen cuenta) y el
-traductor ni se importa. Lo que afirma igual, siempre, es lo que el fixture
+(``tests/flow_store_translator.py``); si difiere, la prueba que compara se
+saltea con el motivo (``pytest.skip``, que el resumen cuenta) y el traductor ni
+se importa. Las definiciones son las de ``c7fa8ef`` (``base``); el sha256 es el
+del traductor despues de la T2.1 (2026-10-21), que cambio para los varios
+toques sin cambiar lo que traduce de esta captura: el fixture se regenero y
+solo cambio el sha de la cabecera. Lo que afirma igual, siempre, es lo que el fixture
 dice de la captura: los topes y la politica de cada version.
 """
 
@@ -75,7 +78,7 @@ FLOWS = {
 # demas que la traduccion toma del codigo. Era el de c7fa8ef; la T2.1 (2026-10-21) lo
 # cambio para los varios toques (la captura del 21/10), y su traduccion de esta captura
 # es la misma: el fixture se regenero y solo cambio este sha de la cabecera.
-TRANSLATOR_SHA256_C7FA8EF = "9f61e478b7dde6f459098afbf5190ed02b6a2b75ab89de1d371a4924d3ab7630"
+TRANSLATOR_SHA256 = "9f61e478b7dde6f459098afbf5190ed02b6a2b75ab89de1d371a4924d3ab7630"
 
 
 def translator_sha256() -> str:
@@ -96,7 +99,7 @@ def _translator(path: Path) -> Any:
 def translator() -> Any:
     """El traductor de c7fa8ef, o saltear: si cambio, ni se importa (un cambio suyo no pone roja a la T3a)."""
     current = translator_sha256()
-    if current != TRANSLATOR_SHA256_C7FA8EF:
+    if current != TRANSLATOR_SHA256:
         pytest.skip(f"tests/flow_store_translator.py cambio desde c7fa8ef (sha256 {current}); "
                     f"{TARGET.name} sigue con las definiciones de c7fa8ef y no se compara. La 1c las vuelve a traducir.")
     return _translator(TRANSLATOR_PATH)
@@ -139,7 +142,7 @@ def _document() -> dict[str, Any]:
                 "uv run pytest tests/test_flow_engine_definitions_fixture.py"
             ),
             "base": "c7fa8ef",
-            "translator_sha256": TRANSLATOR_SHA256_C7FA8EF,
+            "translator_sha256": TRANSLATOR_SHA256,
             "translator_sha256_of": "los bytes de tests/flow_store_translator.py",
         },
         "instance": {"tenant_ref": INSTANCE.tenant_ref, "ally_ref": INSTANCE.ally_ref,
@@ -168,8 +171,8 @@ def test_the_fixture_is_what_the_translator_gives() -> None:
     assert in_repo == document, f"{TARGET.name} no es el de hoy: regenerarlo con FLOW_SIMULATION_FIXTURE_DIR"
 
 
-def test_the_header_keeps_the_sha256_of_the_translator_at_c7fa8ef() -> None:
-    assert IN_REPO["_generated"]["translator_sha256"] == TRANSLATOR_SHA256_C7FA8EF
+def test_the_header_keeps_the_sha256_of_the_translator_and_the_base_c7fa8ef() -> None:
+    assert IN_REPO["_generated"]["translator_sha256"] == TRANSLATOR_SHA256
     assert IN_REPO["_generated"]["base"] == "c7fa8ef"
 
 
