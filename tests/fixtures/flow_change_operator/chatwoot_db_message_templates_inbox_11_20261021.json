@@ -1,0 +1,856 @@
+{
+ "_capture": {
+  "source": "Chatwoot de ATT1 (infra_chatwoot-db), channel_whatsapp.message_templates de la bandeja 11, leido con psql en sesion de solo lectura",
+  "captured_at": "2026-10-21T15:45Z",
+  "why": "el comando del operador lee el catalogo de la base de Chatwoot y no de la API: misma forma que GET /inboxes/11"
+ },
+ "message_templates": [
+  {
+   "id": "1101194956128264",
+   "name": "att1_ultima_renovacion_01",
+   "status": "APPROVED",
+   "category": "MARKETING",
+   "language": "es_MX",
+   "components": [
+    {
+     "text": "Hola, {{1}}. Te reactivé tu *10 % de descuento* para {{2}} por última vez, hasta {{3}}.\n\nEl pago está listo en el botón, con el descuento aplicado. Después de esto no te voy a insistir más con tu inscripción.\n\nSi en algún momento quieres retomarla o tienes una duda, respóndeme aquí.",
+     "type": "BODY",
+     "example": {
+      "body_text": [
+       [
+        "María",
+        "Alimenta tu Tiroides",
+        "mañana a las 3:10 p. m."
+       ]
+      ]
+     }
+    },
+    {
+     "type": "BUTTONS",
+     "buttons": [
+      {
+       "url": "https://pay.hotmart.com/{{1}}",
+       "text": "Usar mi descuento",
+       "type": "URL",
+       "example": [
+        "https://pay.hotmart.com/D98014973Y?off=gopi6lh7&offDiscount=EJEMPLO10&sck=ejemplo"
+       ]
+      },
+      {
+       "text": "No más mensajes",
+       "type": "QUICK_REPLY"
+      }
+     ]
+    }
+   ],
+   "parameter_format": "POSITIONAL",
+   "disable_ios_autofill": false,
+   "is_primary_device_delivery_only": false
+  },
+  {
+   "id": "1606490361252624",
+   "name": "att1_recordatorio_dia_elegido_01",
+   "status": "APPROVED",
+   "category": "MARKETING",
+   "language": "es_MX",
+   "components": [
+    {
+     "text": "Hola, {{1}}. Como quedamos, hoy te escribo por tu inscripción a {{2}}.\n\nTe dejé tu *10 % de descuento* hasta {{3}}, con el pago ya preparado en el botón.\n\n¿La completamos hoy?",
+     "type": "BODY",
+     "example": {
+      "body_text": [
+       [
+        "María",
+        "Alimenta tu Tiroides",
+        "mañana a las 3:10 p. m."
+       ]
+      ]
+     }
+    },
+    {
+     "type": "BUTTONS",
+     "buttons": [
+      {
+       "url": "https://pay.hotmart.com/{{1}}",
+       "text": "Usar mi descuento",
+       "type": "URL",
+       "example": [
+        "https://pay.hotmart.com/D98014973Y?off=gopi6lh7&offDiscount=EJEMPLO10&sck=ejemplo"
+       ]
+      },
+      {
+       "text": "No más mensajes",
+       "type": "QUICK_REPLY"
+      }
+     ]
+    }
+   ],
+   "parameter_format": "POSITIONAL",
+   "disable_ios_autofill": false,
+   "is_primary_device_delivery_only": false
+  },
+  {
+   "id": "1683144133446051",
+   "name": "att1_carrito_dudas_01",
+   "status": "APPROVED",
+   "category": "MARKETING",
+   "language": "es_MX",
+   "components": [
+    {
+     "text": "Hola, {{1}}. ¿Qué te frenó con {{2}}?\n\nSi fue el pago, puedes usar otra tarjeta, PayPal o efectivo, y en México también pagar a meses. Si fue una duda: es un programa en línea, a tu ritmo, con clases en video, guías de alimentación, menús y recetas. El acceso es para siempre y tiene 7 días de garantía de Hotmart.\n\nTu 10 % ya venció, pero si me respondes te lo reactivo.",
+     "type": "BODY",
+     "example": {
+      "body_text": [
+       [
+        "María",
+        "Alimenta tu Tiroides"
+       ]
+      ]
+     }
+    },
+    {
+     "type": "BUTTONS",
+     "buttons": [
+      {
+       "text": "Quiero mi 10 %",
+       "type": "QUICK_REPLY"
+      },
+      {
+       "text": "No más mensajes",
+       "type": "QUICK_REPLY"
+      }
+     ]
+    }
+   ],
+   "parameter_format": "POSITIONAL",
+   "disable_ios_autofill": false,
+   "is_primary_device_delivery_only": false
+  },
+  {
+   "id": "1827294231622174",
+   "name": "att1_pago_efectivo_confirmado_01",
+   "status": "APPROVED",
+   "category": "UTILITY",
+   "language": "es_MX",
+   "components": [
+    {
+     "text": "Hola, {{1}}. Se confirmó tu pago de {{2}}.\n\nTu acceso te llega al correo con el que compraste, desde Hotmart. Si en unas horas no lo ves, respóndeme aquí y te ayudo.",
+     "type": "BODY",
+     "example": {
+      "body_text": [
+       [
+        "María",
+        "Alimenta tu Tiroides"
+       ]
+      ]
+     }
+    }
+   ],
+   "parameter_format": "POSITIONAL",
+   "disable_ios_autofill": false,
+   "is_primary_device_delivery_only": false
+  },
+  {
+   "id": "1112205334736363",
+   "name": "att1_ficha_vencida_descuento_01",
+   "status": "APPROVED",
+   "category": "MARKETING",
+   "language": "es_MX",
+   "components": [
+    {
+     "text": "Hola, {{1}}. Tu ficha de {{2}} para {{3}} venció y no nos llegó el pago. Si la pagaste en los últimos días, respóndeme y lo revisamos.\n\nSi todavía quieres entrar, te dejé un *10 % de descuento*: genera tu ficha nueva desde el botón antes de {{4}}, y después tienes varios días para pagarla en efectivo o con otro medio.\n\n¿Te ayudo con algo para completarla?",
+     "type": "BODY",
+     "example": {
+      "body_text": [
+       [
+        "María",
+        "OXXO",
+        "Alimenta tu Tiroides",
+        "mañana a las 3:10 p. m."
+       ]
+      ]
+     }
+    },
+    {
+     "type": "BUTTONS",
+     "buttons": [
+      {
+       "url": "https://pay.hotmart.com/{{1}}",
+       "text": "Usar mi descuento",
+       "type": "URL",
+       "example": [
+        "https://pay.hotmart.com/D98014973Y?off=gopi6lh7&offDiscount=EJEMPLO10&sck=ejemplo"
+       ]
+      },
+      {
+       "text": "No más mensajes",
+       "type": "QUICK_REPLY"
+      }
+     ]
+    }
+   ],
+   "parameter_format": "POSITIONAL",
+   "disable_ios_autofill": false,
+   "is_primary_device_delivery_only": false
+  },
+  {
+   "id": "1894168628572098",
+   "name": "att1_ficha_vence_hoy_01",
+   "status": "APPROVED",
+   "category": "UTILITY",
+   "language": "es_MX",
+   "components": [
+    {
+     "text": "Hola, {{1}}. Tu ficha de {{2}} para {{3}} vence hoy.\n\nSi ya la pagaste, no tienes que hacer nada. Si todavía no, ¿alcanzas a pasar hoy?",
+     "type": "BODY",
+     "example": {
+      "body_text": [
+       [
+        "María",
+        "OXXO",
+        "Alimenta tu Tiroides"
+       ]
+      ]
+     }
+    },
+    {
+     "type": "BUTTONS",
+     "buttons": [
+      {
+       "url": "https://customer-local-latam.ebanx.com/print/oxxo?hash={{1}}",
+       "text": "Ver mi ficha",
+       "type": "URL",
+       "example": [
+        "https://customer-local-latam.ebanx.com/print/oxxo?hash=EJEMPLO0123456789"
+       ]
+      },
+      {
+       "text": "No más mensajes",
+       "type": "QUICK_REPLY"
+      }
+     ]
+    }
+   ],
+   "parameter_format": "POSITIONAL",
+   "disable_ios_autofill": false,
+   "is_primary_device_delivery_only": false
+  },
+  {
+   "id": "1487556399862613",
+   "name": "att1_ficha_vence_manana_01",
+   "status": "APPROVED",
+   "category": "MARKETING",
+   "language": "es_MX",
+   "components": [
+    {
+     "text": "Hola, {{1}}. Tu ficha de {{2}} para {{3}} vence mañana, {{4}}.\n\nSi ya la pagaste, no tienes que hacer nada: la confirmación llega al día siguiente del pago. Si todavía no, ¿te da tiempo de pasar hoy o mañana?",
+     "type": "BODY",
+     "example": {
+      "body_text": [
+       [
+        "María",
+        "OXXO",
+        "Alimenta tu Tiroides",
+        "jueves 22 de octubre"
+       ]
+      ]
+     }
+    },
+    {
+     "type": "BUTTONS",
+     "buttons": [
+      {
+       "url": "https://customer-local-latam.ebanx.com/print/oxxo?hash={{1}}",
+       "text": "Ver mi ficha",
+       "type": "URL",
+       "example": [
+        "https://customer-local-latam.ebanx.com/print/oxxo?hash=EJEMPLO0123456789"
+       ]
+      },
+      {
+       "text": "No más mensajes",
+       "type": "QUICK_REPLY"
+      }
+     ]
+    }
+   ],
+   "parameter_format": "POSITIONAL",
+   "previous_category": "UTILITY",
+   "disable_ios_autofill": false,
+   "is_primary_device_delivery_only": false
+  },
+  {
+   "id": "1135382735609669",
+   "name": "att1_ficha_efectivo_01",
+   "status": "APPROVED",
+   "category": "UTILITY",
+   "language": "es_MX",
+   "components": [
+    {
+     "text": "Hola, {{1}}. Te dejo aquí tu ficha para pagar {{2}} en {{3}}, para que la tengas a mano.\n\nTe escribo del equipo de la Dra. Nina. Puedes pagarla en efectivo hasta el {{4}}, mostrándola desde tu celular. Cuando se confirma el pago, tu acceso te llega al correo.\n\n¿Qué día te queda bien pasar a pagarla?",
+     "type": "BODY",
+     "example": {
+      "body_text": [
+       [
+        "María",
+        "Alimenta tu Tiroides",
+        "OXXO",
+        "jueves 22 de octubre"
+       ]
+      ]
+     }
+    },
+    {
+     "type": "BUTTONS",
+     "buttons": [
+      {
+       "url": "https://customer-local-latam.ebanx.com/print/oxxo?hash={{1}}",
+       "text": "Ver mi ficha",
+       "type": "URL",
+       "example": [
+        "https://customer-local-latam.ebanx.com/print/oxxo?hash=EJEMPLO0123456789"
+       ]
+      },
+      {
+       "text": "No más mensajes",
+       "type": "QUICK_REPLY"
+      }
+     ]
+    }
+   ],
+   "parameter_format": "POSITIONAL",
+   "disable_ios_autofill": false,
+   "is_primary_device_delivery_only": false
+  },
+  {
+   "id": "1808451533734179",
+   "name": "att1_pago_pendiente_cancelado_01",
+   "status": "APPROVED",
+   "category": "UTILITY",
+   "language": "es_MX",
+   "components": [
+    {
+     "text": "Hola, {{1}}. Tu pago de {{2}} con {{3}} no llegó a completarse, así que tu inscripción no se confirmó.\n\nTe escribo del equipo de la Dra. Nina. En el botón está el pago preparado para que lo termines con tarjeta o con {{4}}.\n\n¿Te ayudo con algo para completarlo?",
+     "type": "BODY",
+     "example": {
+      "body_text": [
+       [
+        "María",
+        "Alimenta tu Tiroides",
+        "Mercado Pago",
+        "OXXO"
+       ]
+      ]
+     }
+    },
+    {
+     "type": "BUTTONS",
+     "buttons": [
+      {
+       "url": "https://pay.hotmart.com/{{1}}",
+       "text": "Completar mi pago",
+       "type": "URL",
+       "example": [
+        "https://pay.hotmart.com/D98014973Y?off=gopi6lh7&offDiscount=EJEMPLO10&sck=ejemplo"
+       ]
+      },
+      {
+       "text": "No más mensajes",
+       "type": "QUICK_REPLY"
+      }
+     ]
+    }
+   ],
+   "parameter_format": "POSITIONAL",
+   "disable_ios_autofill": false,
+   "is_primary_device_delivery_only": false
+  },
+  {
+   "id": "1773004677254964",
+   "name": "att1_pago_pendiente_01",
+   "status": "APPROVED",
+   "category": "UTILITY",
+   "language": "es_MX",
+   "components": [
+    {
+     "text": "Hola, {{1}}. Tu pago de {{2}} con {{3}} quedó sin terminar.\n\nTe escribo del equipo de la Dra. Nina. Si no te dejó completarlo, en el botón está tu pago preparado para hacerlo con tarjeta o con {{4}}. El pago pendiente se cancela solo, sin cobrarte nada.\n\n¿Te ayudo a completarlo?",
+     "type": "BODY",
+     "example": {
+      "body_text": [
+       [
+        "María",
+        "Alimenta tu Tiroides",
+        "Mercado Pago",
+        "OXXO"
+       ]
+      ]
+     }
+    },
+    {
+     "type": "BUTTONS",
+     "buttons": [
+      {
+       "url": "https://pay.hotmart.com/{{1}}",
+       "text": "Completar mi pago",
+       "type": "URL",
+       "example": [
+        "https://pay.hotmart.com/D98014973Y?off=gopi6lh7&offDiscount=EJEMPLO10&sck=ejemplo"
+       ]
+      },
+      {
+       "text": "No más mensajes",
+       "type": "QUICK_REPLY"
+      }
+     ]
+    }
+   ],
+   "parameter_format": "POSITIONAL",
+   "disable_ios_autofill": false,
+   "is_primary_device_delivery_only": false
+  },
+  {
+   "id": "4579643042354992",
+   "name": "att1_pago_rechazado_descuento_01",
+   "status": "APPROVED",
+   "category": "MARKETING",
+   "language": "es_MX",
+   "components": [
+    {
+     "text": "Hola, {{1}}. Tu inscripción a {{2}} sigue pendiente.\n\nComo ayer el pago no se pudo completar, te dejé un *10 % de descuento* hasta {{3}}. En el botón está el pago ya preparado, y ahí puedes elegir otra tarjeta u otro medio de pago.\n\n¿Algo te sigue frenando? Respóndeme y lo resolvemos.",
+     "type": "BODY",
+     "example": {
+      "body_text": [
+       [
+        "María",
+        "Alimenta tu Tiroides",
+        "mañana a las 3:10 p. m."
+       ]
+      ]
+     }
+    },
+    {
+     "type": "BUTTONS",
+     "buttons": [
+      {
+       "url": "https://pay.hotmart.com/{{1}}",
+       "text": "Usar mi descuento",
+       "type": "URL",
+       "example": [
+        "https://pay.hotmart.com/D98014973Y?off=gopi6lh7&offDiscount=EJEMPLO10&sck=ejemplo"
+       ]
+      },
+      {
+       "text": "No más mensajes",
+       "type": "QUICK_REPLY"
+      }
+     ]
+    }
+   ],
+   "parameter_format": "POSITIONAL",
+   "disable_ios_autofill": false,
+   "is_primary_device_delivery_only": false
+  },
+  {
+   "id": "1769185017491844",
+   "name": "att1_pago_rechazado_banco_01",
+   "status": "APPROVED",
+   "category": "UTILITY",
+   "language": "es_MX",
+   "components": [
+    {
+     "text": "Hola, {{1}}. Tu banco no aprobó el pago que intentaste {{2}} por {{3}}.\n\nTe escribo del equipo de la Dra. Nina. Pasa seguido con las compras en línea o internacionales, y muchas veces se resuelve en un minuto desde la app de tu banco. Si tienes otra tarjeta a mano, el pago está preparado en el botón.\n\n¿De qué banco es tu tarjeta? Te digo qué activar.",
+     "type": "BODY",
+     "example": {
+      "body_text": [
+       [
+        "María",
+        "hoy a las 3:10 p. m.",
+        "Alimenta tu Tiroides"
+       ]
+      ]
+     }
+    },
+    {
+     "type": "BUTTONS",
+     "buttons": [
+      {
+       "url": "https://pay.hotmart.com/{{1}}",
+       "text": "Completar mi pago",
+       "type": "URL",
+       "example": [
+        "https://pay.hotmart.com/D98014973Y?off=gopi6lh7&offDiscount=EJEMPLO10&sck=ejemplo"
+       ]
+      },
+      {
+       "text": "No más mensajes",
+       "type": "QUICK_REPLY"
+      }
+     ]
+    }
+   ],
+   "parameter_format": "POSITIONAL",
+   "disable_ios_autofill": false,
+   "is_primary_device_delivery_only": false
+  },
+  {
+   "id": "1333697975390026",
+   "name": "att1_pago_rechazado_saldo_01",
+   "status": "APPROVED",
+   "category": "MARKETING",
+   "language": "es_MX",
+   "components": [
+    {
+     "text": "Hola, {{1}}. El pago que intentaste {{2}} por {{3}} no pasó porque la tarjeta no tenía saldo o límite en ese momento.\n\nTe escribo del equipo de la Dra. Nina. Para que te quede más cómodo, te dejé un *10 % de descuento* hasta {{4}}, con el pago preparado en el botón.\n\nSi hoy no te queda bien, ¿te escribo el día que cobres?",
+     "type": "BODY",
+     "example": {
+      "body_text": [
+       [
+        "María",
+        "hoy a las 3:10 p. m.",
+        "Alimenta tu Tiroides",
+        "mañana a las 3:10 p. m."
+       ]
+      ]
+     }
+    },
+    {
+     "type": "BUTTONS",
+     "buttons": [
+      {
+       "url": "https://pay.hotmart.com/{{1}}",
+       "text": "Usar mi descuento",
+       "type": "URL",
+       "example": [
+        "https://pay.hotmart.com/D98014973Y?off=gopi6lh7&offDiscount=EJEMPLO10&sck=ejemplo"
+       ]
+      },
+      {
+       "text": "No más mensajes",
+       "type": "QUICK_REPLY"
+      }
+     ]
+    }
+   ],
+   "parameter_format": "POSITIONAL",
+   "disable_ios_autofill": false,
+   "is_primary_device_delivery_only": false
+  },
+  {
+   "id": "2945604012458080",
+   "name": "att1_pago_rechazado_dos_veces_01",
+   "status": "APPROVED",
+   "category": "UTILITY",
+   "language": "es_MX",
+   "components": [
+    {
+     "text": "Hola, {{1}}. El pago que intentaste {{2}} por {{3}} no pasó dos veces.\n\nTe escribo del equipo de la Dra. Nina. Para no hacerte pasar por lo mismo otra vez, te conviene pagarlo con otra tarjeta u otro medio de pago de tu país. En el botón está el pago preparado y ahí eliges.\n\n¿Te digo cuáles tienes disponibles?",
+     "type": "BODY",
+     "example": {
+      "body_text": [
+       [
+        "María",
+        "hoy a las 3:10 p. m.",
+        "Alimenta tu Tiroides"
+       ]
+      ]
+     }
+    },
+    {
+     "type": "BUTTONS",
+     "buttons": [
+      {
+       "url": "https://pay.hotmart.com/{{1}}",
+       "text": "Completar mi pago",
+       "type": "URL",
+       "example": [
+        "https://pay.hotmart.com/D98014973Y?off=gopi6lh7&offDiscount=EJEMPLO10&sck=ejemplo"
+       ]
+      },
+      {
+       "text": "No más mensajes",
+       "type": "QUICK_REPLY"
+      }
+     ]
+    }
+   ],
+   "parameter_format": "POSITIONAL",
+   "disable_ios_autofill": false,
+   "is_primary_device_delivery_only": false
+  },
+  {
+   "id": "1581888749923348",
+   "name": "att1_pago_rechazado_cupon_01",
+   "status": "APPROVED",
+   "category": "MARKETING",
+   "language": "es_MX",
+   "components": [
+    {
+     "text": "Hola, {{1}}. El pago que intentaste {{2}} por {{3}} no pasó.\n\nTe escribo del equipo de la Dra. Nina: tu *10 % de descuento* sigue activo hasta {{4}}. En el botón está el pago preparado con tu descuento, y ahí puedes usar otra tarjeta u otro medio.\n\n¿Quieres que te ayude a que pase esta vez?",
+     "type": "BODY",
+     "example": {
+      "body_text": [
+       [
+        "María",
+        "hoy a las 3:10 p. m.",
+        "Alimenta tu Tiroides",
+        "mañana a las 3:10 p. m."
+       ]
+      ]
+     }
+    },
+    {
+     "type": "BUTTONS",
+     "buttons": [
+      {
+       "url": "https://pay.hotmart.com/{{1}}",
+       "text": "Usar mi descuento",
+       "type": "URL",
+       "example": [
+        "https://pay.hotmart.com/D98014973Y?off=gopi6lh7&offDiscount=EJEMPLO10&sck=ejemplo"
+       ]
+      },
+      {
+       "text": "No más mensajes",
+       "type": "QUICK_REPLY"
+      }
+     ]
+    }
+   ],
+   "parameter_format": "POSITIONAL",
+   "disable_ios_autofill": false,
+   "is_primary_device_delivery_only": false
+  },
+  {
+   "id": "2012628042906830",
+   "name": "att1_carrito_descuento_01",
+   "status": "APPROVED",
+   "category": "MARKETING",
+   "language": "es_MX",
+   "components": [
+    {
+     "text": "Hola, {{1}}: te guardé un *10 % de descuento* para {{2}}.\n\nTe escribo del equipo de la Dra. Nina porque tu inscripción de {{3}} quedó en el último paso. El 10 % es sobre los {{4}} y vale hasta {{5}}; ya está aplicado en el botón, con tus datos cargados.\n\n¿Algo te frenó al pagar, o te quedó alguna duda del programa? Respóndeme y te ayudo.",
+     "type": "BODY",
+     "example": {
+      "body_text": [
+       [
+        "María",
+        "Alimenta tu Tiroides",
+        "hoy a las 3:10 p. m.",
+        "USD 47",
+        "mañana a las 3:10 p. m."
+       ]
+      ]
+     }
+    },
+    {
+     "type": "BUTTONS",
+     "buttons": [
+      {
+       "url": "https://pay.hotmart.com/{{1}}",
+       "text": "Usar mi descuento",
+       "type": "URL",
+       "example": [
+        "https://pay.hotmart.com/D98014973Y?off=gopi6lh7&offDiscount=EJEMPLO10&sck=ejemplo"
+       ]
+      },
+      {
+       "text": "No más mensajes",
+       "type": "QUICK_REPLY"
+      }
+     ]
+    }
+   ],
+   "parameter_format": "POSITIONAL",
+   "disable_ios_autofill": false,
+   "is_primary_device_delivery_only": false
+  },
+  {
+   "id": "1761004688444999",
+   "name": "att1_seguimiento_descuento_01",
+   "status": "APPROVED",
+   "category": "MARKETING",
+   "language": "es_MX",
+   "components": [
+    {
+     "text": "Hola, {{1}}. Soy el asistente virtual del equipo de Dra. Nina.\n\nQuería retomar nuestra conversación sobre {{2}}.\n\nPara ayudarte a dar ese paso, te reservamos un *10 % de descuento*. Toca el botón de abajo y tu descuento queda activado al instante.\n\nSi todavía tienes alguna duda, responde a este mensaje y te ayudamos.",
+     "type": "BODY",
+     "example": {
+      "body_text": [
+       [
+        "María",
+        "Alimenta tu Tiroides"
+       ]
+      ]
+     }
+    },
+    {
+     "type": "BUTTONS",
+     "buttons": [
+      {
+       "url": "https://pay.hotmart.com/{{1}}",
+       "text": "Usar mi descuento",
+       "type": "URL",
+       "example": [
+        "https://pay.hotmart.com/D98014973Y?off=gopi6lh7&checkoutMode=10&offDiscount=CODIGO10"
+       ]
+      }
+     ]
+    }
+   ],
+   "sub_category": "CUSTOM",
+   "parameter_format": "POSITIONAL",
+   "disable_ios_autofill": false,
+   "is_primary_device_delivery_only": false
+  },
+  {
+   "id": "2193118654604596",
+   "name": "att1_reactivacion_01",
+   "status": "APPROVED",
+   "category": "MARKETING",
+   "language": "es_MX",
+   "components": [
+    {
+     "text": "Hola, {{1}}. Soy el asistente virtual del equipo de Dra. Nina.\n\nQuedó una conversación pendiente entre nosotros y quiero retomarla. Si todavía necesitas ayuda, escríbeme por aquí y dime qué necesitas para continuar.",
+     "type": "BODY",
+     "example": {
+      "body_text": [
+       [
+        "María"
+       ]
+      ]
+     }
+    }
+   ],
+   "sub_category": "CUSTOM",
+   "parameter_format": "POSITIONAL",
+   "disable_ios_autofill": false,
+   "is_primary_device_delivery_only": false
+  },
+  {
+   "id": "2572970813214416",
+   "name": "att1_carrito_abandonado_01",
+   "status": "APPROVED",
+   "category": "MARKETING",
+   "language": "es_MX",
+   "components": [
+    {
+     "text": "Hola, {{1}}. Soy el asistente virtual del equipo de Dra. Nina.\n\nTu proceso para acceder a {{2}} quedó incompleto. Si tuviste alguna duda o dificultad, puedo ayudarte. También puedo enviarte el enlace para que lo retomes cuando quieras.",
+     "type": "BODY",
+     "example": {
+      "body_text": [
+       [
+        "María",
+        "Alimenta tu Tiroides"
+       ]
+      ]
+     }
+    },
+    {
+     "type": "BUTTONS",
+     "buttons": [
+      {
+       "text": "Envíame el enlace",
+       "type": "QUICK_REPLY"
+      },
+      {
+       "text": "Necesito ayuda",
+       "type": "QUICK_REPLY"
+      },
+      {
+       "text": "No más mensajes",
+       "type": "QUICK_REPLY"
+      }
+     ]
+    }
+   ],
+   "sub_category": "CUSTOM",
+   "parameter_format": "POSITIONAL",
+   "disable_ios_autofill": false,
+   "is_primary_device_delivery_only": false
+  },
+  {
+   "id": "1697917048575160",
+   "name": "att1_compra_fallida_01",
+   "status": "APPROVED",
+   "category": "MARKETING",
+   "language": "es_MX",
+   "components": [
+    {
+     "text": "Hola, {{1}}. Soy el asistente virtual del equipo de Dra. Nina.\n\nTu compra de {{2}} no pudo completarse. Si quieres intentarlo nuevamente, puedo enviarte el enlace o ayudarte con los próximos pasos.\n\nPor seguridad, no compartas datos de tu tarjeta por WhatsApp.",
+     "type": "BODY",
+     "example": {
+      "body_text": [
+       [
+        "María",
+        "Alimenta tu Tiroides"
+       ]
+      ]
+     }
+    },
+    {
+     "type": "BUTTONS",
+     "buttons": [
+      {
+       "text": "Envíame el enlace",
+       "type": "QUICK_REPLY"
+      },
+      {
+       "text": "Necesito ayuda",
+       "type": "QUICK_REPLY"
+      },
+      {
+       "text": "No más mensajes",
+       "type": "QUICK_REPLY"
+      }
+     ]
+    }
+   ],
+   "sub_category": "CUSTOM",
+   "parameter_format": "POSITIONAL",
+   "disable_ios_autofill": false,
+   "is_primary_device_delivery_only": false
+  },
+  {
+   "id": "1160485406304049",
+   "name": "att1_interes_precheckout_01",
+   "status": "APPROVED",
+   "category": "MARKETING",
+   "language": "es_MX",
+   "components": [
+    {
+     "text": "Hola, {{1}}. Soy del equipo de Dra. Nina.\n\nCompletaste el formulario para recibir información sobre {{2}}. Si tienes alguna duda, puedo ayudarte. También puedo enviarte el enlace para que continúes cuando quieras.",
+     "type": "BODY",
+     "example": {
+      "body_text": [
+       [
+        "María",
+        "Alimenta Tu Tiroides"
+       ]
+      ]
+     }
+    },
+    {
+     "type": "BUTTONS",
+     "buttons": [
+      {
+       "text": "Envíame el enlace",
+       "type": "QUICK_REPLY"
+      },
+      {
+       "text": "Necesito ayuda",
+       "type": "QUICK_REPLY"
+      },
+      {
+       "text": "No más mensajes",
+       "type": "QUICK_REPLY"
+      }
+     ]
+    }
+   ],
+   "sub_category": "CUSTOM",
+   "parameter_format": "POSITIONAL",
+   "disable_ios_autofill": false,
+   "is_primary_device_delivery_only": false
+  }
+ ]
+}
