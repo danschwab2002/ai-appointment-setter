@@ -5174,6 +5174,68 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         1,
         'recovery_checkout_authorize_started_attempt'
+    union all
+    select
+        '20261021000100',
+        '20261021000100_automation_expert_change_v1.sql',
+        -- El rol del Automation Expert existe, sin login, sin heredar y sin
+        -- atributos. Nunca se nombra el rol como texto donde podria no existir:
+        -- el inventario corre tambien antes de aplicar (to_regrole da null).
+        (
+            select count(*) = 1
+            from pg_roles r
+            where r.oid = to_regrole('automation_expert_change')
+              and not r.rolcanlogin and not r.rolinherit and not r.rolsuper
+              and not r.rolbypassrls and not r.rolcreaterole
+        )::int
+        -- Sus cuatro funciones: security definer y search_path fijo.
+        + (
+            select count(*) = 4
+            from functions
+            where oid in (
+                to_regprocedure('public.read_flow_store_v1(jsonb)'),
+                to_regprocedure('public.save_flow_change_draft_v1(jsonb,uuid,integer,jsonb,jsonb,text,text)'),
+                to_regprocedure('public.record_flow_change_validation_v1(jsonb,uuid,integer,jsonb,jsonb,jsonb,jsonb,text)'),
+                to_regprocedure('public.get_flow_change_proposal_v1(jsonb,uuid)')
+            )
+              and prosecdef
+              and proconfig @> array['search_path=pg_catalog, public, pg_temp']
+        )::int
+        -- Las dos lecturas son STABLE.
+        + (
+            select count(*) = 2
+            from functions
+            where oid in (
+                to_regprocedure('public.read_flow_store_v1(jsonb)'),
+                to_regprocedure('public.get_flow_change_proposal_v1(jsonb,uuid)')
+            )
+              and provolatile = 's'
+        )::int
+        -- Solo las ejecuta el rol: ni anon, ni authenticated, ni service_role.
+        + (
+            select count(*) = 4
+            from functions
+            where oid in (
+                to_regprocedure('public.read_flow_store_v1(jsonb)'),
+                to_regprocedure('public.save_flow_change_draft_v1(jsonb,uuid,integer,jsonb,jsonb,text,text)'),
+                to_regprocedure('public.record_flow_change_validation_v1(jsonb,uuid,integer,jsonb,jsonb,jsonb,jsonb,text)'),
+                to_regprocedure('public.get_flow_change_proposal_v1(jsonb,uuid)')
+            )
+              and coalesce(has_function_privilege(to_regrole('automation_expert_change'), oid, 'EXECUTE'), false)
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+        )::int
+        -- Aprobar registra la simulacion congelada en la vista previa.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_change_approve(text,text,uuid,text,text,text)')
+              and position('automation_expert_change_approve_simulation(20261021000100)' in definition) > 0
+              and position('{preview,simulacion}' in definition) > 0
+        )::int,
+        5,
+        'automation_expert_change'
 )
 select
     version,
