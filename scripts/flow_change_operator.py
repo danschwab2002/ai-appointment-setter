@@ -113,10 +113,12 @@ class Terminal:
     """La terminal de quien corre el comando. Sin ``/dev/tty``, no hay confirmacion."""
 
     def ask(self, prompt: str) -> str:
+        # Una tty no admite seek: abierta en texto con "r+" da UnsupportedOperation, que es un
+        # OSError y se leia como "sin terminal". Por eso se abre dos veces, para escribir y para leer.
         try:
-            with open("/dev/tty", "r+", encoding="utf-8") as tty:
-                tty.write(prompt)
-                tty.flush()
+            with open("/dev/tty", "w", encoding="utf-8") as out, open("/dev/tty", encoding="utf-8") as tty:
+                out.write(prompt)
+                out.flush()
                 return tty.readline().strip()
         except OSError as error:
             raise Refused("sin terminal no se confirma: este comando lo corre una persona") from error
