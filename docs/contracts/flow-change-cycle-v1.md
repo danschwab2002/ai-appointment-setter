@@ -3,7 +3,7 @@
 - **Estado:** aceptado como contrato conceptual el 2026-10-15; sin implementación (lo construye la 1b). El contrato no describe nada desplegado ni activado. Lo que dice de ATT1 es lo que pasó, con su fecha y de dónde sale.
 - **Fecha:** 2026-10-15
 - **ADR:** [ADR-0025](../decisions/0025-cada-instancia-tiene-su-hermes-declarado-por-el-producto.md) §7, [ADR-0007](../decisions/0007-durable-next-action-engine.md) §5 y [ADR-0017](../decisions/0017-central-slack-operations-connector.md)
-- **Contrato:** `flow-change-cycle-v1`, versión `1.2.0`. La 1.1.0 suma «Lo que fijó la implementación (1.1.0)»: lo que decidió la construcción del almacén (#243) y que este contrato dejaba abierto. No cambia ninguna decisión de Dan. La 1.2.0 suma «Lo que fija el comando del operador (1.2.0)», con un valor por defecto que revisa Dan: el operador también arma propuestas.
+- **Contrato:** `flow-change-cycle-v1`, versión `1.3.0`. La 1.1.0 suma «Lo que fijó la implementación (1.1.0)»: lo que decidió la construcción del almacén (#243) y que este contrato dejaba abierto. No cambia ninguna decisión de Dan. La 1.2.0 suma «Lo que fija el comando del operador (1.2.0)», con un valor por defecto que revisa Dan: el operador también arma propuestas. La 1.3.0 suma «Lo que fijan las rutas del agente (1.3.0)»: la forma de las rutas y de las herramientas del Automation Expert, sin la pausa (otro valor por defecto que revisa Dan), y una ruta de lectura del almacén.
 - **Alcance:** cómo se cambia un flujo que ya está escrito como dato. Fija:
   - quién lo propone;
   - qué lleva la propuesta y cómo se valida;
@@ -425,6 +425,25 @@ El comando del operador es la primera parte de las herramientas (la T4): `script
 - **Sin simulación no se publica salvo que se pida.** Mientras la vista previa traiga `simulation_not_built`, publicar exige `--sin-simulacion`. La base sigue registrando `simulation: not_built` al aprobar hasta la migración de las herramientas del agente.
 - **Validar** registra solo las propuestas del operador; las del agente las valida su ruta del bridge.
 - **Mover la ruta de un flujo** (`operator_route_flow_v1`, contrato `flow-engine-v1`) va en este comando cuando exista.
+
+## Lo que fijan las rutas del agente (1.3.0)
+
+La segunda parte de las herramientas (la T4): `src/bridge/flow_change_api.py`, enchufado en `app.py` detrás de `AUTOMATION_EXPERT_CHANGE_ENABLED` (apagado por defecto), y el plugin `profiles/automation-expert/plugins/automation-expert-change/`. Escrita el 2026-10-21, antes del merge; no afirma que nada esté desplegado ni activado.
+
+- **Dos claves propias, separadas de todo lo demás.**
+  - El plugin entra al bridge con `AUTOMATION_EXPERT_CHANGE_TOKEN` (en el profile, `AUTOMATION_EXPERT_CHANGE_API_TOKEN`): 32 caracteres o más y distinta de todo otro valor, también de la de lectura.
+  - El bridge entra a PostgREST con `AUTOMATION_EXPERT_CHANGE_DB_KEY`, el JWT del rol `automation_expert_change` de la migración `20261021000100`, que alcanza solo sus cuatro envoltorios. El bridge no arranca si esa clave no dice ese rol o si es igual a la de `service_role`; estas rutas nunca usan el cliente de `service_role`.
+- **Las rutas,** todas bajo `/internal/automation-expert/v1/` y con el sobre `{contract: "flow-change-cycle-v1", contract_version, data}`:
+  - `GET /flow-store`: los flujos del almacén de la instancia, cada uno con `flow_id`, `product_ref`, `flow_key`, `state`, `active_version`, `generation`, `changed_at`, los números de sus `versions` y su `active_definition` completa. Es de donde el agente copia lo que cambia: la lectura de la 1a no trae la definición ni el `flow_id` mientras siga leyendo la proyección.
+  - `POST /flow-changes`: `{items, base, purpose, requested_by}`, y `proposal_id` con `revision` para rehacer. Corre el validador en fase `draft`; con bloqueos contesta 422 `flow_change_draft_blocked` con `blocks` y `warnings` y no guarda; si no, 201 con el borrador guardado.
+  - `POST /flow-changes/{id}/validate`: `{revision, requested_by}`. Lee el catálogo de la bandeja de la instancia, valida en fase `publish`, arma la vista previa y la registra. Sin catálogo contesta 503 `template_catalog_unavailable` y no registra nada.
+  - `GET /flow-changes/{id}`: la propuesta, con su `preview` y sus últimos eventos.
+- **Los errores son códigos cerrados.** De la base: 22023 es 422, P0002 es 404 (PostgREST 14 lo contesta como 500) y un resultado `ok: false` con código conocido es 409. Todo lo demás, incluido un permiso negado, es 503 `automation_expert_change_unavailable`, sin más detalle. Dos pedidos a la vez como máximo (`automation_expert_change_busy`) y cuerpos de hasta 256 KiB (`body_too_large`).
+- **Quién pide el cambio lo pone el plugin, nunca el modelo.** Sale del contexto de la sesión de Hermes (`HERMES_SESSION_PLATFORM` y `HERMES_SESSION_USER_ID`), y solo en Slack; fuera de Slack el plugin no propone ni valida. La base lo guarda como declarado: el bridge no lo puede verificar.
+- **El «para qué»** se rechaza con un mail o siete dígitos seguidos (`identifier_not_allowed`), en el plugin y en el bridge.
+- **Las herramientas** son cuatro, en el toolset `automation_expert_change`: `get_flow_definitions`, `propose_flow_change`, `validate_flow_change` y `get_flow_change`. El profile las tiene en Slack y en la terminal, junto a las de lectura (`platform_toolsets`, y `herramientas` en `hermes/declaracion.toml`).
+- **El agente no pausa.** Donde arriba dice que hay una ruta `POST /flows/{flow_key}/pause` y una herramienta `pause_flow`, no existen: la base no puede verificar a quien pide la pausa, y la ruta tampoco llevaba el producto. Pausar es del comando del operador. **Es el valor por defecto de Andy (21/10), y lo revisa Dan.**
+- **Aprobar registra la simulación que quedó congelada en la vista previa** (`validation.preview.simulacion`): `built` con `summary_sha256`, `failed` con `reason_code`, o `not_built` si no hay. Lo hace `_flow_change_approve` desde la migración `20261021000100`. Hasta que la vista previa arme la simulación con el motor (contrato `flow-engine-v1`), sigue saliendo `not_built`.
 
 ## Lo que se confirma al construir
 

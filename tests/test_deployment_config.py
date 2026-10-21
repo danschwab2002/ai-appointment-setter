@@ -602,6 +602,26 @@ def test_deployment_declares_automation_expert_read_default_off(tmp_path: Path) 
     assert settings.automation_expert_read_token is None
 
 
+def test_deployment_declares_automation_expert_change_default_off(tmp_path: Path) -> None:
+    # flow-change-cycle-v1: el flag, la clave del plugin y el JWT del rol llegan
+    # al contenedor por compose.yaml, apagados por defecto.
+    env_lines = (PROJECT_ROOT / ".env.example").read_text().splitlines()
+    compose = (PROJECT_ROOT / "compose.yaml").read_text()
+    for name, default in (("AUTOMATION_EXPERT_CHANGE_ENABLED", "false"), ("AUTOMATION_EXPERT_CHANGE_TOKEN", ""),
+                          ("AUTOMATION_EXPERT_CHANGE_DB_KEY", "")):
+        assert f"{name}={default}" in env_lines
+        assert f"{name}: ${{{name}:-{default}}}" in compose
+    settings = Settings(
+        webhook_secret="test-secret",
+        allowed_jid="12025550123@s.whatsapp.net",
+        capture_dir=tmp_path,
+        max_age_seconds=300,
+    )
+    assert settings.automation_expert_change_enabled is False
+    assert settings.automation_expert_change_token is None
+    assert settings.automation_expert_change_db_key is None
+
+
 def test_deployment_declares_portable_precheckout_first_contact_default_off(
     tmp_path: Path,
 ) -> None:

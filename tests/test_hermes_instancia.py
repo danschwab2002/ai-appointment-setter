@@ -99,7 +99,7 @@ def test_la_declaracion_del_producto_trae_el_comercial_y_el_automation_expert_co
     assert comercial.obligatorio is True
     ae = d.profiles["automation-expert"]
     assert ae.distribucion == ROOT / "profiles" / "automation-expert"
-    assert (ae.puerto, ae.le_habla, ae.herramientas, ae.obligatorio) == (None, "slack", ("automation_expert_read",), False)
+    assert (ae.puerto, ae.le_habla, ae.herramientas, ae.obligatorio) == (None, "slack", ("automation_expert_change", "automation_expert_read"), False)
 
 
 def test_la_distribucion_es_nativa_de_hermes_y_solo_trae_el_soul_y_el_config():
@@ -658,7 +658,7 @@ def test_el_molde_del_automation_expert_completado_no_deja_nada_en_null():
     assert config["slack"]["allow_admin_from"] == [ADMIN]
     assert config["slack"]["group_allow_admin_from"] == [ADMIN]
     assert "platforms" not in config
-    assert config["platform_toolsets"]["slack"] == ["automation_expert_read", "no_mcp"]
+    assert config["platform_toolsets"]["slack"] == ["automation_expert_read", "automation_expert_change", "no_mcp"]
     assert not [r for r, v in hi.aplanar(config).items() if v is None]
     # El molde en Git no cambia: el instalador completa una copia.
     assert yaml.safe_load((DISTRIBUCION_AE / "config.yaml").read_text(encoding="utf-8"))["slack"]["allow_admin_from"] is None
@@ -716,7 +716,7 @@ def test_el_paquete_lleva_los_plugins_y_solo_los_profiles_que_la_instancia_decla
     assert hi.huella_de_carpeta(ae / "plugins") == hi.huella_de_carpeta(DISTRIBUCION_AE / "plugins")
     plan = json.loads((con / "plan.json").read_text(encoding="utf-8"))
     p = plan["profiles"]["automation-expert"]
-    assert (p["le_habla"], p["puerto"], p["herramientas"], p["administran"]) == ("slack", None, ["automation_expert_read"], [ADMIN])
+    assert (p["le_habla"], p["puerto"], p["herramientas"], p["administran"]) == ("slack", None, ["automation_expert_change", "automation_expert_read"], [ADMIN])
     assert plan["profiles"]["agente-comercial"]["le_habla"] == "bridge"
 
 

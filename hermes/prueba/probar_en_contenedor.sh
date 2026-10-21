@@ -220,6 +220,7 @@ with open(sys.argv[1], "w") as f:
     f.write("SLACK_ALLOWED_USERS=U0123ABCD\n")
     f.write("AUTOMATION_EXPERT_API_URL=http://127.0.0.1:9998\n")
     f.write("AUTOMATION_EXPERT_API_TOKEN=" + secrets.token_hex(24) + "\n")
+    f.write("AUTOMATION_EXPERT_CHANGE_API_TOKEN=" + secrets.token_hex(24) + "\n")
     f.write("AUTOMATION_EXPERT_INTERNAL_HOST=127.0.0.1:9998\n")
 PY
 cp "$TMP/hermes.toml" "$TMP/hermes-ae.toml"
@@ -237,6 +238,7 @@ SLACK_APP_TOKEN = { archivo = "secretos/automation-expert.variables", variable =
 SLACK_ALLOWED_USERS = { archivo = "secretos/automation-expert.variables", variable = "SLACK_ALLOWED_USERS" }
 AUTOMATION_EXPERT_API_URL = { archivo = "secretos/automation-expert.variables", variable = "AUTOMATION_EXPERT_API_URL" }
 AUTOMATION_EXPERT_API_TOKEN = { archivo = "secretos/automation-expert.variables", variable = "AUTOMATION_EXPERT_API_TOKEN" }
+AUTOMATION_EXPERT_CHANGE_API_TOKEN = { archivo = "secretos/automation-expert.variables", variable = "AUTOMATION_EXPERT_CHANGE_API_TOKEN" }
 AUTOMATION_EXPERT_INTERNAL_HOST = { archivo = "secretos/automation-expert.variables", variable = "AUTOMATION_EXPERT_INTERNAL_HOST" }
 TOML
 PID=$(pid_del_gateway agente-comercial)
@@ -257,7 +259,7 @@ instalador aplicar-ae 1 aplicar --instancia "$TMP/hermes-ae.toml" --solo automat
 contiene aplicar-ae "agente-comercial: no se mira (--solo automation-expert)"
 contiene aplicar-ae "instalar la distribucion en automation-expert"
 contiene aplicar-ae "automation-expert: plugins/ igual a Git"
-contiene aplicar-ae "automation-expert: en slack tiene exactamente [automation_expert_read]"
+contiene aplicar-ae "automation-expert: en slack tiene exactamente [automation_expert_change, automation_expert_read]"
 contiene aplicar-ae "automation-expert: el gateway corre"
 contiene aplicar-ae "automation-expert: el gateway arranco despues de sus variables y sus plugins"
 contiene aplicar-ae "automation-expert: Slack no esta conectado"
@@ -316,7 +318,7 @@ for archivo in "$TMP/clave-vieja.env" "$TMP/clave-intermedia.env" "$TMP/secretos
   [ -n "$CLAVE" ] || fallar "no hay key de prueba en $archivo"
   if grep -rqF -- "$CLAVE" "$SALIDAS"; then fallar "una key de prueba aparecio en una salida"; fi
 done
-for VAR in SLACK_BOT_TOKEN SLACK_APP_TOKEN AUTOMATION_EXPERT_API_TOKEN; do
+for VAR in SLACK_BOT_TOKEN SLACK_APP_TOKEN AUTOMATION_EXPERT_API_TOKEN AUTOMATION_EXPERT_CHANGE_API_TOKEN; do
   VALOR=$(sed -n "s/^$VAR=//p" "$TMP/secretos/automation-expert.variables")
   [ -n "$VALOR" ] || fallar "no hay $VAR de prueba"
   if grep -rqF -- "$VALOR" "$SALIDAS"; then fallar "el $VAR de prueba aparecio en una salida"; fi

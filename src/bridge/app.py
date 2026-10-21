@@ -107,6 +107,7 @@ from bridge.messaging import (
 )
 from bridge.payment_slip_reminders import PAYMENT_SLIP_STEPS
 from bridge.opt_out import detect_explicit_opt_out
+from bridge import flow_change_api
 from bridge.automation_expert_read import (
     CHATWOOT_MAX_MESSAGES_PER_CONVERSATION,
     CHATWOOT_READ_TIMEOUT_SECONDS,
@@ -304,6 +305,9 @@ PORTABLE_RUNTIME_BOOLEAN_CAPABILITIES = frozenset({
     # existen con manifiesto: la marca de instancia sale de el y nunca del
     # pedido.
     "automation_expert_read_enabled",
+    # Las rutas de cambio del Automation Expert (flow-change-cycle-v1), con la
+    # misma marca de instancia.
+    "automation_expert_change_enabled",
     "slack_connector_projection_enabled",
     "correlation_preresolution_enabled",
     # Transcribir un audio no depende del aliado: la key y el host de Chatwoot
@@ -799,6 +803,11 @@ class Settings:
     operator_correlation_actor_prefix: str | None = None
     automation_expert_read_enabled: bool = False
     automation_expert_read_token: str | None = None
+    # flow-change-cycle-v1: las rutas de cambio del Automation Expert. La clave
+    # del plugin y el JWT del rol de base son distintos de todo otro secreto.
+    automation_expert_change_enabled: bool = False
+    automation_expert_change_token: str | None = None
+    automation_expert_change_db_key: str | None = None
     slack_connector_projection_enabled: bool = False
     slack_connector_base_url: str | None = None
     slack_connector_bearer_token: str | None = None
@@ -2032,6 +2041,16 @@ class Settings:
             ),
             automation_expert_read_token=(
                 os.getenv("AUTOMATION_EXPERT_READ_TOKEN", "").strip() or None
+            ),
+            automation_expert_change_enabled=(
+                os.getenv("AUTOMATION_EXPERT_CHANGE_ENABLED", "false").lower()
+                == "true"
+            ),
+            automation_expert_change_token=(
+                os.getenv("AUTOMATION_EXPERT_CHANGE_TOKEN", "").strip() or None
+            ),
+            automation_expert_change_db_key=(
+                os.getenv("AUTOMATION_EXPERT_CHANGE_DB_KEY", "").strip() or None
             ),
         )
 
@@ -3495,6 +3514,7 @@ def create_app(
     slack_runtime: SlackBridgeRuntime | None = None,
     lead_first_name_client: FirstNameInferenceClient | None = None,
     audio_transcriber: AudioTranscriber | None = None,
+    flow_change_store: flow_change_api.FlowChangeStore | None = None,
 ) -> FastAPI:
     boolean_fields = [
         field
@@ -3564,6 +3584,8 @@ def create_app(
         if settings.automation_expert_read_enabled:
             # La activacion se verifica por presencia, sin token y sin datos.
             instance_readiness["automation_expert_read"] = "enabled"
+        if settings.automation_expert_change_enabled:
+            instance_readiness["automation_expert_change"] = "enabled"
         ghl_adapter_risk = _ghl_adapter_risk_readiness(settings.instance_manifest)
         if ghl_adapter_risk is not None:
             instance_readiness["ghl_adapter_risk"] = ghl_adapter_risk
@@ -3849,6 +3871,9 @@ def create_app(
                 "AGENT_PROVENANCE_SCOPE_REF must be a slug for the automation "
                 "expert read"
             )
+    # flow-change-cycle-v1: manifiesto, Supabase, la lectura prendida, la clave
+    # del plugin distinta de todo y el JWT del rol (nunca la key de service_role).
+    flow_change_api.check_settings(settings)
     pilot_fields = (
         (settings.pilot_scope_key, "LANCEMOS_PILOT_SCOPE_KEY"),
         (settings.pilot_scope_version, "LANCEMOS_PILOT_SCOPE_VERSION"),
@@ -7299,6 +7324,28 @@ def create_app(
                     detail="operator_correlation_write_unavailable",
                 ) from exc
             return {"resolution": resolution}
+
+    if settings.automation_expert_change_enabled:
+        # flow-change-cycle-v1: el agente propone y valida; nunca aprueba ni
+        # publica. Con el flag apagado las rutas no existen y dan 404.
+        assert settings.instance_manifest is not None
+        assert settings.automation_expert_change_token is not None
+        if control_client is None:
+            raise ValueError("automation expert change requires the Chatwoot control client")
+        change_manifest = settings.instance_manifest
+        flow_change_api.register_flow_change_routes(
+            app,
+            token=settings.automation_expert_change_token,
+            store=flow_change_store or flow_change_api.FlowChangeStore(
+                base_url=settings.supabase_base_url or "",
+                db_key=settings.automation_expert_change_db_key or "",
+            ),
+            chatwoot=control_client,
+            tenant_ref=change_manifest.tenant_ref,
+            ally_ref=change_manifest.ally_ref,
+            time_zone=change_manifest.time_zone,
+            inbox_id=change_manifest.chatwoot_inbox_id,
+        )
 
     if settings.automation_expert_read_enabled:
         # automation-expert-read-v1: las lecturas del Automation Expert. Solo
