@@ -718,3 +718,48 @@ def test_el_paquete_lleva_los_plugins_y_solo_los_profiles_que_la_instancia_decla
     p = plan["profiles"]["automation-expert"]
     assert (p["le_habla"], p["puerto"], p["herramientas"], p["administran"]) == ("slack", None, ["automation_expert_read"], [ADMIN])
     assert plan["profiles"]["agente-comercial"]["le_habla"] == "bridge"
+
+
+# --- --solo: acotar a un profile -------------------------------------------------------------
+
+
+def test_solo_con_un_profile_que_la_instancia_no_declara_frena_sin_tocar_nada(tmp_path):
+    with pytest.raises(hi.Freno, match="--solo automation-expert: la instancia no declara ese profile"):
+        hi.correr("plan", FIXTURE, solo="automation-expert")
+
+
+def test_el_plan_lleva_el_alcance(tmp_path):
+    d = hi.cargar_declaracion()
+    hi.armar_paquete(tmp_path, "/tmp/x", "plan", d, hi.cargar_instancia(FIXTURE, d), False, "agente-comercial")
+    assert json.loads((tmp_path / "plan.json").read_text(encoding="utf-8"))["solo"] == "agente-comercial"
+
+
+def _dentro_con(solo):
+    plan = {"modo": "aplicar", "stack": "x", "reiniciar": False, "solo": solo,
+            "profiles": {"agente-comercial": {}, "automation-expert": {}}}
+    return hi.Dentro(plan, {})
+
+
+@pytest.mark.parametrize("solo, esperados", [(None, ["agente-comercial", "automation-expert"]), ("automation-expert", ["automation-expert"])])
+def test_aplicar_con_solo_saltea_los_otros_profiles(monkeypatch, solo, esperados):
+    d = _dentro_con(solo)
+    tocados = []
+    monkeypatch.setattr(d, "_marca", lambda: {"instancia": "x"})
+    monkeypatch.setattr(d, "_aplicar_profile", lambda nombre, p, simular: tocados.append(nombre))
+    d.aplicar(simular=True)
+    assert tocados == esperados
+
+
+def test_chequear_con_solo_no_mira_los_otros_y_lo_dice(monkeypatch):
+    d = _dentro_con("automation-expert")
+    mirados = []
+    monkeypatch.setattr(d, "_marca", lambda: {"instancia": "x"})
+    monkeypatch.setattr(hi, "profiles_presentes", lambda raiz: ["agente-comercial", "automation-expert"])
+    monkeypatch.setattr(d, "_chequear_profile", lambda nombre, p: mirados.append(nombre))
+    monkeypatch.setattr(d, "_estado_s6", lambda servicio: "down")
+    monkeypatch.setattr(d, "_estado_gateway", lambda carpeta: {})
+    d.chequear()
+    assert mirados == ["automation-expert"]
+    textos = [h["texto"] for h in d.reporte.hallazgos]
+    assert "agente-comercial: no se mira (--solo automation-expert)" in textos
+    assert not any("sobra el profile" in t for t in textos)

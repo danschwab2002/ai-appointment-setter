@@ -26,6 +26,10 @@ Hay dos tipos de profile (``le_habla`` en hermes/declaracion.toml):
   espera al arrancar; lo dice ``chequear``.
 Un profile ``obligatorio = false`` puede faltar en la instancia, y entonces no se instala.
 
+``--solo <profile>`` acota plan, aplicar y chequear a ese profile: los otros no se instalan ni se
+chequean (la marca, el dueño del Hermes y los profiles de mas, si). Sirve para instalar uno nuevo
+sin arrastrar un cambio pendiente de otro, como el SOUL del comercial en ATT1 el 2026-10-21.
+
 Frena (sale con 2) sin tocar nada si:
 - el contenedor no es del stack que declara la instancia (etiqueta ``com.docker.stack.namespace``);
 - con ``aplicar``, la imagen no es la que declara el producto;
@@ -430,7 +434,7 @@ def imagen_del_contenedor(contenedor: str) -> list[str]:
 
 
 def armar_paquete(carpeta: Path, destino: str, modo: str, declaracion: Declaracion,
-                  instancia: Instancia, reiniciar: bool) -> None:
+                  instancia: Instancia, reiniciar: bool, solo: str | None = None) -> None:
     for nombre in instancia.profiles:
         producto = declaracion.profiles[nombre]
         dist = carpeta / "profiles" / nombre
@@ -452,6 +456,7 @@ def armar_paquete(carpeta: Path, destino: str, modo: str, declaracion: Declaraci
         "modo": modo,
         "stack": instancia.stack,
         "reiniciar": reiniciar,
+        "solo": solo,
         "profiles": {
             nombre: {
                 "staged": f"{destino}/profiles/{nombre}",
@@ -472,9 +477,11 @@ def armar_paquete(carpeta: Path, destino: str, modo: str, declaracion: Declaraci
 
 
 def correr(modo: str, ruta_instancia: Path, contenedor: str | None = None,
-           reiniciar: bool = False, ruta_declaracion: Path = DECLARACION) -> int:
+           reiniciar: bool = False, ruta_declaracion: Path = DECLARACION, solo: str | None = None) -> int:
     declaracion = cargar_declaracion(ruta_declaracion)
     instancia = cargar_instancia(ruta_instancia, declaracion)
+    if solo is not None and solo not in instancia.profiles:
+        raise Freno(f"--solo {solo}: la instancia no declara ese profile ({', '.join(instancia.profiles)})")
     secretos = leer_secretos(instancia)
     ident = encontrar_contenedor(instancia, contenedor)
     hallazgos: list[dict] = []
@@ -491,7 +498,7 @@ def correr(modo: str, ruta_instancia: Path, contenedor: str | None = None,
     if modo == "aplicar":
         entrada["valores"] = secretos
     with tempfile.TemporaryDirectory(prefix="setter-hermes-") as tmp:
-        armar_paquete(Path(tmp), destino, modo, declaracion, instancia, reiniciar)
+        armar_paquete(Path(tmp), destino, modo, declaracion, instancia, reiniciar, solo)
         try:
             docker("cp", f"{tmp}/.", f"{ident}:{destino}")
             docker("exec", ident, "chown", "-R", "hermes:hermes", destino)
@@ -836,6 +843,12 @@ class Dentro:
         distribuciones = {n: self._yaml(PROFILES / n / "distribution.yaml") for n in self.plan["profiles"]}
         verificar_duenio(self.plan["stack"], self._marca(), presentes, list(self.plan["profiles"]), distribuciones)
 
+    def _fuera_del_alcance(self, nombre: str) -> bool:
+        """Con --solo, los otros profiles no se instalan ni se chequean. La marca, el dueño del
+        Hermes y los profiles de mas se siguen mirando contra todo lo declarado."""
+        solo = self.plan.get("solo")
+        return solo is not None and nombre != solo
+
     # --- aplicar -------------------------------------------------------------------------
 
     def aplicar(self, simular: bool) -> None:
@@ -852,6 +865,8 @@ class Dentro:
                 }) + "\n", encoding="utf-8")
                 tmp.replace(MARCA)
         for nombre, p in self.plan["profiles"].items():
+            if self._fuera_del_alcance(nombre):
+                continue
             self._aplicar_profile(nombre, p, simular)
 
     def _aplicar_profile(self, nombre: str, p: dict, simular: bool) -> None:
@@ -1110,6 +1125,9 @@ class Dentro:
         for sobra in sorted(set(presentes) - set(declarados)):
             r.diferencia(f"sobra el profile {sobra}: no esta en la declaracion")
         for nombre, p in self.plan["profiles"].items():
+            if self._fuera_del_alcance(nombre):
+                r.ok(f"{nombre}: no se mira (--solo {self.plan['solo']})")
+                continue
             if nombre not in presentes:
                 r.diferencia(f"falta el profile {nombre}")
                 continue
@@ -1274,10 +1292,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--instancia", type=Path, required=True, help="el hermes.toml de la instancia")
     parser.add_argument("--contenedor", help="el contenedor de Hermes, si no se busca por el servicio del stack")
     parser.add_argument("--reiniciar", action="store_true", help="con aplicar: reinicia un gateway si cambia su puerto")
+    parser.add_argument("--solo", metavar="PROFILE", help="plan, aplicar y chequear tocan solo este profile")
     parser.add_argument("--declaracion", type=Path, default=DECLARACION, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     try:
-        return correr(args.modo, args.instancia, args.contenedor, args.reiniciar, args.declaracion)
+        return correr(args.modo, args.instancia, args.contenedor, args.reiniciar, args.declaracion, args.solo)
     except Freno as exc:
         print(f"FRENO: {exc}. No se toco nada.", file=sys.stderr)
         return SALIDA_FRENO
