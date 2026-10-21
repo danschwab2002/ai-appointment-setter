@@ -616,9 +616,17 @@ def aplanar(nodo: Any, prefijo: str = "") -> dict[str, Any]:
     return salida
 
 
+# Lo que Hermes anota solo en el config.yaml de un profile mientras corre: no es configuracion
+# declarada y no cuenta como diferencia. agent/onboarding.py (Hermes 0.21.0) guarda en
+# onboarding.seen cada aviso de bienvenida que ya mostro, al primer mensaje.
+ESTADO_DE_HERMES = ("onboarding.seen",)
+
+
 def diferencias_de_config(vivo: dict, esperado: dict) -> list[str]:
-    """Las rutas de clave que difieren, sin valores."""
+    """Las rutas de clave que difieren, sin valores. Lo que anota Hermes solo no cuenta."""
     a, b = aplanar(vivo), aplanar(esperado)
+    a = {r: v for r, v in a.items()
+         if r in b or not any(r == p or r.startswith(p + ".") for p in ESTADO_DE_HERMES)}
     salida = [f"falta {r}" for r in sorted(set(b) - set(a))]
     salida += [f"sobra {r}" for r in sorted(set(a) - set(b))]
     salida += [f"distinto {r}" for r in sorted(set(a) & set(b)) if a[r] != b[r]]
