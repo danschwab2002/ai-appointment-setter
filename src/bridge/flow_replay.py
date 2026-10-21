@@ -56,7 +56,7 @@ import dataclasses
 import heapq
 from bisect import bisect_left, bisect_right, insort
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from types import MappingProxyType
@@ -65,7 +65,7 @@ from zoneinfo import ZoneInfo
 
 from . import flow_engine as engine
 from .flow_capture import parse_instant
-from .flow_definition import ProposalItem, as_published, trigger_of
+from .flow_definition import ProposalItem, as_published, step_type, trigger_of
 from .flow_engine import (
     ARMED,
     ENGINE_CAPABILITIES_V1,
@@ -93,13 +93,14 @@ from .flow_parity import (
     supersessions,
     winners_without_cancel,
 )
-from .flow_policy import interval_of
+from .flow_policy import STEPS_BY_LEGACY_KIND, interval_of
 from .flow_schedule import Franja, franja_of_policy, local_day, next_open
 
 __all__ = [
     "ConsistencyReport", "History", "ObservedGate", "ObservedLedger", "PredictedLedger", "PurchaseFact",
     "CaptureControl", "Replay", "RunChange", "RunOutcome", "Simulation", "StepOutcome", "VersionChoice", "Versions",
     "as_ran", "consistency_report", "current_versions", "engine_flows_from_definitions", "exceptions_for", "fixed",
+    "plan_step_keys",
     "flow_summary", "history_from_capture", "in_flight_at", "observed_gate_inputs", "observed_supersessions",
     "observed_winners_without_cancel", "proposed_versions", "replay", "replay_summary", "simulate",
 ]
@@ -306,17 +307,34 @@ def observed_gate_inputs(capture: Capture, action: Mapping[str, Any]) -> Observe
 # Las excepciones y las versiones.
 # ---------------------------------------------------------------------------
 
-def exceptions_for(legacy_kind: str | None) -> frozenset[str]:
+def plan_step_keys(definition: Mapping[str, Any], legacy_kind: str | None) -> frozenset[str]:
+    """Los ``step_key`` del plan de una definicion: los de la forma de su flujo del legado, uno por envio."""
+    shape = STEPS_BY_LEGACY_KIND.get(legacy_kind or "", ())
+    steps = definition.get("pasos")
+    sends = sum(1 for step in steps if step_type(step) == "plantilla") if isinstance(steps, list) else 0
+    return frozenset(step.step_key for step in shape[:sends])
+
+
+def exceptions_for(legacy_kind: str | None, step_keys: Iterable[str] = ()) -> frozenset[str]:
     """Las excepciones del catalogo que tiene un flujo del motor (§2.8 del diseno).
 
     Las de capa ``sql`` y ``despacho`` siempre: las aplica codigo que el motor
     reusa. Las de capa ``plan`` y ``puerta``, solo las del ``legacy_kind`` del
-    flujo. El catalogo es ``flow_parity.EXCEPTIONS_V1``, importado.
+    flujo. Las que el codigo aplica por el paso (las de los varios toques de la
+    T2.1, con ``step_keys``), solo si el flujo es de su ``legacy_kind`` y su plan
+    tiene alguno de esos pasos (``plan_step_keys``): un carrito de un toque no
+    hereda las de Z. El catalogo es ``flow_parity.EXCEPTIONS_V1``, importado.
     """
-    return frozenset(
-        item.name for item in EXCEPTIONS_V1
-        if item.layer in ALWAYS_LAYERS or (legacy_kind is not None and legacy_kind in item.legacy_kinds)
-    )
+    keys = frozenset(step_keys)
+    out = set()
+    for item in EXCEPTIONS_V1:
+        mine = legacy_kind is not None and legacy_kind in item.legacy_kinds
+        if item.by_step:
+            if mine and item.step_keys & keys:
+                out.add(item.name)
+        elif item.layer in ALWAYS_LAYERS or mine:
+            out.add(item.name)
+    return frozenset(out)
 
 
 Versions = Mapping[FlowRef, Mapping[int, EngineFlow]]
@@ -350,7 +368,8 @@ def engine_flows_from_definitions(document: Mapping[str, Any]) -> Versions:
             flow = EngineFlow(
                 flow_id=meta[key]["flow_id"], product_ref=definition["producto"], flow_key=key, version=number,
                 definition=definition, legacy_kind=legacy_kind, fixed_zone=fixed_zone,
-                pool=caps.get("bolsa") or document.get("scope_key"), exceptions=exceptions_for(legacy_kind),
+                pool=caps.get("bolsa") or document.get("scope_key"),
+                exceptions=exceptions_for(legacy_kind, plan_step_keys(definition, legacy_kind)),
             )
             out.setdefault(flow.ref, {})[number] = flow
     return MappingProxyType({ref: MappingProxyType(by_version) for ref, by_version in out.items()})
@@ -1383,7 +1402,9 @@ def proposed_versions(versions: Versions, current: Mapping[FlowRef, int | None],
         if item.tipo == "version":
             number = max(out[ref]) + 1
             definition = as_published(item.definicion or {}, number)
-            out[ref][number] = dataclasses.replace(latest, version=number, definition=MappingProxyType(definition))
+            out[ref][number] = dataclasses.replace(
+                latest, version=number, definition=MappingProxyType(definition),
+                exceptions=exceptions_for(latest.legacy_kind, plan_step_keys(definition, latest.legacy_kind)))
             chosen[ref] = number
         elif item.tipo == "volver":
             if item.version not in out[ref]:

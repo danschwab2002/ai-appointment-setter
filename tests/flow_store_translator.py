@@ -27,6 +27,21 @@ control) se parte en dos flujos con los mismos valores
 conoce (otra ventana, dias que no son los siete, un intervalo con otro
 formato, otra audiencia, otro evento) es ``TranslationError``: falla en voz
 alta, nunca inventa un valor.
+
+**Varios toques (T2.1, la captura del 2026-10-21).** Desde el 19/10 el carrito
+corre ``att1-recuperacion`` v7 con la politica de tres pasos, y el pago fallido
+tiene su propio scope, ``att1-pago-rechazado`` (v2, dos pasos). Si la
+configuracion tiene el control de un scope propio para un evento
+(``DEDICATED_SCOPES``), ese evento sale de ahi y no del scope compartido: el
+bridge toma el pago fallido de ``LANCEMOS_PILOT_PAYMENT_FAILURE_SCOPE_*``
+(``src/bridge/app.py:254-257``), aunque ``att1-recuperacion`` v7 siga nombrando
+``PURCHASE_CANCELED``. De cada politica se toman los pasos de su flujo (los
+``step_key`` de ``bridge.flow_policy.STEPS_BY_LEGACY_KIND``): la espera de cada
+uno sale de su ``delay`` (desde el primer envio, la regla del legado) y el cupon
+personal, de ``coupon_ordinal``. Las plantillas de los toques no estan en el
+manifiesto (son del runtime): entran como el parametro ``touches``, con su
+origen escrito (``ATT1_TOUCHES_20261021``). La captura del 16/10 (un paso por
+flujo y sin scope propio) se traduce igual que antes.
 """
 
 from __future__ import annotations
@@ -36,6 +51,9 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
+
+from bridge.flow_definition import PERSONAL_COUPON
+from bridge.flow_policy import STEPS_BY_LEGACY_KIND
 
 # El evento de Hotmart o de la landing, en el esquema: (evento, flujo).
 EVENTS: Mapping[str, tuple[str, str]] = {
@@ -71,6 +89,66 @@ CODE: Mapping[str, Mapping[str, Any]] = {
         "prioridad": {"le_gana_a": [], "no_arranca_mientras": []},
     },
 }
+# El scope propio de un evento, si la configuracion tiene su control: el evento
+# sale de ahi y no del scope compartido (src/bridge/app.py:254-257).
+DEDICATED_SCOPES: Mapping[str, str] = {"PURCHASE_CANCELED": "att1-pago-rechazado"}
+
+
+@dataclass(frozen=True)
+class Touch:
+    """La plantilla de un toque que no esta en el manifiesto: su nombre, su idioma, si lleva el cupon
+    personal y sus variables, con la constante del bridge de la que salen.
+
+    El cupon personal va con el boton del checkout (``{link: checkout, cupon:
+    personal}``): el link de recuperacion con ``offDiscount``.
+    """
+
+    template: str
+    language: str
+    personal_coupon: bool
+    variables: tuple[str, ...]
+    variables_from: str
+
+
+SOURCE_BRIDGE = "codigo del bridge"
+# Las variables de cada toque, en el orden {{1}}, {{2}}...: las constantes con las que el bridge
+# arma los parametros (y que exige al leer la plantilla del catalogo).
+A1_VARIABLES = ("nombre", "producto", "cuando", "precio", "vence")
+A1_VARIABLES_FROM = f"{SOURCE_BRIDGE}: cart_first_touch.CART_DISCOUNT_VARIABLES (src/bridge/cart_first_touch.py:33)"
+A2_VARIABLES = ("nombre", "producto")
+A2_VARIABLES_FROM = f"{SOURCE_BRIDGE}: cart_followups.CART_SECOND_TOUCH_VARIABLES (src/bridge/cart_followups.py:67)"
+LAST_TOUCH_VARIABLES = ("nombre", "producto", "vence")
+Z_VARIABLES_FROM = f"{SOURCE_BRIDGE}: cart_followups.CART_LAST_TOUCH_VARIABLES (src/bridge/cart_followups.py:68)"
+B2_VARIABLES_FROM = (f"{SOURCE_BRIDGE}: payment_failure_followups.PAYMENT_FAILURE_FOLLOWUP_VARIABLES "
+                     "(src/bridge/payment_failure_followups.py:65)")
+
+
+# Las plantillas de los toques de ATT1 al 2026-10-21, por flujo y en el orden de
+# sus pasos; None es «la del manifiesto». Salen de despliegue/secretos/generar.py
+# de la instancia ATT1 (setter-instancia-att1) en origin/main, d9fa3ee
+# (2026-10-21), todas en es_MX (WABA_TEMPLATE_LANGUAGE, :271):
+# * carrito, A1: att1_carrito_descuento_01 (RECOVERY_DISCOUNT_TEMPLATE_NAME, :320),
+#   con el cupon personal. Si el cupon no llega, el bridge manda la del
+#   manifiesto, att1_carrito_abandonado_01 (excepcion a1_espera_al_cupon);
+# * carrito, A2: att1_carrito_dudas_01 (RECOVERY_CART_SECOND_TOUCH_TEMPLATE_NAME, :329);
+# * carrito, Z: att1_ultima_renovacion_01 (RECOVERY_CART_LAST_TOUCH_TEMPLATE_NAME, :336);
+# * pago fallido, B1: la del manifiesto, att1_compra_fallida_01 (las variantes
+#   de B1 no se migran en la Etapa 1);
+# * pago fallido, el seguimiento: B2, att1_pago_rechazado_descuento_01
+#   (WABA_PAYMENT_FAILURE_TEMPLATE_SECOND_TOUCH, :407), el que sigue a un B1 sin
+#   cupon (portable-payment-failure-followup-v1.md, «Proposito y limite»).
+ATT1_TOUCHES_20261021: Mapping[str, tuple[Touch | None, ...]] = {
+    "carrito": (
+        Touch("att1_carrito_descuento_01", "es_MX", True, A1_VARIABLES, A1_VARIABLES_FROM),
+        Touch("att1_carrito_dudas_01", "es_MX", False, A2_VARIABLES, A2_VARIABLES_FROM),
+        Touch("att1_ultima_renovacion_01", "es_MX", True, LAST_TOUCH_VARIABLES, Z_VARIABLES_FROM),
+    ),
+    "pago_fallido": (None, Touch("att1_pago_rechazado_descuento_01", "es_MX", True, LAST_TOUCH_VARIABLES,
+                                 B2_VARIABLES_FROM)),
+}
+TOUCHES_SOURCE = ("parametro del traductor: ATT1_TOUCHES_20261021 "
+                  "(despliegue/secretos/generar.py de la instancia ATT1, origin/main d9fa3ee)")
+
 # Los flujos que salen enteros de un bloque del esquema: (bloque, flujo).
 FROM_SCHEMA_BLOCKS = (("4", "descuento"), ("5a", "reactivacion"))
 # El orden de la propuesta de primeras versiones.
@@ -82,6 +160,8 @@ SOURCE_CODE = "codigo (contrato :481-590)"
 SOURCE_SCHEMA = "bloque del esquema"
 
 _HMS = re.compile(r"([0-9]{2}):([0-9]{2}):([0-9]{2})")
+_DELAY = re.compile(r"([1-9][0-9]{0,5}) (minute|hour|day)s?")
+_DELAY_MINUTES = {"minute": 1, "hour": 60, "day": 24 * 60}
 _DAYS = re.compile(r"([1-9][0-9]{0,2}) days?")
 _HOUR = re.compile(r"([01][0-9]|2[0-3]):[0-5][0-9]")
 
@@ -103,6 +183,35 @@ def _grace_minutes(value: object) -> int:
     if match is None or match.group(3) != "00":
         raise TranslationError(f"grace_period_shape:{value!r}")
     return int(match.group(1)) * 60 + int(match.group(2))
+
+
+def _delay_minutes(value: object) -> int:
+    match = _DELAY.fullmatch(value) if isinstance(value, str) else None
+    if match is None:
+        raise TranslationError(f"step_delay_shape:{value!r}")
+    return int(match.group(1)) * _DELAY_MINUTES[match.group(2)]
+
+
+def _duration(minutes: int) -> str:
+    """Una espera del esquema: en horas si son horas justas, si no en minutos."""
+    return f"{minutes // 60}h" if minutes % 60 == 0 else f"{minutes}m"
+
+
+def _flow_steps(policy: Mapping[str, Any], flow_key: str) -> list[Mapping[str, Any]]:
+    """Los pasos de la politica que son de este flujo, en orden, y que son los primeros de su forma."""
+    shape = [step.step_key for step in STEPS_BY_LEGACY_KIND[flow_key]]
+    steps = policy.get("steps")
+    if not isinstance(steps, list) or not all(isinstance(step, Mapping) for step in steps):
+        raise TranslationError("policy_steps_shape")
+    mine = [step for step in steps if step.get("step_key") in shape]
+    if [step.get("step_key") for step in mine] != shape[:len(mine)] or not mine:
+        raise TranslationError(f"policy_steps_not_the_shape:{flow_key}")
+    for index, step in enumerate(mine):
+        expected = {"mode", "step_key"} if index == 0 else {"mode", "step_key", "delay", "approved_template"}
+        keys = set(step) - {"coupon_ordinal"} if index else set(step)
+        if keys != expected or step.get("mode") != "freeform" or (index and step.get("approved_template") is not True):
+            raise TranslationError(f"policy_step_shape:{step.get('step_key')}")
+    return mine
 
 
 def _deadline(value: object) -> str:
@@ -155,7 +264,8 @@ def _template(manifest: Mapping[str, Any], flow_key: str) -> tuple[str, str]:
 
 
 def _from_scope(scope: Mapping[str, Any], policy: Mapping[str, Any], event_type: str,
-                manifest: Mapping[str, Any]) -> Translated:
+                manifest: Mapping[str, Any],
+                touches: Mapping[str, Sequence[Touch | None]] | None = None) -> Translated:
     if event_type not in EVENTS:
         raise TranslationError(f"event_type_unknown:{event_type}")
     event, flow_key = EVENTS[event_type]
@@ -164,8 +274,12 @@ def _from_scope(scope: Mapping[str, Any], policy: Mapping[str, Any], event_type:
         raise TranslationError(f"audience_mode_unknown:{audience}")
     if scope.get("timezone") != policy.get("timezone"):
         raise TranslationError("scope_and_policy_time_zones_differ")
-    if policy.get("max_automatic_messages") != 1:
-        raise TranslationError("more_than_one_automatic_message")
+    policy_steps = _flow_steps(policy, flow_key)
+    if policy.get("max_automatic_messages") != len(policy_steps):
+        raise TranslationError("automatic_messages_and_steps_differ")
+    flow_touches = (touches or {}).get(flow_key)
+    if len(policy_steps) > 1 and (flow_touches is None or len(flow_touches) != len(policy_steps)):
+        raise TranslationError(f"touch_templates_missing:{flow_key}")
     for key in ("max_outbound_request_starts_per_day", "max_outbound_request_starts_total"):
         value = scope.get(key)
         if not isinstance(value, int) or isinstance(value, bool) or value < 1:
@@ -179,11 +293,39 @@ def _from_scope(scope: Mapping[str, Any], policy: Mapping[str, Any], event_type:
     if grace:
         steps.append({"esperar": f"{grace}m"})
         sources["/pasos/0/esperar"] = f"{SOURCE_REAL}: followup_policy_versions.grace_period"
-    step_at = f"/pasos/{len(steps)}"
-    steps.append({"plantilla": template, "idioma": language, "variables": list(code["variables"])})
-    sources[f"{step_at}/plantilla"] = f"{SOURCE_MANIFEST}: [plantillas].{flow_key}.nombre"
-    sources[f"{step_at}/idioma"] = f"{SOURCE_MANIFEST}: [plantillas].{flow_key}.idioma"
-    sources[f"{step_at}/variables"] = SOURCE_CODE
+    previous_delay = 0
+    for index, policy_step in enumerate(policy_steps):
+        if index:
+            delay = _delay_minutes(policy_step.get("delay"))
+            if delay <= previous_delay:
+                raise TranslationError(f"step_delay_not_increasing:{policy_step.get('step_key')}")
+            steps.append({"esperar": _duration(delay - previous_delay)})
+            sources[f"/pasos/{len(steps) - 1}/esperar"] = (
+                f"{SOURCE_REAL}: followup_policy_versions.steps[{policy_step.get('step_key')}].delay")
+            previous_delay = delay
+        touch = flow_touches[index] if flow_touches is not None else None
+        step_at = f"/pasos/{len(steps)}"
+        if touch is None:
+            step = {"plantilla": template, "idioma": language, "variables": list(code["variables"])}
+            sources[f"{step_at}/plantilla"] = f"{SOURCE_MANIFEST}: [plantillas].{flow_key}.nombre"
+            sources[f"{step_at}/idioma"] = f"{SOURCE_MANIFEST}: [plantillas].{flow_key}.idioma"
+        else:
+            step = {"plantilla": touch.template, "idioma": touch.language, "variables": list(touch.variables)}
+            sources[f"{step_at}/plantilla"] = TOUCHES_SOURCE
+            sources[f"{step_at}/idioma"] = TOUCHES_SOURCE
+        sources[f"{step_at}/variables"] = SOURCE_CODE if touch is None else touch.variables_from
+        personal = touch is not None and touch.personal_coupon
+        marked = "coupon_ordinal" in policy_step
+        # El primer toque no lleva marca: su cupon lo gobierna el flag (a1_cupon_por_flag).
+        if index and personal != marked:
+            raise TranslationError(f"touch_coupon_and_policy_differ:{policy_step.get('step_key')}")
+        if personal:
+            step["boton"] = {"link": "checkout", "cupon": PERSONAL_COUPON}
+            sources[f"{step_at}/boton/link"] = TOUCHES_SOURCE
+            sources[f"{step_at}/boton/cupon"] = (
+                f"{SOURCE_REAL}: followup_policy_versions.steps[{policy_step.get('step_key')}].coupon_ordinal"
+                if index else TOUCHES_SOURCE)
+        steps.append(step)
     definition: dict[str, Any] = {
         "flujo": flow_key,
         "nombre": code["nombre"],
@@ -223,16 +365,30 @@ def _from_scope(scope: Mapping[str, Any], policy: Mapping[str, Any], event_type:
     return Translated(definition=definition, sources=sources)
 
 
+def _has_control(config: Mapping[str, Any], scope_key: str) -> bool:
+    return any(c.get("scope_key") == scope_key for c in config.get("pilot_runtime_controls") or [])
+
+
 def translate_att1(config: Mapping[str, Any], manifest: Mapping[str, Any],
-                   schema_blocks: Sequence[Mapping[str, Any]]) -> dict[str, Translated]:
-    """Los cinco flujos de ATT1, en el orden de la propuesta, con la fuente de cada campo."""
+                   schema_blocks: Sequence[Mapping[str, Any]],
+                   touches: Mapping[str, Sequence[Touch | None]] | None = None) -> dict[str, Translated]:
+    """Los cinco flujos de ATT1, en el orden de la propuesta, con la fuente de cada campo.
+
+    ``touches`` son las plantillas de los toques que no estan en el manifiesto
+    (``ATT1_TOUCHES_20261021``); hacen falta solo si una politica tiene mas de
+    un paso para su flujo.
+    """
     out: dict[str, Translated] = {}
-    for scope_key in ("att1-recuperacion", "att1-primer-contacto"):
+    dedicated = {event: scope_key for event, scope_key in DEDICATED_SCOPES.items() if _has_control(config, scope_key)}
+    scope_keys = ["att1-recuperacion", *sorted(set(dedicated.values())), "att1-primer-contacto"]
+    for scope_key in scope_keys:
         scope = _active_scope(config, scope_key)
         policy = _policy_of(config, scope)
         events = [scope.get("source_event_type"), *(scope.get("additional_source_event_types") or [])]
         for event_type in events:
-            translated = _from_scope(scope, policy, event_type, manifest)
+            if dedicated.get(event_type, scope_key) != scope_key:
+                continue
+            translated = _from_scope(scope, policy, event_type, manifest, touches)
             flow_key = translated.definition["flujo"]
             if flow_key in out:
                 raise TranslationError(f"flow_repeated:{flow_key}")
@@ -252,7 +408,9 @@ def translate_att1(config: Mapping[str, Any], manifest: Mapping[str, Any],
 
 
 def att1_definitions_from_config(config: Mapping[str, Any], manifest: Mapping[str, Any],
-                                 schema_blocks: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+                                 schema_blocks: Sequence[Mapping[str, Any]],
+                                 touches: Mapping[str, Sequence[Touch | None]] | None = None
+                                 ) -> dict[str, dict[str, Any]]:
     """Las cinco definiciones de ATT1, sin normalizar, en el orden de la propuesta."""
     return {flow_key: translated.definition
-            for flow_key, translated in translate_att1(config, manifest, schema_blocks).items()}
+            for flow_key, translated in translate_att1(config, manifest, schema_blocks, touches).items()}

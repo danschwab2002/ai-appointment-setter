@@ -1,0 +1,1551 @@
+{
+ "_captured": {
+  "origin": "att1-db (stack setter-att1), psql con default_transaction_read_only, solo filas de configuracion",
+  "captured_at": "2026-10-21T15:43:39Z",
+  "redactions": [
+   "pilot_scope_versions: sin channel_account_ref; queda solo channel_account_ref_present (si estaba o no)",
+   "pilot_control_events_control_level: solo las filas sin contact_id, action_id ni attempt_id, y sin esas tres claves"
+  ],
+  "query": "tests/fixtures/flow_store/att1_flow_config_query.sql",
+  "note": "salida de la consulta tal cual, reindentada; escaneado: sin mails ni telefonos (el unico numero de 9 o mas digitos es la migracion 20261009000200, citada en un change_reason)"
+ },
+ "pilot_scope_versions": [
+  {
+   "source": "hotmart",
+   "status": "published",
+   "channel": "whatsapp",
+   "purpose": "cart_recovery",
+   "version": 1,
+   "timezone": "America/Mexico_City",
+   "scope_key": "att1-ficha",
+   "created_at": "2026-10-19T02:55:46.760308+00:00",
+   "offer_code": "gopi6lh7",
+   "policy_key": "att1-ficha-un-toque",
+   "tenant_key": "lancemos",
+   "updated_at": "2026-10-19T02:55:46.760308+00:00",
+   "approved_at": "2026-10-19T02:55:46.733079+00:00",
+   "approved_by": "dan",
+   "published_at": "2026-10-19T02:55:46.733079+00:00",
+   "audience_mode": "consented_intent",
+   "policy_version": 1,
+   "channel_provider": "waba",
+   "chatwoot_inbox_id": 11,
+   "source_event_type": "PURCHASE_BILLET_PRINTED",
+   "chatwoot_account_id": 2,
+   "external_product_id": "5071808",
+   "max_cohort_contacts": 2,
+   "additional_offer_codes": [
+    "bmaztyhg",
+    "2uafw5bg"
+   ],
+   "channel_account_ref_present": true,
+   "additional_source_event_types": [],
+   "max_outbound_request_starts_total": 200,
+   "max_outbound_request_starts_per_day": 10
+  },
+  {
+   "source": "hotmart",
+   "status": "published",
+   "channel": "whatsapp",
+   "purpose": "cart_recovery",
+   "version": 2,
+   "timezone": "America/Mexico_City",
+   "scope_key": "att1-ficha",
+   "created_at": "2026-10-19T12:05:50.902108+00:00",
+   "offer_code": "gopi6lh7",
+   "policy_key": "att1-ficha-tres-toques",
+   "tenant_key": "lancemos",
+   "updated_at": "2026-10-19T12:05:50.902109+00:00",
+   "approved_at": "2026-10-19T12:05:50.863274+00:00",
+   "approved_by": "dan",
+   "published_at": "2026-10-19T12:05:50.863274+00:00",
+   "audience_mode": "consented_intent",
+   "policy_version": 1,
+   "channel_provider": "waba",
+   "chatwoot_inbox_id": 11,
+   "source_event_type": "PURCHASE_BILLET_PRINTED",
+   "chatwoot_account_id": 2,
+   "external_product_id": "5071808",
+   "max_cohort_contacts": 2,
+   "additional_offer_codes": [
+    "bmaztyhg",
+    "2uafw5bg"
+   ],
+   "channel_account_ref_present": true,
+   "additional_source_event_types": [],
+   "max_outbound_request_starts_total": 200,
+   "max_outbound_request_starts_per_day": 10
+  },
+  {
+   "source": "hotmart",
+   "status": "published",
+   "channel": "whatsapp",
+   "purpose": "cart_recovery",
+   "version": 3,
+   "timezone": "America/Mexico_City",
+   "scope_key": "att1-ficha",
+   "created_at": "2026-10-19T13:21:28.583147+00:00",
+   "offer_code": "gopi6lh7",
+   "policy_key": "att1-ficha-dos-toques",
+   "tenant_key": "lancemos",
+   "updated_at": "2026-10-19T13:21:28.583147+00:00",
+   "approved_at": "2026-10-19T13:21:28.564837+00:00",
+   "approved_by": "dan",
+   "published_at": "2026-10-19T13:21:28.564837+00:00",
+   "audience_mode": "consented_intent",
+   "policy_version": 1,
+   "channel_provider": "waba",
+   "chatwoot_inbox_id": 11,
+   "source_event_type": "PURCHASE_BILLET_PRINTED",
+   "chatwoot_account_id": 2,
+   "external_product_id": "5071808",
+   "max_cohort_contacts": 2,
+   "additional_offer_codes": [
+    "bmaztyhg",
+    "2uafw5bg"
+   ],
+   "channel_account_ref_present": true,
+   "additional_source_event_types": [],
+   "max_outbound_request_starts_total": 200,
+   "max_outbound_request_starts_per_day": 10
+  },
+  {
+   "source": "hotmart",
+   "status": "published",
+   "channel": "whatsapp",
+   "purpose": "cart_recovery",
+   "version": 1,
+   "timezone": "America/Mexico_City",
+   "scope_key": "att1-pago-rechazado",
+   "created_at": "2026-10-19T12:07:59.430177+00:00",
+   "offer_code": "gopi6lh7",
+   "policy_key": "att1-pago-rechazado-un-toque",
+   "tenant_key": "lancemos",
+   "updated_at": "2026-10-19T12:07:59.430177+00:00",
+   "approved_at": "2026-10-19T12:07:59.406894+00:00",
+   "approved_by": "dan",
+   "published_at": "2026-10-19T12:07:59.406894+00:00",
+   "audience_mode": "consented_intent",
+   "policy_version": 1,
+   "channel_provider": "waba",
+   "chatwoot_inbox_id": 11,
+   "source_event_type": "PURCHASE_CANCELED",
+   "chatwoot_account_id": 2,
+   "external_product_id": "5071808",
+   "max_cohort_contacts": 2,
+   "additional_offer_codes": [
+    "bmaztyhg",
+    "2uafw5bg"
+   ],
+   "channel_account_ref_present": true,
+   "additional_source_event_types": [],
+   "max_outbound_request_starts_total": 200,
+   "max_outbound_request_starts_per_day": 10
+  },
+  {
+   "source": "hotmart",
+   "status": "published",
+   "channel": "whatsapp",
+   "purpose": "cart_recovery",
+   "version": 2,
+   "timezone": "America/Mexico_City",
+   "scope_key": "att1-pago-rechazado",
+   "created_at": "2026-10-19T17:59:06.902138+00:00",
+   "offer_code": "gopi6lh7",
+   "policy_key": "att1-pago-rechazado-dos-toques",
+   "tenant_key": "lancemos",
+   "updated_at": "2026-10-19T17:59:06.902138+00:00",
+   "approved_at": "2026-10-19T17:59:06.885393+00:00",
+   "approved_by": "dan",
+   "published_at": "2026-10-19T17:59:06.885393+00:00",
+   "audience_mode": "consented_intent",
+   "policy_version": 1,
+   "channel_provider": "waba",
+   "chatwoot_inbox_id": 11,
+   "source_event_type": "PURCHASE_CANCELED",
+   "chatwoot_account_id": 2,
+   "external_product_id": "5071808",
+   "max_cohort_contacts": 2,
+   "additional_offer_codes": [
+    "bmaztyhg",
+    "2uafw5bg"
+   ],
+   "channel_account_ref_present": true,
+   "additional_source_event_types": [],
+   "max_outbound_request_starts_total": 200,
+   "max_outbound_request_starts_per_day": 10
+  },
+  {
+   "source": "landing",
+   "status": "published",
+   "channel": "whatsapp",
+   "purpose": "cart_recovery",
+   "version": 1,
+   "timezone": "America/Mexico_City",
+   "scope_key": "att1-primer-contacto",
+   "created_at": "2026-10-01T16:34:14.413972+00:00",
+   "offer_code": "gopi6lh7",
+   "policy_key": "att1-primer-contacto-formulario",
+   "tenant_key": "lancemos",
+   "updated_at": "2026-10-01T16:34:14.413973+00:00",
+   "approved_at": "2026-10-01T16:34:10.760886+00:00",
+   "approved_by": "aprovisionar-att1-v1",
+   "published_at": "2026-10-01T16:34:10.760886+00:00",
+   "audience_mode": "consented_intent_in_cohort",
+   "policy_version": 1,
+   "channel_provider": "waba",
+   "chatwoot_inbox_id": 11,
+   "source_event_type": "PRECHECKOUT_FORM_SUBMITTED",
+   "chatwoot_account_id": 2,
+   "external_product_id": "5071808",
+   "max_cohort_contacts": 2,
+   "additional_offer_codes": [
+    "bmaztyhg",
+    "2uafw5bg"
+   ],
+   "channel_account_ref_present": true,
+   "additional_source_event_types": [],
+   "max_outbound_request_starts_total": 3,
+   "max_outbound_request_starts_per_day": 3
+  },
+  {
+   "source": "landing",
+   "status": "published",
+   "channel": "whatsapp",
+   "purpose": "cart_recovery",
+   "version": 2,
+   "timezone": "America/Mexico_City",
+   "scope_key": "att1-primer-contacto",
+   "created_at": "2026-10-09T14:57:56.979894+00:00",
+   "offer_code": "gopi6lh7",
+   "policy_key": "att1-primer-contacto-formulario",
+   "tenant_key": "lancemos",
+   "updated_at": "2026-10-09T14:57:56.979894+00:00",
+   "approved_at": "2026-10-09T14:57:56.966215+00:00",
+   "approved_by": "dan",
+   "published_at": "2026-10-09T14:57:56.966215+00:00",
+   "audience_mode": "consented_intent",
+   "policy_version": 1,
+   "channel_provider": "waba",
+   "chatwoot_inbox_id": 11,
+   "source_event_type": "PRECHECKOUT_FORM_SUBMITTED",
+   "chatwoot_account_id": 2,
+   "external_product_id": "5071808",
+   "max_cohort_contacts": 2,
+   "additional_offer_codes": [
+    "bmaztyhg",
+    "2uafw5bg"
+   ],
+   "channel_account_ref_present": true,
+   "additional_source_event_types": [],
+   "max_outbound_request_starts_total": 150,
+   "max_outbound_request_starts_per_day": 10
+  },
+  {
+   "source": "hotmart",
+   "status": "published",
+   "channel": "whatsapp",
+   "purpose": "cart_recovery",
+   "version": 1,
+   "timezone": "America/Mexico_City",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-09-30T05:04:07.401708+00:00",
+   "offer_code": "gopi6lh7",
+   "policy_key": "att1-recuperacion-un-toque",
+   "tenant_key": "lancemos",
+   "updated_at": "2026-09-30T05:04:07.401708+00:00",
+   "approved_at": "2026-09-30T05:04:07.373528+00:00",
+   "approved_by": "aprovisionar-att1-v1",
+   "published_at": "2026-09-30T05:04:07.373528+00:00",
+   "audience_mode": "manual_cohort",
+   "policy_version": 1,
+   "channel_provider": "waba",
+   "chatwoot_inbox_id": 11,
+   "source_event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+   "chatwoot_account_id": 2,
+   "external_product_id": "5071808",
+   "max_cohort_contacts": 20,
+   "additional_offer_codes": [
+    "bmaztyhg",
+    "2uafw5bg"
+   ],
+   "channel_account_ref_present": true,
+   "additional_source_event_types": [
+    "PURCHASE_CANCELED"
+   ],
+   "max_outbound_request_starts_total": 20,
+   "max_outbound_request_starts_per_day": 20
+  },
+  {
+   "source": "hotmart",
+   "status": "published",
+   "channel": "whatsapp",
+   "purpose": "cart_recovery",
+   "version": 2,
+   "timezone": "America/Mexico_City",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-01T16:34:15.363156+00:00",
+   "offer_code": "gopi6lh7",
+   "policy_key": "att1-recuperacion-un-toque",
+   "tenant_key": "lancemos",
+   "updated_at": "2026-10-01T16:34:15.363156+00:00",
+   "approved_at": "2026-10-01T16:34:15.311987+00:00",
+   "approved_by": "publicar-scope-v2",
+   "published_at": "2026-10-01T16:34:15.311987+00:00",
+   "audience_mode": "consented_intent_in_cohort",
+   "policy_version": 1,
+   "channel_provider": "waba",
+   "chatwoot_inbox_id": 11,
+   "source_event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+   "chatwoot_account_id": 2,
+   "external_product_id": "5071808",
+   "max_cohort_contacts": 2,
+   "additional_offer_codes": [
+    "bmaztyhg",
+    "2uafw5bg"
+   ],
+   "channel_account_ref_present": true,
+   "additional_source_event_types": [
+    "PURCHASE_CANCELED"
+   ],
+   "max_outbound_request_starts_total": 4,
+   "max_outbound_request_starts_per_day": 4
+  },
+  {
+   "source": "hotmart",
+   "status": "published",
+   "channel": "whatsapp",
+   "purpose": "cart_recovery",
+   "version": 3,
+   "timezone": "America/Mexico_City",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-08T22:41:50.39929+00:00",
+   "offer_code": "gopi6lh7",
+   "policy_key": "att1-recuperacion-un-toque",
+   "tenant_key": "lancemos",
+   "updated_at": "2026-10-08T22:41:50.39929+00:00",
+   "approved_at": "2026-10-08T22:41:50.369473+00:00",
+   "approved_by": "dan",
+   "published_at": "2026-10-08T22:41:50.369473+00:00",
+   "audience_mode": "consented_intent",
+   "policy_version": 1,
+   "channel_provider": "waba",
+   "chatwoot_inbox_id": 11,
+   "source_event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+   "chatwoot_account_id": 2,
+   "external_product_id": "5071808",
+   "max_cohort_contacts": 2,
+   "additional_offer_codes": [
+    "bmaztyhg",
+    "2uafw5bg"
+   ],
+   "channel_account_ref_present": true,
+   "additional_source_event_types": [
+    "PURCHASE_CANCELED"
+   ],
+   "max_outbound_request_starts_total": 400,
+   "max_outbound_request_starts_per_day": 40
+  },
+  {
+   "source": "hotmart",
+   "status": "published",
+   "channel": "whatsapp",
+   "purpose": "cart_recovery",
+   "version": 4,
+   "timezone": "America/Mexico_City",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-09T18:50:38.318555+00:00",
+   "offer_code": "gopi6lh7",
+   "policy_key": "att1-recuperacion-un-toque",
+   "tenant_key": "lancemos",
+   "updated_at": "2026-10-09T18:50:38.318555+00:00",
+   "approved_at": "2026-10-09T18:50:38.310292+00:00",
+   "approved_by": "dan",
+   "published_at": "2026-10-09T18:50:38.310292+00:00",
+   "audience_mode": "consented_intent",
+   "policy_version": 1,
+   "channel_provider": "waba",
+   "chatwoot_inbox_id": 11,
+   "source_event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+   "chatwoot_account_id": 2,
+   "external_product_id": "5071808",
+   "max_cohort_contacts": 2,
+   "additional_offer_codes": [
+    "bmaztyhg",
+    "2uafw5bg"
+   ],
+   "channel_account_ref_present": true,
+   "additional_source_event_types": [
+    "PURCHASE_CANCELED"
+   ],
+   "max_outbound_request_starts_total": 1000,
+   "max_outbound_request_starts_per_day": 40
+  },
+  {
+   "source": "hotmart",
+   "status": "published",
+   "channel": "whatsapp",
+   "purpose": "cart_recovery",
+   "version": 5,
+   "timezone": "America/Mexico_City",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-13T00:17:41.719545+00:00",
+   "offer_code": "gopi6lh7",
+   "policy_key": "att1-recuperacion-un-toque",
+   "tenant_key": "lancemos",
+   "updated_at": "2026-10-13T00:17:41.719545+00:00",
+   "approved_at": "2026-10-13T00:17:41.705304+00:00",
+   "approved_by": "dan",
+   "published_at": "2026-10-13T00:17:41.705304+00:00",
+   "audience_mode": "consented_intent",
+   "policy_version": 1,
+   "channel_provider": "waba",
+   "chatwoot_inbox_id": 11,
+   "source_event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+   "chatwoot_account_id": 2,
+   "external_product_id": "5071808",
+   "max_cohort_contacts": 2,
+   "additional_offer_codes": [
+    "bmaztyhg",
+    "2uafw5bg"
+   ],
+   "channel_account_ref_present": true,
+   "additional_source_event_types": [
+    "PURCHASE_CANCELED"
+   ],
+   "max_outbound_request_starts_total": 1000,
+   "max_outbound_request_starts_per_day": 80
+  },
+  {
+   "source": "hotmart",
+   "status": "published",
+   "channel": "whatsapp",
+   "purpose": "cart_recovery",
+   "version": 6,
+   "timezone": "America/Mexico_City",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-19T17:09:50.120669+00:00",
+   "offer_code": "gopi6lh7",
+   "policy_key": "att1-carrito-dos-toques",
+   "tenant_key": "lancemos",
+   "updated_at": "2026-10-19T17:09:50.120669+00:00",
+   "approved_at": "2026-10-19T17:09:50.075869+00:00",
+   "approved_by": "dan",
+   "published_at": "2026-10-19T17:09:50.075869+00:00",
+   "audience_mode": "consented_intent",
+   "policy_version": 1,
+   "channel_provider": "waba",
+   "chatwoot_inbox_id": 11,
+   "source_event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+   "chatwoot_account_id": 2,
+   "external_product_id": "5071808",
+   "max_cohort_contacts": 2,
+   "additional_offer_codes": [
+    "bmaztyhg",
+    "2uafw5bg"
+   ],
+   "channel_account_ref_present": true,
+   "additional_source_event_types": [
+    "PURCHASE_CANCELED"
+   ],
+   "max_outbound_request_starts_total": 5000,
+   "max_outbound_request_starts_per_day": 160
+  },
+  {
+   "source": "hotmart",
+   "status": "published",
+   "channel": "whatsapp",
+   "purpose": "cart_recovery",
+   "version": 7,
+   "timezone": "America/Mexico_City",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-19T18:12:35.915531+00:00",
+   "offer_code": "gopi6lh7",
+   "policy_key": "att1-carrito-tres-toques",
+   "tenant_key": "lancemos",
+   "updated_at": "2026-10-19T18:12:35.915531+00:00",
+   "approved_at": "2026-10-19T18:12:35.89003+00:00",
+   "approved_by": "dan",
+   "published_at": "2026-10-19T18:12:35.89003+00:00",
+   "audience_mode": "consented_intent",
+   "policy_version": 1,
+   "channel_provider": "waba",
+   "chatwoot_inbox_id": 11,
+   "source_event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+   "chatwoot_account_id": 2,
+   "external_product_id": "5071808",
+   "max_cohort_contacts": 2,
+   "additional_offer_codes": [
+    "bmaztyhg",
+    "2uafw5bg"
+   ],
+   "channel_account_ref_present": true,
+   "additional_source_event_types": [
+    "PURCHASE_CANCELED"
+   ],
+   "max_outbound_request_starts_total": 5000,
+   "max_outbound_request_starts_per_day": 240
+  }
+ ],
+ "followup_policy_versions": [
+  {
+   "steps": [
+    {
+     "mode": "freeform",
+     "step_key": "first_contact"
+    },
+    {
+     "mode": "freeform",
+     "delay": "24 hours",
+     "step_key": "cart_second_touch",
+     "approved_template": true
+    }
+   ],
+   "status": "published",
+   "purpose": "cart_recovery",
+   "version": 1,
+   "timezone": "America/Mexico_City",
+   "created_at": "2026-10-19T17:09:50.075869+00:00",
+   "policy_key": "att1-carrito-dos-toques",
+   "updated_at": "2026-10-19T17:09:50.075869+00:00",
+   "approved_at": "2026-10-19T17:09:50.075869+00:00",
+   "approved_by": "dan",
+   "grace_period": "00:00:00",
+   "published_at": "2026-10-19T17:09:50.075869+00:00",
+   "expires_after": "3 days",
+   "business_windows": [
+    {
+     "end": "21:00",
+     "days": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+     ],
+     "start": "09:00"
+    }
+   ],
+   "max_automatic_messages": 2
+  },
+  {
+   "steps": [
+    {
+     "mode": "freeform",
+     "step_key": "first_contact"
+    },
+    {
+     "mode": "freeform",
+     "delay": "24 hours",
+     "step_key": "cart_second_touch",
+     "approved_template": true
+    },
+    {
+     "mode": "freeform",
+     "delay": "72 hours",
+     "step_key": "cart_last_touch",
+     "coupon_ordinal": 2,
+     "approved_template": true
+    }
+   ],
+   "status": "published",
+   "purpose": "cart_recovery",
+   "version": 1,
+   "timezone": "America/Mexico_City",
+   "created_at": "2026-10-19T18:12:35.89003+00:00",
+   "policy_key": "att1-carrito-tres-toques",
+   "updated_at": "2026-10-19T18:12:35.89003+00:00",
+   "approved_at": "2026-10-19T18:12:35.89003+00:00",
+   "approved_by": "dan",
+   "grace_period": "00:00:00",
+   "published_at": "2026-10-19T18:12:35.89003+00:00",
+   "expires_after": "5 days",
+   "business_windows": [
+    {
+     "end": "21:00",
+     "days": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+     ],
+     "start": "09:00"
+    }
+   ],
+   "max_automatic_messages": 3
+  },
+  {
+   "steps": [
+    {
+     "mode": "freeform",
+     "step_key": "payment_slip_first_contact"
+    },
+    {
+     "mode": "freeform",
+     "delay": "1 minute",
+     "step_key": "payment_slip_due_day"
+    }
+   ],
+   "status": "published",
+   "purpose": "cart_recovery",
+   "version": 1,
+   "timezone": "America/Mexico_City",
+   "created_at": "2026-10-19T13:21:28.564837+00:00",
+   "policy_key": "att1-ficha-dos-toques",
+   "updated_at": "2026-10-19T13:21:28.564837+00:00",
+   "approved_at": "2026-10-19T13:21:28.564837+00:00",
+   "approved_by": "dan",
+   "grace_period": "01:00:00",
+   "published_at": "2026-10-19T13:21:28.564837+00:00",
+   "expires_after": "4 days",
+   "business_windows": [
+    {
+     "end": "21:00",
+     "days": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+     ],
+     "start": "09:00"
+    }
+   ],
+   "max_automatic_messages": 2
+  },
+  {
+   "steps": [
+    {
+     "mode": "freeform",
+     "step_key": "payment_slip_first_contact"
+    },
+    {
+     "mode": "freeform",
+     "delay": "1 minute",
+     "step_key": "payment_slip_due_eve"
+    },
+    {
+     "mode": "freeform",
+     "delay": "2 minutes",
+     "step_key": "payment_slip_due_day"
+    }
+   ],
+   "status": "published",
+   "purpose": "cart_recovery",
+   "version": 1,
+   "timezone": "America/Mexico_City",
+   "created_at": "2026-10-19T12:05:50.863274+00:00",
+   "policy_key": "att1-ficha-tres-toques",
+   "updated_at": "2026-10-19T12:05:50.863274+00:00",
+   "approved_at": "2026-10-19T12:05:50.863274+00:00",
+   "approved_by": "dan",
+   "grace_period": "01:00:00",
+   "published_at": "2026-10-19T12:05:50.863274+00:00",
+   "expires_after": "4 days",
+   "business_windows": [
+    {
+     "end": "21:00",
+     "days": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+     ],
+     "start": "09:00"
+    }
+   ],
+   "max_automatic_messages": 3
+  },
+  {
+   "steps": [
+    {
+     "mode": "freeform",
+     "step_key": "payment_slip_first_contact"
+    }
+   ],
+   "status": "published",
+   "purpose": "cart_recovery",
+   "version": 1,
+   "timezone": "America/Mexico_City",
+   "created_at": "2026-10-19T02:55:46.733079+00:00",
+   "policy_key": "att1-ficha-un-toque",
+   "updated_at": "2026-10-19T02:55:46.733079+00:00",
+   "approved_at": "2026-10-19T02:55:46.733079+00:00",
+   "approved_by": "dan",
+   "grace_period": "01:00:00",
+   "published_at": "2026-10-19T02:55:46.733079+00:00",
+   "expires_after": "1 day",
+   "business_windows": [
+    {
+     "end": "21:00",
+     "days": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+     ],
+     "start": "09:00"
+    }
+   ],
+   "max_automatic_messages": 1
+  },
+  {
+   "steps": [
+    {
+     "mode": "freeform",
+     "step_key": "payment_failure_first_contact"
+    },
+    {
+     "mode": "freeform",
+     "delay": "24 hours",
+     "step_key": "payment_failure_followup",
+     "coupon_ordinal": 2,
+     "approved_template": true
+    }
+   ],
+   "status": "published",
+   "purpose": "cart_recovery",
+   "version": 1,
+   "timezone": "America/Mexico_City",
+   "created_at": "2026-10-19T17:59:06.885393+00:00",
+   "policy_key": "att1-pago-rechazado-dos-toques",
+   "updated_at": "2026-10-19T17:59:06.885393+00:00",
+   "approved_at": "2026-10-19T17:59:06.885393+00:00",
+   "approved_by": "dan",
+   "grace_period": "00:15:00",
+   "published_at": "2026-10-19T17:59:06.885393+00:00",
+   "expires_after": "3 days",
+   "business_windows": [
+    {
+     "end": "21:00",
+     "days": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+     ],
+     "start": "09:00"
+    }
+   ],
+   "max_automatic_messages": 2
+  },
+  {
+   "steps": [
+    {
+     "mode": "freeform",
+     "step_key": "payment_failure_first_contact"
+    }
+   ],
+   "status": "published",
+   "purpose": "cart_recovery",
+   "version": 1,
+   "timezone": "America/Mexico_City",
+   "created_at": "2026-10-19T12:07:59.406894+00:00",
+   "policy_key": "att1-pago-rechazado-un-toque",
+   "updated_at": "2026-10-19T12:07:59.406894+00:00",
+   "approved_at": "2026-10-19T12:07:59.406894+00:00",
+   "approved_by": "dan",
+   "grace_period": "00:15:00",
+   "published_at": "2026-10-19T12:07:59.406894+00:00",
+   "expires_after": "1 day",
+   "business_windows": [
+    {
+     "end": "21:00",
+     "days": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+     ],
+     "start": "09:00"
+    }
+   ],
+   "max_automatic_messages": 1
+  },
+  {
+   "steps": [
+    {
+     "mode": "freeform",
+     "step_key": "first_contact"
+    }
+   ],
+   "status": "published",
+   "purpose": "cart_recovery",
+   "version": 1,
+   "timezone": "America/Mexico_City",
+   "created_at": "2026-10-01T16:34:10.760886+00:00",
+   "policy_key": "att1-primer-contacto-formulario",
+   "updated_at": "2026-10-01T16:34:10.760886+00:00",
+   "approved_at": "2026-10-01T16:34:10.760886+00:00",
+   "approved_by": "aprovisionar-att1-v1",
+   "grace_period": "01:00:00",
+   "published_at": "2026-10-01T16:34:10.760886+00:00",
+   "expires_after": "1 day",
+   "business_windows": [
+    {
+     "end": "21:00",
+     "days": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+     ],
+     "start": "09:00"
+    }
+   ],
+   "max_automatic_messages": 1
+  },
+  {
+   "steps": [
+    {
+     "mode": "freeform",
+     "step_key": "first_contact"
+    },
+    {
+     "mode": "freeform",
+     "step_key": "payment_failure_first_contact"
+    }
+   ],
+   "status": "published",
+   "purpose": "cart_recovery",
+   "version": 1,
+   "timezone": "America/Mexico_City",
+   "created_at": "2026-09-30T05:04:07.373528+00:00",
+   "policy_key": "att1-recuperacion-un-toque",
+   "updated_at": "2026-09-30T05:04:07.373528+00:00",
+   "approved_at": "2026-09-30T05:04:07.373528+00:00",
+   "approved_by": "aprovisionar-att1-v1",
+   "grace_period": "00:00:00",
+   "published_at": "2026-09-30T05:04:07.373528+00:00",
+   "expires_after": "1 day",
+   "business_windows": [
+    {
+     "end": "21:00",
+     "days": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+     ],
+     "start": "09:00"
+    }
+   ],
+   "max_automatic_messages": 1
+  }
+ ],
+ "pilot_runtime_controls": [
+  {
+   "scope_key": "att1-ficha",
+   "changed_at": "2026-10-19T15:04:17.02641+00:00",
+   "changed_by": "dan",
+   "created_at": "2026-10-19T02:55:46.86963+00:00",
+   "generation": 4,
+   "updated_at": "2026-10-19T15:04:17.021489+00:00",
+   "change_reason": "subida a v1.13.0: C1 y C3 de la ficha (att1-ficha v3)",
+   "runtime_state": "armed",
+   "scope_version": 3
+  },
+  {
+   "scope_key": "att1-pago-rechazado",
+   "changed_at": "2026-10-19T17:59:54.542576+00:00",
+   "changed_by": "dan",
+   "created_at": "2026-10-19T12:07:59.540535+00:00",
+   "generation": 4,
+   "updated_at": "2026-10-19T17:59:54.53745+00:00",
+   "change_reason": "subida a v1.15.0: el seguimiento del pago rechazado, B2 o Z (att1-pago-rechazado v2)",
+   "runtime_state": "armed",
+   "scope_version": 2
+  },
+  {
+   "scope_key": "att1-primer-contacto",
+   "changed_at": "2026-10-09T18:47:05.833032+00:00",
+   "changed_by": "dan",
+   "created_at": "2026-10-01T16:34:14.524295+00:00",
+   "generation": 6,
+   "updated_at": "2026-10-09T18:47:05.825622+00:00",
+   "change_reason": "la adopcion ya no se frena por un primer contacto reemplazado (20261009000200)",
+   "runtime_state": "armed",
+   "scope_version": 2
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "changed_at": "2026-10-19T18:13:52.943806+00:00",
+   "changed_by": "dan",
+   "created_at": "2026-09-30T05:04:07.530828+00:00",
+   "generation": 20,
+   "updated_at": "2026-10-19T18:13:52.939128+00:00",
+   "change_reason": "Z del carrito: att1-recuperacion v7 (tres toques)",
+   "runtime_state": "armed",
+   "scope_version": 7
+  }
+ ],
+ "pilot_proactive_contact_caps": null,
+ "pilot_control_events_control_level": [
+  {
+   "id": "778529af-0363-4b45-98ca-b7a3c1b0b1af",
+   "data": {
+    "to_version": 2,
+    "from_version": 1,
+    "runtime_state": "inactive"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-06T18:42:27.024406+00:00",
+   "event_type": "pilot_scope_version_activated",
+   "reason_code": "pilot_scope_version_activated",
+   "scope_version": 2,
+   "runtime_generation": 1
+  },
+  {
+   "id": "83f0ec61-e5f0-4119-9a25-2fa19016824c",
+   "data": {
+    "to_state": "armed"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-06T19:46:13.373045+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 2,
+   "runtime_generation": 3
+  },
+  {
+   "id": "ca3530d9-a315-4864-8f4a-2c03b75b9800",
+   "data": {
+    "to_state": "paused"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-06T20:40:33.756912+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 2,
+   "runtime_generation": 4
+  },
+  {
+   "id": "792b7d81-b937-45fd-b3ff-da8ce8aee806",
+   "data": {
+    "to_state": "armed"
+   },
+   "actor": "dan",
+   "scope_key": "att1-primer-contacto",
+   "created_at": "2026-10-08T14:09:15.12573+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 1,
+   "runtime_generation": 1
+  },
+  {
+   "id": "c7128621-d262-4f9a-90c9-55e2e09f95f7",
+   "data": {
+    "to_state": "paused"
+   },
+   "actor": "dan",
+   "scope_key": "att1-primer-contacto",
+   "created_at": "2026-10-08T14:11:35.995103+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 1,
+   "runtime_generation": 2
+  },
+  {
+   "id": "d5a117f0-e29e-42ce-a6c8-695fe72906e9",
+   "data": {
+    "to_state": "armed"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-08T14:11:42.306361+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 2,
+   "runtime_generation": 5
+  },
+  {
+   "id": "decb802b-7095-4c70-8711-1235ec16c2dc",
+   "data": {
+    "to_state": "paused"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-08T22:41:43.848667+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 2,
+   "runtime_generation": 6
+  },
+  {
+   "id": "972ab022-77f3-4185-a4e5-fc4063d2dc93",
+   "data": {
+    "to_version": 3,
+    "from_version": 2,
+    "runtime_state": "inactive"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-08T22:42:19.893671+00:00",
+   "event_type": "pilot_scope_version_activated",
+   "reason_code": "pilot_scope_version_activated",
+   "scope_version": 3,
+   "runtime_generation": 7
+  },
+  {
+   "id": "c6cfd6fb-021c-429a-b07b-ea9270cf3e1f",
+   "data": {
+    "to_state": "armed"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-08T22:51:47.638382+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 3,
+   "runtime_generation": 8
+  },
+  {
+   "id": "a52b8e62-176a-4881-bc57-320f2484cada",
+   "data": {
+    "to_version": 2,
+    "from_version": 1,
+    "runtime_state": "inactive"
+   },
+   "actor": "dan",
+   "scope_key": "att1-primer-contacto",
+   "created_at": "2026-10-09T14:58:21.131019+00:00",
+   "event_type": "pilot_scope_version_activated",
+   "reason_code": "pilot_scope_version_activated",
+   "scope_version": 2,
+   "runtime_generation": 3
+  },
+  {
+   "id": "42fda3e4-51a4-486a-bcc3-91da259161a7",
+   "data": {
+    "to_state": "armed"
+   },
+   "actor": "dan",
+   "scope_key": "att1-primer-contacto",
+   "created_at": "2026-10-09T15:06:44.45426+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 2,
+   "runtime_generation": 4
+  },
+  {
+   "id": "1583baa3-a2cd-450b-9e97-5c15acbd3d08",
+   "data": {
+    "to_state": "paused"
+   },
+   "actor": "dan",
+   "scope_key": "att1-primer-contacto",
+   "created_at": "2026-10-09T16:56:00.74414+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 2,
+   "runtime_generation": 5
+  },
+  {
+   "id": "158d57e5-110f-4ae9-8df2-2dbbc9abbc6d",
+   "data": {
+    "to_state": "armed"
+   },
+   "actor": "dan",
+   "scope_key": "att1-primer-contacto",
+   "created_at": "2026-10-09T18:47:05.836065+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 2,
+   "runtime_generation": 6
+  },
+  {
+   "id": "cfdb220c-ec2e-4c04-bbed-acdb4adcb2b4",
+   "data": {
+    "to_state": "paused"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-09T18:53:31.570724+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 3,
+   "runtime_generation": 9
+  },
+  {
+   "id": "23cb638a-c708-47a0-af08-8a9c2a6e07db",
+   "data": {
+    "to_version": 4,
+    "from_version": 3,
+    "runtime_state": "inactive"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-09T18:53:32.649507+00:00",
+   "event_type": "pilot_scope_version_activated",
+   "reason_code": "pilot_scope_version_activated",
+   "scope_version": 4,
+   "runtime_generation": 10
+  },
+  {
+   "id": "95ff0a60-5c16-4cd7-8554-1223b7600f86",
+   "data": {
+    "to_state": "armed"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-09T18:53:34.094666+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 4,
+   "runtime_generation": 11
+  },
+  {
+   "id": "cada83a6-78da-4ba6-a0bc-39afa316eba8",
+   "data": {
+    "to_state": "paused"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-13T00:20:23.133037+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 4,
+   "runtime_generation": 12
+  },
+  {
+   "id": "43778089-2058-4d04-8160-c586bc2d6ef5",
+   "data": {
+    "to_version": 5,
+    "from_version": 4,
+    "runtime_state": "inactive"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-13T00:20:27.855185+00:00",
+   "event_type": "pilot_scope_version_activated",
+   "reason_code": "pilot_scope_version_activated",
+   "scope_version": 5,
+   "runtime_generation": 13
+  },
+  {
+   "id": "d9ab798a-246d-4548-99ec-8df07e95a00b",
+   "data": {
+    "to_state": "armed"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-13T00:20:37.508913+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 5,
+   "runtime_generation": 14
+  },
+  {
+   "id": "ed06d4ab-37e4-4a57-957d-f828ab25b93d",
+   "data": {
+    "to_state": "armed"
+   },
+   "actor": "dan",
+   "scope_key": "att1-ficha",
+   "created_at": "2026-10-19T02:56:03.688199+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 1,
+   "runtime_generation": 1
+  },
+  {
+   "id": "ad79f8b9-42df-4ae9-bc54-162e594c86bc",
+   "data": {
+    "to_state": "armed"
+   },
+   "actor": "dan",
+   "scope_key": "att1-pago-rechazado",
+   "created_at": "2026-10-19T12:08:21.558925+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 1,
+   "runtime_generation": 1
+  },
+  {
+   "id": "7652e99c-270d-4d32-8554-bb50c1be379f",
+   "data": {
+    "to_state": "paused"
+   },
+   "actor": "dan",
+   "scope_key": "att1-ficha",
+   "created_at": "2026-10-19T15:04:13.993434+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 1,
+   "runtime_generation": 2
+  },
+  {
+   "id": "86cc012a-29ce-41c3-b77c-6b82e8b06376",
+   "data": {
+    "to_version": 3,
+    "from_version": 1,
+    "runtime_state": "inactive"
+   },
+   "actor": "dan",
+   "scope_key": "att1-ficha",
+   "created_at": "2026-10-19T15:04:15.448702+00:00",
+   "event_type": "pilot_scope_version_activated",
+   "reason_code": "pilot_scope_version_activated",
+   "scope_version": 3,
+   "runtime_generation": 3
+  },
+  {
+   "id": "c1362deb-5fe4-4945-8fc7-8f853901bd8a",
+   "data": {
+    "to_state": "armed"
+   },
+   "actor": "dan",
+   "scope_key": "att1-ficha",
+   "created_at": "2026-10-19T15:04:17.027856+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 3,
+   "runtime_generation": 4
+  },
+  {
+   "id": "ab7934c7-3922-4b37-b3b0-fa69aedeffd3",
+   "data": {
+    "to_state": "paused"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-19T17:10:34.716469+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 5,
+   "runtime_generation": 15
+  },
+  {
+   "id": "13ec68d0-bc0b-4b5c-bc49-390c0a05c9ac",
+   "data": {
+    "to_version": 6,
+    "from_version": 5,
+    "runtime_state": "inactive"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-19T17:10:35.854962+00:00",
+   "event_type": "pilot_scope_version_activated",
+   "reason_code": "pilot_scope_version_activated",
+   "scope_version": 6,
+   "runtime_generation": 16
+  },
+  {
+   "id": "cb79fad7-c130-4b81-ae27-8e29e81fe81c",
+   "data": {
+    "to_state": "armed"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-19T17:10:36.938665+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 6,
+   "runtime_generation": 17
+  },
+  {
+   "id": "dec24ceb-dc28-4e16-872f-65e1077c1d51",
+   "data": {
+    "to_state": "paused"
+   },
+   "actor": "dan",
+   "scope_key": "att1-pago-rechazado",
+   "created_at": "2026-10-19T17:59:51.956197+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 1,
+   "runtime_generation": 2
+  },
+  {
+   "id": "3f9ab325-dea4-47a4-95a6-bed22d959693",
+   "data": {
+    "to_version": 2,
+    "from_version": 1,
+    "runtime_state": "inactive"
+   },
+   "actor": "dan",
+   "scope_key": "att1-pago-rechazado",
+   "created_at": "2026-10-19T17:59:53.162655+00:00",
+   "event_type": "pilot_scope_version_activated",
+   "reason_code": "pilot_scope_version_activated",
+   "scope_version": 2,
+   "runtime_generation": 3
+  },
+  {
+   "id": "90c9586f-ad56-4604-8214-061ab13d7b97",
+   "data": {
+    "to_state": "armed"
+   },
+   "actor": "dan",
+   "scope_key": "att1-pago-rechazado",
+   "created_at": "2026-10-19T17:59:54.544031+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 2,
+   "runtime_generation": 4
+  },
+  {
+   "id": "95cb9561-c2df-4167-b16b-550cc4f1de5e",
+   "data": {
+    "to_state": "paused"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-19T18:13:50.725027+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 6,
+   "runtime_generation": 18
+  },
+  {
+   "id": "aef37b53-03a0-4dac-a0ff-28ea2d17c8b7",
+   "data": {
+    "to_version": 7,
+    "from_version": 6,
+    "runtime_state": "inactive"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-19T18:13:51.812205+00:00",
+   "event_type": "pilot_scope_version_activated",
+   "reason_code": "pilot_scope_version_activated",
+   "scope_version": 7,
+   "runtime_generation": 19
+  },
+  {
+   "id": "b9e0559b-0c7f-49e7-ada9-f21ee8ef0995",
+   "data": {
+    "to_state": "armed"
+   },
+   "actor": "dan",
+   "scope_key": "att1-recuperacion",
+   "created_at": "2026-10-19T18:13:52.94492+00:00",
+   "event_type": "pilot_runtime_state_changed",
+   "reason_code": "pilot_runtime_state_changed",
+   "scope_version": 7,
+   "runtime_generation": 20
+  }
+ ],
+ "pilot_control_events_counts": [
+  {
+   "scope_key": "att1-ficha",
+   "scope_version": 1,
+   "event_type": "pilot_outbound_request_authorized",
+   "n": 1
+  },
+  {
+   "scope_key": "att1-ficha",
+   "scope_version": 1,
+   "event_type": "pilot_runtime_state_changed",
+   "n": 2
+  },
+  {
+   "scope_key": "att1-ficha",
+   "scope_version": 3,
+   "event_type": "pilot_outbound_request_authorized",
+   "n": 1
+  },
+  {
+   "scope_key": "att1-ficha",
+   "scope_version": 3,
+   "event_type": "pilot_runtime_state_changed",
+   "n": 1
+  },
+  {
+   "scope_key": "att1-ficha",
+   "scope_version": 3,
+   "event_type": "pilot_scope_version_activated",
+   "n": 1
+  },
+  {
+   "scope_key": "att1-pago-rechazado",
+   "scope_version": 1,
+   "event_type": "pilot_runtime_state_changed",
+   "n": 2
+  },
+  {
+   "scope_key": "att1-pago-rechazado",
+   "scope_version": 2,
+   "event_type": "pilot_outbound_request_authorized",
+   "n": 1
+  },
+  {
+   "scope_key": "att1-pago-rechazado",
+   "scope_version": 2,
+   "event_type": "pilot_runtime_state_changed",
+   "n": 1
+  },
+  {
+   "scope_key": "att1-pago-rechazado",
+   "scope_version": 2,
+   "event_type": "pilot_scope_version_activated",
+   "n": 1
+  },
+  {
+   "scope_key": "att1-primer-contacto",
+   "scope_version": 1,
+   "event_type": "pilot_runtime_state_changed",
+   "n": 2
+  },
+  {
+   "scope_key": "att1-primer-contacto",
+   "scope_version": 2,
+   "event_type": "pilot_outbound_request_authorized",
+   "n": 43
+  },
+  {
+   "scope_key": "att1-primer-contacto",
+   "scope_version": 2,
+   "event_type": "pilot_runtime_state_changed",
+   "n": 3
+  },
+  {
+   "scope_key": "att1-primer-contacto",
+   "scope_version": 2,
+   "event_type": "pilot_scope_version_activated",
+   "n": 1
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 2,
+   "event_type": "pilot_cohort_member_enrolled",
+   "n": 1
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 2,
+   "event_type": "pilot_outbound_request_authorized",
+   "n": 2
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 2,
+   "event_type": "pilot_runtime_state_changed",
+   "n": 4
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 2,
+   "event_type": "pilot_scope_version_activated",
+   "n": 1
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 3,
+   "event_type": "pilot_outbound_request_authorized",
+   "n": 22
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 3,
+   "event_type": "pilot_runtime_state_changed",
+   "n": 2
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 3,
+   "event_type": "pilot_scope_version_activated",
+   "n": 1
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 4,
+   "event_type": "pilot_outbound_request_authorized",
+   "n": 102
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 4,
+   "event_type": "pilot_runtime_state_changed",
+   "n": 2
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 4,
+   "event_type": "pilot_scope_version_activated",
+   "n": 1
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 5,
+   "event_type": "pilot_outbound_request_authorized",
+   "n": 179
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 5,
+   "event_type": "pilot_runtime_state_changed",
+   "n": 2
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 5,
+   "event_type": "pilot_scope_version_activated",
+   "n": 1
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 6,
+   "event_type": "pilot_outbound_request_authorized",
+   "n": 1
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 6,
+   "event_type": "pilot_runtime_state_changed",
+   "n": 2
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 6,
+   "event_type": "pilot_scope_version_activated",
+   "n": 1
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 7,
+   "event_type": "pilot_outbound_request_authorized",
+   "n": 78
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 7,
+   "event_type": "pilot_runtime_state_changed",
+   "n": 1
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 7,
+   "event_type": "pilot_scope_version_activated",
+   "n": 1
+  }
+ ]
+}

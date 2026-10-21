@@ -19,6 +19,7 @@ Los datos son inventados: uuid de la forma ``00000000-0000-4000-8000-<n>``.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -143,20 +144,26 @@ def test_with_the_preview_each_step_counts_from_the_first_send_and_shares_the_de
     plan = plan_steps(flow, fire(1, DAY), capabilities=PREVIEW_CAPABILITIES)
     assert [step.after for step in plan.steps] == [timedelta(hours=1), timedelta(hours=24), timedelta(hours=48)]
     assert [step.index for step in plan.steps] == [0, 1, 2]
-    assert [step.step_key for step in plan.steps] == ["first_contact", None, None]
+    # Desde la T2.1, el step_key de cada paso es el de la forma del carrito.
+    assert [step.step_key for step in plan.steps] == ["first_contact", "cart_second_touch", "cart_last_touch"]
     assert plan.expires_after == timedelta(days=4)
 
 
-def test_with_the_v1_a_definition_of_two_templates_is_not_supported() -> None:
+def test_with_the_v1_three_touches_plan_like_the_preview() -> None:
+    # La T2.1: la v1 ejecuta hasta tres envios por camino, con la espera entre uno y otro.
     flow = flow_of(pasos=THREE_TOUCHES, vence="4d")
+    assert plan_steps(flow, fire(1, DAY)) == plan_steps(flow, fire(1, DAY), capabilities=PREVIEW_CAPABILITIES)
+
+
+def test_with_the_v1_a_fourth_send_is_not_supported() -> None:
+    flow = flow_of(pasos=[*THREE_TOUCHES, {"esperar": "24h"}, SEND], vence="5d")
     with pytest.raises(PlanNotSupported) as raised:
         plan_steps(flow, fire(1, DAY))
-    assert raised.value.codes == ("engine_not_supported:espera_despues_del_envio",
-                                  "engine_not_supported:mas_de_un_envio")
-    with pytest.raises(PlanNotSupported) as raised:
-        plan_steps(flow_of(pasos=[SEND, SEND]), fire(1, DAY))
-    assert raised.value.codes == ("engine_not_supported:mas_de_un_envio",)
-    assert str(raised.value) == "engine_not_supported:mas_de_un_envio"
+    assert raised.value.codes == ("engine_not_supported:demasiados_envios",)
+    assert str(raised.value) == "engine_not_supported:demasiados_envios"
+    assert len(plan_steps(flow, fire(1, DAY), capabilities=PREVIEW_CAPABILITIES).steps) == 4
+    # Un cuarto paso no tiene step_key en la forma del carrito.
+    assert plan_steps(flow, fire(1, DAY), capabilities=PREVIEW_CAPABILITIES).steps[3].step_key is None
 
 
 @pytest.mark.parametrize(("changes", "codes"), [
@@ -179,12 +186,22 @@ def test_not_supported_names_what_the_v1_does_not_run(changes: dict[str, Any], c
 
 def test_the_preview_differs_from_the_v1_only_in_the_sends_per_path() -> None:
     assert PREVIEW_CAPABILITIES.max_sends_per_path is None
-    assert ENGINE_CAPABILITIES_V1.max_sends_per_path == 1
-    assert {**vars(PREVIEW_CAPABILITIES), "max_sends_per_path": 1} == vars(ENGINE_CAPABILITIES_V1)
+    assert ENGINE_CAPABILITIES_V1.max_sends_per_path == 3
+    assert ENGINE_CAPABILITIES_V1.waits_between_sends is True
+    assert {**vars(PREVIEW_CAPABILITIES), "max_sends_per_path": 3} == vars(ENGINE_CAPABILITIES_V1)
     definition = {**copy.deepcopy(DEFINITIONS["versions"]["5"]["carrito"]), "pasos": THREE_TOUCHES}
     assert not_supported(definition, PREVIEW_CAPABILITIES) == ()
+    assert not_supported(definition) == ()
     trailing = {**definition, "pasos": [*THREE_TOUCHES, {"esperar": "1h"}]}
     assert not_supported(trailing, PREVIEW_CAPABILITIES) == ("engine_not_supported:espera_despues_del_envio",)
+    assert not_supported(trailing) == ("engine_not_supported:espera_despues_del_envio",)
+
+
+def test_a_capability_without_waits_between_sends_names_the_wait() -> None:
+    one_send = dataclasses.replace(ENGINE_CAPABILITIES_V1, max_sends_per_path=1, waits_between_sends=False)
+    definition = {**copy.deepcopy(DEFINITIONS["versions"]["5"]["carrito"]), "pasos": THREE_TOUCHES}
+    assert not_supported(definition, one_send) == ("engine_not_supported:espera_despues_del_envio",
+                                                   "engine_not_supported:demasiados_envios")
 
 
 @pytest.mark.parametrize(("changes", "code"), [

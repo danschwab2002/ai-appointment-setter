@@ -17,10 +17,11 @@ diferencias con nombre de la T1.
   ``flow_definition.parse_items`` (la lista, o un objeto con ``items``) e
   imprime el resumen de la vista previa y los cambios por disparo, contra la
   vigente en toda la ventana (``flow_replay.simulate``).
-* Una propuesta que las capacidades v1 no ejecutan sale con 2: con mas de un
-  envio por camino, ``engine_not_supported:mas_de_un_envio``. ``--varios-toques``
-  corre con ``PREVIEW_CAPABILITIES`` (N envios, la regla del legado) y la
-  salida lo dice en la cabecera. Solo es para la vista previa del lienzo.
+* Una propuesta que las capacidades v1 no ejecutan sale con 2: con mas de tres
+  envios por camino (desde la T2.1), ``engine_not_supported:demasiados_envios``.
+  ``--varios-toques`` corre con ``PREVIEW_CAPABILITIES`` (N envios, la regla del
+  legado) y la salida lo dice en la cabecera. Solo es para la vista previa del
+  lienzo.
 * ``--lienzo`` escribe, por flujo y por version, cuantos recorridos pasan por
   cada paso, para la skill ``lienzo-de-flujos``: indexado por el ``flow_key``,
   la etiqueta de la version (``hoy`` para la vigente; ``--etiqueta`` para la
@@ -84,7 +85,7 @@ EXIT_OK = 0
 EXIT_RED = 1
 EXIT_REJECTED = 2
 
-MORE_THAN_ONE_SEND = "engine_not_supported:mas_de_un_envio"
+TOO_MANY_SENDS = "engine_not_supported:demasiados_envios"
 CURRENT_LABEL = "hoy"
 DEFAULT_LABEL = "propuesto"
 LIENZO_SCHEMA = "setter-simulacion-lienzo/v1"
@@ -93,12 +94,14 @@ LIENZO_SCHEMA = "setter-simulacion-lienzo/v1"
 # casos generados y el traductor, con su sha256 en c7fa8ef. Los casos se
 # regeneraron con 20261019000200 (G11 y G12: el pago fallido repetido ya no
 # adelanta el envio ni abre otro caso); las politicas y los flujos que traduce el
-# fixture no cambiaron, asi que las definiciones siguen siendo las de c7fa8ef.
+# fixture no cambiaron, asi que las definiciones siguen siendo las de c7fa8ef. El
+# traductor lo cambio la T2.1 (los varios toques, 2026-10-21) sin cambiar lo que
+# traduce de la captura del 16/10: su sha256 es el de despues de la T2.1.
 BASE = "c7fa8ef"
 LEGACY_FILES = {
     "tests/fixtures/flow_engine/legacy_recovery_cases.json":
         "68bcbfe7a1df77f8e2db0fb6a22cc8fdcbb3e8ae6eeefce939780abda3cc9da7",
-    "tests/flow_store_translator.py": "b3ea196ca80d5dd72eb86d36d8d59337630ebb0f91d101e56fbafe3d92bdb2cb",
+    "tests/flow_store_translator.py": "9f61e478b7dde6f459098afbf5190ed02b6a2b75ab89de1d371a4924d3ab7630",
 }
 LEGACY_CHANGED = "las definiciones de hoy son del 16/10; el legado cambio despues"
 
@@ -170,7 +173,7 @@ def load_proposal(data: Any, history: History, versions: Versions, *, several_to
 
     Rechaza (``RejectedProposal``) lo que ``parse_items`` o ``proposed_versions``
     no aceptan, y una version nueva que las capacidades no ejecutan: con la v1,
-    mas de un envio por camino, salvo con ``several_touches``.
+    mas de tres envios por camino, salvo con ``several_touches``.
     """
     items_json = data.get("items") if isinstance(data, Mapping) else data
     capabilities = PREVIEW_CAPABILITIES if several_touches else ENGINE_CAPABILITIES_V1
@@ -378,7 +381,7 @@ def _header(capture: Capture, history: History, title: str, *, several_touches: 
         lines.append(f"aviso: {LEGACY_CHANGED} ({BASE}; cambio {', '.join(changed)})")
     if several_touches is not None:
         lines.append("capacidades: " + ("vista previa de varios toques (PREVIEW_CAPABILITIES, --varios-toques)"
-                                        if several_touches else "v1, un envio por camino"))
+                                        if several_touches else "v1, hasta tres envios por camino"))
     return lines
 
 
@@ -498,7 +501,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--consistencia", action="store_true", help="la consistencia contra la T1 (§7)")
     parser.add_argument("--propuesta", type=Path, help="los items de una propuesta (parse_items)")
     parser.add_argument("--varios-toques", action="store_true",
-                        help="simula mas de un envio por camino (solo la vista previa del lienzo)")
+                        help="simula mas de tres envios por camino (solo la vista previa del lienzo)")
     parser.add_argument("--lienzo", type=Path, help="escribe los conteos por paso para el lienzo de flujos")
     parser.add_argument("--etiqueta", default=DEFAULT_LABEL,
                         help="la etiqueta de la propuesta en el lienzo (hoy es la vigente)")
@@ -543,8 +546,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = run_proposal(history, lienzo_versions, current, chosen, several_touches=args.varios_toques)
         except RejectedProposal as rejected:
             print(f"propuesta rechazada: {', '.join(rejected.codes)}")
-            if MORE_THAN_ONE_SEND in rejected.codes:
-                print("  las capacidades v1 son de un envio por camino; la vista previa de varios toques"
+            if TOO_MANY_SENDS in rejected.codes:
+                print("  las capacidades v1 son de hasta tres envios por camino; la vista previa de varios toques"
                       " corre con --varios-toques")
             return EXIT_REJECTED
         proposed_result = result.proposed

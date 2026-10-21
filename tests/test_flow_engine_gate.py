@@ -25,6 +25,7 @@ de horas, contadas estrictamente antes (el libro observado) o con los empates
 from __future__ import annotations
 
 import copy
+import dataclasses
 import hashlib
 import json
 from bisect import bisect_left, bisect_right
@@ -303,22 +304,49 @@ TWO_SENDS = {"/pasos": [
 ], "/termina/vence": "4d"}
 
 
-def test_a_two_send_plan_with_the_v1_capabilities_closes_after_the_first() -> None:
-    # El plan de la vista previa, mirado con las capacidades de la v1: la
+# Las capacidades de antes de la T2.1: un envio por camino, sin espera entre envios.
+ONE_SEND_CAPABILITIES = dataclasses.replace(ENGINE_CAPABILITIES_V1, max_sends_per_path=1,
+                                            waits_between_sends=False)
+
+
+def test_a_two_send_plan_with_a_one_send_capability_closes_after_the_first() -> None:
+    # El plan de la vista previa, mirado con una capacidad de un envio: la
     # puerta no deja salir el segundo aunque el plan lo tenga.
     flow = cart_v5(TWO_SENDS)
     fired = firing(DAY)
     run, plan = run_of(flow, fired, sends=(DAY,), capabilities=PREVIEW_CAPABILITIES)
     assert len(plan.steps) == 2
     now = DAY + timedelta(hours=24)
-    v1 = evaluate_gate(flow, run, plan, engine.NO_FACTS, now, control=ALWAYS_ARMED, bolsa=ListLedger())
-    assert (v1.decision, v1.reason) == ("cancelar", "completo")
+    one = evaluate_gate(flow, run, plan, engine.NO_FACTS, now, control=ALWAYS_ARMED, bolsa=ListLedger(),
+                        capabilities=ONE_SEND_CAPABILITIES)
+    assert (one.decision, one.reason) == ("cancelar", "completo")
     preview = evaluate_gate(flow, run, plan, engine.NO_FACTS, now, control=ALWAYS_ARMED, bolsa=ListLedger(),
                             capabilities=PREVIEW_CAPABILITIES)
     assert preview.decision == "mandar"
     early = evaluate_gate(flow, run, plan, engine.NO_FACTS, now - timedelta(hours=1), control=ALWAYS_ARMED,
                           bolsa=ListLedger(), capabilities=PREVIEW_CAPABILITIES)
     assert (early.decision, early.reason, early.next_at) == ("esperar", None, now)
+
+
+def test_with_the_v1_of_the_t2_1_the_second_send_goes_out() -> None:
+    # Desde la T2.1 la v1 ejecuta hasta tres envios por camino: el segundo sale a su hora,
+    # y el plan es el mismo que el de la vista previa.
+    flow = cart_v5(TWO_SENDS)
+    fired = firing(DAY)
+    run, plan = run_of(flow, fired, sends=(DAY,))
+    assert plan == run_of(flow, fired, sends=(DAY,), capabilities=PREVIEW_CAPABILITIES)[1]
+    assert len(plan.steps) == 2
+    now = DAY + timedelta(hours=24)
+    v1 = evaluate_gate(flow, run, plan, engine.NO_FACTS, now, control=ALWAYS_ARMED, bolsa=ListLedger())
+    assert v1.decision == "mandar"
+    early = evaluate_gate(flow, run, plan, engine.NO_FACTS, now - timedelta(hours=1), control=ALWAYS_ARMED,
+                          bolsa=ListLedger())
+    assert (early.decision, early.reason, early.next_at) == ("esperar", None, now)
+    # Con los dos enviados, el recorrido termina completo.
+    done, _ = run_of(flow, fired, sends=(DAY, now))
+    closed = evaluate_gate(flow, done, plan, engine.NO_FACTS, now + timedelta(hours=1), control=ALWAYS_ARMED,
+                           bolsa=ListLedger())
+    assert (closed.decision, closed.reason) == ("cancelar", "completo")
 
 
 def test_after_a_send_a_reply_and_a_takeover_end_the_run() -> None:

@@ -112,7 +112,7 @@ def published(definition: dict[str, Any], version: int = 1) -> dict[str, Any]:
 
 def flow(key: str, *, versions: dict[int, dict[str, Any]] | None = None, active: int | None = None,
          state: str | None = None, generation: int | None = None, product: str = "att1",
-         flow_id: str | None = None) -> WorldFlow:
+         flow_id: str | None = None, legacy_kind: str | None = None) -> WorldFlow:
     versions = versions or {}
     if active is None and versions:
         active = max(versions)
@@ -120,7 +120,7 @@ def flow(key: str, *, versions: dict[int, dict[str, Any]] | None = None, active:
         flow_id=flow_id or IDS[key], product_ref=product, flow_key=key,
         state=state or ("prendido" if active is not None else "apagado"),
         active_version=active, generation=generation if generation is not None else len(versions),
-        versions=versions,
+        versions=versions, legacy_kind=legacy_kind,
     )
 
 
@@ -256,6 +256,28 @@ def _same_trigger(related: bool) -> list[Finding]:
     if related:
         definition["prioridad"]["le_gana_a"].append("carrito_dos")
     return run(definition, in_world=world(other))
+
+
+def _personal_touches(count: int) -> list[dict[str, Any]]:
+    """``count`` envios con ``cupon: personal``, separados por 24 h."""
+    steps: list[dict[str, Any]] = []
+    for index in range(count):
+        if index:
+            steps.append({"esperar": "24h"})
+        steps.append({**TEMPLATE_STEP, "boton": {"link": "checkout", "cupon": fd.PERSONAL_COUPON}})
+    return steps
+
+
+PERSONAL_BUTTON = {"link": "checkout", "cupon": "personal"}
+
+
+def legacy(key: str = "carrito") -> FlowWorld:
+    """El mundo con ``key`` registrado como el flujo del legado del mismo nombre (T2.1)."""
+    return world(flow(key, legacy_kind=key))
+
+
+def _legacy_run(pasos: list[dict[str, Any]], key: str = "carrito") -> list[Finding]:
+    return run(with_(flow_def(key), lambda d: d.update(pasos=pasos)), key, in_world=legacy(key))
 
 
 CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]] = {
@@ -457,11 +479,64 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
         lambda: run(flow_def("carrito"), catalog=None),
         lambda: run(flow_def("carrito")),
     ),
+    # Regla 14, con legacy_kind (T2.1): lo que se publica compila a la politica de su flujo del legado.
+    "engine_not_supported:more_sends_than_steps": (
+        lambda: _legacy_run([{"esperar": "60m"}, dict(TEMPLATE_STEP), {"esperar": "1h"}, dict(TEMPLATE_STEP)],
+                            "precheckout"),
+        lambda: _legacy_run([{"esperar": "60m"}, dict(TEMPLATE_STEP)], "precheckout"),
+    ),
+    "engine_not_supported:coupon_not_allowed": (
+        lambda: _legacy_run([dict(TEMPLATE_STEP), {"esperar": "24h"},
+                             {**TEMPLATE_STEP, "boton": dict(PERSONAL_BUTTON)}]),
+        lambda: _legacy_run([dict(TEMPLATE_STEP), {"esperar": "24h"}, dict(TEMPLATE_STEP)]),
+    ),
+    "engine_not_supported:coupon_missing": (
+        lambda: _legacy_run([dict(TEMPLATE_STEP), {"esperar": "24h"}, dict(TEMPLATE_STEP), {"esperar": "48h"},
+                             dict(TEMPLATE_STEP)]),
+        lambda: _legacy_run([dict(TEMPLATE_STEP), {"esperar": "24h"}, dict(TEMPLATE_STEP), {"esperar": "48h"},
+                             {**TEMPLATE_STEP, "variables": ["nombre", "producto", "vence"],
+                              "boton": dict(PERSONAL_BUTTON)}]),
+    ),
+    "engine_not_supported:fixed_coupon": (
+        lambda: _legacy_run([{**TEMPLATE_STEP, "boton": {"link": "checkout", "cupon": "TIROIDES10"}}]),
+        lambda: _legacy_run([dict(TEMPLATE_STEP)]),
+    ),
+    "engine_not_supported:variables_differ": (
+        lambda: _legacy_run([{**TEMPLATE_STEP, "variables": ["producto", "nombre"]}]),
+        lambda: _legacy_run([dict(TEMPLATE_STEP)]),
+    ),
+    "engine_not_supported:espera_entre_envios": (
+        lambda: _legacy_run([dict(TEMPLATE_STEP), dict(TEMPLATE_STEP)]),
+        lambda: _legacy_run([dict(TEMPLATE_STEP), {"esperar": "1m"}, dict(TEMPLATE_STEP)]),
+    ),
+    "engine_not_supported:espera_despues_del_envio": (
+        lambda: _legacy_run([dict(TEMPLATE_STEP), {"esperar": "1h"}]),
+        lambda: _legacy_run([dict(TEMPLATE_STEP)]),
+    ),
     # Regla 15.
     "coupon_change_not_supported": (
         lambda: run(draft_of("descuento", lambda d: d["pasos"][0]["boton"].update(cupon="OTRO10")), "descuento",
                     in_world=world(live("descuento"))),
         lambda: run(draft_of("descuento"), "descuento", in_world=world(live("descuento"))),
+    ),
+    # Regla 15, el limite de la 1.1: a lo sumo dos cupones personales por camino.
+    "coupon_personal_limit": (
+        lambda: run(with_(flow_def("carrito"), lambda d: d.update(pasos=_personal_touches(3)))),
+        lambda: run(with_(flow_def("carrito"), lambda d: d.update(pasos=_personal_touches(2)))),
+    ),
+    # Regla 5, con las variables de la 1.1: precio y vence solo con cupon personal; cuando solo con un evento.
+    "variable_needs_personal_coupon": (
+        lambda: run(with_(flow_def("carrito"), lambda d: d["pasos"][0].update(
+            variables=["nombre", "producto", "vence"])), phase="draft"),
+        lambda: run(with_(flow_def("carrito"), lambda d: d["pasos"][0].update(
+            variables=["nombre", "producto", "vence"], boton={"link": "checkout", "cupon": fd.PERSONAL_COUPON})),
+            phase="draft"),
+    ),
+    "variable_needs_event_trigger": (
+        lambda: run(with_(block("5a"), lambda d: d["pasos"][0].update(variables=["nombre", "cuando"])),
+                    "reactivacion", phase="draft"),
+        lambda: run(with_(flow_def("carrito"), lambda d: d["pasos"][0].update(
+            variables=["nombre", "producto", "cuando"])), phase="draft"),
     ),
     # Regla 17.
     "purchase_permission_requires_single_utility_send": (
@@ -592,7 +667,8 @@ def test_the_catalog_has_the_rule_and_kind_of_the_design() -> None:
         3: {"permission_trigger_mismatch", "contesto_a_requires_conversation"},
         4: {"purchase_exit_missing", "purchase_exit_with_purchase_trigger"},
         5: {"ficha_vencida_requires_ficha_trigger", "medio_de_pago_requires_ficha_trigger",
-            "ficha_link_requires_ficha_trigger", "coupon_requires_checkout_link"},
+            "ficha_link_requires_ficha_trigger", "coupon_requires_checkout_link",
+            "variable_needs_personal_coupon", "variable_needs_event_trigger"},
         6: {"event_requires_vence", "silence_forbids_vence"},
         7: {"conversar_outside_open_window_branch", "terminal_step_not_last", "nested_condition"},
         8: {"hour_invalid", "window_not_increasing", "zone_invalid", "zone_changed", "pool_zone_mismatch"},
@@ -603,7 +679,11 @@ def test_the_catalog_has_the_rule_and_kind_of_the_design() -> None:
         12: {"vence_not_after_waits"},
         13: {"template_not_in_catalog", "template_not_approved", "template_language_mismatch",
              "template_variable_count_mismatch", "template_button_mismatch", "template_catalog_unavailable"},
-        15: {"coupon_change_not_supported"},
+        14: {"engine_not_supported:more_sends_than_steps", "engine_not_supported:coupon_not_allowed",
+             "engine_not_supported:coupon_missing", "engine_not_supported:fixed_coupon",
+             "engine_not_supported:variables_differ", "engine_not_supported:espera_entre_envios",
+             "engine_not_supported:espera_despues_del_envio"},
+        15: {"coupon_change_not_supported", "coupon_personal_limit"},
         17: {"purchase_permission_requires_single_utility_send"},
     }
     for rule, codes in expected_rules.items():
@@ -615,10 +695,14 @@ def test_the_catalog_has_the_rule_and_kind_of_the_design() -> None:
         "purchase_exit_missing", "zone_changed", "daily_cap_exceeds_total",
         "template_not_in_catalog", "template_not_approved", "template_language_mismatch",
         "template_variable_count_mismatch", "template_button_mismatch", "template_catalog_unavailable",
-        "purchase_permission_requires_single_utility_send",
+        "purchase_permission_requires_single_utility_send", "coupon_personal_limit",
+        "variable_needs_personal_coupon", "variable_needs_event_trigger",
     }
     assert {code for code, pairs in fv.CODE_RULES.items() if any(k == "todavia_no" for _, k in pairs)} == {
-        "coupon_change_not_supported"}
+        "coupon_change_not_supported", "engine_not_supported:more_sends_than_steps",
+        "engine_not_supported:coupon_not_allowed", "engine_not_supported:coupon_missing",
+        "engine_not_supported:fixed_coupon", "engine_not_supported:variables_differ",
+        "engine_not_supported:espera_entre_envios", "engine_not_supported:espera_despues_del_envio"}
     cycle = {code for code, pairs in fv.CODE_RULES.items() if (None, "ciclo") in pairs}
     assert cycle == {
         "flow_creation_not_enabled", "change_outside_1b_scope", "trigger_change_is_another_flow",
@@ -1902,3 +1986,21 @@ def test_the_example_world_has_two_products_and_a_flow_without_version() -> None
     assert {known.product_ref for known in example_world.flows} == set(BASE_EXAMPLE["instance"]["products"])
     assert any(known.active_version is None for known in example_world.flows)
     assert len(BASE_EXAMPLE["bases"]) == 3
+
+
+def test_rule_14_without_a_legacy_kind_does_not_compile_anything() -> None:
+    # Sin legacy_kind el flujo no tiene politica del legado: la forma no se mira.
+    four = with_(flow_def("carrito"), lambda d: d.update(pasos=[dict(TEMPLATE_STEP), {"esperar": "1h"}] * 3
+                                                         + [dict(TEMPLATE_STEP)]))
+    assert not {code for code in found(run(four)) if code.startswith("engine_not_supported")}
+    assert found(run(four, in_world=legacy())) & {code for code in fv.BLOCK_CODES if code.startswith("engine_not")}
+
+
+def test_rule_14_points_at_the_step_and_only_at_publish() -> None:
+    changed = with_(flow_def("carrito"), lambda d: d.update(pasos=[dict(TEMPLATE_STEP), {"esperar": "24h"},
+                                                                   {**TEMPLATE_STEP, "variables": ["nombre"]}]))
+    result = check([version_item(changed)], in_world=legacy())
+    assert ("engine_not_supported:variables_differ", "/0/definicion/pasos/2/variables") in blocks_at(result)
+    draft = check([version_item(changed)], in_world=legacy(), phase="draft")
+    assert not [code for code, _ in blocks_at(draft) if code.startswith("engine_not_supported")]
+
