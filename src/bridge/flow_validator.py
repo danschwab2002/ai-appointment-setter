@@ -1,4 +1,5 @@
-"""El validador de las definiciones de flujo: las reglas 1 a 13, 15 y 17, las
+"""El validador de las definiciones de flujo: las reglas 1 a 13, 15 (con el limite de
+cupones personales de la 1.1) y 17, las
 siete advertencias y los chequeos del ciclo.
 
 Contratos: docs/contracts/flow-definition-v1.md («Las reglas del validador») y
@@ -38,6 +39,7 @@ from .flow_definition import (
     KIND_WARNING,
     MAX_DEPTH,
     NO_CAP,
+    PERSONAL_COUPONS_PER_PATH,
     PERMISSIONS,
     SCHEMA,
     SILENCE_MAX_MINUTES,
@@ -60,6 +62,7 @@ from .flow_definition import (
     finding_path,
     is_flow_key,
     is_iana_zone,
+    is_personal_coupon,
     is_product_ref,
     is_template_name,
     is_unresolved,
@@ -282,6 +285,12 @@ COUPON_CHANGE_NOT_SUPPORTED = _spec(
     limit="El cambio del código del cupón",
     alternative="Dejar el cupón de la versión publicada; cambiarlo es un cambio con PR y aprobación.",
 )
+COUPON_PERSONAL_LIMIT = _spec(
+    "coupon_personal_limit", 15, KIND_PROTECTION,
+    "Un camino lleva más de dos cupones personales, y a cada caso le tocan a lo sumo dos códigos.",
+    limit="Dos cupones personales por camino",
+    alternative="Dejar el cupón personal en dos envíos como mucho.",
+)
 PURCHASE_PERMISSION_REQUIRES_SINGLE_UTILITY_SEND = _spec(
     "purchase_permission_requires_single_utility_send", 17, KIND_PROTECTION,
     "la persona no dio permiso de WhatsApp: con la compra como permiso solo se le confirma la compra, una vez.",
@@ -377,7 +386,7 @@ _VALIDATOR_CODES: tuple[CodeSpec, ...] = (
     MUTUAL_LE_GANA_A, PRODUCT_NOT_DECLARED, PRODUCT_REQUIRED, DUPLICATE_FLOW_KEY,
     UNRESOLVED_VALUE, VENCE_NOT_AFTER_WAITS, TEMPLATE_NOT_IN_CATALOG, TEMPLATE_NOT_APPROVED,
     TEMPLATE_LANGUAGE_MISMATCH, TEMPLATE_VARIABLE_COUNT_MISMATCH, TEMPLATE_BUTTON_MISMATCH,
-    TEMPLATE_CATALOG_UNAVAILABLE, COUPON_CHANGE_NOT_SUPPORTED,
+    TEMPLATE_CATALOG_UNAVAILABLE, COUPON_CHANGE_NOT_SUPPORTED, COUPON_PERSONAL_LIMIT,
     PURCHASE_PERMISSION_REQUIRES_SINGLE_UTILITY_SEND, FLOW_CREATION_NOT_ENABLED,
     CHANGE_OUTSIDE_1B_SCOPE, TRIGGER_CHANGE_IS_ANOTHER_FLOW, FLOW_CHANGE_STALE_BASE,
     ROLLBACK_TARGET_NOT_FOUND, ROLLBACK_TARGET_IS_ACTIVE, STATE_TRANSITION_INVALID,
@@ -576,6 +585,28 @@ def _wait_before_first_send(steps: object) -> bool:
 
     walk(steps, {(False, False)}, 0)
     return found
+
+
+def _personal_coupon(step: object) -> bool:
+    """Si el paso es una plantilla con ``boton.cupon: personal``."""
+    if step_type(step) != "plantilla":
+        return False
+    assert isinstance(step, Mapping)
+    button = _mapping(step.get("boton"))
+    return button is not None and is_personal_coupon(button.get("cupon"))
+
+
+def _max_personal_coupons(steps: object, depth: int = 0) -> int:
+    """Los cupones personales del camino que mas tiene, contados como ``_max_sends``."""
+    if not isinstance(steps, list) or depth > MAX_DEPTH:
+        return 0
+    total = 0
+    for step in steps:
+        if _personal_coupon(step):
+            total += 1
+        elif step_type(step) == "condicion":
+            total += max(_max_personal_coupons(step.get(name), depth + 1) for name in ("entonces", "si_no"))
+    return total
 
 
 def _coupons(definition: Mapping[str, Any]) -> frozenset[str] | None:
@@ -893,6 +924,7 @@ class _Run:
             categories = self._rule13(emitter, definition)
             if active is not None:
                 self._rule15(emitter, definition, active)
+            self._rule15_personal(emitter, definition)
             self._rule17(emitter, definition, categories)
             if not subject.is_rollback:
                 self._client_ok(subject, active)
@@ -1282,6 +1314,21 @@ class _Run:
                 emitter.add(COUPON_CHANGE_NOT_SUPPORTED, at + ("boton", "cupon"))
                 return
         emitter.add(COUPON_CHANGE_NOT_SUPPORTED, ("pasos",))
+
+    def _rule15_personal(self, emitter: _Emitter, definition: Mapping[str, Any]) -> None:
+        """Mas de dos ``cupon: personal`` en un camino (contrato 1.1): en el tercero, o en ``pasos`` con ramas."""
+        steps = definition.get("pasos")
+        if _max_personal_coupons(steps) <= PERSONAL_COUPONS_PER_PATH:
+            return
+        if isinstance(steps, list) and not any(step_type(step) == "condicion" for step in steps):
+            seen = 0
+            for index, step in enumerate(steps):
+                if _personal_coupon(step):
+                    seen += 1
+                    if seen > PERSONAL_COUPONS_PER_PATH:
+                        emitter.add(COUPON_PERSONAL_LIMIT, ("pasos", index, "boton", "cupon"))
+                        return
+        emitter.add(COUPON_PERSONAL_LIMIT, ("pasos",))
 
     def _rule17(self, emitter: _Emitter, definition: Mapping[str, Any],
                 categories: Mapping[tuple[Segment, ...], object]) -> None:

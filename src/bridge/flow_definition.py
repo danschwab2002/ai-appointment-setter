@@ -45,6 +45,12 @@ _LANGUAGE = re.compile(r"[a-z]{2}(?:_[A-Z]{2})?")
 # La forma del cupon que acepta el boton del seguimiento
 # (followup_discount.COUPON_CODE_RE).
 _COUPON = re.compile(r"[A-Za-z0-9_-]{1,64}")
+# boton.cupon: personal es el codigo por persona que crea el worker del cupon en
+# Hotmart y que vence (contrato 1.1, «Los pasos»). Tiene la forma de un codigo,
+# asi que la forma no cambia; lo distinguen la regla 15 y la politica compilada.
+PERSONAL_COUPON = "personal"
+# A lo sumo dos cupones personales por camino: dos codigos por caso (regla del 17/10).
+PERSONAL_COUPONS_PER_PATH = 2
 # El codigo de Hotmart del medio de pago (CASHPAYMENT, MERCADO_PAGO...).
 _PAYMENT_CODE = re.compile(r"[A-Z][A-Z0-9_]{1,39}")
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
@@ -343,6 +349,11 @@ def is_template_name(value: object) -> bool:
 
 def is_coupon_code(value: object) -> bool:
     return isinstance(value, str) and _COUPON.fullmatch(value) is not None
+
+
+def is_personal_coupon(value: object) -> bool:
+    """Si ``boton.cupon`` es el codigo por persona (``personal``), no un codigo fijo."""
+    return value == PERSONAL_COUPON
 
 
 def is_flow_id(value: object) -> bool:

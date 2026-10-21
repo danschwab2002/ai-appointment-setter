@@ -1,6 +1,6 @@
 # Contrato: la definición de un flujo (v1)
 
-- **Estado:** aceptado como contrato conceptual el 2026-10-15; sin implementación (lo construye la Etapa 1b). El esquema no describe nada desplegado ni activado. Lo que dice de ATT1 es la línea de base de la migración, con su fecha y su evidencia. Enmendado el mismo día, antes de construir nada: cada flujo es de un producto de la instancia (ver «El producto de un flujo»).
+- **Estado:** aceptado como contrato conceptual el 2026-10-15; sin implementación (lo construye la Etapa 1b). El esquema no describe nada desplegado ni activado. Lo que dice de ATT1 es la línea de base de la migración, con su fecha y su evidencia. Enmendado el mismo día, antes de construir nada: cada flujo es de un producto de la instancia (ver «El producto de un flujo»). **Versión 1.1 del 2026-10-21 (la T2.1 del motor):** varios envíos por camino, `cupon: personal` y las bolsas separadas del carrito y el pago fallido (ver «Historial», al final).
 - **Fecha:** 2026-10-15
 - **ADR:** [ADR-0007](../decisions/0007-durable-next-action-engine.md) y [ADR-0025](../decisions/0025-cada-instancia-tiene-su-hermes-declarado-por-el-producto.md) §7
 - **Esquema:** `setter-flujo/v1`
@@ -43,7 +43,7 @@ Para cada pieza se explica qué es, qué admite en la v1, su valor por defecto, 
 
 ### 1. Qué lo dispara
 
-**Qué es.** Es lo que tiene que pasar para que el flujo arranque para una persona. Cada flujo tiene un solo disparador, y un disparador distinto es otro flujo. Hoy el carrito y el pago fallido comparten un scope con dos disparadores (`publicar-recuperacion-v5.sql:23-28`). En el esquema son dos flujos que comparten la bolsa de topes.
+**Qué es.** Es lo que tiene que pasar para que el flujo arranque para una persona. Cada flujo tiene un solo disparador, y un disparador distinto es otro flujo. Hoy el carrito y el pago fallido comparten un scope con dos disparadores (`publicar-recuperacion-v5.sql:23-28`). En el esquema son dos flujos que comparten la bolsa de topes. Desde el 2026-10-19 el pago fallido tiene su propio scope, `att1-pago-rechazado`, y ya no comparten bolsa (1.1).
 
 El disparo es el momento del evento, o el del barrido que encontró el silencio. Desde ahí se cuentan las esperas y el plazo. En un evento de Hotmart es su `creation_date` (`resolution.py:283-286`), que llega de 30 a 40 minutos después de lo último que la persona hizo en el checkout (medido en ATT1 el 2026-10-06).
 
@@ -116,7 +116,7 @@ El disparo es el momento del evento, o el del barrido que encontró el silencio.
 
 **Qué admite en la v1.** Cinco tipos de paso:
 - `esperar`: una duración. Se cuenta desde el paso anterior, y la primera espera se cuenta desde el disparo. El motor la guarda como hoy: la primera espera como gracia y las siguientes como plazos fijos desde el primer envío aceptado (`followup-engine-v1.md:68-81`). Si un envío sale tarde por el horario, el siguiente no se corre, así que puede quedar más cerca de lo pedido. Los máximos de frecuencia ponen el límite.
-- `plantilla`: una plantilla aprobada, con su `idioma` y sus `variables` en el orden {{1}}, {{2}}… Si la plantilla tiene un botón de URL dinámica, lleva también el `boton`: `checkout` (con `cupon` opcional) o `ficha`. Mientras la plantilla no exista, se escribe `{a_crear: <nombre propuesto>}`, así al publicar se sabe cuál buscar en el catálogo.
+- `plantilla`: una plantilla aprobada, con su `idioma` y sus `variables` en el orden {{1}}, {{2}}… Si la plantilla tiene un botón de URL dinámica, lleva también el `boton`: `checkout` (con `cupon` opcional: un código fijo, o `personal`, el código por persona que crea el worker del cupón en Hotmart y que vence; `personal` va a lo sumo dos veces por camino) o `ficha`. Mientras la plantilla no exista, se escribe `{a_crear: <nombre propuesto>}`, así al publicar se sabe cuál buscar en el catálogo.
 - `conversar`: un objetivo de hasta 300 caracteres. El agente comercial escribe con toda la conversación, su SOUL, su conocimiento y ese objetivo. El bridge valida lo que el agente propone antes de mandarlo (ADR-0007 §3). Este paso va dentro de la rama de una condición con la ventana abierta.
 - `condicion`: un `dato` y los valores que lo cumplen, con dos ramas, `entonces` y `si_no`. En la v1 hay dos datos posibles:
   - `ventana`: abierta o cerrada, como la informa Chatwoot;
@@ -125,7 +125,7 @@ El disparo es el momento del evento, o el del barrido que encontró el silencio.
   Una condición no puede llevar otra adentro.
 - `derivar`: una nota para el equipo de la instancia. Hace lo mismo que la derivación de hoy: pausa la conversación, le pone la etiqueta, la asigna al equipo, deja la nota y manda la tarjeta a Slack (ADR-0010). El flujo termina en ese paso.
 
-**Lo que la v1 todavía no ejecuta.** Hoy el motor manda un solo mensaje por flujo, en modo plantilla directa (`worker.py:994-998`). No le hace llegar un objetivo al agente, y no tiene cómo ejecutar `derivar` fuera de la conversación: hace falta una política de derivación aparte para el motor. Por eso, hasta que la 1b los construya, más de un envío por camino, `conversar` y `derivar` se pueden escribir en un borrador pero no se publican.
+**Lo que la v1 todavía no ejecuta.** El motor manda los envíos de su flujo del legado, en modo plantilla directa: hasta tres por camino, con la espera entre uno y otro (1.1; las capacidades del motor, `flow_engine.ENGINE_CAPABILITIES_V1`, y la forma de cada flujo, `flow_policy.STEPS_BY_LEGACY_KIND`). No le hace llegar un objetivo al agente, y no tiene cómo ejecutar `derivar` fuera de la conversación: hace falta una política de derivación aparte para el motor. Por eso, hasta que la 1b los construya, más envíos por camino de los que ejecuta el motor para ese flujo, `conversar` y `derivar` se pueden escribir en un borrador pero no se publican.
 
 **Por defecto.**
 - Un solo paso: una plantilla aprobada, sin espera.
@@ -147,7 +147,7 @@ Mientras la plantilla no esté aprobada, el flujo queda en borrador. «¿Y si no
 - La traducción del medio de pago a su nombre.
 - Que `conversar` salga solo con la ventana de 24 h abierta.
 - El efecto de `derivar`, y que la conversación derivada no se suelta sola.
-- Los máximos de frecuencia. En la v1 son dos: un envío por camino y el tope por persona de la puerta.
+- Los máximos de frecuencia. En la v1 son dos: los envíos que ejecuta el motor para ese flujo y el tope por persona de la puerta.
 
 ### 4. Cuándo termina
 
@@ -321,7 +321,7 @@ Hay dos cosas que no hace falta modelar:
 4. **Al revés no pasa.**
    - Si llega un pago fallido mientras hay un carrito en curso, el pago fallido abre su propio recorrido (`20260904000100:87-98`), así que a las 09 saldrían las dos plantillas.
    - Esto se infiere del código y falta medirlo.
-5. **Comparten los topes.** Se escribe con `bolsa: att1-recuperacion` en los dos (`publicar-recuperacion-v5.sql:23-28` y `:36-44`).
+5. **Comparten los topes.** Se escribe con `bolsa: att1-recuperacion` en los dos (`publicar-recuperacion-v5.sql:23-28` y `:36-44`). Desde el 2026-10-19 ya no: el pago fallido cuenta en `att1-pago-rechazado` (1.1).
 6. **Hay un solo primer contacto en curso por persona, y ninguno en las 24 h siguientes a un envío aceptado o incierto.** Se escribe con `repeticion: {una_por: persona, otra_despues_de: 24h}` (`20261001000200:836-862`).
 7. **El cupón sale una vez por conversación, y solo en las adoptadas.** Se escribe con `otra_despues_de: nunca` y `contesto_a` (`conversation-followup-discount-v1.md:9`; `20261010000100:22-32`).
 8. **La compra corta la recuperación.** Se escribe con `compra` en `termina.si`.
@@ -405,7 +405,7 @@ El orden de los chequeos decide qué motivo queda registrado. Una guarda que fre
     - Hoy: `approved_template_mismatch` (`referencia-manifiesto.md:91`) y el chequeo final de Meta.
     - Conversando: qué plantilla aprobada sale.
 11. **Los topes.**
-    - Qué revisa: los máximos de frecuencia y el límite del flujo sobre su bolsa. En la v1, los máximos son el tope por persona de la instancia, que suma los envíos de todos los flujos de todos sus productos, cupón y reactivación incluidos (de 1 a 20 envíos en una ventana de 1 h a 30 días), y un envío por camino, que asegura el validador.
+    - Qué revisa: los máximos de frecuencia y el límite del flujo sobre su bolsa. En la v1, los máximos son el tope por persona de la instancia, que suma los envíos de todos los flujos de todos sus productos, cupón y reactivación incluidos (de 1 a 20 envíos en una ventana de 1 h a 30 días), y los envíos que ejecuta el motor para ese flujo, que asegura el validador.
     - Resultado: el envío espera sin gastar cupo y se reintenta hasta que se libere el tope o venza el plazo. Una propuesta del 2026-10-09, todavía sin decidir ni publicar, propone cancelar el envío que supera el tope por persona.
     - En este chequeo se gasta el cupo.
     - Hoy: `authorize_lancemos_pilot_request_start` (`20261007000100:22-30`; `20260930000300:620-639`).
@@ -450,7 +450,7 @@ Al migrar, la puerta única y la separación del carrito y el pago fallido traen
   - La persona no nota la diferencia, pero el lector de la 1a sí.
 - **La persona.** Hoy la repetición del primer contacto mira el contacto (`20261001000200:840-857`). La puerta junta las dos formas del móvil.
 - **El carrito y el pago fallido se separan.**
-  - Hoy comparten el scope, la política y el control. La primera espera es la gracia de esa política, y el bridge la toma de una sola variable para los dos (`FOLLOWUP_POLICY_KEY`, `app.py:1083`; `resolution.py:324-337`).
+  - Al 2026-10-14 compartían el scope, la política y el control (desde el 2026-10-19 el pago fallido tiene su scope, `att1-pago-rechazado`, su política y su control). La primera espera es la gracia de esa política, y el bridge la toma de una sola variable para los dos (`FOLLOWUP_POLICY_KEY`, `app.py:1083`; `resolution.py:324-337`).
   - Con dos flujos, cambiar la espera del carrito no toca el pago fallido, que hoy sale a los 10 segundos, y pausar el carrito deja corriendo el pago fallido.
   - Al migrar, cada uno arranca con su propia política, con los mismos valores de hoy.
 - **El orden de los chequeos.** Hoy el primer contacto mira la compra y el carrito antes que la baja (`20261001000200:285-332`). Con la puerta, en el caso raro de las dos cosas a la vez, cambia solo el motivo registrado.
@@ -885,7 +885,9 @@ pasos:                            # [existe: followup_policy_versions.steps] [NU
     # boton: {link: checkout, cupon: TIROIDES10}
     #                             # solo si la plantilla tiene un botón de URL dinámica.
     #                             #   link: checkout [existe: el del cupón] | ficha [NUEVO; solo
-    #                             #   con la ficha]. cupon: opcional, solo con checkout; en la v1
+    #                             #   con la ficha]. cupon: opcional, solo con checkout: un código
+    #                             #   fijo, o personal (el código por persona del worker del cupón;
+    #                             #   a lo sumo dos por camino) [NUEVO en 1.1: personal]. En la v1
     #                             #   no se cambia conversando.
   # - esperar: 60m                # duración. Desde el paso anterior; la primera, desde el disparo.
   #                               #   [existe: grace_period y el plazo de cada paso]
@@ -991,8 +993,8 @@ Son código y corren en dos momentos. Un bloqueo no se puede confirmar; una adve
 11. Un valor `a_medir`, `a_decidir` o `a_crear`.
 12. Un `vence` que no supera la suma de las esperas.
 13. Una plantilla que no está APPROVED en el catálogo del inbox, en ese idioma, con tantas variables como marcadores y con el botón que declara.
-14. Algo que el motor de la instancia todavía no ejecuta o no trae. Hoy: más de un envío por camino, un paso `conversar` o `derivar`, los disparadores de la ficha y de la compra, `medio_de_pago`, y el `nombre` con la compra.
-15. Un código de cupón distinto del de la versión publicada: en la v1 no se cambia conversando.
+14. Algo que el motor de la instancia todavía no ejecuta o no trae. Hoy: más envíos por camino de los que ejecuta el motor para ese flujo, un paso `conversar` o `derivar`, los disparadores de la ficha y de la compra, `medio_de_pago`, y el `nombre` con la compra.
+15. Un código de cupón distinto del de la versión publicada: en la v1 no se cambia conversando, y pasar de un código fijo a `personal`, o al revés, también es un cambio de código (`coupon_change_not_supported`). Más de dos `cupon: personal` en un camino (`coupon_personal_limit`): dos códigos por caso, la regla del 2026-10-17.
 16. En los flujos de hoy, mientras `[flujos]` y `[plantillas]` del manifiesto sigan siendo el techo, una plantilla distinta de la que nombra `[plantillas]`. Prender uno de esos flujos exige, además, que esté en `true` en `[flujos]`.
 17. Un flujo con `permiso: compra` que manda algo que no es una plantilla de utilidad, o más de un envío por camino. A diferencia de la regla 14, esta no se levanta cuando el motor mande más de un mensaje por camino.
 
@@ -1013,7 +1015,7 @@ Hoy un flujo del motor vive en dos filas que no se modifican y que están atadas
 - el scope (`pilot_scope_versions`): el disparador, el producto, la audiencia, las ofertas, los topes y la zona;
 - la política (`followup_policy_versions`): los pasos, el horario, la gracia y el vencimiento.
 
-El carrito y el pago fallido comparten las dos filas y el control. El cupón y la reactivación no tienen filas: viven en variables y en el manifiesto. Para el lector de la 1a, cada flujo de hoy tiene arriba su línea «Fuente hoy».
+Al 2026-10-14, el carrito y el pago fallido compartían las dos filas y el control; desde el 2026-10-19, cada uno tiene las suyas (`att1-recuperacion` y `att1-pago-rechazado`). El cupón y la reactivación no tienen filas: viven en variables y en el manifiesto. Para el lector de la 1a, cada flujo de hoy tiene arriba su línea «Fuente hoy».
 
 Un cliente fuera de Lancemos no queda frenado por el tenant. El CHECK `tenant_key = 'lancemos'` de `20260810000100:11` ya se relajó en `20260903000300:3-7`. Quedan funciones con ese valor escrito, pero son del primer toque de Johanna (`20260829000300:294` y otras tres), no del camino de ATT1.
 
@@ -1133,3 +1135,12 @@ La migración los actualiza. Qué cambia en la base no se aprueba con este esque
 - `despliegue/base/publicar-primer-contacto-v2.sql`: :1-40.
 - `despliegue/secretos/generar.py`: :146, :160, :165-169 y :183-198.
 - `conocimiento/knowledge-v6.toml` (en `fefdef8`): también explica el cupón (:190-196).
+
+## Historial
+
+- **1.0, 2026-10-15.** El esquema, con su enmienda de producto del mismo día.
+- **1.1, 2026-10-21 (la T2.1 del motor, decisión de Dan del 2026-10-21 de que el motor ejecuta solo el carrito en la Etapa 1).** Sin cambiar `setter-flujo/v1` ni ninguna definición escrita antes:
+  - se levanta «un solo envío por camino»: el motor ejecuta los envíos de la forma de su flujo del legado (`flow_policy.STEPS_BY_LEGACY_KIND`: el carrito, A1, A2 y Z; el pago fallido, B1 y su seguimiento; el primer contacto, uno), hasta tres, con la espera entre envíos. Una definición con más envíos que esa forma, o con el cupón personal en un paso que no lo admite, no se compila (`flow_policy_not_compilable:<detalle>`): agregar o sacar un toque es un cambio de código;
+  - `boton.cupon` acepta `personal`, el código por persona del worker del cupón, a lo sumo dos veces por camino (regla 15, `coupon_personal_limit`). Pasar de un código fijo a `personal`, o al revés, sigue siendo `coupon_change_not_supported`;
+  - el carrito y el pago fallido de ATT1 ya no comparten bolsa desde el 2026-10-19 (`att1-recuperacion` y `att1-pago-rechazado`). Los bloques 1 y 2 de «Los siete flujos de validación» siguen siendo la línea de base del 2026-10-14, con la bolsa compartida;
+  - la regla 17 no cambia: con `permiso: compra`, un solo envío por camino.

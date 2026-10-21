@@ -258,6 +258,16 @@ def _same_trigger(related: bool) -> list[Finding]:
     return run(definition, in_world=world(other))
 
 
+def _personal_touches(count: int) -> list[dict[str, Any]]:
+    """``count`` envios con ``cupon: personal``, separados por 24 h."""
+    steps: list[dict[str, Any]] = []
+    for index in range(count):
+        if index:
+            steps.append({"esperar": "24h"})
+        steps.append({**TEMPLATE_STEP, "boton": {"link": "checkout", "cupon": fd.PERSONAL_COUPON}})
+    return steps
+
+
 CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]] = {
     # Regla 1.
     "unknown_key": (
@@ -463,6 +473,11 @@ CASES: dict[str, tuple[Callable[[], list[Finding]], Callable[[], list[Finding]]]
                     in_world=world(live("descuento"))),
         lambda: run(draft_of("descuento"), "descuento", in_world=world(live("descuento"))),
     ),
+    # Regla 15, el limite de la 1.1: a lo sumo dos cupones personales por camino.
+    "coupon_personal_limit": (
+        lambda: run(with_(flow_def("carrito"), lambda d: d.update(pasos=_personal_touches(3)))),
+        lambda: run(with_(flow_def("carrito"), lambda d: d.update(pasos=_personal_touches(2)))),
+    ),
     # Regla 17.
     "purchase_permission_requires_single_utility_send": (
         lambda: check([version_item(purchase_flow(pasos=[dict(TEMPLATE_STEP)]), "activacion", ok=CLIENT_OK)]).blocks,
@@ -603,7 +618,7 @@ def test_the_catalog_has_the_rule_and_kind_of_the_design() -> None:
         12: {"vence_not_after_waits"},
         13: {"template_not_in_catalog", "template_not_approved", "template_language_mismatch",
              "template_variable_count_mismatch", "template_button_mismatch", "template_catalog_unavailable"},
-        15: {"coupon_change_not_supported"},
+        15: {"coupon_change_not_supported", "coupon_personal_limit"},
         17: {"purchase_permission_requires_single_utility_send"},
     }
     for rule, codes in expected_rules.items():
@@ -615,7 +630,7 @@ def test_the_catalog_has_the_rule_and_kind_of_the_design() -> None:
         "purchase_exit_missing", "zone_changed", "daily_cap_exceeds_total",
         "template_not_in_catalog", "template_not_approved", "template_language_mismatch",
         "template_variable_count_mismatch", "template_button_mismatch", "template_catalog_unavailable",
-        "purchase_permission_requires_single_utility_send",
+        "purchase_permission_requires_single_utility_send", "coupon_personal_limit",
     }
     assert {code for code, pairs in fv.CODE_RULES.items() if any(k == "todavia_no" for _, k in pairs)} == {
         "coupon_change_not_supported"}
