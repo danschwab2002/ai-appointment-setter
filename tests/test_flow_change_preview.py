@@ -67,6 +67,17 @@ def test_what_the_engine_does_not_build_yet_goes_as_gaps_with_their_code() -> No
     assert preview["en_curso"] == {"politica": "seguir", "recorridos": None}
 
 
+def test_a_simulation_takes_the_place_of_its_gap() -> None:
+    built = {"status": "built", "summary": {"cambios": 1}, "summary_sha256": "a" * 64, "cambios": []}
+    preview = build_preview([wait_item()], world(), purpose="x", simulacion=built)
+    assert preview["simulacion"] == built
+    assert [gap["code"] for gap in preview["huecos"]] == ["in_flight_not_counted", "audience_change_not_computed"]
+    failed = {"status": "failed", "reason_code": "flow_engine_unavailable"}
+    preview = build_preview([wait_item()], world(), purpose="x", simulacion=failed)
+    assert preview["simulacion"] == failed
+    assert preview["huecos"][0] == {"code": "simulation_failed", "reason_code": "flow_engine_unavailable"}
+
+
 def test_going_back_diffs_against_the_target_version() -> None:
     item = ProposalItem("att1", "carrito", CART, "volver", version=1, en_curso="seguir")
     [change] = build_preview([item], world(), purpose="volver")["cambios"]

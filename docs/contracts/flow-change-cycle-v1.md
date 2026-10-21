@@ -3,7 +3,7 @@
 - **Estado:** aceptado como contrato conceptual el 2026-10-15; sin implementación (lo construye la 1b). El contrato no describe nada desplegado ni activado. Lo que dice de ATT1 es lo que pasó, con su fecha y de dónde sale.
 - **Fecha:** 2026-10-15
 - **ADR:** [ADR-0025](../decisions/0025-cada-instancia-tiene-su-hermes-declarado-por-el-producto.md) §7, [ADR-0007](../decisions/0007-durable-next-action-engine.md) §5 y [ADR-0017](../decisions/0017-central-slack-operations-connector.md)
-- **Contrato:** `flow-change-cycle-v1`, versión `1.3.0`. La 1.1.0 suma «Lo que fijó la implementación (1.1.0)»: lo que decidió la construcción del almacén (#243) y que este contrato dejaba abierto. No cambia ninguna decisión de Dan. La 1.2.0 suma «Lo que fija el comando del operador (1.2.0)», con un valor por defecto que revisa Dan: el operador también arma propuestas. La 1.3.0 suma «Lo que fijan las rutas del agente (1.3.0)»: la forma de las rutas y de las herramientas del Automation Expert, sin la pausa (otro valor por defecto que revisa Dan), y una ruta de lectura del almacén.
+- **Contrato:** `flow-change-cycle-v1`, versión `1.4.0`. La 1.1.0 suma «Lo que fijó la implementación (1.1.0)»: lo que decidió la construcción del almacén (#243) y que este contrato dejaba abierto. No cambia ninguna decisión de Dan. La 1.2.0 suma «Lo que fija el comando del operador (1.2.0)», con un valor por defecto que revisa Dan: el operador también arma propuestas. La 1.3.0 suma «Lo que fijan las rutas del agente (1.3.0)»: la forma de las rutas y de las herramientas del Automation Expert, sin la pausa (otro valor por defecto que revisa Dan), y una ruta de lectura del almacén. La 1.4.0 suma «La simulación en la vista previa (1.4.0)»: validar arma la simulación con el motor, y aprobar registra la que quedó congelada.
 - **Alcance:** cómo se cambia un flujo que ya está escrito como dato. Fija:
   - quién lo propone;
   - qué lleva la propuesta y cómo se valida;
@@ -444,6 +444,25 @@ La segunda parte de las herramientas (la T4): `src/bridge/flow_change_api.py`, e
 - **Las herramientas** son cuatro, en el toolset `automation_expert_change`: `get_flow_definitions`, `propose_flow_change`, `validate_flow_change` y `get_flow_change`. El profile las tiene en Slack y en la terminal, junto a las de lectura (`platform_toolsets`, y `herramientas` en `hermes/declaracion.toml`).
 - **El agente no pausa.** Donde arriba dice que hay una ruta `POST /flows/{flow_key}/pause` y una herramienta `pause_flow`, no existen: la base no puede verificar a quien pide la pausa, y la ruta tampoco llevaba el producto. Pausar es del comando del operador. **Es el valor por defecto de Andy (21/10), y lo revisa Dan.**
 - **Aprobar registra la simulación que quedó congelada en la vista previa** (`validation.preview.simulacion`): `built` con `summary_sha256`, `failed` con `reason_code`, o `not_built` si no hay. Lo hace `_flow_change_approve` desde la migración `20261021000100`. Hasta que la vista previa arme la simulación con el motor (contrato `flow-engine-v1`), sigue saliendo `not_built`.
+
+## La simulación en la vista previa (1.4.0)
+
+La tercera parte de las herramientas (la T4c): `src/bridge/flow_change_simulation.py`, que sigue los pasos de la sección 4 del contrato `flow-engine-v1`. Escrita el 2026-10-21, antes del merge; no afirma que nada esté desplegado ni activado.
+
+- **Quién la arma.** Validar, por los dos caminos: la ruta `POST /flow-changes/{id}/validate` del bridge, con la clave del rol del agente, y el comando del operador, con `psql`. Los dos leen `read_flow_engine_v1` (todas sus páginas) y `read_flow_engine_history_v1` del producto de la propuesta, con los últimos 8 días menos 5 minutos. El comando pide la historia con el reloj de la base.
+- **La vigente** de cada flujo es la `active_version` de la lectura del motor, si el flujo está prendido. **La propuesta** sale de `proposed_versions`. Las dos corren sobre la misma historia con las capacidades del motor de la instancia (`ENGINE_CAPABILITIES_V1`).
+- **La forma, en `validation.preview.simulacion`:**
+  - `{"status": "built", "summary": {...}, "summary_sha256": "<64 hex>", "cambios": [...]}`. `summary` es el de `flow_replay.simulate`: los disparos, cuántos cambian, y el resumen de la vigente y de la propuesta. `summary_sha256` es el sha256 del resumen en JSON canónico (claves ordenadas, sin espacios, UTF-8). `cambios` trae hasta 20 disparos, con el fin antes y después.
+  - `{"status": "failed", "reason_code": "..."}` cuando no se pudo armar. Los motivos:
+    - `flow_engine_unavailable`: la base no tiene las funciones del motor, o no contestaron;
+    - `flow_engine_history_too_large`: la historia pasa de 1 MB;
+    - `flow_engine_history_invalid`: la historia no tiene la forma cerrada de la captura v3, que es la prueba de privacidad;
+    - `flow_engine_read_invalid` y `flow_engine_capabilities_unknown`: la lectura del motor no es la del contrato;
+    - `simulation_multi_product`: la propuesta toca más de un producto;
+    - el código de `not_supported` cuando la propuesta trae algo que el motor no ejecuta, como `engine_not_supported:…`.
+- **La vista previa.** Con la simulación, el hueco `simulation_not_built` se va. Si la simulación falló, queda `simulation_failed` con su motivo. **Validar no se frena por la simulación:** sin ella, la propuesta se valida igual y la vista previa dice por qué no está.
+- **Aprobar** registra la simulación de la validación guardada (migración `20261021000100`): `built` con el `summary_sha256`, o `failed` con el motivo. **El comando del operador** publica sin `--sin-simulacion` solo si esa simulación guardada está `built`; si no, frena y dice el motivo.
+- **Lo que no cambia:** el conteo de lo que está en curso (`in_flight_not_counted`) y el cambio de audiencia (`audience_change_not_computed`) siguen siendo huecos. Mover la ruta de un flujo (`operator_route_flow_v1`) todavía no está en el comando.
 
 ## Lo que se confirma al construir
 

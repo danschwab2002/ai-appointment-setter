@@ -46,6 +46,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from .flow_change_preview import build_preview
+from .flow_change_simulation import build_simulation
 from .flow_definition import (
     FlowWorld,
     InstanceView,
@@ -182,7 +183,15 @@ def validate_proposal(payload: object, *, environ: Mapping[str, str]) -> dict[st
     result_json = result.to_json()
     validator = {**result.validator_json(), "product_version": version, "git_sha": sha}
     try:
-        preview = build_preview(items, world, purpose=purpose, warnings=result_json["warnings"])
+        simulacion = None
+        unavailable = data.get("simulation_unavailable")
+        if isinstance(unavailable, str):
+            simulacion = {"status": "failed", "reason_code": unavailable}
+        elif "engine" in data:
+            simulacion = build_simulation(data.get("engine"), data.get("history"), items,
+                                          time_zone=instance.time_zone)
+        preview = build_preview(items, world, purpose=purpose, warnings=result_json["warnings"],
+                                simulacion=simulacion)
     except ValueError as error:
         raise OperatorInputError(str(error)) from error
     return {

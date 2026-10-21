@@ -62,8 +62,9 @@ def validation(*, gaps: tuple[str, ...] = ("simulation_not_built",), blocks: int
 
 class FakeDocker:
     def __init__(self, *, containers: int = 1, prop: dict | None = None, valid: dict | None = None,
-                 fail_with: str | None = None) -> None:
+                 fail_with: str | None = None, engine: bool = False) -> None:
         self.calls: list[tuple[list[str], str]] = []
+        self.engine = engine
         self.containers = containers
         self.prop = proposal() if prop is None else prop
         self.valid = validation() if valid is None else valid
@@ -82,6 +83,10 @@ class FakeDocker:
             return subprocess.CompletedProcess(argv, 0 if self.valid["ok"] else 3, json.dumps(self.valid), "")
         if self.fail_with and "select public.operator_" in stdin:
             return subprocess.CompletedProcess(argv, 3, "", f"psql:<stdin>:9: ERROR:  {self.fail_with}\nDETAIL: x")
+        if self.engine and "read_flow_engine_v1" in stdin:
+            return ok(json.dumps({"contract": "flow-engine-v1", "flows": [], "next": None}) + "\n")
+        if self.engine and "read_flow_engine_history_v1" in stdin:
+            return ok(json.dumps({"_captured": {"query": "captura-paridad-recuperacion-v3"}}) + "\n")
         if "commercial_ally_runtime_bindings" in stdin:
             return ok('["att1"]\n' + json.dumps(FLOWS) + "\n")
         if "from public.flow_change_proposals p\n where p.id" in stdin:
@@ -138,6 +143,34 @@ def test_without_the_simulation_it_refuses_unless_asked_and_before_the_code() ->
     code, out = run(["publicar", PROPOSAL, "--quien", "dan"], docker, terminal)
     assert code == script.EXIT_REFUSED and "--sin-simulacion" in out
     assert docker.writes() == [] and terminal.asked == 0
+
+
+def test_with_a_built_simulation_in_the_stored_validation_it_publishes_without_the_flag() -> None:
+    stored = proposal()
+    stored["validation"] = {"preview": {"simulacion": {"status": "built", "summary_sha256": "a" * 64}}}
+    docker = FakeDocker(prop=stored)
+    code, out = run(["publicar", PROPOSAL, "--quien", "dan"], docker)
+    assert code == script.EXIT_OK, out
+    assert len(docker.writes()) == 2
+    # Una simulacion que fallo frena igual, y dice por que.
+    stored["validation"] = {"preview": {"simulacion": {"status": "failed", "reason_code": "flow_engine_unavailable"}}}
+    code, out = run(["publicar", PROPOSAL, "--quien", "dan"], FakeDocker(prop=stored))
+    assert code == script.EXIT_REFUSED and "flow_engine_unavailable" in out and "--sin-simulacion" in out
+
+
+def test_the_validator_gets_the_engine_read_and_the_history_from_the_base_clock() -> None:
+    docker = FakeDocker(engine=True)
+    run(["publicar", PROPOSAL, "--quien", "dan", "--sin-simulacion"], docker)
+    payload = json.loads(next(stdin for argv, stdin in docker.calls if argv[0] == "run"))
+    assert payload["engine"]["contract"] == "flow-engine-v1" and "_captured" in payload["history"]
+    history_sql = next(stdin for argv, stdin in docker.calls if "read_flow_engine_history_v1" in stdin)
+    assert "now() - interval '8 days' + interval '5 minutes'" in history_sql
+    assert "product\tatt1" in history_sql
+    # Sin las funciones del motor en la base, el validador recibe el motivo y no la lectura.
+    docker = FakeDocker()
+    run(["publicar", PROPOSAL, "--quien", "dan", "--sin-simulacion"], docker)
+    payload = json.loads(next(stdin for argv, stdin in docker.calls if argv[0] == "run"))
+    assert payload["simulation_unavailable"] == "flow_engine_unavailable" and "engine" not in payload
 
 
 def test_with_blocks_now_it_does_not_publish() -> None:

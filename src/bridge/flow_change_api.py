@@ -39,7 +39,7 @@ import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -67,11 +67,16 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 CONTRACT = "flow-change-cycle-v1"
-CONTRACT_VERSION = "1.3.0"
+CONTRACT_VERSION = "1.4.0"
 PREFIX = "/internal/automation-expert/v1"
 DB_ROLE = "automation_expert_change"
 MAX_BODY_BYTES = 256 * 1024
 MAX_STORE_BYTES = 4 * 1024 * 1024
+# read_flow_engine_v1 pagina de a 50 flujos; mas de 500 en una instancia no es de la v1.
+ENGINE_PAGES_MAX = 10
+# La historia de los ultimos 8 dias (la vista previa simula 7 y el de mas es la siembra), con un margen
+# para que un reloj del bridge atrasado no pida mas de lo que la funcion acepta.
+HISTORY_WINDOW = timedelta(days=8) - timedelta(minutes=5)
 _CODE = re.compile(r"^[a-z][a-z0-9_]{1,79}$")
 _SLACK_USER = re.compile(r"^[UW][A-Z0-9]{8,20}$")
 _EMAIL = re.compile(r"[^\s@]+@[^\s@]+")
@@ -169,6 +174,50 @@ class FlowChangeStore:
 
     async def get_proposal(self, instance: Mapping[str, str], proposal_id: str) -> dict[str, Any]:
         return await self._rpc("get_flow_change_proposal_v1", {"p_instance": instance, "p_proposal_id": proposal_id})
+
+    async def read_engine(self, instance: Mapping[str, str]) -> dict[str, Any]:
+        """``read_flow_engine_v1`` entero: las paginas de 50 flujos, juntas (hasta ENGINE_PAGES_MAX)."""
+        document: dict[str, Any] | None = None
+        after: str | None = None
+        for _ in range(ENGINE_PAGES_MAX):
+            page = await self._rpc("read_flow_engine_v1", {"p_instance": instance, "p_after": after})
+            if not isinstance(page, dict) or not isinstance(page.get("flows"), list):
+                raise StoreUnavailable()
+            if document is None:
+                document = page
+            else:
+                document["flows"] = [*document["flows"], *page["flows"]]
+            after = page.get("next")
+            if after is None:
+                document["next"] = None
+                return document
+        raise StoreUnavailable()
+
+    async def read_history(self, instance: Mapping[str, str], product_ref: str, since: datetime) -> Any:
+        return await self._rpc("read_flow_engine_history_v1", {
+            "p_instance": instance, "p_product_ref": product_ref,
+            "p_since": since.isoformat().replace("+00:00", "Z")})
+
+
+async def _simulation_inputs(store: FlowChangeStore, instance: Mapping[str, str], items: Any) -> dict[str, Any]:
+    """La lectura del motor y la historia del producto de la propuesta, para la simulacion.
+
+    Si no se pueden leer (por ejemplo, la base todavia no tiene la migracion del
+    motor), la validacion sigue y la simulacion queda ``failed`` con
+    ``flow_engine_unavailable``: la vista previa lo dice y aprobar registra ``failed``.
+    """
+    products = {item.get("producto") for item in items if isinstance(item, Mapping)} if isinstance(items, list) \
+        else set()
+    if len(products) != 1 or not all(isinstance(product, str) for product in products):
+        return {"simulation_unavailable": "simulation_multi_product"}
+    since = datetime.now(UTC) - HISTORY_WINDOW
+    try:
+        engine = await store.read_engine(instance)
+        history = await store.read_history(instance, next(iter(products)), since)
+    except (StoreUnavailable, StoreRejected):
+        logger.info("automation_expert_change route=validate simulation=flow_engine_unavailable")
+        return {"simulation_unavailable": "flow_engine_unavailable"}
+    return {"engine": engine, "history": history}
 
 
 def looks_like_identifier(value: str) -> bool:
@@ -436,9 +485,11 @@ def register_flow_change_routes(app: FastAPI, *, token: str, store: FlowChangeSt
                 raise HTTPException(status_code=503, detail="template_catalog_unavailable") from None
             if not isinstance(inbox, Mapping) or not isinstance(inbox.get("message_templates"), list):
                 raise HTTPException(status_code=503, detail="template_catalog_unavailable")
+            simulation_inputs = await _simulation_inputs(store, context.instance, proposal.get("items"))
             try:
                 view = _instance_view(context, snapshot)
                 out = validate_proposal({
+                    **simulation_inputs,
                     "instance": {**context.instance, "products": sorted(view.products),
                                  "time_zone": context.time_zone},
                     "store": snapshot,
