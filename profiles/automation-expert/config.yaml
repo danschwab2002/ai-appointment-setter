@@ -12,8 +12,10 @@
 #   * los slash commands nativos no pasan por allowed_channels: los frena el hook
 #     pre_gateway_dispatch del plugin, que deja pasar solo los canales D;
 #   * unauthorized_dm_behavior: ignore, explicito (el default automatico mira solo el entorno).
-# - Las herramientas: solo automation_expert_read, en Slack y en la terminal. no_mcp apaga los
-#   servidores MCP, que sin lista entran todos. disabled_toolsets resta todo lo demas al final.
+# - Las herramientas: automation_expert_read (leer y explicar) y automation_expert_change (proponer
+#   y validar un cambio de flujo, flow-change-cycle-v1; nunca aprueba, publica ni pausa), en Slack y
+#   en la terminal. no_mcp apaga los servidores MCP, que sin lista entran todos. disabled_toolsets
+#   resta todo lo demas al final.
 # - Lo que devuelve el bridge vive solo en la charla: sin memoria, sin skills, sin la revision en
 #   segundo plano y con las sesiones podadas a los 7 dias.
 _config_version: 39
@@ -42,9 +44,11 @@ slack:
 platform_toolsets:
   slack:
     - automation_expert_read
+    - automation_expert_change
     - no_mcp
   cli:
     - automation_expert_read
+    - automation_expert_change
     - no_mcp
 
 agent:
@@ -98,6 +102,7 @@ sessions:
 plugins:
   enabled:
     - automation-expert-read
+    - automation-expert-change
 
 security:
   redact_secrets: true

@@ -28,6 +28,9 @@ env_requires:
   - name: AUTOMATION_EXPERT_API_TOKEN
     description: "El AUTOMATION_EXPERT_READ_TOKEN del bridge: 32 caracteres o mas, distinto de todo otro secreto."
     required: true
+  - name: AUTOMATION_EXPERT_CHANGE_API_TOKEN
+    description: "El AUTOMATION_EXPERT_CHANGE_TOKEN del bridge: 32 caracteres o mas, distinto de todo otro secreto (tambien del de lectura)."
+    required: true
   - name: AUTOMATION_EXPERT_INTERNAL_HOST
     description: "El host:puerto exacto del bridge, el unico al que el plugin le habla por http. En ATT1, att1-bridge:8000."
     required: false
