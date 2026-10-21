@@ -33,6 +33,7 @@ __all__ = [
     "GAP_DIFF_TRUNCATED",
     "GAP_IN_FLIGHT",
     "GAP_SIMULATION",
+    "GAP_SIMULATION_FAILED",
     "PREVIEW_MAX_BYTES",
     "build_preview",
 ]
@@ -43,6 +44,7 @@ PREVIEW_MAX_BYTES = 131072
 DIFF_MAX_CHANGES = 200
 
 GAP_SIMULATION = "simulation_not_built"
+GAP_SIMULATION_FAILED = "simulation_failed"
 GAP_IN_FLIGHT = "in_flight_not_counted"
 GAP_AUDIENCE = "audience_change_not_computed"
 GAP_DIFF_TRUNCATED = "diff_truncated"
@@ -91,11 +93,14 @@ def build_preview(
     *,
     purpose: str,
     warnings: Sequence[Mapping[str, Any]] = (),
+    simulacion: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """La vista previa de los items sobre la foto del almacen.
 
     ``warnings`` son las advertencias del validador (``ValidationResult.to_json()["warnings"]``):
-    van por codigo y ruta, sin el texto.
+    van por codigo y ruta, sin el texto. ``simulacion`` es la de
+    ``flow_change_simulation.build_simulation``: con ella, el hueco
+    ``simulation_not_built`` se va; si fallo, queda ``simulation_failed`` con el motivo.
     """
     cambios: list[dict[str, Any]] = []
     truncated: list[dict[str, Any]] = []
@@ -112,7 +117,13 @@ def build_preview(
         if flow is not None and flow.active_version is not None
     ]
     politicas = sorted({item.en_curso for item in items if item.en_curso is not None})
-    huecos: list[dict[str, Any]] = [{"code": GAP_SIMULATION}, {"code": GAP_IN_FLIGHT}, {"code": GAP_AUDIENCE}]
+    if simulacion is None:
+        huecos: list[dict[str, Any]] = [{"code": GAP_SIMULATION}]
+    elif simulacion.get("status") == "built":
+        huecos = []
+    else:
+        huecos = [{"code": GAP_SIMULATION_FAILED, "reason_code": simulacion.get("reason_code")}]
+    huecos += [{"code": GAP_IN_FLIGHT}, {"code": GAP_AUDIENCE}]
     if truncated:
         huecos.append({"code": GAP_DIFF_TRUNCATED, "items": truncated})
     preview: dict[str, Any] = {
@@ -121,7 +132,7 @@ def build_preview(
         "a_quien": None,
         "en_curso": {"politica": politicas[0] if len(politicas) == 1 else (politicas or None),
                      "recorridos": None},
-        "simulacion": None,
+        "simulacion": None if simulacion is None else dict(simulacion),
         "advertencias": [
             {"code": warning.get("code"), "path": warning.get("path")}
             for warning in warnings if isinstance(warning, Mapping)

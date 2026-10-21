@@ -21,6 +21,7 @@ import copy
 import hashlib
 import json
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -45,6 +46,9 @@ DEFINITIONS = {d["flujo"]: d for d in json.loads(
     (FIXTURES / "flow_store/att1_definitions_20261016.json").read_text())["definitions"]}
 CATALOG = json.loads((FIXTURES / "flow_change_operator/chatwoot_db_message_templates_inbox_11_20261021.json")
                      .read_text())
+# La historia: la captura v3 de ATT1 del 21/10 (la de la T2.2), con la forma que devuelve
+# read_flow_engine_history_v1.
+HISTORY = json.loads((FIXTURES / "flow_engine/att1_recovery_capture_v3_20261021.json").read_text())
 KEYS = ("carrito", "pago_fallido", "precheckout")
 IDS = {key: f"0000000{index}-0000-4000-8000-0000000a7701" for index, key in enumerate(KEYS, start=1)}
 
@@ -77,6 +81,25 @@ class PostgrestEmulator:
         self.proposals: dict[str, dict] = {}
         self.requests: list[tuple[str, dict, dict]] = []
         self.fail_with: str | None = None
+        # Las dos lecturas del motor (flow-engine-v1, secciones 1 y 2): sin ellas, como una base sin la
+        # migracion del motor, PostgREST contesta 403 y la simulacion queda failed.
+        self.engine = True
+
+    def _engine_read(self) -> dict:
+        flows = []
+        for flow in self.flows:
+            definition = flow["versions"]["1"]
+            flows.append({key: flow[key] for key in ("flow_id", "product_ref", "flow_key", "state",
+                                                     "active_version", "generation")}
+                         | {"route": {"executor": "legado", "legacy_kind": flow["flow_key"],
+                                      "legacy_scope_key": "att1-recuperacion", "generation": 0,
+                                      "changed_at": "2026-10-21T16:00:00Z"},
+                            "versions": [{"version": 1, "definition": definition, "definition_sha256": "0" * 64,
+                                          "published_at": "2026-10-21T16:00:00Z", "in_flight": 0,
+                                          "pool": (definition.get("topes") or {}).get("bolsa")
+                                          or "att1-recuperacion"}]})
+        return {"contract": "flow-engine-v1", "contract_version": "1.0.0", "database_at": "2026-10-21T17:16:07Z",
+                "engine": {"capabilities": "v1", "rules_version": 2}, "flows": flows, "next": None}
 
     def _draft_base(self, items: list[dict]) -> dict:
         by_id = {flow["flow_id"]: flow for flow in self.flows}
@@ -90,6 +113,10 @@ class PostgrestEmulator:
             return _error(self.fail_with)
         if body.get("p_instance") != {"tenant_ref": "lancemos", "ally_ref": "att1"}:
             return _error("instance_not_bound_22023")
+        if function == "read_flow_engine_v1" and self.engine:
+            return httpx.Response(200, json=self._engine_read())
+        if function == "read_flow_engine_history_v1" and self.engine:
+            return httpx.Response(200, json=copy.deepcopy(HISTORY))
         if function == "read_flow_store_v1":
             return httpx.Response(200, json={"database_at": "2026-10-21T16:00:00Z", "products": ["att1"],
                                              "flows": copy.deepcopy(self.flows)})
@@ -265,7 +292,7 @@ def test_proposing_a_wait_in_the_cart_saves_the_normalized_draft_with_the_role_k
     response = client.post(f"{PREFIX}/flow-changes", headers=AUTH, json=_propose_body())
     assert response.status_code == 201, response.text
     body = response.json()
-    assert (body["contract"], body["contract_version"]) == ("flow-change-cycle-v1", "1.3.0")
+    assert (body["contract"], body["contract_version"]) == ("flow-change-cycle-v1", "1.4.0")
     assert body["instance"] == {"tenant_ref": "lancemos", "ally_ref": "att1"}
     assert body["data"]["status"] == "borrador" and body["data"]["revision"] == 1
     [read, save] = emulator.requests
@@ -368,7 +395,15 @@ def test_validating_freezes_the_proposal_with_the_preview_and_the_catalog(monkey
     assert data["status"] == "validada" and len(data["fingerprint"]) == 64
     assert data["blocks"] == [] and [w["code"] for w in data["warnings"]] == ["wait_without_contesta"]
     assert {"ruta": "/pasos/0/esperar", "antes": None, "despues": "2h"} in data["preview"]["cambios"][0]["diff"]
-    assert [gap["code"] for gap in data["preview"]["huecos"]][0] == "simulation_not_built"
+    # La simulacion de la espera, sobre la historia de ATT1: queda congelada en la vista previa.
+    simulation = data["preview"]["simulacion"]
+    assert simulation["status"] == "built" and len(simulation["summary_sha256"]) == 64
+    assert simulation["summary"]["cambios"] > 0
+    assert "simulation_not_built" not in [gap["code"] for gap in data["preview"]["huecos"]]
+    history = [body for function, body, _ in emulator.requests if function == "read_flow_engine_history_v1"]
+    assert history[0]["p_product_ref"] == "att1"
+    since = datetime.fromisoformat(history[0]["p_since"].replace("Z", "+00:00"))
+    assert timedelta(days=7, hours=23) < datetime.now(UTC) - since < timedelta(days=8)
     assert chatwoot.inboxes == [11]
     record = [body for function, body, _ in emulator.requests if function == "record_flow_change_validation_v1"]
     assert record[0]["p_validator"]["actor"] == "automation_expert"
@@ -378,7 +413,7 @@ def test_validating_freezes_the_proposal_with_the_preview_and_the_catalog(monkey
     reread = client.get(f"{PREFIX}/flow-changes/{proposal_id}", headers=AUTH)
     assert reread.status_code == 200
     assert reread.json()["data"]["status"] == "validada"
-    assert reread.json()["data"]["preview"]["huecos"][0]["code"] == "simulation_not_built"
+    assert reread.json()["data"]["preview"]["simulacion"]["summary_sha256"] == simulation["summary_sha256"]
     assert "validation" not in reread.json()["data"]
 
 
@@ -442,3 +477,19 @@ def test_the_flow_store_gives_each_flow_with_its_active_definition_with_the_role
     assert function == "read_flow_store_v1"
     assert headers["authorization"] == f"Bearer {DB_KEY}"
     assert client.get(f"{PREFIX}/flow-store").status_code == 401
+
+
+def test_without_the_engine_functions_it_validates_and_the_simulation_says_why(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SETTER_VERSION", "1.15.5")
+    monkeypatch.setenv("GIT_SHA", "b163669f57bfdafbac6cb19d82dd357c83c3c1e8")
+    emulator = PostgrestEmulator()
+    emulator.engine = False
+    client, _ = _client(emulator)
+    proposal_id = _proposed(client)
+    response = client.post(f"{PREFIX}/flow-changes/{proposal_id}/validate", headers=AUTH,
+                           json={"revision": 1, "requested_by": SLACK})
+    assert response.status_code == 200, response.text
+    preview = response.json()["data"]["preview"]
+    assert preview["simulacion"] == {"status": "failed", "reason_code": "flow_engine_unavailable"}
+    assert {"code": "simulation_failed", "reason_code": "flow_engine_unavailable"} in preview["huecos"]

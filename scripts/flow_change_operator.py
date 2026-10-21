@@ -277,9 +277,34 @@ class Ops:
             raise Refused(f"el validador rechazo la entrada: {out.get('reason_code') if isinstance(out, dict) else '?'}")
         return result.returncode, out
 
+    def read_engine_inputs(self, items: object) -> dict[str, Any]:
+        """La lectura del motor y la historia del producto, o por que no se pudieron leer."""
+        products = {item.get("producto") for item in items if isinstance(item, Mapping)} \
+            if isinstance(items, list) else set()
+        if len(products) != 1:
+            return {"simulation_unavailable": "simulation_multi_product"}
+        args = {"tenant": self.config.tenant, "ally": self.config.ally}
+        try:
+            engine: dict[str, Any] | None = None
+            after = None
+            for _ in range(ENGINE_PAGES_MAX):
+                page = self.sql_json(SQL_ENGINE, {**args, "after": after}, read_only=True)
+                if not isinstance(page, dict) or not isinstance(page.get("flows"), list):
+                    raise Refused("la lectura del motor no tiene la forma del contrato")
+                engine = page if engine is None else {**engine, "flows": engine["flows"] + page["flows"]}
+                after = page.get("next")
+                if after is None:
+                    break
+            else:
+                raise Refused("la lectura del motor tiene demasiadas paginas")
+            history = self.sql_json(SQL_HISTORY, {**args, "product": next(iter(products))}, read_only=True)
+        except Refused:
+            return {"simulation_unavailable": "flow_engine_unavailable"}
+        return {"engine": engine, "history": history}
+
     def validate(self, proposal: Mapping[str, Any], world: Mapping[str, Any],
                  catalog: Mapping[str, Any] | None) -> dict[str, Any]:
-        payload = {**world, "catalog": catalog, "proposal": {
+        payload = {**world, **self.read_engine_inputs(proposal["items"]), "catalog": catalog, "proposal": {
             key: proposal[key] for key in ("id", "revision", "items", "draft_base", "purpose", "requested_by_kind")}}
         _, out = self.module("validar", payload)
         return out
@@ -358,6 +383,13 @@ SQL_OPEN = f"""select coalesce(jsonb_agg(jsonb_build_object({_PROPOSAL_FIELDS}) 
   from public.flow_change_proposals p
  where p.tenant_ref = {_arg('tenant')} and p.ally_ref = {_arg('ally')}
    and p.status in ('borrador', 'validada', 'aprobada');"""
+
+# Las dos lecturas del motor (flow-engine-v1, secciones 1 y 2), para la simulacion de la vista previa.
+# La historia se pide con el now() de la base: 8 dias menos 5 minutos, lo que la funcion acepta.
+SQL_ENGINE = f"""select public.read_flow_engine_v1({INSTANCE_SQL}, {_arg('after')})::text;"""
+SQL_HISTORY = f"""select public.read_flow_engine_history_v1({INSTANCE_SQL}, {_arg('product')},
+    now() - interval '8 days' + interval '5 minutes')::text;"""
+ENGINE_PAGES_MAX = 10
 
 SQL_CATALOG = f"""select c.message_templates::jsonb::text
   from public.inboxes i join public.channel_whatsapp c on c.id = i.channel_id
@@ -540,9 +572,13 @@ def _publish(ops: Ops, proposal_id: str, who: str, without_simulation: bool) -> 
         raise Refused("la validacion de ahora tiene bloqueos: no se publica", EXIT_BLOCKED)
     if validation.get("catalog_sha256") is None:
         raise Refused("no se pudo leer el catalogo de plantillas: no se publica")
-    gaps = {gap.get("code") for gap in validation["preview"].get("huecos", [])}
-    if GAP_SIMULATION in gaps and not without_simulation:
-        raise Refused("la vista previa no trae simulacion: para publicar igual, --sin-simulacion")
+    # Aprobar registra la simulacion de la validacion guardada (validation.preview.simulacion), no la de
+    # ahora: sin una construida ahi, se publica solo con --sin-simulacion.
+    stored = ((proposal.get("validation") or {}).get("preview") or {}).get("simulacion")
+    if not (isinstance(stored, Mapping) and stored.get("status") == "built"):
+        if not without_simulation:
+            reason = stored.get("reason_code") if isinstance(stored, Mapping) else GAP_SIMULATION
+            raise Refused(f"la validacion guardada no trae simulacion ({reason}): para publicar igual, --sin-simulacion")
     ops.confirm(f"aprobar y publicar {proposal['id'][:8]}")
     instance = {"tenant": ops.config.tenant, "ally": ops.config.ally, "id": proposal["id"],
                 "fingerprint": proposal["fingerprint"], "who": who}
