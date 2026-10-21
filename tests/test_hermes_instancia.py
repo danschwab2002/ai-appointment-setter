@@ -84,9 +84,9 @@ API_SERVER_KEY = { archivo = "secretos/bridge.env", variable = "HERMES_API_KEY" 
 # --- la declaracion del producto y la distribucion -------------------------------------------
 
 
-def test_la_declaracion_del_producto_trae_solo_el_comercial_con_la_imagen_fija():
+def test_la_declaracion_del_producto_trae_el_comercial_y_el_automation_expert_con_la_imagen_fija():
     d = hi.cargar_declaracion()
-    assert list(d.profiles) == ["agente-comercial"]
+    assert list(d.profiles) == ["agente-comercial", "automation-expert"]
     assert d.imagen.referencia == (
         "nousresearch/hermes-agent@sha256:64923faeae267792bf9bf87fe3b4c4869e35004e360c7df01730ad801b74d524"
     )
@@ -95,6 +95,11 @@ def test_la_declaracion_del_producto_trae_solo_el_comercial_con_la_imagen_fija()
     assert comercial.distribucion == DISTRIBUCION
     assert comercial.puerto == 8642
     assert comercial.le_habla == "bridge"
+    assert comercial.herramientas == ()
+    assert comercial.obligatorio is True
+    ae = d.profiles["automation-expert"]
+    assert ae.distribucion == ROOT / "profiles" / "automation-expert"
+    assert (ae.puerto, ae.le_habla, ae.herramientas, ae.obligatorio) == (None, "slack", ("automation_expert_read",), False)
 
 
 def test_la_distribucion_es_nativa_de_hermes_y_solo_trae_el_soul_y_el_config():
@@ -162,7 +167,7 @@ puerto = 8642
 le_habla = "bridge"
 """ % ("0" * 64)
     ruta = tmp_path / "declaracion.toml"
-    ruta.write_text(base + "[profiles.c-d]\ndistribucion = \"d\"\npuerto = 8642\nle_habla = \"x\"\n", encoding="utf-8")
+    ruta.write_text(base + "[profiles.c-d]\ndistribucion = \"d\"\npuerto = 8642\nle_habla = \"bridge\"\n", encoding="utf-8")
     with pytest.raises(hi.Freno, match="ya lo usa otro profile"):
         hi.cargar_declaracion(ruta, tmp_path)
     ruta.write_text(base.replace('le_habla = "bridge"', 'le_habla = "bridge"\nextra = 1'), encoding="utf-8")
@@ -555,3 +560,161 @@ def test_el_workflow_corre_la_prueba_de_punta_a_punta_cuando_cambia_hermes():
     assert {"hermes/**", "profiles/**", "scripts/hermes_instancia.py", "tests/fixtures/hermes/**"} <= caminos
     pasos = [p.get("run", "") for p in flujo["jobs"]["instalador"]["steps"]]
     assert any("hermes/prueba/probar_en_contenedor.sh" in p for p in pasos)
+
+
+# --- el profile de Slack (el Automation Expert) ----------------------------------------------
+
+DISTRIBUCION_AE = ROOT / "profiles" / "automation-expert"
+ADMIN = "U0123ABCD"
+
+INSTANCIA_CON_AE = INSTANCIA_MINIMA + """
+[profiles.automation-expert]
+modelo = "m"
+proveedor = "openrouter"
+administran = ["%s"]
+
+[profiles.automation-expert.variables]
+SLACK_BOT_TOKEN = { archivo = "secretos/automation-expert.variables", variable = "SLACK_BOT_TOKEN" }
+""" % ADMIN
+
+
+def _plan_slack(**cambios) -> dict:
+    base = {
+        "le_habla": "slack",
+        "modelo": "z-ai/glm-5.3-flash",
+        "proveedor": "openrouter",
+        "base_url": None,
+        "respaldo": [],
+        "puerto": None,
+        "herramientas": ["automation_expert_read"],
+        "administran": [ADMIN],
+    }
+    base.update(cambios)
+    return base
+
+
+def _declaracion_con(tmp_path: Path, extra: str) -> Path:
+    (tmp_path / "d").mkdir(exist_ok=True)
+    for archivo in hi.ARCHIVOS_DISTRIBUCION:
+        (tmp_path / "d" / archivo).write_text("x", encoding="utf-8")
+    ruta = tmp_path / "declaracion.toml"
+    ruta.write_text(
+        """
+schema = 1
+[imagen]
+nombre = "n"
+etiqueta = "e"
+digest = "sha256:%s"
+version_hermes = "0.21.0"
+[profiles.a-b]
+distribucion = "d"
+puerto = 8642
+le_habla = "bridge"
+""" % ("0" * 64) + extra,
+        encoding="utf-8",
+    )
+    return ruta
+
+
+@pytest.mark.parametrize(
+    "extra, mensaje",
+    [
+        ('[profiles.c-d]\ndistribucion = "d"\nle_habla = "x"\n', "tiene que ser bridge o slack"),
+        ('[profiles.c-d]\ndistribucion = "d"\nle_habla = "slack"\npuerto = 8650\nherramientas = ["t"]\n', "no tiene API server ni puerto"),
+        ('[profiles.c-d]\ndistribucion = "d"\nle_habla = "slack"\n', "lista no vacia de toolsets"),
+        ('[profiles.c-d]\ndistribucion = "d"\nle_habla = "slack"\nherramientas = []\n', "lista no vacia de toolsets"),
+        ('[profiles.c-d]\ndistribucion = "d"\nle_habla = "bridge"\npuerto = 8650\nherramientas = ["t"]\n', "va sin herramientas"),
+        ('[profiles.c-d]\ndistribucion = "d"\nle_habla = "slack"\nherramientas = ["t"]\nobligatorio = "no"\n', "true o false"),
+    ],
+)
+def test_la_declaracion_valida_cada_tipo_de_profile(tmp_path, extra, mensaje):
+    with pytest.raises(hi.Freno, match=mensaje):
+        hi.cargar_declaracion(_declaracion_con(tmp_path, extra), tmp_path)
+
+
+def test_un_profile_opcional_puede_faltar_en_la_instancia():
+    inst = hi.cargar_instancia(FIXTURE, hi.cargar_declaracion())
+    assert list(inst.profiles) == ["agente-comercial"]
+
+
+def test_la_instancia_que_declara_el_automation_expert_tiene_que_decir_quien_administra(tmp_path):
+    d = hi.cargar_declaracion()
+    inst = hi.cargar_instancia(_instancia(tmp_path, INSTANCIA_CON_AE), d)
+    assert inst.profiles["automation-expert"].administran == (ADMIN,)
+    sin = INSTANCIA_CON_AE.replace('administran = ["%s"]\n' % ADMIN, "")
+    with pytest.raises(hi.Freno, match="faltan administran"):
+        hi.cargar_instancia(_instancia(tmp_path, sin), d)
+    with pytest.raises(hi.Freno, match="IDs de usuario de Slack"):
+        hi.cargar_instancia(_instancia(tmp_path, INSTANCIA_CON_AE.replace(ADMIN, "dan")), d)
+    en_comercial = INSTANCIA_MINIMA.replace('proveedor = "openrouter"', 'proveedor = "openrouter"\nadministran = ["%s"]' % ADMIN)
+    with pytest.raises(hi.Freno, match="claves no soportadas administran"):
+        hi.cargar_instancia(_instancia(tmp_path, en_comercial), d)
+
+
+def test_el_molde_del_automation_expert_completado_no_deja_nada_en_null():
+    molde = yaml.safe_load((DISTRIBUCION_AE / "config.yaml").read_text(encoding="utf-8"))
+    config = hi.renderizar_config(molde, _plan_slack())
+    assert config["model"] == {"default": "z-ai/glm-5.3-flash", "provider": "openrouter"}
+    assert config["slack"]["allow_admin_from"] == [ADMIN]
+    assert config["slack"]["group_allow_admin_from"] == [ADMIN]
+    assert "platforms" not in config
+    assert config["platform_toolsets"]["slack"] == ["automation_expert_read", "no_mcp"]
+    assert not [r for r, v in hi.aplanar(config).items() if v is None]
+    # El molde en Git no cambia: el instalador completa una copia.
+    assert yaml.safe_load((DISTRIBUCION_AE / "config.yaml").read_text(encoding="utf-8"))["slack"]["allow_admin_from"] is None
+
+
+def test_renderizar_un_profile_de_slack_frena_sin_admins_sin_slack_o_con_api_server():
+    molde = yaml.safe_load((DISTRIBUCION_AE / "config.yaml").read_text(encoding="utf-8"))
+    with pytest.raises(hi.Freno, match="quien administra"):
+        hi.renderizar_config(molde, _plan_slack(administran=[]))
+    with pytest.raises(hi.Freno, match="no puede prender platforms.api_server"):
+        hi.renderizar_config({**molde, "platforms": {"api_server": {"enabled": True}}}, _plan_slack())
+    with pytest.raises(hi.Freno, match="seccion slack"):
+        hi.renderizar_config({k: v for k, v in molde.items() if k != "slack"}, _plan_slack())
+
+
+def test_huella_de_carpeta_ve_el_contenido_y_saltea_los_caches(tmp_path):
+    assert hi.huella_de_carpeta(tmp_path / "no-existe") is None
+    (tmp_path / "p" / "x").mkdir(parents=True)
+    (tmp_path / "p" / "x" / "a.py").write_text("uno", encoding="utf-8")
+    antes = hi.huella_de_carpeta(tmp_path / "p")
+    (tmp_path / "p" / "x" / "__pycache__").mkdir()
+    (tmp_path / "p" / "x" / "__pycache__" / "a.cpython-311.pyc").write_bytes(b"\0")
+    assert hi.huella_de_carpeta(tmp_path / "p") == antes
+    (tmp_path / "p" / "x" / "a.py").write_text("dos", encoding="utf-8")
+    assert hi.huella_de_carpeta(tmp_path / "p") != antes
+
+
+def test_inicio_de_proceso_cuenta_los_campos_despues_del_nombre():
+    # Un nombre con espacios y parentesis, como los que acepta el kernel: starttime es el campo 22.
+    stat = "4242 (hermes (gw) x) S 1 4242 4242 0 -1 4194560 " + " ".join(["0"] * 12) + " 500 0"
+    assert hi.inicio_de_proceso(stat, "cpu 1 2 3\nbtime 1000\n", 100) == 1005.0
+
+
+def test_cambiado_despues():
+    assert hi.cambiado_despues(None, [1.0]) is True
+    assert hi.cambiado_despues(10.0, [5.0, None, 9.9]) is False
+    assert hi.cambiado_despues(10.0, [5.0, 11.5]) is False  # adentro del margen
+    assert hi.cambiado_despues(10.0, [5.0, 12.5]) is True
+
+
+def test_el_paquete_lleva_los_plugins_y_solo_los_profiles_que_la_instancia_declara(tmp_path):
+    d = hi.cargar_declaracion()
+    solo = tmp_path / "solo"
+    solo.mkdir()
+    hi.armar_paquete(solo, "/tmp/x", "plan", d, hi.cargar_instancia(FIXTURE, d), False)
+    assert sorted(p.name for p in (solo / "profiles").iterdir()) == ["agente-comercial"]
+
+    con = tmp_path / "con"
+    con.mkdir()
+    inst = hi.cargar_instancia(_instancia(tmp_path, INSTANCIA_CON_AE), d)
+    hi.armar_paquete(con, "/tmp/x", "plan", d, inst, False)
+    ae = con / "profiles" / "automation-expert"
+    assert (ae / "plugins" / "automation-expert-read" / "tools.py").is_file()
+    assert not list(ae.rglob("__pycache__"))
+    assert hi.huella_de_carpeta(ae / "plugins") == hi.huella_de_carpeta(DISTRIBUCION_AE / "plugins")
+    plan = json.loads((con / "plan.json").read_text(encoding="utf-8"))
+    p = plan["profiles"]["automation-expert"]
+    assert (p["le_habla"], p["puerto"], p["herramientas"], p["administran"]) == ("slack", None, ["automation_expert_read"], [ADMIN])
+    assert plan["profiles"]["agente-comercial"]["le_habla"] == "bridge"
