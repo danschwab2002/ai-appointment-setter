@@ -70,10 +70,10 @@ from .flow_policy import STEPS_BY_LEGACY_KIND
 from .flow_schedule import DEFAULT_ZONE, LAST_MINUTE, Franja, franja_of, is_open, next_open
 
 __all__ = [
-    "ENGINE_CAPABILITIES_V1", "LEGACY_REASON_TO_MOTIVO", "PREVIEW_CAPABILITIES", "PROPOSED_TO_CONTRACT_OWNER",
+    "ENGINE_CAPABILITIES_V1", "LEGACY_REASON_PARAMETERS", "LEGACY_REASON_TO_MOTIVO", "PREVIEW_CAPABILITIES", "PROPOSED_TO_CONTRACT_OWNER",
     "BolsaLedger", "ControlLine", "Eligible", "EngineCapabilities", "EngineFlow", "Firing", "FlowRef",
     "GateDecision", "GateFacts", "PersonView", "Plan", "PlanInvalid", "PlanNotSupported", "PlannedStep",
-    "RunView", "StartDecision", "evaluate_gate", "first_eligible", "not_supported", "plan_start",
+    "RunView", "StartDecision", "evaluate_gate", "first_eligible", "legacy_motivo", "not_supported", "plan_start",
     "plan_steps", "pool_zone", "step_start", "wins",
 ]
 
@@ -840,6 +840,11 @@ LEGACY_REASON_TO_MOTIVO: Mapping[str, str | None] = MappingProxyType({
     "pilot_total_budget_exhausted": "tope_del_flujo",
     "pilot_contact_proactive_cap_reached": "tope_por_persona",
     "identity_not_authorized": "identidad:<motivo>",
+    # La reevaluacion escala porque el bridge no pudo verificar la conversacion en Chatwoot
+    # (chatwoot_checked = false, 20260805000300_per_case_conversation_anchor.sql:377-379): no se sabe
+    # si la conversacion es del inbox de la instancia (automation-expert-read-v1.md:190). En ATT1 la
+    # causo, en 16 A2 del 20/10, el bug que arreglo la v1.15.5 (#286). T2.2.
+    "chatwoot_authority_unavailable": "identidad:<motivo>",
     "contact_authorization_unknown": "identidad:<motivo>",
     "approved_template_mismatch": "meta:<regla>",
     "template_parameters_missing": "meta:nombre",
@@ -865,3 +870,18 @@ PROPOSED_TO_CONTRACT_OWNER: Mapping[str, str] = MappingProxyType({
     "flujo_apagado": "flujo_apagado",
     "payment_failure_correlation_unresolved": "no_entra:permiso",
 })
+# El parametro de un motivo de la tabla, cuando el codigo del legado ya lo dice
+# (identidad:<motivo> con chatwoot_authority_unavailable es identidad:conversacion).
+# Lo completa legacy_motivo; la tabla queda con los parametros del contrato.
+LEGACY_REASON_PARAMETERS: Mapping[str, str] = MappingProxyType({
+    "chatwoot_authority_unavailable": "conversacion",
+})
+
+
+def legacy_motivo(code: str | None) -> str | None:
+    """El motivo del contrato de un codigo del legado, con su parametro si el codigo lo dice."""
+    motivo = LEGACY_REASON_TO_MOTIVO.get(code or "")
+    parameter = LEGACY_REASON_PARAMETERS.get(code or "")
+    if motivo is not None and parameter is not None and motivo.endswith(":<motivo>"):
+        return motivo[: -len("<motivo>")] + parameter
+    return motivo
