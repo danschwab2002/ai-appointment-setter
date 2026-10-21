@@ -1,0 +1,1372 @@
+{
+ "_captured": {
+  "origin": "sintetico: armado a mano para la T2.2, no sale de ninguna base",
+  "query": "captura-paridad-recuperacion-v3",
+  "captured_at": "2026-10-21T20:00:00.000000Z",
+  "desde": "2026-10-19T18:13:00.000000Z",
+  "desde_origen": "pilot_scope_version_activated:att1-recuperacion:v>=7",
+  "siembra": "2026-10-12T18:13:00.000000Z",
+  "redactions": [
+   "sintetico: uuid y claves de persona inventados, que son el numero de cada fila"
+  ],
+  "conteos": {
+   "eventos": 8,
+   "disparos_desde": 5,
+   "casos": 7,
+   "acciones": 14,
+   "intentos": 14,
+   "intentos_tramos": 13,
+   "envios": 10,
+   "reevaluaciones": 0,
+   "reevaluaciones_tramos": 0,
+   "autorizaciones": 10,
+   "primer_contacto": 1,
+   "intenciones": 1,
+   "contactos": 7,
+   "casos_del_carrito": 6,
+   "secuencias": 6,
+   "cupones": 5,
+   "links": 1,
+   "renovaciones": 2
+  }
+ },
+ "config": {
+  "pilot_scope_versions": [
+   {
+    "scope_key": "att1-recuperacion",
+    "version": 6,
+    "status": "published",
+    "tenant_key": "lancemos",
+    "source": "hotmart",
+    "source_event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+    "additional_source_event_types": [],
+    "purpose": "cart_recovery",
+    "timezone": "America/Mexico_City",
+    "external_product_id": "5071808",
+    "offer_code": "gopi6lh7",
+    "additional_offer_codes": [],
+    "policy_key": "att1-recuperacion-un-toque",
+    "policy_version": 1,
+    "audience_mode": "consented_intent",
+    "max_outbound_request_starts_per_day": 40,
+    "max_outbound_request_starts_total": 1000,
+    "published_at": "2026-10-01T00:00:00.000000Z"
+   },
+   {
+    "scope_key": "att1-recuperacion",
+    "version": 7,
+    "status": "published",
+    "tenant_key": "lancemos",
+    "source": "hotmart",
+    "source_event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+    "additional_source_event_types": [],
+    "purpose": "cart_recovery",
+    "timezone": "America/Mexico_City",
+    "external_product_id": "5071808",
+    "offer_code": "gopi6lh7",
+    "additional_offer_codes": [],
+    "policy_key": "att1-carrito-tres-toques",
+    "policy_version": 1,
+    "audience_mode": "consented_intent",
+    "max_outbound_request_starts_per_day": 40,
+    "max_outbound_request_starts_total": 1000,
+    "published_at": "2026-10-01T00:00:00.000000Z"
+   },
+   {
+    "scope_key": "att1-pago-rechazado",
+    "version": 2,
+    "status": "published",
+    "tenant_key": "lancemos",
+    "source": "hotmart",
+    "source_event_type": "PURCHASE_CANCELED",
+    "additional_source_event_types": [],
+    "purpose": "cart_recovery",
+    "timezone": "America/Mexico_City",
+    "external_product_id": "5071808",
+    "offer_code": "gopi6lh7",
+    "additional_offer_codes": [],
+    "policy_key": "att1-pago-rechazado",
+    "policy_version": 1,
+    "audience_mode": "consented_intent",
+    "max_outbound_request_starts_per_day": 40,
+    "max_outbound_request_starts_total": 1000,
+    "published_at": "2026-10-01T00:00:00.000000Z"
+   },
+   {
+    "scope_key": "att1-primer-contacto",
+    "version": 2,
+    "status": "published",
+    "tenant_key": "lancemos",
+    "source": "landing",
+    "source_event_type": "PRECHECKOUT_FORM_SUBMITTED",
+    "additional_source_event_types": [],
+    "purpose": "cart_recovery",
+    "timezone": "America/Mexico_City",
+    "external_product_id": "5071808",
+    "offer_code": "gopi6lh7",
+    "additional_offer_codes": [],
+    "policy_key": "att1-primer-contacto-formulario",
+    "policy_version": 1,
+    "audience_mode": "consented_intent",
+    "max_outbound_request_starts_per_day": 40,
+    "max_outbound_request_starts_total": 1000,
+    "published_at": "2026-10-01T00:00:00.000000Z"
+   }
+  ],
+  "followup_policy_versions": [
+   {
+    "policy_key": "att1-recuperacion-un-toque",
+    "version": 1,
+    "status": "published",
+    "purpose": "cart_recovery",
+    "timezone": "America/Mexico_City",
+    "business_windows": [
+     {
+      "days": [
+       1,
+       2,
+       3,
+       4,
+       5,
+       6,
+       7
+      ],
+      "start": "09:00",
+      "end": "21:00"
+     }
+    ],
+    "grace_period": "00:00:00",
+    "expires_after": "5 days",
+    "max_automatic_messages": 1,
+    "steps": [
+     {
+      "step_key": "first_contact",
+      "mode": "freeform"
+     }
+    ],
+    "published_at": "2026-10-01T00:00:00.000000Z"
+   },
+   {
+    "policy_key": "att1-carrito-tres-toques",
+    "version": 1,
+    "status": "published",
+    "purpose": "cart_recovery",
+    "timezone": "America/Mexico_City",
+    "business_windows": [
+     {
+      "days": [
+       1,
+       2,
+       3,
+       4,
+       5,
+       6,
+       7
+      ],
+      "start": "09:00",
+      "end": "21:00"
+     }
+    ],
+    "grace_period": "01:00:00",
+    "expires_after": "5 days",
+    "max_automatic_messages": 3,
+    "steps": [
+     {
+      "step_key": "first_contact",
+      "mode": "freeform"
+     },
+     {
+      "step_key": "cart_second_touch",
+      "mode": "freeform",
+      "delay": "24:00:00",
+      "approved_template": true
+     },
+     {
+      "step_key": "cart_last_touch",
+      "mode": "freeform",
+      "delay": "72:00:00",
+      "approved_template": true,
+      "coupon_ordinal": 2
+     }
+    ],
+    "published_at": "2026-10-01T00:00:00.000000Z"
+   },
+   {
+    "policy_key": "att1-pago-rechazado",
+    "version": 1,
+    "status": "published",
+    "purpose": "cart_recovery",
+    "timezone": "America/Mexico_City",
+    "business_windows": [
+     {
+      "days": [
+       1,
+       2,
+       3,
+       4,
+       5,
+       6,
+       7
+      ],
+      "start": "09:00",
+      "end": "21:00"
+     }
+    ],
+    "grace_period": "00:15:00",
+    "expires_after": "5 days",
+    "max_automatic_messages": 1,
+    "steps": [
+     {
+      "step_key": "payment_failure_first_contact",
+      "mode": "freeform"
+     }
+    ],
+    "published_at": "2026-10-01T00:00:00.000000Z"
+   }
+  ],
+  "pilot_runtime_controls": [
+   {
+    "scope_key": "att1-recuperacion",
+    "scope_version": 7,
+    "runtime_state": "armed",
+    "generation": 5,
+    "changed_at": "2026-10-19T18:13:20.000000Z"
+   }
+  ],
+  "pilot_proactive_contact_caps": [],
+  "pilot_control_events_control_level": [
+   {
+    "scope_key": "att1-recuperacion",
+    "scope_version": 6,
+    "runtime_generation": 1,
+    "created_at": "2026-10-12T00:00:00.000000Z",
+    "event_type": "pilot_scope_version_activated",
+    "reason_code": "pilot_scope_version_activated"
+   },
+   {
+    "scope_key": "att1-recuperacion",
+    "scope_version": 6,
+    "runtime_generation": 2,
+    "created_at": "2026-10-12T00:01:00.000000Z",
+    "event_type": "pilot_runtime_state_changed",
+    "reason_code": "pilot_runtime_state_changed",
+    "to_state": "armed"
+   },
+   {
+    "scope_key": "att1-recuperacion",
+    "scope_version": 6,
+    "runtime_generation": 3,
+    "created_at": "2026-10-19T18:12:50.000000Z",
+    "event_type": "pilot_runtime_state_changed",
+    "reason_code": "pilot_runtime_state_changed",
+    "to_state": "paused"
+   },
+   {
+    "scope_key": "att1-recuperacion",
+    "scope_version": 7,
+    "runtime_generation": 4,
+    "created_at": "2026-10-19T18:13:00.000000Z",
+    "event_type": "pilot_scope_version_activated",
+    "reason_code": "pilot_scope_version_activated"
+   },
+   {
+    "scope_key": "att1-recuperacion",
+    "scope_version": 7,
+    "runtime_generation": 5,
+    "created_at": "2026-10-19T18:13:20.000000Z",
+    "event_type": "pilot_runtime_state_changed",
+    "reason_code": "pilot_runtime_state_changed",
+    "to_state": "armed"
+   }
+  ]
+ },
+ "eventos": [
+  {
+   "id": "00000000-0000-4000-8000-000000000070",
+   "event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+   "received_at": "2026-10-18T10:00:01.000000Z",
+   "processed_at": "2026-10-18T10:00:02.000000Z",
+   "processing_status": "processed",
+   "creation_date_ms": 1792317600000,
+   "product_id": "5071808",
+   "offer_code": "gopi6lh7",
+   "person_key": "0000000000000007",
+   "funnel_ref": "att1"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000000004",
+   "event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+   "received_at": "2026-10-19T20:00:01.000000Z",
+   "processed_at": "2026-10-19T20:00:02.000000Z",
+   "processing_status": "processed",
+   "creation_date_ms": 1792440000000,
+   "product_id": "5071808",
+   "offer_code": "gopi6lh7",
+   "person_key": "0000000000000004",
+   "funnel_ref": "att1"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000000005",
+   "event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+   "received_at": "2026-10-19T22:00:01.000000Z",
+   "processed_at": "2026-10-19T22:00:02.000000Z",
+   "processing_status": "processed",
+   "creation_date_ms": 1792447200000,
+   "product_id": "5071808",
+   "offer_code": "gopi6lh7",
+   "person_key": "0000000000000005",
+   "funnel_ref": "att1"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000000060",
+   "event_type": "PURCHASE_CANCELED",
+   "received_at": "2026-10-20T12:00:01.000000Z",
+   "processed_at": "2026-10-20T12:00:02.000000Z",
+   "processing_status": "processed",
+   "creation_date_ms": 1792497600000,
+   "product_id": "5071808",
+   "offer_code": "gopi6lh7",
+   "person_key": "0000000000000006",
+   "funnel_ref": "att1",
+   "purchase_status": "CANCELED"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000000001",
+   "event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+   "received_at": "2026-10-20T15:00:01.000000Z",
+   "processed_at": "2026-10-20T15:00:02.000000Z",
+   "processing_status": "processed",
+   "creation_date_ms": 1792508400000,
+   "product_id": "5071808",
+   "offer_code": "gopi6lh7",
+   "person_key": "0000000000000001",
+   "funnel_ref": "att1",
+   "cart_correlation": {
+    "outcome": "resolved",
+    "purchase_intent_id": "00000000-0000-4000-8000-000000000101",
+    "reason_code": "exact_email_and_phone",
+    "observed_at": "2026-10-20T15:00:00.000000Z"
+   }
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000000002",
+   "event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+   "received_at": "2026-10-20T17:00:01.000000Z",
+   "processed_at": "2026-10-20T17:00:02.000000Z",
+   "processing_status": "processed",
+   "creation_date_ms": 1792515600000,
+   "product_id": "5071808",
+   "offer_code": "gopi6lh7",
+   "person_key": "0000000000000002",
+   "funnel_ref": "att1"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000000003",
+   "event_type": "PURCHASE_OUT_OF_SHOPPING_CART",
+   "received_at": "2026-10-20T19:00:01.000000Z",
+   "processed_at": "2026-10-20T19:00:02.000000Z",
+   "processing_status": "processed",
+   "creation_date_ms": 1792522800000,
+   "product_id": "5071808",
+   "offer_code": "gopi6lh7",
+   "person_key": "0000000000000003",
+   "funnel_ref": "att1"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000000050",
+   "event_type": "PURCHASE_APPROVED",
+   "received_at": "2026-10-20T21:00:01.000000Z",
+   "processed_at": "2026-10-20T21:00:01.000000Z",
+   "processing_status": "processed",
+   "creation_date_ms": 1792530000000,
+   "approved_date_ms": 1792529998000,
+   "purchase_shape_ok": true,
+   "product_id": "5071808",
+   "offer_code": "gopi6lh7",
+   "purchase_status": "APPROVED",
+   "person_key": "0000000000000003",
+   "digits_key": "0000000000000067",
+   "email_key": "00000000000000cb"
+  }
+ ],
+ "conflictos_de_compra": [],
+ "intenciones": [
+  {
+   "id": "00000000-0000-4000-8000-000000000101",
+   "funnel_ref": "att1",
+   "product_ref": "B12345678C",
+   "offer_ref": "gopi6lh7",
+   "submitted_at": "2026-10-20T14:29:00.000000Z",
+   "lifecycle_state": "waiting_for_purchase",
+   "current_classification": "cart_abandoned",
+   "person_key": "0000000000000001"
+  }
+ ],
+ "contactos": [
+  {
+   "id": "00000000-0000-4000-8000-000000009001",
+   "person_keys": [
+    "0000000000000001"
+   ],
+   "digits_keys": [],
+   "email_keys": []
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000009002",
+   "person_keys": [
+    "0000000000000002"
+   ],
+   "digits_keys": [],
+   "email_keys": []
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000009003",
+   "person_keys": [
+    "0000000000000003"
+   ],
+   "digits_keys": [],
+   "email_keys": []
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000009004",
+   "person_keys": [
+    "0000000000000004"
+   ],
+   "digits_keys": [],
+   "email_keys": []
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000009005",
+   "person_keys": [
+    "0000000000000005"
+   ],
+   "digits_keys": [],
+   "email_keys": []
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000009006",
+   "person_keys": [
+    "0000000000000006"
+   ],
+   "digits_keys": [],
+   "email_keys": []
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000009007",
+   "person_keys": [
+    "0000000000000007"
+   ],
+   "digits_keys": [],
+   "email_keys": []
+  }
+ ],
+ "casos": [
+  {
+   "id": "00000000-0000-4000-8000-000000001070",
+   "contact_id": "00000000-0000-4000-8000-000000009007",
+   "abandonment_event_id": "00000000-0000-4000-8000-000000000070",
+   "external_product_id": "5071808",
+   "offer_code": "gopi6lh7",
+   "status": "sequence_exhausted",
+   "grace_expires_at": "2026-10-18T11:00:00.000000Z",
+   "created_at": "2026-10-18T10:00:02.000000Z",
+   "policy_key": "att1-recuperacion-un-toque",
+   "policy_version": 1,
+   "has_conversation": true,
+   "binding": {
+    "scope_key": "att1-recuperacion",
+    "scope_version": 6,
+    "source_event_id": "00000000-0000-4000-8000-000000000070",
+    "audience_mode": "consented_intent",
+    "bound_at": "2026-10-18T10:00:01.000000Z"
+   },
+   "eventos": [
+    {
+     "webhook_event_id": "00000000-0000-4000-8000-000000000070",
+     "event_role": "cart_abandonment",
+     "observed_at": "2026-10-18T10:00:00.000000Z"
+    }
+   ],
+   "closed_at": "2026-10-18T15:00:10.000000Z"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000001004",
+   "contact_id": "00000000-0000-4000-8000-000000009004",
+   "abandonment_event_id": "00000000-0000-4000-8000-000000000004",
+   "external_product_id": "5071808",
+   "offer_code": "gopi6lh7",
+   "status": "sequence_exhausted",
+   "grace_expires_at": "2026-10-19T21:00:00.000000Z",
+   "created_at": "2026-10-19T20:00:02.000000Z",
+   "policy_key": "att1-carrito-tres-toques",
+   "policy_version": 1,
+   "has_conversation": true,
+   "binding": {
+    "scope_key": "att1-recuperacion",
+    "scope_version": 7,
+    "source_event_id": "00000000-0000-4000-8000-000000000004",
+    "audience_mode": "consented_intent",
+    "bound_at": "2026-10-19T20:00:01.000000Z"
+   },
+   "eventos": [
+    {
+     "webhook_event_id": "00000000-0000-4000-8000-000000000004",
+     "event_role": "cart_abandonment",
+     "observed_at": "2026-10-19T20:00:00.000000Z"
+    }
+   ],
+   "closed_at": "2026-10-20T23:38:17.000000Z"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000001005",
+   "contact_id": "00000000-0000-4000-8000-000000009005",
+   "abandonment_event_id": "00000000-0000-4000-8000-000000000005",
+   "external_product_id": "5071808",
+   "offer_code": "gopi6lh7",
+   "status": "active",
+   "grace_expires_at": "2026-10-19T23:00:00.000000Z",
+   "created_at": "2026-10-19T22:00:02.000000Z",
+   "policy_key": "att1-carrito-tres-toques",
+   "policy_version": 1,
+   "has_conversation": true,
+   "binding": {
+    "scope_key": "att1-recuperacion",
+    "scope_version": 7,
+    "source_event_id": "00000000-0000-4000-8000-000000000005",
+    "audience_mode": "consented_intent",
+    "bound_at": "2026-10-19T22:00:01.000000Z"
+   },
+   "eventos": [
+    {
+     "webhook_event_id": "00000000-0000-4000-8000-000000000005",
+     "event_role": "cart_abandonment",
+     "observed_at": "2026-10-19T22:00:00.000000Z"
+    }
+   ]
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000001060",
+   "contact_id": "00000000-0000-4000-8000-000000009006",
+   "abandonment_event_id": "00000000-0000-4000-8000-000000000060",
+   "external_product_id": "5071808",
+   "offer_code": "gopi6lh7",
+   "status": "sequence_exhausted",
+   "grace_expires_at": "2026-10-20T13:00:00.000000Z",
+   "created_at": "2026-10-20T12:00:02.000000Z",
+   "policy_key": "att1-pago-rechazado",
+   "policy_version": 1,
+   "has_conversation": true,
+   "binding": {
+    "scope_key": "att1-pago-rechazado",
+    "scope_version": 2,
+    "source_event_id": "00000000-0000-4000-8000-000000000060",
+    "audience_mode": "consented_intent",
+    "bound_at": "2026-10-20T12:00:01.000000Z"
+   },
+   "eventos": [
+    {
+     "webhook_event_id": "00000000-0000-4000-8000-000000000060",
+     "event_role": "payment_failure",
+     "observed_at": "2026-10-20T12:00:00.000000Z"
+    }
+   ],
+   "closed_at": "2026-10-20T12:16:00.000000Z"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000001001",
+   "contact_id": "00000000-0000-4000-8000-000000009001",
+   "abandonment_event_id": "00000000-0000-4000-8000-000000000001",
+   "external_product_id": "5071808",
+   "offer_code": "gopi6lh7",
+   "status": "active",
+   "grace_expires_at": "2026-10-20T16:00:00.000000Z",
+   "created_at": "2026-10-20T15:00:02.000000Z",
+   "policy_key": "att1-carrito-tres-toques",
+   "policy_version": 1,
+   "has_conversation": true,
+   "binding": {
+    "scope_key": "att1-recuperacion",
+    "scope_version": 7,
+    "source_event_id": "00000000-0000-4000-8000-000000000001",
+    "audience_mode": "consented_intent",
+    "bound_at": "2026-10-20T15:00:01.000000Z"
+   },
+   "eventos": [
+    {
+     "webhook_event_id": "00000000-0000-4000-8000-000000000001",
+     "event_role": "cart_abandonment",
+     "observed_at": "2026-10-20T15:00:00.000000Z"
+    }
+   ]
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000001002",
+   "contact_id": "00000000-0000-4000-8000-000000009002",
+   "abandonment_event_id": "00000000-0000-4000-8000-000000000002",
+   "external_product_id": "5071808",
+   "offer_code": "gopi6lh7",
+   "status": "active",
+   "grace_expires_at": "2026-10-20T18:00:00.000000Z",
+   "created_at": "2026-10-20T17:00:02.000000Z",
+   "policy_key": "att1-carrito-tres-toques",
+   "policy_version": 1,
+   "has_conversation": true,
+   "binding": {
+    "scope_key": "att1-recuperacion",
+    "scope_version": 7,
+    "source_event_id": "00000000-0000-4000-8000-000000000002",
+    "audience_mode": "consented_intent",
+    "bound_at": "2026-10-20T17:00:01.000000Z"
+   },
+   "eventos": [
+    {
+     "webhook_event_id": "00000000-0000-4000-8000-000000000002",
+     "event_role": "cart_abandonment",
+     "observed_at": "2026-10-20T17:00:00.000000Z"
+    }
+   ]
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000001003",
+   "contact_id": "00000000-0000-4000-8000-000000009003",
+   "abandonment_event_id": "00000000-0000-4000-8000-000000000003",
+   "external_product_id": "5071808",
+   "offer_code": "gopi6lh7",
+   "status": "won",
+   "grace_expires_at": "2026-10-20T20:00:00.000000Z",
+   "created_at": "2026-10-20T19:00:02.000000Z",
+   "policy_key": "att1-carrito-tres-toques",
+   "policy_version": 1,
+   "has_conversation": true,
+   "binding": {
+    "scope_key": "att1-recuperacion",
+    "scope_version": 7,
+    "source_event_id": "00000000-0000-4000-8000-000000000003",
+    "audience_mode": "consented_intent",
+    "bound_at": "2026-10-20T19:00:01.000000Z"
+   },
+   "eventos": [
+    {
+     "webhook_event_id": "00000000-0000-4000-8000-000000000003",
+     "event_role": "cart_abandonment",
+     "observed_at": "2026-10-20T19:00:00.000000Z"
+    }
+   ],
+   "closed_at": "2026-10-20T21:00:01.000000Z",
+   "won_at": "2026-10-20T20:59:58.000000Z",
+   "purchase_event_id": "00000000-0000-4000-8000-000000000050"
+  }
+ ],
+ "secuencias": [
+  {
+   "id": "00000000-0000-4000-8000-000000003070",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001070",
+   "status": "completed",
+   "reason": "cart_abandonment",
+   "policy_key": "att1-recuperacion-un-toque",
+   "policy_version": 1,
+   "current_step": 1,
+   "max_attempts": 1,
+   "automatic_messages_accepted": 1,
+   "started_at": "2026-10-18T10:00:02.000000Z",
+   "completion_reason": "policy_exhausted",
+   "completed_at": "2026-10-18T15:00:10.000000Z"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000003004",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001004",
+   "status": "completed",
+   "reason": "cart_abandonment",
+   "policy_key": "att1-carrito-tres-toques",
+   "policy_version": 1,
+   "current_step": 3,
+   "max_attempts": 3,
+   "automatic_messages_accepted": 3,
+   "started_at": "2026-10-19T20:00:02.000000Z",
+   "completion_reason": "policy_exhausted",
+   "completed_at": "2026-10-20T23:38:17.000000Z"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000003005",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001005",
+   "status": "active",
+   "reason": "cart_abandonment",
+   "policy_key": "att1-carrito-tres-toques",
+   "policy_version": 1,
+   "current_step": 2,
+   "max_attempts": 3,
+   "automatic_messages_accepted": 2,
+   "started_at": "2026-10-19T22:00:02.000000Z"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000003001",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001001",
+   "status": "active",
+   "reason": "cart_abandonment",
+   "policy_key": "att1-carrito-tres-toques",
+   "policy_version": 1,
+   "current_step": 2,
+   "max_attempts": 3,
+   "automatic_messages_accepted": 2,
+   "started_at": "2026-10-20T15:00:02.000000Z"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000003002",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001002",
+   "status": "completed",
+   "reason": "cart_abandonment",
+   "policy_key": "att1-carrito-tres-toques",
+   "policy_version": 1,
+   "current_step": 1,
+   "max_attempts": 3,
+   "automatic_messages_accepted": 1,
+   "started_at": "2026-10-20T17:00:02.000000Z",
+   "completion_reason": "prospect_replied",
+   "completed_at": "2026-10-21T18:00:40.000000Z"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000003003",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001003",
+   "status": "completed",
+   "reason": "cart_abandonment",
+   "policy_key": "att1-carrito-tres-toques",
+   "policy_version": 1,
+   "current_step": 1,
+   "max_attempts": 3,
+   "automatic_messages_accepted": 1,
+   "started_at": "2026-10-20T19:00:02.000000Z",
+   "completion_reason": "purchase_detected",
+   "completed_at": "2026-10-20T21:00:01.000000Z"
+  }
+ ],
+ "acciones": [
+  {
+   "id": "00000000-0000-4000-8000-000000002070",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001070",
+   "followup_sequence_id": "00000000-0000-4000-8000-000000003070",
+   "action_type": "first_contact_review",
+   "status": "accepted_by_chatwoot",
+   "due_at": "2026-10-18T15:00:00.000000Z",
+   "expires_at": "2026-10-23T10:00:00.000000Z",
+   "step_key": "first_contact",
+   "anchor_type": "cart_abandonment",
+   "anchor_observed_at": "2026-10-18T10:00:00.000000Z",
+   "execution_attempt_count": 1,
+   "created_at": "2026-10-18T10:00:02.000000Z",
+   "updated_at": "2026-10-18T15:00:10.000000Z",
+   "intentos": [
+    {
+     "n": 1,
+     "primero": {
+      "attempt_number": 1,
+      "mode": "approved_template",
+      "phase": "completed",
+      "outcome": "accepted_by_chatwoot",
+      "started_at": "2026-10-18T15:00:06.000000Z",
+      "reason_code": "accepted_by_chatwoot",
+      "request_started_at": "2026-10-18T15:00:08.000000Z",
+      "accepted_at": "2026-10-18T15:00:10.000000Z"
+     }
+    }
+   ],
+   "terminal_reason": "accepted_by_chatwoot"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000002010",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001004",
+   "followup_sequence_id": "00000000-0000-4000-8000-000000003004",
+   "action_type": "first_contact_review",
+   "status": "accepted_by_chatwoot",
+   "due_at": "2026-10-19T21:00:00.000000Z",
+   "expires_at": "2026-10-24T20:00:00.000000Z",
+   "step_key": "first_contact",
+   "anchor_type": "cart_abandonment",
+   "anchor_observed_at": "2026-10-19T20:00:00.000000Z",
+   "execution_attempt_count": 1,
+   "created_at": "2026-10-19T20:00:02.000000Z",
+   "updated_at": "2026-10-19T21:00:17.000000Z",
+   "intentos": [
+    {
+     "n": 1,
+     "primero": {
+      "attempt_number": 1,
+      "mode": "approved_template",
+      "phase": "completed",
+      "outcome": "accepted_by_chatwoot",
+      "started_at": "2026-10-19T21:00:13.000000Z",
+      "reason_code": "accepted_by_chatwoot",
+      "request_started_at": "2026-10-19T21:00:15.000000Z",
+      "accepted_at": "2026-10-19T21:00:17.000000Z"
+     }
+    }
+   ],
+   "terminal_reason": "accepted_by_chatwoot"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000002011",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001004",
+   "followup_sequence_id": "00000000-0000-4000-8000-000000003004",
+   "action_type": "no_reply_review",
+   "status": "accepted_by_chatwoot",
+   "due_at": "2026-10-20T21:00:17.000000Z",
+   "expires_at": "2026-10-24T20:00:00.000000Z",
+   "step_key": "cart_second_touch",
+   "anchor_type": "accepted_outbound_message",
+   "anchor_observed_at": "2026-10-19T21:00:17.000000Z",
+   "execution_attempt_count": 1,
+   "created_at": "2026-10-19T21:00:17.000000Z",
+   "updated_at": "2026-10-20T21:00:52.000000Z",
+   "intentos": [
+    {
+     "n": 1,
+     "primero": {
+      "attempt_number": 1,
+      "mode": "approved_template",
+      "phase": "completed",
+      "outcome": "accepted_by_chatwoot",
+      "started_at": "2026-10-20T21:00:48.000000Z",
+      "reason_code": "accepted_by_chatwoot",
+      "request_started_at": "2026-10-20T21:00:50.000000Z",
+      "accepted_at": "2026-10-20T21:00:52.000000Z"
+     }
+    }
+   ],
+   "terminal_reason": "accepted_by_chatwoot",
+   "respuesta": {
+    "renovacion_at": "2026-10-20T23:30:00.000000Z",
+    "contesto_at": "2026-10-20T23:30:09.000000Z"
+   }
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000002013",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001005",
+   "followup_sequence_id": "00000000-0000-4000-8000-000000003005",
+   "action_type": "first_contact_review",
+   "status": "accepted_by_chatwoot",
+   "due_at": "2026-10-19T23:00:00.000000Z",
+   "expires_at": "2026-10-24T22:00:00.000000Z",
+   "step_key": "first_contact",
+   "anchor_type": "cart_abandonment",
+   "anchor_observed_at": "2026-10-19T22:00:00.000000Z",
+   "execution_attempt_count": 1,
+   "created_at": "2026-10-19T22:00:02.000000Z",
+   "updated_at": "2026-10-19T23:00:12.000000Z",
+   "intentos": [
+    {
+     "n": 1,
+     "primero": {
+      "attempt_number": 1,
+      "mode": "approved_template",
+      "phase": "completed",
+      "outcome": "accepted_by_chatwoot",
+      "started_at": "2026-10-19T23:00:08.000000Z",
+      "reason_code": "accepted_by_chatwoot",
+      "request_started_at": "2026-10-19T23:00:10.000000Z",
+      "accepted_at": "2026-10-19T23:00:12.000000Z"
+     }
+    }
+   ],
+   "terminal_reason": "accepted_by_chatwoot"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000002014",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001005",
+   "followup_sequence_id": "00000000-0000-4000-8000-000000003005",
+   "action_type": "no_reply_review",
+   "status": "accepted_by_chatwoot",
+   "due_at": "2026-10-20T23:00:12.000000Z",
+   "expires_at": "2026-10-24T22:00:00.000000Z",
+   "step_key": "cart_second_touch",
+   "anchor_type": "accepted_outbound_message",
+   "anchor_observed_at": "2026-10-19T23:00:12.000000Z",
+   "execution_attempt_count": 1,
+   "created_at": "2026-10-19T23:00:12.000000Z",
+   "updated_at": "2026-10-20T23:00:42.000000Z",
+   "intentos": [
+    {
+     "n": 1,
+     "primero": {
+      "attempt_number": 1,
+      "mode": "approved_template",
+      "phase": "completed",
+      "outcome": "accepted_by_chatwoot",
+      "started_at": "2026-10-20T23:00:38.000000Z",
+      "reason_code": "accepted_by_chatwoot",
+      "request_started_at": "2026-10-20T23:00:40.000000Z",
+      "accepted_at": "2026-10-20T23:00:42.000000Z"
+     }
+    }
+   ],
+   "terminal_reason": "accepted_by_chatwoot",
+   "respuesta": {
+    "renovacion_at": "2026-10-21T01:00:00.000000Z"
+   }
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000002001",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001001",
+   "followup_sequence_id": "00000000-0000-4000-8000-000000003001",
+   "action_type": "first_contact_review",
+   "status": "accepted_by_chatwoot",
+   "due_at": "2026-10-20T16:00:00.000000Z",
+   "expires_at": "2026-10-25T15:00:00.000000Z",
+   "step_key": "first_contact",
+   "anchor_type": "cart_abandonment",
+   "anchor_observed_at": "2026-10-20T15:00:00.000000Z",
+   "execution_attempt_count": 1,
+   "created_at": "2026-10-20T15:00:02.000000Z",
+   "updated_at": "2026-10-20T16:00:32.000000Z",
+   "intentos": [
+    {
+     "n": 1,
+     "primero": {
+      "attempt_number": 1,
+      "mode": "approved_template",
+      "phase": "completed",
+      "outcome": "accepted_by_chatwoot",
+      "started_at": "2026-10-20T16:00:28.000000Z",
+      "reason_code": "accepted_by_chatwoot",
+      "request_started_at": "2026-10-20T16:00:30.000000Z",
+      "accepted_at": "2026-10-20T16:00:32.000000Z"
+     }
+    }
+   ],
+   "terminal_reason": "accepted_by_chatwoot"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000002002",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001001",
+   "followup_sequence_id": "00000000-0000-4000-8000-000000003001",
+   "action_type": "no_reply_review",
+   "status": "accepted_by_chatwoot",
+   "due_at": "2026-10-21T16:00:32.000000Z",
+   "expires_at": "2026-10-25T15:00:00.000000Z",
+   "step_key": "cart_second_touch",
+   "anchor_type": "accepted_outbound_message",
+   "anchor_observed_at": "2026-10-20T16:00:32.000000Z",
+   "execution_attempt_count": 1,
+   "created_at": "2026-10-20T16:00:32.000000Z",
+   "updated_at": "2026-10-21T16:01:02.000000Z",
+   "intentos": [
+    {
+     "n": 1,
+     "primero": {
+      "attempt_number": 1,
+      "mode": "approved_template",
+      "phase": "completed",
+      "outcome": "accepted_by_chatwoot",
+      "started_at": "2026-10-21T16:00:58.000000Z",
+      "reason_code": "accepted_by_chatwoot",
+      "request_started_at": "2026-10-21T16:01:00.000000Z",
+      "accepted_at": "2026-10-21T16:01:02.000000Z"
+     }
+    }
+   ],
+   "terminal_reason": "accepted_by_chatwoot"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000002004",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001002",
+   "followup_sequence_id": "00000000-0000-4000-8000-000000003002",
+   "action_type": "first_contact_review",
+   "status": "accepted_by_chatwoot",
+   "due_at": "2026-10-20T18:00:00.000000Z",
+   "expires_at": "2026-10-25T17:00:00.000000Z",
+   "step_key": "first_contact",
+   "anchor_type": "cart_abandonment",
+   "anchor_observed_at": "2026-10-20T17:00:00.000000Z",
+   "execution_attempt_count": 1,
+   "created_at": "2026-10-20T17:00:02.000000Z",
+   "updated_at": "2026-10-20T18:00:22.000000Z",
+   "intentos": [
+    {
+     "n": 1,
+     "primero": {
+      "attempt_number": 1,
+      "mode": "approved_template",
+      "phase": "completed",
+      "outcome": "accepted_by_chatwoot",
+      "started_at": "2026-10-20T18:00:18.000000Z",
+      "reason_code": "accepted_by_chatwoot",
+      "request_started_at": "2026-10-20T18:00:20.000000Z",
+      "accepted_at": "2026-10-20T18:00:22.000000Z"
+     }
+    }
+   ],
+   "terminal_reason": "accepted_by_chatwoot",
+   "respuesta": {
+    "adopcion_at": "2026-10-20T18:30:00.000000Z",
+    "contesto_at": "2026-10-21T18:00:40.000000Z"
+   }
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000002005",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001002",
+   "followup_sequence_id": "00000000-0000-4000-8000-000000003002",
+   "action_type": "no_reply_review",
+   "status": "cancelled",
+   "due_at": "2026-10-21T18:00:22.000000Z",
+   "expires_at": "2026-10-25T17:00:00.000000Z",
+   "step_key": "cart_second_touch",
+   "anchor_type": "accepted_outbound_message",
+   "anchor_observed_at": "2026-10-20T18:00:22.000000Z",
+   "execution_attempt_count": 0,
+   "created_at": "2026-10-20T18:00:22.000000Z",
+   "updated_at": "2026-10-21T18:00:40.000000Z",
+   "intentos": [],
+   "terminal_reason": "prospect_replied"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000002007",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001003",
+   "followup_sequence_id": "00000000-0000-4000-8000-000000003003",
+   "action_type": "first_contact_review",
+   "status": "accepted_by_chatwoot",
+   "due_at": "2026-10-20T20:00:00.000000Z",
+   "expires_at": "2026-10-25T19:00:00.000000Z",
+   "step_key": "first_contact",
+   "anchor_type": "cart_abandonment",
+   "anchor_observed_at": "2026-10-20T19:00:00.000000Z",
+   "execution_attempt_count": 3,
+   "created_at": "2026-10-20T19:00:02.000000Z",
+   "updated_at": "2026-10-20T20:10:12.000000Z",
+   "intentos": [
+    {
+     "n": 2,
+     "primero": {
+      "attempt_number": 1,
+      "mode": "approved_template",
+      "phase": "completed",
+      "outcome": "failed_before_request",
+      "started_at": "2026-10-20T20:00:05.000000Z",
+      "reason_code": "recovery_coupon_not_ready",
+      "finalized_next_attempt_at": "2026-10-20T20:05:05.000000Z"
+     },
+     "ultimo": {
+      "attempt_number": 2,
+      "mode": "approved_template",
+      "phase": "completed",
+      "outcome": "failed_before_request",
+      "started_at": "2026-10-20T20:05:06.000000Z",
+      "reason_code": "recovery_coupon_not_ready",
+      "finalized_next_attempt_at": "2026-10-20T20:10:06.000000Z"
+     }
+    },
+    {
+     "n": 1,
+     "primero": {
+      "attempt_number": 3,
+      "mode": "approved_template",
+      "phase": "completed",
+      "outcome": "accepted_by_chatwoot",
+      "started_at": "2026-10-20T20:10:08.000000Z",
+      "reason_code": "accepted_by_chatwoot",
+      "request_started_at": "2026-10-20T20:10:10.000000Z",
+      "accepted_at": "2026-10-20T20:10:12.000000Z"
+     }
+    }
+   ],
+   "terminal_reason": "accepted_by_chatwoot"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000002008",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001003",
+   "followup_sequence_id": "00000000-0000-4000-8000-000000003003",
+   "action_type": "no_reply_review",
+   "status": "cancelled",
+   "due_at": "2026-10-21T20:10:12.000000Z",
+   "expires_at": "2026-10-25T19:00:00.000000Z",
+   "step_key": "cart_second_touch",
+   "anchor_type": "accepted_outbound_message",
+   "anchor_observed_at": "2026-10-20T20:10:12.000000Z",
+   "execution_attempt_count": 0,
+   "created_at": "2026-10-20T20:10:12.000000Z",
+   "updated_at": "2026-10-20T21:00:01.000000Z",
+   "intentos": [],
+   "terminal_reason": "purchase_detected"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000002012",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001004",
+   "followup_sequence_id": "00000000-0000-4000-8000-000000003004",
+   "action_type": "no_reply_review",
+   "status": "accepted_by_chatwoot",
+   "due_at": "2026-10-20T23:30:00.500000Z",
+   "expires_at": "2026-10-24T20:00:00.000000Z",
+   "step_key": "cart_last_touch",
+   "anchor_type": "accepted_outbound_message",
+   "anchor_observed_at": "2026-10-20T21:00:52.000000Z",
+   "execution_attempt_count": 2,
+   "created_at": "2026-10-20T21:00:52.000000Z",
+   "updated_at": "2026-10-20T23:38:17.000000Z",
+   "intentos": [
+    {
+     "n": 1,
+     "primero": {
+      "attempt_number": 1,
+      "mode": "approved_template",
+      "phase": "completed",
+      "outcome": "failed_before_request",
+      "started_at": "2026-10-20T23:30:10.000000Z",
+      "reason_code": "recovery_coupon_not_ready",
+      "finalized_next_attempt_at": "2026-10-20T23:38:10.000000Z"
+     }
+    },
+    {
+     "n": 1,
+     "primero": {
+      "attempt_number": 2,
+      "mode": "approved_template",
+      "phase": "completed",
+      "outcome": "accepted_by_chatwoot",
+      "started_at": "2026-10-20T23:38:12.000000Z",
+      "reason_code": "accepted_by_chatwoot",
+      "request_started_at": "2026-10-20T23:38:15.000000Z",
+      "accepted_at": "2026-10-20T23:38:17.000000Z"
+     }
+    }
+   ],
+   "terminal_reason": "accepted_by_chatwoot"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000002015",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001005",
+   "followup_sequence_id": "00000000-0000-4000-8000-000000003005",
+   "action_type": "no_reply_review",
+   "status": "permanent_failed",
+   "due_at": "2026-10-21T01:00:00.200000Z",
+   "expires_at": "2026-10-24T22:00:00.000000Z",
+   "step_key": "cart_last_touch",
+   "anchor_type": "accepted_outbound_message",
+   "anchor_observed_at": "2026-10-20T23:00:42.000000Z",
+   "execution_attempt_count": 1,
+   "created_at": "2026-10-20T23:00:42.000000Z",
+   "updated_at": "2026-10-21T01:00:09.000000Z",
+   "intentos": [
+    {
+     "n": 1,
+     "primero": {
+      "attempt_number": 1,
+      "mode": "approved_template",
+      "phase": "completed",
+      "outcome": "failed_before_request",
+      "started_at": "2026-10-21T01:00:08.000000Z",
+      "reason_code": "recovery_coupon_create_failed"
+     }
+    }
+   ],
+   "terminal_reason": "recovery_coupon_create_failed"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000002003",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001001",
+   "followup_sequence_id": "00000000-0000-4000-8000-000000003001",
+   "action_type": "no_reply_review",
+   "status": "pending",
+   "due_at": "2026-10-23T16:00:32.000000Z",
+   "expires_at": "2026-10-25T15:00:00.000000Z",
+   "step_key": "cart_last_touch",
+   "anchor_type": "accepted_outbound_message",
+   "anchor_observed_at": "2026-10-21T16:01:02.000000Z",
+   "execution_attempt_count": 0,
+   "created_at": "2026-10-21T16:01:02.000000Z",
+   "updated_at": "2026-10-21T16:01:02.000000Z",
+   "intentos": []
+  }
+ ],
+ "cupones": [
+  {
+   "id": "00000000-0000-4000-8000-000000004001",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001001",
+   "ordinal": 1,
+   "status": "valid",
+   "expires_at": "2026-10-21T16:00:00.000000Z",
+   "attempt_count": 2,
+   "verified_at": "2026-10-20T15:51:00.000000Z",
+   "created_at": "2026-10-20T15:15:00.000000Z",
+   "updated_at": "2026-10-20T15:51:00.000000Z"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000004003",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001003",
+   "ordinal": 1,
+   "status": "redeemed",
+   "expires_at": "2026-10-21T20:00:00.000000Z",
+   "attempt_count": 3,
+   "verified_at": "2026-10-20T20:09:30.000000Z",
+   "redeemed_webhook_event_id": "00000000-0000-4000-8000-000000000050",
+   "created_at": "2026-10-20T19:45:00.000000Z",
+   "updated_at": "2026-10-20T21:00:01.000000Z"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000004004",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001004",
+   "ordinal": 1,
+   "status": "valid",
+   "expires_at": "2026-10-20T21:00:00.000000Z",
+   "attempt_count": 2,
+   "verified_at": "2026-10-19T20:52:00.000000Z",
+   "created_at": "2026-10-19T20:15:00.000000Z",
+   "updated_at": "2026-10-19T20:52:00.000000Z"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000004005",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001004",
+   "ordinal": 2,
+   "status": "valid",
+   "expires_at": "2026-10-21T23:30:00.000000Z",
+   "attempt_count": 2,
+   "verified_at": "2026-10-20T23:38:00.000000Z",
+   "created_at": "2026-10-20T23:30:30.000000Z",
+   "updated_at": "2026-10-20T23:38:00.000000Z"
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000004006",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001005",
+   "ordinal": 2,
+   "status": "create_failed",
+   "expires_at": "2026-10-22T01:00:00.000000Z",
+   "failure_code": "hotmart_rejected",
+   "attempt_count": 1,
+   "created_at": "2026-10-21T01:00:01.000000Z",
+   "updated_at": "2026-10-21T01:00:05.000000Z"
+  }
+ ],
+ "links": [
+  {
+   "id": "00000000-0000-4000-8000-000000006001",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001003",
+   "delivery_attempt_id": "00000000-0000-4000-8000-000000006101",
+   "action_id": "00000000-0000-4000-8000-000000002007",
+   "attempt_number": 3,
+   "status": "purchase_matched",
+   "offer_resolution": "recovery_case_offer",
+   "attribution_resolution": "marker_only",
+   "comprado": true,
+   "hotmart_webhook_event_id": "00000000-0000-4000-8000-000000000050",
+   "created_at": "2026-10-20T20:10:09.000000Z",
+   "purchased_at": "2026-10-20T21:00:01.000000Z"
+  }
+ ],
+ "renovaciones": [
+  {
+   "action_id": "00000000-0000-4000-8000-000000002012",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001004",
+   "occurred_at": "2026-10-20T23:30:00.000000Z",
+   "created_at": "2026-10-20T23:30:00.500000Z",
+   "efecto": "adelanto"
+  },
+  {
+   "action_id": "00000000-0000-4000-8000-000000002015",
+   "recovery_case_id": "00000000-0000-4000-8000-000000001005",
+   "occurred_at": "2026-10-21T01:00:00.000000Z",
+   "created_at": "2026-10-21T01:00:00.200000Z",
+   "efecto": "adelanto"
+  }
+ ],
+ "autorizaciones": [
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 6,
+   "action_id": "00000000-0000-4000-8000-000000002070",
+   "contact_id": "00000000-0000-4000-8000-000000009999",
+   "local_budget_date": "2026-10-18",
+   "runtime_generation": 2,
+   "authorized_at": "2026-10-18T15:00:08.000000Z"
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 7,
+   "action_id": "00000000-0000-4000-8000-000000002010",
+   "contact_id": "00000000-0000-4000-8000-000000009999",
+   "local_budget_date": "2026-10-19",
+   "runtime_generation": 5,
+   "authorized_at": "2026-10-19T21:00:15.000000Z"
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 7,
+   "action_id": "00000000-0000-4000-8000-000000002013",
+   "contact_id": "00000000-0000-4000-8000-000000009999",
+   "local_budget_date": "2026-10-19",
+   "runtime_generation": 5,
+   "authorized_at": "2026-10-19T23:00:10.000000Z"
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 7,
+   "action_id": "00000000-0000-4000-8000-000000002001",
+   "contact_id": "00000000-0000-4000-8000-000000009999",
+   "local_budget_date": "2026-10-20",
+   "runtime_generation": 5,
+   "authorized_at": "2026-10-20T16:00:30.000000Z"
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 7,
+   "action_id": "00000000-0000-4000-8000-000000002004",
+   "contact_id": "00000000-0000-4000-8000-000000009999",
+   "local_budget_date": "2026-10-20",
+   "runtime_generation": 5,
+   "authorized_at": "2026-10-20T18:00:20.000000Z"
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 7,
+   "action_id": "00000000-0000-4000-8000-000000002007",
+   "contact_id": "00000000-0000-4000-8000-000000009999",
+   "local_budget_date": "2026-10-20",
+   "runtime_generation": 5,
+   "authorized_at": "2026-10-20T20:10:10.000000Z"
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 7,
+   "action_id": "00000000-0000-4000-8000-000000002011",
+   "contact_id": "00000000-0000-4000-8000-000000009999",
+   "local_budget_date": "2026-10-20",
+   "runtime_generation": 5,
+   "authorized_at": "2026-10-20T21:00:50.000000Z"
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 7,
+   "action_id": "00000000-0000-4000-8000-000000002014",
+   "contact_id": "00000000-0000-4000-8000-000000009999",
+   "local_budget_date": "2026-10-20",
+   "runtime_generation": 5,
+   "authorized_at": "2026-10-20T23:00:40.000000Z"
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 7,
+   "action_id": "00000000-0000-4000-8000-000000002012",
+   "contact_id": "00000000-0000-4000-8000-000000009999",
+   "local_budget_date": "2026-10-20",
+   "runtime_generation": 5,
+   "authorized_at": "2026-10-20T23:38:15.000000Z"
+  },
+  {
+   "scope_key": "att1-recuperacion",
+   "scope_version": 7,
+   "action_id": "00000000-0000-4000-8000-000000002002",
+   "contact_id": "00000000-0000-4000-8000-000000009999",
+   "local_budget_date": "2026-10-21",
+   "runtime_generation": 5,
+   "authorized_at": "2026-10-21T16:01:00.000000Z"
+  }
+ ],
+ "reevaluaciones": [],
+ "primer_contacto": [
+  {
+   "purchase_intent_id": "00000000-0000-4000-8000-000000000101",
+   "contact_id": "00000000-0000-4000-8000-000000009001",
+   "outcome": "planned",
+   "created_at": "2026-10-20T14:30:00.000000Z",
+   "accion_status": "cancelled",
+   "accion_terminal_reason": "superseded_by_provider_event",
+   "accion_due_at": "2026-10-20T15:30:00.000000Z",
+   "accion_cerrada_at": "2026-10-20T15:00:03.000000Z"
+  }
+ ]
+}
