@@ -248,7 +248,7 @@ EXCEPTIONS_V1: tuple[FlowException, ...] = (
     ),
     FlowException(
         "nombre_inseguro_cierra", _CON_PRIMER_CONTACTO, "despacho",
-        "src/bridge/worker.py:1322-1338",
+        "src/bridge/worker.py:1382-1398",
         "El nombre que no pasa el filtro cierra la accion sin reintento (D1).",
     ),
     FlowException(

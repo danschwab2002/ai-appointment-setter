@@ -12,6 +12,18 @@ Cada tag `vX.Y.Z` publica tres imágenes en GHCR con ese tag: `ghcr.io/danschwab
 
 Lo que ya está en `main` y todavía no tiene versión. El número se elige al publicar.
 
+## [1.15.5] - 2026-10-21
+
+Un parche sobre la 1.15.4: los pasos siguientes (A2 y Z del carrito, B2 o Z del pago rechazado, C3 de la ficha) verifican Chatwoot contra el teléfono del caso (#286). Cambia el bridge y no lleva migración.
+
+### Arreglado
+
+- **Ningún paso siguiente salía en una instancia portable.** Antes de mandar un paso que no es el primero, el despachador lee la conversación del caso en Chatwoot y se la pasa como evidencia a `reevaluate_followup_action`. Esa lectura comparaba la conversación con el único JID que deja pasar un runtime viejo (`allowed_jid`), así que para cualquier comprador real fallaba con `conversation_identity_mismatch`, la evidencia quedaba vacía y la reevaluación escalaba con `chatwoot_authority_unavailable`. En ATT1, los 17 A2 que vencieron entre el 2026-10-20 a las 17:40Z y el 2026-10-21 a las 02:39Z cerraron así, sin mensaje. Ahora, con el destinatario portable prendido, se compara con el teléfono del contacto del caso, en sus dos formas equivalentes (`52` + 10 y `521` + 10 para México), la canónica primero. Sin teléfono, o en un runtime sin el destinatario portable (Johanna), la verificación queda como estaba y falla cerrada. Prueba con la conversación real capturada ese día: `tests/fixtures/chatwoot/conversation_a2_att1_2026-10-21.json`.
+
+### Qué hace quien actualiza
+
+- **Pasar el bridge a la imagen 1.15.5.** Sin migración ni cambios en el manifiesto. Los pasos que ya cerraron con `chatwoot_authority_unavailable` no vuelven: el arreglo vale para los que vencen desde la subida.
+
 ## [1.15.4] - 2026-10-20
 
 Un parche sobre la 1.15.3: el despachador acepta la decisión `defer` de la reevaluación (#285). Cambia el bridge y no lleva migración.
