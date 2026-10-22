@@ -48,6 +48,13 @@ def test_it_is_one_transaction_and_comes_right_after_the_t4b() -> None:
     # Y antes del tope de la historia, que solo cambia una constante de
     # read_flow_engine_history_v1.
     assert names[position + 1] == "20261021000300_flow_engine_history_cap_v1.sql"
+    # Y despues, la lectura de /flows mas rapida (que no toca nada de esta) y
+    # el camino del motor para el carrito (la T2.3b), que reemplaza la
+    # capacidad, la guarda y crear la ruta sobre sus definiciones vigentes.
+    assert names[position + 2:] == [
+        "20261021000400_automation_expert_flows_speed_v1.sql",
+        "20261022000100_flow_engine_motor_carrito_v1.sql",
+    ]
 
 
 def test_the_history_query_is_the_v3_generated_not_a_copy() -> None:

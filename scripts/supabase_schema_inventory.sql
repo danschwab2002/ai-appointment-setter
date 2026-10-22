@@ -5355,6 +5355,72 @@ fingerprints(version, filename, present_markers, total_markers, classification) 
         )::int,
         1,
         'automation_expert_flows_speed'
+    union all
+    select
+        '20261022000100',
+        '20261022000100_flow_engine_motor_carrito_v1.sql',
+        -- Las cuatro de service_role del camino del motor: security definer y
+        -- de nadie mas de la API.
+        (
+            select count(*) = 4
+            from functions
+            where oid in (
+                to_regprocedure('public.admit_flow_engine_hotmart_v1(uuid,uuid,text,text,text,timestamptz,bigint,bigint,text,text,integer,text,integer,boolean)'),
+                to_regprocedure('public.mark_flow_engine_request_started_v1(uuid,uuid,text,bigint,timestamptz)'),
+                to_regprocedure('public.flow_engine_execution_context_v1(uuid)'),
+                to_regprocedure('public._flow_engine_run_turned_off(uuid)')
+            )
+              and prosecdef
+              and has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- El camino del motor y la autorizacion: de nadie de la API.
+        + (
+            select count(*) = 2
+            from functions
+            where oid in (
+                to_regprocedure('public._flow_engine_admit_cart_motor(uuid,uuid,text,text,text,timestamptz,bigint,bigint,text,text)'),
+                to_regprocedure('public._flow_engine_authorize_start(uuid,uuid,timestamptz,boolean)')
+            )
+              and not has_function_privilege('service_role', oid, 'EXECUTE')
+              and not has_function_privilege('anon', oid, 'EXECUTE')
+              and not has_function_privilege('authenticated', oid, 'EXECUTE')
+        )::int
+        -- Los seis bloques sobre las definiciones vigentes.
+        + (
+            select count(*) = 6
+            from functions
+            where (oid = to_regprocedure('public.plan_lancemos_pilot_cart_recovery(uuid,uuid,text,text,text,text,integer,timestamptz,bigint,bigint,text,text,integer)')
+                   and position('flow_engine_motor_delegation: begin' in definition) > 0)
+               or (oid = to_regprocedure('public.mark_lancemos_pilot_request_started(uuid,uuid,text,bigint,timestamptz)')
+                   and position('flow_engine_motor_delegation: begin' in definition) > 0)
+               or (oid = to_regprocedure('public.mark_followup_request_started(uuid,uuid,text,bigint,timestamptz)')
+                   and position('flow_engine_motor_authorization: begin' in definition) > 0)
+               or (oid = to_regprocedure('public.reevaluate_followup_action(uuid,text,bigint,timestamptz,boolean,text,text,timestamptz,text,boolean,boolean,boolean,boolean,boolean)')
+                   and position('flow_engine_turned_off: begin' in definition) > 0
+                   and position('flow_engine_turned_off_close: begin' in definition) > 0)
+               or (oid = to_regprocedure('public.operator_create_flow_route_v1(jsonb,text,text,text,text,text,text)')
+                   and position('flow_engine_route_flow_on: begin' in definition) > 0)
+               or (oid = to_regprocedure('public._flow_engine_legacy_guard(text,text)')
+                   and position('flow_engine_motor_guard: begin' in definition) > 0)
+        )::int
+        -- La capacidad del motor: el carrito.
+        + (
+            select count(*) = 1
+            from functions
+            where oid = to_regprocedure('public._flow_engine_route_kinds()')
+              and position('array[''carrito'']' in definition) > 0
+        )::int
+        -- El tope por persona no se carga con una ruta en motor.
+        + (
+            select count(*) = 1
+            from triggers
+            where tgname = 'pilot_proactive_contact_caps_no_engine_route'
+              and position('reject_proactive_contact_cap_with_engine_route' in definition) > 0
+        )::int,
+        5,
+        'flow_engine_motor_carrito'
 )
 select
     version,

@@ -37,7 +37,8 @@ def test_it_is_one_transaction_and_comes_right_after_the_routes() -> None:
     assert names[names.index(ROUTES.name) + 1] == MIGRATION.name
     # Lo que viene despues no vuelve a definir la historia del motor: la
     # lectura de /flows mas rapida (20261021000400) solo reemplaza
-    # read_automation_expert_flows_v1.
+    # read_automation_expert_flows_v1, y el camino del motor para el carrito
+    # (20261022000100, la T2.3b) no la toca.
     for later in names[names.index(MIGRATION.name) + 1:]:
         assert "read_flow_engine_history_v1" not in (MIGRATIONS / later).read_text(encoding="utf-8")
 

@@ -1,9 +1,9 @@
 # Contrato: lo que el motor de flujos le da a las herramientas (v1)
 
-- **Estado:** propuesto el 2026-10-21, para construir contra él. No describe nada construido, desplegado ni activado. Las funciones de la base de este contrato todavía no existen: las crea la migración de la T2.3.
+- **Estado:** propuesto el 2026-10-21, para construir contra él; la sección 7 la suma la T2.3b el 2026-10-22. Las funciones de la base de este contrato las crean las migraciones de la T2.3 (`20261021000200`, la T2.3a, y `20261022000100`, la T2.3b). Este documento fija la interfaz: no dice en qué base están aplicadas.
 - **Fecha:** 2026-10-21
 - **Contrato:** `flow-engine-v1`, versión `1.0.0`
-- **Alcance:** la interfaz entre el motor de la 1b y las piezas que lo usan sin ser el motor. Hoy son las herramientas del Automation Expert y el comando del operador, la T4. Fija cuatro cosas: la lectura del motor (`read_flow_engine_v1`), la lectura de la historia para simular (`read_flow_engine_history_v1`), la ruta de un flujo (crearla y moverla entre `legado` y `motor`) y cómo se arma la simulación de una propuesta en Python con `flow_replay.simulate`. No fija la admisión, la autorización ni el despacho del motor, que son internos.
+- **Alcance:** la interfaz entre el motor de la 1b y las piezas que lo usan sin ser el motor. Hoy son las herramientas del Automation Expert y el comando del operador, la T4. Fija cuatro cosas: la lectura del motor (`read_flow_engine_v1`), la lectura de la historia para simular (`read_flow_engine_history_v1`), la ruta de un flujo (crearla y moverla entre `legado` y `motor`) y cómo se arma la simulación de una propuesta en Python con `flow_replay.simulate`. Desde la T2.3b fija además lo que el bridge de la T2.4 llama del motor (sección 7): la admisión de un carrito, el arranque de un envío y el contexto del paso. La autorización por dentro y el despacho en Python siguen siendo internos.
 - **Citas:** `origin/main` en `b163669`. «El esquema» es [flow-definition-v1.md](flow-definition-v1.md); «el ciclo», [flow-change-cycle-v1.md](flow-change-cycle-v1.md); «el contrato de lectura», [automation-expert-read-v1.md](automation-expert-read-v1.md). El almacén es `supabase/migrations/20261016000100_flow_change_store_v1.sql`.
 - **Relacionados:** el esquema, el ciclo, el contrato de lectura, [portable-cart-followups-v1.md](portable-cart-followups-v1.md) (el carrito de tres toques que el motor ejecuta primero).
 
@@ -115,7 +115,8 @@ operator_create_flow_route_v1(p_instance jsonb, p_product_ref text, p_flow_key t
   - que tenga versión activa (`flow_route_needs_published_version`);
   - que el disparador de la versión activa corresponda al `legacy_kind` (`flow_route_kind_mismatch`);
   - que exista el scope del legado (`flow_route_legacy_scope_unknown`);
-  - que el par no tenga otra ruta (`flow_route_already_exists`).
+  - que el par no tenga otra ruta (`flow_route_already_exists`);
+  - desde la T2.3b, que el flujo esté `prendido` (`flow_route_flow_off`). Un flujo recién registrado nace `apagado`, y una ruta suya en `legado` frenaría con la guarda el flujo de hoy de ese scope. Se mira después del scope y antes de crear la fila, así que con el flujo apagado y el par ya ruteado devuelve `flow_route_flow_off` y no `flow_route_already_exists`.
 - Devuelve `{"ok": true, "route": {...}}`, con la forma de `route` de la sección 1, o `{"ok": false, "reason_code": ...}`. Deja un `flow_change_events` de tipo `flow_route_created` (se suma a la lista de `event_type` del almacén).
 
 ### 3.2 Mover la ruta
@@ -128,10 +129,10 @@ operator_route_flow_v1(p_instance jsonb, p_product_ref text, p_flow_key text, p_
 - La ejecuta solo el dueño de la base, `security invoker`. La corre el comando del operador, que en la T4 es de C y que hoy corre Dan, como `piloto.sh`.
 - `p_expected_generation` es la `generation` de la ruta que leyó quien la mueve. Si no coincide, `{"ok": false, "reason_code": "flow_route_generation_stale"}`.
 - **A `motor`** exige, en este orden:
-  1. que el `legacy_kind` esté en las capacidades de esta versión del motor. En la v1, solo `carrito`. Si no, `flow_route_kind_not_supported`;
+  1. que el `legacy_kind` esté en las capacidades de esta versión del motor. En la v1, solo `carrito` (desde la T2.3b; en la T2.3a no había ninguno). Si no, `flow_route_kind_not_supported`;
   2. que el flujo esté `prendido` o `pausado`, no `apagado` (`flow_route_flow_off`);
   3. que la versión activa pase las reglas 14 y 16 con las capacidades del motor. `p_revalidation` es el resultado del validador sobre esa versión, con estas claves exactas y ninguna más: `version` y `definition_sha256` (las de la versión activa), `rules_version` (2 o más), `capabilities` (`"v1"`), `blocks` (lista, vacía para pasar) y `validator` (las seis claves del validador del ciclo: `contract`, `rules_version`, `phase`, `actor`, `product_version` y `git_sha`). No lleva `fingerprint`: mover una ruta no es una propuesta. Si falta o sobra una clave, si `blocks` no está vacía, o si `version` o `definition_sha256` no son las de la versión activa, devuelve `flow_route_revalidation_invalid`;
-  4. que la instancia no tenga renglón de tope por persona (`flow_route_person_cap_present`, el principio 12 del diseño).
+  4. que la instancia no tenga renglón de tope por persona (`flow_route_person_cap_present`, el principio 12 del diseño). Y al revés, desde la T2.3b: con una ruta del tenant en `motor`, la base no deja cargar ni cambiar un renglón de `pilot_proactive_contact_caps` (un disparador de la tabla, `55000 pilot_proactive_contact_cap_with_engine_route`).
 - **A `legado`** exige que el control del scope del legado esté armado (`pilot_runtime_controls.runtime_state = 'armed'`; si no, `flow_route_legacy_not_armed`). La base no conoce la versión del scope que tiene el bridge, así que no la compara: que el bridge tenga esa versión lo verifica el operador. Armarlo es un paso del operador y no lo hace esta función.
 - Con el mismo `executor` que ya tiene, devuelve `{"ok": true, "unchanged": true}` y no sube la `generation`.
 - Toma la fila de la ruta `FOR UPDATE` y después la de `flow_controls` `FOR SHARE`, en ese orden.
@@ -169,9 +170,11 @@ Los de este contrato, todos en forma `^[a-z][a-z0-9_]{1,79}$`:
 | `flow_route_kind_mismatch` | 3.1 | el disparador no es el del `legacy_kind` |
 | `flow_route_legacy_scope_unknown` | 3.1 | el scope del legado no existe |
 | `flow_route_already_exists` | 3.1 | el par ya tiene una ruta |
+| `flow_route_flow_off` | 3.1 | el flujo no está prendido (desde la T2.3b) |
 | `flow_route_generation_stale` | 3.2 | la ruta cambió desde que se leyó |
 | `flow_route_kind_not_supported` | 3.2 | el motor de esta versión no ejecuta ese `legacy_kind` |
 | `flow_route_flow_off` | 3.2 | el flujo está apagado |
+| `pilot_proactive_contact_cap_with_engine_route` | 3.2 | un renglón de tope por persona con una ruta del tenant en `motor` (55000, del disparador) |
 | `flow_route_revalidation_invalid` | 3.2 | la revalidación falta, bloquea o es de otra versión |
 | `flow_route_person_cap_present` | 3.2 | la instancia tiene tope por persona |
 | `flow_route_legacy_not_armed` | 3.2 | el scope del legado no está armado |
@@ -184,6 +187,71 @@ Los errores de entrada siguen la convención del almacén: `22023` para una entr
 - **La historia** pasa `flow_capture.validate_shape`, en PGlite, sobre una base sembrada con un carrito de tres toques.
 - **La ruta:** cada `reason_code` de la sección 5 tiene su caso en PGlite, y el rojo a propósito: un `pago_fallido` a `motor` en la v1 da `flow_route_kind_not_supported`.
 - **La simulación de punta a punta:** con la historia del fixture y una propuesta que cambia la espera de A2, `simulate` da cero cambios contra la vigente consigo misma, y cambios solo en el paso 2 del carrito.
+
+## 7. El camino del motor: la admisión, el arranque y el contexto (T2.3b)
+
+Las tres funciones que llama el bridge de la T2.4 para el carrito. Las tres son `security definer`, con `search_path` fijo, y las ejecuta solo `service_role`. Las formas de salida son las de esta sección (decisión 1 de la T2.3b); el bridge de la T2.4 las consume.
+
+**La delegación en las funciones de hoy.** Con la ruta del carrito en `motor`, `plan_lancemos_pilot_cart_recovery` admite por el motor (llama a la admisión) y `mark_lancemos_pilot_request_started` arranca un caso del motor por la autorización del motor, así que un bridge que todavía no conoce estas funciones manda bien lo del motor. Por ese camino los motivos van sin `:` ni dígitos (`no_arranca_mientras_pago_fallido`, `no_entra_permiso`), porque el bridge de hoy descarta un motivo con esa forma, y un no-arranque es el `raise` de hoy (`pilot_scope_rejected` o `pilot_request_start_rejected`, con el motivo en `detail`): su fila de rechazo se deshace con el `raise`. La delegación va **por caso** (un renglón en `flow_engine_runs`): lo que arrancó el legado termina en el legado, con la guarda de pausado y apagado. `mark_followup_request_started` acepta también la autorización del motor. El pago rechazado y la ficha no delegan.
+
+### 7.1 La admisión de un carrito
+
+```sql
+admit_flow_engine_hotmart_v1(p_webhook_event_id uuid, p_contact_id uuid, p_external_product_id text,
+    p_product_name text, p_offer_code text, p_abandoned_at timestamptz, p_chatwoot_account_id bigint,
+    p_chatwoot_inbox_id bigint, p_destination_phone text, p_legacy_scope_key text,
+    p_legacy_scope_version integer, p_legacy_policy_key text, p_legacy_policy_version integer,
+    p_force_legacy boolean default false)
+returns table (outcome text, recovery_case_id uuid, created boolean, reason text,
+    divergence_id uuid, divergence_first boolean, followup_sequence_id uuid, scheduled_action_id uuid)
+```
+
+- Los argumentos son los del envoltorio de hoy: `p_destination_phone` es lo que hoy va como `p_external_user_id`, y los `p_legacy_*` son los que usa la caída al legado. Una entrada inválida es `22023 invalid_flow_engine_admission_parameters`.
+- **Nunca hace `raise` por el motor.** El camino del motor corre en una subtransacción. Lo que no puede (una divergencia de la ruta, el producto, la política compilada o el planificador, o un error transitorio como un lock que no llega en 3 s) queda en `flow_engine_divergences` (`count + 1`) y lo planifica el legado en la misma llamada. El `lock_timeout` de quien llama queda como estaba.
+- `outcome`:
+
+| `outcome` | Qué pasó | Las otras columnas |
+|---|---|---|
+| `motor_arranco` | el caso del motor, con su recorrido y su versión fijada | el caso, la secuencia y la acción; `created = false` en la repetición del mismo evento |
+| `motor_no_arranca` | el motor no arranca este disparo | `reason` (abajo); con su fila en `flow_engine_start_rejections` (`phase admision`) salvo `flujo_apagado` y los códigos estáticos del scope |
+| `legado` | la ruta no está en `motor`, o el evento ya lo planificó el legado: lo planificó el envoltorio de hoy | el caso del legado |
+| `legado_por_divergencia` | el motor no pudo y lo planificó el legado | el caso del legado, `divergence_id` y `divergence_first` (la fila es nueva: el aviso) |
+| `legado_rechazo` | el legado tampoco planificó | `reason` = `<message>:<detail>` del rechazo de hoy (por ejemplo `pilot_scope_rejected:pilot_runtime_not_armed`); la divergencia, si la hubo, queda escrita |
+
+- Los `reason` de `motor_no_arranca` son los del contrato de lectura: `flujo_apagado`, `flujo_pausado`, `baja`, `ya_no_entra`, `no_entra:permiso`, `ya_en_curso`, `no_arranca_mientras:<flujo>` (`pago_fallido`, `ficha`, `precheckout`), o el código del legado cuando el evento no coincide con lo estático del scope (`pilot_offer_mismatch`, `pilot_product_mismatch`…; decisión 2, sin divergencia). El motor no mira el estado del runtime del scope del legado ni la versión que pasa el bridge: la versión del binding es la del control del scope (decisión 3).
+- Cae al legado (divergencia) una versión que la v1 no ejecuta: `repeticion.otra_despues_de` distinto de `0m`, o un scope con cohorte (decisión 5).
+- `p_force_legacy = true` no entra al camino del motor: deja una divergencia `transitorio` (`transitorio:forzado_al_legado`) y planifica el legado.
+
+### 7.2 El arranque de un envío del motor
+
+```sql
+mark_flow_engine_request_started_v1(p_action_id uuid, p_attempt_id uuid, p_worker_id text,
+    p_lease_generation bigint, p_now timestamptz)
+returns table (outcome text, reason text, id uuid, action_id uuid, idempotency_key text,
+    attempt_number integer, channel text, mode text, phase text, lease_generation bigint,
+    request_started_at timestamptz, expected_case_version bigint, expected_sequence_revision bigint,
+    flow_authorization_id uuid, flow_generation bigint, authorization_replayed boolean)
+```
+
+- Solo para una acción de un caso del motor: si no, `55000 flow_engine_run_not_found`. Una entrada inválida es `22023 invalid_flow_engine_request_start_parameters`.
+- **Nunca hace `raise` por un rechazo.** `outcome`:
+  - `request_started`: el intento arrancó, con su fila en `flow_engine_request_authorizations` (`flow_authorization_id`, `flow_generation` = la generación del control del flujo). Repetido, devuelve la misma con `authorization_replayed = true`.
+  - `rechazado`: no arranca ahora. Deja su fila en `flow_engine_start_rejections` (`phase despacho`, `count + 1` por llamada), el intento queda reservado y la llamada confirma: el bridge reintenta en el lease siguiente. `reason`: `flujo_pausado`, `tope_del_flujo` (los topes de la definición fijada, contados sobre la bolsa por los dos caminos), `baja`, `ya_no_entra`, `no_entra:permiso`, `pilot_request_time_invalid`, `pilot_delivery_mode_mismatch`, `pilot_attempt_mismatch` o `flow_engine_pool_unknown`.
+  - `terminado` con `flujo_apagado`: el flujo se apagó después de que el recorrido arrancó. Cierra el intento (`completed`, `failed_before_request`: el intento no llegó a pedir el envío), cancela la acción, completa la secuencia y cancela el caso, todo con `flujo_apagado`, y confirma.
+- Por la función de hoy (`mark_lancemos_pilot_request_started`), la imagen vieja recibe los mismos motivos como `raise`, y además `flow_engine_needs_engine_image` cuando la versión fijada manda otros envíos que la primera versión del flujo (la que salió del manifiesto).
+- **El apagado no depende de la imagen:** `reevaluate_followup_action` cancela con `flujo_apagado` un `execute` o un `defer` de un recorrido cuyo flujo se apagó después de arrancar, aunque se haya vuelto a prender. Cualquier otro motivo de la reevaluación le gana.
+
+### 7.3 El contexto del paso
+
+```sql
+flow_engine_execution_context_v1(p_action_id uuid)
+returns table (flow_id uuid, version integer, product_ref text, flow_key text, step_key text,
+    send_ordinal integer, template_name text, template_language text, template_variables text[],
+    template_button jsonb, legacy_dispatch_ok boolean)
+```
+
+- `stable`. La plantilla, el idioma, las variables y el botón del envío del paso en la **versión fijada** del recorrido (principio 10). `send_ordinal` es la posición del `step_key` en la forma de pasos del `legacy_kind`. Cero filas para una acción del legado: el bridge sigue con el manifiesto.
+- `legacy_dispatch_ok` dice si la imagen de hoy puede mandar ese recorrido: cada envío igual al de la primera versión del flujo.
 
 ## Lo que queda para la versión siguiente
 
