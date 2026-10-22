@@ -39,6 +39,7 @@ from bridge.supabase import (
     SupabaseError,
 )
 from slack_correlation.catalog import NotificationCommand
+from slack_correlation.producer import ConnectorSemanticConflict
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,9 @@ class FlowEngineRoutes:
         self._refresh_seconds = refresh_seconds
         self._clock = clock
         self._routes: dict[tuple[str, str], FlowEngineRoute] = {}
+        # Todas las de la ultima lectura buena, tambien las sin scope del
+        # legado (el cupon y la reactivacion): las cuenta /ready.
+        self._all: tuple[FlowEngineRoute, ...] = ()
         self._read_at: float | None = None
         self._state = READ_PENDING
 
@@ -80,7 +84,7 @@ class FlowEngineRoutes:
         return self._state
 
     def count(self, executor: str) -> int:
-        return sum(1 for route in self._routes.values() if route.executor == executor)
+        return sum(1 for route in self._all if route.executor == executor)
 
     async def refresh_if_due(self) -> None:
         """Read the routes again if the last read is 60 s old or never was."""
@@ -92,11 +96,13 @@ class FlowEngineRoutes:
             routes = await self._supabase.read_flow_engine_routes(self._instance)
         except SupabaseError as exc:
             self._routes = {}
+            self._all = ()
             self._state = READ_FAILING
             logger.warning(
                 "flow_engine_read_failed read=routes error=%s", type(exc).__name__
             )
             return
+        self._all = tuple(routes)
         self._routes = {
             (route.legacy_scope_key, route.legacy_kind): route
             for route in routes
@@ -182,7 +188,13 @@ def divergence_command(divergence: FlowEngineDivergence) -> NotificationCommand:
             _DIVERGENCE_DEDUPE_NAMESPACE + divergence.divergence_id.encode("ascii")
         ).hexdigest(),
         occurred_at=datetime.fromisoformat(divergence.first_at).astimezone(UTC),
-        reason_code=f"{divergence.kind}:{divergence.reason}"[:80],
+        # La base ya escribe la clase adelante (transitorio:forzado_al_legado);
+        # si no la trae, se le agrega.
+        reason_code=(
+            divergence.reason
+            if divergence.reason.startswith(f"{divergence.kind}:")
+            else f"{divergence.kind}:{divergence.reason}"
+        )[:80],
         component="flow_engine",
         state="pending",
         count=min(divergence.count, 1_000_000),
@@ -228,6 +240,16 @@ class DivergenceNotifier:
         for divergence in read.divergences:
             try:
                 await self._producer.admit(divergence_command(divergence))
+            except ConnectorSemanticConflict:
+                # El conector ya tiene un aviso con ese id y otro contenido: lo
+                # admitio una vuelta anterior cuya respuesta o cuya marca no
+                # llego, y despues la fila sumo count. Ya esta avisada: se
+                # marca, si no la divergencia volveria en cada vuelta y la
+                # pagina de 20 se trabaria con ella.
+                logger.info(
+                    "flow_engine_divergence_already_admitted divergence_id=%s",
+                    divergence.divergence_id,
+                )
             except Exception as exc:
                 # Slack or the connector did not take it: no mark, and the
                 # next round reads it again.

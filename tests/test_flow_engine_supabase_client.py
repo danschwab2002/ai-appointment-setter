@@ -134,6 +134,34 @@ def test_an_admission_row_outside_the_contract_is_a_committed_error(mutation: di
         asyncio.run(_client(_rows(row)).admit_flow_engine_cart(**ADMIT_ARGS))
 
 
+def test_a_planned_outcome_with_a_reason_or_a_lone_divergence_is_a_committed_error() -> None:
+    for row in (
+        {**ROWS["admission"]["motor_arranco"], "reason": "no_entra:permiso"},
+        {**ROWS["admission"]["legado_por_divergencia"], "divergence_first": None},
+        {**ROWS["admission"]["legado"], "divergence_first": True},
+    ):
+        with pytest.raises(SupabaseCommittedResponseError):
+            asyncio.run(_client(_rows(row)).admit_flow_engine_cart(**ADMIT_ARGS))
+    with pytest.raises(SupabaseCommittedResponseError):
+        asyncio.run(_client(_rows(ROWS["admission"]["legado"], ROWS["admission"]["legado"]))
+                    .admit_flow_engine_cart(**ADMIT_ARGS))
+
+
+def test_a_divergence_fall_without_its_row_still_parses() -> None:
+    # Si la ruta ya no se encuentra despues del rollback del camino del motor,
+    # la funcion planifica el legado sin escribir la divergencia: el caso existe.
+    row = {**ROWS["admission"]["legado_por_divergencia"], "divergence_id": None, "divergence_first": None}
+    admission = asyncio.run(_client(_rows(row)).admit_flow_engine_cart(**ADMIT_ARGS))
+    assert admission.outcome == "legado_por_divergencia"
+    assert admission.recovery_case_id == row["recovery_case_id"]
+
+
+def test_a_legacy_rejection_keeps_its_two_codes() -> None:
+    reason = f"{'m' * 80}:{'d' * 80}"
+    row = {**ROWS["admission"]["legado_rechazo"], "reason": reason}
+    assert asyncio.run(_client(_rows(row)).admit_flow_engine_cart(**ADMIT_ARGS)).reason == reason
+
+
 def test_a_no_start_with_case_columns_is_a_committed_error() -> None:
     row = {**ROWS["admission"]["motor_no_arranca"], "recovery_case_id": ROWS["admission"]["legado"]["recovery_case_id"]}
     with pytest.raises(SupabaseCommittedResponseError):
@@ -225,17 +253,47 @@ def test_terminado_is_its_own_error() -> None:
 
 @pytest.mark.parametrize(
     "mutation",
-    [{"outcome": "quizas"}, {"phase": "reserved"}, {"lease_generation": 99}, {"flow_authorization_id": None}],
+    [
+        {"outcome": "quizas"}, {"phase": "reserved"}, {"lease_generation": 99},
+        {"flow_authorization_id": None}, {"id": "otro-intento"}, {"action_id": "otra-accion"},
+        {"authorization_replayed": "no"},
+    ],
 )
-def test_a_start_row_outside_the_contract_fails(mutation: dict[str, object]) -> None:
+def test_a_start_row_outside_the_contract_is_a_committed_error(mutation: dict[str, object]) -> None:
+    # La funcion confirma antes de contestar: una respuesta que no se entiende
+    # es comprometida, como en el arranque del legado, para que el despachador
+    # no deje el intento varado en request_started.
     row = {**ROWS["request_start"]["request_started"], **mutation}
     row = {key: value for key, value in row.items() if key != "_call"}
     call = ROWS["request_start"]["request_started"]["_call"]
-    with pytest.raises(SupabaseError):
+    with pytest.raises(SupabaseCommittedResponseError):
         asyncio.run(_client(_rows(row)).mark_flow_engine_request_started(
             action_id=call["action_id"], attempt_id=call["attempt_id"], worker_id="w",
             lease_generation=call["lease_generation"], now="2026-10-22T15:00:00+00:00",
         ))
+
+
+def test_a_start_with_two_rows_or_a_bad_reason_is_a_committed_error() -> None:
+    call = ROWS["request_start"]["request_started"]["_call"]
+    row = {key: value for key, value in ROWS["request_start"]["request_started"].items() if key != "_call"}
+    for payload in ([row, row], [{**ROWS["request_start"]["rechazado"], "reason": "Con Espacios"}]):
+        with pytest.raises(SupabaseCommittedResponseError):
+            asyncio.run(_client(lambda request, p=payload: httpx.Response(200, json=p))
+                        .mark_flow_engine_request_started(
+                action_id=call["action_id"], attempt_id=call["attempt_id"], worker_id="w",
+                lease_generation=call["lease_generation"], now="2026-10-22T15:00:00+00:00",
+            ))
+
+
+def test_a_start_that_failed_by_http_is_a_plain_error() -> None:
+    call = ROWS["request_start"]["request_started"]["_call"]
+    with pytest.raises(SupabaseError) as raised:
+        asyncio.run(_client(lambda request: httpx.Response(500, json={"code": "XX000"}))
+                    .mark_flow_engine_request_started(
+            action_id=call["action_id"], attempt_id=call["attempt_id"], worker_id="w",
+            lease_generation=call["lease_generation"], now="2026-10-22T15:00:00+00:00",
+        ))
+    assert not isinstance(raised.value, SupabaseCommittedResponseError)
 
 
 # -------------------------------------------------------------------- contexto
@@ -259,10 +317,21 @@ def test_no_rows_is_a_legacy_action() -> None:
     assert asyncio.run(_client(_rows()).get_flow_engine_step_context("action")) is None
 
 
-def test_a_context_with_bad_variables_fails() -> None:
-    row = {**ROWS["context"]["first_contact"], "template_variables": "nombre"}
+@pytest.mark.parametrize(
+    "changes",
+    [{"template_variables": "nombre"}, {"template_variables": ["nombre", ""]},
+     {"template_button": "checkout"}, {"template_button": {"link": 1}}, {"version": 0}],
+)
+def test_a_context_outside_the_contract_fails(changes: dict[str, object]) -> None:
+    row = {**ROWS["context"]["first_contact"], **changes}
     with pytest.raises(SupabaseError):
         asyncio.run(_client(_rows(row)).get_flow_engine_step_context("action"))
+
+
+def test_two_contexts_fail() -> None:
+    row = ROWS["context"]["first_contact"]
+    with pytest.raises(SupabaseError):
+        asyncio.run(_client(_rows(row, row)).get_flow_engine_step_context("action"))
 
 
 # --------------------------------------------------------------------- lecturas
@@ -288,6 +357,43 @@ def test_a_route_with_an_unknown_executor_fails() -> None:
     payload["routes"][0]["executor"] = "otro"
     with pytest.raises(SupabaseError):
         asyncio.run(_client(_object(payload)).read_flow_engine_routes(INSTANCE))
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [{"generation": -1}, {"legacy_scope_key": 7}, {"flow_state": "otro"}],
+)
+def test_a_route_outside_the_contract_fails(changes: dict[str, object]) -> None:
+    payload = copy.deepcopy(ROWS["reads"]["routes"])
+    payload["routes"][0].update(changes)
+    with pytest.raises(SupabaseError):
+        asyncio.run(_client(_object(payload)).read_flow_engine_routes(INSTANCE))
+
+
+def test_routes_without_a_list_fail() -> None:
+    with pytest.raises(SupabaseError):
+        asyncio.run(_client(_object({"routes": {}})).read_flow_engine_routes(INSTANCE))
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [{"unnotified": -1}, {"reason": "Mal Motivo"}, {"version": 0}, {"kind": "otra"}],
+)
+def test_divergences_outside_the_contract_fail(changes: dict[str, object]) -> None:
+    payload = copy.deepcopy(ROWS["reads"]["divergences"])
+    if "unnotified" in changes:
+        payload.update(changes)
+    else:
+        payload["divergences"][0].update(changes)
+    with pytest.raises(SupabaseError):
+        asyncio.run(_client(_object(payload)).read_flow_engine_divergences(
+            INSTANCE, only_unnotified=True, limit=20))
+
+
+def test_a_mark_that_is_not_a_boolean_fails() -> None:
+    with pytest.raises(SupabaseError):
+        asyncio.run(_client(_object({"ok": True})).mark_flow_engine_divergence_notified(
+            "d", notified_at="2026-10-22T15:00:00+00:00"))
 
 
 def test_the_divergences_read_parses() -> None:

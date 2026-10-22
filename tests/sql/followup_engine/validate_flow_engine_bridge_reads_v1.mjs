@@ -123,6 +123,21 @@ const validateReads = async (world) => {
     { code: '22023', message: 'flow_engine_divergences_parameters_invalid' });
   results.divergencias = { unnotified: 1, kind: divergence.kind, reason: divergence.reason };
 
+  // La pagina y el orden: una segunda divergencia (el carrito del producto B,
+  // de la misma instancia). unnotified cuenta las dos aunque la pagina traiga
+  // una, y la pagina va de la mas vieja a la mas nueva.
+  if (!(await createRoute(world.B.funnel, 'carrito', 'carrito', world.B.scope)).ok) fail('la ruta de B');
+  const forcedB = await admit(await cartFor('lectura-del-bridge-b', { P: world.B }), true);
+  if (forcedB.outcome !== 'legado_por_divergencia') fail('la divergencia de B', forcedB);
+  const page = await asRole(db, 'service_role', () => rpcJson(DIVERGENCES, [JSON.stringify(INSTANCE), true, 1]));
+  const both = await asRole(db, 'service_role', () => rpcJson(DIVERGENCES, [JSON.stringify(INSTANCE), true, 50]));
+  if (page.unnotified !== 2 || page.divergences.length !== 1 || page.divergences[0].id !== divergence.id
+      || both.divergences.length !== 2 || both.divergences[1].id !== forcedB.divergence_id
+      || both.divergences[1].product_ref !== world.B.funnel) {
+    fail('la pagina y el orden de las divergencias', { page, both });
+  }
+  results.pagina = { unnotified: page.unnotified, en_la_pagina: page.divergences.length };
+
   // 3. La marca. Se confirma (no se deshace) para ver el efecto despues.
   const now = new Date().toISOString();
   await db.exec('begin');
@@ -136,7 +151,8 @@ const validateReads = async (world) => {
     { code: '22023', message: 'flow_engine_divergence_mark_parameters_invalid' });
   const afterMark = await asRole(db, 'service_role', () => rpcJson(DIVERGENCES, [JSON.stringify(INSTANCE), true, 20]));
   const all = await asRole(db, 'service_role', () => rpcJson(DIVERGENCES, [JSON.stringify(INSTANCE), false, 20]));
-  if (afterMark.unnotified !== 0 || afterMark.divergences.length !== 0 || all.divergences.length !== 1) {
+  if (afterMark.unnotified !== 1 || afterMark.divergences.length !== 1
+      || afterMark.divergences[0].id !== forcedB.divergence_id || all.divergences.length !== 2) {
     fail('despues de la marca', { afterMark, all });
   }
   const stored = one((await db.query('select notified_at from public.flow_engine_divergences where id = $1',

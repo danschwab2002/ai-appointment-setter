@@ -209,6 +209,9 @@ FLOW_ENGINE_REQUEST_START_OUTCOMES = frozenset({
 # The reasons of the engine functions (contract flow-engine-v1, section 7):
 # always a code, with ':' (no_entra:permiso, pilot_scope_rejected:<detail>).
 _FLOW_ENGINE_REASON = re.compile(r"[a-z0-9_:]{1,80}")
+# legado_rechazo carries <message>:<detail> of the rejection of today, each a
+# code of up to 80 (_flow_engine_plan_legacy_cart in 20261022000100).
+_FLOW_ENGINE_ADMISSION_REASON = re.compile(r"[a-z0-9_:]{1,161}")
 _FLOW_ENGINE_EXECUTORS = frozenset({"legado", "motor"})
 _FLOW_ENGINE_FLOW_STATES = frozenset({"apagado", "prendido", "pausado"})
 _FLOW_ENGINE_DIVERGENCE_KINDS = frozenset({
@@ -1700,13 +1703,13 @@ def _flow_engine_admission(row: dict[str, Any]) -> FlowEngineAdmission:
     if planned and admission.reason is not None:
         raise invalid()
     if not planned and (
-        admission.reason is None or _FLOW_ENGINE_REASON.fullmatch(admission.reason) is None
+        admission.reason is None
+        or _FLOW_ENGINE_ADMISSION_REASON.fullmatch(admission.reason) is None
     ):
         raise invalid()
-    if outcome == "legado_por_divergencia" and (
-        admission.divergence_id is None or admission.divergence_first is None
-    ):
-        raise invalid()
+    # legado_por_divergencia may come without its row: when the route is no
+    # longer found after the rollback of the engine path, the function plans
+    # the legacy without writing a divergence. The case is planned either way.
     if (admission.divergence_id is None) != (admission.divergence_first is None):
         raise invalid()
     return admission
@@ -6005,6 +6008,37 @@ class SupabaseClient:
         )
         if response.status_code != 200:
             raise SupabaseError(f"{operation}_failed: HTTP {response.status_code}")
+        # The function commits before answering (request_started, and the
+        # rejection or the close it records): an answer that does not parse is
+        # a committed response, never a plain failure, so the dispatcher does
+        # not strand the attempt at request_started (as in the legacy start).
+        try:
+            outcome, reason, attempt = self._flow_engine_started_row(
+                response, action_id=action_id, attempt_id=attempt_id,
+                lease_generation=lease_generation, operation=operation,
+            )
+        except SupabaseError as exc:
+            raise SupabaseCommittedResponseError(
+                f"{operation}_committed_response_invalid"
+            ) from exc
+        if outcome == "rechazado":
+            assert reason is not None
+            raise PilotRequestStartRejectedError(reason)
+        if outcome == "terminado":
+            assert reason is not None
+            raise FlowEngineRunTerminated(reason)
+        assert attempt is not None
+        return attempt
+
+    @staticmethod
+    def _flow_engine_started_row(
+        response: httpx.Response,
+        *,
+        action_id: str,
+        attempt_id: str,
+        lease_generation: int,
+        operation: str,
+    ) -> tuple[str, str | None, DeliveryAttempt | None]:
         rows = _response_rows(response, operation=operation)
         if len(rows) != 1:
             raise SupabaseError(f"{operation}_invalid_shape")
@@ -6016,9 +6050,7 @@ class SupabaseClient:
             reason = _required_string(row, "reason", operation=operation)
             if _FLOW_ENGINE_REASON.fullmatch(reason) is None:
                 raise SupabaseError(f"{operation}_invalid_row")
-            if outcome == "rechazado":
-                raise PilotRequestStartRejectedError(reason)
-            raise FlowEngineRunTerminated(reason)
+            return outcome, reason, None
         returned_attempt_id = _required_string(row, "id", operation=operation)
         returned_action_id = _required_string(row, "action_id", operation=operation)
         returned_generation = _required_int(row, "lease_generation", operation=operation)
@@ -6032,7 +6064,7 @@ class SupabaseClient:
         _required_string(row, "flow_authorization_id", operation=operation)
         _required_int(row, "flow_generation", operation=operation)
         _required_bool(row, "authorization_replayed", operation=operation)
-        return DeliveryAttempt(
+        return outcome, None, DeliveryAttempt(
             attempt_id=returned_attempt_id,
             action_id=returned_action_id,
             idempotency_key=_required_string(row, "idempotency_key", operation=operation),

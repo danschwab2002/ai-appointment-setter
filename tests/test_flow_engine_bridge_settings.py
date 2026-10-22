@@ -57,6 +57,9 @@ def test_on_with_the_whole_cart_it_starts(tmp_path: Path) -> None:
         ({"instance_manifest": None}, "FLOW_ENGINE_ENABLED requires an instance manifest"),
         ({"pilot_boundary_enabled": False}, "FLOW_ENGINE_ENABLED requires LANCEMOS_PILOT_BOUNDARY_ENABLED"),
         ({"worker_enabled": False}, "FLOW_ENGINE_ENABLED requires RESOLUTION_WORKER_ENABLED"),
+        ({"dispatcher_enabled": False}, "FLOW_ENGINE_ENABLED requires DURABLE_DISPATCHER_ENABLED"),
+        ({"recovery_discount_first_touch_enabled": False},
+         "FLOW_ENGINE_ENABLED requires RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED"),
         ({"dispatcher_approved_template_direct_enabled": False},
          "FLOW_ENGINE_ENABLED requires DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED"),
         ({"recovery_cart_followups_enabled": False},
@@ -69,6 +72,19 @@ def test_an_incomplete_wiring_does_not_start(
     settings = engine_settings(tmp_path, **overrides)
     with pytest.raises(ValueError, match=f"^{message}$"):
         app_module._validate_flow_engine(settings)
+
+
+def test_the_required_flags_are_the_seven_of_d4() -> None:
+    assert [env for _, env in app_module.FLOW_ENGINE_REQUIRED_FLAGS] == [
+        "LANCEMOS_PILOT_BOUNDARY_ENABLED",
+        "RESOLUTION_WORKER_ENABLED",
+        "DURABLE_DISPATCHER_ENABLED",
+        "DURABLE_APPROVED_TEMPLATE_DIRECT_ENABLED",
+        "RECOVERY_DISCOUNT_FIRST_TOUCH_ENABLED",
+        "RECOVERY_CART_FOLLOWUPS_ENABLED",
+    ]
+    for field_name, _ in app_module.FLOW_ENGINE_REQUIRED_FLAGS:
+        assert field_name in Settings.__dataclass_fields__
 
 
 @pytest.mark.parametrize(

@@ -286,3 +286,33 @@ def test_h_without_a_context_it_goes_the_way_of_today(tmp_path: Path, context_er
 def test_the_evidence_of_the_harness_is_the_one_of_the_followups() -> None:
     # El arnes es el de A2/Z: si cambia, este archivo tiene que mirarlo.
     assert EVIDENCE["p_chatwoot_conversation_id"] == "200"
+
+
+@pytest.mark.parametrize("step_key", [CART_SECOND_TOUCH_STEP, CART_LAST_TOUCH_STEP])
+@pytest.mark.parametrize("changes", [{"template_name": "att1_no_existe_01"}, {"template_language": "en_US"}])
+def test_b_a2_and_z_look_up_the_template_and_language_of_the_version(
+    tmp_path: Path, step_key: str, changes: dict[str, Any]
+) -> None:
+    # El catalogo capturado no tiene esa plantilla ni ese idioma: si el paso
+    # usara la configuracion, saldria. Que no salga nada prueba el reemplazo.
+    authority = _EngineStep(step_key, context=_context(step_key, **changes))
+    chatwoot, _ = _run(authority, tmp_path)
+
+    assert _sent(chatwoot) == []
+    assert authority.engine_calls == ["context"]
+
+
+@pytest.mark.parametrize("changes", [{"template_name": "att1_no_existe_01"}, {"template_language": "en_US"}])
+def test_b_a1_without_the_template_of_its_version_falls_back_like_today(
+    tmp_path: Path, changes: dict[str, Any]
+) -> None:
+    # A1 no se pierde por el cupon ni por su plantilla (a1_espera_al_cupon):
+    # sin la de la version sale la del manifiesto, sin descuento, como hoy. El
+    # porton de Meta lleva el idioma de lo que sale, no el de la version.
+    authority = _EngineFirst(context=_context("first_contact", **changes))
+    chatwoot, gate = _run(authority, tmp_path)
+
+    [message] = _sent(chatwoot)
+    assert message.get("template_params", {}).get("name") != ROWS["context"]["first_contact"]["template_name"]
+    assert authority.engine_calls == ["context", "request_started"]
+    assert [effect.template_language for effect in gate.effects] == ["es_EC"]

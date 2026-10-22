@@ -369,3 +369,27 @@ def test_the_batch_refreshes_the_routes_only_with_the_flag() -> None:
     client = off.client()
     asyncio.run(_worker(off, None, client)._process_batch())
     assert off.names() == []
+
+
+def test_a_read_that_fails_after_a_good_one_goes_back_to_the_wrapper() -> None:
+    base = _Base(routes=_routes("motor"))
+    now = [0.0]
+    runtime = FlowEngineRuntime(supabase=base.client(), instance=INSTANCE, clock=lambda: now[0])
+    asyncio.run(runtime.routes.refresh_if_due())
+    assert runtime.routes.executor(BOUNDARY.scope_key, "carrito") == "motor"
+    base.routes_status = 503
+    now[0] += 60
+    asyncio.run(runtime.routes.refresh_if_due())
+    assert runtime.routes.state == "failing"
+    assert runtime.routes.executor(BOUNDARY.scope_key, "carrito") is None
+    assert runtime.routes.count("motor") == 0
+
+
+def test_routes_without_a_legacy_scope_are_counted() -> None:
+    payload = _routes("legado")
+    payload["routes"].append({**payload["routes"][0], "flow_key": "descuento", "legacy_kind": "descuento",
+                              "legacy_scope_key": None})
+    base = _Base(routes=payload)
+    runtime = _runtime(base, base.client())
+    assert runtime.routes.count("legado") == 2
+    assert runtime.routes.executor(BOUNDARY.scope_key, "carrito") == "legado"

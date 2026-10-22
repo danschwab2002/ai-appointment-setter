@@ -2454,9 +2454,14 @@ class DurableDispatcher:
                                         ),
                                         content=proposal.message,
                                         template_name=template_name or "",
+                                        # The language of the pinned version
+                                        # only goes with its template: A1 that
+                                        # falls back without its coupon sends
+                                        # the template of the manifest.
                                         template_language=(
                                             engine_step.template_language
                                             if engine_step is not None
+                                            and direct_template_name is not None
                                             else self._waba_template.language
                                             if self._waba_template is not None
                                             else ""
