@@ -1,0 +1,207 @@
+{
+  "_origen": "tests/sql/followup_engine/validate_flow_engine_bridge_reads_v1.mjs --emit-bridge-fixtures: las RPC reales sobre la cadena de migraciones (PGlite), con el manifiesto de ATT1 de tests/fixtures/instances/att1/; uuid y horas normalizados",
+  "admission": {
+    "legado": {
+      "outcome": "legado",
+      "recovery_case_id": "00000000-0000-4000-8000-000000000001",
+      "created": true,
+      "reason": null,
+      "divergence_id": null,
+      "divergence_first": null,
+      "followup_sequence_id": "00000000-0000-4000-8000-000000000002",
+      "scheduled_action_id": "00000000-0000-4000-8000-000000000003"
+    },
+    "legado_por_divergencia": {
+      "outcome": "legado_por_divergencia",
+      "recovery_case_id": "00000000-0000-4000-8000-000000000004",
+      "created": true,
+      "reason": null,
+      "divergence_id": "00000000-0000-4000-8000-000000000005",
+      "divergence_first": true,
+      "followup_sequence_id": "00000000-0000-4000-8000-000000000006",
+      "scheduled_action_id": "00000000-0000-4000-8000-000000000007"
+    },
+    "motor_arranco": {
+      "outcome": "motor_arranco",
+      "recovery_case_id": "00000000-0000-4000-8000-000000000008",
+      "created": true,
+      "reason": null,
+      "divergence_id": null,
+      "divergence_first": null,
+      "followup_sequence_id": "00000000-0000-4000-8000-000000000009",
+      "scheduled_action_id": "00000000-0000-4000-8000-000000000010"
+    },
+    "motor_no_arranca": {
+      "outcome": "motor_no_arranca",
+      "recovery_case_id": null,
+      "created": null,
+      "reason": "no_entra:permiso",
+      "divergence_id": null,
+      "divergence_first": null,
+      "followup_sequence_id": null,
+      "scheduled_action_id": null
+    },
+    "legado_rechazo": {
+      "outcome": "legado_rechazo",
+      "recovery_case_id": null,
+      "created": null,
+      "reason": "pilot_scope_rejected:pilot_runtime_not_armed",
+      "divergence_id": "00000000-0000-4000-8000-000000000005",
+      "divergence_first": false,
+      "followup_sequence_id": null,
+      "scheduled_action_id": null
+    }
+  },
+  "request_start": {
+    "request_started": {
+      "outcome": "request_started",
+      "reason": null,
+      "id": "00000000-0000-4000-8000-000000000012",
+      "action_id": "00000000-0000-4000-8000-000000000010",
+      "idempotency_key": "cart_recovery:first_contact:00000000-0000-4000-8000-000000000008",
+      "attempt_number": 1,
+      "channel": "whatsapp",
+      "mode": "approved_template",
+      "phase": "request_started",
+      "lease_generation": 1,
+      "request_started_at": "2026-10-22T15:00:00.000000+00:00",
+      "expected_case_version": 1,
+      "expected_sequence_revision": 1,
+      "flow_authorization_id": "00000000-0000-4000-8000-000000000013",
+      "flow_generation": 1,
+      "authorization_replayed": false,
+      "_call": {
+        "action_id": "00000000-0000-4000-8000-000000000010",
+        "attempt_id": "00000000-0000-4000-8000-000000000012",
+        "lease_generation": 1
+      }
+    },
+    "rechazado": {
+      "outcome": "rechazado",
+      "reason": "flujo_pausado",
+      "id": "00000000-0000-4000-8000-000000000014",
+      "action_id": "00000000-0000-4000-8000-000000000015",
+      "idempotency_key": "cart_recovery:first_contact:00000000-0000-4000-8000-000000000016",
+      "attempt_number": 1,
+      "channel": "whatsapp",
+      "mode": "approved_template",
+      "phase": "reserved",
+      "lease_generation": 1,
+      "request_started_at": null,
+      "expected_case_version": 1,
+      "expected_sequence_revision": 1,
+      "flow_authorization_id": null,
+      "flow_generation": 2,
+      "authorization_replayed": false
+    },
+    "terminado": {
+      "outcome": "terminado",
+      "reason": "flujo_apagado",
+      "id": "00000000-0000-4000-8000-000000000017",
+      "action_id": "00000000-0000-4000-8000-000000000018",
+      "idempotency_key": "cart_recovery:first_contact:00000000-0000-4000-8000-000000000019",
+      "attempt_number": 1,
+      "channel": "whatsapp",
+      "mode": "approved_template",
+      "phase": "completed",
+      "lease_generation": 1,
+      "request_started_at": null,
+      "expected_case_version": 1,
+      "expected_sequence_revision": 1,
+      "flow_authorization_id": null,
+      "flow_generation": 4,
+      "authorization_replayed": false
+    }
+  },
+  "context": {
+    "first_contact": {
+      "flow_id": "00000000-0000-4000-8000-000000000011",
+      "version": 1,
+      "product_ref": "att1",
+      "flow_key": "carrito",
+      "step_key": "first_contact",
+      "send_ordinal": 1,
+      "template_name": "att1_carrito_descuento_01",
+      "template_language": "es_MX",
+      "template_variables": [
+        "nombre",
+        "producto",
+        "cuando",
+        "precio",
+        "vence"
+      ],
+      "template_button": {
+        "link": "checkout",
+        "cupon": "personal"
+      },
+      "legacy_dispatch_ok": true
+    },
+    "cart_second_touch": {
+      "flow_id": "00000000-0000-4000-8000-000000000011",
+      "version": 1,
+      "product_ref": "att1",
+      "flow_key": "carrito",
+      "step_key": "cart_second_touch",
+      "send_ordinal": 2,
+      "template_name": "att1_carrito_dudas_01",
+      "template_language": "es_MX",
+      "template_variables": [
+        "nombre",
+        "producto"
+      ],
+      "template_button": null,
+      "legacy_dispatch_ok": true
+    },
+    "cart_last_touch": {
+      "flow_id": "00000000-0000-4000-8000-000000000011",
+      "version": 1,
+      "product_ref": "att1",
+      "flow_key": "carrito",
+      "step_key": "cart_last_touch",
+      "send_ordinal": 3,
+      "template_name": "att1_ultima_renovacion_01",
+      "template_language": "es_MX",
+      "template_variables": [
+        "nombre",
+        "producto",
+        "vence"
+      ],
+      "template_button": {
+        "link": "checkout",
+        "cupon": "personal"
+      },
+      "legacy_dispatch_ok": true
+    }
+  },
+  "reads": {
+    "routes": {
+      "routes": [
+        {
+          "executor": "legado",
+          "flow_key": "carrito",
+          "flow_state": "prendido",
+          "generation": 0,
+          "legacy_kind": "carrito",
+          "product_ref": "att1",
+          "legacy_scope_key": "att1-recuperacion"
+        }
+      ]
+    },
+    "divergences": {
+      "unnotified": 1,
+      "divergences": [
+        {
+          "id": "00000000-0000-4000-8000-000000000005",
+          "kind": "transitorio",
+          "count": 1,
+          "reason": "transitorio:forzado_al_legado",
+          "last_at": "2026-10-22T15:00:00.000000Z",
+          "version": null,
+          "first_at": "2026-10-22T15:00:00.000000Z",
+          "flow_key": "carrito",
+          "product_ref": "att1"
+        }
+      ]
+    }
+  }
+}
