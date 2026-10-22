@@ -153,7 +153,11 @@ expected_service_role(signature) as (
         ('public.record_payment_failure_first_touch_v1(uuid, uuid, text, bigint, text, text, timestamp with time zone)'),
         ('public.get_payment_failure_followup_context_v1(uuid, text, bigint, timestamp with time zone)'),
         ('public.read_flow_engine_v1(jsonb, text)'),
-        ('public.read_flow_engine_history_v1(jsonb, text, timestamp with time zone)')
+        ('public.read_flow_engine_history_v1(jsonb, text, timestamp with time zone)'),
+        ('public._flow_engine_run_turned_off(uuid)'),
+        ('public.admit_flow_engine_hotmart_v1(uuid, uuid, text, text, text, timestamp with time zone, bigint, bigint, text, text, integer, text, integer, boolean)'),
+        ('public.mark_flow_engine_request_started_v1(uuid, uuid, text, bigint, timestamp with time zone)'),
+        ('public.flow_engine_execution_context_v1(uuid)')
 ),
 functions as (
     select

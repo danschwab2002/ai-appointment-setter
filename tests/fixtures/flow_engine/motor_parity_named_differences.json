@@ -1,0 +1,345 @@
+{
+  "_formato": {
+    "que_es": "Las diferencias con nombre entre la ruta del motor (la T2.3b) y el legado en los casos del carrito de la T1 (legacy_recovery_cases.json), con la imagen nueva y la vieja. Lo lee tests/sql/followup_engine/validate_flow_engine_motor_parity.mjs: una diferencia que no esta aca es rojo, y una de aca que ya no ocurre tambien.",
+    "campos": "caso (G de la T1), imagen (nueva: la admision y mark_flow_engine_request_started_v1; vieja: el envoltorio y mark_lancemos_pilot_request_started), posicion en la proyeccion (plan, primera reevaluacion de cada toma, arranque), campo, legado, motor y por_que. campo paso con motor null: el paso del legado no tiene par en el motor.",
+    "imagen_nueva": "Un no-arranque del motor se proyecta como flow_engine_no_start:<motivo>, como lo marcaria el bridge de la T2.4 (diseno, principio 1, punto 5)."
+  },
+  "diferencias": [
+    {
+      "caso": "G4",
+      "imagen": "nueva",
+      "posicion": 5,
+      "campo": "motivo",
+      "legado": "pilot_daily_budget_exhausted",
+      "motor": "tope_del_flujo",
+      "por_que": "El tope es el de la definicion fijada (topes.por_dia), no el del scope, y el motivo es el del contrato de lectura (tope_del_flujo); la bolsa la cuentan los dos caminos igual."
+    },
+    {
+      "caso": "G6",
+      "imagen": "nueva",
+      "posicion": 5,
+      "campo": "motivo",
+      "legado": "pilot_total_budget_exhausted",
+      "motor": "tope_del_flujo",
+      "por_que": "El tope es el de la definicion fijada (topes.total), no el del scope, y el motivo es el del contrato de lectura (tope_del_flujo); el total se mira antes que el dia, como en el legado."
+    },
+    {
+      "caso": "G7",
+      "imagen": "nueva",
+      "posicion": 0,
+      "campo": "motivo",
+      "legado": "pilot_case_binding_conflict",
+      "motor": "flow_engine_no_start:no_arranca_mientras:pago_fallido",
+      "por_que": "Principio 13: el motor no llama al planificador con un caso de otro flujo abierto (no mueve su due_at) y no arranca con no_arranca_mientras:pago_fallido; el legado llegaba a pilot_case_binding_conflict. La imagen vieja lo ve sin dos puntos."
+    },
+    {
+      "caso": "G9",
+      "imagen": "nueva",
+      "posicion": 1,
+      "campo": "motivo",
+      "legado": "pilot_case_binding_conflict",
+      "motor": "flow_engine_no_start:ya_en_curso",
+      "por_que": "Principio 13: el mismo flujo ya esta en curso para la persona, ya_en_curso, sin llamar al planificador; el legado llegaba a pilot_case_binding_conflict despues de sumar el evento al caso."
+    },
+    {
+      "caso": "G10",
+      "imagen": "nueva",
+      "posicion": 3,
+      "campo": "arranco",
+      "legado": true,
+      "motor": false,
+      "por_que": "El carrito del motor es de tres toques: despues de aceptar A1 el caso sigue abierto (espera A2), asi que el segundo carrito es ya_en_curso; el legado de G1 a G25 es de un toque y su caso ya se habia cerrado."
+    },
+    {
+      "caso": "G10",
+      "imagen": "nueva",
+      "posicion": 3,
+      "campo": "motivo",
+      "legado": null,
+      "motor": "flow_engine_no_start:ya_en_curso",
+      "por_que": "El carrito del motor es de tres toques: despues de aceptar A1 el caso sigue abierto (espera A2), asi que el segundo carrito es ya_en_curso; el legado de G1 a G25 es de un toque y su caso ya se habia cerrado."
+    },
+    {
+      "caso": "G20",
+      "imagen": "nueva",
+      "posicion": 0,
+      "campo": "motivo",
+      "legado": "pilot_scope_rejected:pilot_audience_consented_intent_prior_opt_out",
+      "motor": "flow_engine_no_start:baja",
+      "por_que": "El motivo de la audiencia es el del contrato de lectura (baja), no el codigo del helper; la baja previa frena igual."
+    },
+    {
+      "caso": "G21",
+      "imagen": "nueva",
+      "posicion": 2,
+      "campo": "resultado",
+      "legado": "rechazado",
+      "motor": "request_started",
+      "por_que": "El motor no mira la version del scope del legado al arrancar: el recorrido tiene su version fijada del almacen (decision 3 y principio 6), asi que cambiar la version del scope no lo frena; el legado rechaza hasta vencer."
+    },
+    {
+      "caso": "G21",
+      "imagen": "nueva",
+      "posicion": 2,
+      "campo": "motivo",
+      "legado": "pilot_scope_version_mismatch",
+      "motor": null,
+      "por_que": "El motor no mira la version del scope del legado al arrancar: el recorrido tiene su version fijada del almacen (decision 3 y principio 6), asi que cambiar la version del scope no lo frena; el legado rechaza hasta vencer."
+    },
+    {
+      "caso": "G21",
+      "imagen": "nueva",
+      "posicion": 3,
+      "campo": "paso",
+      "legado": {
+        "paso": "reevaluacion",
+        "decision": "execute",
+        "motivo": "eligible_for_execution"
+      },
+      "motor": null,
+      "por_que": "El motor no mira la version del scope del legado al arrancar: el recorrido tiene su version fijada del almacen (decision 3 y principio 6), asi que cambiar la version del scope no lo frena; el legado rechaza hasta vencer."
+    },
+    {
+      "caso": "G21",
+      "imagen": "nueva",
+      "posicion": 4,
+      "campo": "paso",
+      "legado": {
+        "paso": "arranque",
+        "resultado": "rechazado",
+        "motivo": "pilot_scope_version_mismatch"
+      },
+      "motor": null,
+      "por_que": "El motor no mira la version del scope del legado al arrancar: el recorrido tiene su version fijada del almacen (decision 3 y principio 6), asi que cambiar la version del scope no lo frena; el legado rechaza hasta vencer."
+    },
+    {
+      "caso": "G22",
+      "imagen": "nueva",
+      "posicion": 0,
+      "campo": "arranco",
+      "legado": false,
+      "motor": true,
+      "por_que": "La version del scope del binding del motor es la del control (decision 3): la variable vieja del bridge no se compara, y el carrito arranca por el motor; el legado lo rechazaba."
+    },
+    {
+      "caso": "G22",
+      "imagen": "nueva",
+      "posicion": 0,
+      "campo": "motivo",
+      "legado": "pilot_scope_rejected:pilot_scope_version_mismatch",
+      "motor": null,
+      "por_que": "La version del scope del binding del motor es la del control (decision 3): la variable vieja del bridge no se compara, y el carrito arranca por el motor; el legado lo rechazaba."
+    },
+    {
+      "caso": "G23",
+      "imagen": "nueva",
+      "posicion": 2,
+      "campo": "resultado",
+      "legado": "rechazado",
+      "motor": "request_started",
+      "por_que": "El motor no mira runtime_state del scope del legado (lo frena el almacen: pausado o apagado del flujo); con el scope pausado, el arranque del motor sale en el primer lease y no hay un segundo."
+    },
+    {
+      "caso": "G23",
+      "imagen": "nueva",
+      "posicion": 2,
+      "campo": "motivo",
+      "legado": "pilot_runtime_not_armed",
+      "motor": null,
+      "por_que": "El motor no mira runtime_state del scope del legado (lo frena el almacen: pausado o apagado del flujo); con el scope pausado, el arranque del motor sale en el primer lease y no hay un segundo."
+    },
+    {
+      "caso": "G23",
+      "imagen": "nueva",
+      "posicion": 3,
+      "campo": "paso",
+      "legado": {
+        "paso": "reevaluacion",
+        "decision": "execute",
+        "motivo": "eligible_for_execution"
+      },
+      "motor": null,
+      "por_que": "El motor no mira runtime_state del scope del legado (lo frena el almacen: pausado o apagado del flujo); con el scope pausado, el arranque del motor sale en el primer lease y no hay un segundo."
+    },
+    {
+      "caso": "G23",
+      "imagen": "nueva",
+      "posicion": 4,
+      "campo": "paso",
+      "legado": {
+        "paso": "arranque",
+        "resultado": "request_started"
+      },
+      "motor": null,
+      "por_que": "El motor no mira runtime_state del scope del legado (lo frena el almacen: pausado o apagado del flujo); con el scope pausado, el arranque del motor sale en el primer lease y no hay un segundo."
+    },
+    {
+      "caso": "G4",
+      "imagen": "vieja",
+      "posicion": 5,
+      "campo": "motivo",
+      "legado": "pilot_daily_budget_exhausted",
+      "motor": "tope_del_flujo",
+      "por_que": "El tope es el de la definicion fijada (topes.por_dia), no el del scope, y el motivo es el del contrato de lectura (tope_del_flujo); la bolsa la cuentan los dos caminos igual."
+    },
+    {
+      "caso": "G6",
+      "imagen": "vieja",
+      "posicion": 5,
+      "campo": "motivo",
+      "legado": "pilot_total_budget_exhausted",
+      "motor": "tope_del_flujo",
+      "por_que": "El tope es el de la definicion fijada (topes.total), no el del scope, y el motivo es el del contrato de lectura (tope_del_flujo); el total se mira antes que el dia, como en el legado."
+    },
+    {
+      "caso": "G7",
+      "imagen": "vieja",
+      "posicion": 0,
+      "campo": "motivo",
+      "legado": "pilot_case_binding_conflict",
+      "motor": "pilot_scope_rejected:no_arranca_mientras_pago_fallido",
+      "por_que": "Principio 13: el motor no llama al planificador con un caso de otro flujo abierto (no mueve su due_at) y no arranca con no_arranca_mientras:pago_fallido; el legado llegaba a pilot_case_binding_conflict. La imagen vieja lo ve sin dos puntos."
+    },
+    {
+      "caso": "G9",
+      "imagen": "vieja",
+      "posicion": 1,
+      "campo": "motivo",
+      "legado": "pilot_case_binding_conflict",
+      "motor": "pilot_scope_rejected:ya_en_curso",
+      "por_que": "Principio 13: el mismo flujo ya esta en curso para la persona, ya_en_curso, sin llamar al planificador; el legado llegaba a pilot_case_binding_conflict despues de sumar el evento al caso."
+    },
+    {
+      "caso": "G10",
+      "imagen": "vieja",
+      "posicion": 3,
+      "campo": "arranco",
+      "legado": true,
+      "motor": false,
+      "por_que": "El carrito del motor es de tres toques: despues de aceptar A1 el caso sigue abierto (espera A2), asi que el segundo carrito es ya_en_curso; el legado de G1 a G25 es de un toque y su caso ya se habia cerrado."
+    },
+    {
+      "caso": "G10",
+      "imagen": "vieja",
+      "posicion": 3,
+      "campo": "motivo",
+      "legado": null,
+      "motor": "pilot_scope_rejected:ya_en_curso",
+      "por_que": "El carrito del motor es de tres toques: despues de aceptar A1 el caso sigue abierto (espera A2), asi que el segundo carrito es ya_en_curso; el legado de G1 a G25 es de un toque y su caso ya se habia cerrado."
+    },
+    {
+      "caso": "G20",
+      "imagen": "vieja",
+      "posicion": 0,
+      "campo": "motivo",
+      "legado": "pilot_scope_rejected:pilot_audience_consented_intent_prior_opt_out",
+      "motor": "pilot_scope_rejected:baja",
+      "por_que": "El motivo de la audiencia es el del contrato de lectura (baja), no el codigo del helper; la baja previa frena igual."
+    },
+    {
+      "caso": "G21",
+      "imagen": "vieja",
+      "posicion": 2,
+      "campo": "resultado",
+      "legado": "rechazado",
+      "motor": "request_started",
+      "por_que": "El motor no mira la version del scope del legado al arrancar: el recorrido tiene su version fijada del almacen (decision 3 y principio 6), asi que cambiar la version del scope no lo frena; el legado rechaza hasta vencer."
+    },
+    {
+      "caso": "G21",
+      "imagen": "vieja",
+      "posicion": 2,
+      "campo": "motivo",
+      "legado": "pilot_scope_version_mismatch",
+      "motor": null,
+      "por_que": "El motor no mira la version del scope del legado al arrancar: el recorrido tiene su version fijada del almacen (decision 3 y principio 6), asi que cambiar la version del scope no lo frena; el legado rechaza hasta vencer."
+    },
+    {
+      "caso": "G21",
+      "imagen": "vieja",
+      "posicion": 3,
+      "campo": "paso",
+      "legado": {
+        "paso": "reevaluacion",
+        "decision": "execute",
+        "motivo": "eligible_for_execution"
+      },
+      "motor": null,
+      "por_que": "El motor no mira la version del scope del legado al arrancar: el recorrido tiene su version fijada del almacen (decision 3 y principio 6), asi que cambiar la version del scope no lo frena; el legado rechaza hasta vencer."
+    },
+    {
+      "caso": "G21",
+      "imagen": "vieja",
+      "posicion": 4,
+      "campo": "paso",
+      "legado": {
+        "paso": "arranque",
+        "resultado": "rechazado",
+        "motivo": "pilot_scope_version_mismatch"
+      },
+      "motor": null,
+      "por_que": "El motor no mira la version del scope del legado al arrancar: el recorrido tiene su version fijada del almacen (decision 3 y principio 6), asi que cambiar la version del scope no lo frena; el legado rechaza hasta vencer."
+    },
+    {
+      "caso": "G22",
+      "imagen": "vieja",
+      "posicion": 0,
+      "campo": "arranco",
+      "legado": false,
+      "motor": true,
+      "por_que": "La version del scope del binding del motor es la del control (decision 3): la variable vieja del bridge no se compara, y el carrito arranca por el motor; el legado lo rechazaba."
+    },
+    {
+      "caso": "G22",
+      "imagen": "vieja",
+      "posicion": 0,
+      "campo": "motivo",
+      "legado": "pilot_scope_rejected:pilot_scope_version_mismatch",
+      "motor": null,
+      "por_que": "La version del scope del binding del motor es la del control (decision 3): la variable vieja del bridge no se compara, y el carrito arranca por el motor; el legado lo rechazaba."
+    },
+    {
+      "caso": "G23",
+      "imagen": "vieja",
+      "posicion": 2,
+      "campo": "resultado",
+      "legado": "rechazado",
+      "motor": "request_started",
+      "por_que": "El motor no mira runtime_state del scope del legado (lo frena el almacen: pausado o apagado del flujo); con el scope pausado, el arranque del motor sale en el primer lease y no hay un segundo."
+    },
+    {
+      "caso": "G23",
+      "imagen": "vieja",
+      "posicion": 2,
+      "campo": "motivo",
+      "legado": "pilot_runtime_not_armed",
+      "motor": null,
+      "por_que": "El motor no mira runtime_state del scope del legado (lo frena el almacen: pausado o apagado del flujo); con el scope pausado, el arranque del motor sale en el primer lease y no hay un segundo."
+    },
+    {
+      "caso": "G23",
+      "imagen": "vieja",
+      "posicion": 3,
+      "campo": "paso",
+      "legado": {
+        "paso": "reevaluacion",
+        "decision": "execute",
+        "motivo": "eligible_for_execution"
+      },
+      "motor": null,
+      "por_que": "El motor no mira runtime_state del scope del legado (lo frena el almacen: pausado o apagado del flujo); con el scope pausado, el arranque del motor sale en el primer lease y no hay un segundo."
+    },
+    {
+      "caso": "G23",
+      "imagen": "vieja",
+      "posicion": 4,
+      "campo": "paso",
+      "legado": {
+        "paso": "arranque",
+        "resultado": "request_started"
+      },
+      "motor": null,
+      "por_que": "El motor no mira runtime_state del scope del legado (lo frena el almacen: pausado o apagado del flujo); con el scope pausado, el arranque del motor sale en el primer lease y no hay un segundo."
+    }
+  ]
+}

@@ -164,7 +164,14 @@ await db.exec('create role otro_duenio nologin');
 await apply(join(root, 'supabase/migrations', TARGET));
 const after = await snapshot();
 const tablesAfter = await tables();
-for (const name of migrationNames.slice(targetIndex + 1)) await apply(join(root, 'supabase/migrations', name));
+// La suite de la T2.3a queda congelada en su migracion y en la del tope de la
+// historia (20261021000300), que prueba abajo: la T2.3b (20261022000100) cambia
+// la capacidad del motor, la guarda y crear la ruta, y tiene su propia suite
+// (validate_flow_engine_motor_v1.mjs).
+const FROZEN_AT = '20261021000300_flow_engine_history_cap_v1.sql';
+const frozenIndex = migrationNames.indexOf(FROZEN_AT);
+if (frozenIndex <= targetIndex) fail(`${FROZEN_AT} no esta despues de ${TARGET}`);
+for (const name of migrationNames.slice(targetIndex + 1, frozenIndex + 1)) await apply(join(root, 'supabase/migrations', name));
 
 const TZ = 'timestamp with time zone';
 const READS = ['read_flow_engine_v1(jsonb,text)', `read_flow_engine_history_v1(jsonb,text,${TZ})`];

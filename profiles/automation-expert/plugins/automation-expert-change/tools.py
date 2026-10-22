@@ -126,6 +126,33 @@ def looks_like_identifier(value: str) -> bool:
     return False
 
 
+_REASON_TEXT = re.compile(r"^[<>a-z0-9_]{1,40}$")
+
+
+def _reason(value: object) -> dict[str, object] | None:
+    """El motivo de un 422 del bridge, con su forma cerrada: textos cortos, el numero de item y listas de claves.
+
+    Lo que no tiene esa forma no pasa: el agente recibe el codigo solo, como antes.
+    """
+    if not isinstance(value, dict):
+        return None
+    out: dict[str, object] = {}
+    for key in ("field", "code", "problem"):
+        text = value.get(key)
+        if isinstance(text, str) and _REASON_TEXT.fullmatch(text):
+            out[key] = text
+    item = value.get("item")
+    if type(item) is int and 0 <= item < 100:
+        out["item"] = item
+    for key in ("missing", "extra"):
+        names = value.get(key)
+        if isinstance(names, list):
+            kept = [name for name in names[:10] if isinstance(name, str) and _REASON_TEXT.fullmatch(name)]
+            if kept:
+                out[key] = kept
+    return out or None
+
+
 def _request(method: str, path: str, body: dict[str, object] | None = None) -> dict[str, object]:
     try:
         base_url = _validated_base_url()
@@ -156,6 +183,10 @@ def _request(method: str, path: str, body: dict[str, object] | None = None) -> d
             if detail == "flow_change_draft_blocked" and isinstance(data_out, dict):
                 out["blocks"] = data_out.get("blocks", [])
                 out["warnings"] = data_out.get("warnings", [])
+            # Y el motivo de un pedido que no cierra: que campo, que item y que claves.
+            reason = _reason(error_payload.get("reason"))
+            if reason is not None:
+                out["reason"] = reason
             return out
         if exc.code == 401:
             return {"error": "automation_expert_change_authentication_required"}

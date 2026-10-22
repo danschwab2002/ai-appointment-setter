@@ -1,0 +1,135 @@
+{
+  "what": "la respuesta de read_flow_store_v1 de ATT1, tal cual: el mismo almacen que leyo el Automation Expert a las 13:18:58Z (sin cambios entre las dos lecturas: ningun flow_change_event despues de las 00:14Z) antes de los 8 rechazos 422 de POST /flow-changes",
+  "source": "att1-db, sesion de solo lectura (default_transaction_read_only=on), con el p_instance del bridge {tenant_ref: lancemos, ally_ref: att1}",
+  "captured_at": "2026-10-22T13:50:52Z",
+  "personal_data": "ninguno: definiciones de flujo, nombres de plantilla y refs (verificado: 0 mails, 0 secuencias de 7 digitos)",
+  "response": {
+    "flows": [
+      {
+        "state": "prendido",
+        "flow_id": "3ad1c523-2869-43f1-82ad-ed2610f2f521",
+        "flow_key": "carrito",
+        "versions": {
+          "1": {
+            "entra": {
+              "permiso": "formulario",
+              "contesto_a": []
+            },
+            "flujo": "carrito",
+            "pasos": [
+              {
+                "boton": {
+                  "link": "checkout",
+                  "cupon": "personal"
+                },
+                "idioma": "es_MX",
+                "plantilla": "att1_carrito_descuento_01",
+                "variables": [
+                  "nombre",
+                  "producto",
+                  "cuando",
+                  "precio",
+                  "vence"
+                ]
+              },
+              {
+                "esperar": "24h"
+              },
+              {
+                "idioma": "es_MX",
+                "plantilla": "att1_carrito_dudas_01",
+                "variables": [
+                  "nombre",
+                  "producto"
+                ]
+              },
+              {
+                "esperar": "48h"
+              },
+              {
+                "boton": {
+                  "link": "checkout",
+                  "cupon": "personal"
+                },
+                "idioma": "es_MX",
+                "plantilla": "att1_ultima_renovacion_01",
+                "variables": [
+                  "nombre",
+                  "producto",
+                  "vence"
+                ]
+              }
+            ],
+            "topes": {
+              "bolsa": "att1-recuperacion",
+              "total": 5000,
+              "por_dia": 240,
+              "repeticion": {
+                "una_por": "persona_y_oferta",
+                "otra_despues_de": "0m"
+              }
+            },
+            "estado": "publicada",
+            "nombre": "Carrito abandonado",
+            "dispara": {
+              "evento": "carrito"
+            },
+            "esquema": "setter-flujo/v1",
+            "horario": {
+              "zona": "America/Mexico_City",
+              "desde": "09:00",
+              "hasta": "21:00"
+            },
+            "termina": {
+              "si": [
+                "compra"
+              ],
+              "vence": "5d"
+            },
+            "version": 1,
+            "producto": "att1",
+            "prioridad": {
+              "le_gana_a": [
+                "precheckout"
+              ],
+              "no_arranca_mientras": [
+                "pago_fallido"
+              ]
+            }
+          }
+        },
+        "changed_at": "2026-10-22T00:13:15.324614+00:00",
+        "generation": 2,
+        "product_ref": "att1",
+        "active_version": 1,
+        "changed_by_kind": "operador"
+      },
+      {
+        "state": "apagado",
+        "flow_id": "0c809f76-a538-4523-b1a2-64185b6fdfc3",
+        "flow_key": "pago_fallido",
+        "versions": {},
+        "changed_at": "2026-10-22T00:11:17.44816+00:00",
+        "generation": 0,
+        "product_ref": "att1",
+        "active_version": null,
+        "changed_by_kind": "operador"
+      },
+      {
+        "state": "apagado",
+        "flow_id": "9845e131-a6c2-4ef4-9b40-ab52048ea525",
+        "flow_key": "precheckout",
+        "versions": {},
+        "changed_at": "2026-10-22T00:11:03.662583+00:00",
+        "generation": 0,
+        "product_ref": "att1",
+        "active_version": null,
+        "changed_by_kind": "operador"
+      }
+    ],
+    "products": [
+      "att1"
+    ],
+    "database_at": "2026-10-22T13:50:52.237622+00:00"
+  }
+}

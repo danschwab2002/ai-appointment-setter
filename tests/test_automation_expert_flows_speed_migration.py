@@ -39,14 +39,17 @@ def _outside_observed(function: str) -> str:
     return function[:start] + function[function.index(OBSERVED_END, start):]
 
 
-def test_it_is_one_transaction_and_the_last_migration() -> None:
+def test_it_is_one_transaction_and_comes_before_the_motor() -> None:
     sql = _sql()
     assert "\nbegin;\n" in sql and sql.rstrip().endswith("commit;")
     names = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
-    assert names[-1] == MIGRATION.name
-    # Va antes de la reserva de la T2.3b (20261022000100): si esta entra
-    # primero, el orden de los archivos y el de aplicacion en ATT1 coinciden.
-    assert MIGRATION.name < "20261022000100"
+    position = names.index(MIGRATION.name)
+    assert names[position - 1] == "20261021000300_flow_engine_history_cap_v1.sql"
+    # Despues va el camino del motor para el carrito (la T2.3b), que no vuelve
+    # a definir read_automation_expert_flows_v1.
+    assert names[position + 1:] == ["20261022000100_flow_engine_motor_carrito_v1.sql"]
+    for later in names[position + 1:]:
+        assert "read_automation_expert_flows_v1" not in (MIGRATIONS / later).read_text(encoding="utf-8")
 
 
 def test_it_only_replaces_the_flows_function() -> None:
