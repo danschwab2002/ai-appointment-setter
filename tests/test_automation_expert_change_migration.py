@@ -36,8 +36,12 @@ def test_it_is_one_transaction_and_comes_before_the_flow_engine_routes() -> None
     assert "\nbegin;\n" in sql and sql.rstrip().endswith("commit;")
     names = sorted(path.name for path in (ROOT / "supabase" / "migrations").glob("*.sql"))
     # La migracion del motor (20261021000200) va despues: concede sus dos
-    # lecturas a este rol, detras de to_regrole.
-    assert names[names.index(MIGRATION.name) + 1:] == ["20261021000200_flow_engine_routes_v1.sql"]
+    # lecturas a este rol, detras de to_regrole. El tope de la historia
+    # (20261021000300) conserva esos permisos.
+    assert names[names.index(MIGRATION.name) + 1:] == [
+        "20261021000200_flow_engine_routes_v1.sql",
+        "20261021000300_flow_engine_history_cap_v1.sql",
+    ]
 
 
 def test_the_role_only_gets_its_four_functions_and_the_schema() -> None:

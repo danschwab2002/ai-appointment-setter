@@ -92,7 +92,7 @@ read_flow_engine_history_v1(p_instance jsonb, p_product_ref text, p_since timest
 - Devuelve **la captura** de la paridad, con su forma cerrada (`src/bridge/flow_capture.py`), restringida a la instancia y al producto, desde `p_since`, con la siembra que pide la forma. `p_since` no puede ser anterior a 8 días: la vista previa simula los últimos 7 (el ciclo), y el día de más es la siembra de lo que ya estaba en curso. Si es anterior, `22023 flow_engine_history_window_too_wide`.
 - La forma es la de la captura v3 (`captura-paridad-recuperacion-v3`), que trae la T2.2: la v2 de hoy más los pasos siguientes (A2 y Z), los cupones por persona, el link por intento y los pedidos de renovación. Hasta que exista, el doble de la T4 usa el fixture de la v2 (`tests/fixtures/flow_engine/att1_recovery_capture_20261016.json`), que tiene la misma forma salvo esas secciones.
 - **La forma es la prueba de privacidad.** La función no devuelve nada que `flow_capture.validate_shape` rechace: claves de persona de 16 hex, sin arroba y sin nueve dígitos seguidos. El bridge la valida igual antes de usarla, y si falla, la simulación no se construye (`simulation: failed`, sección 4).
-- Con más de 1 MB, la función corta y devuelve `{"ok": false, "reason_code": "flow_engine_history_too_large"}`. La vista previa lo muestra como «la simulación no se pudo armar».
+- Con más de 4.000.000 bytes (4 MB; debajo del corte de 4 MiB del bridge, `MAX_STORE_BYTES` en `flow_change_api.py`), la función corta y devuelve `{"ok": false, "reason_code": "flow_engine_history_too_large"}`. La vista previa lo muestra como «la simulación no se pudo armar».
 
 ## 3. La ruta de un flujo
 
@@ -163,7 +163,7 @@ Los de este contrato, todos en forma `^[a-z][a-z0-9_]{1,79}$`:
 | Código | Dónde | Qué quiere decir |
 |---|---|---|
 | `flow_engine_history_window_too_wide` | 2 | `p_since` es anterior a 8 días |
-| `flow_engine_history_too_large` | 2 | la historia pasa de 1 MB |
+| `flow_engine_history_too_large` | 2 | la historia pasa de 4 MB |
 | `flow_route_kind_not_guarded` | 3.1 | en la v1, el legado de ese `legacy_kind` no tiene guarda del almacén |
 | `flow_route_needs_published_version` | 3.1 | el flujo no tiene versión activa |
 | `flow_route_kind_mismatch` | 3.1 | el disparador no es el del `legacy_kind` |
